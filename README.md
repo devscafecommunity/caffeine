@@ -5,6 +5,19 @@ Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3
 
 ---
 
+## 📚 Documentação
+
+| Documento | Descrição |
+|---|---|
+| **[`docs/MASTER.md`](docs/MASTER.md)** | **Documentação completa** — filosofia, arquitetura, fases, convenções, fluxo de trabalho |
+| **[`desing_planning/`](desing_planning/)** | Especificações de design e specs técnicas |
+| **`desing_planning/roadmap.md`** | Roadmap detalhado das 6 fases |
+| **`desing_planning/dev_manifesto.md`** | Leis do projeto, regras de segurança e estilo |
+
+> ⚠️ **O código-fonte ainda não foi criado.** O projeto está em **Fase 0** (Setup & Documentação). Comece pela [`docs/MASTER.md`](docs/MASTER.md) para entender a visão completa.
+
+---
+
 ## 🏛️ Filosofia de Desenvolvimento
 Ao contrário de engines "bloated", a Caffeine é construída sob o princípio da **transparência**.
 * **Zero Dependency:** Reduzir ao máximo a dependência da `std` padrão, criando uma `stdlib` própria focada em jogos.
