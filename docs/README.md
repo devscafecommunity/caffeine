@@ -1,6 +1,6 @@
 # ☕ Caffeine Engine — Documentação Mestre
 
-**Versão:** 1.0.0  
+**Versão:** 1.1.0  
 **Status:** Alpha (Pré-produção)  
 **Última Atualização:** 2026-04-06  
 **Mantido por:** Codex Studio Guild
@@ -106,35 +106,59 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 ### 3.1 Visão Macro da Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        ENTRY POINT                           │
-│                       (main.cpp)                             │
-└────────────────────────────┬───────────────────────────────┘
-                             │
-                             ▼
-┌──────────────────────────────────────────────────────────────┐
-│                      CAFFEINE CORE                           │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │  Platform   │  │   Caffeine   │  │  Caffeine Core   │   │
-│  │   Layer     │  │   Stdlib     │  │   Types & Macros │   │
-│  │  (OS Abst.) │  │ (Allocators, │  │  (u32, f64, etc) │   │
-│  │             │  │  Containers) │  │                  │   │
-│  └─────────────┘  └──────────────┘  └──────────────────┘   │
-└────────────────────────────┬───────────────────────────────┘
-                             │
+┌──────────────────────────────────────────────────────────────────────┐
+│                           ENTRY POINT                                  │
+│                          (main.cpp)                                     │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         CAFFEINE CORE                                   │
+│                                                                       │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐        │
+│  │  Platform   │  │   Caffeine   │  │  Caffeine Core       │        │
+│  │   Layer     │  │   Stdlib     │  │  Types & Macros     │        │
+│  │  (OS Abst.) │  │ (Allocators, │  │  (u32, f64, etc)   │        │
+│  │             │  │  Containers) │  │                     │        │
+│  └─────────────┘  └──────────────┘  └──────────────────────┘        │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
           ┌──────────────────┼──────────────────┐
+          │                  │                  │
           ▼                  ▼                  ▼
 ┌─────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Job System     │ │   RHI Layer  │ │   ECS Core       │
-│  (Threading)    │ │  (Graphics)  │ │   (Entities)     │
-└─────────────────┘ └──────────────┘ └──────────────────┘
-          │                  │                  │
-          └──────────────────┼──────────────────┘
-                             ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     GAME / APPLICATION                       │
-│              (User Code built on Caffeine)                   │
-└──────────────────────────────────────────────────────────────┘
+│   Job System     │ │   RHI Layer  │ │   ECS Core       │
+│   (Threading)    │ │  (Graphics)  │ │   (Entities)     │
+└────────┬────────┘ └──────┬───────┘ └──────────────────┘
+         │                  │
+         ▼                  ▼
+┌─────────────────┐ ┌──────────────────────┐
+│  GAME SYSTEMS    │ │   ECS SYSTEMS         │
+│                 │ │                       │
+│ • Input Manager │ │ • PhysicsSystem2D     │
+│ • Debug Tools   │ │ • AnimationSystem     │
+│ • Audio System │ │ • MovementSystem       │
+│ • Asset Manager │ │ • SpriteSystem         │
+└─────────────────┘ │ • UISystem            │
+                     └──────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                        GAME LOOP                                       │
+│                                                                       │
+│  beginFrame ──▶ processInput ──▶ accumulator += dt                  │
+│                          │                                             │
+│        ┌────────────────┼────────────────┐                          │
+│        ▼                ▼                ▼                          │
+│   [Jobs parallel]   [Events]         [ECS update]                    │
+│   • Physics        dispatch         (priority order)                  │
+│   • Animation                       1. Physics (100)                 │
+│   • Asset load                     2. Movement (150)                   │
+│                                        3. Animation (200)             │
+│                                        4. UI (500)                    │
+│  render ◀──────────────────────────────────┘                        │
+│  endFrame                                                         │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2 Camadas e Responsabilidades
@@ -159,6 +183,12 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 - Física, IA e Carregamento como Jobs discretos
 - Atômicos e barreiras de sincronização lock-free
 
+#### Game Systems (Fase 2-4)
+- **Input Manager:** Action mapping, polling/event-driven, gamepad
+- **Debug Tools:** Logging, profiler, debug draw
+- **Audio System:** SDL3 audio, pooling, spatial 2D
+- **Asset Manager:** Async loading, cache, hot-reload
+
 #### RHI (Rendering Hardware Interface)
 - Abstração sobre SDL_GPU
 - Recebe `DrawCommand` → fila interna → GPU
@@ -168,6 +198,12 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 - Entidades = IDs (não objetos)
 - Componentes = dados em arrays contíguos
 - Sistemas = lógica que opera nos componentes
+
+#### ECS Systems (Fase 4+)
+- **PhysicsSystem2D:** AABB/circle collision, rigid body dynamics
+- **AnimationSystem:** Sprite frames, state machine
+- **UISystem:** Retained mode, ECS integration
+- **MovementSystem:** Velocity/position integration
 
 ---
 
@@ -755,35 +791,84 @@ Cada módulo deve ser **independente** — compilável sem os outros.
 | **Threading** | Job System, thread pool | 2 |
 | **Time** | Timer, game loop | 2 |
 
-### 9.2 Módulos Opcionais (Engine)
+### 9.2 Módulos de Gameplay (Engine)
 
-| Módulo | Descrição | Fase |
-|---|---|---|
-| **RHI** | Abstração gráfica | 3 |
-| **Renderer** | Batch rendering 2D | 3 |
-| **Camera** | Sistema de câmera | 3 |
-| **ECS** | Entity Component System | 4 |
-| **Scene** | Serialização, scene graph | 4 |
-| **Events** | Event bus | 4 |
-| **Audio** | Sistema de som (futuro) | TBD |
-| **Physics** | Motor de física (futuro) | TBD |
+| Módulo | Descrição | Fase | Dependência |
+|---|---|---|---|
+| **Input** | Action mapping, polling/event-driven | 2 | Core |
+| **Debug Tools** | Logging, profiler, debug draw | 2+ | Core |
+| **Asset Manager** | Async loading, cache, hot-reload | 3 | Job System |
+| **RHI** | Abstração SDL_GPU | 3 | Core |
+| **Batch Renderer** | Sprite batching, texture atlas | 3 | RHI |
+| **Camera** | Sistema de câmera | 3 | Math |
+| **ECS** | Entity Component System | 4 | Core, Memory |
+| **Scene** | Serialização, scene graph | 4 | ECS, Asset |
+| **Events** | Event bus | 4 | ECS |
+| **Audio** | SDL3 audio, pooling, spatial | 4 | Asset |
+| **Animation** | Sprite frames, state machine | 4 | ECS, Asset |
+| **Physics (2D)** | AABB, collision, integration | 4 | ECS, Math |
+| **UI** | Retained mode, ECS integration | 5 | ECS, Render |
 
 ### 9.3 Dependências entre Módulos
 
 ```
-Core ──────▶ Memory ──────▶ Containers
- │                          │
- │                          ▼
- │                      Threading ◀── Time
- │                          │
- └──────────────────────────┴───────┬─────▶ ECS ──▶ Scene ──▶ Events
-                                    │
-                                    ▼
-                                   RHI ──▶ Renderer ──▶ Camera
-                                    │
-                                    ▼
-                                   Math
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         MODULE DEPENDENCY GRAPH                          │
+│                                                                          │
+│  Core ──────▶ Memory ──────▶ Containers                               │
+│   │                          │                                          │
+│   │                          ▼                                          │
+│   │                      Threading ◀── Time                             │
+│   │                          │                                          │
+│   └──┬───────────────────────┴───────┬──────────────────────┐         │
+│      │                               │                      │         │
+│      ▼                               ▼                      ▼         │
+│  Input                          Job System            Debug Tools       │
+│  (Fase 2)                      (Fase 2)             (Fase 2+)       │
+│      │                               │                      │         │
+│      │                               ▼                      │         │
+│      │                          Asset Manager                     │         │
+│      │                          (Fase 3)                       │         │
+│      │                               │                             │         │
+│      │        ┌─────────────────────┼─────────────────────┐     │         │
+│      │        │                     │                     │     │         │
+│      ▼        ▼                     ▼                     ▼     │         │
+│     RHI ◀──────┴──▶ Batch Renderer ◀── Camera           │         │
+│      │                         (Fase 3)                  │         │
+│      │                                                    │         │
+│      ▼                                                    ▼         │
+│     Math                                                   │         │
+│                                                            │         │
+│  ┌───┴───┬───────────────┬───────────────┬─────────────┐   │         │
+│  │       │               │               │             │   │         │
+│  ▼       ▼               ▼               ▼             ▼   │         │
+│ ECS ◀── Scene ◀── Events ◀── Audio ◀── Animation ◀─── Physics ◀── UI │
+│  │                                                                         │
+│  │     ◀────────────────────────────────────────────────────────────────┘
+│  │
+│  ▼
+│ Fase 5+ ───▶ 3D Math, Mesh Loading, Skeletal Animation
+│ Fase 6+ ───▶ Embedded UI, Scene Editor, Asset Pipeline
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 9.4 Mapa de Uso de Memória por Sistema
+
+| Sistema | Allocator | Justificativa |
+|---|---|---|
+| **Game Loop** | Linear (frame) | Reset a cada frame |
+| **Job System** | Linear (scratch) + Stack (task) | Task scopes |
+| **Input** | Pool | Gamepad state, bindings |
+| **Event Bus** | Linear (frame) | Fila de eventos |
+| **ECS** | Pool + Persistent | Component storage |
+| **Physics** | Linear (frame) | Contact manifolds |
+| **Audio** | Pool | AudioSource instances |
+| **Animation** | Pool | Animator instances |
+| **UI** | Pool | Widget instances |
+| **Scene** | Stack (level) | Load/unload arena |
+| **Asset Manager** | Persistent + Linear | Registry + load buffer |
+
+> Para detalhes completos, ver [`desing_planning/memory_model.md`](../desing_planning/memory_model.md).
 
 ---
 
@@ -889,11 +974,30 @@ feature/fase-1-linear-allocator
 
 ## Apêndice B: Referências e Recursos
 
+### Documentação
 - [SDL3 Documentation](https://wiki.libsdl.org/)
 - [SDL_GPU API](https://github.com/libsdl-org/SDL_gpu/)
 - [C++20 Standard](https://en.cppreference.com/)
+
+### Livros e Conceitos
 - [Data-Oriented Design — Richard Fabian](https://www.dataorienteddesign.com/)
 - [Game Programming Patterns — Robert Nystrom](https://gameprogrammingpatterns.com/)
+- [Game Engine Architecture — Jason Gregory](https://www.gameenginebook.com/)
+
+### Engines e Bibliotecas de Referência
+- [flecs](https://github.com/SanderMertens/flecs) — ECS archetype-based com cache locality
+- [EnTT](https://github.com/skypjack/entt) — ECS patterns e integração com game loops
+- [Jolt Physics](https://github.com/jrouwe/JoltPhysics) — Job System com barreiras
+- [Box2D/LiquidFun](https://github.com/google/liquidfun) — Física 2D com broad/narrow phase
+
+### Padrões de Game Loop
+- [Handmade Hero](https://github.com/cmuratori/HandmadeHeroCode) — Padrões de engine de baixo nível
+- [Fixed Timestep Demo](https://github.com/jakubtomsu/fixed-timestep-demo) — Padrão accumulator com interpolação
+- [Dear ImGui SDL3](https://github.com/ocornut/imgui/blob/master/examples/example_sdl3_opengl3/main.cpp) — SDL3 game loop integration
+
+### Patterns de Código
+- [Endurodave StateMachine](https://github.com/endurodave/StateMachine) — State machine patterns em C++
+- [Merrilledmonds GameLoop](https://github.com/merrilledmonds/GameLoop) — Boilerplate game loop modular
 
 ---
 
