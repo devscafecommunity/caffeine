@@ -101,23 +101,38 @@ src/
 
 ### Ciclo de Game Loop
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      GAME LOOP                              │
-│                                                             │
-│  beginFrame ──▶ processInput ──▶ accumulator += dt        │
-│                       │                                    │
-│         ┌─────────────┼─────────────┐                       │
-│         ▼             ▼             ▼                       │
-│    [Jobs parallel]  Events       ECS update                │
-│    • Physics        dispatch      (priority order)         │
-│    • Animation                   1. Physics (100)         │
-│    • Asset load                  2. Movement (150)           │
-│                                   3. Animation (200)       │
-│                                        │                   │
-│  render ───────────────────────────────┘                   │
-│  endFrame ──▶ stats update                                  │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    BF["🎬 beginFrame"]
+    PI["⌨️ processInput"]
+    ACC["⏱️ accumulator += dt"]
+    
+    subgraph PARALLEL["⚙️ PARALLEL EXECUTION"]
+        JOBS["🔗 Jobs Parallel<br/><small>• Physics<br/>• Animation<br/>• Asset load</small>"]
+        EVENTS["📢 Events<br/>dispatch"]
+        ECS["🧠 ECS update<br/><small>Priority Order:<br/>1. Physics(100)<br/>2. Movement(150)<br/>3. Animation(200)</small>"]
+    end
+    
+    RENDER["🎨 render"]
+    EF["📊 endFrame → stats update"]
+    
+    BF --> PI --> ACC --> JOBS
+    ACC --> EVENTS
+    ACC --> ECS
+    JOBS --> RENDER
+    EVENTS --> RENDER
+    ECS --> RENDER
+    RENDER --> EF
+    
+    style BF fill:#2d5016,stroke:#4a9,color:#fff
+    style PI fill:#2d5016,stroke:#4a9,color:#fff
+    style ACC fill:#2d5016,stroke:#4a9,color:#fff
+    style JOBS fill:#1a3a5c,stroke:#4af,color:#fff
+    style EVENTS fill:#1a3a5c,stroke:#4af,color:#fff
+    style ECS fill:#1a3a5c,stroke:#4af,color:#fff
+    style RENDER fill:#4a1a1a,stroke:#f94,color:#fff
+    style EF fill:#4a1a1a,stroke:#f94,color:#fff
+    style PARALLEL fill:none,stroke:#666,stroke-dasharray: 5 5
 ```
 
 ### Critério de Progresso
@@ -144,23 +159,30 @@ src/
 
 ### Pipeline de Renderização
 
-```
-ECS World
-    │
-    ├── SpriteSystem (collects all Sprite + Transform components)
-    │
-    ▼
-BatchRenderer
-    │
-    ├── Group by: pipeline + texture + layer
-    ├── Sort by: sortKey (z-order)
-    │
-    ▼
-RHI Command Buffer
-    │
-    ├── bindPipeline()
-    ├── bindVertexBuffer()
-    └── drawInstanced()  ← 1 call per batch
+```mermaid
+flowchart TB
+    WORLD["🌍 ECS World"]
+    SPRITE["🎨 SpriteSystem<br/><small>collects all Sprite<br/>+ Transform components</small>"]
+    BATCH["📦 BatchRenderer<br/><small>Group by: pipeline + texture + layer<br/>Sort by: sortKey z-order</small>"]
+    RHI["⚡ RHI Command Buffer"]
+    BIND_PIPE["🔗 bindPipeline()"]
+    BIND_VB["📍 bindVertexBuffer()"]
+    DRAW["✨ drawInstanced()<br/><small>1 call per batch</small>"]
+    
+    WORLD --> SPRITE
+    SPRITE --> BATCH
+    BATCH --> RHI
+    RHI --> BIND_PIPE
+    RHI --> BIND_VB
+    RHI --> DRAW
+    
+    style WORLD fill:#2d5016,stroke:#4a9,color:#fff
+    style SPRITE fill:#1a3a5c,stroke:#4af,color:#fff
+    style BATCH fill:#1a3a5c,stroke:#4af,color:#fff
+    style RHI fill:#4a1a1a,stroke:#f94,color:#fff
+    style BIND_PIPE fill:#4a1a1a,stroke:#f94,color:#fff
+    style BIND_VB fill:#4a1a1a,stroke:#f94,color:#fff
+    style DRAW fill:#4a1a1a,stroke:#f94,color:#fff
 ```
 
 ### Critério de Progresso
@@ -189,38 +211,33 @@ RHI Command Buffer
 
 ### Arquitetura ECS
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       ECS WORLD                             │
-│                                                             │
-│  Entity = u32 ID                                          │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                  ARCHETYPES                         │   │
-│  │                                                     │   │
-│  │  [Pos+Velo+Sprite] ──▶ ComponentPool(Pos)          │   │
-│  │                        ComponentPool(Velo)          │   │
-│  │                        ComponentPool(Sprite)         │   │
-│  │                                                     │   │
-│  │  [Pos+Velo+Phys]  ──▶ ComponentPool(Pos)          │   │
-│  │                        ComponentPool(Velo)          │   │
-│  │                        ComponentPool(RigidBody)     │   │
-│  │                        ComponentPool(Collider)      │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                  SYSTEMS                           │   │
-│  │                                                     │   │
-│  │  PhysicsSystem      ──▶ reads: Pos, Velo, RigidBody │   │
-│  │                     writes: Pos, Velo                │   │
-│  │                                                     │   │
-│  │  MovementSystem    ──▶ reads: Pos, Velo, Input     │   │
-│  │                     writes: Velo                    │   │
-│  │                                                     │   │
-│  │  AnimationSystem   ──▶ reads: Animator, Sprite      │   │
-│  │                     writes: Sprite                  │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph WORLD["🧠 ECS WORLD - Entity = u32 ID"]
+        subgraph ARCH["📦 ARCHETYPES"]
+            A1["[Pos + Velo + Sprite]<br/>├─ Pool(Pos)<br/>├─ Pool(Velo)<br/>└─ Pool(Sprite)"]
+            A2["[Pos + Velo + Phys]<br/>├─ Pool(Pos)<br/>├─ Pool(Velo)<br/>├─ Pool(RigidBody)<br/>└─ Pool(Collider)"]
+        end
+        
+        subgraph SYSTEMS["⚙️ SYSTEMS"]
+            S1["PhysicsSystem<br/>READ: Pos, Velo, RigidBody<br/>WRITE: Pos, Velo"]
+            S2["MovementSystem<br/>READ: Pos, Velo, Input<br/>WRITE: Velo"]
+            S3["AnimationSystem<br/>READ: Animator, Sprite<br/>WRITE: Sprite"]
+        end
+    end
+    
+    ARCH -.->|queries| S1
+    ARCH -.->|queries| S2
+    ARCH -.->|queries| S3
+    
+    style WORLD fill:none,stroke:#666,stroke-width:3px
+    style ARCH fill:#1a3a5c,stroke:#4af,color:#fff
+    style SYSTEMS fill:#2d5016,stroke:#4a9,color:#fff
+    style A1 fill:#1a3a5c,stroke:#4af,color:#fff
+    style A2 fill:#1a3a5c,stroke:#4af,color:#fff
+    style S1 fill:#2d5016,stroke:#4a9,color:#fff
+    style S2 fill:#2d5016,stroke:#4a9,color:#fff
+    style S3 fill:#2d5016,stroke:#4a9,color:#fff
 ```
 
 ### Componentes ECS Pré-definidos
@@ -297,10 +314,28 @@ Name, SceneRef
 
 **Regra:** Não avançamos para a Fase N+1 enquanto a Fase N não passar no Stress Test.
 
-```
-Fase N ──[Stress Test]──▶ Passou? ──▶ SIM ──▶ Fase N+1
-                          │
-                          └──▶ NÃO ──▶ Corrigir ──▶ Repete
+```mermaid
+flowchart TD
+    PHASE["📍 Fase N"]
+    TEST["🔬 Stress Test"]
+    PASS{{"✅ Passou?"}}
+    ADVANCE["🚀 Fase N+1"]
+    FIX["🔧 Corrigir"]
+    RETRY["🔁 Repete"]
+    
+    PHASE --> TEST
+    TEST --> PASS
+    PASS -->|SIM| ADVANCE
+    PASS -->|NÃO| FIX
+    FIX --> RETRY
+    RETRY --> TEST
+    
+    style PHASE fill:#2d5016,stroke:#4a9,color:#fff
+    style TEST fill:#1a3a5c,stroke:#4af,color:#fff
+    style PASS fill:#4a1a1a,stroke:#f94,color:#fff
+    style ADVANCE fill:#2d5016,stroke:#4a9,color:#fff
+    style FIX fill:#4a1a1a,stroke:#f94,color:#fff
+    style RETRY fill:#4a1a1a,stroke:#f94,color:#fff
 ```
 
 ### Stress Tests por Fase
