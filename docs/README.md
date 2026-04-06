@@ -27,11 +27,11 @@
 
 ### 1.1 O que é a Caffeine?
 
-A **Caffeine Engine** é uma game engine proprietária do Codex Studio, desenvolvida em **C++** sobre a camada do **SDL3**. O projeto nasce da insatisfação com engines "bloated" — soluções que abstraem o hardware ao ponto de torná-lo opaco para o desenvolvedor.
+A **Caffeine Engine** é uma game engine proprietária do Codex Studio, desenvolvida em **C++** sobre a camada do **SDL3**.
 
 A Caffeine prioriza:
 - **Controle total** sobre o hardware
-- **Concorrência multithread**榨干 cada núcleo da CPU
+- **Concorrência multithread** cada núcleo da CPU
 - **Gerenciamento de memória** customizado, sem dependência da `std`
 - **Otimização gráfica** de baixo nível via SDL_GPU
 
