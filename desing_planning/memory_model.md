@@ -34,44 +34,67 @@ Este documento contém as **especificações técnicas detalhadas** dos sistemas
 
 ### A.2 Mapa de Allocators por Uso
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                 POLÍTICA DE MEMÓRIA DA CAFFEINE                       │
-│                                                                      │
-│  ════════════════════════════════════════════════════════════════    │
-│  PERSISTENT (malloc/bootstrap)                                      │
-│  ════════════════════════════════════════════════════════════════    │
-│  • Asset registry (texturas, áudio carregados)                     │
-│  • Scene data (entidades serializadas)                              │
-│  • Shader bytecode                                                  │
-│  • ECS archetype storage                                            │
-│                                                                      │
-│  ════════════════════════════════════════════════════════════════    │
-│  POOL (tamanho fixo, rápido)                                       │
-│  ════════════════════════════════════════════════════════════════    │
-│  • Audio voices/emiters                                            │
-│  • UI widgets                                                     │
-│  • Input bindings / gamepad state                                   │
-│  • Particle instances                                              │
-│  • Active audio buffers                                            │
-│                                                                      │
-│  ════════════════════════════════════════════════════════════════    │
-│  LINEAR / FRAME (reset a cada frame)                              │
-│  ════════════════════════════════════════════════════════════════    │
-│  • Contact manifolds (physics)                                      │
-│  • Debug draw primitives                                           │
-│  • Event queue                                                    │
-│  • Temporary transforms                                            │
-│  • Render command scratch                                          │
-│                                                                      │
-│  ════════════════════════════════════════════════════════════════    │
-│  STACK (escopo aninhado)                                           │
-│  ════════════════════════════════════════════════════════════════    │
-│  • Level load/unload                                              │
-│  • Scene transitions                                               │
-│  • Task scopes (job sub-scopes)                                   │
-│  • Profiler markers                                               │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph MEM["📊 POLÍTICA DE MEMÓRIA DA CAFFEINE"]
+        subgraph PERS["💾 PERSISTENT<br/><small>(malloc/bootstrap)</small>"]
+            P1["🗂️ Asset registry<br/><small>texturas, áudio carregados</small>"]
+            P2["📦 Scene data<br/><small>entidades serializadas</small>"]
+            P3["🔹 Shader bytecode"]
+            P4["🏗️ ECS archetype storage"]
+        end
+        
+        subgraph POOL["🎯 POOL<br/><small>(tamanho fixo, rápido)</small>"]
+            PL1["🔊 Audio voices/emitters"]
+            PL2["🎨 UI widgets"]
+            PL3["🎮 Input bindings<br/><small>gamepad state</small>"]
+            PL4["✨ Particle instances"]
+            PL5["🔉 Active audio buffers"]
+        end
+        
+        subgraph LIN["⚡ LINEAR / FRAME<br/><small>(reset a cada frame)</small>"]
+            L1["💥 Contact manifolds<br/><small>physics</small>"]
+            L2["🖼️ Debug draw primitives"]
+            L3["📮 Event queue"]
+            L4["🔄 Temporary transforms"]
+            L5["📋 Render command scratch"]
+        end
+        
+        subgraph STK["📚 STACK<br/><small>(escopo aninhado)</small>"]
+            S1["🔓 Level load/unload"]
+            S2["🔄 Scene transitions"]
+            S3["⏱️ Task scopes<br/><small>job sub-scopes</small>"]
+            S4["📊 Profiler markers"]
+        end
+    end
+    
+    style PERS fill:#2d5016,stroke:#4a9,color:#fff,stroke-width:2px
+    style POOL fill:#1a3a5c,stroke:#4af,color:#fff,stroke-width:2px
+    style LIN fill:#5c2d1a,stroke:#fa4,color:#fff,stroke-width:2px
+    style STK fill:#3a2d5c,stroke:#a4f,color:#fff,stroke-width:2px
+    style MEM fill:#1a1a2e,stroke:#888,color:#fff
+    
+    style P1 fill:#3d6b26,stroke:#6d9,color:#fff
+    style P2 fill:#3d6b26,stroke:#6d9,color:#fff
+    style P3 fill:#3d6b26,stroke:#6d9,color:#fff
+    style P4 fill:#3d6b26,stroke:#6d9,color:#fff
+    
+    style PL1 fill:#2d5a7f,stroke:#6df,color:#fff
+    style PL2 fill:#2d5a7f,stroke:#6df,color:#fff
+    style PL3 fill:#2d5a7f,stroke:#6df,color:#fff
+    style PL4 fill:#2d5a7f,stroke:#6df,color:#fff
+    style PL5 fill:#2d5a7f,stroke:#6df,color:#fff
+    
+    style L1 fill:#7a4a2d,stroke:#d96,color:#fff
+    style L2 fill:#7a4a2d,stroke:#d96,color:#fff
+    style L3 fill:#7a4a2d,stroke:#d96,color:#fff
+    style L4 fill:#7a4a2d,stroke:#d96,color:#fff
+    style L5 fill:#7a4a2d,stroke:#d96,color:#fff
+    
+    style S1 fill:#5a4a7f,stroke:#b8d,color:#fff
+    style S2 fill:#5a4a7f,stroke:#b8d,color:#fff
+    style S3 fill:#5a4a7f,stroke:#b8d,color:#fff
+    style S4 fill:#5a4a7f,stroke:#b8d,color:#fff
 ```
 
 ### A.3 Interface Base
@@ -646,38 +669,62 @@ Total: 664.0 KB used, 3.3 MB peak, 1.2M allocs
 
 ## D. Uso por Sistema — Mapa Completo
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     SYSTEM → ALLOCATOR MAP                             │
-├────────────────────┬────────────────────┬─────────────────────────────┤
-│ Sistema             │ Allocator          │ Razão                     │
-├────────────────────┼────────────────────┼─────────────────────────────┤
-│ Game Loop          │ Linear (frame)    │ Reset a cada frame        │
-│ Job System         │ Linear (scratch)   │ Task scopes                │
-│ Job System         │ Stack (task scope) │ Marca/free ordenado        │
-│ Input Manager      │ Pool              │ Gamepad state, bindings     │
-│ Event Bus          │ Linear (frame)    │ Fila de eventos            │
-│ Event Bus          │ Linear (listener)  │ Listeners por frame        │
-│ ECS World          │ Pool              │ Component storage           │
-│ ECS World          │ Persistent        │ Archetype storage          │
-│ Physics 2D         │ Linear (frame)    │ Contact manifolds          │
-│ Physics 2D         │ Pool             │ Rigid body proxies         │
-│ Asset Manager       │ Persistent        │ Asset registry, cache       │
-│ Asset Manager       │ Linear (load)    │ File buffer, decode        │
-│ Audio System        │ Pool             │ AudioSource instances      │
-│ Audio System        │ Persistent        │ Clip registry              │
-│ Animation System    │ Pool             │ Animator instances         │
-│ Render / RHI       │ Linear (frame)    │ Command buffer scratch     │
-│ Batch Renderer      │ Linear (frame)   │ Batch metadata             │
-│ Camera System       │ Linear (frame)   │ Temp matrices              │
-│ UI System          │ Pool             │ Widget instances            │
-│ UI System          │ Persistent        │ Style/theme data           │
-│ Debug Draw         │ Linear (frame)    │ Primitive list             │
-│ Debug Profiler     │ Stack            │ Scoped markers             │
-│ Scene Manager       │ Stack (level)    │ Load/unload arena          │
-│ Scene Manager       │ Persistent        │ Scene metadata             │
-│ Serializer          │ Linear (frame)   │ Parse buffer              │
-└────────────────────┴────────────────────┴─────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph SYSMAP["🔗 SYSTEM → ALLOCATOR MAP"]
+        subgraph GL["🎮 Game Loop & Job System"]
+            GL1["Game Loop → Linear frame<br/>Event Bus → Linear frame"]
+            GL2["Job System → Linear scratch<br/>Job System → Stack task scope"]
+        end
+        
+        subgraph INPUT["⌨️ Input & Events"]
+            IN1["Input Manager → Pool<br/>Event Bus → Linear listener"]
+        end
+        
+        subgraph ECS["🏗️ ECS World"]
+            ECS1["ECS World → Pool<br/>ECS World → Persistent archetype"]
+        end
+        
+        subgraph PHYS["⚙️ Physics & Collision"]
+            PHYS1["Physics 2D → Linear frame<br/>Physics 2D → Pool proxies"]
+        end
+        
+        subgraph ASSET["📦 Asset & Rendering"]
+            ASSET1["Asset Manager → Persistent registry<br/>Asset Manager → Linear load"]
+            ASSET2["Render/RHI → Linear frame<br/>Batch Renderer → Linear frame"]
+        end
+        
+        subgraph AUDIO["🔊 Audio & Animation"]
+            AUDIO1["Audio System → Pool instances<br/>Audio System → Persistent clips"]
+            AUDIO2["Animation System → Pool instances"]
+        end
+        
+        subgraph UI["🎨 UI & Debug"]
+            UI1["UI System → Pool widgets<br/>UI System → Persistent styles"]
+            UI2["Debug Draw → Linear frame"]
+        end
+        
+        subgraph SCENE["🎭 Scene & Camera"]
+            SCENE1["Scene Manager → Stack level<br/>Scene Manager → Persistent metadata"]
+            SCENE2["Camera System → Linear frame"]
+        end
+        
+        subgraph SERIAL["💾 Profiler & Serializer"]
+            SERIAL1["Debug Profiler → Stack markers<br/>Serializer → Linear frame"]
+        end
+    end
+    
+    style SYSMAP fill:#1a1a2e,stroke:#888,color:#fff
+    
+    style GL fill:#2d5016,stroke:#4a9,color:#fff,stroke-width:2px
+    style INPUT fill:#1a3a5c,stroke:#4af,color:#fff,stroke-width:2px
+    style ECS fill:#5c2d1a,stroke:#fa4,color:#fff,stroke-width:2px
+    style PHYS fill:#3a2d5c,stroke:#a4f,color:#fff,stroke-width:2px
+    style ASSET fill:#2d5016,stroke:#4a9,color:#fff,stroke-width:2px
+    style AUDIO fill:#1a3a5c,stroke:#4af,color:#fff,stroke-width:2px
+    style UI fill:#5c2d1a,stroke:#fa4,color:#fff,stroke-width:2px
+    style SCENE fill:#3a2d5c,stroke:#a4f,color:#fff,stroke-width:2px
+    style SERIAL fill:#2d5016,stroke:#4a9,color:#fff,stroke-width:2px
 ```
 
 ---

@@ -64,17 +64,17 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 
 ### 2.1 Os Três Pilares
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     CAFFEINE PILLARS                        │
-├─────────────────┬─────────────────┬────────────────────────┤
-│  ZERO DEPENDENCY│ DATA-ORIENTED   │ CAFFEINE-POWERED      │
-│                 │                 │                        │
-│ Reduzir ao máx. │ Foco em cache   │ Feita por devs que     │
-│ a dependência   │ locality e      │ preferem entender      │
-│ da std padrão   │ processamento   │ cada byte que passa    │
-│                 │ paralelo        │ pela CPU               │
-└─────────────────┴─────────────────┴────────────────────────┘
+```mermaid
+graph TB
+    subgraph PILARS["🏛️ CAFFEINE PILLARS"]
+        ZD["🔌 ZERO DEPENDENCY<br/><small>Reduzir ao máximo a<br/>dependência da std padrão</small>"]
+        DOD["📊 DATA-ORIENTED<br/><small>Foco em cache locality<br/>e processamento paralelo</small>"]
+        CP["⚡ CAFFEINE-POWERED<br/><small>Feita por devs que<br/>entendem cada byte</small>"]
+    end
+    
+    style ZD fill:#2d5016,stroke:#4a9,color:#fff
+    style DOD fill:#1a3a5c,stroke:#4af,color:#fff
+    style CP fill:#4a1a1a,stroke:#f94,color:#fff
 ```
 
 ### 2.2 Regras de Segurança (The Golden Rules)
@@ -105,60 +105,80 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 
 ### 3.1 Visão Macro da Arquitetura
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                           ENTRY POINT                                  │
-│                          (main.cpp)                                     │
-└─────────────────────────────┬────────────────────────────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                         CAFFEINE CORE                                   │
-│                                                                       │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐        │
-│  │  Platform   │  │   Caffeine   │  │  Caffeine Core       │        │
-│  │   Layer     │  │   Stdlib     │  │  Types & Macros     │        │
-│  │  (OS Abst.) │  │ (Allocators, │  │  (u32, f64, etc)   │        │
-│  │             │  │  Containers) │  │                     │        │
-│  └─────────────┘  └──────────────┘  └──────────────────────┘        │
-└─────────────────────────────┬────────────────────────────────────────┘
-                              │
-          ┌──────────────────┼──────────────────┐
-          │                  │                  │
-          ▼                  ▼                  ▼
-┌─────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│   Job System     │ │   RHI Layer  │ │   ECS Core       │
-│   (Threading)    │ │  (Graphics)  │ │   (Entities)     │
-└────────┬────────┘ └──────┬───────┘ └──────────────────┘
-         │                  │
-         ▼                  ▼
-┌─────────────────┐ ┌──────────────────────┐
-│  GAME SYSTEMS    │ │   ECS SYSTEMS         │
-│                 │ │                       │
-│ • Input Manager │ │ • PhysicsSystem2D     │
-│ • Debug Tools   │ │ • AnimationSystem     │
-│ • Audio System │ │ • MovementSystem       │
-│ • Asset Manager │ │ • SpriteSystem         │
-└─────────────────┘ │ • UISystem            │
-                     └──────────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        GAME LOOP                                       │
-│                                                                       │
-│  beginFrame ──▶ processInput ──▶ accumulator += dt                  │
-│                          │                                             │
-│        ┌────────────────┼────────────────┐                          │
-│        ▼                ▼                ▼                          │
-│   [Jobs parallel]   [Events]         [ECS update]                    │
-│   • Physics        dispatch         (priority order)                  │
-│   • Animation                       1. Physics (100)                 │
-│   • Asset load                     2. Movement (150)                   │
-│                                        3. Animation (200)             │
-│                                        4. UI (500)                    │
-│  render ◀──────────────────────────────────┘                        │
-│  endFrame                                                         │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ENTRY["📍 ENTRY POINT"]
+        MAIN["main.cpp"]
+    end
+
+    subgraph CORE["⚙️ CAFFEINE CORE"]
+        direction LR
+        PLAT["🖥️ Platform Layer<br/><small>OS Abstraction</small>"]
+        STDLIB["📚 Caffeine Stdlib<br/><small>Allocators • Containers</small>"]
+        TYPES["🔧 Core Types<br/><small>u32 • f64 • Macros</small>"]
+    end
+
+    subgraph LAYERS["🏗️ ENGINE LAYERS"]
+        direction TB
+        JS["⚡ Job System<br/><small>Thread Pool • Work-Stealing</small>"]
+        RHI["🎨 RHI<br/><small>SDL_GPU Abstraction</small>"]
+        ECS["🧠 ECS Core<br/><small>Archetypes • World</small>"]
+    end
+
+    subgraph SYSTEMS["🎮 GAME SYSTEMS"]
+        direction LR
+        INPUT["🕹️ Input"]
+        DEBUG["🔍 Debug Tools"]
+        AUDIO["🔊 Audio"]
+        ASSETS["📦 Asset Manager"]
+    end
+
+    subgraph ECS_SYS["🎯 ECS SYSTEMS"]
+        direction TB
+        PHYSICS["💥 Physics2D"]
+        ANIM["🎬 Animation"]
+        MOVEMENT["🏃 Movement"]
+        SPRITE["🖼️ Sprite"]
+        UI["📋 UI"]
+    end
+
+    subgraph LOOP["🔄 GAME LOOP"]
+        direction TB
+        BF["beginFrame"]
+        INPUT_PROC["processInput"]
+        ACCUM["accumulator += dt"]
+        JOBS["parallel jobs"]
+        EVENTS["events dispatch"]
+        ECS_UP["ECS update"]
+        RENDER["render"]
+        EF["endFrame"]
+    end
+
+    MAIN --> CORE
+    CORE --> LAYERS
+    LAYERS --> SYSTEMS
+    LAYERS --> ECS_SYS
+    
+    JS --> JOBS
+    RHI --> SPRITE
+    ECS --> ECS_UP
+    
+    SYSTEMS --> LOOP
+    ECS_SYS --> LOOP
+
+    BF --> INPUT_PROC --> ACCUM
+    ACCUM --> JOBS
+    ACCUM --> EVENTS
+    ACCUM --> ECS_UP
+    ECS_UP --> RENDER
+    RENDER --> EF
+
+    style ENTRY fill:#1a1a2e,stroke:#eee,color:#fff
+    style CORE fill:#16213e,stroke:#4a9,color:#fff
+    style LAYERS fill:#0f3460,stroke:#4af,color:#fff
+    style SYSTEMS fill:#1a3a1a,stroke:#4f4,color:#fff
+    style ECS_SYS fill:#3a1a3a,stroke:#f4f,color:#fff
+    style LOOP fill:#3a3a1a,stroke:#ff4,color:#fff
 ```
 
 ### 3.2 Camadas e Responsabilidades
@@ -211,14 +231,27 @@ O projeto está em **Fase 0 — Setup Inicial & Documentação**. O código-font
 
 ### 4.1 Mapa de Fases
 
-```
-Fase 0: Setup & Docs       ████████░░░░░░░░  (atual)
-Fase 1: Fundação Atômica   ░░░░░░░░░░░░░░░░  (próxima)
-Fase 2: Concorrência        ░░░░░░░░░░░░░░░░
-Fase 3: RHI & 2D            ░░░░░░░░░░░░░░░░
-Fase 4: ECS & Serialização  ░░░░░░░░░░░░░░░░
-Fase 5: Transição 3D         ░░░░░░░░░░░░░░░░
-Fase 6: Caffeine Studio IDE  ░░░░░░░░░░░░░░░░
+```mermaid
+flowchart LR
+    subgraph PHASES["📈 DEVELOPMENT PHASES"]
+        P0["Phase 0<br/>Setup & Docs<br/><small>████████░░░░░░░░ ✓</small>"]
+        P1["Phase 1<br/>Fundação Atômica<br/><small>░░░░░░░░░░░░░░░░</small>"]
+        P2["Phase 2<br/>Concorrência<br/><small>░░░░░░░░░░░░░░░░</small>"]
+        P3["Phase 3<br/>RHI & 2D<br/><small>░░░░░░░░░░░░░░░░</small>"]
+        P4["Phase 4<br/>ECS & Serialização<br/><small>░░░░░░░░░░░░░░░░</small>"]
+        P5["Phase 5<br/>Transição 3D<br/><small>░░░░░░░░░░░░░░░░</small>"]
+        P6["Phase 6<br/>Studio IDE<br/><small>░░░░░░░░░░░░░░░░</small>"]
+    end
+    
+    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6
+    
+    style P0 fill:#2d5016,stroke:#4a9,color:#fff
+    style P1 fill:#1a3a5c,stroke:#4af,color:#fff
+    style P2 fill:#3a2a1a,stroke:#fa4,color:#fff
+    style P3 fill:#2a1a3a,stroke:#f4f,color:#fff
+    style P4 fill:#1a3a2a,stroke:#4f4,color:#fff
+    style P5 fill:#3a2a1a,stroke:#fa4,color:#fff
+    style P6 fill:#3a1a1a,stroke:#f94,color:#fff
 ```
 
 ### 4.2 Detalhamento por Fase
@@ -545,14 +578,26 @@ struct Sprite {
 
 O ciclo **R.I.C.O.** é o processo de tomada de decisão da Caffeine:
 
-```
-┌─────────────┐     ┌──────────┐     ┌──────────┐     ┌────────┐
-│  RESEARCH   │────▶│   IDEA   │────▶│ CONFLICT │────▶│ ORDER  │
-│  Pesquisa   │     │   Ideia  │     │ Conflito │     │ Ordem  │
-└─────────────┘     └──────────┘     └──────────┘     └────────┘
-     │                                                        │
-     │         Ciclo R.I.C.O. para cada decisão              │
-     └────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph RICO["🔄 CICLO R.I.C.O."]
+        R["🔍 RESEARCH<br/>Pesquisa<br/><small>Investigar como<br/>SDL3 e C++ lidam<br/>com o problema</small>"]
+        I["💡 IDEA<br/>Ideia<br/><small>Propor solução<br/>que se encaixe na<br/>filosofia Caffeine</small>"]
+        C["⚔️ CONFLICT<br/>Conflito<br/><small>Discussão no Discord<br/>com a Guilda Codex</small>"]
+        O["✅ ORDER<br/>Ordem<br/><small>Documentar decisão<br/>final e implementar</small>"]
+    end
+    
+    FB["🔁 Feedback Loop"]
+    
+    R --> I --> C --> O
+    O --> FB --> R
+    
+    style R fill:#2d5016,stroke:#4a9,color:#fff
+    style I fill:#1a3a5c,stroke:#4af,color:#fff
+    style C fill:#3a1a1a,stroke:#f94,color:#fff
+    style O fill:#2a1a3a,stroke:#f4f,color:#fff
+    style FB fill:#3a2a1a,stroke:#fa4,color:#fff
+    style RICO fill:#1a1a1a,stroke:#aaa,color:#fff
 ```
 
 ### 6.1 Research (Pesquisa)
@@ -578,15 +623,29 @@ O ciclo **R.I.C.O.** é o processo de tomada de decisão da Caffeine:
 
 ### 6.5 Ciclo de Feedback (Draft → Prototype → Refactor → Audit)
 
-```
- Draft ──────▶ Prototype ──────▶ Refactor ──────▶ Audit
-  │                                │                    │
-  │ O Scribe descreve              │ O Architect        │ O Oracle testa
-  │ a funcionalidade               │ limpa e integra    │ performance
-  │                                │ aos padrões        │ e estabilidade
-  │                                │                    │
-  └────────────────────────────────┴────────────────────┘
-                         Volta se falhar
+```mermaid
+flowchart LR
+    subgraph CYCLE["📋 FEEDBACK CYCLE"]
+        D["📝 Draft<br/><small>O Scribe descreve<br/>a funcionalidade</small>"]
+        P["🎨 Prototype<br/><small>Implementação inicial<br/>da solução</small>"]
+        R["🔧 Refactor<br/><small>O Architect limpa<br/>e integra aos padrões</small>"]
+        A["✔️ Audit<br/><small>O Oracle testa<br/>performance e<br/>estabilidade</small>"]
+    end
+    
+    FAIL["❌ Se falhar<br/>volta ao início"]
+    
+    D --> P --> R --> A
+    A -->|Passou| OK["✅ Pronto"]
+    A -->|Falhou| FAIL
+    FAIL --> D
+    
+    style D fill:#2d5016,stroke:#4a9,color:#fff
+    style P fill:#1a3a5c,stroke:#4af,color:#fff
+    style R fill:#3a2a1a,stroke:#fa4,color:#fff
+    style A fill:#2a1a3a,stroke:#f4f,color:#fff
+    style FAIL fill:#3a1a1a,stroke:#f94,color:#fff
+    style OK fill:#1a3a1a,stroke:#4f4,color:#fff
+    style CYCLE fill:#1a1a1a,stroke:#aaa,color:#fff
 ```
 
 ---
@@ -732,25 +791,25 @@ A Caffeine **NUNCA** permite `new` ou `delete` no código da aplicação. Toda a
 
 ### 8.3 Ciclo de Vida da Memória
 
-```
-Application Start
-      │
-      ▼
-┌─────────────────┐
-│ System Allocator│ ← São as únicas alocações via malloc/new
-│  (Uma vez só)   │  bootstrap dos allocators
-└────────┬────────┘
-         │ aloca os pools
-         ▼
-┌─────────────────┐
-│ Caffeine Allocators│ Frame 0: allocate
-│  (Linear/Pool/   │ Frame 1: reset/allocate
-│   Stack)         │ Frame N: tudo limpo
-└─────────────────┘
-         │
-         ▼
-  Application End
-  (free do System Allocator)
+```mermaid
+flowchart TD
+    subgraph LIFECYCLE["🧠 MEMORY LIFECYCLE"]
+        START["▶️ Application Start"]
+        SYS["🖥️ System Allocator<br/><small>malloc/new apenas aqui<br/>Bootstrap dos allocators</small>"]
+        POOL["🏊 Caffeine Allocators<br/><small>Linear / Pool / Stack<br/>Frame 0: allocate<br/>Frame 1: reset/allocate<br/>Frame N: tudo limpo</small>"]
+        END["⏹️ Application End<br/><small>free do System Allocator</small>"]
+    end
+    
+    START --> SYS
+    SYS -->|aloca os pools| POOL
+    POOL -->|ciclo de frames| POOL
+    POOL --> END
+    
+    style START fill:#2a1a3a,stroke:#f4f,color:#fff
+    style SYS fill:#1a3a5c,stroke:#4af,color:#fff
+    style POOL fill:#2d5016,stroke:#4a9,color:#fff
+    style END fill:#3a1a1a,stroke:#f94,color:#fff
+    style LIFECYCLE fill:#1a1a1a,stroke:#aaa,color:#fff
 ```
 
 ### 8.4 Allocator Registry
@@ -811,45 +870,103 @@ Cada módulo deve ser **independente** — compilável sem os outros.
 
 ### 9.3 Dependências entre Módulos
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         MODULE DEPENDENCY GRAPH                          │
-│                                                                          │
-│  Core ──────▶ Memory ──────▶ Containers                               │
-│   │                          │                                          │
-│   │                          ▼                                          │
-│   │                      Threading ◀── Time                             │
-│   │                          │                                          │
-│   └──┬───────────────────────┴───────┬──────────────────────┐         │
-│      │                               │                      │         │
-│      ▼                               ▼                      ▼         │
-│  Input                          Job System            Debug Tools       │
-│  (Fase 2)                      (Fase 2)             (Fase 2+)       │
-│      │                               │                      │         │
-│      │                               ▼                      │         │
-│      │                          Asset Manager                     │         │
-│      │                          (Fase 3)                       │         │
-│      │                               │                             │         │
-│      │        ┌─────────────────────┼─────────────────────┐     │         │
-│      │        │                     │                     │     │         │
-│      ▼        ▼                     ▼                     ▼     │         │
-│     RHI ◀──────┴──▶ Batch Renderer ◀── Camera           │         │
-│      │                         (Fase 3)                  │         │
-│      │                                                    │         │
-│      ▼                                                    ▼         │
-│     Math                                                   │         │
-│                                                            │         │
-│  ┌───┴───┬───────────────┬───────────────┬─────────────┐   │         │
-│  │       │               │               │             │   │         │
-│  ▼       ▼               ▼               ▼             ▼   │         │
-│ ECS ◀── Scene ◀── Events ◀── Audio ◀── Animation ◀─── Physics ◀── UI │
-│  │                                                                         │
-│  │     ◀────────────────────────────────────────────────────────────────┘
-│  │
-│  ▼
-│ Fase 5+ ───▶ 3D Math, Mesh Loading, Skeletal Animation
-│ Fase 6+ ───▶ Embedded UI, Scene Editor, Asset Pipeline
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph CORE["⚙️ CORE FOUNDATION"]
+        direction LR
+        CoreMod["🔧 Core"]
+        MemMod["💾 Memory"]
+        ContMod["📦 Containers"]
+    end
+    
+    subgraph SYSTEMS["⚡ SYSTEM LAYER"]
+        direction LR
+        ThreadMod["🧵 Threading"]
+        TimeMod["⏱️ Time"]
+        InputMod["🕹️ Input"]
+        DebugMod["🔍 Debug"]
+    end
+    
+    subgraph GRAPHICS["🎨 GRAPHICS LAYER"]
+        direction LR
+        MathMod["📐 Math"]
+        RHIMod["🎨 RHI"]
+        BatchMod["📊 Batch Renderer"]
+        CamMod["📷 Camera"]
+    end
+    
+    subgraph GAMEPLAY["🎮 GAMEPLAY LAYER"]
+        direction LR
+        ECSMod["🧠 ECS"]
+        SceneMod["🎬 Scene"]
+        EventMod["📢 Events"]
+        AudioMod["🔊 Audio"]
+        AnimMod["🎞️ Animation"]
+        PhysMod["💥 Physics"]
+        UIMod["📋 UI"]
+    end
+    
+    subgraph FUTURE["🚀 FUTURE"]
+         3DMod["🌐 3D Math"]
+        EditorMod["✏️ Editor"]
+    end
+    
+    CoreMod --> MemMod --> ContMod
+    CoreMod --> ThreadMod
+    TimeMod --> ThreadMod
+    
+    CoreMod --> InputMod
+    CoreMod --> DebugMod
+    ThreadMod --> InputMod
+    
+    CoreMod --> MathMod
+    RHIMod --> BatchMod
+    CamMod --> BatchMod
+    MathMod --> CamMod
+    MathMod --> RHIMod
+    
+    MemMod --> ECSMod
+    ContMod --> ECSMod
+    ECSMod --> SceneMod
+    ECSMod --> EventMod
+    ECSMod --> UIMod
+    
+    RHIMod --> UIMod
+    BatchMod --> UIMod
+    ThreadMod --> AudioMod
+    ContMod --> AudioMod
+    
+    ECSMod --> AnimMod
+    AudioMod --> AnimMod
+    
+    ECSMod --> PhysMod
+    MathMod --> PhysMod
+    
+    PhysMod --> ECSMod
+    
+    ECSMod --> 3DMod
+    3DMod --> EditorMod
+    
+    style CoreMod fill:#1a3a5c,stroke:#4af,color:#fff
+    style MemMod fill:#2d5016,stroke:#4a9,color:#fff
+    style ContMod fill:#3a2a1a,stroke:#fa4,color:#fff
+    style ThreadMod fill:#2a1a3a,stroke:#f4f,color:#fff
+    style TimeMod fill:#1a3a2a,stroke:#4f4,color:#fff
+    style InputMod fill:#2a1a3a,stroke:#f4f,color:#fff
+    style DebugMod fill:#3a1a1a,stroke:#f94,color:#fff
+    style MathMod fill:#1a3a5c,stroke:#4af,color:#fff
+    style RHIMod fill:#2d5016,stroke:#4a9,color:#fff
+    style BatchMod fill:#3a2a1a,stroke:#fa4,color:#fff
+    style CamMod fill:#2a1a3a,stroke:#f4f,color:#fff
+    style ECSMod fill:#1a3a2a,stroke:#4f4,color:#fff
+    style SceneMod fill:#3a1a1a,stroke:#f94,color:#fff
+    style EventMod fill:#1a3a5c,stroke:#4af,color:#fff
+    style AudioMod fill:#2d5016,stroke:#4a9,color:#fff
+    style AnimMod fill:#3a2a1a,stroke:#fa4,color:#fff
+    style PhysMod fill:#2a1a3a,stroke:#f4f,color:#fff
+    style UIMod fill:#1a3a2a,stroke:#4f4,color:#fff
+    style 3DMod fill:#3a1a1a,stroke:#f94,color:#fff
+    style EditorMod fill:#1a3a5c,stroke:#4af,color:#fff
 ```
 
 ### 9.4 Mapa de Uso de Memória por Sistema
@@ -876,15 +993,21 @@ Cada módulo deve ser **independente** — compilável sem os outros.
 
 ### 10.1 Como o Projeto Deve Evoluir
 
-```
- Alpha (Fase 0-2)          Beta (Fase 3-4)          Stable (Fase 5-6)
- ─────────────────        ─────────────────         ─────────────────
- ▸ Engine é usável        ▸ Games 2D funcionais     ▸ Games 3D funcionais
-   para demos e            são possíveis             são possíveis
-   protótipos            ▸ ECS completo            ▸ Editor visual
- ▸ API ainda instável     ▸ Serialização funcionando ▸ Asset pipeline
- ▸ Breaking changes       ▸ API começa a estabilizar   completo
-   são esperados          ▸ Primeiros jogos externos ▸ API congelada
+```mermaid
+flowchart LR
+    subgraph EVOLUTION["📈 PROJECT EVOLUTION"]
+        ALPHA["🔵 Alpha<br/>Fase 0-2<br/><small>Engine usável<br/>para demos<br/>API instável</small>"]
+        BETA["🟡 Beta<br/>Fase 3-4<br/><small>Games 2D<br/>funcionais<br/>API estabiliza</small>"]
+        STABLE["🟢 Stable<br/>Fase 5-6<br/><small>Games 3D<br/>Editor visual<br/>API congelada</small>"]
+    end
+    
+    ALPHA -->|Progresso| BETA
+    BETA -->|Produção| STABLE
+    
+    style ALPHA fill:#3a1a1a,stroke:#f94,color:#fff
+    style BETA fill:#3a2a1a,stroke:#fa4,color:#fff
+    style STABLE fill:#1a3a2a,stroke:#4f4,color:#fff
+    style EVOLUTION fill:#1a1a1a,stroke:#aaa,color:#fff
 ```
 
 ### 10.2 Critérios para Avançar de Fase

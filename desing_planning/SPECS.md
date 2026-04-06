@@ -37,14 +37,22 @@ Este diretório contém os documentos fundamentais que regem o desenvolvimento d
 
 Seguimos o ciclo **R.I.C.O.** (Research, Idea, Conflict, Order):
 
-```
-Research ──▶ Idea ──▶ Conflict ──▶ Order
-  │           │           │           │
-  │ Investigar       Discutir       Documentar
-  │ como SDL/C++     no Discord     a decisão
-  │ resolve           │
-  └───────────────────┴──────────────┘
-           Volta se não houver consenso
+```mermaid
+flowchart LR
+    Research["🔍 Research<br/><small>Investigar como<br/>SDL/C++ resolve</small>"]
+    Idea["💡 Idea<br/><small>Propor solução<br/>de baixa dependência</small>"]
+    Conflict["⚔️ Conflict<br/><small>Discutir no Discord<br/>desempenho/portabilidade</small>"]
+    Order["📋 Order<br/><small>Documentar<br/>a decisão</small>"]
+    
+    Research --> Idea
+    Idea --> Conflict
+    Conflict --> Order
+    Order -->|Volta se não houver consenso| Research
+    
+    style Research fill:#2d5016,stroke:#4a9,color:#fff
+    style Idea fill:#1a3a5c,stroke:#4af,color:#fff
+    style Conflict fill:#4a1a1a,stroke:#f94,color:#fff
+    style Order fill:#2d1a4a,stroke:#a4f,color:#fff
 ```
 
 ### Detalhamento
@@ -72,16 +80,22 @@ Research ──▶ Idea ──▶ Conflict ──▶ Order
 
 Todo subsistema passa por este ciclo antes de ser integrado:
 
-```
-Draft ────▶ Prototype ────▶ Refactor ────▶ Audit
- │             │              │             │
- │ Scribe      │ Architect    │ Architect   │ Oracle
- │ descreve    │ implementa    │ limpa e     │ testa
- │ funcionalidad│ funcional    │ integra aos  │ performance
- │             │ "sujo"       │ padrões      │ e estabilidade
- │             │              │             │
- └─────────────┴──────────────┴─────────────┘
-                Volta se falhar
+```mermaid
+flowchart LR
+    Draft["📝 Draft<br/><small>Scribe descreve<br/>funcionalidade</small>"]
+    Prototype["🏗️ Prototype<br/><small>Architect implementa<br/>funcional 'sujo'</small>"]
+    Refactor["✨ Refactor<br/><small>Architect limpa<br/>e integra padrões</small>"]
+    Audit["🔬 Audit<br/><small>Oracle testa<br/>performance/estabilidade</small>"]
+    
+    Draft --> Prototype
+    Prototype --> Refactor
+    Refactor --> Audit
+    Audit -->|Volta se falhar| Draft
+    
+    style Draft fill:#2d5016,stroke:#4a9,color:#fff
+    style Prototype fill:#1a3a5c,stroke:#4af,color:#fff
+    style Refactor fill:#2d1a4a,stroke:#a4f,color:#fff
+    style Audit fill:#4a1a1a,stroke:#f94,color:#fff
 ```
 
 ---
