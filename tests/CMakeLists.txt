@@ -8,7 +8,7 @@ add_executable(CaffeineTest
 )
 
 target_link_libraries(CaffeineTest PRIVATE Caffeine)
-target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)
 else()
@@ -20,7 +20,7 @@ add_executable(CaffeineBenchmarks
 )
 
 target_link_libraries(CaffeineBenchmarks PRIVATE Caffeine)
-target_include_directories(CaffeineBenchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(CaffeineBenchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
 if(MSVC)
     target_compile_options(CaffeineBenchmarks PRIVATE /W4 /WX-)
 else()
