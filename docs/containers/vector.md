@@ -14,7 +14,7 @@ The Containers module provides data structures optimized for game development wi
 |------|-------------|
 | [`Vector.hpp`](../../src/containers/Vector.hpp) | Dynamic array with cache-friendly contiguous memory |
 | [`HashMap.hpp`](../../src/containers/HashMap.hpp) | Hash table with O(1) lookup |
-| [`StringView.hpp`](../../src/containers/StringView.md) | String without ownership (zero-copy) |
+| [`StringView.hpp`](../../src/containers/StringView.hpp) | String without ownership (zero-copy) |
 | [`FixedString.hpp`](../../src/containers/FixedString.hpp) | Inline buffer string (zero heap) |
 
 ## Vector<T>
