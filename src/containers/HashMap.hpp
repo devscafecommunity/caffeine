@@ -11,7 +11,7 @@ public:
     using Pair = struct { Key key; Value value; };
 
     HashMap() = default;
-    explicit HashMap(usize capacity) { reserve(capacity); }
+    explicit HashMap(usize capacity);
 
     Value* get(const Key& key) {
         for (auto& pair : m_data) {
@@ -61,5 +61,10 @@ public:
 private:
     Vector<Pair> m_data;
 };
+
+template<typename Key, typename Value>
+HashMap<Key, Value>::HashMap(usize capacity) {
+    m_data.reserve(capacity);
+}
 
 } // namespace Caffeine
