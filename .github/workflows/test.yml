@@ -5,6 +5,12 @@ on:
     branches: [ main, develop, 'feature/**' ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      run_stress:
+        description: 'Run stress tests'
+        required: false
+        default: 'false'
 
 jobs:
   build-and-test:
@@ -23,5 +29,10 @@ jobs:
     - name: Build
       run: cd build && cmake --build .
       
-    - name: Run Tests
+    - name: Run Tests (skip stress)
+      if: github.event_name != 'workflow_dispatch' || github.inputs.run_stress != 'true'
       run: cd build && ./tests/CaffeineTest ~[stress] --success
+      
+    - name: Run Stress Tests
+      if: github.event_name == 'workflow_dispatch' && github.inputs.run_stress == 'true'
+      run: cd build && ./tests/CaffeineTest "[stress]" --success
