@@ -20,9 +20,4 @@ target_include_directories(Caffeine INTERFACE
 
 add_library(Caffeine::Core ALIAS Caffeine)
 
-add_executable(CaffeineTest tests/test.cpp)
-target_link_libraries(CaffeineTest PRIVATE Caffeine)
-target_compile_options(CaffeineTest PRIVATE /W4 /WX-)
-
-enable_testing()
-add_test(NAME CaffeineTest COMMAND CaffeineTest)
+add_subdirectory(tests)
