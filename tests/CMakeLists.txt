@@ -15,17 +15,5 @@ else()
     target_compile_options(CaffeineTest PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(CaffeineBenchmarks
-    benchmarks.cpp
-)
-
-target_link_libraries(CaffeineBenchmarks PRIVATE Caffeine)
-target_include_directories(CaffeineBenchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
-if(MSVC)
-    target_compile_options(CaffeineBenchmarks PRIVATE /W4 /WX-)
-else()
-    target_compile_options(CaffeineBenchmarks PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
 enable_testing()
 add_test(NAME CaffeineTest COMMAND CaffeineTest)
