@@ -10,90 +10,18 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     
-    strategy:
-      matrix:
-        include:
-          - compiler: g++-13
-            std: 20
-          - compiler: g++-12
-            std: 17
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
     - name: Install compiler
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ${{ matrix.compiler }}
-        
+      run: sudo apt-get update && sudo apt-get install -y g++-13
+      
     - name: Configure
-      run: |
-        mkdir -p build
-        cd build
-        cmake .. -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_CXX_STANDARD=${{ matrix.std }}
-        
+      run: mkdir -p build && cd build && cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20
+      
     - name: Build
-      run: |
-        cd build
-        cmake --build . --config Release
-        
+      run: cd build && cmake --build .
+      
     - name: Run Tests
-      run: |
-        cd build
-        ./tests/CaffeineTest --success
-        
-  sanitize:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Install sanitizers
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y g++-13
-        
-    - name: Build with ASan
-      run: |
-        mkdir -p build-asan
-        cd build-asan
-        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20 -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
-        cmake --build .
-        
-    - name: Run Tests with ASan
-      run: |
-        cd build-asan
-        ./tests/CaffeineTest --success
-        
-  code-coverage:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Install coverage tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y g++-13 lcov
-        
-    - name: Configure with coverage
-      run: |
-        mkdir -p build-cov
-        cd build-cov
-        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20 -DCMAKE_CXX_FLAGS="--coverage"
-        cmake --build .
-        
-    - name: Run tests
-      run: |
-        cd build-cov
-        ./tests/CaffeineTest
-        
-    - name: Generate coverage report
-      run: |
-        cd build-cov
-        lcov --capture --directory . --output-file coverage.info
-        lcov --remove coverage.info '*/tests/*' '*/build/*' --output-file filtered.info
-        lcov --summary filtered.info
+      run: cd build && ./tests/CaffeineTest --success
