@@ -659,21 +659,16 @@ caffeine/
 ├── CMakeLists.txt              # Build principal
 ├── .gitignore
 │
-├── desing_planning/            # ← Documentação de design (atual)
-│   ├── README.md
-│   ├── dev_manifesto.md        # Leis do projeto
-│   ├── roadmap.md              # Fases de 1 a 6
-│   ├── architecture_specs.md    # (futuro) ECS, Job System, RHI specs
-│   ├── memory_model.md          # (futuro) Specs de allocators
-│   └── master_plan.md          # (futuro) Roadmap detalhado
+├── docs/                       # ← Documentação consolidada
+│   ├── MASTER.md               # Visão geral completa
+│   ├── SPECS.md                # Regras e padrões de desenvolvimento
+│   ├── ROADMAP.md              # Status das 6 fases
+│   ├── architecture_specs.md    # Especificações técnicas ECS, Job System, RHI
+│   ├── memory_model.md          # Specs de allocators
+│   ├── plans/                  # Planos de implementação
+│   └── README.md               # Este arquivo
 │
-├── docs/                       # ← Documentação pública
-│   ├── MASTER.md               # Este arquivo
-│   ├── architecture/
-│   ├── api/
-│   └── guides/
-│
-├── src/                        # ← Código-fonte (a criar na Fase 1)
+├── src/                        # ← Código-fonte (Fase 1+)
 │   ├── Caffeine.hpp            # Header principal de inclusão
 │   ├── Caffeine.cpp            # Entry point mínimo
 │   │
