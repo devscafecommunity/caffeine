@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - compiler: g++-13
-            std: c++20
+            std: 20
           - compiler: g++-12
-            std: c++17
+            std: 17
     
     steps:
     - name: Checkout code
@@ -65,7 +65,7 @@ jobs:
       run: |
         mkdir -p build-asan
         cd build-asan
-        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=c++20 -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20 -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
         cmake --build .
         
     - name: Run Tests with ASan
@@ -89,7 +89,7 @@ jobs:
       run: |
         mkdir -p build-cov
         cd build-cov
-        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=c++20 -DCMAKE_CXX_FLAGS="--coverage"
+        cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20 -DCMAKE_CXX_FLAGS="--coverage"
         cmake --build .
         
     - name: Run tests
