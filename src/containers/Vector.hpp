@@ -24,7 +24,7 @@ public:
     }
 
     ~Vector() {
-        if (m_data && m_ownsData) {
+        if (m_data && m_ownsData && m_allocator) {
             m_allocator->free(m_data);
         }
     }
@@ -64,7 +64,7 @@ public:
 
     Vector& operator=(Vector&& other) noexcept {
         if (this != &other) {
-            if (m_ownsData && m_data) {
+            if (m_ownsData && m_data && m_allocator) {
                 m_allocator->free(m_data);
             }
             m_data = other.m_data;
@@ -130,6 +130,7 @@ public:
 
     void reserve(usize newCapacity) {
         if (newCapacity > m_capacity) {
+            CF_ASSERT(m_allocator, "Allocator is required for Vector");
             T* newData = static_cast<T*>(m_allocator->alloc(newCapacity * sizeof(T), alignof(T)));
             CF_ASSERT_NOT_NULL(newData);
             
@@ -138,7 +139,7 @@ public:
                 m_data[i].~T();
             }
             
-            if (m_ownsData && m_data) {
+            if (m_ownsData && m_data && m_allocator) {
                 m_allocator->free(m_data);
             }
             
