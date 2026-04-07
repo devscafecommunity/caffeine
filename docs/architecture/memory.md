@@ -48,7 +48,7 @@ public:
 
 - All allocators use contiguous memory blocks
 - No dynamic memory after initial allocation
-- Thread-safe by design (no locks in hot path)
+- Not thread-safe for shared instances; use per-thread allocators or external synchronization
 - Zero heap allocations during normal operation
 
 ## See Also
