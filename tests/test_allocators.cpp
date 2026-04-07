@@ -1,3 +1,4 @@
+#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 #include "../src/memory/LinearAllocator.hpp"
 #include "../src/memory/PoolAllocator.hpp"
