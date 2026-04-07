@@ -62,7 +62,7 @@ inline bool approximatelyEqual(f32 a, f32 b, f32 epsilon = 0.00001f) {
 }
 
 inline bool isPowerOfTwo(usize value) {
-    return (value & (value - 1)) == 0;
+    return value > 0 && (value & (value - 1)) == 0;
 }
 
 inline usize nextPowerOfTwo(usize value) {

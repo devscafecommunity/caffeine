@@ -53,17 +53,14 @@ public:
 
     Vec3 transformPoint(const Vec3& p) const {
         Vec4 p4(p.x, p.y, p.z, 1.0f);
-        Vec4 result(0, 0, 0, 0);
-        for (usize row = 0; row < 4; ++row) {
-            result.x += (*this)(row, 0) * p4.x;
-            result.y += (*this)(row, 1) * p4.y;
-            result.z += (*this)(row, 2) * p4.z;
-            result.w += (*this)(row, 3) * p4.w;
+        f32 tx = (*this)(0, 0) * p4.x + (*this)(0, 1) * p4.y + (*this)(0, 2) * p4.z + (*this)(0, 3) * p4.w;
+        f32 ty = (*this)(1, 0) * p4.x + (*this)(1, 1) * p4.y + (*this)(1, 2) * p4.z + (*this)(1, 3) * p4.w;
+        f32 tz = (*this)(2, 0) * p4.x + (*this)(2, 1) * p4.y + (*this)(2, 2) * p4.z + (*this)(2, 3) * p4.w;
+        f32 tw = (*this)(3, 0) * p4.x + (*this)(3, 1) * p4.y + (*this)(3, 2) * p4.z + (*this)(3, 3) * p4.w;
+        if (tw != 0.0f && tw != 1.0f) {
+            return Vec3(tx / tw, ty / tw, tz / tw);
         }
-        if (result.w != 0.0f) {
-            return Vec3(result.x / result.w, result.y / result.w, result.z / result.w);
-        }
-        return Vec3(result.x, result.y, result.z);
+        return Vec3(tx, ty, tz);
     }
 
     Vec3 transformVector(const Vec3& v) const {

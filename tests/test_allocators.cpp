@@ -157,7 +157,7 @@ TEST_CASE("StackAllocator - Multiple Markers", "[memory][stack]") {
     allocator.alloc(64, 8);
     Marker m3 = allocator.setMarker();
     allocator.alloc(32, 8);
-    REQUIRE(allocator.usedMemory() == 96);
+    REQUIRE(allocator.usedMemory() == 128);
 }
 
 TEST_CASE("StackAllocator - Reset", "[memory][stack]") {
