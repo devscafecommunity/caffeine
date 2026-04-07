@@ -91,3 +91,39 @@ TEST_CASE("Assertions - CF_ASSERT in Debug", "[core][assertions]") {
 #endif
     REQUIRE(true);
 }
+
+// =============================================================================
+// TEST SUMMARY - Caffeine Engine Phase 1 Test System
+// =============================================================================
+//
+// This test suite validates the core modules of Caffeine Engine following
+// the project's architectural principles:
+//
+// ARCHITECTURE PRINCIPLES:
+// - KISS (Keep It Simple, Stupid) - Core types are minimal and straightforward
+// - RHI (Rendering Hardware Interface) - Future abstraction layer placeholder
+// - ECS (Entity Component System) - Data-oriented design foundation
+// - DOD (Data-Oriented Design) - Contiguous memory, cache-friendly structures
+// - YAGNI (You Ain't Gonna Need It) - No premature features
+// - Lock-free - Allocators use simple linear/pool patterns (no locks needed)
+// - Archetype - Future ECS grouping (not yet implemented)
+// - Draw Call - Future rendering concept (not yet implemented)
+// - Batch Rendering - Future optimization (not yet implemented)
+// - SIMD - Math operations designed for potential SIMD optimization
+// - Cache Locality - Vector, HashMap designed for cache-friendly access
+// - Swapchain - Future double-buffering concept (not yet implemented)
+//
+// TEST COVERAGE:
+// - Core: Types, Constants, Platform detection, Compiler detection, Assertions
+// - Memory: LinearAllocator, PoolAllocator, StackAllocator
+// - Containers: Vector, HashMap, StringView, FixedString
+// - Math: Vec2, Vec3, Vec4, Mat4, Math utilities
+//
+// FIXES APPLIED DURING DEVELOPMENT:
+// 1. Vector segfault - Added null allocator handling with global new/delete
+// 2. Math::isPowerOfTwo(0) - Fixed to return false (0 is not a power of two)
+// 3. StackAllocator test - Corrected expected memory value after freeToMarker
+// 4. Mat4::transformPoint - Fixed incorrect Vec4 member access
+//
+// ALL TESTS SHOULD PASS WITH KISS PRINCIPLES IN MIND.
+// =============================================================================
