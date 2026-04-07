@@ -143,64 +143,64 @@ TEST_CASE("Mat4 - Transform Point", "[math][mat4]") {
 }
 
 TEST_CASE("Math - Lerp", "[math]") {
-    float result = lerp(0.0f, 10.0f, 0.5f);
+    float result = Math::lerp(0.0f, 10.0f, 0.5f);
     REQUIRE(result == 5.0f);
 
-    result = lerp(0.0f, 10.0f, 0.0f);
+    result = Math::lerp(0.0f, 10.0f, 0.0f);
     REQUIRE(result == 0.0f);
 
-    result = lerp(0.0f, 10.0f, 1.0f);
+    result = Math::lerp(0.0f, 10.0f, 1.0f);
     REQUIRE(result == 10.0f);
 }
 
 TEST_CASE("Math - Clamp", "[math]") {
-    float result = clamp(5.0f, 0.0f, 10.0f);
+    float result = Math::clamp(5.0f, 0.0f, 10.0f);
     REQUIRE(result == 5.0f);
 
-    result = clamp(-5.0f, 0.0f, 10.0f);
+    result = Math::clamp(-5.0f, 0.0f, 10.0f);
     REQUIRE(result == 0.0f);
 
-    result = clamp(15.0f, 0.0f, 10.0f);
+    result = Math::clamp(15.0f, 0.0f, 10.0f);
     REQUIRE(result == 10.0f);
 }
 
 TEST_CASE("Math - Saturate", "[math]") {
-    float result = saturate(0.5f);
+    float result = Math::saturate(0.5f);
     REQUIRE(result == 0.5f);
 
-    result = saturate(-0.5f);
+    result = Math::saturate(-0.5f);
     REQUIRE(result == 0.0f);
 
-    result = saturate(1.5f);
+    result = Math::saturate(1.5f);
     REQUIRE(result == 1.0f);
 }
 
 TEST_CASE("Math - DegToRad", "[math]") {
-    float result = degToRad(0.0f);
+    float result = Math::degToRad(0.0f);
     REQUIRE(result == 0.0f);
 
-    result = degToRad(90.0f);
+    result = Math::degToRad(90.0f);
     REQUIRE(result == Approx(PI / 2.0f).epsilon(0.001f));
 
-    result = degToRad(180.0f);
+    result = Math::degToRad(180.0f);
     REQUIRE(result == Approx(PI).epsilon(0.001f));
 }
 
 TEST_CASE("Math - IsPowerOfTwo", "[math]") {
-    REQUIRE(isPowerOfTwo(1) == true);
-    REQUIRE(isPowerOfTwo(2) == true);
-    REQUIRE(isPowerOfTwo(4) == true);
-    REQUIRE(isPowerOfTwo(8) == true);
-    REQUIRE(isPowerOfTwo(3) == false);
-    REQUIRE(isPowerOfTwo(5) == false);
-    REQUIRE(isPowerOfTwo(0) == false);
+    REQUIRE(Math::isPowerOfTwo(1) == true);
+    REQUIRE(Math::isPowerOfTwo(2) == true);
+    REQUIRE(Math::isPowerOfTwo(4) == true);
+    REQUIRE(Math::isPowerOfTwo(8) == true);
+    REQUIRE(Math::isPowerOfTwo(3) == false);
+    REQUIRE(Math::isPowerOfTwo(5) == false);
+    REQUIRE(Math::isPowerOfTwo(0) == false);
 }
 
 TEST_CASE("Math - NextPowerOfTwo", "[math]") {
-    REQUIRE(nextPowerOfTwo(1) == 1);
-    REQUIRE(nextPowerOfTwo(2) == 2);
-    REQUIRE(nextPowerOfTwo(3) == 4);
-    REQUIRE(nextPowerOfTwo(5) == 8);
-    REQUIRE(nextPowerOfTwo(15) == 16);
-    REQUIRE(nextPowerOfTwo(0) == 1);
+    REQUIRE(Math::nextPowerOfTwo(1) == 1);
+    REQUIRE(Math::nextPowerOfTwo(2) == 2);
+    REQUIRE(Math::nextPowerOfTwo(3) == 4);
+    REQUIRE(Math::nextPowerOfTwo(5) == 8);
+    REQUIRE(Math::nextPowerOfTwo(15) == 16);
+    REQUIRE(Math::nextPowerOfTwo(0) == 1);
 }
