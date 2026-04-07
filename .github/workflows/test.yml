@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install compiler
+      run: sudo apt-get update && sudo apt-get install -y g++-13
+      
+    - name: Configure
+      run: mkdir -p build && cd build && cmake .. -DCMAKE_CXX_COMPILER=g++-13 -DCMAKE_CXX_STANDARD=20
+      
+    - name: Build
+      run: cd build && cmake --build .
+      
+    - name: Run Tests
+      run: cd build && ./tests/CaffeineTest ~[stress] --success
