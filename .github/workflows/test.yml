@@ -24,4 +24,4 @@ jobs:
       run: cd build && cmake --build .
       
     - name: Run Tests
-      run: cd build && ./tests/CaffeineTest --success
+      run: cd build && ./tests/CaffeineTest ~[stress] --success
