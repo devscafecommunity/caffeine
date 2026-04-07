@@ -31,8 +31,10 @@ f32 length = velocity.length();
 ### Vec3
 ```cpp
 Caffeine::Vec3 pos(1.0f, 2.0f, 3.0f);
-Caffeine::Vec3 cross = Caffeine::Vec3::cross(up, right);
-f32 dot = Caffeine::Vec3::dot(a, b);
+Caffeine::Vec3 up(0.0f, 1.0f, 0.0f);
+Caffeine::Vec3 right(1.0f, 0.0f, 0.0f);
+Caffeine::Vec3 cross = up.cross(right);
+Caffeine::f32 dot = up.dot(right);
 ```
 
 ### Vec4
