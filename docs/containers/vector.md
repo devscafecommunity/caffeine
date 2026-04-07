@@ -28,7 +28,7 @@ vec.pushBack(42);
 
 // With custom allocator
 Caffeine::LinearAllocator alloc(1024);
-Caffeine::Vector<int, Caffeine::IAllocator*> vec2(&alloc);
+Caffeine::Vector<int> vec2(&alloc);
 ```
 
 ### Key Methods
