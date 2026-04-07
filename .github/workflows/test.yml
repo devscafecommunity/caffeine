@@ -41,13 +41,7 @@ jobs:
     - name: Run Tests
       run: |
         cd build
-        ./CaffeineTest --success
-        
-    - name: Run Benchmarks
-      run: |
-        cd build
-        echo "=== Benchmarks ===" >> $GITHUB_STEP_SUMMARY
-        ./CaffeineBenchmarks 2>&1 | tee /tmp/benchmarks.txt
+        ./tests/CaffeineTest --success
         
   sanitize:
     runs-on: ubuntu-latest
@@ -71,7 +65,7 @@ jobs:
     - name: Run Tests with ASan
       run: |
         cd build-asan
-        ./CaffeineTest --success
+        ./tests/CaffeineTest --success
         
   code-coverage:
     runs-on: ubuntu-latest
@@ -95,7 +89,7 @@ jobs:
     - name: Run tests
       run: |
         cd build-cov
-        ./CaffeineTest
+        ./tests/CaffeineTest
         
     - name: Generate coverage report
       run: |
