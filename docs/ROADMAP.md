@@ -17,14 +17,47 @@ Visão executiva das 6 fases do projeto. Para **detalhes técnicos completos** d
 ## 📊 Status Geral
 
 ```
-Fase 0: Setup & Docs       █████████░░░░░░  80%  ← ATUAL
+Fase 0: Setup & Docs       █████████████████ 100% ✅ COMPLETO
 Fase 1: Fundação Atômica   █████████████████ 100% ✅ COMPLETO
 Fase 2: Concorrência        ░░░░░░░░░░░░░░░  0%
 Fase 3: RHI & 2D            ░░░░░░░░░░░░░░░  0%
 Fase 4: ECS & Sistemas      ░░░░░░░░░░░░░░░  0%
-Fase 5: Transição 3D          ░░░░░░░░░░░░░░░  0%
+Fase 5: Transição 3D         ░░░░░░░░░░░░░░░  0%  📅 Futuro Distante
 Fase 6: Caffeine Studio IDE  ░░░░░░░░░░░░░░░  0%
 ```
+
+---
+
+## 🚀 Fase 0: Setup & Documentação
+
+**Responsável:** Scribes  
+**Status:** ✅ Completo
+
+> Configurar infraestrutura do projeto e criar documentação base.
+
+### Entregáveis
+
+| Componente | Descrição | Status |
+|---|---|---|
+| **Repositório GitHub** | Estrutura de branches, GitHub Actions CI | ✅ |
+| **CMake Build System** | Configuração completa com testes | ✅ |
+| **Documentação Mestre** | `docs/MASTER.md` com filosofia e arquitetura | ✅ |
+| **Roadmap Documentado** | Este documento | ✅ |
+| **Style Guide** | Convenções de código e nomenclatura | ✅ |
+
+### Infraestrutura Criada
+
+```
+.github/workflows/test.yml    # CI com CMake + GTest
+CMakeLists.txt                 # Build principal
+tests/                         # Testes unitários
+docs/                         # Documentação completa
+```
+
+### Critério de Progresso
+- [x] CI compila e executa testes em Ubuntu
+- [x] Documentação completa em Markdown
+- [x] Estrutura de branches definida
 
 ---
 
@@ -93,26 +126,30 @@ src/
 
 ---
 
-## 📊 Status Geral
-
-```
-Fase 0: Setup & Docs       █████████░░░░░░  70%  ← ATUAL
-Fase 1: Fundação Atômica   ░░░░░░░░░░░░░░░  0%
-Fase 2: Concorrência        ░░░░░░░░░░░░░░░  0%
-Fase 3: RHI & 2D            ░░░░░░░░░░░░░░░  0%
-Fase 4: ECS & Sistemas      ░░░░░░░░░░░░░░░  0%
-Fase 5: Transição 3D          ░░░░░░░░░░░░░░░  0%
-Fase 6: Caffeine Studio IDE  ░░░░░░░░░░░░░░░  0%
-```
-
----
-
 ## ⚡ Fase 2: O Pulso e a Concorrência
 
 **Responsável:** Architects  
 **Status:** 📅 Planejado
 
 > Utilizar todos os núcleos da CPU e manter clock estável. Primeira camada de input e ferramentas de debug.
+
+### 🎯 Melhorias Introduzidas
+
+A arquitetura de Job System foi enhancementada com os seguintes recursos:
+
+#### Priorização de Jobs
+Nem todo Job é igual. Implementar uma **fila com três níveis de prioridade**:
+- **🔴 Crítico** — Renderização e Física (nunca esperam)
+- **🟡 Normal** — Lógica de gameplay, animation, eventos
+- **⚪ Background** — Carregamento de assets, asset streaming
+
+> Isso garante que a Renderização e Física nunca esperem por um carregamento de asset pesado.
+
+#### Fiber-based Job System
+Em vez de threads puras, usar **Fibers (threads leves do usuário)**:
+- Um Job pode **suspender** sua execução (esperando outro Job) sem bloquear a thread do OS
+- Maximiza o uso da CPU sem contexto switching custoso
+- Implementação via coroutines ou stack-less fibers customizadas
 
 ### Entregáveis
 
@@ -174,10 +211,12 @@ flowchart TB
 | **RF2.2** | Job System com workers | N workers = cores - 1 |
 | **RF2.3** | Lock-free job queue | Zero locks no hot path |
 | **RF2.4** | JobHandle para dependências | Jobs dependentes completam antes |
-| **RF2.5** | Fixed timestep game loop | 60 updates/segundo fixo |
-| **RF2.6** | Variable timestep render | Delta time variável |
-| **RF2.7** | Input System (actions) | Action mapping, polling |
-| **RF2.8** | Debug Tools (logging) | Log com níveis configuráveis |
+| **RF2.5** | Job Priority Queue | 3 níveis (Crítico/Normal/Background) |
+| **RF2.6** | Fiber-based Job System | Jobs podem suspender sem block OS thread |
+| **RF2.7** | Fixed timestep game loop | 60 updates/segundo fixo |
+| **RF2.8** | Variable timestep render | Delta time variável |
+| **RF2.9** | Input System (actions) | Action mapping, polling |
+| **RF2.10** | Debug Tools (logging) | Log com níveis configuráveis |
 
 ### Critério de Progresso
 **Physics demo:** 10K partículas, todos os núcleos a 80%+ carga, `tsan` clean.
@@ -190,6 +229,22 @@ flowchart TB
 **Status:** 📅 Planejado
 
 > Construir a camada de renderização agnóstica e sistema de assets.
+
+### 🎯 Melhorias Introduzidas
+
+A arquitetura de renderização foi enhancementada para alcançar os 50K sprites com apenas 1 draw call:
+
+#### Persistent Mapped Buffers
+- No RHI, usar **buffers mapeados persistentemente**
+- CPU e GPU compartilham a memória de vértices diretamente
+- **Zero memcpy** a cada frame — elimina o gargalo de transferência
+- Buffers alocados uma vez e reutilizados por todo o frame
+
+#### Layer Sorting Inteligente
+- Com o Batch Renderer, a ordenação por profundidade (Z-Order) é **crítica**
+- Implementar **Radix Sort** para ordenar IDs de textura e profundidade antes do batch
+- Essa é a forma mais rápida de garantir o preenchimento correto da tela sem quebrar o batching
+- Prioridade de sort: Layer → Texture ID → Depth (Z)
 
 ### Entregáveis
 
@@ -242,10 +297,12 @@ flowchart TB
 | **RF3.1** | RHI abstraction | Abstração SDL_GPU, não chama SDL_Draw direto |
 | **RF3.2** | DrawCommand queue | Command buffer com flush automático |
 | **RF3.3** | Batch Renderer | 50K sprites → 1 draw call |
-| **RF3.4** | Texture Atlas | Bin-packing, UV mapping correto |
-| **RF3.5** | Camera 2D/3D | Projeção orto e perspectiva |
-| **RF3.6** | Asset Manager async | Loading em background job |
-| **RF3.7** | Hot-reload | Textures/shaders recarregáveis em runtime |
+| **RF3.4** | Persistent Mapped Buffers | CPU↔GPU zero memcpy por frame |
+| **RF3.5** | Radix Sort Layer Sorting | Ordenação por layer + texture + depth |
+| **RF3.6** | Texture Atlas | Bin-packing, UV mapping correto |
+| **RF3.7** | Camera 2D/3D | Projeção orto e perspectiva |
+| **RF3.8** | Asset Manager async | Loading em background job |
+| **RF3.9** | Hot-reload | Textures/shaders recarregáveis em runtime |
 
 ### Critério de Progresso
 **Demo:** 50K sprites na tela a **60fps estável**.
@@ -258,6 +315,22 @@ flowchart TB
 **Status:** 📅 Planejado
 
 > ECS completo, sistemas de gameplay, comunicação desacoplada.
+
+### 🎯 Melhorias Introduzidas
+
+A escolha por um ECS baseado em Arquétipos (como o Flecs) foi enhancementada com:
+
+#### Comandos Diferidos (Command Buffers)
+- Sistemas de gameplay **nunca** devem criar ou destruir entidades diretamente durante a iteração
+- Isso quebra a **localidade de cache** e causa behavior indefinido durante a iteração
+- Implementar um **Command Buffer** que "anota" as mudanças e as aplica em um ponto seguro do frame
+- Commands: `CreateEntity`, `DestroyEntity`, `AddComponent`, `RemoveComponent`, `SetComponent`
+
+#### Integração de Scripting Antecipada
+- Você mencionou Lua/AngelScript na Fase 6, mas **recomendo antecipar para a Fase 4**
+- Incluir os **bindings básicos de dados** (Entity ID, Component access, System hooks)
+- Ter a lógica de alto nível em scripts permite que os Scribes testem mecânicas sem precisar que os Architects recompilem a engine toda vez
+- Preparar a infraestrutura para hot-reload de scripts desde o início
 
 ### Entregáveis
 
@@ -315,12 +388,14 @@ flowchart TB
 | **RF4.1** | ECS Core (Archetype) | Entities = IDs, Components = dados contíguos |
 | **RF4.2** | ComponentPool<T> | Arrays contíguos, grow como Vector |
 | **RF4.3** | World query system | Query por combinação de componentes |
-| **RF4.4** | Scene serialization | Save/load .caf formato binário |
-| **RF4.5** | Event Bus pub/sub | Event<T> tipado, priority queue |
-| **RF4.6** | Audio System | SDL3 audio, pooling, spatial 2D |
-| **RF4.7** | Animation System | Sprite frames, state machine |
-| **RF4.8** | Physics 2D | AABB/circle collision, layers |
-| **RF4.9** | UI System (retained) | ECS integration, widget instances |
+| **RF4.4** | Deferred Command Buffer | Commands diferidos aplicados em safe point |
+| **RF4.5** | Scene serialization | Save/load .caf formato binário |
+| **RF4.6** | Event Bus pub/sub | Event<T> tipado, priority queue |
+| **RF4.7** | Scripting Bindings (early) | Lua/AngelScript bindings básicos |
+| **RF4.8** | Audio System | SDL3 audio, pooling, spatial 2D |
+| **RF4.9** | Animation System | Sprite frames, state machine |
+| **RF4.10** | Physics 2D | AABB/circle collision, layers |
+| **RF4.11** | UI System (retained) | ECS integration, widget instances |
 
 ### Componentes ECS Pré-definidos
 
@@ -346,6 +421,87 @@ Name, SceneRef
 
 ### Critério de Progresso
 **Demo:** 100 entidades dinâmicas, 5+ sistemas rodando, serialização end-to-end.
+
+---
+
+## 📦 4.2: Sistema de Assets — O Formato .caf (Caffeine Asset Format)
+
+**Responsável:** Architects  
+**Status:** 📅 Planejado (Integração com Fase 3 & 4)
+
+> O formato .caf (Caffeine Asset Format) serve como espinha dorsal de dados da engine. Filosofia: **Zero-parsing, Zero-copy**. O arquivo no disco é um espelho direto da memória RAM/VRAM.
+
+### Estrutura do Header (`src/core/io/CafTypes.hpp`)
+
+```cpp
+namespace Caffeine {
+    enum class AssetType : u16 {
+        Unknown = 0,
+        Texture,    // RGBA8, BC7, ASTC
+        Audio,      // PCM, ADPCM
+        Mesh,       // Vertex/Index Buffers
+        Prefab,     // ECS Entity Template (Binary)
+        Scene,      // World State
+        Shader      // SPIR-V / Bytecode
+    };
+
+    struct CafHeader {
+        u32 magic;          // 0xCAFECAFE
+        u16 version;        // Versão do formato
+        AssetType type;     // Tipo de dado
+        u64 metadataSize;   // Offset para o início dos dados brutos
+        u64 dataSize;       // Tamanho do payload binário
+        u64 alignment;      // 16 ou 32 bytes (para SIMD/GPU)
+    };
+}
+```
+
+### Requisitos de Engenharia para o .caf
+
+| Categoria | Requisito Técnico | Motivação |
+|---|---|---|
+| **Endianness** | Little-endian (padrão x86/x64) | Evitar swap de bytes no carregamento (Zero CPU overhead) |
+| **Alignment** | Global: 16-byte / Mesh: 32-byte | Compatibilidade com instruções SIMD e otimização de barramento da GPU |
+| **IO Pattern** | Single-Shot Read | Minimiza o seek time do HD/SSD ao ler Metadata + Data em uma única chamada de IO |
+| **Versioning** | Semantic Versioning no Header | Permitir que a engine identifique assets obsoletos e force a re-compilação via IDE |
+
+### Integração no Roadmap
+
+#### Fase 3: RHI & Asset Foundation (Update)
+
+**RF3.0: Caffeine Binary System (.caf)**
+
+- **Implementação:** BlobLoader para leitura assíncrona de blocos binários
+- **DOD:** Uso de Memory Mapping (mmap) ou Direct Storage (se disponível) para carregar assets sem passar pela cópia intermediária da CPU
+- **Suporte Multimídia:**
+  - **Imagens:** Conversão de metadados para `SDL_GPUTextureCreateInfo`
+  - **Audio:** Mapeamento de buffers PCM direto para o AudioStream
+  - **3D:** Alinhamento de buffers de vértices para 32 bytes (pré-requisito para Fase 5)
+
+#### Fase 4: ECS & Sistemas (Update)
+
+**RF4.2: Binary Prefabs & Scenes**
+
+- **Implementação:** Serializador binário que despeja o estado das entidades ECS diretamente em um arquivo `.caf` tipo Prefab
+- **Vantagem:** Instanciar um Prefab torna-se um `memcpy` de um bloco binário para o ComponentPool da engine
+
+### Fluxo de Implementação: "The Loading Chain"
+
+Para que isso funcione em escala, a engine seguirá este fluxo:
+
+1. **FileSystem::Open** — Localiza o asset no disco
+2. **BlobLoader::Load** — O JobSystem (Fase 2) reserva memória via LinearAllocator e faz a leitura bruta
+3. **AssetResolver::Cast:**
+   - Se `type == Texture`: O ponteiro é passado para a GPU
+   - Se `type == Audio`: O ponteiro é enviado para o Mixer
+   - Se `type == Prefab`: Os dados são injetados no ECS
+4. **Lifetime Management** — O asset permanece em memória até que a Cena seja descarregada, sem nunca ter sido "parseado"
+
+### Critério de Aceitação (Stress Test)
+
+**Benchmark:** Carregar um "Mega-Bundle" de 1GB contendo texturas, áudios e meshes.
+
+**Sucesso:** O tempo de carregamento deve ser limitado apenas pela velocidade de leitura do SSD (ex: 500MB/s), com uso de CPU inferior a 2% durante o processo.
 
 ---
 
