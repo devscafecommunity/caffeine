@@ -15,6 +15,7 @@ endif()
 add_library(Caffeine
     src/core/Timer.cpp
     src/core/GameLoop.cpp
+    src/input/InputManager.cpp
 )
 
 target_include_directories(Caffeine PUBLIC 
