@@ -1,4 +1,8 @@
-# ☕ Caffeine Engine — Documentação Mestre
+# ☕ Caffeine Engine — Documentação (Legado)
+
+> ⚠️ **Aviso:** Este arquivo foi substituído por [`MASTER.md`](MASTER.md). Por favor, use o MASTER.md para documentação completa e unificada.
+
+---
 
 **Versão:** 1.1.0  
 **Status:** Alpha (Pré-produção)  
@@ -7,7 +11,34 @@
 
 ---
 
-## Índice
+## 📚 Documentação Principal
+
+| Documento | Descrição | Link |
+|-----------|-----------|------|
+| **MASTER.md** | Documentação unificada completa | [`MASTER.md`](MASTER.md) |
+| **ROADMAP.md** | Roadmap das 6 fases de desenvolvimento | [`ROADMAP.md`](ROADMAP.md) |
+| **SPECS.md** | Regras e padrões de desenvolvimento | [`SPECS.md`](SPECS.md) |
+
+### Navegação por Módulo
+
+| Módulo | Arquitetura | Containers/API |
+|--------|-------------|----------------|
+| **Core** | [`architecture/core.md`](architecture/core.md) | [`api/README.md`](api/README.md) |
+| **Memory** | [`architecture/memory.md`](architecture/memory.md) | [`api/README.md`](api/README.md) |
+| **Containers** | [`containers/vector.md`](containers/vector.md) | [`api/README.md`](api/README.md) |
+| **Math** | [`math/vectors.md`](math/vectors.md) | [`api/README.md`](api/README.md) |
+
+---
+
+## 🚀 Comece Aqui
+
+1. Leia o [`MASTER.md`](MASTER.md) para visão completa
+2. Consulte [`ROADMAP.md`](ROADMAP.md) para status das fases
+3. Explore a documentação por módulo acima
+
+---
+
+## Índice (Legado)
 
 1. [Visão Geral](#1-visão-geral)
 2. [Filosofia & Princípios](#2-filosofia--princípios)

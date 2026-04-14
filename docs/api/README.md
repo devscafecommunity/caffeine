@@ -5,42 +5,54 @@
 ## Module Index
 
 ### Core Module
-| Type/Function | Description |
-|---------------|-------------|
-| `u8`, `u16`, `u32`, `u64` | Unsigned integers |
-| `i8`, `i16`, `i32`, `i64` | Signed integers |
-| `f32`, `f64` | Floating point |
-| `CF_ASSERT(condition, msg)` | Debug assertion |
-| `CF_PLATFORM_WINDOWS` | Windows platform macro |
-| `CF_PLATFORM_LINUX` | Linux platform macro |
-| `CF_PLATFORM_MACOS` | macOS platform macro |
+
+| Type/Function | Description | Header |
+|---------------|-------------|--------|
+| `u8`, `u16`, `u32`, `u64` | Unsigned integers | [`src/core/Types.hpp`](../../src/core/Types.hpp) |
+| `i8`, `i16`, `i32`, `i64` | Signed integers | [`src/core/Types.hpp`](../../src/core/Types.hpp) |
+| `f32`, `f64` | Floating point | [`src/core/Types.hpp`](../../src/core/Types.hpp) |
+| `CF_ASSERT(condition, msg)` | Debug assertion | [`src/core/Assertions.hpp`](../../src/core/Assertions.hpp) |
+| `CF_PLATFORM_WINDOWS` | Windows platform macro | [`src/core/Platform.hpp`](../../src/core/Platform.hpp) |
+| `CF_PLATFORM_LINUX` | Linux platform macro | [`src/core/Platform.hpp`](../../src/core/Platform.hpp) |
+| `CF_PLATFORM_MACOS` | macOS platform macro | [`src/core/Platform.hpp`](../../src/core/Platform.hpp) |
+
+**Documentation:** [`docs/architecture/core.md`](../architecture/core.md)
 
 ### Memory Module
-| Class | Description |
-|-------|-------------|
-| `IAllocator` | Base allocator interface |
-| `LinearAllocator` | O(1) allocation, reset() clears all |
-| `PoolAllocator` | Fixed-size slot allocator |
-| `StackAllocator` | Marker-based allocator |
+
+| Class | Description | Header |
+|-------|-------------|--------|
+| `IAllocator` | Base allocator interface | [`src/memory/Allocator.hpp`](../../src/memory/Allocator.hpp) |
+| `LinearAllocator` | O(1) allocation, reset() clears all | [`src/memory/LinearAllocator.hpp`](../../src/memory/LinearAllocator.hpp) |
+| `PoolAllocator` | Fixed-size slot allocator | [`src/memory/PoolAllocator.hpp`](../../src/memory/PoolAllocator.hpp) |
+| `StackAllocator` | Marker-based allocator | [`src/memory/StackAllocator.hpp`](../../src/memory/StackAllocator.hpp) |
+
+**Documentation:** [`docs/architecture/memory.md`](../architecture/memory.md) | [`docs/memory_model.md`](../memory_model.md)
 
 ### Containers Module
-| Class | Description |
-|-------|-------------|
-| `Vector<T>` | Dynamic array |
-| `HashMap<K, V>` | Hash table |
-| `StringView` | Non-owning string |
-| `FixedString<T, N>` | Fixed-size string |
+
+| Class | Description | Header |
+|-------|-------------|--------|
+| `Vector<T>` | Dynamic array | [`src/containers/Vector.hpp`](../../src/containers/Vector.hpp) |
+| `HashMap<K, V>` | Hash table | [`src/containers/HashMap.hpp`](../../src/containers/HashMap.hpp) |
+| `StringView` | Non-owning string | [`src/containers/StringView.hpp`](../../src/containers/StringView.hpp) |
+| `FixedString<T, N>` | Fixed-size string | [`src/containers/FixedString.hpp`](../../src/containers/FixedString.hpp) |
+
+**Documentation:** [`docs/containers/vector.md`](../containers/vector.md)
 
 ### Math Module
-| Class/Function | Description |
-|----------------|-------------|
-| `Vec2` | 2D vector |
-| `Vec3` | 3D vector |
-| `Vec4` | 4D vector |
-| `Mat4` | 4x4 matrix |
-| `Math::lerp()` | Linear interpolation |
-| `Math::clamp()` | Clamp value |
-| `Math::isPowerOfTwo()` | Power of two check |
+
+| Class/Function | Description | Header |
+|----------------|-------------|--------|
+| `Vec2` | 2D vector | [`src/math/Vec2.hpp`](../../src/math/Vec2.hpp) |
+| `Vec3` | 3D vector | [`src/math/Vec3.hpp`](../../src/math/Vec3.hpp) |
+| `Vec4` | 4D vector | [`src/math/Vec4.hpp`](../../src/math/Vec4.hpp) |
+| `Mat4` | 4x4 matrix | [`src/math/Mat4.hpp`](../../src/math/Mat4.hpp) |
+| `Math::lerp()` | Linear interpolation | [`src/math/Math.hpp`](../../src/math/Math.hpp) |
+| `Math::clamp()` | Clamp value | [`src/math/Math.hpp`](../../src/math/Math.hpp) |
+| `Math::isPowerOfTwo()` | Power of two check | [`src/math/Math.hpp`](../../src/math/Math.hpp) |
+
+**Documentation:** [`docs/math/vectors.md`](../math/vectors.md)
 
 ## Quick Start
 
@@ -68,9 +80,11 @@ Caffeine::Mat4 transform = Caffeine::Mat4::translation(pos);
 | Vector | Memory | Uses IAllocator for allocation |
 | All | Core | Uses types (u32, f32, etc.) |
 | Math | Core | Uses types in vector/matrix operations |
+| Containers | Core | Uses types for indices and sizes |
 
 ## See Also
 
+- [MASTER.md](../MASTER.md) - Complete documentation
 - [Core Architecture](../architecture/core.md)
 - [Memory Architecture](../architecture/memory.md)
 - [Containers Architecture](../containers/vector.md)

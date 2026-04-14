@@ -10,17 +10,20 @@ The Math module provides vector and matrix types optimized for game development.
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| [`Vec2.hpp`](../../src/math/Vec2.hpp) | 2D vector (x, y) |
-| [`Vec3.hpp`](../../src/math/Vec3.hpp) | 3D vector (x, y, z) |
-| [`Vec4.hpp`](../../src/math/Vec4.hpp) | 4D vector (x, y, z, w) |
-| [`Mat4.hpp`](../../src/math/Mat4.hpp) | 4x4 matrix (column-major) |
-| [`Math.hpp`](../../src/math/Math.hpp) | Utility functions |
+| File | Description | Status |
+|------|-------------|--------|
+| [`Vec2.hpp`](../../src/math/Vec2.hpp) | 2D vector (x, y) | ✅ Complete |
+| [`Vec3.hpp`](../../src/math/Vec3.hpp) | 3D vector (x, y, z) | ✅ Complete |
+| [`Vec4.hpp`](../../src/math/Vec4.hpp) | 4D vector (x, y, z, w) | ✅ Complete |
+| [`Mat4.hpp`](../../src/math/Mat4.hpp) | 4x4 matrix (column-major) | ✅ Complete |
+| [`Math.hpp`](../../src/math/Math.hpp) | Utility functions | ✅ Complete |
 
 ## Vector Types
 
 ### Vec2
+
+2D vector for positions, velocities, UV coordinates.
+
 ```cpp
 Caffeine::Vec2 position(10.0f, 20.0f);
 Caffeine::Vec2 velocity(1.0f, -1.0f);
@@ -29,6 +32,9 @@ f32 length = velocity.length();
 ```
 
 ### Vec3
+
+3D vector for positions, directions, colors (RGB).
+
 ```cpp
 Caffeine::Vec3 pos(1.0f, 2.0f, 3.0f);
 Caffeine::Vec3 up(0.0f, 1.0f, 0.0f);
@@ -38,13 +44,16 @@ Caffeine::f32 dot = up.dot(right);
 ```
 
 ### Vec4
+
+4D vector for homogeneous coordinates, colors (RGBA).
+
 ```cpp
-Caffeine::Vec4 color(1.0f, 0.0f, 0.0f, 1.0f);  // RGBA
+Caffeine::Vec4 color(1.0f, 0.0f, 0.0f, 1.0f);  // RGBA red
 ```
 
 ## Mat4
 
-Column-major 4x4 matrix for transformations.
+Column-major 4x4 matrix for transformations. GPU-compatible layout.
 
 ```cpp
 Caffeine::Mat4 identity = Caffeine::Mat4::identity();
@@ -64,9 +73,12 @@ Caffeine::Vec3 transformed = transform.transformPoint(point);
 | `translation(x, y, z)` | Translation matrix |
 | `scale(s)` or `scale(x, y, z)` | Scale matrix |
 | `rotationZ(radians)` | Z-axis rotation |
+| `rotationY(radians)` | Y-axis rotation |
+| `rotationX(radians)` | X-axis rotation |
 | `transformPoint(p)` | Transform 3D point |
 | `transformVector(v)` | Transform 3D vector (w=0) |
 | `transposed()` | Transpose matrix |
+| `inverse()` | Matrix inverse |
 | `operator*` | Matrix multiplication |
 
 ## Math Utilities
@@ -82,6 +94,8 @@ Caffeine::Vec3 transformed = transform.transformPoint(point);
 | `Math::nextPowerOfTwo(value)` | Next power of two |
 | `Math::absf(value)` | Absolute value (float) |
 | `Math::sqrtf(value)` | Square root |
+| `Math::sinf(value)` | Sine |
+| `Math::cosf(value)` | Cosine |
 
 ## DOD (Data-Oriented Design)
 
@@ -93,17 +107,23 @@ Caffeine::Vec3 transformed = transform.transformPoint(point);
 ## Agnosticism
 
 All math types work for both 2D and 3D:
-- Vec2: 2D position, UV coordinates
-- Vec3: 3D position, direction, color RGB
-- Vec4: Homogeneous coordinates, color RGBA
-- Mat4: Works with both 2D and 3D transformations
+
+| Type | 2D Use | 3D Use |
+|------|--------|--------|
+| Vec2 | position, velocity, UV | — |
+| Vec3 | — | position, direction, color RGB |
+| Vec4 | — | homogeneous coords, color RGBA |
+| Mat4 | 2D transforms | 3D transforms |
 
 ## See Also
 
+### Related Documentation
+- [ROADMAP.md](../ROADMAP.md) - Phase 1 requirements
+- [SPECS.md](../SPECS.md) - Development rules
+- [architecture_specs.md](../architecture_specs.md) - Technical specifications
+- [API Reference](../api/README.md) - Complete API documentation
+- [Test Documentation](../../tests/test_math.cpp) - Math tests
+
+### Related Modules
 - [Core Module](../architecture/core.md) - Foundation types
 - [Memory Module](../architecture/memory.md) - Allocators
-
-## Related Documentation
-
-- [ROADMAP.md](../ROADMAP.md) - Phase 1 requirements
-- [Test Documentation](../../tests/test_math.cpp) - Math tests

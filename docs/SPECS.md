@@ -4,7 +4,7 @@
 
 Este diretório contém os documentos fundamentais que regem o desenvolvimento da **Caffeine Engine**. Antes de escrever qualquer linha de código em `/src`, os Architects e Scribes consultam e atualizam os documentos aqui contidos.
 
-> ⚠️ Para uma visão **completa e consolidada** do projeto, consulte [`docs/MASTER.md`](../docs/MASTER.md). Este diretório contém specs **detalhadas** de subsistemas.
+> ⚠️ Para uma visão **completa e consolidada** do projeto, consulte [`MASTER.md`](MASTER.md). Este diretório contém specs **detalhadas** de subsistemas.
 
 ---
 
@@ -12,10 +12,20 @@ Este diretório contém os documentos fundamentais que regem o desenvolvimento d
 
 | Documento | Função | Relação com MASTER.md |
 |---|---|---|
+| **`MASTER.md`** | Documentação unificada completa | — |
 | **`SPECS.md`** *(este)* | Regras e padrões de desenvolvimento | Complemento — MASTER §2, §5, §6 |
-| **`roadmap.md`** | Status e progresso das 6 fases | Resumo — MASTER §4 |
+| **`ROADMAP.md`** | Status e progresso das 6 fases | Resumo — MASTER §4 |
 | **`architecture_specs.md`** | Especificações técnicas do ECS, Job System e RHI | Técnico — MASTER §3 |
 | **`memory_model.md`** | Especificações detalhadas dos Custom Allocators | Técnico — MASTER §8 |
+
+### Documentação por Módulo
+
+| Módulo | Arquitetura | API |
+|--------|-------------|-----|
+| **Core** | [`architecture/core.md`](architecture/core.md) | [`api/README.md`](api/README.md) |
+| **Memory** | [`architecture/memory.md`](architecture/memory.md) | [`api/README.md`](api/README.md) |
+| **Containers** | [`containers/vector.md`](containers/vector.md) | [`api/README.md`](api/README.md) |
+| **Math** | [`math/vectors.md`](math/vectors.md) | [`api/README.md`](api/README.md) |
 
 ---
 
@@ -39,10 +49,18 @@ Seguimos o ciclo **R.I.C.O.** (Research, Idea, Conflict, Order):
 
 ```mermaid
 flowchart LR
-    Research["🔍 Research<br/><small>Investigar como<br/>SDL/C++ resolve</small>"]
-    Idea["💡 Idea<br/><small>Propor solução<br/>de baixa dependência</small>"]
-    Conflict["⚔️ Conflict<br/><small>Discutir no Discord<br/>desempenho/portabilidade</small>"]
-    Order["📋 Order<br/><small>Documentar<br/>a decisão</small>"]
+    Research[🔍 Research
+    Investigar como
+    SDL/C++ resolve]
+    Idea[💡 Idea
+    Propor solução
+    de baixa dependência]
+    Conflict[⚔️ Conflict
+    Discutir no Discord
+    desempenho/portabilidade]
+    Order[📋 Order
+    Documentar
+    a decisão]
     
     Research --> Idea
     Idea --> Conflict
@@ -82,10 +100,18 @@ Todo subsistema passa por este ciclo antes de ser integrado:
 
 ```mermaid
 flowchart LR
-    Draft["📝 Draft<br/><small>Scribe descreve<br/>funcionalidade</small>"]
-    Prototype["🏗️ Prototype<br/><small>Architect implementa<br/>funcional 'sujo'</small>"]
-    Refactor["✨ Refactor<br/><small>Architect limpa<br/>e integra padrões</small>"]
-    Audit["🔬 Audit<br/><small>Oracle testa<br/>performance/estabilidade</small>"]
+    Draft[📝 Draft
+    Scribe descreve
+    funcionalidade]
+    Prototype[🏗️ Prototype
+    Architect implementa
+    funcional 'sujo']
+    Refactor[✨ Refactor
+    Architect limpa
+    e integra padrões]
+    Audit[🔬 Audit
+    Oracle testa
+    performance/estabilidade]
     
     Draft --> Prototype
     Prototype --> Refactor
@@ -104,11 +130,19 @@ flowchart LR
 
 Antes de abrir PR para código novo:
 
-- [ ] Spec correspondente existe em `/desing_planning/`
+- [ ] Spec correspondente existe em `docs/plans/`
 - [ ] Código e documentação estão no **mesmo commit**
 - [ ] Nomenclatura segue `SPECS.md §Convenções`
 - [ ] Stress test foi executado para o módulo
 - [ ] Allocators foram usados (nenhum `new`/`delete` solto)
 
 ---
-> *"Planejar é trazer o futuro para o presente, para que possamos fazer algo a respeito agora."*
+
+## See Also
+
+- [MASTER.md](MASTER.md) - Documentação unificada completa
+- [ROADMAP.md](ROADMAP.md) - Roadmap completo
+- [architecture_specs.md](architecture_specs.md) - Especificações técnicas
+- [memory_model.md](memory_model.md) - Modelo de memória
+
+> *Planejar é trazer o futuro para o presente, para que possamos fazer algo a respeito agora.*

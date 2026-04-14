@@ -1,7 +1,7 @@
 # 🧠 Memory Model — Especificação de Allocators
 
 > ⚠️ **Status:** Versão 1.0 — Completo para as Fases 1-4.  
-> ⚠️ Para contexto completo, consulte [`docs/MASTER.md`](../docs/MASTER.md) §8 e [`architecture_specs.md`](architecture_specs.md).
+> ⚠️ Para contexto completo, consulte [`MASTER.md`](MASTER.md) §8 e [`architecture_specs.md`](architecture_specs.md).
 
 Este documento contém as **especificações técnicas detalhadas** dos sistemas de gerenciamento de memória da Caffeine Engine.
 
@@ -11,10 +11,10 @@ Este documento contém as **especificações técnicas detalhadas** dos sistemas
 
 | Allocator | Fase | Status | Uso |
 |---|---|---|---|
-| **IAllocator (Interface)** | 1 | 🔄 Em Progresso | Base para todos os allocators |
-| **Linear Allocator** | 1 | 🔄 Em Progresso | Scratch space por frame |
-| **Pool Allocator** | 1 | 🔄 Em Progresso | Blocos de tamanho fixo |
-| **Stack Allocator** | 1 | 🔄 Em Progresso | Escopos aninhados |
+| **IAllocator (Interface)** | 1 | ✅ Completo | Base para todos os allocators |
+| **Linear Allocator** | 1 | ✅ Completo | Scratch space por frame |
+| **Pool Allocator** | 1 | ✅ Completo | Blocos de tamanho fixo |
+| **Stack Allocator** | 1 | ✅ Completo | Escopos aninhados |
 | **Proxy Allocator** | 1 | 📅 Planejado | Wrappers com logging/debug |
 | **TLSF Allocator** | TBD | 💡 Ideia | Fallback para alocações gerais |
 | **Buddy Allocator** | TBD | 💡 Ideia | Para o sistema de levels |

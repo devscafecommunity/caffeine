@@ -1,6 +1,9 @@
 # 🗺️ Roadmap de Desenvolvimento
 
-Visão executiva das 6 fases do projeto. Para **detalhes técnicos completos** de cada fase (arquitetura, arquivos, critérios de progresso), consulte [`docs/README.md`](docs/README.md) §4 e [`architecture_specs.md`](architecture_specs.md) para APIs completas.
+Visão executiva das 6 fases do projeto. Para **detalhes técnicos completos** de cada fase (arquitetura, arquivos, critérios de progresso), consulte:
+
+- [`docs/MASTER.md`](MASTER.md) — Documentação unificada completa
+- [`docs/architecture_specs.md`](architecture_specs.md) — Especificações técnicas detalhadas
 
 > **Legenda de Princípios:**
 > - **DOD** = Data-Oriented Design — organização de dados para cache locality

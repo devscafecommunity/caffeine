@@ -10,12 +10,12 @@ The Containers module provides data structures optimized for game development wi
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| [`Vector.hpp`](../../src/containers/Vector.hpp) | Dynamic array with cache-friendly contiguous memory |
-| [`HashMap.hpp`](../../src/containers/HashMap.hpp) | Hash table with O(1) lookup |
-| [`StringView.hpp`](../../src/containers/StringView.hpp) | String without ownership (zero-copy) |
-| [`FixedString.hpp`](../../src/containers/FixedString.hpp) | Inline buffer string (zero heap) |
+| File | Description | Status |
+|------|-------------|--------|
+| [`Vector.hpp`](../../src/containers/Vector.hpp) | Dynamic array with cache-friendly contiguous memory | ✅ Complete |
+| [`HashMap.hpp`](../../src/containers/HashMap.hpp) | Hash table with O(1) lookup | ✅ Complete |
+| [`StringView.hpp`](../../src/containers/StringView.hpp) | String without ownership (zero-copy) | ✅ Complete |
+| [`FixedString.hpp`](../../src/containers/FixedString.hpp) | Inline buffer string (zero heap) | ✅ Complete |
 
 ## Vector<T>
 
@@ -48,19 +48,28 @@ Open addressing hash map with linear probing.
 
 ```cpp
 Caffeine::HashMap<int, const char*> map;
-map.set(1, "one");
-map.set(2, "two");
+map.set(1, “one”);
+map.set(2, “two”);
 
 const char* val = map.get(1);
 bool exists = map.contains(1);
 ```
+
+### Key Methods
+
+| Method | Complexity | Description |
+|--------|------------|--------------|
+| `set()` | O(1) amortized | Insert or update |
+| `get()` | O(1) | Retrieve value |
+| `contains()` | O(1) | Check key exists |
+| `remove()` | O(1) | Delete key-value |
 
 ## StringView
 
 Zero-copy string reference (pointer + length).
 
 ```cpp
-Caffeine::StringView sv("Hello World", 5);  // "Hello"
+Caffeine::StringView sv(“Hello World”, 5); // “Hello”
 ```
 
 ## FixedString<T, N>
@@ -69,7 +78,7 @@ Stack-allocated string with inline buffer.
 
 ```cpp
 Caffeine::FixedString<char, 32> fs;
-fs.append("Hello");
+fs.append(“Hello”);
 ```
 
 ## DOD (Data-Oriented Design)
@@ -81,11 +90,14 @@ fs.append("Hello");
 
 ## See Also
 
+### Related Documentation
+- [ROADMAP.md](../ROADMAP.md) - Phase 1 RF1.7-RF1.9
+- [SPECS.md](../SPECS.md) - Development rules
+- [architecture_specs.md](../architecture_specs.md) - Technical specifications
+- [API Reference](../api/README.md) - Complete API documentation
+- [Test Documentation](../../tests/test_containers.cpp) - Container tests
+
+### Related Modules
 - [Core Module](../architecture/core.md) - Foundation types
 - [Memory Module](../architecture/memory.md) - Allocators used by containers
 - [Math Module](../math/vectors.md) - Vector math types
-
-## Related Documentation
-
-- [ROADMAP.md](../ROADMAP.md) - Phase 1 RF1.7-RF1.9
-- [Test Documentation](../../tests/test_containers.cpp) - Container tests
