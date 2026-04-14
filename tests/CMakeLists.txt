@@ -8,6 +8,7 @@ add_executable(CaffeineTest
     test_timer.cpp
     test_gameloop.cpp
     test_input.cpp
+    test_debug.cpp
 )
 
 target_link_libraries(CaffeineTest PRIVATE Caffeine)
