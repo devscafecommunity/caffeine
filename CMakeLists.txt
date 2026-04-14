@@ -12,11 +12,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions(CF_DEBUG)
 endif()
 
-add_library(Caffeine INTERFACE)
-target_include_directories(Caffeine INTERFACE 
+add_library(Caffeine
+    src/core/Timer.cpp
+)
+
+target_include_directories(Caffeine PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
+
+target_compile_features(Caffeine PUBLIC cxx_std_20)
 
 add_library(Caffeine::Core ALIAS Caffeine)
 
