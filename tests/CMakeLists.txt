@@ -9,6 +9,7 @@ set(CAFFEINE_TEST_SOURCES
     test_gameloop.cpp
     test_input.cpp
     test_debug.cpp
+    test_jobsystem.cpp
 )
 
 if(SDL3_FOUND)
