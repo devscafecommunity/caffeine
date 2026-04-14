@@ -9,6 +9,7 @@ add_executable(CaffeineTest
     test_gameloop.cpp
     test_input.cpp
     test_debug.cpp
+    test_rhi.cpp
 )
 
 target_link_libraries(CaffeineTest PRIVATE Caffeine)
@@ -21,3 +22,11 @@ endif()
 
 enable_testing()
 add_test(NAME CaffeineTest COMMAND CaffeineTest)
+
+if(WIN32)
+    add_custom_command(TARGET CaffeineTest POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL3::SDL3>
+            $<TARGET_FILE_DIR:CaffeineTest>
+    )
+endif()
