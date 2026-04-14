@@ -16,6 +16,8 @@ add_library(Caffeine
     src/core/Timer.cpp
     src/core/GameLoop.cpp
     src/input/InputManager.cpp
+    src/debug/LogSystem.cpp
+    src/debug/Profiler.cpp
 )
 
 target_include_directories(Caffeine PUBLIC 
