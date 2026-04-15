@@ -83,8 +83,8 @@ docs/
 │   └── vectors.md       # Módulo Math
 ├── api/
 │   └── README.md       # Referência completa da API
-└── plans/
-    └── 2026-04-07-test-system-design.md
+└── fase2/
+    └── testing.md       # Test System Design (consolidated from legacy plans/)
 ```
 
 ### 1.4 CI/CD (`.github/`)

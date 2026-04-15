@@ -273,13 +273,277 @@ physicsQuery.forEachParallel(world, [](RigidBody2D& rb, Collider2D& col,
 
 - **Upstream:** `Caffeine::Core::Types`, `Caffeine::Containers::HashMap`
 - **Downstream:** [Asset Manager](../fase3/asset-manager.md), [ECS — forEachParallel](../fase4/ecs.md), [Physics 2D](../fase4/physics.md), [Animation](../fase4/animation.md)
-- **Plano detalhado:** [`docs/plans/2026-04-11-job-system-design.md`](../plans/2026-04-11-job-system-design.md)
+
+---
+
+---
+
+## Implementation Plan (3 Phases)
+
+> **Tech Stack:** C++20, std::thread, std::atomic, lock-free algorithms  
+> **Goal:** Implementar um motor de concorrência que transforma processamento pesado em Jobs distribuidos entre todos os nucleos da CPU.
+
+### Visão Geral do Sistema
+
+#### Filosofia de Design
+
+| Principio | Implementacao |
+|----------|---------------|
+| **Data-Oriented Design (DOD)** | Jobs em arrays continuos, cache-line aligned (64 bytes) |
+| **Lock-Free Progress** | std::atomic em caminhos criticos, mutex apenas em fallback |
+| **Work-Stealing** | Workers ociosos roubam trabalho de workers sobrecarregados |
+| **Wait & Stall** | Main Thread ajuda a processar enquanto espera |
+
+#### Requisitos Funcionais (RFs)
+
+| ID | Requisito | Descricao Tecnica |
+|----|----------|----------------|
+| **RF1** | Thread Pool | N-1 threads workers (N = nucleos logicos) |
+| **RF2** | Task Batching | Agrupar tarefas pequenas em lotes |
+| **RF3** | Job Handles | Sincronizacao atomic para grupos de jobs |
+| **RF4** | Wait & Stall | Main Thread processa enquanto espera |
+| **RF5** | Priority Levels | 3 niveis: Critico, Normal, Background |
+
+### Estrutura de Dados
+
+#### Job (64 bytes - fit cache line)
+
+```cpp
+namespace Caffeine {
+
+using JobFunc = void (*)(void*);
+
+// @brief Estrutura de trabalho atomica (64 bytes para caber em cache line)
+// @note data e um ponteiro para contexto alocado pelo caller
+struct Job {
+    JobFunc function;     // O que executar
+    void* data;           // Dados (contexto)
+    JobHandle* handle;    // Handle para sincronizacao (opcional)
+    // @todo: padding para 64 bytes
+};
+static_assert(sizeof(Job) <= 64, "Job must fit in cache line");
+
+} // namespace Caffeine
+```
+
+#### JobHandle (sincronizacao)
+
+```cpp
+namespace Caffeine {
+
+// @brief Handle para sincronizacao de grupo de jobs
+// @note usa contador atomico para tracking sem mutex
+struct JobHandle {
+    std::atomic<int32_t> unfinishedJobs;  // atomic counter
+    
+    // @brief Construtor - inicializa com N jobs pendentes
+    explicit JobHandle(int32_t initialCount) 
+        : unfinishedJobs(initialCount) {}
+    
+    // @brief Decrementa contador
+    // @return true se chegou a zero
+    bool complete() {
+        return (unfinishedJobs.fetch_sub(1, std::memory_order_release) - 1) == 0;
+    }
+    
+    // @brief Espera ate todos os jobs completarem
+    void wait() {
+        while (unfinishedJobs.load(std::memory_order_acquire) > 0) {
+            // @todo: yield CPU
+        }
+    }
+};
+
+} // namespace Caffeine
+```
+
+#### Priority Levels
+
+```cpp
+namespace Caffeine {
+
+// @brief Niveis de prioridade de job
+enum class JobPriority : u8 {
+    Critical = 0,   // Fisica/Input - nunca esperam
+    Normal = 1,      // Gameplay, animation
+    Background = 2   // Asset loading
+};
+
+} // namespace Caffeine
+```
+
+### Fases de Implementacao
+
+#### Fase Alpha: Thread Pool com Mutex
+
+**Objetivo:** Implementar thread pool basico funcional para debug e validacao.
+
+**Criterio:** 1.000 tarefas simples completes com sucesso.
+
+| Marco | Tarefas | Tempo |
+|-------|---------|-------|
+| Alpha-1 | Cria pastas e headers | 5 min |
+| Alpha-2 | Implementa Job e JobHandle | 10 min |
+| Alpha-3 | Implementa Worker com thread | 15 min |
+| Alpha-4 | Implementa JobScheduler basico | 15 min |
+| Alpha-5 | Escreve testes | 10 min |
+| Alpha-6 | Stress test 1k tarefas | 5 min |
+| **Total** | | **60 min** |
+
+**Arquivos:**
+- `src/threading/JobPriority.hpp` — Enum e comparadores
+- `src/threading/Job.hpp` — struct Job (64 bytes)
+- `src/threading/JobHandle.hpp` — JobHandle atomic
+- `src/threading/JobQueue.hpp` — std::queue + mutex
+- `src/threading/Worker.hpp` — thread loop basico
+- `src/threading/JobSystem.hpp` — JobScheduler inicial
+- `tests/test_threading.cpp` — testes do Job System
+
+**TDD Workflow:**
+
+1. **Alpha-1:** Estrutura de pastas, headers vazios
+2. **Alpha-2:** Job struct (64 bytes), JobHandle com atomic counter
+   - Test: `JobHandle initializes with correct count`
+   - Test: `JobHandle decrements on complete`
+   - Test: `Job is 64 bytes or less`
+3. **Alpha-3:** Worker basico
+   - Test: `Worker thread can be created`
+4. **Alpha-4:** JobScheduler com fila protegida por mutex
+   - Test: `JobScheduler creates workers`
+   - Test: `JobScheduler can schedule job`
+5. **Alpha-5 & 6:** Stress tests
+   - Test: `Alpha stress: 1000 jobs complete`
+   - Expected: < 100ms para 1k jobs
+
+#### Fase Beta: Work-Stealing
+
+**Objetivo:** Substituir fila unica por filas por thread e implementar steal().
+
+**Criterio:** 10.000 tarefas com work-stealing ativo, CPU usage > 80%.
+
+| Marco | Tarefas | Tempo |
+|-------|---------|-------|
+| Beta-1 | Implementar WorkerLocal deque | 15 min |
+| Beta-2 | Implementar steal() algorithm | 15 min |
+| Beta-3 | Integrar com JobScheduler | 15 min |
+| Beta-4 | Stress test 10k tarefas | 10 min |
+| **Total** | | **55 min** |
+
+**Arquivos novos:**
+- `src/threading/WorkerLocal.hpp` — deque LIFO por worker
+
+**WorkerLocal (LIFO deque):**
+
+```cpp
+class WorkerLocal {
+public:
+    // @brief Adiciona job na frente (LIFO)
+    void push(Job&& job) {
+        queue_.push_front(std::move(job));
+    }
+    
+    // @brief Remove job da frente (LIFO)
+    bool pop(Job* out) {
+        if (queue_.empty()) return false;
+        *out = std::move(queue_.front());
+        queue_.pop_front();
+        return true;
+    }
+    
+    // @brief Tenta roubar da cauda (FIFO - para steal)
+    bool steal(Job* out) {
+        if (queue_.empty()) return false;
+        *out = std::move(queue_.back());
+        queue_.pop_back();
+        return true;
+    }
+    
+    bool empty() const { return queue_.empty(); }
+private:
+    std::deque<Job> queue_;
+};
+```
+
+**Stress test:**
+```cpp
+TEST_CASE("Beta stress: 10000 jobs with work stealing", "[threading][stress]") {
+    Caffeine::JobScheduler scheduler;
+    std::atomic<int32_t> counter{0};
+    
+    auto handle = scheduler.schedule(10000, [](void* data) {
+        auto* c = static_cast<std::atomic<int32_t>*>(data);
+        c->fetch_add(1);
+    }, &counter);
+    
+    scheduler.wait(handle);
+    CHECK(counter.load() == 10000);
+}
+```
+
+#### Fase Gold: Lock-Free
+
+**Objetivo:** Trocar mutexes por operacoes atomicas de baixo nivel.
+
+**Criterio:** 50.000 tarefas em lock-free, zero mutex no hot path.
+
+| Marco | Tarefas | Tempo |
+|-------|---------|-------|
+| Gold-1 | Implementar atomic queue | 20 min |
+| Gold-2 | Substituir mutex por atomic | 15 min |
+| Gold-3 | Stress test 50k tarefas | 10 min |
+| Gold-4 | TSAN/ASAN clean | 10 min |
+| **Total** | | **55 min** |
+
+**Stress test final:**
+```cpp
+TEST_CASE("Gold stress: 50000 jobs complete", "[threading][stress]") {
+    Caffeine::JobScheduler scheduler;
+    std::atomic<int32_t> counter{0};
+    
+    auto handle = scheduler.schedule(50000, [](void* data) {
+        auto* c = static_cast<std::atomic<int32_t>*>(data);
+        c->fetch_add(1);
+    }, &counter);
+    
+    scheduler.wait(handle);
+    CHECK(counter.load() == 50000);
+}
+```
+
+### Criterios de Progresso
+
+| Fase | Teste | Benchmark | Target |
+|------|-------|-----------|--------|
+| Alpha | 1k tarefas | < 100ms | Correctness |
+| Beta | 10k tarefas, work-stealing | < 500ms | Load balancing |
+| Gold | 50k tarefas, lock-free | < 2s, TSAN clean | Performance |
+
+### Inclusao no Build
+
+```cmake
+# src/CMakeLists.txt
+add_subdirectory(threading)
+```
+
+```cpp
+// src/Caffeine.hpp
+#include "threading/JobSystem.hpp"
+```
+
+### Resumo da Implementacao
+
+| Fase | Descricao | Arquivos | Stress Test |
+|------|----------|---------|-------------|
+| **Alpha** | Thread pool + mutex | 7 novos | 1k jobs |
+| **Beta** | Work-stealing | 1 novo | 10k jobs |
+| **Gold** | Lock-free | 1 novo | 50k jobs |
+
+**Tempo total estimado:** ~3 horas
 
 ---
 
 ## Referências
 
 - [`docs/architecture_specs.md`](../architecture_specs.md) — §2 Job System
-- [`docs/plans/2026-04-11-job-system-design.md`](../plans/2026-04-11-job-system-design.md)
 - [Jolt Physics Job System](https://github.com/jrouwe/JoltPhysics) — Referência de design
 - [Multithreaded Job Systems in Game Engines](https://pulsegeek.com/articles/multithreaded-job-systems-in-game-engines/)
