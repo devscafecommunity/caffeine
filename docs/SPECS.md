@@ -130,7 +130,7 @@ flowchart LR
 
 Antes de abrir PR para código novo:
 
-- [ ] Spec correspondente existe em `docs/plans/`
+- [ ] Spec correspondente existe em `docs/faseN/` (ex: `docs/fase2/job-system.md`)
 - [ ] Código e documentação estão no **mesmo commit**
 - [ ] Nomenclatura segue `SPECS.md §Convenções`
 - [ ] Stress test foi executado para o módulo

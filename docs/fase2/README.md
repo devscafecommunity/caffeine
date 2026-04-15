@@ -16,6 +16,7 @@ Esta fase transforma a engine de uma fundação de dados para um sistema **vivo*
 | **Job System** | [`job-system.md`](job-system.md) | `Caffeine::Threading` | 2 |
 | **Game Loop** | [`game-loop.md`](game-loop.md) | `Caffeine::Core` | 2 |
 | **Input System** | [`input.md`](input.md) | `Caffeine::Input` | 2 |
+| **Test System** | [`testing.md`](testing.md) | `Caffeine::Testing` | 2 |
 | **Debug Tools** | [`debug.md`](debug.md) | `Caffeine::Debug` | 2 |
 
 ---
@@ -116,7 +117,6 @@ src/
 ## 📚 Referências
 
 - [`docs/architecture_specs.md`](../architecture_specs.md) — §1 Game Loop, §2 Job System, §3 Input, §16 Debug
-- [`docs/plans/2026-04-11-job-system-design.md`](../plans/2026-04-11-job-system-design.md) — Plano detalhado do Job System
 - [`docs/MASTER.md`](../MASTER.md) — Documentação unificada
 - [Jolt Physics Job System](https://github.com/jrouwe/JoltPhysics) — Referência de work-stealing
 - [Game Programming Patterns — Game Loop](https://gameprogrammingpatterns.com/game-loop.html)

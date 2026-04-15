@@ -75,11 +75,8 @@ docs/
 │   ├── scene-editor.md
 │   ├── asset-pipeline.md
 │   └── scripting.md
-├── reviews/
-│   └── PHASE1_REVIEW.md     # 📝 Reviews
-└── plans/
-    ├── 2026-04-07-test-system-design.md
-    └── 2026-04-11-job-system-design.md
+└── reviews/
+    └── PHASE1_REVIEW.md     # 📝 Reviews
 ```
 
 ---
@@ -327,7 +324,7 @@ Caffeine.hpp
 
 ### Para Scribes (Documentação)
 
-1. **Antes de codificar:** Spec deve existir em `docs/plans/`
+1. **Antes de codificar:** Spec deve existir em `docs/faseN/` (ex: `docs/fase2/job-system.md`)
 2. **Sincronia:** Código e docs no mesmo commit
 3. **Clareza:** Se explicação > código, simplificar
 4. **AGNOSTICISM:** Toda spec deve prever 2D e 3D
