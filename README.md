@@ -107,11 +107,11 @@ Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3
 ```
 Fase 0: Setup & Docs       █████████████████ 100% ✅ COMPLETO
 Fase 1: Fundação Atômica   █████████████████ 100% ✅ COMPLETO
-Fase 2: Concorrência        ░░░░░░░░░░░░░░░  0% 📅 Planejado
-Fase 3: RHI & 2D            ░░░░░░░░░░░░░░░  0% 📅 Planejado
-Fase 4: ECS & Sistemas      ░░░░░░░░░░░░░░░  0% 📅 Planejado
-Fase 5: Transição 3D         ░░░░░░░░░░░░░░░  0% 📅 Futuro Distante
-Fase 6: Caffeine Studio IDE  ░░░░░░░░░░░░░░░  0% 📅 Planejado
+Fase 2: Concorrência       █████████████████  100% ✅ COMPLETO
+Fase 3: RHI & 2D            ████░░░░░░░░░░░░  10%
+Fase 4: ECS & Sistemas      ░░░░░░░░░░░░░░░  0%
+Fase 5: Transição 3D         ░░░░░░░░░░░░░░░  0%
+Fase 6: Caffeine Studio IDE  ░░░░░░░░░░░░░░░  0%
 ```
 
 ---
