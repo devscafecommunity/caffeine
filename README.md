@@ -8,6 +8,8 @@ Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3
 
 ## 📚 Documentação
 
+### Documentos Principais
+
 | Documento | Descrição | Link |
 |-----------|-----------|------|
 | **MASTER.md** | Documentação unificada completa | [`docs/MASTER.md`](docs/MASTER.md) |
@@ -16,7 +18,7 @@ Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3
 | **memory_model.md** | Especificações de memória | [`docs/memory_model.md`](docs/memory_model.md) |
 | **architecture_specs.md** | Especificações técnicas | [`docs/architecture_specs.md`](docs/architecture_specs.md) |
 
-### Documentação por Módulo
+### Arquitetura & Módulos
 
 | Módulo | Arquitetura | API Reference |
 |--------|-------------|---------------|
@@ -24,6 +26,81 @@ Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3
 | **Memory** | [`docs/architecture/memory.md`](docs/architecture/memory.md) | [`docs/api/README.md`](docs/api/README.md) |
 | **Containers** | [`docs/containers/vector.md`](docs/containers/vector.md) | [`docs/api/README.md`](docs/api/README.md) |
 | **Math** | [`docs/math/vectors.md`](docs/math/vectors.md) | [`docs/api/README.md`](docs/api/README.md) |
+
+### Documentação por Fase
+
+| Fase | Descrição | Documentação | Status |
+|------|-----------|--------------|--------|
+| **Fase 0** | Setup & Docs | [`docs/SPECS.md`](docs/SPECS.md) | ✅ COMPLETO |
+| **Fase 1** | Fundação Atômica | [`docs/architecture/`](docs/architecture/) | ✅ COMPLETO |
+| **Fase 2** | Concorrência | [`docs/fase2/`](docs/fase2/) | 📅 Planejado |
+| **Fase 3** | RHI & 2D | [`docs/fase3/`](docs/fase3/) | 📅 Planejado |
+| **Fase 4** | ECS & Sistemas | [`docs/fase4/`](docs/fase4/) | 📅 Planejado |
+| **Fase 5** | Transição 3D | [`docs/fase5/`](docs/fase5/) | 📅 Futuro Distante |
+| **Fase 6** | Caffeine Studio IDE | [`docs/fase6/`](docs/fase6/) | 📅 Planejado |
+
+### Fase 2 — Concorrência & Core Runtime
+
+| Módulo | Arquivo |
+|--------|---------|
+| **Overview** | [`docs/fase2/README.md`](docs/fase2/README.md) |
+| **Timer** | [`docs/fase2/timer.md`](docs/fase2/timer.md) |
+| **Job System** | [`docs/fase2/job-system.md`](docs/fase2/job-system.md) |
+| **Game Loop** | [`docs/fase2/game-loop.md`](docs/fase2/game-loop.md) |
+| **Input** | [`docs/fase2/input.md`](docs/fase2/input.md) |
+| **Debug Tools** | [`docs/fase2/debug.md`](docs/fase2/debug.md) |
+| **Test System** | [`docs/fase2/testing.md`](docs/fase2/testing.md) |
+
+### Fase 3 — RHI & Rendering 2D
+
+| Módulo | Arquivo |
+|--------|---------|
+| **Overview** | [`docs/fase3/README.md`](docs/fase3/README.md) |
+| **RHI** | [`docs/fase3/rhi.md`](docs/fase3/rhi.md) |
+| **Batch Renderer** | [`docs/fase3/batch-renderer.md`](docs/fase3/batch-renderer.md) |
+| **Camera 2D** | [`docs/fase3/camera.md`](docs/fase3/camera.md) |
+| **Asset Manager** | [`docs/fase3/asset-manager.md`](docs/fase3/asset-manager.md) |
+| **CAF Format** | [`docs/fase3/caf-format.md`](docs/fase3/caf-format.md) |
+
+### Fase 4 — ECS & Sistemas de Jogo
+
+| Módulo | Arquivo |
+|--------|---------|
+| **Overview** | [`docs/fase4/README.md`](docs/fase4/README.md) |
+| **ECS** | [`docs/fase4/ecs.md`](docs/fase4/ecs.md) |
+| **Scene** | [`docs/fase4/scene.md`](docs/fase4/scene.md) |
+| **Events** | [`docs/fase4/events.md`](docs/fase4/events.md) |
+| **Audio** | [`docs/fase4/audio.md`](docs/fase4/audio.md) |
+| **Animation** | [`docs/fase4/animation.md`](docs/fase4/animation.md) |
+| **Physics 2D** | [`docs/fase4/physics.md`](docs/fase4/physics.md) |
+| **UI System** | [`docs/fase4/ui.md`](docs/fase4/ui.md) |
+
+### Fase 5 — Transição Dimensional (3D)
+
+| Módulo | Arquivo |
+|--------|---------|
+| **Overview** | [`docs/fase5/README.md`](docs/fase5/README.md) |
+| **3D Math** | [`docs/fase5/3d-math.md`](docs/fase5/3d-math.md) |
+| **Mesh Loading** | [`docs/fase5/mesh-loading.md`](docs/fase5/mesh-loading.md) |
+| **Spatial Partitioning** | [`docs/fase5/spatial-partitioning.md`](docs/fase5/spatial-partitioning.md) |
+| **Camera 3D** | [`docs/fase5/camera3d.md`](docs/fase5/camera3d.md) |
+| **Skeletal Animation** | [`docs/fase5/skeletal-animation.md`](docs/fase5/skeletal-animation.md) |
+
+### Fase 6 — Caffeine Studio IDE
+
+| Módulo | Arquivo |
+|--------|---------|
+| **Overview** | [`docs/fase6/README.md`](docs/fase6/README.md) |
+| **Embedded UI** | [`docs/fase6/embedded-ui.md`](docs/fase6/embedded-ui.md) |
+| **Scene Editor** | [`docs/fase6/scene-editor.md`](docs/fase6/scene-editor.md) |
+| **Asset Pipeline** | [`docs/fase6/asset-pipeline.md`](docs/fase6/asset-pipeline.md) |
+| **Scripting** | [`docs/fase6/scripting.md`](docs/fase6/scripting.md) |
+
+### Reviews
+
+| Review | Arquivo |
+|--------|---------|
+| **Phase 1 Review** | [`docs/reviews/PHASE1_REVIEW.md`](docs/reviews/PHASE1_REVIEW.md) |
 
 ### Status das Fases
 
