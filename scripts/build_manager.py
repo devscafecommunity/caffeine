@@ -26,58 +26,52 @@ class BuildConfig:
                 self.generator = "Unix Makefiles"
 
 class BuildManager:
+    def _find_project_root(self, start_path: Path) -> Path:
+        current = start_path
+        for _ in range(5):
+            if (current / "CMakeLists.txt").exists():
+                return current
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return start_path
+    
     def __init__(self, project_root: Optional[Path] = None):
         if project_root is None:
-            self.project_root = Path(__file__).parent.parent.resolve()
+            start_path = Path(__file__).parent.parent.resolve()
+            self.project_root = self._find_project_root(start_path)
         else:
             self.project_root = Path(project_root).resolve()
         
         self.build_dir = self.project_root / "build"
+        self.bin_dir = self.project_root / "bin"
+        self.scripts_dir = self.project_root / "scripts"
+        self.versions_dir = self.project_root / ".versions"
+        
         self.build_dir.mkdir(exist_ok=True)
+        self.bin_dir.mkdir(exist_ok=True)
+        self.scripts_dir.mkdir(exist_ok=True)
+        self.versions_dir.mkdir(exist_ok=True)
         
         self.cmake_cache = self.build_dir / "CMakeCache.txt"
-        self.version_file = self.build_dir / "build_version.json"
     
-    def get_version_file(self) -> Path:
-        return self.version_file
+    def get_version_file(self, build_type: str = "Debug") -> Path:
+        return self.versions_dir / f"{build_type.lower()}_version.json"
     
-    def read_version_info(self) -> Dict:
-        if self.version_file.exists():
-            with open(self.version_file, 'r') as f:
+    def read_version_info(self, build_type: str = "Debug") -> Dict:
+        version_file = self.get_version_file(build_type)
+        if version_file.exists():
+            with open(version_file, 'r') as f:
                 return json.load(f)
         return {}
     
-    def write_version_info(self, version_info: Dict):
-        with open(self.version_file, 'w') as f:
+    def write_version_info(self, version_info: Dict, build_type: str = "Debug"):
+        version_file = self.get_version_file(build_type)
+        with open(version_file, 'w') as f:
             json.dump(version_info, f, indent=2)
     
-    def get_current_config(self) -> Optional[BuildConfig]:
-        version_info = self.read_version_info()
-        if not version_info:
-            return None
-        
-        return BuildConfig(
-            build_type=version_info.get("build_type", "Debug"),
-            generator=version_info.get("generator", ""),
-            preset=version_info.get("preset"),
-            additional_args=version_info.get("additional_args", [])
-        )
-    
-    def needs_reconfigure(self, new_config: BuildConfig) -> bool:
-        if not self.cmake_cache.exists():
-            return True
-        
-        current_config = self.get_current_config()
-        if current_config is None:
-            return True
-        
-        return (
-            current_config.build_type != new_config.build_type or
-            current_config.generator != new_config.generator or
-            current_config.preset != new_config.preset
-        )
-    
-    def configure(self, config: BuildConfig) -> int:
+    def configure(self, config: BuildConfig) -> bool:
         args = ["cmake"]
         
         if config.preset:
@@ -102,17 +96,11 @@ class BuildManager:
                 "preset": config.preset,
                 "additional_args": config.additional_args
             }
-            self.write_version_info(version_info)
+            self.write_version_info(version_info, config.build_type)
         
-        return result.returncode
+        return result.returncode == 0
     
-    def build(self, config: BuildConfig, targets: Optional[List[str]] = None) -> int:
-        if self.needs_reconfigure(config):
-            print("Configuration changed, reconfiguring...")
-            ret = self.configure(config)
-            if ret != 0:
-                return ret
-        
+    def build(self, config: BuildConfig, targets: Optional[List[str]] = None) -> bool:
         args = [
             "cmake",
             "--build", str(self.build_dir),
@@ -125,9 +113,9 @@ class BuildManager:
         
         print(f"Running: {' '.join(args)}")
         result = subprocess.run(args, cwd=self.project_root)
-        return result.returncode
+        return result.returncode == 0
     
-    def clean(self) -> int:
+    def clean(self) -> bool:
         args = [
             "cmake",
             "--build", str(self.build_dir),
@@ -136,29 +124,50 @@ class BuildManager:
         
         print(f"Running: {' '.join(args)}")
         result = subprocess.run(args, cwd=self.project_root)
-        return result.returncode
+        return result.returncode == 0
     
-    def rebuild(self, config: BuildConfig) -> int:
-        self.clean()
-        return self.build(config)
-    
-    def run_tests(self, config: BuildConfig) -> int:
+    def run_tests(self, config: BuildConfig) -> bool:
         test_dir = self.build_dir / "tests"
         if not test_dir.exists():
             print("No test directory found, skipping tests")
-            return 0
+            return True
         
         args = ["ctest", "--output-on-failure", "-C", config.build_type]
         
         print(f"Running: {' '.join(args)}")
         result = subprocess.run(args, cwd=self.build_dir)
-        return result.returncode
+        return result.returncode == 0
     
-    def get_platform_info(self) -> Dict[str, str]:
-        return {
-            "system": platform.system(),
-            "machine": platform.machine(),
-            "python_version": platform.python_version(),
-            "project_root": str(self.project_root),
-            "build_dir": str(self.build_dir)
-        }
+    def get_git_commit(self) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return ""
+    
+    def get_git_branch(self) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return ""
+    
+    def list_binaries(self) -> List[Path]:
+        binaries = []
+        if self.bin_dir.exists():
+            for item in self.bin_dir.iterdir():
+                if item.is_file():
+                    binaries.append(item)
+        return binaries
