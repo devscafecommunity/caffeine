@@ -10,6 +10,7 @@ set(CAFFEINE_TEST_SOURCES
     test_input.cpp
     test_debug.cpp
     test_jobsystem.cpp
+    test_caf.cpp
 )
 
 if(SDL3_FOUND)

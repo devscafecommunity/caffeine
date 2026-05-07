@@ -5,6 +5,11 @@
 #include "core/Compiler.hpp"
 #include "core/Assertions.hpp"
 
+#include "core/io/CafTypes.hpp"
+#include "core/io/Crc32.hpp"
+#include "core/io/BlobLoader.hpp"
+#include "core/io/CafWriter.hpp"
+
 #include "memory/Allocator.hpp"
 #include "memory/LinearAllocator.hpp"
 #include "memory/PoolAllocator.hpp"
