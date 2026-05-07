@@ -22,6 +22,8 @@ add_library(Caffeine
     src/debug/LogSystem.cpp
     src/debug/Profiler.cpp
     src/threading/JobSystem.cpp
+    src/ecs/CommandBuffer.cpp
+    src/ecs/World.cpp
 )
 
 if(SDL3_FOUND)
