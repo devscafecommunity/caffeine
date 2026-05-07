@@ -224,6 +224,32 @@ TEST_CASE("BlobLoader::load - rejects nonexistent file", "[caf][loader]") {
     REQUIRE_FALSE(lr.valid);
 }
 
+TEST_CASE("BlobLoader::load - rejects corrupt header (footer CRC mismatch)", "[caf][loader]") {
+    u8 payload[16] = {0};
+
+    CafWriter::write(
+        "test_corrupt_hdr.caf",
+        AssetType::Texture,
+        CAF_FLAG_NONE,
+        nullptr, 0,
+        payload, sizeof(payload));
+
+    {
+        std::FILE* f = std::fopen("test_corrupt_hdr.caf", "r+b");
+        REQUIRE(f != nullptr);
+        std::fseek(f, 4, SEEK_SET);
+        u16 bad = 0xDEAD;
+        std::fwrite(&bad, sizeof(u16), 1, f);
+        std::fclose(f);
+    }
+
+    LinearAllocator alloc(1024);
+    auto lr = BlobLoader::load("test_corrupt_hdr.caf", &alloc);
+    REQUIRE_FALSE(lr.valid);
+
+    std::remove("test_corrupt_hdr.caf");
+}
+
 TEST_CASE("BlobLoader::load - rejects corrupt payload (CRC mismatch)", "[caf][loader]") {
     u8 payload[32];
     std::memset(payload, 0x55, sizeof(payload));

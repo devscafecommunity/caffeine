@@ -19,6 +19,7 @@
 
 #include "core/Types.hpp"
 #include <functional>
+#include <bit>
 
 namespace Caffeine {
 
@@ -102,6 +103,7 @@ struct CafHeader {
 
 static_assert(sizeof(CafHeader)  == 32, "CafHeader must be exactly 32 bytes");
 static_assert(alignof(CafHeader) ==  8, "CafHeader must be 8-byte aligned");
+static_assert(std::endian::native == std::endian::little, ".caf requires a little-endian platform");
 
 // ============================================================================
 // Metadata structs — one per asset type.

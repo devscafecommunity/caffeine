@@ -28,25 +28,7 @@ BlobLoader::LoadResult BlobLoader::load(const char* path, IAllocator* allocator)
         return result;
     }
 
-    CafHeader headerPeek{};
-    if (std::fread(&headerPeek, sizeof(CafHeader), 1, file) != 1) {
-        std::fclose(file);
-        return result;
-    }
-    std::rewind(file);
-
-    if (headerPeek.magic != CafHeader::kMagic) {
-        std::fclose(file);
-        return result;
-    }
-
-    const u64 expectedFileSize = headerPeek.totalFileSize();
-    if (fileSize != expectedFileSize) {
-        std::fclose(file);
-        return result;
-    }
-
-    void* buf = allocator->alloc(fileSize, headerPeek.payloadAlignment());
+    void* buf = allocator->alloc(fileSize, 16);
     if (!buf) {
         std::fclose(file);
         return result;
@@ -61,9 +43,24 @@ BlobLoader::LoadResult BlobLoader::load(const char* path, IAllocator* allocator)
     const auto* header = static_cast<const CafHeader*>(buf);
     const auto* bytes  = static_cast<const u8*>(buf);
 
+    if (header->magic != CafHeader::kMagic)
+        return result;
+
+    if (header->versionMajor != CafHeader::kVersionMajor)
+        return result;
+
+    if (fileSize != header->totalFileSize())
+        return result;
+
     const u8* payloadPtr =
         bytes + CafHeader::kHeaderSize + header->metadataSize;
+
     if (!verifyCRC32(payloadPtr, header->dataSize, header->crc32))
+        return result;
+
+    const u32 footerCrc  = *reinterpret_cast<const u32*>(bytes + fileSize - CafHeader::kFooterSize);
+    const u32 computedCrc = Caffeine::IO::crc32(buf, fileSize - CafHeader::kFooterSize);
+    if (footerCrc != computedCrc)
         return result;
 
     result.header   = header;
