@@ -8,11 +8,11 @@
 
 #include "core/Types.hpp"
 #include "core/Assertions.hpp"
+#include "ecs/ComponentSet.hpp"
 #include "containers/Vector.hpp"
 #include "containers/HashMap.hpp"
 #include "ecs/Entity.hpp"
 #include "ecs/Archetype.hpp"
-#include "ecs/ComponentSet.hpp"
 #include "ecs/ComponentID.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "threading/JobSystem.hpp"

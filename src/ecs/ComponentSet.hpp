@@ -13,6 +13,8 @@
     #include <intrin.h>
 #endif
 
+#include <functional>
+
 namespace Caffeine::ECS {
 
 class ComponentSet {
