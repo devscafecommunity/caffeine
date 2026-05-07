@@ -18,6 +18,8 @@ find_package(SDL3 CONFIG QUIET)
 add_library(Caffeine
     src/core/Timer.cpp
     src/core/GameLoop.cpp
+    src/core/io/BlobLoader.cpp
+    src/core/io/CafWriter.cpp
     src/input/InputManager.cpp
     src/debug/LogSystem.cpp
     src/debug/Profiler.cpp
