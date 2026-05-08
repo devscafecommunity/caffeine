@@ -21,6 +21,7 @@ set(CAFFEINE_TEST_SOURCES
     test_animation.cpp
     test_mesh.cpp
     test_editor.cpp
+    test_pipeline.cpp
 )
 
 if(SDL3_FOUND)

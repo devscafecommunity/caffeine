@@ -92,3 +92,11 @@
 #include "editor/ImGuiIntegration.hpp"
 #endif
 #endif
+
+// Tools (Asset Pipeline)
+#include "tools/PipelineTypes.hpp"
+#include "tools/TextureEncoder.hpp"
+#include "tools/AudioEncoder.hpp"
+#include "tools/MeshEncoder.hpp"
+#include "tools/AssetManifest.hpp"
+#include "tools/AssetPipeline.hpp"

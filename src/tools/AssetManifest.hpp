@@ -1,0 +1,184 @@
+#pragma once
+
+#include "tools/PipelineTypes.hpp"
+#include "core/io/CafTypes.hpp"
+#include <vector>
+#include <string>
+#include <string_view>
+#include <cstdio>
+#include <algorithm>
+#include <cstring>
+
+namespace Caffeine::Tools {
+using namespace Caffeine;
+
+class AssetManifest {
+public:
+    void addEntry(AssetManifestEntry entry) {
+        m_entries.push_back(entry);
+    }
+    
+    void removeEntry(std::string_view id) {
+        auto it = std::remove_if(m_entries.begin(), m_entries.end(),
+            [id](const AssetManifestEntry& e) { return e.id == id; });
+        m_entries.erase(it, m_entries.end());
+    }
+    
+    const AssetManifestEntry* find(std::string_view id) const {
+        for (const auto& entry : m_entries) {
+            if (entry.id == id) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+    
+    const std::vector<AssetManifestEntry>& entries() const { 
+        return m_entries; 
+    }
+    
+    usize entryCount() const { 
+        return m_entries.size(); 
+    }
+
+    bool save(std::string_view manifestPath) const {
+        FILE* f = std::fopen(manifestPath.data(), "w");
+        if (!f) return false;
+        
+        std::fprintf(f, "{\n");
+        std::fprintf(f, "  \"version\": 1,\n");
+        std::fprintf(f, "  \"assets\": [\n");
+        
+        for (usize i = 0; i < m_entries.size(); ++i) {
+            const auto& e = m_entries[i];
+            std::fprintf(f, "    { \"id\": \"%s\", \"path\": \"%s\", \"type\": \"%s\", \"sizeBytes\": %llu, \"crc32\": %u }",
+                e.id.c_str(), e.path.c_str(), assetTypeName(e.type), 
+                static_cast<unsigned long long>(e.sizeBytes), e.crc32);
+            
+            if (i < m_entries.size() - 1) {
+                std::fprintf(f, ",\n");
+            } else {
+                std::fprintf(f, "\n");
+            }
+        }
+        
+        std::fprintf(f, "  ]\n");
+        std::fprintf(f, "}\n");
+        
+        std::fclose(f);
+        return true;
+    }
+
+    bool load(std::string_view manifestPath) {
+        FILE* f = std::fopen(manifestPath.data(), "r");
+        if (!f) return false;
+        
+        m_entries.clear();
+        
+        char line[2048];
+        AssetManifestEntry currentEntry;
+        bool inEntry = false;
+        
+        while (std::fgets(line, sizeof(line), f)) {
+            const char* p = line;
+            
+            while (*p == ' ' || *p == '\t') ++p;
+            
+            if (*p == '{' && !inEntry) {
+                inEntry = true;
+                currentEntry = AssetManifestEntry();
+            }
+            else if (std::strstr(p, "\"id\":")) {
+                const char* start = std::strchr(p, '"');
+                if (start) {
+                    start = std::strchr(start + 1, '"');
+                    if (start) {
+                        start++;
+                        const char* end = std::strchr(start, '"');
+                        if (end) {
+                            currentEntry.id = std::string(start, end - start);
+                        }
+                    }
+                }
+            }
+            else if (std::strstr(p, "\"path\":")) {
+                const char* start = std::strchr(p, '"');
+                if (start) {
+                    start = std::strchr(start + 1, '"');
+                    if (start) {
+                        start++;
+                        const char* end = std::strchr(start, '"');
+                        if (end) {
+                            currentEntry.path = std::string(start, end - start);
+                        }
+                    }
+                }
+            }
+            else if (std::strstr(p, "\"type\":")) {
+                const char* start = std::strchr(p, '"');
+                if (start) {
+                    start = std::strchr(start + 1, '"');
+                    if (start) {
+                        start++;
+                        const char* end = std::strchr(start, '"');
+                        if (end) {
+                            std::string typeName(start, end - start);
+                            currentEntry.type = assetTypeFromName(typeName.c_str());
+                        }
+                    }
+                }
+            }
+            else if (std::strstr(p, "\"sizeBytes\":")) {
+                unsigned long long val;
+                if (std::sscanf(p, " \"sizeBytes\": %llu", &val) == 1) {
+                    currentEntry.sizeBytes = val;
+                }
+            }
+            else if (std::strstr(p, "\"crc32\":")) {
+                unsigned int val;
+                if (std::sscanf(p, " \"crc32\": %u", &val) == 1) {
+                    currentEntry.crc32 = val;
+                }
+            }
+            else if (*p == '}' && inEntry) {
+                inEntry = false;
+                m_entries.push_back(currentEntry);
+            }
+        }
+        
+        std::fclose(f);
+        return true;
+    }
+
+private:
+    std::vector<AssetManifestEntry> m_entries;
+
+    static const char* assetTypeName(AssetType t) {
+        switch (t) {
+            case AssetType::Unknown:   return "Unknown";
+            case AssetType::Texture:   return "Texture";
+            case AssetType::Audio:     return "Audio";
+            case AssetType::Mesh:      return "Mesh";
+            case AssetType::Prefab:    return "Prefab";
+            case AssetType::Scene:     return "Scene";
+            case AssetType::Shader:    return "Shader";
+            case AssetType::Animation: return "Animation";
+            case AssetType::Font:      return "Font";
+            default:                   return "Unknown";
+        }
+    }
+    
+    static AssetType assetTypeFromName(const char* name) {
+        if (std::strcmp(name, "Texture") == 0)   return AssetType::Texture;
+        if (std::strcmp(name, "Audio") == 0)     return AssetType::Audio;
+        if (std::strcmp(name, "Mesh") == 0)      return AssetType::Mesh;
+        if (std::strcmp(name, "Prefab") == 0)    return AssetType::Prefab;
+        if (std::strcmp(name, "Scene") == 0)     return AssetType::Scene;
+        if (std::strcmp(name, "Shader") == 0)    return AssetType::Shader;
+        if (std::strcmp(name, "Animation") == 0) return AssetType::Animation;
+        if (std::strcmp(name, "Font") == 0)      return AssetType::Font;
+        return AssetType::Unknown;
+    }
+};
+
+} // namespace Caffeine::Tools
