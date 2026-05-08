@@ -11,7 +11,7 @@ using namespace Caffeine::Physics2D;
 
 static constexpr f32 kEps = 0.01f;
 
-static bool approxEq(f32 a, f32 b) { return std::fabsf(a - b) < kEps; }
+static bool approxEq(f32 a, f32 b) { return std::fabs(a - b) < kEps; }
 
 
 TEST_CASE("PhysicsMaterial - ice preset", "[physics]") {
