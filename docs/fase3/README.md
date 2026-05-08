@@ -14,6 +14,7 @@ Esta fase constrói a camada de renderização — o "olho" da engine. Com ela, 
 |--------|---------|-----------|------|--------|
 | **Asset Manager** | [`asset-manager.md`](asset-manager.md) | `Caffeine::Assets` | 3 | ✅ |
 | **Formato .caf** | [`caf-format.md`](caf-format.md) | `Caffeine` | 3+4 | ✅ |
+| **Camera 2D** | [`camera.md`](camera.md) | `Caffeine::Render` | 3 | ✅ |
 
 ---
 

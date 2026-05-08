@@ -3,7 +3,7 @@
 > **Fase:** 3 — O Olho da Engine  
 > **Namespace:** `Caffeine::Render`  
 > **Arquivo:** `src/render/Camera2D.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF3.7
 
 ---
@@ -14,7 +14,7 @@ O Camera System fornece a projeção matemática entre o **espaço do mundo** (c
 
 ---
 
-## API Planejada
+## API
 
 ```cpp
 namespace Caffeine::Render {
@@ -213,11 +213,11 @@ O [Batch Renderer](batch-renderer.md) aceita `Camera2D` e `Camera3D` via polimor
 
 ## Critério de Aceitação
 
-- [ ] Câmera segue entidade com `smoothing = 0.1f` sem jitter a 60fps
-- [ ] `worldToScreen` e `screenToWorld` são operações inversas corretas
-- [ ] Camera shake decai corretamente até zero
-- [ ] `setBounds` impede câmera de mostrar área fora do mapa
-- [ ] VP matrix cached — não recalcula quando câmera não moveu
+- [x] Câmera segue entidade com `smoothing = 0.1f` sem jitter a 60fps
+- [x] `worldToScreen` e `screenToWorld` são operações inversas corretas
+- [x] Camera shake decai corretamente até zero
+- [x] `setBounds` impede câmera de mostrar área fora do mapa
+- [x] VP matrix cached — não recalcula quando câmera não moveu
 
 ---
 
