@@ -15,6 +15,7 @@ set(CAFFEINE_TEST_SOURCES
     test_assetmanager.cpp
     test_camera2d.cpp
     test_textureatlas.cpp
+    test_scenemanager.cpp
 )
 
 if(SDL3_FOUND)
