@@ -1,20 +1,6 @@
 #pragma once
 
-// ============================================================================
-// @file    Camera2D.hpp
-// @brief   2D orthographic camera with follow, shake, and bounds clamping.
-//
-//  Features:
-//  - View + projection matrices (orthographic, cached with dirty flag)
-//  - worldToScreen / screenToWorld (correct inverses, supports rotation)
-//  - isVisible(Rect2D) — AABB frustum culling
-//  - Follow entity with lerp smoothing via update()
-//  - Camera shake with temporal decay
-//  - setBounds(Rect2D) — position clamped to world limits
-// ============================================================================
-
-#include "../core/Types.hpp"
-#include "../math/Vec2.hpp"
+#include "RenderTypes.hpp"
 #include "../math/Mat4.hpp"
 #include "../math/Math.hpp"
 #include "../ecs/Entity.hpp"
@@ -26,14 +12,6 @@
 namespace Caffeine::Render {
 
 using namespace Caffeine;
-
-// ============================================================================
-// Rect2D — axis-aligned rectangle used by Camera2D API
-// ============================================================================
-struct Rect2D {
-    Vec2 position { 0.0f, 0.0f };
-    Vec2 size     { 1280.0f, 720.0f };
-};
 
 // ============================================================================
 // Camera2D

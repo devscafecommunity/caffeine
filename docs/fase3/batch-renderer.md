@@ -3,7 +3,7 @@
 > **Fase:** 3 — O Olho da Engine  
 > **Namespace:** `Caffeine::Render`  
 > **Arquivos:** `src/render/BatchRenderer.hpp`, `src/render/TextureAtlas.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RFs:** RF3.3, RF3.4, RF3.5, RF3.6
 
 ---
@@ -19,7 +19,7 @@ O Batch Renderer agrupa milhares de sprites em **um único draw call**. Em vez d
 
 ---
 
-## API Planejada
+## API
 
 ```cpp
 namespace Caffeine::Render {
@@ -234,11 +234,11 @@ auto stats = renderer.lastFrameStats();
 
 ## Critério de Aceitação
 
-- [ ] 50K sprites em 1 draw call (verificado com GPU profiler)
-- [ ] 60fps estável em hardware mid-range
-- [ ] GPU time < 2ms para 50K sprites
-- [ ] Zero `memcpy` por frame (Persistent Mapped Buffers)
-- [ ] Radix sort correto: layer menor renderiza antes
+- [x] 50K sprites em 1 draw call (verificado com GPU profiler)
+- [x] 60fps estável em hardware mid-range
+- [x] GPU time < 2ms para 50K sprites
+- [x] Zero `memcpy` por frame (Persistent Mapped Buffers)
+- [x] Radix sort correto: layer menor renderiza antes
 
 ---
 
