@@ -62,3 +62,7 @@
 // Physics
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsSystem2D.hpp"
+
+// UI
+#include "ui/UIComponents.hpp"
+#include "ui/UISystem.hpp"
