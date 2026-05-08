@@ -66,3 +66,9 @@
 // UI
 #include "ui/UIComponents.hpp"
 #include "ui/UISystem.hpp"
+
+// Audio
+#include "audio/AudioComponents.hpp"
+#ifdef CF_HAS_SDL3
+#include "audio/AudioSystem.hpp"
+#endif
