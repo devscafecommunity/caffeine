@@ -25,6 +25,7 @@ public:
         TransitionType type      = TransitionType::Fade;
         f32            duration  = 0.5f;
         Color          fadeColor = {};
+        TransitionConfig() = default;
     };
 
     SceneHandle loadScene(const char* path, bool async = false) {
