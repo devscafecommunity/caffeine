@@ -41,3 +41,8 @@
 // Events
 #include "events/EventBus.hpp"
 #include "events/Events.hpp"
+
+// Assets
+#include "assets/AssetTypes.hpp"
+#include "assets/AssetHandle.hpp"
+#include "assets/AssetManager.hpp"

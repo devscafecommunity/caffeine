@@ -10,13 +10,10 @@ Esta fase constrói a camada de renderização — o "olho" da engine. Com ela, 
 
 ## 📋 Índice
 
-| Módulo | Arquivo | Namespace | Fase |
-|--------|---------|-----------|------|
-| **RHI** | [`rhi.md`](rhi.md) | `Caffeine::RHI` | 3 |
-| **Batch Renderer** | [`batch-renderer.md`](batch-renderer.md) | `Caffeine::Render` | 3 |
-| **Camera System** | [`camera.md`](camera.md) | `Caffeine::Render` | 3 |
-| **Asset Manager** | [`asset-manager.md`](asset-manager.md) | `Caffeine::Assets` | 3 |
-| **Formato .caf** | [`caf-format.md`](caf-format.md) | `Caffeine` | 3+4 |
+| Módulo | Arquivo | Namespace | Fase | Status |
+|--------|---------|-----------|------|--------|
+| **Asset Manager** | [`asset-manager.md`](asset-manager.md) | `Caffeine::Assets` | 3 | ✅ |
+| **Formato .caf** | [`caf-format.md`](caf-format.md) | `Caffeine` | 3+4 | ✅ |
 
 ---
 
