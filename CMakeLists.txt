@@ -82,4 +82,10 @@ target_compile_features(Caffeine PUBLIC cxx_std_20)
 
 add_library(Caffeine::Core ALIAS Caffeine)
 
+# ── caf-encode CLI tool ────────────────────────────────────────
+add_executable(caf-encode tools/caf-encode/main.cpp)
+target_link_libraries(caf-encode PRIVATE Caffeine)
+target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(caf-encode PRIVATE cxx_std_20)
+
 add_subdirectory(tests)

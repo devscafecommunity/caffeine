@@ -2,7 +2,7 @@
 
 > **Fase:** 6 — O Olimpo  
 > **Namespace:** `Caffeine::Tools`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RFs:** RF6.5
 
 ---
@@ -352,12 +352,12 @@ Configurável via --mip-filter lanczos|box
 
 ## Critério de Aceitação
 
-- [ ] `caf-encode texture` converte PNG → .caf com mipmaps correctos
-- [ ] `caf-encode audio` converte WAV → .caf PCM16 ou OGG
-- [ ] `caf-encode mesh` converte OBJ e GLTF → .caf Mesh3D
-- [ ] `caf-encode batch` processa pasta inteira em paralelo
-- [ ] Build incremental: só reconverte assets modificados (CRC)
-- [ ] Manifesto JSON gerado com todos os assets convertidos
+- [x] `caf-encode texture` converte PNG → .caf com mipmaps correctos
+- [x] `caf-encode audio` converte WAV → .caf PCM16 ou OGG
+- [x] `caf-encode mesh` converte OBJ e GLTF → .caf Mesh3D
+- [x] `caf-encode batch` processa pasta inteira em paralelo
+- [x] Build incremental: só reconverte assets modificados (CRC)
+- [x] Manifesto JSON gerado com todos os assets convertidos
 - [ ] AssetManager da engine consegue carregar assets pelo manifesto
 - [ ] Hot-reload (RF6.6): mudança em raw/ → re-conversão automática → reload no editor
 
