@@ -3,7 +3,7 @@
 > **Fase:** 4 — O Cérebro  
 > **Namespace:** `Caffeine::Physics2D`  
 > **Arquivo:** `src/physics/PhysicsSystem2D.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF4.10
 
 ---
@@ -16,7 +16,72 @@ Sistema de física 2D simples com suporte a rigid body dynamics, AABB e circle c
 
 ---
 
-## API Planejada
+## API
+
+```cpp
+namespace Caffeine::Physics2D {
+
+struct PhysicsMaterial {
+    f32 friction    = 0.5f;
+    f32 restitution = 0.3f;
+    static PhysicsMaterial ice();
+    static PhysicsMaterial rubber();
+    static PhysicsMaterial metal();
+    static PhysicsMaterial wood();
+    static PhysicsMaterial stone();
+};
+
+struct RigidBody2D {
+    f32  mass          = 1.0f;
+    f32  restitution   = 0.3f;
+    f32  friction      = 0.5f;
+    f32  linearDamping = 0.0f;
+    bool isKinematic   = false;
+    bool lockRotation  = true;
+};
+
+struct Collider2D {
+    Vec2          size      = { 32.0f, 32.0f };
+    Vec2          offset    = { 0.0f, 0.0f };
+    f32           radius    = 16.0f;
+    u32           layer     = 0;
+    u32           layerMask = 0xFFFFFFFF;
+    ColliderShape shape     = ColliderShape::AABB;
+    bool          isStatic  = false;
+    bool          isTrigger = false;
+    bool          isOneWay  = false;
+};
+
+struct Rect2D { Vec2 position; Vec2 size; };
+struct RaycastHit { ECS::Entity entity; Vec2 point; Vec2 normal; f32 distance; bool hit; };
+struct CollisionManifold { Vec2 contactPoint; Vec2 normal; f32 penetration; };
+
+class PhysicsSystem2D : public ECS::ISystem {
+public:
+    explicit PhysicsSystem2D(Events::EventBus* eventBus = nullptr);
+    void onUpdate(ECS::World& world, f32 dt) override;
+
+    void setGravity(Vec2 gravity);
+    Vec2 gravity() const;
+
+    RaycastHit               raycast(ECS::World& world, Vec2 origin, Vec2 dir, f32 maxDist, u32 layerMask = 0xFFFFFFFF);
+    std::vector<ECS::Entity> overlapCircle(ECS::World& world, Vec2 center, f32 radius, u32 layerMask = 0xFFFFFFFF);
+    std::vector<ECS::Entity> overlapAABB(ECS::World& world, Rect2D rect, u32 layerMask = 0xFFFFFFFF);
+
+    void applyForce(ECS::Entity e, Vec2 force);
+    void applyImpulse(ECS::Entity e, Vec2 impulse);
+    void setKinematic(ECS::Entity e, bool kinematic);
+    void teleport(ECS::Entity e, Vec2 position);
+
+    const std::vector<CollisionManifold>& lastManifolds() const;
+};
+
+}
+```
+
+---
+
+## API Planejada (original de referência)
 
 ```cpp
 namespace Caffeine::Physics2D {
@@ -216,8 +281,8 @@ Se o jogo precisar de:
 - [ ] 1K rigid bodies a 60fps
 - [ ] Physics step < 3ms para 1K bodies
 - [ ] `tsan` clean — `applyForce` thread-safe
-- [ ] Raycast retorna hit correto para todos ângulos
-- [ ] Colisões publicam `OnCollision2D` corretamente
+- [x] Raycast retorna hit correto para todos ângulos
+- [x] Colisões publicam `OnCollision2D` corretamente
 
 ---
 
