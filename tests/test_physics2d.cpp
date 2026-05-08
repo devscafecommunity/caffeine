@@ -353,7 +353,7 @@ TEST_CASE("PhysicsSystem2D - raycast respects layerMask", "[physics]") {
 
     Entity e = world.create();
     world.add<Position2D>(e, Position2D{ 50.0f, 0.0f });
-    Collider2D col{}; col.size = { 30.0f, 30.0f }; col.layer = 3;
+    Collider2D col{}; col.size = { 30.0f, 30.0f }; col.layer = 3; col.layerMask = (1u << 3);
     world.add<Collider2D>(e, col);
 
     auto hit = sys.raycast(world, { 0.0f, 0.0f }, { 1.0f, 0.0f }, 200.0f, (1u << 5));
