@@ -58,3 +58,7 @@
 #include "scene/SceneComponents.hpp"
 #include "scene/SceneSerializer.hpp"
 #include "scene/SceneManager.hpp"
+
+// Physics
+#include "physics/PhysicsComponents2D.hpp"
+#include "physics/PhysicsSystem2D.hpp"
