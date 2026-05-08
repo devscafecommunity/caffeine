@@ -27,6 +27,7 @@ add_library(Caffeine
     src/ecs/CommandBuffer.cpp
     src/ecs/World.cpp
     src/events/EventBus.cpp
+    src/assets/AssetManager.cpp
 )
 
 if(SDL3_FOUND)
