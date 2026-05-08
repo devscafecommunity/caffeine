@@ -72,3 +72,7 @@
 #ifdef CF_HAS_SDL3
 #include "audio/AudioSystem.hpp"
 #endif
+
+// Animation
+#include "animation/AnimationComponents.hpp"
+#include "animation/AnimationSystem.hpp"

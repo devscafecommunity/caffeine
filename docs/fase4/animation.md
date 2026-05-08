@@ -3,7 +3,7 @@
 > **Fase:** 4 — O Cérebro  
 > **Namespace:** `Caffeine::Animation`  
 > **Arquivo:** `src/animation/AnimationSystem.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF4.9
 
 ---
@@ -16,90 +16,61 @@ Sistema de animação 2D com clipes de sprite e state machine. Cada entidade tem
 
 ---
 
-## API Planejada
+## API
 
 ```cpp
 namespace Caffeine::Animation {
 
-// ============================================================================
-// @brief  Clipe de animação — sequência de frames de sprite sheet.
-// ============================================================================
-struct AnimationClip {
-    FixedString<32>     name;
-    u32                 fps          = 12;
-    std::vector<Rect2D> frames;       // regiões na textura/atlas
-    bool                loop         = true;
-    f32 duration() const { return (f32)frames.size() / (f32)fps; }
+struct FrameRect {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 w = 0.0f;
+    f32 h = 0.0f;
 };
 
-// ============================================================================
-// @brief  Transição entre estados de animação.
-// ============================================================================
+struct AnimationClip {
+    FixedString<32>        name;
+    u32                    fps   = 12;
+    std::vector<FrameRect> frames;
+    bool                   loop  = true;
+    f32 duration() const;
+};
+
 struct AnimationTransition {
     FixedString<32>       toState;
-    std::function<bool()> condition;   // quando esta condição é verdade, transiciona
-    f32                   blendTime   = 0.1f;  // segundos de crossfade
-    bool                  hasExitTime = false;  // true = espera clip terminar
+    std::function<bool()> condition;
+    f32                   blendTime   = 0.1f;
+    bool                  hasExitTime = false;
 };
 
-// ============================================================================
-// @brief  Estado de animação (nó na state machine).
-// ============================================================================
 struct AnimationState {
     FixedString<32>                  name;
-    const AnimationClip*             clip        = nullptr;
-    f32                              speed       = 1.0f;
+    const AnimationClip*             clip  = nullptr;
+    f32                              speed = 1.0f;
     std::vector<AnimationTransition> transitions;
 };
 
-// ============================================================================
-// @brief  Componente de animação da entidade.
-//
-//  Contém a state machine e estado atual.
-//  O AnimationSystem itera sobre todas as entidades com este componente.
-// ============================================================================
 struct Animator {
-    HashMap<FixedString<32>, AnimationState> states;
-    FixedString<32>  currentState;
-    FixedString<32>  previousState;
-    f32              timeInState    = 0.0f;
-    f32              blendWeight    = 1.0f;   // para crossfade (0 → 1)
-    f32              playbackScale  = 1.0f;   // multiplicador de velocidade
-    bool             paused         = false;
-
-    // Eventos de animação (frame específico dispara callback)
+    HashMap<FixedString<32>, AnimationState>     states;
+    FixedString<32>                              currentState;
+    FixedString<32>                              previousState;
+    f32                                          timeInState   = 0.0f;
+    f32                                          blendWeight   = 1.0f;
+    f32                                          playbackScale = 1.0f;
+    bool                                         paused        = false;
     std::vector<std::pair<u32, FixedString<32>>> frameEvents;
     std::function<void(const FixedString<32>&)>  onFrameEvent;
 };
 
-// ============================================================================
-// @brief  Sistema de animação ECS.
-//
-//  Por frame:
-//  1. Verifica condições de transição
-//  2. Avança timeInState
-//  3. Calcula frame atual do clipe
-//  4. Atualiza Sprite.srcRect com o frame correto
-//  5. Dispara frameEvents se frame atingido
-// ============================================================================
 class AnimationSystem : public ECS::ISystem {
 public:
-    void update(ECS::World& world, f64 dt) override;
-    i32  priority() const override { return 200; }
-    const char* name() const override { return "Animation"; }
+    void onUpdate(ECS::World& world, f32 dt) override;
 
-    // API imperativa (útil para gameplay code)
-    void play(ECS::Entity e, const char* stateName,
-              f32 blendTime = 0.1f);
-    void pause(ECS::Entity e);
-    void resume(ECS::Entity e);
-    void setSpeed(ECS::Entity e, f32 speed);
-    bool isPlaying(ECS::Entity e, const char* stateName) const;
-
-private:
-    void evaluateTransitions(ECS::Entity e, Animator& anim, f64 dt);
-    void advanceFrame(ECS::Entity e, Animator& anim, Sprite& sprite, f64 dt);
-    void checkFrameEvents(ECS::Entity e, Animator& anim);
+    void play(ECS::World& world, ECS::Entity e, const char* stateName);
+    void pause(ECS::World& world, ECS::Entity e);
+    void resume(ECS::World& world, ECS::Entity e);
+    void setSpeed(ECS::World& world, ECS::Entity e, f32 speed);
+    bool isPlaying(ECS::World& world, ECS::Entity e, const char* stateName) const;
 };
 
 }  // namespace Caffeine::Animation
@@ -129,9 +100,6 @@ idle ──────────────────► jump_rise
 ## Exemplos de Uso
 
 ```cpp
-// ── Setup do Animator ─────────────────────────────────────────
-Animator anim;
-
 AnimationClip idleClip;
 idleClip.name = "idle";
 idleClip.fps  = 8;
@@ -144,36 +112,38 @@ walkClip.fps  = 12;
 walkClip.frames = { {128,0,64,64}, {192,0,64,64}, {256,0,64,64}, {320,0,64,64} };
 walkClip.loop = true;
 
-AnimationState idleState { "idle", &idleClip };
+AnimationState idleState;
+idleState.name = "idle";
+idleState.clip = &idleClip;
 idleState.transitions.push_back({
-    .toState   = "walk",
-    .condition = [&]() { return input.axisValue(Axis::MoveX) != 0.0f; }
+    FixedString<32>("walk"),
+    [&]() { return input.axisValue(Axis::MoveX) != 0.0f; }
 });
 
-AnimationState walkState { "walk", &walkClip };
+AnimationState walkState;
+walkState.name = "walk";
+walkState.clip = &walkClip;
 walkState.transitions.push_back({
-    .toState   = "idle",
-    .condition = [&]() { return input.axisValue(Axis::MoveX) == 0.0f; }
+    FixedString<32>("idle"),
+    [&]() { return input.axisValue(Axis::MoveX) == 0.0f; }
 });
 
-anim.states["idle"] = idleState;
-anim.states["walk"] = walkState;
-anim.currentState   = "idle";
+Animator anim;
+anim.states.set(FixedString<32>("idle"), idleState);
+anim.states.set(FixedString<32>("walk"), walkState);
+anim.currentState = "idle";
 
 world.add<Animator>(player, std::move(anim));
 
-// ── Registrar sistema ─────────────────────────────────────────
-world.registerSystem<AnimationSystem>();
+AnimationSystem animSys;
+animSys.play(world, player, "attack_1");
 
-// ── Controle programático ─────────────────────────────────────
-auto* animSys = world.getSystem<AnimationSystem>();
-animSys->play(player, "attack_1", 0.0f);  // sem blend (combos)
-
-// ── Frame events ──────────────────────────────────────────────
-world.get<Animator>(player)->frameEvents.push_back({3, "attack_hit"});
+world.get<Animator>(player)->frameEvents.push_back({3u, FixedString<32>("attack_hit")});
 world.get<Animator>(player)->onFrameEvent = [](const FixedString<32>& evt) {
-    if (evt == "attack_hit") damageEnemiesInRange();
+    if (evt == FixedString<32>("attack_hit")) damageEnemiesInRange();
 };
+
+animSys.onUpdate(world, dt);
 ```
 
 ---
