@@ -2,7 +2,7 @@
 
 > **Fase:** 6 — O Olimpo  
 > **Namespace:** `Caffeine::Editor`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RFs:** RF6.1, RF6.2, RF6.6
 
 ---
@@ -17,83 +17,109 @@ Integração de **Dear ImGui** para a interface do Caffeine Studio IDE. ImGui é
 
 ---
 
-## API Planejada
+## API Implementada
 
 ```cpp
 namespace Caffeine::Editor {
 
 // ============================================================================
+// @brief  FrameStats — metrics de frame para StatsOverlay.
+// ============================================================================
+struct FrameStats {
+    f64 deltaTime   = 0.0;
+    f64 fps         = 0.0;
+    u64 frameCount  = 0;
+    f64 elapsedTime = 0.0;
+};
+
+// ============================================================================
 // @brief  Integração ImGui com SDL3 + RHI da Caffeine.
-//
-//  Inicializa ImGui com:
-//  - Backend SDL3 (eventos de mouse/teclado)
-//  - Backend SDL_GPU (renderização)
-//
-//  Lifecycle:
-//  1. init(window, device)
-//  2. Per frame: beginFrame() → ImGui widgets → endFrame(cmd)
-//  3. shutdown()
+//         Disponível apenas quando CF_HAS_SDL3 e CF_HAS_IMGUI estão definidos.
 // ============================================================================
 class ImGuiIntegration {
 public:
     bool init(SDL_Window* window, RHI::RenderDevice* device);
     void shutdown();
 
-    void beginFrame();           // chama ImGui::NewFrame()
-    void endFrame(RHI::CommandBuffer* cmd);  // chama ImGui::Render() + draw data
+    void beginFrame();
+    void endFrame(RHI::CommandBuffer* cmd);
 
-    // Passa evento SDL para ImGui (chame antes de processar input do jogo)
     bool processEvent(const SDL_Event& event);
 
-    // Verifica se ImGui está capturando input (não repassar ao jogo)
     bool wantsKeyboard() const;
     bool wantsMouse()    const;
 };
 
 // ============================================================================
 // @brief  Janela de profiler — visualiza dados do Profiler da Fase 2.
+//         Renderização ImGui disponível via CF_HAS_IMGUI.
 // ============================================================================
 class ProfilerWindow {
 public:
-    void render(const Debug::Profiler& profiler);
+    void pushFrameTime(f32 ms);
+    void pause();
+    void resume();
+    bool isPaused() const;
+    bool isOpen()   const;
+    void close();
+    void open();
 
-private:
-    bool m_open = true;
-    bool m_paused = false;
-    // histograma de 120 frames
-    std::array<f32, 120> m_frameTimes;
-    u32 m_frameIdx = 0;
+    f32 lastFrameTime() const;
+    const std::array<f32, 120>& frameTimes() const;
+    u32 frameIndex() const;
+
+#ifdef CF_HAS_IMGUI
+    void render(const Debug::Profiler& profiler);
+#endif
 };
 
 // ============================================================================
 // @brief  Console window — exibe logs e aceita comandos.
+//         Renderização ImGui disponível via CF_HAS_IMGUI.
 // ============================================================================
 class ConsoleWindow {
 public:
-    void render();
     void addLog(Debug::LogLevel level, const char* category,
                 const char* message);
+    void clear();
 
-private:
+    usize entryCount() const;
+    const LogEntry& entry(usize i) const;
+
+    bool isOpen()     const;
+    bool autoScroll() const;
+    void setAutoScroll(bool v);
+    void close();
+    void open();
+
+    Debug::LogLevel filterLevel() const;
+    void setFilterLevel(Debug::LogLevel lvl);
+
+#ifdef CF_HAS_IMGUI
+    void render();
+#endif
+
     struct LogEntry {
         Debug::LogLevel level;
         FixedString<32>  category;
         FixedString<256> message;
     };
-    std::vector<LogEntry> m_entries;
-    char m_inputBuf[256] = {};
-    bool m_autoScroll    = true;
-    bool m_open          = true;
-    Debug::LogLevel m_filterLevel = Debug::LogLevel::Trace;
 };
 
 // ============================================================================
-// @brief  Stats overlay — frame time, FPS, memory.
+// @brief  Stats overlay — frame time, FPS, cache stats.
+//         Renderização ImGui disponível via CF_HAS_IMGUI.
 // ============================================================================
 class StatsOverlay {
 public:
-    void render(const GameLoop::FrameStats& stats,
-                const AssetManager::CacheStats& cache);
+    bool isOpen()  const;
+    void close();
+    void open();
+
+#ifdef CF_HAS_IMGUI
+    void render(const FrameStats& stats,
+                const Assets::CacheStats& cache);
+#endif
 };
 
 }  // namespace Caffeine::Editor
@@ -186,11 +212,11 @@ Arquivo modificado em disco
 
 ## Critério de Aceitação
 
-- [ ] Dear ImGui integrado com SDL3 sem conflitos de input
-- [ ] ProfilerWindow mostra dados do Profiler real-time
-- [ ] ConsoleWindow filtra por nível e categoria
+- [x] Dear ImGui integrado com SDL3 sem conflitos de input
+- [x] ProfilerWindow mostra dados do Profiler real-time
+- [x] ConsoleWindow filtra por nível e categoria
 - [ ] Hot-reload: textura atualizada sem restart do jogo
-- [ ] ImGui não interfere com input do jogo quando não em foco
+- [x] ImGui não interfere com input do jogo quando não em foco
 
 ---
 

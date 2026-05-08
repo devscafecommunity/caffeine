@@ -81,3 +81,14 @@
 #include "ecs/Components3D.hpp"
 #include "assets/MeshTypes.hpp"
 #include "assets/MeshLoader.hpp"
+
+// Editor (Dear ImGui)
+#include "editor/EditorTypes.hpp"
+#include "editor/ConsoleWindow.hpp"
+#include "editor/ProfilerWindow.hpp"
+#include "editor/StatsOverlay.hpp"
+#ifdef CF_HAS_SDL3
+#ifdef CF_HAS_IMGUI
+#include "editor/ImGuiIntegration.hpp"
+#endif
+#endif
