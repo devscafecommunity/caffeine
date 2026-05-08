@@ -18,6 +18,7 @@ set(CAFFEINE_TEST_SOURCES
     test_scenemanager.cpp
     test_physics2d.cpp
     test_ui.cpp
+    test_animation.cpp
 )
 
 if(SDL3_FOUND)
