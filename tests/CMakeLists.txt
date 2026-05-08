@@ -19,6 +19,7 @@ set(CAFFEINE_TEST_SOURCES
     test_physics2d.cpp
     test_ui.cpp
     test_animation.cpp
+    test_mesh.cpp
 )
 
 if(SDL3_FOUND)
