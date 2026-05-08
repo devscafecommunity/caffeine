@@ -102,40 +102,43 @@ public:
                 --depth;
             }
             else if (std::strstr(p, "\"id\":")) {
-                const char* start = std::strchr(p, '"');
-                if (start) {
-                    start = std::strchr(start + 1, '"');
-                    if (start) {
-                        start++;
-                        const char* end = std::strchr(start, '"');
+                const char* val = std::strchr(p, ':');
+                if (val) {
+                    ++val;
+                    while (*val == ' ' || *val == '\t') ++val;
+                    if (*val == '"') {
+                        ++val;
+                        const char* end = std::strchr(val, '"');
                         if (end) {
-                            currentEntry.id = std::string(start, end - start);
+                            currentEntry.id.assign(val, end - val);
                         }
                     }
                 }
             }
             else if (std::strstr(p, "\"path\":")) {
-                const char* start = std::strchr(p, '"');
-                if (start) {
-                    start = std::strchr(start + 1, '"');
-                    if (start) {
-                        start++;
-                        const char* end = std::strchr(start, '"');
+                const char* val = std::strchr(p, ':');
+                if (val) {
+                    ++val;
+                    while (*val == ' ' || *val == '\t') ++val;
+                    if (*val == '"') {
+                        ++val;
+                        const char* end = std::strchr(val, '"');
                         if (end) {
-                            currentEntry.path = std::string(start, end - start);
+                            currentEntry.path.assign(val, end - val);
                         }
                     }
                 }
             }
             else if (std::strstr(p, "\"type\":")) {
-                const char* start = std::strchr(p, '"');
-                if (start) {
-                    start = std::strchr(start + 1, '"');
-                    if (start) {
-                        start++;
-                        const char* end = std::strchr(start, '"');
+                const char* val = std::strchr(p, ':');
+                if (val) {
+                    ++val;
+                    while (*val == ' ' || *val == '\t') ++val;
+                    if (*val == '"') {
+                        ++val;
+                        const char* end = std::strchr(val, '"');
                         if (end) {
-                            std::string typeName(start, end - start);
+                            std::string typeName(val, end - val);
                             currentEntry.type = assetTypeFromName(typeName.c_str());
                         }
                     }
@@ -153,9 +156,6 @@ public:
                     currentEntry.crc32 = val;
                 }
             }
-            else if (*p == '}' && inEntry) {
-                inEntry = false;
-                m_entries.push_back(currentEntry);
             }
         }
         
