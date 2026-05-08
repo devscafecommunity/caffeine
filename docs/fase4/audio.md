@@ -3,7 +3,7 @@
 > **Fase:** 4 — O Cérebro  
 > **Namespace:** `Caffeine::Audio`  
 > **Arquivo:** `src/audio/AudioSystem.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF4.8
 
 ---
@@ -19,26 +19,29 @@ O Audio System usa `SDL_AudioStream` para streaming de música e pré-carregamen
 
 ---
 
-## API Planejada
+## API
 
 ```cpp
 namespace Caffeine::Audio {
 
-// ============================================================================
-// @brief  Clipe de áudio (dados brutos em memória).
-// ============================================================================
 struct AudioClip {
-    const u8* data        = nullptr;
-    u64       size        = 0;
-    u32       sampleRate  = 44100;
-    u16       channels    = 2;
+    const u8* data          = nullptr;
+    u64       size          = 0;
+    u32       sampleRate    = 44100;
+    u16       channels      = 2;
     u16       bitsPerSample = 16;
-    f32       duration    = 0.0f;  // segundos
+    f32       duration      = 0.0f;
 };
 
-// ============================================================================
-// @brief  Source de áudio — instância de som tocando.
-// ============================================================================
+struct AudioEmitter {
+    FixedString<128> clipPath;
+    f32              volume      = 1.0f;
+    f32              maxDistance = 500.0f;
+    bool             loop        = false;
+    bool             playOnSpawn = true;
+    bool             spatial     = true;
+};
+
 class AudioSource {
 public:
     void play();
@@ -46,92 +49,58 @@ public:
     void stop();
     void seek(f32 seconds);
 
-    void setVolume(f32 v);      // 0.0 a 1.0
-    void setPan(f32 pan);       // -1.0 (left) a +1.0 (right)
-    void setPitch(f32 pitch);   // 0.5 (half speed) a 2.0 (double)
+    void setVolume(f32 v);
+    void setPan(f32 pan);
+    void setPitch(f32 pitch);
     void setLoop(bool loop);
 
-    bool isPlaying()     const;
-    bool isPaused()      const;
-    f32  currentTime()   const;
-    f32  duration()      const { return m_clip ? m_clip->duration : 0; }
-
-private:
-    SDL_AudioStream* m_stream = nullptr;
-    AudioClip*        m_clip   = nullptr;
-    f32               m_volume = 1.0f;
-    f32               m_pan    = 0.0f;
-    f32               m_pitch  = 1.0f;
-    bool              m_loop   = false;
+    bool isPlaying()   const;
+    bool isPaused()    const;
+    bool isFree()      const;
+    f32  currentTime() const;
+    f32  duration()    const;
+    f32  volume()      const;
+    f32  pan()         const;
+    f32  pitch()       const;
+    bool loop()        const;
 };
 
-// ============================================================================
-// @brief  Sistema de áudio.
-//
-//  Channels:
-//  - sfxChannelCount   = 32 (SFX simultâneos)
-//  - musicChannelCount = 2  (crossfade entre músicas)
-//
-//  Memory:
-//  - SFX pool: PoolAllocator (tamanho fixo por clip, zero alloc em runtime)
-//  - Música: streaming (64KB chunks)
-// ============================================================================
 class AudioSystem {
 public:
-    AudioSystem();
-    ~AudioSystem();
-
     bool init(u32 sfxChannelCount = 32, u32 musicChannelCount = 2);
     void shutdown();
 
-    // ── SFX ────────────────────────────────────────────────────
-    AudioClip*   loadClip(const char* path);
-    AudioSource* playSFX(AudioClip* clip,
-                         f32 volume = 1.0f,
-                         f32 pan    = 0.0f);
-    AudioSource* playSFXAt(AudioClip* clip, Vec2 worldPos,
+    AudioClip*   registerClip(const u8* data, u64 size,
+                               u32 sampleRate = 44100, u16 channels = 2,
+                               u16 bitsPerSample = 16, f32 duration = 0.0f);
+
+    AudioSource* playSFX(const AudioClip* clip,
+                         f32 volume = 1.0f, f32 pan = 0.0f);
+    AudioSource* playSFXAt(const AudioClip* clip, Vec2 worldPos,
                             f32 maxDistance = 500.0f);
 
-    // ── Música ─────────────────────────────────────────────────
-    void playMusic(const char* path,
-                   f32 volume = 0.8f,
-                   bool loop  = true);
-    void stopMusic(f32 fadeOutSecs = 0.5f);
-    void fadeMusic(f32 fadeOutSecs,
-                   const char* nextPath,
-                   f32 fadeInSecs = 0.5f);
-    void setMusicVolume(f32 volume);
-
-    // ── Spatial audio ──────────────────────────────────────────
-    void setListenerPosition(Vec2 pos, Vec2 forward = {1, 0});
+    void setListenerPosition(Vec2 pos, Vec2 forward = {1.0f, 0.0f});
     void setSourcePosition(AudioSource* source, Vec2 worldPos,
                            f32 maxDistance = 500.0f);
 
-    // ── Master controls ────────────────────────────────────────
     void setMasterVolume(f32 volume);
     void setMasterPaused(bool paused);
 
-    // ── Update (processa fade, libera sources finalizados) ─────
     void update(f64 dt);
 
+    bool isInitialized()    const;
+    f32  masterVolume()     const;
+    bool masterPaused()     const;
+    Vec2 listenerPosition() const;
+
     struct Stats {
-        u32 activeSFX;
-        u32 sfxPoolUsed;
-        u32 sfxPoolTotal;
+        u32  activeSFX;
+        u32  sfxPoolUsed;
+        u32  sfxPoolTotal;
         bool musicPlaying;
         f32  musicVolume;
     };
     Stats stats() const;
-
-private:
-    SDL_AudioDeviceID              m_device;
-    std::vector<AudioSource>       m_sfxPool;
-    AudioSource*                    m_musicCurrent = nullptr;
-    AudioSource*                    m_musicNext    = nullptr;  // crossfade
-    HashMap<u64, AudioClip>         m_clipCache;
-    Vec2                            m_listenerPos   = {0, 0};
-    f32                             m_masterVolume  = 1.0f;
-    bool                            m_masterPaused  = false;
 };
 
 }  // namespace Caffeine::Audio
@@ -181,34 +150,18 @@ pan     = clamp((emitterX - listenerX) / maxDistance, -1, 1)
 ## Exemplos de Uso
 
 ```cpp
-// ── Init ──────────────────────────────────────────────────────
 Caffeine::Audio::AudioSystem audio;
 audio.init(32, 2);
 
-// ── Carregar clips ────────────────────────────────────────────
-auto* jumpSFX    = audio.loadClip("audio/jump.caf");
-auto* impactSFX  = audio.loadClip("audio/impact.caf");
+static const u8 jumpPCM[64] = {};
+auto* jumpSFX = audio.registerClip(jumpPCM, sizeof(jumpPCM), 44100, 2, 16, 0.5f);
 
-// ── Tocar SFX simples ─────────────────────────────────────────
 audio.playSFX(jumpSFX, 0.8f);
 
-// ── Tocar SFX com posição ─────────────────────────────────────
-audio.playSFXAt(impactSFX, explosionPos, 300.0f);
+audio.playSFXAt(jumpSFX, {300.0f, 150.0f}, 500.0f);
 
-// ── Música com crossfade ──────────────────────────────────────
-audio.playMusic("music/level1.caf");
-// ... ao chegar em boss:
-audio.fadeMusic(1.0f, "music/boss.caf", 0.5f);
-
-// ── Listener segue câmera ─────────────────────────────────────
 audio.setListenerPosition(camera.position());
 
-// ── Responder a eventos ───────────────────────────────────────
-eventBus.subscribe<OnCollision2D>([&](const OnCollision2D& e) {
-    audio.playSFXAt(impactSFX, e.contactPoint, 200.0f);
-});
-
-// ── Update no Game Loop ───────────────────────────────────────
 audio.update(dt);
 ```
 
