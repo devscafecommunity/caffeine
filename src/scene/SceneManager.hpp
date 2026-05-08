@@ -12,12 +12,7 @@ namespace Caffeine::Scene {
 
 struct Color {
     u8 r = 0, g = 0, b = 0, a = 255;
-    static const Color BLACK;
-    static const Color WHITE;
 };
-
-inline const Color Color::BLACK = {0,   0,   0,   255};
-inline const Color Color::WHITE = {255, 255, 255, 255};
 
 class SceneManager {
 public:
@@ -29,7 +24,7 @@ public:
     struct TransitionConfig {
         TransitionType type      = TransitionType::Fade;
         f32            duration  = 0.5f;
-        Color          fadeColor = Color::BLACK;
+        Color          fadeColor = {};
     };
 
     SceneHandle loadScene(const char* path, bool async = false) {
