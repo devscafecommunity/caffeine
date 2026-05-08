@@ -70,7 +70,7 @@ TEST_CASE("PhysicsSystem2D - dynamic body falls under gravity", "[physics]") {
 
     sys.onUpdate(world, 1.0f / 60.0f);
 
-    auto* pos = e.get<Position2D>();
+    auto* pos = world.get<Position2D>(e);
     REQUIRE(pos != nullptr);
     REQUIRE(pos->y < 100.0f);
 }
@@ -90,7 +90,7 @@ TEST_CASE("PhysicsSystem2D - static body does not move under gravity", "[physics
 
     sys.onUpdate(world, 1.0f / 60.0f);
 
-    auto* pos = e.get<Position2D>();
+    auto* pos = world.get<Position2D>(e);
     REQUIRE(approxEq(pos->y, 0.0f));
 }
 
@@ -109,7 +109,7 @@ TEST_CASE("PhysicsSystem2D - kinematic body moves by velocity, ignores gravity",
 
     sys.onUpdate(world, 1.0f);
 
-    auto* pos = e.get<Position2D>();
+    auto* pos = world.get<Position2D>(e);
     REQUIRE(pos->x > 50.0f);
     REQUIRE(approxEq(pos->y, 0.0f));
 }
@@ -136,8 +136,8 @@ TEST_CASE("PhysicsSystem2D - two AABB bodies collide and separate", "[physics]")
 
     sys.onUpdate(world, 1.0f / 60.0f);
 
-    auto* velA = a.get<Velocity2D>();
-    auto* velB = b.get<Velocity2D>();
+    auto* velA = world.get<Velocity2D>(a);
+    auto* velB = world.get<Velocity2D>(b);
     REQUIRE(velA != nullptr);
     REQUIRE(velB != nullptr);
     REQUIRE(velB->x > 0.0f);
@@ -164,7 +164,7 @@ TEST_CASE("PhysicsSystem2D - dynamic AABB vs static AABB", "[physics]") {
 
     sys.onUpdate(world, 1.0f / 60.0f);
 
-    auto* vel = dyn.get<Velocity2D>();
+    auto* vel = world.get<Velocity2D>(dyn);
     REQUIRE(vel != nullptr);
     REQUIRE(vel->x < 100.0f);
 }
@@ -191,7 +191,7 @@ TEST_CASE("PhysicsSystem2D - two circles collide", "[physics]") {
 
     sys.onUpdate(world, 1.0f / 60.0f);
 
-    auto* velB = b.get<Velocity2D>();
+    auto* velB = world.get<Velocity2D>(b);
     REQUIRE(velB != nullptr);
     REQUIRE(velB->x > 0.0f);
 }
@@ -224,7 +224,7 @@ TEST_CASE("PhysicsSystem2D - trigger does not push bodies", "[physics]") {
     bus.dispatch();
 
     REQUIRE(triggered);
-    auto* velA = a.get<Velocity2D>();
+    auto* velA = world.get<Velocity2D>(a);
     REQUIRE(approxEq(velA->x, 0.0f));
 }
 
@@ -244,7 +244,7 @@ TEST_CASE("PhysicsSystem2D - body falls asleep when velocity is near zero", "[ph
         sys.onUpdate(world, 1.0f / 60.0f);
     }
 
-    auto* rb = e.get<RigidBody2D>();
+    auto* rb = world.get<RigidBody2D>(e);
     REQUIRE(rb != nullptr);
     REQUIRE(rb->isSleeping);
 }
@@ -262,9 +262,9 @@ TEST_CASE("PhysicsSystem2D - applyImpulse wakes sleeping body", "[physics]") {
     world.add<RigidBody2D>(e, rb);
     world.add<Collider2D>(e);
 
-    sys.applyImpulse(e, { 100.0f, 0.0f });
+    sys.applyImpulse(world, e, { 100.0f, 0.0f });
 
-    auto* rbc = e.get<RigidBody2D>();
+    auto* rbc = world.get<RigidBody2D>(e);
     REQUIRE_FALSE(rbc->isSleeping);
 }
 
@@ -279,10 +279,10 @@ TEST_CASE("PhysicsSystem2D - teleport moves entity and wakes it", "[physics]") {
     world.add<RigidBody2D>(e, rb);
     world.add<Collider2D>(e);
 
-    sys.teleport(e, { 500.0f, 250.0f });
+    sys.teleport(world, e, { 500.0f, 250.0f });
 
-    auto* pos = e.get<Position2D>();
-    auto* rbc = e.get<RigidBody2D>();
+    auto* pos = world.get<Position2D>(e);
+    auto* rbc = world.get<RigidBody2D>(e);
     REQUIRE(approxEq(pos->x, 500.0f));
     REQUIRE(approxEq(pos->y, 250.0f));
     REQUIRE_FALSE(rbc->isSleeping);
@@ -295,11 +295,11 @@ TEST_CASE("PhysicsSystem2D - setKinematic changes flag", "[physics]") {
     Entity e = world.create();
     world.add<RigidBody2D>(e);
 
-    sys.setKinematic(e, true);
-    REQUIRE(e.get<RigidBody2D>()->isKinematic);
+    sys.setKinematic(world, e, true);
+    REQUIRE(world.get<RigidBody2D>(e)->isKinematic);
 
-    sys.setKinematic(e, false);
-    REQUIRE_FALSE(e.get<RigidBody2D>()->isKinematic);
+    sys.setKinematic(world, e, false);
+    REQUIRE_FALSE(world.get<RigidBody2D>(e)->isKinematic);
 }
 
 

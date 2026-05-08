@@ -186,8 +186,8 @@ public:
         }
     }
 
-    void applyImpulse(ECS::Entity e, Vec2 impulse) {
-        if (auto* rb = e.get<RigidBody2D>()) {
+    void applyImpulse(ECS::World& world, ECS::Entity e, Vec2 impulse) {
+        if (auto* rb = world.get<RigidBody2D>(e)) {
             rb->isSleeping = false;
             rb->sleepTimer = 0.0f;
         }
@@ -201,16 +201,16 @@ public:
         }
     }
 
-    void setKinematic(ECS::Entity e, bool kinematic) {
-        if (auto* rb = e.get<RigidBody2D>()) rb->isKinematic = kinematic;
+    void setKinematic(ECS::World& world, ECS::Entity e, bool kinematic) {
+        if (auto* rb = world.get<RigidBody2D>(e)) rb->isKinematic = kinematic;
     }
 
-    void teleport(ECS::Entity e, Vec2 position) {
-        if (auto* pos = e.get<ECS::Position2D>()) {
+    void teleport(ECS::World& world, ECS::Entity e, Vec2 position) {
+        if (auto* pos = world.get<ECS::Position2D>(e)) {
             pos->x = position.x;
             pos->y = position.y;
         }
-        if (auto* rb = e.get<RigidBody2D>()) {
+        if (auto* rb = world.get<RigidBody2D>(e)) {
             rb->isSleeping = false;
             rb->sleepTimer = 0.0f;
         }
@@ -698,23 +698,19 @@ private:
     }
 
     ECS::Velocity2D* getVel(ECS::World& world, u32 id) {
-        ECS::Entity e(id, &world);
-        return e.get<ECS::Velocity2D>();
+        return world.get<ECS::Velocity2D>(ECS::Entity(id, &world));
     }
 
     ECS::Position2D* getPos(ECS::World& world, u32 id) {
-        ECS::Entity e(id, &world);
-        return e.get<ECS::Position2D>();
+        return world.get<ECS::Position2D>(ECS::Entity(id, &world));
     }
 
     RigidBody2D* getRB(ECS::World& world, u32 id) {
-        ECS::Entity e(id, &world);
-        return e.get<RigidBody2D>();
+        return world.get<RigidBody2D>(ECS::Entity(id, &world));
     }
 
     Collider2D* getCol(ECS::World& world, u32 id) {
-        ECS::Entity e(id, &world);
-        return e.get<Collider2D>();
+        return world.get<Collider2D>(ECS::Entity(id, &world));
     }
 
     struct EntityCell {
