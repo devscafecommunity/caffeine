@@ -14,19 +14,19 @@ struct Color {
     u8 r = 0, g = 0, b = 0, a = 255;
 };
 
+enum class TransitionType : u8 { None, Fade, Slide, Custom };
+
+struct TransitionConfig {
+    TransitionType type      = TransitionType::Fade;
+    f32            duration  = 0.5f;
+    Color          fadeColor = {};
+    TransitionConfig() = default;
+};
+
 class SceneManager {
 public:
     using SceneHandle = u32;
     static constexpr SceneHandle kInvalidHandle = ~u32(0);
-
-    enum class TransitionType : u8 { None, Fade, Slide, Custom };
-
-    struct TransitionConfig {
-        TransitionType type      = TransitionType::Fade;
-        f32            duration  = 0.5f;
-        Color          fadeColor = {};
-        TransitionConfig() = default;
-    };
 
     SceneHandle loadScene(const char* path, bool async = false) {
         (void)async;
@@ -44,9 +44,9 @@ public:
         if (!serializer.deserialize(path)) return false;
         m_worldStack.clear();
         m_worldStack.push_back(std::move(world));
-        m_transitioning  = true;
-        m_currentTrans   = trans;
-        m_transProgress  = 0.0f;
+        m_transitioning = true;
+        m_currentTrans  = trans;
+        m_transProgress = 0.0f;
         return true;
     }
 
@@ -88,7 +88,7 @@ public:
     }
 
 private:
-    std::vector<std::unique_ptr<ECS::World>>      m_worldStack;
+    std::vector<std::unique_ptr<ECS::World>>             m_worldStack;
     std::unordered_map<u32, std::unique_ptr<ECS::World>> m_preloaded;
     bool             m_transitioning = false;
     TransitionConfig m_currentTrans;
