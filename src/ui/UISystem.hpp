@@ -146,6 +146,7 @@ public:
 
         world.forEach<UIWidget>(q, [&](ECS::Entity e, UIWidget& w) {
             if (!w.visible || !w.interactable) return;
+            if (w.type == UIWidgetType::Canvas) return;
             if (w.computedRect.contains(screenPos)) {
                 if (w.siblingOrder > bestOrder) {
                     bestOrder = w.siblingOrder;
