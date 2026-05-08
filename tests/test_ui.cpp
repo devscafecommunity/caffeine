@@ -143,7 +143,7 @@ TEST_CASE("UISystem - createButton returns entity with UIWidget and UIButton", "
     REQUIRE(w->type == UIWidgetType::Button);
     auto* b = world.get<UIButton>(btn);
     REQUIRE(b != nullptr);
-    REQUIRE(std::string(b->labelText.c_str()) == "Play");
+    REQUIRE(std::string(b->labelText.cStr()) == "Play");
 }
 
 TEST_CASE("UISystem - createLabel returns entity with UILabel", "[ui]") {
@@ -154,7 +154,7 @@ TEST_CASE("UISystem - createLabel returns entity with UILabel", "[ui]") {
     REQUIRE(lbl.isValid());
     auto* l = world.get<UILabel>(lbl);
     REQUIRE(l != nullptr);
-    REQUIRE(std::string(l->text.c_str()) == "Hello");
+    REQUIRE(std::string(l->text.cStr()) == "Hello");
 }
 
 TEST_CASE("UISystem - createProgressBar returns entity with UIProgressBar", "[ui]") {
