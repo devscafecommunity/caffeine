@@ -46,6 +46,34 @@ if(SDL3_FOUND)
     target_link_libraries(Caffeine PUBLIC SDL3::SDL3)
     target_compile_definitions(Caffeine PUBLIC CF_HAS_SDL3=1)
     message(STATUS "SDL3 found – RHI module enabled")
+
+    include(FetchContent)
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.9
+        GIT_SHALLOW    TRUE
+    )
+    set(FETCHCONTENT_QUIET OFF)
+    FetchContent_MakeAvailable(imgui)
+
+    add_library(ImGui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlgpu3.cpp
+    )
+    target_include_directories(ImGui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    target_link_libraries(ImGui PUBLIC SDL3::SDL3)
+
+    target_link_libraries(Caffeine PUBLIC ImGui)
+    target_compile_definitions(Caffeine PUBLIC CF_HAS_IMGUI=1)
+    message(STATUS "ImGui fetched and enabled")
 else()
     message(STATUS "SDL3 not found – RHI module disabled")
 endif()

@@ -20,6 +20,7 @@ set(CAFFEINE_TEST_SOURCES
     test_ui.cpp
     test_animation.cpp
     test_mesh.cpp
+    test_editor.cpp
 )
 
 if(SDL3_FOUND)
