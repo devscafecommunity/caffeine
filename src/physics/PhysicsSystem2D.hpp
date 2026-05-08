@@ -95,7 +95,7 @@ public:
         RaycastHit best;
         best.distance = maxDist;
 
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<Collider2D>();
         q.with<ECS::Position2D>();
 
@@ -129,7 +129,7 @@ public:
                                             u32 layerMask = 0xFFFFFFFF) {
         std::vector<ECS::Entity> result;
 
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<Collider2D>();
         q.with<ECS::Position2D>();
 
@@ -154,7 +154,7 @@ public:
                                           u32 layerMask = 0xFFFFFFFF) {
         std::vector<ECS::Entity> result;
 
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<Collider2D>();
         q.with<ECS::Position2D>();
 
@@ -223,7 +223,7 @@ private:
                      const std::unordered_map<u32, Vec2>& forces,
                      const std::unordered_map<u32, Vec2>& impulses,
                      f32 dt) {
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Velocity2D>();
         q.with<Collider2D>();
@@ -249,7 +249,7 @@ private:
     }
 
     void integrateAll(ECS::World& world, f32 dt) {
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Position2D>();
         q.with<ECS::Velocity2D>();
@@ -285,7 +285,7 @@ private:
         m_grid.clear();
         m_entityData.clear();
 
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<Collider2D>();
         q.with<ECS::Position2D>();
 
@@ -550,7 +550,7 @@ private:
     }
 
     void updateSleep(ECS::World& world, f32 dt) {
-        ComponentQuery q;
+        ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Velocity2D>();
         q.with<Collider2D>();
