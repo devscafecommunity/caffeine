@@ -11,6 +11,7 @@ set(CAFFEINE_TEST_SOURCES
     test_debug.cpp
     test_jobsystem.cpp
     test_caf.cpp
+    test_eventbus.cpp
 )
 
 if(SDL3_FOUND)
