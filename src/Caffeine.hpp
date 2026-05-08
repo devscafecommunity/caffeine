@@ -53,3 +53,8 @@
 #ifdef CF_HAS_SDL3
 #include "render/BatchRenderer.hpp"
 #endif
+
+// Scene
+#include "scene/SceneComponents.hpp"
+#include "scene/SceneSerializer.hpp"
+#include "scene/SceneManager.hpp"

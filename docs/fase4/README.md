@@ -10,15 +10,15 @@ Esta fase implementa o **ECS completo** — a arquitetura de dados central que c
 
 ## 📋 Índice
 
-| Módulo | Arquivo | Namespace | Fase |
-|--------|---------|-----------|------|
-| **ECS Core** | [`ecs.md`](ecs.md) | `Caffeine::ECS` | 4 |
-| **Scene Manager** | [`scene.md`](scene.md) | `Caffeine::Scene` | 4 |
-| **Event Bus** | [`events.md`](events.md) | `Caffeine::Events` | 4 |
-| **Audio System** | [`audio.md`](audio.md) | `Caffeine::Audio` | 4 |
-| **Animation System** | [`animation.md`](animation.md) | `Caffeine::Animation` | 4 |
-| **Physics 2D** | [`physics.md`](physics.md) | `Caffeine::Physics2D` | 4 |
-| **UI System** | [`ui.md`](ui.md) | `Caffeine::UI` | 4 |
+| Módulo | Arquivo | Namespace | Fase | Status |
+|--------|---------|-----------|------|--------|
+| **ECS Core** | [`ecs.md`](ecs.md) | `Caffeine::ECS` | 4 | ✅ |
+| **Scene Manager** | [`scene.md`](scene.md) | `Caffeine::Scene` | 4 | ✅ |
+| **Event Bus** | [`events.md`](events.md) | `Caffeine::Events` | 4 | ✅ |
+| **Audio System** | [`audio.md`](audio.md) | `Caffeine::Audio` | 4 | 📅 |
+| **Animation System** | [`animation.md`](animation.md) | `Caffeine::Animation` | 4 | 📅 |
+| **Physics 2D** | [`physics.md`](physics.md) | `Caffeine::Physics2D` | 4 | 📅 |
+| **UI System** | [`ui.md`](ui.md) | `Caffeine::UI` | 4 | 📅 |
 
 ---
 
