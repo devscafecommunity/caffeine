@@ -51,14 +51,16 @@ public:
         
         for (usize i = 0; i < m_entries.size(); ++i) {
             const auto& e = m_entries[i];
-            std::fprintf(f, "    { \"id\": \"%s\", \"path\": \"%s\", \"type\": \"%s\", \"sizeBytes\": %llu, \"crc32\": %u }",
-                e.id.c_str(), e.path.c_str(), assetTypeName(e.type), 
-                static_cast<unsigned long long>(e.sizeBytes), e.crc32);
-            
+            std::fprintf(f, "    {\n");
+            std::fprintf(f, "      \"id\": \"%s\",\n", e.id.c_str());
+            std::fprintf(f, "      \"path\": \"%s\",\n", e.path.c_str());
+            std::fprintf(f, "      \"type\": \"%s\",\n", assetTypeName(e.type));
+            std::fprintf(f, "      \"sizeBytes\": %llu,\n", static_cast<unsigned long long>(e.sizeBytes));
+            std::fprintf(f, "      \"crc32\": %u\n", e.crc32);
             if (i < m_entries.size() - 1) {
-                std::fprintf(f, ",\n");
+                std::fprintf(f, "    },\n");
             } else {
-                std::fprintf(f, "\n");
+                std::fprintf(f, "    }\n");
             }
         }
         
@@ -78,15 +80,26 @@ public:
         char line[2048];
         AssetManifestEntry currentEntry;
         bool inEntry = false;
+        int depth = 0;
         
         while (std::fgets(line, sizeof(line), f)) {
             const char* p = line;
             
             while (*p == ' ' || *p == '\t') ++p;
             
-            if (*p == '{' && !inEntry) {
-                inEntry = true;
-                currentEntry = AssetManifestEntry();
+            if (*p == '{') {
+                ++depth;
+                if (depth == 2) {
+                    inEntry = true;
+                    currentEntry = AssetManifestEntry();
+                }
+            }
+            else if (*p == '}') {
+                if (depth == 2 && inEntry) {
+                    inEntry = false;
+                    m_entries.push_back(currentEntry);
+                }
+                --depth;
             }
             else if (std::strstr(p, "\"id\":")) {
                 const char* start = std::strchr(p, '"');
