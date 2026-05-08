@@ -13,6 +13,7 @@ set(CAFFEINE_TEST_SOURCES
     test_caf.cpp
     test_eventbus.cpp
     test_assetmanager.cpp
+    test_camera2d.cpp
 )
 
 if(SDL3_FOUND)
