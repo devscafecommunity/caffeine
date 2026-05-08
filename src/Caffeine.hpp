@@ -49,3 +49,7 @@
 
 // Render
 #include "render/Camera2D.hpp"
+#include "render/TextureAtlas.hpp"
+#ifdef CF_HAS_SDL3
+#include "render/BatchRenderer.hpp"
+#endif

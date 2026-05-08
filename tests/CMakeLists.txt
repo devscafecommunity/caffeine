@@ -14,10 +14,11 @@ set(CAFFEINE_TEST_SOURCES
     test_eventbus.cpp
     test_assetmanager.cpp
     test_camera2d.cpp
+    test_textureatlas.cpp
 )
 
 if(SDL3_FOUND)
-    list(APPEND CAFFEINE_TEST_SOURCES test_rhi.cpp)
+    list(APPEND CAFFEINE_TEST_SOURCES test_rhi.cpp test_batchrenderer.cpp)
 endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
