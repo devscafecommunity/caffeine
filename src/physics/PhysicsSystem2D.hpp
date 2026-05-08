@@ -386,8 +386,8 @@ private:
 
         f32 dx = posB.x - posA.x;
         f32 dy = posB.y - posA.y;
-        f32 overlapX = (halfA.x + halfB.x) - std::fabsf(dx);
-        f32 overlapY = (halfA.y + halfB.y) - std::fabsf(dy);
+        f32 overlapX = (halfA.x + halfB.x) - std::fabs(dx);
+        f32 overlapY = (halfA.y + halfB.y) - std::fabs(dy);
 
         if (overlapX <= 0.0f || overlapY <= 0.0f) return false;
 
@@ -407,7 +407,7 @@ private:
                                CollisionManifold& out) {
         f32 dx   = posB.x - posA.x;
         f32 dy   = posB.y - posA.y;
-        f32 dist = std::sqrtf(dx * dx + dy * dy);
+        f32 dist = std::sqrt(dx * dx + dy * dy);
         f32 sumR = rA + rB;
 
         if (dist >= sumR) return false;
@@ -431,7 +431,7 @@ private:
         f32  closestY = clampf(circlePos.y, aabbPos.y - half.y, aabbPos.y + half.y);
         f32  dx = circlePos.x - closestX;
         f32  dy = circlePos.y - closestY;
-        f32  dist = std::sqrtf(dx * dx + dy * dy);
+        f32  dist = std::sqrt(dx * dx + dy * dy);
 
         if (dist >= radius) return false;
 
@@ -470,7 +470,7 @@ private:
 
         f32 e = 0.0f;
         if (rbA) e = rbA->restitution;
-        if (rbB) e = std::fminf(e, rbB->restitution);
+        if (rbB) e = std::fmin(e, rbB->restitution);
 
         f32 j = -(1.0f + e) * relVelN / (invMassA + invMassB);
 
@@ -493,16 +493,16 @@ private:
             (vB.x - vA.x) - relVelN * m.normal.x,
             (vB.y - vA.y) - relVelN * m.normal.y
         };
-        f32 tanLen = std::sqrtf(tangent.x * tangent.x + tangent.y * tangent.y);
+        f32 tanLen = std::sqrt(tangent.x * tangent.x + tangent.y * tangent.y);
         if (tanLen > 1e-6f) {
             tangent.x /= tanLen;
             tangent.y /= tanLen;
             f32 frictionA  = rbA ? rbA->friction : 0.5f;
             f32 frictionB  = rbB ? rbB->friction : 0.5f;
-            f32 mu         = std::sqrtf(frictionA * frictionB);
+            f32 mu         = std::sqrt(frictionA * frictionB);
             f32 jt         = -((vB.x - vA.x) * tangent.x + (vB.y - vA.y) * tangent.y)
                               / (invMassA + invMassB);
-            Vec2 frImpulse = (std::fabsf(jt) < j * mu)
+            Vec2 frImpulse = (std::fabs(jt) < j * mu)
                               ? Vec2{tangent.x * jt, tangent.y * jt}
                               : Vec2{-tangent.x * j * mu, -tangent.y * j * mu};
 
@@ -613,7 +613,7 @@ private:
         m_eventBus->publishDeferred(ev);
     }
 
-    static i32  toCell(f32 v)         { return static_cast<i32>(std::floorf(v / kGridCellSize)); }
+    static i32  toCell(f32 v)         { return static_cast<i32>(std::floor(v / kGridCellSize)); }
     static u64  cellKey(i32 cx, i32 cy) {
         return (static_cast<u64>(static_cast<u32>(cx)) << 32) | static_cast<u32>(cy);
     }
@@ -624,7 +624,7 @@ private:
         return { col.size.x * 0.5f, col.size.y * 0.5f };
     }
 
-    static f32 length(Vec2 v) { return std::sqrtf(v.x * v.x + v.y * v.y); }
+    static f32 length(Vec2 v) { return std::sqrt(v.x * v.x + v.y * v.y); }
 
     static Vec2 normalize(Vec2 v) {
         f32 len = length(v);
@@ -639,8 +639,8 @@ private:
     static bool aabbOverlap(Vec2 posA, Vec2 sizeA, Vec2 posB, Vec2 sizeB) {
         Vec2 halfA = { sizeA.x * 0.5f, sizeA.y * 0.5f };
         Vec2 halfB = { sizeB.x * 0.5f, sizeB.y * 0.5f };
-        return std::fabsf(posA.x - posB.x) < halfA.x + halfB.x &&
-               std::fabsf(posA.y - posB.y) < halfA.y + halfB.y;
+        return std::fabs(posA.x - posB.x) < halfA.x + halfB.x &&
+               std::fabs(posA.y - posB.y) < halfA.y + halfB.y;
     }
 
     static bool circleVsAABB(Vec2 circlePos, f32 radius, Vec2 aabbPos, Vec2 aabbSize) {
@@ -659,16 +659,16 @@ private:
         f32 tminY = (center.y - half.y - origin.y);
         f32 tmaxY = (center.y + half.y - origin.y);
 
-        if (std::fabsf(dir.x) > 1e-9f) { tminX /= dir.x; tmaxX /= dir.x; }
+        if (std::fabs(dir.x) > 1e-9f) { tminX /= dir.x; tmaxX /= dir.x; }
         else { if (origin.x < center.x - half.x || origin.x > center.x + half.x) return -1.0f; tminX = -1e30f; tmaxX = 1e30f; }
-        if (std::fabsf(dir.y) > 1e-9f) { tminY /= dir.y; tmaxY /= dir.y; }
+        if (std::fabs(dir.y) > 1e-9f) { tminY /= dir.y; tmaxY /= dir.y; }
         else { if (origin.y < center.y - half.y || origin.y > center.y + half.y) return -1.0f; tminY = -1e30f; tmaxY = 1e30f; }
 
         if (tminX > tmaxX) std::swap(tminX, tmaxX);
         if (tminY > tmaxY) std::swap(tminY, tmaxY);
 
-        f32 tmin = std::fmaxf(tminX, tminY);
-        f32 tmax = std::fminf(tmaxX, tmaxY);
+        f32 tmin = std::fmax(tminX, tminY);
+        f32 tmax = std::fmin(tmaxX, tmaxY);
 
         if (tmax < 0.0f || tmin > tmax) return -1.0f;
         f32 t = (tmin >= 0.0f) ? tmin : tmax;
@@ -687,8 +687,8 @@ private:
         f32 c   = oc.x * oc.x + oc.y * oc.y - radius * radius;
         f32 disc = b * b - c;
         if (disc < 0.0f) return -1.0f;
-        f32 t = -b - std::sqrtf(disc);
-        if (t < 0.0f) t = -b + std::sqrtf(disc);
+        f32 t = -b - std::sqrt(disc);
+        if (t < 0.0f) t = -b + std::sqrt(disc);
         if (t < 0.0f) return -1.0f;
         Vec2 hit = { origin.x + dir.x * t, origin.y + dir.y * t };
         f32 nd = length({ hit.x - center.x, hit.y - center.y });
