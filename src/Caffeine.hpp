@@ -76,3 +76,8 @@
 // Animation
 #include "animation/AnimationComponents.hpp"
 #include "animation/AnimationSystem.hpp"
+
+// Mesh (3D)
+#include "ecs/Components3D.hpp"
+#include "assets/MeshTypes.hpp"
+#include "assets/MeshLoader.hpp"
