@@ -156,7 +156,6 @@ public:
                     currentEntry.crc32 = val;
                 }
             }
-            }
         }
         
         std::fclose(f);
