@@ -2,143 +2,99 @@
 
 > **Fase:** 4 — O Cérebro  
 > **Namespace:** `Caffeine::UI`  
-> **Arquivo:** `src/ui/UISystem.hpp`  
-> **Status:** 📅 Planejado  
+> **Arquivos:** `src/ui/UIComponents.hpp`, `src/ui/UISystem.hpp`  
+> **Status:** ✅ Implementado  
 > **RF:** RF4.11
 
 ---
 
 ## Visão Geral
 
-Sistema de UI **retained mode** — widgets são entidades ECS com componentes de UI. Isso permite que UI seja afetada por ECS systems (ex: HealthBar reflete automaticamente o valor de `Health` component).
+Sistema de UI **retained mode** — widgets são entidades ECS com componentes de UI. Isso permite que UI seja afetada por ECS systems (ex: HealthBar reflete automaticamente o valor de um `Health` component via `bindValue`).
 
 **Fase 6** adiciona Dear ImGui para a interface do editor — ver [`docs/fase6/embedded-ui.md`](../fase6/embedded-ui.md).
 
 ---
 
-## API Planejada
+## Componentes
+
+### `UIColor`
+
+Cor RGBA com canais `f32` em `[0, 1]`. Presets estáticos: `white()`, `black()`, `transparent()`, `red()`, `green()`, `blue()`.
+
+### `UIRect`
+
+Rect de tela com `position` e `size` (`Vec2`). Métodos: `contains(Vec2)`, `isValid()`.
+
+### `RectTransform`
+
+Layout relativo ao parent. `anchorMin`/`anchorMax` são frações do tamanho do parent; `offsetMin`/`offsetMax` são deltas em pixels.
+
+```
+anchorMin=anchorMax={0,0}, offsetMin={px,py}, offsetMax={px+w,py+h}  →  widget fixo em (px,py) tamanho (w,h)
+```
+
+### `UIStyle`
+
+Aparência visual: `backgroundColor`, `textColor`, `borderColor`, `borderWidth`, `borderRadius`, `fontSize`, `textAlignment`.
+
+### `UIWidget`
+
+Componente base presente em toda entidade UI:
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `type` | `UIWidgetType` | Canvas, Panel, Button, Label, ProgressBar, Checkbox, Slider |
+| `parentId` | `u32` | ID do parent; `kUIInvalidParent` para canvas raiz |
+| `visible` | `bool` | Se false, não é processado nem retornado por hitTest |
+| `interactable` | `bool` | Se false, ignorado por hitTest |
+| `siblingOrder` | `i32` | Desempata hitTest quando dois widgets se sobrepõem |
+| `computedRect` | `UIRect` | Preenchido a cada frame por `layoutWidgets()` |
+| `onClick` | `std::function<void(Entity)>` | Disparado ao clicar |
+| `onHoverEnter` | `std::function<void(Entity)>` | Disparado ao entrar com o mouse |
+| `onHoverExit` | `std::function<void(Entity)>` | Disparado ao sair com o mouse |
+| `onValueChanged` | `std::function<void(Entity, f32)>` | Disparado por bindValue |
+
+### Componentes específicos
+
+| Struct | Campos relevantes |
+|--------|-------------------|
+| `UIButton` | `labelText`, `idleColor`, `hoverColor`, `pressedColor`, `isHovered`, `isPressed` |
+| `UILabel` | `text`, `wordWrap` |
+| `UIProgressBar` | `minValue`, `maxValue`, `currentValue`, `showText`, `fillColor` |
+| `UISlider` | `minValue`, `maxValue`, `currentValue`, `snapToInt` |
+| `UICheckbox` | `checked`, `checkedColor` |
+
+---
+
+## API — `UISystem`
 
 ```cpp
 namespace Caffeine::UI {
 
-// ============================================================================
-// @brief  Layout rect em espaço de tela ou frações do parent.
-//
-//  anchorMin/Max em [0, 1] — (0,0) = canto inferior esquerdo da tela
-//  pivot em [0, 1] — (0.5, 0.5) = centro do widget
-// ============================================================================
-struct RectTransform {
-    Vec2   anchorMin = {0, 0};
-    Vec2   anchorMax = {1, 1};
-    Vec2   pivot     = {0.5f, 0.5f};
-    Rect2D offset    = {};  // pixels de deslocamento das anchors
-};
-
-// ============================================================================
-// @brief  Estilo visual do widget.
-// ============================================================================
-struct UIStyle {
-    Color backgroundColor = {0.1f, 0.1f, 0.1f, 0.9f};
-    Color textColor       = Color::WHITE;
-    Color borderColor     = {0.3f, 0.3f, 0.3f, 1.0f};
-    f32   borderWidth     = 1.0f;
-    f32   borderRadius    = 4.0f;
-    Font* font            = nullptr;
-    f32   fontSize        = 16.0f;
-    Vec2  textAlignment   = {0.5f, 0.5f};  // (0,0) = esquerda, (1,1) = direita
-};
-
-// ============================================================================
-// @brief  Widget base — componente ECS para UI.
-// ============================================================================
-struct UIWidget {
-    enum class Type : u8 {
-        Canvas,      // Raiz da hierarquia UI
-        Panel,       // Container de outros widgets
-        Button,      // Clicável
-        Label,       // Texto estático
-        ProgressBar, // Barra de progresso (HP, XP, etc.)
-        Checkbox,    // Toggle
-        Slider       // Valor analógico
-    };
-
-    Type          type         = Type::Panel;
-    bool          visible      = true;
-    bool          interactable = true;
-    i32           siblingOrder = 0;     // ordem de renderização entre irmãos
-    UIStyle       style;
-    RectTransform transform;
-
-    // Callbacks de interação
-    std::function<void(ECS::Entity)> onClick;
-    std::function<void(ECS::Entity)> onHoverEnter;
-    std::function<void(ECS::Entity)> onHoverExit;
-    std::function<void(ECS::Entity, f32)> onValueChanged;  // Slider/ProgressBar
-};
-
-// ── Widgets específicos ────────────────────────────────────────
-struct Button : UIWidget {
-    FixedString<64> labelText;
-    Color           idleColor    = {0.2f, 0.2f, 0.2f, 1.0f};
-    Color           hoverColor   = {0.35f, 0.35f, 0.35f, 1.0f};
-    Color           pressedColor = {0.1f, 0.1f, 0.1f, 1.0f};
-};
-
-struct Label : UIWidget {
-    FixedString<256> text;
-    bool             wordWrap = false;
-};
-
-struct ProgressBar : UIWidget {
-    f32  minValue     = 0.0f;
-    f32  maxValue     = 100.0f;
-    f32  currentValue = 50.0f;
-    bool showText     = false;
-    Color fillColor   = {0.2f, 0.8f, 0.2f, 1.0f};  // verde por default
-};
-
-struct Slider : UIWidget {
-    f32 minValue     = 0.0f;
-    f32 maxValue     = 1.0f;
-    f32 currentValue = 0.5f;
-    bool snapToInt   = false;
-};
-
-// ============================================================================
-// @brief  Sistema de UI ECS.
-//
-//  Memory: Widgets alocados no PoolAllocator por tipo.
-//  Priority: 500 — depois de physics/animation, antes de render
-// ============================================================================
 class UISystem : public ECS::ISystem {
 public:
-    void update(ECS::World& world, f64 dt) override;
-    i32  priority() const override { return 500; }
-    const char* name() const override { return "UI"; }
+    explicit UISystem(Events::EventBus* eventBus = nullptr);
 
-    // ── Factory helpers ────────────────────────────────────────
-    ECS::Entity createCanvas(ECS::World& world);
-    ECS::Entity createButton(ECS::World& world, ECS::Entity parent,
-                              const char* text, Vec2 pos, Vec2 size = {120, 40});
-    ECS::Entity createLabel(ECS::World& world, ECS::Entity parent,
-                             const char* text, Vec2 pos);
-    ECS::Entity createProgressBar(ECS::World& world, ECS::Entity parent,
-                                   Vec2 pos, Vec2 size = {200, 20});
+    void onUpdate(ECS::World& world, f32 dt) override;
 
-    // ── Data binding ───────────────────────────────────────────
-    // Conecta automaticamente um campo de um componente a um widget
-    // Ex: HealthBar.currentValue ← componente Health.current
-    void bindComponent(ECS::Entity widget, ECS::Entity target,
-                       ECS::ComponentID component, const char* fieldPath);
+    ECS::Entity createCanvas(ECS::World& world, Vec2 size = {1280.0f, 720.0f});
+    ECS::Entity createPanel(ECS::World& world, u32 parentId, UIRect rect);
+    ECS::Entity createButton(ECS::World& world, u32 parentId, const char* text,
+                              Vec2 pos, Vec2 size = {120.0f, 40.0f});
+    ECS::Entity createLabel(ECS::World& world, u32 parentId, const char* text, Vec2 pos);
+    ECS::Entity createProgressBar(ECS::World& world, u32 parentId,
+                                   Vec2 pos, Vec2 size = {200.0f, 20.0f});
+    ECS::Entity createSlider(ECS::World& world, u32 parentId,
+                              Vec2 pos, Vec2 size = {200.0f, 20.0f});
+    ECS::Entity createCheckbox(ECS::World& world, u32 parentId, Vec2 pos);
 
-    // ── Hit testing ────────────────────────────────────────────
-    ECS::Entity hitTest(Vec2 screenPos) const;
+    void bindValue(ECS::Entity widget, std::function<f32(ECS::World&)> getter);
 
-private:
-    void layoutWidgets(ECS::World& world);
-    void renderWidget(ECS::Entity e, const UIWidget& widget,
-                      RHI::CommandBuffer* cmd);
-    void processInput(ECS::World& world, const Input::InputManager& input);
+    ECS::Entity hitTest(ECS::World& world, Vec2 screenPos);
+
+    void injectMousePosition(Vec2 pos);
+    void injectMouseClick(bool pressed);
 };
 
 }  // namespace Caffeine::UI
@@ -151,12 +107,12 @@ private:
 ```
 Canvas (root)
   ├── Panel (HUD)
-  │     ├── ProgressBar (health)   ← bind → Health.current
-  │     ├── Label (score)          ← bind → Score.value
+  │     ├── ProgressBar (health)   ← bindValue → retorna Health.current
+  │     ├── Label (score)
   │     └── Label (fps counter)
   ├── Panel (inventory)
   │     └── [slots dinamicamente criados]
-  └── Panel (pause menu — hidden by default)
+  └── Panel (pause menu — visible=false por default)
         ├── Button "Resume"
         ├── Button "Options"
         └── Button "Quit"
@@ -164,39 +120,31 @@ Canvas (root)
 
 ---
 
-## Exemplos de Uso
+## Exemplo de Uso
 
 ```cpp
-// ── Criar HUD ─────────────────────────────────────────────────
-auto* uiSys = world.registerSystem<UISystem>();
+UISystem uiSys;
 
-Entity canvas = uiSys->createCanvas(world);
-Entity hudPanel = uiSys->createPanel(world, canvas, {{0,0},{1280,720}});
+Entity canvas   = uiSys.createCanvas(world, {1280.0f, 720.0f});
+Entity hudPanel = uiSys.createPanel(world, canvas.id(), {{0,0},{1280,720}});
 
-// Health bar
-Entity healthBar = uiSys->createProgressBar(world, hudPanel,
-    {20, 700}, {200, 20});
-world.get<ProgressBar>(healthBar)->fillColor = {0.9f, 0.2f, 0.2f, 1.0f};
+Entity healthBar = uiSys.createProgressBar(world, hudPanel.id(), {20.0f, 700.0f}, {200.0f, 20.0f});
+world.get<UIProgressBar>(healthBar)->fillColor = {0.9f, 0.2f, 0.2f, 1.0f};
 
-// Bind automático: healthBar.currentValue ↔ playerHealth.current
-uiSys->bindComponent(healthBar, playerEntity,
-    ComponentID::of<Health>(), "current");
+uiSys.bindValue(healthBar, [&](ECS::World& w) {
+    return w.get<Health>(playerEntity)->current;
+});
 
-// Label de score
-Entity scoreLabel = uiSys->createLabel(world, hudPanel, "Score: 0", {1100, 700});
+Entity scoreLabel = uiSys.createLabel(world, hudPanel.id(), "Score: 0", {1100.0f, 700.0f});
 
-// ── Botão com callback ────────────────────────────────────────
-Entity playBtn = uiSys->createButton(world, canvas, "Play Game",
-    {640, 360}, {200, 50});
-world.get<Button>(playBtn)->onClick = [&](ECS::Entity e) {
+Entity playBtn = uiSys.createButton(world, canvas.id(), "Play Game", {640.0f, 360.0f}, {200.0f, 50.0f});
+world.get<UIWidget>(playBtn)->onClick = [&](ECS::Entity) {
     sceneManager.switchScene("assets/scenes/level1.caf");
 };
 
-// ── Bind manual via update ────────────────────────────────────
-// (alternativa ao bindComponent para lógica customizada)
-world.query(scoreQuery, [&](Label& lbl, const Score& score) {
-    lbl.text = FixedString<256>("Score: ") + score.value;
-});
+uiSys.injectMousePosition(mousePos);
+uiSys.injectMouseClick(isMouseDown);
+uiSys.onUpdate(world, dt);
 ```
 
 ---
@@ -205,27 +153,33 @@ world.query(scoreQuery, [&](Label& lbl, const Score& score) {
 
 | Decisão | Justificativa |
 |---------|-------------|
-| Retained mode (vs immediate) | UI persiste entre frames sem reconstrução |
+| Retained mode | UI persiste entre frames sem reconstrução |
 | Widgets como entidades ECS | UI pode ser afetada por systems (bindings automáticos) |
-| `bindComponent` | Elimina boilerplate de sincronização manual |
-| `priority = 500` | UI após gameplay, mas antes de render final |
-| Pool allocator por tipo | Zero alloc em runtime para widgets frequentes |
+| `bindValue` com getter `f32` | Evita reflexão em C++ — getter lambda é suficiente para ProgressBar/Slider |
+| `UIColor` com `f32` (não `Color` do engine) | `Color` do engine usa `u8`; UI precisa de precisão float |
+| Layout em 8 passes BFS | ECS forEach não garante ordem topológica; passes extras resolvem hierarquias profundas |
+| `kUIInvalidParent = 0xFFFFFFFFu` | Sentinel de "sem parent" compatível com `u32` |
 
 ---
 
 ## Critério de Aceitação
 
-- [ ] 50 widgets a 60fps
-- [ ] UI render < 2ms
-- [ ] `bindComponent` atualiza ProgressBar no mesmo frame que o componente muda
-- [ ] Hit testing correto com hierarquia de transforms
-- [ ] Widgets com `visible = false` não processados
+- [x] Canvas cria entidade com `UIWidgetType::Canvas` e `computedRect` correto
+- [x] `createButton`, `createLabel`, `createProgressBar`, `createSlider`, `createCheckbox` retornam entidades válidas com componentes corretos
+- [x] `onUpdate` em world vazio não crasha
+- [x] Layout calcula `computedRect` correto para filhos diretos do canvas
+- [x] `hitTest` retorna entidade correta para ponto dentro do rect
+- [x] `hitTest` ignora widgets com `visible=false` ou `interactable=false`
+- [x] `hitTest` desempata por `siblingOrder` (maior vence)
+- [x] `onClick` dispara ao clicar no widget
+- [x] `onHoverEnter` dispara ao entrar com o mouse
+- [x] `bindValue` atualiza `UIProgressBar::currentValue` no mesmo frame
 
 ---
 
 ## Dependências
 
-- **Upstream:** [ECS Core](ecs.md), [Fase 3 — RHI](../fase3/rhi.md), [Input System](../fase2/input.md)
+- **Upstream:** [ECS Core](ecs.md), [Fase 1 — Memory, Containers](../architecture/memory.md)
 - **Downstream:** [Fase 6 — Embedded UI (ImGui)](../fase6/embedded-ui.md)
 
 ---

@@ -18,7 +18,7 @@ Esta fase implementa o **ECS completo** — a arquitetura de dados central que c
 | **Audio System** | [`audio.md`](audio.md) | `Caffeine::Audio` | 4 | 📅 |
 | **Animation System** | [`animation.md`](animation.md) | `Caffeine::Animation` | 4 | 📅 |
 | **Physics 2D** | [`physics.md`](physics.md) | `Caffeine::Physics2D` | 4 | ✅ |
-| **UI System** | [`ui.md`](ui.md) | `Caffeine::UI` | 4 | 📅 |
+| **UI System** | [`ui.md`](ui.md) | `Caffeine::UI` | 4 | ✅ |
 
 ---
 

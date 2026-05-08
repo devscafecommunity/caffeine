@@ -17,6 +17,7 @@ set(CAFFEINE_TEST_SOURCES
     test_textureatlas.cpp
     test_scenemanager.cpp
     test_physics2d.cpp
+    test_ui.cpp
 )
 
 if(SDL3_FOUND)
