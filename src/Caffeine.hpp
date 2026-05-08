@@ -37,3 +37,7 @@
 #include "ecs/SystemRegistry.hpp"
 #include "ecs/CommandBuffer.hpp"
 #include "ecs/Components.hpp"
+
+// Events
+#include "events/EventBus.hpp"
+#include "events/Events.hpp"
