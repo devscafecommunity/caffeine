@@ -3,7 +3,7 @@
 > **Fase:** 5 — Transição Dimensional  
 > **Namespace:** `Caffeine::Math`  
 > **Arquivo:** `src/math/Quat.hpp` (extensão de `Mat4.hpp`)  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF5.1
 
 ---
@@ -143,10 +143,10 @@ struct WorldTransform3D {
 
 ## Critério de Aceitação
 
-- [ ] `Quat::slerp` produz interpolação correta entre quaisquer duas orientações
-- [ ] `quat.toMatrix()` produz mesma matrix que `Mat4::fromAxisAngle`
-- [ ] `Quat * Vec3` rota corretamente (comparado com reference impl)
-- [ ] Sem gimbal lock em rotações compostas de 3 eixos
+- [x] `Quat::slerp` produz interpolação correta entre quaisquer duas orientações
+- [x] `quat.toMatrix()` produz mesma matrix que `Mat4::fromAxisAngle`
+- [x] `Quat * Vec3` rota corretamente (comparado com reference impl)
+- [x] Sem gimbal lock em rotações compostas de 3 eixos
 - [ ] `Vec4` acessos SIMD-aligned (alinhado a 16 bytes)
 
 ---

@@ -25,6 +25,7 @@
 #include "math/Vec4.hpp"
 #include "math/Mat4.hpp"
 #include "math/Math.hpp"
+#include "math/Quat.hpp"
 
 // ECS System
 #include "ecs/World.hpp"

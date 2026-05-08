@@ -12,6 +12,7 @@ namespace Caffeine {
 namespace Math {
 
 constexpr f32 PI = 3.14159265358979323846f;
+constexpr f32 PI_HALF = PI * 0.5f;
 constexpr f32 TAU = 2.0f * PI;
 constexpr f32 E = 2.71828182845904523536f;
 
