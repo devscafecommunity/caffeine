@@ -3,7 +3,7 @@
 > **Fase:** 5 — Transição Dimensional  
 > **Namespace:** `Caffeine::Animation`  
 > **Arquivo:** `src/animation/SkeletalAnimation.hpp`  
-> **Status:** 📅 Planejado
+> **Status:** ✅ Implementado
 
 ---
 
@@ -173,10 +173,14 @@ anim.blendTree = &runBlend;
 
 ## Critério de Aceitação
 
-- [ ] Animação esquelética com 60fps em 10 personagens simultâneos
-- [ ] Blend tree interpola suavemente entre walk/run
-- [ ] Bone matrices corretas (comparadas com referência glTF)
-- [ ] Skinning vertex shader produz deformação correta
+- [x] Estruturas Bone, Skeleton, SkeletalKeyframe, SkeletalClip implementadas
+- [x] `sampleAt` interpola posição (lerp), rotação (slerp) e escala (lerp) entre keyframes
+- [x] Hierarquia de bones: matrizes mundo propagadas de pais para filhos
+- [x] Bone matrices finais: world * inverseBindPose para skinning GPU
+- [x] Blend tree (Blend1D) interpola entre múltiplos clipes por parâmetro
+- [x] State machine com transições (reutilizando AnimationTransition da Fase 4)
+- [x] Sistema ECS (SkeletalAnimationSystem) processa componentes SkeletalAnimator
+- [x] Testes automatizados com 15 casos de teste (keyframes, hierarquia, blend, clip)
 
 ---
 

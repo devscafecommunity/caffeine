@@ -23,6 +23,7 @@ set(CAFFEINE_TEST_SOURCES
     test_mesh.cpp
     test_editor.cpp
     test_octree.cpp
+    test_skeletal_animation.cpp
     test_pipeline.cpp
 )
 
