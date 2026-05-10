@@ -3,7 +3,7 @@
 > **Fase:** 5 — Transição Dimensional  
 > **Namespace:** `Caffeine::Spatial`  
 > **Arquivo:** `src/spatial/Octree.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RF:** RF5.4
 
 ---
@@ -36,13 +36,18 @@ struct AABB3D {
 // ============================================================================
 // @brief  Frustum para culling.
 //
-//  Derivado da view-projection matrix.
 //  Planos: Near, Far, Left, Right, Top, Bottom.
+//  Convenção: d ≤ 0 → dentro, d > 0 → fora.
 // ============================================================================
 struct Frustum {
     Vec4 planes[6];   // Ax + By + Cz + D = 0 (normalizados)
 
-    static Frustum fromMatrix(const Math::Mat4& viewProj);
+    // fromCamera() é o método recomendado — funciona com qualquer
+    // convenção de projeção pois constrói os planos da geometria.
+    // fromMatrix() requer matriz VP estilo OpenGL padrão.
+    static Frustum fromCamera(Vec3 eye, Vec3 target, Vec3 up,
+                               f32 fovY, f32 aspect, f32 nearZ, f32 farZ);
+    static Frustum fromMatrix(const Mat4& viewProj);
 
     bool contains(Vec3 point)      const;
     bool intersects(const AABB3D& aabb) const;
@@ -114,11 +119,10 @@ private:
 ## Frustum Culling (RF5.6)
 
 ```
-Camera3D
-  └── viewProjectionMatrix()
+Câmera (eye, target, up, fov, aspect, near, far)
         │
         ▼
-  Frustum::fromMatrix(viewProj)
+  Frustum::fromCamera(eye, target, up, fovY, aspect, nearZ, farZ)
         │
         ▼
   Octree::queryFrustum(frustum, visibleEntities)
@@ -127,6 +131,10 @@ Camera3D
   Apenas entidades DENTRO do frustum são enviadas ao MeshSystem
   (entidades fora não geram draw calls)
 ```
+
+> **Nota:** `Frustum::fromMatrix()` está disponível para matrizes VP estilo
+> OpenGL padrão, mas não funciona com a `Mat4::perspective()` da Caffeine
+> (que possui layout Z/W trocado). Prefira `fromCamera()` sempre que possível.
 
 **Benefício:** Em uma cena com 10K objetos, apenas os ~100 visíveis geram draw calls.
 
@@ -165,7 +173,10 @@ world.query(meshQuery, [&](ECS::Entity e, Position3D& pos, MeshRenderer& mr) {
 });
 
 // ── Frustum culling ───────────────────────────────────────────
-Frustum frustum = Frustum::fromMatrix(camera3D.viewProjectionMatrix());
+Frustum frustum = Frustum::fromCamera(
+    camera3D.position(), camera3D.target(), camera3D.up(),
+    camera3D.fovY(), camera3D.aspect(), camera3D.nearZ(), camera3D.farZ()
+);
 std::vector<ECS::Entity> visible;
 octree.queryFrustum(frustum, visible);
 
@@ -185,10 +196,13 @@ if (entity.get<Position3D>().changed) {
 
 ## Critério de Aceitação
 
-- [ ] `queryFrustum` exclui corretamente entidades fora do frustum
-- [ ] Performance: 10K entidades, query em < 1ms
-- [ ] `insert`/`remove` corretos sem corrupção
-- [ ] Frustum culling: entidades fora da câmera não geram draw calls
+- [x] `AABB3D` — center, size, contains (point/AABB), intersects, intersectsRay
+- [x] `Frustum::fromCamera` — construção robusta a partir de parâmetros de câmera
+- [x] `Frustum::contains` / `intersects` / `containsSphere` — testes com pontos, AABBs e esferas
+- [x] `Octree` — insert, remove, update, rebuild, queries (AABB/Frustum/Ray/Radius)
+- [x] `Octree` — subdivisão automática, profundidade máxima, contagem consistente
+- [ ] Performance bench: 10K entidades, query em < 1ms (benchmark pendente)
+- [ ] Integração com Camera3D + MeshSystem para culling em draw calls
 
 ---
 
