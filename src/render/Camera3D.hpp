@@ -122,7 +122,7 @@ public:
 
     void setRotation(Quat rot) {
         m_rotation = rot;
-        syncAnglesToRotation();
+        syncRotationToAngles();
         m_dirty = true;
     }
 
@@ -131,7 +131,7 @@ public:
         Vec3 fwd = (target - eye).normalized();
         if (fwd.lengthSquared() < 1e-8f) fwd = {0, 0, 1};
         m_rotation = Quat::lookAt(fwd, up);
-        syncAnglesToRotation();
+        syncRotationToAngles();
         m_dirty = true;
     }
 
@@ -142,7 +142,7 @@ public:
         m_pitch += deltaPitch;
         m_yaw   += deltaYaw;
         m_pitch  = Math::clamp(m_pitch, -89.0f, 89.0f);
-        syncRotationToAngles();
+        syncAnglesToRotation();
         m_dirty = true;
     }
 

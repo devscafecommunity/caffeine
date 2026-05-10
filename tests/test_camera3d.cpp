@@ -131,18 +131,21 @@ TEST_CASE("Camera3D screenToWorld roundtrip", "[camera3d]") {
     Camera3D cam;
     cam.lookAt({0, 0, -5}, {0, 0, 0});
     cam.setViewport({{0, 0}, {1280, 720}});
-    Vec3 screen = cam.worldToScreen({0, 0, 0});
-    REQUIRE(screen.x == Approx(640.0f).margin(10.0f));
-    REQUIRE(screen.y == Approx(360.0f).margin(10.0f));
+    Vec3 world = {1.0f, 2.0f, -3.0f};
+    Vec3 screen = cam.worldToScreen(world);
+    Vec3 world2 = cam.screenToWorld({screen.x, screen.y}, screen.z);
+    REQUIRE(world2.x == Approx(world.x).margin(0.01f));
+    REQUIRE(world2.y == Approx(world.y).margin(0.01f));
+    REQUIRE(world2.z == Approx(world.z).margin(0.01f));
 }
 
 TEST_CASE("Camera3D FPS rotation affects forward", "[camera3d]") {
     Camera3D cam;
-    Vec3 fwd1 = cam.forward();
-    cam.rotateFPS(0.0f, 45.0f);
-    Vec3 fwd2 = cam.forward();
-    REQUIRE(fwd1.length() == Approx(1.0f).margin(0.01f));
-    REQUIRE(fwd2.length() == Approx(1.0f).margin(0.01f));
+    cam.rotateFPS(0.0f, 90.0f); // yaw 90 degrees right
+    Vec3 fwd = cam.forward();
+    REQUIRE(fwd.x == Approx(1.0f).margin(0.01f));
+    REQUIRE(fwd.y == Approx(0.0f).margin(0.01f));
+    REQUIRE(fwd.z == Approx(0.0f).margin(0.01f));
 }
 
 TEST_CASE("Camera3D FPS pitch clamped", "[camera3d]") {
@@ -179,8 +182,8 @@ TEST_CASE("Camera3D setRotation", "[camera3d]") {
     Quat rot = Quat::fromAxisAngle({0, 1, 0}, degToRad(90.0f));
     cam.setRotation(rot);
     Vec3 fwd = cam.forward();
-    REQUIRE(fabsf(fwd.x) < 2.0f);
-    REQUIRE(fabsf(fwd.z) < 2.0f);
+    REQUIRE(fwd.x == Approx(1.0f).margin(0.01f));
+    REQUIRE(fwd.z == Approx(0.0f).margin(0.01f));
 }
 
 TEST_CASE("Camera3D setFOV clamping", "[camera3d]") {

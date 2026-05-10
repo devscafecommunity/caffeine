@@ -158,7 +158,7 @@ public:
         Mat4 result;
         for (u32 col = 0; col < 4; ++col)
             for (u32 row = 0; row < 4; ++row)
-                result(row, col) = inv[col][row] * invDet;
+                result(row, col) = inv[row][col] * invDet;
         return result;
     }
 
