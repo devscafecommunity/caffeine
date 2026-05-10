@@ -34,32 +34,6 @@ Ao contrário de engines "bloated", a Caffeine é construída sob o princípio d
 * **Zero Dependency:** Reduzir ao máximo a dependência da `std` padrão, criando uma `stdlib` própria focada em jogos.
 * **Data-Oriented:** Foco em performance de cache e processamento paralelo.
 * **Caffeine-Powered:** Feita por desenvolvedores que preferem entender cada byte que passa pela CPU.
-
----
-
-
-
-## 🛠️ Roadmap Técnico
-
-### 1. Sistema de Concorrência (Threading)
-* Implementação de um **Job System** baseado em workers.
-* Distribuição de tarefas pesadas (física, animação) entre núcleos da CPU.
-* Primitivas de sincronização *lock-free* para evitar gargalos.
-
-### 2. Otimização Gráfica
-* Integração profunda com a nova **GPU API do SDL3**.
-* Sistema de **Batch Rendering** para redução de Draw Calls.
-* Gerenciamento eficiente de VRAM e Texture Streaming.
-
-### 3. Core & Game Loop
-* Loop de tempo fixo para lógica/física e variável para renderização.
-* Interpolação de frames para garantir fluidez visual (60fps+).
-* Sistema de eventos de alta precisão.
-
-### 4. Caffeine Stdlib (Custom Lib)
-* **Custom Allocators:** Linear, Pool e Stack allocators para evitar fragmentação de memória.
-* **Contêineres Otimizados:** Implementação própria de vetores e strings focados em performance.
-
 ---
 
 ## 🚀 Como Compilar
