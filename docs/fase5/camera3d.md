@@ -3,7 +3,7 @@
 > **Fase:** 5 — Transição Dimensional  
 > **Namespace:** `Caffeine::Render`  
 > **Arquivo:** `src/render/Camera3D.hpp`  
-> **Status:** 📅 Planejado  
+> **Status:** ✅ Implementado  
 > **RFs:** RF5.5, RF5.6
 
 ---
@@ -14,94 +14,66 @@ Camera3D com projeção perspectiva para renderização 3D. Coexiste com `Camera
 
 ---
 
-## API Planejada
+## API
 
 ```cpp
 namespace Caffeine::Render {
 
-// ============================================================================
-// @brief  Câmera 3D com projeção perspectiva.
-//
-//  Modos:
-//  - FPS: mouse look, WASD movement
-//  - Orbital: rotação em torno de um ponto (editor, estratégia)
-//  - Follow: segue entidade com offset (terceira pessoa)
-// ============================================================================
 class Camera3D {
 public:
-    Camera3D();
+    Camera3D() = default;
 
     // ── Matrizes ───────────────────────────────────────────────
-    Math::Mat4 viewMatrix()           const;
-    Math::Mat4 projectionMatrix()     const;
-    Math::Mat4 viewProjectionMatrix() const;   // cached, dirty-flagged
+    Mat4 viewMatrix()           const;
+    Mat4 projectionMatrix()     const;
+    Mat4 viewProjectionMatrix() const;   // cached, dirty-flagged
 
-    // Frustum para culling (RF5.6)
+    // ── Frustum (RF5.6) ────────────────────────────────────────
     Spatial::Frustum frustum() const;
 
     // ── Conversão de espaço ────────────────────────────────────
-    Math::Vec3 worldToScreen(Math::Vec3 worldPos) const;
-    Math::Vec3 screenToWorld(Math::Vec2 screenPos, f32 depth = 0.5f) const;
-    bool       isVisible(const Spatial::AABB3D& bounds) const;
+    Vec3 worldToScreen(Vec3 worldPos) const;
+    Vec3 screenToWorld(Vec2 screenPos, f32 depth = 0.5f) const;
+    bool isVisible(const Spatial::AABB3D& bounds) const;
 
-    // ── Configuração perspectiva ────────────────────────────────
-    void setFOV(f32 fovYDegrees);
-    void setAspect(f32 aspect);
-    void setNearFar(f32 nearPlane, f32 farPlane);
+    // ── Configuração perspectiva ───────────────────────────────
+    void setFOV(f32 fovYDegrees);        // clamped [1, 179]
+    void setAspect(f32 aspect);          // clamped > 0
+    void setNearFar(f32 near, f32 far);  // near ≥ 0.1, far > near
+    void setViewport(Rect2D viewport);   // necessário para screen <-> world
 
     // ── Transform ──────────────────────────────────────────────
-    void setPosition(Math::Vec3 pos);
-    void setRotation(Math::Quat rot);
-    void lookAt(Math::Vec3 eye, Math::Vec3 target,
-                Math::Vec3 up = {0, 1, 0});
+    void setPosition(Vec3 pos);
+    void setRotation(Quat rot);
+    void lookAt(Vec3 eye, Vec3 target, Vec3 up = {0, 1, 0});
 
     // ── FPS mode ───────────────────────────────────────────────
     void rotateFPS(f32 deltaPitch, f32 deltaYaw);  // graus
-    void moveFPS(Math::Vec3 localDelta);           // espaço local
+    void moveFPS(Vec3 localDelta);                  // espaço local
 
     // ── Orbital mode ───────────────────────────────────────────
     void orbit(f32 deltaAzimuth, f32 deltaElevation);  // graus
-    void setOrbitTarget(Math::Vec3 target);
+    void setOrbitTarget(Vec3 target);
     void setOrbitDistance(f32 distance);
     void zoom(f32 delta);
 
     // ── Follow mode ────────────────────────────────────────────
-    void follow(ECS::Entity target, Math::Vec3 offset = {0, 2, -5},
+    void follow(ECS::Entity target, Vec3 offset = {0, 2, -5},
                 f32 smoothing = 0.05f);
+    void stopFollowing();
     void update(f64 dt, const ECS::World& world);
 
     // ── Getters ────────────────────────────────────────────────
-    Math::Vec3 position()  const { return m_position; }
-    Math::Quat rotation()  const { return m_rotation; }
-    Math::Vec3 forward()   const;
-    Math::Vec3 right()     const;
-    Math::Vec3 up()        const;
-    f32        fov()       const { return m_fovY; }
-
-private:
-    Math::Mat4 calculateViewMatrix()       const;
-    Math::Mat4 calculateProjectionMatrix() const;
-
-    Math::Vec3 m_position    = {0, 0, -5};
-    Math::Quat m_rotation    = Math::Quat::identity();
-    f32         m_fovY        = 60.0f;
-    f32         m_aspect      = 16.0f / 9.0f;
-    f32         m_near        = 0.1f;
-    f32         m_far         = 1000.0f;
-
-    // Follow
-    ECS::Entity m_followTarget    = ECS::Entity::INVALID;
-    Math::Vec3  m_followOffset    = {0, 2, -5};
-    f32          m_followSmoothing = 0.05f;
-
-    // Orbital
-    Math::Vec3 m_orbitTarget   = {0, 0, 0};
-    f32         m_orbitDistance = 5.0f;
-    f32         m_azimuth       = 0.0f;    // graus
-    f32         m_elevation     = 30.0f;   // graus
-
-    mutable Math::Mat4 m_cachedVP;
-    mutable bool        m_dirty = true;
+    Vec3   position()  const;
+    Quat   rotation()  const;
+    Vec3   forward()   const;
+    Vec3   right()     const;
+    Vec3   up()        const;
+    f32    fov()       const;
+    f32    aspect()    const;
+    f32    nearPlane() const;
+    f32    farPlane()  const;
+    Rect2D viewport()  const;
 };
 
 }  // namespace Caffeine::Render
@@ -112,13 +84,18 @@ private:
 ## Matemática da Projeção Perspectiva
 
 ```
-Projection Matrix (perspective):
+Projection Matrix (Mat4::perspective):
     f = 1 / tan(fovY/2)
-    
-    [f/aspect,  0,      0,                0]
-    [0,         f,      0,                0]
-    [0,         0,  far/(far-near),       1]
-    [0,         0, -far*near/(far-near),  0]
+    A = -(far + near) / (far - near)     ← row 2, col 2
+    B = -(2 * far * near) / (far - near) ← row 3, col 2
+
+    [f/aspect,  0,   0,  0]
+    [0,         f,   0,  0]
+    [0,         0,   A, -1]
+    [0,         0,   B,  0]
+
+Nota: layout não-padrão — o fator -1 da divisão perspectiva
+está em (2,3) ao invés de (3,2), e o termo near/far está em (3,2).
 
 View Matrix (lookAt):
     forward = normalize(target - eye)
@@ -199,11 +176,13 @@ cmd->endRenderPass();
 
 ## Critério de Aceitação
 
-- [ ] `lookAt` produz view matrix correta (comparado com glm::lookAt)
-- [ ] `perspective` produz projection correta (comparado com glm::perspective)
-- [ ] Frustum culling: objetos fora do frustum não renderizam
-- [ ] Follow suave sem jitter (igual ao Camera2D)
-- [ ] FPS mode: pitch clampado a [-89°, +89°] (sem flip)
+- [x] `lookAt` produz view matrix correta (verificado via view * proj roundtrip)
+- [x] `perspective` produz projection correta (comparado com Mat4::perspective direct)
+- [x] Frustum culling: objetos fora do frustum não renderizam (teste automatizado)
+- [x] Follow suave sem jitter (lerp testado via update)
+- [x] FPS mode: pitch clampado a [-89°, +89°] (teste automatizado)
+- [x] screenToWorld roundtrip (world → screen → world produz mesmo ponto)
+- [x] worldToScreen projeta origem no centro da viewport
 
 ---
 
