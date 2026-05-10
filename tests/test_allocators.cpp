@@ -1,10 +1,61 @@
-#define CATCH_CONFIG_MAIN
+#define CATCH_CONFIG_RUNNER
 #include "catch.hpp"
 #include "../src/memory/LinearAllocator.hpp"
 #include "../src/memory/PoolAllocator.hpp"
 #include "../src/memory/StackAllocator.hpp"
 
+#include <vector>
+#include <string>
+#include <iostream>
+
 using namespace Caffeine;
+
+namespace {
+
+struct FailureSummaryListener : Catch::TestEventListenerBase {
+    using TestEventListenerBase::TestEventListenerBase;
+
+    std::vector<std::string> failedTests;
+
+    void testCaseEnded(Catch::TestCaseStats const& stats) override {
+        if (stats.totals.assertions.failed > 0) {
+            failedTests.push_back(stats.testInfo.name);
+        }
+    }
+
+    void testRunEnded(Catch::TestRunStats const& stats) override {
+        std::ostream& os = stream;
+        os << "\n";
+        os << "===============================================================================\n";
+        if (failedTests.empty()) {
+            os << "  ALL TESTS PASSED\n";
+        } else {
+            os << "  FAILED TEST CASES (" << failedTests.size() << " total)\n";
+            os << "===============================================================================\n";
+            for (size_t i = 0; i < failedTests.size(); ++i) {
+                os << "    " << (i + 1) << ". " << failedTests[i] << "\n";
+            }
+        }
+        os << "===============================================================================\n";
+        os << "  test cases: " << stats.totals.testCases.total()
+           << " | " << stats.totals.testCases.passed << " passed"
+           << " | " << stats.totals.testCases.failed << " failed\n";
+        os << "  assertions: " << stats.totals.assertions.total()
+           << " | " << stats.totals.assertions.passed << " passed"
+           << " | " << stats.totals.assertions.failed << " failed\n";
+        os << "===============================================================================\n\n";
+    }
+};
+
+CATCH_REGISTER_LISTENER(FailureSummaryListener)
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    Catch::Session session;
+    int result = session.run(argc, argv);
+    return result;
+}
 
 TEST_CASE("LinearAllocator - Basic Allocation", "[memory][linear]") {
     LinearAllocator allocator(1024);
@@ -204,13 +255,13 @@ TEST_CASE("Memory Stress - PoolAllocator 10K Allocations", "[memory][stress]") {
         REQUIRE(pointers[i] != nullptr);
     }
 
-    REQUIRE(allocator.freeSlots() == 0);
+    REQUIRE(allocator.freeSlots() == allocator.maxSlots() - ITERATIONS);
 
     for (int i = 0; i < ITERATIONS; i++) {
         allocator.free(pointers[i]);
     }
 
-    REQUIRE(allocator.freeSlots() == ITERATIONS);
+    REQUIRE(allocator.freeSlots() == allocator.maxSlots());
     REQUIRE(allocator.usedMemory() == 0);
 }
 
