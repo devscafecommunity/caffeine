@@ -85,9 +85,15 @@
 
 // Editor (Dear ImGui)
 #include "editor/EditorTypes.hpp"
+#include "editor/EditorContext.hpp"
 #include "editor/ConsoleWindow.hpp"
 #include "editor/ProfilerWindow.hpp"
 #include "editor/StatsOverlay.hpp"
+#include "editor/HierarchyPanel.hpp"
+#include "editor/InspectorPanel.hpp"
+#include "editor/SceneViewport.hpp"
+#include "editor/AssetBrowser.hpp"
+#include "editor/SceneEditor.hpp"
 #ifdef CF_HAS_SDL3
 #ifdef CF_HAS_IMGUI
 #include "editor/ImGuiIntegration.hpp"
