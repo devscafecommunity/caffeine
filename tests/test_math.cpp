@@ -48,7 +48,7 @@ TEST_CASE("Vec2 - Normalization", "[math][vec2]") {
     Vec2 normalized = v.normalized();
 
     float len = normalized.length();
-    REQUIRE(len == Approx(1.0f).epsilon(0.001f));
+    REQUIRE(len == Approx(1.0f).margin(0.001f));
 }
 
 TEST_CASE("Vec3 - Basic Operations", "[math][vec3]") {
@@ -181,10 +181,10 @@ TEST_CASE("Math - DegToRad", "[math]") {
     REQUIRE(result == 0.0f);
 
     result = Math::degToRad(90.0f);
-    REQUIRE(result == Approx(PI / 2.0f).epsilon(0.001f));
+    REQUIRE(result == Approx(PI / 2.0f).margin(0.001f));
 
     result = Math::degToRad(180.0f);
-    REQUIRE(result == Approx(PI).epsilon(0.001f));
+    REQUIRE(result == Approx(PI).margin(0.001f));
 }
 
 TEST_CASE("Math - IsPowerOfTwo", "[math]") {
@@ -223,35 +223,35 @@ TEST_CASE("Quat - Default Constructor Equals Identity", "[math][quat]") {
 TEST_CASE("Quat - FromAxisAngle Zero Degrees", "[math][quat]") {
     Quat q = Quat::fromAxisAngle(Vec3(0, 1, 0), 0.0f);
     Quat identity = Quat::identity();
-    REQUIRE(q.x == Approx(identity.x).epsilon(0.001f));
-    REQUIRE(q.y == Approx(identity.y).epsilon(0.001f));
-    REQUIRE(q.z == Approx(identity.z).epsilon(0.001f));
-    REQUIRE(q.w == Approx(identity.w).epsilon(0.001f));
+    REQUIRE(q.x == Approx(identity.x).margin(0.001f));
+    REQUIRE(q.y == Approx(identity.y).margin(0.001f));
+    REQUIRE(q.z == Approx(identity.z).margin(0.001f));
+    REQUIRE(q.w == Approx(identity.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - FromAxisAngle 90 Degrees Y Rotates X to Z", "[math][quat]") {
     Quat q = Quat::fromAxisAngle(Vec3(0, 1, 0), PI / 2.0f);
     Vec3 rotated = q.rotate(Vec3(1, 0, 0));
-    REQUIRE(rotated.x == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.z == Approx(-1.0f).epsilon(0.001f));
+    REQUIRE(rotated.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.z == Approx(-1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - FromEuler Zero Returns Identity", "[math][quat]") {
     Quat q = Quat::fromEuler(0.0f, 0.0f, 0.0f);
     Quat identity = Quat::identity();
-    REQUIRE(q.x == Approx(identity.x).epsilon(0.001f));
-    REQUIRE(q.y == Approx(identity.y).epsilon(0.001f));
-    REQUIRE(q.z == Approx(identity.z).epsilon(0.001f));
-    REQUIRE(q.w == Approx(identity.w).epsilon(0.001f));
+    REQUIRE(q.x == Approx(identity.x).margin(0.001f));
+    REQUIRE(q.y == Approx(identity.y).margin(0.001f));
+    REQUIRE(q.z == Approx(identity.z).margin(0.001f));
+    REQUIRE(q.w == Approx(identity.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - FromEuler Pitch 90 Degrees", "[math][quat]") {
     Quat q = Quat::fromEuler(PI / 2.0f, 0.0f, 0.0f);
     Vec3 rotated = q.rotate(Vec3(0, 1, 0));
-    REQUIRE(rotated.x == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.z == Approx(1.0f).epsilon(0.001f));
+    REQUIRE(rotated.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.z == Approx(1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Quaternion Composition", "[math][quat]") {
@@ -259,18 +259,18 @@ TEST_CASE("Quat - Quaternion Composition", "[math][quat]") {
     Quat q2 = Quat::fromAxisAngle(Vec3(0, 1, 0), PI / 2.0f);
     Quat result = q1 * q2;
     Vec3 rotated = result.rotate(Vec3(1, 0, 0));
-    REQUIRE(rotated.x == Approx(-1.0f).epsilon(0.001f));
-    REQUIRE(rotated.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.z == Approx(0.0f).epsilon(0.001f));
+    REQUIRE(rotated.x == Approx(-1.0f).margin(0.001f));
+    REQUIRE(rotated.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.z == Approx(0.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Quaternion Times Vec3", "[math][quat]") {
     Quat q = Quat::fromAxisAngle(Vec3(0, 1, 0), PI / 2.0f);
     Vec3 v(1, 0, 0);
     Vec3 rotated = q * v;
-    REQUIRE(rotated.x == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(rotated.z == Approx(-1.0f).epsilon(0.001f));
+    REQUIRE(rotated.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(rotated.z == Approx(-1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Conjugate of Identity is Identity", "[math][quat]") {
@@ -290,31 +290,31 @@ TEST_CASE("Quat - Conjugate Negates XYZ", "[math][quat]") {
 
 TEST_CASE("Quat - Length of Identity is One", "[math][quat]") {
     Quat identity = Quat::identity();
-    REQUIRE(identity.length() == Approx(1.0f).epsilon(0.001f));
+    REQUIRE(identity.length() == Approx(1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Length of Normalized is One", "[math][quat]") {
     Quat q(2, 0, 0, 0);
     Quat normalized = q.normalized();
-    REQUIRE(normalized.length() == Approx(1.0f).epsilon(0.001f));
+    REQUIRE(normalized.length() == Approx(1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Normalized 2,0,0,0 Returns 1,0,0,0", "[math][quat]") {
     Quat q(2, 0, 0, 0);
     Quat normalized = q.normalized();
-    REQUIRE(normalized.x == Approx(1.0f).epsilon(0.001f));
-    REQUIRE(normalized.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(normalized.z == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(normalized.w == Approx(0.0f).epsilon(0.001f));
+    REQUIRE(normalized.x == Approx(1.0f).margin(0.001f));
+    REQUIRE(normalized.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(normalized.z == Approx(0.0f).margin(0.001f));
+    REQUIRE(normalized.w == Approx(0.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - Inverse of Identity is Identity", "[math][quat]") {
     Quat identity = Quat::identity();
     Quat inv = identity.inverse();
-    REQUIRE(inv.x == Approx(identity.x).epsilon(0.001f));
-    REQUIRE(inv.y == Approx(identity.y).epsilon(0.001f));
-    REQUIRE(inv.z == Approx(identity.z).epsilon(0.001f));
-    REQUIRE(inv.w == Approx(identity.w).epsilon(0.001f));
+    REQUIRE(inv.x == Approx(identity.x).margin(0.001f));
+    REQUIRE(inv.y == Approx(identity.y).margin(0.001f));
+    REQUIRE(inv.z == Approx(identity.z).margin(0.001f));
+    REQUIRE(inv.w == Approx(identity.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - Q Times Q Inverse Equals Identity", "[math][quat]") {
@@ -322,19 +322,19 @@ TEST_CASE("Quat - Q Times Q Inverse Equals Identity", "[math][quat]") {
     Quat inv = q.inverse();
     Quat result = q * inv;
     Quat identity = Quat::identity();
-    REQUIRE(result.x == Approx(identity.x).epsilon(0.001f));
-    REQUIRE(result.y == Approx(identity.y).epsilon(0.001f));
-    REQUIRE(result.z == Approx(identity.z).epsilon(0.001f));
-    REQUIRE(result.w == Approx(identity.w).epsilon(0.001f));
+    REQUIRE(result.x == Approx(identity.x).margin(0.001f));
+    REQUIRE(result.y == Approx(identity.y).margin(0.001f));
+    REQUIRE(result.z == Approx(identity.z).margin(0.001f));
+    REQUIRE(result.w == Approx(identity.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - SLERP of Same Quaternion Returns Same", "[math][quat]") {
     Quat q = Quat::fromAxisAngle(Vec3(0, 1, 0), PI / 4.0f);
     Quat result = Quat::slerp(q, q, 0.5f);
-    REQUIRE(result.x == Approx(q.x).epsilon(0.001f));
-    REQUIRE(result.y == Approx(q.y).epsilon(0.001f));
-    REQUIRE(result.z == Approx(q.z).epsilon(0.001f));
-    REQUIRE(result.w == Approx(q.w).epsilon(0.001f));
+    REQUIRE(result.x == Approx(q.x).margin(0.001f));
+    REQUIRE(result.y == Approx(q.y).margin(0.001f));
+    REQUIRE(result.z == Approx(q.z).margin(0.001f));
+    REQUIRE(result.w == Approx(q.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - SLERP t=0 Returns First, t=1 Returns Second", "[math][quat]") {
@@ -342,16 +342,16 @@ TEST_CASE("Quat - SLERP t=0 Returns First, t=1 Returns Second", "[math][quat]") 
     Quat b = Quat::fromAxisAngle(Vec3(0, 1, 0), PI / 2.0f);
     
     Quat result0 = Quat::slerp(a, b, 0.0f);
-    REQUIRE(result0.x == Approx(a.x).epsilon(0.001f));
-    REQUIRE(result0.y == Approx(a.y).epsilon(0.001f));
-    REQUIRE(result0.z == Approx(a.z).epsilon(0.001f));
-    REQUIRE(result0.w == Approx(a.w).epsilon(0.001f));
+    REQUIRE(result0.x == Approx(a.x).margin(0.001f));
+    REQUIRE(result0.y == Approx(a.y).margin(0.001f));
+    REQUIRE(result0.z == Approx(a.z).margin(0.001f));
+    REQUIRE(result0.w == Approx(a.w).margin(0.001f));
     
     Quat result1 = Quat::slerp(a, b, 1.0f);
-    REQUIRE(result1.x == Approx(b.x).epsilon(0.001f));
-    REQUIRE(result1.y == Approx(b.y).epsilon(0.001f));
-    REQUIRE(result1.z == Approx(b.z).epsilon(0.001f));
-    REQUIRE(result1.w == Approx(b.w).epsilon(0.001f));
+    REQUIRE(result1.x == Approx(b.x).margin(0.001f));
+    REQUIRE(result1.y == Approx(b.y).margin(0.001f));
+    REQUIRE(result1.z == Approx(b.z).margin(0.001f));
+    REQUIRE(result1.w == Approx(b.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - NLERP t=0 Returns First Normalized", "[math][quat]") {
@@ -360,10 +360,10 @@ TEST_CASE("Quat - NLERP t=0 Returns First Normalized", "[math][quat]") {
     
     Quat result = Quat::nlerp(a, b, 0.0f);
     Quat aNorm = a.normalized();
-    REQUIRE(result.x == Approx(aNorm.x).epsilon(0.001f));
-    REQUIRE(result.y == Approx(aNorm.y).epsilon(0.001f));
-    REQUIRE(result.z == Approx(aNorm.z).epsilon(0.001f));
-    REQUIRE(result.w == Approx(aNorm.w).epsilon(0.001f));
+    REQUIRE(result.x == Approx(aNorm.x).margin(0.001f));
+    REQUIRE(result.y == Approx(aNorm.y).margin(0.001f));
+    REQUIRE(result.z == Approx(aNorm.z).margin(0.001f));
+    REQUIRE(result.w == Approx(aNorm.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - ToMatrix Identity Returns Identity Matrix", "[math][quat]") {
@@ -373,7 +373,7 @@ TEST_CASE("Quat - ToMatrix Identity Returns Identity Matrix", "[math][quat]") {
     
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
-            REQUIRE(m(i, j) == Approx(identityMat(i, j)).epsilon(0.001f));
+            REQUIRE(m(i, j) == Approx(identityMat(i, j)).margin(0.001f));
         }
     }
 }
@@ -386,7 +386,7 @@ TEST_CASE("Quat - ToMatrix Matches Mat4::rotationY", "[math][quat]") {
     
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
-            REQUIRE(quatMat(i, j) == Approx(mat4Rot(i, j)).epsilon(0.001f));
+            REQUIRE(quatMat(i, j) == Approx(mat4Rot(i, j)).margin(0.001f));
         }
     }
 }
@@ -394,19 +394,19 @@ TEST_CASE("Quat - ToMatrix Matches Mat4::rotationY", "[math][quat]") {
 TEST_CASE("Quat - ToEuler Identity Returns Zero", "[math][quat]") {
     Quat identity = Quat::identity();
     Vec3 euler = identity.toEuler();
-    REQUIRE(euler.x == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(euler.y == Approx(0.0f).epsilon(0.001f));
-    REQUIRE(euler.z == Approx(0.0f).epsilon(0.001f));
+    REQUIRE(euler.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(euler.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(euler.z == Approx(0.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - FromMatrix Identity Returns Identity Quat", "[math][quat]") {
     Mat4 identity = Mat4::identity();
     Quat q = Quat::fromMatrix(identity);
     Quat identityQuat = Quat::identity();
-    REQUIRE(q.x == Approx(identityQuat.x).epsilon(0.001f));
-    REQUIRE(q.y == Approx(identityQuat.y).epsilon(0.001f));
-    REQUIRE(q.z == Approx(identityQuat.z).epsilon(0.001f));
-    REQUIRE(q.w == Approx(identityQuat.w).epsilon(0.001f));
+    REQUIRE(q.x == Approx(identityQuat.x).margin(0.001f));
+    REQUIRE(q.y == Approx(identityQuat.y).margin(0.001f));
+    REQUIRE(q.z == Approx(identityQuat.z).margin(0.001f));
+    REQUIRE(q.w == Approx(identityQuat.w).margin(0.001f));
 }
 
 TEST_CASE("Quat - LookAt Forward Z Up Y Returns Identity", "[math][quat]") {
@@ -414,7 +414,7 @@ TEST_CASE("Quat - LookAt Forward Z Up Y Returns Identity", "[math][quat]") {
     Vec3 up(0, 1, 0);
     Quat q = Quat::lookAt(forward, up);
     Vec3 testVec = q.rotate(Vec3(1, 0, 0));
-    REQUIRE(testVec.length() == Approx(1.0f).epsilon(0.001f));
+    REQUIRE(testVec.length() == Approx(1.0f).margin(0.001f));
 }
 
 TEST_CASE("Quat - FromEuler ToEuler Roundtrip", "[math][quat]") {
@@ -425,7 +425,7 @@ TEST_CASE("Quat - FromEuler ToEuler Roundtrip", "[math][quat]") {
     Quat q = Quat::fromEuler(pitch, yaw, roll);
     Vec3 euler = q.toEuler();
     
-    REQUIRE(euler.x == Approx(pitch).epsilon(0.001f));
-    REQUIRE(euler.y == Approx(yaw).epsilon(0.001f));
-    REQUIRE(euler.z == Approx(roll).epsilon(0.001f));
+    REQUIRE(euler.x == Approx(pitch).margin(0.001f));
+    REQUIRE(euler.y == Approx(yaw).margin(0.001f));
+    REQUIRE(euler.z == Approx(roll).margin(0.001f));
 }

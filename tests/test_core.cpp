@@ -3,6 +3,10 @@
 #include "../src/core/Platform.hpp"
 #include "../src/core/Compiler.hpp"
 #include "../src/core/Assertions.hpp"
+#if defined(CF_DEBUG)
+#include <signal.h>
+#include <csetjmp>
+#endif
 
 using namespace Caffeine;
 
@@ -80,16 +84,38 @@ TEST_CASE("Compiler - Inline Macro", "[core][compiler]") {
     REQUIRE(true);
 }
 
+#if defined(CF_DEBUG)
+static sigjmp_buf sAssertJmpBuf;
+
+extern "C" void handleSigill(int) {
+    siglongjmp(sAssertJmpBuf, 1);
+}
+#endif
+
 TEST_CASE("Assertions - CF_ASSERT in Debug", "[core][assertions]") {
 #if defined(CF_DEBUG)
+    struct sigaction oldSa = {};
+    struct sigaction sa = {};
+    sa.sa_handler = handleSigill;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    sigaction(SIGILL, &sa, &oldSa);
+
     bool caught = false;
-    try {
+    if (sigsetjmp(sAssertJmpBuf, 1) == 0) {
         CF_ASSERT(false, "Test assertion");
-    } catch (...) {
+    } else {
         caught = true;
     }
-#endif
+
+    sigaction(SIGILL, &oldSa, nullptr);
+
+    REQUIRE(caught);
+#else
+    CF_ASSERT(false, "Test assertion - no-op in release");
     REQUIRE(true);
+#endif
 }
 
 // =============================================================================
