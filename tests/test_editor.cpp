@@ -188,3 +188,83 @@ TEST_CASE("ConsoleWindow - entry accessor returns correct entry", "[editor]") {
     REQUIRE(e1.category == FixedString<32>("Cat2"));
     REQUIRE(e1.message == FixedString<256>("Msg2"));
 }
+
+// ============================================================================
+// EditorContext Tests
+// ============================================================================
+
+TEST_CASE("EditorContext - Default State", "[editor][context]") {
+    EditorContext ctx;
+    REQUIRE(ctx.selectedEntity.isValid() == false);
+    REQUIRE(ctx.hoveredEntity.isValid() == false);
+    REQUIRE(ctx.isDirty == false);
+    REQUIRE(static_cast<int>(ctx.gizmoMode) == static_cast<int>(EditorContext::GizmoMode::Translate));
+    REQUIRE(static_cast<int>(ctx.gizmoSpace) == static_cast<int>(EditorContext::GizmoSpace::World));
+    REQUIRE(ctx.viewportZoom == 1.0f);
+}
+
+TEST_CASE("EditorContext - Gizmo Mode Transitions", "[editor][context]") {
+    EditorContext ctx;
+    ctx.gizmoMode = EditorContext::GizmoMode::None;
+    REQUIRE(static_cast<int>(ctx.gizmoMode) == static_cast<int>(EditorContext::GizmoMode::None));
+    ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
+    REQUIRE(static_cast<int>(ctx.gizmoMode) == static_cast<int>(EditorContext::GizmoMode::Rotate));
+    ctx.gizmoMode = EditorContext::GizmoMode::Scale;
+    REQUIRE(static_cast<int>(ctx.gizmoMode) == static_cast<int>(EditorContext::GizmoMode::Scale));
+}
+
+// ============================================================================
+// NameComponent Tests
+// ============================================================================
+
+TEST_CASE("NameComponent - Default Name", "[editor][name]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    const char* name = getEntityName(world, e);
+    REQUIRE(name != nullptr);
+    REQUIRE(strcmp(name, "Unnamed") == 0);
+}
+
+TEST_CASE("NameComponent - Set and Get Name", "[editor][name]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    setEntityName(world, e, "Hero");
+    REQUIRE(strcmp(getEntityName(world, e), "Hero") == 0);
+}
+
+TEST_CASE("NameComponent - Update Name", "[editor][name]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    setEntityName(world, e, "Villain");
+    REQUIRE(strcmp(getEntityName(world, e), "Villain") == 0);
+    setEntityName(world, e, "AntiHero");
+    REQUIRE(strcmp(getEntityName(world, e), "AntiHero") == 0);
+}
+
+TEST_CASE("NameComponent - Long Name Truncation", "[editor][name]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    const char* longName = "ThisIsAVeryLongEntityNameThatShouldDefinitelyExceedTheSixtyFourCharacterBufferLimitOfTheNameComponent";
+    setEntityName(world, e, longName);
+    const char* stored = getEntityName(world, e);
+    REQUIRE(stored != nullptr);
+    REQUIRE(strlen(stored) == 63);
+}
+
+TEST_CASE("NameComponent - Multiple Entities", "[editor][name]") {
+    ECS::World world;
+    ECS::Entity e1 = world.create();
+    ECS::Entity e2 = world.create();
+    ECS::Entity e3 = world.create();
+    setEntityName(world, e1, "Player");
+    setEntityName(world, e2, "Enemy");
+    setEntityName(world, e3, "NPC");
+    REQUIRE(strcmp(getEntityName(world, e1), "Player") == 0);
+    REQUIRE(strcmp(getEntityName(world, e2), "Enemy") == 0);
+    REQUIRE(strcmp(getEntityName(world, e3), "NPC") == 0);
+    // Verify independence
+    setEntityName(world, e1, "Hero");
+    REQUIRE(strcmp(getEntityName(world, e1), "Hero") == 0);
+    REQUIRE(strcmp(getEntityName(world, e2), "Enemy") == 0);
+    REQUIRE(strcmp(getEntityName(world, e3), "NPC") == 0);
+}
