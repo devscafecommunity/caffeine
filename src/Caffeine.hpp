@@ -81,6 +81,7 @@
 // Animation
 #include "animation/AnimationComponents.hpp"
 #include "animation/AnimationSystem.hpp"
+#include "animation/SkeletalAnimation.hpp"
 
 // Mesh (3D)
 #include "ecs/Components3D.hpp"
