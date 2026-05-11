@@ -12,124 +12,108 @@ on:
         default: 'v0.0.1-beta'
 
 jobs:
-  # ── Core: Engine base sem SDL3/ImGui (Linux) ─────────────────────────────
-  build-core:
-    name: Build Core (Linux)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install GCC 13
-        run: sudo apt-get update && sudo apt-get install -y g++-13
-
-      - name: Configure Core (sem SDL3)
-        run: |
-          cmake -S . -B build-core \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++-13
-
-      - name: Build Core
-        run: cmake --build build-core --target Caffeine -- -j$(nproc)
-
-      - name: Package Core
-        run: |
-          TAG="${{ github.ref_name || inputs.version }}"
-          PKG="caffeine-core-${TAG}-linux"
-          mkdir -p "$PKG/lib" "$PKG/include"
-
-          # Biblioteca compilada
-          cp build-core/libCaffeine.a "$PKG/lib/"
-
-          # Headers públicos (exclui editor — editor é parte da IDE)
-          find src -name "*.hpp" | grep -v "/editor/" | while read f; do
-            dest="$PKG/include/${f#src/}"
-            mkdir -p "$(dirname "$dest")"
-            cp "$f" "$dest"
-          done
-
-          zip -r "${PKG}.zip" "$PKG"
-          echo "CORE_ZIP=${PKG}.zip" >> $GITHUB_ENV
-
-      - name: Upload Core artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-linux
-          path: caffeine-core-*.zip
-
-  # ── IDE + Bundle: Engine completa com SDL3 + ImGui (Windows) ─────────────
-  build-ide-bundle:
-    name: Build IDE + Bundle (Windows)
+  build-and-release:
+    name: Build & Publish Release
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            echo "VERSION=${{ inputs.version }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            echo "VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
 
       - name: Download SDL3
         shell: pwsh
         run: |
           $version = "3.2.14"
           $url = "https://github.com/libsdl-org/SDL/releases/download/release-$version/SDL3-devel-$version-VC.zip"
-          Write-Host "Downloading SDL3 $version..."
           Invoke-WebRequest -Uri $url -OutFile SDL3.zip
           Expand-Archive SDL3.zip -DestinationPath "$env:GITHUB_WORKSPACE\SDL3"
           $sdl3Root = "$env:GITHUB_WORKSPACE\SDL3\SDL3-$version"
-          echo "SDL3_CMAKE_DIR=$sdl3Root\cmake"  | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "SDL3_BIN=$sdl3Root\lib\x64"      | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "SDL3_CMAKE_DIR = $sdl3Root\cmake"
+          echo "SDL3_CMAKE_DIR=$sdl3Root\cmake" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "SDL3_BIN=$sdl3Root\lib\x64"     | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Configure Full (com SDL3 + ImGui)
+      # ── core: Caffeine sem SDL3 + caf-encode ─────────────────────────────
+      - name: Configure Core (sem SDL3)
+        shell: pwsh
+        run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Core
+        shell: pwsh
+        run: cmake --build build-core --config Release
+
+      # ── full: apenas Caffeine.lib com SDL3 + ImGui ────────────────────────
+      - name: Configure Full (com SDL3)
         shell: pwsh
         run: |
           cmake -S . -B build-full `
             -DCMAKE_BUILD_TYPE=Release `
             -DSDL3_DIR="${{ env.SDL3_CMAKE_DIR }}"
 
-      - name: Build Full
+      - name: Build Full (target Caffeine only)
         shell: pwsh
-        run: cmake --build build-full --config Release
+        run: cmake --build build-full --config Release --target Caffeine
 
-      # ── Artifact: IDE (apenas o módulo editor + engine compilada com SDL3) ─
+      # ── Package: core ─────────────────────────────────────────────────────
+      - name: Package Core
+        shell: pwsh
+        run: |
+          $tag = "${{ env.VERSION }}"
+          $pkg = "caffeine-core-$tag-windows"
+          New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
+
+          Copy-Item "build-core\Release\Caffeine.lib" "$pkg\lib\"
+          Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
+
+          Get-ChildItem "src" -Recurse -Filter "*.hpp" | Where-Object {
+            $_.FullName -notlike "*\editor\*"
+          } | ForEach-Object {
+            $rel  = $_.FullName.Substring((Resolve-Path "src").Path.Length + 1)
+            $dest = "$pkg\include\$rel"
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item $_.FullName $dest
+          }
+
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      # ── Package: ide ──────────────────────────────────────────────────────
       - name: Package IDE
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name || inputs.version }}"
+          $tag = "${{ env.VERSION }}"
           $pkg = "caffeine-ide-$tag-windows"
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include\editor", "$pkg\bin" | Out-Null
 
-          # Biblioteca com SDL3 + ImGui
           Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
+          Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
-          # Apenas os headers do módulo editor
           Get-ChildItem "src\editor" -Filter "*.hpp" | ForEach-Object {
             Copy-Item $_.FullName "$pkg\include\editor\"
           }
 
-          # Runtime SDL3
-          Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
-
           Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
 
-      # ── Artifact: Bundle (IDE + Engine core + todas as ferramentas) ────────
+      # ── Package: bundle ───────────────────────────────────────────────────
       - name: Package Bundle
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name || inputs.version }}"
+          $tag = "${{ env.VERSION }}"
           $pkg = "caffeine-bundle-$tag-windows"
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
 
-          # Biblioteca completa
           Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
-
-          # Ferramenta caf-encode
-          Copy-Item "build-full\Release\caf-encode.exe" "$pkg\bin\"
-
-          # Runtime SDL3
+          Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
-          # Todos os headers (core + editor)
           Get-ChildItem "src" -Recurse -Filter "*.hpp" | ForEach-Object {
             $rel  = $_.FullName.Substring((Resolve-Path "src").Path.Length + 1)
             $dest = "$pkg\include\$rel"
@@ -139,36 +123,15 @@ jobs:
 
           Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
 
-      - name: Upload IDE + Bundle artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ide-bundle-windows
-          path: |
-            caffeine-ide-*.zip
-            caffeine-bundle-*.zip
-
-  # ── Publicar Release no GitHub ───────────────────────────────────────────
-  release:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: [build-core, build-ide-bundle]
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-
+      # ── GitHub Release ────────────────────────────────────────────────────
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || inputs.version }}
-          name: "☕ Caffeine Engine ${{ github.ref_name || inputs.version }}"
+          tag_name: ${{ env.VERSION }}
+          name: "☕ Caffeine Engine ${{ env.VERSION }}"
           prerelease: true
           body: |
-            ## ☕ Caffeine Engine ${{ github.ref_name || inputs.version }}
+            ## ☕ Caffeine Engine ${{ env.VERSION }}
 
             Primeira release pública da **Caffeine Engine** — uma game engine de alta performance construída em C++20 sobre SDL3.
 
@@ -176,25 +139,20 @@ jobs:
 
             ### 📦 Artifacts
 
-            | Arquivo | Plataforma | Descrição |
-            |---------|-----------|-----------|
-            | `caffeine-core-*-linux.zip` | Linux | Engine base sem SDL3/ImGui — apenas a biblioteca estática |
-            | `caffeine-ide-*-windows.zip` | Windows | Módulo IDE: engine compilada com SDL3 + ImGui + headers do editor |
-            | `caffeine-bundle-*-windows.zip` | Windows | Bundle completa: IDE + Core + caf-encode + SDL3.dll |
+            | Arquivo | Descrição |
+            |---------|-----------|
+            | `caffeine-core-*-windows.zip` | Engine base: `Caffeine.lib` (sem SDL3/ImGui) + `caf-encode.exe` + headers públicos |
+            | `caffeine-ide-*-windows.zip` | Módulo IDE: `Caffeine.lib` (com SDL3 + ImGui) + headers do editor + `SDL3.dll` |
+            | `caffeine-bundle-*-windows.zip` | Bundle completa: IDE + Core + todas as ferramentas + todos os headers |
 
             ---
 
             ### 📋 Requisitos
 
-            **Core (Linux)**
-            - GCC 13+ ou Clang 16+
-            - CMake 3.20+
-            - C++20
-
-            **IDE / Bundle (Windows)**
             - Windows 10/11 (x64)
             - Visual C++ Redistributable 2022
-            - SDL3.dll incluído no pacote
+            - CMake 3.20+ (para integrar como dependência)
+            - `SDL3.dll` incluído nos pacotes IDE e Bundle
 
             ---
 
