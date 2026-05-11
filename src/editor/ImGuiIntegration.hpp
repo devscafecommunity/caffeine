@@ -23,13 +23,12 @@ public:
         ImGui::CreateContext();
 
         ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
         ImGui_ImplSDL3_InitForSDLGPU(window);
 
         ImGui_ImplSDLGPU3_InitInfo initInfo{};
-        initInfo.GpuDevice         = device->nativeDevice();
+        initInfo.Device            = device->nativeDevice();
         initInfo.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(
             device->nativeDevice(), window);
 
@@ -56,7 +55,7 @@ public:
     void prepareRender(RHI::CommandBuffer* cmd) {
         if (!m_initialized) return;
         ImGui::Render();
-        ImGui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), cmd->nativeHandle());
+        Imgui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), cmd->nativeHandle());
     }
 
     void endFrame(RHI::CommandBuffer* cmd) {

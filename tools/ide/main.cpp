@@ -41,7 +41,7 @@ int main(int, char**) {
         return 1;
     }
 
-    Caffeine::Assets::AssetManager assetManager;
+    Caffeine::Assets::AssetManager assetManager(nullptr, "assets");
     Caffeine::ECS::World world;
     Caffeine::Render::Camera2D editorCamera;
 

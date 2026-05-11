@@ -149,13 +149,6 @@ private:
     }
 
     void setupDockingLayout() {
-        ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(
-            0,
-            ImGui::GetMainViewport(),
-            ImGuiDockNodeFlags_PassthruCentralNode);
-
-        // Only setup once
-        if (m_dockingSetup) return;
         m_dockingSetup = true;
     }
 
