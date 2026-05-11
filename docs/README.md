@@ -1,192 +1,135 @@
-# ☕ Caffeine Engine — Documentação (Legado)
+# ☕ Caffeine Engine — Documentação
 
-> ⚠️ **Aviso:** Este arquivo foi substituído por [`MASTER.md`](MASTER.md). Por favor, use o MASTER.md para documentação completa e unificada.
-
----
-
-**Versão:** 1.1.0  
-**Status:** Alpha (Pré-produção)  
-**Última Atualização:** 2026-04-06  
-**Mantido por:** Codex Studio Guild
+> Documentação técnica organizada por módulos funcionais.
 
 ---
 
-## 📚 Documentação Principal
+## Índice da Documentação
 
-| Documento | Descrição | Link |
-|-----------|-----------|------|
-| **MASTER.md** | Documentação unificada completa | [`MASTER.md`](MASTER.md) |
-| **ROADMAP.md** | Roadmap das 6 fases de desenvolvimento | [`ROADMAP.md`](ROADMAP.md) |
-| **SPECS.md** | Regras e padrões de desenvolvimento | [`SPECS.md`](SPECS.md) |
+### Engine Core
 
-### Navegação por Módulo
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Core Types** | [`core/types.md`](core/types.md) | Tipos fundamentais (`u8..u64`, `f32`, `f64`, `usize`), plataforma, compilador, assertions |
+| **Timer** | [`core/timer.md`](core/timer.md) | High-Resolution Timer, `TimePoint`, `Duration`, `ScopeTimer` |
+| **Game Loop** | [`core/game-loop.md`](core/game-loop.md) | Fixed timestep, accumulator, interpolação, spiral of death prevention |
+| **Event Bus** | [`core/events.md`](core/events.md) | Pub/sub tipado, `Event<T>`, fila diferida, thread-safe |
 
-| Módulo | Arquitetura | Containers/API |
-|--------|-------------|----------------|
-| **Core** | [`architecture/core.md`](architecture/core.md) | [`api/README.md`](api/README.md) |
-| **Memory** | [`architecture/memory.md`](architecture/memory.md) | [`api/README.md`](api/README.md) |
-| **Containers** | [`containers/vector.md`](containers/vector.md) | [`api/README.md`](api/README.md) |
-| **Math** | [`math/vectors.md`](math/vectors.md) | [`api/README.md`](api/README.md) |
+### Memory & Data
 
----
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Allocators** | [`memory/allocators.md`](memory/allocators.md) | `IAllocator`, Linear, Pool, Stack allocators |
+| **Memory Model** | [`memory/memory-model.md`](memory/memory-model.md) | Modelo de memória da engine, estratégias de alocação |
+| **Containers** | [`memory/containers.md`](memory/containers.md) | Vector, HashMap, StringView, FixedString |
 
-## 🚀 Comece Aqui
+### Math Library
 
-1. Leia o [`MASTER.md`](MASTER.md) para visão completa
-2. Consulte [`ROADMAP.md`](ROADMAP.md) para status das fases
-3. Explore a documentação por módulo acima
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Vectors & Matrices** | [`math/vectors.md`](math/vectors.md) | Vec2, Vec3, Vec4, Mat4, operações e transformações |
+| **Quaternions** | [`math/quaternions.md`](math/quaternions.md) | Quaternion, SLERP, extensões 3D de Mat4 (perspective, lookAt) |
 
----
+### Concurrency
 
-## Índice (Legado)
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Job System** | [`concurrency/job-system.md`](concurrency/job-system.md) | Thread pool, work-stealing, job priorities, fiber support |
 
-1. [Visão Geral](#1-visão-geral)
-2. [Filosofia & Princípios](#2-filosofia--princípios)
-3. [Arquitetura do Sistema](#3-arquitetura-do-sistema)
-4. [Fases de Desenvolvimento](#4-fases-de-desenvolvimento)
-5. [Convenções de Código](#5-convenções-de-código)
-6. [Fluxo de Trabalho (R.I.C.O.)](#6-fluxo-de-trabalho-rico)
-7. [Estrutura de Diretórios](#7-estrutura-de-diretórios)
-8. [Gestão de Memória](#8-gestão-de-memória)
-9. [Módulos da Engine](#9-módulos-da-engine)
-10. [Estratégia de Crescimento](#10-estratégia-de-crescimento)
-11. [Documentação Técnica](#11-documentação-técnica)
-12. [Como Contribuir](#12-como-contribuir)
+### Input
 
----
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Input System** | [`input/input-system.md`](input/input-system.md) | Action mapping, polling, gamepad/keyboard/mouse abstraction |
 
-## 11. Documentação Técnica
+### Rendering
 
-### Fase 1: Fundação Atômica (IMPLEMENTADA)
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **RHI** | [`rendering/rhi.md`](rendering/rhi.md) | RenderDevice, CommandBuffer, Triple Buffering, abstração SDL_GPU |
+| **Batch Renderer** | [`rendering/batch-renderer.md`](rendering/batch-renderer.md) | Sprite batching, Texture Atlas, Radix Sort, Persistent Mapped Buffers |
+| **Camera 2D** | [`rendering/camera-2d.md`](rendering/camera-2d.md) | Projeção ortográfica, follow, shake, bounds |
+| **Camera 3D** | [`rendering/camera-3d.md`](rendering/camera-3d.md) | Projeção perspectiva, lookAt, frustum culling |
 
-A documentação técnica da Fase 1 está organizada em subpastas com referências cruzadas:
+### Assets
 
-| Módulo | Arquitetura | API |
-|--------|-------------|-----|
-| **Core** | [`architecture/core.md`](architecture/core.md) | Tipos, Platform, Assertions |
-| **Memory** | [`architecture/memory.md`](architecture/memory.md) | Linear, Pool, Stack allocators |
-| **Containers** | [`containers/vector.md`](containers/vector.md) | Vector, HashMap, String |
-| **Math** | [`math/vectors.md`](math/vectors.md) | Vec2, Vec3, Vec4, Mat4 |
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Asset Manager** | [`assets/asset-manager.md`](assets/asset-manager.md) | Async loading, hot-reload, `AssetHandle<T>`, cache |
+| **CAF Format** | [`assets/caf-format.md`](assets/caf-format.md) | Formato binário `.caf` — zero-parsing, zero-copy |
+| **Mesh Loading** | [`assets/mesh-loading.md`](assets/mesh-loading.md) | Mesh loader (.obj, .gltf), Shader system HLSL/GLSL |
+| **Asset Pipeline** | [`assets/asset-pipeline.md`](assets/asset-pipeline.md) | CLI converter: PNG/WAV/OBJ → `.caf` |
 
-**Referências Cruzadas:**
+### ECS (Entity Component System)
 
-```
-Core ──────► Memory ──────► Containers ──────► Math
-  │             │                 │              │
-  └─────────────┴─────────────────┴────────────┘
-                          │
-                     [API Reference](api/README.md)
-```
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **ECS Core** | [`ecs/core.md`](ecs/core.md) | Archetypes, World, Entity, ComponentQuery, Command Buffer |
+| **Scene Manager** | [`ecs/scene.md`](ecs/scene.md) | Scene stack, hierarquia parent/child, serialização `.caf` |
+| **ECS Overview** | [`ecs/README.md`](ecs/README.md) | Visão geral do ECS |
+| **ECS Examples** | [`ecs/examples.md`](ecs/examples.md) | Exemplos de uso do ECS |
 
-### Navegação Rápida
+### Physics
 
-- [API Reference](api/README.md) - Referência completa da API
-- [Core Module](architecture/core.md) - Tipos fundamentais
-- [Memory Module](architecture/memory.md) - Allocators customizados
-- [Containers Module](containers/vector.md) - Estruturas de dados
-- [Math Module](math/vectors.md) - Vetores e matrizes
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Physics 2D** | [`physics/physics-2d.md`](physics/physics-2d.md) | AABB/circle collision, rigid body, layers, raycast |
+| **Spatial Partitioning** | [`physics/spatial-partitioning.md`](physics/spatial-partitioning.md) | Octree, broad-phase collision, frustum culling |
 
-### Testes
+### Animation
 
-Os testes estão localizados em [`tests/`](../tests/) e cobrem:
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Animation 2D** | [`animation/animation-2d.md`](animation/animation-2d.md) | Sprite clips, state machine, frame events |
+| **Skeletal Animation** | [`animation/skeletal-animation.md`](animation/skeletal-animation.md) | Bones, skinning, blend trees, glTF animation |
 
-- `test_core.cpp` - 8 testes (Types, Platform, Compiler, Assertions)
-- `test_allocators.cpp` - 16 testes + 3 stress tests
-- `test_containers.cpp` - 14 testes + 1 stress test
-- `test_math.cpp` - 18 testes
+### Audio
 
----
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Audio System** | [`audio/audio-system.md`](audio/audio-system.md) | SFX, music streaming, spatial 2D, SDL_AudioStream |
 
-## 12. Como Contribuir
+### UI
 
-### 11.1 Para Arquitetos (Implementação)
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Game UI** | [`ui/game-ui.md`](ui/game-ui.md) | UI retained mode, widgets ECS, bindValue |
+| **Editor UI** | [`ui/editor-ui.md`](ui/editor-ui.md) | Dear ImGui integrado, ProfilerWindow, ConsoleWindow |
 
-1. **Consultar R.I.C.O.:** Antes de implementar, seguir o ciclo Research → Idea → Conflict → Order
-2. **Criar Branch:** `feature/fase-N-nome-da-feature`
-3. **Implementar:** Seguir convenções de código (Seção 5)
-4. **Code Review:** Pull Request com pelo menos 1 aprovação
-5. **Merge:** Squash merge para manter histórico limpo
-6. **Documentar:** Spec e código no mesmo commit
+### Editor
 
-### 11.2 Para Scribes (Documentação)
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Scene Editor** | [`editor/scene-editor.md`](editor/scene-editor.md) | Entity Inspector, Hierarchy, Gizmos, drag-and-drop |
 
-1. **Antes de Codificar:** A spec deve existir em `/desing_planning/`
-2. **Sincronia:** Se o código mudou, o doc mudou no mesmo commit
-3. **Clareza:** "Se a explicação é mais complexa que o código, o sistema precisa ser simplificado"
-4. **AGNOSTICISM:** Toda spec deve prever 2D e 3D
+### Scripting
 
-### 11.3 Fluxo Git
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Scripting** | [`scripting/scripting.md`](scripting/scripting.md) | Lua/AngelScript bindings, ECS integration, hot-reload |
 
-```
-feature/fase-1-linear-allocator
-        │
-        ├── Implementa LinearAllocator
-        ├── Escreve testes
-        ├── Atualiza memory_model.md
-        ├── Code Review aprovação
-        │
-        ▼
-      Squash Merge → main
-        │
-        ▼
-    Tag: v0.1.0-alpha
-```
+### Debug
 
-### 11.4 Checklist Antes de Commitar
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Debug Tools** | [`debug/debug-tools.md`](debug/debug-tools.md) | LogSystem, Profiler, DebugDraw |
+| **Testing** | [`debug/testing.md`](debug/testing.md) | Test system, Catch2, CI integration |
 
-- [ ] Código compila em todas as plataformas
-- [ ] Sem `new` ou `delete` soltos
-- [ ] Nomenclatura segue o Style Guide
-- [ ] Headers têm documentação Doxygen
-- [ ] Documentação correspondente atualizada
-- [ ] `.gitignore` não vai incluir artefatos de build
+### API Reference
+
+| Documentação | Descrição |
+|-------------|-----------|
+| [`api/README.md`](api/README.md) | Referência completa da API por módulo |
 
 ---
 
-## Apêndice A: Glossário
+## Documentos de Referência
 
-| Termo | Definição |
-|---|---|
-| **RHI** | Rendering Hardware Interface — abstração sobre a API gráfica |
-| **ECS** | Entity Component System — arquitetura de dados para jogos |
-| **DOD** | Data-Oriented Design — organização de dados para cache locality |
-| **YAGNI** | You Ain't Gonna Need It — não implementar o que não é necessário |
-| **Lock-free** | Algoritmo que não usa locks, apenas atômicos |
-| **Archetype** | Grupo de entidades com o mesmo conjunto de componentes |
-| **Draw Call** | Comando enviado à GPU para renderizar geometria |
-| **Batch Rendering** | Agrupar múltiplos draw calls em um único |
-| **SIMD** | Single Instruction Multiple Data — instruções vetoriais da CPU |
-| **Cache Locality** | Padrão de acesso à memória que maximiza hits de cache |
-| **Swapchain** | Buffer de frames para double/triple buffering |
-
----
-
-## Apêndice B: Referências e Recursos
-
-### Documentação
-- [SDL3 Documentation](https://wiki.libsdl.org/)
-- [SDL_GPU API](https://github.com/libsdl-org/SDL_gpu/)
-- [C++20 Standard](https://en.cppreference.com/)
-
-### Livros e Conceitos
-- [Data-Oriented Design — Richard Fabian](https://www.dataorienteddesign.com/)
-- [Game Programming Patterns — Robert Nystrom](https://gameprogrammingpatterns.com/)
-- [Game Engine Architecture — Jason Gregory](https://www.gameenginebook.com/)
-
-### Engines e Bibliotecas de Referência
-- [flecs](https://github.com/SanderMertens/flecs) — ECS archetype-based com cache locality
-- [EnTT](https://github.com/skypjack/entt) — ECS patterns e integração com game loops
-- [Jolt Physics](https://github.com/jrouwe/JoltPhysics) — Job System com barreiras
-- [Box2D/LiquidFun](https://github.com/google/liquidfun) — Física 2D com broad/narrow phase
-
-### Padrões de Game Loop
-- [Handmade Hero](https://github.com/cmuratori/HandmadeHeroCode) — Padrões de engine de baixo nível
-- [Fixed Timestep Demo](https://github.com/jakubtomsu/fixed-timestep-demo) — Padrão accumulator com interpolação
-- [Dear ImGui SDL3](https://github.com/ocornut/imgui/blob/master/examples/example_sdl3_opengl3/main.cpp) — SDL3 game loop integration
-
-### Patterns de Código
-- [Endurodave StateMachine](https://github.com/endurodave/StateMachine) — State machine patterns em C++
-- [Merrilledmonds GameLoop](https://github.com/merrilledmonds/GameLoop) — Boilerplate game loop modular
+| Documento | Descrição |
+|-----------|-----------|
+| [`MASTER.md`](MASTER.md) | Documentação unificada completa (visão geral) |
+| [`architecture_specs.md`](architecture_specs.md) | Especificações técnicas detalhadas |
+| [`HISTORY.md`](HISTORY.md) | Histórico de desenvolvimento (fases, roadmap, planos) |
 
 ---
 

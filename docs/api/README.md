@@ -1,6 +1,6 @@
 # API Reference
 
-> Complete API documentation for Caffeine Engine - Phase 1: Atomic Foundation
+> Complete API documentation for Caffeine Engine
 
 ## Module Index
 
@@ -16,7 +16,7 @@
 | `CF_PLATFORM_LINUX` | Linux platform macro | [`src/core/Platform.hpp`](../../src/core/Platform.hpp) |
 | `CF_PLATFORM_MACOS` | macOS platform macro | [`src/core/Platform.hpp`](../../src/core/Platform.hpp) |
 
-**Documentation:** [`docs/architecture/core.md`](../architecture/core.md)
+**Documentation:** [`docs/core/types.md`](../core/types.md)
 
 ### Memory Module
 
@@ -27,7 +27,7 @@
 | `PoolAllocator` | Fixed-size slot allocator | [`src/memory/PoolAllocator.hpp`](../../src/memory/PoolAllocator.hpp) |
 | `StackAllocator` | Marker-based allocator | [`src/memory/StackAllocator.hpp`](../../src/memory/StackAllocator.hpp) |
 
-**Documentation:** [`docs/architecture/memory.md`](../architecture/memory.md) | [`docs/memory_model.md`](../memory_model.md)
+**Documentation:** [`docs/memory/allocators.md`](../memory/allocators.md) | [`docs/memory/memory-model.md`](../memory/memory-model.md)
 
 ### Containers Module
 
@@ -38,7 +38,7 @@
 | `StringView` | Non-owning string | [`src/containers/StringView.hpp`](../../src/containers/StringView.hpp) |
 | `FixedString<T, N>` | Fixed-size string | [`src/containers/FixedString.hpp`](../../src/containers/FixedString.hpp) |
 
-**Documentation:** [`docs/containers/vector.md`](../containers/vector.md)
+**Documentation:** [`docs/memory/containers.md`](../memory/containers.md)
 
 ### Math Module
 
@@ -85,8 +85,8 @@ Caffeine::Mat4 transform = Caffeine::Mat4::translation(pos);
 ## See Also
 
 - [MASTER.md](../MASTER.md) - Complete documentation
-- [Core Architecture](../architecture/core.md)
-- [Memory Architecture](../architecture/memory.md)
-- [Containers Architecture](../containers/vector.md)
-- [Math Architecture](../math/vectors.md)
-- [ROADMAP.md](../ROADMAP.md) - Phase 1 requirements
+- [Core Types](../core/types.md)
+- [Memory Allocators](../memory/allocators.md)
+- [Memory Containers](../memory/containers.md)
+- [Math Vectors](../math/vectors.md)
+- [HISTORY.md](../HISTORY.md) - Development history
