@@ -23,7 +23,7 @@ public:
 
     InspectorPanel() = default;
 
-    void registerDrawer(ECS::ComponentID id, ComponentDrawer drawer) {
+    void registerDrawer(u32 componentTypeId, ComponentDrawer drawer) {
 #ifdef CF_HAS_IMGUI
         m_drawers.set(id, std::move(drawer));
 #endif
@@ -185,7 +185,7 @@ private:
 #endif
 
     bool m_open = true;
-    HashMap<ECS::ComponentID, ComponentDrawer> m_drawers;
+    HashMap<u32, ComponentDrawer> m_drawers;
 };
 
 } // namespace Caffeine::Editor
