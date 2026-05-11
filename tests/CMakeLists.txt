@@ -44,6 +44,10 @@ endif()
 enable_testing()
 add_test(NAME CaffeineTest COMMAND CaffeineTest)
 
+if(CAFFEINE_ENABLE_SCRIPTING)
+    list(APPEND CAFFEINE_TEST_SOURCES test_script.cpp)
+endif()
+
 if(SDL3_FOUND AND WIN32)
     add_custom_command(TARGET CaffeineTest POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

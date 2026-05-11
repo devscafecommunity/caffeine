@@ -130,6 +130,16 @@ AxisState InputManager::axisState(Axis axis) const {
     return state;
 }
 
+bool InputManager::isKeyDown(Key key) const {
+    auto idx = static_cast<usize>(key);
+    return idx < m_keyState.size() && m_keyState[idx];
+}
+
+bool InputManager::isMouseButtonDown(MouseButton button) const {
+    auto idx = static_cast<usize>(button);
+    return idx < m_mouseState.size() && m_mouseState[idx];
+}
+
 Vec2 InputManager::mousePosition() const {
     return m_mousePos;
 }

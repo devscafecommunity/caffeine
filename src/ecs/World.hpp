@@ -283,4 +283,31 @@ void World::forEachParallel(const ComponentQuery& query, Threading::JobSystem& j
     barrier.wait();
 }
 
+template<typename T, typename... Args>
+T& Entity::add(Args&&... args) {
+    return m_world->add<T>(*this, std::forward<Args>(args)...);
+}
+
+template<typename T>
+void Entity::remove() {
+    m_world->remove<T>(*this);
+}
+
+template<typename T>
+bool Entity::has() const {
+    return m_world->has<T>(*this);
+}
+
+template<typename T>
+T* Entity::get() {
+    return m_world->get<T>(*this);
+}
+
+template<typename T>
+T& Entity::getOrAdd() {
+    T* ptr = m_world->get<T>(*this);
+    if (ptr) return *ptr;
+    return m_world->add<T>(*this);
+}
+
 }
