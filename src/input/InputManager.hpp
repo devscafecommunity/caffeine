@@ -185,6 +185,8 @@ public:
     // --- Query state ---
     ActionState actionState(Action action) const;
     AxisState   axisState(Axis axis) const;
+    bool        isKeyDown(Key key) const;
+    bool        isMouseButtonDown(MouseButton button) const;
     Vec2        mousePosition() const;
     Vec2        mouseDelta() const;
 

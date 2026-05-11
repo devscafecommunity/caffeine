@@ -105,6 +105,14 @@
 #endif
 #endif
 
+// Scripting (optional — CAFFEINE_ENABLE_SCRIPTING)
+#ifdef CF_HAS_SCRIPTING
+#include "script/ScriptEngine.hpp"
+#include "script/ScriptTypes.hpp"
+#include "script/ScriptSystem.hpp"
+#include "script/ScriptWatcher.hpp"
+#endif
+
 // Tools (Asset Pipeline)
 #include "tools/PipelineTypes.hpp"
 #include "tools/TextureEncoder.hpp"
