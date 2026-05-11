@@ -118,12 +118,11 @@ All math types work for both 2D and 3D:
 ## See Also
 
 ### Related Documentation
-- [ROADMAP.md](../ROADMAP.md) - Phase 1 requirements
-- [SPECS.md](../SPECS.md) - Development rules
+- [HISTORY.md](../HISTORY.md) - Phase 1 requirements and development rules
 - [architecture_specs.md](../architecture_specs.md) - Technical specifications
 - [API Reference](../api/README.md) - Complete API documentation
 - [Test Documentation](../../tests/test_math.cpp) - Math tests
 
 ### Related Modules
-- [Core Module](../architecture/core.md) - Foundation types
-- [Memory Module](../architecture/memory.md) - Allocators
+- [Core Module](../core/types.md) - Foundation types
+- [Memory Module](../memory/allocators.md) - Allocators
