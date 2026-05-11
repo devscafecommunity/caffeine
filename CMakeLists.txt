@@ -88,6 +88,14 @@ target_link_libraries(caf-encode PRIVATE Caffeine)
 target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(caf-encode PRIVATE cxx_std_20)
 
+# ── caffeine-studio IDE executable ───────────────────────────────
+if(SDL3_FOUND)
+    add_executable(caffeine-studio tools/ide/main.cpp)
+    target_link_libraries(caffeine-studio PRIVATE Caffeine)
+    target_include_directories(caffeine-studio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(caffeine-studio PRIVATE cxx_std_20)
+endif()
+
 add_subdirectory(tests)
 
 # ── Scripting (Lua + sol2) ────────────────────────────────────

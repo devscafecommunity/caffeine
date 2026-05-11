@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <cstring>
 #include <optional>
+#include <algorithm>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -94,7 +95,7 @@ public:
 
             ImGui::BeginChild("asset_grid", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
 
-            int cols = ImMax(1, static_cast<int>(ImGui::GetContentRegionAvail().x / 100.0f));
+            int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / 100.0f));
             ImGui::Columns(cols, nullptr, false);
 
             for (usize i = 0; i < m_entries.size(); ++i) {

@@ -25,7 +25,7 @@ public:
 
     void registerDrawer(ECS::ComponentID id, ComponentDrawer drawer) {
 #ifdef CF_HAS_IMGUI
-        m_drawers[id] = std::move(drawer);
+        m_drawers.set(id, std::move(drawer));
 #endif
     }
 

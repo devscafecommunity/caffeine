@@ -150,6 +150,7 @@ private:
 
     void setupDockingLayout() {
         ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(
+            0,
             ImGui::GetMainViewport(),
             ImGuiDockNodeFlags_PassthruCentralNode);
 

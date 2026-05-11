@@ -59,9 +59,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DSDL3_DIR="${{ env.SDL3_CMAKE_DIR }}"
 
-      - name: Build Full (target Caffeine only)
+      - name: Build Full (target Caffeine + caffeine-studio)
         shell: pwsh
-        run: cmake --build build-full --config Release --target Caffeine
+        run: |
+          cmake --build build-full --config Release --target Caffeine
+          cmake --build build-full --config Release --target caffeine-studio
 
       # ── Package: core ─────────────────────────────────────────────────────
       - name: Package Core
@@ -94,6 +96,7 @@ jobs:
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include\editor", "$pkg\bin" | Out-Null
 
           Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
+          Copy-Item "build-full\Release\caffeine-studio.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
           Get-ChildItem "src\editor" -Filter "*.hpp" | ForEach-Object {
@@ -112,6 +115,7 @@ jobs:
 
           Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
           Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\caffeine-studio.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
           Get-ChildItem "src" -Recurse -Filter "*.hpp" | ForEach-Object {
@@ -142,8 +146,8 @@ jobs:
             | Arquivo | Descrição |
             |---------|-----------|
             | `caffeine-core-*-windows.zip` | Engine base: `Caffeine.lib` (sem SDL3/ImGui) + `caf-encode.exe` + headers públicos |
-            | `caffeine-ide-*-windows.zip` | Módulo IDE: `Caffeine.lib` (com SDL3 + ImGui) + headers do editor + `SDL3.dll` |
-            | `caffeine-bundle-*-windows.zip` | Bundle completa: IDE + Core + todas as ferramentas + todos os headers |
+            | `caffeine-ide-*-windows.zip` | Módulo IDE: `caffeine-studio.exe` + `Caffeine.lib` (com SDL3 + ImGui) + headers do editor + `SDL3.dll` |
+            | `caffeine-bundle-*-windows.zip` | Bundle completa: `caffeine-studio.exe` + `caf-encode.exe` + `Caffeine.lib` + todos os headers + `SDL3.dll` |
 
             ---
 
