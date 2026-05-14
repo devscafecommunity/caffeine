@@ -4,12 +4,12 @@
 #include "ecs/World.hpp"
 #include "ecs/Entity.hpp"
 #include "editor/EditorContext.hpp"
+#include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #endif
-
-#include <glm/glm.hpp>
 
 namespace Caffeine::Editor {
 namespace ECS = Caffeine::ECS;
@@ -33,21 +33,21 @@ private:
     void handleInput(EditorContext& ctx);
     bool isKeyPressed(int key) const;
 
-    void renderTranslate(const glm::vec2& screenPos, float handleLen);
-    void renderRotate(const glm::vec2& screenPos, float handleLen);
-    void renderScale(const glm::vec2& screenPos, float handleLen);
+    void renderTranslate(const Vec2& screenPos, float handleLen);
+    void renderRotate(const Vec2& screenPos, float handleLen);
+    void renderScale(const Vec2& screenPos, float handleLen);
 
-    void renderTranslate3D(const glm::vec2& screenPos, float handleLen, float rotation);
-    void renderRotate3D(const glm::vec2& screenPos, float handleLen);
-    void renderScale3D(const glm::vec2& screenPos, float handleLen);
+    void renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation);
+    void renderRotate3D(const Vec2& screenPos, float handleLen);
+    void renderScale3D(const Vec2& screenPos, float handleLen);
 
-    GizmoAxis intersectTest(const glm::vec2& mousePos, const glm::vec2& screenPos,
+    GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
                             float handleLen, EditorContext::GizmoMode mode);
 
-    void applyTranslate(ECS::World& world, ECS::Entity entity, const glm::vec2& screenDelta,
+    void applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                        GizmoAxis axis, bool snapEnabled, float zoom);
     void applyRotate(ECS::World& world, ECS::Entity entity, float deltaX, bool snapEnabled);
-    void applyScale(ECS::World& world, ECS::Entity entity, const glm::vec2& screenDelta,
+    void applyScale(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                    GizmoAxis axis, bool snapEnabled, float zoom);
 
     float applySnap(float value, float snapInterval);
@@ -80,8 +80,8 @@ private:
     GizmoAxis m_hoveredAxis = GizmoAxis::None;
     GizmoAxis m_dragAxis = GizmoAxis::None;
     bool m_isDragging = false;
-    glm::vec2 m_dragStartMouse = {0.f, 0.f};
-    glm::vec2 m_entityStartPos = {0.f, 0.f};
+    Vec2 m_dragStartMouse = {0.f, 0.f};
+    Vec2 m_entityStartPos = {0.f, 0.f};
 };
 
 } // namespace Caffeine::Editor

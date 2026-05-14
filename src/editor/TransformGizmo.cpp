@@ -6,43 +6,34 @@
 
 namespace Caffeine::Editor {
 
-// Forward declare helper function
-static float pointToLineDistance(const glm::vec2& point, const glm::vec2& lineStart, const glm::vec2& lineEnd);
+static float pointToLineDistance(const Vec2& point, const Vec2& lineStart, const Vec2& lineEnd);
 
 void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
     if (!entity.isValid()) return;
     if (ctx.gizmoMode == EditorContext::GizmoMode::None) return;
 
-    // Handle keyboard input for mode switching
     handleInput(ctx);
 
-    // Get entity position in world space
-    glm::vec2 screenPos(0.f, 0.f);
+    Vec2 screenPos(0.f, 0.f);
     float entityRotation = 0.f;
     bool is3D = false;
 
-    // Get viewport size for world-to-screen conversion
     ImVec2 vpSize = ImGui::GetContentRegionAvail();
     if (vpSize.x < 1 || vpSize.y < 1) return;
 
     ImVec2 vpMin = ImGui::GetItemRectMin();
     ImVec2 vpMax = ImGui::GetItemRectMax();
 
-    // Try 2D components first
     auto* pos2D = world.get<ECS::Position2D>(entity);
     if (pos2D) {
         float worldToScreen = ctx.viewportZoom * 50.0f;
-        // World to screen: screenPos = viewportCenter + (worldPos + pan) * worldToScreen
         screenPos.x = vpMin.x + vpSize.x * 0.5f + (pos2D->x + ctx.viewportPanX / worldToScreen) * worldToScreen;
         screenPos.y = vpMin.y + vpSize.y * 0.5f + (pos2D->y + ctx.viewportPanY / worldToScreen) * worldToScreen;
     }
 
-    // Check for 3D components
     if (world.get<ECS::Position3D>(entity)) {
         is3D = true;
-        // For 3D, we'd need proper camera transform - for now use screen center
-        // A proper implementation would project the 3D position using camera matrices
         auto* pos3D = world.get<ECS::Position3D>(entity);
         if (pos3D) {
             float worldToScreen = ctx.viewportZoom * 50.0f;
@@ -51,19 +42,16 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
         }
     }
 
-    // Get rotation if available
     if (auto* rot = world.get<ECS::Rotation>(entity)) {
         entityRotation = rot->angle;
     }
 
     float handleLen = 30.0f * ctx.viewportZoom;
 
-    // Get mouse position relative to viewport
     ImVec2 mousePos = ImGui::GetMousePos();
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
                             mousePos.y >= vpMin.y && mousePos.y <= vpMax.y);
 
-    // Render the appropriate gizmo based on mode
     if (mouseInViewport) {
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
@@ -90,12 +78,10 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
             default: break;
         }
 
-        // Test intersection and handle dragging
         if (ImGui::IsWindowFocused()) {
-            glm::vec2 mousePosGlm(mousePos.x, mousePos.y);
+            Vec2 mousePosGlm(mousePos.x, mousePos.y);
             m_hoveredAxis = intersectTest(mousePosGlm, screenPos, handleLen, ctx.gizmoMode);
 
-            // Handle drag start
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_isDragging) {
                 if (m_hoveredAxis != GizmoAxis::None) {
                     m_isDragging = true;
@@ -109,9 +95,8 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
                 }
             }
 
-            // Handle drag continue
             if (m_isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                glm::vec2 delta = {
+                Vec2 delta = {
                     mousePos.x - m_dragStartMouse.x,
                     mousePos.y - m_dragStartMouse.y
                 };
@@ -158,7 +143,7 @@ bool TransformGizmo::isKeyPressed(int key) const {
 #endif
 }
 
-void TransformGizmo::renderTranslate(const glm::vec2& screenPos, float handleLen) {
+void TransformGizmo::renderTranslate(const Vec2& screenPos, float handleLen) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -184,7 +169,7 @@ void TransformGizmo::renderTranslate(const glm::vec2& screenPos, float handleLen
 #endif
 }
 
-void TransformGizmo::renderRotate(const glm::vec2& screenPos, float handleLen) {
+void TransformGizmo::renderRotate(const Vec2& screenPos, float handleLen) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -198,7 +183,7 @@ void TransformGizmo::renderRotate(const glm::vec2& screenPos, float handleLen) {
 #endif
 }
 
-void TransformGizmo::renderScale(const glm::vec2& screenPos, float handleLen) {
+void TransformGizmo::renderScale(const Vec2& screenPos, float handleLen) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -219,7 +204,7 @@ void TransformGizmo::renderScale(const glm::vec2& screenPos, float handleLen) {
 }
 
 // 3D Gizmos (2.5D with Z axis going diagonally)
-void TransformGizmo::renderTranslate3D(const glm::vec2& screenPos, float handleLen, float rotation) {
+void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation) {
 #ifdef CF_HAS_IMGUI
     (void)rotation; // Rotation not yet used for 3D gizmos
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -256,7 +241,7 @@ void TransformGizmo::renderTranslate3D(const glm::vec2& screenPos, float handleL
 #endif
 }
 
-void TransformGizmo::renderRotate3D(const glm::vec2& screenPos, float handleLen) {
+void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -274,7 +259,7 @@ void TransformGizmo::renderRotate3D(const glm::vec2& screenPos, float handleLen)
 #endif
 }
 
-void TransformGizmo::renderScale3D(const glm::vec2& screenPos, float handleLen) {
+void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -303,7 +288,7 @@ void TransformGizmo::renderScale3D(const glm::vec2& screenPos, float handleLen) 
 #endif
 }
 
-GizmoAxis TransformGizmo::intersectTest(const glm::vec2& mousePos, const glm::vec2& screenPos,
+GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screenPos,
                                         float handleLen, EditorContext::GizmoMode mode) {
     // Check center first (for uniform/free manipulation)
     float centerDist = std::sqrt((mousePos.x - screenPos.x) * (mousePos.x - screenPos.x) +
@@ -317,20 +302,20 @@ GizmoAxis TransformGizmo::intersectTest(const glm::vec2& mousePos, const glm::ve
 
     // X axis line test
     if (pointToLineDistance(mousePos, screenPos, 
-        glm::vec2(screenPos.x + handleLen, screenPos.y)) < HOVER_THRESHOLD) {
+        Vec2(screenPos.x + handleLen, screenPos.y)) < HOVER_THRESHOLD) {
         return GizmoAxis::X;
     }
 
     // Y axis line test
     if (pointToLineDistance(mousePos, screenPos,
-        glm::vec2(screenPos.x, screenPos.y - handleLen)) < HOVER_THRESHOLD) {
+        Vec2(screenPos.x, screenPos.y - handleLen)) < HOVER_THRESHOLD) {
         return GizmoAxis::Y;
     }
 
     // Z axis line test (for 3D modes)
     if (mode != EditorContext::GizmoMode::None) {
         if (pointToLineDistance(mousePos, screenPos,
-            glm::vec2(screenPos.x - zOffset, screenPos.y + zOffset)) < HOVER_THRESHOLD) {
+            Vec2(screenPos.x - zOffset, screenPos.y + zOffset)) < HOVER_THRESHOLD) {
             return GizmoAxis::Z;
         }
     }
@@ -338,7 +323,7 @@ GizmoAxis TransformGizmo::intersectTest(const glm::vec2& mousePos, const glm::ve
     return GizmoAxis::None;
 }
 
-void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const glm::vec2& screenDelta,
+void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                                      GizmoAxis axis, bool snapEnabled, float zoom) {
     // Convert screen delta to world delta
     float pixelsPerUnit = zoom * 50.0f;
@@ -416,7 +401,7 @@ void TransformGizmo::applyRotate(ECS::World& world, ECS::Entity entity, float de
     }
 }
 
-void TransformGizmo::applyScale(ECS::World& world, ECS::Entity entity, const glm::vec2& screenDelta,
+void TransformGizmo::applyScale(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                                 GizmoAxis axis, bool snapEnabled, float zoom) {
     float pixelsPerUnit = zoom * 50.0f;
     float deltaX = screenDelta.x / pixelsPerUnit;
@@ -474,8 +459,8 @@ float TransformGizmo::applySnap(float value, float snapInterval) {
 }
 
 // Helper function - point to line segment distance
-static float pointToLineDistance(const glm::vec2& point, const glm::vec2& lineStart, const glm::vec2& lineEnd) {
-    glm::vec2 lineDir = lineEnd - lineStart;
+static float pointToLineDistance(const Vec2& point, const Vec2& lineStart, const Vec2& lineEnd) {
+    Vec2 lineDir = lineEnd - lineStart;
     float lineLengthSq = lineDir.x * lineDir.x + lineDir.y * lineDir.y;
     
     if (lineLengthSq < 0.0001f) {
