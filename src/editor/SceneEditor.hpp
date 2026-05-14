@@ -25,7 +25,7 @@ using namespace Caffeine;
 
 class SceneEditor {
 public:
-    SceneEditor() = default;
+    SceneEditor() : m_hierarchy(&m_ctx) {}
 
 #ifdef CF_HAS_SDL3
     bool init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,

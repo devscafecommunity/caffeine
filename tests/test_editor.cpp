@@ -277,3 +277,38 @@ TEST_CASE("NameComponent - Multiple Entities", "[editor][name]") {
     REQUIRE(strcmp(getEntityName(world, e2), "Enemy") == 0);
     REQUIRE(strcmp(getEntityName(world, e3), "NPC") == 0);
 }
+
+// ============================================================================
+// HierarchyPanel Tests
+// ============================================================================
+
+TEST_CASE("HierarchyPanel - Constructor stores context", "[editor][hierarchy]") {
+    EditorContext ctx;
+    HierarchyPanel panel(&ctx);
+    REQUIRE(panel.context() == &ctx);
+}
+
+TEST_CASE("HierarchyPanel - Default state", "[editor][hierarchy]") {
+    EditorContext ctx;
+    HierarchyPanel panel(&ctx);
+    REQUIRE(panel.isOpen() == true);
+}
+
+TEST_CASE("HierarchyPanel - setContext updates pointer", "[editor][hierarchy]") {
+    EditorContext ctx1;
+    EditorContext ctx2;
+    HierarchyPanel panel(&ctx1);
+    REQUIRE(panel.context() == &ctx1);
+    panel.setContext(&ctx2);
+    REQUIRE(panel.context() == &ctx2);
+}
+
+TEST_CASE("HierarchyPanel - close and open", "[editor][hierarchy]") {
+    EditorContext ctx;
+    HierarchyPanel panel(&ctx);
+    REQUIRE(panel.isOpen() == true);
+    panel.close();
+    REQUIRE(panel.isOpen() == false);
+    panel.open();
+    REQUIRE(panel.isOpen() == true);
+}
