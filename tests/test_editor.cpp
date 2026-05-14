@@ -1,5 +1,14 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
+#include "../src/core/Types.hpp"
+#include "../src/core/IDebugHooks.hpp"
+#include "../src/ecs/World.hpp"
+#include "../src/ecs/Entity.hpp"
+#include "../src/debug/LogSystem.hpp"
+#include "../src/editor/EditorTypes.hpp"
+#include "../src/editor/EditorContext.hpp"
+#include "../src/editor/ConsoleWindow.hpp"
+#include "../src/editor/ProfilerWindow.hpp"
+#include "../src/editor/StatsOverlay.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;

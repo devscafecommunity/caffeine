@@ -42,16 +42,16 @@ jobs:
           echo "SDL3_CMAKE_DIR=$sdl3Root\cmake" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "SDL3_BIN=$sdl3Root\lib\x64"     | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      # ── core: Caffeine sem SDL3 + caf-encode ─────────────────────────────
-      - name: Configure Core (sem SDL3)
+      # ── core: caffeine-core (headless) + caf-encode ────────────────────────
+      - name: Configure Core (headless)
         shell: pwsh
-        run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release -DCAFFEINE_BUILD_HEADLESS=ON
 
       - name: Build Core
         shell: pwsh
         run: cmake --build build-core --config Release
 
-      # ── full: apenas Caffeine.lib com SDL3 + ImGui ────────────────────────
+      # ── full: caffeine-core + doppio com SDL3 + ImGui ────────────────────
       - name: Configure Full (com SDL3)
         shell: pwsh
         run: |
@@ -59,11 +59,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DSDL3_DIR="${{ env.SDL3_CMAKE_DIR }}"
 
-      - name: Build Full (target Caffeine + caffeine-studio)
+      - name: Build Full (target doppio)
         shell: pwsh
         run: |
-          cmake --build build-full --config Release --target Caffeine
-          cmake --build build-full --config Release --target caffeine-studio
+          cmake --build build-full --config Release --target doppio
 
       # ── Package: core ─────────────────────────────────────────────────────
       - name: Package Core
@@ -73,11 +72,11 @@ jobs:
           $pkg = "caffeine-core-$tag-windows"
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
 
-          Copy-Item "build-core\Release\Caffeine.lib" "$pkg\lib\"
+          Copy-Item "build-core\Release\caffeine-core.lib" "$pkg\lib\"
           Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
 
           Get-ChildItem "src" -Recurse -Filter "*.hpp" | Where-Object {
-            $_.FullName -notlike "*\editor\*"
+            $_.FullName -notlike "*\editor\*" -and $_.FullName -notlike "*\tools\*"
           } | ForEach-Object {
             $rel  = $_.FullName.Substring((Resolve-Path "src").Path.Length + 1)
             $dest = "$pkg\include\$rel"
@@ -92,11 +91,11 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ env.VERSION }}"
-          $pkg = "caffeine-ide-$tag-windows"
+          $pkg = "doppio-$tag-windows"
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include\editor", "$pkg\bin" | Out-Null
 
-          Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
-          Copy-Item "build-full\Release\caffeine-studio.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
+          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
           Get-ChildItem "src\editor" -Filter "*.hpp" | ForEach-Object {
@@ -113,9 +112,9 @@ jobs:
           $pkg = "caffeine-bundle-$tag-windows"
           New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
 
-          Copy-Item "build-full\Release\Caffeine.lib" "$pkg\lib\"
+          Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
           Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
-          Copy-Item "build-full\Release\caffeine-studio.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
           Get-ChildItem "src" -Recurse -Filter "*.hpp" | ForEach-Object {
@@ -145,9 +144,9 @@ jobs:
 
             | Arquivo | Descrição |
             |---------|-----------|
-            | `caffeine-core-*-windows.zip` | Engine base: `Caffeine.lib` (sem SDL3/ImGui) + `caf-encode.exe` + headers públicos |
-            | `caffeine-ide-*-windows.zip` | Módulo IDE: `caffeine-studio.exe` + `Caffeine.lib` (com SDL3 + ImGui) + headers do editor + `SDL3.dll` |
-            | `caffeine-bundle-*-windows.zip` | Bundle completa: `caffeine-studio.exe` + `caf-encode.exe` + `Caffeine.lib` + todos os headers + `SDL3.dll` |
+            | `caffeine-core-*-windows.zip` | Engine base: `caffeine-core.lib` (headless) + `caf-encode.exe` + headers públicos |
+            | `doppio-*-windows.zip` | IDE: `doppio.exe` + `caffeine-core.lib` (com SDL3) + headers do editor + `SDL3.dll` |
+            | `caffeine-bundle-*-windows.zip` | Bundle completa: `doppio.exe` + `caf-encode.exe` + `caffeine-core.lib` + todos os headers + `SDL3.dll` |
 
             ---
 
@@ -169,5 +168,5 @@ jobs:
             > *"Caffeine: Because great games are built on strong code and a lot of coffee."*
           files: |
             caffeine-core-*.zip
-            caffeine-ide-*.zip
+            doppio-*.zip
             caffeine-bundle-*.zip

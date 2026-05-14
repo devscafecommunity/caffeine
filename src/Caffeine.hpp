@@ -88,23 +88,6 @@
 #include "assets/MeshTypes.hpp"
 #include "assets/MeshLoader.hpp"
 
-// Editor (Dear ImGui)
-#include "editor/EditorTypes.hpp"
-#include "editor/EditorContext.hpp"
-#include "editor/ConsoleWindow.hpp"
-#include "editor/ProfilerWindow.hpp"
-#include "editor/StatsOverlay.hpp"
-#include "editor/HierarchyPanel.hpp"
-#include "editor/InspectorPanel.hpp"
-#include "editor/SceneViewport.hpp"
-#include "editor/AssetBrowser.hpp"
-#include "editor/SceneEditor.hpp"
-#ifdef CF_HAS_SDL3
-#ifdef CF_HAS_IMGUI
-#include "editor/ImGuiIntegration.hpp"
-#endif
-#endif
-
 // Scripting (optional — CAFFEINE_ENABLE_SCRIPTING)
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptEngine.hpp"
@@ -112,11 +95,3 @@
 #include "script/ScriptSystem.hpp"
 #include "script/ScriptWatcher.hpp"
 #endif
-
-// Tools (Asset Pipeline)
-#include "tools/PipelineTypes.hpp"
-#include "tools/TextureEncoder.hpp"
-#include "tools/AudioEncoder.hpp"
-#include "tools/MeshEncoder.hpp"
-#include "tools/AssetManifest.hpp"
-#include "tools/AssetPipeline.hpp"

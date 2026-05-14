@@ -21,10 +21,10 @@ set(CAFFEINE_TEST_SOURCES
     test_ui.cpp
     test_animation.cpp
     test_mesh.cpp
-    test_editor.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
     test_pipeline.cpp
+    test_editor.cpp
 )
 
 if(SDL3_FOUND)
@@ -33,7 +33,7 @@ endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
-target_link_libraries(CaffeineTest PRIVATE Caffeine)
+target_link_libraries(CaffeineTest PRIVATE caffeine-core)
 target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)
