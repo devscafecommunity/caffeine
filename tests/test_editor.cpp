@@ -9,6 +9,7 @@
 #include "../src/editor/ConsoleWindow.hpp"
 #include "../src/editor/ProfilerWindow.hpp"
 #include "../src/editor/StatsOverlay.hpp"
+#include "../src/editor/HierarchyPanel.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
