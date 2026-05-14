@@ -25,17 +25,19 @@ public:
         if (ImGui::Begin("Hierarchy", &m_open)) {
             // Toolbar
             if (ImGui::Button("+", ImVec2(24, 0))) {
+                ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
                 ECS::Entity e = world.create();
                 setEntityName(world, e, "New Entity");
                 ctx.selectedEntity = e;
-                ctx.isDirty = true;
+                ctx.endUndo(world);
             }
             ImGui::SameLine();
             if (ImGui::Button("Delete", ImVec2(0, 0))) {
                 if (ctx.selectedEntity.isValid()) {
+                    ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), world);
                     world.destroy(ctx.selectedEntity);
                     ctx.selectedEntity = ECS::Entity::INVALID;
-                    ctx.isDirty = true;
+                    ctx.endUndo(world);
                 }
             }
 
@@ -97,10 +99,11 @@ private:
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
                 ECS::Entity dragged(*(u32*)payload->Data, &world);
                 if (dragged != entity) {
+                    ctx.beginUndo(EditorCommand::MoveEntity, dragged.id(), world);
                     auto& parentComp = world.add<Scene::Parent>(dragged);
                     parentComp.parent = entity;
                     parentComp.dirty = true;
-                    ctx.isDirty = true;
+                    ctx.endUndo(world);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -118,17 +121,19 @@ private:
         if (ImGui::BeginPopupContextItem()) {
             if (ImGui::MenuItem("Rename")) { m_renaming = entity; }
             if (ImGui::MenuItem("Create Child")) {
+                ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
                 ECS::Entity child = world.create();
                 setEntityName(world, child, "Child");
                 auto& parentComp = world.add<Scene::Parent>(child);
                 parentComp.parent = entity;
                 parentComp.dirty = true;
-                ctx.isDirty = true;
+                ctx.endUndo(world);
             }
             if (ImGui::MenuItem("Delete")) {
+                ctx.beginUndo(EditorCommand::RemoveEntity, entity.id(), world);
                 world.destroy(entity);
                 if (ctx.selectedEntity == entity) ctx.selectedEntity = ECS::Entity::INVALID;
-                ctx.isDirty = true;
+                ctx.endUndo(world);
             }
             ImGui::EndPopup();
         }
@@ -157,8 +162,9 @@ private:
                 buf[sizeof(buf) - 1] = '\0';
                 if (ImGui::InputText("##rename_input", buf, sizeof(buf),
                                      ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    ctx.beginUndo(EditorCommand::SetField, entity.id(), world);
                     setEntityName(world, entity, buf);
-                    ctx.isDirty = true;
+                    ctx.endUndo(world);
                     m_renaming = ECS::Entity::INVALID;
                     ImGui::CloseCurrentPopup();
                 }

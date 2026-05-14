@@ -110,6 +110,7 @@ private:
                     world.destroyAll();
                     m_ctx.selectedEntity = ECS::Entity::INVALID;
                     m_ctx.isDirty = false;
+                    m_ctx.undoStack.clear();
                 }
                 if (ImGui::MenuItem("Save", "Ctrl+S")) {
                     saveScene("scene.caf", world);
@@ -127,8 +128,12 @@ private:
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Undo", "Ctrl+Z")) {}
-                if (ImGui::MenuItem("Redo", "Ctrl+Y")) {}
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
+                    m_ctx.undoStack.undo(world);
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
+                    m_ctx.undoStack.redo(world);
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
@@ -159,6 +164,8 @@ private:
         std::filesystem::path assetPath = *dropped;
         std::string ext = assetPath.extension().string();
 
+        m_ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
+
         ECS::Entity entity = world.create();
         setEntityName(world, entity, assetPath.stem().string().c_str());
         world.add<ECS::Position2D>(entity, 0.0f, 0.0f);
@@ -168,7 +175,8 @@ private:
         }
 
         m_ctx.selectedEntity = entity;
-        m_ctx.isDirty = true;
+
+        m_ctx.endUndo(world);
     }
 #endif
 

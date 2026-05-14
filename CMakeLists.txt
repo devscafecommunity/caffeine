@@ -43,6 +43,7 @@ add_library(caffeine-core
     src/events/EventBus.cpp
     src/assets/AssetManager.cpp
     src/core/DebugHookRegistry.cpp
+    src/editor/EditorContext.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC
