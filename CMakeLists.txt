@@ -190,6 +190,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
 
     add_executable(doppio
         apps/doppio/main.cpp
+        src/editor/HierarchyPanel.cpp
     )
     target_link_libraries(doppio PRIVATE caffeine-core ImGui)
     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
