@@ -13,6 +13,7 @@
 #include "../src/editor/SceneViewport.hpp"
 #include "../src/editor/AssetBrowser.hpp"
 #include "../src/editor/InspectorPanel.hpp"
+#include "../src/editor/SceneEditor.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -369,4 +370,33 @@ TEST_CASE("SceneViewport - close and open", "[editor][viewport]") {
     REQUIRE(viewport.isOpen() == false);
     viewport.open();
     REQUIRE(viewport.isOpen() == true);
+}
+
+// ============================================================================
+// SceneEditor Tests
+// ============================================================================
+
+TEST_CASE("SceneEditor - Default state", "[editor][sceneeditor]") {
+    SceneEditor editor;
+    REQUIRE(editor.isOpen() == true);
+}
+
+TEST_CASE("SceneEditor - close and open", "[editor][sceneeditor]") {
+    SceneEditor editor;
+    REQUIRE(editor.isOpen() == true);
+    editor.close();
+    REQUIRE(editor.isOpen() == false);
+    editor.open();
+    REQUIRE(editor.isOpen() == true);
+}
+
+TEST_CASE("SceneEditor - accessors return valid panels", "[editor][sceneeditor]") {
+    SceneEditor editor;
+    REQUIRE(editor.context().selectedEntity.isValid() == false);
+    REQUIRE(editor.hierarchy().isOpen() == true);
+    REQUIRE(editor.inspector().isOpen() == true);
+    REQUIRE(editor.viewport().isOpen() == true);
+    REQUIRE(editor.assetBrowser().isOpen() == true);
+    REQUIRE(editor.console().isOpen() == true);
+    REQUIRE(editor.profiler().isOpen() == true);
 }
