@@ -61,6 +61,235 @@ Este plano divide o desenvolvimento em **4 milestones** progressivas:
 
 ---
 
+## T0 — Desacoplamento Core↔IDE (Fundação)
+
+> **Objetivo:** Separar o monolito atual em dois binários independentes — **Caffeine Engine** (core) e **Doppio** (IDE) — com uma fronteira de API bem definida.
+
+### Problema Atual
+
+Neste momento tudo vive na mesma biblioteca `Caffeine`, incluindo código editor que depende de ImGui. Isto significa que:
+
+- Uma build headless (servidor, CI, testes) paga o custo do ImGui e do editor
+- O core não pode ser reutilizado sem arrastar a IDE
+- A separação de responsabilidades é inexistente — `target_link_libraries(Caffeine PUBLIC ImGui)` torna ImGui numa dependência pública mesmo para quem só quer a engine
+
+### Arquitetura Alvo
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         DOCCIO (IDE)                            │
+│  SceneEditor | HierarchyPanel | InspectorPanel | SceneViewport  │
+│  AssetBrowser | ProfilerWindow | ConsoleWindow | StatsOverlay   │
+│  Gizmos | Timeline | Tilemap Editor | Material Editor           │
+│  Lua Script Editor | Plugin System | Build System               │
+│                                                                 │
+│  Depende de: Caffeine::Core (engine) + ImGui + SDL3             │
+│  NÃO funciona sem o core                                        │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ #include "Caffeine/*.hpp"
+                           │ link: Caffeine::Core
+┌──────────────────────────▼──────────────────────────────────────┐
+│                      CAFFEINE ENGINE (CORE)                     │
+│  Core: Types, Memory, Platform, IO, Timer                       │
+│  Math: Vec2/3/4, Mat4, Quat                                     │
+│  Concurrency: JobSystem, ThreadPool, Work-Stealing              │
+│  Input: InputManager, Action/Axis Mapping                       │
+│  ECS: World, Entity, Archetypes, Queries, Systems               │
+│  Scene: SceneManager, SceneSerializer (.caf)                    │
+│  Events: EventBus, pub/sub                                      │
+│  Assets: AssetManager, AssetHandle, Hot-Reload                  │
+│  Rendering: RHI, BatchRenderer, Camera2D/3D, TextureAtlas       │
+│  Audio: AudioSystem, AudioSource, Spatial                       │
+│  Animation: AnimationClip, State Machine                         │
+│  Physics: Physics2D, RigidBody, Collision                       │
+│  UI: UISystem (game HUD, retained mode)                         │
+│  Scripting: LuaVM, ScriptSystem, Bindings                       │
+│  Debug: LogSystem, Profiler, DebugDraw                          │
+│                                                                 │
+│  ZERO dependência de ImGui ou editor code                       │
+│  Funciona standalone (headless ou com rendering SDL3)           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Escopo
+
+#### 0.1 Identificar a Fronteira Core↔IDE
+
+Listar exaustivamente o que pertence ao core vs. o que é IDE:
+
+| Pertence ao Core | Pertence ao Doppio (IDE) |
+|---|---|
+| ECS (World, Entity, queries) | HierarchyPanel |
+| SceneManager + SceneSerializer | InspectorPanel + Component Drawers |
+| RHI (RenderDevice, CommandBuffer) | SceneViewport (framebuffer + gizmos) |
+| BatchRenderer, Camera2D/3D | AssetBrowser |
+| AssetManager, AssetPipeline | SceneEditor (orquestrador) |
+| InputManager | ProfilerWindow |
+| AudioSystem | ConsoleWindow |
+| Physics2D | StatsOverlay |
+| AnimationSystem | Timeline Editor |
+| UI System (game) | Tilemap Editor |
+| LuaVM + ScriptSystem | Material/Shader Editor |
+| LogSystem, Profiler, DebugDraw | Entity Debugger |
+| GameLoop | Build System Integration |
+| EventBus | Plugin System |
+| JobSystem | Project Manager |
+| Core Types, Memory, Math, Containers | Script Editor Integration |
+
+#### 0.2 Separar o Build em Dois Targets
+
+```cmake
+# CMakeLists.txt — Caffeine Engine Core
+add_library(caffeine-core
+    src/core/Timer.cpp
+    src/core/GameLoop.cpp
+    src/ecs/World.cpp
+    src/ecs/CommandBuffer.cpp
+    src/events/EventBus.cpp
+    src/assets/AssetManager.cpp
+    src/rhi/RenderDevice.cpp
+    src/input/InputManager.cpp
+    src/debug/LogSystem.cpp
+    src/debug/Profiler.cpp
+    src/threading/JobSystem.cpp
+    src/script/ScriptEngine.cpp
+    # ... resto do core, SEM editor/*
+)
+
+# ⚠️ NÃO linkar ImGui — core é puro
+target_link_libraries(caffeine-core PUBLIC SDL3::SDL3)
+target_include_directories(caffeine-core PUBLIC src/)
+```
+
+```cmake
+# CMakeLists.txt — Doppio IDE
+add_executable(doppio
+    src/editor/SceneEditor.cpp
+    src/editor/HierarchyPanel.cpp
+    src/editor/InspectorPanel.cpp
+    src/editor/SceneViewport.cpp
+    src/editor/AssetBrowser.cpp
+    src/editor/ProfilerWindow.cpp
+    src/editor/ConsoleWindow.cpp
+    src/editor/StatsOverlay.cpp
+    src/editor/ImGuiIntegration.cpp
+    tools/ide/main.cpp
+)
+
+target_link_libraries(doppio PRIVATE caffeine-core ImGui)
+target_include_directories(doppio PRIVATE src/)
+```
+
+#### 0.3 Remover Dependência de ImGui do Core
+
+- `editor/` incluído atualmente no `Caffeine` library → mover para `doppio`
+- `ImGuiIntegration` deixa de ser linked ao core
+- `CF_HAS_IMGUI` define apenas no target `doppio`
+- Headers do core que usam ImGui (`ImGuiIntegration.hpp` nos editor types) são movidos
+- Alternativa: se algum core system precisa de debug visualization, expor via interface abstrata (`DebugDraw`)
+
+#### 0.4 Definir Pontos de Extensão Core→IDE
+
+O core precisa de extension points para a IDE se conectar sem o core saber da IDE:
+
+```cpp
+// Caffeine/Core/IDebugHooks.hpp — API de extensão core→IDE
+namespace Caffeine::Core {
+
+struct IDebugHooks {
+    virtual ~IDebugHooks() = default;
+    virtual void onEntityCreated(ECS::Entity e) = 0;
+    virtual void onEntityDestroyed(ECS::Entity e) = 0;
+    virtual void onLogMessage(const char* msg, u8 level) = 0;
+    virtual void onFrameEnd(const FrameStats& stats) = 0;
+};
+
+// Core expõe um registry opcional de hooks
+class DebugHookRegistry {
+public:
+    static void registerHooks(IDebugHooks* hooks);
+    static IDebugHooks* hooks();
+};
+
+} // namespace Caffeine::Core
+```
+
+```cpp
+// Doppio implementa os hooks:
+struct EditorDebugHooks : Caffeine::Core::IDebugHooks {
+    void onEntityCreated(ECS::Entity e) override {
+        // atualiza HierarchyPanel
+    }
+    void onLogMessage(const char* msg, u8 level) override {
+        // adiciona ao ConsoleWindow
+    }
+    void onFrameEnd(const FrameStats& stats) override {
+        // atualiza ProfilerWindow + StatsOverlay
+    }
+};
+```
+
+**Outros pontos de extensão necessários:**
+- **AssetImportHook** — core faz asset loading, IDE pode interceptar para mostrar progress bar
+- **SelectionHook** — core não tem conceito de "seleção", IDE gere
+- **PlayModeHook** — core tem game loop, IDE pode iniciar/parar play mode
+- **InputOverride** — IDE pode consumir input antes do core (ex: shortcuts do editor)
+
+#### 0.5 Headless Mode
+
+O core deve ser buildável sem SDL3:
+
+```cmake
+option(CAFFEINE_BUILD_HEADLESS "Build core without SDL3/RHI" OFF)
+if(CAFFEINE_BUILD_HEADLESS)
+    target_compile_definitions(caffeine-core PUBLIC CF_HEADLESS=1)
+    # SDL3 não linked, RHI não compilado
+else()
+    target_link_libraries(caffeine-core PUBLIC SDL3::SDL3)
+endif()
+```
+
+Isto permite:
+- Servidor dedicado sem GPU
+- CI tests sem GPU
+- Runtime de jogo standalone (sem IDE)
+- Compilação mais rápida para development core-only
+
+#### 0.6 Renomear `caffeine-studio` → `doppio`
+
+- Executável `caffeine-studio` → `doppio`
+- Namespace `Caffeine::Editor` → `Doppio::Editor` (ou manter `Caffeine::Editor` como sub-namespace de Doppio)
+- Ficheiro `tools/ide/main.cpp` → `apps/doppio/main.cpp`
+- Separar recursos estáticos (ícones, shaders editor) em `apps/doppio/assets/`
+
+#### 0.7 Atualizar Testes
+
+- `CaffeineTest` passa a linkar `caffeine-core` (não a library monolítica)
+- Testes de editor (se existirem) passam a `DoppioTest` que linka `doppio`
+- CI ganha dois jobs: `build-core` (headless) e `build-doppio` (com SDL3)
+
+### Critério de Aceitação (T0)
+
+- [ ] `caffeine-core` compila sem ImGui e sem editor code
+- [ ] `caffeine-core` compila em modo headless (sem SDL3)
+- [ ] `doppio` compila e linka `caffeine-core` + ImGui
+- [ ] Testes core-only (`CaffeineTest`) passam sem SDL3
+- [ ] `DebugHookRegistry` permite IDE ligar-se ao core sem core conhecer IDE
+- [ ] `doppio` substitui `caffeine-studio` com mesma funcionalidade
+- [ ] `SceneEditor` no doppio usa `Caffeine::Core::DebugHookRegistry` para console + profiler
+- [ ] Core não tem `#include <imgui.h>` em nenhum header público
+- [ ] Build headless não falha por falta de SDL3
+
+### Impacto nos Milestones Seguintes
+
+| Milestone | Impacto |
+|:---------:|---------|
+| **M1–M4** | Todo o código editor (painéis, gizmos, viewport) vive em `doppio`, linka `caffeine-core`. Nenhum milestone precisa de mudar a fronteira. |
+| **Testes** | Testes de editor precisam de `doppio` linkado; testes core puros usam `caffeine-core` |
+| **CI/CD** | `caffeine-core` testado em headless (rápido); `doppio` testado com SDL3 (lento, opcional) |
+
+---
+
 ## M1 — Scene Editor Foundation
 
 > **Objetivo:** Transformar o overlay de debug num editor de cenas funcional com os 4 painéis principais.
