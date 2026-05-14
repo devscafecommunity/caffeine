@@ -7,6 +7,7 @@
 #include "render/Camera2D.hpp"
 #include "math/Math.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/TransformGizmo.hpp"
 
 #include <cmath>
 
@@ -96,17 +97,9 @@ public:
         bool focused = ImGui::IsWindowFocused();
 
         if (hovered) {
-            // Handle gizmo hotkeys
-            if (focused) {
-                if (ImGui::IsKeyPressed(ImGuiKey_W)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
-                if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
-                if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
-                if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
-            }
-
             // Handle mouse drag for selected entity gizmo
             if (ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
-                handleGizmoInput(world, ctx, viewportSize);
+                m_Gizmo.onImGuiRender(world, ctx.selectedEntity, ctx);
             }
         }
 
@@ -277,6 +270,7 @@ private:
 
     bool m_open = true;
     bool m_initialized = false;
+    TransformGizmo m_Gizmo;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;
     RHI::Texture* m_colorTarget = nullptr;

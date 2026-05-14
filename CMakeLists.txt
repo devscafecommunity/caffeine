@@ -28,6 +28,7 @@ add_library(Caffeine
     src/ecs/World.cpp
     src/events/EventBus.cpp
     src/assets/AssetManager.cpp
+    src/editor/TransformGizmo.cpp
 )
 
 if(SDL3_FOUND)
