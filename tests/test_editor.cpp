@@ -12,6 +12,7 @@
 #include "../src/editor/HierarchyPanel.hpp"
 #include "../src/editor/SceneViewport.hpp"
 #include "../src/editor/AssetBrowser.hpp"
+#include "../src/editor/InspectorPanel.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -332,6 +333,24 @@ TEST_CASE("AssetBrowser - close and open", "[editor][assetbrowser]") {
     REQUIRE(browser.isOpen() == false);
     browser.open();
     REQUIRE(browser.isOpen() == true);
+}
+
+// ============================================================================
+// InspectorPanel Tests
+// ============================================================================
+
+TEST_CASE("InspectorPanel - Default state", "[editor][inspector]") {
+    InspectorPanel panel;
+    REQUIRE(panel.isOpen() == true);
+}
+
+TEST_CASE("InspectorPanel - close and open", "[editor][inspector]") {
+    InspectorPanel panel;
+    REQUIRE(panel.isOpen() == true);
+    panel.close();
+    REQUIRE(panel.isOpen() == false);
+    panel.open();
+    REQUIRE(panel.isOpen() == true);
 }
 
 // ============================================================================
