@@ -78,6 +78,7 @@ void SceneEditor::render(ECS::World& world
 
     ImGui::End(); // DockSpace
 
+    renderUnsavedChangesPopup(world);
     renderStatusBar(world);
 }
 
@@ -109,23 +110,41 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
-                world.destroyAll();
-                m_ctx.selectedEntity = ECS::Entity::INVALID;
-                m_ctx.isDirty = false;
-                m_ctx.undoStack.clear();
+                if (m_ctx.isDirty) {
+                    m_pendingAction = PendingAction::NewScene;
+                    ImGui::OpenPopup("Unsaved Changes?");
+                } else {
+                    doNewScene(world);
+                }
             }
             if (ImGui::MenuItem("Save", "Ctrl+S")) {
-                saveScene("scene.caf", world);
+                if (m_ctx.currentScenePath.empty()) {
+                    saveSceneAs(world);
+                } else {
+                    saveScene(m_ctx.currentScenePath.c_str(), world);
+                }
             }
             if (ImGui::MenuItem("Save As...")) {
-                saveScene("scene.caf", world);
+                saveSceneAs(world);
             }
             if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-                loadScene("scene.caf", world);
+                if (m_ctx.isDirty) {
+                    m_pendingAction = PendingAction::OpenScene;
+                    ImGui::OpenPopup("Unsaved Changes?");
+                } else {
+                    // TODO: native file dialog — for now hardcoded
+                    loadScene("scene.caf", world);
+                    m_ctx.currentScenePath = "scene.caf";
+                }
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Exit")) {
-                m_open = false;
+                if (m_ctx.isDirty) {
+                    m_pendingAction = PendingAction::Exit;
+                    ImGui::OpenPopup("Unsaved Changes?");
+                } else {
+                    m_open = false;
+                }
             }
             ImGui::EndMenu();
         }
@@ -198,7 +217,19 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
     bool ctrl = ImGui::GetIO().KeyCtrl;
 
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
-        saveScene("scene.caf", world);
+        if (m_ctx.currentScenePath.empty()) {
+            saveSceneAs(world);
+        } else {
+            saveScene(m_ctx.currentScenePath.c_str(), world);
+        }
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
+        if (m_ctx.isDirty) {
+            m_pendingAction = PendingAction::NewScene;
+            ImGui::OpenPopup("Unsaved Changes?");
+        } else {
+            doNewScene(world);
+        }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
         if (ImGui::GetIO().KeyShift) {
@@ -215,18 +246,85 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
 // ── Serialization ───────────────────────────────────────────────
 
 bool SceneEditor::saveScene(const char* path, ECS::World& world) {
-    Scene::SceneSerializer serializer(world);
+    Editor::SceneSerializer serializer(world);
     if (!serializer.serialize(path)) return false;
+    m_ctx.currentScenePath = path;
     m_ctx.isDirty = false;
     return true;
 }
 
+bool SceneEditor::saveSceneAs(ECS::World& world) {
+    // TODO: native file dialog — for now write to a default path
+    const char* path = "scene.caf";
+    return saveScene(path, world);
+}
+
 bool SceneEditor::loadScene(const char* path, ECS::World& world) {
-    Scene::SceneSerializer serializer(world);
+    Editor::SceneSerializer serializer(world);
     if (!serializer.deserialize(path)) return false;
+    m_ctx.currentScenePath = path;
     m_ctx.selectedEntity = ECS::Entity::INVALID;
     m_ctx.isDirty = false;
     return true;
+}
+
+// ── Unsaved changes popup ───────────────────────────────────────
+
+void SceneEditor::renderUnsavedChangesPopup(ECS::World& world) {
+    if (m_pendingAction == PendingAction::None) return;
+
+    if (ImGui::BeginPopupModal("Unsaved Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("There are unsaved changes. Do you want to save before continuing?");
+        ImGui::Separator();
+
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            if (m_ctx.currentScenePath.empty()) {
+                saveSceneAs(world);
+            } else {
+                saveScene(m_ctx.currentScenePath.c_str(), world);
+            }
+            ImGui::CloseCurrentPopup();
+            executePendingAction(world);
+            m_pendingAction = PendingAction::None;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+            executePendingAction(world);
+            m_pendingAction = PendingAction::None;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+            m_pendingAction = PendingAction::None;
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void SceneEditor::executePendingAction(ECS::World& world) {
+    switch (m_pendingAction) {
+        case PendingAction::NewScene:
+            doNewScene(world);
+            break;
+        case PendingAction::OpenScene:
+            // TODO: native file dialog
+            loadScene("scene.caf", world);
+            break;
+        case PendingAction::Exit:
+            m_open = false;
+            break;
+        default:
+            break;
+    }
+}
+
+void SceneEditor::doNewScene(ECS::World& world) {
+    world.destroyAll();
+    m_ctx.selectedEntity = ECS::Entity::INVALID;
+    m_ctx.currentScenePath.clear();
+    m_ctx.isDirty = false;
+    m_ctx.undoStack.clear();
 }
 
 // ── Asset drop ──────────────────────────────────────────────────

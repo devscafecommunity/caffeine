@@ -25,6 +25,7 @@ set(CAFFEINE_TEST_SOURCES
     test_skeletal_animation.cpp
     test_pipeline.cpp
     test_editor.cpp
+    ../src/editor/SceneSerializer.cpp
 )
 
 if(SDL3_FOUND)
