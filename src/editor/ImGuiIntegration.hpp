@@ -21,8 +21,18 @@ public:
 
     bool init(SDL_Window* window, RHI::RenderDevice* device) {
         ImGui::CreateContext();
-        ImGui_ImplSDL3_InitForSDLGPU(window, nullptr);
-        ImGui_ImplSDLGPU3_Init(device->nativeDevice());
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+        ImGui_ImplSDL3_InitForSDLGPU(window);
+
+        ImGui_ImplSDLGPU3_InitInfo initInfo{};
+        initInfo.Device            = device->nativeDevice();
+        initInfo.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(
+            device->nativeDevice(), window);
+
+        ImGui_ImplSDLGPU3_Init(&initInfo);
         m_initialized = true;
         return true;
     }
@@ -42,10 +52,18 @@ public:
         ImGui::NewFrame();
     }
 
-    void endFrame(RHI::CommandBuffer* cmd) {
+    void prepareRender(RHI::CommandBuffer* cmd) {
         if (!m_initialized) return;
         ImGui::Render();
-        ImGui_ImplSDLGPU3_RenderDrawData(ImGui::GetDrawData(), cmd);
+        Imgui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), cmd->nativeHandle());
+    }
+
+    void endFrame(RHI::CommandBuffer* cmd) {
+        if (!m_initialized) return;
+        ImGui_ImplSDLGPU3_RenderDrawData(
+            ImGui::GetDrawData(),
+            cmd->nativeHandle(),
+            cmd->nativeRenderPass());
     }
 
     bool processEvent(const SDL_Event& event) {

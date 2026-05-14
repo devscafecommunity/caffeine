@@ -5,6 +5,7 @@
 #include "core/io/Crc32.hpp"
 #include <vector>
 #include <cmath>
+#include <cstring>
 #include <string_view>
 #include <cstdio>
 

@@ -1,4 +1,5 @@
-#include "Caffeine.hpp"
+#include "core/Types.hpp"
+#include "assets/AssetTypes.hpp"
 #include "tools/TextureEncoder.hpp"
 #include "tools/AudioEncoder.hpp"
 #include "tools/MeshEncoder.hpp"

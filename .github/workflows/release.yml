@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag version (e.g. v0.0.1-beta)'
+        required: true
+        default: 'v0.0.1-beta'
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            echo "VERSION=${{ inputs.version }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            echo "VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Download SDL3
+        shell: pwsh
+        run: |
+          $version = "3.2.14"
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-$version/SDL3-devel-$version-VC.zip"
+          Invoke-WebRequest -Uri $url -OutFile SDL3.zip
+          Expand-Archive SDL3.zip -DestinationPath "$env:GITHUB_WORKSPACE\SDL3"
+          $sdl3Root = "$env:GITHUB_WORKSPACE\SDL3\SDL3-$version"
+          echo "SDL3_CMAKE_DIR=$sdl3Root\cmake" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "SDL3_BIN=$sdl3Root\lib\x64"     | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # ── core: caffeine-core (headless) + caf-encode ────────────────────────
+      - name: Configure Core (headless)
+        shell: pwsh
+        run: cmake -S . -B build-core -DCMAKE_BUILD_TYPE=Release -DCAFFEINE_BUILD_HEADLESS=ON
+
+      - name: Build Core
+        shell: pwsh
+        run: cmake --build build-core --config Release
+
+      # ── full: caffeine-core + doppio com SDL3 + ImGui ────────────────────
+      - name: Configure Full (com SDL3)
+        shell: pwsh
+        run: |
+          cmake -S . -B build-full `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSDL3_DIR="${{ env.SDL3_CMAKE_DIR }}"
+
+      - name: Build Full (target doppio)
+        shell: pwsh
+        run: |
+          cmake --build build-full --config Release --target doppio
+
+      # ── Package: core ─────────────────────────────────────────────────────
+      - name: Package Core
+        shell: pwsh
+        run: |
+          $tag = "${{ env.VERSION }}"
+          $pkg = "caffeine-core-$tag-windows"
+          New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
+
+          Copy-Item "build-core\Release\caffeine-core.lib" "$pkg\lib\"
+          Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
+
+          Get-ChildItem "src" -Recurse -Filter "*.hpp" | Where-Object {
+            $_.FullName -notlike "*\editor\*" -and $_.FullName -notlike "*\tools\*"
+          } | ForEach-Object {
+            $rel  = $_.FullName.Substring((Resolve-Path "src").Path.Length + 1)
+            $dest = "$pkg\include\$rel"
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item $_.FullName $dest
+          }
+
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      # ── Package: ide ──────────────────────────────────────────────────────
+      - name: Package IDE
+        shell: pwsh
+        run: |
+          $tag = "${{ env.VERSION }}"
+          $pkg = "doppio-$tag-windows"
+          New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include\editor", "$pkg\bin" | Out-Null
+
+          Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
+          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
+          Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
+
+          Get-ChildItem "src\editor" -Filter "*.hpp" | ForEach-Object {
+            Copy-Item $_.FullName "$pkg\include\editor\"
+          }
+
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      # ── Package: bundle ───────────────────────────────────────────────────
+      - name: Package Bundle
+        shell: pwsh
+        run: |
+          $tag = "${{ env.VERSION }}"
+          $pkg = "caffeine-bundle-$tag-windows"
+          New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include", "$pkg\bin" | Out-Null
+
+          Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
+          Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
+          Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
+
+          Get-ChildItem "src" -Recurse -Filter "*.hpp" | ForEach-Object {
+            $rel  = $_.FullName.Substring((Resolve-Path "src").Path.Length + 1)
+            $dest = "$pkg\include\$rel"
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item $_.FullName $dest
+          }
+
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      # ── GitHub Release ────────────────────────────────────────────────────
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: "☕ Caffeine Engine ${{ env.VERSION }}"
+          prerelease: true
+          body: |
+            ## ☕ Caffeine Engine ${{ env.VERSION }}
+
+            Primeira release pública da **Caffeine Engine** — uma game engine de alta performance construída em C++20 sobre SDL3.
+
+            ---
+
+            ### 📦 Artifacts
+
+            | Arquivo | Descrição |
+            |---------|-----------|
+            | `caffeine-core-*-windows.zip` | Engine base: `caffeine-core.lib` (headless) + `caf-encode.exe` + headers públicos |
+            | `doppio-*-windows.zip` | IDE: `doppio.exe` + `caffeine-core.lib` (com SDL3) + headers do editor + `SDL3.dll` |
+            | `caffeine-bundle-*-windows.zip` | Bundle completa: `doppio.exe` + `caf-encode.exe` + `caffeine-core.lib` + todos os headers + `SDL3.dll` |
+
+            ---
+
+            ### 📋 Requisitos
+
+            - Windows 10/11 (x64)
+            - Visual C++ Redistributable 2022
+            - CMake 3.20+ (para integrar como dependência)
+            - `SDL3.dll` incluído nos pacotes IDE e Bundle
+
+            ---
+
+            ### ⚠️ Aviso Beta
+
+            Esta é uma versão **beta** de desenvolvimento. APIs públicas podem mudar sem aviso prévio entre versões.
+
+            ---
+
+            > *"Caffeine: Because great games are built on strong code and a lot of coffee."*
+          files: |
+            caffeine-core-*.zip
+            doppio-*.zip
+            caffeine-bundle-*.zip

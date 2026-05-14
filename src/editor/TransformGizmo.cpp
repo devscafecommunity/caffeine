@@ -150,7 +150,7 @@ void TransformGizmo::handleInput(EditorContext& ctx) {
 #endif
 }
 
-bool TransformGizmo::isKeyPressed(ImGuiKey key) const {
+bool TransformGizmo::isKeyPressed(int key) const {
 #ifdef CF_HAS_IMGUI
     return ImGui::IsKeyDown(key);
 #else
