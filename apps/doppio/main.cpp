@@ -3,13 +3,15 @@
 #include "assets/AssetManager.hpp"
 #include "ecs/World.hpp"
 #include "render/Camera2D.hpp"
+
+// Editor headers (header-only, ImGui code is CF_HAS_IMGUI-guarded)
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
 
 int main(int, char**) {
-    SDL_SetAppMetadata("Caffeine Studio", "0.0.1-beta", "com.devscafe.caffeine-studio");
+    SDL_SetAppMetadata("Doppio", "0.0.1-beta", "com.devscafe.doppio");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -17,7 +19,7 @@ int main(int, char**) {
     }
 
     SDL_Window* window = SDL_CreateWindow(
-        "Caffeine Studio  —  v0.0.1 Beta",
+        "Doppio  —  Caffeine Studio IDE  v0.0.1 Beta",
         1280, 720,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 
@@ -31,7 +33,7 @@ int main(int, char**) {
     cfg.width       = 1280;
     cfg.height      = 720;
     cfg.vsync       = true;
-    cfg.windowTitle = "Caffeine Studio";
+    cfg.windowTitle = "Doppio";
 
     Caffeine::RHI::RenderDevice device;
     if (!device.init(window, cfg)) {
@@ -63,6 +65,9 @@ int main(int, char**) {
         SDL_Quit();
         return 1;
     }
+
+    // Register editor debug hooks into core
+    // (T0.4 — IDebugHooks will be wired here in a follow-up)
 
     bool running = true;
     while (running && editor.isOpen()) {
