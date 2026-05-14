@@ -49,52 +49,36 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
     if (!m_open) return;
 
 #ifdef CF_HAS_SDL3
-    // Use ImGui::Image to display the offscreen framebuffer
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) return;
 
-    // Show the framebuffer texture as an ImGui image
     ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
 #else
-    // Without SDL3, show a placeholder
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) return;
     ImGui::Dummy(viewportSize);
 #endif
 
     bool hovered = ImGui::IsItemHovered();
-    bool focused = ImGui::IsWindowFocused();
 
-    if (hovered) {
-        // Handle gizmo hotkeys
-        if (focused) {
-            if (ImGui::IsKeyPressed(ImGuiKey_W)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
-            if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
-            if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
-            if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
+    if (hovered && ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
+        bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        if (dragging && !m_gizmoDragging) {
+            ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
+            m_gizmoDragging = true;
         }
-
-        if (ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
-            bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
-            if (dragging && !m_gizmoDragging) {
-                ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
-                m_gizmoDragging = true;
-            }
-            if (m_gizmoDragging) {
-                handleGizmoInput(world, ctx, viewportSize);
-            }
-            if (!dragging && m_gizmoDragging) {
-                ctx.endUndo(world);
-                m_gizmoDragging = false;
-            }
+        if (m_gizmoDragging) {
+            m_Gizmo.onImGuiRender(world, ctx.selectedEntity, ctx);
+        }
+        if (!dragging && m_gizmoDragging) {
+            ctx.endUndo(world);
+            m_gizmoDragging = false;
         }
     }
 
-    // Draw gizmo overlay and grid info
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetItemRectMin();
 
-    // Grid overlay text
     if (m_config.grid) {
         char modeStr[16];
         switch (ctx.gizmoMode) {
@@ -108,12 +92,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
         drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(200, 200, 200, 200), buf);
     }
 
-    // Draw gizmo handles for selected entity
     if (ctx.selectedEntity.isValid() && hovered) {
         drawGizmo(world, ctx, origin, viewportSize);
     }
 
-    // Handle viewport pan (middle mouse)
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
         ctx.viewportPanX += delta.x;
@@ -121,7 +103,6 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
     }
 
-    // Handle viewport zoom (scroll)
     if (hovered) {
         float scroll = ImGui::GetIO().MouseWheel;
         if (scroll != 0) {

@@ -7,6 +7,7 @@
 #include "render/Camera2D.hpp"
 #include "math/Math.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/TransformGizmo.hpp"
 
 #include <cmath>
 
@@ -60,6 +61,7 @@ private:
 
     bool m_open = true;
     bool m_initialized = false;
+    TransformGizmo m_Gizmo;
     bool m_gizmoDragging = false;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;
