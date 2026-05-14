@@ -10,6 +10,7 @@
 #include "../src/editor/ProfilerWindow.hpp"
 #include "../src/editor/StatsOverlay.hpp"
 #include "../src/editor/HierarchyPanel.hpp"
+#include "../src/editor/SceneViewport.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -312,4 +313,22 @@ TEST_CASE("HierarchyPanel - close and open", "[editor][hierarchy]") {
     REQUIRE(panel.isOpen() == false);
     panel.open();
     REQUIRE(panel.isOpen() == true);
+}
+
+// ============================================================================
+// SceneViewport Tests
+// ============================================================================
+
+TEST_CASE("SceneViewport - Default state", "[editor][viewport]") {
+    SceneViewport viewport;
+    REQUIRE(viewport.isOpen() == true);
+}
+
+TEST_CASE("SceneViewport - close and open", "[editor][viewport]") {
+    SceneViewport viewport;
+    REQUIRE(viewport.isOpen() == true);
+    viewport.close();
+    REQUIRE(viewport.isOpen() == false);
+    viewport.open();
+    REQUIRE(viewport.isOpen() == true);
 }
