@@ -1,7 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
 #include "ecs/World.hpp"
-#include "scene/SceneSerializer.hpp"
 #include "render/Camera2D.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/HierarchyPanel.hpp"
@@ -10,6 +9,7 @@
 #include "editor/AssetBrowser.hpp"
 #include "editor/ConsoleWindow.hpp"
 #include "editor/ProfilerWindow.hpp"
+#include "editor/SceneSerializer.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -21,12 +21,20 @@
 #endif
 
 #include <cstdio>
+#include <functional>
 
 namespace Caffeine::Editor {
 using namespace Caffeine;
 
 class SceneEditor {
 public:
+    enum class PendingAction : u8 {
+        None,
+        NewScene,
+        OpenScene,
+        Exit
+    };
+
     SceneEditor() : m_hierarchy(&m_ctx) {}
 
 #ifdef CF_HAS_SDL3
@@ -44,6 +52,7 @@ public:
     // ── Serialization ──
 
     bool saveScene(const char* path, ECS::World& world);
+    bool saveSceneAs(ECS::World& world);
     bool loadScene(const char* path, ECS::World& world);
 
     // ── Accessors ──
@@ -65,8 +74,11 @@ private:
     void setupDockspace(ImGuiID dockspaceId);
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
+    void renderUnsavedChangesPopup(ECS::World& world);
+    void executePendingAction(ECS::World& world);
     void handleAssetDrop(ECS::World& world);
     void handleShortcuts(ECS::World& world);
+    void doNewScene(ECS::World& world);
 #endif
 
     EditorContext  m_ctx;
@@ -83,6 +95,7 @@ private:
 
     bool m_open         = true;
     bool m_dockingSetup = false;
+    PendingAction m_pendingAction = PendingAction::None;
 };
 
 } // namespace Caffeine::Editor
