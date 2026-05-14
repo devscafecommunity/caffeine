@@ -194,6 +194,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         src/editor/SceneViewport.cpp
         src/editor/AssetBrowser.cpp
         src/editor/InspectorPanel.cpp
+        src/editor/SceneEditor.cpp
     )
     target_link_libraries(doppio PRIVATE caffeine-core ImGui)
     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
