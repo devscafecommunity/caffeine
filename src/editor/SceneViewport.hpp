@@ -104,9 +104,19 @@ public:
                 if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
             }
 
-            // Handle mouse drag for selected entity gizmo
             if (ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
-                handleGizmoInput(world, ctx, viewportSize);
+                bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+                if (dragging && !m_gizmoDragging) {
+                    ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
+                    m_gizmoDragging = true;
+                }
+                if (m_gizmoDragging) {
+                    handleGizmoInput(world, ctx, viewportSize);
+                }
+                if (!dragging && m_gizmoDragging) {
+                    ctx.endUndo(world);
+                    m_gizmoDragging = false;
+                }
             }
         }
 
@@ -277,6 +287,7 @@ private:
 
     bool m_open = true;
     bool m_initialized = false;
+    bool m_gizmoDragging = false;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;
     RHI::Texture* m_colorTarget = nullptr;

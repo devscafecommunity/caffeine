@@ -48,8 +48,9 @@ public:
             nameBuf[sizeof(nameBuf) - 1] = '\0';
             if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf),
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
+                ctx.beginUndo(EditorCommand::SetField, e.id(), world);
                 setEntityName(world, e, nameBuf);
-                ctx.isDirty = true;
+                ctx.endUndo(world);
             }
             ImGui::SameLine();
             ImGui::TextDisabled("Entity %u", e.id());
@@ -72,16 +73,24 @@ public:
             }
             if (ImGui::BeginPopup("add_component")) {
                 if (!world.has<ECS::Position2D>(e) && ImGui::MenuItem("Position2D")) {
-                    world.add<ECS::Position2D>(e); ctx.isDirty = true;
+                    ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                    world.add<ECS::Position2D>(e);
+                    ctx.endUndo(world);
                 }
                 if (!world.has<ECS::Velocity2D>(e) && ImGui::MenuItem("Velocity2D")) {
-                    world.add<ECS::Velocity2D>(e); ctx.isDirty = true;
+                    ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                    world.add<ECS::Velocity2D>(e);
+                    ctx.endUndo(world);
                 }
                 if (!world.has<ECS::Sprite>(e) && ImGui::MenuItem("Sprite")) {
-                    world.add<ECS::Sprite>(e); ctx.isDirty = true;
+                    ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                    world.add<ECS::Sprite>(e);
+                    ctx.endUndo(world);
                 }
                 if (!world.has<ECS::Health>(e) && ImGui::MenuItem("Health")) {
-                    world.add<ECS::Health>(e); ctx.isDirty = true;
+                    ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                    world.add<ECS::Health>(e);
+                    ctx.endUndo(world);
                 }
                 ImGui::EndPopup();
             }
