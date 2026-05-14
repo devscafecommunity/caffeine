@@ -11,6 +11,7 @@
 #include "../src/editor/StatsOverlay.hpp"
 #include "../src/editor/HierarchyPanel.hpp"
 #include "../src/editor/SceneViewport.hpp"
+#include "../src/editor/AssetBrowser.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -313,6 +314,24 @@ TEST_CASE("HierarchyPanel - close and open", "[editor][hierarchy]") {
     REQUIRE(panel.isOpen() == false);
     panel.open();
     REQUIRE(panel.isOpen() == true);
+}
+
+// ============================================================================
+// AssetBrowser Tests
+// ============================================================================
+
+TEST_CASE("AssetBrowser - Default state", "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    REQUIRE(browser.isOpen() == true);
+}
+
+TEST_CASE("AssetBrowser - close and open", "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    REQUIRE(browser.isOpen() == true);
+    browser.close();
+    REQUIRE(browser.isOpen() == false);
+    browser.open();
+    REQUIRE(browser.isOpen() == true);
 }
 
 // ============================================================================
