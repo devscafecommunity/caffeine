@@ -60,11 +60,12 @@ private:
     void submit();
     void reset();
 
-    SDL_GPUDevice*        m_device     = nullptr;
-    SDL_GPUCommandBuffer* m_cmdBuffer  = nullptr;
-    SDL_GPURenderPass*    m_renderPass = nullptr;
-    bool                  m_inRenderPass = false;
-    bool                  m_acquired     = false;
+    SDL_GPUDevice*        m_device            = nullptr;
+    SDL_GPUCommandBuffer* m_cmdBuffer         = nullptr;
+    SDL_GPURenderPass*    m_renderPass        = nullptr;
+    SDL_GPUTexture*       m_swapchainTexture  = nullptr;
+    bool                  m_inRenderPass      = false;
+    bool                  m_acquired          = false;
 };
 
 }  // namespace Caffeine::RHI

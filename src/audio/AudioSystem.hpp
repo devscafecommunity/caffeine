@@ -199,7 +199,7 @@ public:
         spec.channels = 2;
         spec.freq     = 44100;
 
-        m_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_OUTPUT, &spec);
+        m_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
         if (m_device == 0) {
             SDL_QuitSubSystem(SDL_INIT_AUDIO);
             return false;

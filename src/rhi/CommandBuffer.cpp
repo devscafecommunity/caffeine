@@ -59,16 +59,21 @@ void CommandBuffer::reset() {
 }
 
 void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
-    if (!m_cmdBuffer || m_inRenderPass) {
+    if (!m_cmdBuffer || m_inRenderPass || !m_swapchainTexture) {
         return;
     }
 
-    // This begins a render pass targeting the swapchain texture.
-    // For off-screen rendering, the caller would provide a texture target.
-    // For now, this sets up the clear color but actual render target
-    // binding happens in RenderDevice::endFrame with the swapchain texture.
-    m_inRenderPass = true;
-    (void)desc;
+    SDL_GPUColorTargetInfo colorTarget{};
+    colorTarget.texture       = m_swapchainTexture;
+    colorTarget.load_op       = SDL_GPU_LOADOP_CLEAR;
+    colorTarget.store_op      = SDL_GPU_STOREOP_STORE;
+    colorTarget.clear_color.r = desc.clearColor[0];
+    colorTarget.clear_color.g = desc.clearColor[1];
+    colorTarget.clear_color.b = desc.clearColor[2];
+    colorTarget.clear_color.a = desc.clearColor[3];
+
+    m_renderPass   = SDL_BeginGPURenderPass(m_cmdBuffer, &colorTarget, 1, nullptr);
+    m_inRenderPass = (m_renderPass != nullptr);
 }
 
 void CommandBuffer::endRenderPass() {

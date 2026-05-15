@@ -55,7 +55,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) return;
 
-    ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
+    if (m_initialized && m_colorTarget) {
+        ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
+    } else {
+        ImGui::Dummy(viewportSize);
+    }
 #else
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) return;
