@@ -28,6 +28,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
+    ../src/editor/SceneTabManager.cpp
 )
 
 if(SDL3_FOUND)
