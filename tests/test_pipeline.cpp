@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "../src/Caffeine.hpp"
 #include "../src/core/io/FileWatcher.hpp"
+#include "../src/assets/AssetPipeline.hpp"
 #include "../src/tools/PipelineTypes.hpp"
 #include "../src/tools/TextureEncoder.hpp"
 #include "../src/tools/AudioEncoder.hpp"
@@ -366,4 +367,88 @@ TEST_CASE("AssetPipeline::isOutdated - nonexistent dst", "[pipeline]") {
 TEST_CASE("FileWatcher - Create and destroy", "[pipeline]") {
     IO::FileWatcher fw;
     REQUIRE_FALSE(fw.isRunning());
+}
+
+// ============================================================================
+// AssetPipeline tests
+// ============================================================================
+
+using namespace Caffeine::Assets;
+
+namespace {
+
+class NullCompiler : public IAssetCompiler {
+public:
+    bool Compile(AssetImportContext& ctx) override {
+        ctx.Logs.push_back("NullCompiler: " + ctx.SourcePath.string());
+        ctx.Success = true;
+        return true;
+    }
+    std::vector<std::string> GetSupportedExtensions() override {
+        return { ".null" };
+    }
+};
+
+} // anonymous namespace
+
+TEST_CASE("AssetPipeline - Register and find compiler", "[pipeline]") {
+    AssetPipeline pipeline;
+    pipeline.RegisterCompiler(std::make_unique<NullCompiler>());
+    REQUIRE_FALSE(pipeline.IsProcessing());
+    REQUIRE(pipeline.GetProgress() == 0.0f);
+}
+
+TEST_CASE("AssetPipeline - Initialize creates directories", "[pipeline]") {
+    auto tmp = std::filesystem::temp_directory_path() / "caffeine_pipeline_test";
+    std::filesystem::remove_all(tmp);
+
+    AssetPipeline pipeline;
+    pipeline.Initialize(tmp);
+
+    REQUIRE(std::filesystem::exists(tmp / "assets" / "raw"));
+    REQUIRE(std::filesystem::exists(tmp / "assets" / "processed"));
+
+    std::filesystem::remove_all(tmp);
+}
+
+TEST_CASE("AssetPipeline - Manifest roundtrip", "[pipeline]") {
+    auto tmp = std::filesystem::temp_directory_path() / "caffeine_manifest_test";
+    std::filesystem::remove_all(tmp);
+
+    {
+        AssetPipeline pipeline;
+        pipeline.RegisterCompiler(std::make_unique<NullCompiler>());
+        pipeline.Initialize(tmp);
+
+        // Create a dummy source file
+        auto srcDir = tmp / "assets" / "raw";
+        std::filesystem::create_directories(srcDir);
+        auto dummySrc = srcDir / "test.null";
+        {
+            std::ofstream f(dummySrc.string());
+            f << "dummy";
+        }
+
+        pipeline.Reimport(dummySrc);
+
+        auto manifest = pipeline.GetManifest();
+        REQUIRE(manifest.size() == 1);
+        REQUIRE(manifest[0].sourcePath.find("test.null") != std::string::npos);
+
+        // Verify manifest file was saved
+        REQUIRE(std::filesystem::exists(tmp / "assets" / "manifest.caf"));
+    }
+
+    // Create new pipeline and verify manifest loads
+    {
+        AssetPipeline pipeline2;
+        pipeline2.RegisterCompiler(std::make_unique<NullCompiler>());
+        pipeline2.Initialize(tmp);
+
+        auto manifest2 = pipeline2.GetManifest();
+        REQUIRE(manifest2.size() == 1);
+        REQUIRE(manifest2[0].sourcePath.find("test.null") != std::string::npos);
+    }
+
+    std::filesystem::remove_all(tmp);
 }

@@ -43,6 +43,7 @@ add_library(caffeine-core
     src/ecs/World.cpp
     src/events/EventBus.cpp
     src/assets/AssetManager.cpp
+    src/assets/AssetPipeline.cpp
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
