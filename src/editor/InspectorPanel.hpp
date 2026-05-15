@@ -6,6 +6,7 @@
 #include "ecs/ComponentID.hpp"
 #include "scene/SceneComponents.hpp"
 #include "editor/EditorContext.hpp"
+#include "script/ScriptTypes.hpp"
 #include "containers/HashMap.hpp"
 #include <functional>
 
@@ -37,6 +38,7 @@ private:
     void drawCamera(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 #endif
 
     bool m_open = true;

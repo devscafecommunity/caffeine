@@ -44,6 +44,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
 
         drawTransform(world, e, ctx);
         drawSprite(world, e, ctx);
+        drawScript(world, e, ctx);
 
         ImGui::Separator();
 
@@ -70,6 +71,11 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             if (!world.has<ECS::Health>(e) && ImGui::MenuItem("Health")) {
                 ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
                 world.add<ECS::Health>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<Script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<Script::ScriptComponent>(e);
                 ctx.endUndo(world);
             }
             ImGui::EndPopup();
@@ -176,6 +182,47 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
 void InspectorPanel::drawCamera(ECS::World&, ECS::Entity, EditorContext&) {}
 void InspectorPanel::drawRigidBody2D(ECS::World&, ECS::Entity, EditorContext&) {}
 void InspectorPanel::drawAudioSource(ECS::World&, ECS::Entity, EditorContext&) {}
+
+void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Script::ScriptComponent>(e)) {
+        if (ImGui::CollapsingHeader("Script")) {
+            if (ImGui::Button("+ Add Script")) {
+                world.add<Script::ScriptComponent>(e);
+                ctx.isDirty = true;
+            }
+        }
+        return;
+    }
+
+    if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto* script = world.get<Script::ScriptComponent>(e);
+
+        std::string pathDisplay = script->scriptPath.empty() ? "No script" : script->scriptPath;
+
+        if (ImGui::Button(pathDisplay.c_str(), ImVec2(-1, 0))) {
+        }
+
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                const char* path = static_cast<const char*>(payload->Data);
+                std::filesystem::path p(path);
+                if (p.extension() == ".lua") {
+                    script->scriptPath = path;
+                    ctx.isDirty = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        if (!script->scriptPath.empty()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Open")) {
+                std::string cmd = "xdg-open \"" + script->scriptPath + "\" &";
+                std::system(cmd.c_str());
+            }
+        }
+    }
+}
 
 } // namespace Caffeine::Editor
 
