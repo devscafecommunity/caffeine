@@ -412,10 +412,21 @@ bool ScriptEngine::init(const InitParams& params) {
     registerDebugBindings(lua);
     registerMathBindings(lua);
 
-    // Sandboxing: block dangerous globals
     lua["dofile"] = sol::nil;
     lua["load"] = sol::nil;
     lua["loadfile"] = sol::nil;
+    lua["os"] = sol::nil;
+    lua["io"] = sol::nil;
+    lua["package"] = sol::nil;
+    lua["debug"] = sol::nil;
+
+    lua.safe_script(R"(
+        os = {}
+        os.clock = os.clock or function()
+            local t = os.date('!*t')
+            return t.hour * 3600 + t.min * 60 + t.sec
+        end
+    )");
 
     return true;
 }
