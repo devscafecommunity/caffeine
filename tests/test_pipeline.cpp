@@ -1,5 +1,6 @@
 #include "catch.hpp"
 #include "../src/Caffeine.hpp"
+#include "../src/core/io/FileWatcher.hpp"
 #include "../src/tools/PipelineTypes.hpp"
 #include "../src/tools/TextureEncoder.hpp"
 #include "../src/tools/AudioEncoder.hpp"
@@ -356,4 +357,13 @@ TEST_CASE("AssetPipeline::isOutdated - nonexistent dst", "[pipeline]") {
     REQUIRE(pipeline.isOutdated(src, dst) == true);
     
     std::filesystem::remove(src);
+}
+
+// ============================================================================
+// FileWatcher tests
+// ============================================================================
+
+TEST_CASE("FileWatcher - Create and destroy", "[pipeline]") {
+    IO::FileWatcher fw;
+    REQUIRE_FALSE(fw.isRunning());
 }

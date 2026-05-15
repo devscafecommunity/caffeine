@@ -34,6 +34,7 @@ add_library(caffeine-core
     src/core/GameLoop.cpp
     src/core/io/BlobLoader.cpp
     src/core/io/CafWriter.cpp
+    src/core/io/FileWatcher.cpp
     src/input/InputManager.cpp
     src/debug/LogSystem.cpp
     src/debug/Profiler.cpp
