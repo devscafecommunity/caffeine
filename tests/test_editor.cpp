@@ -16,6 +16,7 @@
 #include "../src/editor/SceneEditor.hpp"
 #include "../src/editor/SceneSerializer.hpp"
 #include "../src/editor/DragDropSystem.hpp"
+#include "../src/editor/ProjectManager.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -631,4 +632,150 @@ TEST_CASE("DragDropSystem - DragDropManager constants", "[editor][dragdrop]") {
 
     const auto* assetResult = DragDropManager::AcceptAssetDrop();
     REQUIRE(assetResult == nullptr);
+}
+
+// ============================================================================
+// ProjectManager tests
+// ============================================================================
+
+namespace {
+
+struct ProjectManagerFixture {
+    std::filesystem::path tmpDir;
+
+    ProjectManagerFixture()
+        : tmpDir(std::filesystem::temp_directory_path() / "caffeine_pm_test")
+    {
+        std::filesystem::remove_all(tmpDir);
+    }
+
+    ~ProjectManagerFixture() {
+        std::filesystem::remove_all(tmpDir);
+    }
+};
+
+} // anonymous namespace
+
+TEST_CASE("ProjectManager - CreateNewProject creates directories and project.caffeine", "[editor]") {
+    ProjectManagerFixture fix;
+    ProjectManager pm;
+
+    ProjectConfig cfg;
+    cfg.Name     = "TestProject";
+    cfg.RootPath = fix.tmpDir / "MyGame";
+
+    bool ok = pm.CreateNewProject(cfg);
+    REQUIRE(ok);
+
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame"));
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame" / "project.caffeine"));
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame" / "assets" / "raw"));
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame" / "assets" / "processed"));
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame" / "scripts"));
+    REQUIRE(std::filesystem::exists(fix.tmpDir / "MyGame" / "build"));
+}
+
+TEST_CASE("ProjectManager - CreateNewProject with empty name fails", "[editor]") {
+    ProjectManagerFixture fix;
+    ProjectManager pm;
+
+    ProjectConfig cfg;
+    cfg.Name     = "";
+    cfg.RootPath = fix.tmpDir / "Empty";
+
+    bool ok = pm.CreateNewProject(cfg);
+    REQUIRE_FALSE(ok);
+}
+
+TEST_CASE("ProjectManager - OpenProject loads saved project correctly", "[editor]") {
+    ProjectManagerFixture fix;
+    ProjectManager pm;
+
+    {
+        ProjectConfig cfg;
+        cfg.Name     = "ReloadTest";
+        cfg.Version  = "1.0.0";
+        cfg.RootPath = fix.tmpDir / "ReloadTest";
+        cfg.AssetRawPath = "custom/raw";
+        cfg.AssetProcessedPath = "custom/processed";
+        cfg.ScriptsPath = "my_scripts";
+        cfg.LastScene = "scenes/level1.scene";
+
+        bool ok = pm.CreateNewProject(cfg);
+        REQUIRE(ok);
+    }
+
+    ProjectManager pm2;
+    auto projectFile = fix.tmpDir / "ReloadTest" / "project.caffeine";
+    bool ok = pm2.OpenProject(projectFile);
+    REQUIRE(ok);
+
+    const auto& loaded = pm2.GetCurrentProject();
+    REQUIRE(loaded.Name == "ReloadTest");
+    REQUIRE(loaded.Version == "1.0.0");
+    REQUIRE(loaded.AssetRawPath.generic_string() == "custom/raw");
+    REQUIRE(loaded.AssetProcessedPath.generic_string() == "custom/processed");
+    REQUIRE(loaded.ScriptsPath.generic_string() == "my_scripts");
+    REQUIRE(loaded.LastScene == "scenes/level1.scene");
+}
+
+TEST_CASE("ProjectManager - OpenProject with non-existent path fails", "[editor]") {
+    ProjectManager pm;
+    bool ok = pm.OpenProject(std::filesystem::temp_directory_path() / "nonexistent" / "project.caffeine");
+    REQUIRE_FALSE(ok);
+    REQUIRE(pm.GetCurrentProject().Name.empty());
+}
+
+TEST_CASE("ProjectManager - GetRecentProjects updates after CreateNewProject", "[editor]") {
+    ProjectManagerFixture fix;
+    ProjectManager pm;
+    pm.SetRecentProjectsPath(fix.tmpDir / "recent.txt");
+
+    REQUIRE(pm.GetRecentProjects().empty());
+
+    ProjectConfig cfg;
+    cfg.Name     = "RecentTest";
+    cfg.RootPath = fix.tmpDir / "RecentTest";
+
+    pm.CreateNewProject(cfg);
+    REQUIRE(pm.GetRecentProjects().size() == 1);
+    REQUIRE(pm.GetRecentProjects()[0].string().find("project.caffeine") != std::string::npos);
+}
+
+TEST_CASE("ProjectManager - recent projects persist across instances", "[editor]") {
+    ProjectManagerFixture fix;
+
+    {
+        ProjectManager pm;
+        pm.SetRecentProjectsPath(fix.tmpDir / "recent.txt");
+
+        ProjectConfig cfg;
+        cfg.Name     = "Persist1";
+        cfg.RootPath = fix.tmpDir / "Persist1";
+        pm.CreateNewProject(cfg);
+
+        cfg.Name     = "Persist2";
+        cfg.RootPath = fix.tmpDir / "Persist2";
+        pm.CreateNewProject(cfg);
+
+        REQUIRE(pm.GetRecentProjects().size() == 2);
+    }
+
+    {
+        ProjectManager pm;
+        pm.SetRecentProjectsPath(fix.tmpDir / "recent.txt");
+        REQUIRE(pm.GetRecentProjects().size() == 2);
+    }
+}
+
+TEST_CASE("ProjectManager - DefaultRecentPath returns a non-empty path", "[editor]") {
+    auto path = ProjectManager::DefaultRecentPath();
+    REQUIRE_FALSE(path.empty());
+}
+
+TEST_CASE("ProjectManager - GetCurrentProject returns empty config initially", "[editor]") {
+    ProjectManager pm;
+    const auto& cfg = pm.GetCurrentProject();
+    REQUIRE(cfg.Name.empty());
+    REQUIRE(cfg.Version == "0.2.0");
 }
