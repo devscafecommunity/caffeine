@@ -134,6 +134,8 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
         scl.y = t["scaleY"].get_or(1.0f);
     };
 
+    wt["addTransform"] = wt["setTransform"];
+
     wt["getVelocity"] = [&lua, world](u32 entityId) -> sol::table {
         ECS::Entity e(entityId, world);
         sol::table t = lua.create_table();
@@ -193,6 +195,8 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
         s.name = t["name"].get_or(std::string());
         s.frameIndex = t["frameIndex"].get_or(0u);
     };
+
+    wt["addSprite"] = wt["setSprite"];
 }
 
 void registerInputBindings(sol::state& lua, Input::InputManager* input) {
