@@ -928,3 +928,104 @@ TEST_CASE("ProjectManager - GetCurrentProject returns empty config initially", "
     REQUIRE(cfg.Name.empty());
     REQUIRE(cfg.Version == "0.2.0");
 }
+
+// ============================================================================
+// SceneTabManager Tests (data layer only, no ImGui)
+// ============================================================================
+
+TEST_CASE("SceneTabManager - default state has no tabs", "[editor][scenetab]") {
+    SceneTabManager mgr;
+    REQUIRE(mgr.tabCount() == 0);
+    REQUIRE(mgr.activeTabIndex() < 0);
+    REQUIRE(mgr.activeWorld() == nullptr);
+}
+
+TEST_CASE("SceneTabManager - newScene creates a tab", "[editor][scenetab]") {
+    SceneTabManager mgr;
+    int idx = mgr.newScene("TestScene");
+    REQUIRE(idx >= 0);
+    REQUIRE(mgr.tabCount() == 1);
+    REQUIRE(mgr.activeTabIndex() == idx);
+    REQUIRE(mgr.activeWorld() != nullptr);
+    REQUIRE(mgr.activeTab().name == "TestScene");
+    REQUIRE(mgr.activeTab().isDirty == false);
+    REQUIRE(mgr.activeTab().selectedEntity.isValid() == false);
+}
+
+TEST_CASE("SceneTabManager - addTab adds a tab with existing world", "[editor][scenetab]") {
+    SceneTabManager mgr;
+    auto world = std::make_unique<ECS::World>();
+    ECS::World* worldPtr = world.get();
+    int idx = mgr.addTab("LoadedScene", std::move(world));
+    REQUIRE(idx >= 0);
+    REQUIRE(mgr.tabCount() == 1);
+    REQUIRE(mgr.activeWorld() == worldPtr);
+}
+
+TEST_CASE("SceneTabManager - multiple tabs and switching", "[editor][scenetab]") {
+    EditorContext ctx;
+    SceneTabManager mgr;
+
+    int tab1 = mgr.newScene("Tab1");
+    REQUIRE(tab1 >= 0);
+
+    auto world2 = std::make_unique<ECS::World>();
+    int tab2 = mgr.addTab("Tab2", std::move(world2));
+
+    REQUIRE(mgr.tabCount() == 2);
+    REQUIRE(mgr.activeTabIndex() == tab1);
+    REQUIRE(mgr.activeTab().name == "Tab1");
+
+    // Switch to tab2
+    mgr.setActiveTab(tab2, ctx);
+    REQUIRE(mgr.activeTabIndex() == tab2);
+    REQUIRE(mgr.activeTab().name == "Tab2");
+
+    // Switch back to tab1
+    mgr.setActiveTab(tab1, ctx);
+    REQUIRE(mgr.activeTabIndex() == tab1);
+}
+
+TEST_CASE("SceneTabManager - closeScene removes a tab", "[editor][scenetab]") {
+    EditorContext ctx;
+    SceneTabManager mgr;
+
+    mgr.newScene("Tab1");
+    auto world2 = std::make_unique<ECS::World>();
+    int tab2 = mgr.addTab("Tab2", std::move(world2));
+
+    REQUIRE(mgr.tabCount() == 2);
+
+    // Close tab2
+    mgr.closeScene(tab2);
+    REQUIRE(mgr.tabCount() == 1);
+    REQUIRE(mgr.activeTab().name == "Tab1");
+}
+
+TEST_CASE("SceneTabManager - closeScene on last tab creates replacement", "[editor][scenetab]") {
+    SceneTabManager mgr;
+    mgr.newScene("OnlyTab");
+    REQUIRE(mgr.tabCount() == 1);
+
+    mgr.closeScene(0);
+    REQUIRE(mgr.tabCount() == 1);  // replacement created
+    REQUIRE(mgr.activeTab().name == "Untitled");
+}
+
+TEST_CASE("SceneTabManager - captureContext and applyContext sync state", "[editor][scenetab]") {
+    EditorContext ctx;
+    SceneTabManager mgr;
+    mgr.newScene("Test");
+
+    // Set some state in EditorContext
+    ctx.isDirty = true;
+
+    // Capture into the tab
+    mgr.captureContext(ctx);
+    REQUIRE(mgr.activeTab().isDirty == true);
+
+    // Modify ctx and verify apply restores
+    ctx.isDirty = false;
+    mgr.applyContext(ctx);
+    REQUIRE(ctx.isDirty == true);
+}

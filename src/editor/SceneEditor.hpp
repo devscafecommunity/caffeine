@@ -10,6 +10,7 @@
 #include "editor/ConsoleWindow.hpp"
 #include "editor/ProfilerWindow.hpp"
 #include "editor/SceneSerializer.hpp"
+#include "editor/SceneTabManager.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -43,9 +44,9 @@ public:
     void shutdown();
 #endif
 
-    void render(ECS::World& world
+    void render(
 #ifdef CF_HAS_SDL3
-                , Render::Camera2D& editorCamera
+                Render::Camera2D& editorCamera
 #endif
                );
 
@@ -62,6 +63,7 @@ public:
     InspectorPanel& inspector() { return m_inspector; }
     SceneViewport&  viewport()  { return m_viewport; }
     AssetBrowser&   assetBrowser() { return m_assetBrowser; }
+    SceneTabManager& tabManager() { return m_tabManager; }
     ConsoleWindow&  console() { return m_console; }
     ProfilerWindow& profiler() { return m_profiler; }
 
@@ -78,24 +80,28 @@ private:
     void executePendingAction(ECS::World& world);
     void handleAssetDrop(ECS::World& world);
     void handleShortcuts(ECS::World& world);
-    void doNewScene(ECS::World& world);
+    void doNewScene();
 #endif
 
     EditorContext  m_ctx;
     HierarchyPanel m_hierarchy;
     InspectorPanel m_inspector;
     SceneViewport  m_viewport;
-    AssetBrowser   m_assetBrowser;
-    ConsoleWindow  m_console;
-    ProfilerWindow m_profiler;
+    AssetBrowser    m_assetBrowser;
+    SceneTabManager m_tabManager;
+    ConsoleWindow   m_console;
+    ProfilerWindow  m_profiler;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
 #endif
 
+    void closeTab(int index);
+
     bool m_open         = true;
     bool m_dockingSetup = false;
     PendingAction m_pendingAction = PendingAction::None;
+    int m_pendingCloseTab = -1;
 };
 
 } // namespace Caffeine::Editor
