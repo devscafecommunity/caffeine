@@ -1,5 +1,6 @@
 #include "editor/ProjectManager.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
