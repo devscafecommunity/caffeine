@@ -240,6 +240,33 @@ LoadStatus AssetManager::getStatus(u32 id) const {
     return m_assets[id]->status.load(std::memory_order_acquire);
 }
 
+u32 AssetManager::reloadAsset(const char* path) {
+    if (!path) return ~0u;
+
+    std::string key = m_basePath + path;
+    u32 id = ~0u;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_pathIndex.find(key);
+        if (it == m_pathIndex.end()) return ~0u;
+        id = it->second;
+
+        auto& e = *m_assets[id];
+        m_cachedBytes.fetch_sub(e.sizeBytes, std::memory_order_relaxed);
+        e.allocator.reset();
+        e.header    = nullptr;
+        e.metadata  = nullptr;
+        e.payload   = nullptr;
+        e.resolved  = {};
+        e.sizeBytes = 0;
+        e.status.store(LoadStatus::Unloaded, std::memory_order_release);
+    }
+
+    loadInternal(id);
+    return id;
+}
+
 #ifdef CF_DEBUG
 u64 AssetManager::getFileWriteTime(const std::string& path) {
     std::error_code ec;

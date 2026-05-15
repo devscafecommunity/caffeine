@@ -46,6 +46,10 @@ public:
     CacheStats cacheStats() const;
     void       tick(u64 frameIndex = 0);
 
+    // Reload an already-loaded asset from disk by its loaded .caf path.
+    // Returns the asset ID, or ~0u if not found. Thread-safe.
+    u32        reloadAsset(const char* path);
+
     void       incRef(u32 id);
     void       decRef(u32 id);
     LoadStatus getStatus(u32 id) const;
