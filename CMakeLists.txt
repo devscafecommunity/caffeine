@@ -49,6 +49,7 @@ add_library(caffeine-core
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
+    src/editor/ProjectManager.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC
