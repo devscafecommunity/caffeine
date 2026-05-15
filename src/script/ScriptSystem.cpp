@@ -11,15 +11,14 @@ ScriptSystem::ScriptSystem(ScriptEngine* engine)
 
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
+    processLuaScripts(world, dt);
+    processNativeScripts(world, dt);
+}
 
+void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
     ECS::ComponentQuery q;
     q.with<ScriptComponent>();
 
-    // Phase 1: Collect entity data without processing scripts.
-    // We must NOT call callOnCreate/callOnUpdate during forEach because those
-    // can add components (e.g., Position2D via setTransform), triggering
-    // archetype migration via World::add. This invalidates forEach's iteration
-    // state (cached entityCount becomes stale, out-of-bounds access → SIGSEGV).
     struct ScriptEntry {
         u32 entityId;
         std::string scriptPath;
@@ -32,14 +31,12 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
             entries.pushBack({entity.id(), sc.scriptPath});
         });
 
-    // Phase 2: Process each entity outside forEach, safe to modify archetypes.
     for (auto& entry : entries) {
         ECS::Entity entity(entry.entityId, &world);
         if (!entity.isValid()) continue;
 
         const std::string& path = entry.scriptPath;
 
-        // Load script if not yet loaded
         if (!m_engine->isLoaded(path)) {
             std::string err;
             if (!m_engine->loadScript(path, &err)) {
@@ -49,10 +46,9 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
             }
         }
 
-        // First encounter: call onCreate
         bool isNew = true;
-        for (usize i = 0; i < m_initialized.size(); ++i) {
-            if (m_initialized[i].id() == entity.id()) {
+        for (usize i = 0; i < m_initializedLua.size(); ++i) {
+            if (m_initializedLua[i].id() == entity.id()) {
                 isNew = false;
                 break;
             }
@@ -60,11 +56,56 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
 
         if (isNew) {
             m_engine->callOnCreate(path, entity);
-            m_initialized.pushBack(entity);
+            m_initializedLua.pushBack(entity);
         }
 
-        // Per-frame update
         m_engine->callOnUpdate(path, entity, dt);
+    }
+}
+
+void ScriptSystem::processNativeScripts(ECS::World& world, f32 dt) {
+    ECS::ComponentQuery q;
+    q.with<NativeScriptComponent>();
+
+    struct NativeScriptEntry {
+        u32 entityId;
+        NativeScriptComponent* script;
+    };
+    Vector<NativeScriptEntry> entries;
+
+    world.forEach<NativeScriptComponent>(q,
+        [&entries](ECS::Entity entity, NativeScriptComponent& nsc) {
+            entries.pushBack({entity.id(), &nsc});
+        });
+
+    for (auto& entry : entries) {
+        ECS::Entity entity(entry.entityId, &world);
+        if (!entity.isValid()) continue;
+
+        NativeScriptComponent* nsc = entry.script;
+        if (!nsc) continue;
+
+        if (!nsc->initialized) {
+            if (nsc->onCreate) {
+                nsc->onCreate(entity);
+            }
+            nsc->initialized = true;
+
+            bool alreadyTracked = false;
+            for (usize i = 0; i < m_initializedNative.size(); ++i) {
+                if (m_initializedNative[i].id() == entity.id()) {
+                    alreadyTracked = true;
+                    break;
+                }
+            }
+            if (!alreadyTracked) {
+                m_initializedNative.pushBack(entity);
+            }
+        }
+
+        if (nsc->onUpdate) {
+            nsc->onUpdate(entity, dt);
+        }
     }
 }
 
