@@ -12,6 +12,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     if (!m_viewport.init(device)) return false;
     m_assetBrowser.init(assetsPath);
     m_assetManager = assetManager;
+    m_tabManager.newScene("Untitled");
     return true;
 }
 
@@ -22,14 +23,17 @@ void SceneEditor::shutdown() {
 
 // ── Main render ─────────────────────────────────────────────────
 
-void SceneEditor::render(ECS::World& world
+void SceneEditor::render(
 #ifdef CF_HAS_SDL3
-                          , Render::Camera2D& editorCamera
+                          Render::Camera2D& editorCamera
 #endif
                          ) {
     if (!m_open) return;
 
-    handleShortcuts(world);
+    ECS::World* activeWorld = m_tabManager.activeWorld();
+    if (!activeWorld) return;
+
+    handleShortcuts(*activeWorld);
 
     // Setup dockspace root window
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_MenuBar
@@ -52,6 +56,22 @@ void SceneEditor::render(ECS::World& world
     ImGui::Begin("DockSpace", nullptr, windowFlags);
     ImGui::PopStyleVar(3);
 
+    // ── Scene tab bar ──
+    auto tabResult = m_tabManager.renderTabBar();
+    if (tabResult.switchToIndex >= 0) {
+        m_tabManager.setActiveTab(tabResult.switchToIndex, m_ctx);
+    }
+    if (tabResult.newTabRequested) {
+        doNewScene();
+    }
+    if (tabResult.closeCandidate >= 0) {
+        closeTab(tabResult.closeCandidate);
+    }
+
+    // Re-acquire active world after potential tab switch/close
+    activeWorld = m_tabManager.activeWorld();
+    if (!activeWorld) { ImGui::End(); return; }
+
     ImGuiID dockspaceId = ImGui::GetID("MyDockSpace");
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
@@ -60,26 +80,26 @@ void SceneEditor::render(ECS::World& world
         m_dockingSetup = true;
     }
 
-    renderMainMenuBar(world);
+    renderMainMenuBar(*activeWorld);
+    renderUnsavedChangesPopup(*activeWorld);
 
     // Render panels
-    m_hierarchy.render(world, m_ctx);
-    m_inspector.render(world, m_ctx);
+    m_hierarchy.render(*activeWorld, m_ctx);
+    m_inspector.render(*activeWorld, m_ctx);
 #ifdef CF_HAS_SDL3
-    m_viewport.render(world, m_ctx, editorCamera);
+    m_viewport.render(*activeWorld, m_ctx, editorCamera);
 #else
-    m_viewport.render(world, m_ctx);
+    m_viewport.render(*activeWorld, m_ctx);
 #endif
     m_assetBrowser.render(m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
 
-    handleAssetDrop(world);
+    handleAssetDrop(*activeWorld);
 
     ImGui::End(); // DockSpace
 
-    renderUnsavedChangesPopup(world);
-    renderStatusBar(world);
+    renderStatusBar(*activeWorld);
 }
 
 // ── Dockspace setup ─────────────────────────────────────────────
@@ -114,7 +134,7 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                     m_pendingAction = PendingAction::NewScene;
                     ImGui::OpenPopup("Unsaved Changes?");
                 } else {
-                    doNewScene(world);
+                    doNewScene();
                 }
             }
             if (ImGui::MenuItem("Save", "Ctrl+S")) {
@@ -128,13 +148,12 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 saveSceneAs(world);
             }
             if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-                if (m_ctx.isDirty) {
-                    m_pendingAction = PendingAction::OpenScene;
-                    ImGui::OpenPopup("Unsaved Changes?");
-                } else {
-                    // TODO: native file dialog — for now hardcoded
-                    loadScene("scene.caf", world);
-                    m_ctx.currentScenePath = "scene.caf";
+                // Open in a new tab
+                auto newWorld = std::make_unique<ECS::World>();
+                Editor::SceneSerializer serializer(*newWorld);
+                if (serializer.deserialize("scene.caf")) {
+                    m_tabManager.addTab("scene.caf", std::move(newWorld));
+                    m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
                 }
             }
             ImGui::Separator();
@@ -228,7 +247,7 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
             m_pendingAction = PendingAction::NewScene;
             ImGui::OpenPopup("Unsaved Changes?");
         } else {
-            doNewScene(world);
+            doNewScene();
         }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
@@ -248,13 +267,16 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
 bool SceneEditor::saveScene(const char* path, ECS::World& world) {
     Editor::SceneSerializer serializer(world);
     if (!serializer.serialize(path)) return false;
+    if (m_tabManager.activeTabIndex() >= 0) {
+        m_tabManager.activeTab().path = path;
+        m_tabManager.activeTab().isDirty = false;
+    }
     m_ctx.currentScenePath = path;
     m_ctx.isDirty = false;
     return true;
 }
 
 bool SceneEditor::saveSceneAs(ECS::World& world) {
-    // TODO: native file dialog — for now write to a default path
     const char* path = "scene.caf";
     return saveScene(path, world);
 }
@@ -268,49 +290,107 @@ bool SceneEditor::loadScene(const char* path, ECS::World& world) {
     return true;
 }
 
+// ── Close tab with confirmation ──────────────────────────────────
+
+void SceneEditor::closeTab(int index) {
+    if (index < 0 || index >= m_tabManager.tabCount()) return;
+    auto& tab = m_tabManager.tab(index);
+    if (tab.isDirty) {
+        m_pendingCloseTab = index;
+        ImGui::OpenPopup("Unsaved Tab?");
+    } else {
+        m_tabManager.closeScene(index);
+    }
+}
+
 // ── Unsaved changes popup ───────────────────────────────────────
 
 void SceneEditor::renderUnsavedChangesPopup(ECS::World& world) {
-    if (m_pendingAction == PendingAction::None) return;
+    // "Unsaved Changes?" — triggered by menu actions (New/Open/Exit)
+    if (m_pendingAction != PendingAction::None) {
+        if (ImGui::BeginPopupModal("Unsaved Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("There are unsaved changes. Do you want to save before continuing?");
+            ImGui::Separator();
 
-    if (ImGui::BeginPopupModal("Unsaved Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("There are unsaved changes. Do you want to save before continuing?");
-        ImGui::Separator();
-
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
-            if (m_ctx.currentScenePath.empty()) {
-                saveSceneAs(world);
-            } else {
-                saveScene(m_ctx.currentScenePath.c_str(), world);
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                if (m_ctx.currentScenePath.empty()) {
+                    saveSceneAs(world);
+                } else {
+                    saveScene(m_ctx.currentScenePath.c_str(), world);
+                }
+                ImGui::CloseCurrentPopup();
+                executePendingAction(world);
+                m_pendingAction = PendingAction::None;
             }
-            ImGui::CloseCurrentPopup();
-            executePendingAction(world);
-            m_pendingAction = PendingAction::None;
+            ImGui::SameLine();
+            if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+                executePendingAction(world);
+                m_pendingAction = PendingAction::None;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+                m_pendingAction = PendingAction::None;
+            }
+            ImGui::EndPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-            executePendingAction(world);
-            m_pendingAction = PendingAction::None;
+    }
+
+    // "Unsaved Tab?" — triggered by closing a dirty tab
+    if (m_pendingCloseTab >= 0) {
+        bool popupOpen = true;
+        if (ImGui::BeginPopupModal("Unsaved Tab?", &popupOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Save changes to \"%s\" before closing?",
+                        m_tabManager.tab(m_pendingCloseTab).name.c_str());
+            ImGui::Separator();
+
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                auto& tab = m_tabManager.tab(m_pendingCloseTab);
+                // Save if we have a path, otherwise save-as with default name
+                const char* savePath = tab.path.empty() ? "scene.caf" : tab.path.c_str();
+                Editor::SceneSerializer serializer(*tab.world);
+                if (serializer.serialize(savePath)) {
+                    tab.isDirty = false;
+                }
+                m_tabManager.closeScene(m_pendingCloseTab);
+                ImGui::CloseCurrentPopup();
+                m_pendingCloseTab = -1;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+                m_tabManager.closeScene(m_pendingCloseTab);
+                ImGui::CloseCurrentPopup();
+                m_pendingCloseTab = -1;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+                m_pendingCloseTab = -1;
+            }
+            ImGui::EndPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-            m_pendingAction = PendingAction::None;
+        if (!popupOpen) {
+            m_pendingCloseTab = -1;
         }
-        ImGui::EndPopup();
     }
 }
 
 void SceneEditor::executePendingAction(ECS::World& world) {
+    (void)world;
     switch (m_pendingAction) {
         case PendingAction::NewScene:
-            doNewScene(world);
+            doNewScene();
             break;
-        case PendingAction::OpenScene:
-            // TODO: native file dialog
-            loadScene("scene.caf", world);
+        case PendingAction::OpenScene: {
+            auto newWorld = std::make_unique<ECS::World>();
+            Editor::SceneSerializer serializer(*newWorld);
+            if (serializer.deserialize("scene.caf")) {
+                m_tabManager.addTab("scene.caf", std::move(newWorld));
+                m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
+            }
             break;
+        }
         case PendingAction::Exit:
             m_open = false;
             break;
@@ -319,12 +399,9 @@ void SceneEditor::executePendingAction(ECS::World& world) {
     }
 }
 
-void SceneEditor::doNewScene(ECS::World& world) {
-    world.destroyAll();
-    m_ctx.selectedEntity = ECS::Entity::INVALID;
-    m_ctx.currentScenePath.clear();
-    m_ctx.isDirty = false;
-    m_ctx.undoStack.clear();
+void SceneEditor::doNewScene() {
+    m_tabManager.newScene("Untitled");
+    m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
 }
 
 // ── Asset drop ──────────────────────────────────────────────────

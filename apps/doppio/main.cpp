@@ -1,10 +1,8 @@
 #include "rhi/RenderDevice.hpp"
 #include "rhi/CommandBuffer.hpp"
 #include "assets/AssetManager.hpp"
-#include "ecs/World.hpp"
 #include "render/Camera2D.hpp"
 
-// Editor headers (header-only, ImGui code is CF_HAS_IMGUI-guarded)
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
 #include <SDL3/SDL.h>
@@ -44,7 +42,6 @@ int main(int, char**) {
     }
 
     Caffeine::Assets::AssetManager assetManager(nullptr, "assets");
-    Caffeine::ECS::World world;
     Caffeine::Render::Camera2D editorCamera;
 
     Caffeine::Editor::ImGuiIntegration imgui;
@@ -81,7 +78,7 @@ int main(int, char**) {
         if (!cmd) continue;
 
         imgui.beginFrame();
-        editor.render(world, editorCamera);
+        editor.render(editorCamera);
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;
