@@ -34,6 +34,7 @@ void AssetBrowser::refresh() {
             else if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" || ext == ".tga")  e.type = AssetType::Texture;
             else if (ext == ".wav"  || ext == ".ogg"  || ext == ".mp3")   e.type = AssetType::Audio;
             else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb")   e.type = AssetType::Mesh;
+            else if (ext == ".lua")                      e.type = AssetType::Unknown;
             else                                     e.type = AssetType::Unknown;
 
             std::error_code ec;
@@ -147,7 +148,10 @@ namespace Caffeine::Editor {
 
 // ── Icon helper ─────────────────────────────────────────────────────────────
 
-const char* AssetBrowser::iconForType(AssetType type) {
+const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
+    if (path.extension() == ".lua") {
+        return "[L]";
+    }
     switch (type) {
         case AssetType::Texture: return "[T]";
         case AssetType::Audio:   return "[A]";
@@ -240,7 +244,7 @@ void AssetBrowser::renderGridView() {
         if (entry.isDirectory) {
             ImGui::Text("[dir]");
         } else {
-            ImGui::Text("%s", iconForType(entry.type));
+            ImGui::Text("%s", iconForType(entry.type, entry.path));
         }
         ImGui::TextUnformatted(entry.name.c_str());
 
@@ -298,7 +302,7 @@ void AssetBrowser::renderListView() {
         if (entry.isDirectory) {
             ImGui::Text("[dir] %s", entry.name.c_str());
         } else {
-            ImGui::Text("%s %s", iconForType(entry.type), entry.name.c_str());
+            ImGui::Text("%s %s", iconForType(entry.type, entry.path), entry.name.c_str());
         }
 
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
@@ -325,12 +329,16 @@ void AssetBrowser::renderListView() {
         if (entry.isDirectory) {
             ImGui::Text("Folder");
         } else {
-            switch (entry.type) {
-                case AssetType::Texture: ImGui::Text("Texture");  break;
-                case AssetType::Audio:   ImGui::Text("Audio");    break;
-                case AssetType::Mesh:    ImGui::Text("Mesh");     break;
-                case AssetType::Scene:   ImGui::Text("Scene");    break;
-                default:                 ImGui::Text("Unknown");  break;
+            if (entry.path.extension() == ".lua") {
+                ImGui::Text("Script");
+            } else {
+                switch (entry.type) {
+                    case AssetType::Texture: ImGui::Text("Texture");  break;
+                    case AssetType::Audio:   ImGui::Text("Audio");    break;
+                    case AssetType::Mesh:    ImGui::Text("Mesh");     break;
+                    case AssetType::Scene:   ImGui::Text("Scene");    break;
+                    default:                 ImGui::Text("Unknown");  break;
+                }
             }
         }
         ImGui::NextColumn();

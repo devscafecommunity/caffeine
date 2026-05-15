@@ -95,6 +95,7 @@ void SceneEditor::render(
     m_assetBrowser.render(m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
+    m_scriptEditor.render();
 
     handleAssetDrop(*activeWorld);
 

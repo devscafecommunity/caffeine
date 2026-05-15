@@ -88,7 +88,7 @@ public:
     void renderGridView();
     void renderListView();
     void renderContextMenu();
-    const char* iconForType(AssetType type);
+    const char* iconForType(AssetType type, const std::filesystem::path& path = {});
 
     int m_selectedEntry = -1;
     #endif
