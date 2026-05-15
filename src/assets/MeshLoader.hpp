@@ -186,19 +186,17 @@ public:
         if (!m_device || !mesh) return;
         
         if (!mesh->vertices.empty()) {
-            mesh->vertexBuffer = m_device->createBuffer(
-                mesh->vertices.data(),
-                mesh->vertices.size() * sizeof(Vertex3D),
-                RHI::BufferUsage::Vertex
-            );
+            RHI::BufferDesc desc;
+            desc.size = mesh->vertices.size() * sizeof(Vertex3D);
+            desc.name = "MeshVertexBuffer";
+            mesh->vertexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Vertex);
         }
         
         if (!mesh->indices.empty()) {
-            mesh->indexBuffer = m_device->createBuffer(
-                mesh->indices.data(),
-                mesh->indices.size() * sizeof(u32),
-                RHI::BufferUsage::Index
-            );
+            RHI::BufferDesc desc;
+            desc.size = mesh->indices.size() * sizeof(u32);
+            desc.name = "MeshIndexBuffer";
+            mesh->indexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Index);
         }
     }
 #endif
