@@ -80,6 +80,31 @@ endif()
 # ── Backward-compat alias ───────────────────────────────────────
 add_library(Caffeine::Core ALIAS caffeine-core)
 
+# ═══════════════════════════════════════════════════════════════════
+#  CAFFEINE UI — header-only UI module
+#
+#  INTERFACE library: widget system, layout, hit-testing.
+#  Depends on caffeine-core.
+# ═══════════════════════════════════════════════════════════════════
+add_library(caffeine-ui INTERFACE)
+target_include_directories(caffeine-ui INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(caffeine-ui INTERFACE caffeine-core)
+add_library(Caffeine::UI ALIAS caffeine-ui)
+
+# ═══════════════════════════════════════════════════════════════════
+#  CAFFEINE COMBINED — demonstra core + UI no mesmo executável
+#
+#  Executable that links both caffeine-core and caffeine-ui.
+# ═══════════════════════════════════════════════════════════════════
+add_executable(caffeine-combined
+    apps/combined/main.cpp
+)
+target_link_libraries(caffeine-combined PRIVATE caffeine-core caffeine-ui)
+target_compile_features(caffeine-combined PRIVATE cxx_std_20)
+
 # ── Scripting ────────────────────────────────────────────────────
 if(CAFFEINE_ENABLE_SCRIPTING)
     include(FetchContent)
@@ -175,7 +200,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
     FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
-        GIT_TAG        v1.91.9
+        GIT_TAG        docking
         GIT_SHALLOW    TRUE
     )
     set(FETCHCONTENT_QUIET OFF)
