@@ -11,6 +11,7 @@
 #include "editor/ProfilerWindow.hpp"
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
+#include "editor/ScriptEditorWindow.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -66,6 +67,7 @@ public:
     SceneTabManager& tabManager() { return m_tabManager; }
     ConsoleWindow&  console() { return m_console; }
     ProfilerWindow& profiler() { return m_profiler; }
+    ScriptEditorWindow& scriptEditor() { return m_scriptEditor; }
 
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
@@ -91,6 +93,7 @@ private:
     SceneTabManager m_tabManager;
     ConsoleWindow   m_console;
     ProfilerWindow  m_profiler;
+    ScriptEditorWindow m_scriptEditor;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
