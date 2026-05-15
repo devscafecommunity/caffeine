@@ -1,13 +1,17 @@
 #include "catch.hpp"
 #include "../src/Caffeine.hpp"
+#include "../src/core/io/Crc32.hpp"
 #include "../src/core/io/FileWatcher.hpp"
 #include "../src/assets/AssetPipeline.hpp"
+#include "../src/assets/TextureCompiler.hpp"
 #include "../src/tools/PipelineTypes.hpp"
 #include "../src/tools/TextureEncoder.hpp"
 #include "../src/tools/AudioEncoder.hpp"
 #include "../src/tools/MeshEncoder.hpp"
 #include "../src/tools/AssetManifest.hpp"
 #include "../src/tools/AssetPipeline.hpp"
+
+#include <fstream>
 
 using namespace Caffeine;
 using namespace Caffeine::Tools;
@@ -373,13 +377,11 @@ TEST_CASE("FileWatcher - Create and destroy", "[pipeline]") {
 // AssetPipeline tests
 // ============================================================================
 
-using namespace Caffeine::Assets;
-
 namespace {
 
-class NullCompiler : public IAssetCompiler {
+class NullCompiler : public Caffeine::Assets::IAssetCompiler {
 public:
-    bool Compile(AssetImportContext& ctx) override {
+    bool Compile(Caffeine::Assets::AssetImportContext& ctx) override {
         ctx.Logs.push_back("NullCompiler: " + ctx.SourcePath.string());
         ctx.Success = true;
         return true;
@@ -392,7 +394,7 @@ public:
 } // anonymous namespace
 
 TEST_CASE("AssetPipeline - Register and find compiler", "[pipeline]") {
-    AssetPipeline pipeline;
+    Caffeine::Assets::AssetPipeline pipeline;
     pipeline.RegisterCompiler(std::make_unique<NullCompiler>());
     REQUIRE_FALSE(pipeline.IsProcessing());
     REQUIRE(pipeline.GetProgress() == 0.0f);
@@ -402,7 +404,7 @@ TEST_CASE("AssetPipeline - Initialize creates directories", "[pipeline]") {
     auto tmp = std::filesystem::temp_directory_path() / "caffeine_pipeline_test";
     std::filesystem::remove_all(tmp);
 
-    AssetPipeline pipeline;
+    Caffeine::Assets::AssetPipeline pipeline;
     pipeline.Initialize(tmp);
 
     REQUIRE(std::filesystem::exists(tmp / "assets" / "raw"));
@@ -416,11 +418,10 @@ TEST_CASE("AssetPipeline - Manifest roundtrip", "[pipeline]") {
     std::filesystem::remove_all(tmp);
 
     {
-        AssetPipeline pipeline;
+        Caffeine::Assets::AssetPipeline pipeline;
         pipeline.RegisterCompiler(std::make_unique<NullCompiler>());
         pipeline.Initialize(tmp);
 
-        // Create a dummy source file
         auto srcDir = tmp / "assets" / "raw";
         std::filesystem::create_directories(srcDir);
         auto dummySrc = srcDir / "test.null";
@@ -435,13 +436,11 @@ TEST_CASE("AssetPipeline - Manifest roundtrip", "[pipeline]") {
         REQUIRE(manifest.size() == 1);
         REQUIRE(manifest[0].sourcePath.find("test.null") != std::string::npos);
 
-        // Verify manifest file was saved
         REQUIRE(std::filesystem::exists(tmp / "assets" / "manifest.caf"));
     }
 
-    // Create new pipeline and verify manifest loads
     {
-        AssetPipeline pipeline2;
+        Caffeine::Assets::AssetPipeline pipeline2;
         pipeline2.RegisterCompiler(std::make_unique<NullCompiler>());
         pipeline2.Initialize(tmp);
 
@@ -451,4 +450,154 @@ TEST_CASE("AssetPipeline - Manifest roundtrip", "[pipeline]") {
     }
 
     std::filesystem::remove_all(tmp);
+}
+
+namespace {
+
+// Generates a minimal valid 1x1 RGBA red PNG using raw bytes and the engine's
+// own CRC32 at run time — avoids external image-write dependencies in tests.
+bool writeTestPng(const std::filesystem::path& path) {
+    const u8 signature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+
+    const u8 ihdrData[13] = {
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00
+    };
+    const u8 idatBody[16] = {
+        0x78, 0x01, 0x01, 0x05, 0x00, 0xFA, 0xFF,
+        0x00, 0xFF, 0x00, 0x00, 0xFF,
+        0xFF, 0x01, 0x01, 0x05
+    };
+
+    std::FILE* f = std::fopen(path.string().c_str(), "wb");
+    if (!f) return false;
+
+    auto writeU32BE = [&](u32 v) {
+        u8 buf[4] = { u8(v >> 24), u8(v >> 16), u8(v >> 8), u8(v & 0xFF) };
+        std::fwrite(buf, 4, 1, f);
+    };
+
+    std::fwrite(signature, 8, 1, f);
+
+    writeU32BE(13);
+    std::fwrite("IHDR", 4, 1, f);
+    std::fwrite(ihdrData, 1, 13, f);
+    {
+        u8 crcInput[4 + 13];
+        std::memcpy(crcInput, "IHDR", 4);
+        std::memcpy(crcInput + 4, ihdrData, 13);
+        writeU32BE(IO::crc32(crcInput, 4 + 13));
+    }
+
+    writeU32BE(16);
+    std::fwrite("IDAT", 4, 1, f);
+    std::fwrite(idatBody, 1, 16, f);
+    {
+        u8 crcInput[4 + 16];
+        std::memcpy(crcInput, "IDAT", 4);
+        std::memcpy(crcInput + 4, idatBody, 16);
+        writeU32BE(IO::crc32(crcInput, 4 + 16));
+    }
+
+    writeU32BE(0);
+    std::fwrite("IEND", 4, 1, f);
+    writeU32BE(IO::crc32("IEND", 4));
+
+    std::fclose(f);
+    return true;
+}
+
+} // anonymous namespace
+
+TEST_CASE("TextureCompiler - supports correct extensions", "[pipeline]") {
+    Assets::TextureCompiler compiler;
+    auto exts = compiler.GetSupportedExtensions();
+    REQUIRE(exts.size() == 3);
+    REQUIRE(std::find(exts.begin(), exts.end(), ".png") != exts.end());
+    REQUIRE(std::find(exts.begin(), exts.end(), ".jpg") != exts.end());
+    REQUIRE(std::find(exts.begin(), exts.end(), ".jpeg") != exts.end());
+}
+
+TEST_CASE("TextureCompiler - non-existent file returns false", "[pipeline]") {
+    Assets::TextureCompiler compiler;
+    Assets::AssetImportContext ctx;
+    ctx.SourcePath = std::filesystem::temp_directory_path() / "nonexistent.png";
+    ctx.DestinationPath = std::filesystem::temp_directory_path() / "nonexistent.caf";
+
+    bool result = compiler.Compile(ctx);
+    REQUIRE_FALSE(result);
+    REQUIRE_FALSE(ctx.Success);
+    REQUIRE(ctx.Logs.size() > 0);
+}
+
+TEST_CASE("TextureCompiler - corrupt file returns false", "[pipeline]") {
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_texcomp_test";
+    std::filesystem::create_directories(tmpDir);
+    auto corruptPng = tmpDir / "corrupt.png";
+    {
+        std::ofstream f(corruptPng.string(), std::ios::binary);
+        f << "not a png file";
+    }
+
+    Assets::TextureCompiler compiler;
+    Assets::AssetImportContext ctx;
+    ctx.SourcePath = corruptPng;
+    ctx.DestinationPath = tmpDir / "corrupt.caf";
+
+    bool result = compiler.Compile(ctx);
+    REQUIRE_FALSE(result);
+    REQUIRE_FALSE(ctx.Success);
+    REQUIRE(ctx.Logs.size() > 0);
+
+    std::filesystem::remove_all(tmpDir);
+}
+
+TEST_CASE("TextureCompiler - 1x1 RGBA PNG to .caf conversion", "[pipeline]") {
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_texconv_test";
+    std::filesystem::remove_all(tmpDir);
+    std::filesystem::create_directories(tmpDir);
+
+    auto pngPath = tmpDir / "red_pixel.png";
+    REQUIRE(writeTestPng(pngPath));
+
+    auto cafPath = tmpDir / "red_pixel.caf";
+
+    Assets::TextureCompiler compiler;
+    Assets::AssetImportContext ctx;
+    ctx.SourcePath = pngPath;
+    ctx.DestinationPath = cafPath;
+
+    bool ok = compiler.Compile(ctx);
+    REQUIRE(ok);
+    REQUIRE(ctx.Success);
+    REQUIRE(std::filesystem::exists(cafPath));
+
+    std::FILE* f = std::fopen(cafPath.string().c_str(), "rb");
+    REQUIRE(f != nullptr);
+
+    CafHeader header;
+    REQUIRE(std::fread(&header, sizeof(header), 1, f) == 1);
+    REQUIRE(header.magic == CafHeader::kMagic);
+    REQUIRE(header.versionMajor == CafHeader::kVersionMajor);
+    REQUIRE(header.type == AssetType::Texture);
+    REQUIRE(header.metadataSize == sizeof(TextureMetadata));
+
+    TextureMetadata meta;
+    REQUIRE(std::fread(&meta, sizeof(meta), 1, f) == 1);
+    REQUIRE(meta.width == 1);
+    REQUIRE(meta.height == 1);
+    REQUIRE(meta.format == 0);
+    REQUIRE(meta.mipLevels == 1);
+
+    std::vector<u8> pixelData(header.dataSize);
+    REQUIRE(pixelData.size() == 4);
+    REQUIRE(std::fread(pixelData.data(), 1, header.dataSize, f) == header.dataSize);
+    REQUIRE(pixelData[0] == 255);
+    REQUIRE(pixelData[1] == 0);
+    REQUIRE(pixelData[2] == 0);
+    REQUIRE(pixelData[3] == 255);
+
+    std::fclose(f);
+    std::filesystem::remove_all(tmpDir);
 }
