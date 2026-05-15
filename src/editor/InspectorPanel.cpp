@@ -1,4 +1,6 @@
 #include "editor/InspectorPanel.hpp"
+#include "editor/DragDropSystem.hpp"
+#include <filesystem>
 
 #ifdef CF_HAS_IMGUI
 
@@ -152,6 +154,14 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
         if (ImGui::InputText("Texture", buf, sizeof(buf))) {
             sprite->name = buf;
             ctx.isDirty = true;
+        }
+        // ── Drop target for texture assets ──
+        if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
+            if (asset->type == AssetType::Texture) {
+                std::filesystem::path assetPath(asset->path);
+                sprite->name = assetPath.filename().string();
+                ctx.isDirty = true;
+            }
         }
         int frame = static_cast<int>(sprite->frameIndex);
         if (ImGui::DragInt("Frame", &frame, 1, 0, 1000)) {

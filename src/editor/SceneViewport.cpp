@@ -1,4 +1,7 @@
 #include "editor/SceneViewport.hpp"
+#include "editor/DragDropSystem.hpp"
+#include "editor/EditorContext.hpp"
+#include <filesystem>
 
 #ifdef CF_HAS_IMGUI
 
@@ -58,6 +61,32 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
     if (viewportSize.x < 1 || viewportSize.y < 1) return;
     ImGui::Dummy(viewportSize);
 #endif
+
+    // ── Drag-drop target for assets ──
+    if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
+        ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
+
+        ECS::Entity entity = world.create();
+        std::filesystem::path assetPath(asset->path);
+        setEntityName(world, entity, assetPath.stem().string().c_str());
+
+        // Convert mouse position to world coordinates
+        ImVec2 mousePos  = ImGui::GetMousePos();
+        ImVec2 viewportTL = ImGui::GetItemRectMin();
+        f32 localX = (mousePos.x - viewportTL.x) - viewportSize.x * 0.5f;
+        f32 localY = (mousePos.y - viewportTL.y) - viewportSize.y * 0.5f;
+        f32 scale  = ctx.viewportZoom * 50.0f;
+        f32 worldX = (localX - ctx.viewportPanX) / scale;
+        f32 worldY = (localY - ctx.viewportPanY) / scale;
+        world.add<ECS::Position2D>(entity, worldX, -worldY);
+
+        if (asset->type == AssetType::Texture) {
+            world.add<ECS::Sprite>(entity, assetPath.filename().string(), 0);
+        }
+
+        ctx.selectedEntity = entity;
+        ctx.endUndo(world);
+    }
 
     bool hovered = ImGui::IsItemHovered();
 

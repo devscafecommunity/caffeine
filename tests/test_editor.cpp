@@ -15,6 +15,7 @@
 #include "../src/editor/InspectorPanel.hpp"
 #include "../src/editor/SceneEditor.hpp"
 #include "../src/editor/SceneSerializer.hpp"
+#include "../src/editor/DragDropSystem.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -596,4 +597,38 @@ TEST_CASE("SceneSerializer - deserialize from non-existent file", "[editor][seri
     ECS::World world;
     Editor::SceneSerializer serializer(world);
     REQUIRE(serializer.deserialize("_non_existent_file.caf") == false);
+}
+
+// ============================================================================
+// DragDropSystem Tests
+// ============================================================================
+
+TEST_CASE("DragDropSystem - payload constants are defined", "[editor][dragdrop]") {
+    REQUIRE(kPayloadAssetPath != nullptr);
+    REQUIRE(kPayloadEntityDrag != nullptr);
+    REQUIRE(std::strlen(kPayloadAssetPath) > 0);
+    REQUIRE(std::strlen(kPayloadEntityDrag) > 0);
+    REQUIRE(std::string(kPayloadAssetPath) != std::string(kPayloadEntityDrag));
+}
+
+TEST_CASE("DragDropSystem - AssetDropPayload size", "[editor][dragdrop]") {
+    REQUIRE(sizeof(AssetDropPayload) >= 512 + sizeof(AssetType));
+    REQUIRE(offsetof(AssetDropPayload, type) < sizeof(AssetDropPayload));
+}
+
+TEST_CASE("DragDropSystem - DragDropManager constants", "[editor][dragdrop]") {
+    // Verify that the static methods exist and compile (they are no-ops without ImGui)
+    // These test the API surface compiles correctly
+    const char* testPath = "test.png";
+    AssetType testType = AssetType::Texture;
+
+    // Source methods return false without ImGui context
+    bool sourceResult = DragDropManager::SourceAsset(testPath, testType, "test");
+    REQUIRE(sourceResult == false);
+
+    u32 entityResult = DragDropManager::AcceptEntityDrop();
+    REQUIRE(entityResult == u32_max);
+
+    const auto* assetResult = DragDropManager::AcceptAssetDrop();
+    REQUIRE(assetResult == nullptr);
 }
