@@ -15,8 +15,12 @@ public:
     void onUpdate(ECS::World& world, f32 dt) override;
 
 private:
+    void processLuaScripts(ECS::World& world, f32 dt);
+    void processNativeScripts(ECS::World& world, f32 dt);
+
     ScriptEngine* m_engine;
-    Vector<ECS::Entity> m_initialized;
+    Vector<ECS::Entity> m_initializedLua;
+    Vector<ECS::Entity> m_initializedNative;
 };
 
 } // namespace Caffeine::Script
