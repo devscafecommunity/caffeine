@@ -1,6 +1,7 @@
 #include "editor/SceneEditor.hpp"
 
 #ifdef CF_HAS_IMGUI
+#include <imgui_internal.h>
 
 namespace Caffeine::Editor {
 

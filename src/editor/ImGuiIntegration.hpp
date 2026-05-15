@@ -24,6 +24,7 @@ public:
 
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
         ImGui_ImplSDL3_InitForSDLGPU(window);
 
@@ -55,7 +56,7 @@ public:
     void prepareRender(RHI::CommandBuffer* cmd) {
         if (!m_initialized) return;
         ImGui::Render();
-        Imgui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), cmd->nativeHandle());
+        ImGui_ImplSDLGPU3_PrepareDrawData(ImGui::GetDrawData(), cmd->nativeHandle());
     }
 
     void endFrame(RHI::CommandBuffer* cmd) {
