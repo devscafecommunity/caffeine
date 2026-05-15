@@ -1,5 +1,6 @@
 #include "catch.hpp"
 #include "../src/assets/AssetManager.hpp"
+#include "../src/assets/HotReloader.hpp"
 #include "../src/core/io/CafWriter.hpp"
 #include "../src/core/io/CafTypes.hpp"
 
@@ -238,4 +239,113 @@ TEST_CASE("AssetManager - tick advances frame index", "[assets]") {
     mgr.tick(42);
     CacheStats s = mgr.cacheStats();
     REQUIRE(s.totalCachedBytes == 0);
+}
+
+// ============================================================================
+// HotReloader tests
+// ============================================================================
+
+TEST_CASE("HotReloader - default state is not running", "[hotreload]") {
+    HotReloader hr;
+    REQUIRE_FALSE(hr.IsRunning());
+}
+
+TEST_CASE("HotReloader - Start/Stop lifecycle", "[hotreload]") {
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_hr_start_stop";
+    std::filesystem::create_directories(tmpDir);
+
+    HotReloader hr;
+    REQUIRE_FALSE(hr.IsRunning());
+    hr.Start(nullptr, tmpDir, 10);
+    REQUIRE(hr.IsRunning());
+    hr.Stop();
+    REQUIRE_FALSE(hr.IsRunning());
+    hr.Stop();
+    REQUIRE_FALSE(hr.IsRunning());
+
+    std::filesystem::remove_all(tmpDir);
+}
+
+TEST_CASE("HotReloader - Start twice does not crash", "[hotreload]") {
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_hr_start_twice";
+    std::filesystem::create_directories(tmpDir);
+
+    HotReloader hr;
+    hr.Start(nullptr, tmpDir, 10);
+    REQUIRE(hr.IsRunning());
+    hr.Start(nullptr, tmpDir, 10);
+    REQUIRE(hr.IsRunning());
+    hr.Stop();
+    REQUIRE_FALSE(hr.IsRunning());
+
+    std::filesystem::remove_all(tmpDir);
+}
+
+TEST_CASE("HotReloader - Update is safe when not running", "[hotreload]") {
+    HotReloader hr;
+    hr.Update();
+
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_hr_update_safe";
+    std::filesystem::create_directories(tmpDir);
+    hr.Start(nullptr, tmpDir);
+    hr.Stop();
+    hr.Update();
+    REQUIRE_FALSE(hr.IsRunning());
+
+    std::filesystem::remove_all(tmpDir);
+}
+
+TEST_CASE("HotReloader - integration reload and callback", "[hotreload]") {
+    auto tmpDir = std::filesystem::temp_directory_path() / "caffeine_hr_reload";
+    std::filesystem::remove_all(tmpDir);
+    std::filesystem::create_directories(tmpDir);
+    auto cafPath = tmpDir / "test_reload.caf";
+
+    {
+        TextureMetadata meta{};
+        meta.width = 2; meta.height = 2; meta.format = 0; meta.mipLevels = 1;
+        u8 pixels[16];
+        std::memset(pixels, 0xAB, sizeof(pixels));
+        CafWriter::write(cafPath.string().c_str(), AssetType::Texture,
+                         CAF_FLAG_NONE, &meta, sizeof(meta), pixels, sizeof(pixels));
+    }
+
+    AssetManager mgr(nullptr, "");
+    auto handle = mgr.loadSync<Texture>(cafPath.string().c_str());
+    REQUIRE(handle.isReady());
+    REQUIRE(handle.get()->pixels[0] == 0xAB);
+
+    bool callbackFired = false;
+    Caffeine::Assets::HotReloadedAsset callbackInfo;
+    {
+        HotReloader hr;
+        hr.SetNotificationCallback([&](const Caffeine::Assets::HotReloadedAsset& a) {
+            callbackFired = true;
+            callbackInfo  = a;
+        });
+        hr.Start(&mgr, tmpDir, 10);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+        {
+            TextureMetadata meta{};
+            meta.width = 2; meta.height = 2; meta.format = 0; meta.mipLevels = 1;
+            u8 pixels[16];
+            std::memset(pixels, 0xCD, sizeof(pixels));
+            CafWriter::write(cafPath.string().c_str(), AssetType::Texture,
+                             CAF_FLAG_NONE, &meta, sizeof(meta), pixels, sizeof(pixels));
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        hr.Update();
+
+        REQUIRE(handle.get()->pixels[0] == 0xCD);
+        REQUIRE(callbackFired);
+        REQUIRE(callbackInfo.assetId == handle.id());
+        REQUIRE(callbackInfo.type    == AssetType::Texture);
+
+        hr.Stop();
+    }
+
+    std::filesystem::remove_all(tmpDir);
 }
