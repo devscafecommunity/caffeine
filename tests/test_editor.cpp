@@ -17,6 +17,7 @@
 #include "../src/editor/SceneSerializer.hpp"
 #include "../src/editor/DragDropSystem.hpp"
 #include "../src/editor/ProjectManager.hpp"
+#include <fstream>
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
@@ -337,6 +338,154 @@ TEST_CASE("AssetBrowser - close and open", "[editor][assetbrowser]") {
     REQUIRE(browser.isOpen() == false);
     browser.open();
     REQUIRE(browser.isOpen() == true);
+}
+
+// ── Test fixture for AssetBrowser data-layer tests ──────────────────
+
+namespace {
+
+struct AssetBrowserFixture {
+    std::filesystem::path tmpDir;
+
+    AssetBrowserFixture()
+        : tmpDir(std::filesystem::temp_directory_path() / "caffeine_ab_test")
+    {
+        std::filesystem::remove_all(tmpDir);
+        std::filesystem::create_directories(tmpDir);
+
+        // Create some test files
+        {
+            std::ofstream(tmpDir / "player.png")  << "fake png";
+            std::ofstream(tmpDir / "theme.wav")   << "fake wav";
+            std::ofstream(tmpDir / "enemy.obj")   << "fake obj";
+            std::ofstream(tmpDir / "level.caf")   << "fake scene";
+            std::ofstream(tmpDir / "readme.txt")  << "notes";
+            std::filesystem::create_directory(tmpDir / "subdir");
+            std::ofstream(tmpDir / "subdir" / "nested.txt") << "nested";
+            std::filesystem::create_directory(tmpDir / "emptydir");
+        }
+    }
+
+    ~AssetBrowserFixture() {
+        std::filesystem::remove_all(tmpDir);
+    }
+};
+
+} // anonymous namespace
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - refresh populates entries",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    browser.init(tmpDir.string().c_str());
+    REQUIRE(browser.entryCount() > 0);
+    REQUIRE(browser.entryCount() <= 7); // 5 files + 2 dirs (but filtered if search active etc)
+    REQUIRE_FALSE(browser.searchFilter().empty() == false); // default filter is empty
+    REQUIRE(browser.searchFilter().empty());
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - search filter narrows results",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    browser.init(tmpDir.string().c_str());
+    usize totalBefore = browser.entryCount();
+
+    browser.setSearchFilter("player");
+    usize filteredCount = browser.entryCount();
+    REQUIRE(filteredCount < totalBefore);
+    REQUIRE(filteredCount > 0);
+    REQUIRE(browser.searchFilter() == "player");
+
+    // Verify filtered entry is the png
+    for (const auto& e : browser.entries()) {
+        REQUIRE(e.name.find("player") != std::string::npos);
+    }
+
+    // Clear filter restores all entries
+    browser.setSearchFilter("");
+    REQUIRE(browser.entryCount() == totalBefore);
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - directory navigation",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    browser.init(tmpDir.string().c_str());
+
+    auto subdir = tmpDir / "subdir";
+    REQUIRE(std::filesystem::exists(subdir));
+
+    browser.navigateTo(subdir);
+    REQUIRE(browser.currentPath() == subdir);
+    REQUIRE(browser.canGoBack() == true);
+    REQUIRE(browser.entryCount() >= 1);
+
+    // Should see nested.txt
+    bool foundNested = false;
+    for (const auto& e : browser.entries()) {
+        if (e.name == "nested.txt") { foundNested = true; break; }
+    }
+    REQUIRE(foundNested == true);
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - back navigation",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    browser.init(tmpDir.string().c_str());
+    auto root = browser.currentPath();
+
+    browser.navigateTo(tmpDir / "subdir");
+    REQUIRE(browser.currentPath() != root);
+
+    browser.navigateBack();
+    REQUIRE(browser.currentPath() == root);
+    REQUIRE(browser.canGoBack() == false);
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - view mode toggle",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    REQUIRE(browser.viewMode() == AssetBrowser::ViewMode::Grid);
+
+    browser.setViewMode(AssetBrowser::ViewMode::List);
+    REQUIRE(browser.viewMode() == AssetBrowser::ViewMode::List);
+
+    browser.setViewMode(AssetBrowser::ViewMode::Grid);
+    REQUIRE(browser.viewMode() == AssetBrowser::ViewMode::Grid);
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - thumbnail size get/set",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    REQUIRE(browser.thumbnailSize() == 64);
+
+    browser.setThumbnailSize(128);
+    REQUIRE(browser.thumbnailSize() == 128);
+
+    browser.setThumbnailSize(32);
+    REQUIRE(browser.thumbnailSize() == 32);
+}
+
+TEST_CASE_METHOD(AssetBrowserFixture, "AssetBrowser - entry metadata correct",
+                 "[editor][assetbrowser]") {
+    AssetBrowser browser;
+    browser.init(tmpDir.string().c_str());
+
+    // Find player.png
+    bool foundPng = false;
+    for (const auto& e : browser.entries()) {
+        if (e.name == "player.png") {
+            foundPng = true;
+            REQUIRE(e.isDirectory == false);
+            REQUIRE(e.type == AssetType::Texture);
+            REQUIRE(e.fileSize > 0);
+            REQUIRE(e.path.filename().string() == "player.png");
+        }
+        if (e.name == "subdir") {
+            REQUIRE(e.isDirectory == true);
+            REQUIRE(e.type == AssetType::Unknown);
+            REQUIRE(e.fileSize == 0);
+        }
+    }
+    REQUIRE(foundPng == true);
 }
 
 // ============================================================================
