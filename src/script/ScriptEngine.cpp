@@ -197,6 +197,35 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     };
 
     wt["addSprite"] = wt["setSprite"];
+
+    wt["addParticleEmitter"] = [world](u32 entityId, sol::table t) {
+        ECS::Entity e(entityId, world);
+        auto& p = e.getOrAdd<ECS::ParticleEmitterComponent>();
+        p.maxParticles = t["maxParticles"].get_or(100);
+        p.emissionRate = t["emissionRate"].get_or(10.0f);
+        p.lifetime = t["lifetime"].get_or(2.0f);
+        p.startSize = t["startSize"].get_or(1.0f);
+        p.endSize = t["endSize"].get_or(0.0f);
+
+        if (t["startColor"].valid()) {
+            sol::table sc = t["startColor"];
+            u8 r = static_cast<u8>(sc["r"].get_or(1.0f) * 255);
+            u8 g = static_cast<u8>(sc["g"].get_or(1.0f) * 255);
+            u8 b = static_cast<u8>(sc["b"].get_or(1.0f) * 255);
+            u8 a = static_cast<u8>(sc["a"].get_or(1.0f) * 255);
+            p.startColor = (r << 24) | (g << 16) | (b << 8) | a;
+        }
+        if (t["endColor"].valid()) {
+            sol::table ec = t["endColor"];
+            u8 r = static_cast<u8>(ec["r"].get_or(1.0f) * 255);
+            u8 g = static_cast<u8>(ec["g"].get_or(1.0f) * 255);
+            u8 b = static_cast<u8>(ec["b"].get_or(1.0f) * 255);
+            u8 a = static_cast<u8>(ec["a"].get_or(0.0f) * 255);
+            p.endColor = (r << 24) | (g << 16) | (b << 8) | a;
+        }
+
+        e.getOrAdd<ECS::Position2D>();
+    };
 }
 
 void registerInputBindings(sol::state& lua, Input::InputManager* input) {
@@ -370,6 +399,7 @@ bool ScriptEngine::init(const InitParams& params) {
     lua["caffeine"]["events"] = lua.create_table();
     lua["caffeine"]["debug"] = lua.create_table();
     lua["caffeine"]["math"]  = lua.create_table();
+    lua["caffeine"]["particles"] = lua.create_table();
 
     registerWorldBindings(lua, m_impl->m_world);
     registerInputBindings(lua, m_impl->m_input);
@@ -415,6 +445,31 @@ bool ScriptEngine::init(const InitParams& params) {
 
     registerDebugBindings(lua);
     registerMathBindings(lua);
+
+    {
+        sol::table pt = lua["caffeine"]["particles"];
+        auto* impl = m_impl.get();
+
+        pt["emit"] = [impl](u32 entityId, int count) {
+            if (!impl->m_world) return;
+            ECS::Entity e(entityId, impl->m_world);
+            if (!e.isValid()) return;
+            auto* emitter = e.get<ECS::ParticleEmitterComponent>();
+            if (!emitter) return;
+            for (int i = 0; i < count && emitter->activeParticles.size() < static_cast<size_t>(emitter->maxParticles); ++i) {
+                ECS::ParticleEmitterComponent::Particle p;
+                auto* pos = e.get<ECS::Position2D>();
+                p.position = pos ? Vec2{pos->x, pos->y} : Vec2{0, 0};
+                p.velocity.x = static_cast<float>(rand() % 200 - 100) / 10.0f;
+                p.velocity.y = static_cast<float>(rand() % 200 - 100) / 10.0f;
+                p.life = emitter->lifetime;
+                p.maxLife = emitter->lifetime;
+                p.color = emitter->startColor;
+                p.size = emitter->startSize;
+                emitter->activeParticles.push_back(p);
+            }
+        };
+    }
 
     lua["dofile"] = sol::nil;
     lua["load"] = sol::nil;

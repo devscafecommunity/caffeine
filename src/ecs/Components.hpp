@@ -7,7 +7,9 @@
 #pragma once
 
 #include "core/Types.hpp"
+#include "math/Vec2.hpp"
 #include <string>
+#include <vector>
 
 namespace Caffeine::ECS {
 
@@ -46,5 +48,31 @@ struct Health {
 };
 
 struct Tag { };
+
+struct ParticleEmitterComponent {
+    int maxParticles = 100;
+    f32 emissionRate = 10.0f;
+    f32 lifetime = 2.0f;
+
+    Vec2 velocityMin = {-10.0f, -10.0f};
+    Vec2 velocityMax = {10.0f, 10.0f};
+
+    u32 startColor = 0xFFFFFFFF;
+    u32 endColor = 0x00000000;
+
+    f32 startSize = 1.0f;
+    f32 endSize = 0.0f;
+
+    struct Particle {
+        Vec2 position;
+        Vec2 velocity;
+        f32 life;
+        f32 maxLife;
+        u32 color;
+        f32 size;
+    };
+
+    std::vector<Particle> activeParticles;
+};
 
 }
