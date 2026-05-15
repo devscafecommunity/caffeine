@@ -47,6 +47,7 @@
 #include "assets/AssetTypes.hpp"
 #include "assets/AssetHandle.hpp"
 #include "assets/AssetManager.hpp"
+#include "assets/AssetPipeline.hpp"
 
 // Render
 #include "render/Camera2D.hpp"

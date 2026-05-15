@@ -34,6 +34,7 @@ add_library(caffeine-core
     src/core/GameLoop.cpp
     src/core/io/BlobLoader.cpp
     src/core/io/CafWriter.cpp
+    src/core/io/FileWatcher.cpp
     src/input/InputManager.cpp
     src/debug/LogSystem.cpp
     src/debug/Profiler.cpp
@@ -42,6 +43,8 @@ add_library(caffeine-core
     src/ecs/World.cpp
     src/events/EventBus.cpp
     src/assets/AssetManager.cpp
+    src/assets/AssetPipeline.cpp
+    src/assets/TextureCompiler.cpp
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
@@ -49,6 +52,7 @@ add_library(caffeine-core
 
 target_include_directories(caffeine-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
     $<INSTALL_INTERFACE:include>
 )
 
