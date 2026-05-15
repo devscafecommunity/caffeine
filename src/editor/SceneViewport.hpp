@@ -32,13 +32,15 @@ public:
         bool grid        = true;
         f32  gridSpacing = 64.0f;
         f32  gridWidth   = 2000.0f;
+
+        static Config defaults() { return {}; }
     };
 #endif
 
     SceneViewport() = default;
 
 #ifdef CF_HAS_SDL3
-    bool init(RHI::RenderDevice* device, Config cfg = {});
+    bool init(RHI::RenderDevice* device, Config cfg = Config::defaults());
     void shutdown();
     RHI::Texture* colorTarget() const { return m_colorTarget; }
 #endif
