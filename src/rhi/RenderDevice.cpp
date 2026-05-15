@@ -27,7 +27,7 @@ bool RenderDevice::init(SDL_Window* window, const RenderConfig& config) {
 
     m_device = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
-        true,
+        false,
         nullptr
     );
 
@@ -85,6 +85,23 @@ CommandBuffer* RenderDevice::beginFrame() {
         return nullptr;
     }
 
+    SDL_GPUTexture* swapchainTexture = nullptr;
+    u32 swapW = 0, swapH = 0;
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(
+            cmd->nativeHandle(), m_window, &swapchainTexture, &swapW, &swapH)) {
+        cmd->submit();
+        delete cmd;
+        return nullptr;
+    }
+
+    if (!swapchainTexture) {
+        cmd->submit();
+        delete cmd;
+        return nullptr;
+    }
+
+    cmd->m_swapchainTexture = swapchainTexture;
+
     return cmd;
 }
 
@@ -95,34 +112,6 @@ void RenderDevice::endFrame(CommandBuffer* cmd) {
 
     if (cmd->isInRenderPass()) {
         cmd->endRenderPass();
-    }
-
-    SDL_GPUTexture* swapchainTexture = nullptr;
-    u32 swapW = 0, swapH = 0;
-
-    if (!SDL_WaitAndAcquireGPUSwapchainTexture(
-            cmd->nativeHandle(), m_window, &swapchainTexture, &swapW, &swapH)) {
-        cmd->submit();
-        delete cmd;
-        return;
-    }
-
-    if (swapchainTexture) {
-        SDL_GPUColorTargetInfo colorTarget{};
-        colorTarget.texture = swapchainTexture;
-        colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
-        colorTarget.store_op = SDL_GPU_STOREOP_STORE;
-        colorTarget.clear_color.r = 0.0f;
-        colorTarget.clear_color.g = 0.0f;
-        colorTarget.clear_color.b = 0.0f;
-        colorTarget.clear_color.a = 1.0f;
-
-        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(
-            cmd->nativeHandle(), &colorTarget, 1, nullptr);
-
-        if (pass) {
-            SDL_EndGPURenderPass(pass);
-        }
     }
 
     cmd->submit();
