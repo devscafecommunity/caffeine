@@ -10,6 +10,11 @@
 
 namespace Caffeine::IO {
 
+// ============================================================================
+// Windows implementation — ReadDirectoryChangesW
+// ============================================================================
+#ifdef _WIN32
+
 struct FileWatcher::Impl {
     std::filesystem::path              directory;
     HANDLE                             hDir = INVALID_HANDLE_VALUE;
@@ -111,5 +116,35 @@ std::vector<std::filesystem::path> FileWatcher::poll() {
     }
     return result;
 }
+
+// ============================================================================
+// Stub implementation for non-Windows platforms
+// ============================================================================
+#else
+
+struct FileWatcher::Impl {
+    std::filesystem::path directory;
+};
+
+FileWatcher::~FileWatcher() = default;
+
+bool FileWatcher::start(const std::filesystem::path& directory, bool) {
+    m_Impl   = new Impl{ directory };
+    m_Running = true;
+    return true;
+}
+
+void FileWatcher::stop() {
+    if (!m_Running || !m_Impl) return;
+    delete m_Impl;
+    m_Impl   = nullptr;
+    m_Running = false;
+}
+
+std::vector<std::filesystem::path> FileWatcher::poll() {
+    return {};
+}
+
+#endif
 
 } // namespace Caffeine::IO
