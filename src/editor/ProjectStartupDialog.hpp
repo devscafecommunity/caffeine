@@ -4,6 +4,8 @@
 #include <optional>
 #include <string>
 #include <filesystem>
+#include <vector>
+#include <cstdint>
 
 namespace Caffeine::Editor {
 
@@ -65,6 +67,27 @@ private:
     std::string m_browsePath;
     std::vector<std::filesystem::path> m_browseResults;
 
+    // ── Toast Notification System ───────────────────────────────
+    enum class ToastType {
+        Success,  // Green
+        Error,    // Red
+        Info      // Yellow
+    };
+
+    struct Toast {
+        std::string message;
+        ToastType type;
+        double showTime;  // SDL_GetTicks() when created
+        static constexpr double DURATION_MS = 3000.0;  // 3 seconds
+        
+        bool isExpired(double currentTime) const {
+            return (currentTime - showTime) >= DURATION_MS;
+        }
+    };
+
+    std::vector<Toast> m_toastQueue;
+    static constexpr int MAX_VISIBLE_TOASTS = 3;
+
     // ── ProjectManager for file operations ────────────────────────────
     ProjectManager m_projectManager;
 
@@ -79,6 +102,9 @@ private:
     std::optional<ProjectConfig> renderRecentTab();
     std::optional<ProjectConfig> renderBrowseTab();
     void renderErrorPopup();
+    void showToast(const std::string& message, ToastType type);
+    void updateToasts();
+    void renderToasts();
     #endif
 };
 
