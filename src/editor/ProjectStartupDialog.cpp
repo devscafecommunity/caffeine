@@ -180,6 +180,10 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     }
 
     renderToasts();
+    
+    if (result.has_value()) {
+        m_open = false;
+    }
 
     return result;
 }
