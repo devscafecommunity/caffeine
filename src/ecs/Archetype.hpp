@@ -155,6 +155,7 @@ public:
     
     template<typename T>
     u32 addComponent(u32 indexInArchetype, const T& component) {
+        (void)indexInArchetype;
         u32 componentID = ComponentID::get<T>();
         void* pool = m_poolRegistry.getPool(componentID);
         
