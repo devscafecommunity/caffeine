@@ -80,7 +80,9 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
 
-    if (ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_NoMove)) {
+    bool windowOpen = ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_NoMove);
+    
+    if (windowOpen) {
         ImGui::Text("Current: %s", state.currentPath.c_str());
 
         if (ImGui::Button("Go Up##browser", ImVec2(80, 0))) {
@@ -159,9 +161,9 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
         if (ImGui::Button("Cancel", ImVec2(100, 0))) {
             state.isOpen = false;
         }
-
-        ImGui::End();
     }
+    
+    ImGui::End();
 
     return result;
 #else
