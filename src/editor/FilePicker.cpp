@@ -48,6 +48,7 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
         std::vector<std::filesystem::path> entries;
         std::string searchFilter;
         bool isOpen;
+        bool wasJustClosed = false;
     };
     
     static std::unordered_map<std::string, State> states;
@@ -58,7 +59,8 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
             defaultPath.empty() ? std::filesystem::current_path() : defaultPath,
             {},
             "",
-            true
+            true,
+            false
         };
         it = states.find(title);
     }
@@ -67,14 +69,18 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     std::optional<std::filesystem::path> result;
 
     if (!state.isOpen) {
-        states.erase(title);
+        if (state.wasJustClosed) {
+            states.erase(title);
+        } else {
+            state.wasJustClosed = true;
+        }
         return std::nullopt;
     }
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
 
-    if (ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_Modal)) {
+    if (ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_NoMove)) {
         ImGui::Text("Current: %s", state.currentPath.c_str());
 
         if (ImGui::Button("Go Up##browser", ImVec2(80, 0))) {
@@ -155,10 +161,6 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
         }
 
         ImGui::End();
-    }
-
-    if (!state.isOpen && result) {
-        states.erase(title);
     }
 
     return result;

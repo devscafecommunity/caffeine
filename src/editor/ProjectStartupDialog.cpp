@@ -236,7 +236,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     }
 
     if (m_showLocationPicker) {
-        if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Project Location", m_selectedLocation)) {
+        auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Project Location", m_selectedLocation);
+        if (path.has_value()) {
             m_selectedLocation = path.value().string();
             m_showLocationPicker = false;
             showToast("Location selected!", ToastType::Success);
