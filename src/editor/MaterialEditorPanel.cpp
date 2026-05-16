@@ -206,25 +206,7 @@ void MaterialEditorPanel::renderPreviewWindow() {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.y -= 30;
 
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 center = ImGui::GetCursorScreenPos();
-    center.x += avail.x * 0.5f;
-    center.y += avail.y * 0.5f;
-    float radius = (avail.x < avail.y ? avail.x : avail.y) * 0.4f;
-
-    ImU32 sphereColor = ImGui::GetColorU32(ImVec4(0.3f, 0.5f, 0.9f, 1.0f));
-    ImU32 outlineColor = ImGui::GetColorU32(ImVec4(0.1f, 0.2f, 0.4f, 1.0f));
-
-    drawList->AddCircleFilled(center, radius, sphereColor, 32);
-    drawList->AddCircle(center, radius, outlineColor, 32);
-
-    drawList->AddCircleFilled(
-        ImVec2(center.x - radius * 0.3f, center.y - radius * 0.3f),
-        radius * 0.15f,
-        IM_COL32(255, 255, 255, 80), 16);
-
-    ImGui::SetCursorScreenPos(ImVec2(center.x - radius, center.y + radius + 5));
-    ImGui::TextUnformatted("RHI Preview");
+    m_previewRenderer.renderFallback(m_previewRotation, avail.x, avail.y);
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15);
     ImGui::SliderFloat("Rotation", &m_previewRotation, 0.0f, 360.0f, "%.0f deg");

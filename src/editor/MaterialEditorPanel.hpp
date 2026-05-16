@@ -1,5 +1,6 @@
 #pragma once
 #include "editor/ShaderGraph.hpp"
+#include "editor/PreviewRenderer.hpp"
 #include "assets/MeshTypes.hpp"
 #include <string>
 
@@ -38,6 +39,7 @@ private:
     bool m_showGrid = true;
     bool m_autoCompile = false;
     float m_previewRotation = 0.0f;
+    PreviewRenderer m_previewRenderer;
 
     char m_codeBuffer[16 * 1024];
     bool m_textDirty = false;
