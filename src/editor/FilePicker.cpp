@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
+#include <cstring>
 
 namespace Caffeine::Editor {
 
@@ -41,68 +43,78 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     const std::filesystem::path& defaultPath
 ) {
 #ifdef CF_HAS_IMGUI
-    static std::filesystem::path currentPath;
-    static std::vector<std::filesystem::path> entries;
-    static bool initialized = false;
-    static char searchFilter[256] = {0};
-    static bool windowOpen = false;
-    static std::string lastTitle;
-
-    // Reset state if we're opening a new dialog with a different title
-    if (!initialized || lastTitle != title) {
-        currentPath = defaultPath.empty() ? std::filesystem::current_path() : defaultPath;
-        initialized = true;
-        windowOpen = true;
-        lastTitle = title;
-        memset(searchFilter, 0, sizeof(searchFilter));
+    struct State {
+        std::filesystem::path currentPath;
+        std::vector<std::filesystem::path> entries;
+        std::string searchFilter;
+        bool isOpen;
+    };
+    
+    static std::unordered_map<std::string, State> states;
+    
+    auto it = states.find(title);
+    if (it == states.end()) {
+        states[title] = {
+            defaultPath.empty() ? std::filesystem::current_path() : defaultPath,
+            {},
+            "",
+            true
+        };
+        it = states.find(title);
     }
+    
+    State& state = it->second;
+    std::optional<std::filesystem::path> result;
 
-    if (!windowOpen) {
+    if (!state.isOpen) {
+        states.erase(title);
         return std::nullopt;
     }
-
-    std::optional<std::filesystem::path> result;
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
 
-    if (ImGui::Begin(title.c_str(), &windowOpen, ImGuiWindowFlags_Modal)) {
-        ImGui::Text("Current: %s", currentPath.c_str());
+    if (ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_Modal)) {
+        ImGui::Text("Current: %s", state.currentPath.c_str());
 
         if (ImGui::Button("Go Up##browser", ImVec2(80, 0))) {
-            if (currentPath.has_parent_path()) {
-                currentPath = currentPath.parent_path();
+            if (state.currentPath.has_parent_path()) {
+                state.currentPath = state.currentPath.parent_path();
             }
         }
 
-        ImGui::InputTextWithHint("##search", "Filter...", searchFilter, sizeof(searchFilter));
+        char filterBuf[256];
+        strcpy(filterBuf, state.searchFilter.c_str());
+        if (ImGui::InputTextWithHint("##search", "Filter...", filterBuf, sizeof(filterBuf))) {
+            state.searchFilter = filterBuf;
+        }
 
         ImGui::Separator();
 
         if (ImGui::BeginChild("browser_list", ImVec2(0, 300), true)) {
             try {
-                entries.clear();
-                for (const auto& entry : std::filesystem::directory_iterator(currentPath)) {
+                state.entries.clear();
+                for (const auto& entry : std::filesystem::directory_iterator(state.currentPath)) {
                     std::string name = entry.path().filename().string();
 
-                    if (strlen(searchFilter) > 0) {
-                        if (name.find(searchFilter) == std::string::npos) {
+                    if (!state.searchFilter.empty()) {
+                        if (name.find(state.searchFilter) == std::string::npos) {
                             continue;
                         }
                     }
 
-                    entries.push_back(entry.path());
+                    state.entries.push_back(entry.path());
                 }
 
-                std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+                std::sort(state.entries.begin(), state.entries.end(), [](const auto& a, const auto& b) {
                     bool aIsDir = std::filesystem::is_directory(a);
                     bool bIsDir = std::filesystem::is_directory(b);
                     if (aIsDir != bIsDir) return aIsDir;
                     return a.filename() < b.filename();
                 });
 
-                for (size_t i = 0; i < entries.size(); ++i) {
-                    const auto& entry = entries[i];
+                for (size_t i = 0; i < state.entries.size(); ++i) {
+                    const auto& entry = state.entries[i];
                     std::string name = entry.filename().string();
                     bool isDir = std::filesystem::is_directory(entry);
 
@@ -110,16 +122,15 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
 
                     if (ImGui::Selectable(displayName.c_str())) {
                         if (isDir) {
-                            currentPath = entry;
+                            state.currentPath = entry;
                         } else if (mode != Mode::PickFolder) {
                             result = entry;
-                            windowOpen = false;
-                            initialized = false;
+                            state.isOpen = false;
                         }
                     }
 
                     if (isDir && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        currentPath = entry;
+                        state.currentPath = entry;
                     }
                 }
             } catch (const std::exception& e) {
@@ -133,19 +144,21 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
 
         if (mode == Mode::PickFolder) {
             if (ImGui::Button("Select This Folder", ImVec2(150, 0))) {
-                result = currentPath;
-                windowOpen = false;
-                initialized = false;
+                result = state.currentPath;
+                state.isOpen = false;
             }
         }
 
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(100, 0))) {
-            windowOpen = false;
-            initialized = false;
+            state.isOpen = false;
         }
 
         ImGui::End();
+    }
+
+    if (!state.isOpen && result) {
+        states.erase(title);
     }
 
     return result;

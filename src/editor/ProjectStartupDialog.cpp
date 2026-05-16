@@ -240,8 +240,6 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
             m_selectedLocation = path.value().string();
             m_showLocationPicker = false;
             showToast("Location selected!", ToastType::Success);
-        } else if (!ImGui::IsPopupOpen("Select Project Location", ImGuiPopupFlags_AnyPopup)) {
-            m_showLocationPicker = false;
         }
     }
 
@@ -325,14 +323,12 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
 
     if (m_showBrowsePicker) {
         std::filesystem::path browsePathFs = m_browsePath.empty() ? std::filesystem::current_path() : std::filesystem::path(m_browsePath);
-        if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Folder to Browse", browsePathFs)) {
-            m_browsePath = path.value().string();
-            m_showBrowsePicker = false;
-            showToast("Scanning directory...", ToastType::Info);
-        } else if (!ImGui::IsPopupOpen("Select Folder to Browse", ImGuiPopupFlags_AnyPopup)) {
-            m_showBrowsePicker = false;
-        }
-    }
+         if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Folder to Browse", browsePathFs)) {
+             m_browsePath = path.value().string();
+             m_showBrowsePicker = false;
+             showToast("Scanning directory...", ToastType::Info);
+         }
+     }
 
     ImGui::Spacing();
     ImGui::Separator();
