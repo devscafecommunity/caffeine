@@ -17,8 +17,13 @@ static std::unordered_map<int, PinAttr> s_attrToPin;
 static int s_nextAttrId = 1;
 
 MaterialEditorPanel::MaterialEditorPanel() {
+    ImNodes::CreateContext();
     m_codeBuffer[0] = '\0';
     addDefaultNodes();
+}
+
+MaterialEditorPanel::~MaterialEditorPanel() {
+    ImNodes::DestroyContext();
 }
 
 void MaterialEditorPanel::addDefaultNodes() {
@@ -156,6 +161,8 @@ void MaterialEditorPanel::renderGraphCanvas() {
         }
     }
 
+    ImNodes::EndNodeEditor();
+
     // Handle new links
     int startAttr, endAttr;
     if (ImNodes::IsLinkCreated(&startAttr, &endAttr)) {
@@ -203,8 +210,6 @@ void MaterialEditorPanel::renderGraphCanvas() {
         ImGui::OpenPopup("AddNodePopup");
     }
     renderNodeContextMenu();
-
-    ImNodes::EndNodeEditor();
     ImGui::EndChild();
 }
 

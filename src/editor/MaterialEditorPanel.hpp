@@ -11,6 +11,7 @@ enum class EditorMode { Graph, Text };
 class MaterialEditorPanel {
 public:
     MaterialEditorPanel();
+    ~MaterialEditorPanel();
 
     void onImGuiRender();
 

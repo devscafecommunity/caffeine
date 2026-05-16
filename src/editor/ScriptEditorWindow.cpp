@@ -25,6 +25,8 @@ bool ScriptEditorWindow::openFile(const std::filesystem::path& path) {
     f.content = std::move(content);
     f.originalContent = f.content;
     f.isDirty = false;
+    f.editBuffer.resize(f.content.size() + 1);
+    std::memcpy(f.editBuffer.data(), f.content.c_str(), f.content.size() + 1);
 
     m_openFiles.push_back(std::move(f));
     m_activeFileIndex = static_cast<int>(m_openFiles.size()) - 1;
@@ -115,24 +117,23 @@ void ScriptEditorWindow::render() {
             
             ImGui::Separator();
             
-            static char textBuffer[65536] = {};
-            
-            size_t copyLen = std::min(file.content.size(), sizeof(textBuffer) - 1);
-            if (copyLen > 0) {
-                std::memcpy(textBuffer, file.content.c_str(), copyLen);
+            // Ensure the edit buffer is sized to hold content + NUL
+            size_t bufSize = std::max(file.content.size() + 1, size_t(1));
+            if (file.editBuffer.size() < bufSize) {
+                file.editBuffer.resize(bufSize);
             }
-            textBuffer[copyLen] = '\0';
+            std::memcpy(file.editBuffer.data(), file.content.c_str(), bufSize);
             
             ImGui::InputTextMultiline(
                 "##script_content",
-                textBuffer,
-                sizeof(textBuffer),
+                file.editBuffer.data(),
+                file.editBuffer.size(),
                 ImVec2(-1, -ImGui::GetFrameHeightWithSpacing() - 40),
                 ImGuiInputTextFlags_AllowTabInput
             );
             
-            if (std::strcmp(textBuffer, file.content.c_str()) != 0) {
-                file.content = textBuffer;
+            if (std::strcmp(file.editBuffer.data(), file.content.c_str()) != 0) {
+                file.content = file.editBuffer.data();
                 file.isDirty = true;
             }
         } else {

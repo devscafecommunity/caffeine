@@ -17,6 +17,7 @@
 #include "../src/editor/SceneSerializer.hpp"
 #include "../src/editor/DragDropSystem.hpp"
 #include "../src/editor/ProjectManager.hpp"
+#include "../src/audio/AudioComponents.hpp"
 #include <fstream>
 
 using namespace Caffeine;
@@ -1011,6 +1012,78 @@ TEST_CASE("SceneTabManager - closeScene on last tab creates replacement", "[edit
     mgr.closeScene(0);
     REQUIRE(mgr.tabCount() == 1);  // replacement created
     REQUIRE(mgr.activeTab().name == "Untitled");
+}
+
+// ============================================================================
+// AudioEmitter serialization tests
+// ============================================================================
+
+TEST_CASE("SceneSerializer - AudioEmitter component roundtrip",
+          "[editor][serializer][audio]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    setEntityName(world, e, "Speaker");
+    auto& emitter = world.add<Audio::AudioEmitter>(e);
+    emitter.clipPath = "sfx/explosion.wav";
+    emitter.volume = 0.8f;
+    emitter.maxDistance = 500.0f;
+    emitter.loop = true;
+    emitter.playOnSpawn = false;
+    emitter.spatial = true;
+
+    Editor::SceneSerializer serializer(world);
+    REQUIRE(serializer.serialize("_test_audio.caf") == true);
+
+    ECS::World loaded;
+    Editor::SceneSerializer loader(loaded);
+    REQUIRE(loader.deserialize("_test_audio.caf") == true);
+
+    ECS::ComponentQuery q;
+    q.with<Audio::AudioEmitter>();
+    bool found = false;
+    loaded.forEach<Audio::AudioEmitter>(q, [&](ECS::Entity ent, Audio::AudioEmitter& ae) {
+        found = true;
+        REQUIRE(ae.clipPath == "sfx/explosion.wav");
+        REQUIRE(ae.volume == 0.8f);
+        REQUIRE(ae.maxDistance == 500.0f);
+        REQUIRE(ae.loop == true);
+        REQUIRE(ae.playOnSpawn == false);
+        REQUIRE(ae.spatial == true);
+    });
+    REQUIRE(found == true);
+
+    std::remove("_test_audio.caf");
+}
+
+TEST_CASE("SceneSerializer - AudioEmitter default values roundtrip",
+          "[editor][serializer][audio]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    setEntityName(world, e, "DefaultAudio");
+    world.add<Audio::AudioEmitter>(e);  // default values
+
+    Editor::SceneSerializer serializer(world);
+    REQUIRE(serializer.serialize("_test_audio_default.caf") == true);
+
+    ECS::World loaded;
+    Editor::SceneSerializer loader(loaded);
+    REQUIRE(loader.deserialize("_test_audio_default.caf") == true);
+
+    ECS::ComponentQuery q;
+    q.with<Audio::AudioEmitter>();
+    bool found = false;
+    loaded.forEach<Audio::AudioEmitter>(q, [&](ECS::Entity ent, Audio::AudioEmitter& ae) {
+        found = true;
+        REQUIRE(ae.clipPath.empty());
+        REQUIRE(ae.volume == 1.0f);
+        REQUIRE(ae.maxDistance == 500.0f);
+        REQUIRE(ae.loop == false);
+        REQUIRE(ae.playOnSpawn == true);
+        REQUIRE(ae.spatial == true);
+    });
+    REQUIRE(found == true);
+
+    std::remove("_test_audio_default.caf");
 }
 
 TEST_CASE("SceneTabManager - captureContext and applyContext sync state", "[editor][scenetab]") {

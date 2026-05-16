@@ -62,3 +62,53 @@ if(SDL3_FOUND AND WIN32)
             $<TARGET_FILE_DIR:CaffeineTest>
     )
 endif()
+
+# ── DoppioTest — Editor UI tests (ImGui-dependent) ──────────────
+if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
+    file(GLOB IMGUI_TEST_ENGINE_SRCS
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_*.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+    )
+    
+    add_executable(DoppioTest
+        test_editor_ui_main.cpp
+        test_editor_ui/test_inspector.cpp
+        test_editor_ui/test_hierarchy.cpp
+        test_editor_ui/test_assetbrowser.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/SceneViewport.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/HierarchyPanel.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/AssetBrowser.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/AnimationTimeline.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/TilemapEditor.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/CommandPalette.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/EditorContext.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/ProjectManager.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/AudioPreviewPanel.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/MaterialEditorPanel.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/ShaderGraph.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/ShaderNode.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/PreviewRenderer.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/ScriptEditorWindow.cpp
+        ${IMGUI_TEST_ENGINE_SRCS}
+    )
+    
+    target_link_libraries(DoppioTest PRIVATE caffeine-core ImGui ImNodes)
+    target_include_directories(DoppioTest PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${imgui_test_engine_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}
+    )
+    target_compile_definitions(DoppioTest PRIVATE
+        CF_HAS_IMGUI=1
+        IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1
+    )
+    target_compile_features(DoppioTest PRIVATE cxx_std_20)
+    
+    add_test(NAME DoppioTest COMMAND DoppioTest)
+endif()
+

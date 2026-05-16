@@ -51,11 +51,14 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
         }
     });
 
+    m_audioPreview.init();
+
     return true;
 }
 
 void SceneEditor::shutdown() {
     m_viewport.shutdown();
+    m_audioPreview.shutdown();
 }
 #endif
 
@@ -134,6 +137,7 @@ void SceneEditor::render(
     m_profiler.render(Debug::Profiler::instance());
     m_scriptEditor.render();
     m_materialEditor.onImGuiRender();
+    m_audioPreview.onImGuiRender();
     m_animationTimeline.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
@@ -191,12 +195,16 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 saveSceneAs(world);
             }
             if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-                // Open in a new tab
-                auto newWorld = std::make_unique<ECS::World>();
-                Editor::SceneSerializer serializer(*newWorld);
-                if (serializer.deserialize("scene.caf")) {
-                    m_tabManager.addTab("scene.caf", std::move(newWorld));
-                    m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
+                if (m_ctx.isDirty) {
+                    m_pendingAction = PendingAction::OpenScene;
+                    ImGui::OpenPopup("Unsaved Changes?");
+                } else {
+                    auto newWorld = std::make_unique<ECS::World>();
+                    Editor::SceneSerializer serializer(*newWorld);
+                    if (serializer.deserialize("scene.caf")) {
+                        m_tabManager.addTab("scene.caf", std::move(newWorld));
+                        m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
+                    }
                 }
             }
             ImGui::Separator();

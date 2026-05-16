@@ -1,5 +1,6 @@
 #include "editor/SceneSerializer.hpp"
 #include "ecs/Components.hpp"
+#include "audio/AudioComponents.hpp"
 #include "editor/EditorContext.hpp"
 #include <vector>
 #include <unordered_map>
@@ -124,6 +125,15 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         m_world.forEach<ECS::Tag>(q, [&](ECS::Entity e, ECS::Tag&) {
             entityMap[e.id()].emplace_back(kTypeTag, std::vector<u8>{});
         });
+    }
+
+    // Type 9: AudioEmitter
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<Audio::AudioEmitter>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeAudioEmitter, std::move(data));
+        }
     }
 
     // Write binary file
@@ -260,6 +270,9 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 break;
             case kTypeTag:
                 m_world.add<ECS::Tag>(e);
+                break;
+            case kTypeAudioEmitter:
+                applyPODComponent<Audio::AudioEmitter>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             default:
                 break;

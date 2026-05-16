@@ -19,6 +19,7 @@ public:
         std::string content;
         std::string originalContent;
         bool isDirty = false;
+        std::vector<char> editBuffer;  // Per-file ImGui editing buffer
     };
 
     bool openFile(const std::filesystem::path& path);

@@ -15,6 +15,7 @@
 
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
+#include "editor/AudioPreviewPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -79,6 +80,9 @@ public:
     AnimationTimelinePanel& animationTimeline() { return m_animationTimeline; }
     TilemapEditorPanel& tilemapEditor() { return m_tilemapEditor; }
     CommandPalette& commandPalette() { return m_commandPalette; }
+#ifdef CF_HAS_IMGUI
+    AudioPreviewPanel& audioPreview() { return m_audioPreview; }
+#endif
 
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
@@ -108,6 +112,7 @@ private:
 
 #ifdef CF_HAS_IMGUI
     MaterialEditorPanel m_materialEditor;
+    AudioPreviewPanel m_audioPreview;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;
