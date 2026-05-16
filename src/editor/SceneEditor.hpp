@@ -12,6 +12,11 @@
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
+
+#ifdef CF_HAS_IMGUI
+#include "editor/MaterialEditorPanel.hpp"
+#endif
+
 #include "editor/AnimationTimeline.hpp"
 #include "editor/TilemapEditor.hpp"
 #include "editor/CommandPalette.hpp"
@@ -100,6 +105,11 @@ private:
     ConsoleWindow   m_console;
     ProfilerWindow  m_profiler;
     ScriptEditorWindow m_scriptEditor;
+
+#ifdef CF_HAS_IMGUI
+    MaterialEditorPanel m_materialEditor;
+#endif
+
     AnimationTimelinePanel m_animationTimeline;
     TilemapEditorPanel m_tilemapEditor;
     CommandPalette m_commandPalette;

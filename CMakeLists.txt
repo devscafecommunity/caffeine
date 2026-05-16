@@ -203,8 +203,37 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         GIT_TAG        docking
         GIT_SHALLOW    TRUE
     )
+    FetchContent_Declare(
+        imnodes
+        GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
+        GIT_TAG        v0.5
+        GIT_SHALLOW    TRUE
+    )
     set(FETCHCONTENT_QUIET OFF)
-    FetchContent_MakeAvailable(imgui)
+    FetchContent_MakeAvailable(imgui imnodes)
+
+    # Patch imnodes for ImGui docking compatibility (TextureId -> TexRef)
+    file(WRITE "${CMAKE_BINARY_DIR}/patch_imnodes.py"
+"import sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+
+# Fix: _TextureIdStack -> _TextureStack.back()._TexID
+content = content.replace(
+    'draw_list->_TextureIdStack.back()',
+    'draw_list->_TextureStack.back()._TexID'
+)
+
+# Fix: TextureId -> TexRef with proper initialization
+content = content.replace(
+    'draw_cmd.TextureId',
+    'draw_cmd.TexRef._TexID'
+)
+
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+")
+    execute_process(COMMAND python3 "${CMAKE_BINARY_DIR}/patch_imnodes.py" "${imnodes_SOURCE_DIR}/imnodes.cpp")
 
     add_library(ImGui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
@@ -220,6 +249,18 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
     )
     target_link_libraries(ImGui PUBLIC SDL3::SDL3)
 
+    add_library(ImNodes STATIC
+        ${imnodes_SOURCE_DIR}/imnodes.cpp
+    )
+    target_include_directories(ImNodes PUBLIC
+        ${imnodes_SOURCE_DIR}
+    )
+    target_compile_definitions(ImNodes PRIVATE 
+        IMGUI_DEFINE_MATH_OPERATORS
+        IM_OFFSETOF=offsetof
+    )
+    target_link_libraries(ImNodes PUBLIC ImGui)
+
     add_executable(doppio
         apps/doppio/main.cpp
         src/editor/HierarchyPanel.cpp
@@ -234,8 +275,12 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         src/editor/AnimationTimeline.cpp
         src/editor/TilemapEditor.cpp
         src/editor/CommandPalette.cpp
+        src/editor/ShaderNode.cpp
+        src/editor/ShaderGraph.cpp
+        src/editor/MaterialEditorPanel.cpp
+        src/editor/PreviewRenderer.cpp
     )
-    target_link_libraries(doppio PRIVATE caffeine-core ImGui)
+    target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
     target_compile_features(doppio PRIVATE cxx_std_20)

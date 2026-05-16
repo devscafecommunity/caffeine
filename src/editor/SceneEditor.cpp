@@ -133,6 +133,7 @@ void SceneEditor::render(
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
     m_scriptEditor.render();
+    m_materialEditor.onImGuiRender();
     m_animationTimeline.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
