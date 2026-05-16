@@ -4,6 +4,7 @@
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
+#include <SDL3/SDL.h>
 #endif
 
 namespace Caffeine::Editor {
@@ -59,6 +60,28 @@ void ProjectStartupDialog::setError(const char* message) {
     m_showError = true;
 }
 
+void ProjectStartupDialog::showToast(const std::string& message, ToastType type) {
+    m_toastQueue.push_back({message, type, static_cast<double>(SDL_GetTicksNS()) / 1'000'000.0});
+    if (m_toastQueue.size() > MAX_VISIBLE_TOASTS) {
+        m_toastQueue.erase(m_toastQueue.begin());
+    }
+}
+
+void ProjectStartupDialog::updateToasts() {
+    double currentTime = static_cast<double>(SDL_GetTicksNS()) / 1'000'000.0;
+    auto it = m_toastQueue.begin();
+    while (it != m_toastQueue.end()) {
+        if (it->isExpired(currentTime)) {
+            it = m_toastQueue.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void ProjectStartupDialog::renderToasts() {
+}
+
 // ── UI Layer (requires CF_HAS_IMGUI) ──────────────────────────────────────
 
 #ifdef CF_HAS_IMGUI
@@ -85,7 +108,7 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
         ImGui::Separator();
 
         if (ImGui::Button("Create Empty Project", ImVec2(200, 0))) {
-            return tryCreateProject();
+            result = tryCreateProject();
         }
         ImGui::SameLine();
         if (ImGui::Button("Quit", ImVec2(100, 0))) {
