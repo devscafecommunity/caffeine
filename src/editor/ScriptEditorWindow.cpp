@@ -99,6 +99,17 @@ void ScriptEditorWindow::render() {
     if (!m_open) return;
     
     if (ImGui::Begin("Script Editor", &m_open)) {
+        // Handle drag-drop of .lua files from Asset Browser
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                const char* path = (const char*)payload->Data;
+                if (path) {
+                    openFile(path);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
         if (m_activeFileIndex >= 0 && m_activeFileIndex < static_cast<int>(m_openFiles.size())) {
             auto& file = m_openFiles[m_activeFileIndex];
             
@@ -117,7 +128,6 @@ void ScriptEditorWindow::render() {
             
             ImGui::Separator();
             
-            // Ensure the edit buffer is sized to hold content + NUL
             size_t bufSize = std::max(file.content.size() + 1, size_t(1));
             if (file.editBuffer.size() < bufSize) {
                 file.editBuffer.resize(bufSize);
@@ -137,7 +147,7 @@ void ScriptEditorWindow::render() {
                 file.isDirty = true;
             }
         } else {
-            ImGui::Text("No file open. Double-click a .lua file in Asset Browser to open.");
+            ImGui::Text("No file open. Drag .lua files from Asset Browser or click below.");
         }
     }
     ImGui::End();
