@@ -22,6 +22,7 @@ ProjectStartupDialog::ProjectStartupDialog() {
 void ProjectStartupDialog::init() {
     m_locationPicked = false;
     m_popupOpened = false;
+    m_recentProjects = m_projectManager.GetRecentProjects();
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::tryCreateProject() {
@@ -256,22 +257,51 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
-    const auto& recents = m_projectManager.GetRecentProjects();
-    
-    if (recents.empty()) {
-        ImGui::TextDisabled("No recent projects. Create a new one or browse.");
-        return std::nullopt;
-    }
+    std::optional<ProjectConfig> result;
 
-    ImGui::BeginChild("RecentList", ImVec2(0, 300), true);
-    for (const auto& recent : recents) {
-        if (ImGui::Selectable(recent.string().c_str())) {
-            return tryOpenProject(recent);
+    ImGui::InputTextWithHint("##search_recent", "Search projects...", m_searchFilter, sizeof(m_searchFilter));
+    ImGui::SameLine();
+    ImGui::Checkbox("Show All##recent", &m_showAllRecents);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    if (ImGui::BeginChild("recent_list", ImVec2(0, 300), true)) {
+        if (m_recentProjects.empty()) {
+            ImGui::TextDisabled("No projects yet. Create one in 'Create New' tab!");
+        } else {
+            for (size_t i = 0; i < m_recentProjects.size(); ++i) {
+                const auto& projPath = m_recentProjects[i];
+                std::string projName = projPath.filename().string();
+                
+                if (strlen(m_searchFilter) > 0) {
+                    if (projName.find(m_searchFilter) == std::string::npos) {
+                        continue;
+                    }
+                }
+
+                bool selected = (m_selectedRecentIndex == (int)i);
+                if (ImGui::Selectable(projName.c_str(), selected)) {
+                    m_selectedRecentIndex = i;
+                }
+
+                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+                ImGui::PushID((int)i);
+                if (ImGui::Button("Open##recent", ImVec2(70, 0))) {
+                    result = tryOpenProject(projPath);
+                    if (result) {
+                        showToast("Project opened!", ToastType::Success);
+                    } else {
+                        showToast("Failed to open project", ToastType::Error);
+                    }
+                }
+                ImGui::PopID();
+            }
         }
+        ImGui::EndChild();
     }
-    ImGui::EndChild();
 
-    return std::nullopt;
+    return result;
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
