@@ -12,6 +12,7 @@
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
+#include "editor/MaterialEditorPanel.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -94,6 +95,7 @@ private:
     ConsoleWindow   m_console;
     ProfilerWindow  m_profiler;
     ScriptEditorWindow m_scriptEditor;
+    MaterialEditorPanel m_materialEditor;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
