@@ -35,9 +35,11 @@ public:
 
     bool isVisible() const { return m_isVisible; }
     void setVisible(bool visible) { m_isVisible = visible; }
+    bool& visible() { return m_isVisible; }
 
     bool isLocked() const { return m_isLocked; }
     void setLocked(bool locked) { m_isLocked = locked; }
+    bool& locked() { return m_isLocked; }
 
     TileCell& getCell(i32 x, i32 y);
     const TileCell& getCell(i32 x, i32 y) const;

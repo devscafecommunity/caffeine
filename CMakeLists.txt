@@ -231,6 +231,9 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         src/editor/DragDropSystem.cpp
         src/editor/SceneTabManager.cpp
         src/editor/ScriptEditorWindow.cpp
+        src/editor/AnimationTimeline.cpp
+        src/editor/TilemapEditor.cpp
+        src/editor/CommandPalette.cpp
     )
     target_link_libraries(doppio PRIVATE caffeine-core ImGui)
     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
