@@ -49,6 +49,7 @@ public:
     }
 
     void free(void* ptr) override {
+        (void)ptr;
     }
 
     void reset() override {

@@ -113,6 +113,9 @@ public:
         }
         
         m_poolRegistry.forEach([indexInArchetype](u32 cid, void* pool, CopyFunc copyFunc, CreatePoolFunc createFunc, RemoveFunc removeFunc) {
+            (void)cid;
+            (void)copyFunc;
+            (void)createFunc;
             if (pool && removeFunc) {
                 removeFunc(pool, indexInArchetype);
             }

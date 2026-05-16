@@ -198,6 +198,7 @@ TEST_CASE("StackAllocator - Multiple Markers", "[memory][stack]") {
     Marker m1 = allocator.setMarker();
     allocator.alloc(64, 8);
     Marker m2 = allocator.setMarker();
+    (void)m2;
     allocator.alloc(128, 8);
 
     REQUIRE(allocator.usedMemory() == 224);
@@ -207,6 +208,7 @@ TEST_CASE("StackAllocator - Multiple Markers", "[memory][stack]") {
 
     allocator.alloc(64, 8);
     Marker m3 = allocator.setMarker();
+    (void)m3;
     allocator.alloc(32, 8);
     REQUIRE(allocator.usedMemory() == 128);
 }
@@ -226,6 +228,7 @@ TEST_CASE("Memory Stress - LinearAllocator 1M Allocations", "[memory][stress]") 
 
     constexpr int ITERATIONS = 1000000;
     void* pointers[100];
+    (void)pointers;
     
     for (int i = 0; i < ITERATIONS; i++) {
         void* ptr = allocator.alloc(64, 8);
@@ -275,6 +278,7 @@ TEST_CASE("Memory Stress - Fragmentation Test", "[memory][stress]") {
 
     usize usedBeforeReset = allocator.usedMemory();
     usize peakBeforeReset = allocator.peakMemory();
+    (void)peakBeforeReset;
 
     allocator.reset();
     allocator.alloc(usedBeforeReset, 8);

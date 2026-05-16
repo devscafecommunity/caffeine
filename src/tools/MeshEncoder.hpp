@@ -20,6 +20,7 @@ public:
         const Assets::Mesh3D& mesh,
         const MeshEncodeOptions& opts = {})
     {
+        (void)opts;
         ConversionResult result;
         
         if (mesh.vertices.empty()) {
@@ -129,6 +130,9 @@ private:
                                 std::string_view outputPath,
                                 const MeshEncodeOptions& opts)
     {
+        (void)inputPath;
+        (void)outputPath;
+        (void)opts;
         ConversionResult result;
         result.errorMessage = "GLTF encoding not yet implemented";
         return result;

@@ -144,6 +144,9 @@ public:
                             std::string_view outputPath,
                             const TextureEncodeOptions& opts = {})
     {
+        (void)inputPath;
+        (void)outputPath;
+        (void)opts;
         ConversionResult result;
         result.errorMessage = "stb_image not linked - file-based encoding unavailable";
         return result;
