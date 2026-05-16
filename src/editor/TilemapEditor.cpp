@@ -173,11 +173,7 @@ void TilemapEditorPanel::render() {
         renderToolbar();
         ImGui::Separator();
 
-        // TODO (missing): Visual tile grid canvas.
-        // Should display m_tilemap.layer(m_currentLayer) as grid of clickable tiles.
-        // On click: if brush tool, paintTile(). If bucket, floodFill(). If eraser, eraseTile().
-        // If picker, set m_selectedTileID.
-        ImGui::TextDisabled("[Canvas grid rendering not implemented]");
+        renderGrid();
         ImGui::Separator();
 
         renderLayers();
@@ -185,6 +181,82 @@ void TilemapEditorPanel::render() {
         renderPalette();
     }
     ImGui::End();
+}
+
+void TilemapEditorPanel::renderGrid() {
+    if (m_currentLayer < 0 || m_currentLayer >= static_cast<i32>(m_tilemap.layerCount())) {
+        ImGui::TextDisabled("No layer selected");
+        return;
+    }
+
+    auto& layer = m_tilemap.layer(m_currentLayer);
+    if (!layer.isVisible()) {
+        ImGui::TextDisabled("Layer is hidden");
+        return;
+    }
+
+    f32 tileSize = m_tilemap.tileSize();
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    f32 canvasWidth = ImGui::GetContentRegionAvail().x;
+    f32 gridWidth = layer.width() * tileSize;
+    f32 gridHeight = layer.height() * tileSize;
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasWidth, canvasPos.y + gridHeight),
+                            IM_COL32(30, 30, 40, 255));
+
+    for (i32 y = 0; y < layer.height(); ++y) {
+        for (i32 x = 0; x < layer.width(); ++x) {
+            ImVec2 cellTopLeft(canvasPos.x + x * tileSize, canvasPos.y + y * tileSize);
+            ImVec2 cellBottomRight(cellTopLeft.x + tileSize, cellTopLeft.y + tileSize);
+
+            const TileCell& cell = layer.getCell(x, y);
+            u32 bgColor = (cell.tileID >= 0) ? IM_COL32(80, 120, 200, 200) : IM_COL32(40, 40, 50, 200);
+            u32 borderColor = IM_COL32(100, 100, 120, 180);
+
+            drawList->AddRectFilled(cellTopLeft, cellBottomRight, bgColor);
+            drawList->AddRect(cellTopLeft, cellBottomRight, borderColor, 0.0f, 0, 1.0f);
+
+            if (cell.tileID >= 0) {
+                char tileLabel[8];
+                snprintf(tileLabel, sizeof(tileLabel), "%d", cell.tileID);
+                ImVec2 textSize = ImGui::CalcTextSize(tileLabel);
+                ImVec2 textPos(
+                    cellTopLeft.x + (tileSize - textSize.x) * 0.5f,
+                    cellTopLeft.y + (tileSize - textSize.y) * 0.5f
+                );
+                drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), tileLabel);
+            }
+        }
+    }
+
+    ImGui::Dummy(ImVec2(canvasWidth, gridHeight));
+
+    if (ImGui::IsItemHovered()) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        i32 gridX = static_cast<i32>((mousePos.x - canvasPos.x) / tileSize);
+        i32 gridY = static_cast<i32>((mousePos.y - canvasPos.y) / tileSize);
+
+        if (gridX >= 0 && gridX < layer.width() && gridY >= 0 && gridY < layer.height()) {
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                switch (m_currentTool) {
+                    case ToolMode::Brush:
+                        paintTile(m_currentLayer, gridX, gridY, m_selectedTileID);
+                        break;
+                    case ToolMode::Bucket:
+                        floodFill(m_currentLayer, gridX, gridY, layer.getCell(gridX, gridY).tileID, m_selectedTileID);
+                        break;
+                    case ToolMode::Eraser:
+                        eraseTile(m_currentLayer, gridX, gridY);
+                        break;
+                    case ToolMode::Picker:
+                        m_selectedTileID = layer.getCell(gridX, gridY).tileID;
+                        break;
+                }
+            }
+        }
+    }
 }
 
 void TilemapEditorPanel::renderToolbar() {

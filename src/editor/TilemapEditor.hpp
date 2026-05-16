@@ -89,6 +89,7 @@ public:
     void renderPalette();
     void renderToolbar();
     void renderLayers();
+    void renderGrid();
 
     void paintTile(i32 layerIdx, i32 x, i32 y, i32 tileID);
     void floodFill(i32 layerIdx, i32 x, i32 y, i32 targetID, i32 replacementID);
