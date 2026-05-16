@@ -296,9 +296,17 @@ with open(sys.argv[1], 'w') as f:
         src/editor/BuildSystem.cpp
         src/editor/BuildDialog.cpp
         src/editor/AssetCooker.cpp
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_exporters.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_perftool.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
+        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
     )
     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
-    target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
     target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
     target_compile_features(doppio PRIVATE cxx_std_20)
 
