@@ -50,6 +50,7 @@ add_library(caffeine-core
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
     src/editor/ProjectManager.cpp
+    src/editor/ProjectStartupDialog.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC

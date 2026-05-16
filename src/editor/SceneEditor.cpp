@@ -9,10 +9,11 @@ namespace Caffeine::Editor {
 
 #ifdef CF_HAS_SDL3
 bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
-                        const char* assetsPath) {
+                       const ProjectConfig& projectConfig) {
     if (!m_viewport.init(device)) return false;
-    m_assetBrowser.init(assetsPath);
+    m_assetBrowser.init(projectConfig.AssetRawPath.string().c_str());
     m_assetManager = assetManager;
+    m_currentProjectConfig = projectConfig;
     m_tabManager.newScene("Untitled");
 
     m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {

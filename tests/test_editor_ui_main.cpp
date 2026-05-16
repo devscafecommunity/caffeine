@@ -15,6 +15,7 @@
 #include "rhi/RenderDevice.hpp"
 #include "assets/AssetManager.hpp"
 #include "editor/SceneEditor.hpp"
+#include "editor/ProjectManager.hpp"
 #include "render/Camera2D.hpp"
 
 #define CATCH_CONFIG_RUNNER
@@ -129,7 +130,14 @@ int main(int argc, char* argv[]) {
     s_state.editor = new Caffeine::Editor::SceneEditor();
     
     if (s_state.gpuAvailable) {
-        if (!s_state.editor->init(s_state.device, s_state.assetManager, "assets")) {
+        // Create a minimal ProjectConfig for testing
+        Caffeine::Editor::ProjectConfig testProject;
+        testProject.Name = "TestProject";
+        testProject.RootPath = "./test_project";
+        testProject.AssetRawPath = "assets";
+        testProject.TemplateType = "Empty";
+        
+        if (!s_state.editor->init(s_state.device, s_state.assetManager, testProject)) {
             std::fprintf(stderr, "SceneEditor::init failed\n");
             delete s_state.editor;
             delete s_state.assetManager;

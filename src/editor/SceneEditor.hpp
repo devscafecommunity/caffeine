@@ -12,6 +12,7 @@
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
+#include "editor/ProjectManager.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
@@ -51,7 +52,7 @@ public:
 
 #ifdef CF_HAS_SDL3
     bool init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
-              const char* assetsPath = "assets");
+              const ProjectConfig& projectConfig);
     void shutdown();
 #endif
 
@@ -123,6 +124,7 @@ private:
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
+    ProjectConfig m_currentProjectConfig;
 #endif
 
     void closeTab(int index);

@@ -5,6 +5,7 @@
 
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
+#include "editor/ProjectStartupDialog.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
 
@@ -53,8 +54,62 @@ int main(int, char**) {
         return 1;
     }
 
+    // Show project startup dialog
+    Caffeine::Editor::ProjectStartupDialog projectDialog;
+    projectDialog.init();
+
+    Caffeine::Editor::ProjectConfig selectedProject;
+    bool projectSelected = false;
+
+    while (projectDialog.isOpen() && !projectSelected) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            imgui.processEvent(event);
+            if (event.type == SDL_EVENT_QUIT) {
+                imgui.shutdown();
+                device.shutdown();
+                SDL_DestroyWindow(window);
+                SDL_Quit();
+                return 0;
+            }
+        }
+
+        Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
+        if (!cmd) continue;
+
+        imgui.beginFrame();
+        if (auto config = projectDialog.render()) {
+            selectedProject = config.value();
+            projectSelected = true;
+        }
+        imgui.prepareRender(cmd);
+
+        Caffeine::RHI::RenderPassDesc passDesc;
+        passDesc.clearColor[0] = 0.10f;
+        passDesc.clearColor[1] = 0.10f;
+        passDesc.clearColor[2] = 0.12f;
+        passDesc.clearColor[3] = 1.00f;
+
+        cmd->beginRenderPass(passDesc);
+        imgui.endFrame(cmd);
+        cmd->endRenderPass();
+
+        device.endFrame(cmd);
+    }
+
+    if (!projectSelected) {
+        imgui.shutdown();
+        device.shutdown();
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 0;
+    }
+
+    // Create asset manager with project's asset path
+    Caffeine::Assets::AssetManager projectAssetManager(nullptr, selectedProject.AssetRawPath.string().c_str());
+
     Caffeine::Editor::SceneEditor editor;
-    if (!editor.init(&device, &assetManager)) {
+    if (!editor.init(&device, &projectAssetManager, selectedProject)) {
         std::fprintf(stderr, "SceneEditor::init failed\n");
         imgui.shutdown();
         device.shutdown();
