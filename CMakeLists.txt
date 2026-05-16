@@ -248,6 +248,7 @@ with open(sys.argv[1], 'w') as f:
         ${imgui_SOURCE_DIR}/backends
     )
     target_link_libraries(ImGui PUBLIC SDL3::SDL3)
+    target_compile_definitions(ImGui PUBLIC IMGUI_ENABLE_TEST_ENGINE=1)
 
     add_library(ImNodes STATIC
         ${imnodes_SOURCE_DIR}/imnodes.cpp
@@ -260,6 +261,18 @@ with open(sys.argv[1], 'w') as f:
         IM_OFFSETOF=offsetof
     )
     target_link_libraries(ImNodes PUBLIC ImGui)
+
+    # ── imgui_test_engine (for editor UI tests) ────────────────────
+    FetchContent_Declare(
+        imgui_test_engine
+        GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git
+        GIT_TAG        main
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_GetProperties(imgui_test_engine)
+    if(NOT imgui_test_engine_POPULATED)
+        FetchContent_Populate(imgui_test_engine)
+    endif()
 
     add_executable(doppio
         apps/doppio/main.cpp
