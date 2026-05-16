@@ -75,9 +75,12 @@ int main(int, char**) {
         }
 
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
-        if (!cmd) continue;
+        if (!cmd) {
+            continue;
+        }
 
         imgui.beginFrame();
+        
         if (auto config = projectDialog.render()) {
             selectedProject = config.value();
             projectSelected = true;
@@ -95,6 +98,7 @@ int main(int, char**) {
         cmd->endRenderPass();
 
         device.endFrame(cmd);
+        fflush(stderr);
     }
 
     if (!projectSelected) {

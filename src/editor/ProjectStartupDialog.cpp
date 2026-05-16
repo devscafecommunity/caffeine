@@ -2,6 +2,10 @@
 #include <filesystem>
 #include <cstring>
 
+#ifdef CF_HAS_IMGUI
+#include <imgui.h>
+#endif
+
 namespace Caffeine::Editor {
 
 ProjectStartupDialog::ProjectStartupDialog() {
@@ -58,13 +62,15 @@ void ProjectStartupDialog::setError(const char* message) {
 // ── UI Layer (requires CF_HAS_IMGUI) ──────────────────────────────────────
 
 #ifdef CF_HAS_IMGUI
-#include <imgui.h>
 
 std::optional<ProjectConfig> ProjectStartupDialog::render() {
-    if (!m_open) return std::nullopt;
+    if (!m_open) {
+        return std::nullopt;
+    }
 
     std::optional<ProjectConfig> result;
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    
     ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
     
@@ -94,46 +100,11 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     return result;
 }
 
-    std::optional<ProjectConfig> result;
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    
-    if (ImGui::BeginPopupModal("ProjectManagerModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Welcome to Doppio — Select or Create a Project");
-        ImGui::Separator();
-
-        ImGui::Text("Project Name:");
-        ImGui::InputText("##ProjectName", m_projectName, sizeof(m_projectName));
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        if (ImGui::Button("Create Empty Project", ImVec2(200, 0))) {
-            return tryCreateProject();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Quit", ImVec2(100, 0))) {
-            ImGui::CloseCurrentPopup();
-            m_open = false;
-        }
-
-        renderErrorPopup();
-
-        ImGui::EndPopup();
-    }
-
-    return result;
-}
-
 std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     ImGui::InputText("Project Name##CreateTab", m_projectName, sizeof(m_projectName));
-    ImGui::SameLine();
-    ImGui::HelpMarker("Name for your new project");
 
     const char* templates[] = {"Empty", "2D", "3D"};
     ImGui::Combo("Template##CreateTab", &m_templateIndex, templates, IM_ARRAYSIZE(templates));
-    ImGui::SameLine();
-    ImGui::HelpMarker("Project template (affects initial folder structure)");
 
     ImGui::Text("Location: %s", m_selectedLocation.c_str());
     if (ImGui::Button("Browse Location...##Create")) {
@@ -208,7 +179,6 @@ void ProjectStartupDialog::renderErrorPopup() {
 }
 
 #else
-// Non-ImGui fallback: render() returns nullopt (dialog unavailable without ImGui)
 std::optional<ProjectConfig> ProjectStartupDialog::render() {
     return std::nullopt;
 }

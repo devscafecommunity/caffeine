@@ -261,9 +261,13 @@ with open(sys.argv[1], 'w') as f:
         IMGUI_DEFINE_MATH_OPERATORS
         IM_OFFSETOF=offsetof
     )
-    target_link_libraries(ImNodes PUBLIC ImGui)
+     target_link_libraries(ImNodes PUBLIC ImGui)
 
-    # ── imgui_test_engine (for editor UI tests) ────────────────────
+    # ── Link ImGui to caffeine-core for editor components ──────────────────────
+    target_link_libraries(caffeine-core PUBLIC ImGui ImNodes)
+    target_compile_definitions(caffeine-core PUBLIC CF_HAS_IMGUI=1)
+
+     # ── imgui_test_engine (for editor UI tests) ────────────────────
     FetchContent_Declare(
         imgui_test_engine
         GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git

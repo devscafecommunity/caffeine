@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
+#include <cstdio>
 
 #ifdef CF_HAS_SDL3
 #ifdef CF_HAS_IMGUI
