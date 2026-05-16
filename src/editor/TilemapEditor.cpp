@@ -172,6 +172,14 @@ void TilemapEditorPanel::render() {
     if (ImGui::Begin("Tilemap Editor", &m_open)) {
         renderToolbar();
         ImGui::Separator();
+
+        // TODO (missing): Visual tile grid canvas.
+        // Should display m_tilemap.layer(m_currentLayer) as grid of clickable tiles.
+        // On click: if brush tool, paintTile(). If bucket, floodFill(). If eraser, eraseTile().
+        // If picker, set m_selectedTileID.
+        ImGui::TextDisabled("[Canvas grid rendering not implemented]");
+        ImGui::Separator();
+
         renderLayers();
         ImGui::Separator();
         renderPalette();

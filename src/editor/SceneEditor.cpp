@@ -195,12 +195,16 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 saveSceneAs(world);
             }
             if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-                // Open in a new tab
-                auto newWorld = std::make_unique<ECS::World>();
-                Editor::SceneSerializer serializer(*newWorld);
-                if (serializer.deserialize("scene.caf")) {
-                    m_tabManager.addTab("scene.caf", std::move(newWorld));
-                    m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
+                if (m_ctx.isDirty) {
+                    m_pendingAction = PendingAction::OpenScene;
+                    ImGui::OpenPopup("Unsaved Changes?");
+                } else {
+                    auto newWorld = std::make_unique<ECS::World>();
+                    Editor::SceneSerializer serializer(*newWorld);
+                    if (serializer.deserialize("scene.caf")) {
+                        m_tabManager.addTab("scene.caf", std::move(newWorld));
+                        m_tabManager.setActiveTab(m_tabManager.tabCount() - 1, m_ctx);
+                    }
                 }
             }
             ImGui::Separator();

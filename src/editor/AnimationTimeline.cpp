@@ -52,6 +52,9 @@ void AnimationTimelinePanel::setClip(Animation::AnimationClip* clip) {
 
 void AnimationTimelinePanel::play() {
     m_isPlaying = true;
+    // TODO (blocked): m_currentTime advances only in render() with delta time.
+    // Currently no delta time is passed to render(). When render signature changes to
+    // render(f32 deltaTime), add: if (m_isPlaying) m_currentTime += deltaTime;
 }
 
 void AnimationTimelinePanel::stop() {
@@ -270,6 +273,9 @@ void AnimationTimelinePanel::renderTracks() {
 }
 
 void AnimationTimelinePanel::handleInput() {
+    // TODO (blocked): Requires timeline UI interaction model.
+    // When timeline is clicked, update m_currentTime. When keyframes are dragged,
+    // call moveSelectedKeyframe(). When right-click on keyframe, call deleteSelectedKeyframe().
 }
 
 }

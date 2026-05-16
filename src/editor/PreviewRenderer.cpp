@@ -88,8 +88,9 @@ bool PreviewRenderer::createShaderPipeline(const std::string& shaderCode) {
     (void)shaderCode;
     if (!m_hasRHI || !m_device) return false;
 
-    // TODO: Parse shader code, create RHI shaders and pipeline
-    // For now, just a placeholder
+    // TODO (blocked): Requires RHI::ShaderCompiler::compile() and RHI::Device::createGraphicsPipeline().
+    // Currently not implemented in RHI layer. Once available, parse shaderCode, compile
+    // vertex/fragment shaders, and create pipeline with proper attribute bindings.
 
     return false;
 }
@@ -98,7 +99,11 @@ void PreviewRenderer::render(RHI::CommandBuffer* cmd, const std::string& shaderC
     (void)cmd;
     if (m_hasRHI && !shaderCode.empty()) {
         createShaderPipeline(shaderCode);
-        // TODO: Full RHI pipeline render with sphere mesh
+        // TODO (blocked): Once createShaderPipeline() is complete, render sphere mesh using:
+        // - cmd->bindPipeline(m_pipeline)
+        // - cmd->bindVertexBuffer(m_sphereVertices)
+        // - cmd->bindIndexBuffer(m_sphereIndices)
+        // - cmd->drawIndexed(m_indexCount)
     }
 }
 
