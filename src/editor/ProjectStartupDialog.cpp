@@ -80,6 +80,50 @@ void ProjectStartupDialog::updateToasts() {
 }
 
 void ProjectStartupDialog::renderToasts() {
+    if (m_toastQueue.empty()) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    float toastWidth = 300.0f;
+    float toastHeight = 60.0f;
+    float padding = 10.0f;
+    float spacing = 5.0f;
+
+    float totalHeight = m_toastQueue.size() * (toastHeight + spacing);
+    ImVec2 startPos(
+        io.DisplaySize.x - toastWidth - padding,
+        io.DisplaySize.y - totalHeight - padding
+    );
+
+    for (size_t i = 0; i < m_toastQueue.size(); ++i) {
+        const Toast& toast = m_toastQueue[i];
+        ImVec2 pos(startPos.x, startPos.y + i * (toastHeight + spacing));
+
+        ImGui::SetNextWindowPos(pos);
+        ImGui::SetNextWindowSize(ImVec2(toastWidth, toastHeight));
+
+        ImVec4 bgColor;
+        switch (toast.type) {
+            case ToastType::Success:
+                bgColor = ImVec4(0.2f, 0.7f, 0.2f, 0.8f);
+                break;
+            case ToastType::Error:
+                bgColor = ImVec4(0.9f, 0.2f, 0.2f, 0.8f);
+                break;
+            case ToastType::Info:
+                bgColor = ImVec4(1.0f, 1.0f, 0.2f, 0.8f);
+                break;
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, bgColor);
+        char label[64];
+        snprintf(label, sizeof(label), "##toast_%zu", i);
+        
+        if (ImGui::Begin(label, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("%s", toast.message.c_str());
+            ImGui::End();
+        }
+        ImGui::PopStyleColor();
+    }
 }
 
 // ── UI Layer (requires CF_HAS_IMGUI) ──────────────────────────────────────
@@ -90,6 +134,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     if (!m_open) {
         return std::nullopt;
     }
+
+    updateToasts();
 
     std::optional<ProjectConfig> result;
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -119,6 +165,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
 
         ImGui::End();
     }
+
+    renderToasts();
 
     return result;
 }
