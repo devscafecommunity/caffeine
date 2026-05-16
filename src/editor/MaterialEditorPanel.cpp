@@ -91,6 +91,14 @@ void MaterialEditorPanel::renderMenuBar() {
 void MaterialEditorPanel::renderGraphCanvas() {
     ImGui::BeginChild("GraphCanvas", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar);
 
+    if (m_graph.empty()) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPos(ImVec2(avail.x * 0.3f, avail.y * 0.4f));
+        ImGui::TextUnformatted("Right-click to add nodes, or use Add Node menu");
+        ImGui::EndChild();
+        return;
+    }
+
     ImNodes::BeginNodeEditor();
 
     s_attrToPin.clear();
@@ -130,12 +138,12 @@ void MaterialEditorPanel::renderGraphCanvas() {
         ImNodes::EndNode();
     }
 
-    // Render links from connections
     int linkId = 0;
     for (const auto& conn : m_graph.connections()) {
-        // Find attribute IDs for fromNode/fromPin (output) and toNode/toPin (input)
         int fromAttr = 0, toAttr = 0;
-        for (const auto& [attrId, pin] : s_attrToPin) {
+        for (const auto& pair : s_attrToPin) {
+            int attrId = pair.first;
+            const PinAttr& pin = pair.second;
             if (pin.nodeId == conn.fromNode && pin.pinIndex == conn.fromPin && !pin.isInput) {
                 fromAttr = attrId;
             }
@@ -148,7 +156,7 @@ void MaterialEditorPanel::renderGraphCanvas() {
         }
     }
 
-    // Handle new links created by user
+    // Handle new links
     int startAttr, endAttr;
     if (ImNodes::IsLinkCreated(&startAttr, &endAttr)) {
         auto fromIt = s_attrToPin.find(startAttr);
@@ -156,19 +164,39 @@ void MaterialEditorPanel::renderGraphCanvas() {
         if (fromIt != s_attrToPin.end() && toIt != s_attrToPin.end()) {
             PinAttr& fromPin = fromIt->second;
             PinAttr& toPin = toIt->second;
-            // Ensure direction: output -> input
             if (!fromPin.isInput && toPin.isInput) {
                 m_graph.connect(fromPin.nodeId, fromPin.pinIndex, toPin.nodeId, toPin.pinIndex);
             } else if (!toPin.isInput && fromPin.isInput) {
                 m_graph.connect(toPin.nodeId, toPin.pinIndex, fromPin.nodeId, fromPin.pinIndex);
             }
+            if (m_autoCompile) recompileShader();
         }
     }
 
-    // Handle link deletion
+    // Handle deleted links
     int deletedLinkId;
-    if (ImNodes::IsLinkDestroyed(&deletedLinkId)) {
+    while (ImNodes::IsLinkDestroyed(&deletedLinkId)) {
         (void)deletedLinkId;
+        // Find and remove from graph
+        int linkIdx = 0;
+        for (auto it = m_graph.connections().begin(); it != m_graph.connections().end(); ++it) {
+            if (linkIdx == deletedLinkId) {
+                m_graph.disconnect(it->fromNode, it->fromPin);
+                break;
+            }
+            linkIdx++;
+        }
+    }
+
+    int selectedNodeCount = ImNodes::NumSelectedNodes();
+    if (selectedNodeCount > 0) {
+        std::vector<int> selectedNodes(static_cast<size_t>(selectedNodeCount));
+        ImNodes::GetSelectedNodes(selectedNodes.data());
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+            for (int nodeId : selectedNodes) {
+                m_graph.removeNode(static_cast<uint32_t>(nodeId));
+            }
+        }
     }
 
     if (ImGui::IsMouseReleased(1) && ImGui::IsWindowHovered()) {
