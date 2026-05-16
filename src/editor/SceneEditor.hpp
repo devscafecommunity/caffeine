@@ -21,6 +21,7 @@
 #include "editor/AnimationTimeline.hpp"
 #include "editor/TilemapEditor.hpp"
 #include "editor/CommandPalette.hpp"
+#include "editor/BuildDialog.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -118,6 +119,7 @@ private:
     AnimationTimelinePanel m_animationTimeline;
     TilemapEditorPanel m_tilemapEditor;
     CommandPalette m_commandPalette;
+    BuildDialog m_buildDialog;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;

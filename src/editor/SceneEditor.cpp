@@ -141,6 +141,7 @@ void SceneEditor::render(
     m_animationTimeline.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
+    m_buildDialog.render();
 
     handleAssetDrop(*activeWorld);
 

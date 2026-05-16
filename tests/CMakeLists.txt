@@ -32,6 +32,9 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/AnimationTimeline.cpp
     ../src/editor/TilemapEditor.cpp
     ../src/editor/CommandPalette.cpp
+    ../src/editor/BuildSystem.cpp
+    ../src/editor/BuildDialog.cpp
+    ../src/editor/AssetCooker.cpp
 )
 
 if(SDL3_FOUND)
@@ -94,6 +97,9 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         ${CMAKE_SOURCE_DIR}/src/editor/ShaderNode.cpp
         ${CMAKE_SOURCE_DIR}/src/editor/PreviewRenderer.cpp
         ${CMAKE_SOURCE_DIR}/src/editor/ScriptEditorWindow.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/BuildSystem.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/BuildDialog.cpp
+        ${CMAKE_SOURCE_DIR}/src/editor/AssetCooker.cpp
         ${IMGUI_TEST_ENGINE_SRCS}
     )
     
