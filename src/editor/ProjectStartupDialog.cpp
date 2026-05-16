@@ -62,16 +62,13 @@ void ProjectStartupDialog::setError(const char* message) {
 std::optional<ProjectConfig> ProjectStartupDialog::render() {
     if (!m_open) return std::nullopt;
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_Modal 
-                            | ImGuiWindowFlags_AlwaysAutoResize
-                            | ImGuiWindowFlags_NoMove;
+    ImGui::OpenPopup("ProjectManagerModal");
 
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
-    
     std::optional<ProjectConfig> result;
-
-    if (ImGui::Begin("Doppio Project Manager", nullptr, flags)) {
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    if (ImGui::BeginPopupModal("ProjectManagerModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Welcome to Doppio — Select or Create a Project");
         ImGui::Separator();
 
@@ -92,18 +89,22 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
         }
 
         ImGui::Separator();
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120) * 0.5f);
         if (ImGui::Button("Quit Doppio", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
             m_open = false;
         }
 
         renderErrorPopup();
 
-        ImGui::End();
+        if (result) {
+            ImGui::CloseCurrentPopup();
+            m_open = false;
+        }
+
+        ImGui::EndPopup();
     }
 
-    if (result) {
-        m_open = false;
-    }
     return result;
 }
 
