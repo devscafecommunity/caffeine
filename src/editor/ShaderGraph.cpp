@@ -2,9 +2,20 @@
 #include <algorithm>
 #include <queue>
 #include <set>
-#include <fmt/format.h>
+#include <string>
+#include <cstdio>
+#include <cstdarg>
 
 namespace Caffeine::Editor {
+
+static std::string str(const char* fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    return buf;
+}
 
 uint32_t ShaderGraph::addNode(NodeType type) {
     auto node = createNode(type, m_nextID);
@@ -129,25 +140,19 @@ std::string ShaderGraph::compileGLSL() const {
     std::string body;
     std::string outputVar;
 
-    // Gather input vars for each node from connections
-    std::unordered_map<uint32_t, std::vector<std::string>> nodeInputVars;
-
-    // For each node in topological order, collect which connected vars feed its inputs
     for (uint32_t id : sorted) {
         std::vector<std::string> inputVars;
         const auto* node = getNode(id);
         if (!node) continue;
 
-        // Initialize with empty strings (defaults used in generateCode)
         for (size_t i = 0; i < node->inputs().size(); i++) {
             (void)i;
             inputVars.push_back("");
         }
 
-        // Fill in actual connected vars
         for (const auto& c : m_connections) {
             if (c.toNode == id && c.toPin >= 0 && c.toPin < static_cast<int>(inputVars.size())) {
-                inputVars[c.toPin] = fmt::format("var_{}", c.fromNode);
+                inputVars[c.toPin] = str("var_%u", c.fromNode);
             }
         }
 
@@ -155,7 +160,7 @@ std::string ShaderGraph::compileGLSL() const {
         body += code + "\n";
 
         if (node->type() == NodeType::OutputPBR) {
-            outputVar = fmt::format("var_{}", id);
+            outputVar = str("var_%u", id);
         }
     }
 
@@ -167,7 +172,7 @@ std::string ShaderGraph::compileGLSL() const {
     } else {
         result += body;
         if (!outputVar.empty()) {
-            result += fmt::format("    fragColor = {};\n", outputVar);
+            result += str("    fragColor = %s;\n", outputVar.c_str());
         } else {
             result += "    fragColor = vec4(1.0f, 0.0f, 1.0f, 1.0f);\n";
         }
@@ -178,8 +183,6 @@ std::string ShaderGraph::compileGLSL() const {
 }
 
 std::string ShaderGraph::compileHLSL() const {
-    // HLSL generation follows same topological pattern
-    // For the MVP, delegate to GLSL
     return compileGLSL();
 }
 

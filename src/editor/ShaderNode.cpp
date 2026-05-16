@@ -1,8 +1,20 @@
 #include "editor/ShaderNode.hpp"
 #include <imgui.h>
-#include <fmt/format.h>
+#include <string>
+#include <cstdio>
+#include <cstdarg>
 
 namespace Caffeine::Editor {
+
+// Simple format helper to avoid fmt dependency
+static std::string str(const char* fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    return buf;
+}
 
 static std::string floatToStr(float v) {
     char buf[32];
@@ -11,7 +23,11 @@ static std::string floatToStr(float v) {
 }
 
 static std::string vec4ToStr(const float c[4]) {
-    return fmt::format("vec4({}f, {}f, {}f, {}f)", c[0], c[1], c[2], c[3]);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "vec4(%gf, %gf, %gf, %gf)",
+        static_cast<double>(c[0]), static_cast<double>(c[1]),
+        static_cast<double>(c[2]), static_cast<double>(c[3]));
+    return buf;
 }
 
 TextureSampleNode::TextureSampleNode(uint32_t id)
@@ -24,7 +40,7 @@ TextureSampleNode::TextureSampleNode(uint32_t id)
 std::string TextureSampleNode::generateCode(const std::vector<std::string>& inputVars) const {
     (void)inputVars;
     std::string sampled = m_texturePath[0] ? m_texturePath : "u_texture";
-    return fmt::format("    vec4 var_{} = texture(sampler_{}, texCoord);", m_id, sampled);
+    return str("    vec4 var_%u = texture(sampler_%s, texCoord);", m_id, sampled.c_str());
 }
 
 void TextureSampleNode::renderProperties() {
@@ -39,7 +55,7 @@ ColorConstantNode::ColorConstantNode(uint32_t id)
 
 std::string ColorConstantNode::generateCode(const std::vector<std::string>& inputVars) const {
     (void)inputVars;
-    return fmt::format("    vec4 var_{} = {};", m_id, vec4ToStr(color));
+    return str("    vec4 var_%u = %s;", m_id, vec4ToStr(color).c_str());
 }
 
 void ColorConstantNode::renderProperties() {
@@ -54,7 +70,7 @@ FloatConstantNode::FloatConstantNode(uint32_t id)
 
 std::string FloatConstantNode::generateCode(const std::vector<std::string>& inputVars) const {
     (void)inputVars;
-    return fmt::format("    float var_{} = {}f;", m_id, floatToStr(value));
+    return str("    float var_%u = %s;", m_id, floatToStr(value).c_str());
 }
 
 void FloatConstantNode::renderProperties() {
@@ -72,7 +88,7 @@ MultiplyNode::MultiplyNode(uint32_t id)
 std::string MultiplyNode::generateCode(const std::vector<std::string>& inputVars) const {
     std::string a = inputVars.size() > 0 && !inputVars[0].empty() ? inputVars[0] : "1.0f";
     std::string b = inputVars.size() > 1 && !inputVars[1].empty() ? inputVars[1] : "1.0f";
-    return fmt::format("    float var_{} = {} * {};", m_id, a, b);
+    return str("    float var_%u = %s * %s;", m_id, a.c_str(), b.c_str());
 }
 
 const char* MultiplyNode::outputVarType() const { return "float"; }
@@ -88,7 +104,7 @@ AddNode::AddNode(uint32_t id)
 std::string AddNode::generateCode(const std::vector<std::string>& inputVars) const {
     std::string a = inputVars.size() > 0 && !inputVars[0].empty() ? inputVars[0] : "0.0f";
     std::string b = inputVars.size() > 1 && !inputVars[1].empty() ? inputVars[1] : "0.0f";
-    return fmt::format("    float var_{} = {} + {};", m_id, a, b);
+    return str("    float var_%u = %s + %s;", m_id, a.c_str(), b.c_str());
 }
 
 const char* AddNode::outputVarType() const { return "float"; }
@@ -106,7 +122,7 @@ std::string LerpNode::generateCode(const std::vector<std::string>& inputVars) co
     std::string from = inputVars.size() > 0 && !inputVars[0].empty() ? inputVars[0] : "vec4(0.0f)";
     std::string to   = inputVars.size() > 1 && !inputVars[1].empty() ? inputVars[1] : "vec4(1.0f)";
     std::string t    = inputVars.size() > 2 && !inputVars[2].empty() ? inputVars[2] : "0.5f";
-    return fmt::format("    vec4 var_{} = mix({}, {}, {});", m_id, from, to, t);
+    return str("    vec4 var_%u = mix(%s, %s, %s);", m_id, from.c_str(), to.c_str(), t.c_str());
 }
 
 TimeNode::TimeNode(uint32_t id)
@@ -117,7 +133,7 @@ TimeNode::TimeNode(uint32_t id)
 
 std::string TimeNode::generateCode(const std::vector<std::string>& inputVars) const {
     (void)inputVars;
-    return fmt::format("    float var_{} = u_time;", m_id);
+    return str("    float var_%u = u_time;", m_id);
 }
 
 VertexPositionNode::VertexPositionNode(uint32_t id)
@@ -128,7 +144,7 @@ VertexPositionNode::VertexPositionNode(uint32_t id)
 
 std::string VertexPositionNode::generateCode(const std::vector<std::string>& inputVars) const {
     (void)inputVars;
-    return fmt::format("    vec3 var_{} = v_position;", m_id);
+    return str("    vec3 var_%u = v_position;", m_id);
 }
 
 OutputPBRNode::OutputPBRNode(uint32_t id)
@@ -146,13 +162,13 @@ std::string OutputPBRNode::generateCode(const std::vector<std::string>& inputVar
     std::string metal   = inputVars.size() > 2 && !inputVars[2].empty() ? inputVars[2] : "0.0f";
     std::string rough   = inputVars.size() > 3 && !inputVars[3].empty() ? inputVars[3] : "0.5f";
 
-    return fmt::format(
-        "    float metallic_{} = {};\n"
-        "    float roughness_{} = {};\n"
-        "    // PBR Output: albedo={}, metallic={}, roughness={}, normal={}",
-        m_id, metal,
-        m_id, rough,
-        albedo, metal, rough, normal
+    return str(
+        "    float metallic_%u = %s;\n"
+        "    float roughness_%u = %s;\n"
+        "    // PBR Output: albedo=%s, metallic=%s, roughness=%s, normal=%s",
+        m_id, metal.c_str(),
+        m_id, rough.c_str(),
+        albedo.c_str(), metal.c_str(), rough.c_str(), normal.c_str()
     );
 }
 
