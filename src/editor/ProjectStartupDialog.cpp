@@ -305,24 +305,51 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
-    static char browsePath[512] = {0};
-    ImGui::InputText("Search Path##Browse", browsePath, sizeof(browsePath));
-    
-    if (ImGui::Button("Browse Folder...##Browse")) {
-        // TODO: Implement file picker (ImGui or native dialog)
-        // For now, user can manually type path above
+    std::optional<ProjectConfig> result;
+
+    ImGui::InputTextWithHint("##browse_path", "Enter directory path...", 
+                            m_browsePath.data(), m_browsePath.capacity());
+    ImGui::SameLine();
+    if (ImGui::Button("Browse Folder...##browse", ImVec2(120, 0))) {
+        showToast("File picker coming soon", ToastType::Info);
     }
 
-    ImGui::TextDisabled("Tip: Type path above or use Browse button (coming soon)");
-    ImGui::Text("Looking for project.caffeine files...");
-    ImGui::BeginChild("BrowseList", ImVec2(0, 250), true);
-    
-    // Placeholder: would populate m_browseResults with matching projects
-    ImGui::TextDisabled("(Folder browser not yet implemented)");
-    
-    ImGui::EndChild();
+    ImGui::Spacing();
+    ImGui::Separator();
 
-    return std::nullopt;
+    if (ImGui::BeginChild("browse_list", ImVec2(0, 300), true)) {
+        if (m_browseResults.empty()) {
+            ImGui::TextDisabled("No projects found. Type a path and press Enter.");
+        } else {
+            ImGui::Text("Found %zu project(s):", m_browseResults.size());
+            ImGui::Separator();
+
+            for (size_t i = 0; i < m_browseResults.size(); ++i) {
+                const auto& projPath = m_browseResults[i];
+                std::string projName = projPath.filename().string();
+
+                bool selected = (m_selectedBrowseIndex == (int)i);
+                if (ImGui::Selectable(projName.c_str(), selected)) {
+                    m_selectedBrowseIndex = i;
+                }
+
+                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+                ImGui::PushID((int)i + 1000);
+                if (ImGui::Button("Open##browse", ImVec2(70, 0))) {
+                    result = tryOpenProject(projPath);
+                    if (result) {
+                        showToast("Project opened!", ToastType::Success);
+                    } else {
+                        showToast("Failed to open project", ToastType::Error);
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    return result;
 }
 
 void ProjectStartupDialog::renderErrorPopup() {
