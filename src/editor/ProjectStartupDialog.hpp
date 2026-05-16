@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Types.hpp"
 #include "editor/ProjectManager.hpp"
+#include "editor/FilePicker.hpp"
 #include <optional>
 #include <string>
 #include <filesystem>
@@ -94,6 +95,10 @@ private:
 
     std::vector<Toast> m_toastQueue;
     static constexpr int MAX_VISIBLE_TOASTS = 3;
+
+    // ── File picker state ────────────────────────────────────────────────
+    bool m_showLocationPicker = false;
+    bool m_showBrowsePicker = false;
 
     // ── ProjectManager for file operations ────────────────────────────
     ProjectManager m_projectManager;

@@ -232,8 +232,17 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
 
     ImGui::Text("Location: %s", m_selectedLocation.c_str());
     if (ImGui::Button("Browse Location...##Create", ImVec2(150, 0))) {
-        m_locationPicked = true;
-        showToast("File picker coming soon", ToastType::Info);
+        m_showLocationPicker = true;
+    }
+
+    if (m_showLocationPicker) {
+        if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Project Location", m_selectedLocation)) {
+            m_selectedLocation = path.value().string();
+            m_showLocationPicker = false;
+            showToast("Location selected!", ToastType::Success);
+        } else if (!ImGui::IsPopupOpen("Select Project Location", ImGuiPopupFlags_AnyPopup)) {
+            m_showLocationPicker = false;
+        }
     }
 
     ImGui::Spacing();
@@ -311,7 +320,18 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
                             m_browsePath.data(), m_browsePath.capacity());
     ImGui::SameLine();
     if (ImGui::Button("Browse Folder...##browse", ImVec2(120, 0))) {
-        showToast("File picker coming soon", ToastType::Info);
+        m_showBrowsePicker = true;
+    }
+
+    if (m_showBrowsePicker) {
+        std::filesystem::path browsePathFs = m_browsePath.empty() ? std::filesystem::current_path() : std::filesystem::path(m_browsePath);
+        if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Folder to Browse", browsePathFs)) {
+            m_browsePath = path.value().string();
+            m_showBrowsePicker = false;
+            showToast("Scanning directory...", ToastType::Info);
+        } else if (!ImGui::IsPopupOpen("Select Folder to Browse", ImGuiPopupFlags_AnyPopup)) {
+            m_showBrowsePicker = false;
+        }
     }
 
     ImGui::Spacing();

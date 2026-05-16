@@ -51,6 +51,7 @@ add_library(caffeine-core
     src/editor/EditorContext.cpp
     src/editor/ProjectManager.cpp
     src/editor/ProjectStartupDialog.cpp
+    src/editor/FilePicker.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC
