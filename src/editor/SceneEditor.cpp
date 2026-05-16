@@ -51,11 +51,14 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
         }
     });
 
+    m_audioPreview.init();
+
     return true;
 }
 
 void SceneEditor::shutdown() {
     m_viewport.shutdown();
+    m_audioPreview.shutdown();
 }
 #endif
 
@@ -134,6 +137,7 @@ void SceneEditor::render(
     m_profiler.render(Debug::Profiler::instance());
     m_scriptEditor.render();
     m_materialEditor.onImGuiRender();
+    m_audioPreview.onImGuiRender();
     m_animationTimeline.render();
     m_tilemapEditor.render();
     m_commandPalette.render();

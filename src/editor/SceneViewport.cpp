@@ -1,6 +1,7 @@
 #include "editor/SceneViewport.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "audio/AudioComponents.hpp"
 #include <filesystem>
 
 #ifdef CF_HAS_IMGUI
@@ -86,6 +87,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
 
         if (asset->type == AssetType::Texture) {
             world.add<ECS::Sprite>(entity, assetPath.filename().string(), 0);
+        }
+
+        if (asset->type == AssetType::Audio) {
+            auto& emitter = world.add<Audio::AudioEmitter>(entity);
+            emitter.clipPath = assetPath.filename().string().c_str();
         }
 
         ctx.selectedEntity = entity;
@@ -207,6 +213,25 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         case EditorContext::GizmoMode::None:
             dl->AddCircle(screenPos, 6, IM_COL32(255, 255, 255, 180), 12, 2.0f);
             break;
+    }
+
+    if (world.has<Audio::AudioEmitter>(ctx.selectedEntity)) {
+        auto* emitter = world.get<Audio::AudioEmitter>(ctx.selectedEntity);
+        if (emitter->spatial && emitter->maxDistance > 0.0f) {
+            f32 w2s = ctx.viewportZoom * 50.0f;
+            f32 fullVolumeRadius = emitter->maxDistance * 0.5f;
+            char buf[64];
+            dl->AddCircle(screenPos, fullVolumeRadius * w2s, IM_COL32(0, 255, 255, 80), 48, 2.0f);
+            snprintf(buf, sizeof(buf), "near %.0f", fullVolumeRadius);
+            dl->AddText(ImVec2(screenPos.x + fullVolumeRadius * w2s + 4, screenPos.y - 8),
+                        IM_COL32(0, 255, 255, 180), buf);
+            dl->AddCircle(screenPos, emitter->maxDistance * w2s, IM_COL32(50, 130, 255, 60), 64, 2.0f);
+            snprintf(buf, sizeof(buf), "max %.0f", emitter->maxDistance);
+            dl->AddText(ImVec2(screenPos.x + emitter->maxDistance * w2s + 4, screenPos.y - 8),
+                        IM_COL32(50, 130, 255, 180), buf);
+            dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 20),
+                        IM_COL32(180, 180, 255, 220), "S");
+        }
     }
 }
 

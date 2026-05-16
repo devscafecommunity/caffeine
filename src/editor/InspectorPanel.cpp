@@ -1,5 +1,6 @@
 #include "editor/InspectorPanel.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "audio/AudioComponents.hpp"
 #include <filesystem>
 
 #ifdef CF_HAS_IMGUI
@@ -181,7 +182,50 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
 
 void InspectorPanel::drawCamera(ECS::World&, ECS::Entity, EditorContext&) {}
 void InspectorPanel::drawRigidBody2D(ECS::World&, ECS::Entity, EditorContext&) {}
-void InspectorPanel::drawAudioSource(ECS::World&, ECS::Entity, EditorContext&) {}
+void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    (void)ctx;
+    if (!world.has<Audio::AudioEmitter>(e)) {
+        if (ImGui::CollapsingHeader("Audio Source")) {
+            if (ImGui::Button("+ Add Audio Source")) {
+                world.add<Audio::AudioEmitter>(e);
+                ctx.isDirty = true;
+            }
+        }
+        return;
+    }
+
+    if (ImGui::CollapsingHeader("Audio Source", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto* emitter = world.get<Audio::AudioEmitter>(e);
+
+        char buf[128];
+        strncpy(buf, emitter->clipPath.data(), sizeof(buf));
+        buf[sizeof(buf) - 1] = '\0';
+        if (ImGui::InputText("Clip", buf, sizeof(buf))) {
+            emitter->clipPath = buf;
+            ctx.isDirty = true;
+        }
+        if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
+            if (asset->type == AssetType::Audio) {
+                std::filesystem::path p(asset->path);
+                emitter->clipPath = p.filename().string().c_str();
+                ctx.isDirty = true;
+            }
+        }
+
+        ImGui::SliderFloat("Volume", &emitter->volume, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+
+        ImGui::DragFloat("Max Distance", &emitter->maxDistance, 1.0f, 0.0f, 2000.0f, "%.0f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+
+        ImGui::Checkbox("Loop", &emitter->loop);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+        ImGui::Checkbox("Play on Spawn", &emitter->playOnSpawn);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+        ImGui::Checkbox("Spatial", &emitter->spatial);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+    }
+}
 
 void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
     if (!world.has<Script::ScriptComponent>(e)) {

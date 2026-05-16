@@ -29,7 +29,8 @@ private:
     static constexpr u32 kTypeSprite       = 6;
     static constexpr u32 kTypeHealth       = 7;
     static constexpr u32 kTypeTag          = 8;
-    static constexpr u32 kTypeCount        = 9;
+    static constexpr u32 kTypeAudioEmitter = 9;
+    static constexpr u32 kTypeCount        = 10;
 
     // File format constants
     static constexpr u32 kFormatVersion    = 1;

@@ -279,6 +279,7 @@ with open(sys.argv[1], 'w') as f:
         src/editor/ShaderGraph.cpp
         src/editor/MaterialEditorPanel.cpp
         src/editor/PreviewRenderer.cpp
+        src/editor/AudioPreviewPanel.cpp
     )
     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
