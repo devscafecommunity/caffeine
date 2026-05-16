@@ -46,11 +46,15 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     static bool initialized = false;
     static char searchFilter[256] = {0};
     static bool windowOpen = false;
+    static std::string lastTitle;
 
-    if (!initialized) {
+    // Reset state if we're opening a new dialog with a different title
+    if (!initialized || lastTitle != title) {
         currentPath = defaultPath.empty() ? std::filesystem::current_path() : defaultPath;
         initialized = true;
         windowOpen = true;
+        lastTitle = title;
+        memset(searchFilter, 0, sizeof(searchFilter));
     }
 
     if (!windowOpen) {
