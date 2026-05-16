@@ -53,6 +53,7 @@ TEST_CASE("Vector - Resize", "[containers][vector]") {
 TEST_CASE("Vector - Reserve", "[containers][vector]") {
     Vector<int> vec;
     usize initialCapacity = vec.capacity();
+    (void)initialCapacity;
 
     vec.reserve(100);
     REQUIRE(vec.capacity() >= 100);

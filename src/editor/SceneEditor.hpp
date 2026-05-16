@@ -12,7 +12,14 @@
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
+
+#ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
+#endif
+
+#include "editor/AnimationTimeline.hpp"
+#include "editor/TilemapEditor.hpp"
+#include "editor/CommandPalette.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -69,6 +76,9 @@ public:
     ConsoleWindow&  console() { return m_console; }
     ProfilerWindow& profiler() { return m_profiler; }
     ScriptEditorWindow& scriptEditor() { return m_scriptEditor; }
+    AnimationTimelinePanel& animationTimeline() { return m_animationTimeline; }
+    TilemapEditorPanel& tilemapEditor() { return m_tilemapEditor; }
+    CommandPalette& commandPalette() { return m_commandPalette; }
 
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
@@ -95,7 +105,14 @@ private:
     ConsoleWindow   m_console;
     ProfilerWindow  m_profiler;
     ScriptEditorWindow m_scriptEditor;
+
+#ifdef CF_HAS_IMGUI
     MaterialEditorPanel m_materialEditor;
+#endif
+
+    AnimationTimelinePanel m_animationTimeline;
+    TilemapEditorPanel m_tilemapEditor;
+    CommandPalette m_commandPalette;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;

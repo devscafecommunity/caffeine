@@ -272,6 +272,9 @@ with open(sys.argv[1], 'w') as f:
         src/editor/DragDropSystem.cpp
         src/editor/SceneTabManager.cpp
         src/editor/ScriptEditorWindow.cpp
+        src/editor/AnimationTimeline.cpp
+        src/editor/TilemapEditor.cpp
+        src/editor/CommandPalette.cpp
         src/editor/ShaderNode.cpp
         src/editor/ShaderGraph.cpp
         src/editor/MaterialEditorPanel.cpp

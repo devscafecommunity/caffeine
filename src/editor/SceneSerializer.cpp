@@ -52,6 +52,7 @@ bool SceneSerializer::serialize(const std::string& filepath) {
             entityMap[eid].emplace_back(0, std::move(data)); // typeId filled below
         }
     };
+    (void)addToMap;
 
     // Collect each component type
     // Type 0: NameComponent (needs special handling for char[64])

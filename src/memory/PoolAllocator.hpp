@@ -33,6 +33,8 @@ public:
     }
 
     void* alloc(usize size, usize alignment = 8) override {
+        (void)size;
+        (void)alignment;
         CF_ASSERT(size <= m_slotSize, "Requested size exceeds slot size");
         
         if (!m_freeList) {

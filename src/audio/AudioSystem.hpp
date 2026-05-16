@@ -192,7 +192,7 @@ public:
         (void)musicChannelCount;
         if (m_initialized) return true;
 
-        if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) return false;
+        if (static_cast<int>(SDL_InitSubSystem(SDL_INIT_AUDIO)) < 0) return false;
 
         SDL_AudioSpec spec;
         spec.format   = SDL_AUDIO_S16;

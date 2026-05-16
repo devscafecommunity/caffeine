@@ -29,6 +29,9 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
     ../src/editor/SceneTabManager.cpp
+    ../src/editor/AnimationTimeline.cpp
+    ../src/editor/TilemapEditor.cpp
+    ../src/editor/CommandPalette.cpp
 )
 
 if(SDL3_FOUND)

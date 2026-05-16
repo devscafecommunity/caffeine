@@ -22,6 +22,7 @@ TEST_CASE("Camera3D view matrix matches lookAt", "[camera3d]") {
     Camera3D cam;
     cam.lookAt({0, 0, -5}, {0, 0, 0});
     Mat4 view = cam.viewMatrix();
+    (void)view;
     Vec3 pos = cam.position();
     REQUIRE(pos.x == Approx(0.0f));
     REQUIRE(pos.y == Approx(0.0f));
