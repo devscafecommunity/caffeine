@@ -278,33 +278,35 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
         if (m_recentProjects.empty()) {
             ImGui::TextDisabled("No projects yet. Create one in 'Create New' tab!");
         } else {
-            for (size_t i = 0; i < m_recentProjects.size(); ++i) {
-                const auto& projPath = m_recentProjects[i];
-                std::string projName = projPath.filename().string();
-                
-                if (strlen(m_searchFilter) > 0) {
-                    if (projName.find(m_searchFilter) == std::string::npos) {
-                        continue;
-                    }
-                }
+             for (size_t i = 0; i < m_recentProjects.size(); ++i) {
+                 const auto& projPath = m_recentProjects[i];
+                 std::string projName = projPath.filename().string();
+                 
+                 if (strlen(m_searchFilter) > 0) {
+                     if (projName.find(m_searchFilter) == std::string::npos) {
+                         continue;
+                     }
+                 }
 
-                bool selected = (m_selectedRecentIndex == (int)i);
-                if (ImGui::Selectable(projName.c_str(), selected)) {
-                    m_selectedRecentIndex = i;
-                }
+                 ImGui::PushID((int)i);
+                 
+                 bool selected = (m_selectedRecentIndex == (int)i);
+                 if (ImGui::Selectable(projName.c_str(), selected)) {
+                     m_selectedRecentIndex = i;
+                 }
 
-                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                ImGui::PushID((int)i);
-                if (ImGui::Button("Open##recent", ImVec2(70, 0))) {
-                    result = tryOpenProject(projPath);
-                    if (result) {
-                        showToast("Project opened!", ToastType::Success);
-                    } else {
-                        showToast("Failed to open project", ToastType::Error);
-                    }
-                }
-                ImGui::PopID();
-            }
+                 ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+                 if (ImGui::Button("Open", ImVec2(70, 0))) {
+                     result = tryOpenProject(projPath);
+                     if (result) {
+                         showToast("Project opened!", ToastType::Success);
+                     } else {
+                         showToast("Failed to open project", ToastType::Error);
+                     }
+                 }
+                 
+                 ImGui::PopID();
+             }
         }
         ImGui::EndChild();
     }
@@ -345,14 +347,15 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
                 const auto& projPath = m_browseResults[i];
                 std::string projName = projPath.filename().string();
 
+                ImGui::PushID((int)i);
+                
                 bool selected = (m_selectedBrowseIndex == (int)i);
                 if (ImGui::Selectable(projName.c_str(), selected)) {
                     m_selectedBrowseIndex = i;
                 }
 
                 ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                ImGui::PushID((int)i + 1000);
-                if (ImGui::Button("Open##browse", ImVec2(70, 0))) {
+                if (ImGui::Button("Open", ImVec2(70, 0))) {
                     result = tryOpenProject(projPath);
                     if (result) {
                         showToast("Project opened!", ToastType::Success);
@@ -360,6 +363,7 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
                         showToast("Failed to open project", ToastType::Error);
                     }
                 }
+                
                 ImGui::PopID();
             }
         }
