@@ -141,24 +141,36 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     
     ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
     
     if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
         ImGui::Text("Welcome to Doppio — Select or Create a Project");
         ImGui::Separator();
 
-        ImGui::Text("Project Name:");
-        ImGui::InputText("##ProjectName", m_projectName, sizeof(m_projectName));
+        if (ImGui::BeginTabBar("ProjectDialogTabs")) {
+            
+            if (ImGui::BeginTabItem("Create New")) {
+                if (auto config = renderCreateTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
 
-        ImGui::Spacing();
-        ImGui::Separator();
+            if (ImGui::BeginTabItem("Open Recent")) {
+                if (auto config = renderRecentTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
 
-        if (ImGui::Button("Create Empty Project", ImVec2(200, 0))) {
-            result = tryCreateProject();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Quit", ImVec2(100, 0))) {
-            m_open = false;
+            if (ImGui::BeginTabItem("Browse Projects")) {
+                if (auto config = renderBrowseTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
 
         renderErrorPopup();
@@ -172,25 +184,75 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
-    ImGui::InputText("Project Name##CreateTab", m_projectName, sizeof(m_projectName));
+    std::optional<ProjectConfig> result;
 
-    const char* templates[] = {"Empty", "2D", "3D"};
-    ImGui::Combo("Template##CreateTab", &m_templateIndex, templates, IM_ARRAYSIZE(templates));
-
-    ImGui::Text("Location: %s", m_selectedLocation.c_str());
-    if (ImGui::Button("Browse Location...##Create")) {
-        m_locationPicked = true;
-        // TODO: Implement native file picker or ImGui folder browser (future)
+    ImGui::Text("Project Name:");
+    ImGui::InputText("##ProjectName", m_projectName, sizeof(m_projectName));
+    
+    if (m_projectName[0] == '\0') {
+        ImGui::TextDisabled("(Enter a project name)");
     }
 
     ImGui::Spacing();
     ImGui::Separator();
 
+    ImGui::Text("Template:");
+    ImGui::BeginGroup();
+    
+    const char* templates[] = {"Empty", "2D", "3D"};
+    const char* descriptions[] = {
+        "Blank project, no starter assets",
+        "Pre-configured for 2D games",
+        "Pre-configured for 3D games"
+    };
+    
+    for (int i = 0; i < 3; ++i) {
+        bool selected = (m_templateIndex == i);
+        ImVec4 borderColor = selected ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 0.5f);
+        
+        ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+        
+        if (ImGui::Selectable(templates[i], selected, ImGuiSelectableFlags_None, ImVec2(150, 80))) {
+            m_templateIndex = i;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", descriptions[i]);
+        
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::EndGroup();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    ImGui::Text("Location: %s", m_selectedLocation.c_str());
+    if (ImGui::Button("Browse Location...##Create", ImVec2(150, 0))) {
+        m_locationPicked = true;
+        showToast("File picker coming soon", ToastType::Info);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    bool canCreate = (m_projectName[0] != '\0');
+    if (!canCreate) ImGui::BeginDisabled();
+    
     if (ImGui::Button("Create & Open", ImVec2(150, 0))) {
-        return tryCreateProject();
+        result = tryCreateProject();
+        if (result) {
+            showToast("Project created successfully!", ToastType::Success);
+        } else {
+            showToast("Failed to create project", ToastType::Error);
+        }
     }
     
-    return std::nullopt;
+    if (!canCreate) ImGui::EndDisabled();
+
+    return result;
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
