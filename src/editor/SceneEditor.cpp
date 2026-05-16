@@ -14,6 +14,43 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_assetBrowser.init(assetsPath);
     m_assetManager = assetManager;
     m_tabManager.newScene("Untitled");
+
+    m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {
+        m_hierarchy.open();
+    });
+    m_commandPalette.registerCommand("panel_inspector", "Inspector Panel", "Panels", [this]() {
+        m_inspector.open();
+    });
+    m_commandPalette.registerCommand("panel_console", "Console", "Panels", [this]() {
+        m_console.open();
+    });
+    m_commandPalette.registerCommand("panel_profiler", "Profiler", "Panels", [this]() {
+        m_profiler.open();
+    });
+    m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Panels", [this]() {
+        m_assetBrowser.open();
+    });
+    m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Panels", [this]() {
+        m_animationTimeline.open();
+    });
+    m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Panels", [this]() {
+        m_tilemapEditor.open();
+    });
+    m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
+        m_scriptEditor.open();
+    });
+    m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Panels", [this]() {
+    });
+
+    m_commandPalette.registerCommand("action_new_scene", "New Scene", "Actions", [this]() {
+        doNewScene();
+    });
+    m_commandPalette.registerCommand("action_save_scene", "Save Scene", "Actions", [this]() {
+        if (auto* world = m_tabManager.activeWorld()) {
+            saveSceneAs(*world);
+        }
+    });
+
     return true;
 }
 
@@ -96,6 +133,9 @@ void SceneEditor::render(
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
     m_scriptEditor.render();
+    m_animationTimeline.render();
+    m_tilemapEditor.render();
+    m_commandPalette.render();
 
     handleAssetDrop(*activeWorld);
 
@@ -236,6 +276,12 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 
 void SceneEditor::handleShortcuts(ECS::World& world) {
     bool ctrl = ImGui::GetIO().KeyCtrl;
+    bool shift = ImGui::GetIO().KeyShift;
+
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_P)) {
+        m_commandPalette.toggle();
+        return;
+    }
 
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
         if (m_ctx.currentScenePath.empty()) {

@@ -19,6 +19,7 @@ public:
         u32 sampleRate, u16 channels,
         const AudioEncodeOptions& opts = {})
     {
+        (void)opts;
         ConversionResult result;
         
         if (!samples || sampleCount == 0) {

@@ -677,6 +677,7 @@ TEST_CASE("SceneSerializer - Sprite component serialization", "[editor][serializ
     q.with<ECS::Sprite>();
     bool found = false;
     loaded.forEach<ECS::Sprite>(q, [&](ECS::Entity ent, ECS::Sprite& sprite) {
+        (void)ent;
         REQUIRE(sprite.name == "hero_sprite.png");
         REQUIRE(sprite.frameIndex == 0);
         found = true;

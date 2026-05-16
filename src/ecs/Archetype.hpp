@@ -113,6 +113,9 @@ public:
         }
         
         m_poolRegistry.forEach([indexInArchetype](u32 cid, void* pool, CopyFunc copyFunc, CreatePoolFunc createFunc, RemoveFunc removeFunc) {
+            (void)cid;
+            (void)copyFunc;
+            (void)createFunc;
             if (pool && removeFunc) {
                 removeFunc(pool, indexInArchetype);
             }
@@ -155,6 +158,7 @@ public:
     
     template<typename T>
     u32 addComponent(u32 indexInArchetype, const T& component) {
+        (void)indexInArchetype;
         u32 componentID = ComponentID::get<T>();
         void* pool = m_poolRegistry.getPool(componentID);
         

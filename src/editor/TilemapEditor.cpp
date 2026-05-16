@@ -220,9 +220,9 @@ void TilemapEditorPanel::renderLayers() {
         }
 
         ImGui::SameLine();
-        ImGui::Checkbox(("##visible" + std::to_string(i)).c_str(), &layer.isVisible);
+        ImGui::Checkbox(("##visible" + std::to_string(i)).c_str(), &layer.visible());
         ImGui::SameLine();
-        ImGui::Checkbox(("##locked" + std::to_string(i)).c_str(), &layer.isLocked);
+        ImGui::Checkbox(("##locked" + std::to_string(i)).c_str(), &layer.locked());
     }
 
     if (ImGui::Button("+ Add Layer")) {

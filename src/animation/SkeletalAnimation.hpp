@@ -407,6 +407,7 @@ inline void SkeletalAnimationSystem::sampleBlendTree(
                     Vec3 posA(sampleA[j].data()[0], sampleA[j].data()[1], sampleA[j].data()[2]);
                     Vec3 posB(sampleB[j].data()[0], sampleB[j].data()[1], sampleB[j].data()[2]);
                     Vec3 pos = Detail::lerpVec3(posA, posB, t);
+                    (void)pos;
                     // As bone matrices completas usam lerp para simplificar
                     Mat4 blended;
                     for (u32 k = 0; k < 16; ++k) {

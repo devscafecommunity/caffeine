@@ -372,6 +372,7 @@ TEST_CASE("JobSystem - parallelFor with barrier", "[threading][parallel]") {
         [&sum](u32 i) { sum.fetch_add(i); },
         &barrier
     );
+    (void)handle;
 
     barrier.wait();
     // sum of 0..499 = 499*500/2 = 124750

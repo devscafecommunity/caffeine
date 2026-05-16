@@ -302,6 +302,7 @@ TEST_CASE("Octree - rebuild", "[spatial][octree]") {
 
     REQUIRE(octree.entityCount() == 10);
     u32 nodesBefore = octree.nodeCount();
+    (void)nodesBefore;
 
     octree.rebuild();
     REQUIRE(octree.entityCount() == 10);

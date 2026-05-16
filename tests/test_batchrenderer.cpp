@@ -75,7 +75,7 @@ TEST_CASE("BatchRenderer - setAtlas nullptr gives full-UV fallback without crash
 TEST_CASE("BatchRenderer - setCamera stores camera without crash", "[batch]") {
     BatchRenderer renderer(nullptr);
     Camera2D cam;
-    cam.setOrtho(800.0f, 600.0f, -1.0f, 1.0f);
+    cam.setViewport({{0, 0}, {800.0f, 600.0f}});
     REQUIRE_NOTHROW(renderer.setCamera(cam));
 
     Mat4 vp = cam.viewProjectionMatrix();
