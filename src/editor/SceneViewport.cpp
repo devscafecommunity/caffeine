@@ -52,9 +52,17 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
                            ) {
     if (!m_open) return;
 
+    if (!ImGui::Begin("Scene Viewport", &m_open)) {
+        ImGui::End();
+        return;
+    }
+
 #ifdef CF_HAS_SDL3
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-    if (viewportSize.x < 1 || viewportSize.y < 1) return;
+    if (viewportSize.x < 1 || viewportSize.y < 1) {
+        ImGui::End();
+        return;
+    }
 
     if (m_initialized && m_colorTarget) {
         ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
@@ -63,7 +71,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
     }
 #else
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-    if (viewportSize.x < 1 || viewportSize.y < 1) return;
+    if (viewportSize.x < 1 || viewportSize.y < 1) {
+        ImGui::End();
+        return;
+    }
     ImGui::Dummy(viewportSize);
 #endif
 
@@ -150,6 +161,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
             if (ctx.viewportZoom > 10.0f) ctx.viewportZoom = 10.0f;
         }
     }
+
+    ImGui::End();
 }
 
 // ── Gizmo drawing ─────────────────────────────────────────────────

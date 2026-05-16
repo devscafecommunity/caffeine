@@ -50,6 +50,7 @@ public:
 private:
     // ── UI state ────────────────────────────────────────────────────────
     bool m_open = true;
+    bool m_popupOpened = false;  // Track if popup has been opened this session
     int m_activeTab = 0;  // 0=Create, 1=Recent, 2=Browse
 
     // ── Create tab state ────────────────────────────────────────────────
