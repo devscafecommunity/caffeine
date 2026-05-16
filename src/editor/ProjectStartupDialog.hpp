@@ -66,6 +66,13 @@ private:
     // ── Browse tab state ────────────────────────────────────────────────
     std::string m_browsePath;
     std::vector<std::filesystem::path> m_browseResults;
+    int m_selectedBrowseIndex = -1;
+
+    // ── Recent tab state ────────────────────────────────────────────────
+    std::vector<std::filesystem::path> m_recentProjects;
+    bool m_showAllRecents = false;
+    char m_searchFilter[256] = {0};
+    int m_selectedRecentIndex = -1;
 
     // ── Toast Notification System ───────────────────────────────
     enum class ToastType {
