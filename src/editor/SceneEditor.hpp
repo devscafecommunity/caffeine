@@ -58,9 +58,10 @@ public:
 
     void render(
 #ifdef CF_HAS_SDL3
-                Render::Camera2D& editorCamera
+                Render::Camera2D& editorCamera,
 #endif
-               );
+                f32 deltaTime = 0.016f
+                );
 
     // ── Serialization ──
 

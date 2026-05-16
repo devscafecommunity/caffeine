@@ -67,9 +67,10 @@ void SceneEditor::shutdown() {
 
 void SceneEditor::render(
 #ifdef CF_HAS_SDL3
-                          Render::Camera2D& editorCamera
+                Render::Camera2D& editorCamera,
 #endif
-                         ) {
+                f32 deltaTime
+                ) {
     if (!m_open) return;
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
@@ -139,7 +140,7 @@ void SceneEditor::render(
     m_scriptEditor.render();
     m_materialEditor.onImGuiRender();
     m_audioPreview.onImGuiRender();
-    m_animationTimeline.render();
+    m_animationTimeline.render(deltaTime);
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();

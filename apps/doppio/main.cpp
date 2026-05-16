@@ -122,6 +122,7 @@ int main(int, char**) {
     // (T0.4 — IDebugHooks will be wired here in a follow-up)
 
     bool running = true;
+    Uint64 lastFrameTime = SDL_GetTicksNS();
     while (running && editor.isOpen()) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -129,11 +130,15 @@ int main(int, char**) {
             if (event.type == SDL_EVENT_QUIT) running = false;
         }
 
+        Uint64 currentFrameTime = SDL_GetTicksNS();
+        float deltaTime = static_cast<float>(currentFrameTime - lastFrameTime) / 1'000'000'000.0f;
+        lastFrameTime = currentFrameTime;
+
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
         if (!cmd) continue;
 
         imgui.beginFrame();
-        editor.render(editorCamera);
+        editor.render(editorCamera, deltaTime);
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;

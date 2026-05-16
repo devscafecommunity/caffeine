@@ -145,8 +145,19 @@ void AnimationTimelinePanel::moveSelectedKeyframe(f32 newTime) {
 
 namespace Caffeine::Editor {
 
-void AnimationTimelinePanel::render() {
+void AnimationTimelinePanel::render(f32 deltaTime) {
     if (!m_open) return;
+
+    if (m_isPlaying && m_clip) {
+        m_currentTime += deltaTime;
+        if (m_currentTime >= m_clip->duration()) {
+            if (m_looping) {
+                m_currentTime = 0.0f;
+            } else {
+                m_isPlaying = false;
+            }
+        }
+    }
 
     if (ImGui::Begin("Animation Timeline", &m_open)) {
         renderHeader();

@@ -34,6 +34,7 @@ static struct {
     Caffeine::Editor::SceneEditor* editor = nullptr;
     Caffeine::Render::Camera2D* camera = nullptr;
     ImGuiTestEngine* testEngine = nullptr;
+    Uint64 lastFrameTime = SDL_GetTicksNS();
     bool gpuAvailable = false;
 } s_state;
 
@@ -51,8 +52,12 @@ void PumpFrame() {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
+    Uint64 currentFrameTime = SDL_GetTicksNS();
+    float deltaTime = static_cast<float>(currentFrameTime - s_state.lastFrameTime) / 1'000'000'000.0f;
+    s_state.lastFrameTime = currentFrameTime;
+
     if (s_state.editor && s_state.gpuAvailable) {
-        s_state.editor->render(*s_state.camera);
+        s_state.editor->render(*s_state.camera, deltaTime);
     }
 
     ImGui::Render();
