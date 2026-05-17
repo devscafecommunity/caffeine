@@ -34,6 +34,12 @@ public:
         List
     };
 
+    // ── Browse mode ────────────────────────────────────────────────────
+    enum class BrowseMode : u8 {
+        Filesystem,
+        CapFile
+    };
+
     // ── File entry ─────────────────────────────────────────────────────
     struct Entry {
         std::filesystem::path path;
@@ -76,6 +82,10 @@ public:
     const std::vector<Entry>& entries() const;
     usize entryCount() const;
 
+    // CAP file browsing
+    void loadCapFile(const std::filesystem::path& capPath);
+    BrowseMode browseMode() const { return m_browseMode; }
+
     // ── UI layer (requires ImGui) ─────────────────────────────────────
     #ifdef CF_HAS_IMGUI
     void render(EditorContext& ctx);
@@ -106,6 +116,9 @@ private:
     std::string m_searchFilter;
     ViewMode m_viewMode = ViewMode::Grid;
     u32 m_thumbnailSize = 64;
+    
+    BrowseMode m_browseMode = BrowseMode::Filesystem;
+    std::filesystem::path m_currentCapPath;
 };
 
 } // namespace Caffeine::Editor

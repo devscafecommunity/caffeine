@@ -1,4 +1,5 @@
 #include "editor/AssetBrowser.hpp"
+#include "editor/CapLoader.hpp"
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Data layer — always compiled (no ImGui dependency)
@@ -16,6 +17,11 @@ void AssetBrowser::init(const char* rootPath) {
 }
 
 void AssetBrowser::refresh() {
+    if (m_browseMode == BrowseMode::CapFile) {
+        loadCapFile(m_currentCapPath);
+        return;
+    }
+
     m_entries.clear();
     if (!std::filesystem::exists(m_currentDir)) {
         applySearchFilter();
@@ -44,6 +50,40 @@ void AssetBrowser::refresh() {
         m_entries.push_back(std::move(e));
     }
 
+    applySearchFilter();
+}
+
+void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
+    m_entries.clear();
+    m_currentCapPath = capPath;
+    m_browseMode = BrowseMode::CapFile;
+    
+    auto assets = CapLoader::loadCap(capPath);
+    
+    for (const auto& asset : assets) {
+        Entry entry{};
+        entry.name = std::to_string(asset.hashID);
+        
+        switch (asset.type) {
+            case Caffeine::Assets::CafAssetType::Texture:
+                entry.type = AssetType::Texture;
+                break;
+            case Caffeine::Assets::CafAssetType::Audio:
+                entry.type = AssetType::Audio;
+                break;
+            case Caffeine::Assets::CafAssetType::Mesh:
+                entry.type = AssetType::Mesh;
+                break;
+            default:
+                entry.type = AssetType::Unknown;
+        }
+        
+        entry.path = capPath;
+        entry.fileSize = asset.cafBlob.size();
+        entry.isDirectory = false;
+        m_entries.push_back(entry);
+    }
+    
     applySearchFilter();
 }
 
@@ -386,7 +426,7 @@ void AssetBrowser::renderContextMenu() {
 
 // ── Main render ─────────────────────────────────────────────────────────────
 
-void AssetBrowser::render(EditorContext& ctx) {
+void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
     if (!m_open) return;
 
     if (ImGui::Begin("Asset Browser", &m_open)) {
