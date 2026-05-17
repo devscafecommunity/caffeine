@@ -225,26 +225,26 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     setEntityName(world, e, name);
     
     if (strcmp(componentType, "Camera2D") == 0) {
-        world.add<ECS::Camera2D>(e);
+        world.add<ECS::Camera2DComponent>(e);
     } else if (strcmp(componentType, "Camera3D") == 0) {
-        world.add<ECS::Camera3D>(e);
+        world.add<ECS::Camera3DComponent>(e);
         world.add<ECS::Position3D>(e);
         world.add<ECS::Rotation3D>(e);
         world.add<ECS::Scale3D>(e);
     } else if (strcmp(componentType, "DirectionalLight") == 0) {
-        world.add<ECS::Light>(e);
-        world.add<ECS::DirectionalLight>(e);
+        world.add<ECS::LightComponent>(e);
+        world.add<ECS::DirectionalLightComponent>(e);
     } else if (strcmp(componentType, "PointLight") == 0) {
-        world.add<ECS::Light>(e);
-        world.add<ECS::PointLight>(e);
+        world.add<ECS::LightComponent>(e);
+        world.add<ECS::PointLightComponent>(e);
         world.add<ECS::Position3D>(e);
     } else if (strcmp(componentType, "SpotLight") == 0) {
-        world.add<ECS::Light>(e);
-        world.add<ECS::SpotLight>(e);
+        world.add<ECS::LightComponent>(e);
+        world.add<ECS::SpotLightComponent>(e);
         world.add<ECS::Position3D>(e);
         world.add<ECS::Rotation3D>(e);
     } else if (strcmp(componentType, "MeshRenderer") == 0) {
-        world.add<ECS::MeshRenderer>(e);
+        world.add<ECS::MeshRendererComponent>(e);
         world.add<ECS::Position3D>(e);
         world.add<ECS::Rotation3D>(e);
         world.add<ECS::Scale3D>(e);
