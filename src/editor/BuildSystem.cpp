@@ -155,7 +155,7 @@ bool BuildSystem::PrepareOutputDirectory(const BuildSettings& settings) {
     }
 }
 
-bool BuildSystem::CompileScripts(const BuildSettings& settings) {
+bool BuildSystem::CompileScripts([[maybe_unused]] const BuildSettings& settings) {
     s_progress.status.store(BuildStatus::CompilingScripts, std::memory_order_relaxed);
     s_progress.progress.store(0.10f, std::memory_order_relaxed);
     s_progress.currentTask = "Compiling scripts";
@@ -166,7 +166,7 @@ bool BuildSystem::CompileScripts(const BuildSettings& settings) {
     return true;
 }
 
-bool BuildSystem::CookAssets(const BuildSettings& settings) {
+bool BuildSystem::CookAssets([[maybe_unused]] const BuildSettings& settings) {
     s_progress.status.store(BuildStatus::CookingAssets, std::memory_order_relaxed);
     s_progress.progress.store(0.20f, std::memory_order_relaxed);
     s_progress.currentTask = "Cooking assets";
@@ -186,7 +186,7 @@ bool BuildSystem::CookAssets(const BuildSettings& settings) {
     return true;
 }
 
-bool BuildSystem::LinkExecutable(const BuildSettings& settings) {
+bool BuildSystem::LinkExecutable([[maybe_unused]] const BuildSettings& settings) {
     s_progress.status.store(BuildStatus::LinkingExecutable, std::memory_order_relaxed);
     s_progress.progress.store(0.65f, std::memory_order_relaxed);
     s_progress.currentTask = "Linking executable";
@@ -197,7 +197,7 @@ bool BuildSystem::LinkExecutable(const BuildSettings& settings) {
     return true;
 }
 
-bool BuildSystem::GenerateProject(const BuildSettings& settings) {
+bool BuildSystem::GenerateProject([[maybe_unused]] const BuildSettings& settings) {
     s_progress.status.store(BuildStatus::GeneratingProject, std::memory_order_relaxed);
     s_progress.progress.store(0.85f, std::memory_order_relaxed);
     s_progress.currentTask = "Generating project configuration";
@@ -208,7 +208,7 @@ bool BuildSystem::GenerateProject(const BuildSettings& settings) {
     return true;
 }
 
-bool BuildSystem::RunGameAndWait(const BuildSettings& settings) {
+bool BuildSystem::RunGameAndWait([[maybe_unused]] const BuildSettings& settings) {
     s_progress.currentTask = "Game running...";
     std::cout << "Launching game\n";
     return true;

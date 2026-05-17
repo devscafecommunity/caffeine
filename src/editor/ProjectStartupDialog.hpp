@@ -56,13 +56,13 @@ private:
     bool m_popupOpened = false;  // Track if popup has been opened this session
     int m_activeTab = 0;  // 0=Create, 1=Recent, 2=Browse
 
-    // ── Create tab state ────────────────────────────────────────────────
-    char m_projectName[256] = {0};
-    int m_templateIndex = 0;  // 0=Empty, 1=2D, 2=3D
-    std::string m_selectedLocation;
-    bool m_locationPicked = false;
-    char m_errorMessage[512] = {0};
-    bool m_showError = false;
+     // ── Create tab state ────────────────────────────────────────────────
+     char m_projectName[256] = {0};
+     int m_templateIndex = 0;  // 0=Empty, 1=2D, 2=3D
+     std::string m_selectedLocation;
+     bool m_locationPicked = false;
+     char m_errorMessage[512] = {0};
+     bool m_showError = false;
 
     // ── Browse tab state ────────────────────────────────────────────────
     std::string m_browsePath;

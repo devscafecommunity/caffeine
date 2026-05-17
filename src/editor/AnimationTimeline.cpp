@@ -224,12 +224,12 @@ void AnimationTimelinePanel::renderTimeline() {
 
     ImGui::SetCursorScreenPos(ImVec2(timelinePos.x, timelinePos.y + 25.0f));
 
-    if (ImGui::Button("Add Keyframe")) {
-        if (m_tracks.empty() == false) {
-            FixedString<32> frameName = "frame_0";
-            addKeyframeToSelectedTrack(m_currentTime, i32(0));
-        }
-    }
+     if (ImGui::Button("Add Keyframe")) {
+         if (m_tracks.empty() == false) {
+             [[maybe_unused]] FixedString<32> frameName = "frame_0";
+             addKeyframeToSelectedTrack(m_currentTime, i32(0));
+         }
+     }
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         deleteSelectedKeyframe();

@@ -3,14 +3,14 @@
 
 namespace Caffeine::Editor {
 
-bool AssetCooker::CookTextures(const std::string& assetsDir, const std::string& outputDir, BuildProgress& progress) {
-    std::cout << "Cooking textures from: " << assetsDir << "\n";
-    std::cout << "Output directory: " << outputDir << "\n";
-    std::cout << "Texture cooking - processing PNG/TGA assets...\n";
-    return true;
-}
-
-bool AssetCooker::CookShaders(const std::string& assetsDir, const std::string& outputDir, BuildProgress& progress) {
+bool AssetCooker::CookTextures(const std::string& assetsDir, const std::string& outputDir, [[maybe_unused]] BuildProgress& progress) {
+     std::cout << "Cooking textures from: " << assetsDir << "\n";
+     std::cout << "Output directory: " << outputDir << "\n";
+     std::cout << "Texture cooking - processing PNG/TGA assets...\n";
+     return true;
+ }
+ 
+ bool AssetCooker::CookShaders(const std::string& assetsDir, const std::string& outputDir, [[maybe_unused]] BuildProgress& progress) {
     std::cout << "Cooking shaders from: " << assetsDir << "\n";
     std::cout << "Output directory: " << outputDir << "\n";
     std::cout << "Shader cooking - compiling GLSL to SPIR-V...\n";

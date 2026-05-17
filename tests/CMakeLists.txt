@@ -25,6 +25,8 @@ set(CAFFEINE_TEST_SOURCES
     test_skeletal_animation.cpp
     test_pipeline.cpp
     test_editor.cpp
+    test_cap_loader.cpp
+    editor/phase1_integration_test.cpp
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
@@ -35,15 +37,49 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/BuildSystem.cpp
     ../src/editor/BuildDialog.cpp
     ../src/editor/AssetCooker.cpp
+    ../src/editor/CapLoader.cpp
+    ../src/editor/AudioWaveformRenderer.cpp
+    ../src/editor/ProjectManager.cpp
 )
 
 if(SDL3_FOUND)
-    list(APPEND CAFFEINE_TEST_SOURCES test_rhi.cpp test_batchrenderer.cpp test_audio.cpp)
+    list(APPEND CAFFEINE_TEST_SOURCES 
+        test_rhi.cpp 
+        test_batchrenderer.cpp 
+        test_audio.cpp
+        ../src/editor/MaterialEditorPanel.cpp
+        ../src/editor/AudioPreviewPanel.cpp
+        ../src/editor/ShaderGraph.cpp
+        ../src/editor/ShaderNode.cpp
+        ../src/editor/PreviewRenderer.cpp
+    )
+    
+     # Build imgui_test_engine library
+     file(GLOB IMGUI_TEST_ENGINE_SRCS
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_*.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+     )
+     add_library(ImGuiTestEngine STATIC ${IMGUI_TEST_ENGINE_SRCS})
+     target_include_directories(ImGuiTestEngine PUBLIC ${imgui_test_engine_SOURCE_DIR})
+     target_link_libraries(ImGuiTestEngine PUBLIC ImGui)
+     target_compile_definitions(ImGuiTestEngine PUBLIC IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
+     # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
+     if(NOT MSVC)
+         target_compile_options(ImGuiTestEngine PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
 endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
 target_link_libraries(CaffeineTest PRIVATE caffeine-core)
+
+# Link ImGui and test engine if SDL3 is available (needed for editor panels)
+if(SDL3_FOUND)
+    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine)
+    target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
+    target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
+endif()
+
 target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)

@@ -245,12 +245,12 @@ with open(sys.argv[1], 'w') as f:
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlgpu3.cpp
     )
-    target_include_directories(ImGui PUBLIC
-        ${imgui_SOURCE_DIR}
-        ${imgui_SOURCE_DIR}/backends
-    )
-    target_link_libraries(ImGui PUBLIC SDL3::SDL3)
-    target_compile_definitions(ImGui PUBLIC IMGUI_ENABLE_TEST_ENGINE=1)
+     target_include_directories(ImGui PUBLIC
+         ${imgui_SOURCE_DIR}
+         ${imgui_SOURCE_DIR}/backends
+     )
+     target_link_libraries(ImGui PUBLIC SDL3::SDL3)
+     target_compile_definitions(ImGui PUBLIC IMGUI_ENABLE_TEST_ENGINE=1 IMGUI_DEFINE_MATH_OPERATORS)
 
     add_library(ImNodes STATIC
         ${imnodes_SOURCE_DIR}/imnodes.cpp
@@ -258,27 +258,23 @@ with open(sys.argv[1], 'w') as f:
     target_include_directories(ImNodes PUBLIC
         ${imnodes_SOURCE_DIR}
     )
-    target_compile_definitions(ImNodes PRIVATE 
-        IMGUI_DEFINE_MATH_OPERATORS
-        IM_OFFSETOF=offsetof
-    )
+     target_compile_definitions(ImNodes PRIVATE 
+         IM_OFFSETOF=offsetof
+     )
      target_link_libraries(ImNodes PUBLIC ImGui)
 
     # ── Link ImGui to caffeine-core for editor components ──────────────────────
     target_link_libraries(caffeine-core PUBLIC ImGui ImNodes)
     target_compile_definitions(caffeine-core PUBLIC CF_HAS_IMGUI=1)
 
-     # ── imgui_test_engine (for editor UI tests) ────────────────────
-    FetchContent_Declare(
-        imgui_test_engine
-        GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git
-        GIT_TAG        main
-        GIT_SHALLOW    TRUE
-    )
-    FetchContent_GetProperties(imgui_test_engine)
-    if(NOT imgui_test_engine_POPULATED)
-        FetchContent_Populate(imgui_test_engine)
-    endif()
+      # ── imgui_test_engine (for editor UI tests) ────────────────────
+     FetchContent_Declare(
+         imgui_test_engine
+         GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git
+         GIT_TAG        main
+         GIT_SHALLOW    TRUE
+     )
+     FetchContent_MakeAvailable(imgui_test_engine)
 
     add_executable(doppio
         apps/doppio/main.cpp
@@ -302,6 +298,7 @@ with open(sys.argv[1], 'w') as f:
         src/editor/BuildSystem.cpp
         src/editor/BuildDialog.cpp
         src/editor/AssetCooker.cpp
+        src/editor/CapLoader.cpp
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
@@ -311,10 +308,14 @@ with open(sys.argv[1], 'w') as f:
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
     )
-    target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
-    target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
-    target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
-    target_compile_features(doppio PRIVATE cxx_std_20)
+     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
+     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
+     target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
+     target_compile_features(doppio PRIVATE cxx_std_20)
+     # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
+     if(NOT MSVC)
+         target_compile_options(doppio PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
 
     message(STATUS "Doppio (IDE) enabled – ImGui v1.91.9 fetched")
 endif()

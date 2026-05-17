@@ -195,11 +195,11 @@ void TilemapEditorPanel::renderGrid() {
         return;
     }
 
-    f32 tileSize = m_tilemap.tileSize();
-    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    f32 canvasWidth = ImGui::GetContentRegionAvail().x;
-    f32 gridWidth = layer.width() * tileSize;
-    f32 gridHeight = layer.height() * tileSize;
+     f32 tileSize = m_tilemap.tileSize();
+     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+     f32 canvasWidth = ImGui::GetContentRegionAvail().x;
+     [[maybe_unused]] f32 gridWidth = layer.width() * tileSize;
+     f32 gridHeight = layer.height() * tileSize;
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 

@@ -83,8 +83,8 @@ AudioWaveformRenderer::WaveformData AudioWaveformRenderer::generateWaveform(
 
 u32 AudioWaveformRenderer::renderWaveformTexture(
     const WaveformData& data,
-    u32 width,
-    u32 height
+    [[maybe_unused]] u32 width,
+    [[maybe_unused]] u32 height
 ) {
     if (data.leftChannel.empty()) {
         return 0;
