@@ -78,5 +78,6 @@ struct ParticleEmitterComponent {
 };
 
 #include "ecs/CameraComponents.hpp"
+#include "ecs/LightComponents.hpp"
 
 }  // namespace Caffeine::ECS
