@@ -46,6 +46,7 @@ add_library(caffeine-core
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
     src/assets/HotReloader.cpp
+    src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
