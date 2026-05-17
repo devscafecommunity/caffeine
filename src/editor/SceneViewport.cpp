@@ -142,6 +142,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
         drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(200, 200, 200, 200), buf);
     }
 
+    drawGrid(drawList, origin, viewportSize, ctx);
+
     if (ctx.selectedEntity.isValid() && hovered) {
         drawGizmo(world, ctx, origin, viewportSize);
     }
@@ -246,6 +248,45 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
                         IM_COL32(180, 180, 255, 220), "S");
         }
     }
+}
+
+void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
+    if (!m_config.grid) return;
+    
+    f32 gridSpacing = m_config.gridSpacing;
+    f32 scale = ctx.viewportZoom * 50.0f;
+    f32 scaledSpacing = gridSpacing * scale;
+    
+    f32 centerX = origin.x + viewportSize.x * 0.5f;
+    f32 centerY = origin.y + viewportSize.y * 0.5f;
+    f32 offsetX = ctx.viewportPanX * scale;
+    f32 offsetY = ctx.viewportPanY * scale;
+    
+    ImU32 gridColor = IM_COL32(100, 100, 120, 80);
+    ImU32 axisColor = IM_COL32(200, 100, 100, 150);
+    
+    if (scaledSpacing < 2.0f) return;
+    
+    f32 startX = centerX - fmod(centerX - offsetX - origin.x, scaledSpacing) - scaledSpacing;
+    f32 startY = centerY - fmod(centerY - offsetY - origin.y, scaledSpacing) - scaledSpacing;
+    
+    for (f32 x = startX; x < origin.x + viewportSize.x + scaledSpacing * 2; x += scaledSpacing) {
+        if (fabs(x - centerX) < 2.0f) {
+            drawList->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + viewportSize.y), axisColor, 1.5f);
+        } else {
+            drawList->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + viewportSize.y), gridColor, 0.5f);
+        }
+    }
+    
+    for (f32 y = startY; y < origin.y + viewportSize.y + scaledSpacing * 2; y += scaledSpacing) {
+        if (fabs(y - centerY) < 2.0f) {
+            drawList->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + viewportSize.x, y), axisColor, 1.5f);
+        } else {
+            drawList->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + viewportSize.x, y), gridColor, 0.5f);
+        }
+    }
+    
+    drawList->AddCircle(ImVec2(centerX, centerY), 8.0f, IM_COL32(255, 200, 0, 200), 12, 2.0f);
 }
 
 // ── Gizmo input handling ──────────────────────────────────────────
