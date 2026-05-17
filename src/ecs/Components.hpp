@@ -8,6 +8,8 @@
 
 #include "core/Types.hpp"
 #include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
+#include "math/Vec4.hpp"
 #include <string>
 #include <vector>
 
@@ -75,4 +77,6 @@ struct ParticleEmitterComponent {
     std::vector<Particle> activeParticles;
 };
 
-}
+#include "ecs/CameraComponents.hpp"
+
+}  // namespace Caffeine::ECS
