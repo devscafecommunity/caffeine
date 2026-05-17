@@ -1,5 +1,12 @@
 #include "editor/AssetBrowser.hpp"
 #include "editor/CapLoader.hpp"
+#include "editor/FilePicker.hpp"
+#include "assets/TextureCompiler.hpp"
+#include "caf-pack/Packer.hpp"
+#include "caf-pack/HeaderGenerator.hpp"
+#include "stb/stb_image.h"
+
+#include <system_error>
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Data layer — always compiled (no ImGui dependency)
@@ -11,8 +18,26 @@ namespace Caffeine::Editor {
 
 void AssetBrowser::init(const char* rootPath) {
     m_rootPath = rootPath ? rootPath : "assets";
+    m_projectRoot.clear();
+    m_rawRoot = std::filesystem::absolute(m_rootPath);
+    m_processedRoot.clear();
+    m_assetScope = AssetScope::Raw;
     m_currentDir = m_rootPath;
     m_pathHistory.clear();
+    refresh();
+}
+
+void AssetBrowser::init(const ProjectConfig& projectConfig) {
+    m_projectRoot = std::filesystem::absolute(projectConfig.RootPath);
+    m_rawRoot = std::filesystem::absolute(m_projectRoot / projectConfig.AssetRawPath);
+    m_processedRoot = std::filesystem::absolute(m_projectRoot / projectConfig.AssetProcessedPath);
+    m_rootPath = m_rawRoot.string();
+    m_assetScope = AssetScope::Raw;
+    m_browseMode = BrowseMode::Filesystem;
+    m_currentDir = m_rawRoot;
+    m_pathHistory.clear();
+    std::filesystem::create_directories(m_rawRoot);
+    std::filesystem::create_directories(m_processedRoot);
     refresh();
 }
 
@@ -85,6 +110,15 @@ void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
     }
     
     applySearchFilter();
+}
+
+void AssetBrowser::setAssetScope(AssetScope scope) {
+    if (scope == m_assetScope && m_browseMode == BrowseMode::Filesystem) {
+        return;
+    }
+
+    m_assetScope = scope;
+    switchToFilesystemRoot(rootForScope(scope));
 }
 
 // ── Search ──────────────────────────────────────────────────────────────────
@@ -175,6 +209,22 @@ usize AssetBrowser::entryCount() const {
     return m_filteredEntries.size();
 }
 
+std::filesystem::path AssetBrowser::rootForScope(AssetScope scope) const {
+    const auto& root = (scope == AssetScope::Processed) ? m_processedRoot : m_rawRoot;
+    if (!root.empty()) {
+        return root;
+    }
+    return std::filesystem::absolute(m_rootPath);
+}
+
+void AssetBrowser::switchToFilesystemRoot(const std::filesystem::path& root) {
+    m_browseMode = BrowseMode::Filesystem;
+    m_currentDir = root;
+    m_rootPath = root.string();
+    m_pathHistory.clear();
+    refresh();
+}
+
 } // namespace Caffeine::Editor
 
 
@@ -240,6 +290,64 @@ void AssetBrowser::renderToolbar() {
         m_thumbnailSize = static_cast<u32>(size);
     }
     ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+    if (ImGui::Button("Import...")) {
+        m_showImportFilePicker = true;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Import Folder...")) {
+        m_showImportFolderPicker = true;
+    }
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto .caf", &m_autoConvertOnImport);
+
+    ImGui::SameLine();
+    if (ImGui::Button("Convert Raw -> .caf")) {
+        usize converted = convertAllSupportedAssets();
+        if (converted > 0) {
+            setStatusMessage("Converted " + std::to_string(converted) + " asset(s) to assets/processed");
+        } else {
+            setStatusMessage("No supported raw assets found to convert", true);
+        }
+        if (m_assetScope == AssetScope::Processed) {
+            refresh();
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Pack CAP")) {
+        std::string error;
+        if (packCurrentProjectCap(&error)) {
+            setStatusMessage("Packed game.cap successfully");
+        } else {
+            setStatusMessage(error.empty() ? "Failed to pack game.cap" : error, true);
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Open CAP")) {
+        std::string error;
+        if (openCurrentProjectCap(&error)) {
+            setStatusMessage("Opened game.cap in CAP view");
+        } else {
+            setStatusMessage(error.empty() ? "Failed to open game.cap" : error, true);
+        }
+    }
+
+    ImGui::SameLine();
+    bool rawSelected = (m_assetScope == AssetScope::Raw);
+    if (ImGui::Selectable("Raw", rawSelected, ImGuiSelectableFlags_None, ImVec2(42.0f, 0.0f))) {
+        setAssetScope(AssetScope::Raw);
+    }
+
+    ImGui::SameLine();
+    bool processedSelected = (m_assetScope == AssetScope::Processed);
+    if (ImGui::Selectable("Processed", processedSelected, ImGuiSelectableFlags_None, ImVec2(78.0f, 0.0f))) {
+        setAssetScope(AssetScope::Processed);
+    }
 }
 
 // ── Breadcrumbs ─────────────────────────────────────────────────────────────
@@ -303,7 +411,7 @@ void AssetBrowser::renderGridView() {
         }
 
         // Drag-drop source
-        if (!entry.isDirectory && ImGui::BeginDragDropSource()) {
+        if (!entry.isDirectory && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             std::string pathStr = entry.path.string();
             ImGui::SetDragDropPayload("ASSET_PATH", pathStr.c_str(), pathStr.size() + 1);
             ImGui::Text("%s", entry.name.c_str());
@@ -356,7 +464,7 @@ void AssetBrowser::renderListView() {
             }
         }
 
-        if (!entry.isDirectory && ImGui::BeginDragDropSource()) {
+        if (!entry.isDirectory && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             std::string pathStr = entry.path.string();
             ImGui::SetDragDropPayload("ASSET_PATH", pathStr.c_str(), pathStr.size() + 1);
             ImGui::Text("%s", entry.name.c_str());
@@ -424,6 +532,261 @@ void AssetBrowser::renderContextMenu() {
     }
 }
 
+void AssetBrowser::renderPreviewPane() {
+    ImGui::TextUnformatted("Preview");
+    ImGui::Separator();
+
+    if (m_selectedEntry < 0 || static_cast<usize>(m_selectedEntry) >= m_filteredEntries.size()) {
+        ImGui::TextDisabled("Select an item to preview");
+        return;
+    }
+
+    const auto& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+    ImGui::TextWrapped("%s", entry.name.c_str());
+    ImGui::Spacing();
+
+    if (entry.isDirectory) {
+        ImGui::TextUnformatted("Type: Folder");
+        ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
+        return;
+    }
+
+    const char* typeLabel = "Unknown";
+    switch (entry.type) {
+        case AssetType::Texture: typeLabel = "Texture"; break;
+        case AssetType::Audio:   typeLabel = "Audio"; break;
+        case AssetType::Mesh:    typeLabel = "Mesh"; break;
+        case AssetType::Scene:   typeLabel = "Scene/CAF"; break;
+        default: break;
+    }
+
+    ImGui::Text("Type: %s", typeLabel);
+    ImGui::Text("Kind: %s", entry.path.extension().string().c_str());
+    ImGui::Text("Size: %.2f KB", static_cast<float>(entry.fileSize) / 1024.0f);
+
+    if (m_browseMode == BrowseMode::Filesystem) {
+        ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
+    } else {
+        ImGui::TextWrapped("Source CAP: %s", m_currentCapPath.string().c_str());
+        ImGui::TextWrapped("Asset ID: %s", entry.name.c_str());
+    }
+
+    if (entry.type == AssetType::Texture && m_browseMode == BrowseMode::Filesystem) {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        if (stbi_info(entry.path.string().c_str(), &width, &height, &channels)) {
+            ImGui::Text("Resolution: %d x %d", width, height);
+            ImGui::Text("Channels: %d", channels);
+        }
+    }
+}
+
+bool AssetBrowser::isSupportedRawAsset(const std::filesystem::path& path) const {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga";
+}
+
+bool AssetBrowser::convertRawAssetToCaf(const std::filesystem::path& rawPath, std::string* errorMessage) {
+    if (m_rawRoot.empty() || m_processedRoot.empty()) {
+        if (errorMessage) *errorMessage = "Asset pipeline paths are not configured";
+        return false;
+    }
+
+    if (!isSupportedRawAsset(rawPath)) {
+        if (errorMessage) *errorMessage = "No compiler available for " + rawPath.extension().string();
+        return false;
+    }
+
+    std::error_code ec;
+    auto relativePath = std::filesystem::relative(rawPath, m_rawRoot, ec);
+    if (ec) {
+        relativePath = rawPath.filename();
+    }
+
+    std::filesystem::path destPath = m_processedRoot / relativePath;
+    destPath.replace_extension(".caf");
+    std::filesystem::create_directories(destPath.parent_path(), ec);
+    if (ec) {
+        if (errorMessage) *errorMessage = "Failed to prepare output directory";
+        return false;
+    }
+
+    Caffeine::Assets::TextureCompiler compiler;
+    Caffeine::Assets::AssetImportContext importCtx;
+    importCtx.SourcePath = rawPath;
+    importCtx.DestinationPath = destPath;
+
+    if (!compiler.Compile(importCtx)) {
+        if (errorMessage) {
+            *errorMessage = importCtx.Logs.empty() ? "Texture conversion failed" : importCtx.Logs.back();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+usize AssetBrowser::convertAllSupportedAssets() {
+    if (m_rawRoot.empty() || !std::filesystem::exists(m_rawRoot)) {
+        return 0;
+    }
+
+    usize converted = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(m_rawRoot)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (!isSupportedRawAsset(entry.path())) {
+            continue;
+        }
+        std::string error;
+        if (convertRawAssetToCaf(entry.path(), &error)) {
+            ++converted;
+        }
+    }
+    return converted;
+}
+
+bool AssetBrowser::packCurrentProjectCap(std::string* errorMessage) {
+    if (m_projectRoot.empty() || m_rawRoot.empty()) {
+        if (errorMessage) *errorMessage = "Project paths are not configured";
+        return false;
+    }
+
+    if (!std::filesystem::exists(m_rawRoot)) {
+        if (errorMessage) *errorMessage = "assets/raw does not exist";
+        return false;
+    }
+
+    std::filesystem::path capPath = m_projectRoot / "game.cap";
+    std::filesystem::path headerPath = m_processedRoot.empty()
+        ? (m_projectRoot / "game_assets.hpp")
+        : (m_processedRoot / "game_assets.hpp");
+
+    std::error_code ec;
+    std::filesystem::create_directories(headerPath.parent_path(), ec);
+
+    CafPack::Packer::Config config;
+    config.inputDir = m_rawRoot;
+    config.outputFile = capPath;
+    config.generateHeader = true;
+    config.headerPath = headerPath.string();
+    config.compress = false;
+
+    CafPack::Packer packer(config);
+    if (!packer.pack()) {
+        if (errorMessage) *errorMessage = packer.getError();
+        return false;
+    }
+
+    std::vector<CafPack::AssetEntry> entries;
+    for (const auto& [name, id] : packer.getAssetEntries()) {
+        entries.push_back({name, id});
+    }
+    CafPack::HeaderGenerator::generateHeader(entries, headerPath);
+    return true;
+}
+
+bool AssetBrowser::openCurrentProjectCap(std::string* errorMessage) {
+    if (m_projectRoot.empty()) {
+        if (errorMessage) *errorMessage = "Project path is not configured";
+        return false;
+    }
+
+    std::filesystem::path capPath = m_projectRoot / "game.cap";
+    if (!std::filesystem::exists(capPath)) {
+        if (errorMessage) *errorMessage = "game.cap not found. Pack assets first.";
+        return false;
+    }
+
+    loadCapFile(capPath);
+    return true;
+}
+
+bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool autoConvert) {
+    if (sourcePath.empty()) {
+        setStatusMessage("Provide a source path to import", true);
+        return false;
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(sourcePath, ec) || ec) {
+        setStatusMessage("Source path does not exist", true);
+        return false;
+    }
+
+    if (m_rawRoot.empty()) {
+        setStatusMessage("Raw asset path is not configured", true);
+        return false;
+    }
+
+    std::filesystem::create_directories(m_rawRoot, ec);
+    if (ec) {
+        setStatusMessage("Failed to create assets/raw", true);
+        return false;
+    }
+
+    usize copiedCount = 0;
+    usize convertedCount = 0;
+
+    auto importSingleFile = [&](const std::filesystem::path& filePath, const std::filesystem::path& targetPath) {
+        std::filesystem::create_directories(targetPath.parent_path(), ec);
+        if (ec) return false;
+        std::filesystem::copy_file(filePath, targetPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return false;
+        ++copiedCount;
+        if (autoConvert && isSupportedRawAsset(targetPath)) {
+            std::string error;
+            if (convertRawAssetToCaf(targetPath, &error)) {
+                ++convertedCount;
+            }
+        }
+        return true;
+    };
+
+    if (std::filesystem::is_directory(sourcePath)) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(sourcePath)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            auto rel = std::filesystem::relative(entry.path(), sourcePath, ec);
+            if (ec) rel = entry.path().filename();
+            if (!importSingleFile(entry.path(), m_rawRoot / rel)) {
+                setStatusMessage("Failed to import some files from folder", true);
+                refresh();
+                return false;
+            }
+        }
+    } else {
+        if (!importSingleFile(sourcePath, m_rawRoot / sourcePath.filename())) {
+            setStatusMessage("Failed to import file", true);
+            refresh();
+            return false;
+        }
+    }
+
+    refresh();
+    if (m_assetScope == AssetScope::Processed && convertedCount > 0) {
+        setAssetScope(AssetScope::Processed);
+    }
+
+    std::string message = "Imported " + std::to_string(copiedCount) + " file(s)";
+    if (convertedCount > 0) {
+        message += " — converted " + std::to_string(convertedCount) + " to .caf";
+    }
+    setStatusMessage(message, false);
+    return true;
+}
+
+void AssetBrowser::setStatusMessage(const std::string& message, bool isError) {
+    m_statusMessage = message;
+    m_statusIsError = isError;
+}
+
 // ── Main render ─────────────────────────────────────────────────────────────
 
 void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
@@ -434,15 +797,51 @@ void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
         renderToolbar();
         ImGui::Separator();
 
+        if (m_showImportFilePicker) {
+            std::filesystem::path startPath = m_rawRoot.empty() ? std::filesystem::current_path() : m_rawRoot;
+            if (auto selected = FilePicker::pickPath(FilePicker::Mode::PickFile, "Import Asset File", startPath)) {
+                importPath(selected.value(), m_autoConvertOnImport);
+                m_showImportFilePicker = false;
+            } else if (FilePicker::consumeCloseEvent("Import Asset File")) {
+                m_showImportFilePicker = false;
+            }
+        }
+
+        if (m_showImportFolderPicker) {
+            std::filesystem::path startPath = m_rawRoot.empty() ? std::filesystem::current_path() : m_rawRoot;
+            if (auto selected = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Import Asset Folder", startPath)) {
+                importPath(selected.value(), m_autoConvertOnImport);
+                m_showImportFolderPicker = false;
+            } else if (FilePicker::consumeCloseEvent("Import Asset Folder")) {
+                m_showImportFolderPicker = false;
+            }
+        }
+
+        if (!m_statusMessage.empty()) {
+            ImVec4 color = m_statusIsError ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f) : ImVec4(0.45f, 0.9f, 0.45f, 1.0f);
+            ImGui::TextColored(color, "%s", m_statusMessage.c_str());
+        }
+
         ImGui::BeginChild("asset_content", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
 
+        const float previewWidth = 280.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float leftWidth = std::max(120.0f, ImGui::GetContentRegionAvail().x - previewWidth - spacing);
+
+        ImGui::BeginChild("asset_list_area", ImVec2(leftWidth, 0), false);
         if (m_viewMode == ViewMode::Grid) {
             renderGridView();
         } else {
             renderListView();
         }
-
         renderContextMenu();
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        ImGui::BeginChild("asset_preview_area", ImVec2(0, 0), true);
+        renderPreviewPane();
+        ImGui::EndChild();
 
         ImGui::EndChild();
     }

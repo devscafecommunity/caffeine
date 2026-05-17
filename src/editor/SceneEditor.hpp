@@ -1,7 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
 #include "ecs/World.hpp"
-#include "render/Camera2D.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/HierarchyPanel.hpp"
 #include "editor/InspectorPanel.hpp"
@@ -23,6 +22,7 @@
 #include "editor/TilemapEditor.hpp"
 #include "editor/CommandPalette.hpp"
 #include "editor/BuildDialog.hpp"
+#include "editor/SettingsPanel.hpp"
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -37,7 +37,6 @@
 #include <functional>
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class SceneEditor {
 public:
@@ -56,12 +55,7 @@ public:
     void shutdown();
 #endif
 
-    void render(
-#ifdef CF_HAS_SDL3
-                Render::Camera2D& editorCamera,
-#endif
-                f32 deltaTime = 0.016f
-                );
+    void render(f32 deltaTime = 0.016f);
 
     // ── Serialization ──
 
@@ -90,10 +84,13 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+    void requestLayoutRebuild() { m_layoutNeedsRebuild = true; }
+
 
 private:
 #ifdef CF_HAS_IMGUI
     void setupDockspace(ImGuiID dockspaceId);
+    void applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile);
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
     void renderUnsavedChangesPopup(ECS::World& world);
@@ -122,6 +119,7 @@ private:
     TilemapEditorPanel m_tilemapEditor;
     CommandPalette m_commandPalette;
     BuildDialog m_buildDialog;
+    SettingsPanel m_settingsPanel;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
@@ -132,6 +130,8 @@ private:
 
     bool m_open         = true;
     bool m_dockingSetup = false;
+    ImGuiID m_dockspaceId = 0;
+    bool m_layoutNeedsRebuild = false;
     PendingAction m_pendingAction = PendingAction::None;
     int m_pendingCloseTab = -1;
 };

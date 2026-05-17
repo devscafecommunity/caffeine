@@ -19,6 +19,8 @@ public:
         const std::filesystem::path& defaultPath = "."
     );
 
+    static bool consumeCloseEvent(const std::string& title);
+
 private:
     static std::optional<std::filesystem::path> pickPathNative(
         Mode mode,

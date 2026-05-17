@@ -13,7 +13,6 @@
 #include <imgui_impl_sdlgpu3.h>
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class ImGuiIntegration {
 public:

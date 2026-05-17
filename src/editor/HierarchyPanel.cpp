@@ -156,7 +156,7 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
         ImGui::EndDragDropTarget();
     }
 
-    if (ImGui::BeginDragDropSource()) {
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         u32 eid = entity.id();
         ImGui::SetDragDropPayload("ENTITY_DRAG", &eid, sizeof(u32));
         ImGui::Text("%s", name);

@@ -245,6 +245,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
             m_selectedLocation = path.value().string();
             m_showLocationPicker = false;
             showToast("Location selected!", ToastType::Success);
+        } else if (FilePicker::consumeCloseEvent("Select Project Location")) {
+            m_showLocationPicker = false;
         }
     }
 
@@ -271,6 +273,18 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
 std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
     std::optional<ProjectConfig> result;
 
+    auto projectDisplayName = [](const std::filesystem::path& projectPath) {
+        if (projectPath.filename() == "project.caffeine" && projectPath.has_parent_path()) {
+            return projectPath.parent_path().filename().string();
+        }
+
+        std::string name = projectPath.stem().string();
+        if (name.empty()) {
+            name = projectPath.filename().string();
+        }
+        return name;
+    };
+
     ImGui::InputTextWithHint("##search_recent", "Search projects...", m_searchFilter, sizeof(m_searchFilter));
     ImGui::SameLine();
     ImGui::Checkbox("Show All##recent", &m_showAllRecents);
@@ -284,7 +298,7 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
         } else {
              for (size_t i = 0; i < m_recentProjects.size(); ++i) {
                  const auto& projPath = m_recentProjects[i];
-                 std::string projName = projPath.filename().string();
+                 std::string projName = projectDisplayName(projPath);
                  
                  if (strlen(m_searchFilter) > 0) {
                      if (projName.find(m_searchFilter) == std::string::npos) {
@@ -295,12 +309,17 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
                  ImGui::PushID((int)i);
                  
                  bool selected = (m_selectedRecentIndex == (int)i);
-                 if (ImGui::Selectable(projName.c_str(), selected)) {
+                 const float openButtonWidth = 70.0f;
+                 const float spacing = ImGui::GetStyle().ItemSpacing.x;
+                 float selectableWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
+                 if (selectableWidth < 1.0f) selectableWidth = 1.0f;
+
+                 if (ImGui::Selectable(projName.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(selectableWidth, 0.0f))) {
                      m_selectedRecentIndex = i;
                  }
 
-                 ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                 if (ImGui::Button("Open", ImVec2(70, 0))) {
+                 ImGui::SameLine();
+                 if (ImGui::Button("Open", ImVec2(openButtonWidth, 0))) {
                      result = tryOpenProject(projPath);
                      if (result) {
                          showToast("Project opened!", ToastType::Success);
@@ -321,6 +340,18 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
 std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
     std::optional<ProjectConfig> result;
 
+    auto projectDisplayName = [](const std::filesystem::path& projectPath) {
+        if (projectPath.filename() == "project.caffeine" && projectPath.has_parent_path()) {
+            return projectPath.parent_path().filename().string();
+        }
+
+        std::string name = projectPath.stem().string();
+        if (name.empty()) {
+            name = projectPath.filename().string();
+        }
+        return name;
+    };
+
     ImGui::InputTextWithHint("##browse_path", "Enter directory path...", 
                             m_browsePath.data(), m_browsePath.capacity());
     ImGui::SameLine();
@@ -334,6 +365,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
              m_browsePath = path.value().string();
              m_showBrowsePicker = false;
              showToast("Scanning directory...", ToastType::Info);
+         } else if (FilePicker::consumeCloseEvent("Select Folder to Browse")) {
+             m_showBrowsePicker = false;
          }
      }
 
@@ -349,17 +382,22 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
 
             for (size_t i = 0; i < m_browseResults.size(); ++i) {
                 const auto& projPath = m_browseResults[i];
-                std::string projName = projPath.filename().string();
+                std::string projName = projectDisplayName(projPath);
 
                 ImGui::PushID((int)i);
                 
                 bool selected = (m_selectedBrowseIndex == (int)i);
-                if (ImGui::Selectable(projName.c_str(), selected)) {
+                const float openButtonWidth = 70.0f;
+                const float spacing = ImGui::GetStyle().ItemSpacing.x;
+                float selectableWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
+                if (selectableWidth < 1.0f) selectableWidth = 1.0f;
+
+                if (ImGui::Selectable(projName.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(selectableWidth, 0.0f))) {
                     m_selectedBrowseIndex = i;
                 }
 
-                ImGui::SameLine(ImGui::GetWindowWidth() - 80);
-                if (ImGui::Button("Open", ImVec2(70, 0))) {
+                ImGui::SameLine();
+                if (ImGui::Button("Open", ImVec2(openButtonWidth, 0))) {
                     result = tryOpenProject(projPath);
                     if (result) {
                         showToast("Project opened!", ToastType::Success);

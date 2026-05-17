@@ -172,8 +172,7 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
         // ── Drop target for texture assets ──
         if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
             if (asset->type == AssetType::Texture) {
-                std::filesystem::path assetPath(asset->path);
-                sprite->name = assetPath.filename().string();
+                sprite->name = asset->path;
                 ctx.isDirty = true;
             }
         }

@@ -1,7 +1,6 @@
 #include "rhi/RenderDevice.hpp"
 #include "rhi/CommandBuffer.hpp"
 #include "assets/AssetManager.hpp"
-#include "render/Camera2D.hpp"
 
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
@@ -43,7 +42,6 @@ int main(int, char**) {
     }
 
     Caffeine::Assets::AssetManager assetManager(nullptr, "assets");
-    Caffeine::Render::Camera2D editorCamera;
 
     Caffeine::Editor::ImGuiIntegration imgui;
     if (!imgui.init(window, &device)) {
@@ -142,7 +140,7 @@ int main(int, char**) {
         if (!cmd) continue;
 
         imgui.beginFrame();
-        editor.render(editorCamera, deltaTime);
+        editor.render(deltaTime);
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;

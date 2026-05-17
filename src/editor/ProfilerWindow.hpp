@@ -9,7 +9,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class ProfilerWindow {
 public:

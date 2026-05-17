@@ -98,6 +98,13 @@ target_link_libraries(caffeine-ui INTERFACE caffeine-core)
 add_library(Caffeine::UI ALIAS caffeine-ui)
 
 # ═══════════════════════════════════════════════════════════════════
+#  CAF-PACK LIBRARY
+#
+#  Shared asset packer library used by the IDE for generating game.cap.
+# ═══════════════════════════════════════════════════════════════════
+add_subdirectory(caf-pack/src)
+
+# ═══════════════════════════════════════════════════════════════════
 #  CAFFEINE COMBINED — demonstra core + UI no mesmo executável
 #
 #  Executable that links both caffeine-core and caffeine-ui.
@@ -261,7 +268,11 @@ with open(sys.argv[1], 'w') as f:
     )
      target_compile_definitions(ImNodes PRIVATE 
          IM_OFFSETOF=offsetof
+         IMGUI_DEFINE_MATH_OPERATORS
      )
+     if(NOT MSVC)
+         target_compile_options(ImNodes PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
      target_link_libraries(ImNodes PUBLIC ImGui)
 
     # ── Link ImGui to caffeine-core for editor components ──────────────────────
@@ -277,39 +288,41 @@ with open(sys.argv[1], 'w') as f:
      )
      FetchContent_MakeAvailable(imgui_test_engine)
 
-    add_executable(doppio
-        apps/doppio/main.cpp
-        src/editor/HierarchyPanel.cpp
-        src/editor/SceneViewport.cpp
-        src/editor/AssetBrowser.cpp
-        src/editor/InspectorPanel.cpp
-        src/editor/SceneEditor.cpp
-        src/editor/SceneSerializer.cpp
-        src/editor/DragDropSystem.cpp
-        src/editor/SceneTabManager.cpp
-        src/editor/ScriptEditorWindow.cpp
-        src/editor/AnimationTimeline.cpp
-        src/editor/TilemapEditor.cpp
-        src/editor/CommandPalette.cpp
-        src/editor/ShaderNode.cpp
-        src/editor/ShaderGraph.cpp
-        src/editor/MaterialEditorPanel.cpp
-        src/editor/PreviewRenderer.cpp
-        src/editor/AudioPreviewPanel.cpp
-        src/editor/BuildSystem.cpp
-        src/editor/BuildDialog.cpp
-        src/editor/AssetCooker.cpp
-        src/editor/CapLoader.cpp
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_exporters.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_perftool.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
-        "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
-    )
-     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
+     add_executable(doppio
+         apps/doppio/main.cpp
+         src/editor/HierarchyPanel.cpp
+         src/editor/SceneViewport.cpp
+         src/editor/AssetBrowser.cpp
+         src/editor/InspectorPanel.cpp
+         src/editor/SettingsPanel.cpp
+         src/editor/LayoutManager.cpp
+         src/editor/SceneEditor.cpp
+         src/editor/SceneSerializer.cpp
+         src/editor/DragDropSystem.cpp
+         src/editor/SceneTabManager.cpp
+         src/editor/ScriptEditorWindow.cpp
+         src/editor/AnimationTimeline.cpp
+         src/editor/TilemapEditor.cpp
+         src/editor/CommandPalette.cpp
+         src/editor/ShaderNode.cpp
+         src/editor/ShaderGraph.cpp
+         src/editor/MaterialEditorPanel.cpp
+         src/editor/PreviewRenderer.cpp
+         src/editor/AudioPreviewPanel.cpp
+         src/editor/BuildSystem.cpp
+         src/editor/BuildDialog.cpp
+         src/editor/AssetCooker.cpp
+         src/editor/CapLoader.cpp
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_exporters.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_perftool.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
+     )
+    target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes caf-pack-lib)
      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
      target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
      target_compile_features(doppio PRIVATE cxx_std_20)

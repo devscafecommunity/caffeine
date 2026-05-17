@@ -13,7 +13,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class HierarchyPanel {
 public:

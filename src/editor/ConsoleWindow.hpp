@@ -10,7 +10,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class ConsoleWindow {
 public:

@@ -16,7 +16,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class InspectorPanel {
 public:

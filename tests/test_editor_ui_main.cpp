@@ -57,7 +57,7 @@ void PumpFrame() {
     s_state.lastFrameTime = currentFrameTime;
 
     if (s_state.editor && s_state.gpuAvailable) {
-        s_state.editor->render(*s_state.camera, deltaTime);
+        s_state.editor->render(deltaTime);
     }
 
     ImGui::Render();

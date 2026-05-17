@@ -2,7 +2,14 @@
 #include "editor/DragDropSystem.hpp"
 #include "editor/EditorContext.hpp"
 #include "audio/AudioComponents.hpp"
+#include "ecs/ComponentQuery.hpp"
 #include <filesystem>
+#include <algorithm>
+#include <cstring>
+#include <stb/stb_image.h>
+#ifdef CF_HAS_SDL3
+#include <imgui_impl_sdlgpu3.h>
+#endif
 
 #ifdef CF_HAS_IMGUI
 
@@ -34,6 +41,7 @@ bool SceneViewport::init(RHI::RenderDevice* device, Config cfg) {
 }
 
 void SceneViewport::shutdown() {
+    releaseSpriteTextures();
     if (!m_initialized || !m_device) return;
     m_device->destroyTexture(m_colorTarget);
     m_device->destroyTexture(m_depthTarget);
@@ -45,11 +53,7 @@ void SceneViewport::shutdown() {
 
 // ── Main render entry point ───────────────────────────────────────
 
-void SceneViewport::render(ECS::World& world, EditorContext& ctx
-#ifdef CF_HAS_SDL3
-                            , Render::Camera2D& editorCamera
-#endif
-                           ) {
+void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
     if (!ImGui::Begin("Scene Viewport", &m_open)) {
@@ -97,7 +101,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
         world.add<ECS::Position2D>(entity, worldX, -worldY);
 
         if (asset->type == AssetType::Texture) {
-            world.add<ECS::Sprite>(entity, assetPath.filename().string(), 0);
+            world.add<ECS::Sprite>(entity, asset->path, 0);
         }
 
         if (asset->type == AssetType::Audio) {
@@ -111,19 +115,27 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
 
     bool hovered = ImGui::IsItemHovered();
 
-    if (hovered && ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
-        bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
-        if (dragging && !m_gizmoDragging) {
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_W)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
+        if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
+    }
+
+    bool leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+    bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if ((hovered || m_gizmoDragging) && ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
+        if (leftDragging && !m_gizmoDragging) {
             ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
             m_gizmoDragging = true;
         }
-        if (m_gizmoDragging) {
-            m_Gizmo.onImGuiRender(world, ctx.selectedEntity, ctx);
+        if (leftDragging) {
+            handleGizmoInput(world, ctx, viewportSize);
         }
-        if (!dragging && m_gizmoDragging) {
-            ctx.endUndo(world);
-            m_gizmoDragging = false;
-        }
+    }
+    if (!leftDown && m_gizmoDragging) {
+        ctx.endUndo(world);
+        m_gizmoDragging = false;
     }
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -143,10 +155,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
     }
 
     drawGrid(drawList, origin, viewportSize, ctx);
+    drawSprites(world, ctx, origin, viewportSize);
 
-    if (ctx.selectedEntity.isValid() && hovered) {
+    if (ctx.selectedEntity.isValid()) {
         drawGizmo(world, ctx, origin, viewportSize);
     }
+
+    drawNavigationWidget(world, ctx, origin, viewportSize);
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
@@ -169,17 +184,146 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx
 
 // ── Gizmo drawing ─────────────────────────────────────────────────
 
+void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    ECS::ComponentQuery query;
+    query.with<ECS::Position2D>();
+    query.with<ECS::Sprite>();
+
+    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
+    const f32 minHalfSize = 8.0f;
+
+    world.forEach<ECS::Position2D, ECS::Sprite>(query, [&](ECS::Entity entity, ECS::Position2D& pos, ECS::Sprite& sprite) {
+        ImVec2 screenPos(
+            origin.x + viewportSize.x * 0.5f + (pos.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-pos.y + ctx.viewportPanY / worldToScreen) * worldToScreen
+        );
+
+        f32 scaleX = 1.0f;
+        f32 scaleY = 1.0f;
+        if (auto* scale = world.get<ECS::Scale2D>(entity)) {
+            scaleX = std::max(0.1f, scale->x);
+            scaleY = std::max(0.1f, scale->y);
+        }
+
+        f32 angle = 0.0f;
+        if (auto* rot = world.get<ECS::Rotation>(entity)) {
+            angle = rot->angle;
+        }
+
+        f32 halfW = std::max(minHalfSize, 0.5f * worldToScreen * scaleX);
+        f32 halfH = std::max(minHalfSize, 0.5f * worldToScreen * scaleY);
+
+        ImTextureRef texRef;
+        bool hasTexture = false;
+        if (!sprite.name.empty()) {
+            const std::string spritePath = resolveSpritePath(sprite.name, ctx);
+            if (!spritePath.empty()) {
+                auto it = m_spriteTextureCache.find(spritePath);
+                if (it == m_spriteTextureCache.end()) {
+                    // Try to load the texture
+                    int width = 0, height = 0, channels = 0;
+                    unsigned char* pixels = stbi_load(spritePath.c_str(), &width, &height, &channels, 4);
+                    
+                    SpriteTextureCacheEntry entry;
+                    if (pixels && width > 0 && height > 0) {
+                        entry.width = width;
+                        entry.height = height;
+                        entry.texture = std::make_unique<ImTextureData>();
+                        entry.texture->Create(ImTextureFormat_RGBA32, width, height);
+                        std::memcpy(entry.texture->GetPixels(), pixels, static_cast<size_t>(width * height * 4));
+                        entry.texture->SetStatus(ImTextureStatus_WantCreate);
+                        ImGui_ImplSDLGPU3_UpdateTexture(entry.texture.get());
+                        entry.loadFailed = false;
+                    } else {
+                        entry.loadFailed = true;
+                    }
+                    
+                    if (pixels) {
+                        stbi_image_free(pixels);
+                    }
+                    
+                    auto [newIt, inserted] = m_spriteTextureCache.emplace(spritePath, std::move(entry));
+                    it = newIt;
+                }
+
+                if (!it->second.loadFailed && it->second.texture) {
+                    // Ensure texture is properly initialized
+                    if (it->second.texture->Status == ImTextureStatus_WantCreate) {
+                        ImGui_ImplSDLGPU3_UpdateTexture(it->second.texture.get());
+                    }
+                    
+                    ImTextureID texID = it->second.texture->GetTexID();
+                    hasTexture = (texID != ImTextureID_Invalid);
+                    
+                    if (hasTexture) {
+                        texRef = it->second.texture->GetTexRef();
+                        if (it->second.width > 0 && it->second.height > 0) {
+                            const f32 aspect = static_cast<f32>(it->second.width) / static_cast<f32>(it->second.height);
+                            if (aspect > 1.0f) {
+                                halfH = std::max(minHalfSize, halfW / aspect);
+                            } else {
+                                halfW = std::max(minHalfSize, halfH * aspect);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const f32 c = std::cos(angle);
+        const f32 s = std::sin(angle);
+        auto rotatePoint = [&](f32 x, f32 y) -> ImVec2 {
+            return ImVec2(screenPos.x + x * c - y * s, screenPos.y + x * s + y * c);
+        };
+
+        const ImVec2 p1 = rotatePoint(-halfW, -halfH);
+        const ImVec2 p2 = rotatePoint(halfW, -halfH);
+        const ImVec2 p3 = rotatePoint(halfW, halfH);
+        const ImVec2 p4 = rotatePoint(-halfW, halfH);
+
+        const bool selected = (ctx.selectedEntity == entity);
+        const ImU32 fill = selected ? IM_COL32(100, 170, 255, 80) : IM_COL32(180, 180, 200, 45);
+        const ImU32 border = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(190, 190, 220, 200);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (hasTexture) {
+            dl->AddImageQuad(texRef, p1, p2, p3, p4);
+        } else {
+            // Draw checkerboard pattern for missing texture
+            dl->AddQuadFilled(p1, p2, p3, p4, IM_COL32(64, 64, 64, 200));
+            
+            // Draw checkerboard pattern
+            ImVec2 checkSize = ImVec2((p2.x - p1.x) / 4.0f, (p4.y - p1.y) / 4.0f);
+            for (int y = 0; y < 4; ++y) {
+                for (int x = 0; x < 4; ++x) {
+                    if ((x + y) % 2 == 0) {
+                        ImVec2 checkMin = ImVec2(p1.x + x * checkSize.x, p1.y + y * checkSize.y);
+                        ImVec2 checkMax = ImVec2(checkMin.x + checkSize.x, checkMin.y + checkSize.y);
+                        dl->AddRectFilled(checkMin, checkMax, IM_COL32(96, 96, 96, 200));
+                    }
+                }
+            }
+        }
+        dl->AddQuad(p1, p2, p3, p4, border, selected ? 2.0f : 1.0f);
+
+        if (!sprite.name.empty()) {
+            std::filesystem::path labelPath(sprite.name);
+            const std::string label = labelPath.filename().string();
+            dl->AddText(ImVec2(screenPos.x - halfW, screenPos.y - halfH - 14.0f), IM_COL32(220, 220, 230, 230), label.c_str());
+        }
+    });
+}
+
 void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
 
     auto* pos = world.get<ECS::Position2D>(ctx.selectedEntity);
     if (!pos) return;
 
-    // Convert world position to screen position
     f32 worldToScreen = ctx.viewportZoom * 50.0f;
     ImVec2 screenPos(
         origin.x + viewportSize.x * 0.5f + (pos->x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-        origin.y + viewportSize.y * 0.5f + (pos->y + ctx.viewportPanY / worldToScreen) * worldToScreen
+        origin.y + viewportSize.y * 0.5f + (-pos->y + ctx.viewportPanY / worldToScreen) * worldToScreen
     );
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -253,33 +397,36 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
 void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
     if (!m_config.grid) return;
     
-    f32 gridSpacing = m_config.gridSpacing;
-    f32 scale = ctx.viewportZoom * 50.0f;
-    f32 scaledSpacing = gridSpacing * scale;
+    f32 baseSpacing = m_config.gridSpacing;
+    f32 scaledSpacing = baseSpacing * ctx.viewportZoom;
+    const f32 minPixelSpacing = 12.0f;
+    while (scaledSpacing < minPixelSpacing) {
+        scaledSpacing *= 2.0f;
+    }
     
     f32 centerX = origin.x + viewportSize.x * 0.5f;
     f32 centerY = origin.y + viewportSize.y * 0.5f;
-    f32 offsetX = ctx.viewportPanX * scale;
-    f32 offsetY = ctx.viewportPanY * scale;
+    f32 offsetX = ctx.viewportPanX;
+    f32 offsetY = ctx.viewportPanY;
+    f32 axisX = centerX + offsetX;
+    f32 axisY = centerY + offsetY;
     
     ImU32 gridColor = IM_COL32(100, 100, 120, 80);
     ImU32 axisColor = IM_COL32(200, 100, 100, 150);
-    
-    if (scaledSpacing < 2.0f) return;
-    
-    f32 startX = centerX - fmod(centerX - offsetX - origin.x, scaledSpacing) - scaledSpacing;
-    f32 startY = centerY - fmod(centerY - offsetY - origin.y, scaledSpacing) - scaledSpacing;
-    
-    for (f32 x = startX; x < origin.x + viewportSize.x + scaledSpacing * 2; x += scaledSpacing) {
-        if (fabs(x - centerX) < 2.0f) {
+
+    f32 startX = axisX - std::floor((axisX - origin.x) / scaledSpacing) * scaledSpacing;
+    f32 startY = axisY - std::floor((axisY - origin.y) / scaledSpacing) * scaledSpacing;
+
+    for (f32 x = startX; x <= origin.x + viewportSize.x; x += scaledSpacing) {
+        if (std::fabs(x - axisX) < 1.0f) {
             drawList->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + viewportSize.y), axisColor, 1.5f);
         } else {
             drawList->AddLine(ImVec2(x, origin.y), ImVec2(x, origin.y + viewportSize.y), gridColor, 0.5f);
         }
     }
     
-    for (f32 y = startY; y < origin.y + viewportSize.y + scaledSpacing * 2; y += scaledSpacing) {
-        if (fabs(y - centerY) < 2.0f) {
+    for (f32 y = startY; y <= origin.y + viewportSize.y; y += scaledSpacing) {
+        if (std::fabs(y - axisY) < 1.0f) {
             drawList->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + viewportSize.x, y), axisColor, 1.5f);
         } else {
             drawList->AddLine(ImVec2(origin.x, y), ImVec2(origin.x + viewportSize.x, y), gridColor, 0.5f);
@@ -287,6 +434,50 @@ void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewpor
     }
     
     drawList->AddCircle(ImVec2(centerX, centerY), 8.0f, IM_COL32(255, 200, 0, 200), 12, 2.0f);
+}
+
+void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float padding = 12.0f;
+    const float buttonWidth = 62.0f;
+    const float widgetSize = 84.0f;
+
+    ImVec2 widgetMin(
+        origin.x + viewportSize.x - padding - buttonWidth - 6.0f - widgetSize,
+        origin.y + viewportSize.y - padding - widgetSize
+    );
+    ImVec2 widgetMax(widgetMin.x + widgetSize, widgetMin.y + widgetSize);
+
+    dl->AddRectFilled(widgetMin, widgetMax, IM_COL32(18, 20, 26, 190), 6.0f);
+    dl->AddRect(widgetMin, widgetMax, IM_COL32(90, 100, 130, 180), 6.0f, 0, 1.0f);
+
+    bool is3D = false;
+    if (ctx.selectedEntity.isValid()) {
+        is3D = world.has<ECS::Position3D>(ctx.selectedEntity);
+    }
+
+    ImVec2 center(widgetMin.x + widgetSize * 0.5f, widgetMin.y + widgetSize * 0.5f);
+    const float axisLen = 22.0f;
+
+    dl->AddLine(center, ImVec2(center.x + axisLen, center.y), IM_COL32(255, 70, 70, 255), 2.0f);
+    dl->AddText(ImVec2(center.x + axisLen + 3.0f, center.y - 8.0f), IM_COL32(255, 90, 90, 255), "X");
+
+    dl->AddLine(center, ImVec2(center.x, center.y - axisLen), IM_COL32(70, 255, 90, 255), 2.0f);
+    dl->AddText(ImVec2(center.x - 4.0f, center.y - axisLen - 14.0f), IM_COL32(90, 255, 110, 255), "Y");
+
+    if (is3D) {
+        dl->AddLine(center, ImVec2(center.x - axisLen * 0.70f, center.y + axisLen * 0.70f), IM_COL32(90, 140, 255, 255), 2.0f);
+        dl->AddText(ImVec2(center.x - axisLen * 0.70f - 12.0f, center.y + axisLen * 0.70f - 6.0f), IM_COL32(120, 165, 255, 255), "Z");
+    }
+
+    dl->AddCircleFilled(center, 2.8f, IM_COL32(240, 240, 240, 255));
+    dl->AddText(ImVec2(widgetMin.x + 6.0f, widgetMin.y + widgetSize - 18.0f), IM_COL32(220, 220, 230, 220), is3D ? "3D" : "2D");
+
+    ImVec2 btnPos(widgetMax.x + 6.0f, widgetMin.y + widgetSize - 24.0f);
+    ImGui::SetCursorScreenPos(btnPos);
+    if (ImGui::Button(m_projectionMode == ProjectionMode::Perspective ? "Persp" : "Ortho", ImVec2(buttonWidth, 24.0f))) {
+        toggleProjectionMode();
+    }
 }
 
 // ── Gizmo input handling ──────────────────────────────────────────
@@ -330,6 +521,60 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
         ctx.isDirty = true;
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
     }
+}
+
+std::string SceneViewport::resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const {
+    if (spriteName.empty()) {
+        return "";
+    }
+
+    // 1. Try as-is (absolute path or relative to cwd)
+    {
+        std::filesystem::path path(spriteName);
+        if (std::filesystem::exists(path)) {
+            return spriteName;
+        }
+    }
+
+    // 2. Derive project root from current scene path (if available)
+    std::filesystem::path projectRoot;
+    if (!ctx.currentScenePath.empty()) {
+        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path();
+    } else {
+        projectRoot = std::filesystem::current_path();
+    }
+
+    // Only the filename (without directory)
+    std::string filename = std::filesystem::path(spriteName).filename().string();
+
+    // 3. Search in common asset directories relative to project root
+    std::vector<std::filesystem::path> searchDirs = {
+        projectRoot,
+        projectRoot / "assets",
+        projectRoot / "assets" / "raw",
+        projectRoot / "assets" / "processed",
+        projectRoot / "assets" / "textures",
+    };
+
+    for (const auto& dir : searchDirs) {
+        // Try the full relative path
+        auto candidate = dir / spriteName;
+        if (std::filesystem::exists(candidate)) {
+            return candidate.string();
+        }
+        // Try just the filename
+        candidate = dir / filename;
+        if (std::filesystem::exists(candidate)) {
+            return candidate.string();
+        }
+    }
+
+    // 4. Return as-is and let stbi_load report the error
+    return spriteName;
+}
+
+void SceneViewport::releaseSpriteTextures() {
+    m_spriteTextureCache.clear();
 }
 
 } // namespace Caffeine::Editor

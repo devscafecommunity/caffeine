@@ -11,7 +11,7 @@ namespace Caffeine::Editor {
 bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
                        const ProjectConfig& projectConfig) {
     if (!m_viewport.init(device)) return false;
-    m_assetBrowser.init(projectConfig.AssetRawPath.string().c_str());
+    m_assetBrowser.init(projectConfig);
     m_assetManager = assetManager;
     m_currentProjectConfig = projectConfig;
     m_tabManager.newScene("Untitled");
@@ -40,6 +40,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
         m_scriptEditor.open();
     });
+    m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
+        m_settingsPanel.open();
+    });
     m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Panels", [this]() {
     });
 
@@ -54,6 +57,22 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
     m_audioPreview.init();
 
+    // Register layout change callback
+    m_settingsPanel.setLayoutChangeCallback([this]() {
+        requestLayoutRebuild();
+    });
+
+    // Auto-load last scene if project config has one
+    if (!projectConfig.LastScene.empty()) {
+        std::filesystem::path scenePath = projectConfig.RootPath / projectConfig.LastScene;
+        if (std::filesystem::exists(scenePath)) {
+            if (auto* world = m_tabManager.activeWorld()) {
+                loadScene(scenePath.string().c_str(), *world);
+                m_tabManager.activeTab().name = std::filesystem::path(projectConfig.LastScene).stem().string();
+            }
+        }
+    }
+
     return true;
 }
 
@@ -65,12 +84,7 @@ void SceneEditor::shutdown() {
 
 // ── Main render ─────────────────────────────────────────────────
 
-void SceneEditor::render(
-#ifdef CF_HAS_SDL3
-                Render::Camera2D& editorCamera,
-#endif
-                f32 deltaTime
-                ) {
+void SceneEditor::render(f32 deltaTime) {
     if (!m_open) return;
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
@@ -115,11 +129,14 @@ void SceneEditor::render(
     activeWorld = m_tabManager.activeWorld();
     if (!activeWorld) { ImGui::End(); return; }
 
-    ImGuiID dockspaceId = ImGui::GetID("MyDockSpace");
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+    m_dockspaceId = ImGui::GetID("MyDockSpace");
+    ImGui::DockSpace(m_dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-    if (!m_dockingSetup) {
-        setupDockspace(dockspaceId);
+    if (!m_dockingSetup || m_layoutNeedsRebuild) {
+        // Apply layout profile from settings if available
+        const auto& profile = m_settingsPanel.layoutManager().currentProfile();
+        applyLayoutProfile(m_dockspaceId, profile);
+        m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
     }
 
@@ -129,15 +146,12 @@ void SceneEditor::render(
     // Render panels
     m_hierarchy.render(*activeWorld, m_ctx);
     m_inspector.render(*activeWorld, m_ctx);
-#ifdef CF_HAS_SDL3
-    m_viewport.render(*activeWorld, m_ctx, editorCamera);
-#else
     m_viewport.render(*activeWorld, m_ctx);
-#endif
     m_assetBrowser.render(m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
     m_scriptEditor.render();
+    m_settingsPanel.render();
     m_materialEditor.onImGuiRender();
     m_audioPreview.onImGuiRender();
     m_animationTimeline.render(deltaTime);
@@ -333,12 +347,30 @@ bool SceneEditor::saveScene(const char* path, ECS::World& world) {
     }
     m_ctx.currentScenePath = path;
     m_ctx.isDirty = false;
+
+    // Persist LastScene in project.caffeine so it reopens automatically
+    if (!m_currentProjectConfig.RootPath.empty()) {
+        std::filesystem::path root = m_currentProjectConfig.RootPath;
+        std::filesystem::path scenePath(path);
+        // Store relative path if scene is inside the project root
+        std::error_code ec;
+        auto rel = std::filesystem::relative(scenePath, root, ec);
+        m_currentProjectConfig.LastScene = (!ec && !rel.empty()) ? rel.string() : scenePath.string();
+        ProjectManager pm;
+        pm.SaveProjectFile(m_currentProjectConfig);
+    }
+
     return true;
 }
 
 bool SceneEditor::saveSceneAs(ECS::World& world) {
-    const char* path = "scene.caf";
-    return saveScene(path, world);
+    std::filesystem::path defaultPath;
+    if (!m_currentProjectConfig.RootPath.empty()) {
+        defaultPath = m_currentProjectConfig.RootPath / "scene.caf";
+    } else {
+        defaultPath = "scene.caf";
+    }
+    return saveScene(defaultPath.string().c_str(), world);
 }
 
 bool SceneEditor::loadScene(const char* path, ECS::World& world) {
@@ -480,11 +512,81 @@ void SceneEditor::handleAssetDrop(ECS::World& world) {
     world.add<ECS::Position2D>(entity, 0.0f, 0.0f);
 
     if (ext == ".caf" || ext == ".png" || ext == ".jpg") {
-        world.add<ECS::Sprite>(entity, assetPath.filename().string(), 0);
+        world.add<ECS::Sprite>(entity, assetPath.string(), 0);
     }
 
     m_ctx.selectedEntity = entity;
     m_ctx.endUndo(world);
+}
+
+// ── Layout profile application ──────────────────────────────────
+
+void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile) {
+    // Remove the old dockspace layout
+    ImGui::DockBuilderRemoveNode(dockspaceId);
+    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+
+    // Count visible panels to determine splits
+    int visibleCount = 0;
+    if (profile.hierarchyOpen) visibleCount++;
+    if (profile.inspectorOpen) visibleCount++;
+    if (profile.viewportOpen) visibleCount++;
+    if (profile.assetsOpen) visibleCount++;
+    if (profile.consoleOpen) visibleCount++;
+    if (profile.profilerOpen) visibleCount++;
+    if (profile.animationTimelineOpen) visibleCount++;
+    if (profile.tilemapEditorOpen) visibleCount++;
+    if (profile.scriptEditorOpen) visibleCount++;
+
+    if (visibleCount == 0) {
+        // Ensure at least viewport is visible
+        ImGui::DockBuilderDockWindow("Scene Viewport", dockspaceId);
+        ImGui::DockBuilderFinish(dockspaceId);
+        return;
+    }
+
+    ImGuiID dockLeft = dockspaceId;
+    ImGuiID dockRight = dockspaceId;
+    ImGuiID dockBottom = dockspaceId;
+    ImGuiID dockCenter = dockspaceId;
+
+    // Left panel (Hierarchy) - if enabled
+    if (profile.hierarchyOpen) {
+        ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, profile.hierarchyWidth, &dockLeft, &dockCenter);
+        ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+    }
+
+    // Right panel (Inspector) - if enabled
+    if (profile.inspectorOpen) {
+        ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Right, profile.inspectorWidth / (1.0f - profile.hierarchyWidth), &dockRight, &dockCenter);
+        ImGui::DockBuilderDockWindow("Inspector", dockRight);
+    }
+
+    // Bottom panels (Assets, Console, Profiler, etc.) - if any enabled
+    if (profile.assetsOpen || profile.consoleOpen || profile.profilerOpen || 
+        profile.animationTimelineOpen || profile.tilemapEditorOpen || profile.scriptEditorOpen) {
+        ImGuiID dockBottomRegion;
+        ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottomRegion, &dockCenter);
+        
+        // Group all bottom panels in the same tab bar
+        if (profile.assetsOpen) ImGui::DockBuilderDockWindow("Asset Browser", dockBottomRegion);
+        if (profile.consoleOpen) ImGui::DockBuilderDockWindow("Console", dockBottomRegion);
+        if (profile.profilerOpen) ImGui::DockBuilderDockWindow("Profiler", dockBottomRegion);
+        if (profile.animationTimelineOpen) ImGui::DockBuilderDockWindow("Animation Timeline", dockBottomRegion);
+        if (profile.tilemapEditorOpen) ImGui::DockBuilderDockWindow("Tilemap Editor", dockBottomRegion);
+        if (profile.scriptEditorOpen) ImGui::DockBuilderDockWindow("Script Editor", dockBottomRegion);
+    }
+
+    // Center panel (Viewport) - always visible or fallback
+    if (profile.viewportOpen) {
+        ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
+    } else if (visibleCount > 0) {
+        // If viewport is hidden but other panels are visible, use remaining space
+        ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
+    }
+
+    ImGui::DockBuilderFinish(dockspaceId);
 }
 
 } // namespace Caffeine::Editor

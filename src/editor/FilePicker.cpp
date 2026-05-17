@@ -13,9 +13,14 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstring>
 
 namespace Caffeine::Editor {
+
+namespace {
+std::unordered_set<std::string> g_filePickerCloseEvents;
+}
 
 std::optional<std::filesystem::path> FilePicker::pickPath(
     Mode mode,
@@ -27,6 +32,15 @@ std::optional<std::filesystem::path> FilePicker::pickPath(
 #endif
 
     return std::nullopt;
+}
+
+bool FilePicker::consumeCloseEvent(const std::string& title) {
+    auto it = g_filePickerCloseEvents.find(title);
+    if (it == g_filePickerCloseEvents.end()) {
+        return false;
+    }
+    g_filePickerCloseEvents.erase(it);
+    return true;
 }
 
 std::optional<std::filesystem::path> FilePicker::pickPathNative(
@@ -48,32 +62,27 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
         std::vector<std::filesystem::path> entries;
         std::string searchFilter;
         bool isOpen;
-        bool wasJustClosed = false;
     };
     
     static std::unordered_map<std::string, State> states;
     
     auto it = states.find(title);
-    if (it == states.end()) {
-        states[title] = {
-            defaultPath.empty() ? std::filesystem::current_path() : defaultPath,
-            {},
-            "",
-            true,
-            false
-        };
-        it = states.find(title);
-    }
+     if (it == states.end()) {
+         states[title] = {
+             defaultPath.empty() ? std::filesystem::current_path() : defaultPath,
+             {},
+             "",
+             true
+         };
+         it = states.find(title);
+     }
     
     State& state = it->second;
     std::optional<std::filesystem::path> result;
 
     if (!state.isOpen) {
-        if (state.wasJustClosed) {
-            states.erase(title);
-        } else {
-            state.wasJustClosed = true;
-        }
+        states.erase(title);
+        g_filePickerCloseEvents.insert(title);
         return std::nullopt;
     }
 

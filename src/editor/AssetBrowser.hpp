@@ -2,6 +2,7 @@
 #include "core/Types.hpp"
 #include "core/io/CafTypes.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/ProjectManager.hpp"
 
 #include <vector>
 #include <string>
@@ -15,7 +16,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 // ============================================================================
 // AssetBrowser v2 — Data/UI separated editor panel.
@@ -40,6 +40,11 @@ public:
         CapFile
     };
 
+    enum class AssetScope : u8 {
+        Raw,
+        Processed
+    };
+
     // ── File entry ─────────────────────────────────────────────────────
     struct Entry {
         std::filesystem::path path;
@@ -58,6 +63,7 @@ public:
 
     // ── Data layer ─────────────────────────────────────────────────────
     void init(const char* rootPath);
+    void init(const ProjectConfig& projectConfig);
     void refresh();
 
     // Search
@@ -85,6 +91,8 @@ public:
     // CAP file browsing
     void loadCapFile(const std::filesystem::path& capPath);
     BrowseMode browseMode() const { return m_browseMode; }
+    AssetScope assetScope() const { return m_assetScope; }
+    void setAssetScope(AssetScope scope);
 
     // ── UI layer (requires ImGui) ─────────────────────────────────────
     #ifdef CF_HAS_IMGUI
@@ -97,18 +105,36 @@ public:
     void renderBreadcrumbs();
     void renderGridView();
     void renderListView();
+    void renderPreviewPane();
     void renderContextMenu();
     const char* iconForType(AssetType type, const std::filesystem::path& path = {});
+    bool importPath(const std::filesystem::path& sourcePath, bool autoConvert = true);
+    bool convertRawAssetToCaf(const std::filesystem::path& rawPath, std::string* errorMessage = nullptr);
+    usize convertAllSupportedAssets();
+    bool packCurrentProjectCap(std::string* errorMessage = nullptr);
+    bool openCurrentProjectCap(std::string* errorMessage = nullptr);
+    bool isSupportedRawAsset(const std::filesystem::path& path) const;
+    void setStatusMessage(const std::string& message, bool isError = false);
 
     int m_selectedEntry = -1;
+    bool m_autoConvertOnImport = true;
+    bool m_showImportFilePicker = false;
+    bool m_showImportFolderPicker = false;
+    std::string m_statusMessage;
+    bool m_statusIsError = false;
     #endif
 
 private:
     // ── Internal ───────────────────────────────────────────────────────
     void applySearchFilter();
+    std::filesystem::path rootForScope(AssetScope scope) const;
+    void switchToFilesystemRoot(const std::filesystem::path& root);
 
     bool m_open = true;
     std::string m_rootPath = "assets";
+    std::filesystem::path m_projectRoot;
+    std::filesystem::path m_rawRoot;
+    std::filesystem::path m_processedRoot;
     std::filesystem::path m_currentDir;
     std::vector<Entry> m_entries;
     std::vector<Entry> m_filteredEntries;
@@ -116,6 +142,7 @@ private:
     std::string m_searchFilter;
     ViewMode m_viewMode = ViewMode::Grid;
     u32 m_thumbnailSize = 64;
+    AssetScope m_assetScope = AssetScope::Raw;
     
     BrowseMode m_browseMode = BrowseMode::Filesystem;
     std::filesystem::path m_currentCapPath;

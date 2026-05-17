@@ -8,7 +8,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class ScriptEditorWindow {
 public:

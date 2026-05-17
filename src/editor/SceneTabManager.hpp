@@ -15,8 +15,6 @@
 
 namespace Caffeine::Editor {
 
-using namespace Caffeine;
-
 struct SceneTab {
     std::string                     name;
     std::string                     path;

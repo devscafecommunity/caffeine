@@ -5,8 +5,6 @@
 
 namespace Caffeine::Editor {
 
-using namespace Caffeine;
-
 class AssetCooker {
 public:
     static bool CookTextures(const std::string& assetsDir, const std::string& outputDir, BuildProgress& progress);

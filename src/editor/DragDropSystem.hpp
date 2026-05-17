@@ -11,7 +11,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 // ── Payload type identifiers ────────────────────────────────────
 
@@ -51,7 +50,7 @@ public:
     /// Begin an asset drag-source. Returns true if the source is active.
     static bool SourceAsset(const char* path, AssetType type, const char* label) {
 #ifdef CF_HAS_IMGUI
-        if (!ImGui::BeginDragDropSource()) return false;
+    if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) return false;
         AssetDropPayload payload;
         strncpy(payload.path, path, sizeof(payload.path) - 1);
         payload.path[sizeof(payload.path) - 1] = '\0';
@@ -69,7 +68,7 @@ public:
     /// Begin an entity drag-source. Returns true if the source is active.
     static bool SourceEntity(u32 entityId, const char* label) {
 #ifdef CF_HAS_IMGUI
-        if (!ImGui::BeginDragDropSource()) return false;
+    if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) return false;
         ImGui::SetDragDropPayload(kPayloadEntityDrag, &entityId, sizeof(u32));
         ImGui::Text("%s", label);
         ImGui::EndDragDropSource();
