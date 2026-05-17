@@ -26,6 +26,7 @@ set(CAFFEINE_TEST_SOURCES
     test_pipeline.cpp
     test_editor.cpp
     test_cap_loader.cpp
+    test_phase2_3.cpp
     editor/phase1_integration_test.cpp
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
