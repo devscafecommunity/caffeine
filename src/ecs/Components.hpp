@@ -77,8 +77,9 @@ struct ParticleEmitterComponent {
     std::vector<Particle> activeParticles;
 };
 
+}  // namespace Caffeine::ECS
+
+#include "ecs/Components3D.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
-
-}  // namespace Caffeine::ECS

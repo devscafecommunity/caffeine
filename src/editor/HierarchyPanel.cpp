@@ -219,14 +219,76 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
 
 // ── Empty space context menu ─────────────────────────────────────
 
+void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, const char* componentType) {
+    m_context->beginUndo(EditorCommand::AddEntity, u32_max, world);
+    ECS::Entity e = world.create();
+    setEntityName(world, e, name);
+    
+    if (strcmp(componentType, "Camera2D") == 0) {
+        world.add<ECS::Camera2D>(e);
+    } else if (strcmp(componentType, "Camera3D") == 0) {
+        world.add<ECS::Camera3D>(e);
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+    } else if (strcmp(componentType, "DirectionalLight") == 0) {
+        world.add<ECS::Light>(e);
+        world.add<ECS::DirectionalLight>(e);
+    } else if (strcmp(componentType, "PointLight") == 0) {
+        world.add<ECS::Light>(e);
+        world.add<ECS::PointLight>(e);
+        world.add<ECS::Position3D>(e);
+    } else if (strcmp(componentType, "SpotLight") == 0) {
+        world.add<ECS::Light>(e);
+        world.add<ECS::SpotLight>(e);
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+    } else if (strcmp(componentType, "MeshRenderer") == 0) {
+        world.add<ECS::MeshRenderer>(e);
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+    }
+    
+    m_context->selectedEntity = e;
+    m_context->endUndo(world);
+}
+
 void HierarchyPanel::renderEmptyContextMenu() {
     if (ImGui::BeginPopupContextWindow("hierarchy_empty_ctx")) {
-        if (ImGui::MenuItem("Create Empty Entity")) {
-            m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-            ECS::Entity e = m_world->create();
-            setEntityName(*m_world, e, "New Entity");
-            m_context->selectedEntity = e;
-            m_context->endUndo(*m_world);
+        if (ImGui::BeginMenu("Create Entity")) {
+            if (ImGui::MenuItem("Empty Entity")) {
+                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+                ECS::Entity e = m_world->create();
+                setEntityName(*m_world, e, "New Entity");
+                m_context->selectedEntity = e;
+                m_context->endUndo(*m_world);
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Camera");
+            if (ImGui::MenuItem("Camera 2D")) {
+                createEntityWithType(*m_world, "Camera 2D", "Camera2D");
+            }
+            if (ImGui::MenuItem("Camera 3D")) {
+                createEntityWithType(*m_world, "Camera 3D", "Camera3D");
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Lights");
+            if (ImGui::MenuItem("Directional Light")) {
+                createEntityWithType(*m_world, "Directional Light", "DirectionalLight");
+            }
+            if (ImGui::MenuItem("Point Light")) {
+                createEntityWithType(*m_world, "Point Light", "PointLight");
+            }
+            if (ImGui::MenuItem("Spot Light")) {
+                createEntityWithType(*m_world, "Spot Light", "SpotLight");
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Rendering");
+            if (ImGui::MenuItem("Mesh Renderer")) {
+                createEntityWithType(*m_world, "Mesh Renderer", "MeshRenderer");
+            }
+            ImGui::EndMenu();
         }
         ImGui::EndPopup();
     }

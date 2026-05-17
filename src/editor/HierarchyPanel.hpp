@@ -36,6 +36,7 @@ private:
     void renderEntityNode(ECS::Entity entity);
     void renderEmptyContextMenu();
     void handleDeleteKey();
+    void createEntityWithType(ECS::World& world, const char* name, const char* componentType);
 
     bool hasChildren(ECS::Entity entity) const;
     void renderChildren(ECS::Entity parent);
