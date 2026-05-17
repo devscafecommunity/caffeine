@@ -102,7 +102,7 @@ add_library(Caffeine::UI ALIAS caffeine-ui)
 #
 #  Shared asset packer library used by the IDE for generating game.cap.
 # ═══════════════════════════════════════════════════════════════════
-add_subdirectory(caf-pack/src)
+add_subdirectory(caf-pack)
 
 # ═══════════════════════════════════════════════════════════════════
 #  CAFFEINE COMBINED — demonstra core + UI no mesmo executável
