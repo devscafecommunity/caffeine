@@ -129,34 +129,28 @@ void SettingsPanel::renderGeneralSettings() {
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Editor Preferences:");
     ImGui::Separator();
 
-    static bool vsyncEnabled = true;
-    if (ImGui::Checkbox("Enable VSync", &vsyncEnabled)) {
-        // TODO: Apply VSync setting
+    if (ImGui::Checkbox("Enable VSync", &m_vsyncEnabled)) {
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Requires restart to take effect.");
+
+    if (ImGui::SliderInt("UI Font Size", &m_fontSize, 10, 20)) {
+        ImGui::GetIO().FontGlobalScale = static_cast<float>(m_fontSize) / 13.0f;
     }
 
-    static int fontSize = 13;
-    if (ImGui::SliderInt("UI Font Size", &fontSize, 10, 20)) {
-        // TODO: Apply font size
-    }
-
-    static bool darkMode = true;
-    if (ImGui::Checkbox("Dark Mode", &darkMode)) {
-        // TODO: Apply theme
+    if (ImGui::Checkbox("Dark Mode", &m_darkMode)) {
+        if (m_darkMode) {
+            ImGui::StyleColorsDark();
+        } else {
+            ImGui::StyleColorsLight();
+        }
     }
 
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Auto-save Settings:");
     ImGui::Separator();
 
-    static bool autoSaveEnabled = true;
-    if (ImGui::Checkbox("Enable Auto-save", &autoSaveEnabled)) {
-        // TODO: Configure auto-save
-    }
-
-    static int autoSaveInterval = 300;
-    if (ImGui::DragInt("Auto-save Interval (seconds)", &autoSaveInterval, 1, 10, 3600)) {
-        // TODO: Update auto-save interval
-    }
+    ImGui::Checkbox("Enable Auto-save", &m_autoSaveEnabled);
+    ImGui::DragInt("Auto-save Interval (seconds)", &m_autoSaveInterval, 1, 10, 3600);
 #endif
 }
 

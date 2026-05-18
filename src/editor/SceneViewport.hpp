@@ -93,6 +93,8 @@ private:
     bool m_initialized = false;
     TransformGizmo m_Gizmo;
     bool m_gizmoDragging = false;
+    bool m_boxSelecting = false;
+    ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
     ProjectionMode m_projectionMode = ProjectionMode::Perspective;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;

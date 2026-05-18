@@ -154,6 +154,35 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(200, 200, 200, 200), buf);
     }
 
+    {
+        ImVec2 btnPos(origin.x + 8, origin.y + 28);
+        ImGui::SetCursorScreenPos(btnPos);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+        if (ctx.physicsDebugVisible) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 0.85f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
+        }
+        if (ImGui::Button("Physics")) {
+            ctx.physicsDebugVisible = !ctx.physicsDebugVisible;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle physics collider debug overlay");
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (ctx.snapToGrid) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.5f, 0.1f, 0.85f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
+        }
+        if (ImGui::Button("Snap")) {
+            ctx.snapToGrid = !ctx.snapToGrid;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle snap to grid (%.1f units)", ctx.snapGridSize);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+    }
+
     drawGrid(drawList, origin, viewportSize, ctx);
     drawSprites(world, ctx, origin, viewportSize);
     drawPhysicsDebug(world, ctx, origin, viewportSize);
@@ -396,6 +425,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
 }
 
 void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    if (!ctx.physicsDebugVisible) return;
     using namespace Physics2D;
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
@@ -540,6 +570,10 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
             case EditorContext::GizmoMode::Translate:
                 pos->x += delta.x * sensitivity;
                 pos->y -= delta.y * sensitivity;
+                if (ctx.snapToGrid && ctx.snapGridSize > 0.0f) {
+                    pos->x = roundf(pos->x / ctx.snapGridSize) * ctx.snapGridSize;
+                    pos->y = roundf(pos->y / ctx.snapGridSize) * ctx.snapGridSize;
+                }
                 break;
             case EditorContext::GizmoMode::Rotate: {
                 auto& rot = world.add<ECS::Rotation>(ctx.selectedEntity);

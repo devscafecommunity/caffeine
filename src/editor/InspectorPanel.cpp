@@ -25,6 +25,14 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             return;
         }
 
+        if (ctx.hasMultiSelection()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "%zu entities selected",
+                               ctx.selectedEntities.size());
+            ImGui::TextDisabled("Select a single entity to inspect its components.");
+            ImGui::End();
+            return;
+        }
+
         ECS::Entity e = ctx.selectedEntity;
 
         // Entity header
@@ -120,10 +128,12 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Position2D>(e)) {
         auto* pos = world.get<ECS::Position2D>(e);
         f32 p[2] = { pos->x, pos->y };
+        if (ImGui::IsItemActivated()) { ctx.beginUndo(EditorCommand::SetField, e.id(), world); m_undoStarted = true; }
         if (ImGui::DragFloat2("Position", p, 0.5f)) {
             pos->x = p[0]; pos->y = p[1];
             ctx.isDirty = true;
         }
+        if (ImGui::IsItemDeactivatedAfterEdit() && m_undoStarted) { ctx.endUndo(world); m_undoStarted = false; }
     } else {
         f32 p[2] = { 0, 0 };
         if (ImGui::DragFloat2("Position", p, 0.5f)) {
@@ -135,10 +145,12 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Rotation>(e)) {
         auto* rot = world.get<ECS::Rotation>(e);
         f32 degrees = rot->angle * 180.0f / 3.14159265f;
+        if (ImGui::IsItemActivated()) { ctx.beginUndo(EditorCommand::SetField, e.id(), world); m_undoStarted = true; }
         if (ImGui::DragFloat("Rotation", &degrees, 1.0f, -360.0f, 360.0f)) {
             rot->angle = degrees * 3.14159265f / 180.0f;
             ctx.isDirty = true;
         }
+        if (ImGui::IsItemDeactivatedAfterEdit() && m_undoStarted) { ctx.endUndo(world); m_undoStarted = false; }
     } else {
         f32 degrees = 0;
         if (ImGui::DragFloat("Rotation", &degrees, 1.0f, -360.0f, 360.0f)) {
@@ -152,10 +164,12 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Scale2D>(e)) {
         auto* scl = world.get<ECS::Scale2D>(e);
         f32 s[2] = { scl->x, scl->y };
+        if (ImGui::IsItemActivated()) { ctx.beginUndo(EditorCommand::SetField, e.id(), world); m_undoStarted = true; }
         if (ImGui::DragFloat2("Scale", s, 0.1f, 0.01f, 100.0f)) {
             scl->x = s[0]; scl->y = s[1];
             ctx.isDirty = true;
         }
+        if (ImGui::IsItemDeactivatedAfterEdit() && m_undoStarted) { ctx.endUndo(world); m_undoStarted = false; }
     } else {
         f32 s[2] = { 1, 1 };
         if (ImGui::DragFloat2("Scale", s, 0.1f, 0.01f, 100.0f)) {

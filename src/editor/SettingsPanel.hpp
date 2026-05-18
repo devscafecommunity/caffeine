@@ -34,12 +34,16 @@ private:
     bool m_open = false;
     LayoutManager m_layoutManager;
     
-    // UI state
     std::string m_newProfileName;
     std::string m_selectedProfileName;
     int m_selectedProfileIndex = 0;
     std::function<void()> m_onLayoutChange;
 
+    bool m_vsyncEnabled    = true;
+    int  m_fontSize        = 13;
+    bool m_darkMode        = true;
+    bool m_autoSaveEnabled = true;
+    int  m_autoSaveInterval = 300;
 
     void renderLayoutProfiles();
     void renderGeneralSettings();

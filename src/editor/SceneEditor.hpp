@@ -24,6 +24,8 @@
 #include "editor/BuildDialog.hpp"
 #include "editor/SettingsPanel.hpp"
 
+#include "core/io/FileWatcher.hpp"
+
 #include "physics/PhysicsSystem2D.hpp"
 #include "events/EventBus.hpp"
 
@@ -169,6 +171,9 @@ private:
         float rotation = 0;
     };
     std::vector<EntitySnapshot> m_playSnapshot;
+
+    IO::FileWatcher m_scriptFileWatcher;
+    bool m_scriptWatcherStarted = false;
 };
 
 } // namespace Caffeine::Editor

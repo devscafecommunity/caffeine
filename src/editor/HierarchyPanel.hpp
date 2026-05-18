@@ -6,6 +6,7 @@
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "editor/EditorContext.hpp"
+#include "physics/PhysicsComponents2D.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -29,6 +30,8 @@ public:
     void setContext(EditorContext* ctx) { m_context = ctx; }
     void setWorld(ECS::World* world) { m_world = world; }
 
+    void duplicateEntity(ECS::World& world, ECS::Entity src);
+
 private:
     void renderSearchBar();
     void renderToolbar();
@@ -50,6 +53,7 @@ private:
     ECS::Entity m_entities[MAX_VISIBLE];
     u32 m_entityCount = 0;
     ECS::Entity m_renaming = ECS::Entity::INVALID;
+    ECS::Entity m_lastScrollTarget = ECS::Entity::INVALID;
 };
 
 } // namespace Caffeine::Editor

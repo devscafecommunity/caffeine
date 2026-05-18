@@ -182,6 +182,25 @@ void SceneEditor::render(f32 deltaTime) {
 
     handleShortcuts(*activeWorld);
 
+#ifdef CF_HAS_SCRIPTING
+    if (!m_scriptWatcherStarted && !m_currentProjectConfig.RootPath.empty()) {
+        std::filesystem::path scriptsDir = m_currentProjectConfig.RootPath / "scripts";
+        if (std::filesystem::exists(scriptsDir)) {
+            m_scriptFileWatcher.start(scriptsDir, true);
+            m_scriptWatcherStarted = true;
+        }
+    }
+    if (m_scriptWatcherStarted) {
+        auto changed = m_scriptFileWatcher.poll();
+        if (!changed.empty() && m_scriptEngineReady && m_ctx.scriptEngine) {
+            for (const auto& path : changed) {
+                std::string err;
+                m_ctx.scriptEngine->loadScript(path.string(), &err);
+            }
+        }
+    }
+#endif
+
     // Setup dockspace root window
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_MenuBar
                                  | ImGuiWindowFlags_NoDocking
@@ -223,9 +242,13 @@ void SceneEditor::render(f32 deltaTime) {
     ImGui::DockSpace(m_dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
     if (!m_dockingSetup || m_layoutNeedsRebuild) {
-        // Apply layout profile from settings if available
+        ImGuiDockNode* existingNode = ImGui::DockBuilderGetNode(m_dockspaceId);
+        bool hasExistingLayout = existingNode != nullptr && existingNode->IsSplitNode();
+
         const auto& profile = m_settingsPanel.layoutManager().currentProfile();
-        applyLayoutProfile(m_dockspaceId, profile);
+        if (!hasExistingLayout || m_layoutNeedsRebuild) {
+            applyLayoutProfile(m_dockspaceId, profile);
+        }
         
         // Apply visibility from profile to panels
         profile.hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
@@ -345,6 +368,16 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
                 m_ctx.undoStack.redo(world);
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
+                m_ctx.clipboardEntity = m_ctx.selectedEntity;
+            }
+            if (ImGui::MenuItem("Paste", "Ctrl+V", false, m_ctx.clipboardEntity.isValid())) {
+                m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_ctx.selectedEntity.isValid())) {
+                m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
@@ -436,6 +469,22 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
         if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
+    }
+
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
+        if (m_ctx.selectedEntity.isValid()) {
+            m_ctx.clipboardEntity = m_ctx.selectedEntity;
+        }
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
+        if (m_ctx.clipboardEntity.isValid()) {
+            m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
+        }
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
+        if (m_ctx.selectedEntity.isValid()) {
+            m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
+        }
     }
 }
 
@@ -672,13 +721,15 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
         ImGuiID dockBottomRegion;
         ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottomRegion, &dockCenter);
         
-        // Group all bottom panels in the same tab bar
         if (profile.assetsOpen) ImGui::DockBuilderDockWindow("Asset Browser", dockBottomRegion);
         if (profile.consoleOpen) ImGui::DockBuilderDockWindow("Console", dockBottomRegion);
         if (profile.profilerOpen) ImGui::DockBuilderDockWindow("Profiler", dockBottomRegion);
         if (profile.animationTimelineOpen) ImGui::DockBuilderDockWindow("Animation Timeline", dockBottomRegion);
         if (profile.tilemapEditorOpen) ImGui::DockBuilderDockWindow("Tilemap Editor", dockBottomRegion);
         if (profile.scriptEditorOpen) ImGui::DockBuilderDockWindow("Script Editor", dockBottomRegion);
+        ImGui::DockBuilderDockWindow("Build & Run", dockBottomRegion);
+        ImGui::DockBuilderDockWindow("Audio Preview", dockBottomRegion);
+        ImGui::DockBuilderDockWindow("Settings", dockBottomRegion);
     }
 
     // Center panel (Viewport) - always visible or fallback

@@ -44,6 +44,7 @@ private:
 #endif
 
     bool m_open = true;
+    bool m_undoStarted = false;
     HashMap<u32, ComponentDrawer> m_drawers;
 };
 

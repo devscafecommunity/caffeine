@@ -29,10 +29,10 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     std::optional<ProjectConfig> result;
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     
-    ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(620, 520), ImGuiCond_Appearing);
     
-    if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
         ImGui::Text("Welcome to Doppio — Select or Create a Project");
         ImGui::Separator();
         

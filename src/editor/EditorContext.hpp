@@ -4,6 +4,7 @@
 #include "ecs/World.hpp"
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <cstring>
 
 #ifdef CF_HAS_SCRIPTING
@@ -84,9 +85,10 @@ private:
 class EditorContext {
 public:
     // ── Selection ──────────────────────────────────────────────────────
-    ECS::Entity selectedEntity   = ECS::Entity::INVALID;
-    ECS::Entity hoveredEntity    = ECS::Entity::INVALID;
-    ECS::Entity clipboardEntity  = ECS::Entity::INVALID;
+    ECS::Entity              selectedEntity  = ECS::Entity::INVALID;
+    std::vector<ECS::Entity> selectedEntities;
+    ECS::Entity              hoveredEntity   = ECS::Entity::INVALID;
+    ECS::Entity              clipboardEntity = ECS::Entity::INVALID;
 
     // ── Scene state ────────────────────────────────────────────────────
     std::string currentScenePath;
@@ -98,6 +100,13 @@ public:
 
     GizmoMode  gizmoMode  = GizmoMode::Translate;
     GizmoSpace gizmoSpace = GizmoSpace::World;
+
+    // ── Snap ───────────────────────────────────────────────────────────
+    bool snapToGrid   = false;
+    f32  snapGridSize = 1.0f;
+
+    // ── Debug overlays ─────────────────────────────────────────────────
+    bool physicsDebugVisible = true;
 
     // ── Viewport state ─────────────────────────────────────────────────
     f32 viewportPanX = 0.0f;
@@ -120,24 +129,43 @@ public:
 
     // ── Methods ────────────────────────────────────────────────────────
 
-    /// Select an entity (updates selectedEntity).
-    void selectEntity(ECS::Entity e) { selectedEntity = e; }
-
-    /// Mark the scene as modified (dirty).
-    void markDirty() { isDirty = true; }
-
-    /// Clear selection and hover.
-    void clearSelection() {
-        selectedEntity  = ECS::Entity::INVALID;
-        hoveredEntity   = ECS::Entity::INVALID;
+    void selectEntity(ECS::Entity e) {
+        selectedEntity = e;
+        selectedEntities.clear();
+        if (e.isValid()) selectedEntities.push_back(e);
     }
 
-    /// Capture the current world as the "before" snapshot, begin an undo
-    /// command. Must be followed by endUndo() after the edit.
-    void beginUndo(EditorCommand::Type type, u32 entityId, ECS::World& world);
+    void addToSelection(ECS::Entity e) {
+        if (!isSelected(e)) selectedEntities.push_back(e);
+        selectedEntity = e;
+    }
 
-    /// Capture the current world as the "after" snapshot and push the
-    /// pending undo command onto the stack. Marks dirty automatically.
+    void toggleSelection(ECS::Entity e) {
+        auto it = std::find(selectedEntities.begin(), selectedEntities.end(), e);
+        if (it != selectedEntities.end()) {
+            selectedEntities.erase(it);
+            selectedEntity = selectedEntities.empty() ? ECS::Entity::INVALID : selectedEntities.back();
+        } else {
+            selectedEntities.push_back(e);
+            selectedEntity = e;
+        }
+    }
+
+    bool isSelected(ECS::Entity e) const {
+        return std::find(selectedEntities.begin(), selectedEntities.end(), e) != selectedEntities.end();
+    }
+
+    bool hasMultiSelection() const { return selectedEntities.size() > 1; }
+
+    void markDirty() { isDirty = true; }
+
+    void clearSelection() {
+        selectedEntity = ECS::Entity::INVALID;
+        hoveredEntity  = ECS::Entity::INVALID;
+        selectedEntities.clear();
+    }
+
+    void beginUndo(EditorCommand::Type type, u32 entityId, ECS::World& world);
     void endUndo(ECS::World& world);
 
 private:
