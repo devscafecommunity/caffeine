@@ -1,4 +1,6 @@
 #include "editor/SceneEditor.hpp"
+#include "ecs/Components.hpp"
+#include "physics/PhysicsComponents2D.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui_internal.h>
@@ -80,6 +82,79 @@ void SceneEditor::shutdown() {
     m_viewport.shutdown();
     m_audioPreview.shutdown();
 }
+
+// ── Play mode control ───────────────────────────────────────────
+
+void SceneEditor::enterPlayMode(ECS::World& world) {
+    m_playSnapshot.clear();
+    ECS::ComponentQuery q;
+    world.forEach<ECS::Position2D>(q,
+        [&](ECS::Entity e, ECS::Position2D& pos) {
+            EntitySnapshot snap;
+            snap.id = e.id();
+            snap.px = pos.x; snap.py = pos.y;
+            if (auto* v = world.get<ECS::Velocity2D>(e)) { snap.vx = v->x; snap.vy = v->y; }
+            if (auto* r = world.get<ECS::Rotation>(e))   { snap.rotation = r->angle; }
+            m_playSnapshot.push_back(snap);
+        });
+    m_isPlaying = true;
+    m_isPaused  = false;
+#ifdef CF_HAS_SCRIPTING
+    if (!m_scriptEngineReady) {
+        Script::ScriptEngine::InitParams p;
+        p.world  = &world;
+        p.events = &m_eventBus;
+        m_scriptEngineReady = m_scriptEngine.init(p);
+        m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+    }
+#endif
+}
+
+void SceneEditor::exitPlayMode(ECS::World& world) {
+    m_isPlaying = false;
+    m_isPaused  = false;
+    for (auto& snap : m_playSnapshot) {
+        ECS::Entity e(snap.id, &world);
+        if (!e.isValid()) continue;
+        if (auto* pos = world.get<ECS::Position2D>(e)) { pos->x = snap.px; pos->y = snap.py; }
+        if (auto* v   = world.get<ECS::Velocity2D>(e)) { v->x = snap.vx;  v->y = snap.vy;  }
+        if (auto* r   = world.get<ECS::Rotation>(e))   { r->angle = snap.rotation; }
+    }
+    m_playSnapshot.clear();
+}
+
+void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
+    if (!m_isPlaying || m_isPaused) return;
+    m_physicsSystem.onUpdate(world, dt);
+#ifdef CF_HAS_SCRIPTING
+    if (m_scriptEngineReady) m_scriptSystem.onUpdate(world, dt);
+#endif
+    m_eventBus.dispatch();
+}
+
+void SceneEditor::renderPlaybar(ECS::World& world) {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration
+                           | ImGuiWindowFlags_NoNav
+                           | ImGuiWindowFlags_NoMove
+                           | ImGuiWindowFlags_NoBringToFrontOnFocus
+                           | ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f - 60.0f, 30.0f), ImGuiCond_Always);
+    if (ImGui::Begin("##PlayBar", nullptr, flags)) {
+        if (!m_isPlaying) {
+            if (ImGui::Button(" Play ")) enterPlayMode(world);
+        } else {
+            if (m_isPaused) {
+                if (ImGui::Button("Resume")) m_isPaused = false;
+            } else {
+                if (ImGui::Button(" Pause")) m_isPaused = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(" Stop ")) exitPlayMode(world);
+        }
+    }
+    ImGui::End();
+}
 #endif
 
 // ── Main render ─────────────────────────────────────────────────
@@ -89,6 +164,8 @@ void SceneEditor::render(f32 deltaTime) {
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
     if (!activeWorld) return;
+
+    tickSystems(*activeWorld, deltaTime);
 
     handleShortcuts(*activeWorld);
 
@@ -158,6 +235,7 @@ void SceneEditor::render(f32 deltaTime) {
     // Render panels
     m_hierarchy.render(*activeWorld, m_ctx);
     m_inspector.render(*activeWorld, m_ctx);
+    renderPlaybar(*activeWorld);
     m_viewport.render(*activeWorld, m_ctx);
     m_assetBrowser.render(m_ctx);
     m_console.render();
