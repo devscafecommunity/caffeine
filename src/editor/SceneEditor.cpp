@@ -67,13 +67,23 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     // Auto-load last scene if project config has one
     if (!projectConfig.LastScene.empty()) {
         std::filesystem::path scenePath = projectConfig.RootPath / projectConfig.LastScene;
-        if (std::filesystem::exists(scenePath)) {
+         if (std::filesystem::exists(scenePath)) {
             if (auto* world = m_tabManager.activeWorld()) {
                 loadScene(scenePath.string().c_str(), *world);
                 m_tabManager.activeTab().name = std::filesystem::path(projectConfig.LastScene).stem().string();
             }
         }
     }
+
+#ifdef CF_HAS_SCRIPTING
+    Script::ScriptEngine::InitParams scriptParams;
+    scriptParams.world  = nullptr;
+    scriptParams.events = &m_eventBus;
+    if (!m_scriptEngineReady) {
+        m_scriptEngineReady = m_scriptEngine.init(scriptParams);
+    }
+    m_ctx.scriptEngine = &m_scriptEngine;
+#endif
 
     return true;
 }

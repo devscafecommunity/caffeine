@@ -272,44 +272,45 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
 }
 
 void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
-    if (!world.has<Script::ScriptComponent>(e)) {
-        if (ImGui::CollapsingHeader("Script")) {
-            if (ImGui::Button("+ Add Script")) {
-                world.add<Script::ScriptComponent>(e);
-                ctx.isDirty = true;
-            }
+#ifdef CF_HAS_SCRIPTING
+    using namespace Script;
+    auto* sc = world.get<ScriptComponent>(e);
+    if (!sc) {
+        if (ImGui::Button("Add Script")) {
+            world.add<ScriptComponent>(e);
         }
         return;
     }
-
-    if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
-        auto* script = world.get<Script::ScriptComponent>(e);
-
-        std::string pathDisplay = script->scriptPath.empty() ? "No script" : script->scriptPath;
-
-        if (ImGui::Button(pathDisplay.c_str(), ImVec2(-1, 0))) {
-        }
-
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                const char* path = static_cast<const char*>(payload->Data);
-                std::filesystem::path p(path);
-                if (p.extension() == ".lua") {
-                    script->scriptPath = path;
-                    ctx.isDirty = true;
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-
-        if (!script->scriptPath.empty()) {
-            ImGui::SameLine();
-            if (ImGui::Button("Open")) {
-                std::string cmd = "xdg-open \"" + script->scriptPath + "\" &";
-                std::system(cmd.c_str());
-            }
+    static char pathBuf[512] = {};
+    static std::string lastError;
+    if (sc->scriptPath != std::string(pathBuf)) {
+        std::strncpy(pathBuf, sc->scriptPath.c_str(), sizeof(pathBuf) - 1);
+        pathBuf[sizeof(pathBuf)-1] = 0;
+    }
+    ImGui::Text("Script Component");
+    ImGui::SetNextItemWidth(-90.0f);
+    if (ImGui::InputText("##scriptPath", pathBuf, sizeof(pathBuf))) {
+        sc->scriptPath = pathBuf;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Load")) {
+        if (ctx.scriptEngine) {
+            std::string err;
+            bool ok = ctx.scriptEngine->loadScript(sc->scriptPath, &err);
+            lastError = ok ? "" : err;
+        } else {
+            lastError = "ScriptEngine not available";
         }
     }
+    if (!lastError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+        ImGui::TextWrapped("%s", lastError.c_str());
+        ImGui::PopStyleColor();
+    }
+#else
+    (void)world; (void)e; (void)ctx;
+    ImGui::TextDisabled("Scripting not enabled");
+#endif
 }
 
 } // namespace Caffeine::Editor

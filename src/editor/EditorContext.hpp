@@ -6,6 +6,10 @@
 #include <vector>
 #include <cstring>
 
+#ifdef CF_HAS_SCRIPTING
+#include "script/ScriptEngine.hpp"
+#endif
+
 namespace Caffeine::Editor {
 
 // ============================================================================
@@ -108,6 +112,11 @@ public:
 
     // ── Undo system ────────────────────────────────────────────────────
     UndoStack undoStack;
+
+#ifdef CF_HAS_SCRIPTING
+    // ── Script Engine ──────────────────────────────────────────────────
+    Script::ScriptEngine* scriptEngine = nullptr;
+#endif
 
     // ── Methods ────────────────────────────────────────────────────────
 
