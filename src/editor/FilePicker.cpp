@@ -22,8 +22,7 @@
 
 namespace Caffeine::Editor {
 
-#if defined(CF_HAS_IMGUI) && defined(__unix__)
-// File picker only available on Unix with ImGui
+#ifdef CF_HAS_IMGUI
 
 namespace {
 std::unordered_set<std::string> g_filePickerCloseEvents;
@@ -34,11 +33,7 @@ std::optional<std::filesystem::path> FilePicker::pickPath(
     const std::string& title,
     const std::filesystem::path& defaultPath
 ) {
-#ifdef CF_HAS_IMGUI
     return pickPathImGui(mode, title, defaultPath);
-#endif
-
-    return std::nullopt;
 }
 
 bool FilePicker::consumeCloseEvent(const std::string& title) {
@@ -187,7 +182,7 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
 #endif
 }
 
-#else  // !(CF_HAS_IMGUI && __unix__)
+#else  // !CF_HAS_IMGUI
 
 // Stubs when FilePicker not available
 
@@ -219,7 +214,7 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     return std::nullopt;
 }
 
-#endif  // CF_HAS_IMGUI && __unix__
+#endif  // CF_HAS_IMGUI
 
 } // namespace Caffeine::Editor
 
