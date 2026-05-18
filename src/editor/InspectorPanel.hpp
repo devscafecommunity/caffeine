@@ -9,7 +9,10 @@
 #include "script/ScriptTypes.hpp"
 #include "containers/HashMap.hpp"
 #include "ui/UIComponents.hpp"
+#include "editor/InspectorWidgets.hpp"
+#include "editor/ComponentRegistry.hpp"
 #include <functional>
+#include <filesystem>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -49,6 +52,8 @@ private:
     void drawUILabel(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+
+    std::filesystem::path resolveProjectRoot(const EditorContext& ctx) const;
 #endif
 
     bool m_open = true;
