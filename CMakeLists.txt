@@ -102,7 +102,13 @@ add_library(Caffeine::UI ALIAS caffeine-ui)
 #
 #  Shared asset packer library used by the IDE for generating game.cap.
 # ═══════════════════════════════════════════════════════════════════
-add_subdirectory(caf-pack)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/caf-pack/CMakeLists.txt")
+    add_subdirectory(caf-pack)
+    set(CAF_PACK_AVAILABLE TRUE)
+else()
+    set(CAF_PACK_AVAILABLE FALSE)
+    message(WARNING "caf-pack submodule not found. IDE (doppio) will be built without asset packing support.")
+endif()
 
 # ═══════════════════════════════════════════════════════════════════
 #  CAFFEINE COMBINED — demonstra core + UI no mesmo executável
@@ -322,9 +328,13 @@ with open(sys.argv[1], 'w') as f:
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
      )
-    target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes caf-pack-lib)
-     target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
-     target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
+     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
+     if(CAF_PACK_AVAILABLE)
+         target_link_libraries(doppio PRIVATE caf-pack-lib)
+         target_compile_definitions(doppio PRIVATE CF_HAS_CAF_PACK=1)
+     endif()
+      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
+      target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
      target_compile_features(doppio PRIVATE cxx_std_20)
      # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
      if(NOT MSVC)
