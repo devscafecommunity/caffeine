@@ -1,6 +1,7 @@
 #include "editor/SceneEditor.hpp"
 #include "ecs/Components.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "editor/ComponentRegistry.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui_internal.h>
@@ -89,9 +90,11 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     if (!m_scriptEngineReady) {
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
-    m_ctx.scriptEngine = &m_scriptEngine;
-    m_scriptEditor.setScriptEngine(&m_scriptEngine);
+     m_ctx.scriptEngine = &m_scriptEngine;
+     m_scriptEditor.setScriptEngine(&m_scriptEngine);
 #endif
+
+    registerAllComponents(ComponentRegistry::instance());
 
     return true;
 }

@@ -5,6 +5,8 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include <filesystem>
+#include <algorithm>
+#include <cctype>
 
 #ifdef CF_HAS_IMGUI
 
@@ -74,72 +76,32 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
 
         // Add Component button
         if (ImGui::Button("+ Add Component", ImVec2(-1, 0))) {
-            ImGui::OpenPopup("add_component");
+            ImGui::OpenPopup("add_component_v2");
+            m_addComponentSearch[0] = '\0';
         }
-        if (ImGui::BeginPopup("add_component")) {
-            if (!world.has<ECS::Position2D>(e) && ImGui::MenuItem("Position2D")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::Position2D>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::Velocity2D>(e) && ImGui::MenuItem("Velocity2D")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::Velocity2D>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::Sprite>(e) && ImGui::MenuItem("Sprite")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::Sprite>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::Health>(e) && ImGui::MenuItem("Health")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::Health>(e);
-                ctx.endUndo(world);
-            }
-             if (!world.has<Physics2D::RigidBody2D>(e) && ImGui::MenuItem("RigidBody2D")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<Physics2D::RigidBody2D>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<Physics2D::Collider2D>(e) && ImGui::MenuItem("Collider2D")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                Physics2D::Collider2D col;
-                col.shape = Physics2D::ColliderShape::AABB;
-                col.size = { 64.0f, 64.0f };
-                col.radius = 32.0f;
-                world.add<Physics2D::Collider2D>(e, col);
-                ctx.endUndo(world);
-            }
-            if (!world.has<Audio::AudioEmitter>(e) && ImGui::MenuItem("Audio Source")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<Audio::AudioEmitter>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<Script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<Script::ScriptComponent>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::PersistentComponent>(e) && ImGui::MenuItem("Persistent")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::PersistentComponent>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::MeshFilterComponent>(e) && ImGui::MenuItem("Mesh Filter")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::MeshFilterComponent>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<ECS::MeshRendererComponent>(e) && ImGui::MenuItem("Mesh Renderer")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<ECS::MeshRendererComponent>(e);
-                ctx.endUndo(world);
-            }
-            if (!world.has<UI::UIWidget>(e) && ImGui::MenuItem("UI Widget")) {
-                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
-                world.add<UI::UIWidget>(e);
-                ctx.endUndo(world);
+        if (ImGui::BeginPopup("add_component_v2")) {
+            ImGui::InputText("##search", m_addComponentSearch, sizeof(m_addComponentSearch));
+            ImGui::Separator();
+            const char* lastCategory = nullptr;
+            for (const auto& entry : ComponentRegistry::instance().entries()) {
+                if (entry.has(world, e)) continue;
+                if (m_addComponentSearch[0] != '\0') {
+                    std::string lower = entry.name;
+                    std::string query = m_addComponentSearch;
+                    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                    std::transform(query.begin(), query.end(), query.begin(), ::tolower);
+                    if (lower.find(query) == std::string::npos) continue;
+                }
+                if (!lastCategory || entry.category != lastCategory) {
+                    if (lastCategory) ImGui::Separator();
+                    ImGui::TextDisabled("%s", entry.category.c_str());
+                    lastCategory = entry.category.c_str();
+                }
+                if (ImGui::MenuItem(entry.name.c_str())) {
+                    ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                    entry.add(world, e);
+                    ctx.endUndo(world);
+                }
             }
             ImGui::EndPopup();
         }

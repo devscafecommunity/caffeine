@@ -59,6 +59,7 @@ private:
     bool m_open = true;
     bool m_undoStarted = false;
     HashMap<u32, ComponentDrawer> m_drawers;
+    char m_addComponentSearch[128] = {};
 };
 
 } // namespace Caffeine::Editor
