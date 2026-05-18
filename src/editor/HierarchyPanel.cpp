@@ -286,15 +286,11 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         world.add<ECS::Scale3D>(e);
     }
     else if (strcmp(componentType, "Sprite2D") == 0) {
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
+        world.add<ECS::Transform>(e);
         world.add<ECS::Sprite>(e);
     }
     else if (strcmp(componentType, "Sprite2DBox") == 0) {
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
+        world.add<ECS::Transform>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
@@ -303,9 +299,7 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         world.add<Physics2D::Collider2D>(e, col);
     }
     else if (strcmp(componentType, "Sprite2DCircle") == 0) {
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
+        world.add<ECS::Transform>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
@@ -314,9 +308,7 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         world.add<Physics2D::Collider2D>(e, col);
     }
     else if (strcmp(componentType, "Sprite2DCapsule") == 0) {
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
+        world.add<ECS::Transform>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
