@@ -85,6 +85,7 @@ void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
     m_currentCapPath = capPath;
     m_browseMode = BrowseMode::CapFile;
     
+#ifdef CF_HAS_CAF_PACK
     auto assets = CapLoader::loadCap(capPath);
     
     for (const auto& asset : assets) {
@@ -101,15 +102,18 @@ void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
             case Caffeine::Assets::CafAssetType::Mesh:
                 entry.type = AssetType::Mesh;
                 break;
-            default:
-                entry.type = AssetType::Unknown;
-        }
-        
-        entry.path = capPath;
-        entry.fileSize = asset.cafBlob.size();
-        entry.isDirectory = false;
-        m_entries.push_back(entry);
-    }
+             default:
+                 entry.type = AssetType::Unknown;
+         }
+         
+         entry.path = capPath;
+         entry.fileSize = asset.cafBlob.size();
+         entry.isDirectory = false;
+         m_entries.push_back(entry);
+     }
+#else
+    // CAP loading not available without caf-pack
+#endif
     
     applySearchFilter();
 }

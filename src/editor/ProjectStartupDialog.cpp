@@ -9,6 +9,76 @@
 
 namespace Caffeine::Editor {
 
+// ============================================================================
+// Public API (always available)
+// ============================================================================
+
+ProjectStartupDialog::ProjectStartupDialog() = default;
+
+void ProjectStartupDialog::init() {
+}
+
+std::optional<ProjectConfig> ProjectStartupDialog::render() {
+#ifdef CF_HAS_IMGUI
+    if (!m_open) return std::nullopt;
+    
+    updateToasts();
+    
+    std::optional<ProjectConfig> result;
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    
+    ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
+    
+    if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+        ImGui::Text("Welcome to Doppio — Select or Create a Project");
+        ImGui::Separator();
+        
+        if (ImGui::BeginTabBar("ProjectDialogTabs")) {
+            if (ImGui::BeginTabItem("Create New")) {
+                if (auto config = renderCreateTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Open Recent")) {
+                if (auto config = renderRecentTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Browse Projects")) {
+                if (auto config = renderBrowseTab()) {
+                    result = config;
+                }
+                ImGui::EndTabItem();
+            }
+            
+            ImGui::EndTabBar();
+        }
+        
+        renderErrorPopup();
+        ImGui::End();
+    }
+    
+    renderToasts();
+    
+    if (result.has_value()) {
+        m_open = false;
+    }
+    
+    return result;
+#else
+    return std::nullopt;
+#endif
+}
+
+// ============================================================================
+// ImGui-dependent implementation
+// ============================================================================
+
 #ifdef CF_HAS_IMGUI
 
 std::optional<ProjectConfig> ProjectStartupDialog::tryCreateProject() {
@@ -113,64 +183,7 @@ void ProjectStartupDialog::renderToasts() {
     }
 }
 
-// ── UI Layer (requires CF_HAS_IMGUI) ──────────────────────────────────────
 
-std::optional<ProjectConfig> ProjectStartupDialog::render() {
-    if (!m_open) {
-        return std::nullopt;
-    }
-
-    updateToasts();
-
-    std::optional<ProjectConfig> result;
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    
-    ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
-    
-    if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
-        ImGui::Text("Welcome to Doppio — Select or Create a Project");
-        ImGui::Separator();
-
-        if (ImGui::BeginTabBar("ProjectDialogTabs")) {
-            
-            if (ImGui::BeginTabItem("Create New")) {
-                if (auto config = renderCreateTab()) {
-                    result = config;
-                }
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Open Recent")) {
-                if (auto config = renderRecentTab()) {
-                    result = config;
-                }
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Browse Projects")) {
-                if (auto config = renderBrowseTab()) {
-                    result = config;
-                }
-                ImGui::EndTabItem();
-            }
-
-            ImGui::EndTabBar();
-        }
-
-        renderErrorPopup();
-
-        ImGui::End();
-    }
-
-    renderToasts();
-    
-    if (result.has_value()) {
-        m_open = false;
-    }
-
-    return result;
-}
 
 std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     std::optional<ProjectConfig> result;

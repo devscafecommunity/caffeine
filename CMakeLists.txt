@@ -294,32 +294,35 @@ with open(sys.argv[1], 'w') as f:
      )
      FetchContent_MakeAvailable(imgui_test_engine)
 
-     add_executable(doppio
-         apps/doppio/main.cpp
-         src/editor/HierarchyPanel.cpp
-         src/editor/SceneViewport.cpp
-         src/editor/AssetBrowser.cpp
-         src/editor/InspectorPanel.cpp
-         src/editor/SettingsPanel.cpp
-         src/editor/LayoutManager.cpp
-         src/editor/SceneEditor.cpp
-         src/editor/SceneSerializer.cpp
-         src/editor/DragDropSystem.cpp
-         src/editor/SceneTabManager.cpp
-         src/editor/ScriptEditorWindow.cpp
-         src/editor/AnimationTimeline.cpp
-         src/editor/TilemapEditor.cpp
-         src/editor/CommandPalette.cpp
-         src/editor/ShaderNode.cpp
-         src/editor/ShaderGraph.cpp
-         src/editor/MaterialEditorPanel.cpp
-         src/editor/PreviewRenderer.cpp
-         src/editor/AudioPreviewPanel.cpp
-         src/editor/BuildSystem.cpp
-         src/editor/BuildDialog.cpp
-         src/editor/AssetCooker.cpp
-         src/editor/CapLoader.cpp
-         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+      add_executable(doppio
+          apps/doppio/main.cpp
+          src/editor/HierarchyPanel.cpp
+          src/editor/SceneViewport.cpp
+          src/editor/AssetBrowser.cpp
+          src/editor/InspectorPanel.cpp
+          src/editor/SettingsPanel.cpp
+          src/editor/LayoutManager.cpp
+          src/editor/SceneEditor.cpp
+          src/editor/SceneSerializer.cpp
+          src/editor/DragDropSystem.cpp
+          src/editor/SceneTabManager.cpp
+          src/editor/ScriptEditorWindow.cpp
+          src/editor/AnimationTimeline.cpp
+          src/editor/TilemapEditor.cpp
+          src/editor/CommandPalette.cpp
+          src/editor/ShaderNode.cpp
+          src/editor/ShaderGraph.cpp
+          src/editor/MaterialEditorPanel.cpp
+          src/editor/PreviewRenderer.cpp
+          src/editor/AudioPreviewPanel.cpp
+          src/editor/BuildSystem.cpp
+          src/editor/BuildDialog.cpp
+          src/editor/AssetCooker.cpp
+          src/editor/CapLoader.cpp
+          src/editor/ProjectStartupDialog.cpp
+          src/editor/ProjectManager.cpp
+          src/editor/FilePicker.cpp
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
