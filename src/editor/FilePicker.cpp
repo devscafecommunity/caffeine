@@ -89,7 +89,7 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     }
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(1000, 600), ImGuiCond_Appearing);
 
     bool windowOpen = ImGui::Begin(title.c_str(), &state.isOpen, ImGuiWindowFlags_NoMove);
     
