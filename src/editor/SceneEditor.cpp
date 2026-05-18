@@ -136,6 +136,18 @@ void SceneEditor::render(f32 deltaTime) {
         // Apply layout profile from settings if available
         const auto& profile = m_settingsPanel.layoutManager().currentProfile();
         applyLayoutProfile(m_dockspaceId, profile);
+        
+        // Apply visibility from profile to panels
+        profile.hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
+        profile.inspectorOpen ? m_inspector.open() : m_inspector.close();
+        profile.viewportOpen ? m_viewport.open() : m_viewport.close();
+        profile.assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
+        profile.consoleOpen ? m_console.open() : m_console.close();
+        profile.profilerOpen ? m_profiler.open() : m_profiler.close();
+        profile.scriptEditorOpen ? m_scriptEditor.open() : m_scriptEditor.close();
+        profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
+        profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
+        
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
     }

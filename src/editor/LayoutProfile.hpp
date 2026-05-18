@@ -42,10 +42,10 @@ struct LayoutProfile {
         return LayoutProfile{
             "Default",
             true,   // hierarchy
-            true,   // inspector
+            false,  // inspector - HIDDEN BY DEFAULT
             true,   // viewport
-            true,   // assets
-            true,   // console
+            false,  // assets - HIDDEN BY DEFAULT
+            false,  // console - HIDDEN BY DEFAULT
             false,  // profiler
             false,  // animation timeline
             false,  // tilemap
