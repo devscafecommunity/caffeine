@@ -24,6 +24,14 @@
 #include "editor/BuildDialog.hpp"
 #include "editor/SettingsPanel.hpp"
 
+#include "physics/PhysicsSystem2D.hpp"
+#include "events/EventBus.hpp"
+
+#ifdef CF_HAS_SCRIPTING
+#include "script/ScriptEngine.hpp"
+#include "script/ScriptSystem.hpp"
+#endif
+
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
 #include "assets/AssetManager.hpp"
@@ -35,6 +43,7 @@
 
 #include <cstdio>
 #include <functional>
+#include <vector>
 
 namespace Caffeine::Editor {
 
@@ -98,6 +107,11 @@ private:
     void handleAssetDrop(ECS::World& world);
     void handleShortcuts(ECS::World& world);
     void doNewScene();
+
+    void enterPlayMode(ECS::World& world);
+    void exitPlayMode(ECS::World& world);
+    void tickSystems(ECS::World& world, f32 dt);
+    void renderPlaybar(ECS::World& world);
 #endif
 
     EditorContext  m_ctx;
@@ -134,6 +148,27 @@ private:
     bool m_layoutNeedsRebuild = false;
     PendingAction m_pendingAction = PendingAction::None;
     int m_pendingCloseTab = -1;
+
+    // ── Play Mode ──────────────────────────────────────────────
+    bool m_isPlaying  = false;
+    bool m_isPaused   = false;
+
+    Events::EventBus m_eventBus;
+    Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
+
+#ifdef CF_HAS_SCRIPTING
+    Script::ScriptEngine m_scriptEngine;
+    Script::ScriptSystem m_scriptSystem{nullptr};
+    bool m_scriptEngineReady = false;
+#endif
+
+    struct EntitySnapshot {
+        u32 id;
+        float px = 0, py = 0;
+        float vx = 0, vy = 0;
+        float rotation = 0;
+    };
+    std::vector<EntitySnapshot> m_playSnapshot;
 };
 
 } // namespace Caffeine::Editor
