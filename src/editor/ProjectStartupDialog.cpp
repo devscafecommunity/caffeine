@@ -9,21 +9,7 @@
 
 namespace Caffeine::Editor {
 
-ProjectStartupDialog::ProjectStartupDialog() {
-    // Set default location to ~/Documents/CaffeineProjects
-    const char* home = std::getenv("HOME");
-    if (!home) home = ".";
-    m_selectedLocation = std::filesystem::path(home) / "Documents" / "CaffeineProjects";
-    
-    m_projectName[0] = '\0';
-    m_errorMessage[0] = '\0';
-}
-
-void ProjectStartupDialog::init() {
-    m_locationPicked = false;
-    m_popupOpened = false;
-    m_recentProjects = m_projectManager.GetRecentProjects();
-}
+#ifdef CF_HAS_IMGUI
 
 std::optional<ProjectConfig> ProjectStartupDialog::tryCreateProject() {
     if (std::string(m_projectName).empty()) {
@@ -128,8 +114,6 @@ void ProjectStartupDialog::renderToasts() {
 }
 
 // ── UI Layer (requires CF_HAS_IMGUI) ──────────────────────────────────────
-
-#ifdef CF_HAS_IMGUI
 
 std::optional<ProjectConfig> ProjectStartupDialog::render() {
     if (!m_open) {

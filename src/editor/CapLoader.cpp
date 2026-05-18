@@ -5,6 +5,8 @@
 
 namespace Caffeine::Editor {
 
+#ifdef CF_HAS_CAF_PACK
+
 using namespace Caffeine::Assets;
 
 constexpr uint32_t CAP_MAGIC = 0x4341502F;
@@ -75,5 +77,15 @@ std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::pa
 Caffeine::Assets::CafAssetType CapLoader::identifyAssetType(const Editor::CapAssetMetadata& metadata) {
     return static_cast<Caffeine::Assets::CafAssetType>(metadata.assetType);
 }
+
+#else
+
+std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::path& path) {
+    Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", 
+        "CAP loading not available - caf-pack submodule not included");
+    return {};
+}
+
+#endif
 
 }

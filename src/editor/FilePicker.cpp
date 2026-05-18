@@ -8,15 +8,22 @@
 #include <imgui.h>
 #endif
 
+#ifdef __unix__
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
+
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <cstring>
+#include <filesystem>
 
 namespace Caffeine::Editor {
+
+#if defined(CF_HAS_IMGUI) && defined(__unix__)
+// File picker only available on Unix with ImGui
 
 namespace {
 std::unordered_set<std::string> g_filePickerCloseEvents;
@@ -174,11 +181,45 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
     
     ImGui::End();
 
-    return result;
+     return result;
 #else
-    return std::nullopt;
+     return std::nullopt;
 #endif
 }
+
+#else  // !(CF_HAS_IMGUI && __unix__)
+
+// Stubs when FilePicker not available
+
+std::optional<std::filesystem::path> FilePicker::pickPath(
+    Mode mode,
+    const std::string& title,
+    const std::filesystem::path& defaultPath
+) {
+    return std::nullopt;
+}
+
+bool FilePicker::consumeCloseEvent(const std::string& title) {
+    return false;
+}
+
+std::optional<std::filesystem::path> FilePicker::pickPathNative(
+    Mode mode,
+    const std::string& title,
+    const std::filesystem::path& defaultPath
+) {
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> FilePicker::pickPathImGui(
+    Mode mode,
+    const std::string& title,
+    const std::filesystem::path& defaultPath
+) {
+    return std::nullopt;
+}
+
+#endif  // CF_HAS_IMGUI && __unix__
 
 } // namespace Caffeine::Editor
 

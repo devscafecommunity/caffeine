@@ -2,7 +2,10 @@
 #include "core/Types.hpp"
 #include <vector>
 #include <filesystem>
+
+#ifdef CF_HAS_CAF_PACK
 #include "../caf-pack/include/caffeine/CafTypes.hpp"
+#endif
 
 namespace Caffeine::Editor {
 
@@ -20,7 +23,11 @@ class CapLoader {
 public:
     struct LoadedAsset {
         uint64_t hashID;
+#ifdef CF_HAS_CAF_PACK
         Caffeine::Assets::CafAssetType type;
+#else
+        uint8_t type;
+#endif
         std::vector<u8> cafBlob;
         CapAssetMetadata metadata;
     };
@@ -28,7 +35,9 @@ public:
     static std::vector<LoadedAsset> loadCap(const std::filesystem::path& path);
 
 private:
+#ifdef CF_HAS_CAF_PACK
     static Caffeine::Assets::CafAssetType identifyAssetType(const CapAssetMetadata& metadata);
+#endif
 };
 
 }
