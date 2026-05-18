@@ -213,13 +213,8 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
     }
 
     auto* sprite = world.get<ECS::Sprite>(e);
-    char buf[256];
-    strncpy(buf, sprite->name.c_str(), sizeof(buf));
-    buf[sizeof(buf) - 1] = '\0';
-    if (ImGui::InputText("Texture", buf, sizeof(buf))) {
-        sprite->name = buf;
+    if (Widgets::AssetField("Texture", sprite->name, ".png;.jpg;.bmp", resolveProjectRoot(ctx)))
         ctx.isDirty = true;
-    }
     if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
         if (asset->type == AssetType::Texture) {
             sprite->name = asset->path;
@@ -287,11 +282,9 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
 
     auto* emitter = world.get<Audio::AudioEmitter>(e);
 
-    char buf[128];
-    strncpy(buf, emitter->clipPath.data(), sizeof(buf));
-    buf[sizeof(buf) - 1] = '\0';
-    if (ImGui::InputText("Clip", buf, sizeof(buf))) {
-        emitter->clipPath = buf;
+    std::string clipStr(emitter->clipPath.cStr());
+    if (Widgets::AssetField("Clip", clipStr, ".wav;.ogg;.mp3", resolveProjectRoot(ctx))) {
+        emitter->clipPath = clipStr.c_str();
         ctx.isDirty = true;
     }
     if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
@@ -505,13 +498,8 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         ctx.isDirty = true;
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
-        char buf[256];
-        strncpy(buf, mf->customMeshPath.c_str(), sizeof(buf));
-        buf[sizeof(buf) - 1] = '\0';
-        if (ImGui::InputText("Mesh Path", buf, sizeof(buf))) {
-            mf->customMeshPath = buf;
+        if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
-        }
     } else {
         ImGui::TextDisabled("3D renderer pending — mesh data will be loaded when renderer is implemented");
     }
