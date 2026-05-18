@@ -1,5 +1,6 @@
 #include "editor/InspectorPanel.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "editor/InspectorWidgets.hpp"
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
