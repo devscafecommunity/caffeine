@@ -2,6 +2,7 @@
 #include "editor/DragDropSystem.hpp"
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "ecs/MeshComponents.hpp"
 #include <filesystem>
 
 #ifdef CF_HAS_IMGUI
@@ -60,6 +61,13 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawVelocity2D(world, e, ctx);
         drawHealth(world, e, ctx);
         drawAudioSource(world, e, ctx);
+        drawPersistent(world, e, ctx);
+        drawMeshFilter(world, e, ctx);
+        drawUIWidget(world, e, ctx);
+        drawUIButton(world, e, ctx);
+        drawUILabel(world, e, ctx);
+        drawUIProgressBar(world, e, ctx);
+        drawUISlider(world, e, ctx);
 
         ImGui::Separator();
 
@@ -110,6 +118,26 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             if (!world.has<Script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
                 ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
                 world.add<Script::ScriptComponent>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<ECS::PersistentComponent>(e) && ImGui::MenuItem("Persistent")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<ECS::PersistentComponent>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<ECS::MeshFilterComponent>(e) && ImGui::MenuItem("Mesh Filter")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<ECS::MeshFilterComponent>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<ECS::MeshRendererComponent>(e) && ImGui::MenuItem("Mesh Renderer")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<ECS::MeshRendererComponent>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<UI::UIWidget>(e) && ImGui::MenuItem("UI Widget")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<UI::UIWidget>(e);
                 ctx.endUndo(world);
             }
             ImGui::EndPopup();
@@ -397,6 +425,17 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
     if (ImGui::InputText("##scriptPath", pathBuf, sizeof(pathBuf))) {
         sc->scriptPath = pathBuf;
     }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::filesystem::path dropped(static_cast<const char*>(payload->Data));
+            if (dropped.extension() == ".lua") {
+                sc->scriptPath = dropped.string();
+                std::strncpy(pathBuf, sc->scriptPath.c_str(), sizeof(pathBuf) - 1);
+                pathBuf[sizeof(pathBuf) - 1] = 0;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
     ImGui::SameLine();
     if (ImGui::Button("Load")) {
         if (ctx.scriptEngine) {
@@ -416,6 +455,135 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
     (void)world; (void)e; (void)ctx;
     ImGui::TextDisabled("Scripting not enabled");
 #endif
+}
+
+void InspectorPanel::drawPersistent(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* pc = world.get<ECS::PersistentComponent>(e);
+    if (!pc) return;
+    if (!ImGui::CollapsingHeader("Persistent", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::Checkbox("Don't Destroy On Load", &pc->dontDestroyOnLoad);
+    (void)ctx;
+}
+
+void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* mf = world.get<ECS::MeshFilterComponent>(e);
+    if (!mf) return;
+    if (!ImGui::CollapsingHeader("Mesh Filter", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    static const char* primitiveNames[] = { "Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane" };
+    int current = static_cast<int>(mf->primitive);
+    if (ImGui::Combo("Primitive", &current, primitiveNames, 6)) {
+        mf->primitive = static_cast<ECS::MeshPrimitive>(current);
+        ctx.isDirty = true;
+    }
+    if (mf->primitive == ECS::MeshPrimitive::Custom) {
+        char buf[256];
+        strncpy(buf, mf->customMeshPath.c_str(), sizeof(buf));
+        buf[sizeof(buf) - 1] = '\0';
+        if (ImGui::InputText("Mesh Path", buf, sizeof(buf))) {
+            mf->customMeshPath = buf;
+            ctx.isDirty = true;
+        }
+    } else {
+        ImGui::TextDisabled("3D renderer pending — mesh data will be loaded when renderer is implemented");
+    }
+}
+
+void InspectorPanel::drawUIWidget(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* w = world.get<UI::UIWidget>(e);
+    if (!w) return;
+    if (!ImGui::CollapsingHeader("UI Widget", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    static const char* typeNames[] = { "Canvas", "Panel", "Button", "Label", "ProgressBar", "Checkbox", "Slider" };
+    int current = static_cast<int>(w->type);
+    ImGui::Combo("Type", &current, typeNames, 7);
+
+    ImGui::Checkbox("Visible",       &w->visible);
+    ImGui::Checkbox("Interactable",  &w->interactable);
+    ImGui::DragInt("Sibling Order",  &w->siblingOrder);
+
+    if (ImGui::TreeNode("Rect Transform")) {
+        ImGui::DragFloat2("Anchor Min",  &w->transform.anchorMin.x, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat2("Anchor Max",  &w->transform.anchorMax.x, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat2("Offset Min",  &w->transform.offsetMin.x, 1.0f);
+        ImGui::DragFloat2("Offset Max",  &w->transform.offsetMax.x, 1.0f);
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Style")) {
+        ImGui::ColorEdit4("Background",  &w->style.backgroundColor.r);
+        ImGui::ColorEdit4("Text Color",  &w->style.textColor.r);
+        ImGui::ColorEdit4("Border",      &w->style.borderColor.r);
+        ImGui::DragFloat("Border Width", &w->style.borderWidth, 0.5f, 0.0f, 20.0f);
+        ImGui::DragFloat("Border Radius",&w->style.borderRadius, 0.5f, 0.0f, 50.0f);
+        ImGui::DragFloat("Font Size",    &w->style.fontSize, 0.5f, 6.0f, 96.0f);
+        ImGui::DragFloat2("Text Align",  &w->style.textAlignment.x, 0.01f, 0.0f, 1.0f);
+        ImGui::TreePop();
+    }
+    ctx.isDirty = true;
+}
+
+void InspectorPanel::drawUIButton(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* btn = world.get<UI::UIButton>(e);
+    if (!btn) return;
+    if (!ImGui::CollapsingHeader("UI Button", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    char buf[64];
+    strncpy(buf, btn->labelText.cStr(), sizeof(buf));
+    buf[sizeof(buf) - 1] = '\0';
+    if (ImGui::InputText("Label", buf, sizeof(buf))) {
+        btn->labelText = buf;
+        ctx.isDirty = true;
+    }
+    ImGui::ColorEdit4("Idle Color",    &btn->idleColor.r);
+    ImGui::ColorEdit4("Hover Color",   &btn->hoverColor.r);
+    ImGui::ColorEdit4("Pressed Color", &btn->pressedColor.r);
+    ImGui::TextDisabled("Hovered: %s  Pressed: %s", btn->isHovered ? "yes" : "no", btn->isPressed ? "yes" : "no");
+}
+
+void InspectorPanel::drawUILabel(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* lbl = world.get<UI::UILabel>(e);
+    if (!lbl) return;
+    if (!ImGui::CollapsingHeader("UI Label", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    char buf[256];
+    strncpy(buf, lbl->text.cStr(), sizeof(buf));
+    buf[sizeof(buf) - 1] = '\0';
+    if (ImGui::InputTextMultiline("Text", buf, sizeof(buf), ImVec2(-1, 60))) {
+        lbl->text = buf;
+        ctx.isDirty = true;
+    }
+    ImGui::Checkbox("Word Wrap", &lbl->wordWrap);
+}
+
+void InspectorPanel::drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* pb = world.get<UI::UIProgressBar>(e);
+    if (!pb) return;
+    if (!ImGui::CollapsingHeader("UI Progress Bar", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    ImGui::DragFloat("Min Value",     &pb->minValue, 1.0f);
+    ImGui::DragFloat("Max Value",     &pb->maxValue, 1.0f);
+    ImGui::DragFloat("Current Value", &pb->currentValue, 1.0f, pb->minValue, pb->maxValue);
+    ImGui::Checkbox("Show Text",      &pb->showText);
+    ImGui::ColorEdit4("Fill Color",   &pb->fillColor.r);
+
+    f32 fraction = (pb->maxValue > pb->minValue)
+        ? (pb->currentValue - pb->minValue) / (pb->maxValue - pb->minValue)
+        : 0.0f;
+    ImGui::ProgressBar(fraction, ImVec2(-1, 0));
+    ctx.isDirty = true;
+}
+
+void InspectorPanel::drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    auto* sl = world.get<UI::UISlider>(e);
+    if (!sl) return;
+    if (!ImGui::CollapsingHeader("UI Slider", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    ImGui::DragFloat("Min Value",     &sl->minValue, 1.0f);
+    ImGui::DragFloat("Max Value",     &sl->maxValue, 1.0f);
+    ImGui::SliderFloat("Value",       &sl->currentValue, sl->minValue, sl->maxValue);
+    ImGui::Checkbox("Snap To Int",    &sl->snapToInt);
+    ctx.isDirty = true;
 }
 
 } // namespace Caffeine::Editor

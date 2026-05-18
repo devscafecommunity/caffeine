@@ -8,6 +8,7 @@
 #endif
 #include "stb/stb_image.h"
 
+#include <fstream>
 #include <system_error>
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -407,12 +408,13 @@ void AssetBrowser::renderGridView() {
             m_selectedEntry = static_cast<int>(i);
         }
 
-        // Double-click to enter directory
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (entry.isDirectory) {
                 navigateTo(entry.path);
                 ImGui::EndGroup();
                 break;
+            } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                m_onScriptOpen(entry.path);
             }
         }
 
@@ -467,6 +469,8 @@ void AssetBrowser::renderListView() {
             if (entry.isDirectory) {
                 navigateTo(entry.path);
                 break;
+            } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                m_onScriptOpen(entry.path);
             }
         }
 
@@ -529,9 +533,24 @@ void AssetBrowser::renderContextMenu() {
         if (ImGui::MenuItem("New Folder")) {
             std::error_code ec;
             std::filesystem::create_directory(m_currentDir / "NewFolder", ec);
-            // If created successfully, refresh
             if (!ec) {
                 refresh();
+            }
+        }
+        if (ImGui::MenuItem("New Script")) {
+            std::filesystem::path newPath = m_currentDir / "NewScript.lua";
+            int counter = 1;
+            while (std::filesystem::exists(newPath)) {
+                newPath = m_currentDir / ("NewScript" + std::to_string(counter++) + ".lua");
+            }
+            std::ofstream f(newPath);
+            if (f.is_open()) {
+                f << "function onCreate(entity)\nend\n\nfunction onUpdate(entity, dt)\nend\n\nfunction onDestroy(entity)\nend\n\nfunction onCollision(entity, other)\nend\n";
+                f.close();
+                refresh();
+                if (m_onScriptOpen) {
+                    m_onScriptOpen(newPath);
+                }
             }
         }
         ImGui::EndPopup();

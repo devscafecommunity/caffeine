@@ -10,6 +10,7 @@
 #include <cstring>
 #include <optional>
 #include <algorithm>
+#include <functional>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -60,6 +61,10 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+
+    void setOnScriptOpen(std::function<void(const std::filesystem::path&)> cb) {
+        m_onScriptOpen = std::move(cb);
+    }
 
     // ── Data layer ─────────────────────────────────────────────────────
     void init(const char* rootPath);
@@ -146,6 +151,8 @@ private:
     
     BrowseMode m_browseMode = BrowseMode::Filesystem;
     std::filesystem::path m_currentCapPath;
+
+    std::function<void(const std::filesystem::path&)> m_onScriptOpen;
 };
 
 } // namespace Caffeine::Editor

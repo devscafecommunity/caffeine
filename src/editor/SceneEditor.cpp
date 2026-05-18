@@ -14,6 +14,10 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
                        const ProjectConfig& projectConfig) {
     if (!m_viewport.init(device)) return false;
     m_assetBrowser.init(projectConfig);
+    m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
+        m_scriptEditor.open();
+        m_scriptEditor.openFile(path);
+    });
     m_assetManager = assetManager;
     m_currentProjectConfig = projectConfig;
     m_tabManager.newScene("Untitled");
@@ -86,6 +90,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
     m_ctx.scriptEngine = &m_scriptEngine;
+    m_scriptEditor.setScriptEngine(&m_scriptEngine);
 #endif
 
     return true;
@@ -142,6 +147,12 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
 #ifdef CF_HAS_SCRIPTING
     if (m_scriptEngineReady) m_scriptSystem.onUpdate(world, dt);
 #endif
+    {
+        auto& io = ImGui::GetIO();
+        m_uiSystem.injectMousePosition({io.MousePos.x, io.MousePos.y});
+        m_uiSystem.injectMouseClick(io.MouseDown[0]);
+    }
+    m_uiSystem.onUpdate(world, dt);
     m_eventBus.dispatch();
 }
 

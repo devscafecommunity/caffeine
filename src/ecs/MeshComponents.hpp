@@ -20,4 +20,18 @@ struct SkinnedMeshRendererComponent {
     bool receiveShadows = true;
 };
 
+enum class MeshPrimitive : u8 {
+    Custom,
+    Cube,
+    Sphere,
+    Capsule,
+    Cylinder,
+    Plane
+};
+
+struct MeshFilterComponent {
+    MeshPrimitive primitive   = MeshPrimitive::Cube;
+    std::string   customMeshPath;
+};
+
 }  // namespace Caffeine::ECS

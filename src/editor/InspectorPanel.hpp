@@ -8,6 +8,7 @@
 #include "editor/EditorContext.hpp"
 #include "script/ScriptTypes.hpp"
 #include "containers/HashMap.hpp"
+#include "ui/UIComponents.hpp"
 #include <functional>
 
 #ifdef CF_HAS_IMGUI
@@ -41,6 +42,13 @@ private:
     void drawHealth(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawPersistent(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawMeshFilter(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIWidget(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIButton(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUILabel(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 #endif
 
     bool m_open = true;

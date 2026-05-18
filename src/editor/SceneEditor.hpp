@@ -27,6 +27,7 @@
 #include "core/io/FileWatcher.hpp"
 
 #include "physics/PhysicsSystem2D.hpp"
+#include "ui/UISystem.hpp"
 #include "events/EventBus.hpp"
 
 #ifdef CF_HAS_SCRIPTING
@@ -157,6 +158,7 @@ private:
 
     Events::EventBus m_eventBus;
     Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
+    UI::UISystem m_uiSystem{&m_eventBus};
 
 #ifdef CF_HAS_SCRIPTING
     Script::ScriptEngine m_scriptEngine;

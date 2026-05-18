@@ -1,4 +1,7 @@
 #include "editor/ScriptEditorWindow.hpp"
+#ifdef CF_HAS_SCRIPTING
+#include "script/ScriptEngine.hpp"
+#endif
 #include <fstream>
 #include <cstring>
 
@@ -50,6 +53,12 @@ bool ScriptEditorWindow::saveFile(int index) {
 
     file.originalContent = file.content;
     file.isDirty = false;
+
+#ifdef CF_HAS_SCRIPTING
+    if (m_scriptEngine) {
+        m_scriptEngine->reloadScript(file.path);
+    }
+#endif
     
     return true;
 }
@@ -113,7 +122,7 @@ void ScriptEditorWindow::render() {
         if (m_activeFileIndex >= 0 && m_activeFileIndex < static_cast<int>(m_openFiles.size())) {
             auto& file = m_openFiles[m_activeFileIndex];
             
-            if (ImGui::Button("Save")) {
+        if (ImGui::Button("Save") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
                 saveFile(m_activeFileIndex);
             }
             ImGui::SameLine();

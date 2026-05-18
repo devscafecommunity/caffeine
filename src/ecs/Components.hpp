@@ -77,6 +77,10 @@ struct ParticleEmitterComponent {
     std::vector<Particle> activeParticles;
 };
 
+struct PersistentComponent {
+    bool dontDestroyOnLoad = true;
+};
+
 }  // namespace Caffeine::ECS
 
 #include "ecs/Components3D.hpp"
