@@ -23,6 +23,8 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     if (!m_open) return std::nullopt;
     
     updateToasts();
+
+    m_recentProjects = m_projectManager.GetRecentProjects();
     
     std::optional<ProjectConfig> result;
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
