@@ -23,6 +23,8 @@
 #include <imgui.h>
 #endif
 
+#include "physics/PhysicsComponents2D.hpp"
+
 namespace Caffeine::Editor {
 
 class SceneViewport {
@@ -70,6 +72,7 @@ private:
 #ifdef CF_HAS_IMGUI
     void drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+    void drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
     void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
     void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);

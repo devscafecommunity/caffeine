@@ -156,6 +156,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     drawGrid(drawList, origin, viewportSize, ctx);
     drawSprites(world, ctx, origin, viewportSize);
+    drawPhysicsDebug(world, ctx, origin, viewportSize);
 
     if (ctx.selectedEntity.isValid()) {
         drawGizmo(world, ctx, origin, viewportSize);
@@ -392,6 +393,44 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
                         IM_COL32(180, 180, 255, 220), "S");
         }
     }
+}
+
+void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    using namespace Physics2D;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
+
+    auto worldToScreen_fn = [&](f32 wx, f32 wy) -> ImVec2 {
+        return ImVec2(
+            origin.x + viewportSize.x * 0.5f + (wx + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-wy + ctx.viewportPanY / worldToScreen) * worldToScreen
+        );
+    };
+
+    ECS::ComponentQuery q;
+    q.with<Collider2D>();
+    q.with<ECS::Position2D>();
+
+    world.forEach<Collider2D, ECS::Position2D>(q,
+        [&](ECS::Entity entity, Collider2D& col, ECS::Position2D& pos) {
+            f32 cx = pos.x + col.offset.x;
+            f32 cy = pos.y + col.offset.y;
+            ImU32 color = col.isTrigger ? IM_COL32(255, 80, 80, 200)
+                        : col.isStatic  ? IM_COL32(80, 255, 80, 200)
+                                        : IM_COL32(80, 200, 255, 200);
+            if (col.shape == ColliderShape::AABB) {
+                f32 hw = col.size.x * 0.5f * worldToScreen;
+                f32 hh = col.size.y * 0.5f * worldToScreen;
+                ImVec2 sc = worldToScreen_fn(cx, cy);
+                dl->AddRect(ImVec2(sc.x - hw, sc.y - hh),
+                            ImVec2(sc.x + hw, sc.y + hh),
+                            color, 0.0f, 0, 1.5f);
+            } else if (col.shape == ColliderShape::Circle) {
+                ImVec2 sc = worldToScreen_fn(cx, cy);
+                dl->AddCircle(sc, col.radius * worldToScreen, color, 32, 1.5f);
+            }
+        });
 }
 
 void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
