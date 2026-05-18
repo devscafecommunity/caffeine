@@ -56,6 +56,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
             saveSceneAs(*world);
         }
     });
+    m_commandPalette.registerCommand("action_load_tileset", "Load Tileset", "Actions", [this]() {
+        m_tilemapEditor.open();
+    });
 
     m_audioPreview.init();
 
