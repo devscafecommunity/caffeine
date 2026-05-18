@@ -2,8 +2,10 @@
 #include "editor/CapLoader.hpp"
 #include "editor/FilePicker.hpp"
 #include "assets/TextureCompiler.hpp"
+#ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
 #include "caf-pack/HeaderGenerator.hpp"
+#endif
 #include "stb/stb_image.h"
 
 #include <system_error>
@@ -662,6 +664,7 @@ bool AssetBrowser::packCurrentProjectCap(std::string* errorMessage) {
         return false;
     }
 
+#ifdef CF_HAS_CAF_PACK
     std::filesystem::path capPath = m_projectRoot / "game.cap";
     std::filesystem::path headerPath = m_processedRoot.empty()
         ? (m_projectRoot / "game_assets.hpp")
@@ -689,6 +692,10 @@ bool AssetBrowser::packCurrentProjectCap(std::string* errorMessage) {
     }
     CafPack::HeaderGenerator::generateHeader(entries, headerPath);
     return true;
+#else
+    if (errorMessage) *errorMessage = "Asset packing not available - caf-pack submodule not included";
+    return false;
+#endif
 }
 
 bool AssetBrowser::openCurrentProjectCap(std::string* errorMessage) {
