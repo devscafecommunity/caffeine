@@ -16,7 +16,7 @@ endif()
 option(CAFFEINE_BUILD_HEADLESS "Build caffeine-core without SDL3/RHI" OFF)
 
 # ── Scripting (Lua + sol2) ──────────────────────────────────────
-option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" OFF)
+option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" ON)
 
 # ── SDL3 (optional — only needed when NOT headless) ──────────────
 if(NOT CAFFEINE_BUILD_HEADLESS)
