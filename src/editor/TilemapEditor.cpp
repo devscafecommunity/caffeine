@@ -1,5 +1,9 @@
 #include "editor/TilemapEditor.hpp"
 
+#ifdef CF_HAS_SDL3
+#include <SDL3/SDL.h>
+#endif
+
 namespace Caffeine::Editor {
 
 TileLayer::TileLayer(const std::string& name, i32 width, i32 height)
@@ -158,6 +162,31 @@ void TilemapEditorPanel::eraseTile(i32 layerIdx, i32 x, i32 y) {
             }
         }
     }
+}
+
+bool TilemapEditorPanel::loadTileset(const std::string& path, void* renderer) {
+#ifdef CF_HAS_SDL3
+    if (m_tileset.isLoaded()) m_tileset.destroy();
+    SDL_Renderer* r = static_cast<SDL_Renderer*>(renderer);
+    SDL_Surface* surf = SDL_LoadBMP(path.c_str());
+    if (!surf) return false;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(r, surf);
+    SDL_DestroySurface(surf);
+    if (!tex) return false;
+    float fw = 0, fh = 0;
+    SDL_GetTextureSize(tex, &fw, &fh);
+    m_tileset.path    = path;
+    m_tileset.textureHandle = tex;
+    m_tileset.textureW = static_cast<i32>(fw);
+    m_tileset.textureH = static_cast<i32>(fh);
+    m_tileset.tileWidth  = static_cast<i32>(m_tilemap.tileSize());
+    m_tileset.tileHeight = static_cast<i32>(m_tilemap.tileSize());
+    m_tileset.computeUVs();
+    return true;
+#else
+    (void)path; (void)renderer;
+    return false;
+#endif
 }
 
 }
@@ -321,30 +350,52 @@ void TilemapEditorPanel::renderLayers() {
 void TilemapEditorPanel::renderPalette() {
     ImGui::Text("Tile Palette");
 
-    static const i32 tilesPerRow = 8;
-    static const i32 paletteSize = 64;
+    float availW = ImGui::GetContentRegionAvail().x;
+    ImGui::SetNextItemWidth(availW - 55.0f);
+    ImGui::InputText("##tilesetPath", m_tilesetPathBuf, sizeof(m_tilesetPathBuf));
+    ImGui::SameLine();
+    if (ImGui::Button("Load##ts")) {
+        ImGui::OpenPopup("TilesetNote");
+    }
+    if (ImGui::BeginPopup("TilesetNote")) {
+        ImGui::TextWrapped("Call loadTileset(\"%s\", sdlRenderer) from SceneEditor.", m_tilesetPathBuf);
+        ImGui::EndPopup();
+    }
 
-    for (i32 i = 0; i < paletteSize; ++i) {
-        if (i % tilesPerRow != 0) ImGui::SameLine();
+    ImGui::Separator();
 
-        bool isSelected = (i == m_selectedTileID);
-        std::string label = std::to_string(i);
-
-        if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                m_selectedTileID = i;
-            } else {
+    if (m_tileset.isLoaded()) {
+        ImTextureID texId = reinterpret_cast<ImTextureID>(m_tileset.textureHandle);
+        float disp = static_cast<float>(m_tileDisplaySize);
+        i32 perRow = std::max(1, static_cast<i32>(ImGui::GetContentRegionAvail().x / (disp + 4.0f)));
+        for (i32 i = 0; i < m_tileset.tileCount(); ++i) {
+            if (i % perRow != 0) ImGui::SameLine();
+            const TileUV& uv = m_tileset.tiles[i];
+            bool sel = (i == m_selectedTileID);
+            ImVec4 bg   = sel ? ImVec4(0.3f, 0.6f, 1.0f, 0.5f) : ImVec4(0,0,0,0);
+            ImVec4 tint = ImVec4(1,1,1,1);
+            ImGui::PushID(i);
+            if (ImGui::ImageButton("##t", texId, ImVec2(disp, disp),
+                                   ImVec2(uv.u0, uv.v0), ImVec2(uv.u1, uv.v1), bg, tint)) {
                 m_selectedTileID = i;
             }
+            ImGui::PopID();
         }
-
-        if (i % tilesPerRow == tilesPerRow - 1) {
-            ImGui::NewLine();
+    } else {
+        static const i32 perRow = 8;
+        static const i32 total  = 64;
+        for (i32 i = 0; i < total; ++i) {
+            if (i % perRow != 0) ImGui::SameLine();
+            bool sel = (i == m_selectedTileID);
+            std::string lbl = std::to_string(i);
+            if (ImGui::Selectable(lbl.c_str(), sel, 0, ImVec2(28, 28)))
+                m_selectedTileID = i;
+            if (i % perRow == perRow - 1) ImGui::NewLine();
         }
     }
 
     ImGui::Separator();
-    ImGui::Text("Selected Tile: %d", m_selectedTileID);
+    ImGui::Text("Selected: %d", m_selectedTileID);
 }
 
 }
