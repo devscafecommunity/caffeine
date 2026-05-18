@@ -48,6 +48,10 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawSprite(world, e, ctx);
         drawScript(world, e, ctx);
         drawRigidBody2D(world, e, ctx);
+        drawCollider2D(world, e, ctx);
+        drawVelocity2D(world, e, ctx);
+        drawHealth(world, e, ctx);
+        drawAudioSource(world, e, ctx);
 
         ImGui::Separator();
 
@@ -76,9 +80,23 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
                 world.add<ECS::Health>(e);
                 ctx.endUndo(world);
             }
-            if (!world.has<Physics2D::RigidBody2D>(e) && ImGui::MenuItem("RigidBody2D")) {
+             if (!world.has<Physics2D::RigidBody2D>(e) && ImGui::MenuItem("RigidBody2D")) {
                 ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
                 world.add<Physics2D::RigidBody2D>(e);
+                ctx.endUndo(world);
+            }
+            if (!world.has<Physics2D::Collider2D>(e) && ImGui::MenuItem("Collider2D")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                Physics2D::Collider2D col;
+                col.shape = Physics2D::ColliderShape::AABB;
+                col.size = { 64.0f, 64.0f };
+                col.radius = 32.0f;
+                world.add<Physics2D::Collider2D>(e, col);
+                ctx.endUndo(world);
+            }
+            if (!world.has<Audio::AudioEmitter>(e) && ImGui::MenuItem("Audio Source")) {
+                ctx.beginUndo(EditorCommand::AddComponent, e.id(), world);
+                world.add<Audio::AudioEmitter>(e);
                 ctx.endUndo(world);
             }
             if (!world.has<Script::ScriptComponent>(e) && ImGui::MenuItem("Script")) {
@@ -268,6 +286,79 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
         if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
         ImGui::Checkbox("Spatial", &emitter->spatial);
         if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+    }
+}
+
+void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Physics2D::Collider2D>(e)) return;
+
+    if (ImGui::CollapsingHeader("Collider2D", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto* col = world.get<Physics2D::Collider2D>(e);
+
+        const char* shapes[] = { "AABB", "Circle" };
+        int shapeIdx = (col->shape == Physics2D::ColliderShape::Circle) ? 1 : 0;
+        if (ImGui::Combo("Shape", &shapeIdx, shapes, 2)) {
+            col->shape = (shapeIdx == 1) ? Physics2D::ColliderShape::Circle
+                                         : Physics2D::ColliderShape::AABB;
+            ctx.isDirty = true;
+        }
+
+        if (col->shape == Physics2D::ColliderShape::AABB) {
+            float sz[2] = { col->size.x, col->size.y };
+            if (ImGui::DragFloat2("Size", sz, 1.0f, 0.1f, 2000.0f)) {
+                col->size.x = sz[0]; col->size.y = sz[1];
+                ctx.isDirty = true;
+            }
+        } else {
+            if (ImGui::DragFloat("Radius", &col->radius, 1.0f, 0.1f, 1000.0f)) {
+                ctx.isDirty = true;
+            }
+        }
+
+        float off[2] = { col->offset.x, col->offset.y };
+        if (ImGui::DragFloat2("Offset", off, 0.5f)) {
+            col->offset.x = off[0]; col->offset.y = off[1];
+            ctx.isDirty = true;
+        }
+
+        if (ImGui::Checkbox("Is Static",    &col->isStatic))   ctx.isDirty = true;
+        if (ImGui::Checkbox("Is Trigger",   &col->isTrigger))  ctx.isDirty = true;
+        if (ImGui::Checkbox("Is One Way",   &col->isOneWay))   ctx.isDirty = true;
+
+        int layer = static_cast<int>(col->layer);
+        if (ImGui::DragInt("Layer", &layer, 1, 0, 31)) {
+            col->layer = static_cast<u32>(layer);
+            ctx.isDirty = true;
+        }
+    }
+}
+
+void InspectorPanel::drawVelocity2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::Velocity2D>(e)) return;
+    if (ImGui::CollapsingHeader("Velocity2D")) {
+        auto* v = world.get<ECS::Velocity2D>(e);
+        float vel[2] = { v->x, v->y };
+        if (ImGui::DragFloat2("Velocity", vel, 1.0f)) {
+            v->x = vel[0]; v->y = vel[1];
+            ctx.isDirty = true;
+        }
+    }
+}
+
+void InspectorPanel::drawHealth(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::Health>(e)) return;
+    if (ImGui::CollapsingHeader("Health")) {
+        auto* h = world.get<ECS::Health>(e);
+        int curr = static_cast<int>(h->current);
+        int mx = static_cast<int>(h->max);
+        if (ImGui::DragInt("Current", &curr, 1, 0, 999999)) {
+            h->current = static_cast<u32>(curr);
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragInt("Max", &mx, 1, 0, 999999)) {
+            h->max = static_cast<u32>(mx);
+            ctx.isDirty = true;
+        }
     }
 }
 
