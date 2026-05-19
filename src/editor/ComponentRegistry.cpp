@@ -55,9 +55,14 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ w.add<Audio::AudioEmitter>(e); }
     });
     reg.registerComponent({
-        "Scripting", "Script",
+        "Scripting", "Script (Lua)",
         [](ECS::World& w, ECS::Entity e){ return w.has<Script::ScriptComponent>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<Script::ScriptComponent>(e); }
+    });
+    reg.registerComponent({
+        "Scripting", "Script (C++)",
+        [](ECS::World& w, ECS::Entity e){ return w.has<Script::CppScriptComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<Script::CppScriptComponent>(e); }
     });
     reg.registerComponent({
         "UI", "UI Widget",

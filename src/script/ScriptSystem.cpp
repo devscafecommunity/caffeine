@@ -1,5 +1,6 @@
 #include "script/ScriptSystem.hpp"
 #include "script/ScriptTypes.hpp"
+#include "script/CppScript.hpp"
 #include "ecs/World.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "debug/LogSystem.hpp"
@@ -13,6 +14,7 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
     processLuaScripts(world, dt);
     processNativeScripts(world, dt);
+    processCppScripts(world, dt);
 }
 
 void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
@@ -109,4 +111,40 @@ void ScriptSystem::processNativeScripts(ECS::World& world, f32 dt) {
     }
 }
 
-} // namespace Caffeine::Script
+void ScriptSystem::processCppScripts(ECS::World& world, f32 dt) {
+    ECS::ComponentQuery q;
+    q.with<CppScriptComponent>();
+
+    struct Entry { u32 entityId; CppScriptComponent* script; };
+    Vector<Entry> entries;
+
+    world.forEach<CppScriptComponent>(q,
+        [&entries](ECS::Entity entity, CppScriptComponent& csc) {
+            if (!csc.className.empty()) entries.pushBack({entity.id(), &csc});
+        });
+
+    for (auto& entry : entries) {
+        ECS::Entity entity(entry.entityId, &world);
+        if (!entity.isValid()) continue;
+
+        CppScriptComponent* csc = entry.script;
+        if (!csc) continue;
+
+        if (!csc->instance) {
+            csc->instance = CppScriptRegistry::instance().create(csc->className);
+            if (!csc->instance) {
+                CF_ERROR("Script", "C++ script '%s' not registered", csc->className.c_str());
+                continue;
+            }
+        }
+
+        if (!csc->initialized) {
+            csc->instance->onCreate(entity, world);
+            csc->initialized = true;
+        }
+
+        csc->instance->onUpdate(entity, world, dt);
+    }
+}
+
+}

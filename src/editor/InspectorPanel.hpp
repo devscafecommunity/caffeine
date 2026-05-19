@@ -45,6 +45,7 @@ private:
     void drawHealth(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawCppScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawPersistent(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawMeshFilter(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUIWidget(ECS::World& world, ECS::Entity e, EditorContext& ctx);

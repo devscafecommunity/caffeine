@@ -202,6 +202,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/ScriptEngine.cpp
         src/script/ScriptSystem.cpp
         src/script/ScriptWatcher.cpp
+        src/script/CppScriptRegistry.cpp
     )
 endif()
 
@@ -323,6 +324,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/ProjectStartupDialog.cpp
           src/editor/ProjectManager.cpp
           src/editor/FilePicker.cpp
+          scripts/ScriptBindings.cpp
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
@@ -337,7 +339,7 @@ with open(sys.argv[1], 'w') as f:
          target_link_libraries(doppio PRIVATE caf-pack-lib)
          target_compile_definitions(doppio PRIVATE CF_HAS_CAF_PACK=1)
      endif()
-      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${imgui_test_engine_SOURCE_DIR})
+      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/scripts ${imgui_test_engine_SOURCE_DIR})
       target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
      target_compile_features(doppio PRIVATE cxx_std_20)
      # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)

@@ -4,9 +4,11 @@
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "script/CppScript.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
+#include <vector>
 
 #ifdef CF_HAS_IMGUI
 
@@ -59,6 +61,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawTransform(world, e, ctx);
         drawSprite(world, e, ctx);
         drawScript(world, e, ctx);
+        drawCppScript(world, e, ctx);
         drawRigidBody2D(world, e, ctx);
         drawCollider2D(world, e, ctx);
         drawVelocity2D(world, e, ctx);
@@ -615,6 +618,54 @@ std::filesystem::path InspectorPanel::resolveProjectRoot(const EditorContext& ct
         return std::filesystem::path(ctx.currentScenePath).parent_path();
     }
     return {};
+}
+
+void InspectorPanel::drawCppScript(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Script::CppScriptComponent>(e)) return;
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("C++ Script", enabled, removeRequested)) return;
+    if (removeRequested) {
+        world.remove<Script::CppScriptComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* csc = world.get<Script::CppScriptComponent>(e);
+    const auto& scriptNames = Script::CppScriptRegistry::instance().names();
+
+    if (scriptNames.empty()) {
+        ImGui::TextDisabled("No C++ scripts registered");
+        ImGui::TextDisabled("Add scripts to scripts/ and rebuild");
+        return;
+    }
+
+    static std::vector<const char*> namePtrs;
+    namePtrs.clear();
+    for (const auto& n : scriptNames) namePtrs.push_back(n.c_str());
+
+    int current = -1;
+    for (int i = 0; i < static_cast<int>(scriptNames.size()); ++i) {
+        if (scriptNames[i] == csc->className) { current = i; break; }
+    }
+
+    if (ImGui::Combo("Class", &current, namePtrs.data(), static_cast<int>(namePtrs.size()))) {
+        csc->className = scriptNames[static_cast<usize>(current)];
+        csc->instance.reset();
+        csc->initialized = false;
+        ctx.isDirty = true;
+    }
+
+    if (!csc->className.empty()) {
+        bool found = false;
+        for (const auto& n : scriptNames) if (n == csc->className) { found = true; break; }
+        if (!found) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Script '%s' not found — rebuild", csc->className.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), csc->instance ? "Active" : "Inactive (play to activate)");
+        }
+    }
 }
 
 } // namespace Caffeine::Editor
