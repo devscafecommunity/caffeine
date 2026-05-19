@@ -32,8 +32,8 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){
             Physics2D::Collider2D col;
             col.shape = Physics2D::ColliderShape::AABB;
-            col.size  = {64.0f, 64.0f};
-            col.radius = 32.0f;
+            col.size  = {1.0f, 1.0f};
+            col.radius = 0.5f;
             w.add<Physics2D::Collider2D>(e, col);
         }
     });
