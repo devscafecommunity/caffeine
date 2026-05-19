@@ -50,7 +50,7 @@ struct CollisionPair {
 
 class PhysicsSystem2D : public ECS::ISystem {
 public:
-    static constexpr f32 kSleepVelThreshold = 2.0f;
+    static constexpr f32 kSleepVelThreshold = 0.05f;
     static constexpr f32 kSleepTime         = 0.5f;
     static constexpr f32 kSlop              = 0.01f;
     static constexpr f32 kBaumgartePercent  = 0.4f;
@@ -549,9 +549,17 @@ private:
         q.with<RigidBody2D>();
         q.with<ECS::Velocity2D>();
 
+        const bool gravityActive = (m_gravity.x * m_gravity.x + m_gravity.y * m_gravity.y) > 1e-6f;
+
         world.forEach<RigidBody2D, ECS::Velocity2D>(q,
             [&](ECS::Entity, RigidBody2D& rb, ECS::Velocity2D& vel) {
                 if (rb.isKinematic) return;
+
+                if (gravityActive) {
+                    rb.isSleeping = false;
+                    rb.sleepTimer = 0.0f;
+                    return;
+                }
 
                 f32 speedSq = vel.x * vel.x + vel.y * vel.y;
                 if (speedSq < kSleepVelThreshold * kSleepVelThreshold) {
@@ -720,7 +728,7 @@ private:
         return nullptr;
     }
 
-    Vec2              m_gravity      = { 0.0f, -9.81f * 60.0f };
+    Vec2              m_gravity      = { 0.0f, -9.81f };
     Events::EventBus* m_eventBus     = nullptr;
 
     std::mutex                              m_forcesMutex;
