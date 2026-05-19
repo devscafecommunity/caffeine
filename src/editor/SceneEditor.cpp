@@ -402,6 +402,49 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             ImGui::EndMenu();
         }
 
+        {
+            const float btnW    = 60.0f;
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float totalW  = m_isPlaying ? (btnW * 2 + spacing) : btnW;
+            ImGui::SetCursorPosX(ImGui::GetIO().DisplaySize.x * 0.5f - totalW * 0.5f);
+
+#ifdef CF_HAS_SCRIPTING
+            if (!m_isPlaying) {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.55f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.70f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.12f, 0.40f, 0.12f, 1.0f));
+                if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25B6 Play"), ImVec2(btnW, 0)))
+                    enterPlayMode(world);
+                ImGui::PopStyleColor(3);
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.45f, 0.10f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.58f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.33f, 0.08f, 1.0f));
+                if (m_isPaused) {
+                    if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25B6 Resume"), ImVec2(btnW, 0)))
+                        m_isPaused = false;
+                } else {
+                    if (ImGui::Button(reinterpret_cast<const char*>(u8"\u23F8 Pause"), ImVec2(btnW, 0)))
+                        m_isPaused = true;
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.12f, 0.12f, 1.0f));
+                if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25A0 Stop"), ImVec2(btnW, 0)))
+                    exitPlayMode(world);
+                ImGui::PopStyleColor(3);
+            }
+#else
+            ImGui::BeginDisabled();
+            ImGui::Button(reinterpret_cast<const char*>(u8"\u25B6 Play"), ImVec2(btnW, 0));
+            ImGui::EndDisabled();
+#endif
+        }
+
         char dirtyMarker = m_ctx.isDirty ? '*' : ' ';
         char buf[64];
         snprintf(buf, sizeof(buf), "Caffeine Studio — Scene%c", dirtyMarker);
