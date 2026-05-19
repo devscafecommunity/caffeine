@@ -97,7 +97,10 @@ inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove) {
         ImGui::OpenPopup("##cmenu");
     }
     if (ImGui::BeginPopup("##cmenu")) {
-        if (ImGui::MenuItem("Remove Component")) outRemove = true;
+        if (ImGui::MenuItem("Remove Component")) {
+            outRemove = true;
+            ImGui::CloseCurrentPopup();
+        }
         ImGui::EndPopup();
     }
     ImGui::PopID();

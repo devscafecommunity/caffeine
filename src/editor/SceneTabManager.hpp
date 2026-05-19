@@ -59,7 +59,8 @@ public:
 
 private:
     std::vector<std::unique_ptr<SceneTab>> m_tabs;
-    int m_activeTabIndex = -1;
+    int m_activeTabIndex  = -1;
+    int m_pendingSelectIndex = -1;
 };
 
 } // namespace Caffeine::Editor

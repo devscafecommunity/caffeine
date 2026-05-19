@@ -127,16 +127,22 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Transform>(e)) {
         auto* t = world.get<ECS::Transform>(e);
         bool is2D = !world.has<ECS::MeshFilterComponent>(e) && !world.has<ECS::MeshRendererComponent>(e);
-        if (Widgets::DragVec3("Position", t->position, 0.5f)) ctx.isDirty = true;
+        bool changed = false;
+        if (Widgets::DragVec3("Position", t->position, 0.5f)) { ctx.isDirty = true; changed = true; }
         if (is2D) {
-            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) ctx.isDirty = true;
+            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; changed = true; }
             float s[2] = { t->scale.x, t->scale.y };
             if (ImGui::DragFloat2("Scale", s, 0.05f, 0.01f, 100.0f)) {
-                t->scale.x = s[0]; t->scale.y = s[1]; ctx.isDirty = true;
+                t->scale.x = s[0]; t->scale.y = s[1]; ctx.isDirty = true; changed = true;
             }
         } else {
-            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) ctx.isDirty = true;
-            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) ctx.isDirty = true;
+            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; changed = true; }
+            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { ctx.isDirty = true; changed = true; }
+        }
+        if (changed) {
+            if (auto* pos = world.get<ECS::Position2D>(e)) { pos->x = t->position.x; pos->y = t->position.y; }
+            if (auto* rot = world.get<ECS::Rotation>(e))   { rot->angle = t->rotation.z * 3.14159265f / 180.0f; }
+            if (auto* scl = world.get<ECS::Scale2D>(e))    { scl->x = t->scale.x; scl->y = t->scale.y; }
         }
         return;
     }
