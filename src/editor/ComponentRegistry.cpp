@@ -21,7 +21,10 @@ void registerAllComponents(ComponentRegistry& reg) {
     reg.registerComponent({
         "Physics 2D", "RigidBody2D",
         [](ECS::World& w, ECS::Entity e){ return w.has<Physics2D::RigidBody2D>(e); },
-        [](ECS::World& w, ECS::Entity e){ w.add<Physics2D::RigidBody2D>(e); }
+        [](ECS::World& w, ECS::Entity e){
+            w.add<Physics2D::RigidBody2D>(e);
+            if (!w.has<ECS::Velocity2D>(e)) w.add<ECS::Velocity2D>(e);
+        }
     });
     reg.registerComponent({
         "Physics 2D", "Collider2D",

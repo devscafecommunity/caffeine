@@ -226,11 +226,10 @@ private:
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Velocity2D>();
-        q.with<Collider2D>();
 
-        world.forEach<RigidBody2D, ECS::Velocity2D, Collider2D>(q,
-            [&](ECS::Entity e, RigidBody2D& rb, ECS::Velocity2D& vel, Collider2D& col) {
-                if (col.isStatic || rb.isKinematic || rb.isSleeping) return;
+        world.forEach<RigidBody2D, ECS::Velocity2D>(q,
+            [&](ECS::Entity e, RigidBody2D& rb, ECS::Velocity2D& vel) {
+                if (rb.isKinematic || rb.isSleeping) return;
 
                 f32 invMass = (rb.mass > 0.0f) ? 1.0f / rb.mass : 0.0f;
 
@@ -253,13 +252,9 @@ private:
         q.with<RigidBody2D>();
         q.with<ECS::Position2D>();
         q.with<ECS::Velocity2D>();
-        q.with<Collider2D>();
 
-        world.forEach<RigidBody2D, ECS::Position2D, ECS::Velocity2D, Collider2D>(q,
-            [&](ECS::Entity, RigidBody2D& rb, ECS::Position2D& pos,
-                ECS::Velocity2D& vel, Collider2D& col) {
-                if (col.isStatic) return;
-
+        world.forEach<RigidBody2D, ECS::Position2D, ECS::Velocity2D>(q,
+            [&](ECS::Entity, RigidBody2D& rb, ECS::Position2D& pos, ECS::Velocity2D& vel) {
                 if (rb.isKinematic) {
                     pos.x += vel.x * dt;
                     pos.y += vel.y * dt;
@@ -553,11 +548,10 @@ private:
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Velocity2D>();
-        q.with<Collider2D>();
 
-        world.forEach<RigidBody2D, ECS::Velocity2D, Collider2D>(q,
-            [&](ECS::Entity, RigidBody2D& rb, ECS::Velocity2D& vel, Collider2D& col) {
-                if (col.isStatic || rb.isKinematic) return;
+        world.forEach<RigidBody2D, ECS::Velocity2D>(q,
+            [&](ECS::Entity, RigidBody2D& rb, ECS::Velocity2D& vel) {
+                if (rb.isKinematic) return;
 
                 f32 speedSq = vel.x * vel.x + vel.y * vel.y;
                 if (speedSq < kSleepVelThreshold * kSleepVelThreshold) {
