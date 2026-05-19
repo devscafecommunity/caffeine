@@ -482,9 +482,7 @@ void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVe
         [&](ECS::Entity entity, Collider2D& col, ECS::Position2D& pos) {
             f32 cx = pos.x + col.offset.x;
             f32 cy = pos.y + col.offset.y;
-            ImU32 color = col.isTrigger ? IM_COL32(255, 80, 80, 200)
-                        : col.isStatic  ? IM_COL32(80, 255, 80, 200)
-                                        : IM_COL32(80, 200, 255, 200);
+            ImU32 color = IM_COL32(col.debugColor[0], col.debugColor[1], col.debugColor[2], col.debugColor[3]);
             if (col.shape == ColliderShape::AABB) {
                 f32 hw = col.size.x * 0.5f * worldToScreen;
                 f32 hh = col.size.y * 0.5f * worldToScreen;

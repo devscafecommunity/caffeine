@@ -329,6 +329,20 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
         col->layer = static_cast<u32>(layer);
         ctx.isDirty = true;
     }
+
+    float colF[4] = {
+        col->debugColor[0] / 255.0f,
+        col->debugColor[1] / 255.0f,
+        col->debugColor[2] / 255.0f,
+        col->debugColor[3] / 255.0f
+    };
+    if (ImGui::ColorEdit4("Debug Color", colF)) {
+        col->debugColor[0] = static_cast<u8>(colF[0] * 255.0f);
+        col->debugColor[1] = static_cast<u8>(colF[1] * 255.0f);
+        col->debugColor[2] = static_cast<u8>(colF[2] * 255.0f);
+        col->debugColor[3] = static_cast<u8>(colF[3] * 255.0f);
+        ctx.isDirty = true;
+    }
 }
 
 void InspectorPanel::drawVelocity2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {

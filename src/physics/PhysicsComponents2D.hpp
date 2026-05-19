@@ -41,6 +41,7 @@ struct Collider2D {
     bool          isStatic  = false;
     bool          isTrigger = false;
     bool          isOneWay  = false;
+    u8            debugColor[4] = { 80, 200, 255, 220 };
 };
 
 }
