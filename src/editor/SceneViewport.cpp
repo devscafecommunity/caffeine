@@ -185,6 +185,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     drawGrid(drawList, origin, viewportSize, ctx);
     drawSprites(world, ctx, origin, viewportSize);
+    drawEmptyEntities(world, ctx, origin, viewportSize);
     drawPhysicsDebug(world, ctx, origin, viewportSize);
 
     if (ctx.selectedEntity.isValid()) {
@@ -341,6 +342,41 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
             const std::string label = labelPath.filename().string();
             dl->AddText(ImVec2(screenPos.x - halfW, screenPos.y - halfH - 14.0f), IM_COL32(220, 220, 230, 230), label.c_str());
         }
+    });
+}
+
+void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    ECS::ComponentQuery query;
+    query.with<ECS::Position2D>();
+    query.without<ECS::Sprite>();
+
+    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float r = 7.0f;
+
+    world.forEach<ECS::Position2D>(query, [&](ECS::Entity entity, ECS::Position2D& pos) {
+        ImVec2 sp(
+            origin.x + viewportSize.x * 0.5f + (pos.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-pos.y + ctx.viewportPanY / worldToScreen) * worldToScreen
+        );
+
+        const bool selected = (ctx.selectedEntity == entity);
+        const ImU32 col     = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(180, 180, 200, 200);
+
+        dl->AddQuadFilled(
+            ImVec2(sp.x,     sp.y - r),
+            ImVec2(sp.x + r, sp.y    ),
+            ImVec2(sp.x,     sp.y + r),
+            ImVec2(sp.x - r, sp.y    ),
+            selected ? IM_COL32(110, 210, 255, 40) : IM_COL32(180, 180, 200, 30));
+        dl->AddQuad(
+            ImVec2(sp.x,     sp.y - r),
+            ImVec2(sp.x + r, sp.y    ),
+            ImVec2(sp.x,     sp.y + r),
+            ImVec2(sp.x - r, sp.y    ),
+            col, selected ? 2.0f : 1.0f);
+        dl->AddLine(ImVec2(sp.x - r * 0.5f, sp.y), ImVec2(sp.x + r * 0.5f, sp.y), col, 1.5f);
+        dl->AddLine(ImVec2(sp.x, sp.y - r * 0.5f), ImVec2(sp.x, sp.y + r * 0.5f), col, 1.5f);
     });
 }
 
