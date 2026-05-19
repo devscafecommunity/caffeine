@@ -304,12 +304,12 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
 
     if (col->shape == Physics2D::ColliderShape::AABB) {
         float sz[2] = { col->size.x, col->size.y };
-        if (ImGui::DragFloat2("Size", sz, 1.0f, 0.1f, 2000.0f)) {
+        if (ImGui::DragFloat2("Size", sz, 0.01f, 0.01f, 2000.0f)) {
             col->size.x = sz[0]; col->size.y = sz[1];
             ctx.isDirty = true;
         }
     } else {
-        if (ImGui::DragFloat("Radius", &col->radius, 1.0f, 0.1f, 1000.0f)) {
+        if (ImGui::DragFloat("Radius", &col->radius, 0.01f, 0.01f, 1000.0f)) {
             ctx.isDirty = true;
         }
     }

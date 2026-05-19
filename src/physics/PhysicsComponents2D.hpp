@@ -32,9 +32,9 @@ struct RigidBody2D {
 };
 
 struct Collider2D {
-    Vec2          size      = { 32.0f, 32.0f };
-    Vec2          offset    = { 0.0f,  0.0f  };
-    f32           radius    = 16.0f;
+    Vec2          size      = { 1.0f, 1.0f };
+    Vec2          offset    = { 0.0f, 0.0f };
+    f32           radius    = 0.5f;
     u32           layer     = 0;
     u32           layerMask = 0xFFFFFFFF;
     ColliderShape shape     = ColliderShape::AABB;
