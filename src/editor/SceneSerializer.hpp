@@ -5,7 +5,6 @@
 #include <string>
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class SceneSerializer {
 public:

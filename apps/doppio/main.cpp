@@ -1,10 +1,10 @@
 #include "rhi/RenderDevice.hpp"
 #include "rhi/CommandBuffer.hpp"
 #include "assets/AssetManager.hpp"
-#include "render/Camera2D.hpp"
 
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
+#include "editor/ProjectStartupDialog.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
 
@@ -42,7 +42,6 @@ int main(int, char**) {
     }
 
     Caffeine::Assets::AssetManager assetManager(nullptr, "assets");
-    Caffeine::Render::Camera2D editorCamera;
 
     Caffeine::Editor::ImGuiIntegration imgui;
     if (!imgui.init(window, &device)) {
@@ -53,8 +52,66 @@ int main(int, char**) {
         return 1;
     }
 
+    // Show project startup dialog
+    Caffeine::Editor::ProjectStartupDialog projectDialog;
+    projectDialog.init();
+
+    Caffeine::Editor::ProjectConfig selectedProject;
+    bool projectSelected = false;
+
+    while (projectDialog.isOpen() && !projectSelected) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            imgui.processEvent(event);
+            if (event.type == SDL_EVENT_QUIT) {
+                imgui.shutdown();
+                device.shutdown();
+                SDL_DestroyWindow(window);
+                SDL_Quit();
+                return 0;
+            }
+        }
+
+        Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
+        if (!cmd) {
+            continue;
+        }
+
+        imgui.beginFrame();
+        
+        if (auto config = projectDialog.render()) {
+            selectedProject = config.value();
+            projectSelected = true;
+        }
+        imgui.prepareRender(cmd);
+
+        Caffeine::RHI::RenderPassDesc passDesc;
+        passDesc.clearColor[0] = 0.10f;
+        passDesc.clearColor[1] = 0.10f;
+        passDesc.clearColor[2] = 0.12f;
+        passDesc.clearColor[3] = 1.00f;
+
+        cmd->beginRenderPass(passDesc);
+        imgui.endFrame(cmd);
+        cmd->endRenderPass();
+
+        device.endFrame(cmd);
+        fflush(stderr);
+    }
+
+    if (!projectSelected) {
+        imgui.shutdown();
+        device.shutdown();
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 0;
+    }
+
+    // Create asset manager with project's asset path
+    Caffeine::Assets::AssetManager projectAssetManager(nullptr, selectedProject.AssetRawPath.string().c_str());
+
     Caffeine::Editor::SceneEditor editor;
-    if (!editor.init(&device, &assetManager)) {
+    if (!editor.init(&device, &projectAssetManager, selectedProject)) {
         std::fprintf(stderr, "SceneEditor::init failed\n");
         imgui.shutdown();
         device.shutdown();
@@ -67,6 +124,7 @@ int main(int, char**) {
     // (T0.4 — IDebugHooks will be wired here in a follow-up)
 
     bool running = true;
+    Uint64 lastFrameTime = SDL_GetTicksNS();
     while (running && editor.isOpen()) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -74,11 +132,15 @@ int main(int, char**) {
             if (event.type == SDL_EVENT_QUIT) running = false;
         }
 
+        Uint64 currentFrameTime = SDL_GetTicksNS();
+        float deltaTime = static_cast<float>(currentFrameTime - lastFrameTime) / 1'000'000'000.0f;
+        lastFrameTime = currentFrameTime;
+
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
         if (!cmd) continue;
 
         imgui.beginFrame();
-        editor.render(editorCamera);
+        editor.render(deltaTime);
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;

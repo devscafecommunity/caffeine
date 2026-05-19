@@ -3,18 +3,20 @@
 #include "assets/AssetTypes.hpp"
 #include <string>
 #include <filesystem>
+#include <functional>
+#include <vector>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 // ── Payload type identifiers ────────────────────────────────────
 
 constexpr const char* kPayloadAssetPath  = "ASSET_PATH";
 constexpr const char* kPayloadEntityDrag = "ENTITY_DRAG";
+constexpr const char* kPayloadFileDrop   = "FILE_DROP";
 
 // ── Drag-drop payload data ──────────────────────────────────────
 
@@ -24,16 +26,31 @@ struct AssetDropPayload {
     AssetType type;
 };
 
+// ── File import callback ────────────────────────────────────────
+
+using FileImportCallback = std::function<void(bool success, const std::string& message)>;
+
 // ── DragDropManager ─────────────────────────────────────────────
 
 /// Static helpers for ImGui drag-source and drop-target operations.
 /// Wraps ImGui's payload API with Caffeine-specific payload types.
 class DragDropManager {
 public:
+    /// Set callback for file import operations
+    static void setFileImportCallback(FileImportCallback callback) {
+        s_importCallback = callback;
+    }
+
+    /// Import files to CAP (PNG/WAV → game.cap)
+    static void importFilesToCapPack(
+        const std::vector<std::filesystem::path>& files,
+        const std::filesystem::path& projectRoot
+    );
+
     /// Begin an asset drag-source. Returns true if the source is active.
     static bool SourceAsset(const char* path, AssetType type, const char* label) {
 #ifdef CF_HAS_IMGUI
-        if (!ImGui::BeginDragDropSource()) return false;
+    if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) return false;
         AssetDropPayload payload;
         strncpy(payload.path, path, sizeof(payload.path) - 1);
         payload.path[sizeof(payload.path) - 1] = '\0';
@@ -51,7 +68,7 @@ public:
     /// Begin an entity drag-source. Returns true if the source is active.
     static bool SourceEntity(u32 entityId, const char* label) {
 #ifdef CF_HAS_IMGUI
-        if (!ImGui::BeginDragDropSource()) return false;
+    if (!ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) return false;
         ImGui::SetDragDropPayload(kPayloadEntityDrag, &entityId, sizeof(u32));
         ImGui::Text("%s", label);
         ImGui::EndDragDropSource();
@@ -92,6 +109,9 @@ public:
 #endif
         return u32_max;
     }
+
+private:
+    static FileImportCallback s_importCallback;
 };
 
 } // namespace Caffeine::Editor

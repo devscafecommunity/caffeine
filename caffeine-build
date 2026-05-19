@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+
+################################################################################
+# Caffeine Engine - Universal Build Wrapper
+# Purpose: Single easy-to-use entry point for all build operations
+# Usage: ./caffeine-build [command] [options]
+# 
+# COMMANDS:
+#   config      Configure CMake (supports --debug, --release, --headless, --scripting)
+#   build       Build project (supports --debug, --release, --clean)
+#   test        Run test suite
+#   run         Execute built binary
+#   clean       Remove build artifacts
+#   rebuild     Clean + configure + build
+#   help        Show detailed help
+#
+# QUICK EXAMPLES:
+#   ./caffeine-build                         # Default Debug build
+#   ./caffeine-build build --release         # Release build
+#   ./caffeine-build rebuild --release       # Full Release rebuild
+#   ./caffeine-build test                    # Run tests
+#   ./caffeine-build run                     # Execute binary
+#   ./caffeine-build clean rebuild --release # Clean + full Release rebuild
+#
+# OPTIONS:
+#   --debug        Build in Debug mode (default)
+#   --release      Build in Release mode
+#   --headless     Build without SDL3/RHI (server mode)
+#   --scripting    Enable Lua scripting support
+#   --clean        Clean before build
+#   --jobs N       Use N parallel jobs (default: auto-detected)
+################################################################################
+
+set -e
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COLORS & LOGGING
+# ══════════════════════════════════════════════════════════════════════════════
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+log_error()   { echo -e "${RED}[✗]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[!]${NC} $1"; }
+log_header()  { echo -e "\n${MAGENTA}${BOLD}━━━ $1${NC}\n"; }
+log_step()    { echo -e "${CYAN}▶ $1${NC}"; }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETUP
+# ══════════════════════════════════════════════════════════════════════════════
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$PROJECT_ROOT/build"
+BIN_DIR="$PROJECT_ROOT/bin"
+
+# Detect CPU cores for parallel builds
+if command -v nproc &> /dev/null; then
+    CPU_CORES=$(nproc)
+elif command -v sysctl &> /dev/null; then
+    CPU_CORES=$(sysctl -n hw.ncpu)
+else
+    CPU_CORES=4
+fi
+
+# Defaults
+BUILD_TYPE="Debug"
+HEADLESS=OFF
+SCRIPTING=OFF
+PARALLEL_JOBS=$CPU_CORES
+CLEAN_FIRST=false
+
+log_info "Project root: $PROJECT_ROOT"
+log_info "CPU cores: $CPU_CORES"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DEPENDENCY CHECKS
+# ══════════════════════════════════════════════════════════════════════════════
+
+check_dependencies() {
+    log_step "Verifying dependencies..."
+    
+    local missing=()
+    
+    for cmd in cmake python3 git; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_error "Missing: ${missing[*]}"
+        echo ""
+        echo "Install:"
+        echo "  macOS:   brew install cmake"
+        echo "  Linux:   apt-get install cmake"
+        echo "  Windows: choco install cmake"
+        return 1
+    fi
+    
+    log_success "All dependencies available"
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CMAKE OPERATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+config_cmake() {
+    log_header "Configuring CMake"
+    
+    echo "Build Type:     $BUILD_TYPE"
+    echo "Headless Mode:  $HEADLESS"
+    echo "Scripting:      $SCRIPTING"
+    echo ""
+    
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR"
+    
+    cmake \
+        -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+        -DCAFFEINE_BUILD_HEADLESS="$HEADLESS" \
+        -DCAFFEINE_ENABLE_SCRIPTING="$SCRIPTING" \
+        "$PROJECT_ROOT" || {
+        log_error "CMake configuration failed"
+        return 1
+    }
+    
+    log_success "Configuration complete"
+}
+
+build_project() {
+    log_header "Building Project"
+    
+    if [ ! -f "$BUILD_DIR/CMakeLists.txt" ] && [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+        log_step "Build directory not configured, running config first..."
+        config_cmake || return 1
+    fi
+    
+    cd "$BUILD_DIR"
+    
+    log_step "Compiling with $PARALLEL_JOBS parallel jobs..."
+    cmake --build . --config "$BUILD_TYPE" --parallel "$PARALLEL_JOBS" || {
+        log_error "Build failed"
+        return 1
+    }
+    
+    log_success "Build complete"
+    
+    # List built artifacts
+    if [ -d "$BIN_DIR" ] && [ -n "$(find "$BIN_DIR" -type f 2>/dev/null)" ]; then
+        echo ""
+        log_step "Built artifacts:"
+        find "$BIN_DIR" -type f | head -10 | while read f; do
+            echo "    ${CYAN}→${NC} $(basename "$f")"
+        done
+    fi
+}
+
+clean_build() {
+    log_header "Cleaning Build Directory"
+    
+    if [ -d "$BUILD_DIR" ]; then
+        log_step "Removing $BUILD_DIR..."
+        rm -rf "$BUILD_DIR"
+        log_success "Build directory cleaned"
+    fi
+    
+    if [ -d "$BIN_DIR" ]; then
+        log_step "Removing $BIN_DIR..."
+        rm -rf "$BIN_DIR"
+        log_success "Binary directory cleaned"
+    fi
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST & RUN
+# ══════════════════════════════════════════════════════════════════════════════
+
+run_tests() {
+    log_header "Running Tests"
+    
+    if [ ! -d "$BUILD_DIR" ]; then
+        log_error "Build directory not found"
+        log_info "Run './caffeine-build build' first"
+        return 1
+    fi
+    
+    cd "$BUILD_DIR"
+    
+    if command -v ctest &> /dev/null; then
+        log_step "Executing ctest with $PARALLEL_JOBS parallel jobs..."
+        ctest --output-on-failure --parallel "$PARALLEL_JOBS" || {
+            log_error "Tests failed"
+            return 1
+        }
+    else
+        log_warn "ctest not found, trying cmake --build test"
+        cmake --build . --target test || {
+            log_error "Tests failed"
+            return 1
+        }
+    fi
+    
+    log_success "All tests passed"
+}
+
+run_binary() {
+    log_header "Executing Binary"
+    
+    local exe_name="caffeine-combined"
+    local exe_path=""
+    
+    # Search for executable
+    for dir in "$BIN_DIR" "$BUILD_DIR/apps/doppio" "$BUILD_DIR/bin" "$BUILD_DIR"; do
+        if [ -f "$dir/$exe_name" ]; then
+            exe_path="$dir/$exe_name"
+            break
+        fi
+    done
+    
+    if [ -z "$exe_path" ]; then
+        log_error "Executable '$exe_name' not found"
+        log_step "Searching build directory..."
+        find "$BUILD_DIR" -name "$exe_name" -type f 2>/dev/null | head -5
+        return 1
+    fi
+    
+    log_step "Running: $exe_path"
+    echo ""
+    "$exe_path"
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ARGUMENT PARSING
+# ══════════════════════════════════════════════════════════════════════════════
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --debug)      BUILD_TYPE="Debug"; shift ;;
+            --release)    BUILD_TYPE="Release"; shift ;;
+            --headless)   HEADLESS=ON; shift ;;
+            --scripting)  SCRIPTING=ON; shift ;;
+            --clean)      CLEAN_FIRST=true; shift ;;
+            --jobs)       PARALLEL_JOBS="$2"; shift 2 ;;
+            *)            shift ;;
+        esac
+    done
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELP & MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+show_help() {
+    cat << 'EOF'
+┌──────────────────────────────────────────────────────────────────────┐
+│  ☕ Caffeine Engine - Build Wrapper                                  │
+│  Easy-to-use build automation for all platforms                      │
+└──────────────────────────────────────────────────────────────────────┘
+
+USAGE:
+  ./caffeine-build [command] [options]
+
+COMMANDS:
+  config              Configure CMake with current options
+  build               Build project (configure if needed)
+  rebuild             Clean + configure + build
+  test                Run test suite
+  run                 Execute built binary
+  clean               Remove all build artifacts
+  help                Show this help message
+
+QUICK EXAMPLES:
+  ./caffeine-build                    # Build Debug (default)
+  ./caffeine-build build --release    # Build Release
+  ./caffeine-build rebuild --release  # Full Release rebuild
+  ./caffeine-build test               # Run tests
+  ./caffeine-build run                # Execute game
+  ./caffeine-build clean rebuild      # Clean rebuild
+
+BUILD OPTIONS:
+  --debug             Debug build (default)
+  --release           Release build (optimized)
+  --headless          Build without SDL3/graphics (server/CI mode)
+  --scripting         Enable Lua scripting support
+  --clean             Clean before build
+  --jobs N            Use N parallel jobs (default: auto-detected)
+
+COMBINED EXAMPLES:
+  ./caffeine-build build --release --jobs 8
+  ./caffeine-build rebuild --release --headless
+  ./caffeine-build clean build test
+
+ENVIRONMENT:
+  PROJECT_ROOT: $PROJECT_ROOT
+  BUILD_DIR:    $PROJECT_ROOT/build
+  BIN_DIR:      $PROJECT_ROOT/bin
+  CPU_CORES:    $CPU_CORES
+
+For more info, see scripts/README.md or docs/building.md
+EOF
+}
+
+main() {
+    # No args = default build
+    if [ $# -eq 0 ]; then
+        log_info "No command specified, running default build..."
+        check_dependencies || return 1
+        parse_args "--debug"
+        build_project
+        return
+    fi
+    
+    local command="$1"
+    shift
+    
+    # Parse remaining arguments
+    parse_args "$@"
+    
+    case "$command" in
+        config)
+            check_dependencies || return 1
+            config_cmake
+            ;;
+        build)
+            check_dependencies || return 1
+            [ "$CLEAN_FIRST" = true ] && clean_build
+            build_project
+            ;;
+        rebuild)
+            check_dependencies || return 1
+            clean_build
+            config_cmake && build_project
+            ;;
+        test)
+            check_dependencies || return 1
+            run_tests
+            ;;
+        run)
+            run_binary
+            ;;
+        clean)
+            clean_build
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            log_error "Unknown command: '$command'"
+            echo ""
+            show_help
+            return 1
+            ;;
+    esac
+}
+
+main "$@"

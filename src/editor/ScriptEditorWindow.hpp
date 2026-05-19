@@ -3,12 +3,15 @@
 #include <vector>
 #include <filesystem>
 
+#ifdef CF_HAS_SCRIPTING
+namespace Caffeine::Script { class ScriptEngine; }
+#endif
+
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class ScriptEditorWindow {
 public:
@@ -19,7 +22,7 @@ public:
         std::string content;
         std::string originalContent;
         bool isDirty = false;
-        std::vector<char> editBuffer;  // Per-file ImGui editing buffer
+        std::vector<char> editBuffer;
     };
 
     bool openFile(const std::filesystem::path& path);
@@ -36,6 +39,10 @@ public:
     void close() { m_open = false; }
     void open() { m_open = true; }
 
+#ifdef CF_HAS_SCRIPTING
+    void setScriptEngine(Script::ScriptEngine* engine) { m_scriptEngine = engine; }
+#endif
+
 #ifdef CF_HAS_IMGUI
     void render();
 #endif
@@ -44,6 +51,10 @@ private:
     std::vector<OpenFile> m_openFiles;
     int m_activeFileIndex = -1;
     bool m_open = true;
+
+#ifdef CF_HAS_SCRIPTING
+    Script::ScriptEngine* m_scriptEngine = nullptr;
+#endif
 };
 
 } // namespace Caffeine::Editor

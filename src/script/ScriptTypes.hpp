@@ -2,9 +2,11 @@
 
 #include "core/Types.hpp"
 #include "ecs/Entity.hpp"
+#include "script/CppScript.hpp"
 
 #include <string>
 #include <functional>
+#include <memory>
 
 namespace Caffeine::Script {
 
@@ -25,4 +27,10 @@ struct NativeScriptComponent {
     bool initialized = false;
 };
 
-} // namespace Caffeine::Script
+struct CppScriptComponent {
+    std::string className;
+    std::shared_ptr<CppScript> instance;
+    bool initialized = false;
+};
+
+}

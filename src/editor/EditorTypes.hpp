@@ -2,7 +2,6 @@
 #include "core/Types.hpp"
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 struct FrameStats {
     f64 deltaTime   = 0.0;

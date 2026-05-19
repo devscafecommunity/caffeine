@@ -24,8 +24,7 @@ struct ScriptEngine::Impl {
     Input::InputManager* m_input = nullptr;
     Events::EventBus* m_events = nullptr;
 
-    // Loaded scripts: virtualPath -> compiled chunk (as protected_function)
-    HashMap<std::string, sol::protected_function> m_scripts;
+    HashMap<std::string, sol::environment> m_envs;
 
     struct LuaEventEntry {
         std::string eventName;
@@ -492,14 +491,15 @@ bool ScriptEngine::init(const InitParams& params) {
 
 void ScriptEngine::shutdown() {
     m_impl->m_lua.collect_garbage();
-    m_impl->m_scripts.clear();
+    m_impl->m_envs.clear();
     m_impl->m_luaEvents.clear();
 }
 
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
-    auto result = lua.load_file(path);
+    sol::environment env(lua, sol::create, lua.globals());
+    auto result = lua.safe_script_file(path, env, sol::script_pass_on_error);
     if (!result.valid()) {
         sol::error err = result;
         if (outError) *outError = err.what();
@@ -507,18 +507,7 @@ bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
         return false;
     }
 
-    // Execute the chunk to register global functions (onCreate, onUpdate, etc.)
-    sol::protected_function chunk = result;
-    auto execResult = chunk();
-    if (!execResult.valid()) {
-        sol::error err = execResult;
-        if (outError) *outError = err.what();
-        CF_ERROR("Script", "Failed to execute %s: %s", path.c_str(), err.what());
-        return false;
-    }
-
-    // Store the chunk for potential hot-reload
-    m_impl->m_scripts.set(path, chunk);
+    m_impl->m_envs.set(path, std::move(env));
     CF_INFO("Script", "Loaded script: %s", path.c_str());
     return true;
 }
@@ -528,22 +517,15 @@ bool ScriptEngine::loadString(const std::string& code,
                               std::string* outError) {
     auto& lua = m_impl->m_lua;
 
-    auto result = lua.load(code, virtualPath);
+    sol::environment env(lua, sol::create, lua.globals());
+    auto result = lua.safe_script(code, env, sol::script_pass_on_error, virtualPath);
     if (!result.valid()) {
         sol::error err = result;
         if (outError) *outError = err.what();
         return false;
     }
 
-    sol::protected_function chunk = result;
-    auto execResult = chunk();
-    if (!execResult.valid()) {
-        sol::error err = execResult;
-        if (outError) *outError = err.what();
-        return false;
-    }
-
-    m_impl->m_scripts.set(virtualPath, chunk);
+    m_impl->m_envs.set(virtualPath, std::move(env));
     return true;
 }
 
@@ -553,13 +535,13 @@ bool ScriptEngine::reloadScript(const std::string& path, std::string* outError) 
 }
 
 bool ScriptEngine::isLoaded(const std::string& path) const {
-    return m_impl->m_scripts.get(path) != nullptr;
+    return m_impl->m_envs.get(path) != nullptr;
 }
 
 bool ScriptEngine::callOnCreate(const std::string& path, ECS::Entity entity) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onCreate"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onCreate"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()));
@@ -573,9 +555,9 @@ bool ScriptEngine::callOnCreate(const std::string& path, ECS::Entity entity) {
 
 bool ScriptEngine::callOnUpdate(const std::string& path, ECS::Entity entity,
                                  f32 dt) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onUpdate"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onUpdate"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()), dt);
@@ -588,9 +570,9 @@ bool ScriptEngine::callOnUpdate(const std::string& path, ECS::Entity entity,
 }
 
 bool ScriptEngine::callOnDestroy(const std::string& path, ECS::Entity entity) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onDestroy"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onDestroy"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()));
@@ -604,9 +586,9 @@ bool ScriptEngine::callOnDestroy(const std::string& path, ECS::Entity entity) {
 
 bool ScriptEngine::callOnCollision(const std::string& path, ECS::Entity entity,
                                     ECS::Entity other) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onCollision"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onCollision"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()),

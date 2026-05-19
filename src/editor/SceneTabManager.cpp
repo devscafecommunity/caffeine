@@ -9,6 +9,7 @@ int SceneTabManager::newScene(const char* name) {
     m_tabs.push_back(std::move(tab));
     int idx = static_cast<int>(m_tabs.size() - 1);
     if (m_activeTabIndex < 0) m_activeTabIndex = idx;
+    m_pendingSelectIndex = idx;
     return idx;
 }
 
@@ -19,6 +20,7 @@ int SceneTabManager::addTab(const char* name, std::unique_ptr<ECS::World> world)
     m_tabs.push_back(std::move(tab));
     int idx = static_cast<int>(m_tabs.size() - 1);
     if (m_activeTabIndex < 0) m_activeTabIndex = idx;
+    m_pendingSelectIndex = idx;
     return idx;
 }
 
@@ -43,6 +45,7 @@ void SceneTabManager::setActiveTab(int index, EditorContext& ctx) {
     if (index < 0 || index >= static_cast<int>(m_tabs.size()) || index == m_activeTabIndex) return;
     if (m_activeTabIndex >= 0) captureContext(ctx);
     m_activeTabIndex = index;
+    m_pendingSelectIndex = index;
     applyContext(ctx);
 }
 
@@ -100,7 +103,6 @@ SceneTabManager::TabBarResult SceneTabManager::renderTabBar() {
     if (m_tabs.empty()) return result;
 
     ImGuiTabBarFlags tbFlags = ImGuiTabBarFlags_Reorderable
-                             | ImGuiTabBarFlags_AutoSelectNewTabs
                              | ImGuiTabBarFlags_TabListPopupButton;
 
     if (!ImGui::BeginTabBar("SceneTabs", tbFlags)) return result;
@@ -110,9 +112,10 @@ SceneTabManager::TabBarResult SceneTabManager::renderTabBar() {
         std::string label = tab.name;
         if (tab.isDirty) label += " *";
 
-        ImGuiTabItemFlags itemFlags = (i == m_activeTabIndex)
-            ? ImGuiTabItemFlags_SetSelected
-            : ImGuiTabItemFlags_None;
+        ImGuiTabItemFlags itemFlags = ImGuiTabItemFlags_None;
+        if (i == m_pendingSelectIndex) {
+            itemFlags = ImGuiTabItemFlags_SetSelected;
+        }
 
         bool tabOpen = true;
         if (ImGui::BeginTabItem(label.c_str(), &tabOpen, itemFlags)) {
@@ -126,6 +129,8 @@ SceneTabManager::TabBarResult SceneTabManager::renderTabBar() {
             result.closeCandidate = i;
         }
     }
+
+    m_pendingSelectIndex = -1;
 
     if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Leading | ImGuiTabItemFlags_NoTooltip)) {
         result.newTabRequested = true;

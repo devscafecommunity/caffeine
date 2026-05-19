@@ -1,7 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
 #include "ecs/World.hpp"
-#include "render/Camera2D.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/HierarchyPanel.hpp"
 #include "editor/InspectorPanel.hpp"
@@ -12,6 +11,7 @@
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
+#include "editor/ProjectManager.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
@@ -21,6 +21,19 @@
 #include "editor/AnimationTimeline.hpp"
 #include "editor/TilemapEditor.hpp"
 #include "editor/CommandPalette.hpp"
+#include "editor/BuildDialog.hpp"
+#include "editor/SettingsPanel.hpp"
+
+#include "core/io/FileWatcher.hpp"
+
+#include "physics/PhysicsSystem2D.hpp"
+#include "ui/UISystem.hpp"
+#include "events/EventBus.hpp"
+
+#ifdef CF_HAS_SCRIPTING
+#include "script/ScriptEngine.hpp"
+#include "script/ScriptSystem.hpp"
+#endif
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -33,9 +46,9 @@
 
 #include <cstdio>
 #include <functional>
+#include <vector>
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class SceneEditor {
 public:
@@ -50,15 +63,11 @@ public:
 
 #ifdef CF_HAS_SDL3
     bool init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
-              const char* assetsPath = "assets");
+              const ProjectConfig& projectConfig);
     void shutdown();
 #endif
 
-    void render(
-#ifdef CF_HAS_SDL3
-                Render::Camera2D& editorCamera
-#endif
-               );
+    void render(f32 deltaTime = 0.016f);
 
     // ── Serialization ──
 
@@ -87,10 +96,13 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+    void requestLayoutRebuild() { m_layoutNeedsRebuild = true; }
+
 
 private:
 #ifdef CF_HAS_IMGUI
     void setupDockspace(ImGuiID dockspaceId);
+    void applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile);
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
     void renderUnsavedChangesPopup(ECS::World& world);
@@ -98,6 +110,11 @@ private:
     void handleAssetDrop(ECS::World& world);
     void handleShortcuts(ECS::World& world);
     void doNewScene();
+
+    void enterPlayMode(ECS::World& world);
+    void exitPlayMode(ECS::World& world);
+    void tickSystems(ECS::World& world, f32 dt);
+    void renderPlaybar(ECS::World& world);
 #endif
 
     EditorContext  m_ctx;
@@ -118,17 +135,47 @@ private:
     AnimationTimelinePanel m_animationTimeline;
     TilemapEditorPanel m_tilemapEditor;
     CommandPalette m_commandPalette;
+    BuildDialog m_buildDialog;
+    SettingsPanel m_settingsPanel;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
+    ProjectConfig m_currentProjectConfig;
 #endif
 
     void closeTab(int index);
 
     bool m_open         = true;
     bool m_dockingSetup = false;
+    ImGuiID m_dockspaceId = 0;
+    bool m_layoutNeedsRebuild = false;
     PendingAction m_pendingAction = PendingAction::None;
     int m_pendingCloseTab = -1;
+
+    // ── Play Mode ──────────────────────────────────────────────
+    bool m_isPlaying  = false;
+    bool m_isPaused   = false;
+
+    Events::EventBus m_eventBus;
+    Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
+    UI::UISystem m_uiSystem{&m_eventBus};
+
+#ifdef CF_HAS_SCRIPTING
+    Script::ScriptEngine m_scriptEngine;
+    Script::ScriptSystem m_scriptSystem{nullptr};
+    bool m_scriptEngineReady = false;
+#endif
+
+    struct EntitySnapshot {
+        u32 id;
+        float px = 0, py = 0;
+        float vx = 0, vy = 0;
+        float rotation = 0;
+    };
+    std::vector<EntitySnapshot> m_playSnapshot;
+
+    IO::FileWatcher m_scriptFileWatcher;
+    bool m_scriptWatcherStarted = false;
 };
 
 } // namespace Caffeine::Editor

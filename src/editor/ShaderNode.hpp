@@ -29,7 +29,7 @@ enum class PinType : u8 {
     Texture2D
 };
 
-static const char* pinTypeToString(PinType t) {
+[[maybe_unused]] static const char* pinTypeToString(PinType t) {
     switch (t) {
         case PinType::Float:     return "float";
         case PinType::Vec3:      return "vec3";

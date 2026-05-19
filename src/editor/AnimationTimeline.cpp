@@ -145,8 +145,19 @@ void AnimationTimelinePanel::moveSelectedKeyframe(f32 newTime) {
 
 namespace Caffeine::Editor {
 
-void AnimationTimelinePanel::render() {
+void AnimationTimelinePanel::render(f32 deltaTime) {
     if (!m_open) return;
+
+    if (m_isPlaying && m_clip) {
+        m_currentTime += deltaTime;
+        if (m_currentTime >= m_clip->duration()) {
+            if (m_looping) {
+                m_currentTime = 0.0f;
+            } else {
+                m_isPlaying = false;
+            }
+        }
+    }
 
     if (ImGui::Begin("Animation Timeline", &m_open)) {
         renderHeader();
@@ -213,12 +224,12 @@ void AnimationTimelinePanel::renderTimeline() {
 
     ImGui::SetCursorScreenPos(ImVec2(timelinePos.x, timelinePos.y + 25.0f));
 
-    if (ImGui::Button("Add Keyframe")) {
-        if (m_tracks.empty() == false) {
-            FixedString<32> frameName = "frame_0";
-            addKeyframeToSelectedTrack(m_currentTime, i32(0));
-        }
-    }
+     if (ImGui::Button("Add Keyframe")) {
+         if (m_tracks.empty() == false) {
+             [[maybe_unused]] FixedString<32> frameName = "frame_0";
+             addKeyframeToSelectedTrack(m_currentTime, i32(0));
+         }
+     }
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         deleteSelectedKeyframe();

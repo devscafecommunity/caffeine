@@ -74,7 +74,7 @@ public:
     void setClip(Animation::AnimationClip* clip);
     Animation::AnimationClip* getClip() const { return m_clip; }
 
-    void render();
+    void render(f32 deltaTime = 0.016f);
     void renderHeader();
     void renderTimeline();
     void renderTracks();

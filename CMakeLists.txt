@@ -16,7 +16,7 @@ endif()
 option(CAFFEINE_BUILD_HEADLESS "Build caffeine-core without SDL3/RHI" OFF)
 
 # ── Scripting (Lua + sol2) ──────────────────────────────────────
-option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" OFF)
+option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" ON)
 
 # ── SDL3 (optional — only needed when NOT headless) ──────────────
 if(NOT CAFFEINE_BUILD_HEADLESS)
@@ -46,10 +46,13 @@ add_library(caffeine-core
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
     src/assets/HotReloader.cpp
+    src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
     src/editor/EditorContext.cpp
     src/editor/ProjectManager.cpp
+    src/editor/ProjectStartupDialog.cpp
+    src/editor/FilePicker.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC
@@ -93,6 +96,19 @@ target_include_directories(caffeine-ui INTERFACE
 )
 target_link_libraries(caffeine-ui INTERFACE caffeine-core)
 add_library(Caffeine::UI ALIAS caffeine-ui)
+
+# ═══════════════════════════════════════════════════════════════════
+#  CAF-PACK LIBRARY
+#
+#  Shared asset packer library used by the IDE for generating game.cap.
+# ═══════════════════════════════════════════════════════════════════
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/caf-pack/CMakeLists.txt")
+    add_subdirectory(caf-pack)
+    set(CAF_PACK_AVAILABLE TRUE)
+else()
+    set(CAF_PACK_AVAILABLE FALSE)
+    message(WARNING "caf-pack submodule not found. IDE (doppio) will be built without asset packing support.")
+endif()
 
 # ═══════════════════════════════════════════════════════════════════
 #  CAFFEINE COMBINED — demonstra core + UI no mesmo executável
@@ -186,6 +202,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/ScriptEngine.cpp
         src/script/ScriptSystem.cpp
         src/script/ScriptWatcher.cpp
+        src/script/CppScriptRegistry.cpp
     )
 endif()
 
@@ -243,12 +260,12 @@ with open(sys.argv[1], 'w') as f:
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlgpu3.cpp
     )
-    target_include_directories(ImGui PUBLIC
-        ${imgui_SOURCE_DIR}
-        ${imgui_SOURCE_DIR}/backends
-    )
-    target_link_libraries(ImGui PUBLIC SDL3::SDL3)
-    target_compile_definitions(ImGui PUBLIC IMGUI_ENABLE_TEST_ENGINE=1)
+     target_include_directories(ImGui PUBLIC
+         ${imgui_SOURCE_DIR}
+         ${imgui_SOURCE_DIR}/backends
+     )
+     target_link_libraries(ImGui PUBLIC SDL3::SDL3)
+     target_compile_definitions(ImGui PUBLIC IMGUI_ENABLE_TEST_ENGINE=1 IMGUI_DEFINE_MATH_OPERATORS)
 
     add_library(ImNodes STATIC
         ${imnodes_SOURCE_DIR}/imnodes.cpp
@@ -256,48 +273,79 @@ with open(sys.argv[1], 'w') as f:
     target_include_directories(ImNodes PUBLIC
         ${imnodes_SOURCE_DIR}
     )
-    target_compile_definitions(ImNodes PRIVATE 
-        IMGUI_DEFINE_MATH_OPERATORS
-        IM_OFFSETOF=offsetof
-    )
-    target_link_libraries(ImNodes PUBLIC ImGui)
+     target_compile_definitions(ImNodes PRIVATE 
+         IM_OFFSETOF=offsetof
+         IMGUI_DEFINE_MATH_OPERATORS
+     )
+     if(NOT MSVC)
+         target_compile_options(ImNodes PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
+     target_link_libraries(ImNodes PUBLIC ImGui)
 
-    # ── imgui_test_engine (for editor UI tests) ────────────────────
-    FetchContent_Declare(
-        imgui_test_engine
-        GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git
-        GIT_TAG        main
-        GIT_SHALLOW    TRUE
-    )
-    FetchContent_GetProperties(imgui_test_engine)
-    if(NOT imgui_test_engine_POPULATED)
-        FetchContent_Populate(imgui_test_engine)
-    endif()
+    # ── Link ImGui to caffeine-core for editor components ──────────────────────
+    target_link_libraries(caffeine-core PUBLIC ImGui ImNodes)
+    target_compile_definitions(caffeine-core PUBLIC CF_HAS_IMGUI=1)
 
-    add_executable(doppio
-        apps/doppio/main.cpp
-        src/editor/HierarchyPanel.cpp
-        src/editor/SceneViewport.cpp
-        src/editor/AssetBrowser.cpp
-        src/editor/InspectorPanel.cpp
-        src/editor/SceneEditor.cpp
-        src/editor/SceneSerializer.cpp
-        src/editor/DragDropSystem.cpp
-        src/editor/SceneTabManager.cpp
-        src/editor/ScriptEditorWindow.cpp
-        src/editor/AnimationTimeline.cpp
-        src/editor/TilemapEditor.cpp
-        src/editor/CommandPalette.cpp
-        src/editor/ShaderNode.cpp
-        src/editor/ShaderGraph.cpp
-        src/editor/MaterialEditorPanel.cpp
-        src/editor/PreviewRenderer.cpp
-        src/editor/AudioPreviewPanel.cpp
-    )
-    target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
-    target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
-    target_compile_features(doppio PRIVATE cxx_std_20)
+      # ── imgui_test_engine (for editor UI tests) ────────────────────
+     FetchContent_Declare(
+         imgui_test_engine
+         GIT_REPOSITORY https://github.com/ocornut/imgui_test_engine.git
+         GIT_TAG        main
+         GIT_SHALLOW    TRUE
+     )
+     FetchContent_MakeAvailable(imgui_test_engine)
+
+      add_executable(doppio
+          apps/doppio/main.cpp
+          src/editor/HierarchyPanel.cpp
+          src/editor/SceneViewport.cpp
+          src/editor/AssetBrowser.cpp
+          src/editor/InspectorPanel.cpp
+          src/editor/ComponentRegistry.cpp
+          src/editor/SettingsPanel.cpp
+          src/editor/LayoutManager.cpp
+          src/editor/SceneEditor.cpp
+          src/editor/SceneSerializer.cpp
+          src/editor/DragDropSystem.cpp
+          src/editor/SceneTabManager.cpp
+          src/editor/ScriptEditorWindow.cpp
+          src/editor/AnimationTimeline.cpp
+          src/editor/TilemapEditor.cpp
+          src/editor/CommandPalette.cpp
+          src/editor/ShaderNode.cpp
+          src/editor/ShaderGraph.cpp
+          src/editor/MaterialEditorPanel.cpp
+          src/editor/PreviewRenderer.cpp
+          src/editor/AudioPreviewPanel.cpp
+          src/editor/BuildSystem.cpp
+          src/editor/BuildDialog.cpp
+          src/editor/AssetCooker.cpp
+          src/editor/CapLoader.cpp
+          src/editor/ProjectStartupDialog.cpp
+          src/editor/ProjectManager.cpp
+          src/editor/FilePicker.cpp
+          assets/scripts/ScriptBindings.cpp
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_exporters.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_perftool.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
+     )
+     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
+     if(CAF_PACK_AVAILABLE)
+         target_link_libraries(doppio PRIVATE caf-pack-lib)
+         target_compile_definitions(doppio PRIVATE CF_HAS_CAF_PACK=1)
+     endif()
+      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts ${imgui_test_engine_SOURCE_DIR})
+      target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
+     target_compile_features(doppio PRIVATE cxx_std_20)
+     # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
+     if(NOT MSVC)
+         target_compile_options(doppio PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
 
     message(STATUS "Doppio (IDE) enabled – ImGui v1.91.9 fetched")
 endif()

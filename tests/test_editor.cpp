@@ -1039,14 +1039,14 @@ TEST_CASE("SceneSerializer - AudioEmitter component roundtrip",
     REQUIRE(loader.deserialize("_test_audio.caf") == true);
 
     ECS::ComponentQuery q;
-    q.with<Audio::AudioEmitter>();
-    bool found = false;
-    loaded.forEach<Audio::AudioEmitter>(q, [&](ECS::Entity ent, Audio::AudioEmitter& ae) {
-        found = true;
-        REQUIRE(ae.clipPath == "sfx/explosion.wav");
-        REQUIRE(ae.volume == 0.8f);
-        REQUIRE(ae.maxDistance == 500.0f);
-        REQUIRE(ae.loop == true);
+     q.with<Audio::AudioEmitter>();
+     bool found = false;
+     loaded.forEach<Audio::AudioEmitter>(q, [&]([[maybe_unused]] ECS::Entity ent, Audio::AudioEmitter& ae) {
+         found = true;
+         REQUIRE(ae.clipPath == "sfx/explosion.wav");
+         REQUIRE(ae.volume == 0.8f);
+         REQUIRE(ae.maxDistance == 500.0f);
+         REQUIRE(ae.loop == true);
         REQUIRE(ae.playOnSpawn == false);
         REQUIRE(ae.spatial == true);
     });
@@ -1069,15 +1069,15 @@ TEST_CASE("SceneSerializer - AudioEmitter default values roundtrip",
     Editor::SceneSerializer loader(loaded);
     REQUIRE(loader.deserialize("_test_audio_default.caf") == true);
 
-    ECS::ComponentQuery q;
-    q.with<Audio::AudioEmitter>();
-    bool found = false;
-    loaded.forEach<Audio::AudioEmitter>(q, [&](ECS::Entity ent, Audio::AudioEmitter& ae) {
-        found = true;
-        REQUIRE(ae.clipPath.empty());
-        REQUIRE(ae.volume == 1.0f);
-        REQUIRE(ae.maxDistance == 500.0f);
-        REQUIRE(ae.loop == false);
+     ECS::ComponentQuery q;
+     q.with<Audio::AudioEmitter>();
+     bool found = false;
+     loaded.forEach<Audio::AudioEmitter>(q, [&]([[maybe_unused]] ECS::Entity ent, Audio::AudioEmitter& ae) {
+         found = true;
+         REQUIRE(ae.clipPath.empty());
+         REQUIRE(ae.volume == 1.0f);
+         REQUIRE(ae.maxDistance == 500.0f);
+         REQUIRE(ae.loop == false);
         REQUIRE(ae.playOnSpawn == true);
         REQUIRE(ae.spatial == true);
     });

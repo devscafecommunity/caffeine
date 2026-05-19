@@ -10,8 +10,6 @@
 
 namespace Caffeine::Editor {
 
-using namespace Caffeine;
-
 class AudioPreviewPanel {
 public:
     AudioPreviewPanel();

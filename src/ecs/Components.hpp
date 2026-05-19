@@ -8,6 +8,8 @@
 
 #include "core/Types.hpp"
 #include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
+#include "math/Vec4.hpp"
 #include <string>
 #include <vector>
 
@@ -75,4 +77,21 @@ struct ParticleEmitterComponent {
     std::vector<Particle> activeParticles;
 };
 
-}
+struct PersistentComponent {
+    bool dontDestroyOnLoad = true;
+};
+
+struct DisabledTag {};
+
+struct Transform {
+    Vec3 position = {0.0f, 0.0f, 0.0f};
+    Vec3 rotation = {0.0f, 0.0f, 0.0f};
+    Vec3 scale    = {1.0f, 1.0f, 1.0f};
+};
+
+}  // namespace Caffeine::ECS
+
+#include "ecs/Components3D.hpp"
+#include "ecs/CameraComponents.hpp"
+#include "ecs/LightComponents.hpp"
+#include "ecs/MeshComponents.hpp"

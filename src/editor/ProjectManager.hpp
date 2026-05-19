@@ -49,6 +49,9 @@ public:
     const ProjectConfig&              GetCurrentProject() const { return m_CurrentConfig; }
     const std::vector<std::filesystem::path>& GetRecentProjects() const { return m_RecentProjects; }
 
+    // Save the current project configuration back to disk.
+    bool SaveProjectFile(const ProjectConfig& config);
+
     // Override the recent projects file path (used for testing).
     // Reloads from the new path immediately.
     void SetRecentProjectsPath(std::filesystem::path path) {
@@ -61,7 +64,6 @@ public:
 
 private:
     bool LoadProjectFile(const std::filesystem::path& path, ProjectConfig& out);
-    bool SaveProjectFile(const ProjectConfig& config);
     void CreateDirectoryStructure(const std::filesystem::path& root);
     void UpdateRecentProjects(const std::filesystem::path& path);
     void LoadRecentProjects();

@@ -15,6 +15,7 @@
 #include "rhi/RenderDevice.hpp"
 #include "assets/AssetManager.hpp"
 #include "editor/SceneEditor.hpp"
+#include "editor/ProjectManager.hpp"
 #include "render/Camera2D.hpp"
 
 #define CATCH_CONFIG_RUNNER
@@ -33,6 +34,7 @@ static struct {
     Caffeine::Editor::SceneEditor* editor = nullptr;
     Caffeine::Render::Camera2D* camera = nullptr;
     ImGuiTestEngine* testEngine = nullptr;
+    Uint64 lastFrameTime = SDL_GetTicksNS();
     bool gpuAvailable = false;
 } s_state;
 
@@ -50,8 +52,12 @@ void PumpFrame() {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
+    Uint64 currentFrameTime = SDL_GetTicksNS();
+    float deltaTime = static_cast<float>(currentFrameTime - s_state.lastFrameTime) / 1'000'000'000.0f;
+    s_state.lastFrameTime = currentFrameTime;
+
     if (s_state.editor && s_state.gpuAvailable) {
-        s_state.editor->render(*s_state.camera);
+        s_state.editor->render(deltaTime);
     }
 
     ImGui::Render();
@@ -129,7 +135,14 @@ int main(int argc, char* argv[]) {
     s_state.editor = new Caffeine::Editor::SceneEditor();
     
     if (s_state.gpuAvailable) {
-        if (!s_state.editor->init(s_state.device, s_state.assetManager, "assets")) {
+        // Create a minimal ProjectConfig for testing
+        Caffeine::Editor::ProjectConfig testProject;
+        testProject.Name = "TestProject";
+        testProject.RootPath = "./test_project";
+        testProject.AssetRawPath = "assets";
+        testProject.TemplateType = "Empty";
+        
+        if (!s_state.editor->init(s_state.device, s_state.assetManager, testProject)) {
             std::fprintf(stderr, "SceneEditor::init failed\n");
             delete s_state.editor;
             delete s_state.assetManager;
