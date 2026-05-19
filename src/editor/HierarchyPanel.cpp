@@ -80,6 +80,10 @@ void HierarchyPanel::renderToolbar() {
         m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
         ECS::Entity e = m_world->create();
         setEntityName(*m_world, e, "New Entity");
+        m_world->add<ECS::Transform>(e);
+        m_world->add<ECS::Position2D>(e);
+        m_world->add<ECS::Rotation>(e);
+        m_world->add<ECS::Scale2D>(e);
         m_context->selectEntity(e);
         m_context->endUndo(*m_world);
     }
