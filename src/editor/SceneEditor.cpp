@@ -109,6 +109,7 @@ void SceneEditor::shutdown() {
 void SceneEditor::enterPlayMode(ECS::World& world) {
     m_playSnapshot.clear();
     ECS::ComponentQuery q;
+    q.with<ECS::Position2D>();
     world.forEach<ECS::Position2D>(q,
         [&](ECS::Entity e, ECS::Position2D& pos) {
             EntitySnapshot snap;
