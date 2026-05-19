@@ -1,6 +1,7 @@
 #include "editor/ComponentRegistry.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/CameraComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
@@ -106,6 +107,20 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Game", "Velocity2D",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Velocity2D>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::Velocity2D>(e); }
+    });
+    reg.registerComponent({
+        "Camera", "Camera2D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Camera2DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){
+            ECS::Camera2DComponent cam;
+            cam.zoom = 1.0f;
+            w.add<ECS::Camera2DComponent>(e, cam);
+        }
+    });
+    reg.registerComponent({
+        "Camera", "Camera3D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Camera3DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<ECS::Camera3DComponent>(e); }
     });
 }
 

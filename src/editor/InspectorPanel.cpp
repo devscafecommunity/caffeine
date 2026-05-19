@@ -4,6 +4,7 @@
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/CameraComponents.hpp"
 #include "script/CppScript.hpp"
 #include <filesystem>
 #include <algorithm>
@@ -60,6 +61,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
 
         drawTransform(world, e, ctx);
         drawSprite(world, e, ctx);
+        drawCamera(world, e, ctx);
         drawScript(world, e, ctx);
         drawCppScript(world, e, ctx);
         drawRigidBody2D(world, e, ctx);
@@ -203,7 +205,34 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
 
 // NOTE: Camera2D is a global singleton in render system, not an ECS component.
 // If ECS-based camera selection is needed in the future, implement here.
-void InspectorPanel::drawCamera(ECS::World&, ECS::Entity, EditorContext&) {}
+void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    bool has2D = world.has<ECS::Camera2DComponent>(e);
+    bool has3D = world.has<ECS::Camera3DComponent>(e);
+    if (!has2D && !has3D) return;
+
+    if (has2D) {
+        bool enabled = true, removeRequested = false;
+        if (!Widgets::ComponentHeader("Camera2D", enabled, removeRequested)) return;
+        if (removeRequested) { world.remove<ECS::Camera2DComponent>(e); ctx.isDirty = true; return; }
+
+        auto* cam = world.get<ECS::Camera2DComponent>(e);
+        if (ImGui::DragFloat("Zoom",      &cam->zoom,     0.01f, 0.01f, 100.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Far Clip",  &cam->farClip,  1.0f,  1.0f, 10000.0f)) ctx.isDirty = true;
+    }
+
+    if (has3D) {
+        bool enabled = true, removeRequested = false;
+        if (!Widgets::ComponentHeader("Camera3D", enabled, removeRequested)) return;
+        if (removeRequested) { world.remove<ECS::Camera3DComponent>(e); ctx.isDirty = true; return; }
+
+        auto* cam = world.get<ECS::Camera3DComponent>(e);
+        if (ImGui::DragFloat("FOV",       &cam->fov,         0.5f,  10.0f, 170.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Near Clip", &cam->nearClip,    0.01f, 0.001f, 10.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Far Clip",  &cam->farClip,     1.0f,  1.0f, 10000.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Aspect",    &cam->aspectRatio, 0.01f, 0.1f, 10.0f)) ctx.isDirty = true;
+    }
+}
 void InspectorPanel::drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
     if (!world.has<Physics2D::RigidBody2D>(e)) return;
 

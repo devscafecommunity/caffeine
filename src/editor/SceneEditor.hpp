@@ -16,6 +16,7 @@
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
 #include "editor/AudioPreviewPanel.hpp"
+#include "editor/CameraPreviewPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -129,7 +130,8 @@ private:
 
 #ifdef CF_HAS_IMGUI
     MaterialEditorPanel m_materialEditor;
-    AudioPreviewPanel m_audioPreview;
+    AudioPreviewPanel   m_audioPreview;
+    CameraPreviewPanel  m_cameraPreview;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;

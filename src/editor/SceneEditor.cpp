@@ -295,6 +295,7 @@ void SceneEditor::render(f32 deltaTime) {
     m_settingsPanel.render();
     m_materialEditor.onImGuiRender();
     m_audioPreview.onImGuiRender();
+    m_cameraPreview.onImGuiRender(*activeWorld, m_ctx);
     m_animationTimeline.render(deltaTime);
     m_tilemapEditor.render();
     m_commandPalette.render();
@@ -322,6 +323,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
     ImGui::DockBuilderDockWindow("Inspector", dockRight);
     ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
+    ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
     ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
     ImGui::DockBuilderDockWindow("Console", dockBottom);
     ImGui::DockBuilderDockWindow("Profiler", dockBottom);

@@ -316,8 +316,9 @@ with open(sys.argv[1], 'w') as f:
           src/editor/ShaderGraph.cpp
           src/editor/MaterialEditorPanel.cpp
           src/editor/PreviewRenderer.cpp
-          src/editor/AudioPreviewPanel.cpp
-          src/editor/BuildSystem.cpp
+           src/editor/AudioPreviewPanel.cpp
+           src/editor/CameraPreviewPanel.cpp
+           src/editor/BuildSystem.cpp
           src/editor/BuildDialog.cpp
           src/editor/AssetCooker.cpp
           src/editor/CapLoader.cpp
