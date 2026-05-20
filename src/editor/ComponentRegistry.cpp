@@ -115,6 +115,7 @@ void registerAllComponents(ComponentRegistry& reg) {
             ECS::Camera2DComponent cam;
             cam.zoom = 1.0f;
             w.add<ECS::Camera2DComponent>(e, cam);
+            if (!w.has<ECS::Position2D>(e)) w.add<ECS::Position2D>(e);
         }
     });
     reg.registerComponent({

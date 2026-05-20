@@ -187,6 +187,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     drawSprites(world, ctx, origin, viewportSize);
     drawEmptyEntities(world, ctx, origin, viewportSize);
     drawPhysicsDebug(world, ctx, origin, viewportSize);
+    drawCameraFrustums(world, ctx, origin, viewportSize);
 
     if (ctx.selectedEntity.isValid()) {
         drawGizmo(world, ctx, origin, viewportSize);
@@ -682,6 +683,48 @@ std::string SceneViewport::resolveSpritePath(const std::string& spriteName, cons
 
 void SceneViewport::releaseSpriteTextures() {
     m_spriteTextureCache.clear();
+}
+
+void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
+
+    auto w2s = [&](f32 wx, f32 wy) -> ImVec2 {
+        return ImVec2(
+            origin.x + viewportSize.x * 0.5f + (wx + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-wy + ctx.viewportPanY / worldToScreen) * worldToScreen
+        );
+    };
+
+    ECS::ComponentQuery q;
+    q.with<ECS::Camera2DComponent>();
+    q.with<ECS::Position2D>();
+
+    world.forEach<ECS::Camera2DComponent, ECS::Position2D>(q,
+        [&](ECS::Entity, ECS::Camera2DComponent& cam, ECS::Position2D& pos) {
+        const f32 halfW = 8.0f / cam.zoom;
+        const f32 halfH = 4.5f / cam.zoom;
+
+        ImVec2 tl = w2s(pos.x - halfW, pos.y + halfH);
+        ImVec2 tr = w2s(pos.x + halfW, pos.y + halfH);
+        ImVec2 br = w2s(pos.x + halfW, pos.y - halfH);
+        ImVec2 bl = w2s(pos.x - halfW, pos.y - halfH);
+
+        const ImU32 col = IM_COL32(255, 220, 50, 220);
+        dl->AddQuad(tl, tr, br, bl, col, 1.5f);
+
+        const f32 cLen = 8.0f;
+        dl->AddLine(tl, ImVec2(tl.x + cLen, tl.y), col, 1.5f);
+        dl->AddLine(tl, ImVec2(tl.x, tl.y + cLen), col, 1.5f);
+        dl->AddLine(tr, ImVec2(tr.x - cLen, tr.y), col, 1.5f);
+        dl->AddLine(tr, ImVec2(tr.x, tr.y + cLen), col, 1.5f);
+        dl->AddLine(br, ImVec2(br.x - cLen, br.y), col, 1.5f);
+        dl->AddLine(br, ImVec2(br.x, br.y - cLen), col, 1.5f);
+        dl->AddLine(bl, ImVec2(bl.x + cLen, bl.y), col, 1.5f);
+        dl->AddLine(bl, ImVec2(bl.x, bl.y - cLen), col, 1.5f);
+
+        dl->AddText(ImVec2(tl.x + 4.0f, tl.y - 16.0f), col, "Camera");
+    });
 }
 
 } // namespace Caffeine::Editor

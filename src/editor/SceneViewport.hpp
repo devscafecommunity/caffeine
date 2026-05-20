@@ -24,6 +24,7 @@
 #endif
 
 #include "physics/PhysicsComponents2D.hpp"
+#include "ecs/CameraComponents.hpp"
 
 namespace Caffeine::Editor {
 
@@ -74,6 +75,7 @@ private:
     void drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+    void drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
     void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
     void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
