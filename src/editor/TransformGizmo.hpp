@@ -37,11 +37,12 @@ private:
     void renderRotate(const Vec2& screenPos, float handleLen);
     void renderScale(const Vec2& screenPos, float handleLen);
 
-    void renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation, bool zDimmed);
+    void renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed);
     void renderRotate3D(const Vec2& screenPos, float handleLen, bool zDimmed);
-    void renderScale3D(const Vec2& screenPos, float handleLen, bool zDimmed);
+    void renderScale3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed);
 
     GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
+                            ImVec2 endX, ImVec2 endY, ImVec2 endZ,
                             float handleLen, EditorContext::GizmoMode mode, bool zDimmed);
 
     void applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,

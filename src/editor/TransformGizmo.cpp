@@ -29,9 +29,31 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
     ImVec2 sp2     = SceneViewport::projectToScreen(transform->position, vpMin, vpSize, ctx);
     Vec2 screenPos = Vec2(sp2.x, sp2.y);
-    float entityRotation = transform->rotation.z;
 
     float handleLen = 30.0f * ctx.viewportZoom;
+
+    float handleWorld;
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        float s    = ctx.viewportZoom * 50.0f;
+        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+        Vec3  wp   = transform->position;
+        float rx   = wp.x - ctx.camFocus.x;
+        float ry   = wp.y - ctx.camFocus.y;
+        float rz   = wp.z - ctx.camFocus.z;
+        float vz_c = -sinY * rx + cosY * rz;
+        float vz2  = -sinP * ry + cosP * vz_c;
+        float dist = std::max(ctx.camDistance, 0.1f);
+        float fovScale = s * dist / std::max(dist + vz2, 0.01f);
+        handleWorld = handleLen / std::max(fovScale, 0.01f);
+    } else {
+        handleWorld = handleLen / (ctx.viewportZoom * 50.0f);
+    }
+
+    Vec3 wp = transform->position;
+    ImVec2 endX = SceneViewport::projectToScreen({wp.x + handleWorld, wp.y, wp.z}, vpMin, vpSize, ctx);
+    ImVec2 endY = SceneViewport::projectToScreen({wp.x, wp.y + handleWorld, wp.z}, vpMin, vpSize, ctx);
+    ImVec2 endZ = SceneViewport::projectToScreen({wp.x, wp.y, wp.z + handleWorld}, vpMin, vpSize, ctx);
 
     ImVec2 mousePos = ImGui::GetMousePos();
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
@@ -40,20 +62,20 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     if (mouseInViewport) {
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
-                renderTranslate3D(screenPos, handleLen, entityRotation, zDimmed);
+                renderTranslate3D(screenPos, endX, endY, endZ, zDimmed);
                 break;
             case EditorContext::GizmoMode::Rotate:
                 renderRotate3D(screenPos, handleLen, zDimmed);
                 break;
             case EditorContext::GizmoMode::Scale:
-                renderScale3D(screenPos, handleLen, zDimmed);
+                renderScale3D(screenPos, endX, endY, endZ, zDimmed);
                 break;
             default: break;
         }
 
         if (ImGui::IsWindowFocused()) {
             Vec2 mousePosGlm(mousePos.x, mousePos.y);
-            m_hoveredAxis = intersectTest(mousePosGlm, screenPos, handleLen, ctx.gizmoMode, zDimmed);
+            m_hoveredAxis = intersectTest(mousePosGlm, screenPos, endX, endY, endZ, handleLen, ctx.gizmoMode, zDimmed);
 
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_isDragging) {
                 if (m_hoveredAxis != GizmoAxis::None) {
@@ -172,43 +194,32 @@ void TransformGizmo::renderScale(const Vec2& screenPos, float handleLen) {
 #endif
 }
 
-// 3D Gizmos (2.5D with Z axis going diagonally)
-void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation, bool zDimmed) {
+void TransformGizmo::renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed) {
 #ifdef CF_HAS_IMGUI
-    (void)rotation; // Rotation not yet used for 3D gizmos
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    
-    // Calculate Z axis endpoint (going into screen at 45 degrees)
-    float zOffset = handleLen * 0.7f;
-    
-    // X axis
+    ImVec2 sp(screenPos.x, screenPos.y);
+
+    auto drawAxisArrow = [&](ImVec2 from, ImVec2 to, u32 color) {
+        dl->AddLine(from, to, color, AXIS_LINE_WIDTH);
+        float dx = to.x - from.x, dy = to.y - from.y;
+        float len = std::sqrt(dx*dx + dy*dy);
+        if (len < 0.001f) return;
+        float ux = dx / len, uy = dy / len;
+        float nx = -uy * ARROW_SIZE * 0.6f, ny = ux * ARROW_SIZE * 0.6f;
+        ImVec2 tip(to.x + ux * ARROW_SIZE, to.y + uy * ARROW_SIZE);
+        dl->AddTriangleFilled(tip, ImVec2(to.x + nx, to.y + ny), ImVec2(to.x - nx, to.y - ny), color);
+    };
+
     u32 xColor = (m_hoveredAxis == GizmoAxis::X || m_dragAxis == GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x + handleLen, screenPos.y), xColor, AXIS_LINE_WIDTH);
-    dl->AddTriangleFilled(
-        ImVec2(screenPos.x + handleLen + ARROW_SIZE, screenPos.y),
-        ImVec2(screenPos.x + handleLen, screenPos.y - ARROW_SIZE * 0.6f),
-        ImVec2(screenPos.x + handleLen, screenPos.y + ARROW_SIZE * 0.6f), xColor);
+    drawAxisArrow(sp, endX, xColor);
 
-    // Y axis
     u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x, screenPos.y - handleLen), yColor, AXIS_LINE_WIDTH);
-    dl->AddTriangleFilled(
-        ImVec2(screenPos.x, screenPos.y - handleLen - ARROW_SIZE),
-        ImVec2(screenPos.x - ARROW_SIZE * 0.6f, screenPos.y - handleLen),
-        ImVec2(screenPos.x + ARROW_SIZE * 0.6f, screenPos.y - handleLen), yColor);
+    drawAxisArrow(sp, endY, yColor);
 
-    // Z axis (diagonal, going "into" screen)
     u32 zColor = zDimmed
         ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
         : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x - zOffset, screenPos.y + zOffset), zColor, AXIS_LINE_WIDTH);
-    dl->AddTriangleFilled(
-        ImVec2(screenPos.x - zOffset - ARROW_SIZE, screenPos.y + zOffset + ARROW_SIZE),
-        ImVec2(screenPos.x - zOffset - ARROW_SIZE, screenPos.y + zOffset - ARROW_SIZE),
-        ImVec2(screenPos.x - zOffset + ARROW_SIZE, screenPos.y + zOffset), zColor);
+    drawAxisArrow(sp, endZ, zColor);
 #endif
 }
 
@@ -232,38 +243,32 @@ void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen, bool
 #endif
 }
 
-void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen, bool zDimmed) {
+void TransformGizmo::renderScale3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    
-    float zOffset = handleLen * 0.7f;
-    
-    // X axis with cube
+    ImVec2 sp(screenPos.x, screenPos.y);
+
     u32 xColor = (m_hoveredAxis == GizmoAxis::X || m_dragAxis == GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x + handleLen, screenPos.y), xColor, AXIS_LINE_WIDTH);
-    dl->AddRectFilled(ImVec2(screenPos.x + handleLen - BOX_SIZE, screenPos.y - BOX_SIZE),
-                      ImVec2(screenPos.x + handleLen + BOX_SIZE, screenPos.y + BOX_SIZE), xColor);
+    dl->AddLine(sp, endX, xColor, AXIS_LINE_WIDTH);
+    dl->AddRectFilled(ImVec2(endX.x - BOX_SIZE, endX.y - BOX_SIZE),
+                      ImVec2(endX.x + BOX_SIZE, endX.y + BOX_SIZE), xColor);
 
-    // Y axis with cube
     u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x, screenPos.y - handleLen), yColor, AXIS_LINE_WIDTH);
-    dl->AddRectFilled(ImVec2(screenPos.x - BOX_SIZE, screenPos.y - handleLen - BOX_SIZE),
-                      ImVec2(screenPos.x + BOX_SIZE, screenPos.y - handleLen + BOX_SIZE), yColor);
+    dl->AddLine(sp, endY, yColor, AXIS_LINE_WIDTH);
+    dl->AddRectFilled(ImVec2(endY.x - BOX_SIZE, endY.y - BOX_SIZE),
+                      ImVec2(endY.x + BOX_SIZE, endY.y + BOX_SIZE), yColor);
 
-    // Z axis with cube
     u32 zColor = zDimmed
         ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
         : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
-    dl->AddLine(ImVec2(screenPos.x, screenPos.y),
-                ImVec2(screenPos.x - zOffset, screenPos.y + zOffset), zColor, AXIS_LINE_WIDTH);
-    dl->AddRectFilled(ImVec2(screenPos.x - zOffset - BOX_SIZE, screenPos.y + zOffset - BOX_SIZE),
-                      ImVec2(screenPos.x - zOffset + BOX_SIZE, screenPos.y + zOffset + BOX_SIZE), zColor);
+    dl->AddLine(sp, endZ, zColor, AXIS_LINE_WIDTH);
+    dl->AddRectFilled(ImVec2(endZ.x - BOX_SIZE, endZ.y - BOX_SIZE),
+                      ImVec2(endZ.x + BOX_SIZE, endZ.y + BOX_SIZE), zColor);
 #endif
 }
 
 GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screenPos,
+                                        ImVec2 endX, ImVec2 endY, ImVec2 endZ,
                                         float handleLen, EditorContext::GizmoMode mode, bool zDimmed) {
     float centerDist = std::sqrt((mousePos.x - screenPos.x) * (mousePos.x - screenPos.x) +
                                  (mousePos.y - screenPos.y) * (mousePos.y - screenPos.y));
@@ -271,21 +276,18 @@ GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screen
         return GizmoAxis::Center;
     }
 
-    float zOffset = handleLen * 0.7f;
+    Vec2 sp(screenPos.x, screenPos.y);
 
-    if (pointToLineDistance(mousePos, screenPos, 
-        Vec2(screenPos.x + handleLen, screenPos.y)) < HOVER_THRESHOLD) {
+    if (pointToLineDistance(mousePos, sp, Vec2(endX.x, endX.y)) < HOVER_THRESHOLD) {
         return GizmoAxis::X;
     }
 
-    if (pointToLineDistance(mousePos, screenPos,
-        Vec2(screenPos.x, screenPos.y - handleLen)) < HOVER_THRESHOLD) {
+    if (pointToLineDistance(mousePos, sp, Vec2(endY.x, endY.y)) < HOVER_THRESHOLD) {
         return GizmoAxis::Y;
     }
 
     if (!zDimmed && mode != EditorContext::GizmoMode::None) {
-        if (pointToLineDistance(mousePos, screenPos,
-            Vec2(screenPos.x - zOffset, screenPos.y + zOffset)) < HOVER_THRESHOLD) {
+        if (pointToLineDistance(mousePos, sp, Vec2(endZ.x, endZ.y)) < HOVER_THRESHOLD) {
             return GizmoAxis::Z;
         }
     }

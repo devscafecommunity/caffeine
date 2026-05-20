@@ -222,8 +222,19 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
-        ctx.viewportPanX += delta.x;
-        ctx.viewportPanY += delta.y;
+        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+            float panSpeed = ctx.camDistance * 0.001f / ctx.viewportZoom;
+            float sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+            float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+            ctx.camFocus.x -= delta.x * cosY * panSpeed;
+            ctx.camFocus.z -= delta.x * (-sinY) * panSpeed;
+            ctx.camFocus.x += delta.y * sinY * sinP * panSpeed;
+            ctx.camFocus.y += delta.y * cosP * panSpeed;
+            ctx.camFocus.z += delta.y * cosY * sinP * panSpeed;
+        } else {
+            ctx.viewportPanX += delta.x;
+            ctx.viewportPanY += delta.y;
+        }
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
     }
 
@@ -604,13 +615,19 @@ void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewpor
 }
 
 void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
-    int halfLines = 10;
     ImU32 gridColor  = IM_COL32(100, 100, 120, 60);
     ImU32 axisColorX = IM_COL32(200, 80, 80, 120);
     ImU32 axisColorZ = IM_COL32(80, 80, 200, 120);
 
+    float visibleRange = ctx.camDistance / ctx.viewportZoom;
+    int halfLines = std::min(200, std::max(20, (int)(visibleRange * 2.5f)));
+
+    float spacing = 1.0f;
+    while ((float)(halfLines * 2) / spacing > 60.0f) spacing *= 2.0f;
+    int step = std::max(1, (int)spacing);
+
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
-        for (int i = -halfLines; i <= halfLines; ++i) {
+        for (int i = -halfLines; i <= halfLines; i += step) {
             ImVec2 a = projectToScreen({(f32)i, (f32)(-halfLines), 0.0f}, origin, viewportSize, ctx);
             ImVec2 b = projectToScreen({(f32)i, (f32)( halfLines), 0.0f}, origin, viewportSize, ctx);
             dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
@@ -620,7 +637,7 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
             dl->AddLine(c, d, (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
         }
     } else {
-        for (int i = -halfLines; i <= halfLines; ++i) {
+        for (int i = -halfLines; i <= halfLines; i += step) {
             ImVec2 a = projectToScreen({(f32)i, 0.0f, (f32)(-halfLines)}, origin, viewportSize, ctx);
             ImVec2 b = projectToScreen({(f32)i, 0.0f, (f32)( halfLines)}, origin, viewportSize, ctx);
             dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
