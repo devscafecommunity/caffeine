@@ -2,6 +2,7 @@
 #include "core/Types.hpp"
 #include "ecs/Entity.hpp"
 #include "ecs/World.hpp"
+#include "math/Vec3.hpp"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -112,6 +113,15 @@ public:
     f32 viewportPanX = 0.0f;
     f32 viewportPanY = 0.0f;
     f32 viewportZoom = 1.0f;
+
+    // ── Viewport camera ────────────────────────────────────────────────
+    enum class ViewMode : u8 { Mode2D, Mode3D, Isometric };
+
+    ViewMode        viewMode    = ViewMode::Mode2D;
+    f32             camYaw      = 0.0f;
+    f32             camPitch    = 0.3f;
+    Vec3            camFocus    = {0.0f, 0.0f, 0.0f};
+    f32             camDistance = 10.0f;
 
     // ── Panel visibility ───────────────────────────────────────────────
     bool hierarchyOpen = true;
