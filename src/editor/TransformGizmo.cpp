@@ -51,9 +51,20 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     }
 
     Vec3 wp = transform->position;
-    ImVec2 endX = SceneViewport::projectToScreen({wp.x + handleWorld, wp.y, wp.z}, vpMin, vpSize, ctx);
-    ImVec2 endY = SceneViewport::projectToScreen({wp.x, wp.y + handleWorld, wp.z}, vpMin, vpSize, ctx);
-    ImVec2 endZ = SceneViewport::projectToScreen({wp.x, wp.y, wp.z + handleWorld}, vpMin, vpSize, ctx);
+    ImVec2 rawEndX = SceneViewport::projectToScreen({wp.x + handleWorld, wp.y, wp.z}, vpMin, vpSize, ctx);
+    ImVec2 rawEndY = SceneViewport::projectToScreen({wp.x, wp.y + handleWorld, wp.z}, vpMin, vpSize, ctx);
+    ImVec2 rawEndZ = SceneViewport::projectToScreen({wp.x, wp.y, wp.z + handleWorld}, vpMin, vpSize, ctx);
+
+    auto normalizeHandle = [&](ImVec2 end) -> ImVec2 {
+        float dx = end.x - sp2.x, dy = end.y - sp2.y;
+        float d = std::sqrt(dx*dx + dy*dy);
+        if (d < 0.001f) return ImVec2(sp2.x, sp2.y - handleLen);
+        return ImVec2(sp2.x + dx/d * handleLen, sp2.y + dy/d * handleLen);
+    };
+
+    ImVec2 endX = normalizeHandle(rawEndX);
+    ImVec2 endY = normalizeHandle(rawEndY);
+    ImVec2 endZ = normalizeHandle(rawEndZ);
 
     ImVec2 mousePos = ImGui::GetMousePos();
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&

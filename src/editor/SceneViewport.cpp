@@ -620,7 +620,7 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     ImU32 axisColorZ = IM_COL32(80, 80, 200, 120);
 
     float visibleRange = ctx.camDistance / ctx.viewportZoom;
-    int halfLines = std::min(200, std::max(20, (int)(visibleRange * 2.5f)));
+    int halfLines = std::max(50, (int)(visibleRange * 30.0f));
 
     float spacing = 1.0f;
     while ((float)(halfLines * 2) / spacing > 60.0f) spacing *= 2.0f;
