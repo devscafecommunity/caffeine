@@ -1,0 +1,70 @@
+% ============================================================================
+\chapter{Type System and Platform Abstractions}
+% ============================================================================
+
+\section{Primitive Types (\texttt{Types.hpp})}
+
+All numeric types in the engine are defined as explicit-width aliases in
+\texttt{src/core/Types.hpp}. The rationale is binary portability: the C++
+standard permits \texttt{int} to be 16- or 32-bit depending on the platform;
+the engine must never depend on implicit widths.
+
+\begin{table}[H]
+\centering
+\caption{Caffeine primitive type aliases}
+\begin{tabular}{lll}
+\toprule
+\textbf{Alias} & \textbf{Underlying type} & \textbf{Width} \\
+\midrule
+\texttt{i8 / u8}   & \texttt{int8\_t / uint8\_t}   & 8 bit  \\
+\texttt{i16 / u16} & \texttt{int16\_t / uint16\_t} & 16 bit \\
+\texttt{i32 / u32} & \texttt{int32\_t / uint32\_t} & 32 bit \\
+\texttt{i64 / u64} & \texttt{int64\_t / uint64\_t} & 64 bit \\
+\texttt{f32}       & \texttt{float}                & 32 bit IEEE 754 \\
+\texttt{f64}       & \texttt{double}               & 64 bit IEEE 754 \\
+\texttt{usize}     & \texttt{std::size\_t}         & Platform pointer-width \\
+\texttt{isize}     & \texttt{std::ptrdiff\_t}      & Platform pointer-width \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every width is validated by \texttt{static\_assert} at compile time.
+The consequence is that \emph{inclusion of \texttt{Types.hpp} is the first
+gate for all cross-platform build failures}: if the platform violates any
+width, the translation unit refuses to compile.
+
+\section{Compiler Abstraction (\texttt{Compiler.hpp})}
+
+Platform-specific compiler directives are isolated in a single header so
+that all engine source files are compiler-agnostic. The macros provided
+include \texttt{CF\_INLINE} (\texttt{\_\_forceinline} on MSVC;
+\texttt{\_\_attribute\_\_((always\_inline))} on GCC/Clang),
+\texttt{CF\_NORETURN}, \texttt{CF\_LIKELY / CF\_UNLIKELY} (branch hints),
+and \texttt{CF\_BUILTIN\_TRAP} (hard abort in debug builds).
+
+\section{Assertions}
+
+The macro \texttt{CF\_ASSERT(cond, msg)} is active in debug builds
+(\texttt{CF\_DEBUG} defined) and compiles to a no-op in release builds.
+When an assertion fires it calls \texttt{Caffeine::assertFailed}, which
+invokes \texttt{CF\_BUILTIN\_TRAP()} causing an immediate hardware trap.
+This is deliberately brutal: masked failures in debug are more dangerous
+than hard crashes.
+
+\begin{specbox}{Invariant 2.1 --- Assert semantics}
+  No assertion shall be removed to silence a false positive.
+  If \texttt{CF\_ASSERT} fires, the precondition it guards must be fixed at
+  the call site, not at the assertion.
+\end{specbox}
+
+\section{Timing (\texttt{Timer.hpp})}
+
+The \texttt{Timer} class wraps \texttt{std::chrono::high\_resolution\_clock}
+and exposes nanosecond-precision \texttt{TimePoint} values. The
+\texttt{Duration} struct carries time as a 64-bit \texttt{double} in seconds,
+with helper conversions to milliseconds, microseconds, and nanoseconds.
+
+The \texttt{ScopeTimer} RAII guard is used for fine-grained profiling of
+editor sub-systems. Its destructor stops the timer and records the elapsed
+duration; the name string is a static pointer (not heap-allocated) to keep
+the measurement overhead negligible.

@@ -1,0 +1,110 @@
+% ============================================================================
+\chapter{Entity-Component System (ECS)}
+% ============================================================================
+
+\section{Design Philosophy}
+
+The ECS in Caffeine is \emph{archetype-based}: entities with the same
+set of component types share a single \texttt{Archetype}. This groups
+the data for all entities with a given composition contiguously in memory,
+enabling iteration over a specific component type to proceed without cache
+misses.
+
+\begin{definition}[Entity]
+An entity is an unsigned 32-bit integer identifier. It carries no data.
+All observable state is stored in components associated with the entity.
+An entity with index $\texttt{u32\_max}$ is conventionally \emph{invalid}.
+\end{definition}
+
+\begin{definition}[Component]
+A component is a plain-old-data (POD) struct. It must have no virtual
+methods and no hidden heap allocation. The engine enforces this by
+instantiating components through typed \texttt{ComponentPool<T>} which
+stores them in a \texttt{Vector<T>}.
+\end{definition}
+
+\begin{definition}[Archetype]
+An archetype $\mathcal{A}$ is the set of component types associated with a
+group of entities. Two entities belong to the same archetype if and only if
+they possess exactly the same set of component types.
+\end{definition}
+
+\section{Component Identification}
+
+Each component type receives a unique 32-bit ID at program initialisation
+via \texttt{ComponentID::get<T>()}:
+
+\begin{lstlisting}[caption={Type-ID registration}]
+template<typename T>
+static u32 get() {
+    static const u32 id = nextID();  // initialised once per type
+    return id;
+}
+\end{lstlisting}
+
+The \texttt{static} local variable is guaranteed to be initialised exactly
+once (C++11 magic statics). The counter is an \texttt{std::atomic<u32>}
+to support concurrent registration from multiple translation units.
+Up to 256 distinct component types are permitted.
+
+\section{Component Set (\texttt{ComponentSet})}
+
+A \texttt{ComponentSet} is a bitmask of component IDs. Archetype identity is
+determined by comparing two \texttt{ComponentSet}s. Set operations (union,
+intersection, subset test) reduce to bitwise OR, AND, and masking.
+
+\section{Archetype Internal Structure}
+
+Each \texttt{Archetype} contains:
+\begin{itemize}
+  \item A \texttt{Vector<u32>} of entity IDs (the entities belonging to it).
+  \item A \texttt{PoolRegistry}: a fixed-size array of 64 pool entries,
+        indexed by component ID, each entry holding a \texttt{void*} pool
+        pointer and function pointers for copy, create, and remove.
+\end{itemize}
+
+\subsubsection{Removal by Swap-and-Pop}
+
+When an entity at index $i$ is removed from an archetype, the entity at
+the last position $n-1$ is moved into slot $i$. This preserves contiguity
+in $O(1)$ without shifting all subsequent elements.
+
+\begin{equation}
+\text{entity}[i] \leftarrow \text{entity}[n-1]; \quad n \leftarrow n-1
+\end{equation}
+
+The same swap-and-pop is applied to every component pool for that
+archetype.
+
+\section{Command Buffer}
+
+Structural mutations (creating or destroying entities, adding or removing
+components) \emph{during iteration} would invalidate in-flight iterators.
+The \texttt{CommandBuffer} defers all mutations by recording them as
+\texttt{ICommand} objects:
+
+\begin{lstlisting}[caption={Deferred entity creation}]
+Entity CommandBuffer::create() {
+    u32 pendingID = m_nextPendingID++;
+    m_commands.pushBack(make_unique<CreateCommand>(pendingID));
+    return Entity(pendingID, nullptr);  // not yet alive in world
+}
+\end{lstlisting}
+
+\texttt{execute(World\&)} is called at a safe point (end of frame,
+after all systems finish) to replay all recorded mutations on the live world.
+
+\begin{specbox}{Invariant 6.1 --- Structural mutation safety}
+  ECS structural mutations (entity creation/destruction, component
+  add/remove) during iteration \textbf{must} go through
+  \texttt{CommandBuffer}. Direct world mutation during a
+  \texttt{forEach} loop is undefined behaviour.
+\end{specbox}
+
+\section{Systems}
+
+Systems implement \texttt{ISystem} and are registered in
+\texttt{SystemRegistry}. Each system exposes \texttt{onUpdate(World\&, f32 dt)}.
+The world provides \texttt{forEach<C1, C2, \ldots>} which iterates over all
+entities possessing the queried component types, invoking a callable
+with typed references.

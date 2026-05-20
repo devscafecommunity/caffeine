@@ -1,0 +1,225 @@
+% ============================================================================
+\chapter{Editor and Scene Viewport}
+% ============================================================================
+
+\section{Overview}
+
+The scene viewport (\texttt{SceneViewport}) is a 100\% software-rendered
+panel driven by ImGui's \texttt{ImDrawList}. There is no GPU projection
+matrix; all world-to-screen transformations are implemented analytically
+in the \texttt{projectToScreen} function. Three view modes are supported:
+\textbf{Mode2D} (orthographic top-down), \textbf{Mode3D} (perspective
+orbit), and \textbf{Isometric} (dimetric projection).
+
+\section{Camera Model}
+
+The camera state is stored in \texttt{EditorContext}:
+
+\begin{table}[H]
+\centering
+\caption{Camera state variables}
+\begin{tabular}{lll}
+\toprule
+\textbf{Variable} & \textbf{Type} & \textbf{Meaning} \\
+\midrule
+\texttt{camYaw}      & \texttt{f32} & Azimuth angle (radians, Y-axis) \\
+\texttt{camPitch}    & \texttt{f32} & Elevation angle (radians, X-axis), clamped to $[-\pi/2, \pi/2]$ \\
+\texttt{camFocus}    & \texttt{Vec3} & World-space point the camera orbits \\
+\texttt{camDistance} & \texttt{f32} & Distance from focus to eye \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{projectToScreen --- Mode2D}
+
+In 2D mode, the projection is a simple affine pan-and-zoom:
+
+\begin{align}
+  s_x &= \text{origin}_x + \frac{W}{2} + p_x \cdot \text{zoom} + \text{panX} \\
+  s_y &= \text{origin}_y + \frac{H}{2} - p_y \cdot \text{zoom} + \text{panY}
+\end{align}
+
+where $W, H$ are the viewport dimensions and $(p_x, p_y)$ is the world
+position.
+
+\section{projectToScreen --- Mode3D}
+
+The 3D projection is a software perspective transform using the
+camera's spherical parameterisation.
+
+\subsubsection{Step 1: Translate to Camera-Relative Space}
+
+\begin{equation}
+\mathbf{r} = \mathbf{p} - \mathbf{f}
+\end{equation}
+
+where $\mathbf{f} = \texttt{camFocus}$.
+
+\subsubsection{Step 2: Yaw Rotation (Y-axis, angle $\psi$)}
+
+\begin{align}
+v_x &=  \cos\psi \cdot r_x + \sin\psi \cdot r_z \\
+v_y &= r_y \\
+v_z &= -\sin\psi \cdot r_x + \cos\psi \cdot r_z
+\end{align}
+
+The yaw rotation brings the camera's viewing direction along the $+Z$ axis
+in view space.
+
+\subsubsection{Step 3: Pitch Rotation (X-axis, angle $\phi$)}
+
+\begin{align}
+v_{y2} &=  \cos\phi \cdot v_y + \sin\phi \cdot v_z \\
+v_{z2} &= -\sin\phi \cdot v_y + \cos\phi \cdot v_z
+\end{align}
+
+\subsubsection{Step 4: Perspective Divide}
+
+The viewing volume is parameterised by \texttt{camDistance} $D$:
+
+\begin{equation}
+\text{fovScale} = \frac{s \cdot D}{\max(D + v_{z2},\; \varepsilon)}
+\label{eq:fovscale}
+\end{equation}
+
+where $s = \min(W, H) / 2$ is the half-screen size used as a scale
+factor, and $\varepsilon = 0.01$ guards against division by zero.
+The screen coordinates are:
+
+\begin{align}
+  s_x &= c_x + v_x \cdot \text{fovScale} + \text{panX} \\
+  s_y &= c_y - v_{y2} \cdot \text{fovScale} + \text{panY}
+\end{align}
+
+\subsubsection{Near-Plane Clipping}
+
+A point is \emph{behind the camera} when $D + v_{z2} \leq \varepsilon$.
+For line segments (grid, gizmo axes), this causes \texttt{fovScale} to
+approach infinity, projecting to extreme screen positions.
+The fix is near-plane clipping: for a segment $(\mathbf{a}, \mathbf{b})$,
+compute the camera-depth of each endpoint $d_A, d_B$. If exactly one
+endpoint is behind the near plane (depth $< \varepsilon$), linearly
+interpolate the segment to the boundary:
+
+\begin{equation}
+t = \frac{\varepsilon - d_A}{d_B - d_A}, \quad
+\mathbf{c} = \mathbf{a} + t(\mathbf{b} - \mathbf{a})
+\end{equation}
+
+The clipped segment $(\mathbf{c}, \mathbf{b})$ (or $(\mathbf{a}, \mathbf{c})$)
+is then safe to project without numerical explosion.
+
+\begin{specbox}{Invariant 12.1 --- Near-plane clipping}
+  Near-plane clipping must be applied to every projected line segment
+  in Mode3D. Skipping it for ``short'' segments is not safe; the
+  perspective divide can still explode for world-space points near
+  the camera position.
+\end{specbox}
+
+\section{projectToScreen --- Isometric}
+
+The isometric projection uses a fixed dimetric angle offset of
+$\alpha_0 = 30\degree = \pi/6$ added to the azimuth:
+
+\begin{align}
+  \cos A &= \cos(\psi + \alpha_0) \quad\text{(effective azimuth)} \\
+  \sin A &= \sin(\psi + \alpha_0) \\
+  s_x &= c_x + (r_x \cdot \cos A + r_z \cdot \sin A) \cdot \text{zoom} + \text{panX} \\
+  s_y &= c_y - (r_y - r_x \cdot \sin A \cdot 0.5 + r_z \cdot \cos A \cdot 0.5) \cdot \text{zoom} + \text{panY}
+\end{align}
+
+This produces the classic isometric look without using a GPU depth buffer.
+
+\section{Infinite Grid Rendering}
+
+The 3D grid is drawn on the XZ plane ($y = 0$). Grid lines are world
+segments of the form:
+
+\begin{align}
+  &\{(i, 0, z) : z \in [-H, H]\} \quad \text{(X-aligned lines)} \\
+  &\{(x, 0, i) : x \in [-H, H]\} \quad \text{(Z-aligned lines)}
+\end{align}
+
+where $i \in \{-H_\text{lines}, \ldots, H_\text{lines}\}$ and
+$H_\text{lines}$ is chosen dynamically based on \texttt{camDistance}.
+
+Each segment is near-plane clipped before projection. The adaptive
+spacing doubles when the grid density exceeds 60 lines on screen:
+
+\begin{equation}
+\text{spacing} \leftarrow 2 \cdot \text{spacing}
+\quad \text{while } \frac{2 \cdot H_\text{lines}}{\text{spacing}} > 60
+\end{equation}
+
+\section{Transform Gizmo}
+
+The \texttt{TransformGizmo} renders translate, rotate, and scale handles
+directly on the \texttt{ImDrawList}. For each axis $A \in \{X, Y, Z\}$,
+the tip position is computed by projecting the world point
+$\mathbf{p} + \Delta A \cdot \hat{\mathbf{e}}_A$ through
+\texttt{projectToScreen}.
+
+\subsubsection{Axis Normalisation}
+
+To keep handles at a constant screen-space length $L$ (pixel units),
+the raw projected tip is normalised:
+
+\begin{equation}
+\text{end}_A = \mathbf{o} + L \cdot \frac{\text{rawEnd}_A - \mathbf{o}}{|\text{rawEnd}_A - \mathbf{o}|}
+\end{equation}
+
+If $|\text{rawEnd}_A - \mathbf{o}| < 3\,\text{px}$ (the axis projects
+nearly onto the screen-space origin), a per-axis fallback direction is used.
+
+\subsubsection{Z-Axis Overlap Guard}
+
+When the Z-axis fallback direction projects to within
+$0.3 \cdot L$ pixels of the Y-axis endpoint, the Z-axis is forced to
+its default fallback ($-0.6L, +0.6L$) to avoid ambiguity:
+
+\begin{equation}
+d_{ZY} = |\text{end}_Z - \text{end}_Y| < 0.3L
+\implies \text{end}_Z \leftarrow \text{fallback}_Z
+\end{equation}
+
+\section{Navigation Widget (Orientation Gizmo)}
+
+The mini orientation gizmo in the viewport corner shows the camera's
+current viewing direction. Each world axis is projected onto screen space
+using the camera rotation only (no perspective divide):
+
+\begin{align}
+  s_x    &=  \cos\psi \cdot A_x + \sin\psi \cdot A_z \\
+  s_{y1} &= A_y \\
+  s_z    &= -\sin\psi \cdot A_x + \cos\psi \cdot A_z \\
+  s_{y2} &= \cos\phi \cdot s_{y1} + \sin\phi \cdot s_z \\
+  \text{dir} &= \left(\frac{s_x}{L},\; \frac{-s_{y2}}{L}\right) \cdot L_\text{widget}
+\end{align}
+
+where $(A_x, A_y, A_z)$ is the world-space direction of the axis (e.g.\
+$(1, 0, 0)$ for X), $\psi$ and $\phi$ are \texttt{camYaw} and
+\texttt{camPitch}, and $L_\text{widget} = 22\,\text{px}$ is the display
+length.
+
+The three axes are drawn in fixed colours: X red (255, 70, 70),
+Y green (70, 255, 90), Z blue (90, 140, 255).
+
+\begin{specbox}{Invariant 12.2 --- Navigation widget correctness}
+  Navigation widget axis directions must be computed from the live
+  \texttt{camYaw} and \texttt{camPitch} values every frame.
+  Hardcoding or caching the directions between frames is incorrect.
+\end{specbox}
+
+\section{Keyboard Navigation}
+
+Arrow key navigation moves \texttt{camFocus} in the camera's horizontal
+plane (pitch is ignored for navigation to avoid tilting the focus point
+out of the ground plane):
+
+\begin{align}
+  \Delta\mathbf{f}_\text{forward}  &= (-\sin\psi,\; 0,\;  \cos\psi) \cdot v \\
+  \Delta\mathbf{f}_\text{right}    &= ( \cos\psi,\; 0,\;  \sin\psi) \cdot v
+\end{align}
+
+The \texttt{ImGuiWindowFlags\_NoNavInputs} flag on the viewport window
+prevents ImGui from consuming arrow key events to navigate UI buttons.

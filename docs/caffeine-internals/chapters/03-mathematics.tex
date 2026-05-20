@@ -1,0 +1,378 @@
+% ============================================================================
+\chapter{Mathematics Library}
+% ============================================================================
+
+\section{Overview}
+
+The mathematics library in \texttt{src/math/} provides the complete set of
+primitive geometric types used throughout the engine. All types are plain
+structs with no virtual methods, no heap allocation, and scalar fields
+only --- compatible with \texttt{memcpy} serialisation and SIMD reinterpretation
+on compilers that respect standard-layout guarantees.
+
+\section{Two-Dimensional Vectors (\texttt{Vec2})}
+
+\begin{definition}[2-Vector]
+A two-dimensional vector $\mathbf{v} \in \mathbb{R}^2$ is defined as
+$\mathbf{v} = (x, y)$ where $x, y \in \mathbb{R}$.
+\end{definition}
+
+The \texttt{Vec2} struct stores two \texttt{f32} components. The fundamental
+operations and their implementations are:
+
+\begin{align}
+  \text{Dot product:} \quad & \mathbf{u} \cdot \mathbf{v} = u_x v_x + u_y v_y \\
+  \text{Squared length:} \quad & |\mathbf{v}|^2 = \mathbf{v} \cdot \mathbf{v} \\
+  \text{Euclidean length:} \quad & |\mathbf{v}| = \sqrt{|\mathbf{v}|^2} \\
+  \text{Normalisation:} \quad & \hat{\mathbf{v}} =
+    \begin{cases} \mathbf{v} / |\mathbf{v}| & \text{if } |\mathbf{v}| > 0 \\ \mathbf{0} & \text{otherwise} \end{cases}
+\end{align}
+
+The implementation guards against division by zero in both
+\texttt{length()} and \texttt{normalized()} by checking
+$|\mathbf{v}|^2 > 0$ before taking the square root or dividing.
+
+\section{Three-Dimensional Vectors (\texttt{Vec3})}
+
+\begin{definition}[3-Vector]
+A three-dimensional vector $\mathbf{v} \in \mathbb{R}^3$ is
+$\mathbf{v} = (x, y, z)$ with components $x, y, z \in \mathbb{R}$.
+\end{definition}
+
+In addition to the operations shared with \texttt{Vec2}, \texttt{Vec3}
+provides:
+
+\begin{align}
+  \text{Cross product:} \quad
+  \mathbf{u} \times \mathbf{v} &=
+  \begin{pmatrix} u_y v_z - u_z v_y \\ u_z v_x - u_x v_z \\ u_x v_y - u_y v_x \end{pmatrix}
+\end{align}
+
+The cross product is anticommutative: $\mathbf{u} \times \mathbf{v} = -(\mathbf{v} \times \mathbf{u})$.
+It is used extensively in matrix construction (\texttt{lookAt}),
+Gram-Schmidt orthonormalisation, and quaternion rotation.
+
+Static convenience accessors \texttt{Vec3::forward()}, \texttt{Vec3::up()},
+and \texttt{Vec3::right()} return the canonical basis vectors
+$(0,0,1)$, $(0,1,0)$, and $(1,0,0)$ respectively.
+
+\section{Four-Dimensional Vectors (\texttt{Vec4})}
+
+\texttt{Vec4} extends \texttt{Vec3} with a homogeneous $w$ coordinate.
+It is used as the input to 4$\times$4 matrix multiplications (points have
+$w = 1$; directions have $w = 0$) and as a colour representation
+$(r, g, b, a)$.
+
+\section{4$\times$4 Matrices (\texttt{Mat4})}
+
+\subsection{Storage Layout}
+
+\texttt{Mat4} stores 16 \texttt{f32} values in a flat array \texttt{m[16]}
+using \emph{column-major} order. Element $(row, col)$ maps to
+$\texttt{m}[col \cdot 4 + row]$. This layout is compatible with the
+OpenGL / Vulkan column-major convention and allows a matrix column to
+be loaded as a single 128-bit SIMD register.
+
+\subsection{Fundamental Transforms}
+
+\subsubsection{Translation}
+
+\[
+\mathbf{T}(t_x, t_y, t_z) =
+\begin{pmatrix}
+1 & 0 & 0 & t_x \\
+0 & 1 & 0 & t_y \\
+0 & 0 & 1 & t_z \\
+0 & 0 & 0 & 1
+\end{pmatrix}
+\]
+
+\subsubsection{Scale}
+
+\[
+\mathbf{S}(s_x, s_y, s_z) =
+\begin{pmatrix}
+s_x & 0   & 0   & 0 \\
+0   & s_y & 0   & 0 \\
+0   & 0   & s_z & 0 \\
+0   & 0   & 0   & 1
+\end{pmatrix}
+\]
+
+\subsubsection{Rotation about Z, Y, X}
+
+\[
+\mathbf{R}_z(\theta) =
+\begin{pmatrix}
+\cos\theta & -\sin\theta & 0 & 0 \\
+\sin\theta &  \cos\theta & 0 & 0 \\
+0          & 0           & 1 & 0 \\
+0          & 0           & 0 & 1
+\end{pmatrix}
+\quad
+\mathbf{R}_y(\theta) =
+\begin{pmatrix}
+ \cos\theta & 0 & \sin\theta & 0 \\
+ 0          & 1 & 0          & 0 \\
+-\sin\theta & 0 & \cos\theta & 0 \\
+ 0          & 0 & 0          & 1
+\end{pmatrix}
+\]
+
+\[
+\mathbf{R}_x(\theta) =
+\begin{pmatrix}
+1 & 0          & 0           & 0 \\
+0 & \cos\theta & -\sin\theta & 0 \\
+0 & \sin\theta &  \cos\theta & 0 \\
+0 & 0          & 0           & 1
+\end{pmatrix}
+\]
+
+\subsubsection{Orthographic Projection}
+
+\[
+\mathbf{P}_\text{ortho} =
+\begin{pmatrix}
+\dfrac{2}{r-l} & 0 & 0 & -\dfrac{r+l}{r-l} \\[6pt]
+0 & \dfrac{2}{t-b} & 0 & -\dfrac{t+b}{t-b} \\[6pt]
+0 & 0 & -\dfrac{2}{f-n} & -\dfrac{f+n}{f-n} \\[6pt]
+0 & 0 & 0 & 1
+\end{pmatrix}
+\]
+
+where $l, r, b, t, n, f$ are the left, right, bottom, top, near, and far
+clipping planes.
+
+\subsubsection{Perspective Projection}
+
+Let $\theta_y$ be the vertical field-of-view angle and $a$ the
+aspect ratio $w/h$.
+
+\[
+\mathbf{P}_\text{persp} =
+\begin{pmatrix}
+\dfrac{1}{a \tan(\theta_y/2)} & 0 & 0 & 0 \\[8pt]
+0 & \dfrac{1}{\tan(\theta_y/2)} & 0 & 0 \\[8pt]
+0 & 0 & -\dfrac{f+n}{f-n} & -1 \\[4pt]
+0 & 0 & -\dfrac{2fn}{f-n} & 0
+\end{pmatrix}
+\]
+
+\subsubsection{Look-At View Matrix}
+
+Given eye position $\mathbf{e}$, target $\mathbf{t}$, and world up
+$\mathbf{u}_w$:
+
+\begin{align}
+\mathbf{f} &= \widehat{\mathbf{t} - \mathbf{e}} \quad (\text{forward}) \\
+\mathbf{r} &= \widehat{\mathbf{f} \times \mathbf{u}_w} \quad (\text{right}) \\
+\mathbf{u} &= \mathbf{r} \times \mathbf{f} \quad (\text{corrected up}) \\
+\mathbf{V} &=
+\begin{pmatrix}
+r_x & r_y & r_z & -\mathbf{r}\cdot\mathbf{e} \\
+u_x & u_y & u_z & -\mathbf{u}\cdot\mathbf{e} \\
+-f_x & -f_y & -f_z & \mathbf{f}\cdot\mathbf{e} \\
+0 & 0 & 0 & 1
+\end{pmatrix}
+\end{align}
+
+\subsection{Matrix Inversion}
+
+\texttt{Mat4::inverted()} implements the \textbf{cofactor expansion} method
+(Cram\'er's rule). The adjugate matrix $\text{adj}(\mathbf{M})$ is computed
+element-by-element as the transpose of the cofactor matrix. The inverse is:
+
+\[
+\mathbf{M}^{-1} = \frac{1}{\det(\mathbf{M})} \cdot \text{adj}(\mathbf{M})
+\]
+
+If $|\det(\mathbf{M})| < 10^{-6}$, the matrix is considered singular and
+the identity matrix is returned. This avoids undefined behaviour at the
+cost of silently returning an incorrect inverse; callers that construct
+degenerate matrices bear responsibility for that degeneracy.
+
+\section{Quaternions (\texttt{Quat})}
+
+\subsection{Mathematical Foundation}
+
+\begin{definition}[Quaternion]
+A quaternion $\mathcal{q} \in \mathbb{H}$ is an element of the form
+$\mathcal{q} = w + xi + yj + zk$ where $w, x, y, z \in \mathbb{R}$ and
+the imaginary units satisfy $i^2 = j^2 = k^2 = ijk = -1$ (Hamilton convention).
+\end{definition}
+
+The engine stores quaternions as $(x, y, z, w)$ in memory, where $w$ is
+the scalar (real) part and $(x, y, z)$ is the vector (imaginary) part
+$\mathcal{q}_v$.
+
+A \textbf{unit quaternion} ($|\mathcal{q}| = 1$) represents a rotation.
+The rotation by angle $\theta$ around unit axis $\hat{\mathbf{n}}$ is:
+
+\begin{equation}
+\mathcal{q} = \left(\hat{\mathbf{n}} \sin\tfrac{\theta}{2},\ \cos\tfrac{\theta}{2}\right)
+\label{eq:quat-axis-angle}
+\end{equation}
+
+\subsection{Quaternion Product (Hamilton Product)}
+
+\begin{align}
+\mathcal{q}_1 \cdot \mathcal{q}_2 &=
+(w_1 w_2 - \mathcal{q}_{v1} \cdot \mathcal{q}_{v2},\
+ w_1 \mathcal{q}_{v2} + w_2 \mathcal{q}_{v1} + \mathcal{q}_{v1} \times \mathcal{q}_{v2})
+\end{align}
+
+In component form (the implementation in \texttt{operator*}):
+\begin{align}
+x' &= w_1 x_2 + x_1 w_2 + y_1 z_2 - z_1 y_2 \\
+y' &= w_1 y_2 - x_1 z_2 + y_1 w_2 + z_1 x_2 \\
+z' &= w_1 z_2 + x_1 y_2 - y_1 x_2 + z_1 w_2 \\
+w' &= w_1 w_2 - x_1 x_2 - y_1 y_2 - z_1 z_2
+\end{align}
+
+The product $\mathcal{q}_1 \cdot \mathcal{q}_2$ applies $\mathcal{q}_2$ first,
+then $\mathcal{q}_1$ --- the same composition order as matrix multiplication.
+
+\subsection{Vector Rotation}
+
+Rotating vector $\mathbf{v}$ by unit quaternion $\mathcal{q}$ is equivalent to
+$\mathcal{q} \cdot (0, \mathbf{v}) \cdot \mathcal{q}^{-1}$.
+The efficient formulation avoids the full product by exploiting the identity:
+
+\begin{equation}
+\mathbf{v}' = \mathbf{v} + 2\,\mathcal{q}_v \times (\mathcal{q}_v \times \mathbf{v} + w\,\mathbf{v})
+\label{eq:quat-rotate}
+\end{equation}
+
+This requires only two cross products instead of two full quaternion products,
+reducing the operation from 28 multiplications to 15.
+
+\subsection{Quaternion to Rotation Matrix}
+
+For a unit quaternion $\mathcal{q} = (x, y, z, w)$:
+
+\[
+\mathbf{R} =
+\begin{pmatrix}
+1 - 2(y^2+z^2) & 2(xy - zw)     & 2(xz + yw) \\
+2(xy + zw)     & 1 - 2(x^2+z^2) & 2(yz - xw) \\
+2(xz - yw)     & 2(yz + xw)     & 1 - 2(x^2+y^2)
+\end{pmatrix}
+\]
+
+This matrix satisfies $\mathbf{R}\mathbf{v} = \mathcal{q} \cdot \mathbf{v} \cdot \mathcal{q}^{-1}$
+for any vector $\mathbf{v}$ and $\mathbf{R}\mathbf{R}^T = \mathbf{I}$
+for unit quaternions.
+
+\subsection{Rotation Matrix to Quaternion (Shoemake 1987)}
+
+The trace-based algorithm of Ken Shoemake selects the numerically largest
+diagonal element to avoid division by near-zero values.
+Let $\text{tr} = R_{00} + R_{11} + R_{22}$.
+
+\textbf{Case} $\text{tr} > 0$:
+\[
+s = 2\sqrt{\text{tr}+1}, \quad
+w = s/4, \quad
+x = (R_{21}-R_{12})/s, \quad
+y = (R_{02}-R_{20})/s, \quad
+z = (R_{10}-R_{01})/s
+\]
+
+\textbf{Case} $R_{00}$ is the largest diagonal:
+\[
+s = 2\sqrt{1+R_{00}-R_{11}-R_{22}}, \quad
+x = s/4, \quad
+y = (R_{01}+R_{10})/s, \quad
+z = (R_{02}+R_{20})/s, \quad
+w = (R_{21}-R_{12})/s
+\]
+
+Analogous formulae apply when $R_{11}$ or $R_{22}$ are largest.
+
+\subsection{Euler Angles (ZYX Tait-Bryan Convention)}
+
+The engine uses the ZYX (intrinsic) convention: roll (Z) applied first,
+then pitch (X), then yaw (Y) last.
+Given angles $\phi$ (roll), $\theta$ (pitch), $\psi$ (yaw):
+
+\begin{align}
+  w &= \cos(\phi/2)\cos(\psi/2)\cos(\theta/2) + \sin(\phi/2)\sin(\psi/2)\sin(\theta/2) \\
+  x &= \cos(\phi/2)\cos(\psi/2)\sin(\theta/2) - \sin(\phi/2)\sin(\psi/2)\cos(\theta/2) \\
+  y &= \cos(\phi/2)\sin(\psi/2)\cos(\theta/2) + \sin(\phi/2)\cos(\psi/2)\sin(\theta/2) \\
+  z &= \sin(\phi/2)\cos(\psi/2)\cos(\theta/2) - \cos(\phi/2)\sin(\psi/2)\sin(\theta/2)
+\end{align}
+
+The inverse (quaternion to Euler) extracts angles from the rotation matrix
+rows via \texttt{atan2} and \texttt{asin}:
+
+\begin{align}
+  \psi  &= \arcsin\!\bigl(-2(xz - wy)\bigr) \quad (\text{yaw}) \\
+  \theta &= \operatorname{atan2}\!\bigl(2(yz+wx),\, 1-2(x^2+y^2)\bigr) \quad (\text{pitch}) \\
+  \phi  &= \operatorname{atan2}\!\bigl(2(xy+wz),\, 1-2(y^2+z^2)\bigr) \quad (\text{roll})
+\end{align}
+
+Gimbal lock occurs at $\psi = \pm\pi/2$ and is not resolved in the current
+implementation; users should prefer quaternions for continuous rotation.
+
+\subsection{Spherical Linear Interpolation (SLERP)}
+
+\begin{equation}
+\text{SLERP}(\mathcal{q}_a, \mathcal{q}_b, t)
+= \frac{\sin((1-t)\Omega)}{\sin\Omega}\,\mathcal{q}_a
++ \frac{\sin(t\Omega)}{\sin\Omega}\,\mathcal{q}_b
+\label{eq:slerp}
+\end{equation}
+
+where $\Omega = \arccos(|\mathcal{q}_a \cdot \mathcal{q}_b|)$.
+The shortest arc is guaranteed by negating $\mathcal{q}_b$ when
+$\mathcal{q}_a \cdot \mathcal{q}_b < 0$.
+When $\mathcal{q}_a \cdot \mathcal{q}_b > 0.9999$, linear interpolation
+(NLERP) is used to avoid the numerical instability of $\sin\Omega \approx 0$.
+
+\subsection{Normalised Linear Interpolation (NLERP)}
+
+\begin{equation}
+\text{NLERP}(\mathcal{q}_a, \mathcal{q}_b, t)
+= \frac{(1-t)\,\mathcal{q}_a + t\,\mathcal{q}_b}{|(1-t)\,\mathcal{q}_a + t\,\mathcal{q}_b|}
+\label{eq:nlerp}
+\end{equation}
+
+NLERP does not maintain constant angular velocity --- interpolation speed
+is faster near the midpoint --- but is significantly cheaper (one
+normalisation vs.\ two \texttt{sinf}/\texttt{atan2f} evaluations).
+
+\section{Mathematical Utilities (\texttt{Math.hpp})}
+
+The \texttt{Caffeine::Math} namespace provides scalar utility functions.
+Key values:
+
+\begin{align*}
+  \pi &= 3.14159265358979323846 \\
+  \tau &= 2\pi \\
+  e &= 2.71828182845904523536
+\end{align*}
+
+\subsubsection{Smoothstep}
+
+The cubic Hermite interpolant used for smooth transitions:
+
+\begin{equation}
+\text{smoothstep}(e_0, e_1, x)
+= t^2(3 - 2t), \quad t = \text{saturate}\!\left(\frac{x - e_0}{e_1 - e_0}\right)
+\end{equation}
+
+\subsubsection{Next Power of Two}
+
+\begin{lstlisting}[caption={Bit-manipulation power-of-two rounding}]
+usize nextPowerOfTwo(usize v) {
+    --v;
+    v |= v >> 1;  v |= v >> 2;
+    v |= v >> 4;  v |= v >> 8;
+    v |= v >> 16;
+    return v + 1;
+}
+\end{lstlisting}
+
+This bit-spreading algorithm fills all lower bits of $v-1$ with 1s,
+then adds 1. It runs in $O(\log_2 w)$ operations where $w$ is the word width.
