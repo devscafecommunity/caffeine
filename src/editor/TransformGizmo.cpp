@@ -75,7 +75,7 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
                             mousePos.y >= vpMin.y && mousePos.y <= vpMax.y);
 
-    if (mouseInViewport) {
+        if (mouseInViewport) {
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
                 renderTranslate3D(screenPos, endX, endY, endZ, zDimmed);
@@ -98,7 +98,16 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
                     m_isDragging = true;
                     m_dragAxis = m_hoveredAxis;
                     m_dragStartMouse = {mousePos.x, mousePos.y};
-                    m_entityStartPos = {transform->position.x, transform->position.y};
+                    auto* t = world.get<ECS::Transform>(entity);
+                    if (t) {
+                        m_entityStartPos3D = t->position;
+                        m_entityStartRotZ  = t->rotation.z;
+                    } else {
+                        auto* p3 = world.get<ECS::Position3D>(entity);
+                        m_entityStartPos3D = p3 ? p3->position : Vec3{0.f, 0.f, 0.f};
+                        auto* r3 = world.get<ECS::Rotation3D>(entity);
+                        m_entityStartRotZ  = r3 ? 0.f : 0.f;
+                    }
                 }
             }
 
@@ -110,10 +119,40 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
                 bool snapEnabled = isKeyPressed(ImGuiKey_LeftShift) || isKeyPressed(ImGuiKey_RightShift);
 
+                // Project screen-space delta onto the projected axis direction,
+                // then convert pixels → world units using handleLen/handleWorld ratio.
+                auto projectOnto = [&](ImVec2 axisEnd) -> float {
+                    float axDx = axisEnd.x - sp2.x;
+                    float axDy = axisEnd.y - sp2.y;
+                    float axLen = std::sqrt(axDx * axDx + axDy * axDy);
+                    if (axLen < 0.001f) return 0.f;
+                    float projected = (delta.x * axDx + delta.y * axDy) / axLen;
+                    return projected * handleWorld / handleLen;
+                };
+
                 switch (ctx.gizmoMode) {
-                    case EditorContext::GizmoMode::Translate:
-                        applyTranslate(world, entity, delta, m_dragAxis, snapEnabled, ctx.viewportZoom);
+                    case EditorContext::GizmoMode::Translate: {
+                        Vec3 newPos = m_entityStartPos3D;
+                        switch (m_dragAxis) {
+                            case GizmoAxis::X:
+                                newPos.x += projectOnto(endX);
+                                break;
+                            case GizmoAxis::Y:
+                                newPos.y += projectOnto(endY);
+                                break;
+                            case GizmoAxis::Z:
+                                newPos.z += projectOnto(endZ);
+                                break;
+                            case GizmoAxis::Center:
+                                newPos.x += projectOnto(endX);
+                                newPos.y += projectOnto(endY);
+                                break;
+                            default: break;
+                        }
+                        float snapInterval = snapEnabled ? m_snapTranslate * handleWorld / std::max(handleLen, 0.001f) : 0.f;
+                        applyTranslate(world, entity, newPos, snapEnabled, snapInterval);
                         break;
+                    }
                     case EditorContext::GizmoMode::Rotate:
                         applyRotate(world, entity, delta.x, snapEnabled);
                         break;
@@ -232,10 +271,10 @@ void TransformGizmo::renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec
     u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
     drawAxisArrow(sp, endY, yColor);
 
-    u32 zColor = zDimmed
-        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
-        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
-    drawAxisArrow(sp, endZ, zColor);
+    if (!zDimmed) {
+        u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+        drawAxisArrow(sp, endZ, zColor);
+    }
 #endif
 }
 
@@ -251,11 +290,10 @@ void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen, bool
     u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
     dl->AddCircle(ImVec2(screenPos.x + 4, screenPos.y + 4), handleLen * 1.1f, yColor, 32, AXIS_LINE_WIDTH * 0.6f);
     
-    // Z circle (smallest, suggesting forward direction)
-    u32 zColor = zDimmed
-        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
-        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
-    dl->AddCircle(ImVec2(screenPos.x - 3, screenPos.y - 3), handleLen * 0.9f, zColor, 32, AXIS_LINE_WIDTH * 0.6f);
+    if (!zDimmed) {
+        u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+        dl->AddCircle(ImVec2(screenPos.x - 3, screenPos.y - 3), handleLen * 0.9f, zColor, 32, AXIS_LINE_WIDTH * 0.6f);
+    }
 #endif
 }
 
@@ -274,12 +312,12 @@ void TransformGizmo::renderScale3D(const Vec2& screenPos, ImVec2 endX, ImVec2 en
     dl->AddRectFilled(ImVec2(endY.x - BOX_SIZE, endY.y - BOX_SIZE),
                       ImVec2(endY.x + BOX_SIZE, endY.y + BOX_SIZE), yColor);
 
-    u32 zColor = zDimmed
-        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
-        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
-    dl->AddLine(sp, endZ, zColor, AXIS_LINE_WIDTH);
-    dl->AddRectFilled(ImVec2(endZ.x - BOX_SIZE, endZ.y - BOX_SIZE),
-                      ImVec2(endZ.x + BOX_SIZE, endZ.y + BOX_SIZE), zColor);
+    if (!zDimmed) {
+        u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+        dl->AddLine(sp, endZ, zColor, AXIS_LINE_WIDTH);
+        dl->AddRectFilled(ImVec2(endZ.x - BOX_SIZE, endZ.y - BOX_SIZE),
+                          ImVec2(endZ.x + BOX_SIZE, endZ.y + BOX_SIZE), zColor);
+    }
 #endif
 }
 
@@ -311,87 +349,27 @@ GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screen
     return GizmoAxis::None;
 }
 
-void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
-                                     GizmoAxis axis, bool snapEnabled, float zoom) {
-    // Convert screen delta to world delta
-    float pixelsPerUnit = zoom * 50.0f;
-    float worldDeltaX = screenDelta.x / pixelsPerUnit;
-    float worldDeltaY = -screenDelta.y / pixelsPerUnit; // Y is inverted in screen space
-
+void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity,
+                                     Vec3 newWorldPos, bool snapEnabled, float snapInterval) {
+    if (snapEnabled && snapInterval > 0.f) {
+        newWorldPos.x = applySnap(newWorldPos.x, snapInterval);
+        newWorldPos.y = applySnap(newWorldPos.y, snapInterval);
+        newWorldPos.z = applySnap(newWorldPos.z, snapInterval);
+    }
     auto* transform = world.get<ECS::Transform>(entity);
-    if (transform) {
-        float newX = transform->position.x;
-        float newY = transform->position.y;
-
-        if (axis == GizmoAxis::X || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            newX += worldDeltaX;
-            if (snapEnabled) {
-                float snapWorld = m_snapTranslate / pixelsPerUnit;
-                newX = applySnap(newX, snapWorld);
-            }
-        }
-        if (axis == GizmoAxis::Y || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            newY += worldDeltaY;
-            if (snapEnabled) {
-                float snapWorld = m_snapTranslate / pixelsPerUnit;
-                newY = applySnap(newY, snapWorld);
-            }
-        }
-
-        if (axis == GizmoAxis::Z) {
-            float delta = worldDeltaX * 0.5f;
-            float newZ = transform->position.z + delta;
-            if (snapEnabled) newZ = applySnap(newZ, m_snapTranslate / pixelsPerUnit);
-            transform->position.z = newZ;
-        }
-
-        transform->position.x = newX;
-        transform->position.y = newY;
-        return;
-    }
-
-    // Try 3D component
+    if (transform) { transform->position = newWorldPos; return; }
     auto* pos3D = world.get<ECS::Position3D>(entity);
-    if (pos3D) {
-        if (axis == GizmoAxis::X || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            float snapWorld = snapEnabled ? m_snapTranslate / pixelsPerUnit : 0.0f;
-            pos3D->position.x += worldDeltaX;
-            if (snapEnabled) pos3D->position.x = applySnap(pos3D->position.x, snapWorld);
-        }
-        if (axis == GizmoAxis::Y || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            float snapWorld = snapEnabled ? m_snapTranslate / pixelsPerUnit : 0.0f;
-            pos3D->position.y += worldDeltaY;
-            if (snapEnabled) pos3D->position.y = applySnap(pos3D->position.y, snapWorld);
-        }
-        if (axis == GizmoAxis::Z) {
-            float delta = worldDeltaX * 0.5f; // Z movement on diagonal
-            float snapWorld = snapEnabled ? m_snapTranslate / pixelsPerUnit : 0.0f;
-            pos3D->position.z += delta;
-            if (snapEnabled) pos3D->position.z = applySnap(pos3D->position.z, snapWorld);
-        }
-    }
+    if (pos3D) { pos3D->position = newWorldPos; }
 }
 
-void TransformGizmo::applyRotate(ECS::World& world, ECS::Entity entity, float deltaX, bool snapEnabled) {
-    float deltaAngle = deltaX * 0.01f; // Sensitivity
-
+void TransformGizmo::applyRotate(ECS::World& world, ECS::Entity entity, float totalDeltaX, bool snapEnabled) {
+    float angle = m_entityStartRotZ + totalDeltaX * 0.01f;
+    if (snapEnabled) {
+        float snapRad = m_snapRotate * 3.14159265f / 180.0f;
+        angle = applySnap(angle, snapRad);
+    }
     auto* transform = world.get<ECS::Transform>(entity);
-    if (transform) {
-        if (snapEnabled) {
-            float snapRad = m_snapRotate * 3.14159265f / 180.0f;
-            deltaAngle = applySnap(deltaAngle, snapRad);
-        }
-        transform->rotation.z += deltaAngle;
-        return;
-    }
-
-    // Try 3D rotation
-    auto* rot3D = world.get<ECS::Rotation3D>(entity);
-    if (rot3D) {
-        // Simplified 3D rotation - in a full implementation, this would
-        // multiply quaternions properly for rotation around world axes
-        (void)rot3D;
-    }
+    if (transform) { transform->rotation.z = angle; }
 }
 
 void TransformGizmo::applyScale(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,

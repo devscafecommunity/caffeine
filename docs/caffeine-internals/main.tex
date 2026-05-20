@@ -21,6 +21,8 @@
 
 % ── Geometry ─────────────────────────────────────────────────────────────────
 \usepackage[left=3cm, right=2cm, top=3cm, bottom=2cm]{geometry}
+\setlength{\headheight}{14pt}
+\addtolength{\topmargin}{-2pt}
 
 % ── Typography ────────────────────────────────────────────────────────────────
 \usepackage[T1]{fontenc}
@@ -54,6 +56,7 @@
 
 % ── Mathematics ───────────────────────────────────────────────────────────────
 \usepackage{amsmath, amssymb, amsthm}
+\usepackage{gensymb}
 \usepackage{mathtools}
 \theoremstyle{definition}
 \newtheorem{definition}{Definition}[section]
@@ -82,6 +85,7 @@
   stringstyle=\color{darkblue},
   language=C++
 }
+\lstdefinestyle{code}{}
 
 % ── Hyperlinks & PDF metadata ─────────────────────────────────────────────────
 \usepackage[hidelinks, bookmarks=true]{hyperref}

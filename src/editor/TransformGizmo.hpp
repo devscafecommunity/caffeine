@@ -45,9 +45,10 @@ private:
                             ImVec2 endX, ImVec2 endY, ImVec2 endZ,
                             float handleLen, EditorContext::GizmoMode mode, bool zDimmed);
 
-    void applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
-                       GizmoAxis axis, bool snapEnabled, float zoom);
-    void applyRotate(ECS::World& world, ECS::Entity entity, float deltaX, bool snapEnabled);
+    void applyTranslate(ECS::World& world, ECS::Entity entity,
+                       Vec3 newWorldPos, bool snapEnabled, float snapInterval);
+    void applyRotate(ECS::World& world, ECS::Entity entity,
+                    float totalDeltaX, bool snapEnabled);
     void applyScale(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                    GizmoAxis axis, bool snapEnabled, float zoom);
 
@@ -84,7 +85,8 @@ private:
     GizmoAxis m_dragAxis = GizmoAxis::None;
     bool m_isDragging = false;
     Vec2 m_dragStartMouse = {0.f, 0.f};
-    Vec2 m_entityStartPos = {0.f, 0.f};
+    Vec3 m_entityStartPos3D = {0.f, 0.f, 0.f};
+    float m_entityStartRotZ = 0.f;
 };
 
 } // namespace Caffeine::Editor

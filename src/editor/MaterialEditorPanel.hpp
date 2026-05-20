@@ -2,6 +2,7 @@
 #include "editor/ShaderGraph.hpp"
 #include "editor/PreviewRenderer.hpp"
 #include "assets/MeshTypes.hpp"
+#include <imgui.h>
 #include <string>
 
 namespace Caffeine::Editor {
@@ -26,10 +27,10 @@ public:
 
 private:
     void renderMenuBar();
-    void renderGraphCanvas();
-    void renderTextEditor();
-    void renderPreviewWindow();
-    void renderInspector();
+    void renderGraphCanvas(ImVec2 size);
+    void renderTextEditor(ImVec2 size);
+    void renderPreviewWindow(float height);
+    void renderInspector(float height);
     void recompileShader();
     void renderNodeContextMenu();
     void addDefaultNodes();

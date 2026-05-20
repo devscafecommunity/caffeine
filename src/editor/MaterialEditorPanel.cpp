@@ -38,20 +38,27 @@ void MaterialEditorPanel::onImGuiRender() {
 
     renderMenuBar();
 
-    ImGui::Columns(2, "MatEditorMain", false);
-    ImGui::SetColumnWidth(0, ImGui::GetContentRegionAvail().x * 0.65f);
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float leftW  = avail.x * 0.65f;
+    float rightW = avail.x - leftW - spacing;
 
     if (m_mode == EditorMode::Graph) {
-        renderGraphCanvas();
+        renderGraphCanvas(ImVec2(leftW, avail.y));
     } else {
-        renderTextEditor();
+        renderTextEditor(ImVec2(leftW, avail.y));
     }
 
-    ImGui::NextColumn();
-    renderPreviewWindow();
-    renderInspector();
+    ImGui::SameLine();
 
-    ImGui::Columns(1);
+    if (ImGui::BeginChild("RightPanel", ImVec2(rightW, avail.y), false)) {
+        float previewH  = avail.y * 0.65f;
+        float inspectorH = avail.y - previewH - spacing;
+        renderPreviewWindow(previewH);
+        renderInspector(inspectorH);
+    }
+    ImGui::EndChild();
+
     ImGui::End();
     ImGui::PopStyleVar();
 }
@@ -93,8 +100,8 @@ void MaterialEditorPanel::renderMenuBar() {
     }
 }
 
-void MaterialEditorPanel::renderGraphCanvas() {
-    ImGui::BeginChild("GraphCanvas", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar);
+void MaterialEditorPanel::renderGraphCanvas(ImVec2 size) {
+    ImGui::BeginChild("GraphCanvas", size, true, ImGuiWindowFlags_NoScrollbar);
 
     if (m_graph.empty()) {
         ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -107,6 +114,7 @@ void MaterialEditorPanel::renderGraphCanvas() {
     ImNodes::BeginNodeEditor();
 
     s_attrToPin.clear();
+    s_nextAttrId = 1;
 
     ImNodesStyle& style = ImNodes::GetStyle();
     style.Colors[ImNodesCol_NodeBackground] = IM_COL32(30, 30, 30, 255);
@@ -213,8 +221,8 @@ void MaterialEditorPanel::renderGraphCanvas() {
     ImGui::EndChild();
 }
 
-void MaterialEditorPanel::renderTextEditor() {
-    ImGui::BeginChild("TextEditor", ImVec2(0, 0), true);
+void MaterialEditorPanel::renderTextEditor(ImVec2 size) {
+    ImGui::BeginChild("TextEditor", size, true);
 
     ImVec2 size = ImGui::GetContentRegionAvail();
     size.y -= 30;
@@ -233,8 +241,8 @@ void MaterialEditorPanel::renderTextEditor() {
     ImGui::EndChild();
 }
 
-void MaterialEditorPanel::renderPreviewWindow() {
-    ImGui::BeginChild("Preview", ImVec2(0, 0), true);
+void MaterialEditorPanel::renderPreviewWindow(float height) {
+    ImGui::BeginChild("Preview", ImVec2(0, height), true);
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.y -= 30;
@@ -253,8 +261,8 @@ void MaterialEditorPanel::renderPreviewWindow() {
     ImGui::EndChild();
 }
 
-void MaterialEditorPanel::renderInspector() {
-    ImGui::BeginChild("Inspector", ImVec2(0, 0), true);
+void MaterialEditorPanel::renderInspector(float height) {
+    ImGui::BeginChild("Inspector", ImVec2(0, height), true);
 
     if (m_material) {
         ImGui::TextUnformatted("Material Properties");
