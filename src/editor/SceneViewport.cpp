@@ -186,6 +186,28 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::PopStyleVar();
     }
 
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+        f32 btnW   = 32.0f;
+        f32 margin = 8.0f;
+        ImVec2 btnPos(origin.x + viewportSize.x - margin - btnW * 3.0f - 4.0f, origin.y + 8.0f);
+
+        auto viewBtn = [&](const char* label, EditorContext::ViewMode mode) {
+            bool active = (ctx.viewMode == mode);
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 0.9f));
+            else        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.75f));
+            ImGui::SetCursorScreenPos(btnPos);
+            if (ImGui::Button(label, ImVec2(btnW, 22.0f))) ctx.viewMode = mode;
+            ImGui::PopStyleColor();
+            btnPos.x += btnW + 2.0f;
+        };
+
+        viewBtn("2D",  EditorContext::ViewMode::Mode2D);
+        viewBtn("3D",  EditorContext::ViewMode::Mode3D);
+        viewBtn("Iso", EditorContext::ViewMode::Isometric);
+        ImGui::PopStyleVar();
+    }
+
     drawGrid(drawList, origin, viewportSize, ctx);
     drawSprites(world, ctx, origin, viewportSize);
     drawEmptyEntities(world, ctx, origin, viewportSize);
@@ -205,16 +227,68 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
     }
 
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+        ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+            ctx.camYaw   += delta.x * 0.005f;
+            ctx.camPitch += delta.y * 0.005f;
+            ctx.camPitch  = std::max(-1.5f, std::min(1.5f, ctx.camPitch));
+        } else if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
+            ctx.camYaw += delta.x * 0.005f;
+        }
+        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
+    }
+
     if (hovered) {
-        float scroll = ImGui::GetIO().MouseWheel;
+        f32 scroll = ImGui::GetIO().MouseWheel;
         if (scroll != 0) {
             ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
-            if (ctx.viewportZoom < 0.1f) ctx.viewportZoom = 0.1f;
-            if (ctx.viewportZoom > 10.0f) ctx.viewportZoom = 10.0f;
+            ctx.viewportZoom = std::max(0.1f, std::min(10.0f, ctx.viewportZoom));
         }
     }
 
     ImGui::End();
+}
+
+ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize,
+                                       const EditorContext& ctx) {
+    f32 cx = origin.x + viewportSize.x * 0.5f;
+    f32 cy = origin.y + viewportSize.y * 0.5f;
+
+    switch (ctx.viewMode) {
+        case EditorContext::ViewMode::Mode2D: {
+            f32 s = ctx.viewportZoom * 50.0f;
+            return ImVec2(cx + (p.x + ctx.viewportPanX / s) * s,
+                          cy + (-p.y + ctx.viewportPanY / s) * s);
+        }
+        case EditorContext::ViewMode::Mode3D: {
+            f32 s = ctx.viewportZoom * 50.0f;
+            f32 sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+            f32 rx = p.x - ctx.camFocus.x;
+            f32 ry = p.y - ctx.camFocus.y;
+            f32 rz = p.z - ctx.camFocus.z;
+            f32 vx =  cosY * rx + sinY * rz;
+            f32 vy =  ry;
+            f32 vz = -sinY * rx + cosY * rz;
+            f32 vy2 =  cosP * vy + sinP * vz;
+            f32 vz2 = -sinP * vy + cosP * vz;
+            f32 dist = std::max(ctx.camDistance, 0.1f);
+            f32 fovScale = s * dist / std::max(dist + vz2, 0.01f);
+            return ImVec2(cx + vx  * fovScale + ctx.viewportPanX,
+                          cy - vy2 * fovScale + ctx.viewportPanY);
+        }
+        case EditorContext::ViewMode::Isometric: {
+            f32 s = ctx.viewportZoom * 50.0f;
+            f32 cosA = std::cos(ctx.camYaw + 0.5236f); // 30° offset + azimuth
+            f32 sinA = std::sin(ctx.camYaw + 0.5236f);
+            f32 iso_x = (p.x - p.y) * cosA * s;
+            f32 iso_y = (p.x + p.y) * sinA * s * 0.5f - p.z * s * 0.866f;
+            return ImVec2(cx + iso_x + ctx.viewportPanX,
+                          cy - iso_y + ctx.viewportPanY);
+        }
+    }
+    return ImVec2(cx, cy);
 }
 
 // ── Gizmo drawing ─────────────────────────────────────────────────
@@ -228,10 +302,7 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
     const f32 minHalfSize = 8.0f;
 
     world.forEach<ECS::Transform, ECS::Sprite>(query, [&](ECS::Entity entity, ECS::Transform& pos, ECS::Sprite& sprite) {
-        ImVec2 screenPos(
-            origin.x + viewportSize.x * 0.5f + (pos.position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-pos.position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
-        );
+        ImVec2 screenPos = projectToScreen(pos.position, origin, viewportSize, ctx);
 
         f32 scaleX = std::max(0.1f, pos.scale.x);
         f32 scaleY = std::max(0.1f, pos.scale.y);
@@ -352,10 +423,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     const float r = 7.0f;
 
     world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
-        ImVec2 sp(
-            origin.x + viewportSize.x * 0.5f + (pos.position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-pos.position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
-        );
+        ImVec2 sp = projectToScreen(pos.position, origin, viewportSize, ctx);
 
         const bool selected = (ctx.selectedEntity == entity);
         const ImU32 col     = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(180, 180, 200, 200);
@@ -384,10 +452,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     if (!pos) return;
 
     f32 worldToScreen = ctx.viewportZoom * 50.0f;
-    ImVec2 screenPos(
-        origin.x + viewportSize.x * 0.5f + (pos->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-        origin.y + viewportSize.y * 0.5f + (-pos->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
-    );
+    ImVec2 screenPos  = projectToScreen(pos->position, origin, viewportSize, ctx);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float handleLen = 30.0f * ctx.viewportZoom;
@@ -465,10 +530,7 @@ void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVe
     const f32 worldToScreen = ctx.viewportZoom * 50.0f;
 
     auto worldToScreen_fn = [&](f32 wx, f32 wy) -> ImVec2 {
-        return ImVec2(
-            origin.x + viewportSize.x * 0.5f + (wx + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-wy + ctx.viewportPanY / worldToScreen) * worldToScreen
-        );
+        return projectToScreen({wx, wy, 0.0f}, origin, viewportSize, ctx);
     };
 
     ECS::ComponentQuery q;
@@ -496,7 +558,12 @@ void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVe
 
 void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
     if (!m_config.grid) return;
-    
+
+    if (ctx.viewMode != EditorContext::ViewMode::Mode2D) {
+        drawGrid3D(drawList, origin, viewportSize, ctx);
+        return;
+    }
+
     f32 baseSpacing = m_config.gridSpacing;
     f32 scaledSpacing = baseSpacing * ctx.viewportZoom;
     const f32 minPixelSpacing = 12.0f;
@@ -534,6 +601,35 @@ void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewpor
     }
     
     drawList->AddCircle(ImVec2(centerX, centerY), 8.0f, IM_COL32(255, 200, 0, 200), 12, 2.0f);
+}
+
+void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
+    int halfLines = 10;
+    ImU32 gridColor  = IM_COL32(100, 100, 120, 60);
+    ImU32 axisColorX = IM_COL32(200, 80, 80, 120);
+    ImU32 axisColorZ = IM_COL32(80, 80, 200, 120);
+
+    if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
+        for (int i = -halfLines; i <= halfLines; ++i) {
+            ImVec2 a = projectToScreen({(f32)i, (f32)(-halfLines), 0.0f}, origin, viewportSize, ctx);
+            ImVec2 b = projectToScreen({(f32)i, (f32)( halfLines), 0.0f}, origin, viewportSize, ctx);
+            dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+
+            ImVec2 c = projectToScreen({(f32)(-halfLines), (f32)i, 0.0f}, origin, viewportSize, ctx);
+            ImVec2 d = projectToScreen({(f32)( halfLines), (f32)i, 0.0f}, origin, viewportSize, ctx);
+            dl->AddLine(c, d, (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+        }
+    } else {
+        for (int i = -halfLines; i <= halfLines; ++i) {
+            ImVec2 a = projectToScreen({(f32)i, 0.0f, (f32)(-halfLines)}, origin, viewportSize, ctx);
+            ImVec2 b = projectToScreen({(f32)i, 0.0f, (f32)( halfLines)}, origin, viewportSize, ctx);
+            dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+
+            ImVec2 c = projectToScreen({(f32)(-halfLines), 0.0f, (f32)i}, origin, viewportSize, ctx);
+            ImVec2 d = projectToScreen({(f32)( halfLines), 0.0f, (f32)i}, origin, viewportSize, ctx);
+            dl->AddLine(c, d, (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+        }
+    }
 }
 
 void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
@@ -684,10 +780,7 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
     const f32 worldToScreen = ctx.viewportZoom * 50.0f;
 
     auto w2s = [&](f32 wx, f32 wy) -> ImVec2 {
-        return ImVec2(
-            origin.x + viewportSize.x * 0.5f + (wx + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-wy + ctx.viewportPanY / worldToScreen) * worldToScreen
-        );
+        return projectToScreen({wx, wy, 0.0f}, origin, viewportSize, ctx);
     };
 
     ECS::ComponentQuery q;

@@ -37,12 +37,12 @@ private:
     void renderRotate(const Vec2& screenPos, float handleLen);
     void renderScale(const Vec2& screenPos, float handleLen);
 
-    void renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation);
-    void renderRotate3D(const Vec2& screenPos, float handleLen);
-    void renderScale3D(const Vec2& screenPos, float handleLen);
+    void renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation, bool zDimmed);
+    void renderRotate3D(const Vec2& screenPos, float handleLen, bool zDimmed);
+    void renderScale3D(const Vec2& screenPos, float handleLen, bool zDimmed);
 
     GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
-                            float handleLen, EditorContext::GizmoMode mode);
+                            float handleLen, EditorContext::GizmoMode mode, bool zDimmed);
 
     void applyTranslate(ECS::World& world, ECS::Entity entity, const Vec2& screenDelta,
                        GizmoAxis axis, bool snapEnabled, float zoom);
@@ -60,17 +60,19 @@ private:
     static constexpr float BOX_SIZE = 6.0f;
 
 #ifdef CF_HAS_IMGUI
-    static constexpr u32 COLOR_X_AXIS = IM_COL32(255, 50, 50, 255);
-    static constexpr u32 COLOR_Y_AXIS = IM_COL32(50, 255, 50, 255);
-    static constexpr u32 COLOR_Z_AXIS = IM_COL32(50, 100, 255, 255);
-    static constexpr u32 COLOR_HOVERED = IM_COL32(255, 255, 50, 255);
-    static constexpr u32 COLOR_DRAGGING = IM_COL32(255, 255, 255, 255);
+    static constexpr u32 COLOR_X_AXIS    = IM_COL32(255, 50, 50, 255);
+    static constexpr u32 COLOR_Y_AXIS    = IM_COL32(50, 255, 50, 255);
+    static constexpr u32 COLOR_Z_AXIS    = IM_COL32(50, 100, 255, 255);
+    static constexpr u32 COLOR_Z_AXIS_DIM= IM_COL32(50, 100, 255, 80);
+    static constexpr u32 COLOR_HOVERED   = IM_COL32(255, 255, 50, 255);
+    static constexpr u32 COLOR_DRAGGING  = IM_COL32(255, 255, 255, 255);
 #else
-    static constexpr u32 COLOR_X_AXIS = 0;
-    static constexpr u32 COLOR_Y_AXIS = 0;
-    static constexpr u32 COLOR_Z_AXIS = 0;
-    static constexpr u32 COLOR_HOVERED = 0;
-    static constexpr u32 COLOR_DRAGGING = 0;
+    static constexpr u32 COLOR_X_AXIS    = 0;
+    static constexpr u32 COLOR_Y_AXIS    = 0;
+    static constexpr u32 COLOR_Z_AXIS    = 0;
+    static constexpr u32 COLOR_Z_AXIS_DIM= 0;
+    static constexpr u32 COLOR_HOVERED   = 0;
+    static constexpr u32 COLOR_DRAGGING  = 0;
 #endif
 
     float m_snapTranslate = 16.0f;

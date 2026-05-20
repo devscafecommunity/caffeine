@@ -1,4 +1,5 @@
 #include "editor/TransformGizmo.hpp"
+#include "editor/SceneViewport.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
 #include <algorithm>
@@ -15,10 +16,6 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
     handleInput(ctx);
 
-    Vec2 screenPos(0.f, 0.f);
-    float entityRotation = 0.f;
-    bool is3D = false;
-
     ImVec2 vpSize = ImGui::GetContentRegionAvail();
     if (vpSize.x < 1 || vpSize.y < 1) return;
 
@@ -26,22 +23,13 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     ImVec2 vpMax = ImGui::GetItemRectMax();
 
     auto* transform = world.get<ECS::Transform>(entity);
-    if (transform) {
-        float worldToScreen = ctx.viewportZoom * 50.0f;
-        screenPos.x = vpMin.x + vpSize.x * 0.5f + (transform->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen;
-        screenPos.y = vpMin.y + vpSize.y * 0.5f + (-transform->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen;
-        entityRotation = transform->rotation.z;
-    }
+    if (!transform) return;
 
-    if (!transform && world.get<ECS::Position3D>(entity)) {
-        is3D = true;
-        auto* pos3D = world.get<ECS::Position3D>(entity);
-        if (pos3D) {
-            float worldToScreen = ctx.viewportZoom * 50.0f;
-            screenPos.x = vpMin.x + vpSize.x * 0.5f + (pos3D->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen;
-            screenPos.y = vpMin.y + vpSize.y * 0.5f + (pos3D->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen;
-        }
-    }
+    bool zDimmed = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
+
+    ImVec2 sp2     = SceneViewport::projectToScreen(transform->position, vpMin, vpSize, ctx);
+    Vec2 screenPos = Vec2(sp2.x, sp2.y);
+    float entityRotation = transform->rotation.z;
 
     float handleLen = 30.0f * ctx.viewportZoom;
 
@@ -52,43 +40,27 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     if (mouseInViewport) {
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
-                if (is3D) {
-                    renderTranslate3D(screenPos, handleLen, entityRotation);
-                } else {
-                    renderTranslate(screenPos, handleLen);
-                }
+                renderTranslate3D(screenPos, handleLen, entityRotation, zDimmed);
                 break;
             case EditorContext::GizmoMode::Rotate:
-                if (is3D) {
-                    renderRotate3D(screenPos, handleLen);
-                } else {
-                    renderRotate(screenPos, handleLen);
-                }
+                renderRotate3D(screenPos, handleLen, zDimmed);
                 break;
             case EditorContext::GizmoMode::Scale:
-                if (is3D) {
-                    renderScale3D(screenPos, handleLen);
-                } else {
-                    renderScale(screenPos, handleLen);
-                }
+                renderScale3D(screenPos, handleLen, zDimmed);
                 break;
             default: break;
         }
 
         if (ImGui::IsWindowFocused()) {
             Vec2 mousePosGlm(mousePos.x, mousePos.y);
-            m_hoveredAxis = intersectTest(mousePosGlm, screenPos, handleLen, ctx.gizmoMode);
+            m_hoveredAxis = intersectTest(mousePosGlm, screenPos, handleLen, ctx.gizmoMode, zDimmed);
 
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_isDragging) {
                 if (m_hoveredAxis != GizmoAxis::None) {
                     m_isDragging = true;
                     m_dragAxis = m_hoveredAxis;
                     m_dragStartMouse = {mousePos.x, mousePos.y};
-                    if (transform) {
-                        m_entityStartPos = {transform->position.x, transform->position.y};
-                    } else if (auto* pos3D = world.get<ECS::Position3D>(entity)) {
-                        m_entityStartPos = {pos3D->position.x, pos3D->position.y};
-                    }
+                    m_entityStartPos = {transform->position.x, transform->position.y};
                 }
             }
 
@@ -201,7 +173,7 @@ void TransformGizmo::renderScale(const Vec2& screenPos, float handleLen) {
 }
 
 // 3D Gizmos (2.5D with Z axis going diagonally)
-void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation) {
+void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, float rotation, bool zDimmed) {
 #ifdef CF_HAS_IMGUI
     (void)rotation; // Rotation not yet used for 3D gizmos
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -228,7 +200,9 @@ void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, f
         ImVec2(screenPos.x + ARROW_SIZE * 0.6f, screenPos.y - handleLen), yColor);
 
     // Z axis (diagonal, going "into" screen)
-    u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+    u32 zColor = zDimmed
+        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
+        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
     dl->AddLine(ImVec2(screenPos.x, screenPos.y),
                 ImVec2(screenPos.x - zOffset, screenPos.y + zOffset), zColor, AXIS_LINE_WIDTH);
     dl->AddTriangleFilled(
@@ -238,7 +212,7 @@ void TransformGizmo::renderTranslate3D(const Vec2& screenPos, float handleLen, f
 #endif
 }
 
-void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen) {
+void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen, bool zDimmed) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -251,12 +225,14 @@ void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen) {
     dl->AddCircle(ImVec2(screenPos.x + 4, screenPos.y + 4), handleLen * 1.1f, yColor, 32, AXIS_LINE_WIDTH * 0.6f);
     
     // Z circle (smallest, suggesting forward direction)
-    u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+    u32 zColor = zDimmed
+        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
+        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
     dl->AddCircle(ImVec2(screenPos.x - 3, screenPos.y - 3), handleLen * 0.9f, zColor, 32, AXIS_LINE_WIDTH * 0.6f);
 #endif
 }
 
-void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen) {
+void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen, bool zDimmed) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     
@@ -277,7 +253,9 @@ void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen) {
                       ImVec2(screenPos.x + BOX_SIZE, screenPos.y - handleLen + BOX_SIZE), yColor);
 
     // Z axis with cube
-    u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+    u32 zColor = zDimmed
+        ? ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS_DIM)
+        : ((m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS);
     dl->AddLine(ImVec2(screenPos.x, screenPos.y),
                 ImVec2(screenPos.x - zOffset, screenPos.y + zOffset), zColor, AXIS_LINE_WIDTH);
     dl->AddRectFilled(ImVec2(screenPos.x - zOffset - BOX_SIZE, screenPos.y + zOffset - BOX_SIZE),
@@ -286,31 +264,26 @@ void TransformGizmo::renderScale3D(const Vec2& screenPos, float handleLen) {
 }
 
 GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screenPos,
-                                        float handleLen, EditorContext::GizmoMode mode) {
-    // Check center first (for uniform/free manipulation)
+                                        float handleLen, EditorContext::GizmoMode mode, bool zDimmed) {
     float centerDist = std::sqrt((mousePos.x - screenPos.x) * (mousePos.x - screenPos.x) +
                                  (mousePos.y - screenPos.y) * (mousePos.y - screenPos.y));
     if (centerDist < HOVER_THRESHOLD) {
         return GizmoAxis::Center;
     }
 
-    // Check each axis
     float zOffset = handleLen * 0.7f;
 
-    // X axis line test
     if (pointToLineDistance(mousePos, screenPos, 
         Vec2(screenPos.x + handleLen, screenPos.y)) < HOVER_THRESHOLD) {
         return GizmoAxis::X;
     }
 
-    // Y axis line test
     if (pointToLineDistance(mousePos, screenPos,
         Vec2(screenPos.x, screenPos.y - handleLen)) < HOVER_THRESHOLD) {
         return GizmoAxis::Y;
     }
 
-    // Z axis line test (for 3D modes)
-    if (mode != EditorContext::GizmoMode::None) {
+    if (!zDimmed && mode != EditorContext::GizmoMode::None) {
         if (pointToLineDistance(mousePos, screenPos,
             Vec2(screenPos.x - zOffset, screenPos.y + zOffset)) < HOVER_THRESHOLD) {
             return GizmoAxis::Z;
@@ -345,6 +318,13 @@ void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const
                 float snapWorld = m_snapTranslate / pixelsPerUnit;
                 newY = applySnap(newY, snapWorld);
             }
+        }
+
+        if (axis == GizmoAxis::Z) {
+            float delta = worldDeltaX * 0.5f;
+            float newZ = transform->position.z + delta;
+            if (snapEnabled) newZ = applySnap(newZ, m_snapTranslate / pixelsPerUnit);
+            transform->position.z = newZ;
         }
 
         transform->position.x = newX;
