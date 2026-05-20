@@ -644,8 +644,8 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     while ((float)(halfLines * 2) / spacing > 60.0f) spacing *= 2.0f;
     int step = std::max(1, (int)spacing);
 
-    auto inFront = [&](Vec3 wp) -> bool {
-        if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return true;
+    auto camDepth = [&](Vec3 wp) -> float {
+        if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return 1.0f;
         float sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
         float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
         float rx = wp.x - ctx.camFocus.x;
@@ -653,36 +653,42 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
         float rz = wp.z - ctx.camFocus.z;
         float vz = -sinY * rx + cosY * rz;
         float vz2 = -sinP * ry + cosP * vz;
-        return (ctx.camDistance + vz2) > 0.5f;
+        return ctx.camDistance + vz2;
+    };
+
+    const float nearClip = 0.5f;
+
+    auto clipLine = [&](Vec3 a, Vec3 b, bool& valid) -> std::pair<Vec3, Vec3> {
+        float dA = camDepth(a), dB = camDepth(b);
+        if (dA <= nearClip && dB <= nearClip) { valid = false; return {a, b}; }
+        valid = true;
+        if (dA > nearClip && dB > nearClip) return {a, b};
+        float t = (nearClip - dA) / (dB - dA);
+        Vec3 clip = {a.x + t*(b.x-a.x), a.y + t*(b.y-a.y), a.z + t*(b.z-a.z)};
+        return (dA <= nearClip) ? std::make_pair(clip, b) : std::make_pair(a, clip);
+    };
+
+    auto drawLine = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
+        bool valid;
+        auto [ca, cb] = clipLine(a, b, valid);
+        if (!valid) return;
+        dl->AddLine(projectToScreen(ca, origin, viewportSize, ctx),
+                    projectToScreen(cb, origin, viewportSize, ctx), color, thickness);
     };
 
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
         for (int i = -halfLines; i <= halfLines; i += step) {
-            Vec3 pa = {(f32)i, (f32)(-halfLines), 0.f}, pb = {(f32)i, (f32)(halfLines), 0.f};
-            if (!inFront(pa) || !inFront(pb)) continue;
-            dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
-                        projectToScreen(pb, origin, viewportSize, ctx),
-                        (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
-
-            Vec3 pc = {(f32)(-halfLines), (f32)i, 0.f}, pd = {(f32)(halfLines), (f32)i, 0.f};
-            if (!inFront(pc) || !inFront(pd)) continue;
-            dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
-                        projectToScreen(pd, origin, viewportSize, ctx),
-                        (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+            drawLine({(f32)i, (f32)(-halfLines), 0.f}, {(f32)i, (f32)(halfLines), 0.f},
+                     (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+            drawLine({(f32)(-halfLines), (f32)i, 0.f}, {(f32)(halfLines), (f32)i, 0.f},
+                     (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
         }
     } else {
         for (int i = -halfLines; i <= halfLines; i += step) {
-            Vec3 pa = {(f32)i, 0.f, (f32)(-halfLines)}, pb = {(f32)i, 0.f, (f32)(halfLines)};
-            if (!inFront(pa) || !inFront(pb)) continue;
-            dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
-                        projectToScreen(pb, origin, viewportSize, ctx),
-                        (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
-
-            Vec3 pc = {(f32)(-halfLines), 0.f, (f32)i}, pd = {(f32)(halfLines), 0.f, (f32)i};
-            if (!inFront(pc) || !inFront(pd)) continue;
-            dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
-                        projectToScreen(pd, origin, viewportSize, ctx),
-                        (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+            drawLine({(f32)i, 0.f, (f32)(-halfLines)}, {(f32)i, 0.f, (f32)(halfLines)},
+                     (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+            drawLine({(f32)(-halfLines), 0.f, (f32)i}, {(f32)(halfLines), 0.f, (f32)i},
+                     (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
         }
     }
 }
