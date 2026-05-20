@@ -222,20 +222,34 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
-        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-            float panSpeed = ctx.camDistance * 0.001f / ctx.viewportZoom;
-            float sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            ctx.camFocus.x -= delta.x * cosY * panSpeed;
-            ctx.camFocus.z -= delta.x * (-sinY) * panSpeed;
-            ctx.camFocus.x += delta.y * sinY * sinP * panSpeed;
-            ctx.camFocus.y += delta.y * cosP * panSpeed;
-            ctx.camFocus.z += delta.y * cosY * sinP * panSpeed;
-        } else {
-            ctx.viewportPanX += delta.x;
-            ctx.viewportPanY += delta.y;
-        }
+        ctx.viewportPanX += delta.x;
+        ctx.viewportPanY += delta.y;
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
+    }
+
+    if (hovered && ImGui::IsWindowFocused()) {
+        bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                        ctx.viewMode == EditorContext::ViewMode::Isometric);
+        if (is3DIso) {
+            float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
+            float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+            if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
+                ctx.camFocus.x += cosY * speed;
+                ctx.camFocus.z += sinY * speed;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+                ctx.camFocus.x -= cosY * speed;
+                ctx.camFocus.z -= sinY * speed;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
+                ctx.camFocus.x -= sinY * speed;
+                ctx.camFocus.z += cosY * speed;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
+                ctx.camFocus.x += sinY * speed;
+                ctx.camFocus.z -= cosY * speed;
+            }
+        }
     }
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
@@ -620,31 +634,51 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     ImU32 axisColorZ = IM_COL32(80, 80, 200, 120);
 
     float visibleRange = ctx.camDistance / ctx.viewportZoom;
-    int halfLines = std::max(50, (int)(visibleRange * 30.0f));
+    int halfLines = std::max(30, (int)(visibleRange * 4.0f));
 
     float spacing = 1.0f;
     while ((float)(halfLines * 2) / spacing > 60.0f) spacing *= 2.0f;
     int step = std::max(1, (int)spacing);
 
+    auto inFront = [&](Vec3 wp) -> bool {
+        if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return true;
+        float sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+        float rx = wp.x - ctx.camFocus.x;
+        float ry = wp.y - ctx.camFocus.y;
+        float rz = wp.z - ctx.camFocus.z;
+        float vz = -sinY * rx + cosY * rz;
+        float vz2 = -sinP * ry + cosP * vz;
+        return (ctx.camDistance + vz2) > 0.5f;
+    };
+
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
         for (int i = -halfLines; i <= halfLines; i += step) {
-            ImVec2 a = projectToScreen({(f32)i, (f32)(-halfLines), 0.0f}, origin, viewportSize, ctx);
-            ImVec2 b = projectToScreen({(f32)i, (f32)( halfLines), 0.0f}, origin, viewportSize, ctx);
-            dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+            Vec3 pa = {(f32)i, (f32)(-halfLines), 0.f}, pb = {(f32)i, (f32)(halfLines), 0.f};
+            if (!inFront(pa) && !inFront(pb)) continue;
+            dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
+                        projectToScreen(pb, origin, viewportSize, ctx),
+                        (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
 
-            ImVec2 c = projectToScreen({(f32)(-halfLines), (f32)i, 0.0f}, origin, viewportSize, ctx);
-            ImVec2 d = projectToScreen({(f32)( halfLines), (f32)i, 0.0f}, origin, viewportSize, ctx);
-            dl->AddLine(c, d, (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+            Vec3 pc = {(f32)(-halfLines), (f32)i, 0.f}, pd = {(f32)(halfLines), (f32)i, 0.f};
+            if (!inFront(pc) && !inFront(pd)) continue;
+            dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
+                        projectToScreen(pd, origin, viewportSize, ctx),
+                        (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
         }
     } else {
         for (int i = -halfLines; i <= halfLines; i += step) {
-            ImVec2 a = projectToScreen({(f32)i, 0.0f, (f32)(-halfLines)}, origin, viewportSize, ctx);
-            ImVec2 b = projectToScreen({(f32)i, 0.0f, (f32)( halfLines)}, origin, viewportSize, ctx);
-            dl->AddLine(a, b, (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
+            Vec3 pa = {(f32)i, 0.f, (f32)(-halfLines)}, pb = {(f32)i, 0.f, (f32)(halfLines)};
+            if (!inFront(pa) && !inFront(pb)) continue;
+            dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
+                        projectToScreen(pb, origin, viewportSize, ctx),
+                        (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
 
-            ImVec2 c = projectToScreen({(f32)(-halfLines), 0.0f, (f32)i}, origin, viewportSize, ctx);
-            ImVec2 d = projectToScreen({(f32)( halfLines), 0.0f, (f32)i}, origin, viewportSize, ctx);
-            dl->AddLine(c, d, (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+            Vec3 pc = {(f32)(-halfLines), 0.f, (f32)i}, pd = {(f32)(halfLines), 0.f, (f32)i};
+            if (!inFront(pc) && !inFront(pd)) continue;
+            dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
+                        projectToScreen(pd, origin, viewportSize, ctx),
+                        (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
         }
     }
 }
