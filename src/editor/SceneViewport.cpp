@@ -56,7 +56,11 @@ void SceneViewport::shutdown() {
 void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
-    if (!ImGui::Begin("Scene Viewport", &m_open)) {
+    if (!ImGui::Begin("Scene Viewport", &m_open,
+            (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+             ctx.viewMode == EditorContext::ViewMode::Isometric)
+                ? ImGuiWindowFlags_NoNavInputs
+                : ImGuiWindowFlags_None)) {
         ImGui::End();
         return;
     }
@@ -655,13 +659,13 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
         for (int i = -halfLines; i <= halfLines; i += step) {
             Vec3 pa = {(f32)i, (f32)(-halfLines), 0.f}, pb = {(f32)i, (f32)(halfLines), 0.f};
-            if (!inFront(pa) && !inFront(pb)) continue;
+            if (!inFront(pa) || !inFront(pb)) continue;
             dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
                         projectToScreen(pb, origin, viewportSize, ctx),
                         (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
 
             Vec3 pc = {(f32)(-halfLines), (f32)i, 0.f}, pd = {(f32)(halfLines), (f32)i, 0.f};
-            if (!inFront(pc) && !inFront(pd)) continue;
+            if (!inFront(pc) || !inFront(pd)) continue;
             dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
                         projectToScreen(pd, origin, viewportSize, ctx),
                         (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
@@ -669,13 +673,13 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     } else {
         for (int i = -halfLines; i <= halfLines; i += step) {
             Vec3 pa = {(f32)i, 0.f, (f32)(-halfLines)}, pb = {(f32)i, 0.f, (f32)(halfLines)};
-            if (!inFront(pa) && !inFront(pb)) continue;
+            if (!inFront(pa) || !inFront(pb)) continue;
             dl->AddLine(projectToScreen(pa, origin, viewportSize, ctx),
                         projectToScreen(pb, origin, viewportSize, ctx),
                         (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
 
             Vec3 pc = {(f32)(-halfLines), 0.f, (f32)i}, pd = {(f32)(halfLines), 0.f, (f32)i};
-            if (!inFront(pc) && !inFront(pd)) continue;
+            if (!inFront(pc) || !inFront(pd)) continue;
             dl->AddLine(projectToScreen(pc, origin, viewportSize, ctx),
                         projectToScreen(pd, origin, viewportSize, ctx),
                         (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
@@ -698,10 +702,8 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
     dl->AddRectFilled(widgetMin, widgetMax, IM_COL32(18, 20, 26, 190), 6.0f);
     dl->AddRect(widgetMin, widgetMax, IM_COL32(90, 100, 130, 180), 6.0f, 0, 1.0f);
 
-    bool is3D = false;
-    if (ctx.selectedEntity.isValid()) {
-        is3D = world.has<ECS::Position3D>(ctx.selectedEntity);
-    }
+    bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                 ctx.viewMode == EditorContext::ViewMode::Isometric);
 
     ImVec2 center(widgetMin.x + widgetSize * 0.5f, widgetMin.y + widgetSize * 0.5f);
     const float axisLen = 22.0f;
