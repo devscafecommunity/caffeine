@@ -224,11 +224,11 @@ void MaterialEditorPanel::renderGraphCanvas(ImVec2 size) {
 void MaterialEditorPanel::renderTextEditor(ImVec2 size) {
     ImGui::BeginChild("TextEditor", size, true);
 
-    ImVec2 size = ImGui::GetContentRegionAvail();
-    size.y -= 30;
+    ImVec2 textSize = ImGui::GetContentRegionAvail();
+    textSize.y -= 30;
 
     ImGui::InputTextMultiline("##code", m_codeBuffer, sizeof(m_codeBuffer),
-        size, ImGuiInputTextFlags_AllowTabInput);
+        textSize, ImGuiInputTextFlags_AllowTabInput);
 
     if (ImGui::Button("Compile")) {
         recompileShader();
