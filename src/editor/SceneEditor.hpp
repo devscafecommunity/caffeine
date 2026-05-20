@@ -172,7 +172,7 @@ private:
         u32 id;
         float px = 0, py = 0;
         float vx = 0, vy = 0;
-        float rotation = 0;
+        float rz = 0;
     };
     std::vector<EntitySnapshot> m_playSnapshot;
 

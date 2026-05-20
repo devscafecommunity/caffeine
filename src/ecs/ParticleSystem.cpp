@@ -13,14 +13,14 @@ static float randomFloat(float min, float max) {
 void ParticleSystem::onUpdate(World& world, f32 dt) {
     ComponentQuery q;
     q.with<ParticleEmitterComponent>();
-    q.with<Position2D>();
+    q.with<Transform>();
 
-    world.forEach<ParticleEmitterComponent, Position2D>(q,
-        [&dt](Entity e, ParticleEmitterComponent& emitter, Position2D& pos) {
+    world.forEach<ParticleEmitterComponent, Transform>(q,
+        [&dt](Entity e, ParticleEmitterComponent& emitter, Transform& pos) {
             size_t toEmit = static_cast<size_t>(emitter.emissionRate * dt);
             for (size_t i = 0; i < toEmit && emitter.activeParticles.size() < static_cast<size_t>(emitter.maxParticles); ++i) {
                 ParticleEmitterComponent::Particle p;
-                p.position = { pos.x, pos.y };
+                p.position = { pos.position.x, pos.position.y };
                 p.velocity.x = randomFloat(emitter.velocityMin.x, emitter.velocityMax.x);
                 p.velocity.y = randomFloat(emitter.velocityMin.y, emitter.velocityMax.y);
                 p.life = emitter.lifetime;

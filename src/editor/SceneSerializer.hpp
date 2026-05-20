@@ -19,20 +19,17 @@ private:
     ECS::World& m_world;
 
     // Editor-specific component type IDs for the binary format
-    static constexpr u32 kTypeName         = 0;
-    static constexpr u32 kTypePosition2D   = 1;
-    static constexpr u32 kTypeVelocity2D   = 2;
+    static constexpr u32 kTypeName          = 0;
+    static constexpr u32 kTypeTransform     = 1;
+    static constexpr u32 kTypeVelocity2D    = 2;
     static constexpr u32 kTypeAcceleration2D = 3;
-    static constexpr u32 kTypeRotation     = 4;
-    static constexpr u32 kTypeScale2D      = 5;
-    static constexpr u32 kTypeSprite       = 6;
-    static constexpr u32 kTypeHealth       = 7;
-    static constexpr u32 kTypeTag          = 8;
-    static constexpr u32 kTypeAudioEmitter = 9;
-    static constexpr u32 kTypeCount        = 10;
+    static constexpr u32 kTypeSprite        = 6;
+    static constexpr u32 kTypeHealth        = 7;
+    static constexpr u32 kTypeTag           = 8;
+    static constexpr u32 kTypeAudioEmitter  = 9;
+    static constexpr u32 kTypeCount         = 10;
 
-    // File format constants
-    static constexpr u32 kFormatVersion    = 1;
+    static constexpr u32 kFormatVersion    = 2;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────

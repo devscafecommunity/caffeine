@@ -98,7 +98,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         f32 scale  = ctx.viewportZoom * 50.0f;
         f32 worldX = (localX - ctx.viewportPanX) / scale;
         f32 worldY = (localY - ctx.viewportPanY) / scale;
-        world.add<ECS::Position2D>(entity, worldX, -worldY);
+        auto t = ECS::Transform{};
+        t.position.x = worldX;
+        t.position.y = -worldY;
+        world.add<ECS::Transform>(entity, t);
 
         if (asset->type == AssetType::Texture) {
             world.add<ECS::Sprite>(entity, asset->path, 0);
@@ -218,29 +221,22 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
 void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ECS::ComponentQuery query;
-    query.with<ECS::Position2D>();
+    query.with<ECS::Transform>();
     query.with<ECS::Sprite>();
 
     const f32 worldToScreen = ctx.viewportZoom * 50.0f;
     const f32 minHalfSize = 8.0f;
 
-    world.forEach<ECS::Position2D, ECS::Sprite>(query, [&](ECS::Entity entity, ECS::Position2D& pos, ECS::Sprite& sprite) {
+    world.forEach<ECS::Transform, ECS::Sprite>(query, [&](ECS::Entity entity, ECS::Transform& pos, ECS::Sprite& sprite) {
         ImVec2 screenPos(
-            origin.x + viewportSize.x * 0.5f + (pos.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-pos.y + ctx.viewportPanY / worldToScreen) * worldToScreen
+            origin.x + viewportSize.x * 0.5f + (pos.position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-pos.position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
         );
 
-        f32 scaleX = 1.0f;
-        f32 scaleY = 1.0f;
-        if (auto* scale = world.get<ECS::Scale2D>(entity)) {
-            scaleX = std::max(0.1f, scale->x);
-            scaleY = std::max(0.1f, scale->y);
-        }
+        f32 scaleX = std::max(0.1f, pos.scale.x);
+        f32 scaleY = std::max(0.1f, pos.scale.y);
 
-        f32 angle = 0.0f;
-        if (auto* rot = world.get<ECS::Rotation>(entity)) {
-            angle = rot->angle;
-        }
+        f32 angle = pos.rotation.z;
 
         f32 halfW = std::max(minHalfSize, 0.5f * worldToScreen * scaleX);
         f32 halfH = std::max(minHalfSize, 0.5f * worldToScreen * scaleY);
@@ -348,17 +344,17 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
 
 void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ECS::ComponentQuery query;
-    query.with<ECS::Position2D>();
+    query.with<ECS::Transform>();
     query.without<ECS::Sprite>();
 
     const f32 worldToScreen = ctx.viewportZoom * 50.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float r = 7.0f;
 
-    world.forEach<ECS::Position2D>(query, [&](ECS::Entity entity, ECS::Position2D& pos) {
+    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
         ImVec2 sp(
-            origin.x + viewportSize.x * 0.5f + (pos.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-            origin.y + viewportSize.y * 0.5f + (-pos.y + ctx.viewportPanY / worldToScreen) * worldToScreen
+            origin.x + viewportSize.x * 0.5f + (pos.position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
+            origin.y + viewportSize.y * 0.5f + (-pos.position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
         );
 
         const bool selected = (ctx.selectedEntity == entity);
@@ -384,13 +380,13 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
 
-    auto* pos = world.get<ECS::Position2D>(ctx.selectedEntity);
+    auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
     if (!pos) return;
 
     f32 worldToScreen = ctx.viewportZoom * 50.0f;
     ImVec2 screenPos(
-        origin.x + viewportSize.x * 0.5f + (pos->x + ctx.viewportPanX / worldToScreen) * worldToScreen,
-        origin.y + viewportSize.y * 0.5f + (-pos->y + ctx.viewportPanY / worldToScreen) * worldToScreen
+        origin.x + viewportSize.x * 0.5f + (pos->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen,
+        origin.y + viewportSize.y * 0.5f + (-pos->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen
     );
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -477,12 +473,12 @@ void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVe
 
     ECS::ComponentQuery q;
     q.with<Collider2D>();
-    q.with<ECS::Position2D>();
+    q.with<ECS::Transform>();
 
-    world.forEach<Collider2D, ECS::Position2D>(q,
-        [&](ECS::Entity entity, Collider2D& col, ECS::Position2D& pos) {
-            f32 cx = pos.x + col.offset.x;
-            f32 cy = pos.y + col.offset.y;
+    world.forEach<Collider2D, ECS::Transform>(q,
+        [&](ECS::Entity entity, Collider2D& col, ECS::Transform& pos) {
+            f32 cx = pos.position.x + col.offset.x;
+            f32 cy = pos.position.y + col.offset.y;
             ImU32 color = IM_COL32(col.debugColor[0], col.debugColor[1], col.debugColor[2], col.debugColor[3]);
             if (col.shape == ColliderShape::AABB) {
                 f32 hw = col.size.x * 0.5f * worldToScreen;
@@ -594,33 +590,31 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
 
         f32 sensitivity = 1.0f / (ctx.viewportZoom * 50.0f);
 
-        auto* pos = world.get<ECS::Position2D>(ctx.selectedEntity);
+    auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
         bool hadPos = (pos != nullptr);
 
         if (!hadPos) {
-            pos = &world.add<ECS::Position2D>(ctx.selectedEntity, 0.0f, 0.0f);
+            pos = &world.add<ECS::Transform>(ctx.selectedEntity);
         }
 
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
-                pos->x += delta.x * sensitivity;
-                pos->y -= delta.y * sensitivity;
+                pos->position.x += delta.x * sensitivity;
+                pos->position.y -= delta.y * sensitivity;
                 if (ctx.snapToGrid && ctx.snapGridSize > 0.0f) {
-                    pos->x = roundf(pos->x / ctx.snapGridSize) * ctx.snapGridSize;
-                    pos->y = roundf(pos->y / ctx.snapGridSize) * ctx.snapGridSize;
+                    pos->position.x = roundf(pos->position.x / ctx.snapGridSize) * ctx.snapGridSize;
+                    pos->position.y = roundf(pos->position.y / ctx.snapGridSize) * ctx.snapGridSize;
                 }
                 break;
             case EditorContext::GizmoMode::Rotate: {
-                auto& rot = world.add<ECS::Rotation>(ctx.selectedEntity);
-                rot.angle += delta.x * 0.01f;
+                pos->rotation.z += delta.x * 0.01f;
                 break;
             }
             case EditorContext::GizmoMode::Scale: {
-                auto& scl = world.add<ECS::Scale2D>(ctx.selectedEntity, 1.0f, 1.0f);
-                scl.x *= 1.0f + delta.x * 0.005f;
-                scl.y *= 1.0f + delta.y * 0.005f;
-                if (scl.x < 0.01f) scl.x = 0.01f;
-                if (scl.y < 0.01f) scl.y = 0.01f;
+                pos->scale.x *= 1.0f + delta.x * 0.005f;
+                pos->scale.y *= 1.0f + delta.y * 0.005f;
+                if (pos->scale.x < 0.01f) pos->scale.x = 0.01f;
+                if (pos->scale.y < 0.01f) pos->scale.y = 0.01f;
                 break;
             }
             case EditorContext::GizmoMode::None: break;
@@ -698,17 +692,17 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
 
     ECS::ComponentQuery q;
     q.with<ECS::Camera2DComponent>();
-    q.with<ECS::Position2D>();
+    q.with<ECS::Transform>();
 
-    world.forEach<ECS::Camera2DComponent, ECS::Position2D>(q,
-        [&](ECS::Entity, ECS::Camera2DComponent& cam, ECS::Position2D& pos) {
+    world.forEach<ECS::Camera2DComponent, ECS::Transform>(q,
+        [&](ECS::Entity, ECS::Camera2DComponent& cam, ECS::Transform& pos) {
         const f32 halfW = 8.0f / cam.zoom;
         const f32 halfH = 4.5f / cam.zoom;
 
-        ImVec2 tl = w2s(pos.x - halfW, pos.y + halfH);
-        ImVec2 tr = w2s(pos.x + halfW, pos.y + halfH);
-        ImVec2 br = w2s(pos.x + halfW, pos.y - halfH);
-        ImVec2 bl = w2s(pos.x - halfW, pos.y - halfH);
+        ImVec2 tl = w2s(pos.position.x - halfW, pos.position.y + halfH);
+        ImVec2 tr = w2s(pos.position.x + halfW, pos.position.y + halfH);
+        ImVec2 br = w2s(pos.position.x + halfW, pos.position.y - halfH);
+        ImVec2 bl = w2s(pos.position.x - halfW, pos.position.y - halfH);
 
         const ImU32 col = IM_COL32(255, 220, 50, 220);
         dl->AddQuad(tl, tr, br, bl, col, 1.5f);

@@ -33,13 +33,13 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx) {
     {
         ECS::ComponentQuery q;
         q.with<ECS::Camera2DComponent>();
-        q.with<ECS::Position2D>();
-        world.forEach<ECS::Camera2DComponent, ECS::Position2D>(q,
-            [&](ECS::Entity e, ECS::Camera2DComponent& cam, ECS::Position2D& pos) {
+        q.with<ECS::Transform>();
+        world.forEach<ECS::Camera2DComponent, ECS::Transform>(q,
+            [&](ECS::Entity e, ECS::Camera2DComponent& cam, ECS::Transform& pos) {
                 if (!found) {
                     cameraEntity = e;
-                    camX  = pos.x;
-                    camY  = pos.y;
+                    camX  = pos.position.x;
+                    camY  = pos.position.y;
                     zoom  = cam.zoom;
                     found = true;
                 }
@@ -111,13 +111,13 @@ void CameraPreviewPanel::renderCameraView(ECS::World& world, EditorContext& ctx,
     };
 
     ECS::ComponentQuery spriteQ;
-    spriteQ.with<ECS::Position2D>();
+    spriteQ.with<ECS::Transform>();
     spriteQ.with<ECS::Sprite>();
 
-    world.forEach<ECS::Position2D, ECS::Sprite>(spriteQ,
-        [&](ECS::Entity, ECS::Position2D& pos, ECS::Sprite& sprite) {
-            float scaleX = 1.0f, scaleY = 1.0f;
-            ImVec2 screenPos = w2s(pos.x, pos.y);
+    world.forEach<ECS::Transform, ECS::Sprite>(spriteQ,
+        [&](ECS::Entity, ECS::Transform& pos, ECS::Sprite& sprite) {
+            float scaleX = std::max(0.1f, pos.scale.x), scaleY = std::max(0.1f, pos.scale.y);
+            ImVec2 screenPos = w2s(pos.position.x, pos.position.y);
 
             float halfW = std::max(8.0f, 0.5f * worldToScreen * scaleX);
             float halfH = std::max(8.0f, 0.5f * worldToScreen * scaleY);

@@ -25,14 +25,15 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     ImVec2 vpMin = ImGui::GetItemRectMin();
     ImVec2 vpMax = ImGui::GetItemRectMax();
 
-    auto* pos2D = world.get<ECS::Position2D>(entity);
-    if (pos2D) {
+    auto* transform = world.get<ECS::Transform>(entity);
+    if (transform) {
         float worldToScreen = ctx.viewportZoom * 50.0f;
-        screenPos.x = vpMin.x + vpSize.x * 0.5f + (pos2D->x + ctx.viewportPanX / worldToScreen) * worldToScreen;
-        screenPos.y = vpMin.y + vpSize.y * 0.5f + (pos2D->y + ctx.viewportPanY / worldToScreen) * worldToScreen;
+        screenPos.x = vpMin.x + vpSize.x * 0.5f + (transform->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen;
+        screenPos.y = vpMin.y + vpSize.y * 0.5f + (-transform->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen;
+        entityRotation = transform->rotation.z;
     }
 
-    if (world.get<ECS::Position3D>(entity)) {
+    if (!transform && world.get<ECS::Position3D>(entity)) {
         is3D = true;
         auto* pos3D = world.get<ECS::Position3D>(entity);
         if (pos3D) {
@@ -40,10 +41,6 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
             screenPos.x = vpMin.x + vpSize.x * 0.5f + (pos3D->position.x + ctx.viewportPanX / worldToScreen) * worldToScreen;
             screenPos.y = vpMin.y + vpSize.y * 0.5f + (pos3D->position.y + ctx.viewportPanY / worldToScreen) * worldToScreen;
         }
-    }
-
-    if (auto* rot = world.get<ECS::Rotation>(entity)) {
-        entityRotation = rot->angle;
     }
 
     float handleLen = 30.0f * ctx.viewportZoom;
@@ -87,8 +84,8 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
                     m_isDragging = true;
                     m_dragAxis = m_hoveredAxis;
                     m_dragStartMouse = {mousePos.x, mousePos.y};
-                    if (pos2D) {
-                        m_entityStartPos = {pos2D->x, pos2D->y};
+                    if (transform) {
+                        m_entityStartPos = {transform->position.x, transform->position.y};
                     } else if (auto* pos3D = world.get<ECS::Position3D>(entity)) {
                         m_entityStartPos = {pos3D->position.x, pos3D->position.y};
                     }
@@ -330,11 +327,10 @@ void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const
     float worldDeltaX = screenDelta.x / pixelsPerUnit;
     float worldDeltaY = -screenDelta.y / pixelsPerUnit; // Y is inverted in screen space
 
-    // Try 2D component
-    auto* pos2D = world.get<ECS::Position2D>(entity);
-    if (pos2D) {
-        float newX = pos2D->x;
-        float newY = pos2D->y;
+    auto* transform = world.get<ECS::Transform>(entity);
+    if (transform) {
+        float newX = transform->position.x;
+        float newY = transform->position.y;
 
         if (axis == GizmoAxis::X || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
             newX += worldDeltaX;
@@ -351,8 +347,8 @@ void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const
             }
         }
 
-        pos2D->x = newX;
-        pos2D->y = newY;
+        transform->position.x = newX;
+        transform->position.y = newY;
         return;
     }
 
@@ -381,14 +377,13 @@ void TransformGizmo::applyTranslate(ECS::World& world, ECS::Entity entity, const
 void TransformGizmo::applyRotate(ECS::World& world, ECS::Entity entity, float deltaX, bool snapEnabled) {
     float deltaAngle = deltaX * 0.01f; // Sensitivity
 
-    // Try 2D rotation
-    auto* rot = world.get<ECS::Rotation>(entity);
-    if (rot) {
+    auto* transform = world.get<ECS::Transform>(entity);
+    if (transform) {
         if (snapEnabled) {
             float snapRad = m_snapRotate * 3.14159265f / 180.0f;
             deltaAngle = applySnap(deltaAngle, snapRad);
         }
-        rot->angle += deltaAngle;
+        transform->rotation.z += deltaAngle;
         return;
     }
 
@@ -407,9 +402,8 @@ void TransformGizmo::applyScale(ECS::World& world, ECS::Entity entity, const Vec
     float deltaX = screenDelta.x / pixelsPerUnit;
     float deltaY = -screenDelta.y / pixelsPerUnit;
 
-    // Try 2D scale
-    auto* scl2D = world.get<ECS::Scale2D>(entity);
-    if (scl2D) {
+    auto* transform = world.get<ECS::Transform>(entity);
+    if (transform) {
         float factor = 1.0f;
         if (axis == GizmoAxis::X || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
             factor = 1.0f + deltaX * 0.5f;
@@ -420,14 +414,14 @@ void TransformGizmo::applyScale(ECS::World& world, ECS::Entity entity, const Vec
         }
 
         if (axis == GizmoAxis::X || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            float newX = scl2D->x * factor;
+            float newX = transform->scale.x * factor;
             if (snapEnabled) newX = applySnap(newX, m_snapScale);
-            scl2D->x = std::max(0.01f, newX);
+            transform->scale.x = std::max(0.01f, newX);
         }
         if (axis == GizmoAxis::Y || axis == GizmoAxis::Center || axis == GizmoAxis::None) {
-            float newY = scl2D->y * factor;
+            float newY = transform->scale.y * factor;
             if (snapEnabled) newY = applySnap(newY, m_snapScale);
-            scl2D->y = std::max(0.01f, newY);
+            transform->scale.y = std::max(0.01f, newY);
         }
         return;
     }

@@ -81,9 +81,6 @@ void HierarchyPanel::renderToolbar() {
         ECS::Entity e = m_world->create();
         setEntityName(*m_world, e, "New Entity");
         m_world->add<ECS::Transform>(e);
-        m_world->add<ECS::Position2D>(e);
-        m_world->add<ECS::Rotation>(e);
-        m_world->add<ECS::Scale2D>(e);
         m_context->selectEntity(e);
         m_context->endUndo(*m_world);
     }
@@ -241,9 +238,7 @@ void HierarchyPanel::duplicateEntity(ECS::World& world, ECS::Entity src) {
     std::snprintf(newName, sizeof(newName), "%s (Copy)", getEntityName(world, src));
     setEntityName(world, dst, newName);
 
-    if (auto* c = world.get<ECS::Position2D>(src))          { auto& d = world.add<ECS::Position2D>(dst);  d = *c; }
-    if (auto* c = world.get<ECS::Rotation>(src))            { auto& d = world.add<ECS::Rotation>(dst);    d = *c; }
-    if (auto* c = world.get<ECS::Scale2D>(src))             { auto& d = world.add<ECS::Scale2D>(dst);     d = *c; }
+    if (auto* c = world.get<ECS::Transform>(src))          { auto& d = world.add<ECS::Transform>(dst);   d = *c; }
     if (auto* c = world.get<ECS::Sprite>(src))              { auto& d = world.add<ECS::Sprite>(dst);      d = *c; }
     if (auto* c = world.get<Physics2D::RigidBody2D>(src))   { auto& d = world.add<Physics2D::RigidBody2D>(dst); d = *c; }
     if (auto* c = world.get<Physics2D::Collider2D>(src))    { auto& d = world.add<Physics2D::Collider2D>(dst);  d = *c; }
@@ -291,16 +286,10 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     }
     else if (strcmp(componentType, "Sprite2D") == 0) {
         world.add<ECS::Transform>(e);
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
         world.add<ECS::Sprite>(e);
     }
     else if (strcmp(componentType, "Sprite2DBox") == 0) {
         world.add<ECS::Transform>(e);
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
@@ -310,9 +299,6 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     }
     else if (strcmp(componentType, "Sprite2DCircle") == 0) {
         world.add<ECS::Transform>(e);
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
@@ -322,9 +308,6 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     }
     else if (strcmp(componentType, "Sprite2DCapsule") == 0) {
         world.add<ECS::Transform>(e);
-        world.add<ECS::Position2D>(e);
-        world.add<ECS::Rotation>(e);
-        world.add<ECS::Scale2D>(e);
         world.add<ECS::Sprite>(e);
         world.add<Physics2D::RigidBody2D>(e);
         Physics2D::Collider2D col;
@@ -440,9 +423,6 @@ void HierarchyPanel::renderEmptyContextMenu() {
                 ECS::Entity e = m_world->create();
                 setEntityName(*m_world, e, "New Entity");
                 m_world->add<ECS::Transform>(e);
-                m_world->add<ECS::Position2D>(e);
-                m_world->add<ECS::Rotation>(e);
-                m_world->add<ECS::Scale2D>(e);
                 m_context->selectEntity(e);
                 m_context->endUndo(*m_world);
             }

@@ -96,10 +96,8 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
 
     wt["hasComponent"] = [world](u32 entityId, const std::string& type) -> bool {
         ECS::Entity e(entityId, world);
-        if (type == "Position2D") return e.has<ECS::Position2D>();
+        if (type == "Transform")  return e.has<ECS::Transform>();
         if (type == "Velocity2D") return e.has<ECS::Velocity2D>();
-        if (type == "Rotation")   return e.has<ECS::Rotation>();
-        if (type == "Scale2D")    return e.has<ECS::Scale2D>();
         if (type == "Sprite")     return e.has<ECS::Sprite>();
         if (type == "Health")     return e.has<ECS::Health>();
         if (type == "RigidBody2D") return e.has<Physics2D::RigidBody2D>();
@@ -110,27 +108,25 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     wt["getTransform"] = [&lua, world](u32 entityId) -> sol::table {
         ECS::Entity e(entityId, world);
         sol::table t = lua.create_table();
-        auto* pos = e.get<ECS::Position2D>();
-        auto* rot = e.get<ECS::Rotation>();
-        auto* scl = e.get<ECS::Scale2D>();
-        t["x"] = pos ? pos->x : 0.0f;
-        t["y"] = pos ? pos->y : 0.0f;
-        t["rotation"] = rot ? rot->angle : 0.0f;
-        t["scaleX"] = scl ? scl->x : 1.0f;
-        t["scaleY"] = scl ? scl->y : 1.0f;
+        auto* transform = e.get<ECS::Transform>();
+        t["x"] = transform ? transform->position.x : 0.0f;
+        t["y"] = transform ? transform->position.y : 0.0f;
+        t["z"] = transform ? transform->position.z : 0.0f;
+        t["rotation"] = transform ? transform->rotation.z : 0.0f;
+        t["scaleX"] = transform ? transform->scale.x : 1.0f;
+        t["scaleY"] = transform ? transform->scale.y : 1.0f;
         return t;
     };
 
     wt["setTransform"] = [world](u32 entityId, sol::table t) {
         ECS::Entity e(entityId, world);
-        auto& pos = e.getOrAdd<ECS::Position2D>();
-        pos.x = t["x"].get_or(0.0f);
-        pos.y = t["y"].get_or(0.0f);
-        auto& rot = e.getOrAdd<ECS::Rotation>();
-        rot.angle = t["rotation"].get_or(0.0f);
-        auto& scl = e.getOrAdd<ECS::Scale2D>();
-        scl.x = t["scaleX"].get_or(1.0f);
-        scl.y = t["scaleY"].get_or(1.0f);
+        auto& transform = e.getOrAdd<ECS::Transform>();
+        transform.position.x = t["x"].get_or(0.0f);
+        transform.position.y = t["y"].get_or(0.0f);
+        transform.position.z = t["z"].get_or(0.0f);
+        transform.rotation.z = t["rotation"].get_or(0.0f);
+        transform.scale.x = t["scaleX"].get_or(1.0f);
+        transform.scale.y = t["scaleY"].get_or(1.0f);
     };
 
     wt["addTransform"] = wt["setTransform"];
@@ -223,7 +219,7 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
             p.endColor = (r << 24) | (g << 16) | (b << 8) | a;
         }
 
-        e.getOrAdd<ECS::Position2D>();
+        e.getOrAdd<ECS::Transform>();
     };
 }
 
@@ -457,8 +453,8 @@ bool ScriptEngine::init(const InitParams& params) {
             if (!emitter) return;
             for (int i = 0; i < count && emitter->activeParticles.size() < static_cast<size_t>(emitter->maxParticles); ++i) {
                 ECS::ParticleEmitterComponent::Particle p;
-                auto* pos = e.get<ECS::Position2D>();
-                p.position = pos ? Vec2{pos->x, pos->y} : Vec2{0, 0};
+                auto* transform = e.get<ECS::Transform>();
+                p.position = transform ? Vec2{transform->position.x, transform->position.y} : Vec2{0, 0};
                 p.velocity.x = static_cast<float>(rand() % 200 - 100) / 10.0f;
                 p.velocity.y = static_cast<float>(rand() % 200 - 100) / 10.0f;
                 p.life = emitter->lifetime;

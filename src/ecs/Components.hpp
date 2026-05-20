@@ -15,9 +15,10 @@
 
 namespace Caffeine::ECS {
 
-struct Position2D {
-    f32 x = 0.0f;
-    f32 y = 0.0f;
+struct Transform {
+    Vec3 position = {0.0f, 0.0f, 0.0f};
+    Vec3 rotation = {0.0f, 0.0f, 0.0f};
+    Vec3 scale    = {1.0f, 1.0f, 1.0f};
 };
 
 struct Velocity2D {
@@ -28,15 +29,6 @@ struct Velocity2D {
 struct Acceleration2D {
     f32 x = 0.0f;
     f32 y = 0.0f;
-};
-
-struct Rotation {
-    f32 angle = 0.0f;
-};
-
-struct Scale2D {
-    f32 x = 1.0f;
-    f32 y = 1.0f;
 };
 
 struct Sprite {
@@ -82,12 +74,6 @@ struct PersistentComponent {
 };
 
 struct DisabledTag {};
-
-struct Transform {
-    Vec3 position = {0.0f, 0.0f, 0.0f};
-    Vec3 rotation = {0.0f, 0.0f, 0.0f};
-    Vec3 scale    = {1.0f, 1.0f, 1.0f};
-};
 
 }  // namespace Caffeine::ECS
 

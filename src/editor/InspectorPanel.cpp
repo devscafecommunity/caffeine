@@ -132,42 +132,17 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Transform>(e)) {
         auto* t = world.get<ECS::Transform>(e);
         bool is2D = !world.has<ECS::MeshFilterComponent>(e) && !world.has<ECS::MeshRendererComponent>(e);
-        bool changed = false;
-        if (Widgets::DragVec3("Position", t->position, 0.5f)) { ctx.isDirty = true; changed = true; }
+        if (Widgets::DragVec3("Position", t->position, 0.5f)) { ctx.isDirty = true; }
         if (is2D) {
-            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; changed = true; }
+            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; }
             float s[2] = { t->scale.x, t->scale.y };
             if (ImGui::DragFloat2("Scale", s, 0.05f, 0.01f, 100.0f)) {
-                t->scale.x = s[0]; t->scale.y = s[1]; ctx.isDirty = true; changed = true;
+                t->scale.x = s[0]; t->scale.y = s[1]; ctx.isDirty = true;
             }
         } else {
-            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; changed = true; }
-            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { ctx.isDirty = true; changed = true; }
+            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; }
+            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { ctx.isDirty = true; }
         }
-        if (changed) {
-            if (auto* pos = world.get<ECS::Position2D>(e)) { pos->x = t->position.x; pos->y = t->position.y; }
-            if (auto* rot = world.get<ECS::Rotation>(e))   { rot->angle = t->rotation.z * 3.14159265f / 180.0f; }
-            if (auto* scl = world.get<ECS::Scale2D>(e))    { scl->x = t->scale.x; scl->y = t->scale.y; }
-        }
-        return;
-    }
-
-    if (world.has<ECS::Position2D>(e)) {
-        auto* pos = world.get<ECS::Position2D>(e);
-        float p[2] = { pos->x, pos->y };
-        if (ImGui::DragFloat2("Position", p, 0.5f)) { pos->x = p[0]; pos->y = p[1]; ctx.isDirty = true; }
-    }
-    if (world.has<ECS::Rotation>(e)) {
-        auto* rot = world.get<ECS::Rotation>(e);
-        float deg = rot->angle * 180.0f / 3.14159265f;
-        if (ImGui::DragFloat("Rotation", &deg, 1.0f, -360.0f, 360.0f)) {
-            rot->angle = deg * 3.14159265f / 180.0f; ctx.isDirty = true;
-        }
-    }
-    if (world.has<ECS::Scale2D>(e)) {
-        auto* scl = world.get<ECS::Scale2D>(e);
-        float s[2] = { scl->x, scl->y };
-        if (ImGui::DragFloat2("Scale", s, 0.1f, 0.01f, 100.0f)) { scl->x = s[0]; scl->y = s[1]; ctx.isDirty = true; }
     }
 }
 

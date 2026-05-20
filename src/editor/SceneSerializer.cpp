@@ -65,12 +65,11 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         }
     }
 
-    // Type 1-5, 7: POD components
     {
         std::vector<std::pair<u32, std::vector<u8>>> entries;
-        collectComponent<ECS::Position2D>(m_world, entries);
+        collectComponent<ECS::Transform>(m_world, entries);
         for (auto& [eid, data] : entries) {
-            entityMap[eid].emplace_back(kTypePosition2D, std::move(data));
+            entityMap[eid].emplace_back(kTypeTransform, std::move(data));
         }
     }
     {
@@ -85,20 +84,6 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         collectComponent<ECS::Acceleration2D>(m_world, entries);
         for (auto& [eid, data] : entries) {
             entityMap[eid].emplace_back(kTypeAcceleration2D, std::move(data));
-        }
-    }
-    {
-        std::vector<std::pair<u32, std::vector<u8>>> entries;
-        collectComponent<ECS::Rotation>(m_world, entries);
-        for (auto& [eid, data] : entries) {
-            entityMap[eid].emplace_back(kTypeRotation, std::move(data));
-        }
-    }
-    {
-        std::vector<std::pair<u32, std::vector<u8>>> entries;
-        collectComponent<ECS::Scale2D>(m_world, entries);
-        for (auto& [eid, data] : entries) {
-            entityMap[eid].emplace_back(kTypeScale2D, std::move(data));
         }
     }
     {
@@ -247,20 +232,14 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeName:
                 applyNameComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
-            case kTypePosition2D:
-                applyPODComponent<ECS::Position2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+            case kTypeTransform:
+                applyPODComponent<ECS::Transform>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeVelocity2D:
                 applyPODComponent<ECS::Velocity2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeAcceleration2D:
                 applyPODComponent<ECS::Acceleration2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
-                break;
-            case kTypeRotation:
-                applyPODComponent<ECS::Rotation>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
-                break;
-            case kTypeScale2D:
-                applyPODComponent<ECS::Scale2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeSprite:
                 applySpriteComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));

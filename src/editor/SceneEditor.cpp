@@ -109,14 +109,14 @@ void SceneEditor::shutdown() {
 void SceneEditor::enterPlayMode(ECS::World& world) {
     m_playSnapshot.clear();
     ECS::ComponentQuery q;
-    q.with<ECS::Position2D>();
-    world.forEach<ECS::Position2D>(q,
-        [&](ECS::Entity e, ECS::Position2D& pos) {
+    q.with<ECS::Transform>();
+    world.forEach<ECS::Transform>(q,
+        [&](ECS::Entity e, ECS::Transform& pos) {
             EntitySnapshot snap;
             snap.id = e.id();
-            snap.px = pos.x; snap.py = pos.y;
+            snap.px = pos.position.x; snap.py = pos.position.y;
+            snap.rz = pos.rotation.z;
             if (auto* v = world.get<ECS::Velocity2D>(e)) { snap.vx = v->x; snap.vy = v->y; }
-            if (auto* r = world.get<ECS::Rotation>(e))   { snap.rotation = r->angle; }
             m_playSnapshot.push_back(snap);
         });
     m_isPlaying = true;
@@ -138,9 +138,8 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
     for (auto& snap : m_playSnapshot) {
         ECS::Entity e(snap.id, &world);
         if (!e.isValid()) continue;
-        if (auto* pos = world.get<ECS::Position2D>(e)) { pos->x = snap.px; pos->y = snap.py; }
+        if (auto* pos = world.get<ECS::Transform>(e)) { pos->position.x = snap.px; pos->position.y = snap.py; pos->rotation.z = snap.rz; }
         if (auto* v   = world.get<ECS::Velocity2D>(e)) { v->x = snap.vx;  v->y = snap.vy;  }
-        if (auto* r   = world.get<ECS::Rotation>(e))   { r->angle = snap.rotation; }
     }
     m_playSnapshot.clear();
 }
@@ -721,7 +720,7 @@ void SceneEditor::handleAssetDrop(ECS::World& world) {
 
     ECS::Entity entity = world.create();
     setEntityName(world, entity, assetPath.stem().string().c_str());
-    world.add<ECS::Position2D>(entity, 0.0f, 0.0f);
+    world.add<ECS::Transform>(entity);
 
     if (ext == ".caf" || ext == ".png" || ext == ".jpg") {
         world.add<ECS::Sprite>(entity, assetPath.string(), 0);

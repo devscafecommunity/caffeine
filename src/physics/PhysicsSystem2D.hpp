@@ -97,13 +97,13 @@ public:
 
         ECS::ComponentQuery q;
         q.with<Collider2D>();
-        q.with<ECS::Position2D>();
+        q.with<ECS::Transform>();
 
-        world.forEach<Collider2D, ECS::Position2D>(q,
-            [&](ECS::Entity e, Collider2D& col, ECS::Position2D& pos) {
+        world.forEach<Collider2D, ECS::Transform>(q,
+            [&](ECS::Entity e, Collider2D& col, ECS::Transform& pos) {
                 if (!(col.layerMask & layerMask)) return;
 
-                Vec2 center = { pos.x + col.offset.x, pos.y + col.offset.y };
+                Vec2 center = { pos.position.x + col.offset.x, pos.position.y + col.offset.y };
                 f32 t = -1.0f;
                 Vec2 n;
 
@@ -131,12 +131,12 @@ public:
 
         ECS::ComponentQuery q;
         q.with<Collider2D>();
-        q.with<ECS::Position2D>();
+        q.with<ECS::Transform>();
 
-        world.forEach<Collider2D, ECS::Position2D>(q,
-            [&](ECS::Entity e, Collider2D& col, ECS::Position2D& pos) {
+        world.forEach<Collider2D, ECS::Transform>(q,
+            [&](ECS::Entity e, Collider2D& col, ECS::Transform& pos) {
                 if (!(col.layerMask & layerMask)) return;
-                Vec2 c = { pos.x + col.offset.x, pos.y + col.offset.y };
+                Vec2 c = { pos.position.x + col.offset.x, pos.position.y + col.offset.y };
 
                 if (col.shape == ColliderShape::Circle) {
                     f32 dist = length({ center.x - c.x, center.y - c.y });
@@ -156,12 +156,12 @@ public:
 
         ECS::ComponentQuery q;
         q.with<Collider2D>();
-        q.with<ECS::Position2D>();
+        q.with<ECS::Transform>();
 
-        world.forEach<Collider2D, ECS::Position2D>(q,
-            [&](ECS::Entity e, Collider2D& col, ECS::Position2D& pos) {
+        world.forEach<Collider2D, ECS::Transform>(q,
+            [&](ECS::Entity e, Collider2D& col, ECS::Transform& pos) {
                 if (!(col.layerMask & layerMask)) return;
-                Vec2 c = { pos.x + col.offset.x, pos.y + col.offset.y };
+                Vec2 c = { pos.position.x + col.offset.x, pos.position.y + col.offset.y };
 
                 if (col.shape == ColliderShape::Circle) {
                     if (circleVsAABB(c, col.radius, rect.position, rect.size))
@@ -206,9 +206,9 @@ public:
     }
 
     void teleport(ECS::World& world, ECS::Entity e, Vec2 position) {
-        if (auto* pos = world.get<ECS::Position2D>(e)) {
-            pos->x = position.x;
-            pos->y = position.y;
+        if (auto* pos = world.get<ECS::Transform>(e)) {
+            pos->position.x = position.x;
+            pos->position.y = position.y;
         }
         if (auto* rb = world.get<RigidBody2D>(e)) {
             rb->isSleeping = false;
@@ -250,14 +250,14 @@ private:
     void integrateAll(ECS::World& world, f32 dt) {
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
-        q.with<ECS::Position2D>();
+        q.with<ECS::Transform>();
         q.with<ECS::Velocity2D>();
 
-        world.forEach<RigidBody2D, ECS::Position2D, ECS::Velocity2D>(q,
-            [&](ECS::Entity, RigidBody2D& rb, ECS::Position2D& pos, ECS::Velocity2D& vel) {
+        world.forEach<RigidBody2D, ECS::Transform, ECS::Velocity2D>(q,
+            [&](ECS::Entity, RigidBody2D& rb, ECS::Transform& pos, ECS::Velocity2D& vel) {
                 if (rb.isKinematic) {
-                    pos.x += vel.x * dt;
-                    pos.y += vel.y * dt;
+                    pos.position.x += vel.x * dt;
+                    pos.position.y += vel.y * dt;
                     return;
                 }
 
@@ -271,8 +271,8 @@ private:
                 vel.x *= damping;
                 vel.y *= damping;
 
-                pos.x += vel.x * dt;
-                pos.y += vel.y * dt;
+                pos.position.x += vel.x * dt;
+                pos.position.y += vel.y * dt;
             });
     }
 
@@ -282,13 +282,13 @@ private:
 
         ECS::ComponentQuery q;
         q.with<Collider2D>();
-        q.with<ECS::Position2D>();
+        q.with<ECS::Transform>();
 
-        world.forEach<Collider2D, ECS::Position2D>(q,
-            [&](ECS::Entity e, Collider2D& col, ECS::Position2D& pos) {
+        world.forEach<Collider2D, ECS::Transform>(q,
+            [&](ECS::Entity e, Collider2D& col, ECS::Transform& pos) {
                 EntityCell ec;
                 ec.id  = e.id();
-                ec.pos = { pos.x + col.offset.x, pos.y + col.offset.y };
+                ec.pos = { pos.position.x + col.offset.x, pos.position.y + col.offset.y };
                 ec.col = &col;
                 m_entityData.push_back(ec);
 
@@ -535,12 +535,12 @@ private:
         auto* posB = getPos(world, idB);
 
         if (posA && invMassA > 0.0f) {
-            posA->x -= m.normal.x * correctionMag * invMassA;
-            posA->y -= m.normal.y * correctionMag * invMassA;
+            posA->position.x -= m.normal.x * correctionMag * invMassA;
+            posA->position.y -= m.normal.y * correctionMag * invMassA;
         }
         if (posB && invMassB > 0.0f) {
-            posB->x += m.normal.x * correctionMag * invMassB;
-            posB->y += m.normal.y * correctionMag * invMassB;
+            posB->position.x += m.normal.x * correctionMag * invMassB;
+            posB->position.y += m.normal.y * correctionMag * invMassB;
         }
     }
 
@@ -703,8 +703,8 @@ private:
         return world.get<ECS::Velocity2D>(ECS::Entity(id, &world));
     }
 
-    ECS::Position2D* getPos(ECS::World& world, u32 id) {
-        return world.get<ECS::Position2D>(ECS::Entity(id, &world));
+    ECS::Transform* getPos(ECS::World& world, u32 id) {
+        return world.get<ECS::Transform>(ECS::Entity(id, &world));
     }
 
     RigidBody2D* getRB(ECS::World& world, u32 id) {

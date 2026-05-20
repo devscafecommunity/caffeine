@@ -11,15 +11,8 @@ public:
     }
 
     void onUpdate(Caffeine::ECS::Entity entity, Caffeine::ECS::World& world, Caffeine::f32 dt) override {
-        if (auto* pos = world.get<Caffeine::ECS::Position2D>(entity)) {
-            pos->x += 100.0f * dt;
-        }
         if (auto* tf = world.get<Caffeine::ECS::Transform>(entity)) {
             tf->position.x += 100.0f * dt;
-            if (auto* pos = world.get<Caffeine::ECS::Position2D>(entity)) {
-                pos->x = tf->position.x;
-                pos->y = tf->position.y;
-            }
         }
     }
 
