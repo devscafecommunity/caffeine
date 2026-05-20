@@ -42,13 +42,18 @@ wraps SDL3-GPU command buffers; mesh rendering will use indexed draws
 with a single persistent vertex buffer per mesh, uploaded once at asset
 load time.
 
-\subsection{Scripting (Lua 5.4)}
+\subsection{Scripting (CppScript)}
 
-The scripting engine (\texttt{src/script/}) embeds Lua 5.4.
-Each entity may have a \texttt{ScriptComponent} that stores a Lua table
-as its instance state. The engine exposes the ECS world to scripts via a
-C API binding layer. Script execution runs on the main thread; no
-cross-thread Lua state sharing is permitted.
+The scripting system (\texttt{src/script/}) uses a hot-reloadable C++ approach 
+rather than an interpreted language. High-level logic is implemented by 
+inheriting from the \texttt{CppScript} base class.
+
+The \texttt{ScriptWatcher} monitors the filesystem for changes to script 
+source files. Upon detection, it triggers an external compiler and 
+dynamically reloads the resulting shared library (DLL/SO), patching the 
+function pointers in live \texttt{ScriptComponent} instances. This provides 
+the productivity of a scripting language with the full performance and type 
+safety of C++.
 
 \subsection{Animation}
 

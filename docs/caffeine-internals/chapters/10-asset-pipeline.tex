@@ -93,3 +93,28 @@ initialisation cost.
 platforms). Changed paths are pushed onto a thread-safe queue and polled
 from the main thread so that the asset loader can hot-reload without
 cross-thread world mutation.
+
+\section{Runtime Asset Types}
+
+While metadata defines the disk layout, runtime code interacts with zero-copy view types.
+These structures do not own memory; they hold pointers directly into the \texttt{LinearAllocator} 
+buffer where the \texttt{.caf} payload was loaded.
+
+\begin{itemize}
+    \item \textbf{Texture}: Contains \texttt{width}, \texttt{height}, \texttt{format}, and \texttt{mipLevels}. The \texttt{pixels} pointer provides raw access to the texel data of size \texttt{pixelDataSize}.
+    \item \textbf{AudioClip}: Encapsulates PCM data with \texttt{sampleRate}, \texttt{channels}, \texttt{bitsPerSample}, and \texttt{sampleCount}. Raw data is accessed via \texttt{pcmData}.
+    \item \textbf{ShaderBlob}: A wrapper for compiled bytecode (\texttt{bytecode}, \texttt{bytecodeSize}) and its associated pipeline \texttt{stage} (Vertex, Fragment, or Compute).
+\end{itemize}
+
+\subsection{Asset Type Traits}
+
+The \texttt{AssetTypeTrait<T>} template specialization mechanism is used to map 
+C++ runtime types to their corresponding \texttt{AssetType} discriminants. This allows 
+the \texttt{AssetManager} to perform type-safe loading and caching using the 
+\texttt{.caf} header information.
+
+\begin{lstlisting}[caption={AssetTypeTrait specialization}]
+template<> struct AssetTypeTrait<Texture> {
+    static constexpr AssetType cafType = AssetType::Texture;
+};
+\end{lstlisting}

@@ -1,0 +1,196 @@
+\chapter{Animation System}
+
+The Caffeine Engine's Animation subsystem is a data-oriented, state-driven framework designed to handle 2D sprite-based animations with support for state transitions, blending, and frame-level events. By separating animation data (clips) from state logic (transitions) and playback state (animator), the system achieves a flexible and performant architecture that integrates seamlessly with the Entity-Component-System (ECS) through the \texttt{AnimationSystem}.
+
+\needspace{6\baselineskip}
+\section{Foundational Structures}
+
+The system is built upon several key structures that define how animation data is stored and interpreted. At the lowest level, individual frames are represented by rectangle definitions.
+
+\needspace{5\baselineskip}
+\subsection{FrameRect and AnimationClip}
+
+The \texttt{FrameRect} struct defines a source rectangle within a texture atlas. This allows the renderer to extract the correct sub-image for a specific frame of animation.
+
+\begin{lstlisting}[language=C++]
+struct FrameRect {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 w = 0.0f;
+    f32 h = 0.0f;
+};
+\end{lstlisting}
+
+An \texttt{AnimationClip} is a sequence of \texttt{FrameRect} objects accompanied by playback metadata. It serves as the raw asset from which animations are played.
+
+\begin{lstlisting}[language=C++]
+struct AnimationClip {
+    FixedString<32>        name;
+    u32                    fps   = 12;
+    std::vector<FrameRect> frames;
+    bool                   loop  = true;
+
+    f32 duration() const;
+};
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{fps}: Frames per second, determining the playback speed of the clip.
+    \item \textbf{frames}: A vector containing the source rectangles for each frame.
+    \item \textbf{loop}: A boolean indicating whether the animation should restart once it reaches the end.
+\end{itemize}
+
+The duration of a clip is calculated based on its frame count and playback frequency:
+
+\begin{equation}
+\text{duration} = \frac{\text{frames.size()}}{\text{fps}}
+\end{equation}
+
+\needspace{5\baselineskip}
+\subsection{Animation States and Transitions}
+
+Higher-level logic is handled by \texttt{AnimationState} and \texttt{AnimationTransition}. These structures define how the engine moves between different clips (e.g., from an "Idle" state to a "Run" state).
+
+\begin{lstlisting}[language=C++]
+struct AnimationTransition {
+    FixedString<32>       toState;
+    std::function<bool()> condition;
+    f32                   blendTime   = 0.1f;
+    bool                  hasExitTime = false;
+};
+\end{lstlisting}
+
+A transition defines a destination state (\texttt{toState}) and a predicate (\texttt{condition}) that must be met for the transition to trigger. The \texttt{hasExitTime} property is crucial for animations that must complete their current loop before transitioning (such as a jump start or an attack animation).
+
+\begin{specbox}{Design Rationale: Transition Evaluation}
+The use of \texttt{std::function<bool()>} for transition conditions allows for complex logic to be defined by gameplay scripts or AI controllers. While it introduces a small overhead compared to pure data-driven flags, it provides the flexibility required for dynamic state machines where conditions might involve multiple external components.
+\end{specbox}
+
+The \texttt{AnimationState} wraps a clip and manages its specific playback parameters and outgoing transitions.
+
+\begin{lstlisting}[language=C++]
+struct AnimationState {
+    FixedString<32>                  name;
+    const AnimationClip*             clip  = nullptr;
+    f32                              speed = 1.0f;
+    std::vector<AnimationTransition> transitions;
+};
+\end{lstlisting}
+
+\needspace{6\baselineskip}
+\section{The Animator Component}
+
+The \texttt{Animator} is the primary ECS component used to attach animation capabilities to an entity. It maintains the current state machine configuration and tracks the progression of time.
+
+\begin{lstlisting}[language=C++]
+struct Animator {
+    HashMap<FixedString<32>, AnimationState>     states;
+    FixedString<32>                              currentState;
+    FixedString<32>                              previousState;
+    f32                                          timeInState   = 0.0f;
+    f32                                          blendWeight   = 1.0f;
+    f32                                          playbackScale = 1.0f;
+    bool                                         paused        = false;
+    std::vector<std::pair<u32, FixedString<32>>> frameEvents;
+    std::function<void(const FixedString<32>&)>  onFrameEvent;
+};
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{states}: A hash map storing the available states for this animator, indexed by their name.
+    \item \textbf{timeInState}: Accumulates the elapsed time since the last state change, used to calculate the current frame.
+    \item \textbf{playbackScale}: A global multiplier applied to the playback speed of any active state.
+    \item \textbf{frameEvents}: A list of specific frames that trigger a callback. This is useful for synchronization (e.g., triggering a footstep sound on frame 3).
+\end{itemize}
+
+\needspace{6\baselineskip}
+\section{Animation System Logic}
+
+The \texttt{AnimationSystem} is responsible for updating all \texttt{Animator} components in the \texttt{World}. It operates on entities that possess both an \texttt{Animator} and a \texttt{Sprite} component.
+
+\needspace{5\baselineskip}
+\subsection{State Machine Evaluation}
+
+During the update loop, the system first evaluates the transitions of the current state via \texttt{evaluateTransitions()}.
+
+\begin{lstlisting}[language=C++]
+static void evaluateTransitions(Animator& anim) {
+    const AnimationState* state = anim.states.get(anim.currentState);
+    if (!state) return;
+
+    for (const auto& t : state->transitions) {
+        if (!t.condition) continue;
+        if (t.hasExitTime && state->clip) {
+            if (anim.timeInState < state->clip->duration()) continue;
+        }
+        if (t.condition()) {
+            anim.previousState = anim.currentState;
+            anim.currentState  = t.toState;
+            anim.timeInState   = 0.0f;
+            return;
+        }
+    }
+}
+\end{lstlisting}
+
+The evaluation logic respects the \texttt{hasExitTime} flag by checking if \texttt{timeInState} has reached the clip's duration. If a transition is triggered, the \texttt{timeInState} is reset to zero, effectively starting the new animation from its first frame.
+
+\needspace{5\baselineskip}
+\subsection{Frame Index Computation}
+
+Once the current state is determined, the system calculates the appropriate frame index for the renderer. This involves applying state-specific and global speed multipliers to the delta time.
+
+The effective playback speed is calculated as:
+\begin{equation}
+v_{\text{eff}} = \text{state.speed} \times \text{anim.playbackScale}
+\end{equation}
+
+The time within the state is updated:
+\begin{equation}
+T_{\text{state}} = T_{\text{state}} + \Delta t \times v_{\text{eff}}
+\end{equation}
+
+For looping animations, the time is wrapped within the clip's duration:
+\begin{equation}
+T_{\text{state}} = T_{\text{state}} \pmod{D_{\text{clip}}}
+\end{equation}
+
+The final frame index $F$ is then derived from the accumulated time and the clip's frame rate:
+
+\begin{equation}
+F = \lfloor T_{\text{state}} \times \text{fps} \rfloor
+\end{equation}
+
+In non-looping mode, the frame index is clamped to ensure it does not exceed the bounds of the frame vector:
+
+\begin{equation}
+F_{\text{clamped}} = \min(F, \text{frameCount} - 1)
+\end{equation}
+
+This logic ensures that animations remain smooth and synchronized with the engine's update frequency, even under varying frame rates.
+
+\needspace{5\baselineskip}
+\subsection{Event Dispatching}
+
+The system checks for frame events by comparing the current frame index against the registered events in the \texttt{Animator}. If a match is found, the \texttt{onFrameEvent} callback is executed with the corresponding event name. This mechanism allows the engine to decouple visual feedback from gameplay logic while maintaining tight synchronization.
+
+\needspace{6\baselineskip}
+\section{State Machine Workflow}
+
+A typical workflow for setting up an animation involves defining the clips, organizing them into a state machine, and configuring transitions.
+
+\begin{specbox}{Example: Player State Machine}
+Consider a player character with "Idle", "Walk", and "Jump" states.
+\begin{enumerate}
+    \item \textbf{Idle}: Loops indefinitely. Transitions to \textbf{Walk} when \texttt{velocity.x > 0}.
+    \item \textbf{Walk}: Loops indefinitely. Transitions to \textbf{Idle} when \texttt{velocity.x == 0}, and to \textbf{Jump} when \texttt{isGrounded == false}.
+    \item \textbf{Jump}: Does not loop (\texttt{loop = false}). Transitions back to \textbf{Idle} or \textbf{Walk} only after \texttt{hasExitTime} is met and the landing animation completes.
+\end{enumerate}
+\end{specbox}
+
+The blending window defined by \texttt{blendTime} in transitions allows the system to interpolate between the poses of the previous and current states, though the current 2D implementation primarily uses this for timing state swaps rather than skeletal bone blending.
+
+\needspace{6\baselineskip}
+\section{Conclusion}
+
+The Caffeine Animation System provides a robust foundation for 2D character animation. By leveraging a state-machine architecture and formalizing the relationship between time, frame rates, and transitions, it allows developers to create complex, responsive animations with minimal boilerplate. The integration with the ECS ensures that animation logic is processed efficiently in parallel with other game systems, maintaining the engine's high-performance standards.

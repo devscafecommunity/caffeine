@@ -108,3 +108,36 @@ Systems implement \texttt{ISystem} and are registered in
 The world provides \texttt{forEach<C1, C2, \ldots>} which iterates over all
 entities possessing the queried component types, invoking a callable
 with typed references.
+
+\needspace{6\baselineskip}
+\section{Component Queries}
+
+The \texttt{ComponentQuery} class provides a builder interface for selecting archetypes
+based on component presence, absence, or partial matches. It maintains three criteria:
+\begin{itemize}
+    \item \texttt{m\_required}: A \texttt{ComponentSet} of types that \textbf{must} be present.
+    \item \texttt{m\_excluded}: A \texttt{ComponentSet} of types that \textbf{must not} be present.
+    \item \texttt{m\_any}: A vector of \texttt{ComponentSet}s, where for each set, \textbf{at least one} component must be present.
+\end{itemize}
+
+The builder methods \texttt{with<T>()}, \texttt{without<T>()}, and \texttt{any<T...>()}
+populate these masks using \texttt{ComponentID::get<T>()}.
+
+\subsection{Matching Logic}
+
+Given an archetype's component set $\mathcal{A}$, the query matches if and only if the following boolean expression is true:
+\begin{equation}
+    (\mathcal{R} \subseteq \mathcal{A}) \land (\mathcal{E} \cap \mathcal{A} = \emptyset) \land \left( \forall \mathcal{S} \in \mathcal{M}_{any} : \mathcal{S} \cap \mathcal{A} \neq \emptyset \right)
+\end{equation}
+where $\mathcal{R}$ is the required set, $\mathcal{E}$ is the excluded set, and $\mathcal{M}_{any}$ is the collection of "any" sets.
+
+\begin{lstlisting}[caption={ComponentQuery API usage}]
+ComponentQuery query;
+query.with<Transform, Mesh>()
+     .without<Hidden>()
+     .any<Sprite, ParticleEmitter>();
+
+if (query.matches(someArchetype)) {
+    // Process archetype...
+}
+\end{lstlisting}

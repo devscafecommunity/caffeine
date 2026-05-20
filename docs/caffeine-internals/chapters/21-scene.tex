@@ -1,0 +1,149 @@
+\chapter{Scene Management}
+
+The Scene Management subsystem in the Caffeine Engine provides a robust framework for handling game states, level transitions, and spatial hierarchies. It acts as the orchestrator for the Entity Component System (ECS) worlds, managing their lifecycle, serialization, and hierarchical relationships between entities.
+
+\needspace{6\baselineskip}
+\section{Scene Manager}
+
+The \texttt{SceneManager} class is the central authority for controlling which ECS world is currently active and how the engine transitions between different game states. It utilizes a stack-based approach for managing multiple active worlds, allowing for scenarios such as pausing a game to display a menu overlay.
+
+\subsection{World Stack Management}
+
+Internally, the \texttt{SceneManager} maintains a \texttt{m\_worldStack}, which is a vector of unique pointers to \texttt{ECS::World} instances. This stack architecture enables complex state management:
+
+\begin{lstlisting}[language=C++]
+std::vector<std::unique_ptr<ECS::World>> m_worldStack;
+\end{lstlisting}
+
+The primary methods for stack manipulation are:
+
+\begin{itemize}
+    \item \texttt{switchScene(path, transition)}: Clears the current stack and loads a new scene from the specified path. This is the standard method for moving between levels.
+    \item \texttt{pushScene(path)}: Loads a new scene and pushes it onto the top of the stack. The previous scene remains in memory but becomes inactive.
+    \item \texttt{popScene()}: Removes the top-most scene from the stack, returning control to the scene immediately below it.
+\end{itemize}
+
+\subsection{Scene Transitions}
+
+To ensure smooth visual flow between scenes, the \texttt{SceneManager} includes a transition system. Transitions are configured using the \texttt{TransitionConfig} structure, which defines the visual style and timing of the switch.
+
+\begin{lstlisting}[language=C++]
+struct TransitionConfig {
+    TransitionType type      = TransitionType::Fade;
+    f32            duration  = 0.5f;
+    Color          fadeColor = {};
+};
+\end{lstlisting}
+
+The engine supports several \texttt{TransitionType} modes:
+\begin{itemize}
+    \item \texttt{None}: Instantaneous swap.
+    \item \texttt{Fade}: Smooth color overlay (usually black) that fades out the old scene and fades in the new one.
+    \item \texttt{Slide}: Linear interpolation of viewports.
+    \item \texttt{Custom}: Programmable transition effects.
+\end{itemize}
+
+During a transition, the \texttt{m\_transitioning} flag is set to true, and \texttt{m\_transProgress} is updated during the \texttt{update(dt)} loop based on the duration specified in the config.
+
+\subsection{Asynchronous Preloading}
+
+For large-scale levels, the engine supports preloading scenes into memory before they are needed. The \texttt{loadScene(path, async)} method can be called to populate the \texttt{m\_preloaded} map.
+
+\begin{lstlisting}[language=C++]
+SceneHandle loadScene(const char* path, bool async = false);
+\end{lstlisting}
+
+This returns a \texttt{SceneHandle}, which can later be used to activate the scene instantly, bypassing the disk I/O bottleneck during critical gameplay moments.
+
+\specbox{Design Rationale: Stack vs Single Scene}{
+While many engines only support one active scene, Caffeine uses a stack (\texttt{m\_worldStack}) to facilitate UI and Sub-state management. By pushing a "PauseMenu" world onto the stack, the "GameWorld" state is preserved exactly as it was, avoiding expensive save/load cycles for simple overlays.
+}
+
+\needspace{6\baselineskip}
+\section{Scene Serialization}
+
+The \texttt{SceneSerializer} is responsible for converting the dynamic state of an \texttt{ECS::World} into a persistent format and vice versa. It employs a dual-format strategy to balance production performance with development flexibility.
+
+\subsection{Dual Format Strategy}
+
+Caffeine utilizes two distinct serialization formats:
+
+\begin{enumerate}
+    \item \textbf{Binary (.caf)}: The primary format for production builds. It is designed for maximum loading speed and minimal file size. It uses raw memory copies for POD (Plain Old Data) components and a custom block-based structure.
+    \item \textbf{JSON}: A human-readable format used during development. It allows developers to inspect scene files in text editors, track changes via version control systems like Git, and manually tweak component values without needing a dedicated editor.
+\end{enumerate}
+
+\subsection{The .caf Binary Format}
+
+The binary format is structured around the \texttt{CafHeader} and a series of data blocks produced by \texttt{buildBlocks()}. The file layout consists of:
+
+\begin{enumerate}
+    \item \textbf{Header}: Contains the magic number (\texttt{0xCAF0}), versioning information, and the asset type identifier.
+    \item \textbf{Metadata Block}: Stores high-level scene information such as entity counts and archetype offsets.
+    \item \textbf{Payload Block}: The raw component data, organized into typed sections.
+\end{enumerate}
+
+The payload is reconstructed by the \texttt{parsePayload()} function. Each section in the payload starts with a \texttt{typeId} and a \texttt{count}, followed by the entity ID and component data for each entry.
+
+\begin{lstlisting}[language=C++]
+// Example of binary section layout
+struct RawSection {
+    u32      typeId;
+    u32      count;
+    // Followed by count * (u32 eid + componentData)
+};
+\end{lstlisting}
+
+\subsection{Serialization Process}
+
+When \texttt{serialize()} is invoked, the engine performs the following steps:
+\begin{enumerate}
+    \item \textbf{Block Building}: \texttt{buildBlocks()} iterates through all component types in the world (Transform, Health, etc.) and collects them into contiguous buffers.
+    \item \textbf{CRC Calculation}: A CRC32 checksum is generated for the payload to ensure data integrity.
+    \item \textbf{I/O}: The \texttt{CafWriter} handles the final writing to disk, ensuring proper alignment and header construction.
+\end{enumerate}
+
+\needspace{6\baselineskip}
+\section{Scene Components and Hierarchy}
+
+Beyond simple data storage, the scene system implements a spatial hierarchy through specialized components found in \texttt{SceneComponents.hpp}.
+
+\subsection{The Parent Component}
+
+The \texttt{Parent} component establishes a relationship between two entities. It contains a handle to the parent entity and a dirty flag used for transform updates.
+
+\begin{lstlisting}[language=C++]
+struct Parent {
+    ECS::Entity parent = ECS::Entity::INVALID;
+    bool        dirty  = true;
+};
+\end{lstlisting}
+
+When an entity has a \texttt{Parent} component, its local \texttt{Transform} is treated as an offset relative to the parent, rather than a world-space position.
+
+\subsection{WorldTransform and Dirty Propagation}
+
+The \texttt{WorldTransform} component stores the final, calculated 4x4 matrix used for rendering.
+
+\begin{lstlisting}[language=C++]
+struct WorldTransform {
+    Mat4 matrix = Mat4::identity();
+};
+\end{lstlisting}
+
+\textbf{Dirty Flag Propagation}:
+The system uses a "push" model for transform updates. When a parent's \texttt{Transform} changes, its \texttt{Parent::dirty} flag (and the flags of all its children) must be set to true. 
+
+During the scene update phase:
+\begin{enumerate}
+    \item The system identifies all entities with \texttt{dirty == true}.
+    \item It traverses the hierarchy from the root down.
+    \item For each entity, it computes: $WorldMatrix = ParentWorldMatrix \times LocalTransformMatrix$.
+    \item The result is stored in the \texttt{WorldTransform} component, and the dirty flag is cleared.
+\end{enumerate}
+
+This approach ensures that matrix multiplications are only performed when necessary, significantly optimizing performance in complex scenes with deep hierarchies.
+
+\specbox{Implementation Detail: Entity Remapping}{
+During deserialization, entity handles in the file may not match the handles assigned by the current \texttt{ECS::World}. The \texttt{SceneSerializer::parsePayload} function maintains an \texttt{unordered_map<u32, ECS::Entity>} to remap old IDs to new ones, ensuring that the \texttt{Parent} components correctly point to the newly created entities in the current session.
+}

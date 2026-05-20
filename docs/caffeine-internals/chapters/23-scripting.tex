@@ -1,0 +1,200 @@
+\chapter{Scripting System}
+
+The Caffeine Engine implements a specialized scripting subsystem designed for high performance and direct integration with the core C++ codebase. Unlike many modern engines that rely on external interpreted languages, Caffeine uses a native C++ scripting approach. This design choice ensures that gameplay logic runs at near metal speeds while maintaining full access to the engine's low level APIs and type safety.
+
+\needspace{6\baselineskip}
+\section{Design Rationale}
+
+The decision to use C++ as the primary scripting language is central to the philosophy of the Caffeine Engine. By avoiding a virtual machine or a bytecode interpreter, the engine eliminates the traditional overhead associated with language bridging and data marshaling.
+
+\begin{specbox}{Performance and Type Safety}
+Direct C++ scripting allows the compiler to optimize gameplay code alongside the engine core. Developers benefit from compile time checks, preventing a large class of runtime errors that are common in dynamically typed scripting environments. Furthermore, the absence of a garbage collector in the scripting layer provides predictable frame times, which is essential for maintaining a consistent 60 or 144 Hz simulation.
+\end{specbox}
+
+The scripting system is built around the concept of Hot Reloadable C++ modules. This provides the fast iteration cycles typically associated with interpreted languages while retaining the performance characteristics of compiled code.
+
+\needspace{6\baselineskip}
+\section{The Script Engine}
+
+The \texttt{ScriptEngine} class serves as the central authority for managing the lifecycle of scripts within the engine. It handles the loading, unloading, and reloading of script modules, as well as the dispatching of events to active script instances.
+
+\needspace{5\baselineskip}
+\subsection{Initialization and Configuration}
+
+To initialize the script engine, the \texttt{InitParams} structure must be populated with pointers to the core engine systems. This ensures that scripts have access to the world, input, and event subsystems from the moment they are created.
+
+\begin{lstlisting}[language=C++, caption=ScriptEngine Initialization Parameters]
+struct InitParams {
+    ECS::World* world = nullptr;
+    Input::InputManager* input = nullptr;
+    Events::EventBus* events = nullptr;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{The Scripting API}
+
+The \texttt{ScriptEngine} provides a streamlined API for interacting with the scripting layer. Most operations revolve around loading and managing script assets throughout the execution of the game.
+
+\begin{itemize}
+    \item \texttt{loadScript(path, outError)}: Loads a C++ script module from the specified filesystem path. If the operation fails, it populates the optional error string with diagnostic information.
+    \item \texttt{reloadScript(path, outError)}: Forces a reload of a previously loaded script. This method is critical for the hot reload workflow, as it handles the replacement of active script instances.
+    \item \texttt{isLoaded(path)}: Returns a boolean indicating whether a script is currently registered and available for use.
+\end{itemize}
+
+These methods abstract the complexity of the underlying module loader, providing a simple interface for other engine systems to use.
+
+\needspace{5\baselineskip}
+\subsection{ABI Stability via Pimpl Pattern}
+
+The \texttt{ScriptEngine} employs the Pointer to Implementation (Pimpl) pattern to maintain a stable Application Binary Interface (ABI). This technique encapsulates the internal state and third party dependencies within a private structure, ensuring that changes to the implementation do not require a recompilation of the entire engine.
+
+\begin{lstlisting}[language=C++, caption=ScriptEngine Pimpl Implementation]
+class ScriptEngine {
+public:
+    // ... public API ...
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
+\end{lstlisting}
+
+This approach is particularly valuable for a scripting system where the underlying loading mechanisms or internal registries might evolve frequently.
+
+\needspace{6\baselineskip}
+\section{The CppScript Base Class}
+
+Every user defined script in Caffeine must inherit from the \texttt{CppScript} base class. This class defines a set of virtual hooks that the engine calls at specific points in an entity's lifecycle.
+
+\begin{lstlisting}[language=C++, caption=CppScript Interface]
+class CppScript {
+public:
+    virtual ~CppScript() = default;
+
+    virtual void onCreate(ECS::Entity entity, ECS::World& world);
+    virtual void onUpdate(ECS::Entity entity, ECS::World& world, f32 dt);
+    virtual void onDestroy(ECS::Entity entity, ECS::World& world);
+    virtual void onCollision(ECS::Entity entity, ECS::Entity other, ECS::World& world);
+};
+\end{lstlisting}
+
+By overriding these methods, developers can implement complex behaviors that react to world events, user input, or physics interactions.
+
+\needspace{5\baselineskip}
+\subsection{Script Registration}
+
+To enable the engine to instantiate scripts by name, a registration macro is provided. This macro handles the boilerplate of adding the script factory to the global \texttt{CppScriptRegistry}.
+
+\begin{lstlisting}[language=C++, caption=Registering a Custom Script]
+class PlayerController : public CppScript {
+    void onUpdate(ECS::Entity entity, ECS::World& world, f32 dt) override {
+        // Gameplay logic here
+    }
+};
+
+REGISTER_CPP_SCRIPT(PlayerController)
+\end{lstlisting}
+
+The registration happens at static initialization time, allowing the engine to discover all available scripts without manual configuration.
+
+\needspace{6\baselineskip}
+\section{Script Components and Data}
+
+The integration of scripts into the Entity Component System (ECS) is handled via specialized components. These components store the necessary state to associate an entity with its scripted behavior.
+
+\needspace{5\baselineskip}
+\subsection{ScriptComponent}
+
+The \texttt{ScriptComponent} is a lightweight structure that identifies the script associated with an entity. It primarily holds a path to the script file, which is used by the hot reload system to track changes.
+
+\begin{lstlisting}[language=C++, caption=ScriptComponent Structure]
+struct ScriptComponent {
+    std::string scriptPath;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{CppScriptComponent}
+
+For native C++ scripts, the \texttt{CppScriptComponent} maintains the actual instance of the script and its initialization state.
+
+\begin{lstlisting}[language=C++, caption=CppScriptComponent Structure]
+struct CppScriptComponent {
+    std::string className;
+    std::shared_ptr<CppScript> instance;
+    bool initialized = false;
+};
+\end{lstlisting}
+
+The \texttt{initialized} flag ensures that the \texttt{onCreate} hook is called exactly once, even if the script is added to an entity mid frame.
+
+\needspace{6\baselineskip}
+\section{Systems and Runtime Logic}
+
+The execution of script logic is governed by the \texttt{ScriptSystem}, which is a standard ECS system that runs during the engine's update loop.
+
+\needspace{5\baselineskip}
+\subsection{The ScriptSystem Implementation}
+
+The \texttt{ScriptSystem} bridges the gap between the \texttt{ScriptEngine} and the ECS world. It ensures that every entity with a script component receives the appropriate lifecycle callbacks at the right time.
+
+\begin{lstlisting}[language=C++, caption=ScriptSystem Update Logic]
+void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
+    auto view = world.view<CppScriptComponent>();
+    for (auto entity : view) {
+        auto& script = view.get<CppScriptComponent>(entity);
+        
+        if (!script.initialized) {
+            m_engine->callOnCreate(script.className, entity);
+            script.initialized = true;
+        }
+
+        m_engine->callOnUpdate(script.className, entity, dt);
+    }
+}
+\end{lstlisting}
+
+This logic ensures that the \texttt{onCreate} hook is always called before the first \texttt{onUpdate}, providing a reliable initialization point for script state.
+
+\needspace{5\baselineskip}
+\subsection{Interaction with Other Subsystems}
+
+The scripting system does not exist in isolation. Through the \texttt{InitParams} provided at startup, scripts can emit events via the \texttt{EventBus} or query the \texttt{InputManager} for user actions. This cross system communication allows scripts to serve as the glue that binds the engine's various technical modules into a cohesive game experience.
+
+\needspace{6\baselineskip}
+\section{Native Callbacks and Performance}
+
+While \texttt{CppScript} classes provide the most structured way to write gameplay logic, the engine also supports \texttt{NativeScriptComponent} for scenarios requiring even tighter integration or lightweight closures.
+
+\begin{lstlisting}[language=C++, caption=NativeScriptComponent Structure]
+struct NativeScriptComponent {
+    ScriptInitCallback onCreate;
+    ScriptCallback onUpdate;
+    ScriptDestroyCallback onDestroy;
+    ScriptCollisionCallback onCollision;
+    bool initialized = false;
+};
+\end{lstlisting}
+
+These callbacks can be bound to lambda functions or static methods, offering a flexible alternative for simple behaviors that do not warrant a full class definition.
+
+\needspace{6\baselineskip}
+\section{ScriptWatcher and Hot Reloading}
+
+One of the most powerful features of the Caffeine scripting system is its ability to reload scripts at runtime without restarting the engine. This is handled by the \texttt{ScriptWatcher} class.
+
+The \texttt{ScriptWatcher} monitors the filesystem for changes to script files. When a modification is detected, it triggers the \texttt{ScriptEngine} to reload the corresponding module. The engine then identifies all active \texttt{CppScriptComponent} instances using that script, recreates their instances, and preserves their state where possible.
+
+\begin{lstlisting}[language=C++, caption=ScriptWatcher Polling]
+void ScriptWatcher::poll() {
+    for (auto& [path, lastTime] : m_mtimes) {
+        auto currentTime = std::filesystem::last_write_time(path);
+        if (currentTime > lastTime) {
+            m_engine->reloadScript(path);
+            lastTime = currentTime;
+        }
+    }
+}
+\end{lstlisting}
+
+This mechanism significantly reduces the feedback loop for gameplay programmers, allowing for rapid experimentation and tuning of game mechanics.
