@@ -238,20 +238,20 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
             float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
             if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
-                ctx.camFocus.x += cosY * speed;
-                ctx.camFocus.z += sinY * speed;
+                ctx.camFocus.x += -sinY * speed;
+                ctx.camFocus.z +=  cosY * speed;
             }
             if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+                ctx.camFocus.x -= -sinY * speed;
+                ctx.camFocus.z -=  cosY * speed;
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
                 ctx.camFocus.x -= cosY * speed;
                 ctx.camFocus.z -= sinY * speed;
             }
-            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
-                ctx.camFocus.x -= sinY * speed;
-                ctx.camFocus.z += cosY * speed;
-            }
             if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
-                ctx.camFocus.x += sinY * speed;
-                ctx.camFocus.z -= cosY * speed;
+                ctx.camFocus.x += cosY * speed;
+                ctx.camFocus.z += sinY * speed;
             }
         }
     }
@@ -714,15 +714,34 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
     ImVec2 center(widgetMin.x + widgetSize * 0.5f, widgetMin.y + widgetSize * 0.5f);
     const float axisLen = 22.0f;
 
-    dl->AddLine(center, ImVec2(center.x + axisLen, center.y), IM_COL32(255, 70, 70, 255), 2.0f);
-    dl->AddText(ImVec2(center.x + axisLen + 3.0f, center.y - 8.0f), IM_COL32(255, 90, 90, 255), "X");
+    {
+        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
 
-    dl->AddLine(center, ImVec2(center.x, center.y - axisLen), IM_COL32(70, 255, 90, 255), 2.0f);
-    dl->AddText(ImVec2(center.x - 4.0f, center.y - axisLen - 14.0f), IM_COL32(90, 255, 110, 255), "Y");
+        auto axisScreenDir = [&](float wx, float wy, float wz) -> ImVec2 {
+            float sx  =  cosY * wx + sinY * wz;
+            float sy  =  wy;
+            float sz  = -sinY * wx + cosY * wz;
+            float sy2 =  cosP * sy + sinP * sz;
+            float len = std::sqrt(sx * sx + sy2 * sy2);
+            if (len < 0.001f) return ImVec2(0.f, 0.f);
+            return ImVec2(sx / len * axisLen, -sy2 / len * axisLen);
+        };
 
-    if (is3D) {
-        dl->AddLine(center, ImVec2(center.x - axisLen * 0.70f, center.y + axisLen * 0.70f), IM_COL32(90, 140, 255, 255), 2.0f);
-        dl->AddText(ImVec2(center.x - axisLen * 0.70f - 12.0f, center.y + axisLen * 0.70f - 6.0f), IM_COL32(120, 165, 255, 255), "Z");
+        ImVec2 xDir = axisScreenDir(1.f, 0.f, 0.f);
+        ImVec2 yDir = axisScreenDir(0.f, 1.f, 0.f);
+        ImVec2 zDir = axisScreenDir(0.f, 0.f, 1.f);
+
+        dl->AddLine(center, ImVec2(center.x + xDir.x, center.y + xDir.y), IM_COL32(255, 70, 70, 255), 2.0f);
+        dl->AddText(ImVec2(center.x + xDir.x + 3.f, center.y + xDir.y - 8.f), IM_COL32(255, 90, 90, 255), "X");
+
+        dl->AddLine(center, ImVec2(center.x + yDir.x, center.y + yDir.y), IM_COL32(70, 255, 90, 255), 2.0f);
+        dl->AddText(ImVec2(center.x + yDir.x - 4.f, center.y + yDir.y - 14.f), IM_COL32(90, 255, 110, 255), "Y");
+
+        if (is3D) {
+            dl->AddLine(center, ImVec2(center.x + zDir.x, center.y + zDir.y), IM_COL32(90, 140, 255, 255), 2.0f);
+            dl->AddText(ImVec2(center.x + zDir.x - 12.f, center.y + zDir.y - 6.f), IM_COL32(120, 165, 255, 255), "Z");
+        }
     }
 
     dl->AddCircleFilled(center, 2.8f, IM_COL32(240, 240, 240, 255));

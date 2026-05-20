@@ -65,6 +65,11 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     ImVec2 endX = normalizeHandleTo(rawEndX, ImVec2(sp2.x + handleLen, sp2.y));
     ImVec2 endY = normalizeHandleTo(rawEndY, ImVec2(sp2.x, sp2.y - handleLen));
     ImVec2 endZ = normalizeHandleTo(rawEndZ, ImVec2(sp2.x - handleLen * 0.6f, sp2.y + handleLen * 0.6f));
+    {
+        float dzToY = std::sqrt((endZ.x - endY.x) * (endZ.x - endY.x) + (endZ.y - endY.y) * (endZ.y - endY.y));
+        if (dzToY < handleLen * 0.3f)
+            endZ = ImVec2(sp2.x - handleLen * 0.6f, sp2.y + handleLen * 0.6f);
+    }
 
     ImVec2 mousePos = ImGui::GetMousePos();
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
