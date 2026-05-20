@@ -40,15 +40,17 @@
 
 % ── Section styling ───────────────────────────────────────────────────────────
 \usepackage{titlesec}
+% \needspace{N} is injected before each heading: if less than N lines remain
+% on the current page, LaTeX inserts a page break before the heading.
 \titleformat{\chapter}[display]
   {\color{darkblue}\sffamily\huge\bfseries}
   {\color{darkblue}\chaptertitlename\ \thechapter}{12pt}{}
 \titleformat{\section}
-  {\color{darkblue}\sffamily\Large\bfseries}{\thesection}{1em}{}
+  {\needspace{6\baselineskip}\color{darkblue}\sffamily\Large\bfseries}{\thesection}{1em}{}
 \titleformat{\subsection}
-  {\color{darkblue}\sffamily\large\bfseries}{\thesubsection}{1em}{}
+  {\needspace{5\baselineskip}\color{darkblue}\sffamily\large\bfseries}{\thesubsection}{1em}{}
 \titleformat{\subsubsection}
-  {\sffamily\normalsize\bfseries}{\thesubsubsection}{1em}{}
+  {\needspace{4\baselineskip}\sffamily\normalsize\bfseries}{\thesubsubsection}{1em}{}
 
 % ── Mathematics ───────────────────────────────────────────────────────────────
 \usepackage{amsmath, amssymb, amsthm}
@@ -111,6 +113,14 @@
 
 % ── Page numbering ────────────────────────────────────────────────────────────
 \usepackage{etoolbox}
+
+% ── Page-break quality ────────────────────────────────────────────────────────
+\usepackage{needspace}
+% Prevent orphan lines (single line left at bottom / top of page)
+\widowpenalty=10000
+\clubpenalty=10000
+% Discourage page breaks inside paragraphs
+\interlinepenalty=500
 
 % ── Utility ───────────────────────────────────────────────────────────────────
 \usepackage{enumitem}
