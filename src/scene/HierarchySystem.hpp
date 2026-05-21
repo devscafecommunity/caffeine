@@ -6,6 +6,7 @@
 #include "ecs/Components3D.hpp"
 #include "math/Mat4.hpp"
 #include <math.h>
+#include <cstdint>
 
 namespace Caffeine::Scene {
 
@@ -91,6 +92,28 @@ inline void propagateTransforms(ECS::World& world) {
             }
         });
     }
+
+    for (int depth = 0; depth < MAX_DEPTH; ++depth) {
+        ECS::ComponentQuery q;
+        q.with<Scene::Parent>();
+        world.forEach<Scene::Parent>(q, [&](ECS::Entity child, Scene::Parent& pc) {
+            if (!pc.parent.isValid()) return;
+            if (world.has<EntityLayer>(child)) return;
+            auto* parentLayer = world.get<EntityLayer>(pc.parent);
+            if (!parentLayer) return;
+            world.add<EntityLayer>(child).layer = parentLayer->layer;
+        });
+    }
+}
+
+inline bool isEffectivelyDisabled(ECS::World& world, ECS::Entity e) {
+    if (world.has<ECS::DisabledTag>(e)) return true;
+    auto* pc = world.get<Scene::Parent>(e);
+    while (pc && pc->parent.isValid()) {
+        if (world.has<ECS::DisabledTag>(pc->parent)) return true;
+        pc = world.get<Scene::Parent>(pc->parent);
+    }
+    return false;
 }
 
 }

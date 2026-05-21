@@ -5,6 +5,7 @@
 #include "ecs/ComponentQuery.hpp"
 #include "math/Mat4.hpp"
 #include "scene/SceneComponents.hpp"
+#include "scene/HierarchySystem.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -333,12 +334,22 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
     const f32 minHalfSize = 8.0f;
 
     world.forEach<ECS::Transform, ECS::Sprite>(query, [&](ECS::Entity entity, ECS::Transform& pos, ECS::Sprite& sprite) {
-        ImVec2 screenPos = projectToScreen(pos.position, origin, viewportSize, ctx);
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
 
+        Vec3 worldPosition = pos.position;
         f32 scaleX = std::max(0.1f, pos.scale.x);
         f32 scaleY = std::max(0.1f, pos.scale.y);
+        f32 angle  = pos.rotation.z;
 
-        f32 angle = pos.rotation.z;
+        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+            worldPosition = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+            // scaleX/Y = length of matrix column 0/1 (upper 3x3)
+            scaleX = std::max(0.1f, sqrtf(wt->matrix(0,0)*wt->matrix(0,0) + wt->matrix(1,0)*wt->matrix(1,0)));
+            scaleY = std::max(0.1f, sqrtf(wt->matrix(0,1)*wt->matrix(0,1) + wt->matrix(1,1)*wt->matrix(1,1)));
+            angle  = atan2f(wt->matrix(1,0), wt->matrix(0,0));
+        }
+
+        ImVec2 screenPos = projectToScreen(worldPosition, origin, viewportSize, ctx);
 
         f32 halfW = std::max(minHalfSize, 0.5f * worldToScreen * scaleX);
         f32 halfH = std::max(minHalfSize, 0.5f * worldToScreen * scaleY);
@@ -454,7 +465,13 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     const float r = 7.0f;
 
     world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
-        ImVec2 sp = projectToScreen(pos.position, origin, viewportSize, ctx);
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+
+        Vec3 worldPosition = pos.position;
+        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+            worldPosition = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+        }
+        ImVec2 sp = projectToScreen(worldPosition, origin, viewportSize, ctx);
 
         const bool selected = (ctx.selectedEntity == entity);
         const ImU32 col     = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(180, 180, 200, 200);

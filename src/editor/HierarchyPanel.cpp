@@ -1,5 +1,6 @@
 #include "editor/HierarchyPanel.hpp"
 #include "ui/UIComponents.hpp"
+#include "scene/HierarchySystem.hpp"
 #include <cctype>
 #include <cstdio>
 
@@ -140,7 +141,12 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
         m_expandEntity = ECS::Entity::INVALID;
     }
 
+    const bool effectivelyDisabled = Scene::isEffectivelyDisabled(*m_world, entity);
+    if (effectivelyDisabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+
     bool open = ImGui::TreeNodeEx((void*)(uintptr_t)entity.id(), flags, "%s", name);
+
+    if (effectivelyDisabled) ImGui::PopStyleColor();
 
     if (entity == m_context->selectedEntity && entity != m_lastScrollTarget) {
         ImGui::SetScrollHereY(0.5f);
