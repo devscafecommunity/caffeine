@@ -182,9 +182,11 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
             m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
             ECS::Entity child = m_world->create();
             setEntityName(*m_world, child, "Child");
+            m_world->add<ECS::Transform>(child);
             auto& parentComp = m_world->add<Scene::Parent>(child);
             parentComp.parent = entity;
             parentComp.dirty  = true;
+            m_context->selectEntity(child);
             m_context->endUndo(*m_world);
         }
         ImGui::Separator();

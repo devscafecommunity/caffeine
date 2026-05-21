@@ -4,6 +4,7 @@
 #include "audio/AudioComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "math/Mat4.hpp"
+#include "scene/SceneComponents.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -480,7 +481,11 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
     if (!pos) return;
 
-    ImVec2 screenPos = projectToScreen(pos->position, origin, viewportSize, ctx);
+    Vec3 worldPos = pos->position;
+    if (auto* wt = world.get<Scene::WorldTransform>(ctx.selectedEntity)) {
+        worldPos = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+    }
+    ImVec2 screenPos = projectToScreen(worldPos, origin, viewportSize, ctx);
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     const float HL   = 30.0f * ctx.viewportZoom;
     const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);

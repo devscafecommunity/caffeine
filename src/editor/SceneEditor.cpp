@@ -2,6 +2,7 @@
 #include "ecs/Components.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "editor/ComponentRegistry.hpp"
+#include "scene/HierarchySystem.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui_internal.h>
@@ -281,6 +282,8 @@ void SceneEditor::render(f32 deltaTime) {
 
     renderMainMenuBar(*activeWorld);
     renderUnsavedChangesPopup(*activeWorld);
+
+    Scene::propagateTransforms(*activeWorld);
 
     // Render panels
     m_hierarchy.render(*activeWorld, m_ctx);

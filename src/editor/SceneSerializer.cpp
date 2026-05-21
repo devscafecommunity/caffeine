@@ -2,6 +2,7 @@
 #include "ecs/Components.hpp"
 #include "audio/AudioComponents.hpp"
 #include "editor/EditorContext.hpp"
+#include "scene/SceneComponents.hpp"
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -119,6 +120,19 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         for (auto& [eid, data] : entries) {
             entityMap[eid].emplace_back(kTypeAudioEmitter, std::move(data));
         }
+    }
+
+    // Type 10: Scene::Parent — serialize parent entity ID (u32)
+    {
+        ECS::ComponentQuery q;
+        q.with<Scene::Parent>();
+        m_world.forEach<Scene::Parent>(q, [&](ECS::Entity e, Scene::Parent& pc) {
+            if (!pc.parent.isValid()) return;
+            std::vector<u8> data(4);
+            u32 parentId = pc.parent.id();
+            memcpy(data.data(), &parentId, 4);
+            entityMap[e.id()].emplace_back(kTypeParent, std::move(data));
+        });
     }
 
     // Write binary file
@@ -253,6 +267,18 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeAudioEmitter:
                 applyPODComponent<Audio::AudioEmitter>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeParent: {
+                if (entry.data.size() < 4) break;
+                u32 oldParentId;
+                memcpy(&oldParentId, entry.data.data(), 4);
+                auto pit = remap.find(oldParentId);
+                if (pit != remap.end()) {
+                    auto& pc = m_world.add<Scene::Parent>(e);
+                    pc.parent = pit->second;
+                    pc.dirty  = true;
+                }
+                break;
+            }
             default:
                 break;
         }
