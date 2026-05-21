@@ -480,55 +480,99 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
     if (!pos) return;
 
-    f32 worldToScreen = ctx.viewportZoom * 50.0f;
-    ImVec2 screenPos  = projectToScreen(pos->position, origin, viewportSize, ctx);
+    ImVec2 screenPos = projectToScreen(pos->position, origin, viewportSize, ctx);
+    ImDrawList* dl   = ImGui::GetWindowDrawList();
+    float handleLen  = 30.0f * ctx.viewportZoom;
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    float handleLen = 30.0f * ctx.viewportZoom;
+    bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);
 
-    switch (ctx.gizmoMode) {
-        case EditorContext::GizmoMode::Translate: {
-            dl->AddLine(screenPos, ImVec2(screenPos.x + handleLen, screenPos.y),
-                        IM_COL32(255, 50, 50, 255), 3.0f);
-            dl->AddTriangleFilled(
-                ImVec2(screenPos.x + handleLen + 8, screenPos.y),
-                ImVec2(screenPos.x + handleLen, screenPos.y - 5),
-                ImVec2(screenPos.x + handleLen, screenPos.y + 5),
-                IM_COL32(255, 50, 50, 255));
-            dl->AddLine(screenPos, ImVec2(screenPos.x, screenPos.y - handleLen),
-                        IM_COL32(50, 255, 50, 255), 3.0f);
-            dl->AddTriangleFilled(
-                ImVec2(screenPos.x, screenPos.y - handleLen - 8),
-                ImVec2(screenPos.x - 5, screenPos.y - handleLen),
-                ImVec2(screenPos.x + 5, screenPos.y - handleLen),
-                IM_COL32(50, 255, 50, 255));
-            break;
+    // vx   = cosY*ax + sinY*az
+    // vy2  = cosP*ay + sinP*(-sinY*ax + cosY*az)
+    // vz2  = -sinP*ay + cosP*(-sinY*ax + cosY*az)  (depth: positive = behind camera)
+    // smag = sqrt(vx^2 + vy2^2)  — foreshortening factor
+    struct AxisProj { ImVec2 end; float depth; float alpha; };
+    auto projectAxis = [&](float ax, float ay, float az) -> AxisProj {
+        if (!is3D) {
+            ImVec2 end(screenPos.x + ax * handleLen, screenPos.y - ay * handleLen);
+            return {end, 0.f, 1.f};
         }
-        case EditorContext::GizmoMode::Rotate: {
-            dl->AddCircle(screenPos, handleLen, IM_COL32(255, 200, 50, 255), 32, 2.0f);
-            dl->AddLine(screenPos,
-                        ImVec2(screenPos.x + handleLen, screenPos.y),
-                        IM_COL32(255, 200, 50, 255), 2.0f);
-            break;
+        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+        float vx   = cosY * ax + sinY * az;
+        float vy   = ay;
+        float vzc  = -sinY * ax + cosY * az;
+        float vy2  = cosP * vy + sinP * vzc;
+        float vz2  = -sinP * vy + cosP * vzc;
+        float sdx  = vx, sdy = -vy2;
+        float smag = std::sqrt(sdx*sdx + sdy*sdy);
+        float len   = handleLen * std::max(smag, 0.4f);
+        float alpha = 0.4f + 0.6f * smag;
+        if (smag < 0.001f)
+            return {screenPos, vz2, alpha};
+        ImVec2 end(screenPos.x + sdx/smag * len, screenPos.y + sdy/smag * len);
+        return {end, vz2, alpha};
+    };
+
+    auto withAlpha = [](u32 base, float a) -> u32 {
+        return (base & 0x00FFFFFFu) | (static_cast<u32>(std::min(a, 1.f) * 255.f) << 24);
+    };
+
+    AxisProj axX = projectAxis(1.f, 0.f, 0.f);
+    AxisProj axY = projectAxis(0.f, 1.f, 0.f);
+    AxisProj axZ = projectAxis(0.f, 0.f, 1.f);
+
+    struct DrawEntry { int id; float depth; };
+    DrawEntry order[3] = {{0, axX.depth}, {1, axY.depth}, {2, axZ.depth}};
+    std::sort(order, order+3, [](const DrawEntry& a, const DrawEntry& b){ return a.depth > b.depth; });
+
+    const AxisProj* axes[3] = {&axX, &axY, &axZ};
+    const u32 baseColors[3] = {
+        IM_COL32(255, 50,  50,  255),
+        IM_COL32(50,  255, 50,  255),
+        IM_COL32(50,  100, 255, 255),
+    };
+
+    auto drawArrow = [&](ImVec2 from, ImVec2 to, u32 color) {
+        float dx = to.x - from.x, dy = to.y - from.y;
+        float d  = std::sqrt(dx*dx + dy*dy);
+        dl->AddLine(from, to, color, 3.0f);
+        if (d < 0.5f) {
+            dl->AddCircleFilled(from, 4.f, color, 12);
+            return;
         }
-        case EditorContext::GizmoMode::Scale: {
-            dl->AddLine(screenPos, ImVec2(screenPos.x + handleLen, screenPos.y),
-                        IM_COL32(100, 200, 255, 255), 2.0f);
-            dl->AddRectFilled(
-                ImVec2(screenPos.x + handleLen - 5, screenPos.y - 5),
-                ImVec2(screenPos.x + handleLen + 5, screenPos.y + 5),
-                IM_COL32(100, 200, 255, 255));
-            dl->AddLine(screenPos, ImVec2(screenPos.x, screenPos.y - handleLen),
-                        IM_COL32(50, 255, 100, 255), 2.0f);
-            dl->AddRectFilled(
-                ImVec2(screenPos.x - 5, screenPos.y - handleLen - 5),
-                ImVec2(screenPos.x + 5, screenPos.y - handleLen + 5),
-                IM_COL32(50, 255, 100, 255));
-            break;
+        float ux = dx/d, uy = dy/d;
+        float nx = -uy * 5.f, ny = ux * 5.f;
+        ImVec2 tip(to.x + ux*8.f, to.y + uy*8.f);
+        dl->AddTriangleFilled(tip, ImVec2(to.x+nx, to.y+ny), ImVec2(to.x-nx, to.y-ny), color);
+    };
+    auto drawBox = [&](ImVec2 from, ImVec2 to, u32 color) {
+        dl->AddLine(from, to, color, 2.0f);
+        dl->AddRectFilled(ImVec2(to.x-5.f, to.y-5.f), ImVec2(to.x+5.f, to.y+5.f), color);
+    };
+
+    for (int i = 0; i < 3; ++i) {
+        int idx = order[i].id;
+        if (idx == 2 && ctx.viewMode == EditorContext::ViewMode::Mode2D) continue;
+        u32 color = withAlpha(baseColors[idx], axes[idx]->alpha);
+        switch (ctx.gizmoMode) {
+            case EditorContext::GizmoMode::Translate:
+                drawArrow(screenPos, axes[idx]->end, color);
+                break;
+            case EditorContext::GizmoMode::Scale:
+                drawBox(screenPos, axes[idx]->end, color);
+                break;
+            case EditorContext::GizmoMode::Rotate:
+                break;
+            default: break;
         }
-        case EditorContext::GizmoMode::None:
-            dl->AddCircle(screenPos, 6, IM_COL32(255, 255, 255, 180), 12, 2.0f);
-            break;
+    }
+
+    if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
+        dl->AddCircle(screenPos, handleLen, IM_COL32(255, 200, 50, 255), 32, 2.0f);
+        dl->AddLine(screenPos, ImVec2(screenPos.x + handleLen, screenPos.y),
+                    IM_COL32(255, 200, 50, 255), 2.0f);
+    } else if (ctx.gizmoMode == EditorContext::GizmoMode::None) {
+        dl->AddCircle(screenPos, 6.f, IM_COL32(255, 255, 255, 180), 12, 2.0f);
     }
 
     if (world.has<Audio::AudioEmitter>(ctx.selectedEntity)) {
