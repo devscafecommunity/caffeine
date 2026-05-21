@@ -476,104 +476,151 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 
 void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
-
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
     if (!pos) return;
 
     ImVec2 screenPos = projectToScreen(pos->position, origin, viewportSize, ctx);
     ImDrawList* dl   = ImGui::GetWindowDrawList();
-    float handleLen  = 30.0f * ctx.viewportZoom;
-
-    bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);
+    const float HL   = 30.0f * ctx.viewportZoom;
+    const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);
+    const bool  zDimmed = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
 
     // vx   = cosY*ax + sinY*az
     // vy2  = cosP*ay + sinP*(-sinY*ax + cosY*az)
-    // vz2  = -sinP*ay + cosP*(-sinY*ax + cosY*az)  (depth: positive = behind camera)
-    // smag = sqrt(vx^2 + vy2^2)  — foreshortening factor
-    struct AxisProj { ImVec2 end; float depth; float alpha; };
-    auto projectAxis = [&](float ax, float ay, float az) -> AxisProj {
-        if (!is3D) {
-            ImVec2 end(screenPos.x + ax * handleLen, screenPos.y - ay * handleLen);
-            return {end, 0.f, 1.f};
-        }
-        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
-        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-        float vx   = cosY * ax + sinY * az;
-        float vy   = ay;
-        float vzc  = -sinY * ax + cosY * az;
-        float vy2  = cosP * vy + sinP * vzc;
-        float vz2  = -sinP * vy + cosP * vzc;
-        float sdx  = vx, sdy = -vy2;
-        float smag = std::sqrt(sdx*sdx + sdy*sdy);
-        float len   = handleLen * std::max(smag, 0.4f);
-        float alpha = 0.4f + 0.6f * smag;
-        if (smag < 0.001f)
-            return {screenPos, vz2, alpha};
-        ImVec2 end(screenPos.x + sdx/smag * len, screenPos.y + sdy/smag * len);
-        return {end, vz2, alpha};
+    // vz2  = -sinP*ay + cosP*(-sinY*ax + cosY*az)
+    float sinY = 0, cosY = 1, sinP = 0, cosP = 1;
+    if (is3D) { sinY=std::sin(ctx.camYaw); cosY=std::cos(ctx.camYaw); sinP=std::sin(ctx.camPitch); cosP=std::cos(ctx.camPitch); }
+
+    auto proj2D = [&](float ax, float ay, float az) -> ImVec2 {
+        if (!is3D) return ImVec2(ax, -ay);
+        float vx  = cosY*ax + sinY*az;
+        float vzc = -sinY*ax + cosY*az;
+        float vy2 = cosP*ay + sinP*vzc;
+        return ImVec2(vx, -vy2);
+    };
+    auto vdepth = [&](float ax, float ay, float az) -> float {
+        float vzc = -sinY*ax + cosY*az;
+        return -sinP*ay + cosP*vzc;
     };
 
-    auto withAlpha = [](u32 base, float a) -> u32 {
-        return (base & 0x00FFFFFFu) | (static_cast<u32>(std::min(a, 1.f) * 255.f) << 24);
+    ImVec2 rawX = proj2D(1,0,0), rawY = proj2D(0,1,0), rawZ = proj2D(0,0,1);
+    m_axisRawDirs[0] = rawX; m_axisRawDirs[1] = rawY; m_axisRawDirs[2] = rawZ;
+    m_gizmoScreenOrigin = screenPos;
+
+    auto axisEnd = [&](ImVec2 raw) -> ImVec2 {
+        float mag = std::sqrt(raw.x*raw.x + raw.y*raw.y);
+        float len = HL * std::max(mag, 0.4f);
+        if (mag < 0.001f) return screenPos;
+        return ImVec2(screenPos.x + raw.x/mag*len, screenPos.y + raw.y/mag*len);
+    };
+    auto axisAlpha = [](ImVec2 raw) -> float {
+        float mag = std::sqrt(raw.x*raw.x + raw.y*raw.y);
+        return 0.4f + 0.6f * mag;
     };
 
-    AxisProj axX = projectAxis(1.f, 0.f, 0.f);
-    AxisProj axY = projectAxis(0.f, 1.f, 0.f);
-    AxisProj axZ = projectAxis(0.f, 0.f, 1.f);
+    ImVec2 endX = axisEnd(rawX), endY = axisEnd(rawY), endZ = axisEnd(rawZ);
+    float  alpX = axisAlpha(rawX), alpY = axisAlpha(rawY), alpZ = axisAlpha(rawZ);
 
     struct DrawEntry { int id; float depth; };
-    DrawEntry order[3] = {{0, axX.depth}, {1, axY.depth}, {2, axZ.depth}};
+    DrawEntry order[3] = {{1,vdepth(1,0,0)},{2,vdepth(0,1,0)},{3,vdepth(0,0,1)}};
     std::sort(order, order+3, [](const DrawEntry& a, const DrawEntry& b){ return a.depth > b.depth; });
 
-    const AxisProj* axes[3] = {&axX, &axY, &axZ};
-    const u32 baseColors[3] = {
-        IM_COL32(255, 50,  50,  255),
-        IM_COL32(50,  255, 50,  255),
-        IM_COL32(50,  100, 255, 255),
+    int keyAxis = 0;
+    if      (ImGui::IsKeyDown(ImGuiKey_X)) keyAxis = 1;
+    else if (ImGui::IsKeyDown(ImGuiKey_Y)) keyAxis = 2;
+    else if (ImGui::IsKeyDown(ImGuiKey_Z)) keyAxis = 3;
+
+    ImVec2 mouse = ImGui::GetMousePos();
+    bool mouseInVP = mouse.x >= origin.x && mouse.x <= origin.x+viewportSize.x &&
+                     mouse.y >= origin.y && mouse.y <= origin.y+viewportSize.y;
+
+    if (!m_gizmoDragging && mouseInVP && ImGui::IsWindowHovered()) {
+        if (keyAxis != 0) {
+            m_hoveredAxis = keyAxis;
+        } else {
+            m_hoveredAxis = 0;
+            float cdist = std::sqrt((mouse.x-screenPos.x)*(mouse.x-screenPos.x)+(mouse.y-screenPos.y)*(mouse.y-screenPos.y));
+            if (cdist < 9.f) {
+                m_hoveredAxis = 4;
+            } else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
+                auto ringHit = [&](ImVec2 b1, ImVec2 b2) -> bool {
+                    const int N = 48;
+                    for (int i = 0; i < N; ++i) {
+                        float a = 6.28318f * i / N;
+                        float px = screenPos.x + HL*(std::cos(a)*b1.x + std::sin(a)*b2.x);
+                        float py = screenPos.y + HL*(std::cos(a)*b1.y + std::sin(a)*b2.y);
+                        float dx = mouse.x-px, dy = mouse.y-py;
+                        if (dx*dx+dy*dy < 64.f) return true;
+                    }
+                    return false;
+                };
+                if      (ringHit(proj2D(0,1,0), proj2D(0,0,1))) m_hoveredAxis = 1;
+                else if (ringHit(proj2D(1,0,0), proj2D(0,0,1))) m_hoveredAxis = 2;
+                else if (ringHit(proj2D(1,0,0), proj2D(0,1,0))) m_hoveredAxis = 3;
+            } else {
+                auto ptLineDist = [&](ImVec2 b, ImVec2 e) -> float {
+                    float dx=e.x-b.x, dy=e.y-b.y, l2=dx*dx+dy*dy;
+                    if (l2 < 0.0001f) return std::sqrt((mouse.x-b.x)*(mouse.x-b.x)+(mouse.y-b.y)*(mouse.y-b.y));
+                    float t = std::max(0.f,std::min(1.f,((mouse.x-b.x)*dx+(mouse.y-b.y)*dy)/l2));
+                    float px=b.x+t*dx, py=b.y+t*dy;
+                    return std::sqrt((mouse.x-px)*(mouse.x-px)+(mouse.y-py)*(mouse.y-py));
+                };
+                if      (ptLineDist(screenPos, endX) < 8.f) m_hoveredAxis = 1;
+                else if (ptLineDist(screenPos, endY) < 8.f) m_hoveredAxis = 2;
+                else if (!zDimmed && ptLineDist(screenPos, endZ) < 8.f) m_hoveredAxis = 3;
+            }
+        }
+    }
+
+    const u32 COL_X = IM_COL32(255,50,50,255), COL_Y = IM_COL32(50,255,50,255), COL_Z = IM_COL32(50,100,255,255);
+    const u32 COL_HOVER = IM_COL32(255,220,0,255), COL_DRAG = IM_COL32(255,255,255,255);
+
+    auto axisColor = [&](int axId, float alpha) -> u32 {
+        int activeAx = m_gizmoDragging ? m_gizmoDragAxis : (keyAxis ? keyAxis : m_hoveredAxis);
+        if (activeAx == axId) return m_gizmoDragging ? COL_DRAG : COL_HOVER;
+        u32 base = (axId==1) ? COL_X : (axId==2) ? COL_Y : COL_Z;
+        return (base & 0x00FFFFFFu) | (u32(std::min(alpha,1.f)*255.f) << 24);
     };
 
-    auto drawArrow = [&](ImVec2 from, ImVec2 to, u32 color) {
-        float dx = to.x - from.x, dy = to.y - from.y;
-        float d  = std::sqrt(dx*dx + dy*dy);
-        dl->AddLine(from, to, color, 3.0f);
-        if (d < 0.5f) {
-            dl->AddCircleFilled(from, 4.f, color, 12);
-            return;
-        }
-        float ux = dx/d, uy = dy/d;
-        float nx = -uy * 5.f, ny = ux * 5.f;
-        ImVec2 tip(to.x + ux*8.f, to.y + uy*8.f);
-        dl->AddTriangleFilled(tip, ImVec2(to.x+nx, to.y+ny), ImVec2(to.x-nx, to.y-ny), color);
+    auto drawArrow = [&](ImVec2 from, ImVec2 to, u32 col) {
+        float dx=to.x-from.x, dy=to.y-from.y, d=std::sqrt(dx*dx+dy*dy);
+        dl->AddLine(from, to, col, 3.f);
+        if (d < 1.f) { dl->AddCircleFilled(from, 4.f, col, 12); return; }
+        float ux=dx/d, uy=dy/d;
+        ImVec2 tip(to.x+ux*8.f, to.y+uy*8.f);
+        dl->AddTriangleFilled(tip, ImVec2(to.x-uy*5.f,to.y+ux*5.f), ImVec2(to.x+uy*5.f,to.y-ux*5.f), col);
     };
-    auto drawBox = [&](ImVec2 from, ImVec2 to, u32 color) {
-        dl->AddLine(from, to, color, 2.0f);
-        dl->AddRectFilled(ImVec2(to.x-5.f, to.y-5.f), ImVec2(to.x+5.f, to.y+5.f), color);
+    auto drawScaleBox = [&](ImVec2 from, ImVec2 to, u32 col) {
+        dl->AddLine(from, to, col, 2.f);
+        dl->AddRectFilled(ImVec2(to.x-5.f,to.y-5.f), ImVec2(to.x+5.f,to.y+5.f), col);
+    };
+    auto drawRing = [&](ImVec2 b1, ImVec2 b2, u32 col) {
+        const int N = 64;
+        for (int i = 0; i < N; ++i) {
+            float a0=6.28318f*i/N, a1=6.28318f*(i+1)/N;
+            ImVec2 p0(screenPos.x+HL*(std::cos(a0)*b1.x+std::sin(a0)*b2.x), screenPos.y+HL*(std::cos(a0)*b1.y+std::sin(a0)*b2.y));
+            ImVec2 p1(screenPos.x+HL*(std::cos(a1)*b1.x+std::sin(a1)*b2.x), screenPos.y+HL*(std::cos(a1)*b1.y+std::sin(a1)*b2.y));
+            dl->AddLine(p0, p1, col, 2.f);
+        }
     };
 
     for (int i = 0; i < 3; ++i) {
-        int idx = order[i].id;
-        if (idx == 2 && ctx.viewMode == EditorContext::ViewMode::Mode2D) continue;
-        u32 color = withAlpha(baseColors[idx], axes[idx]->alpha);
-        switch (ctx.gizmoMode) {
-            case EditorContext::GizmoMode::Translate:
-                drawArrow(screenPos, axes[idx]->end, color);
-                break;
-            case EditorContext::GizmoMode::Scale:
-                drawBox(screenPos, axes[idx]->end, color);
-                break;
-            case EditorContext::GizmoMode::Rotate:
-                break;
-            default: break;
+        int axId = order[i].id;
+        if (axId == 3 && zDimmed) continue;
+        ImVec2 end  = (axId==1) ? endX : (axId==2) ? endY : endZ;
+        float  alp  = (axId==1) ? alpX : (axId==2) ? alpY : alpZ;
+        u32    col  = axisColor(axId, alp);
+        if      (ctx.gizmoMode == EditorContext::GizmoMode::Translate) drawArrow(screenPos, end, col);
+        else if (ctx.gizmoMode == EditorContext::GizmoMode::Scale)     drawScaleBox(screenPos, end, col);
+        else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
+            ImVec2 b1 = (axId==1) ? proj2D(0,1,0) : proj2D(1,0,0);
+            ImVec2 b2 = (axId==3) ? proj2D(0,1,0) : proj2D(0,0,1);
+            drawRing(b1, b2, axisColor(axId, 1.f));
         }
     }
 
-    if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
-        dl->AddCircle(screenPos, handleLen, IM_COL32(255, 200, 50, 255), 32, 2.0f);
-        dl->AddLine(screenPos, ImVec2(screenPos.x + handleLen, screenPos.y),
-                    IM_COL32(255, 200, 50, 255), 2.0f);
-    } else if (ctx.gizmoMode == EditorContext::GizmoMode::None) {
-        dl->AddCircle(screenPos, 6.f, IM_COL32(255, 255, 255, 180), 12, 2.0f);
-    }
+    if (ctx.gizmoMode == EditorContext::GizmoMode::None)
+        dl->AddCircle(screenPos, 6.f, IM_COL32(255,255,255,180), 12, 2.f);
 
     if (world.has<Audio::AudioEmitter>(ctx.selectedEntity)) {
         auto* emitter = world.get<Audio::AudioEmitter>(ctx.selectedEntity);
@@ -583,14 +630,11 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
             char buf[64];
             dl->AddCircle(screenPos, fullVolumeRadius * w2s, IM_COL32(0, 255, 255, 80), 48, 2.0f);
             snprintf(buf, sizeof(buf), "near %.0f", fullVolumeRadius);
-            dl->AddText(ImVec2(screenPos.x + fullVolumeRadius * w2s + 4, screenPos.y - 8),
-                        IM_COL32(0, 255, 255, 180), buf);
+            dl->AddText(ImVec2(screenPos.x + fullVolumeRadius * w2s + 4, screenPos.y - 8), IM_COL32(0, 255, 255, 180), buf);
             dl->AddCircle(screenPos, emitter->maxDistance * w2s, IM_COL32(50, 130, 255, 60), 64, 2.0f);
             snprintf(buf, sizeof(buf), "max %.0f", emitter->maxDistance);
-            dl->AddText(ImVec2(screenPos.x + emitter->maxDistance * w2s + 4, screenPos.y - 8),
-                        IM_COL32(50, 130, 255, 180), buf);
-            dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 20),
-                        IM_COL32(180, 180, 255, 220), "S");
+            dl->AddText(ImVec2(screenPos.x + emitter->maxDistance * w2s + 4, screenPos.y - 8), IM_COL32(50, 130, 255, 180), buf);
+            dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 20), IM_COL32(180, 180, 255, 220), "S");
         }
     }
 }
@@ -798,49 +842,65 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
     }
 }
 
-// ── Gizmo input handling ──────────────────────────────────────────
-
 void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
+    if (!ImGui::IsMouseDragging(ImGuiMouseButton_Left)) return;
 
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
 
-        f32 sensitivity = 1.0f / (ctx.viewportZoom * 50.0f);
+    int keyAxis = 0;
+    if      (ImGui::IsKeyDown(ImGuiKey_X)) keyAxis = 1;
+    else if (ImGui::IsKeyDown(ImGuiKey_Y)) keyAxis = 2;
+    else if (ImGui::IsKeyDown(ImGuiKey_Z)) keyAxis = 3;
+
+    int axis = keyAxis ? keyAxis : m_hoveredAxis;
+    m_gizmoDragAxis = axis;
 
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
-        bool hadPos = (pos != nullptr);
+    if (!pos) pos = &world.add<ECS::Transform>(ctx.selectedEntity);
 
-        if (!hadPos) {
-            pos = &world.add<ECS::Transform>(ctx.selectedEntity);
-        }
+    const float scale = ctx.viewportZoom * 50.0f;
 
-        switch (ctx.gizmoMode) {
-            case EditorContext::GizmoMode::Translate:
-                pos->position.x += delta.x * sensitivity;
-                pos->position.y -= delta.y * sensitivity;
-                if (ctx.snapToGrid && ctx.snapGridSize > 0.0f) {
-                    pos->position.x = roundf(pos->position.x / ctx.snapGridSize) * ctx.snapGridSize;
-                    pos->position.y = roundf(pos->position.y / ctx.snapGridSize) * ctx.snapGridSize;
-                }
-                break;
-            case EditorContext::GizmoMode::Rotate: {
-                pos->rotation.z += delta.x * 0.01f;
-                break;
+    auto projectDelta = [&](int axIdx) -> float {
+        ImVec2 raw = m_axisRawDirs[axIdx - 1];
+        float mag2 = raw.x*raw.x + raw.y*raw.y;
+        if (mag2 < 0.0001f) return 0.f;
+        return (delta.x*raw.x + delta.y*raw.y) / mag2 / scale;
+    };
+
+    switch (ctx.gizmoMode) {
+        case EditorContext::GizmoMode::Translate:
+            if (axis == 1)                           pos->position.x += projectDelta(1);
+            else if (axis == 2)                      pos->position.y += projectDelta(2);
+            else if (axis == 3)                      pos->position.z += projectDelta(3);
+            else {
+                pos->position.x += delta.x / scale;
+                pos->position.y -= delta.y / scale;
             }
-            case EditorContext::GizmoMode::Scale: {
-                pos->scale.x *= 1.0f + delta.x * 0.005f;
-                pos->scale.y *= 1.0f + delta.y * 0.005f;
-                if (pos->scale.x < 0.01f) pos->scale.x = 0.01f;
-                if (pos->scale.y < 0.01f) pos->scale.y = 0.01f;
-                break;
+            if (ctx.snapToGrid && ctx.snapGridSize > 0.f) {
+                pos->position.x = roundf(pos->position.x / ctx.snapGridSize) * ctx.snapGridSize;
+                pos->position.y = roundf(pos->position.y / ctx.snapGridSize) * ctx.snapGridSize;
             }
-            case EditorContext::GizmoMode::None: break;
-        }
-
-        ctx.isDirty = true;
-        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+            break;
+        case EditorContext::GizmoMode::Rotate:
+            if      (axis == 1) pos->rotation.x += delta.y * 0.01f;
+            else if (axis == 2) pos->rotation.y += delta.x * 0.01f;
+            else                pos->rotation.z += delta.x * 0.01f;
+            break;
+        case EditorContext::GizmoMode::Scale:
+            if (axis == 1) { pos->scale.x = std::max(0.01f, pos->scale.x * (1.f + projectDelta(1) * 0.5f)); }
+            else if (axis == 2) { pos->scale.y = std::max(0.01f, pos->scale.y * (1.f + projectDelta(2) * 0.5f)); }
+            else if (axis == 3) { pos->scale.z = std::max(0.01f, pos->scale.z * (1.f + projectDelta(3) * 0.5f)); }
+            else {
+                pos->scale.x = std::max(0.01f, pos->scale.x * (1.f + delta.x * 0.005f));
+                pos->scale.y = std::max(0.01f, pos->scale.y * (1.f + delta.y * 0.005f));
+            }
+            break;
+        case EditorContext::GizmoMode::None: break;
     }
+
+    ctx.isDirty = true;
 }
 
 std::string SceneViewport::resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const {

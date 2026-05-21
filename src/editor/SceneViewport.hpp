@@ -101,6 +101,10 @@ private:
     TransformGizmo m_Gizmo;
     bool m_gizmoDragging = false;
     bool m_boxSelecting = false;
+    int  m_hoveredAxis   = 0;
+    int  m_gizmoDragAxis = 0;
+    ImVec2 m_axisRawDirs[3] = {};
+    ImVec2 m_gizmoScreenOrigin = {};
     ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
     ProjectionMode m_projectionMode = ProjectionMode::Perspective;
 #ifdef CF_HAS_SDL3
