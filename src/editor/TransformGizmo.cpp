@@ -33,67 +33,92 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
     float handleLen = 30.0f * ctx.viewportZoom;
 
     float handleWorld;
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+    {
         float s    = ctx.viewportZoom * 50.0f;
         float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
         float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-        Vec3  wp   = transform->position;
-        float rx   = wp.x - ctx.camFocus.x;
-        float ry   = wp.y - ctx.camFocus.y;
-        float rz   = wp.z - ctx.camFocus.z;
+        Vec3  wp0  = transform->position;
+        float rx   = wp0.x - ctx.camFocus.x;
+        float ry   = wp0.y - ctx.camFocus.y;
+        float rz   = wp0.z - ctx.camFocus.z;
         float vz_c = -sinY * rx + cosY * rz;
         float vz2  = -sinP * ry + cosP * vz_c;
         float dist = std::max(ctx.camDistance, 0.1f);
         float fovScale = s * dist / std::max(dist + vz2, 0.01f);
         handleWorld = handleLen / std::max(fovScale, 0.01f);
-    } else {
-        handleWorld = handleLen / (ctx.viewportZoom * 50.0f);
     }
 
-    Vec3 wp = transform->position;
-    ImVec2 rawEndX = SceneViewport::projectToScreen({wp.x + handleWorld, wp.y, wp.z}, vpMin, vpSize, ctx);
-    ImVec2 rawEndY = SceneViewport::projectToScreen({wp.x, wp.y + handleWorld, wp.z}, vpMin, vpSize, ctx);
-    ImVec2 rawEndZ = SceneViewport::projectToScreen({wp.x, wp.y, wp.z + handleWorld}, vpMin, vpSize, ctx);
+    // vx   = cosY*ax + sinY*az          (screen-right component)
+    // vy2  = cosP*ay + sinP*(-sinY*ax + cosY*az)  (screen-up component)
+    // vz2  = -sinP*ay + cosP*(-sinY*ax + cosY*az) (depth: positive = behind camera)
+    // sdx  = vx,  sdy = -vy2
+    // smag = length of (sdx,sdy) = foreshortening factor (1=perpendicular, 0=parallel to view)
+    struct AxisInfo { ImVec2 end; float depth; float alpha; bool collapsed; };
 
-    // Collapse threshold: if a world-space axis projects to < 3px the axis is nearly
-    // parallel to the view ray — draw a dot instead of an arrow with a wrong direction.
-    struct AxisInfo { ImVec2 end; bool collapsed; };
-    auto computeAxis = [&](ImVec2 raw) -> AxisInfo {
-        float dx = raw.x - sp2.x, dy = raw.y - sp2.y;
-        float d  = std::sqrt(dx*dx + dy*dy);
-        if (d < 3.0f) return {sp2, true};
-        return {ImVec2(sp2.x + dx/d * handleLen, sp2.y + dy/d * handleLen), false};
+    auto worldAxisToScreen = [&](float ax, float ay, float az) -> AxisInfo {
+        if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {
+            Vec3 wp2 = transform->position;
+            ImVec2 raw = SceneViewport::projectToScreen({wp2.x + ax*handleWorld, wp2.y + ay*handleWorld, wp2.z + az*handleWorld}, vpMin, vpSize, ctx);
+            float dx = raw.x - sp2.x, dy = raw.y - sp2.y;
+            float d  = std::sqrt(dx*dx + dy*dy);
+            if (d < 3.0f) return {sp2, 0.f, 1.f, true};
+            return {ImVec2(sp2.x + dx/d * handleLen, sp2.y + dy/d * handleLen), 0.f, 1.f, false};
+        }
+        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+        float vx   = cosY * ax + sinY * az;
+        float vy   = ay;
+        float vzc  = -sinY * ax + cosY * az;
+        float vy2  = cosP * vy + sinP * vzc;
+        float vz2  = -sinP * vy + cosP * vzc;
+        float sdx  = vx, sdy = -vy2;
+        float smag = std::sqrt(sdx*sdx + sdy*sdy);
+        float len   = handleLen * std::max(smag, 0.4f);
+        float alpha = 0.4f + 0.6f * smag;
+        if (smag < 0.001f)
+            return {sp2, vz2, alpha, true};
+        return {ImVec2(sp2.x + sdx/smag * len, sp2.y + sdy/smag * len), vz2, alpha, false};
     };
 
-    AxisInfo axX = computeAxis(rawEndX);
-    AxisInfo axY = computeAxis(rawEndY);
-    AxisInfo axZ = computeAxis(rawEndZ);
-
-    // If Z and Y project to nearly the same screen direction, nudge Z.
-    if (!axZ.collapsed && !axY.collapsed) {
-        float dzToY = std::sqrt((axZ.end.x - axY.end.x) * (axZ.end.x - axY.end.x) +
-                                (axZ.end.y - axY.end.y) * (axZ.end.y - axY.end.y));
-        if (dzToY < handleLen * 0.3f)
-            axZ.end = ImVec2(sp2.x - handleLen * 0.6f, sp2.y + handleLen * 0.6f);
-    }
+    AxisInfo axX = worldAxisToScreen(1.f, 0.f, 0.f);
+    AxisInfo axY = worldAxisToScreen(0.f, 1.f, 0.f);
+    AxisInfo axZ = worldAxisToScreen(0.f, 0.f, 1.f);
 
     ImVec2 endX = axX.end, endY = axY.end, endZ = axZ.end;
     bool xCollapsed = axX.collapsed, yCollapsed = axY.collapsed, zCollapsed = axZ.collapsed;
+    float alphaX = axX.alpha, alphaY = axY.alpha, alphaZ = axZ.alpha;
 
     ImVec2 mousePos = ImGui::GetMousePos();
     bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
                             mousePos.y >= vpMin.y && mousePos.y <= vpMax.y);
 
         if (mouseInViewport) {
+        struct DrawAxis { int idx; float depth; };
+        DrawAxis order[3] = {{0, axX.depth}, {1, axY.depth}, {2, axZ.depth}};
+        std::sort(order, order+3, [](const DrawAxis& a, const DrawAxis& b){ return a.depth > b.depth; });
+        auto sortedEnd   = [&](int i) -> ImVec2   { return i==0?endX : i==1?endY : endZ; };
+        auto sortedAlpha = [&](int i) -> float    { return i==0?alphaX : i==1?alphaY : alphaZ; };
+        auto sortedCol   = [&](int i) -> bool     { return i==0?xCollapsed : i==1?yCollapsed : zCollapsed; };
+
         switch (ctx.gizmoMode) {
             case EditorContext::GizmoMode::Translate:
-                renderTranslate3D(screenPos, endX, endY, endZ, zDimmed, xCollapsed, yCollapsed, zCollapsed);
+                renderTranslate3D(screenPos,
+                    sortedEnd(order[0].idx), sortedEnd(order[1].idx), sortedEnd(order[2].idx),
+                    zDimmed,
+                    sortedCol(order[0].idx), sortedCol(order[1].idx), sortedCol(order[2].idx),
+                    sortedAlpha(order[0].idx), sortedAlpha(order[1].idx), sortedAlpha(order[2].idx),
+                    order[0].idx, order[1].idx, order[2].idx);
                 break;
             case EditorContext::GizmoMode::Rotate:
                 renderRotate3D(screenPos, handleLen, zDimmed);
                 break;
             case EditorContext::GizmoMode::Scale:
-                renderScale3D(screenPos, endX, endY, endZ, zDimmed, xCollapsed, yCollapsed, zCollapsed);
+                renderScale3D(screenPos,
+                    sortedEnd(order[0].idx), sortedEnd(order[1].idx), sortedEnd(order[2].idx),
+                    zDimmed,
+                    sortedCol(order[0].idx), sortedCol(order[1].idx), sortedCol(order[2].idx),
+                    sortedAlpha(order[0].idx), sortedAlpha(order[1].idx), sortedAlpha(order[2].idx),
+                    order[0].idx, order[1].idx, order[2].idx);
                 break;
             default: break;
         }
@@ -258,11 +283,23 @@ void TransformGizmo::renderScale(const Vec2& screenPos, float handleLen) {
 #endif
 }
 
-void TransformGizmo::renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed,
-                                        bool xCollapsed, bool yCollapsed, bool zCollapsed) {
+void TransformGizmo::renderTranslate3D(const Vec2& screenPos,
+    ImVec2 end0, ImVec2 end1, ImVec2 end2, bool zDimmed,
+    bool col0, bool col1, bool col2,
+    float alpha0, float alpha1, float alpha2,
+    int axis0, int axis1, int axis2) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 sp(screenPos.x, screenPos.y);
+
+    auto withAlpha = [](u32 base, float a) -> u32 {
+        return (base & 0x00FFFFFFu) | (static_cast<u32>(std::min(a, 1.f) * 255.f) << 24);
+    };
+    auto axisBaseColor = [&](int idx) -> u32 {
+        if (idx == 0) return (m_hoveredAxis==GizmoAxis::X||m_dragAxis==GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
+        if (idx == 1) return (m_hoveredAxis==GizmoAxis::Y||m_dragAxis==GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
+        return (m_hoveredAxis==GizmoAxis::Z||m_dragAxis==GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+    };
 
     auto drawAxisArrow = [&](ImVec2 to, u32 color, bool collapsed) {
         if (collapsed) {
@@ -273,21 +310,22 @@ void TransformGizmo::renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec
         float dx = to.x - sp.x, dy = to.y - sp.y;
         float len = std::sqrt(dx*dx + dy*dy);
         if (len < 0.001f) return;
-        float ux = dx / len, uy = dy / len;
-        float nx = -uy * ARROW_SIZE * 0.6f, ny = ux * ARROW_SIZE * 0.6f;
-        ImVec2 tip(to.x + ux * ARROW_SIZE, to.y + uy * ARROW_SIZE);
-        dl->AddTriangleFilled(tip, ImVec2(to.x + nx, to.y + ny), ImVec2(to.x - nx, to.y - ny), color);
+        float ux = dx/len, uy = dy/len;
+        float nx = -uy*ARROW_SIZE*0.6f, ny = ux*ARROW_SIZE*0.6f;
+        ImVec2 tip(to.x + ux*ARROW_SIZE, to.y + uy*ARROW_SIZE);
+        dl->AddTriangleFilled(tip, ImVec2(to.x+nx,to.y+ny), ImVec2(to.x-nx,to.y-ny), color);
     };
 
-    u32 xColor = (m_hoveredAxis == GizmoAxis::X || m_dragAxis == GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
-    drawAxisArrow(endX, xColor, xCollapsed);
+    int axes[3]   = {axis0, axis1, axis2};
+    ImVec2 ends[3]= {end0, end1, end2};
+    bool   cols[3]= {col0, col1, col2};
+    float  alps[3]= {alpha0, alpha1, alpha2};
 
-    u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
-    drawAxisArrow(endY, yColor, yCollapsed);
-
-    if (!zDimmed) {
-        u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
-        drawAxisArrow(endZ, zColor, zCollapsed);
+    for (int i = 0; i < 3; ++i) {
+        int idx = axes[i];
+        if (idx == 2 && zDimmed) continue;
+        u32 color = withAlpha(axisBaseColor(idx), alps[i]);
+        drawAxisArrow(ends[i], color, cols[i]);
     }
 #endif
 }
@@ -311,32 +349,45 @@ void TransformGizmo::renderRotate3D(const Vec2& screenPos, float handleLen, bool
 #endif
 }
 
-void TransformGizmo::renderScale3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed,
-                                    bool xCollapsed, bool yCollapsed, bool zCollapsed) {
+void TransformGizmo::renderScale3D(const Vec2& screenPos,
+    ImVec2 end0, ImVec2 end1, ImVec2 end2, bool zDimmed,
+    bool col0, bool col1, bool col2,
+    float alpha0, float alpha1, float alpha2,
+    int axis0, int axis1, int axis2) {
 #ifdef CF_HAS_IMGUI
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 sp(screenPos.x, screenPos.y);
 
+    auto withAlpha = [](u32 base, float a) -> u32 {
+        return (base & 0x00FFFFFFu) | (static_cast<u32>(std::min(a, 1.f) * 255.f) << 24);
+    };
+    auto axisBaseColor = [&](int idx) -> u32 {
+        if (idx == 0) return (m_hoveredAxis==GizmoAxis::X||m_dragAxis==GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
+        if (idx == 1) return (m_hoveredAxis==GizmoAxis::Y||m_dragAxis==GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
+        return (m_hoveredAxis==GizmoAxis::Z||m_dragAxis==GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
+    };
+
     auto drawAxisScale = [&](ImVec2 to, u32 color, bool collapsed) {
         if (collapsed) {
-            dl->AddRect(ImVec2(sp.x - BOX_SIZE, sp.y - BOX_SIZE),
-                        ImVec2(sp.x + BOX_SIZE, sp.y + BOX_SIZE), color, 0.f, 0, AXIS_LINE_WIDTH * 0.8f);
+            dl->AddRect(ImVec2(sp.x-BOX_SIZE, sp.y-BOX_SIZE),
+                        ImVec2(sp.x+BOX_SIZE, sp.y+BOX_SIZE), color, 0.f, 0, AXIS_LINE_WIDTH*0.8f);
             return;
         }
         dl->AddLine(sp, to, color, AXIS_LINE_WIDTH);
-        dl->AddRectFilled(ImVec2(to.x - BOX_SIZE, to.y - BOX_SIZE),
-                          ImVec2(to.x + BOX_SIZE, to.y + BOX_SIZE), color);
+        dl->AddRectFilled(ImVec2(to.x-BOX_SIZE, to.y-BOX_SIZE),
+                          ImVec2(to.x+BOX_SIZE, to.y+BOX_SIZE), color);
     };
 
-    u32 xColor = (m_hoveredAxis == GizmoAxis::X || m_dragAxis == GizmoAxis::X) ? COLOR_HOVERED : COLOR_X_AXIS;
-    drawAxisScale(endX, xColor, xCollapsed);
+    int axes[3]   = {axis0, axis1, axis2};
+    ImVec2 ends[3]= {end0, end1, end2};
+    bool   cols[3]= {col0, col1, col2};
+    float  alps[3]= {alpha0, alpha1, alpha2};
 
-    u32 yColor = (m_hoveredAxis == GizmoAxis::Y || m_dragAxis == GizmoAxis::Y) ? COLOR_HOVERED : COLOR_Y_AXIS;
-    drawAxisScale(endY, yColor, yCollapsed);
-
-    if (!zDimmed) {
-        u32 zColor = (m_hoveredAxis == GizmoAxis::Z || m_dragAxis == GizmoAxis::Z) ? COLOR_HOVERED : COLOR_Z_AXIS;
-        drawAxisScale(endZ, zColor, zCollapsed);
+    for (int i = 0; i < 3; ++i) {
+        int idx = axes[i];
+        if (idx == 2 && zDimmed) continue;
+        u32 color = withAlpha(axisBaseColor(idx), alps[i]);
+        drawAxisScale(ends[i], color, cols[i]);
     }
 #endif
 }

@@ -37,11 +37,17 @@ private:
     void renderRotate(const Vec2& screenPos, float handleLen);
     void renderScale(const Vec2& screenPos, float handleLen);
 
-    void renderTranslate3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed,
-                           bool xCollapsed, bool yCollapsed, bool zCollapsed);
+    void renderTranslate3D(const Vec2& screenPos,
+                           ImVec2 end0, ImVec2 end1, ImVec2 end2, bool zDimmed,
+                           bool col0, bool col1, bool col2,
+                           float alpha0, float alpha1, float alpha2,
+                           int axis0, int axis1, int axis2);
     void renderRotate3D(const Vec2& screenPos, float handleLen, bool zDimmed);
-    void renderScale3D(const Vec2& screenPos, ImVec2 endX, ImVec2 endY, ImVec2 endZ, bool zDimmed,
-                       bool xCollapsed, bool yCollapsed, bool zCollapsed);
+    void renderScale3D(const Vec2& screenPos,
+                       ImVec2 end0, ImVec2 end1, ImVec2 end2, bool zDimmed,
+                       bool col0, bool col1, bool col2,
+                       float alpha0, float alpha1, float alpha2,
+                       int axis0, int axis1, int axis2);
 
     GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
                             ImVec2 endX, ImVec2 endY, ImVec2 endZ,
