@@ -58,9 +58,12 @@ The projection matrix $P$ is then:
 
 This matrix maps the viewing frustum to a normalized device coordinate (NDC) cube ranging from $-1$ to $1$ on all axes.
 
-\begin{specbox}{Design Rationale: Matrix Convention}
+
+\paragraph{Design Rationale: Matrix Convention}
+
 Caffeine employs column-major matrices to maintain compatibility with OpenGL-style APIs. However, the internal math library provides helper functions to abstract away the memory layout, ensuring that developers can focus on the geometric logic rather than memory offsets.
-\end{specbox}
+
+
 
 \needspace{6\baselineskip}
 \section{Frustum Culling and Visibility}
@@ -231,6 +234,9 @@ struct MeshRendererComponent {
 
 For procedural or primitive-based geometry, the \texttt{MeshFilterComponent} specifies the type of primitive to generate (Cube, Sphere, Capsule, etc.) or a path to a custom mesh. This allows for rapid prototyping without requiring external asset files for basic shapes.
 
-\begin{specbox}{Implementation Detail: Skinned Meshes}
+
+\paragraph{Implementation Detail: Skinned Meshes}
+
 The \texttt{SkinnedMeshRendererComponent} extends the basic mesh concept by adding a \texttt{skeletonPath}. This triggers a different rendering path that uses vertex skinning on the GPU, allowing for character animations where the mesh deforms based on an underlying bone hierarchy.
-\end{specbox}
+
+

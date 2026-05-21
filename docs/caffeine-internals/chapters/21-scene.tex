@@ -144,6 +144,9 @@ During the scene update phase:
 
 This approach ensures that matrix multiplications are only performed when necessary, significantly optimizing performance in complex scenes with deep hierarchies.
 
-\begin{specbox}{Implementation Detail: Entity Remapping}
+
+\paragraph{Implementation Detail: Entity Remapping}
+
 During deserialization, entity handles in the file may not match the handles assigned by the current \texttt{ECS::World}. The \texttt{SceneSerializer::parsePayload} function maintains an \texttt{unordered\_map<u32, ECS::Entity>} to remap old IDs to new ones, ensuring that the \texttt{Parent} components correctly point to the newly created entities in the current session.
-\end{specbox}
+
+

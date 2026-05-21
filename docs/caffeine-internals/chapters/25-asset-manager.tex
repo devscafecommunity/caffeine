@@ -45,11 +45,13 @@ public:
 };
 \end{lstlisting}
 
-The move constructor and move assignment operator are specifically optimized to transfer ownership without triggering atomic increments or decrements in the \texttt{AssetManager}. After a move, the source handle is set to a null state (\texttt{m_id = ~0u}), ensuring that the destructor does not decrement the count for the transferred resource.
+The move constructor and move assignment operator are specifically optimized to transfer ownership without triggering atomic increments or decrements in the \texttt{AssetManager}. After a move, the source handle is set to a null state, ensuring that the destructor does not decrement the count for the transferred resource.
 
-\begin{specbox}{Design Rationale: Handle-Based Access}
+
+\paragraph{Design Rationale: Handle-Based Access}
 By returning a handle instead of a raw pointer, the engine can safely perform hot-reloading or garbage collection in the background. The user never holds a direct pointer to the underlying data for longer than a single frame's scope, allowing the manager to invalidate or move memory without causing dangling pointers in game logic.
-\end{specbox}
+
+
 
 \needspace{6\baselineskip}
 \section{The Asset Manager}
@@ -170,6 +172,9 @@ struct ShaderBlob {
     \end{lstlisting}
 \end{itemize}
 
-\begin{specbox}{Optimization: Alignment and Padding}
-When resolving these views, the \texttt{AssetManager} ensures that pointers (\texttt{pixels}, \texttt{pcmData}, \texttt{bytecode}) are aligned to the requirements of the underlying hardware (e.g., SIMD alignment for audio or GPU alignment for textures), even though they reside within a shared linear buffer.
-\end{specbox}
+
+\paragraph{Optimization: Alignment and Padding}
+
+When resolving these views, the AssetManager ensures that pointers (pixels, pcmData, bytecode) are aligned to the requirements of the underlying hardware (e.g., SIMD alignment for audio or GPU alignment for textures), even though they reside within a shared linear buffer.
+
+

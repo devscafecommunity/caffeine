@@ -62,9 +62,12 @@ struct AnimationTransition {
 
 A transition defines a destination state (\texttt{toState}) and a predicate (\texttt{condition}) that must be met for the transition to trigger. The \texttt{hasExitTime} property is crucial for animations that must complete their current loop before transitioning (such as a jump start or an attack animation).
 
-\begin{specbox}{Design Rationale: Transition Evaluation}
+
+\paragraph{Design Rationale: Transition Evaluation}
+
 The use of \texttt{std::function<bool()>} for transition conditions allows for complex logic to be defined by gameplay scripts or AI controllers. While it introduces a small overhead compared to pure data-driven flags, it provides the flexibility required for dynamic state machines where conditions might involve multiple external components.
-\end{specbox}
+
+
 
 The \texttt{AnimationState} wraps a clip and manages its specific playback parameters and outgoing transitions.
 
@@ -179,14 +182,17 @@ The system checks for frame events by comparing the current frame index against 
 
 A typical workflow for setting up an animation involves defining the clips, organizing them into a state machine, and configuring transitions.
 
-\begin{specbox}{Example: Player State Machine}
+
+\paragraph{Example: Player State Machine}
+
 Consider a player character with "Idle", "Walk", and "Jump" states.
 \begin{enumerate}
     \item \textbf{Idle}: Loops indefinitely. Transitions to \textbf{Walk} when \texttt{velocity.x > 0}.
     \item \textbf{Walk}: Loops indefinitely. Transitions to \textbf{Idle} when \texttt{velocity.x == 0}, and to \textbf{Jump} when \texttt{isGrounded == false}.
     \item \textbf{Jump}: Does not loop (\texttt{loop = false}). Transitions back to \textbf{Idle} or \textbf{Walk} only after \texttt{hasExitTime} is met and the landing animation completes.
 \end{enumerate}
-\end{specbox}
+
+
 
 The blending window defined by \texttt{blendTime} in transitions allows the system to interpolate between the poses of the previous and current states, though the current 2D implementation primarily uses this for timing state swaps rather than skeletal bone blending.
 

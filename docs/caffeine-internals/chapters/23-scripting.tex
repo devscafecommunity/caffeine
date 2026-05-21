@@ -7,9 +7,12 @@ The Caffeine Engine implements a specialized scripting subsystem designed for hi
 
 The decision to use C++ as the primary scripting language is central to the philosophy of the Caffeine Engine. By avoiding a virtual machine or a bytecode interpreter, the engine eliminates the traditional overhead associated with language bridging and data marshaling.
 
-\begin{specbox}{Performance and Type Safety}
+
+\paragraph{Performance and Type Safety}
+
 Direct C++ scripting allows the compiler to optimize gameplay code alongside the engine core. Developers benefit from compile time checks, preventing a large class of runtime errors that are common in dynamically typed scripting environments. Furthermore, the absence of a garbage collector in the scripting layer provides predictable frame times, which is essential for maintaining a consistent 60 or 144 Hz simulation.
-\end{specbox}
+
+
 
 The scripting system is built around the concept of Hot Reloadable C++ modules. This provides the fast iteration cycles typically associated with interpreted languages while retaining the performance characteristics of compiled code.
 

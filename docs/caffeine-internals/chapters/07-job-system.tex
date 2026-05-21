@@ -52,11 +52,14 @@ The handle stores both. A handle is considered complete when
 Reusing the slot for a different job increments its version, preventing
 a stale handle from falsely reporting completion.
 
-\begin{specbox}{Invariant 7.1 --- Handle version check}
+
+\paragraph{Invariant 7.1 --- Handle version check}
+
   Job handles must compare both slot index \emph{and} version number
   before reporting completion. Checking only the index is susceptible
   to ABA-style races where a recycled slot appears done prematurely.
-\end{specbox}
+
+
 
 \section{Barriers}
 

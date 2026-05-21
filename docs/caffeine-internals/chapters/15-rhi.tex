@@ -7,14 +7,17 @@ The Render Hardware Interface (RHI) serves as the foundational abstraction layer
 
 The primary objective of the Caffeine RHI is to eliminate the overhead of traditional state-machine based APIs (e.g., OpenGL) while maintaining a level of abstraction that ensures cross-platform portability. The shift towards explicit graphics APIs necessitates a more disciplined approach to resource management and command submission.
 
-\begin{specbox}{SDL3-GPU Abstraction Rationale}
+
+\paragraph{SDL3-GPU Abstraction Rationale}
+
 The choice of SDL3-GPU as the backend for the RHI is driven by three factors:
 \begin{enumerate}
     \item \textbf{Portability}: Unified access to Vulkan, D3D12, and Metal without maintaining separate backends.
     \item \textbf{Modernity}: Unlike SDL\_Render, SDL3-GPU provides low-level access to command buffers, pipelines, and descriptor sets.
     \item \textbf{Stability}: It abstracts the volatile nature of raw Vulkan/D3D12 extensions into a stable API suitable for long-term engine development.
 \end{enumerate}
-\end{specbox}
+
+
 
 The RHI is designed around the concept of a \textit{stateless command recording} phase followed by an \textit{explicit submission} phase. This allows the engine to parallelize command recording across multiple CPU cores, effectively saturating the GPU command processor.
 
@@ -178,7 +181,9 @@ The RHI uses a command-buffer based workflow to communicate with the GPU. This d
 
 A \texttt{CommandBuffer} is a recording of commands that the GPU will execute asynchronously.
 
-\begin{specbox}{Command Buffer Lifecycle}
+
+\paragraph{Command Buffer Lifecycle}
+
 The lifecycle of a command buffer in Caffeine follows a strict sequence:
 \begin{enumerate}
     \item \textbf{Acquisition}: A command buffer is acquired via \texttt{RenderDevice::beginFrame()}.
@@ -186,7 +191,8 @@ The lifecycle of a command buffer in Caffeine follows a strict sequence:
     \item \textbf{Submission}: The buffer is submitted via \texttt{RenderDevice::endFrame()}, at which point it is queued for GPU execution.
     \item \textbf{Synchronization}: The engine ensures that the command buffer is not reused until the GPU has finished processing it.
 \end{enumerate}
-\end{specbox}
+
+
 
 \needspace{5\baselineskip}
 \subsection{Render Passes}

@@ -186,13 +186,15 @@ Continuous inputs return an \texttt{AxisState}, providing the current scalar val
 
 Proper state tracking requires consistent updates at the start and end of every frame. The \texttt{beginFrame()} method caches the current state into the "previous state" buffer, while \texttt{endFrame()} prepares the manager for the next cycle.
 
-During \texttt{beginFrame()}, the following operations occur:
+During the \texttt{beginFrame()} method, the following operations occur:
 \begin{enumerate}
-    \item Copy \texttt{m_keyState} to \texttt{m_prevKeyState}.
-    \item Copy \texttt{m_mouseState} to \texttt{m_prevMouseState}.
+    \item Copy key state to previous key state.
+    \item Copy mouse state to previous mouse state.
     \item Store current mouse position as previous mouse position.
     \item Clear temporary injection buffers.
 \end{enumerate}
+
+This double buffering ensures that logic running during the frame can query \texttt{isActionJustPressed()} reliably, regardless of when the actual hardware event was received.
 
 This double buffering ensures that logic running during the frame can query \texttt{isActionJustPressed()} reliably, regardless of when the actual hardware event was received.
 

@@ -51,11 +51,14 @@ invokes \texttt{CF\_BUILTIN\_TRAP()} causing an immediate hardware trap.
 This is deliberately brutal: masked failures in debug are more dangerous
 than hard crashes.
 
-\begin{specbox}{Invariant 2.1 --- Assert semantics}
+
+\paragraph{Invariant 2.1 --- Assert semantics}
+
   No assertion shall be removed to silence a false positive.
   If \texttt{CF\_ASSERT} fires, the precondition it guards must be fixed at
   the call site, not at the assertion.
-\end{specbox}
+
+
 
 \section{Timing (\texttt{Timer.hpp})}
 

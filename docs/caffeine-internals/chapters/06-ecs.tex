@@ -94,12 +94,15 @@ Entity CommandBuffer::create() {
 \texttt{execute(World\&)} is called at a safe point (end of frame,
 after all systems finish) to replay all recorded mutations on the live world.
 
-\begin{specbox}{Invariant 6.1 --- Structural mutation safety}
+
+\paragraph{Invariant 6.1 --- Structural mutation safety}
+
   ECS structural mutations (entity creation/destruction, component
   add/remove) during iteration \textbf{must} go through
   \texttt{CommandBuffer}. Direct world mutation during a
   \texttt{forEach} loop is undefined behaviour.
-\end{specbox}
+
+
 
 \section{Systems}
 

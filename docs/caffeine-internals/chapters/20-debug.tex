@@ -5,9 +5,12 @@
 
 The Caffeine Engine incorporates a centralized logging system to provide detailed insights into the runtime behavior of the engine and game code. The \texttt{LogSystem} class serves as the primary interface for message output, offering features like level-based filtering, category-based isolation, and extensible message sinks.
 
-\begin{specbox}{Design Rationale: Fixed Buffer Logging}
+
+\paragraph{Design Rationale: Fixed Buffer Logging}
+
 To maintain performance during intense debugging sessions, the logging system uses a fixed-length message buffer of 2048 characters. This avoids heap allocations during the formatting process, ensuring that logging calls remain relatively lightweight and don't introduce significant jitter in the frame rate.
-\end{specbox}
+
+
 
 \subsection{System Architecture}
 
@@ -130,9 +133,12 @@ Timing in the Caffeine Engine relies on the \texttt{Core::Timer} class. This tim
 
 The system operates with a resolution of one million ticks per second, translating to microsecond precision. When calculating durations, the tick difference between the start and end points is divided by 1,000,000 to convert the value into seconds. The profiler then converts these seconds into milliseconds for more readable statistics.
 
-\begin{specbox}{Design Rationale: Fixed Scope Storage}
-The profiler uses a pre-allocated array of 256 \texttt{InternalScopeData} entries. While this limits the number of unique scopes that can be tracked simultaneously, it guarantees that entering or exiting a profiled region never triggers a memory allocation. This is vital for profiling tight loops or high-frequency functions where the overhead of a hash map or dynamic vector would skew the results.
-\end{specbox}
+
+\paragraph{Design Rationale: Fixed Scope Storage}
+
+The profiler uses a pre-allocated array of 256 InternalScopeData entries. While this limits the number of unique scopes that can be tracked simultaneously, it guarantees that entering or exiting a profiled region never triggers a memory allocation. This is vital for profiling tight loops or high-frequency functions where the overhead of a hash map or dynamic vector would skew the results.
+
+
 
 \needspace{5\baselineskip}
 \subsection{Reporting and Resetting}

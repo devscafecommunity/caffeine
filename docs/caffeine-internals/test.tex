@@ -128,6 +128,16 @@
 
 % ── Utility ───────────────────────────────────────────────────────────────────
 \usepackage{enumitem}
+\usepackage{tcolorbox}
+\tcbuselibrary{breakable}
+\usepackage{tikz}
+
+% ── Custom environments ───────────────────────────────────────────────────────
+\newtcolorbox{specbox}[1]{
+  colback=codebg, colframe=darkblue!40,
+  fonttitle=\sffamily\bfseries,
+  title=#1, breakable
+}
 
 % =============================================================================
 \begin{document}
@@ -171,5 +181,7 @@
 \input{chapters/24-ui}
 \input{chapters/25-asset-manager}
 \input{chapters/bibliography}
+
+\end{document}
 
 \end{document}

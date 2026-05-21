@@ -7,9 +7,12 @@ The Caffeine Engine employs a decoupled communication architecture through its \
 
 A core challenge in a generic event system is identifying event types at runtime without the overhead of C++ Run-Time Type Information (RTTI). Caffeine solves this using a static sentinel address technique.
 
-\begin{specbox}{Design Rationale: Zero-Cost Type IDs}
+
+\paragraph{Design Rationale: Zero-Cost Type IDs}
+
 Standard RTTI (\texttt{typeid}) can introduce significant binary size overhead and performance penalties. Instead, Caffeine utilizes the unique memory address of a static variable within a template function to generate unique identifiers at compile-time for each distinct type.
-\end{specbox}
+
+
 
 The implementation resides in the \texttt{Detail::eventTypeId<T>} function:
 

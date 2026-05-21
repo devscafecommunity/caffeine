@@ -93,9 +93,12 @@ Where $\circ$ denotes the Hadamard product (component wise multiplication). This
     \item \textbf{Fixed Size, Centered}: Setting $A_{min} = A_{max} = (0.5, 0.5)$ anchors the widget to the center of the parent.
 \end{itemize}
 
-\begin{specbox}{Design Rationale: Anchor/Offset Duality}
+
+\paragraph{Design Rationale: Anchor/Offset Duality}
+
 The choice of an anchor/offset system eliminates the need for separate "pixel perfect" and "responsive" layout modes. By treating absolute offsets as deltas from normalized anchors, the engine can handle complex UI resizing, such as sidebars that stay fixed in width while the main content area expands to fill the remaining space.
-\end{specbox}
+
+
 
 \needspace{6\baselineskip}
 \section{System Logic}

@@ -34,11 +34,14 @@ bring a pointer to the next alignment boundary:
 where $a$ must be a power of two. The fast bitwise form is
 $(a - (p \mathbin{\&} (a-1))) \mathbin{\&} (a-1)$.
 
-\begin{specbox}{Invariant 4.1 --- Alignment}
+
+\paragraph{Invariant 4.1 --- Alignment}
+
   Every allocation returned by any \texttt{IAllocator} must satisfy:
   $(\text{address} \bmod \text{alignment}) = 0$.
   The engine assumes 8-byte minimum alignment by default.
-\end{specbox}
+
+
 
 \section{Linear Allocator}
 
@@ -95,11 +98,14 @@ for (usize i = 0; i < m_maxSlots; ++i) {
 particle systems --- any subsystem that creates and destroys many
 identically-sized objects at high frequency.
 
-\begin{specbox}{Invariant 4.2 --- Slot size}
+
+\paragraph{Invariant 4.2 --- Slot size}
+
   No allocation request may exceed \texttt{m\_slotSize}.
   The pool does not track individual allocation sizes; a larger
   request would corrupt adjacent slots.
-\end{specbox}
+
+
 
 \section{Stack Allocator}
 

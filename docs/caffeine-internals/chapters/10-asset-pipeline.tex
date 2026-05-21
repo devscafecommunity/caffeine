@@ -38,12 +38,15 @@ the buffer itself.
 \end{tabular}
 \end{table}
 
-\begin{specbox}{Invariant 10.1 --- Endianness}
+
+\paragraph{Invariant 10.1 --- Endianness}
+
   The \texttt{.caf} format is little-endian.
   A \texttt{static\_assert} verifies \texttt{std::endian::native == std::endian::little}
   at compile time; the format must not be used on big-endian platforms
   without byte-swapping shims.
-\end{specbox}
+
+
 
 \section{Integrity Verification}
 
@@ -61,10 +64,13 @@ The CRC32 uses the IEEE 802.3 polynomial $P = \texttt{0xEDB88320}$
 compile time via a \texttt{constexpr} function, adding zero run-time
 initialisation cost.
 
-\begin{specbox}{Invariant 10.2 --- CRC32 verification}
+
+\paragraph{Invariant 10.2 --- CRC32 verification}
+
   Both CRC32 checks must pass before any \texttt{.caf} file is used.
   A file that passes only one check is treated as corrupt.
-\end{specbox}
+
+
 
 \section{Asset Types}
 

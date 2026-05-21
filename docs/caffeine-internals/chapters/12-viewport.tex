@@ -109,12 +109,15 @@ t = \frac{\varepsilon - d_A}{d_B - d_A}, \quad
 The clipped segment $(\mathbf{c}, \mathbf{b})$ (or $(\mathbf{a}, \mathbf{c})$)
 is then safe to project without numerical explosion.
 
-\begin{specbox}{Invariant 12.1 --- Near-plane clipping}
+
+\paragraph{Invariant 12.1 --- Near-plane clipping}
+
   Near-plane clipping must be applied to every projected line segment
   in Mode3D. Skipping it for ``short'' segments is not safe; the
   perspective divide can still explode for world-space points near
   the camera position.
-\end{specbox}
+
+
 
 \section{projectToScreen --- Isometric}
 
@@ -204,11 +207,14 @@ length.
 The three axes are drawn in fixed colours: X red (255, 70, 70),
 Y green (70, 255, 90), Z blue (90, 140, 255).
 
-\begin{specbox}{Invariant 12.2 --- Navigation widget correctness}
+
+\paragraph{Invariant 12.2 --- Navigation widget correctness}
+
   Navigation widget axis directions must be computed from the live
   \texttt{camYaw} and \texttt{camPitch} values every frame.
   Hardcoding or caching the directions between frames is incorrect.
-\end{specbox}
+
+
 
 \section{Keyboard Navigation}
 

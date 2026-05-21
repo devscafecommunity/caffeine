@@ -43,9 +43,12 @@ struct SpriteVertex {
 };
 \end{lstlisting}
 
-\begin{specbox}{Design Rationale: Packed Color Tints}
-The \texttt{tint} field uses a single \texttt{u32} to represent four 8-bit color channels. This choice reduces the vertex size from 36 bytes (using \texttt{Vec4} floats for color) to 24 bytes, effectively reducing the memory bandwidth requirement by 33\% without significant loss in color precision for 2D applications.
-\end{specbox}
+
+\paragraph{Design Rationale: Packed Color Tints}
+
+The tint field uses a single u32 to represent four 8-bit color channels. This choice reduces the vertex size from 36 bytes (using Vec4 floats for color) to 24 bytes, effectively reducing the memory bandwidth requirement by 33\% without significant loss in color precision for 2D applications.
+
+
 
 \subsection{Submission and Primitives}
 
@@ -85,9 +88,12 @@ Because the sort key is an integer and the number of elements is large, the engi
 
 The algorithm performs four passes, each processing 8 bits of the sort key. This approach is highly cache-friendly and avoids the branching overhead of traditional sorting algorithms.
 
-\begin{specbox}{Performance Advantage of Radix Sort}
+
+\paragraph{Performance Advantage of Radix Sort}
+
 For a typical load of 10,000 sprites, Radix Sort outperforms Quicksort by a factor of 3--5x. In the Caffeine Engine, the sorting pass is often the fastest part of the rendering frame, typically taking less than 0.2ms on a single thread.
-\end{specbox}
+
+
 
 \subsection{Flushing and RHI Integration}
 
@@ -176,9 +182,8 @@ struct PixelData {
 };
 \end{lstlisting}
 
-\begin{specbox}{Design Rationale: Atomic Packing}
-The packing process is atomic. When new entries are added via \texttt{add()}, the \texttt{m_packed} flag is cleared. The atlas remains "unpacked" until the explicit \texttt{pack()} call is made. This prevents redundant re-packing operations when adding multiple sprites in sequence, ensuring that the heavy $O(n \log n)$ sort only occurs when necessary.
-\end{specbox}
+\paragraph{Design Rationale: Atomic Packing}
+The packing process is atomic. When new entries are added via the \texttt{add()} method, the packed flag is cleared. The atlas remains unpacked until the explicit \texttt{pack()} call is made. This prevents redundant re-packing operations when adding multiple sprites in sequence, ensuring that the heavy $O(n \log n)$ sort only occurs when necessary.
 
 \subsection{Utilization and Performance}
 
@@ -276,13 +281,19 @@ x_w &= x_{cam} \cos \theta - y_{cam} \sin \theta + c_x \\
 y_w &= x_{cam} \sin \theta + y_{cam} \cos \theta + c_y
 \end{align}
 
-\begin{specbox}{Design Rationale: Manual Inverse vs Matrix Inverse}
-While using \texttt{Mat4::invert()} on the View-Projection matrix is mathematically sound, the engine provides a manual implementation for \texttt{screenToWorld}. This avoids the numerical stability issues and computational cost associated with 4x4 matrix inversion for simple 2D transformations, resulting in cleaner and faster code for common gameplay tasks like mouse picking.
-\end{specbox}
 
-\begin{specbox}{Dirty Flag Matrix Caching}
-Matrix multiplication and inversion are computationally expensive. The \texttt{Camera2D} implements a "dirty flag" optimization. The View-Projection matrix is only recalculated when a camera property (position, rotation, zoom, or viewport) is modified. This reduces the per-frame overhead for static cameras to near zero.
-\end{specbox}
+\paragraph{Design Rationale: Manual Inverse vs Matrix Inverse}
+
+While using Mat4::invert() on the View-Projection matrix is mathematically sound, the engine provides a manual implementation for screenToWorld. This avoids the numerical stability issues and computational cost associated with 4x4 matrix inversion for simple 2D transformations, resulting in cleaner and faster code for common gameplay tasks like mouse picking.
+
+
+
+
+\paragraph{Dirty Flag Matrix Caching}
+
+Matrix multiplication and inversion are computationally expensive. The Camera2D implements a "dirty flag" optimization. The View-Projection matrix is only recalculated when a camera property (position, rotation, zoom, or viewport) is modified. This reduces the per-frame overhead for static cameras to near zero.
+
+
 
 \subsection{Procedural Effects: Camera Shake}
 
@@ -309,9 +320,12 @@ struct FrameStats {
 
 These metrics provide critical insight into the efficiency of the batching process. For instance, a high ratio of \texttt{drawCalls} to \texttt{totalSprites} indicates that the texture atlas is not being utilized effectively, or that state changes (such as layer switches) are forcing premature flushes.
 
-\begin{specbox}{Interpreting Telemetry}
-In a perfectly optimized scene where all sprites share a single atlas and reside on the same layer, the \texttt{drawCalls} and \texttt{totalBatches} count should both be 1, regardless of the number of sprites (up to the hardware limit). Any deviation from this suggests an opportunity for better asset organization.
-\end{specbox}
+
+\paragraph{Interpreting Telemetry}
+
+In a perfectly optimized scene where all sprites share a single atlas and reside on the same layer, the drawCalls and totalBatches count should both be 1, regardless of the number of sprites (up to the hardware limit). Any deviation from this suggests an opportunity for better asset organization.
+
+
 
 \needspace{6\baselineskip}
 \section{Summary}
