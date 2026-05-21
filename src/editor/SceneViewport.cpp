@@ -3,6 +3,7 @@
 #include "editor/EditorContext.hpp"
 #include "audio/AudioComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
+#include "math/Mat4.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -504,6 +505,21 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     };
 
     ImVec2 rawX = proj2D(1,0,0), rawY = proj2D(0,1,0), rawZ = proj2D(0,0,1);
+
+    if (is3D) {
+        static constexpr float DEG2RAD = 3.14159265f / 180.f;
+        using Caffeine::Mat4;
+        Mat4 R = Mat4::rotationZ(pos->rotation.z * DEG2RAD)
+               * Mat4::rotationY(pos->rotation.y * DEG2RAD)
+               * Mat4::rotationX(pos->rotation.x * DEG2RAD);
+        auto rot = [&](float lx, float ly, float lz) -> ImVec2 {
+            float wx = R(0,0)*lx + R(0,1)*ly + R(0,2)*lz;
+            float wy = R(1,0)*lx + R(1,1)*ly + R(1,2)*lz;
+            float wz = R(2,0)*lx + R(2,1)*ly + R(2,2)*lz;
+            return proj2D(wx, wy, wz);
+        };
+        rawX = rot(1,0,0); rawY = rot(0,1,0); rawZ = rot(0,0,1);
+    }
     m_axisRawDirs[0] = rawX; m_axisRawDirs[1] = rawY; m_axisRawDirs[2] = rawZ;
     m_gizmoScreenOrigin = screenPos;
 

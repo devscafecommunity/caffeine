@@ -131,7 +131,7 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
 
     if (world.has<ECS::Transform>(e)) {
         auto* t = world.get<ECS::Transform>(e);
-        bool is2D = !world.has<ECS::MeshFilterComponent>(e) && !world.has<ECS::MeshRendererComponent>(e);
+        bool is2D = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
         if (Widgets::DragVec3("Position", t->position, 0.5f)) { ctx.isDirty = true; }
         if (is2D) {
             if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; }
