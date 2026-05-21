@@ -135,6 +135,11 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
     bool childExists = hasChildren(entity);
     if (!childExists) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
+    if (entity == m_expandEntity) {
+        ImGui::SetNextItemOpen(true);
+        m_expandEntity = ECS::Entity::INVALID;
+    }
+
     bool open = ImGui::TreeNodeEx((void*)(uintptr_t)entity.id(), flags, "%s", name);
 
     if (entity == m_context->selectedEntity && entity != m_lastScrollTarget) {
@@ -160,6 +165,7 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
                 auto& parentComp = m_world->add<Scene::Parent>(dragged);
                 parentComp.parent = entity;
                 parentComp.dirty  = true;
+                m_expandEntity = entity;
                 m_context->endUndo(*m_world);
             }
         }
@@ -186,8 +192,18 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
             auto& parentComp = m_world->add<Scene::Parent>(child);
             parentComp.parent = entity;
             parentComp.dirty  = true;
+            m_expandEntity = entity;
             m_context->selectEntity(child);
             m_context->endUndo(*m_world);
+        }
+        if (auto* pc = m_world->get<Scene::Parent>(entity)) {
+            if (pc->parent.isValid()) {
+                if (ImGui::MenuItem("Unparent")) {
+                    m_context->beginUndo(EditorCommand::MoveEntity, entity.id(), *m_world);
+                    m_world->remove<Scene::Parent>(entity);
+                    m_context->endUndo(*m_world);
+                }
+            }
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Delete")) {

@@ -54,6 +54,7 @@ private:
     u32 m_entityCount = 0;
     ECS::Entity m_renaming = ECS::Entity::INVALID;
     ECS::Entity m_lastScrollTarget = ECS::Entity::INVALID;
+    ECS::Entity m_expandEntity = ECS::Entity::INVALID;
 };
 
 } // namespace Caffeine::Editor
