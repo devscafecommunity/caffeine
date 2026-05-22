@@ -345,11 +345,11 @@ inline void SkeletalAnimationSystem::evaluateTransitions(SkeletalAnimator& anim)
     if (!state) return;
 
     for (const auto& t : state->transitions) {
-        if (!t.condition) continue;
+        if (!t.legacyCondition) continue;
         if (t.hasExitTime && state->clip) {
             if (anim.timeInState < state->clip->duration) continue;
         }
-        if (t.condition()) {
+        if (t.legacyCondition()) {
             anim.currentState = t.toState;
             anim.timeInState  = 0.0f;
             return;

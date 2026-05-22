@@ -58,6 +58,11 @@ public:
     usize size() const { return m_data.size(); }
     bool empty() const { return m_data.empty(); }
 
+    auto begin()       { return m_data.begin(); }
+    auto end()         { return m_data.end(); }
+    auto begin() const { return m_data.begin(); }
+    auto end()   const { return m_data.end(); }
+
 private:
     Vector<Pair> m_data;
 };

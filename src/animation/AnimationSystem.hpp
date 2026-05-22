@@ -92,20 +92,121 @@ public:
         return anim->currentState == FixedString<32>(stateName);
     }
 
+    void addParameter(ECS::World& world, ECS::Entity e, const char* name, ParameterType type) {
+        Animator* anim = world.get<Animator>(e);
+        if (anim) anim->addParameter(name, type);
+    }
+
+    void setBool(ECS::World& world, ECS::Entity e, const char* name, bool value) {
+        Animator* anim = world.get<Animator>(e);
+        if (anim) anim->setBool(name, value);
+    }
+
+    void setFloat(ECS::World& world, ECS::Entity e, const char* name, f32 value) {
+        Animator* anim = world.get<Animator>(e);
+        if (anim) anim->setFloat(name, value);
+    }
+
+    void setInt(ECS::World& world, ECS::Entity e, const char* name, i32 value) {
+        Animator* anim = world.get<Animator>(e);
+        if (anim) anim->setInt(name, value);
+    }
+
+    void setTrigger(ECS::World& world, ECS::Entity e, const char* name) {
+        Animator* anim = world.get<Animator>(e);
+        if (anim) anim->setTrigger(name);
+    }
+
+    bool getBool(ECS::World& world, ECS::Entity e, const char* name) const {
+        const Animator* anim = world.get<Animator>(e);
+        return anim ? anim->getBool(name) : false;
+    }
+
+    f32 getFloat(ECS::World& world, ECS::Entity e, const char* name) const {
+        const Animator* anim = world.get<Animator>(e);
+        return anim ? anim->getFloat(name) : 0.0f;
+    }
+
+    i32 getInt(ECS::World& world, ECS::Entity e, const char* name) const {
+        const Animator* anim = world.get<Animator>(e);
+        return anim ? anim->getInt(name) : 0;
+    }
+
 private:
+    static bool evaluateCondition(const TransitionCondition& cond, const Animator& anim) {
+        const AnimatorParameter* p = anim.findParameter(cond.parameterName);
+        if (!p) return false;
+
+        switch (p->type) {
+            case ParameterType::Bool:
+                return cond.op == ConditionOperator::Equals
+                    ? (p->boolValue == cond.boolValue)
+                    : (p->boolValue != cond.boolValue);
+
+            case ParameterType::Trigger:
+                return p->triggered;
+
+            case ParameterType::Float:
+                switch (cond.op) {
+                    case ConditionOperator::Greater:        return p->floatValue >  cond.floatValue;
+                    case ConditionOperator::Less:           return p->floatValue <  cond.floatValue;
+                    case ConditionOperator::GreaterOrEqual: return p->floatValue >= cond.floatValue;
+                    case ConditionOperator::LessOrEqual:    return p->floatValue <= cond.floatValue;
+                    case ConditionOperator::Equals:         return p->floatValue == cond.floatValue;
+                    case ConditionOperator::NotEquals:      return p->floatValue != cond.floatValue;
+                }
+                break;
+
+            case ParameterType::Int:
+                switch (cond.op) {
+                    case ConditionOperator::Equals:         return p->intValue == cond.intValue;
+                    case ConditionOperator::NotEquals:      return p->intValue != cond.intValue;
+                    case ConditionOperator::Greater:        return p->intValue >  cond.intValue;
+                    case ConditionOperator::Less:           return p->intValue <  cond.intValue;
+                    case ConditionOperator::GreaterOrEqual: return p->intValue >= cond.intValue;
+                    case ConditionOperator::LessOrEqual:    return p->intValue <= cond.intValue;
+                }
+                break;
+        }
+        return false;
+    }
+
+    static void consumeTriggers(Animator& anim) {
+        for (auto& p : anim.parameters) {
+            if (p.type == ParameterType::Trigger) {
+                p.triggered = false;
+            }
+        }
+    }
+
     static void evaluateTransitions(Animator& anim) {
         const AnimationState* state = anim.states.get(anim.currentState);
         if (!state) return;
 
         for (const auto& t : state->transitions) {
-            if (!t.condition) continue;
             if (t.hasExitTime && state->clip) {
                 if (anim.timeInState < state->clip->duration()) continue;
             }
-            if (t.condition()) {
+
+            bool conditionsMet = false;
+
+            if (!t.conditions.empty()) {
+                conditionsMet = true;
+                for (const auto& cond : t.conditions) {
+                    if (!evaluateCondition(cond, anim)) {
+                        conditionsMet = false;
+                        break;
+                    }
+                }
+            } else if (t.legacyCondition) {
+                conditionsMet = t.legacyCondition();
+            }
+
+            if (conditionsMet) {
                 anim.previousState = anim.currentState;
                 anim.currentState  = t.toState;
                 anim.timeInState   = 0.0f;
+                consumeTriggers(anim);
                 return;
             }
         }
