@@ -1,6 +1,7 @@
 #include "editor/AssetBrowser.hpp"
 #include "editor/CapLoader.hpp"
 #include "editor/FilePicker.hpp"
+#include "editor/DragDropSystem.hpp"
 #include "assets/TextureCompiler.hpp"
 #ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
@@ -261,7 +262,11 @@ const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::pat
 // ── Toolbar ─────────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderToolbar() {
-    // Back button
+    if (ImGui::Button("+ Create")) {
+        m_showAssetCreator = true;
+    }
+    ImGui::SameLine();
+
     if (canGoBack()) {
         if (ImGui::Button("<- Back")) {
             navigateBack();
@@ -297,16 +302,6 @@ void AssetBrowser::renderToolbar() {
         m_thumbnailSize = static_cast<u32>(size);
     }
     ImGui::PopItemWidth();
-
-    ImGui::SameLine();
-    if (ImGui::Button("Import...")) {
-        m_showImportFilePicker = true;
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Import Folder...")) {
-        m_showImportFolderPicker = true;
-    }
 
     ImGui::SameLine();
     ImGui::Checkbox("Auto .caf", &m_autoConvertOnImport);
@@ -388,52 +383,70 @@ void AssetBrowser::renderBreadcrumbs() {
 
 void AssetBrowser::renderGridView() {
     float thumbWithPad = static_cast<float>(m_thumbnailSize) + 16.0f;
+    float lineHeight = ImGui::GetTextLineHeight();
     int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / thumbWithPad));
     ImGui::Columns(cols, nullptr, false);
 
     for (usize i = 0; i < m_filteredEntries.size(); ++i) {
         auto& entry = m_filteredEntries[i];
 
-        ImGui::BeginGroup();
+        ImGui::PushID(static_cast<int>(i));
+        
+        bool isSelected = (m_selectedEntry == static_cast<int>(i));
+        ImVec2 cursorPos = ImGui::GetCursorPos();
+        
+        if (ImGui::Selectable("##cell", isSelected, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap, ImVec2(thumbWithPad, thumbWithPad + lineHeight))) {
+            m_selectedEntry = static_cast<int>(i);
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (entry.isDirectory) {
+                    navigateTo(entry.path);
+                    ImGui::PopID();
+                    break;
+                } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                    m_onScriptOpen(entry.path);
+                }
+            }
+        }
 
+        if (!entry.isDirectory && ImGui::BeginDragDropSource()) {
+            AssetDropPayload ddPayload{};
+            strncpy(ddPayload.path, entry.path.string().c_str(), sizeof(ddPayload.path) - 1);
+            ddPayload.type = entry.type;
+            ImGui::SetDragDropPayload(kPayloadAssetPath, &ddPayload, sizeof(ddPayload));
+            ImGui::Text("%s", entry.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+
+        if (entry.isDirectory) {
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
+                    const auto* dd = static_cast<const AssetDropPayload*>(payload->Data);
+                    std::filesystem::path src(std::string(dd->path));
+                    std::filesystem::path dst = entry.path / src.filename();
+                    std::error_code ec;
+                    std::filesystem::rename(src, dst, ec);
+                    if (!ec) {
+                        m_selectedEntry = -1;
+                        refresh();
+                    } else {
+                        setStatusMessage("Move failed: " + ec.message(), true);
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
+
+        ImGui::SetCursorPos(cursorPos);
+        ImGui::BeginGroup();
         if (entry.isDirectory) {
             ImGui::Text("[dir]");
         } else {
             ImGui::Text("%s", iconForType(entry.type, entry.path));
         }
-        ImGui::TextUnformatted(entry.name.c_str());
-
-        // Selection
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-            m_selectedEntry = static_cast<int>(i);
-        }
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            if (entry.isDirectory) {
-                navigateTo(entry.path);
-                ImGui::EndGroup();
-                break;
-            } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
-                m_onScriptOpen(entry.path);
-            }
-        }
-
-        // Drag-drop source
-        if (!entry.isDirectory && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            std::string pathStr = entry.path.string();
-            ImGui::SetDragDropPayload("ASSET_PATH", pathStr.c_str(), pathStr.size() + 1);
-            ImGui::Text("%s", entry.name.c_str());
-            ImGui::EndDragDropSource();
-        }
-
-        // Selection highlight
-        if (m_selectedEntry == static_cast<int>(i) && ImGui::IsItemHovered()) {
-            ImGui::GetWindowDrawList()->AddRect(
-                ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                IM_COL32(255, 255, 0, 100));
-        }
-
+        ImGui::TextWrapped("%s", entry.name.c_str());
         ImGui::EndGroup();
+
+        ImGui::PopID();
         ImGui::NextColumn();
     }
 
@@ -443,7 +456,6 @@ void AssetBrowser::renderGridView() {
 // ── List view ───────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderListView() {
-    // Table header
     ImGui::Columns(4, "asset_list", false);
     ImGui::Text("Name");   ImGui::NextColumn();
     ImGui::Text("Type");   ImGui::NextColumn();
@@ -453,37 +465,60 @@ void AssetBrowser::renderListView() {
 
     for (usize i = 0; i < m_filteredEntries.size(); ++i) {
         auto& entry = m_filteredEntries[i];
+        ImGui::PushID(static_cast<int>(i));
 
-        // Name column
+        bool isSelected = (m_selectedEntry == static_cast<int>(i));
+        
+        if (ImGui::Selectable("##row", isSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
+            m_selectedEntry = static_cast<int>(i);
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (entry.isDirectory) {
+                    navigateTo(entry.path);
+                    ImGui::PopID();
+                    break;
+                } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                    m_onScriptOpen(entry.path);
+                }
+            }
+        }
+
+        if (!entry.isDirectory && ImGui::BeginDragDropSource()) {
+            AssetDropPayload ddPayload{};
+            strncpy(ddPayload.path, entry.path.string().c_str(), sizeof(ddPayload.path) - 1);
+            ddPayload.type = entry.type;
+            ImGui::SetDragDropPayload(kPayloadAssetPath, &ddPayload, sizeof(ddPayload));
+            ImGui::Text("%s", entry.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+
+        if (entry.isDirectory) {
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
+                    const auto* dd = static_cast<const AssetDropPayload*>(payload->Data);
+                    std::filesystem::path src(std::string(dd->path));
+                    std::filesystem::path dst = entry.path / src.filename();
+                    std::error_code ec;
+                    std::filesystem::rename(src, dst, ec);
+                    if (!ec) {
+                        m_selectedEntry = -1;
+                        refresh();
+                    } else {
+                        setStatusMessage("Move failed: " + ec.message(), true);
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
+
+        ImGui::SameLine();
         if (entry.isDirectory) {
             ImGui::Text("[dir] %s", entry.name.c_str());
         } else {
             ImGui::Text("%s %s", iconForType(entry.type, entry.path), entry.name.c_str());
         }
 
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-            m_selectedEntry = static_cast<int>(i);
-        }
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            if (entry.isDirectory) {
-                navigateTo(entry.path);
-                break;
-            } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
-                m_onScriptOpen(entry.path);
-            }
-        }
-
-        if (!entry.isDirectory && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            std::string pathStr = entry.path.string();
-            ImGui::SetDragDropPayload("ASSET_PATH", pathStr.c_str(), pathStr.size() + 1);
-            ImGui::Text("%s", entry.name.c_str());
-            ImGui::EndDragDropSource();
-        }
-
         ImGui::NextColumn();
 
-        // Type column
         if (entry.isDirectory) {
             ImGui::Text("Folder");
         } else {
@@ -501,7 +536,6 @@ void AssetBrowser::renderListView() {
         }
         ImGui::NextColumn();
 
-        // Size column
         if (entry.isDirectory) {
             ImGui::TextUnformatted("-");
         } else {
@@ -514,13 +548,14 @@ void AssetBrowser::renderListView() {
         }
         ImGui::NextColumn();
 
-        // Kind column
         if (entry.isDirectory) {
             ImGui::TextUnformatted("dir");
         } else {
             ImGui::TextUnformatted(entry.path.extension().string().c_str());
         }
         ImGui::NextColumn();
+        
+        ImGui::PopID();
     }
 
     ImGui::Columns(1);
@@ -529,29 +564,98 @@ void AssetBrowser::renderListView() {
 // ── Context menu ────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderContextMenu() {
+    const bool hasSelection = (m_selectedEntry >= 0 &&
+                               static_cast<usize>(m_selectedEntry) < m_filteredEntries.size());
+    const bool hasClipboard = !m_clipboardPath.empty();
+
     if (ImGui::BeginPopupContextWindow()) {
+        if (ImGui::MenuItem("New Asset")) {
+            m_showAssetCreator = true;
+        }
         if (ImGui::MenuItem("New Folder")) {
+            m_pendingCreateType = 10;
+            std::strncpy(m_assetNamingBuf, "NewFolder", sizeof(m_assetNamingBuf) - 1);
+            m_showNamingPopup = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Import File...")) {
+            m_showImportFilePicker = true;
+        }
+        if (ImGui::MenuItem("Import Folder...")) {
+            m_showImportFolderPicker = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Cut", nullptr, false, hasSelection)) {
+            m_clipboardPath = m_filteredEntries[static_cast<usize>(m_selectedEntry)].path;
+            m_clipboardIsCut = true;
+        }
+        if (ImGui::MenuItem("Copy", nullptr, false, hasSelection)) {
+            m_clipboardPath = m_filteredEntries[static_cast<usize>(m_selectedEntry)].path;
+            m_clipboardIsCut = false;
+        }
+        if (ImGui::MenuItem("Paste", nullptr, false, hasClipboard)) {
             std::error_code ec;
-            std::filesystem::create_directory(m_currentDir / "NewFolder", ec);
+            std::filesystem::path dst = m_currentDir / m_clipboardPath.filename();
+            if (m_clipboardIsCut) {
+                std::filesystem::rename(m_clipboardPath, dst, ec);
+                if (!ec) m_clipboardPath.clear();
+            } else {
+                std::filesystem::copy(m_clipboardPath, dst,
+                    std::filesystem::copy_options::overwrite_existing |
+                    std::filesystem::copy_options::recursive, ec);
+            }
+            if (!ec) refresh();
+            else setStatusMessage("Paste failed: " + ec.message(), true);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Rename", nullptr, false, hasSelection)) {
+            m_renamingEntry = m_selectedEntry;
+            const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+            std::strncpy(m_renameBuf, e.name.c_str(), sizeof(m_renameBuf) - 1);
+            m_renameBuf[sizeof(m_renameBuf) - 1] = '\0';
+        }
+        if (ImGui::MenuItem("Delete", nullptr, false, hasSelection)) {
+            const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+            std::error_code ec;
+            std::filesystem::remove_all(e.path, ec);
             if (!ec) {
+                m_selectedEntry = -1;
                 refresh();
+            } else {
+                setStatusMessage("Delete failed: " + ec.message(), true);
             }
         }
-        if (ImGui::MenuItem("New Script")) {
-            std::filesystem::path newPath = m_currentDir / "NewScript.lua";
-            int counter = 1;
-            while (std::filesystem::exists(newPath)) {
-                newPath = m_currentDir / ("NewScript" + std::to_string(counter++) + ".lua");
-            }
-            std::ofstream f(newPath);
-            if (f.is_open()) {
-                f << "function onCreate(entity)\nend\n\nfunction onUpdate(entity, dt)\nend\n\nfunction onDestroy(entity)\nend\n\nfunction onCollision(entity, other)\nend\n";
-                f.close();
-                refresh();
-                if (m_onScriptOpen) {
-                    m_onScriptOpen(newPath);
+        ImGui::EndPopup();
+    }
+}
+
+void AssetBrowser::renderRenamePopup() {
+    if (m_renamingEntry >= 0) {
+        ImGui::OpenPopup("Rename");
+        m_renamingEntry = -2;
+    }
+
+    if (ImGui::BeginPopupModal("Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("New name", m_renameBuf, sizeof(m_renameBuf));
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            if (m_renameBuf[0] != '\0' && m_selectedEntry >= 0 &&
+                static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+                const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+                std::filesystem::path newPath = e.path.parent_path() / m_renameBuf;
+                std::error_code ec;
+                std::filesystem::rename(e.path, newPath, ec);
+                if (!ec) {
+                    m_selectedEntry = -1;
+                    refresh();
+                } else {
+                    setStatusMessage("Rename failed: " + ec.message(), true);
                 }
             }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -819,12 +923,144 @@ void AssetBrowser::setStatusMessage(const std::string& message, bool isError) {
 
 // ── Main render ─────────────────────────────────────────────────────────────
 
+void AssetBrowser::renderAssetCreatorModal() {
+    if (m_showAssetCreator) {
+        ImGui::OpenPopup("Asset Creator");
+        m_showAssetCreator = false;
+    }
+
+    if (ImGui::BeginPopupModal("Asset Creator", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Create or Import Asset");
+        ImGui::Separator();
+
+        ImGui::BeginChild("CategoryList", ImVec2(140, 300), true);
+        const char* categories[] = { "Media", "3D Models", "Scripts", "Prefabs & Scenes", "Folders" };
+        for (int i = 0; i < 5; ++i) {
+            bool isSelected = (m_assetCreatorCategory == i);
+            if (isSelected) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.4f, 0.8f, 1.0f));
+            }
+            if (ImGui::Selectable(categories[i], isSelected)) {
+                m_assetCreatorCategory = i;
+            }
+            if (isSelected) {
+                ImGui::PopStyleColor();
+            }
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        ImGui::BeginChild("AssetOptions", ImVec2(460, 300), true);
+        ImGui::Columns(4, nullptr, false);
+
+        auto drawOption = [&](const char* icon, const char* name, const char* ext, int typeId, bool isImport) {
+            ImGui::PushID(name);
+            if (ImGui::Button(icon, ImVec2(96, 80))) {
+                if (isImport) {
+                    m_showImportFilePicker = true;
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    m_pendingCreateType = typeId;
+                    m_showNamingPopup = true;
+                    std::strncpy(m_assetNamingBuf, name, sizeof(m_assetNamingBuf) - 1);
+                    for (int i = 0; m_assetNamingBuf[i]; ++i) {
+                        if (m_assetNamingBuf[i] == ' ') m_assetNamingBuf[i] = '_';
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::TextWrapped("%s", name);
+            ImGui::TextDisabled("%s", ext);
+            ImGui::PopID();
+            ImGui::NextColumn();
+        };
+
+        if (m_assetCreatorCategory == 0) {
+            drawOption("[I]", "Image", "PNG/JPG/TGA", 0, true);
+            drawOption("[A]", "Audio", "MP3/OGG/WAV", 1, true);
+            drawOption("[G]", "GIF", "GIF", 2, true);
+            drawOption("[V]", "Video", "MP4/AVI/MOV", 3, true);
+        } else if (m_assetCreatorCategory == 1) {
+            drawOption("[O]", "OBJ Model", ".obj", 4, true);
+            drawOption("[G]", "GLTF Model", ".gltf/.glb", 5, true);
+        } else if (m_assetCreatorCategory == 2) {
+            drawOption("[L]", "Lua Script", ".lua", 6, false);
+            drawOption("[C]", "C++ Script", ".cpp/.hpp", 7, false);
+        } else if (m_assetCreatorCategory == 3) {
+            drawOption("[P]", "Prefab", ".prefab", 8, false);
+            drawOption("[M]", "Material", ".mat", 9, false);
+        } else if (m_assetCreatorCategory == 4) {
+            drawOption("[D]", "New Folder", "dir", 10, false);
+        }
+
+        ImGui::Columns(1);
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void AssetBrowser::renderNamingPopup() {
+    if (m_showNamingPopup) {
+        ImGui::OpenPopup("Name Asset");
+        m_showNamingPopup = false;
+    }
+
+    if (ImGui::BeginPopupModal("Name Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputText("Name", m_assetNamingBuf, sizeof(m_assetNamingBuf));
+        
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            std::string nameStr = m_assetNamingBuf;
+            if (!nameStr.empty()) {
+                if (m_pendingCreateType == 6) {
+                    std::ofstream f(m_currentDir / (nameStr + ".lua"));
+                    f << "function onCreate(entity)\nend\n\nfunction onUpdate(entity, dt)\nend\n\nfunction onDestroy(entity)\nend\n";
+                } else if (m_pendingCreateType == 7) {
+                    std::ofstream hpp(m_currentDir / (nameStr + ".hpp"));
+                    hpp << "#pragma once\n#include \"ecs/CppScript.hpp\"\n\nstruct " << nameStr << " : Caffeine::ECS::CppScript {\n    void onCreate() override {}\n    void onUpdate(float dt) override {}\n    void onDestroy() override {}\n};\n";
+                    std::ofstream cpp(m_currentDir / (nameStr + ".cpp"));
+                    cpp << "#include \"" << nameStr << ".hpp\"\n";
+                } else if (m_pendingCreateType == 8) {
+                    std::ofstream f(m_currentDir / (nameStr + ".prefab"));
+                    f << "{}";
+                } else if (m_pendingCreateType == 9) {
+                    std::ofstream f(m_currentDir / (nameStr + ".mat"));
+                    f << "{}";
+                } else if (m_pendingCreateType == 10) {
+                    std::error_code ec;
+                    std::filesystem::path newPath = m_currentDir / nameStr;
+                    int counter = 1;
+                    while (std::filesystem::exists(newPath, ec)) {
+                        newPath = m_currentDir / (nameStr + std::to_string(counter++));
+                    }
+                    std::filesystem::create_directory(newPath, ec);
+                }
+                refresh();
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
     if (!m_open) return;
 
     if (ImGui::Begin("Asset Browser", &m_open)) {
 
         renderToolbar();
+        renderAssetCreatorModal();
+        renderNamingPopup();
+        renderRenamePopup();
         ImGui::Separator();
 
         if (m_showImportFilePicker) {

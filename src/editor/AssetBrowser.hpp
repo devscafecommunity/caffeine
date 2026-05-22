@@ -125,6 +125,18 @@ public:
     bool m_autoConvertOnImport = true;
     bool m_showImportFilePicker = false;
     bool m_showImportFolderPicker = false;
+    bool m_showAssetCreator = false;
+    int  m_assetCreatorCategory = 0;
+    bool m_showNamingPopup = false;
+    char m_assetNamingBuf[256] = {};
+    int  m_pendingCreateType = -1;
+    std::filesystem::path m_clipboardPath;
+    bool m_clipboardIsCut = false;
+    int  m_renamingEntry = -1;
+    char m_renameBuf[256] = {};
+    void renderAssetCreatorModal();
+    void renderNamingPopup();
+    void renderRenamePopup();
     std::string m_statusMessage;
     bool m_statusIsError = false;
     #endif
