@@ -97,9 +97,7 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     wt["hasComponent"] = [world](u32 entityId, const std::string& type) -> bool {
         ECS::Entity e(entityId, world);
         if (type == "Transform")  return e.has<ECS::Transform>();
-        if (type == "Velocity2D") return e.has<ECS::Velocity2D>();
         if (type == "Sprite")     return e.has<ECS::Sprite>();
-        if (type == "Health")     return e.has<ECS::Health>();
         if (type == "RigidBody2D") return e.has<Physics2D::RigidBody2D>();
         if (type == "Collider2D") return e.has<Physics2D::Collider2D>();
         return false;
@@ -130,22 +128,6 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     };
 
     wt["addTransform"] = wt["setTransform"];
-
-    wt["getVelocity"] = [&lua, world](u32 entityId) -> sol::table {
-        ECS::Entity e(entityId, world);
-        sol::table t = lua.create_table();
-        auto* v = e.get<ECS::Velocity2D>();
-        t["x"] = v ? v->x : 0.0f;
-        t["y"] = v ? v->y : 0.0f;
-        return t;
-    };
-
-    wt["setVelocity"] = [world](u32 entityId, sol::table t) {
-        ECS::Entity e(entityId, world);
-        auto& v = e.getOrAdd<ECS::Velocity2D>();
-        v.x = t["x"].get_or(0.0f);
-        v.y = t["y"].get_or(0.0f);
-    };
 
     wt["getRigidBody2D"] = [&lua, world](u32 entityId) -> sol::table {
         ECS::Entity e(entityId, world);

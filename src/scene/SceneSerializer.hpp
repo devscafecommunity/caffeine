@@ -98,42 +98,6 @@ public:
             }
         }
 
-        // Velocity2D
-        {
-            std::vector<std::pair<u32, ECS::Velocity2D>> entries;
-            ECS::ComponentQuery q; q.with<ECS::Velocity2D>();
-            w.forEach<ECS::Velocity2D>(q, [&](ECS::Entity e, ECS::Velocity2D& c) {
-                entries.push_back({e.id(), c});
-            });
-            if (!entries.empty()) {
-                beginSection("Velocity2D");
-                for (usize i = 0; i < entries.size(); ++i) {
-                    if (i > 0) fprintf(f, ", ");
-                    fprintf(f, "{\"entity\": %u, \"x\": %.6f, \"y\": %.6f}",
-                        entries[i].first, entries[i].second.x, entries[i].second.y);
-                }
-                fprintf(f, "]");
-            }
-        }
-
-        // Health
-        {
-            std::vector<std::pair<u32, ECS::Health>> entries;
-            ECS::ComponentQuery q; q.with<ECS::Health>();
-            w.forEach<ECS::Health>(q, [&](ECS::Entity e, ECS::Health& c) {
-                entries.push_back({e.id(), c});
-            });
-            if (!entries.empty()) {
-                beginSection("Health");
-                for (usize i = 0; i < entries.size(); ++i) {
-                    if (i > 0) fprintf(f, ", ");
-                    fprintf(f, "{\"entity\": %u, \"current\": %u, \"max\": %u}",
-                        entries[i].first, entries[i].second.current, entries[i].second.max);
-                }
-                fprintf(f, "]");
-            }
-        }
-
         // WorldTransform
         {
             std::vector<std::pair<u32, WorldTransform>> entries;
@@ -212,20 +176,16 @@ private:
     ECS::World& m_world;
 
     static constexpr u32 kTypeTransform       = 0;
-    static constexpr u32 kTypeVelocity2D     = 1;
-    static constexpr u32 kTypeAcceleration2D = 2;
-    static constexpr u32 kTypeHealth         = 3;
-    static constexpr u32 kTypeParent         = 4;
-    static constexpr u32 kTypeWorldTransform = 5;
-    static constexpr u32 kTypeCount          = 6;
+    static constexpr u32 kTypeAcceleration2D = 1;
+    static constexpr u32 kTypeParent         = 2;
+    static constexpr u32 kTypeWorldTransform = 3;
+    static constexpr u32 kTypeCount          = 4;
 
     static constexpr u64 kCompSizes[kTypeCount] = {
         sizeof(ECS::Transform),       // 0
-        sizeof(ECS::Velocity2D),      // 1
-        sizeof(ECS::Acceleration2D),  // 2
-        sizeof(ECS::Health),          // 3
-        5u,                           // 4: Parent → u32 parentId + u8 dirty
-        sizeof(WorldTransform),       // 5
+        sizeof(ECS::Acceleration2D),  // 1
+        5u,                           // 2: Parent → u32 parentId + u8 dirty
+        sizeof(WorldTransform),       // 3
     };
 
     // Generic helper: serialize a POD component type into the payload buffer.
@@ -262,9 +222,7 @@ private:
         ECS::World& w = const_cast<ECS::World&>(m_world);
 
         appendSection<ECS::Transform>     (payload, kTypeTransform,       w, sectionCount);
-        appendSection<ECS::Velocity2D>    (payload, kTypeVelocity2D,     w, sectionCount);
         appendSection<ECS::Acceleration2D>(payload, kTypeAcceleration2D, w, sectionCount);
-        appendSection<ECS::Health>        (payload, kTypeHealth,         w, sectionCount);
 
         // Parent — stores entity reference: must be handled specially
         {
@@ -372,9 +330,7 @@ private:
 
                 switch (sec.typeId) {
                     case kTypeTransform:      { auto& c = m_world.add<ECS::Transform>(e);       memcpy(&c, comp, sizeof(ECS::Transform));       break; }
-                    case kTypeVelocity2D:     { auto& c = m_world.add<ECS::Velocity2D>(e);     memcpy(&c, comp, sizeof(ECS::Velocity2D));     break; }
                     case kTypeAcceleration2D: { auto& c = m_world.add<ECS::Acceleration2D>(e); memcpy(&c, comp, sizeof(ECS::Acceleration2D)); break; }
-                    case kTypeHealth:         { auto& c = m_world.add<ECS::Health>(e);         memcpy(&c, comp, sizeof(ECS::Health));         break; }
                     case kTypeWorldTransform: { auto& c = m_world.add<WorldTransform>(e);      memcpy(&c, comp, sizeof(WorldTransform));      break; }
                     default: break;
                 }
