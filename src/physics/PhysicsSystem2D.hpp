@@ -225,24 +225,23 @@ private:
                      f32 dt) {
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
-        q.with<ECS::Velocity2D>();
 
-        world.forEach<RigidBody2D, ECS::Velocity2D>(q,
-            [&](ECS::Entity e, RigidBody2D& rb, ECS::Velocity2D& vel) {
+        world.forEach<RigidBody2D>(q,
+            [&](ECS::Entity e, RigidBody2D& rb) {
                 if (rb.isKinematic || rb.isSleeping) return;
 
                 f32 invMass = (rb.mass > 0.0f) ? 1.0f / rb.mass : 0.0f;
 
                 auto fit = forces.find(e.id());
                 if (fit != forces.end()) {
-                    vel.x += fit->second.x * invMass * dt;
-                    vel.y += fit->second.y * invMass * dt;
+                    rb.velocityX += fit->second.x * invMass * dt;
+                    rb.velocityY += fit->second.y * invMass * dt;
                 }
 
                 auto iit = impulses.find(e.id());
                 if (iit != impulses.end()) {
-                    vel.x += iit->second.x * invMass;
-                    vel.y += iit->second.y * invMass;
+                    rb.velocityX += iit->second.x * invMass;
+                    rb.velocityY += iit->second.y * invMass;
                 }
             });
     }
@@ -251,28 +250,27 @@ private:
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
         q.with<ECS::Transform>();
-        q.with<ECS::Velocity2D>();
 
-        world.forEach<RigidBody2D, ECS::Transform, ECS::Velocity2D>(q,
-            [&](ECS::Entity, RigidBody2D& rb, ECS::Transform& pos, ECS::Velocity2D& vel) {
+        world.forEach<RigidBody2D, ECS::Transform>(q,
+            [&](ECS::Entity, RigidBody2D& rb, ECS::Transform& pos) {
                 if (rb.isKinematic) {
-                    pos.position.x += vel.x * dt;
-                    pos.position.y += vel.y * dt;
+                    pos.position.x += rb.velocityX * dt;
+                    pos.position.y += rb.velocityY * dt;
                     return;
                 }
 
                 if (rb.isSleeping) return;
 
-                vel.x += m_gravity.x * dt;
-                vel.y += m_gravity.y * dt;
+                rb.velocityX += m_gravity.x * dt;
+                rb.velocityY += m_gravity.y * dt;
 
                 f32 damping = 1.0f - rb.linearDamping * dt;
                 if (damping < 0.0f) damping = 0.0f;
-                vel.x *= damping;
-                vel.y *= damping;
+                rb.velocityX *= damping;
+                rb.velocityY *= damping;
 
-                pos.position.x += vel.x * dt;
-                pos.position.y += vel.y * dt;
+                pos.position.x += rb.velocityX * dt;
+                pos.position.y += rb.velocityY * dt;
             });
     }
 
@@ -442,8 +440,6 @@ private:
 
     void resolveCollision(ECS::World& world, u32 idA, u32 idB,
                           const CollisionManifold& m) {
-        ECS::Velocity2D* velA = getVel(world, idA);
-        ECS::Velocity2D* velB = getVel(world, idB);
         RigidBody2D*     rbA  = getRB(world, idA);
         RigidBody2D*     rbB  = getRB(world, idB);
         Collider2D*      colA = getCol(world, idA);
@@ -456,8 +452,8 @@ private:
 
         if (invMassA + invMassB < 1e-9f) return;
 
-        Vec2 vA = velA ? Vec2{velA->x, velA->y} : Vec2{0.0f, 0.0f};
-        Vec2 vB = velB ? Vec2{velB->x, velB->y} : Vec2{0.0f, 0.0f};
+        Vec2 vA = rbA ? Vec2{rbA->velocityX, rbA->velocityY} : Vec2{0.0f, 0.0f};
+        Vec2 vB = rbB ? Vec2{rbB->velocityX, rbB->velocityY} : Vec2{0.0f, 0.0f};
 
         f32 relVelN = (vB.x - vA.x) * m.normal.x + (vB.y - vA.y) * m.normal.y;
 
@@ -471,15 +467,15 @@ private:
 
         Vec2 impulse = { m.normal.x * j, m.normal.y * j };
 
-        if (velA && rbA && !colA->isStatic && !rbA->isKinematic) {
-            velA->x -= impulse.x * invMassA;
-            velA->y -= impulse.y * invMassA;
+        if (rbA && rbB && !colA->isStatic && !rbA->isKinematic) {
+            rbA->velocityX -= impulse.x * invMassA;
+            rbA->velocityY -= impulse.y * invMassA;
             rbA->isSleeping = false;
             rbA->sleepTimer = 0.0f;
         }
-        if (velB && rbB && !colB->isStatic && !rbB->isKinematic) {
-            velB->x += impulse.x * invMassB;
-            velB->y += impulse.y * invMassB;
+        if (rbB && rbB && !colB->isStatic && !rbB->isKinematic) {
+            rbB->velocityX += impulse.x * invMassB;
+            rbB->velocityY += impulse.y * invMassB;
             rbB->isSleeping = false;
             rbB->sleepTimer = 0.0f;
         }
@@ -501,13 +497,13 @@ private:
                               ? Vec2{tangent.x * jt, tangent.y * jt}
                               : Vec2{-tangent.x * j * mu, -tangent.y * j * mu};
 
-            if (velA && rbA && !colA->isStatic && !rbA->isKinematic) {
-                velA->x -= frImpulse.x * invMassA;
-                velA->y -= frImpulse.y * invMassA;
+            if (rbA && !colA->isStatic && !rbA->isKinematic) {
+                rbA->velocityX -= frImpulse.x * invMassA;
+                rbA->velocityY -= frImpulse.y * invMassA;
             }
-            if (velB && rbB && !colB->isStatic && !rbB->isKinematic) {
-                velB->x += frImpulse.x * invMassB;
-                velB->y += frImpulse.y * invMassB;
+            if (rbB && !colB->isStatic && !rbB->isKinematic) {
+                rbB->velocityX += frImpulse.x * invMassB;
+                rbB->velocityY += frImpulse.y * invMassB;
             }
         }
     }
@@ -547,12 +543,11 @@ private:
     void updateSleep(ECS::World& world, f32 dt) {
         ECS::ComponentQuery q;
         q.with<RigidBody2D>();
-        q.with<ECS::Velocity2D>();
 
         const bool gravityActive = (m_gravity.x * m_gravity.x + m_gravity.y * m_gravity.y) > 1e-6f;
 
-        world.forEach<RigidBody2D, ECS::Velocity2D>(q,
-            [&](ECS::Entity, RigidBody2D& rb, ECS::Velocity2D& vel) {
+        world.forEach<RigidBody2D>(q,
+            [&](ECS::Entity, RigidBody2D& rb) {
                 if (rb.isKinematic) return;
 
                 if (gravityActive) {
@@ -561,13 +556,13 @@ private:
                     return;
                 }
 
-                f32 speedSq = vel.x * vel.x + vel.y * vel.y;
+                f32 speedSq = rb.velocityX * rb.velocityX + rb.velocityY * rb.velocityY;
                 if (speedSq < kSleepVelThreshold * kSleepVelThreshold) {
                     rb.sleepTimer += dt;
                     if (rb.sleepTimer >= kSleepTime) {
                         rb.isSleeping = true;
-                        vel.x = 0.0f;
-                        vel.y = 0.0f;
+                        rb.velocityX = 0.0f;
+                        rb.velocityY = 0.0f;
                     }
                 } else {
                     rb.sleepTimer = 0.0f;
@@ -585,10 +580,10 @@ private:
 
         (void)oneWay;
 
-        auto* vel = getVel(world, moverId);
-        if (!vel) return false;
+        auto* rb = getRB(world, moverId);
+        if (!rb) return false;
 
-        float dotWithNormal = vel->y * manifold.normal.y;
+        float dotWithNormal = rb->velocityY * manifold.normal.y;
         return dotWithNormal <= 0.0f;
     }
 
@@ -697,10 +692,6 @@ private:
         normal = nd > 1e-6f ? Vec2{ (hit.x - center.x) / nd, (hit.y - center.y) / nd }
                              : Vec2{ 0.0f, 1.0f };
         return t;
-    }
-
-    ECS::Velocity2D* getVel(ECS::World& world, u32 id) {
-        return world.get<ECS::Velocity2D>(ECS::Entity(id, &world));
     }
 
     ECS::Transform* getPos(ECS::World& world, u32 id) {

@@ -29,6 +29,8 @@ struct RigidBody2D {
     bool lockRotation  = true;
     bool isSleeping    = false;
     f32  sleepTimer    = 0.0f;
+    f32  velocityX     = 0.0f;
+    f32  velocityY     = 0.0f;
 };
 
 struct Collider2D {

@@ -21,11 +21,6 @@ struct Transform {
     Vec3 scale    = {1.0f, 1.0f, 1.0f};
 };
 
-struct Velocity2D {
-    f32 x = 0.0f;
-    f32 y = 0.0f;
-};
-
 struct Acceleration2D {
     f32 x = 0.0f;
     f32 y = 0.0f;
@@ -34,11 +29,6 @@ struct Acceleration2D {
 struct Sprite {
     std::string name;
     u32 frameIndex = 0;
-};
-
-struct Health {
-    u32 current = 100;
-    u32 max = 100;
 };
 
 struct Tag { };
