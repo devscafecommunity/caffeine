@@ -1,0 +1,191 @@
+% ============================================================================
+% Chapter 5 — Components
+% ============================================================================
+\chapter{Components}
+
+This chapter lists all built-in component types. Components are plain structs
+with no virtual functions. They hold data only; logic lives in systems
+(free functions that call \texttt{world.forEach}).
+
+\textbf{Headers:}
+\begin{itemize}[noitemsep]
+  \item \texttt{ecs/Components.hpp} — 2D components
+  \item \texttt{ecs/Components3D.hpp} — 3D transform components
+  \item \texttt{ecs/CameraComponents.hpp} — camera settings
+  \item \texttt{ecs/LightComponents.hpp} — lighting
+  \item \texttt{ecs/MeshComponents.hpp} — mesh rendering
+\end{itemize}
+
+All components are in namespace \texttt{Caffeine::ECS}.
+
+% ----------------------------------------------------------------------------
+\section{Transform}
+
+Spatial state in 3D space. Used for all movable objects, both 2D and 3D.
+
+\begin{lstlisting}
+struct Transform {
+    Vec3 position = {0, 0, 0};
+    Vec3 rotation = {0, 0, 0};  // Euler angles in radians
+    Vec3 scale    = {1, 1, 1};
+};
+\end{lstlisting}
+
+For 2D games, use \texttt{position.x}, \texttt{position.y}, and
+\texttt{rotation.z} (yaw). Leave \texttt{position.z} at 0.
+
+\begin{lstlisting}
+auto& t = world.add<Transform>(e);
+t.position = {320.0f, 240.0f, 0.0f};
+t.rotation.z = 1.5707f;   // 90 degrees
+t.scale = {2.0f, 2.0f, 1.0f};
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{Velocity2D and Acceleration2D}
+
+\begin{lstlisting}
+struct Velocity2D {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+};
+
+struct Acceleration2D {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+};
+\end{lstlisting}
+
+These are plain data containers. Your movement system reads them and writes
+to \texttt{Transform}. Alternatively, use the built-in Physics2D system
+(Chapter~\ref{chap:physics2d}), which manages velocity integration
+automatically when a \texttt{RigidBody2D} is present.
+
+% ----------------------------------------------------------------------------
+\section{Sprite}
+
+Associates an entity with a named sprite and a frame index for sprite-sheet
+animation.
+
+\begin{lstlisting}
+struct Sprite {
+    std::string name;        // asset name in the asset manager
+    u32         frameIndex = 0;
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+world.add<Sprite>(e, Sprite{ "player_idle", 0 });
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{Health}
+
+\begin{lstlisting}
+struct Health {
+    u32 current = 100;
+    u32 max     = 100;
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+Health& hp = world.add<Health>(e, Health{100, 100});
+
+// take damage
+hp.current = (damage >= hp.current) ? 0 : hp.current - damage;
+
+if (hp.current == 0) {
+    world.destroy(e);
+}
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{Tag and DisabledTag}
+
+\begin{lstlisting}
+struct Tag {};         // custom marker — add a using alias
+struct DisabledTag {}; // entity is excluded from most systems
+\end{lstlisting}
+
+Tags are zero-size structs. Use them as type-safe flags:
+
+\begin{lstlisting}
+// Define project-specific tags
+using PlayerTag  = Caffeine::ECS::Tag;
+using EnemyTag   = Caffeine::ECS::Tag;   // use separate structs per project
+
+// Disable an entity temporarily
+world.add<DisabledTag>(e);
+
+// Re-enable
+world.remove<DisabledTag>(e);
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{PersistentComponent}
+
+Marks an entity to survive scene transitions (equivalent to
+\texttt{DontDestroyOnLoad} in other engines).
+
+\begin{lstlisting}
+struct PersistentComponent {
+    bool dontDestroyOnLoad = false;
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+world.add<PersistentComponent>(musicEntity, PersistentComponent{true});
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{ParticleEmitterComponent}
+
+Drives a CPU particle system attached to an entity.
+
+\begin{lstlisting}
+struct ParticleEmitterComponent {
+    int   maxParticles = 100;
+    f32   emissionRate = 10.0f;   // particles per second
+    f32   lifetime     = 1.0f;    // seconds per particle
+    Vec2  velocityMin  = {-1.0f, -1.0f};
+    Vec2  velocityMax  = {1.0f,  1.0f};
+    u32   startColor   = 0xFFFFFFFF;
+    u32   endColor     = 0x00FFFFFF;   // RGBA, alpha fades out
+    f32   startSize    = 8.0f;
+    f32   endSize      = 0.0f;
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+ParticleEmitterComponent emitter;
+emitter.maxParticles = 200;
+emitter.emissionRate = 50.0f;
+emitter.lifetime     = 0.8f;
+emitter.velocityMin  = {-50.0f, -100.0f};
+emitter.velocityMax  = {50.0f,  -200.0f};
+emitter.startColor   = 0xFF8800FF;   // orange
+emitter.endColor     = 0xFF880000;   // dim orange, fully transparent
+world.add<ParticleEmitterComponent>(explosionEntity, emitter);
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{3D Transform Components}
+
+For 3D objects, use the components from \texttt{ecs/Components3D.hpp}.
+
+\begin{lstlisting}
+struct Position3D { Vec3 position; };
+struct Rotation3D  { Vec4 quaternion = {0,0,0,1}; };  // identity
+struct Scale3D     { Vec3 scale = {1,1,1}; };
+\end{lstlisting}
+
+These components store the local-space transform split into three separate
+components instead of a single \texttt{Transform}. The scene system reads
+them and computes the world matrix in \texttt{WorldTransform} (see
+Chapter~\ref{chap:scene}).
+
+\begin{lstlisting}
+world.add<Position3D>(e, Position3D{{10.0f, 0.0f, 5.0f}});
+world.add<Rotation3D>(e);           // identity rotation
+world.add<Scale3D>(e, Scale3D{{2.0f, 2.0f, 2.0f}});
+\end{lstlisting}

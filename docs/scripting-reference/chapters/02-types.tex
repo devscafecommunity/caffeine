@@ -1,0 +1,93 @@
+% ============================================================================
+% Chapter 2 — Type System
+% ============================================================================
+\chapter{Type System}
+
+All engine code uses a set of explicit type aliases defined in
+\texttt{core/Types.hpp} under namespace \texttt{Caffeine}. Using these types
+instead of \texttt{int} or \texttt{float} makes the bit-width unambiguous
+across platforms and compilers.
+
+\section{Integer Types}
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Alias} & \textbf{Underlying type} & \textbf{Size} \\
+\midrule
+\texttt{i8}  & \texttt{int8\_t}   & 1 byte, signed \\
+\texttt{i16} & \texttt{int16\_t}  & 2 bytes, signed \\
+\texttt{i32} & \texttt{int32\_t}  & 4 bytes, signed \\
+\texttt{i64} & \texttt{int64\_t}  & 8 bytes, signed \\
+\texttt{u8}  & \texttt{uint8\_t}  & 1 byte, unsigned \\
+\texttt{u16} & \texttt{uint16\_t} & 2 bytes, unsigned \\
+\texttt{u32} & \texttt{uint32\_t} & 4 bytes, unsigned \\
+\texttt{u64} & \texttt{uint64\_t} & 8 bytes, unsigned \\
+\bottomrule
+\end{longtable}
+
+\section{Floating-Point Types}
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Alias} & \textbf{Underlying type} & \textbf{Precision} \\
+\midrule
+\texttt{f32} & \texttt{float}  & 32-bit IEEE 754 \\
+\texttt{f64} & \texttt{double} & 64-bit IEEE 754 \\
+\bottomrule
+\end{longtable}
+
+Use \texttt{f32} for all game-world quantities (position, velocity, time
+delta). Reserve \texttt{f64} for accumulation over many frames or high-
+precision timing.
+
+\section{Character Types}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Alias} & \textbf{Underlying type} \\
+\midrule
+\texttt{c8}  & \texttt{char} \\
+\texttt{c16} & \texttt{char16\_t} \\
+\texttt{c32} & \texttt{char32\_t} \\
+\bottomrule
+\end{longtable}
+
+\section{Size and Pointer Types}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Alias} & \textbf{Meaning} \\
+\midrule
+\texttt{usize} & Unsigned size type (\texttt{std::size\_t}) \\
+\texttt{isize} & Signed size type (\texttt{std::ptrdiff\_t}) \\
+\texttt{Byte}  & Alias for \texttt{u8}, raw memory \\
+\bottomrule
+\end{longtable}
+
+\section{Named Constants}
+
+The header provides compile-time min/max constants for every numeric type:
+
+\begin{lstlisting}
+constexpr usize u8_max  = 255u;
+constexpr usize u16_max = 65535u;
+constexpr usize u32_max = 4294967295u;
+
+constexpr i32 i32_max =  2147483647;
+constexpr i32 i32_min = -2147483648;
+\end{lstlisting}
+
+\section{Usage Example}
+
+\begin{lstlisting}
+#include "core/Types.hpp"
+using namespace Caffeine;
+
+u32 score    = 0;
+f32 speed    = 150.0f;   // pixels/second
+u8  lives    = 3;
+i32 coins    = -5;       // can go negative
+usize count  = entities.size();
+\end{lstlisting}
+
+Always prefer these aliases over bare C++ primitive types in engine code.
