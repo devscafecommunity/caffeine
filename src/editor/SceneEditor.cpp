@@ -42,6 +42,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Panels", [this]() {
         m_animationTimeline.open();
     });
+    m_commandPalette.registerCommand("panel_animator_controller", "Animator Controller", "Panels", [this]() {
+        m_animatorController.open();
+    });
     m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Panels", [this]() {
         m_tilemapEditor.open();
     });
@@ -117,7 +120,6 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
             snap.id = e.id();
             snap.px = pos.position.x; snap.py = pos.position.y;
             snap.rz = pos.rotation.z;
-            if (auto* v = world.get<ECS::Velocity2D>(e)) { snap.vx = v->x; snap.vy = v->y; }
             m_playSnapshot.push_back(snap);
         });
     m_isPlaying = true;
@@ -140,7 +142,6 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
         ECS::Entity e(snap.id, &world);
         if (!e.isValid()) continue;
         if (auto* pos = world.get<ECS::Transform>(e)) { pos->position.x = snap.px; pos->position.y = snap.py; pos->rotation.z = snap.rz; }
-        if (auto* v   = world.get<ECS::Velocity2D>(e)) { v->x = snap.vx;  v->y = snap.vy;  }
     }
     m_playSnapshot.clear();
 }
@@ -275,6 +276,7 @@ void SceneEditor::render(f32 deltaTime) {
         profile.scriptEditorOpen ? m_scriptEditor.open() : m_scriptEditor.close();
         profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
         profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
+        profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -299,11 +301,10 @@ void SceneEditor::render(f32 deltaTime) {
     m_audioPreview.onImGuiRender();
     m_cameraPreview.onImGuiRender(*activeWorld, m_ctx);
     m_animationTimeline.render(deltaTime);
+    m_animatorController.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
-
-    handleAssetDrop(*activeWorld);
 
     ImGui::End(); // DockSpace
 
@@ -404,6 +405,13 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             ImGui::MenuItem("Inspector", nullptr, &m_ctx.inspectorOpen);
             ImGui::MenuItem("Viewport",  nullptr, &m_ctx.viewportOpen);
             ImGui::MenuItem("Assets",    nullptr, &m_ctx.assetsOpen);
+            ImGui::Separator();
+            bool atOpen = m_animationTimeline.isOpen();
+            if (ImGui::MenuItem("Animation Timeline", nullptr, &atOpen))
+                atOpen ? m_animationTimeline.open() : m_animationTimeline.close();
+            bool acOpen = m_animatorController.isOpen();
+            if (ImGui::MenuItem("Animator Controller", nullptr, &acOpen))
+                acOpen ? m_animatorController.open() : m_animatorController.close();
             ImGui::EndMenu();
         }
 
@@ -750,6 +758,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
     if (profile.consoleOpen) visibleCount++;
     if (profile.profilerOpen) visibleCount++;
     if (profile.animationTimelineOpen) visibleCount++;
+    if (profile.animatorControllerOpen) visibleCount++;
     if (profile.tilemapEditorOpen) visibleCount++;
     if (profile.scriptEditorOpen) visibleCount++;
 
@@ -779,7 +788,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
 
     // Bottom panels (Assets, Console, Profiler, etc.) - if any enabled
     if (profile.assetsOpen || profile.consoleOpen || profile.profilerOpen || 
-        profile.animationTimelineOpen || profile.tilemapEditorOpen || profile.scriptEditorOpen) {
+        profile.animationTimelineOpen || profile.animatorControllerOpen || profile.tilemapEditorOpen || profile.scriptEditorOpen) {
         ImGuiID dockBottomRegion;
         ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottomRegion, &dockCenter);
         
@@ -787,6 +796,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
         if (profile.consoleOpen) ImGui::DockBuilderDockWindow("Console", dockBottomRegion);
         if (profile.profilerOpen) ImGui::DockBuilderDockWindow("Profiler", dockBottomRegion);
         if (profile.animationTimelineOpen) ImGui::DockBuilderDockWindow("Animation Timeline", dockBottomRegion);
+        if (profile.animatorControllerOpen) ImGui::DockBuilderDockWindow("Animator Controller", dockBottomRegion);
         if (profile.tilemapEditorOpen) ImGui::DockBuilderDockWindow("Tilemap Editor", dockBottomRegion);
         if (profile.scriptEditorOpen) ImGui::DockBuilderDockWindow("Script Editor", dockBottomRegion);
         ImGui::DockBuilderDockWindow("Build & Run", dockBottomRegion);

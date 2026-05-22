@@ -20,6 +20,7 @@
 #endif
 
 #include "editor/AnimationTimeline.hpp"
+#include "editor/AnimatorController.hpp"
 #include "editor/TilemapEditor.hpp"
 #include "editor/CommandPalette.hpp"
 #include "editor/BuildDialog.hpp"
@@ -88,6 +89,7 @@ public:
     ProfilerWindow& profiler() { return m_profiler; }
     ScriptEditorWindow& scriptEditor() { return m_scriptEditor; }
     AnimationTimelinePanel& animationTimeline() { return m_animationTimeline; }
+    AnimatorControllerWindow& animatorController() { return m_animatorController; }
     TilemapEditorPanel& tilemapEditor() { return m_tilemapEditor; }
     CommandPalette& commandPalette() { return m_commandPalette; }
 #ifdef CF_HAS_IMGUI
@@ -135,6 +137,7 @@ private:
 #endif
 
     AnimationTimelinePanel m_animationTimeline;
+    AnimatorControllerWindow m_animatorController;
     TilemapEditorPanel m_tilemapEditor;
     CommandPalette m_commandPalette;
     BuildDialog m_buildDialog;
@@ -171,7 +174,6 @@ private:
     struct EntitySnapshot {
         u32 id;
         float px = 0, py = 0;
-        float vx = 0, vy = 0;
         float rz = 0;
     };
     std::vector<EntitySnapshot> m_playSnapshot;

@@ -17,6 +17,7 @@ struct LayoutProfile {
     bool consoleOpen = true;
     bool profilerOpen = false;
     bool animationTimelineOpen = false;
+    bool animatorControllerOpen = false;
     bool tilemapEditorOpen = false;
     bool scriptEditorOpen = false;
 
@@ -34,6 +35,7 @@ struct LayoutProfile {
             && consoleOpen == other.consoleOpen
             && profilerOpen == other.profilerOpen
             && animationTimelineOpen == other.animationTimelineOpen
+            && animatorControllerOpen == other.animatorControllerOpen
             && tilemapEditorOpen == other.tilemapEditorOpen
             && scriptEditorOpen == other.scriptEditorOpen;
     }
