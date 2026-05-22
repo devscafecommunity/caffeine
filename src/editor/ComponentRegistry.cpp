@@ -24,7 +24,6 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ return w.has<Physics2D::RigidBody2D>(e); },
         [](ECS::World& w, ECS::Entity e){
             w.add<Physics2D::RigidBody2D>(e);
-            if (!w.has<ECS::Velocity2D>(e)) w.add<ECS::Velocity2D>(e);
         }
     });
     reg.registerComponent({
@@ -97,16 +96,6 @@ void registerAllComponents(ComponentRegistry& reg) {
         "System", "Persistent",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::PersistentComponent>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PersistentComponent>(e); }
-    });
-    reg.registerComponent({
-        "Game", "Health",
-        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Health>(e); },
-        [](ECS::World& w, ECS::Entity e){ w.add<ECS::Health>(e); }
-    });
-    reg.registerComponent({
-        "Game", "Velocity2D",
-        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Velocity2D>(e); },
-        [](ECS::World& w, ECS::Entity e){ w.add<ECS::Velocity2D>(e); }
     });
     reg.registerComponent({
         "Camera", "Camera2D",

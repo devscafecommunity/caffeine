@@ -73,13 +73,7 @@ bool SceneSerializer::serialize(const std::string& filepath) {
             entityMap[eid].emplace_back(kTypeTransform, std::move(data));
         }
     }
-    {
-        std::vector<std::pair<u32, std::vector<u8>>> entries;
-        collectComponent<ECS::Velocity2D>(m_world, entries);
-        for (auto& [eid, data] : entries) {
-            entityMap[eid].emplace_back(kTypeVelocity2D, std::move(data));
-        }
-    }
+
     {
         std::vector<std::pair<u32, std::vector<u8>>> entries;
         collectComponent<ECS::Acceleration2D>(m_world, entries);
@@ -87,15 +81,7 @@ bool SceneSerializer::serialize(const std::string& filepath) {
             entityMap[eid].emplace_back(kTypeAcceleration2D, std::move(data));
         }
     }
-    {
-        std::vector<std::pair<u32, std::vector<u8>>> entries;
-        collectComponent<ECS::Health>(m_world, entries);
-        for (auto& [eid, data] : entries) {
-            entityMap[eid].emplace_back(kTypeHealth, std::move(data));
-        }
-    }
 
-    // Type 6: Sprite (std::string needs special handling)
     {
         std::vector<std::pair<u32, std::vector<u8>>> entries;
         collectSpriteComponents(entries);
@@ -249,17 +235,11 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeTransform:
                 applyPODComponent<ECS::Transform>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
-            case kTypeVelocity2D:
-                applyPODComponent<ECS::Velocity2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
-                break;
             case kTypeAcceleration2D:
                 applyPODComponent<ECS::Acceleration2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeSprite:
                 applySpriteComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
-                break;
-            case kTypeHealth:
-                applyPODComponent<ECS::Health>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeTag:
                 m_world.add<ECS::Tag>(e);

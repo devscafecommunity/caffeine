@@ -41,8 +41,6 @@ private:
     void drawCamera(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawCollider2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
-    void drawVelocity2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
-    void drawHealth(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawCppScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);

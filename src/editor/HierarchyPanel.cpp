@@ -1,4 +1,5 @@
 #include "editor/HierarchyPanel.hpp"
+#include "editor/DragDropSystem.hpp"
 #include "ui/UIComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include <cctype>
@@ -63,6 +64,30 @@ void HierarchyPanel::onImGuiRender() {
         }
 
         renderEmptyContextMenu();
+
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        ImGui::InvisibleButton("##hierarchy_drop_zone", ImGui::GetWindowSize(), ImGuiButtonFlags_AllowOverlap);
+        if (const AssetDropPayload* asset = DragDropManager::AcceptAssetDrop()) {
+            std::filesystem::path assetPath(std::string(asset->path));
+            const std::string ext = assetPath.extension().string();
+            const bool isScript = (ext == ".lua" || ext == ".cpp" || ext == ".hpp" || ext == ".h");
+            const bool isValidAsset = (asset->type == AssetType::Texture  ||
+                                       asset->type == AssetType::Audio    ||
+                                       asset->type == AssetType::Mesh     ||
+                                       asset->type == AssetType::Prefab   ||
+                                       (!isScript && asset->type == AssetType::Unknown));
+            if (isValidAsset && m_world && m_context) {
+                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+                ECS::Entity entity = m_world->create();
+                setEntityName(*m_world, entity, assetPath.stem().string().c_str());
+                m_world->add<ECS::Transform>(entity);
+                if (asset->type == AssetType::Texture) {
+                    m_world->add<ECS::Sprite>(entity, asset->path, 0);
+                }
+                m_context->selectEntity(entity);
+                m_context->endUndo(*m_world);
+            }
+        }
     }
     ImGui::EndChild();
 
@@ -266,8 +291,6 @@ void HierarchyPanel::duplicateEntity(ECS::World& world, ECS::Entity src) {
     if (auto* c = world.get<ECS::Sprite>(src))              { auto& d = world.add<ECS::Sprite>(dst);      d = *c; }
     if (auto* c = world.get<Physics2D::RigidBody2D>(src))   { auto& d = world.add<Physics2D::RigidBody2D>(dst); d = *c; }
     if (auto* c = world.get<Physics2D::Collider2D>(src))    { auto& d = world.add<Physics2D::Collider2D>(dst);  d = *c; }
-    if (auto* c = world.get<ECS::Velocity2D>(src))          { auto& d = world.add<ECS::Velocity2D>(dst);  d = *c; }
-    if (auto* c = world.get<ECS::Health>(src))              { auto& d = world.add<ECS::Health>(dst);      d = *c; }
 
     m_context->selectEntity(dst);
     m_context->endUndo(world);

@@ -21,10 +21,8 @@ private:
     // Editor-specific component type IDs for the binary format
     static constexpr u32 kTypeName          = 0;
     static constexpr u32 kTypeTransform     = 1;
-    static constexpr u32 kTypeVelocity2D    = 2;
     static constexpr u32 kTypeAcceleration2D = 3;
     static constexpr u32 kTypeSprite        = 6;
-    static constexpr u32 kTypeHealth        = 7;
     static constexpr u32 kTypeTag           = 8;
     static constexpr u32 kTypeAudioEmitter  = 9;
     static constexpr u32 kTypeParent        = 10;

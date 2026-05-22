@@ -66,8 +66,6 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawCppScript(world, e, ctx);
         drawRigidBody2D(world, e, ctx);
         drawCollider2D(world, e, ctx);
-        drawVelocity2D(world, e, ctx);
-        drawHealth(world, e, ctx);
         drawAudioSource(world, e, ctx);
         drawPersistent(world, e, ctx);
         drawMeshFilter(world, e, ctx);
@@ -345,51 +343,6 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
         col->debugColor[1] = static_cast<u8>(colF[1] * 255.0f);
         col->debugColor[2] = static_cast<u8>(colF[2] * 255.0f);
         col->debugColor[3] = static_cast<u8>(colF[3] * 255.0f);
-        ctx.isDirty = true;
-    }
-}
-
-void InspectorPanel::drawVelocity2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
-    if (!world.has<ECS::Velocity2D>(e)) return;
-
-    bool enabled = true;
-    bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Velocity2D", enabled, removeRequested)) return;
-    if (removeRequested) {
-        world.remove<ECS::Velocity2D>(e);
-        ctx.isDirty = true;
-        return;
-    }
-
-    auto* v = world.get<ECS::Velocity2D>(e);
-    float vel[2] = { v->x, v->y };
-    if (ImGui::DragFloat2("Velocity", vel, 1.0f)) {
-        v->x = vel[0]; v->y = vel[1];
-        ctx.isDirty = true;
-    }
-}
-
-void InspectorPanel::drawHealth(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
-    if (!world.has<ECS::Health>(e)) return;
-
-    bool enabled = true;
-    bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Health", enabled, removeRequested)) return;
-    if (removeRequested) {
-        world.remove<ECS::Health>(e);
-        ctx.isDirty = true;
-        return;
-    }
-
-    auto* h = world.get<ECS::Health>(e);
-    int curr = static_cast<int>(h->current);
-    int mx = static_cast<int>(h->max);
-    if (ImGui::DragInt("Current", &curr, 1, 0, 999999)) {
-        h->current = static_cast<u32>(curr);
-        ctx.isDirty = true;
-    }
-    if (ImGui::DragInt("Max", &mx, 1, 0, 999999)) {
-        h->max = static_cast<u32>(mx);
         ctx.isDirty = true;
     }
 }
