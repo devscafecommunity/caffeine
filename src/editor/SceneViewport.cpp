@@ -311,6 +311,15 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         }
     }
 
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && ctx.selectedEntity.isValid() && 
+        ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        Vec3 entityPos;
+        if (tryGetEntityPosition(world, ctx.selectedEntity, entityPos)) {
+            ctx.camFocus = entityPos;
+            ctx.camDistance = 5.0f;
+        }
+    }
+
     bool leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
     bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     if ((hovered || m_gizmoDragging) && ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
