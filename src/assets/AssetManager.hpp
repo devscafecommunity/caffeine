@@ -63,6 +63,7 @@ public:
         if constexpr (std::is_same_v<T, Texture>)    return &e.resolved.texture;
         if constexpr (std::is_same_v<T, AudioClip>)  return &e.resolved.audio;
         if constexpr (std::is_same_v<T, ShaderBlob>) return &e.resolved.shader;
+        if constexpr (std::is_same_v<T, Mesh>)       return &e.resolved.mesh;
         return nullptr;
     }
 
@@ -71,6 +72,7 @@ private:
         Texture    texture  {};
         AudioClip  audio    {};
         ShaderBlob shader   {};
+        Mesh       mesh     {};
     };
 
     struct AssetEntry {
@@ -97,6 +99,7 @@ private:
     void resolveTexture(AssetEntry& e);
     void resolveAudio(AssetEntry& e);
     void resolveShader(AssetEntry& e);
+    void resolveMesh(AssetEntry& e);
 
 #ifdef CF_DEBUG
     u64  getFileWriteTime(const std::string& path);

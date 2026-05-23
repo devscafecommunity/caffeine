@@ -1,5 +1,6 @@
 #include "assets/AssetManager.hpp"
 #include "core/io/BlobLoader.hpp"
+#include "tools/PipelineTypes.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -133,6 +134,7 @@ void AssetManager::resolveEntry(AssetEntry& e) {
         case AssetType::Texture: resolveTexture(e); break;
         case AssetType::Audio:   resolveAudio(e);   break;
         case AssetType::Shader:  resolveShader(e);  break;
+        case AssetType::Mesh:    resolveMesh(e);    break;
         default: break;
     }
 }
@@ -167,6 +169,24 @@ void AssetManager::resolveShader(AssetEntry& e) {
         meta->stage,
         static_cast<const u8*>(e.payload),
         e.header->dataSize
+    };
+}
+
+void AssetManager::resolveMesh(AssetEntry& e) {
+    const auto* meta = static_cast<const Tools::MeshMetadata*>(e.metadata);
+    const u8* payload = static_cast<const u8*>(e.payload);
+    
+    u64 vertexDataSize = static_cast<u64>(meta->vertexCount) * sizeof(Vertex3D);
+    const Vertex3D* vertices = reinterpret_cast<const Vertex3D*>(payload);
+    const u32* indices = reinterpret_cast<const u32*>(payload + vertexDataSize);
+    
+    e.resolved.mesh = Mesh{
+        vertices,
+        meta->vertexCount,
+        indices,
+        meta->indexCount,
+        vertexDataSize,
+        static_cast<u64>(meta->indexCount) * sizeof(u32)
     };
 }
 
