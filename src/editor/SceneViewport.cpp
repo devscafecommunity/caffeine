@@ -280,7 +280,20 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             Vec3 rayDirection = (Vec3(worldNear.x, worldNear.y, worldNear.z) - camPos).normalized();
             
             ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world);
-            ctx.selectedEntity = selectedEntity;
+            
+            bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+            
+            if (selectedEntity.isValid()) {
+                if (shiftPressed) {
+                    ctx.toggleSelection(selectedEntity);
+                } else {
+                    ctx.selectEntity(selectedEntity);
+                }
+            } else {
+                if (!shiftPressed) {
+                    ctx.clearSelection();
+                }
+            }
         }
     }
 
