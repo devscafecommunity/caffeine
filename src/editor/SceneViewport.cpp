@@ -289,6 +289,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
+        
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete) && ctx.selectedEntity.isValid()) {
+            ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), world);
+            world.destroy(ctx.selectedEntity);
+            ctx.selectedEntity = ECS::Entity::INVALID;
+            ctx.endUndo(world);
+        }
     }
 
     bool leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
