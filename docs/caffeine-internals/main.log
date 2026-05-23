@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.5.21)  21 MAY 2026 02:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.5.21)  23 MAY 2026 14:56
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -692,7 +692,7 @@ Package hyperref Info: Link coloring OFF on input line 133.
 Package caption Info: Begin \AtBeginDocument code.
 Package caption Info: End \AtBeginDocument code.
  (./front/cover.tex
-<logo.png, id=1065, 1505.625pt x 1505.625pt>
+<logo.png, id=1193, 1505.625pt x 1505.625pt>
 File: logo.png Graphic file (type png)
 <use logo.png>
 Package pdftex.def Info: logo.png  used on input line 13.
@@ -739,18 +739,13 @@ l.31 \tableofcontents
 ] (./main.toc [2
 
 ] [3] [4] [5] [6] [7]
-Overfull \hbox (1.41573pt too wide) detected at line 299
- []\T1/phv/m/n/12 100
- []
-
-
 Overfull \hbox (1.41573pt too wide) detected at line 300
  []\T1/phv/m/n/12 100
  []
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 301
- []\T1/phv/m/n/12 101
+ []\T1/phv/m/n/12 100
  []
 
 
@@ -794,36 +789,31 @@ Overfull \hbox (1.41573pt too wide) detected at line 309
  []
 
 
-Overfull \hbox (1.41573pt too wide) detected at line 311
- []\T1/phv/m/n/12 105
- []
-
-
-Overfull \hbox (1.41573pt too wide) detected at line 312
- []\T1/phv/m/n/12 105
+Overfull \hbox (1.41573pt too wide) detected at line 310
+ []\T1/phv/m/n/12 103
  []
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 313
- []\T1/phv/m/n/12 106
+ []\T1/phv/m/n/12 105
  []
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 314
- []\T1/phv/m/n/12 106
+ []\T1/phv/m/n/12 105
  []
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 315
- []\T1/phv/m/n/12 107
+ []\T1/phv/m/n/12 106
  []
 
 
-Overfull \hbox (1.41573pt too wide) detected at line 316
+Overfull \hbox (1.41573pt too wide) detected at line 317
  []\T1/phv/m/n/12 107
  []
 
-
+[8]
 Overfull \hbox (1.41573pt too wide) detected at line 318
  []\T1/phv/m/n/12 108
  []
@@ -838,14 +828,14 @@ Overfull \hbox (1.41573pt too wide) detected at line 320
  []\T1/phv/m/n/12 108
  []
 
-[8]
+
 Overfull \hbox (1.41573pt too wide) detected at line 321
  []\T1/phv/m/n/12 109
  []
 
 
-Overfull \hbox (1.41573pt too wide) detected at line 323
- []\T1/phv/m/n/12 110
+Overfull \hbox (1.41573pt too wide) detected at line 322
+ []\T1/phv/m/n/12 109
  []
 
 
@@ -854,13 +844,8 @@ Overfull \hbox (1.41573pt too wide) detected at line 324
  []
 
 
-Overfull \hbox (1.41573pt too wide) detected at line 325
+Overfull \hbox (1.41573pt too wide) detected at line 326
  []\T1/phv/m/n/12 111
- []
-
-
-Overfull \hbox (1.41573pt too wide) detected at line 327
- []\T1/phv/m/n/12 112
  []
 
 
@@ -875,7 +860,7 @@ Overfull \hbox (1.41573pt too wide) detected at line 329
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 330
- []\T1/phv/m/n/12 113
+ []\T1/phv/m/n/12 112
  []
 
 
@@ -885,7 +870,7 @@ Overfull \hbox (1.41573pt too wide) detected at line 331
 
 
 Overfull \hbox (1.41573pt too wide) detected at line 332
- []\T1/phv/m/n/12 114
+ []\T1/phv/m/n/12 113
  []
 
 
@@ -893,21 +878,161 @@ Overfull \hbox (1.41573pt too wide) detected at line 333
  []\T1/phv/m/n/12 114
  []
 
+
+Overfull \hbox (1.41573pt too wide) detected at line 334
+ []\T1/phv/m/n/12 114
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 335
+ []\T1/phv/m/n/12 114
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 336
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 337
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 338
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 339
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 340
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 341
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 343
+ []\T1/phv/m/n/12 118
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 344
+ []\T1/phv/m/n/12 118
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 345
+ []\T1/phv/m/n/12 119
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 346
+ []\T1/phv/m/n/12 119
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 347
+ []\T1/phv/m/n/12 120
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 348
+ []\T1/phv/m/n/12 120
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 350
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 351
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 352
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 353
+ []\T1/phv/m/n/12 122
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 355
+ []\T1/phv/m/n/12 123
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 356
+ []\T1/phv/m/n/12 123
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 357
+ []\T1/phv/m/n/12 124
+ []
+
+[9]
+Overfull \hbox (1.41573pt too wide) detected at line 359
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 360
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 361
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 362
+ []\T1/phv/m/n/12 126
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 363
+ []\T1/phv/m/n/12 126
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 364
+ []\T1/phv/m/n/12 127
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 365
+ []\T1/phv/m/n/12 127
+ []
+
 )
 \tf@toc=\write4
 \openout4 = `main.toc'.
 
- [9] (./main.lof)
+ [10] (./main.lof)
 \tf@lof=\write5
 \openout5 = `main.lof'.
 
- [10
+ [11
 
 ] (./main.lot)
 \tf@lot=\write6
 \openout6 = `main.lot'.
 
-) [11
+) [12
 
 ] (./chapters/01-introduction.tex
 Chapter 1.
@@ -1343,21 +1468,128 @@ Chapter 16.
 Chapter 17.
 [62
 
-] [63] [64] [65] [66] [67] [68]) (./chapters/18-events.tex [69]
+] [63] [64] [65] [66] [67] [68])
+(./chapters/26-polygons-and-3d-representations.tex [69]
 Chapter 18.
 [70
 
-] [71] [72] [73]
+]
+
+! LaTeX Error: Invalid UTF-8 byte sequence (�\lst@FillFixed@).
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.21 ...tangent;          // Bitangent (normal × 
+                                                  tangent)
+The document does not appear to be in UTF-8 encoding.
+Try adding \UseRawInputEncoding as the first line of the file
+or specify an encoding such as \usepackage [latin1]{inputenc}
+in the document preamble.
+Alternatively, save the file in UTF-8 using your editor or another tool
+
+
+! LaTeX Error: Invalid UTF-8 byte "97.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.21 ...tangent;          // Bitangent (normal × 
+                                                  tangent)
+The document does not appear to be in UTF-8 encoding.
+Try adding \UseRawInputEncoding as the first line of the file
+or specify an encoding such as \usepackage [latin1]{inputenc}
+in the document preamble.
+Alternatively, save the file in UTF-8 using your editor or another tool
+
+[71] [72] [73] [74] [75] [76] [77] [78]
+! Undefined control sequence.
+<argument> 5\baselineship 
+                          
+l.343 \needspace{5\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.343 \needspace{5\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+[79]
+! Undefined control sequence.
+<argument> 6\baselineship 
+                          
+l.360 \needspace{6\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.360 \needspace{6\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+! Undefined control sequence.
+<argument> 5\baselineship 
+                          
+l.365 \needspace{5\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.365 \needspace{5\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+[80] [81]) (./chapters/18-events.tex [82]
+Chapter 19.
+[83
+
+] [84] [85] [86]
 Overfull \hbox (41.9971pt too wide) in paragraph at lines 131--132
 []\T1/phv/b/n/12 (-20) Prefer De-ferred for Heavy Logic\T1/phv/m/n/12 (-20) : I
 f an event trig-gers com-plex logic, use \T1/cmtt/m/n/12 publishDeferred
  []
 
-) (./chapters/19-input.tex [74]
-Chapter 19.
-[75
+) (./chapters/19-input.tex [87]
+Chapter 20.
+[88
 
-] [76] [77]
+] [89] [90]
 ! Undefined control sequence.
 l.117 \specbox
               {Gamepad Deadzones}{
@@ -1367,7 +1599,7 @@ misspelled it (e.g., `\hobx'), type `I' and the correct
 spelling (e.g., `I\hbox'). Otherwise just continue,
 and I'll forget about whatever was undefined.
 
-[78]
+[91]
 Overfull \hbox (76.82828pt too wide) in paragraph at lines 197--198
 []\T1/phv/m/n/12 (-20) This dou-ble buffer-ing en-sures that logic run-ning dur
 -ing the frame can query \T1/cmtt/m/n/12 isActionJustPressed()
@@ -1379,19 +1611,19 @@ Overfull \hbox (76.82828pt too wide) in paragraph at lines 199--200
 -ing the frame can query \T1/cmtt/m/n/12 isActionJustPressed()
  []
 
-[79]
+[92]
 Overfull \hbox (3.41818pt too wide) in paragraph at lines 204--205
 \T1/phv/m/n/12 (-20) To keep the in-put sys-tem de-cou-pled from the win-dow-in
 g li-brary (SDL3), the \T1/cmtt/m/n/12 InputManager
  []
 
-) (./chapters/20-debug.tex [80]
-Chapter 20.
-[81
-
-] [82] [83] [84] [85]) (./chapters/21-scene.tex [86]
+) (./chapters/20-debug.tex [93]
 Chapter 21.
-[87
+[94
+
+] [95] [96] [97] [98]) (./chapters/21-scene.tex [99]
+Chapter 22.
+[100
 
 ]
 ! Undefined control sequence.
@@ -1403,7 +1635,7 @@ misspelled it (e.g., `\hobx'), type `I' and the correct
 spelling (e.g., `I\hbox'). Otherwise just continue,
 and I'll forget about whatever was undefined.
 
-[88] [89] [90]
+[101] [102] [103]
 Overfull \hbox (60.71135pt too wide) in paragraph at lines 141--142
 []\T1/phv/m/n/12 (-20) For each en-tity, it com-putes: $\OML/cmm/m/it/12 WorldM
 atrix \OT1/cmr/m/n/12 (-20) = \OML/cmm/m/it/12 ParentWorldMatrix \OMS/cmsy/m/n/
@@ -1416,20 +1648,20 @@ Overfull \hbox (28.68709pt too wide) in paragraph at lines 150--151
 in-tains an \T1/cmtt/m/n/12 unordered_map<u32, ECS::Entity>
  []
 
-) (./chapters/22-animation.tex [91]
-Chapter 22.
-[92
-
-] [93] [94] [95] [96]) (./chapters/23-scripting.tex [97]
+) (./chapters/22-animation.tex [104]
 Chapter 23.
-[98
-
-] [99] [100] [101] [102] [103]) (./chapters/24-ui.tex [104]
-Chapter 24.
 [105
 
-] [106] [107] [108]) (./chapters/25-asset-manager.tex [109]
+] [106] [107] [108] [109]) (./chapters/23-scripting.tex [110]
+Chapter 24.
+[111
+
+] [112] [113] [114] [115] [116]) (./chapters/24-ui.tex [117]
 Chapter 25.
+[118
+
+] [119] [120] [121]) (./chapters/25-asset-manager.tex [122]
+Chapter 26.
 
 Overfull \hbox (14.84703pt too wide) in paragraph at lines 12--13
 \T1/cmtt/m/n/12 AssetHandle<T> \T1/phv/m/n/12 (-20) man-ages the life-time of a
@@ -1437,7 +1669,7 @@ n as-set by com-mu-ni-cat-ing with the \T1/cmtt/m/n/12 AssetManager\T1/phv/m/n/
 12 (-20) .
  []
 
-[110
+[123
 
 ]
 Overfull \hbox (14.15472pt too wide) in paragraph at lines 48--49
@@ -1445,7 +1677,7 @@ Overfull \hbox (14.15472pt too wide) in paragraph at lines 48--49
 ments or decre-ments in the \T1/cmtt/m/n/12 AssetManager\T1/phv/m/n/12 (-20) .
  []
 
-[111]
+[124]
 ! Missing $ inserted.
 <inserted text> 
                 $
@@ -1505,7 +1737,7 @@ Overfull \hbox (7.76782pt too wide) in paragraph at lines 81--82
 irectly into
  []
 
-[112]
+[125]
 Overfull \hbox (38.32661pt too wide) in paragraph at lines 99--100
 \T1/cmtt/m/n/12 The collectGarbage() function is responsible for pruning the ca
 che. It iterates
@@ -1541,7 +1773,7 @@ Overfull \hbox (26.2883pt too wide) in paragraph at lines 123--124
 runtime, these
  []
 
-[113]
+[126]
 Overfull \hbox (24.74493pt too wide) in paragraph at lines 127--128
 \T1/cmtt/m/n/12 To support a generic template-based API, the engine uses the As
 setTypeTrait<T>
@@ -1567,7 +1799,7 @@ Overfull \hbox (20.16542pt too wide) in paragraph at lines 141--142
 xel buffer. 
  []
 
-[114]
+[127]
 Overfull \hbox (36.09784pt too wide) in paragraph at lines 178--179
 [] []\T1/phv/b/n/12 (-20) Op-ti-miza-tion: Align-ment and Padding[] \T1/cmtt/m/
 n/12 When resolving these views, the AssetManager
@@ -1585,7 +1817,7 @@ Overfull \hbox (7.76782pt too wide) in paragraph at lines 178--179
 PU alignment
  []
 
-) (./chapters/bibliography.tex [115] [116
+) (./chapters/bibliography.tex [128] [129
 
 ]
 Underfull \hbox (badness 10000) in paragraph at lines 9--11
@@ -1652,7 +1884,7 @@ Underfull \hbox (badness 10000) in paragraph at lines 42--43
 \T1/cmtt/m/n/12 , Charles River Media,
  []
 
-) [117
+) [130
 
 ] (./main.aux)
  ***********
@@ -1660,18 +1892,18 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 92AEDE7DB24471B8BD76397BAAE2902E;45241.
+(rerunfilecheck)             Checksum: E4934797F29C3659ABC17635C5979835;51756.
  )
 (\end occurred inside a group at level 1)
 
 ### simple group (level 1) entered at line 73 ({)
 ### bottom level 
 Here is how much of TeX's memory you used:
- 21809 strings out of 469515
- 334936 string characters out of 5470807
- 841407 words of memory out of 5000000
- 48320 multiletter control sequences out of 15000+600000
- 688609 words of font info for 347 fonts, out of 8000000 for 9000
+ 22163 strings out of 469515
+ 340397 string characters out of 5470807
+ 854407 words of memory out of 5000000
+ 48471 multiletter control sequences out of 15000+600000
+ 688948 words of font info for 354 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
  75i,16n,89p,1001b,2110s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pf
@@ -1688,10 +1920,10 @@ fb></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt1200.pfb></usr/share/
 texmf-dist/fonts/type1/public/cm-super/sftt1728.pfb></usr/share/texmf-dist/font
 s/type1/urw/helvetic/uhvb8a.pfb></usr/share/texmf-dist/fonts/type1/urw/helvetic
 /uhvr8a.pfb></usr/share/texmf-dist/fonts/type1/urw/helvetic/uhvro8a.pfb>
-Output written on ./main.pdf (129 pages, 736689 bytes).
+Output written on main.pdf (143 pages, 787477 bytes).
 PDF statistics:
- 3280 PDF objects out of 3580 (max. 8388607)
- 3083 compressed objects within 31 object streams
- 1389 named destinations out of 1440 (max. 500000)
- 77382 words of extra memory for PDF output out of 89155 (max. 10000000)
+ 3686 PDF objects out of 4296 (max. 8388607)
+ 3471 compressed objects within 35 object streams
+ 1581 named destinations out of 1728 (max. 500000)
+ 77638 words of extra memory for PDF output out of 89155 (max. 10000000)
 

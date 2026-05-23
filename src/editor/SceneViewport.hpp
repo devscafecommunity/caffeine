@@ -35,6 +35,17 @@ public:
         Perspective
     };
 
+    enum class MeshPreviewMode : u8 {
+        Wireframe,
+        Textured
+    };
+
+    enum class WireframeDensity : u8 {
+        Low,
+        Medium,
+        High
+    };
+
 #ifdef CF_HAS_SDL3
     struct Config {
         u32  width       = 1280;
@@ -80,6 +91,10 @@ private:
     void drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+
+#ifdef CF_HAS_IMGUI
+    void createOrUpdateLightGizmoEntities(ECS::World& world);
+#endif
     void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
     void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
     void drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
@@ -108,6 +123,8 @@ private:
     ImVec2 m_gizmoScreenOrigin = {};
     ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
     ProjectionMode m_projectionMode = ProjectionMode::Perspective;
+    MeshPreviewMode m_meshPreviewMode = MeshPreviewMode::Wireframe;
+    WireframeDensity m_wireframeDensity = WireframeDensity::Medium;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;
     RHI::Texture* m_colorTarget = nullptr;

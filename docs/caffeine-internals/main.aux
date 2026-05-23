@@ -291,152 +291,195 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {17.5.1}MeshRendererComponent}{69}{subsection.17.5.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {17.5.2}MeshFilterComponent}{69}{subsection.17.5.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{Implementation Detail: Skinned Meshes}{69}{paragraph*.72}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {18}Event System}{70}{chapter.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {18}Polygons and Three-Dimensional Representations}{70}{chapter.18}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {18.1}Type Identification Mechanism}{70}{section.18.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Zero-Cost Type IDs}{70}{paragraph*.73}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.1.1}How it Works}{71}{subsection.18.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {18.2}Event Subscription}{71}{section.18.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.1}Listener Records and Callbacks}{71}{subsection.18.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.2}The ListenerHandle Lifecycle}{72}{subsection.18.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {18.3}Event Dispatching}{72}{section.18.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.1}Immediate Dispatch}{72}{subsection.18.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.2}Deferred Dispatch}{73}{subsection.18.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.3}Queue Processing}{73}{subsection.18.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {18.4}Thread Safety and Concurrency}{73}{section.18.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.1}Mutex Usage}{73}{subsection.18.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.2}Synchronous Limitations}{74}{subsection.18.4.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {18.5}Best Practices}{74}{section.18.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {19}Input Management}{75}{chapter.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.1}Polygon Mesh Fundamentals}{70}{section.18.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.1.1}Vertex Attributes and Topology}{70}{subsection.18.1.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.1}{\ignorespaces Standard Vertex Structure}}{70}{lstlisting.18.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.1.2}Index Buffers and Triangle Strips}{71}{subsection.18.1.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.2}{\ignorespaces Indexed Mesh Rendering}}{71}{lstlisting.18.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.2}Primitive Shape Generation}{72}{section.18.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.1}Cube Generation}{72}{subsection.18.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.3}{\ignorespaces Unit Cube Vertex Layout}}{72}{lstlisting.18.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.2}Sphere Generation}{73}{subsection.18.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.4}{\ignorespaces UV Sphere Generation}}{73}{lstlisting.18.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.3}Cylinder and Capsule Generation}{74}{subsection.18.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.4}Plane and Quad Generation}{74}{subsection.18.2.4}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.5}{\ignorespaces Quad Mesh Generation}}{74}{lstlisting.18.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.3}Mesh Asset Loading and Caching}{75}{section.18.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.1}glTF Format Integration}{75}{subsection.18.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.2}Mesh Instance Caching}{75}{subsection.18.3.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.6}{\ignorespaces Mesh Loading with Caching}}{75}{lstlisting.18.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.4}Mesh Transformation and World Space Conversion}{76}{section.18.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.1}Vertex Transformation Pipeline}{76}{subsection.18.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.2}Batching and Instancing}{77}{subsection.18.4.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.7}{\ignorespaces Instance Buffer Layout}}{77}{lstlisting.18.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.5}Gizmo Visualization in the Editor}{77}{section.18.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.1}Light Gizmo Representation}{77}{subsection.18.5.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.8}{\ignorespaces Light Gizmo Drawing}}{78}{lstlisting.18.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.2}Camera Frustum Visualization}{79}{subsection.18.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.3}Physics Collider Visualization}{79}{subsection.18.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.6}Normal Mapping and Tangent Space}{79}{section.18.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.6.1}Tangent Space Fundamentals}{79}{subsection.18.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.6.2}Tangent Vector Calculation}{80}{subsection.18.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.7}Best Practices for Mesh Authoring}{80}{section.18.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.1}Polygon Budget}{80}{subsection.18.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.2}Normal Consistency}{80}{subsection.18.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.3}Texture Coordinate Seams}{81}{subsection.18.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.4}Skeletal Structure for Animation}{81}{subsection.18.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.8}Performance Optimization Techniques}{81}{section.18.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.1}Level of Detail (LOD)}{81}{subsection.18.8.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.9}{\ignorespaces LOD Selection}}{81}{lstlisting.18.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.2}Mesh Simplification}{82}{subsection.18.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.3}Vertex Buffer Pooling}{82}{subsection.18.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.9}Future Directions}{82}{section.18.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {19}Event System}{83}{chapter.19}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {19.1}Logical Abstractions}{75}{section.19.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.1.1}Action Enumeration}{75}{subsection.19.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.1.2}Axis Enumeration}{76}{subsection.19.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {19.2}Hardware Mappings}{76}{section.19.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.1}Keyboard and Mouse Codes}{76}{subsection.19.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.2}Gamepad Support}{77}{subsection.19.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {19.3}Binding Mechanism}{78}{section.19.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.1}The Binding Structure}{78}{subsection.19.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.2}Registering Bindings}{78}{subsection.19.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {19.4}State Management and Polling}{79}{section.19.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.1}Action and Axis States}{79}{subsection.19.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.2}The Frame Lifecycle}{79}{subsection.19.4.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {19.5}Event Injection and Callbacks}{80}{section.19.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {19.5.1}The Callback Interface}{80}{subsection.19.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {20}Debugging and Profiling}{81}{chapter.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.1}Type Identification Mechanism}{83}{section.19.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Zero-Cost Type IDs}{83}{paragraph*.73}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.1.1}How it Works}{84}{subsection.19.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.2}Event Subscription}{84}{section.19.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.1}Listener Records and Callbacks}{84}{subsection.19.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.2}The ListenerHandle Lifecycle}{85}{subsection.19.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.3}Event Dispatching}{85}{section.19.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.1}Immediate Dispatch}{85}{subsection.19.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.2}Deferred Dispatch}{86}{subsection.19.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.3}Queue Processing}{86}{subsection.19.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.4}Thread Safety and Concurrency}{86}{section.19.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.1}Mutex Usage}{86}{subsection.19.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.2}Synchronous Limitations}{87}{subsection.19.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.5}Best Practices}{87}{section.19.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {20}Input Management}{88}{chapter.20}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {20.1}Logging System}{81}{section.20.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Buffer Logging}{81}{paragraph*.74}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.1}System Architecture}{81}{subsection.20.1.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {20.1}{\ignorespaces LogSystem Class Definition}}{81}{lstlisting.20.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.2}Logging Levels}{82}{subsection.20.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.3}Categories and Filtering}{83}{subsection.20.1.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.4}Message Sinks}{83}{subsection.20.1.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {20.2}Performance Profiling}{83}{section.20.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.1}RAII-based Profiling}{83}{subsection.20.2.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {20.2}{\ignorespaces Profiling Macros and RAII Guard}}{83}{lstlisting.20.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.2}Data Collection and Statistics}{84}{subsection.20.2.2}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {20.3}{\ignorespaces Scope Statistics Structure}}{84}{lstlisting.20.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.3}Timing Precision}{85}{subsection.20.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Scope Storage}{85}{paragraph*.75}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.4}Reporting and Resetting}{85}{subsection.20.2.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.5}Practical Usage}{85}{subsection.20.2.5}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {20.4}{\ignorespaces Example Usage of Profiling and Logging}}{85}{lstlisting.20.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {21}Scene Management}{87}{chapter.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.1}Logical Abstractions}{88}{section.20.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.1}Action Enumeration}{88}{subsection.20.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.2}Axis Enumeration}{89}{subsection.20.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.2}Hardware Mappings}{89}{section.20.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.1}Keyboard and Mouse Codes}{89}{subsection.20.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.2}Gamepad Support}{90}{subsection.20.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.3}Binding Mechanism}{91}{section.20.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.3.1}The Binding Structure}{91}{subsection.20.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.3.2}Registering Bindings}{91}{subsection.20.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.4}State Management and Polling}{92}{section.20.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.4.1}Action and Axis States}{92}{subsection.20.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.4.2}The Frame Lifecycle}{92}{subsection.20.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.5}Event Injection and Callbacks}{93}{section.20.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.5.1}The Callback Interface}{93}{subsection.20.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {21}Debugging and Profiling}{94}{chapter.21}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {21.1}Scene Manager}{87}{section.21.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.1}World Stack Management}{87}{subsection.21.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.2}Scene Transitions}{88}{subsection.21.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.3}Asynchronous Preloading}{88}{subsection.21.1.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {21.2}Scene Serialization}{89}{section.21.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.1}Dual Format Strategy}{89}{subsection.21.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.2}The .caf Binary Format}{89}{subsection.21.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.3}Serialization Process}{90}{subsection.21.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {21.3}Scene Components and Hierarchy}{90}{section.21.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.3.1}The Parent Component}{90}{subsection.21.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {21.3.2}WorldTransform and Dirty Propagation}{90}{subsection.21.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Implementation Detail: Entity Remapping}{91}{paragraph*.76}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {22}Animation System}{92}{chapter.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {21.1}Logging System}{94}{section.21.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Buffer Logging}{94}{paragraph*.74}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.1}System Architecture}{94}{subsection.21.1.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.1}{\ignorespaces LogSystem Class Definition}}{94}{lstlisting.21.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.2}Logging Levels}{95}{subsection.21.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.3}Categories and Filtering}{96}{subsection.21.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.4}Message Sinks}{96}{subsection.21.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {21.2}Performance Profiling}{96}{section.21.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.1}RAII-based Profiling}{96}{subsection.21.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.2}{\ignorespaces Profiling Macros and RAII Guard}}{96}{lstlisting.21.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.2}Data Collection and Statistics}{97}{subsection.21.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.3}{\ignorespaces Scope Statistics Structure}}{97}{lstlisting.21.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.3}Timing Precision}{98}{subsection.21.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Scope Storage}{98}{paragraph*.75}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.4}Reporting and Resetting}{98}{subsection.21.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.5}Practical Usage}{98}{subsection.21.2.5}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.4}{\ignorespaces Example Usage of Profiling and Logging}}{98}{lstlisting.21.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {22}Scene Management}{100}{chapter.22}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {22.1}Foundational Structures}{92}{section.22.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.1}FrameRect and AnimationClip}{92}{subsection.22.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.2}Animation States and Transitions}{93}{subsection.22.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Transition Evaluation}{93}{paragraph*.77}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {22.2}The Animator Component}{94}{section.22.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {22.3}Animation System Logic}{95}{section.22.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.1}State Machine Evaluation}{95}{subsection.22.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.2}Frame Index Computation}{95}{subsection.22.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.3}Event Dispatching}{96}{subsection.22.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {22.4}State Machine Workflow}{96}{section.22.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Example: Player State Machine}{96}{paragraph*.78}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {22.5}Conclusion}{97}{section.22.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {23}Scripting System}{98}{chapter.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {22.1}Scene Manager}{100}{section.22.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.1}World Stack Management}{100}{subsection.22.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.2}Scene Transitions}{101}{subsection.22.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.3}Asynchronous Preloading}{101}{subsection.22.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {22.2}Scene Serialization}{102}{section.22.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.1}Dual Format Strategy}{102}{subsection.22.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.2}The .caf Binary Format}{102}{subsection.22.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.3}Serialization Process}{103}{subsection.22.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {22.3}Scene Components and Hierarchy}{103}{section.22.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.1}The Parent Component}{103}{subsection.22.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.2}WorldTransform and Dirty Propagation}{103}{subsection.22.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implementation Detail: Entity Remapping}{104}{paragraph*.76}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {23}Animation System}{105}{chapter.23}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {23.1}Design Rationale}{98}{section.23.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Performance and Type Safety}{98}{paragraph*.79}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.2}The Script Engine}{99}{section.23.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.2.1}Initialization and Configuration}{99}{subsection.23.2.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.1}{\ignorespaces ScriptEngine Initialization Parameters}}{99}{lstlisting.23.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.2.2}The Scripting API}{99}{subsection.23.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.2.3}ABI Stability via Pimpl Pattern}{100}{subsection.23.2.3}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.2}{\ignorespaces ScriptEngine Pimpl Implementation}}{100}{lstlisting.23.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.3}The CppScript Base Class}{100}{section.23.3}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.3}{\ignorespaces CppScript Interface}}{100}{lstlisting.23.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.1}Script Registration}{101}{subsection.23.3.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.4}{\ignorespaces Registering a Custom Script}}{101}{lstlisting.23.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.4}Script Components and Data}{101}{section.23.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.4.1}ScriptComponent}{101}{subsection.23.4.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.5}{\ignorespaces ScriptComponent Structure}}{101}{lstlisting.23.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.4.2}CppScriptComponent}{102}{subsection.23.4.2}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.6}{\ignorespaces CppScriptComponent Structure}}{102}{lstlisting.23.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.5}Systems and Runtime Logic}{102}{section.23.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.5.1}The ScriptSystem Implementation}{102}{subsection.23.5.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.7}{\ignorespaces ScriptSystem Update Logic}}{102}{lstlisting.23.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {23.5.2}Interaction with Other Subsystems}{103}{subsection.23.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.6}Native Callbacks and Performance}{103}{section.23.6}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.8}{\ignorespaces NativeScriptComponent Structure}}{103}{lstlisting.23.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {23.7}ScriptWatcher and Hot Reloading}{103}{section.23.7}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {23.9}{\ignorespaces ScriptWatcher Polling}}{103}{lstlisting.23.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {24}User Interface System}{105}{chapter.24}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.1}Foundational Structures}{105}{section.23.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.1.1}FrameRect and AnimationClip}{105}{subsection.23.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.1.2}Animation States and Transitions}{106}{subsection.23.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Transition Evaluation}{106}{paragraph*.77}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.2}The Animator Component}{107}{section.23.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.3}Animation System Logic}{108}{section.23.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.1}State Machine Evaluation}{108}{subsection.23.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.2}Frame Index Computation}{108}{subsection.23.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.3}Event Dispatching}{109}{subsection.23.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.4}State Machine Workflow}{109}{section.23.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Example: Player State Machine}{109}{paragraph*.78}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.5}Conclusion}{110}{section.23.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {24}Scripting System}{111}{chapter.24}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {24.1}Component Architecture}{105}{section.24.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.1.1}UIWidgetType}{105}{subsection.24.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.1.2}Visual Styling}{106}{subsection.24.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {24.2}The Layout Engine}{106}{section.24.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.1}RectTransform Logic}{107}{subsection.24.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.2}Layout Math Derivation}{107}{subsection.24.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Anchor/Offset Duality}{107}{paragraph*.80}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {24.3}System Logic}{108}{section.24.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.3.1}Layout Traversal}{108}{subsection.24.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.3.2}Input Processing and Hit Testing}{108}{subsection.24.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {24.3.3}Data Binding Mechanism}{109}{subsection.24.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {25}Asset Management}{110}{chapter.25}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.1}Design Rationale}{111}{section.24.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Performance and Type Safety}{111}{paragraph*.79}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.2}The Script Engine}{112}{section.24.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.1}Initialization and Configuration}{112}{subsection.24.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.1}{\ignorespaces ScriptEngine Initialization Parameters}}{112}{lstlisting.24.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.2}The Scripting API}{112}{subsection.24.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.3}ABI Stability via Pimpl Pattern}{113}{subsection.24.2.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.2}{\ignorespaces ScriptEngine Pimpl Implementation}}{113}{lstlisting.24.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.3}The CppScript Base Class}{113}{section.24.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.3}{\ignorespaces CppScript Interface}}{113}{lstlisting.24.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.3.1}Script Registration}{114}{subsection.24.3.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.4}{\ignorespaces Registering a Custom Script}}{114}{lstlisting.24.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.4}Script Components and Data}{114}{section.24.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.4.1}ScriptComponent}{114}{subsection.24.4.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.5}{\ignorespaces ScriptComponent Structure}}{114}{lstlisting.24.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.4.2}CppScriptComponent}{115}{subsection.24.4.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.6}{\ignorespaces CppScriptComponent Structure}}{115}{lstlisting.24.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.5}Systems and Runtime Logic}{115}{section.24.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.5.1}The ScriptSystem Implementation}{115}{subsection.24.5.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.7}{\ignorespaces ScriptSystem Update Logic}}{115}{lstlisting.24.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.5.2}Interaction with Other Subsystems}{116}{subsection.24.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.6}Native Callbacks and Performance}{116}{section.24.6}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.8}{\ignorespaces NativeScriptComponent Structure}}{116}{lstlisting.24.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.7}ScriptWatcher and Hot Reloading}{116}{section.24.7}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.9}{\ignorespaces ScriptWatcher Polling}}{116}{lstlisting.24.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {25}User Interface System}{118}{chapter.25}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\@writefile{toc}{\contentsline {section}{\numberline {25.1}The Asset Handle}{110}{section.25.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.1}Reference Counting Semantics}{110}{subsection.25.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.2}Implementation Details}{111}{subsection.25.1.2}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {25.1}{\ignorespaces AssetHandle interface}}{111}{lstlisting.25.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Handle-Based Access}{111}{paragraph*.81}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {25.2}The Asset Manager}{112}{section.25.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.1}Loading Paths}{112}{subsection.25.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.2}Zero-Copy Memory Model}{112}{subsection.25.2.2}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {25.2}{\ignorespaces AssetEntry Structure}}{112}{lstlisting.25.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.3}Garbage Collection and Cache Management}{113}{subsection.25.2.3}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {25.3}{\ignorespaces CacheStats definition}}{113}{lstlisting.25.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {25.3}Asset Runtime Types}{113}{section.25.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.1}Asset Mapping with Type Traits}{114}{subsection.25.3.1}\protected@file@percent }
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {25.4}{\ignorespaces AssetTypeTrait Specialization}}{114}{lstlisting.25.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.2}Specific View Structures}{114}{subsection.25.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Optimization: Alignment and Padding}{115}{paragraph*.82}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{Bibliography}{116}{chapter*.83}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {25.1}Component Architecture}{118}{section.25.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.1}UIWidgetType}{118}{subsection.25.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.2}Visual Styling}{119}{subsection.25.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {25.2}The Layout Engine}{119}{section.25.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.1}RectTransform Logic}{120}{subsection.25.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.2}Layout Math Derivation}{120}{subsection.25.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Anchor/Offset Duality}{120}{paragraph*.80}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {25.3}System Logic}{121}{section.25.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.1}Layout Traversal}{121}{subsection.25.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.2}Input Processing and Hit Testing}{121}{subsection.25.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.3}Data Binding Mechanism}{122}{subsection.25.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {26}Asset Management}{123}{chapter.26}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {26.1}The Asset Handle}{123}{section.26.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.1.1}Reference Counting Semantics}{123}{subsection.26.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.1.2}Implementation Details}{124}{subsection.26.1.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.1}{\ignorespaces AssetHandle interface}}{124}{lstlisting.26.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Handle-Based Access}{124}{paragraph*.81}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {26.2}The Asset Manager}{125}{section.26.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.1}Loading Paths}{125}{subsection.26.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.2}Zero-Copy Memory Model}{125}{subsection.26.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.2}{\ignorespaces AssetEntry Structure}}{125}{lstlisting.26.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.3}Garbage Collection and Cache Management}{126}{subsection.26.2.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.3}{\ignorespaces CacheStats definition}}{126}{lstlisting.26.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {26.3}Asset Runtime Types}{126}{section.26.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.3.1}Asset Mapping with Type Traits}{127}{subsection.26.3.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.4}{\ignorespaces AssetTypeTrait Specialization}}{127}{lstlisting.26.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.3.2}Specific View Structures}{127}{subsection.26.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Optimization: Alignment and Padding}{128}{paragraph*.82}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{Bibliography}{129}{chapter*.83}\protected@file@percent }
 \bibcite{sdl_gpu}{1}
 \bibcite{jylanki}{2}
 \bibcite{fiedler}{3}
@@ -450,4 +493,4 @@
 \bibcite{gems6}{11}
 \bibcite{imgui}{12}
 \bibcite{cpp20}{13}
-\gdef \@abspage@last{129}
+\gdef \@abspage@last{143}

@@ -5,6 +5,7 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "math/Quat.hpp"
 #include "script/CppScript.hpp"
 #include <filesystem>
 #include <algorithm>
@@ -118,6 +119,9 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
 // ── Transform drawer ─────────────────────────────────────────────
 
 void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    constexpr f32 kDegToRad = 3.14159265f / 180.0f;
+    constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
+
     bool enabled = !world.has<ECS::DisabledTag>(e);
     bool removeRequested = false;
     if (!Widgets::ComponentHeader("Transform", enabled, removeRequested)) return;
@@ -131,16 +135,63 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
     if (world.has<ECS::Transform>(e)) {
         auto* t = world.get<ECS::Transform>(e);
         bool is2D = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
-        if (Widgets::DragVec3("Position", t->position, 0.5f)) { ctx.isDirty = true; }
+        bool changed = false;
+        if (Widgets::DragVec3("Position", t->position, 0.5f)) { changed = true; }
         if (is2D) {
-            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; }
+            if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { changed = true; }
             float s[2] = { t->scale.x, t->scale.y };
             if (ImGui::DragFloat2("Scale", s, 0.05f, 0.01f, 100.0f)) {
-                t->scale.x = s[0]; t->scale.y = s[1]; ctx.isDirty = true;
+                t->scale.x = s[0]; t->scale.y = s[1]; changed = true;
             }
         } else {
-            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { ctx.isDirty = true; }
-            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { ctx.isDirty = true; }
+            if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { changed = true; }
+            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { changed = true; }
+        }
+
+        if (changed) {
+            if (auto* p3 = world.get<ECS::Position3D>(e)) {
+                p3->position = t->position;
+            }
+            if (auto* s3 = world.get<ECS::Scale3D>(e)) {
+                s3->scale = t->scale;
+            }
+            if (auto* r3 = world.get<ECS::Rotation3D>(e)) {
+                const Quat q = Quat::fromEuler(t->rotation.x * kDegToRad,
+                                               t->rotation.y * kDegToRad,
+                                               t->rotation.z * kDegToRad).normalized();
+                r3->quaternion = Vec4(q.x, q.y, q.z, q.w);
+            }
+            ctx.isDirty = true;
+        }
+    } else if (auto* p3 = world.get<ECS::Position3D>(e)) {
+        if (Widgets::DragVec3("Position", p3->position, 0.5f)) {
+            ctx.isDirty = true;
+        }
+
+        Vec3 eulerDeg(0.0f, 0.0f, 0.0f);
+        if (auto* r3 = world.get<ECS::Rotation3D>(e)) {
+            const Vec3 eulerRad = Quat(r3->quaternion.x, r3->quaternion.y, r3->quaternion.z, r3->quaternion.w)
+                                      .normalized()
+                                      .toEuler();
+            eulerDeg = Vec3(eulerRad.x * kRadToDeg, eulerRad.y * kRadToDeg, eulerRad.z * kRadToDeg);
+        }
+
+        if (Widgets::DragVec3("Rotation", eulerDeg, 1.0f, -360.0f, 360.0f)) {
+            auto& r3 = world.add<ECS::Rotation3D>(e);
+            const Quat q = Quat::fromEuler(eulerDeg.x * kDegToRad,
+                                           eulerDeg.y * kDegToRad,
+                                           eulerDeg.z * kDegToRad).normalized();
+            r3.quaternion = Vec4(q.x, q.y, q.z, q.w);
+            ctx.isDirty = true;
+        }
+
+        Vec3 scale(1.0f, 1.0f, 1.0f);
+        if (auto* s3 = world.get<ECS::Scale3D>(e)) {
+            scale = s3->scale;
+        }
+        if (Widgets::DragVec3("Scale", scale, 0.05f, 0.01f, 100.0f)) {
+            world.add<ECS::Scale3D>(e).scale = scale;
+            ctx.isDirty = true;
         }
     }
 }

@@ -62,6 +62,13 @@ struct Mesh {
     u64             indexDataSize  = 0;
 };
 
+struct Prefab {
+    // Lazy instantiation: stores path for runtime entity creation
+    // The actual binary payload is held in AssetManager's buffer
+    const u8* payloadData = nullptr;
+    u64       payloadSize = 0;
+};
+
 // ============================================================================
 // CacheStats — returned by AssetManager::cacheStats()
 // ============================================================================
@@ -90,6 +97,9 @@ template<> struct AssetTypeTrait<ShaderBlob> {
 };
 template<> struct AssetTypeTrait<Mesh> {
     static constexpr AssetType cafType = AssetType::Mesh;
+};
+template<> struct AssetTypeTrait<Prefab> {
+    static constexpr AssetType cafType = AssetType::Prefab;
 };
 
 } // namespace Caffeine::Assets

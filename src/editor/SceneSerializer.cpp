@@ -150,6 +150,30 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         }
     }
 
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::Position3D>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypePosition3D, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::Rotation3D>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeRotation3D, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::Scale3D>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeScale3D, std::move(data));
+        }
+    }
+
     // Write binary file
     std::ofstream fout(filepath, std::ios::binary);
     if (!fout.is_open()) return false;
@@ -207,7 +231,7 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
     memcpy(&entityCount, buffer.data() + 8,  4);
 
     if (signature != kSignature) return false;
-    if (version != kFormatVersion) return false;
+    if (version != 4 && version != kFormatVersion) return false;
 
     // ── Pass 1: collect all entity IDs ────────────────────────────
     struct Entry {
@@ -299,6 +323,15 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 break;
             case kTypeSpotLight:
                 applyPODComponent<ECS::SpotLightComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypePosition3D:
+                applyPODComponent<ECS::Position3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeRotation3D:
+                applyPODComponent<ECS::Rotation3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeScale3D:
+                applyPODComponent<ECS::Scale3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             default:
                 break;

@@ -135,6 +135,7 @@ void AssetManager::resolveEntry(AssetEntry& e) {
         case AssetType::Audio:   resolveAudio(e);   break;
         case AssetType::Shader:  resolveShader(e);  break;
         case AssetType::Mesh:    resolveMesh(e);    break;
+        case AssetType::Prefab:  resolvePrefab(e);  break;
         default: break;
     }
 }
@@ -187,6 +188,13 @@ void AssetManager::resolveMesh(AssetEntry& e) {
         meta->indexCount,
         vertexDataSize,
         static_cast<u64>(meta->indexCount) * sizeof(u32)
+    };
+}
+
+void AssetManager::resolvePrefab(AssetEntry& e) {
+    e.resolved.prefab = Prefab{
+        static_cast<const u8*>(e.payload),
+        e.header->dataSize
     };
 }
 

@@ -4,11 +4,15 @@
 #include "audio/AudioComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "math/Mat4.hpp"
+#include "math/Quat.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/LightingSystem.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
+#include <array>
+#include <vector>
 #include <stb/stb_image.h>
 #ifdef CF_HAS_SDL3
 #include <imgui_impl_sdlgpu3.h>
@@ -17,6 +21,77 @@
 #ifdef CF_HAS_IMGUI
 
 namespace Caffeine::Editor {
+
+namespace {
+
+constexpr f32 kDegToRad = 3.14159265f / 180.0f;
+constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
+
+Mat4 buildLocalMatrix(const ECS::Transform& t) {
+    return Mat4::translation(t.position)
+         * Mat4::rotationZ(t.rotation.z * kDegToRad)
+         * Mat4::rotationY(t.rotation.y * kDegToRad)
+         * Mat4::rotationX(t.rotation.x * kDegToRad)
+         * Mat4::scale(t.scale.x, t.scale.y, t.scale.z);
+}
+
+Mat4 buildLocalMatrix3D(const ECS::Position3D* p, const ECS::Rotation3D* r, const ECS::Scale3D* s) {
+    Mat4 T = p ? Mat4::translation(p->position) : Mat4::identity();
+    Mat4 R = r ? Quat(r->quaternion.x, r->quaternion.y, r->quaternion.z, r->quaternion.w).normalized().toMatrix()
+               : Mat4::identity();
+    Mat4 S = s ? Mat4::scale(s->scale.x, s->scale.y, s->scale.z) : Mat4::identity();
+    return T * R * S;
+}
+
+Mat4 entityMatrix(ECS::World& world, ECS::Entity entity) {
+    if (auto* wt = world.get<Scene::WorldTransform>(entity)) return wt->matrix;
+    if (auto* t = world.get<ECS::Transform>(entity)) return buildLocalMatrix(*t);
+    auto* p3 = world.get<ECS::Position3D>(entity);
+    auto* r3 = world.get<ECS::Rotation3D>(entity);
+    auto* s3 = world.get<ECS::Scale3D>(entity);
+    return buildLocalMatrix3D(p3, r3, s3);
+}
+
+bool tryGetEntityPosition(ECS::World& world, ECS::Entity entity, Vec3& outPosition) {
+    if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+        outPosition = wt->matrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+        return true;
+    }
+    if (auto* t = world.get<ECS::Transform>(entity)) {
+        outPosition = t->position;
+        return true;
+    }
+    if (auto* p3 = world.get<ECS::Position3D>(entity)) {
+        outPosition = p3->position;
+        return true;
+    }
+    return false;
+}
+
+Vec3 matrixAxis(const Mat4& m, int column, const Vec3& fallback) {
+    Vec3 axis(m(0, column), m(1, column), m(2, column));
+    const f32 lenSq = axis.lengthSquared();
+    return (lenSq > 0.000001f) ? axis / std::sqrt(lenSq) : fallback;
+}
+
+Vec3 entityAxis(ECS::World& world, ECS::Entity entity, int column, const Vec3& fallback) {
+    return matrixAxis(entityMatrix(world, entity), column, fallback);
+}
+
+Vec3 entityForward(ECS::World& world, ECS::Entity entity) {
+    return -1.0f * entityAxis(world, entity, 2, Vec3(0.0f, 0.0f, -1.0f));
+}
+
+ImU32 lightColor(const ECS::LightComponent& lc, bool selected) {
+    const f32 alphaScale = selected ? 1.0f : 0.85f;
+    return IM_COL32(
+        static_cast<ImU8>(std::clamp(lc.color.x, 0.0f, 1.0f) * 255.0f),
+        static_cast<ImU8>(std::clamp(lc.color.y, 0.0f, 1.0f) * 255.0f),
+        static_cast<ImU8>(std::clamp(lc.color.z, 0.0f, 1.0f) * 255.0f),
+        static_cast<ImU8>(std::clamp(lc.color.w * lc.intensity * alphaScale, 0.0f, 1.0f) * 255.0f));
+}
+
+} // namespace
 
 // ── Init / Shutdown ───────────────────────────────────────────────
 
@@ -126,7 +201,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     bool hovered = ImGui::IsItemHovered();
 
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        if (ImGui::IsKeyPressed(ImGuiKey_W)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
+        if (ImGui::IsKeyPressed(ImGuiKey_T)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
@@ -160,7 +235,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             default: strcpy(modeStr, "Select"); break;
         }
         char buf[64];
-        snprintf(buf, sizeof(buf), "Gizmo: %s [W/E/R]  Grid: %s", modeStr, m_config.grid ? "ON" : "OFF");
+        snprintf(buf, sizeof(buf), "Gizmo: %s [T/E/R]  Grid: %s", modeStr, m_config.grid ? "ON" : "OFF");
         drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(200, 200, 200, 200), buf);
     }
 
@@ -190,6 +265,36 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle snap to grid (%.1f units)", ctx.snapGridSize);
         ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        const bool texturedPreview = (m_meshPreviewMode == MeshPreviewMode::Textured);
+        if (texturedPreview) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.75f, 0.78f, 0.92f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.05f, 0.05f, 0.05f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
+        }
+        if (ImGui::Button(texturedPreview ? "Textured" : "Wireframe")) {
+            m_meshPreviewMode = texturedPreview ? MeshPreviewMode::Wireframe : MeshPreviewMode::Textured;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle 3D preview style (white/gray textured vs wireframe)");
+        if (texturedPreview) {
+            ImGui::PopStyleColor(2);
+        } else {
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::SameLine();
+        const char* densityLabels[] = {"Low", "Medium", "High"};
+        int wireDensity = static_cast<int>(m_wireframeDensity);
+        ImGui::BeginDisabled(texturedPreview);
+        ImGui::SetNextItemWidth(88.0f);
+        if (ImGui::SliderInt("##wire_density", &wireDensity, 0, 2, densityLabels[wireDensity])) {
+            m_wireframeDensity = static_cast<WireframeDensity>(wireDensity);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wireframe polygon density");
+        ImGui::EndDisabled();
+
         ImGui::PopStyleVar();
     }
 
@@ -241,19 +346,19 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (is3DIso) {
             float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
             float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
+            if (ImGui::IsKeyDown(ImGuiKey_W)) {
                 ctx.camFocus.x += -sinY * speed;
                 ctx.camFocus.z +=  cosY * speed;
             }
-            if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+            if (ImGui::IsKeyDown(ImGuiKey_S)) {
                 ctx.camFocus.x -= -sinY * speed;
                 ctx.camFocus.z -=  cosY * speed;
             }
-            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
+            if (ImGui::IsKeyDown(ImGuiKey_A)) {
                 ctx.camFocus.x -= cosY * speed;
                 ctx.camFocus.z -= sinY * speed;
             }
-            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
+            if (ImGui::IsKeyDown(ImGuiKey_D)) {
                 ctx.camFocus.x += cosY * speed;
                 ctx.camFocus.z += sinY * speed;
             }
@@ -457,21 +562,107 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
 }
 
 void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
-    ECS::ComponentQuery query;
-    query.with<ECS::Transform>();
-    query.without<ECS::Sprite>();
-
-    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float r = 7.0f;
 
-    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
+    struct DirLightEval { Vec3 dir; f32 intensity; Vec3 color; };
+    struct PointLightEval { Vec3 pos; f32 intensity; f32 radius; Vec3 color; };
+    struct SpotLightEval { Vec3 pos; Vec3 dir; f32 intensity; f32 radius; f32 cosHalfAngle; Vec3 color; };
+    std::vector<DirLightEval> dirLights;
+    std::vector<PointLightEval> pointLights;
+    std::vector<SpotLightEval> spotLights;
 
-        Vec3 worldPosition = pos.position;
-        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
-            worldPosition = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::DirectionalLightComponent>();
+        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
+            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
+                if (Scene::isEffectivelyDisabled(world, e)) return;
+                Vec3 ldir = entityForward(world, e).normalized();
+                dirLights.push_back({ldir, lc.intensity, Vec3(lc.color.x, lc.color.y, lc.color.z)});
+            });
+    }
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::PointLightComponent>();
+        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
+            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::PointLightComponent& pl) {
+                if (Scene::isEffectivelyDisabled(world, e)) return;
+                Vec3 p;
+                if (!tryGetEntityPosition(world, e, p)) return;
+                pointLights.push_back({p, lc.intensity, std::max(0.001f, pl.radius), Vec3(lc.color.x, lc.color.y, lc.color.z)});
+            });
+    }
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::SpotLightComponent>();
+        world.forEach<ECS::LightComponent, ECS::SpotLightComponent>(
+            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::SpotLightComponent& sl) {
+                if (Scene::isEffectivelyDisabled(world, e)) return;
+                Vec3 p;
+                if (!tryGetEntityPosition(world, e, p)) return;
+                Vec3 d = entityForward(world, e).normalized();
+                const f32 halfAngle = std::clamp(sl.angle * kDegToRad * 0.5f, 0.01f, 1.5533f);
+                spotLights.push_back({p, d, lc.intensity, std::max(0.001f, sl.radius), std::cos(halfAngle), Vec3(lc.color.x, lc.color.y, lc.color.z)});
+            });
+    }
+
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n) -> Vec3 {
+        const Vec3 nn = n.normalized();
+        Vec3 diffuse(0.18f, 0.18f, 0.18f);
+
+        for (const auto& l : dirLights) {
+            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * l.dir));
+            const f32 gain = ndotl * l.intensity * 0.65f;
+            diffuse += l.color * gain;
         }
+        for (const auto& l : pointLights) {
+            Vec3 toLight = l.pos - p;
+            f32 dist = std::max(0.001f, toLight.length());
+            if (dist > l.radius) continue;
+            Vec3 ldir = toLight / dist;
+            f32 atten = 1.0f - (dist / l.radius);
+            atten *= atten;
+            const f32 ndotl = std::max(0.0f, nn.dot(ldir));
+            diffuse += l.color * (ndotl * l.intensity * atten * 0.9f);
+        }
+        for (const auto& l : spotLights) {
+            Vec3 toPoint = p - l.pos;
+            f32 dist = std::max(0.001f, toPoint.length());
+            if (dist > l.radius) continue;
+            Vec3 fromLight = toPoint / dist;
+            f32 cone = l.dir.dot(fromLight);
+            if (cone < l.cosHalfAngle) continue;
+            f32 spotAtten = (cone - l.cosHalfAngle) / std::max(0.0001f, 1.0f - l.cosHalfAngle);
+            f32 rangeAtten = 1.0f - (dist / l.radius);
+            rangeAtten *= rangeAtten;
+            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * fromLight));
+            diffuse += l.color * (ndotl * l.intensity * spotAtten * rangeAtten);
+        }
+
+        diffuse.x = std::clamp(diffuse.x, 0.06f, 1.65f);
+        diffuse.y = std::clamp(diffuse.y, 0.06f, 1.65f);
+        diffuse.z = std::clamp(diffuse.z, 0.06f, 1.65f);
+        return diffuse;
+    };
+
+    auto toColor = [](const Vec3& v, f32 a = 0.94f) -> ImU32 {
+        const f32 r = std::clamp(v.x, 0.0f, 1.0f);
+        const f32 g = std::clamp(v.y, 0.0f, 1.0f);
+        const f32 b = std::clamp(v.z, 0.0f, 1.0f);
+        const ImU8 cr = static_cast<ImU8>(r * 255.0f);
+        const ImU8 cg = static_cast<ImU8>(g * 255.0f);
+        const ImU8 cb = static_cast<ImU8>(b * 255.0f);
+        const ImU8 alpha = static_cast<ImU8>(std::clamp(a, 0.0f, 1.0f) * 255.0f);
+        return IM_COL32(cr, cg, cb, alpha);
+    };
+
+    auto drawMarker = [&](ECS::Entity entity, const Vec3& worldPosition) {
         ImVec2 sp = projectToScreen(worldPosition, origin, viewportSize, ctx);
 
         const bool selected = (ctx.selectedEntity == entity);
@@ -491,80 +682,446 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             col, selected ? 2.0f : 1.0f);
         dl->AddLine(ImVec2(sp.x - r * 0.5f, sp.y), ImVec2(sp.x + r * 0.5f, sp.y), col, 1.5f);
         dl->AddLine(ImVec2(sp.x, sp.y - r * 0.5f), ImVec2(sp.x, sp.y + r * 0.5f), col, 1.5f);
+    };
+
+    auto drawSegment = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
+        dl->AddLine(projectToScreen(a, origin, viewportSize, ctx),
+                    projectToScreen(b, origin, viewportSize, ctx),
+                    col, thickness);
+    };
+
+    auto drawRing = [&](const Mat4& worldMatrix, const Vec3& axisA, const Vec3& axisB,
+                        f32 radius, int segments, ImU32 col, float thickness) {
+        Vec3 prev = worldMatrix.transformPoint(axisA * radius);
+        for (int i = 1; i <= segments; ++i) {
+            const f32 a = (2.0f * 3.14159265f * static_cast<f32>(i)) / static_cast<f32>(segments);
+            const Vec3 local = axisA * (std::cos(a) * radius) + axisB * (std::sin(a) * radius);
+            const Vec3 curr  = worldMatrix.transformPoint(local);
+            drawSegment(prev, curr, col, thickness);
+            prev = curr;
+        }
+    };
+
+    auto drawMeshPreview = [&](ECS::Entity entity) {
+        auto* mesh = world.get<ECS::MeshFilterComponent>(entity);
+        if (!mesh) return false;
+
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const bool selected = (ctx.selectedEntity == entity);
+        const bool wireMode = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
+        const ImU32 wireCol = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(170, 190, 230, 210);
+        const ImU32 polyCol = selected ? IM_COL32(95, 170, 255, 210) : IM_COL32(130, 150, 190, 170);
+        const float thickness = selected ? 2.0f : 1.25f;
+        const float polyThickness = selected ? 1.5f : 1.0f;
+
+        if (wireMode && !selected) {
+            return true;
+        }
+
+        const bool drawContour = wireMode || selected;
+        const bool drawPolygons = wireMode;
+        const int densityLevel = static_cast<int>(m_wireframeDensity);
+        const int spherePolySegments = (densityLevel == 0) ? 8 : (densityLevel == 1 ? 12 : 18);
+        const int sidePolySlices = (densityLevel == 0) ? 4 : (densityLevel == 1 ? 8 : 14);
+
+        auto cameraDepth = [&](const Vec3& wp) -> f32 {
+            if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+                f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+                f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+                f32 rx = wp.x - ctx.camFocus.x;
+                f32 ry = wp.y - ctx.camFocus.y;
+                f32 rz = wp.z - ctx.camFocus.z;
+                f32 vz = -sinY * rx + cosY * rz;
+                f32 vz2 = -sinP * ry + cosP * vz;
+                return vz2;
+            }
+            if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
+                return wp.x + wp.y + wp.z;
+            }
+            return wp.z;
+        };
+
+        auto drawEdge = [&](const Vec3& a, const Vec3& b) {
+            if (!drawContour) return;
+            drawSegment(a, b, wireCol, thickness);
+        };
+        auto drawPoly = [&](const Vec3& a, const Vec3& b) {
+            if (!drawPolygons) return;
+            drawSegment(a, b, polyCol, polyThickness);
+        };
+
+        switch (mesh->primitive) {
+            case ECS::MeshPrimitive::Cube:
+            case ECS::MeshPrimitive::Custom: {
+                const std::array<Vec3, 8> corners = {{
+                    {-0.5f, -0.5f, -0.5f}, { 0.5f, -0.5f, -0.5f},
+                    { 0.5f,  0.5f, -0.5f}, {-0.5f,  0.5f, -0.5f},
+                    {-0.5f, -0.5f,  0.5f}, { 0.5f, -0.5f,  0.5f},
+                    { 0.5f,  0.5f,  0.5f}, {-0.5f,  0.5f,  0.5f},
+                }};
+                const int edges[][2] = {
+                    {0,1}, {1,2}, {2,3}, {3,0},
+                    {4,5}, {5,6}, {6,7}, {7,4},
+                    {0,4}, {1,5}, {2,6}, {3,7}
+                };
+
+                const int faces[][4] = {
+                    {0,1,2,3}, // back
+                    {4,5,6,7}, // front
+                    {0,3,7,4}, // left
+                    {1,2,6,5}, // right
+                    {3,2,6,7}, // top
+                    {0,1,5,4}, // bottom
+                };
+
+                const Vec3 faceNormalsLocal[] = {
+                    {0,0,-1}, {0,0,1}, {-1,0,0}, {1,0,0}, {0,1,0}, {0,-1,0}
+                };
+
+                std::array<Vec3, 8> wp;
+                for (usize i = 0; i < corners.size(); ++i) {
+                    wp[i] = worldMatrix.transformPoint(corners[i]);
+                }
+
+                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                    struct FaceDraw {
+                        int faceIndex;
+                        f32 depth;
+                    };
+                    std::array<FaceDraw, 6> faceOrder{};
+                    for (int fi = 0; fi < 6; ++fi) {
+                        Vec3 center = (wp[faces[fi][0]] + wp[faces[fi][1]] + wp[faces[fi][2]] + wp[faces[fi][3]]) * 0.25f;
+                        faceOrder[fi] = {fi, cameraDepth(center)};
+                    }
+                    std::sort(faceOrder.begin(), faceOrder.end(), [](const FaceDraw& a, const FaceDraw& b) {
+                        return a.depth > b.depth;
+                    });
+
+                    for (const auto& fd : faceOrder) {
+                        const int fi = fd.faceIndex;
+                        Vec3 nWorld = matrixAxis(worldMatrix, (fi == 0 || fi == 1) ? 2 : (fi <= 3 ? 0 : 1), faceNormalsLocal[fi]);
+                        if (fi == 0 || fi == 2 || fi == 5) nWorld = -1.0f * nWorld;
+
+                        Vec3 center = (wp[faces[fi][0]] + wp[faces[fi][1]] + wp[faces[fi][2]] + wp[faces[fi][3]]) * 0.25f;
+                        const Vec3 lit = lightColorAt(center, nWorld);
+                        const f32 checker = (fi % 2 == 0) ? 0.86f : 0.74f;
+                        const ImU32 fill = toColor(Vec3(lit.x * checker, lit.y * checker, lit.z * checker), 0.92f);
+
+                        ImVec2 p0 = projectToScreen(wp[faces[fi][0]], origin, viewportSize, ctx);
+                        ImVec2 p1 = projectToScreen(wp[faces[fi][1]], origin, viewportSize, ctx);
+                        ImVec2 p2 = projectToScreen(wp[faces[fi][2]], origin, viewportSize, ctx);
+                        ImVec2 p3 = projectToScreen(wp[faces[fi][3]], origin, viewportSize, ctx);
+                        dl->AddQuadFilled(p0, p1, p2, p3, fill);
+                    }
+                }
+
+                for (const auto& edge : edges) {
+                    drawEdge(wp[edge[0]], wp[edge[1]]);
+                }
+                if (drawPolygons) {
+                    for (int fi = 0; fi < 6; ++fi) {
+                        const auto& face = faces[fi];
+                        if (densityLevel == 0) {
+                            if ((fi % 2) == 0) drawPoly(wp[face[0]], wp[face[2]]);
+                        } else if (densityLevel == 1) {
+                            drawPoly(wp[face[0]], wp[face[2]]);
+                        } else {
+                            drawPoly(wp[face[0]], wp[face[2]]);
+                            drawPoly(wp[face[1]], wp[face[3]]);
+                        }
+                    }
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Plane: {
+                const Vec3 corners[] = {
+                    {-0.5f, 0.0f, -0.5f}, { 0.5f, 0.0f, -0.5f},
+                    { 0.5f, 0.0f,  0.5f}, {-0.5f, 0.0f,  0.5f}
+                };
+                Vec3 wp[4] = {
+                    worldMatrix.transformPoint(corners[0]),
+                    worldMatrix.transformPoint(corners[1]),
+                    worldMatrix.transformPoint(corners[2]),
+                    worldMatrix.transformPoint(corners[3])
+                };
+
+                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                    Vec3 nWorld = matrixAxis(worldMatrix, 1, Vec3::up());
+                    Vec3 center = (wp[0] + wp[1] + wp[2] + wp[3]) * 0.25f;
+                    const Vec3 lit = lightColorAt(center, nWorld);
+                    const ImU32 fill = toColor(Vec3(lit.x * 0.80f, lit.y * 0.80f, lit.z * 0.80f), 0.88f);
+                    dl->AddQuadFilled(projectToScreen(wp[0], origin, viewportSize, ctx),
+                                      projectToScreen(wp[1], origin, viewportSize, ctx),
+                                      projectToScreen(wp[2], origin, viewportSize, ctx),
+                                      projectToScreen(wp[3], origin, viewportSize, ctx),
+                                      fill);
+                }
+
+                for (int i = 0; i < 4; ++i) {
+                    drawEdge(wp[i], wp[(i + 1) % 4]);
+                }
+                if (drawPolygons) {
+                    drawPoly(wp[0], wp[2]);
+                    if (densityLevel >= 2) drawPoly(wp[1], wp[3]);
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Sphere: {
+                Vec3 center = worldMatrix.transformPoint(Vec3(0, 0, 0));
+                Vec3 px = worldMatrix.transformPoint(Vec3(0.5f, 0, 0));
+                ImVec2 cs = projectToScreen(center, origin, viewportSize, ctx);
+                ImVec2 pxs = projectToScreen(px, origin, viewportSize, ctx);
+                f32 rad = std::sqrt((pxs.x - cs.x) * (pxs.x - cs.x) + (pxs.y - cs.y) * (pxs.y - cs.y));
+                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                    const Vec3 lit = lightColorAt(center, entityAxis(world, entity, 2, Vec3(0, 0, 1)));
+                    dl->AddCircleFilled(cs, rad, toColor(Vec3(lit.x * 0.78f, lit.y * 0.78f, lit.z * 0.78f), 0.90f), 24);
+                }
+                if (drawContour) {
+                    dl->AddCircle(cs, rad, wireCol, 32, thickness);
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.5f, 28, wireCol, thickness);
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 28, wireCol, thickness);
+                    drawRing(worldMatrix, Vec3(0, 1, 0), Vec3(0, 0, 1), 0.5f, 28, wireCol, thickness);
+                }
+                if (drawPolygons) {
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.5f, spherePolySegments, polyCol, polyThickness);
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, spherePolySegments, polyCol, polyThickness);
+                    drawRing(worldMatrix, Vec3(0, 1, 0), Vec3(0, 0, 1), 0.5f, spherePolySegments, polyCol, polyThickness);
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Cylinder: {
+                Mat4 topMatrix = worldMatrix * Mat4::translation(0.0f, 0.5f, 0.0f);
+                Mat4 bottomMatrix = worldMatrix * Mat4::translation(0.0f, -0.5f, 0.0f);
+                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                    Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
+                    Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
+                    Vec3 cMid = (cTop + cBottom) * 0.5f;
+                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 0, Vec3::right()));
+                    dl->AddLine(projectToScreen(cTop, origin, viewportSize, ctx),
+                                projectToScreen(cBottom, origin, viewportSize, ctx),
+                                toColor(Vec3(lit.x * 0.72f, lit.y * 0.72f, lit.z * 0.72f), 0.75f), 18.0f * ctx.viewportZoom);
+                }
+                if (drawContour) {
+                    drawRing(topMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                    drawRing(bottomMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                }
+                for (int i = 0; i < 4; ++i) {
+                    const f32 a = (3.14159265f * 0.5f) * static_cast<f32>(i);
+                    const Vec3 rim(std::cos(a) * 0.5f, 0.0f, std::sin(a) * 0.5f);
+                    drawEdge(topMatrix.transformPoint(rim), bottomMatrix.transformPoint(rim));
+                }
+                if (drawPolygons) {
+                    for (int i = 0; i < sidePolySlices; ++i) {
+                        const f32 a0 = (2.0f * 3.14159265f * static_cast<f32>(i)) / static_cast<f32>(sidePolySlices);
+                        const f32 a1 = (2.0f * 3.14159265f * static_cast<f32>((i + 1) % sidePolySlices)) / static_cast<f32>(sidePolySlices);
+                        const Vec3 t0(std::cos(a0) * 0.5f, 0.5f, std::sin(a0) * 0.5f);
+                        const Vec3 b1(std::cos(a1) * 0.5f, -0.5f, std::sin(a1) * 0.5f);
+                        drawPoly(worldMatrix.transformPoint(t0), worldMatrix.transformPoint(b1));
+                    }
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Capsule: {
+                Mat4 topMatrix = worldMatrix * Mat4::translation(0.0f, 0.25f, 0.0f);
+                Mat4 bottomMatrix = worldMatrix * Mat4::translation(0.0f, -0.25f, 0.0f);
+                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                    Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
+                    Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
+                    Vec3 cMid = (cTop + cBottom) * 0.5f;
+                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 1, Vec3::up()));
+                    dl->AddLine(projectToScreen(cTop, origin, viewportSize, ctx),
+                                projectToScreen(cBottom, origin, viewportSize, ctx),
+                                toColor(Vec3(lit.x * 0.70f, lit.y * 0.70f, lit.z * 0.70f), 0.70f), 20.0f * ctx.viewportZoom);
+                }
+                if (drawContour) {
+                    drawRing(topMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                    drawRing(bottomMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.5f, 24, wireCol, thickness);
+                    drawRing(worldMatrix, Vec3(0, 1, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                }
+                for (int i = 0; i < 4; ++i) {
+                    const f32 a = (3.14159265f * 0.5f) * static_cast<f32>(i);
+                    const Vec3 rim(std::cos(a) * 0.5f, 0.0f, std::sin(a) * 0.5f);
+                    drawEdge(topMatrix.transformPoint(rim), bottomMatrix.transformPoint(rim));
+                }
+                if (drawPolygons) {
+                    for (int i = 0; i < sidePolySlices; ++i) {
+                        const f32 a0 = (2.0f * 3.14159265f * static_cast<f32>(i)) / static_cast<f32>(sidePolySlices);
+                        const f32 a1 = (2.0f * 3.14159265f * static_cast<f32>((i + 1) % sidePolySlices)) / static_cast<f32>(sidePolySlices);
+                        const Vec3 t0(std::cos(a0) * 0.5f, 0.25f, std::sin(a0) * 0.5f);
+                        const Vec3 b1(std::cos(a1) * 0.5f, -0.25f, std::sin(a1) * 0.5f);
+                        drawPoly(worldMatrix.transformPoint(t0), worldMatrix.transformPoint(b1));
+                    }
+                }
+                break;
+            }
+        }
+
+        return true;
+    };
+
+    auto drawEntity = [&](ECS::Entity entity) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        if (world.has<ECS::LightComponent>(entity)) return;
+
+        if (drawMeshPreview(entity)) return;
+
+        Vec3 worldPosition;
+        if (!tryGetEntityPosition(world, entity, worldPosition)) return;
+        drawMarker(entity, worldPosition);
+    };
+
+    ECS::ComponentQuery transformQuery;
+    transformQuery.with<ECS::Transform>();
+    transformQuery.without<ECS::Sprite>();
+    world.forEach<ECS::Transform>(transformQuery, [&](ECS::Entity entity, ECS::Transform&) {
+        drawEntity(entity);
+    });
+
+    ECS::ComponentQuery pos3Query;
+    pos3Query.with<ECS::Position3D>();
+    pos3Query.without<ECS::Transform>();
+    pos3Query.without<ECS::Sprite>();
+    world.forEach<ECS::Position3D>(pos3Query, [&](ECS::Entity entity, ECS::Position3D&) {
+        drawEntity(entity);
     });
 }
 
 void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    ECS::ComponentQuery q;
-    q.with<ECS::LightComponent>();
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::DirectionalLightComponent>();
 
-    world.forEach<ECS::LightComponent>(q, [&](ECS::Entity entity, ECS::LightComponent& lc) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        u32 directionalIndex = 0;
+        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
+            q, [&](ECS::Entity entity, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
+                if (Scene::isEffectivelyDisabled(world, entity)) return;
 
-        Vec3 worldPos = {0, 0, 0};
-        if (auto* t = world.get<ECS::Transform>(entity)) {
-            worldPos = t->position;
-        } else if (auto* p3d = world.get<ECS::Position3D>(entity)) {
-            worldPos = p3d->position;
-        } else {
-            return;
-        }
+                Vec3 anchor;
+                if (!tryGetEntityPosition(world, entity, anchor)) {
+                    anchor = Vec3(ctx.camFocus.x, ctx.camFocus.y, ctx.camFocus.z)
+                           + Vec3(8.0f + static_cast<f32>(directionalIndex) * 2.5f, 6.0f, 0.0f);
+                }
+                ++directionalIndex;
 
-        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
-            worldPos = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
-        }
-        ImVec2 sp = projectToScreen(worldPos, origin, viewportSize, ctx);
+                const bool selected = (ctx.selectedEntity == entity);
+                const Vec3 dir = entityForward(world, entity);
+                const Vec3 tip = anchor + dir * 2.5f;
+                const ImVec2 screenPos = projectToScreen(anchor, origin, viewportSize, ctx);
+                const ImVec2 tipPos = projectToScreen(tip, origin, viewportSize, ctx);
+                const ImU32 color = lightColor(lc, selected);
 
-        const bool selected = (ctx.selectedEntity == entity);
-        ImU32 col = IM_COL32(
-            static_cast<u8>(lc.color.x * 255),
-            static_cast<u8>(lc.color.y * 255),
-            static_cast<u8>(lc.color.z * 255),
-            selected ? 255 : 180);
+                const f32 sunRadius = 8.0f;
+                const f32 rayLength = 12.0f;
+                const int rayCount = 6;
 
-        if (world.has<ECS::DirectionalLightComponent>(entity)) {
-            float len = 20.0f * ctx.viewportZoom;
-            dl->AddCircleFilled(sp, 6.0f, col);
-            for (int i = 0; i < 6; ++i) {
-                float angle = static_cast<float>(i) * 3.14159265f / 3.0f;
-                ImVec2 end(sp.x + cosf(angle) * len, sp.y + sinf(angle) * len);
-                dl->AddLine(sp, end, col, selected ? 2.0f : 1.0f);
-            }
-        }
-        else if (world.has<ECS::PointLightComponent>(entity)) {
-            auto* pl = world.get<ECS::PointLightComponent>(entity);
-            float screenRadius = pl->radius * ctx.viewportZoom * 50.0f;
-            screenRadius = std::min(screenRadius, 200.0f);
-            dl->AddCircle(sp, screenRadius, col, 32, selected ? 2.0f : 1.0f);
-            dl->AddCircleFilled(sp, 4.0f, col);
-        }
-        else if (world.has<ECS::SpotLightComponent>(entity)) {
-            auto* sl = world.get<ECS::SpotLightComponent>(entity);
-            float len = sl->radius * ctx.viewportZoom * 50.0f;
-            len = std::min(len, 200.0f);
-            float halfAngle = sl->angle * 0.5f * 3.14159265f / 180.0f;
-            float spread = tanf(halfAngle) * len;
-            dl->AddCircleFilled(sp, 4.0f, col);
-            ImVec2 tipLeft(sp.x - spread, sp.y + len);
-            ImVec2 tipRight(sp.x + spread, sp.y + len);
-            dl->AddLine(sp, tipLeft, col, selected ? 2.0f : 1.0f);
-            dl->AddLine(sp, tipRight, col, selected ? 2.0f : 1.0f);
-            dl->AddLine(tipLeft, tipRight, col, selected ? 2.0f : 1.0f);
-        }
-    });
+                dl->AddCircleFilled(screenPos, sunRadius * 0.5f, color, 12);
+
+                for (int i = 0; i < rayCount; ++i) {
+                    f32 angle = (2.0f * 3.14159265f / rayCount) * i;
+                    f32 x1 = sunRadius * std::cos(angle);
+                    f32 y1 = sunRadius * std::sin(angle);
+                    f32 x2 = (sunRadius + rayLength) * std::cos(angle);
+                    f32 y2 = (sunRadius + rayLength) * std::sin(angle);
+                    dl->AddLine(ImVec2(screenPos.x + x1, screenPos.y + y1),
+                               ImVec2(screenPos.x + x2, screenPos.y + y2), color, 2.0f);
+                }
+
+                dl->AddLine(screenPos, tipPos, color, selected ? 2.5f : 1.5f);
+                dl->AddCircleFilled(tipPos, 3.0f, color, 10);
+
+                dl->AddText(ImVec2(screenPos.x + 12, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Dir");
+            });
+    }
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::PointLightComponent>();
+
+        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
+            q, [&](ECS::Entity entity, ECS::LightComponent& lc, ECS::PointLightComponent& ptLight) {
+                if (Scene::isEffectivelyDisabled(world, entity)) return;
+
+                Vec3 position;
+                if (!tryGetEntityPosition(world, entity, position)) return;
+
+                ImVec2 screenPos = projectToScreen(position, origin, viewportSize, ctx);
+                const bool selected = (ctx.selectedEntity == entity);
+                ImU32 color = lightColor(lc, selected);
+
+                Vec3 radiusTestPoint = position + entityAxis(world, entity, 0, Vec3::right()) * ptLight.radius;
+                ImVec2 radiusScreenPoint = projectToScreen(radiusTestPoint, origin, viewportSize, ctx);
+                f32 radiusScreenDist = std::sqrt(
+                    (radiusScreenPoint.x - screenPos.x) * (radiusScreenPoint.x - screenPos.x) +
+                    (radiusScreenPoint.y - screenPos.y) * (radiusScreenPoint.y - screenPos.y)
+                );
+
+                dl->AddCircleFilled(screenPos, 5.0f, color, 16);
+                dl->AddCircle(screenPos, radiusScreenDist, color, 16, 1.5f);
+                dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Pt");
+            });
+    }
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::SpotLightComponent>();
+
+        world.forEach<ECS::LightComponent, ECS::SpotLightComponent>(
+            q, [&](ECS::Entity entity, ECS::LightComponent& lc, ECS::SpotLightComponent& spotLight) {
+                if (Scene::isEffectivelyDisabled(world, entity)) return;
+
+                Vec3 position;
+                if (!tryGetEntityPosition(world, entity, position)) return;
+
+                const bool selected = (ctx.selectedEntity == entity);
+                const Vec3 dir = entityForward(world, entity);
+                Vec3 right = entityAxis(world, entity, 0, Vec3::right());
+                if (std::abs(dir.dot(right)) > 0.95f) right = Vec3::up();
+                Vec3 up = dir.cross(right).normalized();
+                right = up.cross(dir).normalized();
+
+                ImVec2 screenPos = projectToScreen(position, origin, viewportSize, ctx);
+                ImU32 color = lightColor(lc, selected);
+
+                Vec3 coneEnd = position + dir * spotLight.radius;
+                const f32 coneRadius = spotLight.radius * std::sin(spotLight.angle * kDegToRad * 0.5f);
+                Vec3 baseRight = coneEnd + right * coneRadius;
+                Vec3 baseLeft  = coneEnd - right * coneRadius;
+                Vec3 baseUp    = coneEnd + up * coneRadius;
+                Vec3 baseDown  = coneEnd - up * coneRadius;
+
+                dl->AddLine(screenPos, projectToScreen(baseRight, origin, viewportSize, ctx), color, selected ? 2.5f : 1.5f);
+                dl->AddLine(screenPos, projectToScreen(baseLeft, origin, viewportSize, ctx), color, selected ? 2.5f : 1.5f);
+                dl->AddLine(screenPos, projectToScreen(baseUp, origin, viewportSize, ctx), color, selected ? 2.0f : 1.25f);
+                dl->AddLine(screenPos, projectToScreen(baseDown, origin, viewportSize, ctx), color, selected ? 2.0f : 1.25f);
+                dl->AddLine(projectToScreen(baseRight, origin, viewportSize, ctx), projectToScreen(baseUp, origin, viewportSize, ctx), color, 1.25f);
+                dl->AddLine(projectToScreen(baseUp, origin, viewportSize, ctx), projectToScreen(baseLeft, origin, viewportSize, ctx), color, 1.25f);
+                dl->AddLine(projectToScreen(baseLeft, origin, viewportSize, ctx), projectToScreen(baseDown, origin, viewportSize, ctx), color, 1.25f);
+                dl->AddLine(projectToScreen(baseDown, origin, viewportSize, ctx), projectToScreen(baseRight, origin, viewportSize, ctx), color, 1.25f);
+                dl->AddCircleFilled(screenPos, 5.0f, color, 12);
+                dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Sp");
+            });
+    }
+}
+
+void SceneViewport::createOrUpdateLightGizmoEntities(ECS::World& world) {
 }
 
 void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
-    if (!pos) return;
-
-    Vec3 worldPos = pos->position;
-    if (auto* wt = world.get<Scene::WorldTransform>(ctx.selectedEntity)) {
-        worldPos = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+    auto* pos3 = world.get<ECS::Position3D>(ctx.selectedEntity);
+    if (!pos && !pos3) {
+        pos = &world.add<ECS::Transform>(ctx.selectedEntity);
     }
+
+    Vec3 worldPos;
+    if (!tryGetEntityPosition(world, ctx.selectedEntity, worldPos)) return;
     ImVec2 screenPos = projectToScreen(worldPos, origin, viewportSize, ctx);
     ImDrawList* dl   = ImGui::GetWindowDrawList();
     const float HL   = 30.0f * ctx.viewportZoom;
@@ -592,18 +1149,10 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     ImVec2 rawX = proj2D(1,0,0), rawY = proj2D(0,1,0), rawZ = proj2D(0,0,1);
 
     if (is3D) {
-        static constexpr float DEG2RAD = 3.14159265f / 180.f;
-        using Caffeine::Mat4;
-        Mat4 R = Mat4::rotationZ(pos->rotation.z * DEG2RAD)
-               * Mat4::rotationY(pos->rotation.y * DEG2RAD)
-               * Mat4::rotationX(pos->rotation.x * DEG2RAD);
-        auto rot = [&](float lx, float ly, float lz) -> ImVec2 {
-            float wx = R(0,0)*lx + R(0,1)*ly + R(0,2)*lz;
-            float wy = R(1,0)*lx + R(1,1)*ly + R(1,2)*lz;
-            float wz = R(2,0)*lx + R(2,1)*ly + R(2,2)*lz;
-            return proj2D(wx, wy, wz);
-        };
-        rawX = rot(1,0,0); rawY = rot(0,1,0); rawZ = rot(0,0,1);
+        const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
+        rawX = proj2D(worldMatrix(0,0), worldMatrix(1,0), worldMatrix(2,0));
+        rawY = proj2D(worldMatrix(0,1), worldMatrix(1,1), worldMatrix(2,1));
+        rawZ = proj2D(worldMatrix(0,2), worldMatrix(1,2), worldMatrix(2,2));
     }
     m_axisRawDirs[0] = rawX; m_axisRawDirs[1] = rawY; m_axisRawDirs[2] = rawZ;
     m_gizmoScreenOrigin = screenPos;
@@ -959,7 +1508,18 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
     m_gizmoDragAxis = axis;
 
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
-    if (!pos) pos = &world.add<ECS::Transform>(ctx.selectedEntity);
+    if (!pos) {
+        ECS::Transform initial;
+        if (auto* p3 = world.get<ECS::Position3D>(ctx.selectedEntity)) initial.position = p3->position;
+        if (auto* s3 = world.get<ECS::Scale3D>(ctx.selectedEntity))    initial.scale = s3->scale;
+        if (auto* r3 = world.get<ECS::Rotation3D>(ctx.selectedEntity)) {
+            const Vec3 eulerRad = Quat(r3->quaternion.x, r3->quaternion.y, r3->quaternion.z, r3->quaternion.w)
+                                      .normalized()
+                                      .toEuler();
+            initial.rotation = Vec3(eulerRad.x * kRadToDeg, eulerRad.y * kRadToDeg, eulerRad.z * kRadToDeg);
+        }
+        pos = &world.add<ECS::Transform>(ctx.selectedEntity, initial);
+    }
 
     const float scale = ctx.viewportZoom * 50.0f;
 
@@ -999,6 +1559,19 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
             }
             break;
         case EditorContext::GizmoMode::None: break;
+    }
+
+    if (auto* p3 = world.get<ECS::Position3D>(ctx.selectedEntity)) {
+        p3->position = pos->position;
+    }
+    if (auto* s3 = world.get<ECS::Scale3D>(ctx.selectedEntity)) {
+        s3->scale = pos->scale;
+    }
+    if (auto* r3 = world.get<ECS::Rotation3D>(ctx.selectedEntity)) {
+        const Quat q = Quat::fromEuler(pos->rotation.x * kDegToRad,
+                                       pos->rotation.y * kDegToRad,
+                                       pos->rotation.z * kDegToRad).normalized();
+        r3->quaternion = Vec4(q.x, q.y, q.z, q.w);
     }
 
     ctx.isDirty = true;

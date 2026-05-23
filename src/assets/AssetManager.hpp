@@ -64,6 +64,7 @@ public:
         if constexpr (std::is_same_v<T, AudioClip>)  return &e.resolved.audio;
         if constexpr (std::is_same_v<T, ShaderBlob>) return &e.resolved.shader;
         if constexpr (std::is_same_v<T, Mesh>)       return &e.resolved.mesh;
+        if constexpr (std::is_same_v<T, Prefab>)     return &e.resolved.prefab;
         return nullptr;
     }
 
@@ -73,6 +74,7 @@ private:
         AudioClip  audio    {};
         ShaderBlob shader   {};
         Mesh       mesh     {};
+        Prefab     prefab   {};
     };
 
     struct AssetEntry {
@@ -95,11 +97,12 @@ private:
     u32  acquireOrCreate(const char* path, AssetType type);
     void scheduleLoad(u32 id);
     void loadInternal(u32 id);
-    void resolveEntry(AssetEntry& e);
+     void resolveEntry(AssetEntry& e);
     void resolveTexture(AssetEntry& e);
     void resolveAudio(AssetEntry& e);
     void resolveShader(AssetEntry& e);
     void resolveMesh(AssetEntry& e);
+    void resolvePrefab(AssetEntry& e);
 
 #ifdef CF_DEBUG
     u64  getFileWriteTime(const std::string& path);

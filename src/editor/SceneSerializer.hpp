@@ -30,9 +30,12 @@ private:
     static constexpr u32 kTypeDirLight      = 12;
     static constexpr u32 kTypePointLight    = 13;
     static constexpr u32 kTypeSpotLight     = 14;
-    static constexpr u32 kTypeCount         = 15;
+    static constexpr u32 kTypePosition3D    = 15;
+    static constexpr u32 kTypeRotation3D    = 16;
+    static constexpr u32 kTypeScale3D       = 17;
+    static constexpr u32 kTypeCount         = 18;
 
-    static constexpr u32 kFormatVersion    = 4;
+    static constexpr u32 kFormatVersion    = 5;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────
