@@ -241,6 +241,49 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     bool hovered = ImGui::IsItemHovered();
 
+    // Handle entity selection via raycasting (only in 3D mode, not during gizmo drag)
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging && 
+        ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        
+        ImVec2 mousePos = ImGui::GetMousePos();
+        ImVec2 vpMin = ImGui::GetItemRectMin();
+        ImVec2 vpMax = ImGui::GetItemRectMax();
+        
+        bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
+                                mousePos.y >= vpMin.y && mousePos.y <= vpMax.y);
+        
+        if (mouseInViewport) {
+            ImVec2 vpSize = ImGui::GetContentRegionAvail();
+            Vec2 screenClick(mousePos.x - vpMin.x, mousePos.y - vpMin.y);
+            
+            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+            Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+            Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+            f32 aspect = vpSize.x / std::max(vpSize.y, 1.0f);
+            Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+            Mat4 vp = proj * view;
+            Mat4 vpInverse = vp.inverted();
+            
+            f32 ndcX = (2.0f * screenClick.x) / vpSize.x - 1.0f;
+            f32 ndcY = 1.0f - (2.0f * screenClick.y) / vpSize.y;
+            Vec4 ndcNear(ndcX, ndcY, -1.0f, 1.0f);
+            Vec4 worldNear = vpInverse.transformVec4(ndcNear);
+            
+            if (std::abs(worldNear.w) > 0.0001f) {
+                worldNear.x /= worldNear.w;
+                worldNear.y /= worldNear.w;
+                worldNear.z /= worldNear.w;
+            }
+            
+            Vec3 rayOrigin = camPos;
+            Vec3 rayDirection = (Vec3(worldNear.x, worldNear.y, worldNear.z) - camPos).normalized();
+            
+            ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world);
+            ctx.selectedEntity = selectedEntity;
+        }
+    }
+
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         if (ImGui::IsKeyPressed(ImGuiKey_T)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
