@@ -26,6 +26,10 @@ TransformGizmo::Ray3D TransformGizmo::screenToWorldRay(
         worldNear.x /= worldNear.w;
         worldNear.y /= worldNear.w;
         worldNear.z /= worldNear.w;
+    } else {
+        worldNear.x = 0.0f;
+        worldNear.y = 0.0f;
+        worldNear.z = -1.0f;
     }
     
     Vec3 rayOrigin = camPos;
@@ -114,6 +118,9 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
         float fov = 1.0472f;
         float pixelsPerUnit = (vpSize.y * 0.5f) / (distToObj * std::tan(fov * 0.5f));
         handleWorld = handleLen / std::max(pixelsPerUnit, 0.01f);
+        if (handleWorld < 0.01f) {
+            handleWorld = 0.01f;
+        }
     }
 
     // vx   = cosY*ax + sinY*az          (screen-right component)
