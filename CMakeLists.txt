@@ -60,6 +60,8 @@ add_library(caffeine-core
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
     src/assets/MeshLoader.cpp
+    src/assets/MeshCache.cpp
+    src/assets/MeshLOD.cpp
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
     src/engine/AssetLoader.cpp

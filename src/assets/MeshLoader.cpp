@@ -1,4 +1,5 @@
 #include "assets/MeshLoader.hpp"
+#include "assets/MeshLOD.hpp"
 
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -172,6 +173,8 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
             }
         }
     }
+    
+    MeshLOD::generateLODs(mesh, 3);
     
     computeBounds(*mesh);
     
