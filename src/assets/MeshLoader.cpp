@@ -161,6 +161,18 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         mesh->subMeshes.push_back(submesh);
     }
     
+    for (const auto& texture : model.textures) {
+        if (texture.source >= 0 && texture.source < (int)model.images.size()) {
+            const auto& image = model.images[texture.source];
+            if (!image.image.empty()) {
+                mesh->baseColorTexture = image.image;
+                mesh->textureWidth = image.width;
+                mesh->textureHeight = image.height;
+                break;
+            }
+        }
+    }
+    
     computeBounds(*mesh);
     
     return mesh;

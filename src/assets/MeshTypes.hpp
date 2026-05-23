@@ -53,6 +53,10 @@ struct Mesh3D {
     Rect3D bounds;
     u32 lodCount = 1;
     
+    std::vector<u8> baseColorTexture;
+    u32 textureWidth = 0;
+    u32 textureHeight = 0;
+    
 #ifdef CF_HAS_SDL3
     RHI::Buffer* vertexBuffer = nullptr;
     RHI::Buffer* indexBuffer = nullptr;

@@ -872,7 +872,22 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                             meshScale = 0.3f / maxDist;
                         }
                         
-                        const ImU32 fillCol = IM_COL32(100, 150, 200, 180);
+                        auto sampleTexture = [loadedMesh](const Vec2& uv) -> ImU32 {
+                            if (loadedMesh->baseColorTexture.empty() || loadedMesh->textureWidth == 0) {
+                                return IM_COL32(100, 150, 200, 180);
+                            }
+                            u32 x = (u32)(uv.x * (loadedMesh->textureWidth - 1));
+                            u32 y = (u32)(uv.y * (loadedMesh->textureHeight - 1));
+                            u32 idx = (y * loadedMesh->textureWidth + x) * 3;
+                            if (idx + 2 < loadedMesh->baseColorTexture.size()) {
+                                u8 r = loadedMesh->baseColorTexture[idx];
+                                u8 g = loadedMesh->baseColorTexture[idx + 1];
+                                u8 b = loadedMesh->baseColorTexture[idx + 2];
+                                return IM_COL32(r, g, b, 180);
+                            }
+                            return IM_COL32(100, 150, 200, 180);
+                        };
+                        
                         for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
                             u32 i0 = loadedMesh->indices[i];
                             u32 i1 = loadedMesh->indices[i + 1];
@@ -894,7 +909,13 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                                 ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
                                 ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
                                 
-                                dl->AddTriangleFilled(sp0, sp1, sp2, fillCol);
+                                Vec2 uv0 = loadedMesh->vertices[i0].texcoord;
+                                Vec2 uv1 = loadedMesh->vertices[i1].texcoord;
+                                Vec2 uv2 = loadedMesh->vertices[i2].texcoord;
+                                Vec2 uvAvg = Vec2((uv0.x + uv1.x + uv2.x) / 3.0f, (uv0.y + uv1.y + uv2.y) / 3.0f);
+                                
+                                ImU32 triColor = sampleTexture(uvAvg);
+                                dl->AddTriangleFilled(sp0, sp1, sp2, triColor);
                             }
                         }
                         
