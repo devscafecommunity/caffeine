@@ -5,6 +5,8 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include "tiny_gltf.h"
 
+#include <stb/stb_image.h>
+
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -47,6 +49,36 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     auto mesh = new Mesh3D();
     std::vector<Vertex3D> vertices;
     std::vector<u32> indices;
+    
+    // Try to load external textures manually if not already loaded by TinyGLTF
+    if (model.images.empty() && !model.textures.empty() && !basePath.empty()) {
+        // Check if textures reference external files
+        for (const auto& texture : model.textures) {
+            if (texture.source >= 0 && texture.source < (int)model.images.size()) {
+                // Image already loaded
+                continue;
+            }
+        }
+        
+        // Look for companion PNG file (same base name as glTF)
+        std::string pngPath = filenameStr;
+        size_t dotPos = pngPath.find_last_of('.');
+        if (dotPos != std::string::npos) {
+            pngPath = pngPath.substr(0, dotPos) + ".png";
+            int width, height, channels;
+            u8* imgData = stbi_load(pngPath.c_str(), &width, &height, &channels, 3);
+            if (imgData) {
+                tinygltf::Image extImage;
+                extImage.image.resize(width * height * 3);
+                std::memcpy(extImage.image.data(), imgData, width * height * 3);
+                extImage.width = width;
+                extImage.height = height;
+                extImage.component = 3;
+                model.images.push_back(extImage);
+                stbi_image_free(imgData);
+            }
+        }
+    }
     
     u32 indexOffset = 0;
     
@@ -174,11 +206,28 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         }
     }
     
-    MeshLOD::generateLODs(mesh, 3);
+     MeshLOD::generateLODs(mesh, 3);
     
     computeBounds(*mesh);
     
     return mesh;
+}
+
+void MeshLoader::loadPNGTexture(Mesh3D* mesh, const char* pngPath) {
+    if (!mesh || !pngPath) return;
+    
+    int width, height, channels;
+    u8* data = stbi_load(pngPath, &width, &height, &channels, 3);
+    
+    if (!data) return;
+    
+    mesh->baseColorTexture.resize(width * height * 3);
+    std::memcpy(mesh->baseColorTexture.data(), data, width * height * 3);
+    mesh->textureWidth = width;
+    mesh->textureHeight = height;
+    mesh->textureChannels = 3;
+    
+    stbi_image_free(data);
 }
 
 }

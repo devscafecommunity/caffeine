@@ -1,6 +1,9 @@
 #include "editor/SceneViewport.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/TestInstrumentation.hpp"
+#include "editor/TestUIMapper.hpp"
+#include "editor/TestRequestHandler.hpp"
 #include "audio/AudioComponents.hpp"
 #include "assets/MeshLoader.hpp"
 #include "assets/MeshCache.hpp"
@@ -16,6 +19,8 @@
 #include <cstring>
 #include <array>
 #include <vector>
+#include <cstdio>
+#include <cstdlib>
 #include <stb/stb_image.h>
 #ifdef CF_HAS_SDL3
 #include <imgui_impl_sdlgpu3.h>
@@ -96,6 +101,54 @@ ImU32 lightColor(const ECS::LightComponent& lc, bool selected) {
 
 } // namespace
 
+static std::vector<ECS::Entity> getSceneEntities(ECS::World& world) {
+    std::vector<ECS::Entity> entities;
+    ECS::ComponentQuery q;
+    world.forEach(q, [&](ECS::Entity e) {
+        entities.push_back(e);
+    });
+    return entities;
+}
+
+static void processTestCommand(const std::string& cmd, ECS::World& world, EditorContext& ctx) {
+    if (cmd.find("select_entity ") == 0) {
+        try {
+            u32 id = std::stoul(cmd.substr(13));
+            ECS::Entity entity(id, &world);
+            ctx.selectEntity(entity);
+            TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
+        } catch (...) {}
+    }
+    else if (cmd.find("multi_select ") == 0) {
+        try {
+            u32 id = std::stoul(cmd.substr(12));
+            ECS::Entity entity(id, &world);
+            ctx.toggleSelection(entity);
+            TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
+        } catch (...) {}
+    }
+    else if (cmd == "delete_selected") {
+        if (ctx.selectedEntity.isValid()) {
+            world.destroy(ctx.selectedEntity);
+            ctx.selectedEntity = ECS::Entity::INVALID;
+            TestInstrumentation::onSceneEntities(getSceneEntities(world));
+        }
+    }
+    else if (cmd == "focus_selected") {
+        if (ctx.selectedEntity.isValid()) {
+            Vec3 pos;
+            if (tryGetEntityPosition(world, ctx.selectedEntity, pos)) {
+                ctx.camFocus = pos;
+                ctx.camDistance = 5.0f;
+                TestInstrumentation::onCameraFocused(pos, 5.0f);
+            }
+        }
+    }
+    else if (cmd == "get_scene") {
+        TestInstrumentation::onSceneEntities(getSceneEntities(world));
+    }
+}
+
 // ── Init / Shutdown ───────────────────────────────────────────────
 
 #ifdef CF_HAS_SDL3
@@ -164,6 +217,30 @@ void SceneViewport::shutdown() {
 // ── Main render entry point ───────────────────────────────────────
 
 void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
+    if (TestInstrumentation::isTestMode()) {
+        static std::string buffer;
+        int ch;
+        while ((ch = fgetc(stdin)) != EOF && ch != '\n') {
+            buffer += static_cast<char>(ch);
+        }
+        if (ch == '\n' && !buffer.empty()) {
+            TestRequestHandler::Request req;
+            if (TestRequestHandler::tryParseRequest(buffer, req)) {
+                ImVec2 viewportPos = ImGui::GetCursorScreenPos();
+                ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+                
+                auto resp = TestRequestHandler::handleRequest(
+                    req, world, ctx,
+                    viewportPos.x, viewportPos.y,
+                    viewportSize.x, viewportSize.y
+                );
+                
+                std::cout << "REQUEST_RESPONSE: " << resp.toJson() << std::endl;
+            }
+            buffer.clear();
+        }
+    }
+    
     if (!m_open) return;
 
     if (!ImGui::Begin("Scene Viewport", &m_open,
@@ -289,6 +366,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                 } else {
                     ctx.selectEntity(selectedEntity);
                 }
+                TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
             } else {
                 if (!shiftPressed) {
                     ctx.clearSelection();
@@ -308,6 +386,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             world.destroy(ctx.selectedEntity);
             ctx.selectedEntity = ECS::Entity::INVALID;
             ctx.endUndo(world);
+            TestInstrumentation::onSceneEntities(getSceneEntities(world));
         }
     }
 
@@ -317,6 +396,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (tryGetEntityPosition(world, ctx.selectedEntity, entityPos)) {
             ctx.camFocus = entityPos;
             ctx.camDistance = 5.0f;
+            TestInstrumentation::onCameraFocused(entityPos, 5.0f);
         }
     }
 

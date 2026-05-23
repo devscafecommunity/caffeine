@@ -48,12 +48,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Panels", [this]() {
         m_tilemapEditor.open();
     });
-    m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
-        m_scriptEditor.open();
-    });
-    m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
-        m_settingsPanel.open();
-    });
+     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
+         m_scriptEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Panels", [this]() {
+         m_materialEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
+         m_settingsPanel.open();
+     });
     m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Panels", [this]() {
     });
 
@@ -69,12 +72,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
         m_tilemapEditor.open();
     });
 
-    m_audioPreview.init();
+     m_audioPreview.init();
 
-    // Register layout change callback
-    m_settingsPanel.setLayoutChangeCallback([this]() {
-        requestLayoutRebuild();
-    });
+     m_inspector.open();
+     m_assetBrowser.open();
+
+     // Register layout change callback
+     m_settingsPanel.setLayoutChangeCallback([this]() {
+         requestLayoutRebuild();
+     });
 
     // Auto-load last scene if project config has one
     if (!projectConfig.LastScene.empty()) {
@@ -266,17 +272,18 @@ void SceneEditor::render(f32 deltaTime) {
             applyLayoutProfile(m_dockspaceId, profile);
         }
         
-        // Apply visibility from profile to panels
-        profile.hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
-        profile.inspectorOpen ? m_inspector.open() : m_inspector.close();
-        profile.viewportOpen ? m_viewport.open() : m_viewport.close();
-        profile.assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
-        profile.consoleOpen ? m_console.open() : m_console.close();
-        profile.profilerOpen ? m_profiler.open() : m_profiler.close();
-        profile.scriptEditorOpen ? m_scriptEditor.open() : m_scriptEditor.close();
-        profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
-        profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
-        profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
+         // Apply visibility from profile to panels
+         profile.hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
+         profile.inspectorOpen ? m_inspector.open() : m_inspector.close();
+         profile.viewportOpen ? m_viewport.open() : m_viewport.close();
+         profile.assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
+         profile.consoleOpen ? m_console.open() : m_console.close();
+         profile.profilerOpen ? m_profiler.open() : m_profiler.close();
+         profile.scriptEditorOpen ? m_scriptEditor.open() : m_scriptEditor.close();
+         profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
+         profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
+         profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
+         m_materialEditor.open();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -323,15 +330,16 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Right, 0.22f, &dockRight, &dockCenter);
     ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottom, &dockCenter);
 
-    ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-    ImGui::DockBuilderDockWindow("Inspector", dockRight);
-    ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
-    ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
-    ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
-    ImGui::DockBuilderDockWindow("Console", dockBottom);
-    ImGui::DockBuilderDockWindow("Profiler", dockBottom);
+     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+     ImGui::DockBuilderDockWindow("Inspector", dockRight);
+     ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
+     ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
+     ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
+     ImGui::DockBuilderDockWindow("Console", dockBottom);
+     ImGui::DockBuilderDockWindow("Profiler", dockBottom);
+     ImGui::DockBuilderDockWindow("Material Editor", dockBottom);
 
-    ImGui::DockBuilderFinish(dockspaceId);
+     ImGui::DockBuilderFinish(dockspaceId);
 }
 
 // ── Menu bar ────────────────────────────────────────────────────

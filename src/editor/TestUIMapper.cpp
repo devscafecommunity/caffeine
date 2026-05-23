@@ -20,7 +20,7 @@ UIMapResponse TestUIMapper::captureViewportState(
     world.forEach(q, [&](ECS::Entity e) {
         if (!e.isValid()) return;
         
-        auto* mesh = world.get<ECS::MeshFilter>(e);
+        auto* mesh = world.get<ECS::MeshFilterComponent>(e);
         if (!mesh) return;
         
         auto* transform = world.get<Scene::WorldTransform>(e);
@@ -75,7 +75,7 @@ bool TestUIMapper::clickAtCoordinate(
     ECS::ComponentQuery q;
     world.forEach(q, [&](ECS::Entity e) {
         if (!e.isValid()) return;
-        auto* mesh = world.get<ECS::MeshFilter>(e);
+        auto* mesh = world.get<ECS::MeshFilterComponent>(e);
         if (!mesh) return;
         
         auto* transform = world.get<Scene::WorldTransform>(e);

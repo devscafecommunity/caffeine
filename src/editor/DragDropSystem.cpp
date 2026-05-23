@@ -6,6 +6,7 @@
 namespace Caffeine::Editor {
 
 FileImportCallback DragDropManager::s_importCallback = nullptr;
+AssetDropPayload DragDropManager::s_cachedAsset = {};
 
 void DragDropManager::importFilesToCapPack(
     const std::vector<std::filesystem::path>& files,

@@ -9,6 +9,8 @@
 
 namespace Caffeine::Editor {
 
+class EditorContext;
+
 struct UIElement {
     u32 id;
     std::string name;

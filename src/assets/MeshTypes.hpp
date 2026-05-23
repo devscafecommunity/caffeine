@@ -56,6 +56,7 @@ struct Mesh3D {
     std::vector<u8> baseColorTexture;
     u32 textureWidth = 0;
     u32 textureHeight = 0;
+    int textureChannels = 0;
     
 #ifdef CF_HAS_SDL3
     RHI::Buffer* vertexBuffer = nullptr;

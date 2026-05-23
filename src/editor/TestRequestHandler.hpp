@@ -8,6 +8,8 @@
 
 namespace Caffeine::Editor {
 
+class EditorContext;
+
 class TestRequestHandler {
 public:
     struct Request {

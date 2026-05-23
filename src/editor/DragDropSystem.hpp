@@ -79,20 +79,30 @@ public:
 #endif
     }
 
-    /// Accept an asset drop on the current item. Returns a pointer to the
-    /// payload data if dropped, or nullptr. The payload is valid only during
-    /// the current frame.
     static const AssetDropPayload* AcceptAssetDrop() {
 #ifdef CF_HAS_IMGUI
         if (!ImGui::BeginDragDropTarget()) return nullptr;
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
             const auto* result = static_cast<const AssetDropPayload*>(payload->Data);
+            s_cachedAsset = *result;
             ImGui::EndDragDropTarget();
-            return result;
+            return &s_cachedAsset;
         }
         ImGui::EndDragDropTarget();
 #endif
         return nullptr;
+    }
+
+    static const AssetDropPayload* GetCachedAsset() {
+#ifdef CF_HAS_IMGUI
+        if (s_cachedAsset.path[0] == '\0') return nullptr;
+        return &s_cachedAsset;
+#endif
+        return nullptr;
+    }
+
+    static void ClearCachedAsset() {
+        s_cachedAsset.path[0] = '\0';
     }
 
     /// Accept an entity drop on the current item. Returns the entity ID, or
@@ -112,6 +122,7 @@ public:
 
 private:
     static FileImportCallback s_importCallback;
+    static AssetDropPayload s_cachedAsset;
 };
 
 } // namespace Caffeine::Editor

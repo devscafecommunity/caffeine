@@ -339,8 +339,10 @@ with open(sys.argv[1], 'w') as f:
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp
            src/editor/BuildSystem.cpp
-          src/editor/BuildDialog.cpp
-          src/editor/AssetCooker.cpp
+           src/editor/BuildDialog.cpp
+           src/editor/TestUIMapper.cpp
+           src/editor/TestRequestHandler.cpp
+           src/editor/AssetCooker.cpp
           src/editor/CapLoader.cpp
           src/editor/ProjectStartupDialog.cpp
           src/editor/ProjectManager.cpp

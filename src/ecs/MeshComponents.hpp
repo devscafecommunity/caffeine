@@ -32,6 +32,7 @@ enum class MeshPrimitive : u8 {
 struct MeshFilterComponent {
     MeshPrimitive primitive   = MeshPrimitive::Cube;
     std::string   customMeshPath;
+    std::string   customTexturePath;
 };
 
 }  // namespace Caffeine::ECS
