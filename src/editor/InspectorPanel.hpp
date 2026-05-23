@@ -51,9 +51,10 @@ private:
     void drawUILabel(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
-    void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 
-    std::filesystem::path resolveProjectRoot(const EditorContext& ctx) const;
+     void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);
+     std::filesystem::path resolveProjectRoot(const EditorContext& ctx) const;
 #endif
 
     bool m_open = true;

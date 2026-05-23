@@ -1,6 +1,8 @@
 #include "editor/InspectorPanel.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "editor/FilePicker.hpp"
 #include "editor/InspectorWidgets.hpp"
+#include "assets/PrefabSerializer.hpp"
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
@@ -54,10 +56,22 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             setEntityName(world, e, nameBuf);
             ctx.endUndo(world);
         }
-        ImGui::SameLine();
-        ImGui::TextDisabled("Entity %u", e.id());
+         ImGui::SameLine();
+         ImGui::TextDisabled("Entity %u", e.id());
 
-        ImGui::Separator();
+         ImGui::Separator();
+         if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
+             auto prefabPath = FilePicker::pickPath(
+                 FilePicker::Mode::SaveFile,
+                 "Save Entity as Prefab",
+                 "prefabs/"
+             );
+             if (prefabPath) {
+                 savePrefab(world, e, *prefabPath);
+             }
+         }
+
+         ImGui::Separator();
         ImGui::BeginChild("components");
 
         drawTransform(world, e, ctx);
@@ -743,6 +757,11 @@ void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& 
         if (ImGui::DragFloat("Angle", &sl->angle, 0.5f, 1.0f, 179.0f, "%.1f deg")) ctx.isDirty = true;
         if (ImGui::Checkbox("Cast Shadows", &sl->castShadows)) ctx.isDirty = true;
     }
+}
+
+void InspectorPanel::savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path) {
+    Assets::PrefabSerializer serializer(world);
+    serializer.save(path.string(), e);
 }
 
 } // namespace Caffeine::Editor
