@@ -121,6 +121,35 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         });
     }
 
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::LightComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeLight, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::DirectionalLightComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeDirLight, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::PointLightComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypePointLight, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::SpotLightComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeSpotLight, std::move(data));
+        }
+    }
+
     // Write binary file
     std::ofstream fout(filepath, std::ios::binary);
     if (!fout.is_open()) return false;
@@ -259,6 +288,18 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 }
                 break;
             }
+            case kTypeLight:
+                applyPODComponent<ECS::LightComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeDirLight:
+                applyPODComponent<ECS::DirectionalLightComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypePointLight:
+                applyPODComponent<ECS::PointLightComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeSpotLight:
+                applyPODComponent<ECS::SpotLightComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
             default:
                 break;
         }

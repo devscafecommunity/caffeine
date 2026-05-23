@@ -26,9 +26,13 @@ private:
     static constexpr u32 kTypeTag           = 8;
     static constexpr u32 kTypeAudioEmitter  = 9;
     static constexpr u32 kTypeParent        = 10;
-    static constexpr u32 kTypeCount         = 11;
+    static constexpr u32 kTypeLight         = 11;
+    static constexpr u32 kTypeDirLight      = 12;
+    static constexpr u32 kTypePointLight    = 13;
+    static constexpr u32 kTypeSpotLight     = 14;
+    static constexpr u32 kTypeCount         = 15;
 
-    static constexpr u32 kFormatVersion    = 3;
+    static constexpr u32 kFormatVersion    = 4;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────

@@ -2,6 +2,7 @@
 #include "ecs/Components.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/LightComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
@@ -111,6 +112,33 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Camera", "Camera3D",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Camera3DComponent>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::Camera3DComponent>(e); }
+    });
+    reg.registerComponent({
+        "Lighting", "Directional Light",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::DirectionalLightComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){
+            w.add<ECS::LightComponent>(e);
+            w.add<ECS::DirectionalLightComponent>(e);
+            if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+        }
+    });
+    reg.registerComponent({
+        "Lighting", "Point Light",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::PointLightComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){
+            w.add<ECS::LightComponent>(e);
+            w.add<ECS::PointLightComponent>(e);
+            if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+        }
+    });
+    reg.registerComponent({
+        "Lighting", "Spot Light",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::SpotLightComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){
+            w.add<ECS::LightComponent>(e);
+            w.add<ECS::SpotLightComponent>(e);
+            if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+        }
     });
 }
 

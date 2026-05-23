@@ -74,6 +74,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawUILabel(world, e, ctx);
         drawUIProgressBar(world, e, ctx);
         drawUISlider(world, e, ctx);
+        drawLight(world, e, ctx);
 
         ImGui::Separator();
 
@@ -636,6 +637,60 @@ void InspectorPanel::drawCppScript(ECS::World& world, ECS::Entity e, EditorConte
         } else {
             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), csc->instance ? "Active" : "Inactive (play to activate)");
         }
+    }
+}
+
+// ── Light drawer ─────────────────────────────────────────────────
+
+void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::LightComponent>(e)) return;
+
+    const char* lightLabel = "Light";
+    if (world.has<ECS::DirectionalLightComponent>(e)) lightLabel = "Directional Light";
+    else if (world.has<ECS::PointLightComponent>(e))  lightLabel = "Point Light";
+    else if (world.has<ECS::SpotLightComponent>(e))   lightLabel = "Spot Light";
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader(lightLabel, enabled, removeRequested)) return;
+    if (removeRequested) {
+        world.remove<ECS::LightComponent>(e);
+        if (world.has<ECS::DirectionalLightComponent>(e)) world.remove<ECS::DirectionalLightComponent>(e);
+        if (world.has<ECS::PointLightComponent>(e))       world.remove<ECS::PointLightComponent>(e);
+        if (world.has<ECS::SpotLightComponent>(e))        world.remove<ECS::SpotLightComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* light = world.get<ECS::LightComponent>(e);
+
+    float col[4] = { light->color.x, light->color.y, light->color.z, light->color.w };
+    if (ImGui::ColorEdit4("Color", col)) {
+        light->color = Vec4(col[0], col[1], col[2], col[3]);
+        ctx.isDirty = true;
+    }
+
+    if (ImGui::DragFloat("Intensity", &light->intensity, 0.05f, 0.0f, 100.0f, "%.2f")) {
+        ctx.isDirty = true;
+    }
+
+    if (world.has<ECS::DirectionalLightComponent>(e)) {
+        auto* dir = world.get<ECS::DirectionalLightComponent>(e);
+        if (ImGui::DragFloat("Shadow Distance", &dir->shadowDistance, 1.0f, 1.0f, 10000.0f)) ctx.isDirty = true;
+        if (ImGui::Checkbox("Cast Shadows", &dir->castShadows)) ctx.isDirty = true;
+    }
+
+    if (world.has<ECS::PointLightComponent>(e)) {
+        auto* pl = world.get<ECS::PointLightComponent>(e);
+        if (ImGui::DragFloat("Radius", &pl->radius, 0.5f, 0.1f, 1000.0f)) ctx.isDirty = true;
+        if (ImGui::Checkbox("Cast Shadows", &pl->castShadows)) ctx.isDirty = true;
+    }
+
+    if (world.has<ECS::SpotLightComponent>(e)) {
+        auto* sl = world.get<ECS::SpotLightComponent>(e);
+        if (ImGui::DragFloat("Radius", &sl->radius, 0.5f, 0.1f, 1000.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Angle", &sl->angle, 0.5f, 1.0f, 179.0f, "%.1f deg")) ctx.isDirty = true;
+        if (ImGui::Checkbox("Cast Shadows", &sl->castShadows)) ctx.isDirty = true;
     }
 }
 

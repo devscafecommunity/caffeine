@@ -220,6 +220,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     drawEmptyEntities(world, ctx, origin, viewportSize);
     drawPhysicsDebug(world, ctx, origin, viewportSize);
     drawCameraFrustums(world, ctx, origin, viewportSize);
+    drawLightGizmos(world, ctx, origin, viewportSize);
 
     if (ctx.selectedEntity.isValid()) {
         drawGizmo(world, ctx, origin, viewportSize);
@@ -490,6 +491,68 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             col, selected ? 2.0f : 1.0f);
         dl->AddLine(ImVec2(sp.x - r * 0.5f, sp.y), ImVec2(sp.x + r * 0.5f, sp.y), col, 1.5f);
         dl->AddLine(ImVec2(sp.x, sp.y - r * 0.5f), ImVec2(sp.x, sp.y + r * 0.5f), col, 1.5f);
+    });
+}
+
+void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ECS::ComponentQuery q;
+    q.with<ECS::LightComponent>();
+
+    world.forEach<ECS::LightComponent>(q, [&](ECS::Entity entity, ECS::LightComponent& lc) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+
+        Vec3 worldPos = {0, 0, 0};
+        if (auto* t = world.get<ECS::Transform>(entity)) {
+            worldPos = t->position;
+        } else if (auto* p3d = world.get<ECS::Position3D>(entity)) {
+            worldPos = p3d->position;
+        } else {
+            return;
+        }
+
+        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+            worldPos = Vec3(wt->matrix(0,3), wt->matrix(1,3), wt->matrix(2,3));
+        }
+        ImVec2 sp = projectToScreen(worldPos, origin, viewportSize, ctx);
+
+        const bool selected = (ctx.selectedEntity == entity);
+        ImU32 col = IM_COL32(
+            static_cast<u8>(lc.color.x * 255),
+            static_cast<u8>(lc.color.y * 255),
+            static_cast<u8>(lc.color.z * 255),
+            selected ? 255 : 180);
+
+        if (world.has<ECS::DirectionalLightComponent>(entity)) {
+            float len = 20.0f * ctx.viewportZoom;
+            dl->AddCircleFilled(sp, 6.0f, col);
+            for (int i = 0; i < 6; ++i) {
+                float angle = static_cast<float>(i) * 3.14159265f / 3.0f;
+                ImVec2 end(sp.x + cosf(angle) * len, sp.y + sinf(angle) * len);
+                dl->AddLine(sp, end, col, selected ? 2.0f : 1.0f);
+            }
+        }
+        else if (world.has<ECS::PointLightComponent>(entity)) {
+            auto* pl = world.get<ECS::PointLightComponent>(entity);
+            float screenRadius = pl->radius * ctx.viewportZoom * 50.0f;
+            screenRadius = std::min(screenRadius, 200.0f);
+            dl->AddCircle(sp, screenRadius, col, 32, selected ? 2.0f : 1.0f);
+            dl->AddCircleFilled(sp, 4.0f, col);
+        }
+        else if (world.has<ECS::SpotLightComponent>(entity)) {
+            auto* sl = world.get<ECS::SpotLightComponent>(entity);
+            float len = sl->radius * ctx.viewportZoom * 50.0f;
+            len = std::min(len, 200.0f);
+            float halfAngle = sl->angle * 0.5f * 3.14159265f / 180.0f;
+            float spread = tanf(halfAngle) * len;
+            dl->AddCircleFilled(sp, 4.0f, col);
+            ImVec2 tipLeft(sp.x - spread, sp.y + len);
+            ImVec2 tipRight(sp.x + spread, sp.y + len);
+            dl->AddLine(sp, tipLeft, col, selected ? 2.0f : 1.0f);
+            dl->AddLine(sp, tipRight, col, selected ? 2.0f : 1.0f);
+            dl->AddLine(tipLeft, tipRight, col, selected ? 2.0f : 1.0f);
+        }
     });
 }
 
