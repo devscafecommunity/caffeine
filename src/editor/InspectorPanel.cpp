@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <iostream>
 
 #ifdef CF_HAS_IMGUI
 
@@ -760,8 +761,24 @@ void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& 
 }
 
 void InspectorPanel::savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path) {
+    if (!e.isValid()) {
+        std::cerr << "Error: Invalid entity. Cannot save prefab.\n";
+        return;
+    }
+    
+    if (path.empty()) {
+        std::cerr << "Error: Invalid path. Cannot save prefab.\n";
+        return;
+    }
+    
     Assets::PrefabSerializer serializer(world);
-    serializer.save(path.string(), e);
+    bool success = serializer.save(path.string(), e);
+    
+    if (success) {
+        std::cout << "Prefab saved successfully: " << path.string() << "\n";
+    } else {
+        std::cerr << "Error: Failed to save prefab to " << path.string() << "\n";
+    }
 }
 
 } // namespace Caffeine::Editor

@@ -1,6 +1,7 @@
 #include "editor/ComponentRegistry.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/PrefabComponents.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
@@ -131,7 +132,7 @@ void registerAllComponents(ComponentRegistry& reg) {
             if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
         }
     });
-    reg.registerComponent({
+     reg.registerComponent({
         "Lighting", "Spot Light",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::SpotLightComponent>(e); },
         [](ECS::World& w, ECS::Entity e){
@@ -139,6 +140,11 @@ void registerAllComponents(ComponentRegistry& reg) {
             w.add<ECS::SpotLightComponent>(e);
             if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
         }
+    });
+    reg.registerComponent({
+        "Prefabs", "Prefab Instance",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::PrefabInstance>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<ECS::PrefabInstance>(e); }
     });
 }
 

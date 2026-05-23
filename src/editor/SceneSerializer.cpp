@@ -1,5 +1,7 @@
 #include "editor/SceneSerializer.hpp"
 #include "ecs/Components.hpp"
+#include "ecs/MeshComponents.hpp"
+#include "ecs/PrefabComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "editor/EditorContext.hpp"
 #include "scene/SceneComponents.hpp"
@@ -39,6 +41,74 @@ void SceneSerializer::collectSpriteComponents(
         if (nameLen > 0) {
             memcpy(data.data() + 8, s.name.data(), nameLen);
         }
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectMeshFilterComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries)
+{
+    ECS::ComponentQuery q;
+    q.with<ECS::MeshFilterComponent>();
+    m_world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity e, ECS::MeshFilterComponent& mf) {
+        // Format: primitive (1 byte) + pathLength (4 bytes) + pathData
+        u8 prim = static_cast<u8>(mf.primitive);
+        u32 pathLen = static_cast<u32>(mf.customMeshPath.size());
+        std::vector<u8> data(5 + pathLen);
+        memcpy(data.data(), &prim, 1);
+        memcpy(data.data() + 1, &pathLen, 4);
+        if (pathLen > 0) {
+            memcpy(data.data() + 5, mf.customMeshPath.data(), pathLen);
+        }
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectMeshRendererComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries)
+{
+    ECS::ComponentQuery q;
+    q.with<ECS::MeshRendererComponent>();
+    m_world.forEach<ECS::MeshRendererComponent>(q, [&](ECS::Entity e, ECS::MeshRendererComponent& mr) {
+        // Format: meshPathLen (4) + meshPath + materialPathLen (4) + materialPath + castShadows (1) + receiveShadows (1)
+        u32 meshLen = static_cast<u32>(mr.meshPath.size());
+        u32 matLen = static_cast<u32>(mr.materialPath.size());
+        u8 castShadows = mr.castShadows ? 1 : 0;
+        u8 receiveShadows = mr.receiveShadows ? 1 : 0;
+        
+        std::vector<u8> data(4 + meshLen + 4 + matLen + 2);
+        u32 offset = 0;
+        memcpy(data.data() + offset, &meshLen, 4); offset += 4;
+        if (meshLen > 0) {
+            memcpy(data.data() + offset, mr.meshPath.data(), meshLen);
+            offset += meshLen;
+        }
+        memcpy(data.data() + offset, &matLen, 4); offset += 4;
+        if (matLen > 0) {
+            memcpy(data.data() + offset, mr.materialPath.data(), matLen);
+            offset += matLen;
+        }
+        memcpy(data.data() + offset, &castShadows, 1); offset += 1;
+        memcpy(data.data() + offset, &receiveShadows, 1);
+        
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectPrefabInstanceComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries)
+{
+    ECS::ComponentQuery q;
+    q.with<ECS::PrefabInstance>();
+    m_world.forEach<ECS::PrefabInstance>(q, [&](ECS::Entity e, ECS::PrefabInstance& pi) {
+        // Format: pathLength (4 bytes) + pathData + rootEntityId (4 bytes)
+        u32 pathLen = static_cast<u32>(pi.prefabPath.size());
+        std::vector<u8> data(4 + pathLen + 4);
+        memcpy(data.data(), &pathLen, 4);
+        if (pathLen > 0) {
+            memcpy(data.data() + 4, pi.prefabPath.data(), pathLen);
+        }
+        memcpy(data.data() + 4 + pathLen, &pi.rootEntityId, 4);
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -171,6 +241,30 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         collectComponent<ECS::Scale3D>(m_world, entries);
         for (auto& [eid, data] : entries) {
             entityMap[eid].emplace_back(kTypeScale3D, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectMeshFilterComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeMeshFilter, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectMeshRendererComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeMeshRenderer, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectPrefabInstanceComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypePrefabInstance, std::move(data));
         }
     }
 
@@ -333,6 +427,15 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeScale3D:
                 applyPODComponent<ECS::Scale3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeMeshFilter:
+                applyMeshFilterComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeMeshRenderer:
+                applyMeshRendererComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypePrefabInstance:
+                applyPrefabInstanceComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
             default:
                 break;
         }
@@ -361,6 +464,74 @@ bool SceneSerializer::applySpriteComponent(ECS::Entity e, const u8* data, u32 si
     if (8 + nameLen > size) return false;
     std::string spriteName(reinterpret_cast<const char*>(data + 8), nameLen);
     m_world.add<ECS::Sprite>(e, std::move(spriteName), frameIndex);
+    return true;
+}
+
+bool SceneSerializer::applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size) {
+    if (size < 5) return false;
+    u8 prim;
+    u32 pathLen;
+    memcpy(&prim, data, 1);
+    memcpy(&pathLen, data + 1, 4);
+    
+    if (5 + pathLen > size) return false;
+    auto& mf = m_world.add<ECS::MeshFilterComponent>(e);
+    mf.primitive = static_cast<ECS::MeshPrimitive>(prim);
+    if (pathLen > 0) {
+        mf.customMeshPath.assign(reinterpret_cast<const char*>(data + 5), pathLen);
+    }
+    return true;
+}
+
+bool SceneSerializer::applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size) {
+    if (size < 10) return false;
+    u32 offset = 0;
+    u32 meshLen, matLen;
+    memcpy(&meshLen, data + offset, 4); offset += 4;
+    
+    if (4 + meshLen + 4 + 2 > size) return false;
+    std::string meshPath;
+    if (meshLen > 0) {
+        meshPath.assign(reinterpret_cast<const char*>(data + offset), meshLen);
+        offset += meshLen;
+    }
+    
+    memcpy(&matLen, data + offset, 4); offset += 4;
+    std::string matPath;
+    if (matLen > 0) {
+        matPath.assign(reinterpret_cast<const char*>(data + offset), matLen);
+        offset += matLen;
+    }
+    
+    u8 castShadows, receiveShadows;
+    memcpy(&castShadows, data + offset, 1); offset += 1;
+    memcpy(&receiveShadows, data + offset, 1);
+    
+    auto& mr = m_world.add<ECS::MeshRendererComponent>(e);
+    mr.meshPath = std::move(meshPath);
+    mr.materialPath = std::move(matPath);
+    mr.castShadows = (castShadows != 0);
+    mr.receiveShadows = (receiveShadows != 0);
+    return true;
+}
+
+bool SceneSerializer::applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size) {
+    if (size < 8) return false;
+    u32 pathLen;
+    memcpy(&pathLen, data, 4);
+    
+    if (4 + pathLen + 4 > size) return false;
+    std::string prefabPath;
+    if (pathLen > 0) {
+        prefabPath.assign(reinterpret_cast<const char*>(data + 4), pathLen);
+    }
+    
+    u32 rootEntityId;
+    memcpy(&rootEntityId, data + 4 + pathLen, 4);
+    
+    auto& pi = m_world.add<ECS::PrefabInstance>(e);
+    pi.prefabPath = std::move(prefabPath);
+    pi.rootEntityId = rootEntityId;
     return true;
 }
 

@@ -33,7 +33,10 @@ private:
     static constexpr u32 kTypePosition3D    = 15;
     static constexpr u32 kTypeRotation3D    = 16;
     static constexpr u32 kTypeScale3D       = 17;
-    static constexpr u32 kTypeCount         = 18;
+    static constexpr u32 kTypeMeshFilter    = 18;
+    static constexpr u32 kTypeMeshRenderer  = 19;
+    static constexpr u32 kTypePrefabInstance = 20;
+    static constexpr u32 kTypeCount         = 21;
 
     static constexpr u32 kFormatVersion    = 5;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
@@ -58,8 +61,20 @@ private:
     void collectSpriteComponents(
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
+    void collectMeshFilterComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
+    void collectMeshRendererComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
+    void collectPrefabInstanceComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
     bool applyNameComponent(ECS::Entity e, const u8* data, u32 size);
     bool applySpriteComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size);
 
     template<typename T>
     static bool applyPODComponent(ECS::Entity e, const u8* data, u32 size,

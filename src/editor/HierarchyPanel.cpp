@@ -1,9 +1,12 @@
 #include "editor/HierarchyPanel.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "assets/PrefabSerializer.hpp"
+#include "ecs/PrefabComponents.hpp"
 #include "ui/UIComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 
 #ifdef CF_HAS_IMGUI
 
@@ -528,6 +531,64 @@ void HierarchyPanel::renderEmptyContextMenu() {
             if (ImGui::MenuItem("Paste\tCtrl+V")) {
                 duplicateEntity(*m_world, m_context->clipboardEntity);
             }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Place Prefab...")) {
+            ImGui::OpenPopup("place_prefab_dialog");
+        }
+        ImGui::EndPopup();
+    }
+    
+    if (ImGui::BeginPopupModal("place_prefab_dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter prefab asset path:");
+        static char prefabPath[256] = "";
+        static char errorMsg[256] = "";
+        static bool showError = false;
+        
+        ImGui::InputText("##prefab_path", prefabPath, sizeof(prefabPath));
+        
+        if (showError && errorMsg[0] != '\0') {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", errorMsg);
+        }
+        
+        if (ImGui::Button("Load##prefab_load", ImVec2(120, 0))) {
+            if (prefabPath[0] == '\0') {
+                strcpy(errorMsg, "Path cannot be empty");
+                showError = true;
+            } else if (!m_world || !m_context) {
+                strcpy(errorMsg, "World or context is invalid");
+                showError = true;
+            } else {
+                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+                
+                Assets::PrefabSerializer serializer(*m_world);
+                ECS::Entity rootEntity = serializer.load(prefabPath);
+                
+                if (rootEntity.isValid()) {
+                    auto& prefabInst = m_world->add<ECS::PrefabInstance>(rootEntity);
+                    prefabInst.prefabPath = prefabPath;
+                    prefabInst.rootEntityId = rootEntity.id();
+                    
+                    m_context->selectEntity(rootEntity);
+                    m_context->endUndo(*m_world);
+                    
+                    memset(prefabPath, 0, sizeof(prefabPath));
+                    memset(errorMsg, 0, sizeof(errorMsg));
+                    showError = false;
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    m_context->endUndo(*m_world);
+                    strcpy(errorMsg, "Failed to load prefab file");
+                    showError = true;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##prefab_cancel", ImVec2(120, 0))) {
+            memset(prefabPath, 0, sizeof(prefabPath));
+            memset(errorMsg, 0, sizeof(errorMsg));
+            showError = false;
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
