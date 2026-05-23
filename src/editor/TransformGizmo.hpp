@@ -70,9 +70,12 @@ private:
         const Ray3D& ray, 
         const Vec3& axisOrigin, const Vec3& axisDir, f32 axisLength);
 
-    GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
-                            ImVec2 endX, ImVec2 endY, ImVec2 endZ,
-                            float handleLen, EditorContext::GizmoMode mode, bool zDimmed,
+    GizmoAxis intersectTest(const Vec2& mousePos, 
+                            const Mat4& vpInverse, const Vec3& camPos,
+                            const ImVec2& viewportSize,
+                            const Vec3& axisX, const Vec3& axisY, const Vec3& axisZ,
+                            f32 axisLength,
+                            EditorContext::GizmoMode mode, bool zDimmed,
                             bool xCollapsed, bool yCollapsed, bool zCollapsed);
 
     void applyTranslate(ECS::World& world, ECS::Entity entity,

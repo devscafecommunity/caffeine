@@ -193,7 +193,28 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
         if (ImGui::IsWindowFocused()) {
             Vec2 mousePosGlm(mousePos.x, mousePos.y);
-            m_hoveredAxis = intersectTest(mousePosGlm, screenPos, endX, endY, endZ, handleLen, ctx.gizmoMode, zDimmed, xCollapsed, yCollapsed, zCollapsed);
+            
+            // Build VP matrix for raycasting
+            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+            Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+            Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+            f32 aspect = vpSize.x / std::max(vpSize.y, 1.0f);
+            Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+            Mat4 vp = proj * view;
+            Mat4 vpInverse = vp.inverted();
+
+            // World-space axis vectors (from entity origin, in world units)
+            Vec3 entityPos = transform->position;
+            Vec3 worldAxisX = entityPos + Vec3(handleWorld, 0.0f, 0.0f);
+            Vec3 worldAxisY = entityPos + Vec3(0.0f, handleWorld, 0.0f);
+            Vec3 worldAxisZ = entityPos + Vec3(0.0f, 0.0f, handleWorld);
+
+            // Perform raycasting intersection test
+            m_hoveredAxis = intersectTest(
+                mousePosGlm, vpInverse, camPos, vpSize,
+                worldAxisX, worldAxisY, worldAxisZ, handleWorld,
+                ctx.gizmoMode, zDimmed, xCollapsed, yCollapsed, zCollapsed);
 
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_isDragging) {
                 if (m_hoveredAxis != GizmoAxis::None) {
@@ -460,32 +481,55 @@ void TransformGizmo::renderScale3D(const Vec2& screenPos,
 #endif
 }
 
-GizmoAxis TransformGizmo::intersectTest(const Vec2& mousePos, const Vec2& screenPos,
-                                        ImVec2 endX, ImVec2 endY, ImVec2 endZ,
-                                        float handleLen, EditorContext::GizmoMode mode, bool zDimmed,
-                                        bool xCollapsed, bool yCollapsed, bool zCollapsed) {
-    float centerDist = std::sqrt((mousePos.x - screenPos.x) * (mousePos.x - screenPos.x) +
-                                 (mousePos.y - screenPos.y) * (mousePos.y - screenPos.y));
-    if (centerDist < HOVER_THRESHOLD) {
+GizmoAxis TransformGizmo::intersectTest(
+    const Vec2& mousePos, 
+    const Mat4& vpInverse, const Vec3& camPos,
+    const ImVec2& viewportSize,
+    const Vec3& axisX, const Vec3& axisY, const Vec3& axisZ,
+    f32 axisLength,
+    EditorContext::GizmoMode mode, bool zDimmed,
+    bool xCollapsed, bool yCollapsed, bool zCollapsed) {
+    
+    // Test center first (close proximity in world units ~0.2f)
+    Vec3 gizmoOrigin = axisX; // All axes share same origin point
+    Ray3D ray = screenToWorldRay(mousePos, vpInverse, viewportSize, camPos);
+    
+    Vec3 toOrigin = gizmoOrigin - ray.origin;
+    f32 distToOrigin = (toOrigin - ray.direction * toOrigin.dot(ray.direction)).length();
+    if (distToOrigin < 0.2f) {
         return GizmoAxis::Center;
     }
-
-    Vec2 sp(screenPos.x, screenPos.y);
-
-    if (!xCollapsed && pointToLineDistance(mousePos, sp, Vec2(endX.x, endX.y)) < HOVER_THRESHOLD) {
-        return GizmoAxis::X;
+    
+    // World-space threshold for axis picking (0.05f units)
+    const f32 AXIS_THRESHOLD = 0.05f;
+    
+    // Test X axis
+    if (!xCollapsed) {
+        Vec3 axisDir = axisX.normalized();
+        RayAxisTest testX = rayToAxisSegmentDistance(ray, axisX, axisDir, axisLength);
+        if (testX.distance < AXIS_THRESHOLD) {
+            return GizmoAxis::X;
+        }
     }
-
-    if (!yCollapsed && pointToLineDistance(mousePos, sp, Vec2(endY.x, endY.y)) < HOVER_THRESHOLD) {
-        return GizmoAxis::Y;
+    
+    // Test Y axis
+    if (!yCollapsed) {
+        Vec3 axisDir = axisY.normalized();
+        RayAxisTest testY = rayToAxisSegmentDistance(ray, axisY, axisDir, axisLength);
+        if (testY.distance < AXIS_THRESHOLD) {
+            return GizmoAxis::Y;
+        }
     }
-
+    
+    // Test Z axis (respect zDimmed in 2D mode)
     if (!zDimmed && !zCollapsed && mode != EditorContext::GizmoMode::None) {
-        if (pointToLineDistance(mousePos, sp, Vec2(endZ.x, endZ.y)) < HOVER_THRESHOLD) {
+        Vec3 axisDir = axisZ.normalized();
+        RayAxisTest testZ = rayToAxisSegmentDistance(ray, axisZ, axisDir, axisLength);
+        if (testZ.distance < AXIS_THRESHOLD) {
             return GizmoAxis::Z;
         }
     }
-
+    
     return GizmoAxis::None;
 }
 
