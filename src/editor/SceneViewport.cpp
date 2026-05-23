@@ -2,6 +2,7 @@
 #include "editor/DragDropSystem.hpp"
 #include "editor/EditorContext.hpp"
 #include "audio/AudioComponents.hpp"
+#include "assets/MeshLoader.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "math/Mat4.hpp"
@@ -759,8 +760,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         };
 
         switch (mesh->primitive) {
-            case ECS::MeshPrimitive::Cube:
-            case ECS::MeshPrimitive::Custom: {
+            case ECS::MeshPrimitive::Cube: {
                 const std::array<Vec3, 8> corners = {{
                     {-0.5f, -0.5f, -0.5f}, { 0.5f, -0.5f, -0.5f},
                     { 0.5f,  0.5f, -0.5f}, {-0.5f,  0.5f, -0.5f},
@@ -837,6 +837,79 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                             drawPoly(wp[face[0]], wp[face[2]]);
                             drawPoly(wp[face[1]], wp[face[3]]);
                         }
+                    }
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Custom: {
+                if (!mesh->customMeshPath.empty()) {
+                    std::string meshPath = mesh->customMeshPath;
+                    FILE* f = fopen(meshPath.c_str(), "rb");
+                    if (!f) {
+                        meshPath = std::string("assets/raw/") + mesh->customMeshPath;
+                        f = fopen(meshPath.c_str(), "rb");
+                    }
+                    
+                    if (f) {
+                        fseek(f, 0, SEEK_END);
+                        long size = ftell(f);
+                        fseek(f, 0, SEEK_SET);
+                        
+                        if (size > 0) {
+                            std::vector<u8> buffer(size);
+                            fread(buffer.data(), 1, size, f);
+                            auto* loadedMesh = Assets::MeshLoader::parseGLTF(buffer.data(), buffer.size(), meshPath.c_str());
+                            
+                            if (loadedMesh && !loadedMesh->vertices.empty() && !loadedMesh->indices.empty()) {
+                                Vec3 meshCenter(0, 0, 0);
+                                f32 meshScale = 1.0f;
+                                
+                                for (const auto& vertex : loadedMesh->vertices) {
+                                    meshCenter = meshCenter + vertex.position;
+                                }
+                                meshCenter = meshCenter * (1.0f / loadedMesh->vertices.size());
+                                
+                                f32 maxDist = 0.1f;
+                                for (const auto& vertex : loadedMesh->vertices) {
+                                    Vec3 diff = vertex.position - meshCenter;
+                                    f32 dist = std::sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z);
+                                    maxDist = std::max(maxDist, dist);
+                                }
+                                
+                                if (maxDist > 0.001f) {
+                                    meshScale = 0.3f / maxDist;
+                                }
+                                
+                                for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
+                                    u32 i0 = loadedMesh->indices[i];
+                                    u32 i1 = loadedMesh->indices[i + 1];
+                                    u32 i2 = loadedMesh->indices[i + 2];
+                                    
+                                    if (i0 < loadedMesh->vertices.size() &&
+                                        i1 < loadedMesh->vertices.size() &&
+                                        i2 < loadedMesh->vertices.size()) {
+                                        
+                                        Vec3 v0 = (loadedMesh->vertices[i0].position - meshCenter) * meshScale;
+                                        Vec3 v1 = (loadedMesh->vertices[i1].position - meshCenter) * meshScale;
+                                        Vec3 v2 = (loadedMesh->vertices[i2].position - meshCenter) * meshScale;
+                                        
+                                        Vec3 p0 = worldMatrix.transformPoint(v0);
+                                        Vec3 p1 = worldMatrix.transformPoint(v1);
+                                        Vec3 p2 = worldMatrix.transformPoint(v2);
+                                        
+                                        ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
+                                        ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
+                                        ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
+                                        
+                                        dl->AddLine(sp0, sp1, wireCol, thickness);
+                                        dl->AddLine(sp1, sp2, wireCol, thickness);
+                                        dl->AddLine(sp2, sp0, wireCol, thickness);
+                                    }
+                                }
+                                delete loadedMesh;
+                            }
+                        }
+                        fclose(f);
                     }
                 }
                 break;

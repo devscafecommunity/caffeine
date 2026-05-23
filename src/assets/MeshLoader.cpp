@@ -1,6 +1,11 @@
 #include "assets/MeshLoader.hpp"
+
+#define TINYGLTF_IMPLEMENTATION
+#define TINYGLTF_NO_STB_IMAGE_WRITE
 #include "tiny_gltf.h"
+
 #include <cstring>
+#include <cstdio>
 #include <algorithm>
 
 namespace Caffeine::Assets {
@@ -15,17 +20,23 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     tinygltf::TinyGLTF loader;
     std::string err, warn;
     
+    std::string filenameStr(filename);
+    std::string basePath;
+    
+    size_t lastSlash = filenameStr.find_last_of("/\\");
+    if (lastSlash != std::string::npos) {
+        basePath = filenameStr.substr(0, lastSlash + 1);
+    }
+    
     bool success = false;
-    if (std::string(filename).ends_with(".glb")) {
+    
+    if (filenameStr.ends_with(".glb")) {
         success = loader.LoadBinaryFromMemory(&model, &err, &warn, 
                                              reinterpret_cast<const unsigned char*>(data), 
                                              static_cast<unsigned int>(dataLen),
-                                             "");
+                                             basePath);
     } else {
-        success = loader.LoadASCIIFromString(&model, &err, &warn,
-                                            reinterpret_cast<const char*>(data),
-                                            static_cast<unsigned int>(dataLen),
-                                            "");
+        success = loader.LoadASCIIFromFile(&model, &err, &warn, filenameStr);
     }
     
     if (!success || model.meshes.empty()) {
@@ -36,10 +47,10 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     std::vector<Vertex3D> vertices;
     std::vector<u32> indices;
     
-    const auto& gltfMesh = model.meshes[0];
     u32 indexOffset = 0;
     
-    for (const auto& primitive : gltfMesh.primitives) {
+    for (const auto& gltfMesh : model.meshes) {
+        for (const auto& primitive : gltfMesh.primitives) {
         auto posIt = primitive.attributes.find("POSITION");
         auto normIt = primitive.attributes.find("NORMAL");
         auto texIt = primitive.attributes.find("TEXCOORD_0");
@@ -131,6 +142,7 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
             
             indexOffset += indexCount;
         }
+    }
     }
     
     if (vertices.empty()) {
