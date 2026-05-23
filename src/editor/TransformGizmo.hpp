@@ -55,9 +55,20 @@ private:
         Vec3 direction;  // normalized
     };
 
+    struct RayAxisTest {
+        f32 distance;
+        f32 t_ray;      // parameter on ray where closest point lies
+        f32 s_axis;     // parameter on axis [0, axisLength]
+    };
+
     // Convert screen coordinates to 3D world-space ray via VP⁻¹
     Ray3D screenToWorldRay(const Vec2& screenPos, const Mat4& vpInverse, 
                            const ImVec2& viewportSize, const Vec3& camPos);
+
+    // Compute closest distance from ray to finite axis segment
+    RayAxisTest rayToAxisSegmentDistance(
+        const Ray3D& ray, 
+        const Vec3& axisOrigin, const Vec3& axisDir, f32 axisLength);
 
     GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
                             ImVec2 endX, ImVec2 endY, ImVec2 endZ,

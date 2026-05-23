@@ -35,6 +35,52 @@ TransformGizmo::Ray3D TransformGizmo::screenToWorldRay(
     return Ray3D{rayOrigin, rayDir};
 }
 
+TransformGizmo::RayAxisTest TransformGizmo::rayToAxisSegmentDistance(
+    const Ray3D& ray, 
+    const Vec3& axisOrigin, const Vec3& axisDir, f32 axisLength) {
+    
+    // Vector from ray origin to axis origin
+    Vec3 w = axisOrigin - ray.origin;
+    
+    // Solve for closest points:
+    // ray(t) = rayOrigin + t * rayDir
+    // axis(s) = axisOrigin + s * axisDir, s ∈ [0, axisLength]
+    // Minimize: |ray(t) - axis(s)|²
+    
+    f32 a = ray.direction.dot(ray.direction);     // |rayDir|² = 1 (normalized)
+    f32 b = ray.direction.dot(axisDir);
+    f32 c = axisDir.dot(axisDir);
+    f32 d = ray.direction.dot(w);
+    f32 e = axisDir.dot(w);
+    
+    f32 denom = a * c - b * b;
+    f32 t_ray = 0.0f;
+    f32 s_axis = 0.0f;
+    
+    if (std::abs(denom) > 1e-6f) {
+        t_ray = (b * e - c * d) / denom;
+        s_axis = (a * e - b * d) / denom;
+    } else {
+        // Rays are parallel; use perpendicular distance
+        s_axis = (std::abs(c) > 1e-6f) ? (e / c) : 0.0f;
+    }
+    
+    // Clamp t_ray to positive direction (ray goes forward)
+    t_ray = std::max(0.0f, t_ray);
+    
+    // CRITICAL: Clamp s_axis to axis segment bounds [0, axisLength]
+    s_axis = std::max(0.0f, std::min(axisLength, s_axis));
+    
+    // Compute closest points
+    Vec3 closestOnRay = ray.origin + ray.direction * t_ray;
+    Vec3 closestOnAxis = axisOrigin + axisDir * s_axis;
+    
+    // Distance between them
+    f32 distance = (closestOnRay - closestOnAxis).length();
+    
+    return RayAxisTest{distance, t_ray, s_axis};
+}
+
 static float pointToLineDistance(const Vec2& point, const Vec2& lineStart, const Vec2& lineEnd);
 
 void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, EditorContext& ctx) {
