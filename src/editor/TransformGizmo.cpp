@@ -7,6 +7,34 @@
 
 namespace Caffeine::Editor {
 
+TransformGizmo::Ray3D TransformGizmo::screenToWorldRay(
+    const Vec2& screenPos, const Mat4& vpInverse, 
+    const ImVec2& viewportSize, const Vec3& camPos) {
+    
+    // Convert screen coords to NDC [-1, 1]
+    f32 ndcX = (2.0f * screenPos.x) / viewportSize.x - 1.0f;
+    f32 ndcY = 1.0f - (2.0f * screenPos.y) / viewportSize.y;
+    
+    // Near plane point in NDC (z = -1 in OpenGL convention)
+    Vec4 ndcNear(ndcX, ndcY, -1.0f, 1.0f);
+    
+    // Unproject to world via vpInverse
+    Vec4 worldNear = vpInverse.transformVec4(ndcNear);
+    
+    // Perspective divide (CRITICAL: must normalize by w)
+    if (std::abs(worldNear.w) > 0.0001f) {
+        worldNear.x /= worldNear.w;
+        worldNear.y /= worldNear.w;
+        worldNear.z /= worldNear.w;
+    }
+    
+    Vec3 rayOrigin = camPos;
+    Vec3 rayTarget(worldNear.x, worldNear.y, worldNear.z);
+    Vec3 rayDir = (rayTarget - rayOrigin).normalized();
+    
+    return Ray3D{rayOrigin, rayDir};
+}
+
 static float pointToLineDistance(const Vec2& point, const Vec2& lineStart, const Vec2& lineEnd);
 
 void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, EditorContext& ctx) {
@@ -34,18 +62,12 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
     float handleWorld;
     {
-        float s    = ctx.viewportZoom * 50.0f;
-        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
-        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-        Vec3  wp0  = transform->position;
-        float rx   = wp0.x - ctx.camFocus.x;
-        float ry   = wp0.y - ctx.camFocus.y;
-        float rz   = wp0.z - ctx.camFocus.z;
-        float vz_c = -sinY * rx + cosY * rz;
-        float vz2  = -sinP * ry + cosP * vz_c;
-        float dist = std::max(ctx.camDistance, 0.1f);
-        float fovScale = s * dist / std::max(dist + vz2, 0.01f);
-        handleWorld = handleLen / std::max(fovScale, 0.01f);
+        Vec3 wp0 = transform->position;
+        Vec3 diff = Vec3(wp0.x - ctx.camFocus.x, wp0.y - ctx.camFocus.y, wp0.z - ctx.camFocus.z);
+        float distToObj = std::sqrt(diff.dot(diff)) + ctx.camDistance;
+        float fov = 1.0472f;
+        float pixelsPerUnit = (vpSize.y * 0.5f) / (distToObj * std::tan(fov * 0.5f));
+        handleWorld = handleLen / std::max(pixelsPerUnit, 0.01f);
     }
 
     // vx   = cosY*ax + sinY*az          (screen-right component)

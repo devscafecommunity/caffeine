@@ -6,6 +6,7 @@
 #include "editor/EditorContext.hpp"
 #include "math/Vec2.hpp"
 #include "math/Vec3.hpp"
+#include "math/Mat4.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -48,6 +49,15 @@ private:
                        bool col0, bool col1, bool col2,
                        float alpha0, float alpha1, float alpha2,
                        int axis0, int axis1, int axis2);
+
+    struct Ray3D {
+        Vec3 origin;
+        Vec3 direction;  // normalized
+    };
+
+    // Convert screen coordinates to 3D world-space ray via VP⁻¹
+    Ray3D screenToWorldRay(const Vec2& screenPos, const Mat4& vpInverse, 
+                           const ImVec2& viewportSize, const Vec3& camPos);
 
     GizmoAxis intersectTest(const Vec2& mousePos, const Vec2& screenPos,
                             ImVec2 endX, ImVec2 endY, ImVec2 endZ,
