@@ -872,6 +872,32 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                             meshScale = 0.3f / maxDist;
                         }
                         
+                        const ImU32 fillCol = IM_COL32(100, 150, 200, 180);
+                        for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
+                            u32 i0 = loadedMesh->indices[i];
+                            u32 i1 = loadedMesh->indices[i + 1];
+                            u32 i2 = loadedMesh->indices[i + 2];
+                            
+                            if (i0 < loadedMesh->vertices.size() &&
+                                i1 < loadedMesh->vertices.size() &&
+                                i2 < loadedMesh->vertices.size()) {
+                                
+                                Vec3 v0 = (loadedMesh->vertices[i0].position - meshCenter) * meshScale;
+                                Vec3 v1 = (loadedMesh->vertices[i1].position - meshCenter) * meshScale;
+                                Vec3 v2 = (loadedMesh->vertices[i2].position - meshCenter) * meshScale;
+                                
+                                Vec3 p0 = worldMatrix.transformPoint(v0);
+                                Vec3 p1 = worldMatrix.transformPoint(v1);
+                                Vec3 p2 = worldMatrix.transformPoint(v2);
+                                
+                                ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
+                                ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
+                                ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
+                                
+                                dl->AddTriangleFilled(sp0, sp1, sp2, fillCol);
+                            }
+                        }
+                        
                         for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
                             u32 i0 = loadedMesh->indices[i];
                             u32 i1 = loadedMesh->indices[i + 1];
