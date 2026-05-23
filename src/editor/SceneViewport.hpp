@@ -95,14 +95,25 @@ private:
 #ifdef CF_HAS_IMGUI
     void createOrUpdateLightGizmoEntities(ECS::World& world);
 #endif
-    void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
-    void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
-    void drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
-    void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
-    std::string resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const;
-    void releaseSpriteTextures();
+     void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
+     void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
+     void drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
+     void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+     void resizeCanvasIfNeeded(u32 newWidth, u32 newHeight);
+     std::string resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const;
+     void releaseSpriteTextures();
 
-    struct SpriteTextureCacheEntry {
+     // Ray-AABB intersection test (returns t_enter distance, or -1 if no hit)
+     // Used for object selection and culling
+     f32 rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
+                           const Vec3& aabbMin, const Vec3& aabbMax);
+
+     // Find closest entity under a ray (for click-to-select)
+     // Returns INVALID if no hit
+     ECS::Entity raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
+                                     ECS::World& world);
+
+     struct SpriteTextureCacheEntry {
         std::unique_ptr<ImTextureData> texture;
         int width = 0;
         int height = 0;
@@ -130,6 +141,8 @@ private:
     RHI::Texture* m_colorTarget = nullptr;
     RHI::Texture* m_depthTarget = nullptr;
     Config m_config;
+    u32 m_lastCanvasWidth = 0;
+    u32 m_lastCanvasHeight = 0;
 #endif
 };
 

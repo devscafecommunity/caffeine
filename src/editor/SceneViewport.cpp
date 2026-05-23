@@ -117,19 +117,48 @@ bool SceneViewport::init(RHI::RenderDevice* device, Config cfg) {
     depthDesc.usage  = RHI::TextureUsage::DepthStencil;
     m_depthTarget = device->createTexture(depthDesc);
 
-    m_initialized = (m_colorTarget != nullptr);
-    return m_initialized;
+     m_initialized = (m_colorTarget != nullptr);
+     if (m_initialized) {
+         m_lastCanvasWidth = cfg.width;
+         m_lastCanvasHeight = cfg.height;
+     }
+     return m_initialized;
+}
+
+void SceneViewport::resizeCanvasIfNeeded(u32 newWidth, u32 newHeight) {
+    if (!m_device || newWidth < 1 || newHeight < 1) return;
+    if (m_lastCanvasWidth == newWidth && m_lastCanvasHeight == newHeight) return;
+    
+    if (m_colorTarget) m_device->destroyTexture(m_colorTarget);
+    if (m_depthTarget) m_device->destroyTexture(m_depthTarget);
+    
+    RHI::TextureDesc colorDesc;
+    colorDesc.width  = newWidth;
+    colorDesc.height = newHeight;
+    colorDesc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
+    colorDesc.usage  = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+    m_colorTarget = m_device->createTexture(colorDesc);
+    
+    RHI::TextureDesc depthDesc;
+    depthDesc.width  = newWidth;
+    depthDesc.height = newHeight;
+    depthDesc.format = RHI::TextureFormat::D32_FLOAT;
+    depthDesc.usage  = RHI::TextureUsage::DepthStencil;
+    m_depthTarget = m_device->createTexture(depthDesc);
+    
+    m_lastCanvasWidth = newWidth;
+    m_lastCanvasHeight = newHeight;
 }
 
 void SceneViewport::shutdown() {
-    releaseSpriteTextures();
-    if (!m_initialized || !m_device) return;
-    m_device->destroyTexture(m_colorTarget);
-    m_device->destroyTexture(m_depthTarget);
-    m_colorTarget = nullptr;
-    m_depthTarget = nullptr;
-    m_initialized = false;
-}
+     releaseSpriteTextures();
+     if (!m_initialized || !m_device) return;
+     m_device->destroyTexture(m_colorTarget);
+     m_device->destroyTexture(m_depthTarget);
+     m_colorTarget = nullptr;
+     m_depthTarget = nullptr;
+     m_initialized = false;
+ }
 #endif
 
 // ── Main render entry point ───────────────────────────────────────
@@ -152,6 +181,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::End();
         return;
     }
+    
+    resizeCanvasIfNeeded((u32)viewportSize.x, (u32)viewportSize.y);
 
     if (m_initialized && m_colorTarget) {
         ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
@@ -346,34 +377,54 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
         ctx.viewportPanX += delta.x;
-        ctx.viewportPanY += delta.y;
-        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
-    }
+         ctx.viewportPanY += delta.y;
+         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
+     }
 
-    if (hovered && ImGui::IsWindowFocused()) {
-        bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
-                        ctx.viewMode == EditorContext::ViewMode::Isometric);
-        if (is3DIso) {
-            float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
-            float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            if (ImGui::IsKeyDown(ImGuiKey_W)) {
-                ctx.camFocus.x += -sinY * speed;
-                ctx.camFocus.z +=  cosY * speed;
-            }
-            if (ImGui::IsKeyDown(ImGuiKey_S)) {
-                ctx.camFocus.x -= -sinY * speed;
-                ctx.camFocus.z -=  cosY * speed;
-            }
-            if (ImGui::IsKeyDown(ImGuiKey_A)) {
-                ctx.camFocus.x -= cosY * speed;
-                ctx.camFocus.z -= sinY * speed;
-            }
-            if (ImGui::IsKeyDown(ImGuiKey_D)) {
-                ctx.camFocus.x += cosY * speed;
-                ctx.camFocus.z += sinY * speed;
-            }
-        }
-    }
+     // 2D View: Left mouse button drag to pan
+     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+         if (ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+             ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+             f32 s = ctx.viewportZoom * 50.0f;
+             ctx.viewportPanX -= delta.x / s;
+             ctx.viewportPanY -= delta.y / s;
+             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+         }
+     }
+
+      if (hovered && ImGui::IsWindowFocused()) {
+          bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                          ctx.viewMode == EditorContext::ViewMode::Isometric);
+          if (is3DIso) {
+             float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
+             float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+             float sinP  = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+             
+             // WASD movement with full 3D orientation (yaw + pitch)
+             if (ImGui::IsKeyDown(ImGuiKey_W)) {
+                 // Forward: move in camera forward direction
+                 ctx.camFocus.x += -sinY * cosP * speed;
+                 ctx.camFocus.y +=  sinP * speed;
+                 ctx.camFocus.z +=  cosY * cosP * speed;
+             }
+             if (ImGui::IsKeyDown(ImGuiKey_S)) {
+                 // Backward: opposite of forward
+                 ctx.camFocus.x -= -sinY * cosP * speed;
+                 ctx.camFocus.y -=  sinP * speed;
+                 ctx.camFocus.z -=  cosY * cosP * speed;
+             }
+             if (ImGui::IsKeyDown(ImGuiKey_A)) {
+                 // Left: strafe perpendicular to forward
+                 ctx.camFocus.x -= cosY * speed;
+                 ctx.camFocus.z -= sinY * speed;
+             }
+             if (ImGui::IsKeyDown(ImGuiKey_D)) {
+                 // Right: opposite of left
+                 ctx.camFocus.x += cosY * speed;
+                 ctx.camFocus.z += sinY * speed;
+             }
+         }
+     }
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
@@ -387,13 +438,19 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
     }
 
-    if (hovered) {
-        f32 scroll = ImGui::GetIO().MouseWheel;
-        if (scroll != 0) {
-            ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
-            ctx.viewportZoom = std::max(0.1f, std::min(10.0f, ctx.viewportZoom));
-        }
-    }
+     if (hovered) {
+         f32 scroll = ImGui::GetIO().MouseWheel;
+         if (scroll != 0) {
+             if (ctx.viewMode == EditorContext::ViewMode::Mode3D || 
+                 ctx.viewMode == EditorContext::ViewMode::Isometric) {
+                 ctx.camDistance *= (scroll > 0) ? 0.8f : 1.25f;
+                 ctx.camDistance = std::max(0.5f, std::min(1000.0f, ctx.camDistance));
+             } else {
+                 ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
+                 ctx.viewportZoom = std::max(0.1f, std::min(10.0f, ctx.viewportZoom));
+             }
+         }
+     }
 
     ImGui::End();
 }
@@ -410,25 +467,39 @@ ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize
                           cy + (-p.y + ctx.viewportPanY / s) * s);
         }
         case EditorContext::ViewMode::Mode3D: {
-            f32 s = ctx.viewportZoom * 50.0f;
-            f32 sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
+            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
             f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            f32 rx = p.x - ctx.camFocus.x;
-            f32 ry = p.y - ctx.camFocus.y;
-            f32 rz = p.z - ctx.camFocus.z;
-            f32 vx =  cosY * rx + sinY * rz;
-            f32 vy =  ry;
-            f32 vz = -sinY * rx + cosY * rz;
-            f32 vy2 =  cosP * vy + sinP * vz;
-            f32 vz2 = -sinP * vy + cosP * vz;
-            f32 dist = std::max(ctx.camDistance, 0.1f);
-            f32 fovScale = s * dist / std::max(dist + vz2, 0.01f);
-            return ImVec2(cx + vx  * fovScale + ctx.viewportPanX,
-                          cy - vy2 * fovScale + ctx.viewportPanY);
+
+            Vec3 camPos;
+            camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
+            camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
+            camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+
+            Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+
+            f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+            f32 fov = 1.0472f; // 60 degrees
+            f32 zNear = 0.1f;
+            f32 zFar = 10000.0f;
+            Mat4 proj = Mat4::perspective(fov, aspect, zNear, zFar);
+
+            Mat4 vp = proj * view;
+            Vec4 clip = vp.transformVec4(Vec4(p.x, p.y, p.z, 1.0f));
+
+            if (clip.w <= 0.001f) {
+                return ImVec2(-10000.0f, -10000.0f);
+            }
+
+            f32 ndcX = clip.x / clip.w;
+            f32 ndcY = clip.y / clip.w;
+
+            f32 screenX = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
+            f32 screenY = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
+            return ImVec2(screenX, screenY);
         }
         case EditorContext::ViewMode::Isometric: {
             f32 s = ctx.viewportZoom * 50.0f;
-            f32 cosA = std::cos(ctx.camYaw + 0.5236f); // 30° offset + azimuth
+            f32 cosA = std::cos(ctx.camYaw + 0.5236f);
             f32 sinA = std::sin(ctx.camYaw + 0.5236f);
             f32 iso_x = (p.x - p.y) * cosA * s;
             f32 iso_y = (p.x + p.y) * sinA * s * 0.5f - p.z * s * 0.866f;
@@ -853,24 +924,59 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     }
                     
                     if (loadedMesh && !loadedMesh->vertices.empty() && !loadedMesh->indices.empty()) {
-                        Vec3 meshCenter(0, 0, 0);
-                        f32 meshScale = 1.0f;
-                        
-                        for (const auto& vertex : loadedMesh->vertices) {
-                            meshCenter = meshCenter + vertex.position;
+                        if (loadedMesh->baseColorTexture.empty() && loadedMesh->textureWidth == 0) {
+                            std::string texturePath;
+                            if (!mesh->customTexturePath.empty()) {
+                                texturePath = mesh->customTexturePath;
+                                if (texturePath.find("assets/raw") == std::string::npos) {
+                                    texturePath = std::string("assets/raw/") + mesh->customTexturePath;
+                                }
+                            } else {
+                                texturePath = meshPath;
+                                size_t dotPos = texturePath.find_last_of('.');
+                                if (dotPos != std::string::npos) {
+                                    texturePath = texturePath.substr(0, dotPos) + ".png";
+                                }
+                            }
+                            if (!texturePath.empty()) {
+                                Assets::MeshLoader::loadPNGTexture(loadedMesh, texturePath.c_str());
+                            }
                         }
-                        meshCenter = meshCenter * (1.0f / loadedMesh->vertices.size());
                         
-                        f32 maxDist = 0.1f;
-                        for (const auto& vertex : loadedMesh->vertices) {
-                            Vec3 diff = vertex.position - meshCenter;
-                            f32 dist = std::sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z);
-                            maxDist = std::max(maxDist, dist);
+                        f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+                        f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+                        Vec3 camPos;
+                        camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
+                        camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
+                        camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+                        Mat4 viewMat = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+                        f32 aspectR = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                        Mat4 projMat = Mat4::perspective(1.0472f, aspectR, 0.1f, 10000.0f);
+                        Mat4 vpMat = projMat * viewMat;
+
+                        Vec3 bMin = loadedMesh->bounds.min;
+                        Vec3 bMax = loadedMesh->bounds.max;
+                        Vec3 bbCorners[8] = {
+                            {bMin.x, bMin.y, bMin.z}, {bMax.x, bMin.y, bMin.z},
+                            {bMin.x, bMax.y, bMin.z}, {bMax.x, bMax.y, bMin.z},
+                            {bMin.x, bMin.y, bMax.z}, {bMax.x, bMin.y, bMax.z},
+                            {bMin.x, bMax.y, bMax.z}, {bMax.x, bMax.y, bMax.z}
+                        };
+
+                        bool anyVisible = false;
+                        for (int ci = 0; ci < 8; ++ci) {
+                            Vec3 wp = worldMatrix.transformPoint(bbCorners[ci]);
+                            Vec4 clip = vpMat.transformVec4(Vec4(wp.x, wp.y, wp.z, 1.0f));
+                            if (clip.w > 0.01f) {
+                                f32 nx = clip.x / clip.w;
+                                f32 ny = clip.y / clip.w;
+                                if (nx >= -1.5f && nx <= 1.5f && ny >= -1.5f && ny <= 1.5f) {
+                                    anyVisible = true;
+                                    break;
+                                }
+                            }
                         }
-                        
-                        if (maxDist > 0.001f) {
-                            meshScale = 0.3f / maxDist;
-                        }
+                        if (!anyVisible) break;
                         
                         auto sampleTexture = [loadedMesh](const Vec2& uv) -> ImU32 {
                             if (loadedMesh->baseColorTexture.empty() || loadedMesh->textureWidth == 0) {
@@ -893,57 +999,36 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                             u32 i1 = loadedMesh->indices[i + 1];
                             u32 i2 = loadedMesh->indices[i + 2];
                             
-                            if (i0 < loadedMesh->vertices.size() &&
-                                i1 < loadedMesh->vertices.size() &&
-                                i2 < loadedMesh->vertices.size()) {
-                                
-                                Vec3 v0 = (loadedMesh->vertices[i0].position - meshCenter) * meshScale;
-                                Vec3 v1 = (loadedMesh->vertices[i1].position - meshCenter) * meshScale;
-                                Vec3 v2 = (loadedMesh->vertices[i2].position - meshCenter) * meshScale;
-                                
-                                Vec3 p0 = worldMatrix.transformPoint(v0);
-                                Vec3 p1 = worldMatrix.transformPoint(v1);
-                                Vec3 p2 = worldMatrix.transformPoint(v2);
-                                
-                                ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
-                                ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
-                                ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
-                                
-                                Vec2 uv0 = loadedMesh->vertices[i0].texcoord;
-                                Vec2 uv1 = loadedMesh->vertices[i1].texcoord;
-                                Vec2 uv2 = loadedMesh->vertices[i2].texcoord;
-                                Vec2 uvAvg = Vec2((uv0.x + uv1.x + uv2.x) / 3.0f, (uv0.y + uv1.y + uv2.y) / 3.0f);
-                                
-                                ImU32 triColor = sampleTexture(uvAvg);
-                                dl->AddTriangleFilled(sp0, sp1, sp2, triColor);
-                            }
-                        }
-                        
-                        for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
-                            u32 i0 = loadedMesh->indices[i];
-                            u32 i1 = loadedMesh->indices[i + 1];
-                            u32 i2 = loadedMesh->indices[i + 2];
+                            if (i0 >= loadedMesh->vertices.size() ||
+                                i1 >= loadedMesh->vertices.size() ||
+                                i2 >= loadedMesh->vertices.size()) continue;
                             
-                            if (i0 < loadedMesh->vertices.size() &&
-                                i1 < loadedMesh->vertices.size() &&
-                                i2 < loadedMesh->vertices.size()) {
-                                
-                                Vec3 v0 = (loadedMesh->vertices[i0].position - meshCenter) * meshScale;
-                                Vec3 v1 = (loadedMesh->vertices[i1].position - meshCenter) * meshScale;
-                                Vec3 v2 = (loadedMesh->vertices[i2].position - meshCenter) * meshScale;
-                                
-                                Vec3 p0 = worldMatrix.transformPoint(v0);
-                                Vec3 p1 = worldMatrix.transformPoint(v1);
-                                Vec3 p2 = worldMatrix.transformPoint(v2);
-                                
-                                ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
-                                ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
-                                ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
-                                
-                                dl->AddLine(sp0, sp1, wireCol, thickness);
-                                dl->AddLine(sp1, sp2, wireCol, thickness);
-                                dl->AddLine(sp2, sp0, wireCol, thickness);
-                            }
+                            Vec3 v0 = loadedMesh->vertices[i0].position;
+                            Vec3 v1 = loadedMesh->vertices[i1].position;
+                            Vec3 v2 = loadedMesh->vertices[i2].position;
+                            
+                            Vec3 p0 = worldMatrix.transformPoint(v0);
+                            Vec3 p1 = worldMatrix.transformPoint(v1);
+                            Vec3 p2 = worldMatrix.transformPoint(v2);
+                            
+                            Vec4 c0 = vpMat.transformVec4(Vec4(p0.x, p0.y, p0.z, 1.0f));
+                            Vec4 c1 = vpMat.transformVec4(Vec4(p1.x, p1.y, p1.z, 1.0f));
+                            Vec4 c2 = vpMat.transformVec4(Vec4(p2.x, p2.y, p2.z, 1.0f));
+                            if (c0.w <= 0.01f && c1.w <= 0.01f && c2.w <= 0.01f) continue;
+                            
+                            ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
+                            ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
+                            ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
+                            
+                            if (sp0.x < -5000.0f || sp1.x < -5000.0f || sp2.x < -5000.0f) continue;
+                            
+                            Vec2 uv0 = loadedMesh->vertices[i0].texcoord;
+                            Vec2 uv1 = loadedMesh->vertices[i1].texcoord;
+                            Vec2 uv2 = loadedMesh->vertices[i2].texcoord;
+                            Vec2 uvAvg = Vec2((uv0.x + uv1.x + uv2.x) / 3.0f, (uv0.y + uv1.y + uv2.y) / 3.0f);
+                            
+                            ImU32 triColor = sampleTexture(uvAvg);
+                            dl->AddTriangleFilled(sp0, sp1, sp2, triColor);
                         }
                     }
                 }
@@ -1488,62 +1573,106 @@ void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewpor
 
 void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
     ImU32 gridColor  = IM_COL32(100, 100, 120, 60);
-    ImU32 axisColorX = IM_COL32(200, 80, 80, 120);
-    ImU32 axisColorZ = IM_COL32(80, 80, 200, 120);
+    ImU32 axisColorX = IM_COL32(220, 60, 60, 200);
+    ImU32 axisColorZ = IM_COL32(60, 60, 220, 200);
 
-    float visibleRange = ctx.camDistance / ctx.viewportZoom;
-    int halfLines = std::max(30, (int)(visibleRange * 4.0f));
+    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
 
+    Vec3 camPos;
+    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
+    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
+    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+
+    Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+    f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+    f32 fov = 1.0472f;
+    f32 zNear = 0.1f;
+    f32 zFar = 10000.0f;
+    Mat4 proj = Mat4::perspective(fov, aspect, zNear, zFar);
+    Mat4 vp = proj * view;
+
+    auto project = [&](Vec3 worldPt, ImVec2& screenOut) -> bool {
+        Vec4 clip = vp.transformVec4(Vec4(worldPt.x, worldPt.y, worldPt.z, 1.0f));
+        if (clip.w <= 0.01f) return false;
+        f32 ndcX = clip.x / clip.w;
+        f32 ndcY = clip.y / clip.w;
+        if (ndcX < -1.5f || ndcX > 1.5f || ndcY < -1.5f || ndcY > 1.5f) return false;
+        screenOut.x = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
+        screenOut.y = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
+        return true;
+    };
+
+    auto drawLine3D = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
+        ImVec2 sa, sb;
+        bool va = project(a, sa);
+        bool vb = project(b, sb);
+        if (!va && !vb) return;
+        if (va && vb) {
+            dl->AddLine(sa, sb, color, thickness);
+            return;
+        }
+        Vec4 clipA = vp.transformVec4(Vec4(a.x, a.y, a.z, 1.0f));
+        Vec4 clipB = vp.transformVec4(Vec4(b.x, b.y, b.z, 1.0f));
+        f32 wMin = 0.01f;
+        if (clipA.w < wMin && clipB.w < wMin) return;
+        if (clipA.w < wMin) {
+            f32 t = (wMin - clipA.w) / (clipB.w - clipA.w);
+            a = Vec3(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y), a.z + t * (b.z - a.z));
+        } else if (clipB.w < wMin) {
+            f32 t = (wMin - clipB.w) / (clipA.w - clipB.w);
+            b = Vec3(b.x + t * (a.x - b.x), b.y + t * (a.y - b.y), b.z + t * (a.z - b.z));
+        }
+        if (project(a, sa) && project(b, sb)) {
+            dl->AddLine(sa, sb, color, thickness);
+        }
+    };
+
+    float visibleRange = ctx.camDistance;
     float spacing = 1.0f;
-    while ((float)(halfLines * 2) / spacing > 60.0f) spacing *= 2.0f;
-    int step = std::max(1, (int)spacing);
+    while (visibleRange / spacing > 30.0f) spacing *= 2.0f;
+    while (visibleRange / spacing < 5.0f && spacing > 0.5f) spacing *= 0.5f;
+    spacing = std::max(spacing, 0.5f);
 
-    auto camDepth = [&](Vec3 wp) -> float {
-        if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return 1.0f;
-        float sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-        float rx = wp.x - ctx.camFocus.x;
-        float ry = wp.y - ctx.camFocus.y;
-        float rz = wp.z - ctx.camFocus.z;
-        float vz = -sinY * rx + cosY * rz;
-        float vz2 = -sinP * ry + cosP * vz;
-        return ctx.camDistance + vz2;
-    };
+    float renderDist = visibleRange * 2.0f;
+    int maxLines = 120;
+    if ((renderDist * 2.0f / spacing) > maxLines) {
+        renderDist = (maxLines * spacing) / 2.0f;
+    }
 
-    const float nearClip = 0.5f;
+    float camX = ctx.camFocus.x;
+    float camZ = ctx.camFocus.z;
+    int startX = (int)(std::floor((camX - renderDist) / spacing)) * (int)spacing;
+    int endX   = (int)(std::ceil((camX + renderDist) / spacing)) * (int)spacing;
+    int startZ = (int)(std::floor((camZ - renderDist) / spacing)) * (int)spacing;
+    int endZ   = (int)(std::ceil((camZ + renderDist) / spacing)) * (int)spacing;
 
-    auto clipLine = [&](Vec3 a, Vec3 b, bool& valid) -> std::pair<Vec3, Vec3> {
-        float dA = camDepth(a), dB = camDepth(b);
-        if (dA <= nearClip && dB <= nearClip) { valid = false; return {a, b}; }
-        valid = true;
-        if (dA > nearClip && dB > nearClip) return {a, b};
-        float t = (nearClip - dA) / (dB - dA);
-        Vec3 clip = {a.x + t*(b.x-a.x), a.y + t*(b.y-a.y), a.z + t*(b.z-a.z)};
-        return (dA <= nearClip) ? std::make_pair(clip, b) : std::make_pair(a, clip);
-    };
-
-    auto drawLine = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
-        bool valid;
-        auto [ca, cb] = clipLine(a, b, valid);
-        if (!valid) return;
-        dl->AddLine(projectToScreen(ca, origin, viewportSize, ctx),
-                    projectToScreen(cb, origin, viewportSize, ctx), color, thickness);
-    };
+    float lineDist = renderDist;
 
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
-        for (int i = -halfLines; i <= halfLines; i += step) {
-            drawLine({(f32)i, (f32)(-halfLines), 0.f}, {(f32)i, (f32)(halfLines), 0.f},
-                     (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
-            drawLine({(f32)(-halfLines), (f32)i, 0.f}, {(f32)(halfLines), (f32)i, 0.f},
-                     (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+        for (int x = startX; x <= endX; x += (int)spacing) {
+            if (x == 0) continue;
+            drawLine3D({(f32)x, (f32)(camZ - lineDist), 0.f}, {(f32)x, (f32)(camZ + lineDist), 0.f}, gridColor, 0.5f);
         }
+        for (int z = startZ; z <= endZ; z += (int)spacing) {
+            if (z == 0) continue;
+            drawLine3D({(f32)(camX - lineDist), (f32)z, 0.f}, {(f32)(camX + lineDist), (f32)z, 0.f}, gridColor, 0.5f);
+        }
+        float axisLen = visibleRange * 100.0f;
+        drawLine3D({0.f, -axisLen, 0.f}, {0.f, axisLen, 0.f}, axisColorX, 2.5f);
+        drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorZ, 2.5f);
     } else {
-        for (int i = -halfLines; i <= halfLines; i += step) {
-            drawLine({(f32)i, 0.f, (f32)(-halfLines)}, {(f32)i, 0.f, (f32)(halfLines)},
-                     (i == 0) ? axisColorX : gridColor, (i == 0) ? 1.5f : 0.5f);
-            drawLine({(f32)(-halfLines), 0.f, (f32)i}, {(f32)(halfLines), 0.f, (f32)i},
-                     (i == 0) ? axisColorZ : gridColor, (i == 0) ? 1.5f : 0.5f);
+        for (int x = startX; x <= endX; x += (int)spacing) {
+            if (x == 0) continue;
+            drawLine3D({(f32)x, 0.f, (f32)(camZ - lineDist)}, {(f32)x, 0.f, (f32)(camZ + lineDist)}, gridColor, 0.5f);
         }
+        for (int z = startZ; z <= endZ; z += (int)spacing) {
+            if (z == 0) continue;
+            drawLine3D({(f32)(camX - lineDist), 0.f, (f32)z}, {(f32)(camX + lineDist), 0.f, (f32)z}, gridColor, 0.5f);
+        }
+        float axisLen = visibleRange * 100.0f;
+        drawLine3D({0.f, 0.f, -axisLen}, {0.f, 0.f, axisLen}, axisColorZ, 2.5f);
+        drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorX, 2.5f);
     }
 }
 
@@ -1606,6 +1735,108 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
     if (ImGui::Button(m_projectionMode == ProjectionMode::Perspective ? "Persp" : "Ortho", ImVec2(buttonWidth, 24.0f))) {
         toggleProjectionMode();
     }
+}
+
+f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
+                                     const Vec3& aabbMin, const Vec3& aabbMax) {
+    f32 t_enter = 0.0f;
+    f32 t_exit = 1e10f;
+    
+    // Test X slab
+    if (std::abs(rayDir.x) > 1e-6f) {
+        f32 t0 = (aabbMin.x - rayOrigin.x) / rayDir.x;
+        f32 t1 = (aabbMax.x - rayOrigin.x) / rayDir.x;
+        if (t0 > t1) std::swap(t0, t1);
+        t_enter = std::max(t_enter, t0);
+        t_exit = std::min(t_exit, t1);
+    } else {
+        if (rayOrigin.x < aabbMin.x || rayOrigin.x > aabbMax.x) {
+            return -1.0f;
+        }
+    }
+    
+    // Test Y slab
+    if (std::abs(rayDir.y) > 1e-6f) {
+        f32 t0 = (aabbMin.y - rayOrigin.y) / rayDir.y;
+        f32 t1 = (aabbMax.y - rayOrigin.y) / rayDir.y;
+        if (t0 > t1) std::swap(t0, t1);
+        t_enter = std::max(t_enter, t0);
+        t_exit = std::min(t_exit, t1);
+    } else {
+        if (rayOrigin.y < aabbMin.y || rayOrigin.y > aabbMax.y) {
+            return -1.0f;
+        }
+    }
+    
+    // Test Z slab
+    if (std::abs(rayDir.z) > 1e-6f) {
+        f32 t0 = (aabbMin.z - rayOrigin.z) / rayDir.z;
+        f32 t1 = (aabbMax.z - rayOrigin.z) / rayDir.z;
+        if (t0 > t1) std::swap(t0, t1);
+        t_enter = std::max(t_enter, t0);
+        t_exit = std::min(t_exit, t1);
+    } else {
+        if (rayOrigin.z < aabbMin.z || rayOrigin.z > aabbMax.z) {
+            return -1.0f;
+        }
+    }
+    
+    if (t_enter <= t_exit && t_enter >= 0.0f) {
+        return t_enter;
+    }
+    
+    return -1.0f;
+}
+
+ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
+                                               ECS::World& world) {
+    ECS::Entity closestEntity = ECS::Entity::INVALID;
+    f32 closestT = 1e10f;
+    
+    ECS::ComponentQuery query;
+    query.with<ECS::Transform>();
+    
+    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& transform) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        
+        Vec3 aabbMin = transform.position;
+        Vec3 aabbMax = transform.position;
+        
+        if (auto* meshFilter = world.get<ECS::MeshFilterComponent>(entity)) {
+            if (!meshFilter->customMeshPath.empty()) {
+                auto* mesh = Assets::MeshCache::getInstance().getMesh(meshFilter->customMeshPath);
+                if (!mesh) {
+                    std::string fullPath = std::string("assets/raw/") + meshFilter->customMeshPath;
+                    mesh = Assets::MeshCache::getInstance().getMesh(fullPath);
+                }
+                
+                if (mesh && !mesh->vertices.empty()) {
+                    Vec3 meshMin = mesh->bounds.min;
+                    Vec3 meshMax = mesh->bounds.max;
+                    
+                    aabbMin = transform.position + Vec3(meshMin.x * transform.scale.x, 
+                                                         meshMin.y * transform.scale.y, 
+                                                         meshMin.z * transform.scale.z);
+                    aabbMax = transform.position + Vec3(meshMax.x * transform.scale.x, 
+                                                         meshMax.y * transform.scale.y, 
+                                                         meshMax.z * transform.scale.z);
+                    
+                    if (aabbMin.x > aabbMax.x) std::swap(aabbMin.x, aabbMax.x);
+                    if (aabbMin.y > aabbMax.y) std::swap(aabbMin.y, aabbMax.y);
+                    if (aabbMin.z > aabbMax.z) std::swap(aabbMin.z, aabbMax.z);
+                }
+            }
+        }
+        
+        f32 t = rayIntersectsAABB(rayOrigin, rayDir, aabbMin, aabbMax);
+        
+        if (t >= 0.0f && t < closestT) {
+            closestT = t;
+            closestEntity = entity;
+        }
+    });
+    
+    return closestEntity;
 }
 
 void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize) {
