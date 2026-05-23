@@ -3,6 +3,7 @@
 #include "editor/EditorContext.hpp"
 #include "audio/AudioComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
+#include "ecs/MeshComponents.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "scene/SceneComponents.hpp"
@@ -192,6 +193,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (asset->type == AssetType::Audio) {
             auto& emitter = world.add<Audio::AudioEmitter>(entity);
             emitter.clipPath = assetPath.filename().string().c_str();
+        }
+
+        if (asset->type == AssetType::Mesh) {
+            world.add<ECS::MeshFilterComponent>(entity, 
+                ECS::MeshPrimitive::Custom, assetPath.string());
+            world.add<ECS::MeshRendererComponent>(entity, 
+                assetPath.string(), "");
         }
 
         ctx.selectedEntity = entity;
