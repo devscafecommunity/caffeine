@@ -2,7 +2,9 @@
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/Components3D.hpp"
 #include "core/io/CafWriter.hpp"
+#include "core/io/BlobLoader.hpp"
 #include "core/io/Crc32.hpp"
+#include "memory/LinearAllocator.hpp"
 #include "assets/MeshTypes.hpp"
 #include "editor/EditorContext.hpp"
 #include <fstream>
@@ -23,86 +25,133 @@ bool PrefabSerializer::save(const std::string& filePath, ECS::Entity rootEntity)
     
     prefab.entities.push_back(serializeEntity(rootEntity, entityIdMap));
     
-    std::ofstream file(filePath, std::ios::binary);
-    if (!file) return false;
+    // Serialize to binary payload
+    std::vector<u8> payload;
+    payload.reserve(4096);
     
-    u32 magic = PrefabAsset::MAGIC;
-    u32 version = PrefabAsset::VERSION;
+    // Write entity count
     u32 entityCount = static_cast<u32>(prefab.entities.size());
+    payload.insert(payload.end(), 
+                   reinterpret_cast<const u8*>(&entityCount),
+                   reinterpret_cast<const u8*>(&entityCount) + sizeof(entityCount));
     
-    file.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
-    file.write(reinterpret_cast<const char*>(&version), sizeof(version));
-    file.write(reinterpret_cast<const char*>(&entityCount), sizeof(entityCount));
-    
+    // Write each entity
     for (const auto& entityData : prefab.entities) {
+        // Entity name
         u32 nameLen = static_cast<u32>(entityData.name.size());
-        file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
-        file.write(entityData.name.c_str(), nameLen);
+        payload.insert(payload.end(),
+                       reinterpret_cast<const u8*>(&nameLen),
+                       reinterpret_cast<const u8*>(&nameLen) + sizeof(nameLen));
+        payload.insert(payload.end(),
+                       reinterpret_cast<const u8*>(entityData.name.c_str()),
+                       reinterpret_cast<const u8*>(entityData.name.c_str()) + nameLen);
         
+        // Components
         u32 componentCount = static_cast<u32>(entityData.components.size());
-        file.write(reinterpret_cast<const char*>(&componentCount), sizeof(componentCount));
+        payload.insert(payload.end(),
+                       reinterpret_cast<const u8*>(&componentCount),
+                       reinterpret_cast<const u8*>(&componentCount) + sizeof(componentCount));
         
         for (const auto& comp : entityData.components) {
-            file.write(reinterpret_cast<const char*>(&comp.typeId), sizeof(comp.typeId));
+            payload.insert(payload.end(),
+                           reinterpret_cast<const u8*>(&comp.typeId),
+                           reinterpret_cast<const u8*>(&comp.typeId) + sizeof(comp.typeId));
             u32 dataSize = static_cast<u32>(comp.data.size());
-            file.write(reinterpret_cast<const char*>(&dataSize), sizeof(dataSize));
-            file.write(reinterpret_cast<const char*>(comp.data.data()), dataSize);
+            payload.insert(payload.end(),
+                           reinterpret_cast<const u8*>(&dataSize),
+                           reinterpret_cast<const u8*>(&dataSize) + sizeof(dataSize));
+            payload.insert(payload.end(), comp.data.begin(), comp.data.end());
         }
         
+        // Children
         u32 childCount = static_cast<u32>(entityData.childEntityIds.size());
-        file.write(reinterpret_cast<const char*>(&childCount), sizeof(childCount));
+        payload.insert(payload.end(),
+                       reinterpret_cast<const u8*>(&childCount),
+                       reinterpret_cast<const u8*>(&childCount) + sizeof(childCount));
         for (u32 childId : entityData.childEntityIds) {
-            file.write(reinterpret_cast<const char*>(&childId), sizeof(childId));
+            payload.insert(payload.end(),
+                           reinterpret_cast<const u8*>(&childId),
+                           reinterpret_cast<const u8*>(&childId) + sizeof(childId));
         }
     }
     
-    return file.good();
+    // Metadata is minimal for prefabs (empty)
+    IO::CafWriter::WriteResult result = IO::CafWriter::write(
+        filePath.c_str(),
+        AssetType::Prefab,
+        CAF_FLAG_NONE,
+        nullptr,
+        0,
+        payload.data(),
+        payload.size()
+    );
+    
+    return result.success;
 }
 
 ECS::Entity PrefabSerializer::load(const std::string& filePath, const Vec3& positionOffset) {
-    std::ifstream file(filePath, std::ios::binary);
-    if (!file) return ECS::Entity{};
+    auto alloc = std::make_unique<LinearAllocator>(16 * 1024 * 1024);
+    IO::BlobLoader::LoadResult result = IO::BlobLoader::load(filePath.c_str(), alloc.get());
     
-    u32 magic, version, entityCount;
-    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-    file.read(reinterpret_cast<char*>(&version), sizeof(version));
-    file.read(reinterpret_cast<char*>(&entityCount), sizeof(entityCount));
-    
-    if (magic != PrefabAsset::MAGIC || version != PrefabAsset::VERSION) {
+    if (!result.valid || result.header->type != AssetType::Prefab) {
         return ECS::Entity{};
     }
+    
+    const u8* payload = static_cast<const u8*>(result.payload);
+    u64 payloadSize = result.header->dataSize;
+    
+    if (payloadSize < sizeof(u32)) {
+        return ECS::Entity{};
+    }
+    
+    u64 offset = 0;
+    
+    u32 entityCount = *reinterpret_cast<const u32*>(payload + offset);
+    offset += sizeof(entityCount);
     
     std::vector<ECS::Entity> createdEntities;
     std::vector<PrefabAsset::EntityData> loadedEntities;
     
-    for (u32 i = 0; i < entityCount; ++i) {
+    for (u32 i = 0; i < entityCount && offset < payloadSize; ++i) {
         PrefabAsset::EntityData data;
         
-        u32 nameLen;
-        file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
-        data.name.resize(nameLen);
-        file.read(&data.name[0], nameLen);
+        if (offset + sizeof(u32) > payloadSize) break;
+        u32 nameLen = *reinterpret_cast<const u32*>(payload + offset);
+        offset += sizeof(nameLen);
         
-        u32 componentCount;
-        file.read(reinterpret_cast<char*>(&componentCount), sizeof(componentCount));
+        if (offset + nameLen > payloadSize) break;
+        data.name.assign(reinterpret_cast<const char*>(payload + offset), nameLen);
+        offset += nameLen;
         
-        for (u32 j = 0; j < componentCount; ++j) {
-            PrefabAsset::ComponentEntry comp;
-            file.read(reinterpret_cast<char*>(&comp.typeId), sizeof(comp.typeId));
+        if (offset + sizeof(u32) > payloadSize) break;
+        u32 componentCount = *reinterpret_cast<const u32*>(payload + offset);
+        offset += sizeof(componentCount);
+        
+        for (u32 j = 0; j < componentCount && offset < payloadSize; ++j) {
+            if (offset + sizeof(u32) * 2 > payloadSize) break;
             
-            u32 dataSize;
-            file.read(reinterpret_cast<char*>(&dataSize), sizeof(dataSize));
-            comp.data.resize(dataSize);
-            file.read(reinterpret_cast<char*>(comp.data.data()), dataSize);
+            PrefabAsset::ComponentEntry comp;
+            comp.typeId = *reinterpret_cast<const u32*>(payload + offset);
+            offset += sizeof(comp.typeId);
+            
+            u32 dataSize = *reinterpret_cast<const u32*>(payload + offset);
+            offset += sizeof(dataSize);
+            
+            if (offset + dataSize > payloadSize) break;
+            comp.data.assign(payload + offset, payload + offset + dataSize);
+            offset += dataSize;
             
             data.components.push_back(comp);
         }
         
-        u32 childCount;
-        file.read(reinterpret_cast<char*>(&childCount), sizeof(childCount));
-        for (u32 j = 0; j < childCount; ++j) {
-            u32 childId;
-            file.read(reinterpret_cast<char*>(&childId), sizeof(childId));
+        if (offset + sizeof(u32) > payloadSize) break;
+        u32 childCount = *reinterpret_cast<const u32*>(payload + offset);
+        offset += sizeof(childCount);
+        
+        for (u32 j = 0; j < childCount && offset < payloadSize; ++j) {
+            if (offset + sizeof(u32) > payloadSize) break;
+            u32 childId = *reinterpret_cast<const u32*>(payload + offset);
+            offset += sizeof(childId);
             data.childEntityIds.push_back(childId);
         }
         
