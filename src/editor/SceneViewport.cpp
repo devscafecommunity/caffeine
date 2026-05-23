@@ -1867,6 +1867,21 @@ ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3
                     if (aabbMin.x > aabbMax.x) std::swap(aabbMin.x, aabbMax.x);
                     if (aabbMin.y > aabbMax.y) std::swap(aabbMin.y, aabbMax.y);
                     if (aabbMin.z > aabbMax.z) std::swap(aabbMin.z, aabbMax.z);
+                } else {
+                    if (aabbMin.x >= aabbMax.x || aabbMin.y >= aabbMax.y || aabbMin.z >= aabbMax.z) {
+                        Vec3 toEntity = transform.position - rayOrigin;
+                        Vec3 proj = rayDir * toEntity.dot(rayDir);
+                        f32 distToRay = (toEntity - proj).length();
+                        
+                        if (distToRay < 0.1f) {
+                            f32 t = proj.length();
+                            if (t >= 0.0f && t < closestT) {
+                                closestT = t;
+                                closestEntity = entity;
+                            }
+                        }
+                        return;
+                    }
                 }
             }
         }
