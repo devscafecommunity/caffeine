@@ -18,6 +18,20 @@ option(CAFFEINE_BUILD_HEADLESS "Build caffeine-core without SDL3/RHI" OFF)
 # ── Scripting (Lua + sol2) ──────────────────────────────────────
 option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" ON)
 
+# ── glTF Support (tinygltf for mesh encoding) ──────────────────────
+include(FetchContent)
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.8.10
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(tinygltf)
+if(NOT tinygltf_POPULATED)
+    FetchContent_Populate(tinygltf)
+endif()
+set(TINYGLTF_INCLUDE_DIR "${tinygltf_SOURCE_DIR}")
+
 # ── SDL3 (optional — only needed when NOT headless) ──────────────
 if(NOT CAFFEINE_BUILD_HEADLESS)
     find_package(SDL3 CONFIG QUIET)
@@ -45,6 +59,7 @@ add_library(caffeine-core
     src/assets/AssetManager.cpp
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
+    src/assets/MeshLoader.cpp
     src/assets/HotReloader.cpp
     src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
@@ -58,6 +73,7 @@ add_library(caffeine-core
 target_include_directories(caffeine-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
+    $<BUILD_INTERFACE:${TINYGLTF_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
 
