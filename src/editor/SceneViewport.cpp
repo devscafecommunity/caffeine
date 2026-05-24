@@ -21,6 +21,8 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stb/stb_image.h>
 #ifdef CF_HAS_SDL3
 #include <imgui_impl_sdlgpu3.h>
@@ -217,6 +219,14 @@ void SceneViewport::shutdown() {
 // ── Main render entry point ───────────────────────────────────────
 
 void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
+    // Make stdin non-blocking on first call in test mode
+    static bool stdinConfigured = false;
+    if (TestInstrumentation::isTestMode() && !stdinConfigured) {
+        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+        stdinConfigured = true;
+    }
+    
     if (TestInstrumentation::isTestMode()) {
         static std::string buffer;
         int ch;

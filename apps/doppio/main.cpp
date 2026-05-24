@@ -5,10 +5,79 @@
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/SceneEditor.hpp"
 #include "editor/ProjectStartupDialog.hpp"
+#include "editor/TestRequestHandler.hpp"
+#include "editor/EditorContext.hpp"
+#include "ecs/World.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
+#include <thread>
+#include <chrono>
+#include <iostream>
 
-int main(int, char**) {
+int main(int argc, char** argv) {
+    std::string scenePath;
+    bool testMode = false;
+    
+    for (int i = 1; i < argc - 1; ++i) {
+        if (std::string(argv[i]) == "--scene") {
+            scenePath = argv[i + 1];
+            break;
+        }
+    }
+    
+    const char* testModeEnv = std::getenv("DOPPIO_TEST_MODE");
+    if (testModeEnv) {
+        testMode = (std::string(testModeEnv) == "1");
+    }
+    
+    if (testMode) {
+        std::fprintf(stderr, "[TEST MODE] Running headless Doppio\n");
+        std::fprintf(stderr, "[TEST MODE] Scene: %s\n", scenePath.empty() ? "(none)" : scenePath.c_str());
+        
+        Caffeine::ECS::World world;
+        Caffeine::Editor::EditorContext ctx;
+        
+        // Create test entities for scene if specified
+        if (!scenePath.empty() && std::filesystem::exists(scenePath)) {
+            std::fprintf(stderr, "[TEST MODE] Would load scene: %s\n", scenePath.c_str());
+        }
+        
+        fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
+        
+        std::string buffer;
+        while (true) {
+            int ch;
+            bool hasInput = false;
+            
+            while ((ch = fgetc(stdin)) != EOF && ch != '\n') {
+                buffer += static_cast<char>(ch);
+                hasInput = true;
+            }
+            
+            if (ch == '\n' && !buffer.empty()) {
+                Caffeine::Editor::TestRequestHandler::Request req;
+                if (Caffeine::Editor::TestRequestHandler::tryParseRequest(buffer, req)) {
+                    auto resp = Caffeine::Editor::TestRequestHandler::handleRequest(
+                        req, world, ctx,
+                        0, 0, 1280, 720
+                    );
+                    std::cout << "REQUEST_RESPONSE: " << resp.toJson() << std::endl;
+                    std::cout.flush();
+                }
+                buffer.clear();
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        return 0;
+    }
+
     SDL_SetAppMetadata("Doppio", "0.0.1-beta", "com.devscafe.doppio");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -52,59 +121,64 @@ int main(int, char**) {
         return 1;
     }
 
-    // Show project startup dialog
-    Caffeine::Editor::ProjectStartupDialog projectDialog;
-    projectDialog.init();
-
     Caffeine::Editor::ProjectConfig selectedProject;
-    bool projectSelected = false;
+    selectedProject.Name = "TestProject";
+    selectedProject.RootPath = std::filesystem::path(scenePath).parent_path();
+    selectedProject.AssetRawPath = selectedProject.RootPath / "assets";
+    
+    if (scenePath.empty() || !std::filesystem::exists(scenePath)) {
+        Caffeine::Editor::ProjectStartupDialog projectDialog;
+        projectDialog.init();
 
-    while (projectDialog.isOpen() && !projectSelected) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            imgui.processEvent(event);
-            if (event.type == SDL_EVENT_QUIT) {
-                imgui.shutdown();
-                device.shutdown();
-                SDL_DestroyWindow(window);
-                SDL_Quit();
-                return 0;
+        bool projectSelected = false;
+
+        while (projectDialog.isOpen() && !projectSelected) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                imgui.processEvent(event);
+                if (event.type == SDL_EVENT_QUIT) {
+                    imgui.shutdown();
+                    device.shutdown();
+                    SDL_DestroyWindow(window);
+                    SDL_Quit();
+                    return 0;
+                }
             }
+
+            Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
+            if (!cmd) {
+                continue;
+            }
+
+            imgui.beginFrame();
+            
+            if (auto config = projectDialog.render()) {
+                selectedProject = config.value();
+                projectSelected = true;
+            }
+            imgui.prepareRender(cmd);
+
+            Caffeine::RHI::RenderPassDesc passDesc;
+            passDesc.clearColor[0] = 0.10f;
+            passDesc.clearColor[1] = 0.10f;
+            passDesc.clearColor[2] = 0.12f;
+            passDesc.clearColor[3] = 1.00f;
+
+            cmd->beginRenderPass(passDesc);
+            imgui.endFrame(cmd);
+            cmd->endRenderPass();
+
+            device.endFrame(cmd);
+            fflush(stderr);
         }
 
-        Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
-        if (!cmd) {
-            continue;
+        if (!projectSelected) {
+            imgui.shutdown();
+            device.shutdown();
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 0;
         }
-
-        imgui.beginFrame();
-        
-        if (auto config = projectDialog.render()) {
-            selectedProject = config.value();
-            projectSelected = true;
-        }
-        imgui.prepareRender(cmd);
-
-        Caffeine::RHI::RenderPassDesc passDesc;
-        passDesc.clearColor[0] = 0.10f;
-        passDesc.clearColor[1] = 0.10f;
-        passDesc.clearColor[2] = 0.12f;
-        passDesc.clearColor[3] = 1.00f;
-
-        cmd->beginRenderPass(passDesc);
-        imgui.endFrame(cmd);
-        cmd->endRenderPass();
-
-        device.endFrame(cmd);
-        fflush(stderr);
-    }
-
-    if (!projectSelected) {
-        imgui.shutdown();
-        device.shutdown();
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 0;
     }
 
     // Create asset manager with project's asset path
@@ -119,6 +193,8 @@ int main(int, char**) {
         SDL_Quit();
         return 1;
     }
+
+
 
     // Register editor debug hooks into core
     // (T0.4 — IDebugHooks will be wired here in a follow-up)
