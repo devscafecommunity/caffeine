@@ -619,6 +619,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
 ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize,
                                        const EditorContext& ctx) {
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        Mat4 vp = computeVP3D(viewportSize, ctx);
+        return projectToScreenVP(p, origin, viewportSize, vp);
+    }
     f32 cx = origin.x + viewportSize.x * 0.5f;
     f32 cy = origin.y + viewportSize.y * 0.5f;
 
@@ -627,37 +631,6 @@ ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize
             f32 s = ctx.viewportZoom * 50.0f;
             return ImVec2(cx + (p.x + ctx.viewportPanX / s) * s,
                           cy + (-p.y + ctx.viewportPanY / s) * s);
-        }
-        case EditorContext::ViewMode::Mode3D: {
-            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-
-            Vec3 camPos;
-            camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
-            camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
-            camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
-
-            Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
-
-            f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
-            f32 fov = 1.0472f; // 60 degrees
-            f32 zNear = 0.1f;
-            f32 zFar = 10000.0f;
-            Mat4 proj = Mat4::perspective(fov, aspect, zNear, zFar);
-
-            Mat4 vp = proj * view;
-            Vec4 clip = vp.transformVec4(Vec4(p.x, p.y, p.z, 1.0f));
-
-            if (clip.w <= 0.001f) {
-                return ImVec2(-10000.0f, -10000.0f);
-            }
-
-            f32 ndcX = clip.x / clip.w;
-            f32 ndcY = clip.y / clip.w;
-
-            f32 screenX = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
-            f32 screenY = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
-            return ImVec2(screenX, screenY);
         }
         case EditorContext::ViewMode::Isometric: {
             f32 s = ctx.viewportZoom * 50.0f;
@@ -668,8 +641,36 @@ ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize
             return ImVec2(cx + iso_x + ctx.viewportPanX,
                           cy - iso_y + ctx.viewportPanY);
         }
+        default: break;
     }
     return ImVec2(cx, cy);
+}
+
+Mat4 SceneViewport::computeVP3D(ImVec2 viewportSize, const EditorContext& ctx) {
+    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+    Vec3 camPos;
+    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
+    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
+    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+    Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+    f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+    Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+    return proj * view;
+}
+
+ImVec2 SceneViewport::projectToScreenVP(Vec3 p, ImVec2 origin, ImVec2 viewportSize,
+                                         const Mat4& vp) {
+    Vec4 clip = vp.transformVec4(Vec4(p.x, p.y, p.z, 1.0f));
+    if (clip.w <= 0.1f) return ImVec2(-10000.0f, -10000.0f);
+    f32 ndcX = clip.x / clip.w;
+    f32 ndcY = clip.y / clip.w;
+    if (ndcX < -1.0f || ndcX > 1.0f || ndcY < -1.0f || ndcY > 1.0f)
+        return ImVec2(-10000.0f, -10000.0f);
+    return ImVec2(
+        origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x,
+        origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y
+    );
 }
 
 // ── Gizmo drawing ─────────────────────────────────────────────────
@@ -906,7 +907,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     };
 
     auto drawMarker = [&](ECS::Entity entity, const Vec3& worldPosition) {
-        ImVec2 sp = projectToScreen(worldPosition, origin, viewportSize, ctx);
+        ImVec2 sp = projectCached(worldPosition);
 
         const bool selected = (ctx.selectedEntity == entity);
         const ImU32 col     = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(180, 180, 200, 200);
@@ -931,6 +932,14 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         dl->AddLine(projectToScreen(a, origin, viewportSize, ctx),
                     projectToScreen(b, origin, viewportSize, ctx),
                     col, thickness);
+    };
+
+    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        ? computeVP3D(viewportSize, ctx) : Mat4::identity();
+    auto projectCached = [&](const Vec3& p) -> ImVec2 {
+        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+            ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
+            : projectToScreen(p, origin, viewportSize, ctx);
     };
 
     auto drawRing = [&](const Mat4& worldMatrix, const Vec3& axisA, const Vec3& axisB,
@@ -1049,10 +1058,10 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         const f32 checker = (fi % 2 == 0) ? 0.86f : 0.74f;
                         const ImU32 fill = toColor(Vec3(lit.x * checker, lit.y * checker, lit.z * checker), 0.92f);
 
-                        ImVec2 p0 = projectToScreen(wp[faces[fi][0]], origin, viewportSize, ctx);
-                        ImVec2 p1 = projectToScreen(wp[faces[fi][1]], origin, viewportSize, ctx);
-                        ImVec2 p2 = projectToScreen(wp[faces[fi][2]], origin, viewportSize, ctx);
-                        ImVec2 p3 = projectToScreen(wp[faces[fi][3]], origin, viewportSize, ctx);
+                        ImVec2 p0 = projectCached(wp[faces[fi][0]]);
+                        ImVec2 p1 = projectCached(wp[faces[fi][1]]);
+                        ImVec2 p2 = projectCached(wp[faces[fi][2]]);
+                        ImVec2 p3 = projectCached(wp[faces[fi][3]]);
                         dl->AddQuadFilled(p0, p1, p2, p3, fill);
                     }
                 }
@@ -1353,6 +1362,14 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
+    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        ? computeVP3D(viewportSize, ctx) : Mat4::identity();
+    auto proj3D = [&](const Vec3& p) -> ImVec2 {
+        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+            ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
+            : projectToScreen(p, origin, viewportSize, ctx);
+    };
+
     {
         ECS::ComponentQuery q;
         q.with<ECS::LightComponent>();
@@ -1373,8 +1390,8 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                 const bool selected = (ctx.selectedEntity == entity);
                 const Vec3 dir = entityForward(world, entity);
                 const Vec3 tip = anchor + dir * 2.5f;
-                const ImVec2 screenPos = projectToScreen(anchor, origin, viewportSize, ctx);
-                const ImVec2 tipPos = projectToScreen(tip, origin, viewportSize, ctx);
+                const ImVec2 screenPos = proj3D(anchor);
+                const ImVec2 tipPos = proj3D(tip);
                 const ImU32 color = lightColor(lc, selected);
 
                 const f32 sunRadius = 8.0f;
@@ -1412,12 +1429,12 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                 Vec3 position;
                 if (!tryGetEntityPosition(world, entity, position)) return;
 
-                ImVec2 screenPos = projectToScreen(position, origin, viewportSize, ctx);
+                ImVec2 screenPos = proj3D(position);
                 const bool selected = (ctx.selectedEntity == entity);
                 ImU32 color = lightColor(lc, selected);
 
                 Vec3 radiusTestPoint = position + entityAxis(world, entity, 0, Vec3::right()) * ptLight.radius;
-                ImVec2 radiusScreenPoint = projectToScreen(radiusTestPoint, origin, viewportSize, ctx);
+                ImVec2 radiusScreenPoint = proj3D(radiusTestPoint);
                 f32 radiusScreenDist = std::sqrt(
                     (radiusScreenPoint.x - screenPos.x) * (radiusScreenPoint.x - screenPos.x) +
                     (radiusScreenPoint.y - screenPos.y) * (radiusScreenPoint.y - screenPos.y)
@@ -1448,7 +1465,7 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                 Vec3 up = dir.cross(right).normalized();
                 right = up.cross(dir).normalized();
 
-                ImVec2 screenPos = projectToScreen(position, origin, viewportSize, ctx);
+                ImVec2 screenPos = proj3D(position);
                 ImU32 color = lightColor(lc, selected);
 
                 Vec3 coneEnd = position + dir * spotLight.radius;
@@ -1458,14 +1475,14 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                 Vec3 baseUp    = coneEnd + up * coneRadius;
                 Vec3 baseDown  = coneEnd - up * coneRadius;
 
-                dl->AddLine(screenPos, projectToScreen(baseRight, origin, viewportSize, ctx), color, selected ? 2.5f : 1.5f);
-                dl->AddLine(screenPos, projectToScreen(baseLeft, origin, viewportSize, ctx), color, selected ? 2.5f : 1.5f);
-                dl->AddLine(screenPos, projectToScreen(baseUp, origin, viewportSize, ctx), color, selected ? 2.0f : 1.25f);
-                dl->AddLine(screenPos, projectToScreen(baseDown, origin, viewportSize, ctx), color, selected ? 2.0f : 1.25f);
-                dl->AddLine(projectToScreen(baseRight, origin, viewportSize, ctx), projectToScreen(baseUp, origin, viewportSize, ctx), color, 1.25f);
-                dl->AddLine(projectToScreen(baseUp, origin, viewportSize, ctx), projectToScreen(baseLeft, origin, viewportSize, ctx), color, 1.25f);
-                dl->AddLine(projectToScreen(baseLeft, origin, viewportSize, ctx), projectToScreen(baseDown, origin, viewportSize, ctx), color, 1.25f);
-                dl->AddLine(projectToScreen(baseDown, origin, viewportSize, ctx), projectToScreen(baseRight, origin, viewportSize, ctx), color, 1.25f);
+                dl->AddLine(screenPos, proj3D(baseRight), color, selected ? 2.5f : 1.5f);
+                dl->AddLine(screenPos, proj3D(baseLeft),  color, selected ? 2.5f : 1.5f);
+                dl->AddLine(screenPos, proj3D(baseUp),    color, selected ? 2.0f : 1.25f);
+                dl->AddLine(screenPos, proj3D(baseDown),  color, selected ? 2.0f : 1.25f);
+                dl->AddLine(proj3D(baseRight), proj3D(baseUp),    color, 1.25f);
+                dl->AddLine(proj3D(baseUp),    proj3D(baseLeft),  color, 1.25f);
+                dl->AddLine(proj3D(baseLeft),  proj3D(baseDown),  color, 1.25f);
+                dl->AddLine(proj3D(baseDown),  proj3D(baseRight), color, 1.25f);
                 dl->AddCircleFilled(screenPos, 5.0f, color, 12);
                 dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Sp");
             });
@@ -1738,28 +1755,16 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     ImU32 axisColorX = IM_COL32(220, 60, 60, 200);
     ImU32 axisColorZ = IM_COL32(60, 60, 220, 200);
 
-    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+    Mat4 vp = computeVP3D(viewportSize, ctx);
 
-    Vec3 camPos;
-    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
-    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
-    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
-
-    Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
-    f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
-    f32 fov = 1.0472f;
-    f32 zNear = 0.1f;
-    f32 zFar = 10000.0f;
-    Mat4 proj = Mat4::perspective(fov, aspect, zNear, zFar);
-    Mat4 vp = proj * view;
-
-    auto project = [&](Vec3 worldPt, ImVec2& screenOut) -> bool {
+    // Projects a world point to screen. Returns false only if behind the near plane (w <= 0.1).
+    // Off-screen (NDC > 1) coords are intentionally allowed — ImGui clips them automatically,
+    // which is required for lines whose far endpoint is outside the viewport but still in front.
+    auto projectLine = [&](Vec3 worldPt, ImVec2& screenOut) -> bool {
         Vec4 clip = vp.transformVec4(Vec4(worldPt.x, worldPt.y, worldPt.z, 1.0f));
-        if (clip.w <= 0.01f) return false;
+        if (clip.w <= 0.1f) return false;
         f32 ndcX = clip.x / clip.w;
         f32 ndcY = clip.y / clip.w;
-        if (ndcX < -1.5f || ndcX > 1.5f || ndcY < -1.5f || ndcY > 1.5f) return false;
         screenOut.x = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
         screenOut.y = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
         return true;
@@ -1767,27 +1772,31 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
 
     auto drawLine3D = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
         ImVec2 sa, sb;
-        bool va = project(a, sa);
-        bool vb = project(b, sb);
+        bool va = projectLine(a, sa);
+        bool vb = projectLine(b, sb);
         if (!va && !vb) return;
         if (va && vb) {
             dl->AddLine(sa, sb, color, thickness);
             return;
         }
+        // One endpoint is behind the near plane — clip the segment in clip space.
         Vec4 clipA = vp.transformVec4(Vec4(a.x, a.y, a.z, 1.0f));
         Vec4 clipB = vp.transformVec4(Vec4(b.x, b.y, b.z, 1.0f));
-        f32 wMin = 0.01f;
-        if (clipA.w < wMin && clipB.w < wMin) return;
+        const f32 wMin = 0.1f;
         if (clipA.w < wMin) {
             f32 t = (wMin - clipA.w) / (clipB.w - clipA.w);
-            a = Vec3(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y), a.z + t * (b.z - a.z));
-        } else if (clipB.w < wMin) {
+            Vec4 clipped(clipA.x + t*(clipB.x-clipA.x), clipA.y + t*(clipB.y-clipA.y),
+                         clipA.z + t*(clipB.z-clipA.z), wMin);
+            sa.x = origin.x + (clipped.x/wMin + 1.0f) * 0.5f * viewportSize.x;
+            sa.y = origin.y + (1.0f - clipped.y/wMin) * 0.5f * viewportSize.y;
+        } else {
             f32 t = (wMin - clipB.w) / (clipA.w - clipB.w);
-            b = Vec3(b.x + t * (a.x - b.x), b.y + t * (a.y - b.y), b.z + t * (a.z - b.z));
+            Vec4 clipped(clipB.x + t*(clipA.x-clipB.x), clipB.y + t*(clipA.y-clipB.y),
+                         clipB.z + t*(clipA.z-clipB.z), wMin);
+            sb.x = origin.x + (clipped.x/wMin + 1.0f) * 0.5f * viewportSize.x;
+            sb.y = origin.y + (1.0f - clipped.y/wMin) * 0.5f * viewportSize.y;
         }
-        if (project(a, sa) && project(b, sb)) {
-            dl->AddLine(sa, sb, color, thickness);
-        }
+        dl->AddLine(sa, sb, color, thickness);
     };
 
     float visibleRange = ctx.camDistance;
@@ -1804,33 +1813,34 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
 
     float camX = ctx.camFocus.x;
     float camZ = ctx.camFocus.z;
-    int startX = (int)(std::floor((camX - renderDist) / spacing)) * (int)spacing;
-    int endX   = (int)(std::ceil((camX + renderDist) / spacing)) * (int)spacing;
-    int startZ = (int)(std::floor((camZ - renderDist) / spacing)) * (int)spacing;
-    int endZ   = (int)(std::ceil((camZ + renderDist) / spacing)) * (int)spacing;
+    // Use float to preserve sub-unit precision when spacing < 1 (e.g. 0.5f).
+    float startX = std::floor((camX - renderDist) / spacing) * spacing;
+    float endX   = std::ceil ((camX + renderDist) / spacing) * spacing;
+    float startZ = std::floor((camZ - renderDist) / spacing) * spacing;
+    float endZ   = std::ceil ((camZ + renderDist) / spacing) * spacing;
 
     float lineDist = renderDist;
 
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
-        for (int x = startX; x <= endX; x += (int)spacing) {
-            if (x == 0) continue;
-            drawLine3D({(f32)x, (f32)(camZ - lineDist), 0.f}, {(f32)x, (f32)(camZ + lineDist), 0.f}, gridColor, 0.5f);
+        for (float x = startX; x <= endX; x += spacing) {
+            if (x == 0.f) continue;
+            drawLine3D({x, camZ - lineDist, 0.f}, {x, camZ + lineDist, 0.f}, gridColor, 0.5f);
         }
-        for (int z = startZ; z <= endZ; z += (int)spacing) {
-            if (z == 0) continue;
-            drawLine3D({(f32)(camX - lineDist), (f32)z, 0.f}, {(f32)(camX + lineDist), (f32)z, 0.f}, gridColor, 0.5f);
+        for (float z = startZ; z <= endZ; z += spacing) {
+            if (z == 0.f) continue;
+            drawLine3D({camX - lineDist, z, 0.f}, {camX + lineDist, z, 0.f}, gridColor, 0.5f);
         }
         float axisLen = visibleRange * 100.0f;
         drawLine3D({0.f, -axisLen, 0.f}, {0.f, axisLen, 0.f}, axisColorX, 2.5f);
         drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorZ, 2.5f);
     } else {
-        for (int x = startX; x <= endX; x += (int)spacing) {
-            if (x == 0) continue;
-            drawLine3D({(f32)x, 0.f, (f32)(camZ - lineDist)}, {(f32)x, 0.f, (f32)(camZ + lineDist)}, gridColor, 0.5f);
+        for (float x = startX; x <= endX; x += spacing) {
+            if (x == 0.f) continue;
+            drawLine3D({x, 0.f, camZ - lineDist}, {x, 0.f, camZ + lineDist}, gridColor, 0.5f);
         }
-        for (int z = startZ; z <= endZ; z += (int)spacing) {
-            if (z == 0) continue;
-            drawLine3D({(f32)(camX - lineDist), 0.f, (f32)z}, {(f32)(camX + lineDist), 0.f, (f32)z}, gridColor, 0.5f);
+        for (float z = startZ; z <= endZ; z += spacing) {
+            if (z == 0.f) continue;
+            drawLine3D({camX - lineDist, 0.f, z}, {camX + lineDist, 0.f, z}, gridColor, 0.5f);
         }
         float axisLen = visibleRange * 100.0f;
         drawLine3D({0.f, 0.f, -axisLen}, {0.f, 0.f, axisLen}, axisColorZ, 2.5f);

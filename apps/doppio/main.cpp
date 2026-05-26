@@ -8,6 +8,9 @@
 #include "editor/TestRequestHandler.hpp"
 #include "editor/EditorContext.hpp"
 #include "ecs/World.hpp"
+#include "ecs/MeshComponents.hpp"
+#include "scene/SceneComponents.hpp"
+#include "math/Mat4.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -42,10 +45,26 @@ int main(int argc, char** argv) {
         Caffeine::ECS::World world;
         Caffeine::Editor::EditorContext ctx;
         
-        // Create test entities for scene if specified
-        if (!scenePath.empty() && std::filesystem::exists(scenePath)) {
-            std::fprintf(stderr, "[TEST MODE] Would load scene: %s\n", scenePath.c_str());
+        // Coordinate mapping: screenX = (worldX + 10) * 20, screenY = (worldY + 10) * 20
+        // So entity at (0,0) → screen (200,200), (5,0) → (300,200), (10,5) → (400,300)
+        struct TestEntityDef { float x, y, z; const char* name; };
+        static const TestEntityDef kTestEntities[] = {
+            {  0.0f,  0.0f, 0.0f, "Entity_1" },
+            {  5.0f,  0.0f, 0.0f, "Entity_2" },
+            { 10.0f,  5.0f, 0.0f, "Entity_3" },
+        };
+        for (auto& def : kTestEntities) {
+            Caffeine::ECS::Entity e = world.create(def.name);
+            Caffeine::ECS::MeshFilterComponent mf;
+            mf.primitive = Caffeine::ECS::MeshPrimitive::Cube;
+            world.add<Caffeine::ECS::MeshFilterComponent>(e, mf);
+            Caffeine::Scene::WorldTransform wt;
+            wt.matrix = Caffeine::Mat4::translation(Caffeine::Vec3(def.x, def.y, def.z));
+            world.add<Caffeine::Scene::WorldTransform>(e, wt);
+            std::fprintf(stderr, "[TEST MODE] Created entity '%s' at (%.1f, %.1f, %.1f)\n",
+                         def.name, def.x, def.y, def.z);
         }
+        std::fprintf(stderr, "[TEST MODE] Ready — waiting for JSON commands on stdin\n");
         
         fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
         

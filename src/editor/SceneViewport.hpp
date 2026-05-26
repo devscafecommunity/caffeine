@@ -80,8 +80,12 @@ public:
     void close() { m_open = false; }
     void open()  { m_open = true; }
 
-    static ImVec2 projectToScreen(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
-                                   const EditorContext& ctx);
+     static ImVec2 projectToScreen(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
+                                    const EditorContext& ctx);
+
+     static Mat4   computeVP3D(ImVec2 viewportSize, const EditorContext& ctx);
+     static ImVec2 projectToScreenVP(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
+                                     const Mat4& vp);
 
 private:
 #ifdef CF_HAS_IMGUI

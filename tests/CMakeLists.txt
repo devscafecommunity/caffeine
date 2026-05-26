@@ -162,3 +162,19 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
     add_test(NAME DoppioTest COMMAND DoppioTest)
 endif()
 
+find_program(PYTHON3_EXECUTABLE NAMES python3 python)
+if(PYTHON3_EXECUTABLE AND TARGET doppio)
+    add_test(
+        NAME DoppioUIAutomated
+        COMMAND ${PYTHON3_EXECUTABLE} -m pytest
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_ui_automated.py
+            -v --tb=short
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set_tests_properties(DoppioUIAutomated PROPERTIES
+        ENVIRONMENT "DOPPIO_BIN=$<TARGET_FILE:doppio>"
+        TIMEOUT 60
+        LABELS "ui;automated"
+    )
+endif()
+
