@@ -429,3 +429,74 @@ TEST_CASE("Quat - FromEuler ToEuler Roundtrip", "[math][quat]") {
     REQUIRE(euler.y == Approx(yaw).margin(0.001f));
     REQUIRE(euler.z == Approx(roll).margin(0.001f));
 }
+
+// ─── CRITICAL REGRESSION TESTS FOR transformVector ───
+// These tests catch the bug where transformVector() doesn't work for rotations
+
+TEST_CASE("Mat4::transformVector - Scale", "[math][mat4][CRITICAL]") {
+    Mat4 scale = Mat4::scale(2.0f, 3.0f, 4.0f);
+    Vec3 vector(1, 1, 1);
+    Vec3 result = scale.transformVector(vector);
+    
+    REQUIRE(result.x == Approx(2.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(3.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(4.0f).margin(0.001f));
+}
+
+TEST_CASE("Mat4::transformVector - Rotation Z 90 degrees", "[math][mat4][CRITICAL]") {
+    Mat4 rotZ = Mat4::rotationZ(PI / 2.0f);  // 90 degrees
+    Vec3 xAxis(1, 0, 0);
+    Vec3 result = rotZ.transformVector(xAxis);
+    
+    // (1,0,0) rotated 90° around Z should give (0,1,0)
+    REQUIRE(result.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(1.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(0.0f).margin(0.001f));
+}
+
+TEST_CASE("Mat4::transformVector - Rotation Y 90 degrees", "[math][mat4][CRITICAL]") {
+    Mat4 rotY = Mat4::rotationY(PI / 2.0f);  // 90 degrees
+    Vec3 xAxis(1, 0, 0);
+    Vec3 result = rotY.transformVector(xAxis);
+    
+    // (1,0,0) rotated 90° around Y should give (0,0,-1)
+    REQUIRE(result.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(-1.0f).margin(0.001f));
+}
+
+TEST_CASE("Mat4::transformVector - Rotation X 90 degrees", "[math][mat4][CRITICAL]") {
+    Mat4 rotX = Mat4::rotationX(PI / 2.0f);  // 90 degrees
+    Vec3 yAxis(0, 1, 0);
+    Vec3 result = rotX.transformVector(yAxis);
+    
+    // (0,1,0) rotated 90° around X should give (0,0,1)
+    REQUIRE(result.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(1.0f).margin(0.001f));
+}
+
+TEST_CASE("Mat4::transformVector - Combined Rotation and Scale", "[math][mat4][CRITICAL]") {
+    Mat4 rot = Mat4::rotationZ(PI / 2.0f);
+    Mat4 scale = Mat4::scale(2.0f, 2.0f, 1.0f);
+    Mat4 combined = scale * rot;
+    
+    Vec3 xAxis(1, 0, 0);
+    Vec3 result = combined.transformVector(xAxis);
+    
+    // (1,0,0) rotated 90° around Z = (0,1,0), scaled by (2,2,1) = (0,2,0)
+    REQUIRE(result.x == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(2.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(0.0f).margin(0.001f));
+}
+
+TEST_CASE("Mat4::transformVector - Ignores Translation", "[math][mat4][CRITICAL]") {
+    Mat4 trans = Mat4::translation(10, 20, 30);
+    Vec3 vector(1, 0, 0);
+    Vec3 result = trans.transformVector(vector);
+    
+    // Translation should NOT affect vectors (w=0 in homogeneous coords)
+    REQUIRE(result.x == Approx(1.0f).margin(0.001f));
+    REQUIRE(result.y == Approx(0.0f).margin(0.001f));
+    REQUIRE(result.z == Approx(0.0f).margin(0.001f));
+}

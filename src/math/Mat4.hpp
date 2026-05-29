@@ -73,15 +73,11 @@ public:
     }
 
     Vec3 transformVector(const Vec3& v) const {
-        Vec4 v4(v.x, v.y, v.z, 0.0f);
-        Vec4 result(0, 0, 0, 0);
-        for (usize row = 0; row < 4; ++row) {
-            result.x += (*this)(row, 0) * v4.x;
-            result.y += (*this)(row, 1) * v4.y;
-            result.z += (*this)(row, 2) * v4.z;
-            result.w += (*this)(row, 3) * v4.w;
-        }
-        return Vec3(result.x, result.y, result.z);
+        Vec3 result;
+        result.x = (*this)(0, 0) * v.x + (*this)(0, 1) * v.y + (*this)(0, 2) * v.z + (*this)(0, 3) * 0.0f;
+        result.y = (*this)(1, 0) * v.x + (*this)(1, 1) * v.y + (*this)(1, 2) * v.z + (*this)(1, 3) * 0.0f;
+        result.z = (*this)(2, 0) * v.x + (*this)(2, 1) * v.y + (*this)(2, 2) * v.z + (*this)(2, 3) * 0.0f;
+        return result;
     }
 
     Mat4 transposed() const {
