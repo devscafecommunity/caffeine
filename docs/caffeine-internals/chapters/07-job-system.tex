@@ -1,0 +1,89 @@
+% ============================================================================
+\chapter{Job System and Concurrency}
+% ============================================================================
+
+\section{Architecture Overview}
+
+The job system is a \textbf{work-stealing thread pool} with three
+priority levels: \texttt{Critical}, \texttt{Normal}, and \texttt{Background}.
+Each worker thread has a local double-ended queue (deque) per priority level,
+plus a set of global overflow queues.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.85, every node/.style={font=\small}]
+  \foreach \i in {0,1,2} {
+    \draw[thick] (3.5*\i, 0) rectangle (3.5*\i+2.5, 1.2);
+    \node at (3.5*\i+1.25, 0.6) {Worker \i};
+    \draw[thick, darkblue] (3.5*\i, -0.3) rectangle (3.5*\i+2.5, -1.5);
+    \node[darkblue] at (3.5*\i+1.25, -0.9) {Local deque};
+  }
+  \draw[thick, accentblue] (0, -2.2) rectangle (9.5, -3.2);
+  \node[accentblue] at (4.75, -2.7) {Global queues (Critical / Normal / Background)};
+  \foreach \i in {0,1,2} {
+    \draw[->] (3.5*\i+1.25,-1.5) -- (3.5*\i+1.25,-2.2);
+    \draw[->, dashed] (3.5*\i+2.5,-0.9) to[bend right=15] (3.5*\i+3.5+1.25,-0.9);
+  }
+\end{tikzpicture}
+\caption{Job system topology: each worker has private local queues; dashed arrows indicate work-stealing.}
+\end{figure}
+
+\section{Work-Stealing Protocol}
+
+On each worker tick, the following priority order is applied:
+
+\begin{enumerate}
+  \item Pop from own local queue (Critical first, then Normal, then Background).
+  \item Pop from the global queue at each priority level.
+  \item \textbf{Steal} from another worker's local queue (round-robin,
+        from the \emph{back} of the victim's deque to minimise contention).
+\end{enumerate}
+
+Stealing from the back of the victim and consuming from the front of
+self's deque is the classic Chase-Lev deque design. This minimises
+contention: the owner operates on the front; stealers operate on the
+back.
+
+\section{Job Handles and the ABA Problem}
+
+Each job is assigned a slot index and a version number.
+The handle stores both. A handle is considered complete when
+\texttt{m\_slots[index].flag == 1 AND m\_slots[index].version == handle.version}.
+Reusing the slot for a different job increments its version, preventing
+a stale handle from falsely reporting completion.
+
+
+\paragraph{Invariant 7.1 --- Handle version check}
+
+  Job handles must compare both slot index \emph{and} version number
+  before reporting completion. Checking only the index is susceptible
+  to ABA-style races where a recycled slot appears done prematurely.
+
+
+
+\section{Barriers}
+
+\texttt{JobBarrier} is a synchronisation point: a job may call
+\texttt{barrier.release()} upon completion; a caller blocks on
+\texttt{barrier.wait()} until the count reaches zero.
+The barrier uses a \texttt{std::condition\_variable} to avoid busy-waiting.
+
+\section{Parallel For}
+
+\texttt{scheduleParallelFor(count, func)} divides $[0, \text{count})$
+into $\min(\text{workerCount}, \text{count})$ chunks. Each chunk
+$[b_i, e_i)$ is scheduled as an independent job. A shared atomic counter
+tracks how many chunks have completed; the last chunk to decrement it
+to zero signals the parent handle:
+
+\begin{equation}
+\text{chunkSize}_i = \left\lfloor \frac{N}{k} \right\rfloor + [i < N \bmod k]
+\end{equation}
+
+where $N$ is the total count and $k$ is the number of chunks.
+
+\section{Worker Count}
+
+If the caller passes 0, the system uses
+$\texttt{hardware\_concurrency()} - 1$ workers, leaving one logical
+core for the main thread.

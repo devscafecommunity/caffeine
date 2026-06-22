@@ -2,6 +2,7 @@
 
 #include "ecs/Entity.hpp"
 #include "math/Mat4.hpp"
+#include "core/Types.hpp"
 
 namespace Caffeine::Scene {
 
@@ -14,6 +15,10 @@ struct Parent {
 
 struct WorldTransform {
     Mat4 matrix = Mat4::identity();
+};
+
+struct EntityLayer {
+    u8 layer = 0;
 };
 
 }

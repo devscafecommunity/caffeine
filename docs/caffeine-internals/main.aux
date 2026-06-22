@@ -1,0 +1,496 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {chapter}{Abstract}{i}{chapter*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {1}Introduction}{1}{chapter.1}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {1.1}Philosophy}{1}{section.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1.2}Document Structure}{1}{section.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1.3}Notation Conventions}{2}{section.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {2}Type System and Platform Abstractions}{3}{chapter.2}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {2.1}Primitive Types (\texttt  {Types.hpp})}{3}{section.2.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2.1}{\ignorespaces Caffeine primitive type aliases}}{3}{table.caption.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.2}Compiler Abstraction (\texttt  {Compiler.hpp})}{4}{section.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.3}Assertions}{4}{section.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 2.1 --- Assert semantics}{4}{paragraph*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.4}Timing (\texttt  {Timer.hpp})}{4}{section.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {3}Mathematics Library}{5}{chapter.3}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {3.1}Overview}{5}{section.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.2}Two-Dimensional Vectors (\texttt  {Vec2})}{5}{section.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.3}Three-Dimensional Vectors (\texttt  {Vec3})}{6}{section.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.4}Four-Dimensional Vectors (\texttt  {Vec4})}{6}{section.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.5}4$\times $4 Matrices (\texttt  {Mat4})}{6}{section.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5.1}Storage Layout}{6}{subsection.3.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5.2}Fundamental Transforms}{6}{subsection.3.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Translation}{6}{subsubsection*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Scale}{7}{subsubsection*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Rotation about Z, Y, X}{7}{subsubsection*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Orthographic Projection}{7}{subsubsection*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Perspective Projection}{7}{subsubsection*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Look-At View Matrix}{8}{subsubsection*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5.3}Matrix Inversion}{8}{subsection.3.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.6}Quaternions (\texttt  {Quat})}{8}{section.3.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.1}Mathematical Foundation}{8}{subsection.3.6.1}\protected@file@percent }
+\newlabel{eq:quat-axis-angle}{{3.10}{8}{Mathematical Foundation}{equation.3.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.2}Quaternion Product (Hamilton Product)}{9}{subsection.3.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.3}Vector Rotation}{9}{subsection.3.6.3}\protected@file@percent }
+\newlabel{eq:quat-rotate}{{3.16}{9}{Vector Rotation}{equation.3.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.4}Quaternion to Rotation Matrix}{9}{subsection.3.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.5}Rotation Matrix to Quaternion (Shoemake 1987)}{10}{subsection.3.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.6}Euler Angles (ZYX Tait-Bryan Convention)}{10}{subsection.3.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.7}Spherical Linear Interpolation (SLERP)}{11}{subsection.3.6.7}\protected@file@percent }
+\newlabel{eq:slerp}{{3.24}{11}{Spherical Linear Interpolation (SLERP)}{equation.3.24}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6.8}Normalised Linear Interpolation (NLERP)}{11}{subsection.3.6.8}\protected@file@percent }
+\newlabel{eq:nlerp}{{3.25}{11}{Normalised Linear Interpolation (NLERP)}{equation.3.25}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3.7}Mathematical Utilities (\texttt  {Math.hpp})}{11}{section.3.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Smoothstep}{11}{subsubsection*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Next Power of Two}{11}{subsubsection*.14}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {3.1}{\ignorespaces Bit-manipulation power-of-two rounding}}{11}{lstlisting.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {4}Memory Management}{13}{chapter.4}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {4.1}The Allocator Interface (\texttt  {IAllocator})}{13}{section.4.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {4.1}{\ignorespaces IAllocator interface}}{13}{lstlisting.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 4.1 --- Alignment}{13}{paragraph*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.2}Linear Allocator}{14}{section.4.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4.1}{\ignorespaces Linear allocator state: the cursor divides the buffer into used and free regions.}}{14}{figure.caption.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.3}Pool Allocator}{14}{section.4.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {4.2}{\ignorespaces Free-list initialisation (reversed)}}{14}{lstlisting.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 4.2 --- Slot size}{14}{paragraph*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4.4}Stack Allocator}{15}{section.4.4}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {4.3}{\ignorespaces Marker-based rollback}}{15}{lstlisting.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {5}Container Library}{16}{chapter.5}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {5.1}Dynamic Array (\texttt  {Vector<T>})}{16}{section.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Growth Strategy}{16}{subsubsection*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Construction and Destruction}{16}{subsubsection*.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Move Semantics}{16}{subsubsection*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.2}Hash Map (\texttt  {HashMap<K,V>})}{17}{section.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.3}String View (\texttt  {StringView})}{17}{section.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.4}Fixed String (\texttt  {FixedString<N>})}{17}{section.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {6}Entity-Component System (ECS)}{18}{chapter.6}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {6.1}Design Philosophy}{18}{section.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.2}Component Identification}{18}{section.6.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {6.1}{\ignorespaces Type-ID registration}}{18}{lstlisting.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.3}Component Set (\texttt  {ComponentSet})}{19}{section.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.4}Archetype Internal Structure}{19}{section.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Removal by Swap-and-Pop}{19}{subsubsection*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.5}Command Buffer}{19}{section.6.5}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {6.2}{\ignorespaces Deferred entity creation}}{19}{lstlisting.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 6.1 --- Structural mutation safety}{20}{paragraph*.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.6}Systems}{20}{section.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6.7}Component Queries}{20}{section.6.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.7.1}Matching Logic}{20}{subsection.6.7.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {6.3}{\ignorespaces ComponentQuery API usage}}{21}{lstlisting.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {7}Job System and Concurrency}{22}{chapter.7}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {7.1}Architecture Overview}{22}{section.7.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7.1}{\ignorespaces Job system topology: each worker has private local queues; dashed arrows indicate work-stealing.}}{22}{figure.caption.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.2}Work-Stealing Protocol}{22}{section.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.3}Job Handles and the ABA Problem}{23}{section.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 7.1 --- Handle version check}{23}{paragraph*.24}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.4}Barriers}{23}{section.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.5}Parallel For}{23}{section.7.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.6}Worker Count}{23}{section.7.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {8}2D Physics System}{24}{chapter.8}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {8.1}Components}{24}{section.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1.1}RigidBody2D}{24}{subsection.8.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1.2}Collider2D}{24}{subsection.8.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.2}Simulation Loop}{24}{section.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.3}Integration (Semi-Implicit Euler)}{25}{section.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.4}Broad-Phase: Uniform Grid}{25}{section.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.5}Narrow-Phase Geometry}{25}{section.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5.1}AABB vs.\ AABB}{25}{subsection.8.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5.2}Circle vs.\ Circle}{26}{subsection.8.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5.3}Circle vs.\ AABB}{26}{subsection.8.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.6}Impulse-Based Resolution}{26}{section.8.6}\protected@file@percent }
+\newlabel{eq:impulse}{{8.15}{26}{Impulse-Based Resolution}{equation.8.15}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Friction}{26}{subsubsection*.25}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.7}Positional Correction (Baumgarte)}{27}{section.8.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.8}Sleep System}{27}{section.8.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.9}Raycast}{27}{section.8.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {9}Spatial Audio System}{28}{chapter.9}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {9.1}Architecture}{28}{section.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.2}AudioClip}{28}{section.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.3}Spatial Attenuation}{28}{section.9.3}\protected@file@percent }
+\newlabel{eq:audio-volume}{{9.1}{28}{Spatial Attenuation}{equation.9.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9.4}Stereo Panning}{29}{section.9.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9.5}Playback Loop}{29}{section.9.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {10}Asset Pipeline (.caf Format)}{30}{chapter.10}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {10.1}Design Goals}{30}{section.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.2}File Layout}{30}{section.10.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {10.1}{\ignorespaces CafHeader fields (32 bytes, little-endian)}}{30}{table.caption.26}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 10.1 --- Endianness}{30}{paragraph*.27}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.3}Integrity Verification}{31}{section.10.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 10.2 --- CRC32 verification}{31}{paragraph*.28}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.4}Asset Types}{31}{section.10.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {10.2}{\ignorespaces AssetType discriminants and their metadata structs}}{31}{table.caption.29}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.5}Live Asset Watching}{31}{section.10.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10.6}Runtime Asset Types}{32}{section.10.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.6.1}Asset Type Traits}{32}{subsection.10.6.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {10.1}{\ignorespaces AssetTypeTrait specialization}}{32}{lstlisting.10.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {11}Game Loop}{33}{chapter.11}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {11.1}Fixed Timestep with Interpolation}{33}{section.11.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {11.1}{\ignorespaces Game loop tick}}{33}{lstlisting.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Spiral of Death Protection}{33}{subsubsection*.30}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Interpolation Alpha}{33}{subsubsection*.31}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11.2}Debug Hook Registry}{34}{section.11.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {11.2}{\ignorespaces Zero-overhead hook call pattern}}{34}{lstlisting.11.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {12}Editor and Scene Viewport}{35}{chapter.12}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {12.1}Overview}{35}{section.12.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.2}Camera Model}{35}{section.12.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12.1}{\ignorespaces Camera state variables}}{35}{table.caption.32}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.3}projectToScreen --- Mode2D}{35}{section.12.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.4}projectToScreen --- Mode3D}{36}{section.12.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Step 1: Translate to Camera-Relative Space}{36}{subsubsection*.33}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Step 2: Yaw Rotation (Y-axis, angle $\psi $)}{36}{subsubsection*.34}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Step 3: Pitch Rotation (X-axis, angle $\phi $)}{36}{subsubsection*.35}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Step 4: Perspective Divide}{36}{subsubsection*.36}\protected@file@percent }
+\newlabel{eq:fovscale}{{12.9}{36}{Step 4: Perspective Divide}{equation.12.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Near-Plane Clipping}{37}{subsubsection*.37}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 12.1 --- Near-plane clipping}{37}{paragraph*.38}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.5}projectToScreen --- Isometric}{37}{section.12.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.6}Infinite Grid Rendering}{37}{section.12.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.7}Transform Gizmo}{38}{section.12.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Axis Normalisation}{38}{subsubsection*.39}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Z-Axis Overlap Guard}{38}{subsubsection*.40}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.8}Navigation Widget (Orientation Gizmo)}{39}{section.12.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Invariant 12.2 --- Navigation widget correctness}{39}{paragraph*.41}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12.9}Keyboard Navigation}{39}{section.12.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {13}Editor Architecture and Undo System}{40}{chapter.13}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {13.1}EditorContext}{40}{section.13.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13.2}UndoStack}{40}{section.13.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13.3}Panel System}{40}{section.13.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {14}Implementation Rules and Future Specifications}{41}{chapter.14}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {14.1}Binding Invariants}{41}{section.14.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {14.1}{\ignorespaces Binding invariants summary}}{41}{table.caption.42}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {14.2}Planned Systems}{42}{section.14.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.2.1}Mesh Rendering (Phase 5)}{42}{subsection.14.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.2.2}Scripting (CppScript)}{42}{subsection.14.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {14.2.3}Animation}{42}{subsection.14.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {15}Render Hardware Interface}{43}{chapter.15}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {15.1}Design Rationale}{43}{section.15.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{SDL3-GPU Abstraction Rationale}{43}{paragraph*.43}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.2}The Render Device}{44}{section.15.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.2.1}Device Configuration and Initialization}{44}{subsection.15.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.2.2}Triple Buffering and Frame Management}{44}{subsection.15.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.3}Hardware Resources}{45}{section.15.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.3.1}Textures}{45}{subsection.15.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Texture Formats}{45}{subsubsection*.44}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Texture Usage Flags}{46}{subsubsection*.45}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.3.2}Buffers}{46}{subsection.15.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Buffer Usage}{46}{subsubsection*.46}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.3.3}Shaders}{47}{subsection.15.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.4}Pipeline State}{47}{section.15.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.5}Command Recording and Submission}{47}{section.15.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.5.1}Command Buffers}{48}{subsection.15.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Command Buffer Lifecycle}{48}{paragraph*.47}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.5.2}Render Passes}{48}{subsection.15.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {15.5.3}Graphics Commands}{48}{subsection.15.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.6}Algorithmic Submission Flow}{49}{section.15.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {15.7}Conclusion}{50}{section.15.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {16}Two-Dimensional Rendering}{51}{chapter.16}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {16.1}Subsystem Architecture}{51}{section.16.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16.2}The BatchRenderer Pipeline}{52}{section.16.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.2.1}Technical Specifications and Constraints}{52}{subsection.16.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.1}{\ignorespaces BatchRenderer Hardware Constraints}}{52}{lstlisting.16.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.2.2}Vertex Format and Memory Layout}{52}{subsection.16.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.2}{\ignorespaces SpriteVertex Memory Definition}}{52}{lstlisting.16.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Packed Color Tints}{52}{paragraph*.48}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.2.3}Submission and Primitives}{53}{subsection.16.2.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.3}{\ignorespaces Internal SpritePrimitive Representation}}{53}{lstlisting.16.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.2.4}State Sorting and Depth Encoding}{53}{subsection.16.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Sort Key Construction}{53}{subsubsection*.49}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Radix Sort Implementation}{54}{subsubsection*.50}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Performance Advantage of Radix Sort}{54}{paragraph*.51}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.2.5}Flushing and RHI Integration}{54}{subsection.16.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Quad Construction and Transformation}{54}{subsubsection*.52}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Transient Buffer Management}{54}{subsubsection*.53}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.4}{\ignorespaces RHI Buffer Submission}}{55}{lstlisting.16.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16.3}Texture Atlas Management}{55}{section.16.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.3.1}Shelf-Bin Packing Algorithm}{55}{subsection.16.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Algorithm Formalization}{55}{subsubsection*.54}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Pseudocode and Logic}{56}{subsubsection*.55}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.5}{\ignorespaces Shelf-Packing Logic}}{56}{lstlisting.16.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.3.2}Atlas Export and Runtime Generation}{56}{subsection.16.3.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.6}{\ignorespaces Atlas Pixel Export}}{56}{lstlisting.16.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Atomic Packing}{57}{paragraph*.56}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.3.3}Utilization and Performance}{57}{subsection.16.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16.4}The 2D Camera System}{57}{section.16.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.1}Coordinate System and Viewport Mapping}{57}{subsection.16.4.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.7}{\ignorespaces Viewport Definition}}{57}{lstlisting.16.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.2}Orthographic Projection Matrix}{58}{subsection.16.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.3}View Transformation}{58}{subsection.16.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.4}Space Conversions}{58}{subsection.16.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{World-to-Screen Transformation}{58}{subsubsection*.57}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Screen-to-World Transformation}{59}{subsubsection*.58}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Manual Inverse vs Matrix Inverse}{59}{paragraph*.59}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Dirty Flag Matrix Caching}{59}{paragraph*.60}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.5}Procedural Effects: Camera Shake}{60}{subsection.16.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {16.4.6}Performance Monitoring and Frame Statistics}{60}{subsection.16.4.6}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {16.8}{\ignorespaces FrameStats telemetry structure}}{60}{lstlisting.16.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Interpreting Telemetry}{60}{paragraph*.61}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {16.5}Summary}{61}{section.16.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {17}Three-Dimensional Rendering}{62}{chapter.17}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {17.1}The Camera3D Subsystem}{62}{section.17.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.1.1}Operational Modes}{62}{subsection.17.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{First-Person Perspective (FPS)}{62}{subsubsection*.62}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Orbital Navigation}{63}{subsubsection*.63}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Entity Following}{63}{subsubsection*.64}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.1.2}Mathematical Derivation of the Basis Vectors}{63}{subsection.17.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.1.3}Perspective Projection Matrix}{64}{subsection.17.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Matrix Convention}{64}{paragraph*.65}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17.2}Frustum Culling and Visibility}{64}{section.17.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.2.1}Frustum Construction}{64}{subsection.17.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.2.2}Plane-AABB Intersection}{65}{subsection.17.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Sphere and Point Visibility}{65}{subsubsection*.66}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17.3}Octree Spatial Partitioning}{65}{section.17.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.3.1}Recursive Subdivision}{65}{subsection.17.3.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {17.1}{\ignorespaces Octree Node Subdivision}}{65}{lstlisting.17.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.3.2}Ray-AABB Intersection (Slab Method)}{66}{subsection.17.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.3.3}Query Architectures}{66}{subsection.17.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Frustum Query Traversal}{67}{subsubsection*.67}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Radius and Sphere Queries}{67}{subsubsection*.68}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17.4}Lighting Components}{67}{section.17.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.4.1}Base Light Properties}{67}{subsection.17.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.4.2}Specific Light Types}{67}{subsection.17.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Directional Lighting}{68}{subsubsection*.69}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Point Lighting}{68}{subsubsection*.70}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Spot Lighting}{68}{subsubsection*.71}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {17.5}Mesh and Rendering State}{68}{section.17.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.5.1}MeshRendererComponent}{69}{subsection.17.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {17.5.2}MeshFilterComponent}{69}{subsection.17.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implementation Detail: Skinned Meshes}{69}{paragraph*.72}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {18}Polygons and Three-Dimensional Representations}{70}{chapter.18}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {18.1}Polygon Mesh Fundamentals}{70}{section.18.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.1.1}Vertex Attributes and Topology}{70}{subsection.18.1.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.1}{\ignorespaces Standard Vertex Structure}}{70}{lstlisting.18.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.1.2}Index Buffers and Triangle Strips}{71}{subsection.18.1.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.2}{\ignorespaces Indexed Mesh Rendering}}{71}{lstlisting.18.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.2}Primitive Shape Generation}{72}{section.18.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.1}Cube Generation}{72}{subsection.18.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.3}{\ignorespaces Unit Cube Vertex Layout}}{72}{lstlisting.18.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.2}Sphere Generation}{73}{subsection.18.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.4}{\ignorespaces UV Sphere Generation}}{73}{lstlisting.18.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.3}Cylinder and Capsule Generation}{74}{subsection.18.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.2.4}Plane and Quad Generation}{74}{subsection.18.2.4}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.5}{\ignorespaces Quad Mesh Generation}}{74}{lstlisting.18.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.3}Mesh Asset Loading and Caching}{75}{section.18.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.1}glTF Format Integration}{75}{subsection.18.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.3.2}Mesh Instance Caching}{75}{subsection.18.3.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.6}{\ignorespaces Mesh Loading with Caching}}{75}{lstlisting.18.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.4}Mesh Transformation and World Space Conversion}{76}{section.18.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.1}Vertex Transformation Pipeline}{76}{subsection.18.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.4.2}Batching and Instancing}{77}{subsection.18.4.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.7}{\ignorespaces Instance Buffer Layout}}{77}{lstlisting.18.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.5}Gizmo Visualization in the Editor}{77}{section.18.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.1}Light Gizmo Representation}{77}{subsection.18.5.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.8}{\ignorespaces Light Gizmo Drawing}}{78}{lstlisting.18.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.2}Camera Frustum Visualization}{79}{subsection.18.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.5.3}Physics Collider Visualization}{79}{subsection.18.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.6}Normal Mapping and Tangent Space}{79}{section.18.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.6.1}Tangent Space Fundamentals}{79}{subsection.18.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.6.2}Tangent Vector Calculation}{80}{subsection.18.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.7}Best Practices for Mesh Authoring}{80}{section.18.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.1}Polygon Budget}{80}{subsection.18.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.2}Normal Consistency}{80}{subsection.18.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.3}Texture Coordinate Seams}{81}{subsection.18.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.7.4}Skeletal Structure for Animation}{81}{subsection.18.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.8}Performance Optimization Techniques}{81}{section.18.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.1}Level of Detail (LOD)}{81}{subsection.18.8.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {18.9}{\ignorespaces LOD Selection}}{81}{lstlisting.18.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.2}Mesh Simplification}{82}{subsection.18.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {18.8.3}Vertex Buffer Pooling}{82}{subsection.18.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {18.9}Future Directions}{82}{section.18.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {19}Event System}{83}{chapter.19}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {19.1}Type Identification Mechanism}{83}{section.19.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Zero-Cost Type IDs}{83}{paragraph*.73}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.1.1}How it Works}{84}{subsection.19.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.2}Event Subscription}{84}{section.19.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.1}Listener Records and Callbacks}{84}{subsection.19.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.2.2}The ListenerHandle Lifecycle}{85}{subsection.19.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.3}Event Dispatching}{85}{section.19.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.1}Immediate Dispatch}{85}{subsection.19.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.2}Deferred Dispatch}{86}{subsection.19.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.3.3}Queue Processing}{86}{subsection.19.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.4}Thread Safety and Concurrency}{86}{section.19.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.1}Mutex Usage}{86}{subsection.19.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {19.4.2}Synchronous Limitations}{87}{subsection.19.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {19.5}Best Practices}{87}{section.19.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {20}Input Management}{88}{chapter.20}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {20.1}Logical Abstractions}{88}{section.20.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.1}Action Enumeration}{88}{subsection.20.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.1.2}Axis Enumeration}{89}{subsection.20.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.2}Hardware Mappings}{89}{section.20.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.1}Keyboard and Mouse Codes}{89}{subsection.20.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.2.2}Gamepad Support}{90}{subsection.20.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.3}Binding Mechanism}{91}{section.20.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.3.1}The Binding Structure}{91}{subsection.20.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.3.2}Registering Bindings}{91}{subsection.20.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.4}State Management and Polling}{92}{section.20.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.4.1}Action and Axis States}{92}{subsection.20.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.4.2}The Frame Lifecycle}{92}{subsection.20.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {20.5}Event Injection and Callbacks}{93}{section.20.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {20.5.1}The Callback Interface}{93}{subsection.20.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {21}Debugging and Profiling}{94}{chapter.21}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {21.1}Logging System}{94}{section.21.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Buffer Logging}{94}{paragraph*.74}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.1}System Architecture}{94}{subsection.21.1.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.1}{\ignorespaces LogSystem Class Definition}}{94}{lstlisting.21.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.2}Logging Levels}{95}{subsection.21.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.3}Categories and Filtering}{96}{subsection.21.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.1.4}Message Sinks}{96}{subsection.21.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {21.2}Performance Profiling}{96}{section.21.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.1}RAII-based Profiling}{96}{subsection.21.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.2}{\ignorespaces Profiling Macros and RAII Guard}}{96}{lstlisting.21.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.2}Data Collection and Statistics}{97}{subsection.21.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.3}{\ignorespaces Scope Statistics Structure}}{97}{lstlisting.21.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.3}Timing Precision}{98}{subsection.21.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Fixed Scope Storage}{98}{paragraph*.75}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.4}Reporting and Resetting}{98}{subsection.21.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {21.2.5}Practical Usage}{98}{subsection.21.2.5}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {21.4}{\ignorespaces Example Usage of Profiling and Logging}}{98}{lstlisting.21.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {22}Scene Management}{100}{chapter.22}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {22.1}Scene Manager}{100}{section.22.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.1}World Stack Management}{100}{subsection.22.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.2}Scene Transitions}{101}{subsection.22.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.1.3}Asynchronous Preloading}{101}{subsection.22.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {22.2}Scene Serialization}{102}{section.22.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.1}Dual Format Strategy}{102}{subsection.22.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.2}The .caf Binary Format}{102}{subsection.22.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.2.3}Serialization Process}{103}{subsection.22.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {22.3}Scene Components and Hierarchy}{103}{section.22.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.1}The Parent Component}{103}{subsection.22.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {22.3.2}WorldTransform and Dirty Propagation}{103}{subsection.22.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Implementation Detail: Entity Remapping}{104}{paragraph*.76}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {23}Animation System}{105}{chapter.23}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {23.1}Foundational Structures}{105}{section.23.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.1.1}FrameRect and AnimationClip}{105}{subsection.23.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.1.2}Animation States and Transitions}{106}{subsection.23.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Transition Evaluation}{106}{paragraph*.77}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.2}The Animator Component}{107}{section.23.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.3}Animation System Logic}{108}{section.23.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.1}State Machine Evaluation}{108}{subsection.23.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.2}Frame Index Computation}{108}{subsection.23.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {23.3.3}Event Dispatching}{109}{subsection.23.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.4}State Machine Workflow}{109}{section.23.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Example: Player State Machine}{109}{paragraph*.78}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {23.5}Conclusion}{110}{section.23.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {24}Scripting System}{111}{chapter.24}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {24.1}Design Rationale}{111}{section.24.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Performance and Type Safety}{111}{paragraph*.79}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.2}The Script Engine}{112}{section.24.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.1}Initialization and Configuration}{112}{subsection.24.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.1}{\ignorespaces ScriptEngine Initialization Parameters}}{112}{lstlisting.24.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.2}The Scripting API}{112}{subsection.24.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.2.3}ABI Stability via Pimpl Pattern}{113}{subsection.24.2.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.2}{\ignorespaces ScriptEngine Pimpl Implementation}}{113}{lstlisting.24.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.3}The CppScript Base Class}{113}{section.24.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.3}{\ignorespaces CppScript Interface}}{113}{lstlisting.24.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.3.1}Script Registration}{114}{subsection.24.3.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.4}{\ignorespaces Registering a Custom Script}}{114}{lstlisting.24.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.4}Script Components and Data}{114}{section.24.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.4.1}ScriptComponent}{114}{subsection.24.4.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.5}{\ignorespaces ScriptComponent Structure}}{114}{lstlisting.24.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.4.2}CppScriptComponent}{115}{subsection.24.4.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.6}{\ignorespaces CppScriptComponent Structure}}{115}{lstlisting.24.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.5}Systems and Runtime Logic}{115}{section.24.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.5.1}The ScriptSystem Implementation}{115}{subsection.24.5.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.7}{\ignorespaces ScriptSystem Update Logic}}{115}{lstlisting.24.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {24.5.2}Interaction with Other Subsystems}{116}{subsection.24.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.6}Native Callbacks and Performance}{116}{section.24.6}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.8}{\ignorespaces NativeScriptComponent Structure}}{116}{lstlisting.24.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {24.7}ScriptWatcher and Hot Reloading}{116}{section.24.7}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {24.9}{\ignorespaces ScriptWatcher Polling}}{116}{lstlisting.24.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {25}User Interface System}{118}{chapter.25}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {25.1}Component Architecture}{118}{section.25.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.1}UIWidgetType}{118}{subsection.25.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.1.2}Visual Styling}{119}{subsection.25.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {25.2}The Layout Engine}{119}{section.25.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.1}RectTransform Logic}{120}{subsection.25.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.2.2}Layout Math Derivation}{120}{subsection.25.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Anchor/Offset Duality}{120}{paragraph*.80}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {25.3}System Logic}{121}{section.25.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.1}Layout Traversal}{121}{subsection.25.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.2}Input Processing and Hit Testing}{121}{subsection.25.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {25.3.3}Data Binding Mechanism}{122}{subsection.25.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {26}Asset Management}{123}{chapter.26}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {26.1}The Asset Handle}{123}{section.26.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.1.1}Reference Counting Semantics}{123}{subsection.26.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.1.2}Implementation Details}{124}{subsection.26.1.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.1}{\ignorespaces AssetHandle interface}}{124}{lstlisting.26.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Design Rationale: Handle-Based Access}{124}{paragraph*.81}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {26.2}The Asset Manager}{125}{section.26.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.1}Loading Paths}{125}{subsection.26.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.2}Zero-Copy Memory Model}{125}{subsection.26.2.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.2}{\ignorespaces AssetEntry Structure}}{125}{lstlisting.26.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.2.3}Garbage Collection and Cache Management}{126}{subsection.26.2.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.3}{\ignorespaces CacheStats definition}}{126}{lstlisting.26.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {26.3}Asset Runtime Types}{126}{section.26.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.3.1}Asset Mapping with Type Traits}{127}{subsection.26.3.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {26.4}{\ignorespaces AssetTypeTrait Specialization}}{127}{lstlisting.26.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {26.3.2}Specific View Structures}{127}{subsection.26.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Optimization: Alignment and Padding}{128}{paragraph*.82}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{Bibliography}{129}{chapter*.83}\protected@file@percent }
+\bibcite{sdl_gpu}{1}
+\bibcite{jylanki}{2}
+\bibcite{fiedler}{3}
+\bibcite{shoemake}{4}
+\bibcite{chase_lev}{5}
+\bibcite{baumgarte}{6}
+\bibcite{crc32}{7}
+\bibcite{opengl}{8}
+\bibcite{eberly}{9}
+\bibcite{mirtich}{10}
+\bibcite{gems6}{11}
+\bibcite{imgui}{12}
+\bibcite{cpp20}{13}
+\gdef \@abspage@last{143}

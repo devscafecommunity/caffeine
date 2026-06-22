@@ -1,0 +1,56 @@
+% ============================================================================
+\chapter{Spatial Audio System}
+% ============================================================================
+
+\section{Architecture}
+
+The audio system wraps SDL3's \texttt{SDL\_AudioStream} API. It maintains
+a pool of \texttt{AudioSource} objects (default 32 SFX channels).
+Each source maps to one \texttt{SDL\_AudioStream} bound to the system's
+\texttt{SDL\_AudioDeviceID} (default device, S16 stereo 44100\,Hz).
+
+\section{AudioClip}
+
+An \texttt{AudioClip} is a pure descriptor: a pointer to raw PCM bytes,
+size, sample rate, channel count, bits per sample, and duration.
+The system does not own the memory; clips are registered by the asset
+pipeline which manages their lifetimes.
+
+\section{Spatial Attenuation}
+
+For an emitter at world position $\mathbf{p}_e$ and listener at
+$\mathbf{p}_l$ with maximum audible distance $d_\text{max}$:
+
+\begin{equation}
+\text{volume} = \max\!\left(0,\; 1 - \frac{|\mathbf{p}_e - \mathbf{p}_l|}{d_\text{max}}\right)
+\label{eq:audio-volume}
+\end{equation}
+
+This is a \emph{linear falloff} model. Physically accurate inverse-square
+falloff ($1/d^2$) sounds too aggressive for game contexts; linear falloff
+produces a smoother perceptual transition.
+
+\section{Stereo Panning}
+
+The pan value in $[-1, 1]$ is derived from the horizontal offset of the
+emitter relative to the listener:
+
+\begin{equation}
+\text{pan} = \text{clamp}\!\left(\frac{p_{ex} - p_{lx}}{d_\text{max}},\; -1,\; 1\right)
+\end{equation}
+
+Gain for each channel:
+\begin{align}
+  g_L &= v \cdot (1 - \max(0, \text{pan})) \\
+  g_R &= v \cdot (1 + \min(0, \text{pan}))
+\end{align}
+
+The stream gain is set to $\max(g_L, g_R)$. True per-channel gain
+requires a custom mixing callback (planned).
+
+\section{Playback Loop}
+
+When a looping source exhausts its buffer (SDL reports
+\texttt{SDL\_GetAudioStreamAvailable} == 0), the full clip data is
+re-submitted via \texttt{SDL\_PutAudioStreamData}. The implementation
+tracks elapsed time to detect this condition frame-accurately.

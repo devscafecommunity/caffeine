@@ -1,0 +1,51 @@
+% ============================================================================
+\chapter{Game Loop}
+% ============================================================================
+
+\section{Fixed Timestep with Interpolation}
+
+The game loop implements a \textbf{fixed-timestep with remainder
+interpolation} --- the pattern described by Glenn Fiedler in
+``Fix Your Timestep'' (2004).
+
+\begin{lstlisting}[caption={Game loop tick}]
+accumulator += min(deltaTime, maxFrameTime);
+while (accumulator >= fixedDeltaTime) {
+    fixedUpdate(fixedDeltaTime);
+    accumulator -= fixedDeltaTime;
+}
+alpha = accumulator / fixedDeltaTime;
+render(alpha);
+\end{lstlisting}
+
+\subsubsection{Spiral of Death Protection}
+
+Clamping $\Delta t$ to \texttt{maxFrameTime} (default $0.25\,\text{s}$)
+prevents the \emph{spiral of death}: if a frame takes longer than
+$\Delta t_\text{fixed}$, the accumulator would grow without bound,
+scheduling infinitely many fixed-update steps, making the frame even
+longer. The clamp trades simulation accuracy (the simulation slows
+down in real time) for stability.
+
+\subsubsection{Interpolation Alpha}
+
+$\alpha = \texttt{accumulator} / \Delta t_\text{fixed} \in [0, 1)$
+is the fraction of a fixed step that has elapsed but not yet been
+simulated. The renderer uses it to interpolate between the previous
+and current physics state for sub-frame smooth visual output.
+
+\section{Debug Hook Registry}
+
+\texttt{DebugHookRegistry} provides a single-slot registration for an
+\texttt{IDebugHooks} implementation. The core engine calls hooks
+unconditionally-if-registered:
+
+\begin{lstlisting}[caption={Zero-overhead hook call pattern}]
+if (auto* h = DebugHookRegistry::hooks()) {
+    h->onFrameEnd(stats);
+}
+\end{lstlisting}
+
+This decouples the core from the editor without requiring a virtual
+call on every path: when no hooks are registered (shipped game), the
+branch is predicted-not-taken with negligible cost.

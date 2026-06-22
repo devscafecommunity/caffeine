@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
+#include "editor/TilesetAsset.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -89,6 +90,7 @@ public:
     void renderPalette();
     void renderToolbar();
     void renderLayers();
+    void renderGrid();
 
     void paintTile(i32 layerIdx, i32 x, i32 y, i32 tileID);
     void floodFill(i32 layerIdx, i32 x, i32 y, i32 targetID, i32 replacementID);
@@ -103,6 +105,8 @@ public:
     Tilemap& tilemap() { return m_tilemap; }
     const Tilemap& tilemap() const { return m_tilemap; }
 
+    bool loadTileset(const std::string& path, void* renderer);
+
 private:
     bool hasNeighbor(i32 layerIdx, i32 x, i32 y, i32 tileID) const;
 
@@ -114,6 +118,10 @@ private:
     bool m_open = true;
 
     i32 m_brushSize = 1;
+
+    TilesetAsset m_tileset;
+    char m_tilesetPathBuf[512] = {};
+    i32 m_tileDisplaySize = 32;
 };
 
 }

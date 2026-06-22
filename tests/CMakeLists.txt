@@ -25,6 +25,9 @@ set(CAFFEINE_TEST_SOURCES
     test_skeletal_animation.cpp
     test_pipeline.cpp
     test_editor.cpp
+    test_cap_loader.cpp
+    test_phase2_3.cpp
+    editor/phase1_integration_test.cpp
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
@@ -32,16 +35,55 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/AnimationTimeline.cpp
     ../src/editor/TilemapEditor.cpp
     ../src/editor/CommandPalette.cpp
+    ../src/editor/BuildSystem.cpp
+    ../src/editor/BuildDialog.cpp
+    ../src/editor/AssetCooker.cpp
+    ../src/editor/CapLoader.cpp
+    ../src/editor/AudioWaveformRenderer.cpp
+    ../src/editor/ProjectManager.cpp
+    ../src/editor/SettingsPanel.cpp
+    ../src/editor/LayoutManager.cpp
 )
 
 if(SDL3_FOUND)
-    list(APPEND CAFFEINE_TEST_SOURCES test_rhi.cpp test_batchrenderer.cpp test_audio.cpp)
+    list(APPEND CAFFEINE_TEST_SOURCES 
+        test_rhi.cpp 
+        test_batchrenderer.cpp 
+        test_audio.cpp
+        ../src/editor/MaterialEditorPanel.cpp
+        ../src/editor/AudioPreviewPanel.cpp
+        ../src/editor/ShaderGraph.cpp
+        ../src/editor/ShaderNode.cpp
+        ../src/editor/PreviewRenderer.cpp
+    )
+    
+     # Build imgui_test_engine library
+     file(GLOB IMGUI_TEST_ENGINE_SRCS
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_*.cpp"
+         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+     )
+     add_library(ImGuiTestEngine STATIC ${IMGUI_TEST_ENGINE_SRCS})
+     target_include_directories(ImGuiTestEngine PUBLIC ${imgui_test_engine_SOURCE_DIR})
+     target_link_libraries(ImGuiTestEngine PUBLIC ImGui)
+     target_compile_definitions(ImGuiTestEngine PUBLIC IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
+     # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
+     if(NOT MSVC)
+         target_compile_options(ImGuiTestEngine PRIVATE -Wno-macro-redefined -Wno-cpp)
+     endif()
 endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
-target_link_libraries(CaffeineTest PRIVATE caffeine-core)
-target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2)
+target_link_libraries(CaffeineTest PRIVATE caffeine-core caf-pack-lib)
+
+# Link ImGui and test engine if SDL3 is available (needed for editor panels)
+if(SDL3_FOUND)
+    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine)
+    target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
+    target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
+endif()
+
+target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2 ${CMAKE_SOURCE_DIR}/caf-pack/include)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)
 else()
@@ -70,36 +112,44 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
     )
     
-    add_executable(DoppioTest
-        test_editor_ui_main.cpp
-        test_editor_ui/test_inspector.cpp
-        test_editor_ui/test_hierarchy.cpp
-        test_editor_ui/test_assetbrowser.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/SceneViewport.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/HierarchyPanel.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/AssetBrowser.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/AnimationTimeline.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/TilemapEditor.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/CommandPalette.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/EditorContext.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/ProjectManager.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/AudioPreviewPanel.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/MaterialEditorPanel.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/ShaderGraph.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/ShaderNode.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/PreviewRenderer.cpp
-        ${CMAKE_SOURCE_DIR}/src/editor/ScriptEditorWindow.cpp
-        ${IMGUI_TEST_ENGINE_SRCS}
-    )
+      add_executable(DoppioTest
+          test_editor_ui_main.cpp
+          test_editor_ui/test_inspector.cpp
+          test_editor_ui/test_hierarchy.cpp
+          test_editor_ui/test_assetbrowser.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/SceneViewport.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/HierarchyPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AssetBrowser.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/CapLoader.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AnimationTimeline.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TilemapEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/CommandPalette.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorContext.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ProjectManager.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AudioPreviewPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/MaterialEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ShaderGraph.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ShaderNode.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PreviewRenderer.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ScriptEditorWindow.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/BuildSystem.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/BuildDialog.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AssetCooker.cpp
+          ${IMGUI_TEST_ENGINE_SRCS}
+      )
     
-    target_link_libraries(DoppioTest PRIVATE caffeine-core ImGui ImNodes)
+    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes)
     target_include_directories(DoppioTest PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/caf-pack/include
         ${imgui_test_engine_SOURCE_DIR}
         ${imgui_SOURCE_DIR}
     )
@@ -110,5 +160,21 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
     target_compile_features(DoppioTest PRIVATE cxx_std_20)
     
     add_test(NAME DoppioTest COMMAND DoppioTest)
+endif()
+
+find_program(PYTHON3_EXECUTABLE NAMES python3 python)
+if(PYTHON3_EXECUTABLE AND TARGET doppio)
+    add_test(
+        NAME DoppioUIAutomated
+        COMMAND ${PYTHON3_EXECUTABLE} -m pytest
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_ui_automated.py
+            -v --tb=short
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    set_tests_properties(DoppioUIAutomated PROPERTIES
+        ENVIRONMENT "DOPPIO_BIN=$<TARGET_FILE:doppio>"
+        TIMEOUT 60
+        LABELS "ui;automated"
+    )
 endif()
 

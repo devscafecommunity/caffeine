@@ -1,0 +1,180 @@
+\chapter{Asset Management}
+
+The Asset Management subsystem in the Caffeine Engine is designed around the principles of asynchronous resource loading, zero-copy memory access, and automated lifetime management through reference counting. By decoupling the acquisition of a resource from its physical residence in memory, the engine maintains high frame rates during heavy I/O operations and ensures that memory fragmentation is minimized through the use of dedicated linear allocators for each asset.
+
+\needspace{6\baselineskip}
+\section{The Asset Handle}
+
+The primary interface for interacting with the Asset Manager is the \texttt{AssetHandle<T>}. This template class serves as a RAII-compliant reference-counted handle to a resource of type $T$.
+
+\subsection{Reference Counting Semantics}
+
+\texttt{AssetHandle<T>} manages the lifetime of an asset by communicating with the \texttt{AssetManager}. The reference count is incremented whenever a handle is copied and decremented when it is destroyed.
+
+\begin{equation}
+    R_{current} = \sum_{i=1}^{n} H_i
+\end{equation}
+
+Where $R_{current}$ is the total reference count of an asset and $n$ is the number of active \texttt{AssetHandle} instances pointing to that specific resource ID. When $R_{current}$ drops to zero, the asset becomes a candidate for eviction during the next garbage collection cycle.
+
+\needspace{5\baselineskip}
+\subsection{Implementation Details}
+
+The handle is designed to be lightweight, containing only a pointer to the manager and the unique 32-bit identifier for the asset.
+
+\begin{lstlisting}[language=C++, caption={AssetHandle interface}]
+template<typename T>
+class AssetHandle {
+public:
+    AssetHandle();
+    AssetHandle(AssetManager* mgr, u32 id);
+    ~AssetHandle();
+
+    AssetHandle(const AssetHandle& o);
+    AssetHandle& operator=(const AssetHandle& o);
+
+    AssetHandle(AssetHandle&& o) noexcept;
+    AssetHandle& operator=(AssetHandle&& o) noexcept;
+
+    bool     isValid() const;
+    bool     isReady() const;
+    const T* get()     const;
+
+    explicit operator bool() const;
+    u32 id() const;
+};
+\end{lstlisting}
+
+The move constructor and move assignment operator are specifically optimized to transfer ownership without triggering atomic increments or decrements in the \texttt{AssetManager}. After a move, the source handle is set to a null state, ensuring that the destructor does not decrement the count for the transferred resource.
+
+
+\paragraph{Design Rationale: Handle-Based Access}
+By returning a handle instead of a raw pointer, the engine can safely perform hot-reloading or garbage collection in the background. The user never holds a direct pointer to the underlying data for longer than a single frame's scope, allowing the manager to invalidate or move memory without causing dangling pointers in game logic.
+
+
+
+\needspace{6\baselineskip}
+\section{The Asset Manager}
+
+The \texttt{AssetManager} is the central authority for resource lifecycle. It maintains an internal registry of assets, indexed by their path, and coordinates with the \texttt{JobSystem} for background loading.
+
+\subsection{Loading Paths}
+
+The manager provides two distinct paths for loading resources: synchronous and asynchronous.
+
+\begin{itemize}
+    \item \textbf{Sync Path:} Invoked via \texttt{loadSync<T>()}. This method calls \texttt{loadInternal()} immediately, blocking the calling thread until the asset is fully loaded and resolved. This is typically used during initial engine startup or loading screens where immediate availability is required.
+    \item \textbf{Async Path:} Invoked via \texttt{loadAsync<T>()}. This method registers the asset requirement and calls \texttt{scheduleLoad()}, which submits a task to the \texttt{JobSystem}. The calling thread receives a handle immediately, but \texttt{isReady()} will return false until the background task completes.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Zero-Copy Memory Model}
+
+One of the most performance-critical features of the Caffeine Engine is its zero-copy asset storage. Each \texttt{AssetEntry} contains a \texttt{std::unique_ptr<LinearAllocator>} that owns the memory slab where the raw file data is loaded.
+
+\begin{equation}
+    M_{total} = \sum_{j=1}^{m} S_j + \Omega
+\end{equation}
+
+Where $M_{total}$ is the total memory footprint, $S_j$ is the size of the allocator slab for asset $j$, and $\Omega$ represents the fixed overhead of the manager's tracking structures.
+
+When an asset is loaded, the engine maps its structures directly onto the memory-mapped buffer. For example, a \texttt{Texture} object does not contain a copy of the pixel data; instead, it contains a pointer that points directly into the \texttt{LinearAllocator} slab.
+
+\begin{lstlisting}[language=C++, caption={AssetEntry Structure}]
+struct AssetEntry {
+    std::string                      path;
+    AssetType                        cafType;
+    std::atomic<LoadStatus>          status;
+    std::unique_ptr<LinearAllocator> allocator;
+    const void*                      payload;
+    ResolvedData                     resolved;
+    std::atomic<u32>                 refCount;
+    u64                              sizeBytes;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Garbage Collection and Cache Management}
+
+The \texttt{collectGarbage()} function is responsible for pruning the cache. It iterates through the asset registry and identifies entries where the \texttt{refCount} is zero. These entries are evicted, and their associated \texttt{LinearAllocator} slabs are freed, returning memory to the system.
+
+The manager also tracks performance metrics through the \texttt{CacheStats} structure:
+
+\begin{lstlisting}[language=C++, caption={CacheStats definition}]
+struct CacheStats {
+    u64 totalCachedBytes;
+    u64 maxCacheBytes;
+    u32 textureCount;
+    u32 audioCount;
+    u32 pendingJobs;
+    f32 cacheHitRate;
+};
+\end{lstlisting}
+
+The hit rate is calculated as:
+\begin{equation}
+    HitRate = \frac{C_{hits}}{C_{total}}
+\end{equation}
+where $C_{hits}$ is the number of times an already-loaded asset was requested via path lookup, and $C_{total}$ is the total number of load requests.
+
+\needspace{6\baselineskip}
+\section{Asset Runtime Types}
+
+Caffeine utilizes a specialized \texttt{.caf} format for its assets. At runtime, these are represented as thin views into the loaded data.
+
+\subsection{Asset Mapping with Type Traits}
+
+To support a generic template-based API, the engine uses the \texttt{AssetTypeTrait<T>} mechanism. This allows the \texttt{AssetManager} to determine the internal \texttt{AssetType} discriminator at compile time.
+
+\begin{lstlisting}[language=C++, caption={AssetTypeTrait Specialization}]
+template<> struct AssetTypeTrait<Texture> {
+    static constexpr AssetType cafType = AssetType::Texture;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Specific View Structures}
+
+The three primary asset types currently supported by the engine are \texttt{Texture}, \texttt{AudioClip}, and \texttt{ShaderBlob}.
+
+\begin{itemize}
+    \item \textbf{Texture:} Contains dimensions, format, and a pointer to the pixel buffer.
+    \begin{lstlisting}[language=C++]
+struct Texture {
+    u32       width;
+    u32       height;
+    u32       format;
+    u32       mipLevels;
+    const u8* pixels;
+    u64       pixelDataSize;
+};
+    \end{lstlisting}
+    
+    \item \textbf{AudioClip:} Holds PCM data views and metadata for audio playback.
+    \begin{lstlisting}[language=C++]
+struct AudioClip {
+    u32       sampleRate;
+    u16       channels;
+    u16       bitsPerSample;
+    u32       sampleCount;
+    const u8* pcmData;
+    u64       pcmDataSize;
+};
+    \end{lstlisting}
+    
+    \item \textbf{ShaderBlob:} A view into compiled shader bytecode.
+    \begin{lstlisting}[language=C++]
+struct ShaderBlob {
+    u32       stage;
+    const u8* bytecode;
+    u64       bytecodeSize;
+};
+    \end{lstlisting}
+\end{itemize}
+
+
+\paragraph{Optimization: Alignment and Padding}
+
+When resolving these views, the AssetManager ensures that pointers (pixels, pcmData, bytecode) are aligned to the requirements of the underlying hardware (e.g., SIMD alignment for audio or GPU alignment for textures), even though they reside within a shared linear buffer.
+
+

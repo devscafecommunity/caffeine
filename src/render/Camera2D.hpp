@@ -134,10 +134,10 @@ public:
     /// Call once per frame. Advances follow lerp and shake decay.
     void update(f64 dt, const ECS::World& world) {
         if (m_followTarget.isValid()) {
-            const auto* pos = world.get<ECS::Position2D>(m_followTarget);
+            const auto* pos = world.get<ECS::Transform>(m_followTarget);
             if (pos) {
-                m_position.x = Math::lerp(m_position.x, pos->x, m_followSmoothing);
-                m_position.y = Math::lerp(m_position.y, pos->y, m_followSmoothing);
+                m_position.x = Math::lerp(m_position.x, pos->position.x, m_followSmoothing);
+                m_position.y = Math::lerp(m_position.y, pos->position.y, m_followSmoothing);
                 if (m_hasBounds) {
                     m_position = applyBounds(m_position);
                 }

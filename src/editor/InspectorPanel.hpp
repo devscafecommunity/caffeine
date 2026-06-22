@@ -8,7 +8,11 @@
 #include "editor/EditorContext.hpp"
 #include "script/ScriptTypes.hpp"
 #include "containers/HashMap.hpp"
+#include "ui/UIComponents.hpp"
+#include "editor/InspectorWidgets.hpp"
+#include "editor/ComponentRegistry.hpp"
 #include <functional>
+#include <filesystem>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -16,7 +20,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class InspectorPanel {
 public:
@@ -37,12 +40,27 @@ private:
     void drawSprite(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawCamera(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawCollider2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawCppScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawPersistent(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawMeshFilter(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIWidget(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIButton(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUILabel(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+
+     void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);
+     std::filesystem::path resolveProjectRoot(const EditorContext& ctx) const;
 #endif
 
     bool m_open = true;
+    bool m_undoStarted = false;
     HashMap<u32, ComponentDrawer> m_drawers;
+    char m_addComponentSearch[128] = {};
 };
 
 } // namespace Caffeine::Editor

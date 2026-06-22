@@ -1,0 +1,281 @@
+\chapter{Render Hardware Interface}
+
+The Render Hardware Interface (RHI) serves as the foundational abstraction layer between the high-level rendering systems of the Caffeine Engine and the underlying graphics hardware. By utilizing the SDL3-GPU specification, the RHI provides a modern, stateless, and multithread-capable interface that unifies disparate graphics APIs such as Vulkan, Direct3D 12, and Metal into a single, cohesive programming model.
+
+\needspace{6\baselineskip}
+\section{Design Rationale}
+
+The primary objective of the Caffeine RHI is to eliminate the overhead of traditional state-machine based APIs (e.g., OpenGL) while maintaining a level of abstraction that ensures cross-platform portability. The shift towards explicit graphics APIs necessitates a more disciplined approach to resource management and command submission.
+
+
+\paragraph{SDL3-GPU Abstraction Rationale}
+
+The choice of SDL3-GPU as the backend for the RHI is driven by three factors:
+\begin{enumerate}
+    \item \textbf{Portability}: Unified access to Vulkan, D3D12, and Metal without maintaining separate backends.
+    \item \textbf{Modernity}: Unlike SDL\_Render, SDL3-GPU provides low-level access to command buffers, pipelines, and descriptor sets.
+    \item \textbf{Stability}: It abstracts the volatile nature of raw Vulkan/D3D12 extensions into a stable API suitable for long-term engine development.
+\end{enumerate}
+
+
+
+The RHI is designed around the concept of a \textit{stateless command recording} phase followed by an \textit{explicit submission} phase. This allows the engine to parallelize command recording across multiple CPU cores, effectively saturating the GPU command processor.
+
+\needspace{6\baselineskip}
+\section{The Render Device}
+
+The \texttt{RenderDevice} class is the central orchestrator of the RHI. It manages the lifecycle of the physical and logical GPU devices, handles the creation of all hardware resources, and coordinates the triple-buffering logic required for smooth frame presentation.
+
+\needspace{5\baselineskip}
+\subsection{Device Configuration and Initialization}
+
+Initialization of the \texttt{RenderDevice} requires a \texttt{RenderConfig} structure, which defines the initial state of the graphics subsystem.
+
+\begin{lstlisting}[language=C++]
+struct RenderConfig {
+    u32  width           = 1280;
+    u32  height          = 720;
+    bool vsync           = true;
+    bool tripleBuffering = true;
+    const char* windowTitle = "Caffeine Engine";
+};
+\end{lstlisting}
+
+The configuration parameters serve the following purposes:
+\begin{itemize}
+    \item \textbf{width / height}: Initial dimensions of the swapchain textures and backbuffer.
+    \item \textbf{vsync}: Enables or disables Vertical Synchronization, mapping to the \texttt{SDL\_GPU\_PRESENTMODE\_VSYNC} or \texttt{IMMEDIATE} modes.
+    \item \textbf{tripleBuffering}: Determines the number of command buffers and resources maintained in flight to prevent CPU-GPU stalls.
+    \item \textbf{windowTitle}: String identifier for the OS-level window handle.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Triple Buffering and Frame Management}
+
+The Caffeine Engine implements a triple-buffering strategy to maximize throughput. This is represented by the constant \texttt{MAX\_FRAMES\_IN\_FLIGHT = 3}. Mathematically, the latency $L$ of a frame can be expressed as:
+\begin{equation}
+    L = \sum_{i=1}^{n} T_{CPU,i} + T_{GPU,i}
+\end{equation}
+where $n$ is the number of frames in flight. While triple buffering increases latency by one frame compared to double buffering, it ensures that the GPU never starves if the CPU takes slightly longer than $1/60$s to record commands.
+
+\needspace{6\baselineskip}
+\section{Hardware Resources}
+
+Resources in the RHI are categorized into Textures, Buffers, and Shaders. All resources are created via the \texttt{RenderDevice} and are represented by opaque handles that wrap the underlying SDL3-GPU objects.
+
+\needspace{5\baselineskip}
+\subsection{Textures}
+
+Textures represent multi-dimensional arrays of data, typically used for images, render targets, or depth-stencil buffers. The \texttt{Texture} struct maintains the handle and metadata:
+
+\begin{lstlisting}[language=C++]
+struct Texture {
+    SDL_GPUTexture* handle = nullptr;
+    u32           width    = 0;
+    u32           height   = 0;
+    TextureFormat format   = TextureFormat::Invalid;
+};
+\end{lstlisting}
+
+\subsubsection{Texture Formats}
+
+The \texttt{TextureFormat} enumeration defines the bit-layout of the texture data. The RHI supports a variety of formats optimized for different hardware paths:
+
+\begin{itemize}
+    \item \texttt{R8G8B8A8\_UNORM}: Standard 32-bit RGBA format with 8 bits per channel, normalized to $[0, 1]$.
+    \item \texttt{B8G8R8A8\_UNORM}: Blue-Green-Red-Alpha variant, often the native format for Windows-based swapchains.
+    \item \texttt{R8\_UNORM}: Single-channel 8-bit format, ideal for alpha masks or luminance.
+    \item \texttt{R16\_FLOAT}: 16-bit floating point, used for high-dynamic range (HDR) single-channel data.
+    \item \texttt{R32G32B32A32\_FLOAT}: Full 128-bit floating point format for high-precision compute or G-Buffer data.
+    \item \texttt{D16\_UNORM}, \texttt{D24\_UNORM}, \texttt{D32\_FLOAT}: Depth formats for the depth-stencil buffer.
+    \item \texttt{SRGB} variants: Formats that implement automatic Gamma correction ($C_{linear} = C_{srgb}^{2.2}$).
+\end{itemize}
+
+\subsubsection{Texture Usage Flags}
+
+Texture usage must be declared at creation time to allow the driver to optimize the memory layout (e.g., tiling).
+
+\begin{lstlisting}[language=C++]
+enum class TextureUsage : u32 {
+    Sampler      = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    ColorTarget  = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+    DepthStencil = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+    StorageRead  = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ,
+    ComputeRead  = SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ,
+    ComputeWrite = SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE,
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Buffers}
+
+Buffers are linear regions of GPU memory used for vertex data, index data, and uniform constants.
+
+\begin{lstlisting}[language=C++]
+struct Buffer {
+    SDL_GPUBuffer* handle = nullptr;
+    u64          size     = 0;
+    BufferUsage  usage    = BufferUsage::Vertex;
+};
+\end{lstlisting}
+
+The total memory allocated for a buffer $S_{total}$ is often subject to alignment requirements:
+\begin{equation}
+    S_{total} = \lceil S_{requested} / A \rceil \times A
+\end{equation}
+where $A$ is the hardware-specific alignment (typically 16 or 256 bytes for uniform buffers).
+
+\subsubsection{Buffer Usage}
+
+The \texttt{BufferUsage} enumeration specifies how the buffer will be accessed by the pipeline:
+\begin{itemize}
+    \item \texttt{Vertex}: Contains per-vertex attributes.
+    \item \texttt{Index}: Contains indices for indexed drawing.
+    \item \texttt{Uniform}: Constant data accessible by shaders.
+    \item \texttt{Storage}: Read-write data for compute or advanced graphics effects.
+    \item \texttt{TransferSrc} / \texttt{TransferDst}: Used for staging data from CPU to GPU.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Shaders}
+
+Shaders are programmable stages of the graphics pipeline. The Caffeine Engine supports Vertex and Fragment (Pixel) shaders.
+
+\begin{lstlisting}[language=C++]
+struct ShaderDesc {
+    const u8*   code       = nullptr;
+    usize       codeSize   = 0;
+    const char* entryPoint = "main";
+    ShaderStage stage      = ShaderStage::Vertex;
+    u32 numSamplers        = 0;
+    u32 numStorageTextures = 0;
+    u32 numStorageBuffers  = 0;
+    u32 numUniformBuffers  = 0;
+};
+\end{lstlisting}
+
+The \texttt{ShaderDesc} requires explicit declaration of resource bindings (samplers, buffers) to facilitate the creation of pipeline layouts without expensive reflection at runtime.
+
+\needspace{6\baselineskip}
+\section{Pipeline State}
+
+The \texttt{Pipeline} object encapsulates the entire state of the GPU for a draw call, including:
+\begin{itemize}
+    \item Shader programs (Vertex and Fragment).
+    \item Vertex input layout (attributes, strides).
+    \item Primitive topology (Triangles, Lines).
+    \item Rasterizer state (Culling, Fill mode).
+    \item Multisample state.
+    \item Depth-stencil state.
+    \item Blend state for color attachments.
+\end{itemize}
+By baking this state into a single object, the RHI avoids the "state leakage" common in older APIs, where one draw call's state would unexpectedly affect the next.
+
+\needspace{6\baselineskip}
+\section{Command Recording and Submission}
+
+The RHI uses a command-buffer based workflow to communicate with the GPU. This decoupled approach allows for efficient utilization of the hardware.
+
+\needspace{5\baselineskip}
+\subsection{Command Buffers}
+
+A \texttt{CommandBuffer} is a recording of commands that the GPU will execute asynchronously.
+
+
+\paragraph{Command Buffer Lifecycle}
+
+The lifecycle of a command buffer in Caffeine follows a strict sequence:
+\begin{enumerate}
+    \item \textbf{Acquisition}: A command buffer is acquired via \texttt{RenderDevice::beginFrame()}.
+    \item \textbf{Recording}: Commands are recorded (e.g., \texttt{bindPipeline}, \texttt{draw}).
+    \item \textbf{Submission}: The buffer is submitted via \texttt{RenderDevice::endFrame()}, at which point it is queued for GPU execution.
+    \item \textbf{Synchronization}: The engine ensures that the command buffer is not reused until the GPU has finished processing it.
+\end{enumerate}
+
+
+
+\needspace{5\baselineskip}
+\subsection{Render Passes}
+
+All drawing operations must occur within a Render Pass. A Render Pass defines the targets (textures) being drawn to and the operations to perform at the start and end of the pass.
+
+\begin{lstlisting}[language=C++]
+struct RenderPassDesc {
+    f32  clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    bool clearDepth    = false;
+    f32  depthValue    = 1.0f;
+};
+\end{lstlisting}
+
+When \texttt{beginRenderPass} is called, the RHI transitions the swapchain texture to the \texttt{COLOR\_ATTACHMENT} state and clears it if specified by the \texttt{clearColor}.
+
+\needspace{5\baselineskip}
+\subsection{Graphics Commands}
+
+Between \texttt{beginRenderPass} and \texttt{endRenderPass}, the \texttt{CommandBuffer} provides methods to bind resources and issue draws:
+
+\begin{itemize}
+    \item \texttt{bindPipeline(Pipeline*)}: Sets the current graphics state.
+    \item \texttt{bindVertexBuffer(Buffer*, slot)}: Binds a vertex buffer to a specific input slot.
+    \item \texttt{bindIndexBuffer(Buffer*)}: Sets the buffer used for indexed drawing.
+    \item \texttt{bindTexture(Texture*, slot)}: Binds a texture for sampling.
+    \item \texttt{pushUniformData(stage, slot, data, size)}: Uploads small constants directly into the command stream.
+\end{itemize}
+
+The \texttt{DrawCommand} structure represents a high-level abstraction for a single draw call, often used by the \texttt{Renderer} to batch operations:
+
+\begin{lstlisting}[language=C++]
+struct DrawCommand {
+    Pipeline* pipeline      = nullptr;
+    Buffer*   vertices      = nullptr;
+    Buffer*   indices       = nullptr;
+    Texture*  texture       = nullptr;
+    u32       indexCount     = 0;
+    u32       firstIndex    = 0;
+    u32       instanceCount = 1;
+    Mat4      transform     = Mat4::identity();
+    Vec4      tint          = {1.0f, 1.0f, 1.0f, 1.0f};
+    i32       sortKey       = 0;
+};
+\end{lstlisting}
+
+The \texttt{sortKey} is utilized by the rendering front-end to sort draw calls by state (to minimize pipeline changes) or by depth (for opaque-to-transparent ordering).
+
+\needspace{6\baselineskip}
+\section{Algorithmic Submission Flow}
+
+The submission flow of a frame in the Caffeine Engine can be described by the following algorithm:
+
+\begin{enumerate}
+    \item \textbf{Frame Start}:
+    \begin{itemize}
+        \item Wait for a free command buffer slot ($S_{frame} = m\_frameIndex \pmod{3}$).
+        \item Request a \texttt{SDL\_GPUCommandBuffer} from the device.
+    \end{itemize}
+    \item \textbf{Recording}:
+    \begin{itemize}
+        \item Acquire the swapchain texture handle.
+        \item Begin the main render pass.
+        \item Loop through \texttt{DrawCommand} queue:
+        \begin{enumerate}
+            \item Bind pipeline if different from previous.
+            \item Bind vertex/index buffers.
+            \item Push \texttt{transform} and \texttt{tint} as uniform data.
+            \item Issue \texttt{drawIndexed}.
+        \end{enumerate}
+        \item End the main render pass.
+    \end{itemize}
+    \item \textbf{Frame End}:
+    \begin{itemize}
+        \item Submit the command buffer.
+        \item Trigger the swapchain presentation.
+        \item Increment $m\_frameIndex$.
+    \end{itemize}
+\end{enumerate}
+
+This algorithmic structure ensures that the GPU is kept busy with a continuous stream of work, minimizing idle time and maximizing the frame rate ($FPS = 1 / T_{frame}$).
+
+\needspace{6\baselineskip}
+\section{Conclusion}
+
+The Render Hardware Interface of the Caffeine Engine provides a robust and scalable foundation for modern real-time graphics. By abstracting the complexities of explicit APIs into a clean, handle-based system, it allows engine developers to focus on high-level rendering techniques while maintaining the performance characteristics of low-level hardware access.

@@ -1,0 +1,133 @@
+\chapter{Event System}
+
+The Caffeine Engine employs a decoupled communication architecture through its \texttt{EventBus} subsystem. This component facilitates many-to-many communication without requiring explicit dependencies between producers and consumers. By utilizing a zero-RTTI type identification mechanism, the system maintains high performance while providing a flexible, type-safe interface for event subscription and dispatch.
+
+\needspace{6\baselineskip}
+\section{Type Identification Mechanism}
+
+A core challenge in a generic event system is identifying event types at runtime without the overhead of C++ Run-Time Type Information (RTTI). Caffeine solves this using a static sentinel address technique.
+
+
+\paragraph{Design Rationale: Zero-Cost Type IDs}
+
+Standard RTTI (\texttt{typeid}) can introduce significant binary size overhead and performance penalties. Instead, Caffeine utilizes the unique memory address of a static variable within a template function to generate unique identifiers at compile-time for each distinct type.
+
+
+
+The implementation resides in the \texttt{Detail::eventTypeId<T>} function:
+
+\begin{lstlisting}[language=C++]
+template<typename T>
+u32 eventTypeId() {
+    static char s_sentinel = 0;
+    return static_cast<u32>(reinterpret_cast<uintptr_t>(&s_sentinel));
+}
+\end{lstlisting}
+
+\subsection{How it Works}
+When the compiler instantiates a template function for a specific type \texttt{T}, it generates a unique instance of that function. Each instance contains its own static storage for the \texttt{s\_sentinel} variable. According to the C++ standard, these static variables are guaranteed to have unique addresses across the entire program (per translation unit, effectively merged by the linker).
+
+By casting the address of this sentinel to a \texttt{u32}, the engine obtains a unique integer ID for every event type. This process happens entirely without string comparisons or complex hash calculations, resulting in a true $O(1)$ type lookup.
+
+\needspace{6\baselineskip}
+\section{Event Subscription}
+
+Consumers register their interest in specific events via the \texttt{subscribe<T>} method. This method accepts a callback function and returns a \texttt{ListenerHandle}.
+
+\begin{lstlisting}[language=C++]
+template<typename T>
+ListenerHandle subscribe(std::function<void(const T&)> callback) {
+    const u32 typeId = Detail::eventTypeId<T>();
+    const ListenerHandle handle = m_nextHandle++;
+
+    Detail::ListenerRecord record{
+        handle,
+        [cb = std::move(callback)](const void* data) {
+            cb(*static_cast<const T*>(data));
+        }
+    };
+
+    m_listeners[typeId].push_back(std::move(record));
+    return handle;
+}
+\end{lstlisting}
+
+\subsection{Listener Records and Callbacks}
+Internally, the \texttt{EventBus} stores subscribers in a \texttt{std::unordered\_map} where keys are the type IDs and values are vectors of \texttt{ListenerRecord} objects. Since the bus stores disparate event types, it uses type erasure via \texttt{std::function<void(const void*)>} to store the callbacks. When an event is published, the bus casts the generic pointer back to the specific event type before invoking the user's callback.
+
+\needspace{5\baselineskip}
+\subsection{The ListenerHandle Lifecycle}
+The \texttt{ListenerHandle} is an opaque unsigned integer used to identify a specific subscription. It's essential for unsubscription:
+
+\begin{lstlisting}[language=C++]
+void unsubscribe(ListenerHandle handle);
+\end{lstlisting}
+
+When \texttt{unsubscribe} is called, the \texttt{EventBus} searches its listener maps and removes the record associated with that handle. It is the caller's responsibility to manage the lifecycle of this handle. If a listener object is destroyed without unsubscribing, the \texttt{EventBus} may attempt to call a dangling pointer or an invalid functional object, leading to undefined behavior.
+
+\needspace{6\baselineskip}
+\section{Event Dispatching}
+
+The \texttt{EventBus} supports two modes of dispatch: immediate synchronous dispatch and deferred queue-based dispatch.
+
+\subsection{Immediate Dispatch}
+The \texttt{publish<T>} method triggers an immediate broadcast of the event to all current subscribers.
+
+\begin{lstlisting}[language=C++]
+template<typename T>
+void publish(const T& event) {
+    const u32 typeId = Detail::eventTypeId<T>();
+    auto it = m_listeners.find(typeId);
+    if (it == m_listeners.end()) return;
+
+    std::vector<Detail::ListenerRecord> snapshot = it->second;
+    for (const auto& record : snapshot) {
+        record.callback(static_cast<const void*>(&event));
+    }
+}
+\end{lstlisting}
+
+Note that the system takes a snapshot of the listeners before dispatching. This prevents issues if a listener attempts to unsubscribe or subscribe to new events during the dispatch loop, which would otherwise invalidate the iterators of the internal vector.
+
+\needspace{5\baselineskip}
+\subsection{Deferred Dispatch}
+In many engine scenarios, such as within a physics update or a rendering loop, immediate event handling might be undesirable due to performance or state consistency reasons. For these cases, \texttt{publishDeferred<T>} pushes events into a queue.
+
+\begin{lstlisting}[language=C++]
+template<typename T>
+void publishDeferred(T event) {
+    const u32 typeId = Detail::eventTypeId<T>();
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    m_queue.push_back(
+        std::make_unique<Detail::EventWrapper<T>>(typeId, std::move(event)));
+}
+\end{lstlisting}
+
+Events in this queue are not processed until \texttt{dispatch()} (or \texttt{flush()}) is explicitly called.
+
+\needspace{5\baselineskip}
+\subsection{Queue Processing}
+The \texttt{dispatch()} method iterates through the accumulated events in the deferred queue and broadcasts them to their respective subscribers. Each event is wrapped in an \texttt{EventWrapper} which inherits from a common \texttt{IEventWrapper} interface, allowing the queue to store events of different types polymorphically.
+
+\needspace{6\baselineskip}
+\section{Thread Safety and Concurrency}
+
+The \texttt{EventBus} is designed to be partially thread-safe to support the engine's multi-threaded nature.
+
+\subsection{Mutex Usage}
+The deferred event queue is protected by a \texttt{std::mutex} (\texttt{m\_queueMutex}). This allows multiple threads to safely call \texttt{publishDeferred} simultaneously. The use of \texttt{std::lock\_guard} ensures that the mutex is always released, even if an exception occurs during the push operation.
+
+\subsection{Synchronous Limitations}
+The \texttt{m\_listeners} map and \texttt{subscribe}/\texttt{unsubscribe} operations are not currently protected by internal mutexes. This is a deliberate design choice to avoid the significant overhead of locking on every event lookup. As a result, subscriptions and unsubscriptions should typically happen on a single primary thread (usually the main engine thread or a dedicated event thread) or be externally synchronized by the caller.
+
+\needspace{6\baselineskip}
+\section{Best Practices}
+
+To ensure optimal use of the event system, developers should follow these guidelines:
+
+\begin{enumerate}
+    \item \textbf{Small Event Objects}: Events are often copied (especially in deferred dispatch). Keep event structures small or use \texttt{std::move} where applicable.
+    \item \textbf{Lifecycle Management}: Always unsubscribe when a listener is destroyed. Using a scoped guard or a RAII wrapper for the \texttt{ListenerHandle} is recommended.
+    \item \textbf{Prefer Deferred for Heavy Logic}: If an event triggers complex logic, use \texttt{publishDeferred} to avoid blocking the critical path of the producer.
+    \item \textbf{Avoid Deep Nesting}: Publishing an event within a callback of another event can lead to complex call stacks and potential deadlocks if not handled carefully.
+\end{enumerate}

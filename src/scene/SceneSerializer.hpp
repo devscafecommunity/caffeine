@@ -74,55 +74,25 @@ public:
             fprintf(f, "\n    \"%s\": [", name);
         };
 
-        // Position2D
+        // Transform
         {
-            std::vector<std::pair<u32, ECS::Position2D>> entries;
-            ECS::ComponentQuery q; q.with<ECS::Position2D>();
-            w.forEach<ECS::Position2D>(q, [&](ECS::Entity e, ECS::Position2D& c) {
+            std::vector<std::pair<u32, ECS::Transform>> entries;
+            ECS::ComponentQuery q; q.with<ECS::Transform>();
+            w.forEach<ECS::Transform>(q, [&](ECS::Entity e, ECS::Transform& c) {
                 entries.push_back({e.id(), c});
             });
             if (!entries.empty()) {
-                beginSection("Position2D");
+                beginSection("Transform");
                 for (usize i = 0; i < entries.size(); ++i) {
                     if (i > 0) fprintf(f, ", ");
-                    fprintf(f, "{\"entity\": %u, \"x\": %.6f, \"y\": %.6f}",
-                        entries[i].first, entries[i].second.x, entries[i].second.y);
-                }
-                fprintf(f, "]");
-            }
-        }
-
-        // Velocity2D
-        {
-            std::vector<std::pair<u32, ECS::Velocity2D>> entries;
-            ECS::ComponentQuery q; q.with<ECS::Velocity2D>();
-            w.forEach<ECS::Velocity2D>(q, [&](ECS::Entity e, ECS::Velocity2D& c) {
-                entries.push_back({e.id(), c});
-            });
-            if (!entries.empty()) {
-                beginSection("Velocity2D");
-                for (usize i = 0; i < entries.size(); ++i) {
-                    if (i > 0) fprintf(f, ", ");
-                    fprintf(f, "{\"entity\": %u, \"x\": %.6f, \"y\": %.6f}",
-                        entries[i].first, entries[i].second.x, entries[i].second.y);
-                }
-                fprintf(f, "]");
-            }
-        }
-
-        // Health
-        {
-            std::vector<std::pair<u32, ECS::Health>> entries;
-            ECS::ComponentQuery q; q.with<ECS::Health>();
-            w.forEach<ECS::Health>(q, [&](ECS::Entity e, ECS::Health& c) {
-                entries.push_back({e.id(), c});
-            });
-            if (!entries.empty()) {
-                beginSection("Health");
-                for (usize i = 0; i < entries.size(); ++i) {
-                    if (i > 0) fprintf(f, ", ");
-                    fprintf(f, "{\"entity\": %u, \"current\": %u, \"max\": %u}",
-                        entries[i].first, entries[i].second.current, entries[i].second.max);
+                    fprintf(f,
+                        "{\"entity\": %u, \"px\": %.6f, \"py\": %.6f, \"pz\": %.6f, "
+                        "\"rx\": %.6f, \"ry\": %.6f, \"rz\": %.6f, "
+                        "\"sx\": %.6f, \"sy\": %.6f, \"sz\": %.6f}",
+                        entries[i].first,
+                        entries[i].second.position.x, entries[i].second.position.y, entries[i].second.position.z,
+                        entries[i].second.rotation.x, entries[i].second.rotation.y, entries[i].second.rotation.z,
+                        entries[i].second.scale.x,    entries[i].second.scale.y,    entries[i].second.scale.z);
                 }
                 fprintf(f, "]");
             }
@@ -205,27 +175,17 @@ public:
 private:
     ECS::World& m_world;
 
-    // Binary section type IDs
-    static constexpr u32 kTypePosition2D     = 0;
-    static constexpr u32 kTypeVelocity2D     = 1;
-    static constexpr u32 kTypeAcceleration2D = 2;
-    static constexpr u32 kTypeRotation       = 3;
-    static constexpr u32 kTypeScale2D        = 4;
-    static constexpr u32 kTypeHealth         = 5;
-    static constexpr u32 kTypeParent         = 6;
-    static constexpr u32 kTypeWorldTransform = 7;
-    static constexpr u32 kTypeCount          = 8;
+    static constexpr u32 kTypeTransform       = 0;
+    static constexpr u32 kTypeAcceleration2D = 1;
+    static constexpr u32 kTypeParent         = 2;
+    static constexpr u32 kTypeWorldTransform = 3;
+    static constexpr u32 kTypeCount          = 4;
 
-    // Serialized component sizes (not sizeof — Parent is special)
     static constexpr u64 kCompSizes[kTypeCount] = {
-        sizeof(ECS::Position2D),      // 0
-        sizeof(ECS::Velocity2D),      // 1
-        sizeof(ECS::Acceleration2D),  // 2
-        sizeof(ECS::Rotation),        // 3
-        sizeof(ECS::Scale2D),         // 4
-        sizeof(ECS::Health),          // 5
-        5u,                           // 6: Parent → u32 parentId + u8 dirty
-        sizeof(WorldTransform),       // 7
+        sizeof(ECS::Transform),       // 0
+        sizeof(ECS::Acceleration2D),  // 1
+        5u,                           // 2: Parent → u32 parentId + u8 dirty
+        sizeof(WorldTransform),       // 3
     };
 
     // Generic helper: serialize a POD component type into the payload buffer.
@@ -261,12 +221,8 @@ private:
 
         ECS::World& w = const_cast<ECS::World&>(m_world);
 
-        appendSection<ECS::Position2D>    (payload, kTypePosition2D,     w, sectionCount);
-        appendSection<ECS::Velocity2D>    (payload, kTypeVelocity2D,     w, sectionCount);
+        appendSection<ECS::Transform>     (payload, kTypeTransform,       w, sectionCount);
         appendSection<ECS::Acceleration2D>(payload, kTypeAcceleration2D, w, sectionCount);
-        appendSection<ECS::Rotation>      (payload, kTypeRotation,       w, sectionCount);
-        appendSection<ECS::Scale2D>       (payload, kTypeScale2D,        w, sectionCount);
-        appendSection<ECS::Health>        (payload, kTypeHealth,         w, sectionCount);
 
         // Parent — stores entity reference: must be handled specially
         {
@@ -373,12 +329,8 @@ private:
                 ECS::Entity e = it->second;
 
                 switch (sec.typeId) {
-                    case kTypePosition2D:     { auto& c = m_world.add<ECS::Position2D>(e);     memcpy(&c, comp, sizeof(ECS::Position2D));     break; }
-                    case kTypeVelocity2D:     { auto& c = m_world.add<ECS::Velocity2D>(e);     memcpy(&c, comp, sizeof(ECS::Velocity2D));     break; }
+                    case kTypeTransform:      { auto& c = m_world.add<ECS::Transform>(e);       memcpy(&c, comp, sizeof(ECS::Transform));       break; }
                     case kTypeAcceleration2D: { auto& c = m_world.add<ECS::Acceleration2D>(e); memcpy(&c, comp, sizeof(ECS::Acceleration2D)); break; }
-                    case kTypeRotation:       { auto& c = m_world.add<ECS::Rotation>(e);       memcpy(&c, comp, sizeof(ECS::Rotation));       break; }
-                    case kTypeScale2D:        { auto& c = m_world.add<ECS::Scale2D>(e);        memcpy(&c, comp, sizeof(ECS::Scale2D));        break; }
-                    case kTypeHealth:         { auto& c = m_world.add<ECS::Health>(e);         memcpy(&c, comp, sizeof(ECS::Health));         break; }
                     case kTypeWorldTransform: { auto& c = m_world.add<WorldTransform>(e);      memcpy(&c, comp, sizeof(WorldTransform));      break; }
                     default: break;
                 }

@@ -6,6 +6,7 @@
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "editor/EditorContext.hpp"
+#include "physics/PhysicsComponents2D.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -13,7 +14,6 @@
 #endif
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class HierarchyPanel {
 public:
@@ -30,12 +30,15 @@ public:
     void setContext(EditorContext* ctx) { m_context = ctx; }
     void setWorld(ECS::World* world) { m_world = world; }
 
+    void duplicateEntity(ECS::World& world, ECS::Entity src);
+
 private:
     void renderSearchBar();
     void renderToolbar();
     void renderEntityNode(ECS::Entity entity);
     void renderEmptyContextMenu();
     void handleDeleteKey();
+    void createEntityWithType(ECS::World& world, const char* name, const char* componentType);
 
     bool hasChildren(ECS::Entity entity) const;
     void renderChildren(ECS::Entity parent);
@@ -50,6 +53,8 @@ private:
     ECS::Entity m_entities[MAX_VISIBLE];
     u32 m_entityCount = 0;
     ECS::Entity m_renaming = ECS::Entity::INVALID;
+    ECS::Entity m_lastScrollTarget = ECS::Entity::INVALID;
+    ECS::Entity m_expandEntity = ECS::Entity::INVALID;
 };
 
 } // namespace Caffeine::Editor

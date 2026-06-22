@@ -1,0 +1,31 @@
+% ============================================================================
+% ABSTRACT + TABLE OF CONTENTS
+% ============================================================================
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+This document is the complete programming reference for the Caffeine Engine,
+a custom C++20 game engine built over SDL3. It covers everything a programmer
+needs to write game logic, build systems, and extend the engine using its
+public API.
+
+The document is organised by subsystem. Each chapter introduces the relevant
+types and functions, explains how they fit together, and shows concrete code
+examples. Mathematical background is included only where it directly affects
+how an API is used. Readers are expected to know C++20; no prior knowledge
+of the engine internals is required.
+
+Topics covered include: the engine type aliases, the math library
+(\texttt{Vec2}, \texttt{Vec3}, \texttt{Vec4}, \texttt{Mat4}), the
+Entity-Component-System (\texttt{World}, entities, queries), the full
+component catalogue (2D and 3D), the physics system, the audio emitter API,
+the action-based input manager, scene hierarchy and layers, and native C++
+scripting via \texttt{CppScript}.
+
+\bigskip
+\textbf{Keywords:} Caffeine Engine, ECS, C++20, scripting, components,
+physics, audio, input, game programming.
+
+% ── Table of contents ─────────────────────────────────────────────────────────
+\pagestyle{plain}
+\tableofcontents

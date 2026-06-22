@@ -24,8 +24,7 @@ struct ScriptEngine::Impl {
     Input::InputManager* m_input = nullptr;
     Events::EventBus* m_events = nullptr;
 
-    // Loaded scripts: virtualPath -> compiled chunk (as protected_function)
-    HashMap<std::string, sol::protected_function> m_scripts;
+    HashMap<std::string, sol::environment> m_envs;
 
     struct LuaEventEntry {
         std::string eventName;
@@ -97,12 +96,8 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
 
     wt["hasComponent"] = [world](u32 entityId, const std::string& type) -> bool {
         ECS::Entity e(entityId, world);
-        if (type == "Position2D") return e.has<ECS::Position2D>();
-        if (type == "Velocity2D") return e.has<ECS::Velocity2D>();
-        if (type == "Rotation")   return e.has<ECS::Rotation>();
-        if (type == "Scale2D")    return e.has<ECS::Scale2D>();
+        if (type == "Transform")  return e.has<ECS::Transform>();
         if (type == "Sprite")     return e.has<ECS::Sprite>();
-        if (type == "Health")     return e.has<ECS::Health>();
         if (type == "RigidBody2D") return e.has<Physics2D::RigidBody2D>();
         if (type == "Collider2D") return e.has<Physics2D::Collider2D>();
         return false;
@@ -111,46 +106,28 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     wt["getTransform"] = [&lua, world](u32 entityId) -> sol::table {
         ECS::Entity e(entityId, world);
         sol::table t = lua.create_table();
-        auto* pos = e.get<ECS::Position2D>();
-        auto* rot = e.get<ECS::Rotation>();
-        auto* scl = e.get<ECS::Scale2D>();
-        t["x"] = pos ? pos->x : 0.0f;
-        t["y"] = pos ? pos->y : 0.0f;
-        t["rotation"] = rot ? rot->angle : 0.0f;
-        t["scaleX"] = scl ? scl->x : 1.0f;
-        t["scaleY"] = scl ? scl->y : 1.0f;
+        auto* transform = e.get<ECS::Transform>();
+        t["x"] = transform ? transform->position.x : 0.0f;
+        t["y"] = transform ? transform->position.y : 0.0f;
+        t["z"] = transform ? transform->position.z : 0.0f;
+        t["rotation"] = transform ? transform->rotation.z : 0.0f;
+        t["scaleX"] = transform ? transform->scale.x : 1.0f;
+        t["scaleY"] = transform ? transform->scale.y : 1.0f;
         return t;
     };
 
     wt["setTransform"] = [world](u32 entityId, sol::table t) {
         ECS::Entity e(entityId, world);
-        auto& pos = e.getOrAdd<ECS::Position2D>();
-        pos.x = t["x"].get_or(0.0f);
-        pos.y = t["y"].get_or(0.0f);
-        auto& rot = e.getOrAdd<ECS::Rotation>();
-        rot.angle = t["rotation"].get_or(0.0f);
-        auto& scl = e.getOrAdd<ECS::Scale2D>();
-        scl.x = t["scaleX"].get_or(1.0f);
-        scl.y = t["scaleY"].get_or(1.0f);
+        auto& transform = e.getOrAdd<ECS::Transform>();
+        transform.position.x = t["x"].get_or(0.0f);
+        transform.position.y = t["y"].get_or(0.0f);
+        transform.position.z = t["z"].get_or(0.0f);
+        transform.rotation.z = t["rotation"].get_or(0.0f);
+        transform.scale.x = t["scaleX"].get_or(1.0f);
+        transform.scale.y = t["scaleY"].get_or(1.0f);
     };
 
     wt["addTransform"] = wt["setTransform"];
-
-    wt["getVelocity"] = [&lua, world](u32 entityId) -> sol::table {
-        ECS::Entity e(entityId, world);
-        sol::table t = lua.create_table();
-        auto* v = e.get<ECS::Velocity2D>();
-        t["x"] = v ? v->x : 0.0f;
-        t["y"] = v ? v->y : 0.0f;
-        return t;
-    };
-
-    wt["setVelocity"] = [world](u32 entityId, sol::table t) {
-        ECS::Entity e(entityId, world);
-        auto& v = e.getOrAdd<ECS::Velocity2D>();
-        v.x = t["x"].get_or(0.0f);
-        v.y = t["y"].get_or(0.0f);
-    };
 
     wt["getRigidBody2D"] = [&lua, world](u32 entityId) -> sol::table {
         ECS::Entity e(entityId, world);
@@ -224,7 +201,7 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
             p.endColor = (r << 24) | (g << 16) | (b << 8) | a;
         }
 
-        e.getOrAdd<ECS::Position2D>();
+        e.getOrAdd<ECS::Transform>();
     };
 }
 
@@ -458,8 +435,8 @@ bool ScriptEngine::init(const InitParams& params) {
             if (!emitter) return;
             for (int i = 0; i < count && emitter->activeParticles.size() < static_cast<size_t>(emitter->maxParticles); ++i) {
                 ECS::ParticleEmitterComponent::Particle p;
-                auto* pos = e.get<ECS::Position2D>();
-                p.position = pos ? Vec2{pos->x, pos->y} : Vec2{0, 0};
+                auto* transform = e.get<ECS::Transform>();
+                p.position = transform ? Vec2{transform->position.x, transform->position.y} : Vec2{0, 0};
                 p.velocity.x = static_cast<float>(rand() % 200 - 100) / 10.0f;
                 p.velocity.y = static_cast<float>(rand() % 200 - 100) / 10.0f;
                 p.life = emitter->lifetime;
@@ -492,14 +469,15 @@ bool ScriptEngine::init(const InitParams& params) {
 
 void ScriptEngine::shutdown() {
     m_impl->m_lua.collect_garbage();
-    m_impl->m_scripts.clear();
+    m_impl->m_envs.clear();
     m_impl->m_luaEvents.clear();
 }
 
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
-    auto result = lua.load_file(path);
+    sol::environment env(lua, sol::create, lua.globals());
+    auto result = lua.safe_script_file(path, env, sol::script_pass_on_error);
     if (!result.valid()) {
         sol::error err = result;
         if (outError) *outError = err.what();
@@ -507,18 +485,7 @@ bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
         return false;
     }
 
-    // Execute the chunk to register global functions (onCreate, onUpdate, etc.)
-    sol::protected_function chunk = result;
-    auto execResult = chunk();
-    if (!execResult.valid()) {
-        sol::error err = execResult;
-        if (outError) *outError = err.what();
-        CF_ERROR("Script", "Failed to execute %s: %s", path.c_str(), err.what());
-        return false;
-    }
-
-    // Store the chunk for potential hot-reload
-    m_impl->m_scripts.set(path, chunk);
+    m_impl->m_envs.set(path, std::move(env));
     CF_INFO("Script", "Loaded script: %s", path.c_str());
     return true;
 }
@@ -528,22 +495,15 @@ bool ScriptEngine::loadString(const std::string& code,
                               std::string* outError) {
     auto& lua = m_impl->m_lua;
 
-    auto result = lua.load(code, virtualPath);
+    sol::environment env(lua, sol::create, lua.globals());
+    auto result = lua.safe_script(code, env, sol::script_pass_on_error, virtualPath);
     if (!result.valid()) {
         sol::error err = result;
         if (outError) *outError = err.what();
         return false;
     }
 
-    sol::protected_function chunk = result;
-    auto execResult = chunk();
-    if (!execResult.valid()) {
-        sol::error err = execResult;
-        if (outError) *outError = err.what();
-        return false;
-    }
-
-    m_impl->m_scripts.set(virtualPath, chunk);
+    m_impl->m_envs.set(virtualPath, std::move(env));
     return true;
 }
 
@@ -553,13 +513,13 @@ bool ScriptEngine::reloadScript(const std::string& path, std::string* outError) 
 }
 
 bool ScriptEngine::isLoaded(const std::string& path) const {
-    return m_impl->m_scripts.get(path) != nullptr;
+    return m_impl->m_envs.get(path) != nullptr;
 }
 
 bool ScriptEngine::callOnCreate(const std::string& path, ECS::Entity entity) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onCreate"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onCreate"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()));
@@ -573,9 +533,9 @@ bool ScriptEngine::callOnCreate(const std::string& path, ECS::Entity entity) {
 
 bool ScriptEngine::callOnUpdate(const std::string& path, ECS::Entity entity,
                                  f32 dt) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onUpdate"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onUpdate"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()), dt);
@@ -588,9 +548,9 @@ bool ScriptEngine::callOnUpdate(const std::string& path, ECS::Entity entity,
 }
 
 bool ScriptEngine::callOnDestroy(const std::string& path, ECS::Entity entity) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onDestroy"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onDestroy"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()));
@@ -604,9 +564,9 @@ bool ScriptEngine::callOnDestroy(const std::string& path, ECS::Entity entity) {
 
 bool ScriptEngine::callOnCollision(const std::string& path, ECS::Entity entity,
                                     ECS::Entity other) {
-    (void)path;
-    auto& lua = m_impl->m_lua;
-    sol::protected_function fn = lua["onCollision"];
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onCollision"];
     if (!fn.valid()) return false;
 
     auto result = fn(static_cast<u32>(entity.id()),

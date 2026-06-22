@@ -1,0 +1,63 @@
+% ============================================================================
+\chapter{Implementation Rules and Future Specifications}
+% ============================================================================
+
+\section{Binding Invariants}
+
+The following invariants must be preserved by all future implementations.
+A proposed change that violates any invariant requires explicit discussion
+and this document must be updated before implementation begins.
+
+\begin{table}[H]
+\centering
+\caption{Binding invariants summary}
+\begin{tabular}{lp{9cm}}
+\toprule
+\textbf{ID} & \textbf{Statement} \\
+\midrule
+I-1  & All type widths validated by \texttt{static\_assert}. \\
+I-2  & \texttt{CF\_ASSERT} is never removed to silence errors. \\
+I-3  & Allocator alignment is always a power of two $\geq 8$. \\
+I-4  & Pool slot size is never exceeded at the call site. \\
+I-5  & Component IDs are registered atomically; no component may receive two different IDs. \\
+I-6  & ECS structural mutations during iteration go through \texttt{CommandBuffer}. \\
+I-7  & Job handles must check version equality before reporting completion. \\
+I-8  & \texttt{.caf} files are always verified with both CRC32 checks before use. \\
+I-9  & Near-plane clipping is applied to every projected line segment in Mode3D. \\
+I-10 & Navigation widget axes are computed from live \texttt{camYaw}/\texttt{camPitch} values, never hardcoded. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Planned Systems}
+
+The following systems are specified here to constrain future
+implementation choices, even though they are not yet implemented.
+
+\subsection{Mesh Rendering (Phase 5)}
+
+Mesh assets store interleaved vertex data (position, normal, UV, tangent)
+aligned to 32 bytes for AVX2 SIMD. The RHI layer (\texttt{src/rhi/})
+wraps SDL3-GPU command buffers; mesh rendering will use indexed draws
+with a single persistent vertex buffer per mesh, uploaded once at asset
+load time.
+
+\subsection{Scripting (CppScript)}
+
+The scripting system (\texttt{src/script/}) uses a hot-reloadable C++ approach 
+rather than an interpreted language. High-level logic is implemented by 
+inheriting from the \texttt{CppScript} base class.
+
+The \texttt{ScriptWatcher} monitors the filesystem for changes to script 
+source files. Upon detection, it triggers an external compiler and 
+dynamically reloads the resulting shared library (DLL/SO), patching the 
+function pointers in live \texttt{ScriptComponent} instances. This provides 
+the productivity of a scripting language with the full performance and type 
+safety of C++.
+
+\subsection{Animation}
+
+Animation clips store keyframe data (time, value, tangent for Hermite
+interpolation) per channel (position, rotation, scale). The
+\texttt{AnimationSystem} evaluates clips via the Hermite spline formula
+and writes results into transform components.

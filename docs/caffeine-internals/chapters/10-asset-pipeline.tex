@@ -1,0 +1,126 @@
+% ============================================================================
+\chapter{Asset Pipeline (.caf Format)}
+% ============================================================================
+
+\section{Design Goals}
+
+The Caffeine Asset Format (\texttt{.caf}) is a \textbf{zero-parsing,
+zero-copy} binary container. The layout on disk is a direct mirror of
+the in-RAM / in-VRAM layout, so loading is a single \texttt{fread} followed
+by pointer arithmetic --- no deserialization step, no allocations beyond
+the buffer itself.
+
+\section{File Layout}
+
+\begin{equation*}
+\underbrace{[0\ldots 31]}_{\text{CafHeader}}
+\underbrace{[32\ldots 32+N-1]}_{\text{Metadata}}
+\underbrace{[32+N\ldots 32+N+M-1]}_{\text{Payload}}
+\underbrace{[32+N+M\ldots 32+N+M+3]}_{\text{Footer CRC32}}
+\end{equation*}
+
+\begin{table}[H]
+\centering
+\caption{CafHeader fields (32 bytes, little-endian)}
+\begin{tabular}{lllr}
+\toprule
+\textbf{Offset} & \textbf{Field} & \textbf{Type} & \textbf{Bytes} \\
+\midrule
+0  & \texttt{magic}        & \texttt{u32} (= 0xCAFECAFE) & 4 \\
+4  & \texttt{versionMajor} & \texttt{u16}                & 2 \\
+6  & \texttt{versionMinor} & \texttt{u16}                & 2 \\
+8  & \texttt{type}         & \texttt{AssetType} (u16)    & 2 \\
+10 & \texttt{flags}        & \texttt{CafFlags} (u16)     & 2 \\
+12 & \texttt{crc32}        & \texttt{u32}                & 4 \\
+16 & \texttt{metadataSize} & \texttt{u64}                & 8 \\
+24 & \texttt{dataSize}     & \texttt{u64}                & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\paragraph{Invariant 10.1 --- Endianness}
+
+  The \texttt{.caf} format is little-endian.
+  A \texttt{static\_assert} verifies \texttt{std::endian::native == std::endian::little}
+  at compile time; the format must not be used on big-endian platforms
+  without byte-swapping shims.
+
+
+
+\section{Integrity Verification}
+
+Two CRC32 checks are performed at load time:
+\begin{enumerate}
+  \item \textbf{Payload CRC32}: \texttt{crc32(payload, dataSize)} must equal
+        \texttt{header.crc32}.
+  \item \textbf{Whole-file CRC32}: The 4-byte footer stores
+        \texttt{crc32(everything-before-footer)}, providing end-to-end
+        integrity against file corruption or truncation.
+\end{enumerate}
+
+The CRC32 uses the IEEE 802.3 polynomial $P = \texttt{0xEDB88320}$
+(reflected form). The lookup table of 256 entries is built at
+compile time via a \texttt{constexpr} function, adding zero run-time
+initialisation cost.
+
+
+\paragraph{Invariant 10.2 --- CRC32 verification}
+
+  Both CRC32 checks must pass before any \texttt{.caf} file is used.
+  A file that passes only one check is treated as corrupt.
+
+
+
+\section{Asset Types}
+
+\begin{table}[H]
+\centering
+\caption{AssetType discriminants and their metadata structs}
+\begin{tabular}{lll}
+\toprule
+\textbf{Type} & \textbf{Metadata struct} & \textbf{Notes} \\
+\midrule
+\texttt{Texture}   & \texttt{TextureMetadata} (24 B)  & width, height, format, mips \\
+\texttt{Audio}     & \texttt{AudioMetadata} (16 B)    & sampleRate, channels, samples \\
+\texttt{Mesh}      & (Phase 5)                        & vertex / index buffers \\
+\texttt{Prefab}    & \texttt{SceneMetadata} (20 B)    & binary ECS entity template \\
+\texttt{Scene}     & \texttt{SceneMetadata} (20 B)    & full world state snapshot \\
+\texttt{Shader}    & \texttt{ShaderMetadata} (8 B)    & stage (vert/frag/compute) \\
+\texttt{Animation} & (planned)                        & animation clip frames \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Live Asset Watching}
+
+\texttt{FileWatcher} monitors a directory via
+\texttt{ReadDirectoryChangesW} (Windows) or a polling stub (other
+platforms). Changed paths are pushed onto a thread-safe queue and polled
+from the main thread so that the asset loader can hot-reload without
+cross-thread world mutation.
+
+\section{Runtime Asset Types}
+
+While metadata defines the disk layout, runtime code interacts with zero-copy view types.
+These structures do not own memory; they hold pointers directly into the \texttt{LinearAllocator} 
+buffer where the \texttt{.caf} payload was loaded.
+
+\begin{itemize}
+    \item \textbf{Texture}: Contains \texttt{width}, \texttt{height}, \texttt{format}, and \texttt{mipLevels}. The \texttt{pixels} pointer provides raw access to the texel data of size \texttt{pixelDataSize}.
+    \item \textbf{AudioClip}: Encapsulates PCM data with \texttt{sampleRate}, \texttt{channels}, \texttt{bitsPerSample}, and \texttt{sampleCount}. Raw data is accessed via \texttt{pcmData}.
+    \item \textbf{ShaderBlob}: A wrapper for compiled bytecode (\texttt{bytecode}, \texttt{bytecodeSize}) and its associated pipeline \texttt{stage} (Vertex, Fragment, or Compute).
+\end{itemize}
+
+\subsection{Asset Type Traits}
+
+The \texttt{AssetTypeTrait<T>} template specialization mechanism is used to map 
+C++ runtime types to their corresponding \texttt{AssetType} discriminants. This allows 
+the \texttt{AssetManager} to perform type-safe loading and caching using the 
+\texttt{.caf} header information.
+
+\begin{lstlisting}[caption={AssetTypeTrait specialization}]
+template<> struct AssetTypeTrait<Texture> {
+    static constexpr AssetType cafType = AssetType::Texture;
+};
+\end{lstlisting}

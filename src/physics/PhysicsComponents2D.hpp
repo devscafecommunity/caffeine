@@ -29,18 +29,21 @@ struct RigidBody2D {
     bool lockRotation  = true;
     bool isSleeping    = false;
     f32  sleepTimer    = 0.0f;
+    f32  velocityX     = 0.0f;
+    f32  velocityY     = 0.0f;
 };
 
 struct Collider2D {
-    Vec2          size      = { 32.0f, 32.0f };
-    Vec2          offset    = { 0.0f,  0.0f  };
-    f32           radius    = 16.0f;
+    Vec2          size      = { 1.0f, 1.0f };
+    Vec2          offset    = { 0.0f, 0.0f };
+    f32           radius    = 0.5f;
     u32           layer     = 0;
     u32           layerMask = 0xFFFFFFFF;
     ColliderShape shape     = ColliderShape::AABB;
     bool          isStatic  = false;
     bool          isTrigger = false;
     bool          isOneWay  = false;
+    u8            debugColor[4] = { 80, 200, 255, 220 };
 };
 
 }

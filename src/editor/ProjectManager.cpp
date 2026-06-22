@@ -230,6 +230,13 @@ bool ProjectManager::OpenProject(const std::filesystem::path& projectFilePath) {
     if (!LoadProjectFile(projectFilePath, cfg)) return false;
     m_CurrentConfig = cfg;
     UpdateRecentProjects(projectFilePath);
+    
+    std::filesystem::path capPath = cfg.RootPath / "game.cap";
+    if (std::filesystem::exists(capPath)) {
+        // TODO: Get AssetBrowser instance from EditorContext and call loadCapFile
+        // For now, this is a placeholder for future integration
+    }
+    
     return true;
 }
 

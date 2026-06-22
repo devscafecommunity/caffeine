@@ -180,6 +180,11 @@ public:
         
         return parseOBJ(buffer.data(), size);
     }
+    
+    static Mesh3D* parseGLTF(const u8* data, usize dataLen, const char* filename);
+    
+    static void loadPNGTexture(Mesh3D* mesh, const char* pngPath);
+
 
 #ifdef CF_HAS_SDL3
     void uploadToGPU(Mesh3D* mesh) {

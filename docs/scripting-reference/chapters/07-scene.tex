@@ -1,0 +1,94 @@
+% ============================================================================
+% Chapter 7 — Scene Hierarchy
+% ============================================================================
+\chapter{Scene Hierarchy}
+\label{chap:scene}
+
+\textbf{Header:} \texttt{scene/SceneComponents.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Scene}
+
+The scene system provides three components that describe parent--child
+relationships and rendering layers.
+
+\section{Parent}
+
+Attaching a \texttt{Parent} component to an entity makes it a child of
+another entity. The scene system reads this and computes the
+\texttt{WorldTransform} for the entire hierarchy every frame.
+
+\begin{lstlisting}
+struct Parent {
+    ECS::Entity parent = ECS::Entity::INVALID;
+    bool        dirty  = true;   // set to true when the parent changes
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+Entity sword = world.create("Sword");
+world.add<Transform>(sword);
+world.add<Parent>(sword, Parent{ playerEntity });
+\end{lstlisting}
+
+When \texttt{dirty} is true the scene system recomputes the world matrix.
+You can set it manually to force a recalculation, but normally the system
+manages it.
+
+\section{WorldTransform}
+
+Stores the precomputed world-space matrix for the entity. Written by the
+scene system; read by the renderer.
+
+\begin{lstlisting}
+struct WorldTransform {
+    Mat4 matrix = Mat4::identity();
+};
+\end{lstlisting}
+
+Do not write to this yourself — let the scene system maintain it. Read it
+when you need the final world-space transform of an entity (e.g.\ for
+spawning a bullet at the gun barrel position):
+
+\begin{lstlisting}
+if (auto* wt = world.get<WorldTransform>(gunBarrel)) {
+    Vec3 spawnPos = wt->matrix.transformPoint(Vec3::zero());
+    // spawn bullet at spawnPos
+}
+\end{lstlisting}
+
+\section{EntityLayer}
+
+Controls the render layer. Lower layer values render behind higher values.
+
+\begin{lstlisting}
+struct EntityLayer {
+    u8 layer = 0;   // 0-255
+};
+\end{lstlisting}
+
+\begin{lstlisting}
+world.add<EntityLayer>(background, EntityLayer{0});
+world.add<EntityLayer>(player,     EntityLayer{10});
+world.add<EntityLayer>(hud,        EntityLayer{100});
+\end{lstlisting}
+
+\section{Setting Up a Parent--Child Hierarchy}
+
+\begin{lstlisting}
+using namespace Caffeine::ECS;
+using namespace Caffeine::Scene;
+
+// Create parent
+Entity car = world.create("Car");
+world.add<Transform>(car, Transform{{200, 300, 0}});
+world.add<WorldTransform>(car);
+
+// Create child
+Entity wheel = world.create("Wheel_FL");
+world.add<Transform>(wheel, Transform{{-30, 20, 0}});  // local offset
+world.add<WorldTransform>(wheel);
+world.add<Parent>(wheel, Parent{car});
+world.add<EntityLayer>(wheel, EntityLayer{5});
+\end{lstlisting}
+
+The scene system traverses the hierarchy each frame, multiplying local
+transforms down the parent chain to produce each \texttt{WorldTransform}.

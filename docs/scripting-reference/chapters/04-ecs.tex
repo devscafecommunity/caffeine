@@ -1,0 +1,163 @@
+% ============================================================================
+% Chapter 4 — Entity Component System
+% ============================================================================
+\chapter{Entity Component System}
+
+The ECS is the backbone of every Caffeine game. All game objects are
+\emph{entities}; all data lives in \emph{components}; all logic runs in
+functions that iterate entities with specific sets of components.
+
+The implementation uses an \emph{archetype} layout: entities that share
+exactly the same set of component types are stored together in contiguous
+memory. Iteration is therefore cache-friendly regardless of entity count.
+
+\section{Entity}
+
+\textbf{Header:} \texttt{ecs/Entity.hpp}
+
+An entity is a lightweight handle — a numeric ID plus a pointer back to its
+\texttt{World}. Entities are created by the world and should be stored by
+value.
+
+\begin{lstlisting}
+Entity e = world.create("Bullet");
+bool alive = e.isValid();
+\end{lstlisting}
+
+Entities expose shorthand methods that forward to the world:
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Method} & \textbf{Description} \\
+\midrule
+\texttt{e.add<T>(args...)}  & Add component T (returns \texttt{T\&}) \\
+\texttt{e.remove<T>()}      & Remove component T \\
+\texttt{e.has<T>()}         & Returns \texttt{bool} \\
+\texttt{e.get<T>()}         & Returns \texttt{T*} (null if absent) \\
+\texttt{e.getOrAdd<T>()}    & Returns \texttt{T\&}, adding if needed \\
+\texttt{e.isValid()}        & \texttt{bool} — false for destroyed entities \\
+\bottomrule
+\end{longtable}
+
+\section{World}
+
+\textbf{Header:} \texttt{ecs/World.hpp}
+
+\texttt{World} owns all entities and their component data. Typically one
+world exists per scene.
+
+\begin{lstlisting}
+World world;
+\end{lstlisting}
+
+\subsection{Entity lifecycle}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Method} & \textbf{Description} \\
+\midrule
+\texttt{world.create(name)}   & Create entity; \texttt{name} is optional debug label \\
+\texttt{world.destroy(e)}     & Destroy entity and all its components \\
+\texttt{world.destroyAll()}   & Destroy every entity in the world \\
+\texttt{world.entityCount()}  & \texttt{u32} total live entities \\
+\bottomrule
+\end{longtable}
+
+\subsection{Component management}
+
+\begin{lstlisting}
+// Add a component (constructed in-place)
+Transform& t = world.add<Transform>(e);
+
+// Add with constructor arguments
+Velocity2D& v = world.add<Velocity2D>(e, 0.0f, -9.8f);
+
+// Check / get
+if (world.has<Health>(e)) {
+    Health* hp = world.get<Health>(e);   // non-owning pointer
+    hp->current -= 10;
+}
+
+// Remove
+world.remove<Tag>(e);
+\end{lstlisting}
+
+\subsection{Iterating entities — forEach}
+
+\texttt{forEach} visits all entities that have \emph{at least} the listed
+component types. The callback receives the entity plus references to the
+requested components.
+
+\begin{lstlisting}
+#include "ecs/ComponentQuery.hpp"
+
+ComponentQuery q;
+q.require<Transform>().require<Velocity2D>();
+
+world.forEach<Transform, Velocity2D>(q,
+    [&](Entity e, Transform& t, Velocity2D& v) {
+        t.position.x += v.x * dt;
+        t.position.y += v.y * dt;
+    }
+);
+\end{lstlisting}
+
+\textbf{Important:} do not add or remove components while inside a
+\texttt{forEach} callback — this changes archetype membership and invalidates
+the internal iterators.
+
+\subsection{Parallel iteration — forEachParallel}
+
+For CPU-heavy systems (physics integration, pathfinding), dispatch the
+iteration across the engine's job system:
+
+\begin{lstlisting}
+world.forEachParallel<Transform, Velocity2D>(q, jobSystem,
+    [](Entity e, Transform& t, Velocity2D& v) {
+        t.position.x += v.x * dt;
+        t.position.y += v.y * dt;
+    }
+);
+// forEachParallel blocks until all jobs complete.
+\end{lstlisting}
+
+The engine splits entities into batches of 1000 and dispatches one job per
+batch. Callbacks must be thread-safe with respect to each other.
+
+\section{ComponentQuery}
+
+\textbf{Header:} \texttt{ecs/ComponentQuery.hpp}
+
+A query describes which component types are required (or excluded). Build one
+once and reuse it each frame.
+
+\begin{lstlisting}
+ComponentQuery query;
+query.require<Transform>()
+     .require<Velocity2D>()
+     .require<Sprite>();
+\end{lstlisting}
+
+Pass the same query to \texttt{world.forEach} or \texttt{world.forEachParallel}.
+
+\section{Typical Pattern — System as a Free Function}
+
+\begin{lstlisting}
+void movementSystem(World& world, f32 dt) {
+    static ComponentQuery q = []() {
+        ComponentQuery q;
+        q.require<Transform>().require<Velocity2D>();
+        return q;
+    }();
+
+    world.forEach<Transform, Velocity2D>(q,
+        [dt](Entity, Transform& t, Velocity2D& v) {
+            t.position.x += v.x * dt;
+            t.position.y += v.y * dt;
+        }
+    );
+}
+\end{lstlisting}
+
+The query is constructed once (static local) and reused every frame, which
+avoids the small allocation cost of rebuilding the component-set bitmask.

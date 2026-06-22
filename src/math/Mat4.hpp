@@ -63,6 +63,15 @@ public:
         return Vec3(tx, ty, tz);
     }
 
+    Vec4 transformVec4(const Vec4& v) const {
+        return Vec4(
+            (*this)(0, 0) * v.x + (*this)(0, 1) * v.y + (*this)(0, 2) * v.z + (*this)(0, 3) * v.w,
+            (*this)(1, 0) * v.x + (*this)(1, 1) * v.y + (*this)(1, 2) * v.z + (*this)(1, 3) * v.w,
+            (*this)(2, 0) * v.x + (*this)(2, 1) * v.y + (*this)(2, 2) * v.z + (*this)(2, 3) * v.w,
+            (*this)(3, 0) * v.x + (*this)(3, 1) * v.y + (*this)(3, 2) * v.z + (*this)(3, 3) * v.w
+        );
+    }
+
     Vec3 transformVector(const Vec3& v) const {
         Vec4 v4(v.x, v.y, v.z, 0.0f);
         Vec4 result(0, 0, 0, 0);
@@ -234,8 +243,9 @@ public:
         result(0, 0) = 1.0f / (aspect * tanHalfFov);
         result(1, 1) = 1.0f / tanHalfFov;
         result(2, 2) = -(far + near) / (far - near);
-        result(2, 3) = -1.0f;
-        result(3, 2) = -(2.0f * far * near) / (far - near);
+        result(2, 3) = -(2.0f * far * near) / (far - near);
+        result(3, 2) = -1.0f;
+        result(3, 3) = 0.0f;
         return result;
     }
 
@@ -246,17 +256,21 @@ public:
 
         Mat4 result = identity();
         result(0, 0) = right.x;
-        result(1, 0) = right.y;
-        result(2, 0) = right.z;
-        result(0, 1) = newUp.x;
-        result(1, 1) = newUp.y;
-        result(2, 1) = newUp.z;
-        result(0, 2) = -forward.x;
-        result(1, 2) = -forward.y;
-        result(2, 2) = -forward.z;
+        result(0, 1) = right.y;
+        result(0, 2) = right.z;
         result(0, 3) = -right.dot(eye);
+        result(1, 0) = newUp.x;
+        result(1, 1) = newUp.y;
+        result(1, 2) = newUp.z;
         result(1, 3) = -newUp.dot(eye);
+        result(2, 0) = -forward.x;
+        result(2, 1) = -forward.y;
+        result(2, 2) = -forward.z;
         result(2, 3) = forward.dot(eye);
+        result(3, 0) = 0.0f;
+        result(3, 1) = 0.0f;
+        result(3, 2) = 0.0f;
+        result(3, 3) = 1.0f;
         return result;
     }
 

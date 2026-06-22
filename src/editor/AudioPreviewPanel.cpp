@@ -181,7 +181,15 @@ void AudioPreviewPanel::renderPlaybackControls() {
 
 void AudioPreviewPanel::renderWaveform() {
     if (!m_currentAsset || !m_currentAsset->pcmData) {
-        ImGui::TextUnformatted("No audio data");
+        ImGui::TextUnformatted("No audio data - drag .wav/.ogg files from Asset Browser");
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                [[maybe_unused]] const char* path = static_cast<const char*>(payload->Data);
+                // TODO: Load audio asset from path
+                // loadAsset(...);
+            }
+            ImGui::EndDragDropTarget();
+        }
         return;
     }
     if (m_peaksDirty) {
@@ -214,7 +222,15 @@ void AudioPreviewPanel::renderWaveform() {
     float progX = canvasPos.x + canvasWidth * progressRatio;
     dl->AddLine(ImVec2(progX, canvasPos.y), ImVec2(progX, canvasPos.y + canvasHeight),
                 IM_COL32(255, 255, 100, 200), 1.0f);
-    ImGui::Dummy(ImVec2(canvasWidth, canvasHeight));
+     ImGui::Dummy(ImVec2(canvasWidth, canvasHeight));
+     if (ImGui::BeginDragDropTarget()) {
+         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+             [[maybe_unused]] const char* path = static_cast<const char*>(payload->Data);
+             // TODO: Load audio asset from path
+             // loadAsset(...);
+         }
+         ImGui::EndDragDropTarget();
+     }
 }
 
 void AudioPreviewPanel::renderSettings() {

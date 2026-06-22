@@ -130,11 +130,43 @@ private:
                                 std::string_view outputPath,
                                 const MeshEncodeOptions& opts)
     {
-        (void)inputPath;
-        (void)outputPath;
-        (void)opts;
-        ConversionResult result;
-        result.errorMessage = "GLTF encoding not yet implemented";
+        FILE* f = std::fopen(inputPath.data(), "rb");
+        if (!f) {
+            ConversionResult result;
+            result.errorMessage = "Failed to open glTF file";
+            return result;
+        }
+        
+        std::fseek(f, 0, SEEK_END);
+        long fileSize = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+        
+        if (fileSize <= 0) {
+            std::fclose(f);
+            ConversionResult result;
+            result.errorMessage = "Empty glTF file";
+            return result;
+        }
+        
+        std::vector<u8> buffer(fileSize);
+        std::fread(buffer.data(), 1, fileSize, f);
+        std::fclose(f);
+        
+        Assets::Mesh3D* mesh = Assets::MeshLoader::parseGLTF(
+            buffer.data(), 
+            buffer.size(),
+            inputPath.data()
+        );
+        
+        if (!mesh) {
+            ConversionResult result;
+            result.errorMessage = "Failed to parse glTF file";
+            return result;
+        }
+        
+        auto result = encodeRaw(outputPath, *mesh, opts);
+        delete mesh;
+        
         return result;
     }
 };

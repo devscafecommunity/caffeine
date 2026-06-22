@@ -1,0 +1,169 @@
+\chapter{Debugging and Profiling}
+
+\needspace{6\baselineskip}
+\section{Logging System}
+
+The Caffeine Engine incorporates a centralized logging system to provide detailed insights into the runtime behavior of the engine and game code. The \texttt{LogSystem} class serves as the primary interface for message output, offering features like level-based filtering, category-based isolation, and extensible message sinks.
+
+
+\paragraph{Design Rationale: Fixed Buffer Logging}
+
+To maintain performance during intense debugging sessions, the logging system uses a fixed-length message buffer of 2048 characters. This avoids heap allocations during the formatting process, ensuring that logging calls remain relatively lightweight and don't introduce significant jitter in the frame rate.
+
+
+
+\subsection{System Architecture}
+
+The logging system is implemented as a singleton, ensuring a single point of truth for all diagnostic messages. It employs a thread-safe design using a mutex to synchronize access to internal state and message sinks, allowing multiple threads to log concurrently without corrupting the output.
+
+\begin{lstlisting}[language=C++, caption=LogSystem Class Definition]
+class LogSystem {
+public:
+    static LogSystem& instance();
+
+    void log(LogLevel level, const char* category, const char* fmt, ...);
+    void vlog(LogLevel level, const char* category, const char* fmt, va_list args);
+
+    void setLevel(LogLevel minLevel);
+    LogLevel getLevel() const;
+
+    void setCategoryEnabled(const char* category, bool enabled);
+    bool isCategoryEnabled(const char* category) const;
+
+    using SinkFn = std::function<void(LogLevel, const char*, const char*)>;
+    void addSink(SinkFn sink);
+    void clearSinks();
+
+private:
+    static constexpr usize MAX_CATEGORIES = 64;
+    static constexpr usize MAX_SINKS = 16;
+    static constexpr usize MAX_MESSAGE_LENGTH = 2048;
+
+    LogLevel m_minLevel = LogLevel::Trace;
+    CategoryEntry m_categories[MAX_CATEGORIES]{};
+    SinkFn m_sinks[MAX_SINKS]{};
+    mutable std::mutex m_mutex;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Logging Levels}
+
+The engine defines five distinct severity levels to categorize messages. This classification allows developers to filter out less critical information during normal operation while retaining the ability to capture granular details when troubleshooting specific issues.
+
+\begin{itemize}
+    \item \textbf{Trace}: Highly detailed information, typically only useful during the development of specific features.
+    \item \textbf{Info}: General operational messages that highlight significant engine milestones or state changes.
+    \item \textbf{Warn}: Indications of potential problems or unusual conditions that don't prevent the engine from running.
+    \item \textbf{Error}: Significant failures that impact specific functionality but might allow the application to continue.
+    \item \textbf{Fatal}: Critical errors that result in immediate application termination or unrecoverable state.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Categories and Filtering}
+
+Messages are further organized into categories, which act as namespaces for log entries. This system prevents the log output from becoming cluttered by allowing developers to enable or disable specific engine subsystems individually. For example, one might enable logging for the \texttt{"Memory"} category while keeping \texttt{"Renderer"} silent.
+
+The system supports a maximum of 64 unique categories. Each category is tracked using a name buffer of 64 characters and a boolean flag indicating its enabled state. When a log call is made with a new category name, the system automatically registers it if space is available.
+
+\needspace{5\baselineskip}
+\subsection{Message Sinks}
+
+The \texttt{LogSystem} doesn't dictate where messages are displayed. Instead, it uses a sink-based architecture. Developers can register up to 16 callback functions of type \texttt{SinkFn}. When a message passes the level and category filters, it's dispatched to all registered sinks.
+
+This flexibility allows logs to be simultaneously routed to the console, written to a file, displayed in an in-game overlay, or sent to a remote debugging server. Sinks receive the raw log level, the category name, and the formatted message string.
+
+\needspace{6\baselineskip}
+\section{Performance Profiling}
+
+Optimizing a game engine requires precise measurements of how long specific operations take. The \texttt{Profiler} subsystem provides a low-overhead solution for gathering timing statistics across the codebase. It tracks execution times for named scopes and aggregates data to identify performance bottlenecks.
+
+\subsection{RAII-based Profiling}
+
+The primary way to profile code is through the \texttt{ProfileScope} class. This RAII (Resource Acquisition Is Initialization) guard records the start time in its constructor and calculates the elapsed duration in its destructor. By wrapping a block of code with this guard, developers can easily measure its performance without manual timing calls.
+
+\begin{lstlisting}[language=C++, caption=Profiling Macros and RAII Guard]
+class ProfileScope {
+public:
+    explicit ProfileScope(const char* name) : m_name(name) {
+        Profiler::instance().beginScope(name);
+    }
+    ~ProfileScope() {
+        Profiler::instance().endScope(m_name);
+    }
+private:
+    const char* m_name;
+};
+
+#define CF_PROFILE_SCOPE(name) \
+    Caffeine::Debug::ProfileScope _cfProfileScope_##__LINE__(name)
+\end{lstlisting}
+
+Using a macro for profiling scopes ensures that each instance has a unique variable name based on the line number, preventing name collisions within the same scope.
+
+\needspace{5\baselineskip}
+\subsection{Data Collection and Statistics}
+
+The \texttt{Profiler} singleton maintains an array of up to 256 scopes. For each scope, the system tracks several key metrics to provide a comprehensive view of performance over time.
+
+\begin{lstlisting}[language=C++, caption=Scope Statistics Structure]
+struct ScopeStats {
+    const char* name = nullptr;
+    u64  callCount = 0;
+    f64  totalMs   = 0.0;
+    f64  avgMs     = 0.0;
+    f64  minMs     = 1e18;
+    f64  maxMs     = 0.0;
+};
+\end{lstlisting}
+
+When a scope ends, the profiler updates the following values:
+\begin{itemize}
+    \item \textbf{Call Count}: The total number of times the scope was entered since the last reset.
+    \item \textbf{Total Time}: The cumulative time spent inside the scope, measured in milliseconds.
+    \item \textbf{Min/Max Time}: The shortest and longest recorded durations for a single execution of the scope.
+\end{itemize}
+
+Average time is calculated during reporting by dividing the total time by the call count. This data aggregation happens in-place within the \texttt{InternalScopeData} structure, which also includes the active timer for the current execution.
+
+\needspace{5\baselineskip}
+\subsection{Timing Precision}
+
+Timing in the Caffeine Engine relies on the \texttt{Core::Timer} class. This timer uses a high-resolution clock provided by the underlying platform, typically through SDL3's performance counter.
+
+The system operates with a resolution of one million ticks per second, translating to microsecond precision. When calculating durations, the tick difference between the start and end points is divided by 1,000,000 to convert the value into seconds. The profiler then converts these seconds into milliseconds for more readable statistics.
+
+
+\paragraph{Design Rationale: Fixed Scope Storage}
+
+The profiler uses a pre-allocated array of 256 InternalScopeData entries. While this limits the number of unique scopes that can be tracked simultaneously, it guarantees that entering or exiting a profiled region never triggers a memory allocation. This is vital for profiling tight loops or high-frequency functions where the overhead of a hash map or dynamic vector would skew the results.
+
+
+
+\needspace{5\baselineskip}
+\subsection{Reporting and Resetting}
+
+The profiler provides a \texttt{report} method that populates a vector with the current statistics for all active scopes. This separation of data collection and reporting allows the engine to gather data during the main loop and display it at a lower frequency, such as once per second or upon user request.
+
+The \texttt{reset()} method clears all accumulated statistics and resets the scope count to zero. This is usually called at the start of a new profiling session or when switching game states to ensure that the data reflects the current workload accurately.
+
+\needspace{5\baselineskip}
+\subsection{Practical Usage}
+
+To profile a function, a developer simply needs to add the \texttt{CF\_PROFILE\_SCOPE} macro at the beginning of the function body. The engine handles the rest, including registering the scope name and updating the statistics on every call.
+
+\begin{lstlisting}[language=C++, caption=Example Usage of Profiling and Logging]
+void Renderer::drawFrame() {
+    CF_PROFILE_SCOPE("Renderer::drawFrame");
+
+    if (!m_initialized) {
+        CF_ERROR("Renderer", "Attempting to draw with uninitialized renderer");
+        return;
+    }
+
+    // Drawing logic...
+    CF_TRACE("Renderer", "Frame submitted to GPU");
+}
+\end{lstlisting}
+
+By combining granular logging with high-precision profiling, the Caffeine Engine provides a robust framework for diagnosing issues and verifying performance targets during development.

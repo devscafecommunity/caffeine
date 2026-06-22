@@ -5,7 +5,6 @@
 #include <string>
 
 namespace Caffeine::Editor {
-using namespace Caffeine;
 
 class SceneSerializer {
 public:
@@ -20,20 +19,26 @@ private:
     ECS::World& m_world;
 
     // Editor-specific component type IDs for the binary format
-    static constexpr u32 kTypeName         = 0;
-    static constexpr u32 kTypePosition2D   = 1;
-    static constexpr u32 kTypeVelocity2D   = 2;
+    static constexpr u32 kTypeName          = 0;
+    static constexpr u32 kTypeTransform     = 1;
     static constexpr u32 kTypeAcceleration2D = 3;
-    static constexpr u32 kTypeRotation     = 4;
-    static constexpr u32 kTypeScale2D      = 5;
-    static constexpr u32 kTypeSprite       = 6;
-    static constexpr u32 kTypeHealth       = 7;
-    static constexpr u32 kTypeTag          = 8;
-    static constexpr u32 kTypeAudioEmitter = 9;
-    static constexpr u32 kTypeCount        = 10;
+    static constexpr u32 kTypeSprite        = 6;
+    static constexpr u32 kTypeTag           = 8;
+    static constexpr u32 kTypeAudioEmitter  = 9;
+    static constexpr u32 kTypeParent        = 10;
+    static constexpr u32 kTypeLight         = 11;
+    static constexpr u32 kTypeDirLight      = 12;
+    static constexpr u32 kTypePointLight    = 13;
+    static constexpr u32 kTypeSpotLight     = 14;
+    static constexpr u32 kTypePosition3D    = 15;
+    static constexpr u32 kTypeRotation3D    = 16;
+    static constexpr u32 kTypeScale3D       = 17;
+    static constexpr u32 kTypeMeshFilter    = 18;
+    static constexpr u32 kTypeMeshRenderer  = 19;
+    static constexpr u32 kTypePrefabInstance = 20;
+    static constexpr u32 kTypeCount         = 21;
 
-    // File format constants
-    static constexpr u32 kFormatVersion    = 1;
+    static constexpr u32 kFormatVersion    = 5;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────
@@ -56,8 +61,20 @@ private:
     void collectSpriteComponents(
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
+    void collectMeshFilterComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
+    void collectMeshRendererComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
+    void collectPrefabInstanceComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
     bool applyNameComponent(ECS::Entity e, const u8* data, u32 size);
     bool applySpriteComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size);
 
     template<typename T>
     static bool applyPODComponent(ECS::Entity e, const u8* data, u32 size,

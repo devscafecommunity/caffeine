@@ -8,19 +8,17 @@
 
 #include "core/Types.hpp"
 #include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
+#include "math/Vec4.hpp"
 #include <string>
 #include <vector>
 
 namespace Caffeine::ECS {
 
-struct Position2D {
-    f32 x = 0.0f;
-    f32 y = 0.0f;
-};
-
-struct Velocity2D {
-    f32 x = 0.0f;
-    f32 y = 0.0f;
+struct Transform {
+    Vec3 position = {0.0f, 0.0f, 0.0f};
+    Vec3 rotation = {0.0f, 0.0f, 0.0f};
+    Vec3 scale    = {1.0f, 1.0f, 1.0f};
 };
 
 struct Acceleration2D {
@@ -28,23 +26,9 @@ struct Acceleration2D {
     f32 y = 0.0f;
 };
 
-struct Rotation {
-    f32 angle = 0.0f;
-};
-
-struct Scale2D {
-    f32 x = 1.0f;
-    f32 y = 1.0f;
-};
-
 struct Sprite {
     std::string name;
     u32 frameIndex = 0;
-};
-
-struct Health {
-    u32 current = 100;
-    u32 max = 100;
 };
 
 struct Tag { };
@@ -75,4 +59,15 @@ struct ParticleEmitterComponent {
     std::vector<Particle> activeParticles;
 };
 
-}
+struct PersistentComponent {
+    bool dontDestroyOnLoad = true;
+};
+
+struct DisabledTag {};
+
+}  // namespace Caffeine::ECS
+
+#include "ecs/Components3D.hpp"
+#include "ecs/CameraComponents.hpp"
+#include "ecs/LightComponents.hpp"
+#include "ecs/MeshComponents.hpp"

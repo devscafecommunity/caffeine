@@ -1,0 +1,149 @@
+% ============================================================================
+% Chapter 6 — Physics 2D
+% ============================================================================
+\chapter{Physics 2D}
+\label{chap:physics2d}
+
+\textbf{Header:} \texttt{physics/PhysicsComponents2D.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Physics2D}
+
+The 2D physics system uses impulse-based rigid-body simulation with AABB and
+circle colliders. Add a \texttt{RigidBody2D} and a \texttt{Collider2D} to
+any entity; the \texttt{PhysicsSystem2D} does the rest.
+
+\section{RigidBody2D}
+
+\begin{lstlisting}
+struct RigidBody2D {
+    f32  mass          = 1.0f;
+    f32  restitution   = 0.3f;   // bounciness [0, 1]
+    f32  friction      = 0.5f;   // surface friction [0, 1]
+    f32  linearDamping = 0.0f;   // drag coefficient
+    bool isKinematic   = false;  // true: not affected by forces
+    bool lockRotation  = true;   // prevent angular movement
+    bool isSleeping    = false;  // managed by the physics system
+    f32  sleepTimer    = 0.0f;
+};
+\end{lstlisting}
+
+\begin{longtable}{lp{9cm}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{mass}          & Mass in arbitrary units. Higher mass requires more force to accelerate. \\
+\texttt{restitution}   & Energy kept after a collision. 0 = no bounce; 1 = perfectly elastic. \\
+\texttt{friction}      & Resistance to lateral sliding. \\
+\texttt{linearDamping} & Constant velocity reduction each frame (simulates air drag). \\
+\texttt{isKinematic}   & If true, the body is moved only by your code (not by physics forces). Use for platforms, moving walls. \\
+\texttt{lockRotation}  & If true, the body cannot rotate. Recommended for characters. \\
+\bottomrule
+\end{longtable}
+
+\begin{lstlisting}
+RigidBody2D rb;
+rb.mass          = 2.0f;
+rb.restitution   = 0.6f;
+rb.linearDamping = 0.1f;
+rb.lockRotation  = true;
+world.add<RigidBody2D>(player, rb);
+\end{lstlisting}
+
+\section{Collider2D}
+
+\begin{lstlisting}
+struct Collider2D {
+    Vec2          size      = {1.0f, 1.0f};     // AABB half-extents
+    Vec2          offset    = {0.0f, 0.0f};     // local offset from entity position
+    f32           radius    = 0.5f;             // circle radius
+    u32           layer     = 0;                // collision layer bitmask index
+    u32           layerMask = 0xFFFFFFFF;       // which layers this hits
+    ColliderShape shape     = ColliderShape::AABB;
+    bool          isStatic  = false;
+    bool          isTrigger = false;            // fire events, no physics response
+    bool          isOneWay  = false;            // only collide from one direction
+    u8            debugColor[4] = {80,200,255,220};
+};
+\end{lstlisting}
+
+\subsection{Collider shapes}
+
+\begin{lstlisting}
+enum class ColliderShape : u8 {
+    AABB,    // axis-aligned bounding box — use 'size' field
+    Circle   // circle — use 'radius' field
+};
+\end{lstlisting}
+
+\subsection{Collision layers}
+
+Use \texttt{layer} and \texttt{layerMask} to filter which entities collide.
+\texttt{layer} is the bit index (0--31) that this object belongs to.
+\texttt{layerMask} is a bitmask of all layers this object should collide with.
+
+\begin{lstlisting}
+// Example: player is on layer 0, enemies on layer 1, bullets on layer 2
+// Player should collide with terrain (layer 3) and enemies (layer 1)
+Collider2D playerCol;
+playerCol.shape     = ColliderShape::AABB;
+playerCol.size      = {16.0f, 24.0f};
+playerCol.layer     = 0;
+playerCol.layerMask = (1u << 1) | (1u << 3);   // enemies + terrain
+
+world.add<Collider2D>(player, playerCol);
+\end{lstlisting}
+
+\section{PhysicsMaterial}
+
+Preset material properties for common surface types:
+
+\begin{lstlisting}
+struct PhysicsMaterial {
+    f32 friction    = 0.5f;
+    f32 restitution = 0.3f;
+
+    static PhysicsMaterial ice()    { return {0.05f, 0.1f}; }
+    static PhysicsMaterial rubber() { return {0.8f,  0.9f}; }
+    static PhysicsMaterial metal()  { return {0.6f,  0.3f}; }
+    static PhysicsMaterial wood()   { return {0.5f,  0.2f}; }
+    static PhysicsMaterial stone()  { return {0.7f,  0.1f}; }
+};
+\end{lstlisting}
+
+Apply a preset by copying its values onto a \texttt{RigidBody2D}:
+
+\begin{lstlisting}
+auto mat       = PhysicsMaterial::ice();
+rb.friction    = mat.friction;
+rb.restitution = mat.restitution;
+\end{lstlisting}
+
+\section{Complete Setup Example}
+
+\begin{lstlisting}
+using namespace Caffeine::Physics2D;
+
+// Create a dynamic character
+Entity player = world.create("Player");
+world.add<Transform>(player);
+
+RigidBody2D rb;
+rb.mass         = 70.0f;
+rb.lockRotation = true;
+rb.linearDamping = 0.05f;
+world.add<RigidBody2D>(player, rb);
+
+Collider2D col;
+col.shape = ColliderShape::AABB;
+col.size  = {12.0f, 28.0f};
+world.add<Collider2D>(player, col);
+
+// Create a static ground platform
+Entity ground = world.create("Ground");
+world.add<Transform>(ground, Transform{{400, 500, 0}});
+
+Collider2D groundCol;
+groundCol.shape    = ColliderShape::AABB;
+groundCol.size     = {400.0f, 16.0f};
+groundCol.isStatic = true;
+world.add<Collider2D>(ground, groundCol);
+\end{lstlisting}

@@ -1,0 +1,479 @@
+% ============================================================================
+% Chapter 11 — Animation
+% ============================================================================
+\chapter{Animation}
+
+\textbf{Headers:} \texttt{animation/AnimationComponents.hpp},
+                  \texttt{animation/AnimationSystem.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Animation}
+
+The animation module provides frame-based sprite animation driven by a
+finite-state machine. States hold \texttt{AnimationClip} references and are
+connected by \texttt{AnimationTransition} objects whose conditions are
+evaluated against named parameters — a design inspired by Unity's and
+Unreal's Animator/AnimBlueprint systems. At runtime, the engine's
+\texttt{AnimationSystem} evaluates the state machine every frame and updates
+the sprite component automatically.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{AnimationClip}
+
+\textbf{Header:} \texttt{animation/AnimationComponents.hpp}
+
+An \texttt{AnimationClip} is a named sequence of sprite frames.
+
+\begin{lstlisting}
+struct FrameRect {
+    i32 x, y, w, h;   // pixel rectangle on the atlas texture
+};
+
+struct AnimationClip {
+    FixedString<32>       name;
+    u32                   fps;
+    std::vector<FrameRect> frames;
+    bool                  loop;
+
+    f32 duration() const;   // computed: frames.size() / (f32)fps
+};
+\end{lstlisting}
+
+\begin{longtable}{llp{8cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{name}     & \texttt{FixedString<32>}          & Unique identifier used to reference the clip. \\
+\texttt{fps}      & \texttt{u32}                       & Playback frame rate. \\
+\texttt{frames}   & \texttt{std::vector<FrameRect>}    & Ordered list of source rectangles on the texture atlas. \\
+\texttt{loop}     & \texttt{bool}                      & Whether the clip loops when it reaches the last frame. \\
+\texttt{duration()} & \texttt{f32}                     & Returns \texttt{frames.size() / (f32)fps} in seconds. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Creating a clip}
+
+\begin{lstlisting}
+using namespace Caffeine::Animation;
+
+AnimationClip idle;
+idle.name = "idle";
+idle.fps  = 12;
+idle.loop = true;
+idle.frames = {
+    {  0, 0, 64, 64 },
+    { 64, 0, 64, 64 },
+    {128, 0, 64, 64 },
+    {192, 0, 64, 64 },
+};
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Parameter System}
+
+Transitions between states are driven by \emph{named parameters} stored in
+the \texttt{Animator} component. Setting a parameter at runtime causes the
+state machine to evaluate its outgoing transitions on the next update.
+
+\subsection{ParameterType}
+
+\begin{lstlisting}
+enum class ParameterType : u8 {
+    Bool,
+    Float,
+    Int,
+    Trigger,
+};
+\end{lstlisting}
+
+A \texttt{Trigger} behaves like a boolean that is automatically reset to
+\texttt{false} after it causes a transition to fire.
+
+\subsection{AnimatorParameter}
+
+\begin{lstlisting}
+struct AnimatorParameter {
+    FixedString<32> name;
+    ParameterType   type;
+
+    bool  boolValue;
+    f32   floatValue;
+    i32   intValue;
+    bool  triggered;    // used internally for Trigger type
+};
+\end{lstlisting}
+
+\subsection{ConditionOperator}
+
+\begin{lstlisting}
+enum class ConditionOperator : u8 {
+    Equals,
+    NotEquals,
+    Greater,
+    Less,
+    GreaterOrEqual,
+    LessOrEqual,
+};
+\end{lstlisting}
+
+\texttt{Equals} / \texttt{NotEquals} work with Bool, Int, and Trigger
+parameters. The comparison operators (\texttt{Greater}, \texttt{Less}, etc.)
+work with Float and Int parameters.
+
+\subsection{TransitionCondition}
+
+\begin{lstlisting}
+struct TransitionCondition {
+    FixedString<32>    parameterName;
+    ConditionOperator  op;
+
+    bool  boolValue;
+    f32   floatValue;
+    i32   intValue;
+};
+\end{lstlisting}
+
+Each condition names a parameter in the \texttt{Animator} and specifies the
+comparison that must be true for the transition to be allowed. All conditions
+in a transition must be satisfied simultaneously (logical \texttt{AND}).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{AnimationState and AnimationTransition}
+
+\subsection{AnimationTransition}
+
+\begin{lstlisting}
+struct AnimationTransition {
+    FixedString<32>                   toState;
+    std::vector<TransitionCondition>  conditions;
+    f32                               blendTime;
+    bool                              hasExitTime;
+
+    // Legacy: function-based condition (still evaluated when conditions is empty)
+    std::function<bool()>             legacyCondition;
+};
+\end{lstlisting}
+
+\begin{longtable}{llp{7.5cm}}
+\toprule
+\textbf{Field}     & \textbf{Type}   & \textbf{Description} \\
+\midrule
+\texttt{toState}        & \texttt{FixedString<32>}                  & Name of the destination state. \\
+\texttt{conditions}     & \texttt{std::vector<TransitionCondition>} & All conditions must pass for the transition to fire. \\
+\texttt{blendTime}      & \texttt{f32}                              & Cross-fade duration in seconds. \\
+\texttt{hasExitTime}    & \texttt{bool}                             & When \texttt{true}, the transition can fire only after the current clip finishes. \\
+\texttt{legacyCondition}& \texttt{std::function<bool()>}            & Fallback used when \texttt{conditions} is empty. \\
+\bottomrule
+\end{longtable}
+
+\subsection{AnimationState}
+
+\begin{lstlisting}
+struct AnimationState {
+    FixedString<32>                    name;
+    const AnimationClip*               clip;
+    f32                                speed;
+    std::vector<AnimationTransition>   transitions;
+};
+\end{lstlisting}
+
+States are identified by name and reference a clip. Multiple outgoing
+transitions can be defined; they are evaluated in order and the first
+satisfied transition fires.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Animator Component}
+
+\texttt{Animator} is an ECS component that holds the complete state machine
+for an entity.
+
+\begin{lstlisting}
+struct Animator {
+    HashMap<FixedString<32>, AnimationState> states;
+
+    FixedString<32> currentState;
+    FixedString<32> previousState;
+
+    f32  timeInState;
+    f32  blendWeight;
+    f32  playbackScale;
+    bool paused;
+
+    std::vector<AnimatorParameter> parameters;
+
+    // Parameter helpers (inline convenience wrappers over the vector above)
+    void addParameter(const char* name, ParameterType type);
+
+    void setBool (const char* name, bool  value);
+    void setFloat(const char* name, f32   value);
+    void setInt  (const char* name, i32   value);
+    void setTrigger(const char* name);
+
+    bool getBool (const char* name) const;
+    f32  getFloat(const char* name) const;
+    i32  getInt  (const char* name) const;
+};
+\end{lstlisting}
+
+\begin{longtable}{llp{7.5cm}}
+\toprule
+\textbf{Field}         & \textbf{Type}   & \textbf{Description} \\
+\midrule
+\texttt{states}        & \texttt{HashMap} & All states keyed by name. \\
+\texttt{currentState}  & \texttt{FixedString<32>} & Name of the active state. \\
+\texttt{previousState} & \texttt{FixedString<32>} & Name of the state that was active before the last transition. \\
+\texttt{timeInState}   & \texttt{f32}    & Time in seconds the entity has spent in \texttt{currentState}. \\
+\texttt{blendWeight}   & \texttt{f32}    & Cross-fade weight (\texttt{0.0}–\texttt{1.0}) used during transitions. \\
+\texttt{playbackScale} & \texttt{f32}    & Global speed multiplier applied on top of each state's \texttt{speed}. \\
+\texttt{paused}        & \texttt{bool}   & When \texttt{true}, the state machine is frozen. \\
+\texttt{parameters}    & \texttt{vector} & Named parameters evaluated by transitions. \\
+\bottomrule
+\end{longtable}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{AnimationSystem}
+
+\textbf{Header:} \texttt{animation/AnimationSystem.hpp}\\
+\textbf{Base class:} \texttt{ECS::ISystem}
+
+\texttt{AnimationSystem} processes every entity that has both an
+\texttt{Animator} and a sprite component. It advances \texttt{timeInState},
+evaluates all outgoing transitions, fires the first satisfied one, and updates
+the sprite's source rectangle to reflect the current frame.
+
+\begin{lstlisting}
+class AnimationSystem : public ECS::ISystem {
+public:
+    // Called automatically by the engine every frame.
+    void onUpdate(ECS::World& world, f32 dt) override;
+
+    // ── Playback control ──────────────────────────────────────────────────
+    void play   (ECS::World& world, ECS::Entity e, const char* stateName);
+    void pause  (ECS::World& world, ECS::Entity e);
+    void resume (ECS::World& world, ECS::Entity e);
+    void setSpeed(ECS::World& world, ECS::Entity e, f32 speed);
+    bool isPlaying(ECS::World& world, ECS::Entity e,
+                   const char* stateName) const;
+
+    // ── Parameter write ───────────────────────────────────────────────────
+    void addParameter(ECS::World& world, ECS::Entity e,
+                      const char* name, ParameterType type);
+
+    void setBool   (ECS::World& world, ECS::Entity e, const char* name, bool  v);
+    void setFloat  (ECS::World& world, ECS::Entity e, const char* name, f32   v);
+    void setInt    (ECS::World& world, ECS::Entity e, const char* name, i32   v);
+    void setTrigger(ECS::World& world, ECS::Entity e, const char* name);
+
+    // ── Parameter read ────────────────────────────────────────────────────
+    bool getBool (ECS::World& world, ECS::Entity e, const char* name) const;
+    f32  getFloat(ECS::World& world, ECS::Entity e, const char* name) const;
+    i32  getInt  (ECS::World& world, ECS::Entity e, const char* name) const;
+};
+\end{lstlisting}
+
+\subsection{Playback methods}
+
+\begin{longtable}{lp{10cm}}
+\toprule
+\textbf{Method} & \textbf{Description} \\
+\midrule
+\texttt{play(world, e, name)}      & Immediately transitions to the named state. Resets \texttt{timeInState}. \\
+\texttt{pause(world, e)}           & Freezes playback. Sets \texttt{Animator::paused = true}. \\
+\texttt{resume(world, e)}          & Resumes playback from where it was paused. \\
+\texttt{setSpeed(world, e, speed)} & Sets \texttt{playbackScale}. Values above 1 speed up, below 1 slow down. \\
+\texttt{isPlaying(world, e, name)} & Returns \texttt{true} if the entity is currently in the named state and not paused. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Parameter methods}
+
+\begin{longtable}{lp{9.5cm}}
+\toprule
+\textbf{Method} & \textbf{Description} \\
+\midrule
+\texttt{addParameter(world, e, name, type)} & Registers a new named parameter. Call once during setup. \\
+\texttt{setBool(world, e, name, v)}         & Sets a Bool parameter. \\
+\texttt{setFloat(world, e, name, v)}        & Sets a Float parameter. \\
+\texttt{setInt(world, e, name, v)}          & Sets an Int parameter. \\
+\texttt{setTrigger(world, e, name)}         & Sets a Trigger; it is cleared automatically after the transition fires. \\
+\texttt{getBool(world, e, name)}            & Returns the current value of a Bool parameter. \\
+\texttt{getFloat(world, e, name)}           & Returns the current value of a Float parameter. \\
+\texttt{getInt(world, e, name)}             & Returns the current value of an Int parameter. \\
+\bottomrule
+\end{longtable}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Setting Up a Character Animator}
+
+The following example constructs a complete two-state machine (idle / run)
+for a player entity, with a Float parameter controlling the transition.
+
+\begin{lstlisting}
+#include "animation/AnimationComponents.hpp"
+#include "animation/AnimationSystem.hpp"
+#include "ecs/World.hpp"
+
+using namespace Caffeine::Animation;
+
+void setupPlayerAnimator(ECS::World& world, ECS::Entity player,
+                         AnimationSystem& animSys,
+                         const AnimationClip& idleClip,
+                         const AnimationClip& runClip)
+{
+    // 1. Build the state machine
+    AnimationState idle;
+    idle.name  = "idle";
+    idle.clip  = &idleClip;
+    idle.speed = 1.0f;
+
+    AnimationState run;
+    run.name  = "run";
+    run.clip  = &runClip;
+    run.speed = 1.0f;
+
+    // 2. Add transitions
+    {
+        TransitionCondition toRun;
+        toRun.parameterName = "speed";
+        toRun.op            = ConditionOperator::Greater;
+        toRun.floatValue    = 0.1f;
+
+        AnimationTransition idleToRun;
+        idleToRun.toState   = "run";
+        idleToRun.blendTime = 0.1f;
+        idleToRun.conditions.push_back(toRun);
+        idle.transitions.push_back(idleToRun);
+    }
+    {
+        TransitionCondition toIdle;
+        toIdle.parameterName = "speed";
+        toIdle.op            = ConditionOperator::LessOrEqual;
+        toIdle.floatValue    = 0.1f;
+
+        AnimationTransition runToIdle;
+        runToIdle.toState   = "idle";
+        runToIdle.blendTime = 0.1f;
+        runToIdle.conditions.push_back(toIdle);
+        run.transitions.push_back(runToIdle);
+    }
+
+    // 3. Attach the Animator component
+    auto& anim = world.add<Animator>(player);
+    anim.states["idle"] = idle;
+    anim.states["run"]  = run;
+
+    // 4. Register parameters
+    animSys.addParameter(world, player, "speed", ParameterType::Float);
+
+    // 5. Start in idle state
+    animSys.play(world, player, "idle");
+}
+\end{lstlisting}
+
+\subsection{Updating the parameter in a script}
+
+\begin{lstlisting}
+void PlayerController::onUpdate(ECS::Entity entity,
+                                ECS::World& world, f32 dt)
+{
+    f32 vel = computeHorizontalVelocity();   // game-specific
+    animSys.setFloat(world, entity, "speed", std::abs(vel));
+}
+\end{lstlisting}
+
+The \texttt{AnimationSystem} will pick up the change on the next
+\texttt{onUpdate} call and fire the appropriate transition automatically.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Using Triggers for One-Shot Animations}
+
+Triggers are ideal for actions that happen once (jump, attack, hit).
+
+\begin{lstlisting}
+// Setup: add a Trigger parameter and connect a transition
+animSys.addParameter(world, player, "attack", ParameterType::Trigger);
+
+TransitionCondition cond;
+cond.parameterName = "attack";
+cond.op            = ConditionOperator::Equals;
+cond.boolValue     = true;   // Trigger reads as bool internally
+
+AnimationTransition idleToAttack;
+idleToAttack.toState      = "attack";
+idleToAttack.blendTime    = 0.05f;
+idleToAttack.hasExitTime  = false;
+idleToAttack.conditions.push_back(cond);
+idle.transitions.push_back(idleToAttack);
+
+// At runtime: fire the attack animation once
+animSys.setTrigger(world, player, "attack");
+// The trigger is cleared automatically after the transition fires.
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Editor Windows}
+
+\subsection{Animation Timeline}
+
+The \textbf{Animation Timeline} window (\texttt{editor/AnimationTimeline.hpp})
+provides a visual editor for individual \texttt{AnimationClip} objects.
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Ruler} — Displays time tick marks derived from the clip's
+        duration. Click anywhere on the ruler to seek the playhead to that
+        time.
+  \item \textbf{Playhead} — A red vertical line with a triangle marker on the
+        ruler indicates \texttt{currentTime}. Drag it to scrub the clip.
+  \item \textbf{Tracks} — Each track corresponds to a channel (e.g., frame
+        index, a property). Rows alternate in shade for readability; the
+        track name is rendered as a coloured label on the left.
+  \item \textbf{Keyframes} — Rendered as filled diamonds. Left-click and drag
+        to reposition. Right-click to delete.
+  \item \textbf{Buttons} — \texttt{+ Track} adds a new channel,
+        \texttt{+ Key} inserts a keyframe at the current playhead position,
+        \texttt{Del Key} removes the selected keyframe.
+\end{itemize}
+
+\subsection{Animator Controller}
+
+The \textbf{Animator Controller} window
+(\texttt{editor/AnimatorController.hpp}) provides a visual state-machine
+editor comparable to Unity's Animator window.
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Canvas} — An infinite scrollable grid. Pan by dragging with
+        the middle mouse button.
+  \item \textbf{State nodes} — Draggable boxes. The default state is
+        highlighted in a distinct colour; the currently active state is shown
+        in a third colour.
+  \item \textbf{Transitions} — Drawn as directed lines with a triangular
+        arrowhead at the midpoint indicating direction.
+  \item \textbf{Right-click canvas} — Opens an \emph{Add State} modal to
+        create a new state node.
+  \item \textbf{Right-click node} — Context menu with options:
+        \emph{Set as Default}, \emph{Add Transition}, \emph{Delete State}.
+  \item \textbf{Parameters panel} (left) — Lists all \texttt{AnimatorParameter}
+        entries; values can be edited live to test transitions at runtime.
+  \item \textbf{Inspector panel} (right) — Shows the selected state's
+        \texttt{speed}, \texttt{clip}, outgoing transitions, and each
+        transition's conditions.
+  \item \texttt{setAnimator(animator*)} — Bind a live \texttt{Animator}
+        component to the window; state nodes are auto-positioned on a grid.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Best Practices}
+
+\begin{itemize}[noitemsep]
+  \item Name parameters and states consistently — use \texttt{camelCase}
+        for parameters (\texttt{"isGrounded"}, \texttt{"speed"}) and
+        \texttt{PascalCase} for state names (\texttt{"Idle"}, \texttt{"Run"}).
+  \item Prefer Float/Bool parameters over Triggers for conditions that reflect
+        ongoing game state. Triggers are appropriate only for discrete,
+        one-shot events.
+  \item Keep \texttt{blendTime} short (0.05–0.15 s) for responsive
+        characters and longer (0.2–0.4 s) for cinematic transitions.
+  \item Set \texttt{hasExitTime = true} only for transitions that must wait
+        for the current clip to finish, such as an attack returning to idle.
+  \item Call \texttt{addParameter} once during entity setup, not every frame.
+        Reading or writing a non-existent parameter is a no-op, but registering
+        it late may miss the first frame's transitions.
+\end{itemize}

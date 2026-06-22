@@ -9,6 +9,7 @@
 
 #include "core/Types.hpp"
 #include "core/io/CafTypes.hpp"
+#include "assets/MeshTypes.hpp"
 
 namespace Caffeine::Assets {
 
@@ -52,6 +53,22 @@ struct ShaderBlob {
     u64       bytecodeSize = 0;
 };
 
+struct Mesh {
+    const Vertex3D* vertices    = nullptr;
+    u32             vertexCount = 0;
+    const u32*      indices     = nullptr;
+    u32             indexCount  = 0;
+    u64             vertexDataSize = 0;
+    u64             indexDataSize  = 0;
+};
+
+struct Prefab {
+    // Lazy instantiation: stores path for runtime entity creation
+    // The actual binary payload is held in AssetManager's buffer
+    const u8* payloadData = nullptr;
+    u64       payloadSize = 0;
+};
+
 // ============================================================================
 // CacheStats — returned by AssetManager::cacheStats()
 // ============================================================================
@@ -77,6 +94,12 @@ template<> struct AssetTypeTrait<AudioClip> {
 };
 template<> struct AssetTypeTrait<ShaderBlob> {
     static constexpr AssetType cafType = AssetType::Shader;
+};
+template<> struct AssetTypeTrait<Mesh> {
+    static constexpr AssetType cafType = AssetType::Mesh;
+};
+template<> struct AssetTypeTrait<Prefab> {
+    static constexpr AssetType cafType = AssetType::Prefab;
 };
 
 } // namespace Caffeine::Assets
