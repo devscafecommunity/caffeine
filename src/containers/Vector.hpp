@@ -24,6 +24,7 @@ public:
     }
 
     ~Vector() {
+        clear();
         if (m_data && m_ownsData) {
             if (m_allocator) {
                 m_allocator->free(m_data);
@@ -68,6 +69,7 @@ public:
 
     Vector& operator=(Vector&& other) noexcept {
         if (this != &other) {
+            clear();
             if (m_ownsData && m_data) {
                 if (m_allocator) {
                     m_allocator->free(m_data);

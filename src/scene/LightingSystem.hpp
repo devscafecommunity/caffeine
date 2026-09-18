@@ -4,9 +4,11 @@
 #include "ecs/World.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/Components.hpp"
-#include "ecs/ComponentQuery.hpp"
+#include "ecs/Entity.hpp"
 #include "math/Vec3.hpp"
 #include "math/Vec4.hpp"
+#include "scene/CpuDirectionalShadowMap.hpp"
+#include <string>
 #include <vector>
 
 namespace Caffeine::Scene {
@@ -42,64 +44,34 @@ struct LightingData {
     std::vector<PointLightData> points;
     std::vector<SpotLightData> spots;
 
-    void clear() {
-        directionals.clear();
-        points.clear();
-        spots.clear();
-    }
+    void clear();
 };
 
-inline void collectLights(ECS::World& world, LightingData& out) {
-    out.clear();
+struct SceneShadowMaps {
+    std::vector<CpuDirectionalShadowMap> directionals;
+    std::vector<CpuSpotShadowMap> spots;
 
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::DirectionalLightComponent>();
-        q.with<ECS::Transform>();
-        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent, ECS::Transform>(
-            q, [&](ECS::Entity, ECS::LightComponent& lc, ECS::DirectionalLightComponent& dl, ECS::Transform& t) {
-                static constexpr float DEG2RAD = 3.14159265f / 180.f;
-                float rx = t.rotation.x * DEG2RAD;
-                float ry = t.rotation.y * DEG2RAD;
-                Vec3 dir = {
-                    -sinf(ry) * cosf(rx),
-                    sinf(rx),
-                    -cosf(ry) * cosf(rx)
-                };
-                out.directionals.push_back({dir, lc.color, lc.intensity, dl.shadowDistance, dl.castShadows});
-            });
-    }
+    void clear();
+};
 
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::PointLightComponent>();
-        q.with<ECS::Transform>();
-        world.forEach<ECS::LightComponent, ECS::PointLightComponent, ECS::Transform>(
-            q, [&](ECS::Entity, ECS::LightComponent& lc, ECS::PointLightComponent& pl, ECS::Transform& t) {
-                out.points.push_back({t.position, lc.color, lc.intensity, pl.radius, pl.castShadows});
-            });
-    }
+struct SceneLighting {
+    LightingData lights;
+    SceneShadowMaps shadows;
 
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::SpotLightComponent>();
-        q.with<ECS::Transform>();
-        world.forEach<ECS::LightComponent, ECS::SpotLightComponent, ECS::Transform>(
-            q, [&](ECS::Entity, ECS::LightComponent& lc, ECS::SpotLightComponent& sl, ECS::Transform& t) {
-                static constexpr float DEG2RAD = 3.14159265f / 180.f;
-                float rx = t.rotation.x * DEG2RAD;
-                float ry = t.rotation.y * DEG2RAD;
-                Vec3 dir = {
-                    -sinf(ry) * cosf(rx),
-                    sinf(rx),
-                    -cosf(ry) * cosf(rx)
-                };
-                out.spots.push_back({t.position, dir, lc.color, lc.intensity, sl.radius, sl.angle, sl.castShadows});
-            });
-    }
-}
+    void clear();
+};
+
+void collectSceneLights(ECS::World& world, LightingData& out);
+
+void buildSceneShadowMaps(ECS::World& world, const LightingData& lights, const Vec3& focus,
+                          const std::string& projectRoot, SceneShadowMaps& out,
+                          ECS::Entity skipEntity = ECS::Entity::INVALID);
+
+void gatherSceneLighting(ECS::World& world, const Vec3& focus, const std::string& projectRoot,
+                         SceneLighting& out, ECS::Entity skipEntity = ECS::Entity::INVALID);
+
+Vec3 evaluateDiffuseLighting(const LightingData& lights, const SceneShadowMaps& shadows,
+                             const Vec3& worldPos, const Vec3& worldNormal, bool receiveShadows,
+                             const Vec3& ambient = Vec3(0.18f, 0.18f, 0.18f));
 
 }  // namespace Caffeine::Scene

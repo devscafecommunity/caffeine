@@ -71,3 +71,5 @@ struct DisabledTag {};
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/SkyboxComponents.hpp"
+#include "ecs/TerrainComponents.hpp"

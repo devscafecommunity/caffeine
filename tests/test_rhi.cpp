@@ -298,6 +298,50 @@ TEST_CASE("RenderDevice - createShader without init returns null", "[rhi][device
     REQUIRE(device.createShader(desc) == nullptr);
 }
 
+TEST_CASE("RenderDevice - createGraphicsPipeline without init returns null", "[rhi][device]") {
+    RenderDevice device;
+    Shader vs;
+    Shader fs;
+    VertexBufferLayoutDesc layout{0, 32, false};
+    VertexAttributeDesc attr{0, 0, VertexFormat::Float3, 0};
+    GraphicsPipelineDesc pipeDesc;
+    pipeDesc.vertexBuffers = &layout;
+    pipeDesc.numVertexBuffers = 1;
+    pipeDesc.attributes = &attr;
+    pipeDesc.numAttributes = 1;
+    REQUIRE(device.createGraphicsPipeline(&vs, &fs, pipeDesc) == nullptr);
+}
+
+TEST_CASE("RenderDevice - uploadBuffer without init returns false", "[rhi][device]") {
+    RenderDevice device;
+    Buffer buf;
+    u8 data[4] = {0};
+    REQUIRE(device.uploadBuffer(&buf, data, sizeof(data)) == false);
+}
+
+TEST_CASE("RenderDevice - destroyPipeline with null is safe", "[rhi][device]") {
+    RenderDevice device;
+    device.destroyPipeline(nullptr);
+}
+
+TEST_CASE("RenderDevice - destroySampler with null is safe", "[rhi][device]") {
+    RenderDevice device;
+    device.destroySampler(nullptr);
+}
+
+TEST_CASE("GraphicsPipelineDesc - Default depth enabled", "[rhi][pipeline]") {
+    GraphicsPipelineDesc desc;
+    REQUIRE(desc.depthTest == true);
+    REQUIRE(desc.depthWrite == true);
+    REQUIRE(desc.enableBlend == false);
+}
+
+TEST_CASE("RenderPassDesc - Offscreen targets default null", "[rhi][renderpass]") {
+    RenderPassDesc desc;
+    REQUIRE(desc.colorTarget == nullptr);
+    REQUIRE(desc.depthTarget == nullptr);
+}
+
 TEST_CASE("RenderDevice - destroyTexture with null is safe", "[rhi][device]") {
     RenderDevice device;
     device.destroyTexture(nullptr);

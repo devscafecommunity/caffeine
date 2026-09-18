@@ -247,7 +247,9 @@ int main(int argc, char** argv) {
         if (!cmd) continue;
 
         imgui.beginFrame();
+        editor.setFrameCommandBuffer(cmd);
         editor.render(deltaTime);
+        editor.setFrameCommandBuffer(nullptr);
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;

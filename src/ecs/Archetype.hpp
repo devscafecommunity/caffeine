@@ -82,6 +82,10 @@ public:
         , m_archetypeIndex(archetypeIndex)
         , m_entities(allocator)
         , m_poolRegistry() {}
+
+    ~Archetype() {
+        m_poolRegistry.clear();
+    }
     
     const ComponentSet& getComponentSet() const {
         return m_componentSet;
@@ -168,7 +172,8 @@ public:
         }
         
         ComponentPool<T>* newPool = new ComponentPool<T>(m_allocator);
-        m_poolRegistry.set(componentID, newPool, &copyComponentImpl<T>, &createPoolImpl<T>, &removeComponentImpl<T>);
+        m_poolRegistry.set(componentID, newPool, &copyComponentImpl<T>, &createPoolImpl<T>,
+                           &removeComponentImpl<T>, &destroyPoolImpl<T>);
         return newPool->add(component);
     }
     
@@ -190,7 +195,8 @@ public:
         }
         
         void* newPool = srcCreatePoolFunc(m_allocator);
-        m_poolRegistry.set(componentID, newPool, srcCopyFunc, srcCreatePoolFunc, srcRemoveFunc);
+        m_poolRegistry.set(componentID, newPool, srcCopyFunc, srcCreatePoolFunc, srcRemoveFunc,
+                           srcArchetype->m_poolRegistry.getDestroyFunc(componentID));
         srcCopyFunc(newPool, srcPool, srcIndex);
         return newPool;
     }
@@ -199,6 +205,7 @@ private:
     using CopyFunc = void (*)(void* dstPool, const void* srcPool, u32 srcIndex);
     using CreatePoolFunc = void* (*)(IAllocator* allocator);
     using RemoveFunc = void (*)(void* pool, u32 index);
+    using DestroyPoolFunc = void (*)(void* pool);
     
     template<typename T>
     static void copyComponentImpl(void* dstPool, const void* srcPool, u32 srcIndex) {
@@ -220,12 +227,18 @@ private:
         ComponentPool<T>* typedPool = static_cast<ComponentPool<T>*>(pool);
         typedPool->remove(index);
     }
+
+    template<typename T>
+    static void destroyPoolImpl(void* pool) {
+        delete static_cast<ComponentPool<T>*>(pool);
+    }
     
     struct PoolEntry {
-        void* pool;
-        CopyFunc copyFunc;
-        CreatePoolFunc createPoolFunc;
-        RemoveFunc removeFunc;
+        void* pool = nullptr;
+        CopyFunc copyFunc = nullptr;
+        CreatePoolFunc createPoolFunc = nullptr;
+        RemoveFunc removeFunc = nullptr;
+        DestroyPoolFunc destroyFunc = nullptr;
     };
     
     class PoolRegistry {
@@ -242,7 +255,8 @@ private:
             }
         }
         
-        void set(u32 componentID, void* pool, CopyFunc copyFunc, CreatePoolFunc createPoolFunc, RemoveFunc removeFunc) {
+        void set(u32 componentID, void* pool, CopyFunc copyFunc, CreatePoolFunc createPoolFunc,
+                 RemoveFunc removeFunc, DestroyPoolFunc destroyFunc) {
             if (componentID >= MAX_COMPONENTS) {
                 return;
             }
@@ -250,7 +264,28 @@ private:
             m_pools[componentID].copyFunc = copyFunc;
             m_pools[componentID].createPoolFunc = createPoolFunc;
             m_pools[componentID].removeFunc = removeFunc;
+            m_pools[componentID].destroyFunc = destroyFunc;
             m_validIDs = m_validIDs | (1ULL << componentID);
+        }
+
+        DestroyPoolFunc getDestroyFunc(u32 componentID) const {
+            if (componentID >= MAX_COMPONENTS) {
+                return nullptr;
+            }
+            return m_pools[componentID].destroyFunc;
+        }
+
+        void clear() {
+            for (u32 i = 0; i < MAX_COMPONENTS; ++i) {
+                if ((m_validIDs & (1ULL << i)) == 0) {
+                    continue;
+                }
+                if (m_pools[i].pool && m_pools[i].destroyFunc) {
+                    m_pools[i].destroyFunc(m_pools[i].pool);
+                }
+                m_pools[i] = {};
+            }
+            m_validIDs = 0;
         }
         
         void* getPool(u32 componentID) const {

@@ -81,4 +81,8 @@ std::filesystem::path EditorPaths::spinnerPath(const std::string& name) {
     return resolve((std::filesystem::path("spinners") / file).string());
 }
 
+std::filesystem::path EditorPaths::skyboxPath(const std::string& fileName) {
+    return resolve((std::filesystem::path("kenney_skyboxes") / "Skyboxes" / fileName).string());
+}
+
 } // namespace Caffeine::Editor

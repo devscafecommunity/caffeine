@@ -619,6 +619,8 @@ void AssetBrowser::renderGridView() {
                     break;
                 } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
                     m_onScriptOpen(entry.path);
+                } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
+                    m_onMaterialOpen(entry.path);
                 }
             }
         }
@@ -693,6 +695,8 @@ void AssetBrowser::renderListView() {
                     break;
                 } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
                     m_onScriptOpen(entry.path);
+                } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
+                    m_onMaterialOpen(entry.path);
                 }
             }
         }
@@ -1404,7 +1408,16 @@ void AssetBrowser::renderNamingPopup() {
                     f << "{}";
                 } else if (m_pendingCreateType == 9) {
                     std::ofstream f(m_currentDir / (nameStr + ".mat"));
-                    f << "{}";
+                    f << "CAFMAT1\n"
+                         "name " << nameStr << "\n"
+                         "albedo 1 1 1 1\n"
+                         "roughness 0.5\n"
+                         "metallic 0\n"
+                         "node_count 2\n"
+                         "node 1 Color 1 1 1 1\n"
+                         "node 2 OutputPBR\n"
+                         "link_count 1\n"
+                         "link 1 0 2 0\n";
                 } else if (m_pendingCreateType == 10) {
                     std::error_code ec;
                     std::filesystem::path newPath = m_currentDir / nameStr;

@@ -7,9 +7,17 @@
 
 namespace Caffeine::Editor {
 
+struct EvaluatedMaterial {
+    Vec4 albedo{1.0f, 1.0f, 1.0f, 1.0f};
+    f32  metallic = 0.0f;
+    f32  roughness = 0.5f;
+    bool valid = false;
+};
+
 class ShaderGraph {
 public:
     uint32_t addNode(NodeType type);
+    uint32_t addNodeWithId(NodeType type, uint32_t id);
     bool removeNode(uint32_t nodeID);
 
     bool connect(uint32_t fromNode, int fromPin, uint32_t toNode, int toPin);
@@ -25,6 +33,7 @@ public:
 
     std::string compileGLSL() const;
     std::string compileHLSL() const;
+    EvaluatedMaterial evaluateMaterial(f32 time) const;
 
     std::vector<std::unique_ptr<ShaderNode>>& nodes() { return m_nodes; }
     const std::vector<std::unique_ptr<ShaderNode>>& nodes() const { return m_nodes; }

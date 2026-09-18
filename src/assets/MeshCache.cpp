@@ -6,6 +6,11 @@
 #include <filesystem>
 #include <fstream>
 
+#ifdef __linux__
+#include <limits.h>
+#include <unistd.h>
+#endif
+
 namespace Caffeine::Assets {
 
 namespace {
@@ -25,6 +30,34 @@ void appendUnique(std::vector<std::string>& out, const std::filesystem::path& ca
     if (std::find(out.begin(), out.end(), use) == out.end()) {
         out.push_back(use);
     }
+}
+
+std::filesystem::path findEngineAssetsRoot() {
+    std::vector<std::filesystem::path> roots;
+#ifdef CAFFEINE_SOURCE_DIR
+    roots.push_back(std::filesystem::path(CAFFEINE_SOURCE_DIR) / "assets");
+#endif
+    roots.push_back(std::filesystem::current_path() / "assets");
+    roots.push_back(std::filesystem::current_path() / ".." / "assets");
+
+#ifdef __linux__
+    char exePath[PATH_MAX] = {};
+    const ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0) {
+        exePath[len] = '\0';
+        const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        roots.push_back(exeDir / "assets");
+        roots.push_back(exeDir / ".." / "assets");
+    }
+#endif
+
+    for (const auto& root : roots) {
+        std::error_code ec;
+        if (std::filesystem::exists(root / "kenney_prototype-textures", ec) && !ec) {
+            return std::filesystem::weakly_canonical(root, ec);
+        }
+    }
+    return {};
 }
 
 Mesh3D* loadMeshFromBuffer(const std::string& path, const std::vector<u8>& buffer,
@@ -96,6 +129,59 @@ MeshCache& MeshCache::getInstance() {
     return instance;
 }
 
+std::string MeshCache::normalizeTexturePath(const std::string& path) {
+    if (path.empty()) return path;
+
+    std::string normalized = path;
+    for (size_t pos = 0;
+         (pos = normalized.find("kenney-prototype", pos)) != std::string::npos;) {
+        normalized.replace(pos, 16, "kenney_prototype");
+        pos += 17;
+    }
+
+    while (!normalized.empty() && (normalized.back() == '/' || normalized.back() == '\\')) {
+        normalized.pop_back();
+    }
+
+    const std::filesystem::path p(normalized);
+    const std::string ext = p.extension().string();
+    if (ext.empty() || ext == ".") {
+        if (normalized.find("kenney_prototype-textures") != std::string::npos) {
+            normalized += "/Light/texture_07.png";
+        } else if (!normalized.empty()) {
+            normalized += "/texture_07.png";
+        }
+    }
+
+    return normalized;
+}
+
+std::string MeshCache::resolveTexturePath(const std::string& path, const std::string& projectRoot) {
+    if (path.empty()) return {};
+
+    std::vector<std::string> candidates;
+    auto addCandidates = [&](const std::string& candidatePath) {
+        if (candidatePath.empty()) return;
+        for (const std::string& candidate : buildCandidatePaths(candidatePath, projectRoot)) {
+            appendUnique(candidates, candidate);
+        }
+    };
+
+    addCandidates(path);
+    const std::string fixed = normalizeTexturePath(path);
+    if (fixed != path) {
+        addCandidates(fixed);
+    }
+
+    for (const std::string& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec) && !ec) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
 std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
                                                          const std::string& projectRoot) {
     std::vector<std::string> candidates;
@@ -113,6 +199,7 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
     if (!projectRoot.empty()) {
         const std::filesystem::path root(projectRoot);
         appendUnique(candidates, root / input);
+        appendUnique(candidates, root / "assets" / input);
         appendUnique(candidates, root / "assets/raw" / input.filename());
         appendUnique(candidates, root / "assets/raw" / input);
         // Packaged game layout (build output): data/assets/raw/...
@@ -121,6 +208,12 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
         appendUnique(candidates, root / "data/assets/raw" / input);
         appendUnique(candidates, root / "data/assets/processed" / input.filename());
         appendUnique(candidates, root / "data/assets/processed" / input);
+    }
+
+    const std::filesystem::path engineAssets = findEngineAssetsRoot();
+    if (!engineAssets.empty()) {
+        appendUnique(candidates, engineAssets / input);
+        appendUnique(candidates, engineAssets / input.filename());
     }
 
     return candidates;
@@ -190,6 +283,24 @@ Mesh3D* MeshCache::loadFromResolvedPath(const std::string& path) {
     }
     return nullptr;
 }
+
+#ifdef CF_HAS_SDL3
+void MeshCache::releaseGpuResources(RHI::RenderDevice* device) {
+    if (!device) return;
+    for (auto& pair : m_cache) {
+        if (!pair.second) continue;
+        Mesh3D& mesh = *pair.second;
+        if (mesh.vertexBuffer) {
+            device->destroyBuffer(mesh.vertexBuffer);
+            mesh.vertexBuffer = nullptr;
+        }
+        if (mesh.indexBuffer) {
+            device->destroyBuffer(mesh.indexBuffer);
+            mesh.indexBuffer = nullptr;
+        }
+    }
+}
+#endif
 
 void MeshCache::clear() {
     for (auto& pair : m_cache) {

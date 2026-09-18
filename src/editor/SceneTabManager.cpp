@@ -24,6 +24,12 @@ int SceneTabManager::addTab(const char* name, std::unique_ptr<ECS::World> world)
     return idx;
 }
 
+void SceneTabManager::clearAll() {
+    m_tabs.clear();
+    m_activeTabIndex = -1;
+    m_pendingSelectIndex = -1;
+}
+
 bool SceneTabManager::closeScene(int index) {
     if (index < 0 || index >= static_cast<int>(m_tabs.size())) return false;
     m_tabs.erase(m_tabs.begin() + index);

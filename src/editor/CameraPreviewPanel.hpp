@@ -3,6 +3,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
+#include "render/SkyboxRenderer.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -44,6 +45,7 @@ private:
         bool loadFailed = false;
     };
     std::unordered_map<std::string, TexEntry> m_texCache;
+    Render::SkyboxRenderer m_skyboxRenderer;
 
     std::string resolveSpritePath(const std::string& name, const EditorContext& ctx) const;
 #endif

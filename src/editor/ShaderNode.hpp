@@ -81,6 +81,8 @@ public:
     std::string generateCode(const std::vector<std::string>& inputVars) const override;
     const char* outputVarType() const override { return "vec4"; }
     void renderProperties() override;
+    const char* texturePath() const { return m_texturePath; }
+    void setTexturePath(const char* path);
 private:
     char m_texturePath[128] = {};
 };
@@ -142,7 +144,7 @@ class OutputPBRNode final : public ShaderNode {
 public:
     explicit OutputPBRNode(uint32_t id);
     std::string generateCode(const std::vector<std::string>& inputVars) const override;
-    const char* outputVarType() const override { return "void"; }
+    const char* outputVarType() const override { return "vec4"; }
     void renderProperties() override;
 };
 

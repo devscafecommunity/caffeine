@@ -59,12 +59,19 @@ void CommandBuffer::reset() {
 }
 
 void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
-    if (!m_cmdBuffer || m_inRenderPass || !m_swapchainTexture) {
+    if (!m_cmdBuffer || m_inRenderPass) {
+        return;
+    }
+
+    SDL_GPUTexture* colorTexture = desc.colorTarget ? desc.colorTarget->handle : m_swapchainTexture;
+    if (!colorTexture) {
         return;
     }
 
     SDL_GPUColorTargetInfo colorTarget{};
-    colorTarget.texture       = m_swapchainTexture;
+    colorTarget.texture       = colorTexture;
+    colorTarget.mip_level     = desc.colorMipLevel;
+    colorTarget.layer_or_depth_plane = desc.colorLayer;
     colorTarget.load_op       = SDL_GPU_LOADOP_CLEAR;
     colorTarget.store_op      = SDL_GPU_STOREOP_STORE;
     colorTarget.clear_color.r = desc.clearColor[0];
@@ -72,7 +79,20 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
     colorTarget.clear_color.b = desc.clearColor[2];
     colorTarget.clear_color.a = desc.clearColor[3];
 
-    m_renderPass   = SDL_BeginGPURenderPass(m_cmdBuffer, &colorTarget, 1, nullptr);
+    SDL_GPUDepthStencilTargetInfo depthTarget{};
+    SDL_GPUDepthStencilTargetInfo* depthPtr = nullptr;
+    if (desc.depthTarget && desc.depthTarget->handle) {
+        depthTarget.texture = desc.depthTarget->handle;
+        depthTarget.load_op = desc.clearDepth ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
+        depthTarget.store_op = SDL_GPU_STOREOP_STORE;
+        depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        depthTarget.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+        depthTarget.clear_depth = desc.depthValue;
+        depthTarget.clear_stencil = 0;
+        depthPtr = &depthTarget;
+    }
+
+    m_renderPass   = SDL_BeginGPURenderPass(m_cmdBuffer, &colorTarget, 1, depthPtr);
     m_inRenderPass = (m_renderPass != nullptr);
 }
 
@@ -116,13 +136,13 @@ void CommandBuffer::bindIndexBuffer(Buffer* buf) {
     SDL_BindGPUIndexBuffer(m_renderPass, &binding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 }
 
-void CommandBuffer::bindTexture(Texture* tex, u32 slot) {
+void CommandBuffer::bindTexture(Texture* tex, u32 slot, Sampler* sampler) {
     if (!m_renderPass || !tex || !tex->handle) {
         return;
     }
     SDL_GPUTextureSamplerBinding samplerBinding{};
     samplerBinding.texture = tex->handle;
-    samplerBinding.sampler = nullptr;
+    samplerBinding.sampler = sampler ? sampler->handle : nullptr;
     SDL_BindGPUFragmentSamplers(m_renderPass, slot, &samplerBinding, 1);
 }
 
@@ -180,9 +200,10 @@ void CommandBuffer::pushUniformData(ShaderStage stage, u32 slot,
     if (!m_cmdBuffer || !data || size == 0) {
         return;
     }
-    SDL_PushGPUVertexUniformData(m_cmdBuffer, slot, data, size);
     if (stage == ShaderStage::Fragment) {
         SDL_PushGPUFragmentUniformData(m_cmdBuffer, slot, data, size);
+    } else {
+        SDL_PushGPUVertexUniformData(m_cmdBuffer, slot, data, size);
     }
 }
 

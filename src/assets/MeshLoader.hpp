@@ -191,19 +191,29 @@ public:
 #ifdef CF_HAS_SDL3
     void uploadToGPU(Mesh3D* mesh) {
         if (!m_device || !mesh) return;
-        
+
         if (!mesh->vertices.empty()) {
             RHI::BufferDesc desc;
             desc.size = mesh->vertices.size() * sizeof(Vertex3D);
             desc.name = "MeshVertexBuffer";
-            mesh->vertexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Vertex);
+            if (!mesh->vertexBuffer) {
+                mesh->vertexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Vertex);
+            }
+            if (mesh->vertexBuffer) {
+                m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), desc.size);
+            }
         }
-        
+
         if (!mesh->indices.empty()) {
             RHI::BufferDesc desc;
             desc.size = mesh->indices.size() * sizeof(u32);
             desc.name = "MeshIndexBuffer";
-            mesh->indexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Index);
+            if (!mesh->indexBuffer) {
+                mesh->indexBuffer = m_device->createBuffer(desc, RHI::BufferUsage::Index);
+            }
+            if (mesh->indexBuffer) {
+                m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), desc.size);
+            }
         }
     }
 #endif

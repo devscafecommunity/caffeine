@@ -9,7 +9,12 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "assets/MeshCache.hpp"
+#include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/TerrainComponents.hpp"
+#include "terrain/TerrainCache.hpp"
+#include "terrain/generation/TerrainGenerator.hpp"
+#include "terrain/TerrainGpuTextures.hpp"
 #include "math/Quat.hpp"
 #include "script/CppScript.hpp"
 #include <filesystem>
@@ -100,6 +105,8 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawUIProgressBar(world, e, ctx);
         drawUISlider(world, e, ctx);
         drawLight(world, e, ctx);
+        drawSkybox(world, e, ctx);
+        drawTerrain(world, e, ctx);
 
         ImGui::Separator();
 
@@ -542,17 +549,31 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
         if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
-        if (Widgets::AssetField("Texture", mf->customTexturePath, ".png;.jpg;.jpeg", resolveProjectRoot(ctx)))
+        if (world.has<ECS::TerrainComponent>(e)) {
+            ImGui::TextDisabled("Texture managed by Terrain component");
+        } else if (Widgets::AssetField("Mesh Texture", mf->customTexturePath, ".png;.jpg;.jpeg",
+                                       resolveProjectRoot(ctx))) {
             ctx.isDirty = true;
-        if (!mf->customTexturePath.empty()) {
+        }
+        if (Widgets::AssetField("Material", mf->customMaterialPath, ".mat", resolveProjectRoot(ctx)))
+            ctx.isDirty = true;
+        if (!world.has<ECS::TerrainComponent>(e) && !mf->customTexturePath.empty()) {
             std::string projectRoot = resolveProjectRoot(ctx).string();
             bool textureFound = false;
-            for (const std::string& candidate :
-                 Assets::MeshCache::buildCandidatePaths(mf->customTexturePath, projectRoot)) {
-                if (std::filesystem::exists(candidate)) {
-                    textureFound = true;
-                    break;
+            auto checkTexturePath = [&](const std::filesystem::path& path) {
+                if (path.empty()) return;
+                for (const std::string& candidate :
+                     Assets::MeshCache::buildCandidatePaths(path.string(), projectRoot)) {
+                    std::error_code ec;
+                    if (std::filesystem::exists(candidate, ec) && !ec) {
+                        textureFound = true;
+                        return;
+                    }
                 }
+            };
+            checkTexturePath(mf->customTexturePath);
+            if (!textureFound && EditorPaths::isReady()) {
+                checkTexturePath(EditorPaths::resolve(mf->customTexturePath));
             }
             if (!textureFound) {
                 ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
@@ -579,6 +600,15 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         }
     } else {
         ImGui::TextDisabled("3D renderer pending — mesh data will be loaded when renderer is implemented");
+    }
+
+    if (!world.has<ECS::MeshRendererComponent>(e)) {
+        world.add<ECS::MeshRendererComponent>(e);
+    }
+    if (auto* mr = world.get<ECS::MeshRendererComponent>(e)) {
+        ImGui::Separator();
+        if (ImGui::Checkbox("Cast Shadows", &mr->castShadows)) ctx.isDirty = true;
+        if (ImGui::Checkbox("Receive Shadows", &mr->receiveShadows)) ctx.isDirty = true;
     }
 }
 
@@ -775,6 +805,232 @@ void InspectorPanel::drawCppScript(ECS::World& world, ECS::Entity e, EditorConte
 }
 
 // ── Light drawer ─────────────────────────────────────────────────
+
+void InspectorPanel::drawSkybox(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::SkyboxComponent>(e)) return;
+
+    auto* sky = world.get<ECS::SkyboxComponent>(e);
+    if (!sky) return;
+
+    bool enabled = sky->enabled;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Skybox", enabled, removeRequested, "weather-sunny")) return;
+    if (removeRequested) {
+        world.remove<ECS::SkyboxComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    if (enabled != sky->enabled) {
+        sky->enabled = enabled;
+        ctx.isDirty = true;
+    }
+
+    const bool hasCustomTexture = sky->customTexturePath[0] != '\0';
+    int preset = std::clamp(sky->presetIndex, 0, ECS::kSkyboxPresetCount - 1);
+    if (!hasCustomTexture) {
+        if (ImGui::Combo("Preset", &preset, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount)) {
+            sky->presetIndex = preset;
+            ctx.isDirty = true;
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Combo("Preset", &preset, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Clear Custom Texture to use a preset");
+        }
+    }
+
+    if (ImGui::DragFloat("Exposure", &sky->exposure, 0.01f, 0.0f, 8.0f, "%.2f")) {
+        ctx.isDirty = true;
+    }
+
+    if (ImGui::InputText("Custom Texture", sky->customTexturePath, sizeof(sky->customTexturePath))) {
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Optional HDR/PNG path relative to project or absolute. Overrides preset.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) {
+        sky->customTexturePath[0] = '\0';
+        ctx.isDirty = true;
+    }
+}
+
+void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::TerrainComponent>(e)) return;
+
+    auto* terrain = world.get<ECS::TerrainComponent>(e);
+    if (!terrain) return;
+
+    ImGui::PushID(static_cast<int>(e.id()));
+    const std::string projectRoot = resolveProjectRoot(ctx).string();
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Terrain", enabled, removeRequested, "terrain")) {
+        ImGui::PopID();
+        return;
+    }
+    if (removeRequested) {
+        Terrain::TerrainCache::instance().removeEntity(e);
+        world.remove<ECS::TerrainComponent>(e);
+        ctx.isDirty = true;
+        ImGui::PopID();
+        return;
+    }
+
+    int resX = static_cast<int>(terrain->resolutionX);
+    int resZ = static_cast<int>(terrain->resolutionZ);
+    if (ImGui::SliderInt("Resolution X", &resX, 17, 257)) {
+        terrain->resolutionX = static_cast<u32>(resX);
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::SliderInt("Resolution Z", &resZ, 17, 257)) {
+        terrain->resolutionZ = static_cast<u32>(resZ);
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("World Size X", &terrain->worldSizeX, 0.5f, 4.0f, 512.0f, "%.1f")) {
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("World Size Z", &terrain->worldSizeZ, 0.5f, 4.0f, 512.0f, "%.1f")) {
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("Max Height", &terrain->maxHeight, 0.25f, 0.0f, 256.0f, "%.1f")) {
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::Checkbox("Cast Shadows", &terrain->castShadows)) {
+        ctx.isDirty = true;
+    }
+    if (ImGui::Checkbox("Receive Shadows", &terrain->receiveShadows)) {
+        ctx.isDirty = true;
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Surface");
+    if (ImGui::InputText("Albedo Texture", terrain->texturePath, sizeof(terrain->texturePath))) {
+        Terrain::TerrainCache::instance().repairTexturePaths(*terrain);
+        Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);
+#ifdef CF_HAS_SDL3
+        Terrain::TerrainGpuTextureCache::instance().invalidateEntity(e, nullptr);
+#endif
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Engine asset path or project-relative texture");
+    }
+    if (terrain->texturePath[0] != '\0' &&
+        Assets::MeshCache::resolveTexturePath(terrain->texturePath, projectRoot).empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                           "Textura nao encontrada: %s", terrain->texturePath);
+    }
+    if (ImGui::Button("Reset Default Textures")) {
+        const ECS::TerrainComponent defaults;
+        std::strncpy(terrain->texturePath, defaults.texturePath, sizeof(terrain->texturePath) - 1);
+        terrain->texturePath[sizeof(terrain->texturePath) - 1] = '\0';
+        for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+            std::strncpy(terrain->splatLayerPaths[i], defaults.splatLayerPaths[i],
+                          sizeof(terrain->splatLayerPaths[i]) - 1);
+            terrain->splatLayerPaths[i][sizeof(terrain->splatLayerPaths[i]) - 1] = '\0';
+        }
+        Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);
+#ifdef CF_HAS_SDL3
+        Terrain::TerrainGpuTextureCache::instance().invalidateEntity(e, nullptr);
+#endif
+        terrain->splatRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("Tile Size", &terrain->textureTileSize, 0.25f, 1.0f, 128.0f, "%.1f")) {
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("World units covered by one texture repeat");
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Optimization");
+    if (ImGui::Checkbox("Chunked LOD", &terrain->useChunks)) {
+        terrain->dataRevision++;
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Split terrain into chunks with distance-based LOD and frustum culling");
+    }
+    if (terrain->useChunks) {
+        int chunkVerts = static_cast<int>(terrain->chunkVertexCount);
+        if (ImGui::SliderInt("Chunk Resolution", &chunkVerts, 9, 129)) {
+            terrain->chunkVertexCount = static_cast<u32>(chunkVerts);
+            terrain->dataRevision++;
+            ctx.isDirty = true;
+        }
+        int maxLod = static_cast<int>(terrain->maxLodLevels);
+        if (ImGui::SliderInt("LOD Levels", &maxLod, 1, 6)) {
+            terrain->maxLodLevels = static_cast<u32>(maxLod);
+            terrain->dataRevision++;
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("LOD Distance", &terrain->lodDistanceScale, 1.0f, 8.0f, 256.0f, "%.0f")) {
+            terrain->dataRevision++;
+            ctx.isDirty = true;
+        }
+        if (ImGui::SliderFloat("LOD Hysteresis", &terrain->lodHysteresis, 0.0f, 0.9f, "%.2f")) {
+            ctx.isDirty = true;
+        }
+        if (ImGui::Checkbox("Frustum Cull", &terrain->frustumCull)) {
+            ctx.isDirty = true;
+        }
+        if (ImGui::Checkbox("Show Chunk Debug", &ctx.terrainShowChunkDebug)) {
+            ctx.isDirty = true;
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Splatmap");
+    if (ImGui::Checkbox("Use Splatmap", &terrain->useSplatmap)) {
+        Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);
+        ctx.isDirty = true;
+    }
+    if (terrain->useSplatmap) {
+        const char* layerLabels[] = {"Grass", "Rock", "Sand", "Dirt"};
+        for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+            char label[32];
+            snprintf(label, sizeof(label), "%s Texture", layerLabels[i]);
+            if (ImGui::InputText(label, terrain->splatLayerPaths[i],
+                                 sizeof(terrain->splatLayerPaths[i]))) {
+                Terrain::TerrainCache::instance().repairTexturePaths(*terrain);
+                Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);
+#ifdef CF_HAS_SDL3
+                Terrain::TerrainGpuTextureCache::instance().invalidateEntity(e, nullptr);
+#endif
+                terrain->splatRevision++;
+                ctx.isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", terrain->splatLayerPaths[i]);
+            }
+            if (terrain->splatLayerPaths[i][0] != '\0' &&
+                Assets::MeshCache::resolveTexturePath(terrain->splatLayerPaths[i], projectRoot)
+                    .empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                                   "Textura nao encontrada: %s", terrain->splatLayerPaths[i]);
+            }
+        }
+        if (ImGui::DragFloat("Splat Tile Size", &terrain->splatTileSize, 0.25f, 1.0f, 128.0f, "%.1f")) {
+            ctx.isDirty = true;
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Generation, sculpt and paint live in the Terrain Editor panel.");
+    ImGui::PopID();
+}
 
 void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
     if (!world.has<ECS::LightComponent>(e)) return;

@@ -31,6 +31,7 @@ public:
     int newScene(const char* name = "Untitled");
     int addTab(const char* name, std::unique_ptr<ECS::World> world);
     bool closeScene(int index);
+    void clearAll();
     void setActiveTab(int index, EditorContext& ctx);
 
     int  activeTabIndex() const { return m_activeTabIndex; }

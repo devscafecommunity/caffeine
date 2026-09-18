@@ -37,7 +37,7 @@ public:
     void bindPipeline(Pipeline* pipeline);
     void bindVertexBuffer(Buffer* buf, u32 slot = 0);
     void bindIndexBuffer(Buffer* buf);
-    void bindTexture(Texture* tex, u32 slot = 0);
+    void bindTexture(Texture* tex, u32 slot = 0, Sampler* sampler = nullptr);
     void setViewport(f32 x, f32 y, f32 w, f32 h);
     void setScissor(u32 x, u32 y, u32 w, u32 h);
 

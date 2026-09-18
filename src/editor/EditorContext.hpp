@@ -126,6 +126,21 @@ public:
     Vec3            camFocus    = {0.0f, 0.0f, 0.0f};
     f32             camDistance = 10.0f;
 
+    // ── Skybox (3D viewport) ───────────────────────────────────────────
+    bool skyboxEnabled = true;
+    int  skyboxIndex   = 0;
+
+    // ── Terrain editing (3D viewport) ────────────────────────────────
+    enum class TerrainEditMode : u8 { None, Sculpt, Splat };
+    enum class TerrainBrushMode : u8 { Raise, Lower, Smooth };
+
+    TerrainEditMode  terrainEditMode     = TerrainEditMode::None;
+    TerrainBrushMode terrainBrushMode    = TerrainBrushMode::Raise;
+    u32              terrainSplatLayer   = 0;
+    f32              terrainBrushRadius  = 6.0f;
+    f32              terrainBrushStrength = 0.12f;
+    bool             terrainShowChunkDebug = false;
+
     // ── Panel visibility ───────────────────────────────────────────────
     bool hierarchyOpen = true;
     bool inspectorOpen = true;

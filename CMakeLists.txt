@@ -65,6 +65,22 @@ add_library(caffeine-core
     src/assets/MeshLOD.cpp
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
+    src/scene/EnvironmentSystem.cpp
+    src/scene/CpuDirectionalShadowMap.cpp
+    src/scene/LightingSystem.cpp
+    src/scene/TerrainSystem.cpp
+    src/terrain/TerrainHeightmap.cpp
+    src/terrain/TerrainMeshBuilder.cpp
+    src/terrain/TerrainCache.cpp
+    src/terrain/TerrainSculptor.cpp
+    src/terrain/TerrainLodSystem.cpp
+    src/terrain/TerrainSplatmap.cpp
+    src/terrain/TerrainSplatPainter.cpp
+    src/terrain/TerrainSerializer.cpp
+    src/terrain/TerrainGpuTextures.cpp
+    src/terrain/generation/TerrainNoise.cpp
+    src/terrain/generation/TerrainGenerator.cpp
+    src/render/SkyboxRenderer.cpp
     src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
     src/core/DebugHookRegistry.cpp
@@ -82,18 +98,88 @@ target_include_directories(caffeine-core PUBLIC
 )
 
 target_compile_features(caffeine-core PUBLIC cxx_std_20)
+target_compile_definitions(caffeine-core PUBLIC
+    CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(CAFFEINE_BUILD_HEADLESS)
     target_compile_definitions(caffeine-core PUBLIC CF_HEADLESS=1)
     message(STATUS "Building caffeine-core in HEADLESS mode (no SDL3, no RHI)")
 else()
     if(SDL3_FOUND)
+        find_program(GLSLC_EXECUTABLE glslc)
+        find_program(DXC_EXECUTABLE dxc)
+        find_program(SPIRV_CROSS_EXECUTABLE spirv-cross)
+        set(CAFFEINE_GENERATED_SHADER_DIR "${CMAKE_BINARY_DIR}/generated/shaders")
+        if(GLSLC_EXECUTABLE)
+            include("${CMAKE_SOURCE_DIR}/cmake/CompileShaders.cmake")
+            set(_shader_formats SPIRV)
+            if(DXC_EXECUTABLE AND SPIRV_CROSS_EXECUTABLE)
+                list(APPEND _shader_formats DXBC)
+            endif()
+            if(SPIRV_CROSS_EXECUTABLE)
+                list(APPEND _shader_formats MSL)
+            endif()
+
+            caffeine_compile_shader(NAME sphere_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/sphere_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME sphere_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/sphere_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME mesh_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/mesh_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME scene_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/scene_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME scene_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/scene_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME terrain_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/terrain_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME shadow_depth_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/shadow_depth.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            caffeine_compile_shader(NAME shadow_depth_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/shadow_depth.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+
+            set(BUILTIN_SHADERS_SPIRV_HPP "${CAFFEINE_GENERATED_SHADER_DIR}/BuiltinShaders_spirv.hpp")
+            add_custom_command(
+                OUTPUT "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E echo "// Auto-generated SPIR-V shader bundle" > "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/mesh_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/terrain_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
+                DEPENDS
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_vert_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_frag_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/mesh_lit_vert_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_vert_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_frag_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/terrain_lit_frag_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_vert_spirv.hpp"
+                    "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_frag_spirv.hpp"
+            )
+            add_custom_target(caffeine_generated_shaders DEPENDS "${BUILTIN_SHADERS_SPIRV_HPP}")
+        else()
+            message(WARNING "glslc not found — GPU builtin shaders disabled (CPU preview fallback)")
+        endif()
+
         target_sources(caffeine-core PRIVATE
             src/rhi/RenderDevice.cpp
             src/rhi/CommandBuffer.cpp
+            src/render/ShaderBytecode.cpp
+            src/render/ShaderCompiler.cpp
+            src/render/GpuSceneRenderer.cpp
+            src/render/GpuPointShadowMap.cpp
+            src/render/GpuDirectionalShadowMap.cpp
+            src/render/GpuProceduralMeshes.cpp
         )
         target_link_libraries(caffeine-core PUBLIC SDL3::SDL3)
+        find_library(SHADERC_LIBRARY shaderc_shared)
+        find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp)
+        if(SHADERC_LIBRARY AND SHADERC_INCLUDE_DIR)
+            target_include_directories(caffeine-core PRIVATE ${SHADERC_INCLUDE_DIR})
+            target_link_libraries(caffeine-core PRIVATE ${SHADERC_LIBRARY})
+            target_compile_definitions(caffeine-core PRIVATE CF_HAS_SHADERC=1)
+        endif()
         target_compile_definitions(caffeine-core PUBLIC CF_HAS_SDL3=1)
+        if(GLSLC_EXECUTABLE)
+            add_dependencies(caffeine-core caffeine_generated_shaders)
+            target_include_directories(caffeine-core PRIVATE "${CAFFEINE_GENERATED_SHADER_DIR}")
+            target_compile_definitions(caffeine-core PRIVATE CF_HAS_GENERATED_SHADERS=1)
+        endif()
         message(STATUS "SDL3 found – RHI module enabled")
     else()
         message(STATUS "SDL3 not found – RHI module disabled")
@@ -345,7 +431,10 @@ with open(sys.argv[1], 'w') as f:
           src/editor/CommandPalette.cpp
           src/editor/ShaderNode.cpp
           src/editor/ShaderGraph.cpp
+          src/editor/MaterialSerializer.cpp
+          src/assets/MaterialCache.cpp
           src/editor/MaterialEditorPanel.cpp
+          src/editor/TerrainEditorPanel.cpp
           src/editor/PreviewRenderer.cpp
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp
@@ -468,6 +557,10 @@ with open(sys.argv[1], 'w') as f:
               ${CMAKE_SOURCE_DIR}/assets/spinners $<TARGET_FILE_DIR:doppio>/assets/spinners
           COMMAND ${CMAKE_COMMAND} -E copy_directory
               ${CMAKE_SOURCE_DIR}/assets/jetbrains-mono $<TARGET_FILE_DIR:doppio>/assets/jetbrains-mono
+          COMMAND ${CMAKE_COMMAND} -E copy_directory
+              ${CMAKE_SOURCE_DIR}/assets/kenney_skyboxes $<TARGET_FILE_DIR:doppio>/assets/kenney_skyboxes
+          COMMAND ${CMAKE_COMMAND} -E copy_directory
+              ${CMAKE_SOURCE_DIR}/assets/kenney_prototype-textures $<TARGET_FILE_DIR:doppio>/assets/kenney_prototype-textures
           COMMENT "Copying editor UI assets")
      target_compile_features(doppio PRIVATE cxx_std_20)
      # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)

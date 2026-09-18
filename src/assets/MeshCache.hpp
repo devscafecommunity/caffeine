@@ -1,5 +1,8 @@
 #pragma once
 #include "assets/MeshTypes.hpp"
+#ifdef CF_HAS_SDL3
+#include "rhi/RenderDevice.hpp"
+#endif
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -18,9 +21,16 @@ public:
 
     static std::vector<std::string> buildCandidatePaths(const std::string& path,
                                                         const std::string& projectRoot);
+    static std::string normalizeTexturePath(const std::string& path);
+    static std::string resolveTexturePath(const std::string& path,
+                                          const std::string& projectRoot = "");
 
     void clear();
     void remove(const std::string& path);
+
+#ifdef CF_HAS_SDL3
+    void releaseGpuResources(RHI::RenderDevice* device);
+#endif
 
 private:
     MeshCache() = default;

@@ -70,6 +70,49 @@ enum class ShaderStage : u8 {
     Fragment = SDL_GPU_SHADERSTAGE_FRAGMENT
 };
 
+enum class ShaderBytecodeFormat : u8 {
+    SPIRV,
+    DXBC,
+    MSL,
+    Metallib,
+};
+
+enum class VertexFormat : u8 {
+    Float2,
+    Float3,
+    Float4,
+};
+
+struct VertexAttributeDesc {
+    u32         location   = 0;
+    u32         bufferSlot = 0;
+    VertexFormat format    = VertexFormat::Float3;
+    u32         offset     = 0;
+};
+
+struct VertexBufferLayoutDesc {
+    u32  slot        = 0;
+    u32  stride      = 0;
+    bool perInstance = false;
+};
+
+struct GraphicsPipelineDesc {
+    const VertexBufferLayoutDesc* vertexBuffers = nullptr;
+    u32 numVertexBuffers = 0;
+    const VertexAttributeDesc* attributes = nullptr;
+    u32 numAttributes = 0;
+    TextureFormat colorFormat = TextureFormat::R8G8B8A8_UNORM;
+    TextureFormat depthFormat = TextureFormat::D32_FLOAT;
+    bool depthTest  = true;
+    bool depthWrite = true;
+    bool enableBlend = false;
+};
+
+struct SamplerDesc {
+    bool linearFilter = true;
+    bool clampToEdge  = true;
+};
+
 struct Texture {
     SDL_GPUTexture* handle = nullptr;
     u32           width    = 0;
@@ -92,12 +135,22 @@ struct Pipeline {
     SDL_GPUGraphicsPipeline* handle = nullptr;
 };
 
+struct Sampler {
+    SDL_GPUSampler* handle = nullptr;
+};
+
+enum class TextureType : u8 {
+    Texture2D,
+    Cube,
+};
+
 struct TextureDesc {
     u32           width     = 1;
     u32           height    = 1;
     TextureFormat format    = TextureFormat::R8G8B8A8_UNORM;
     TextureUsage  usage     = TextureUsage::Sampler;
     u32           mipLevels = 1;
+    TextureType   type      = TextureType::Texture2D;
 };
 
 struct BufferDesc {
@@ -110,6 +163,7 @@ struct ShaderDesc {
     usize       codeSize   = 0;
     const char* entryPoint = "main";
     ShaderStage stage      = ShaderStage::Vertex;
+    ShaderBytecodeFormat format = ShaderBytecodeFormat::SPIRV;
     u32 numSamplers        = 0;
     u32 numStorageTextures = 0;
     u32 numStorageBuffers  = 0;
@@ -130,6 +184,10 @@ struct DrawCommand {
 };
 
 struct RenderPassDesc {
+    Texture* colorTarget = nullptr;  // nullptr = swapchain
+    Texture* depthTarget = nullptr;
+    u32      colorMipLevel = 0;
+    u32      colorLayer    = 0;      // cubemap face / array layer
     f32  clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     bool clearDepth    = false;
     f32  depthValue    = 1.0f;
@@ -158,10 +216,19 @@ public:
     Texture* createTexture(const TextureDesc& desc);
     Shader*  createShader(const ShaderDesc& desc);
     Buffer*  createBuffer(const BufferDesc& desc, BufferUsage usage);
+    Pipeline* createGraphicsPipeline(Shader* vertexShader, Shader* fragmentShader,
+                                     const GraphicsPipelineDesc& desc);
+    Sampler* createSampler(const SamplerDesc& desc = {});
+
+    bool uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 offset = 0);
+    bool uploadTexture(Texture* texture, const void* pixels, u32 width, u32 height,
+                       u32 bytesPerPixel = 4);
 
     void destroyTexture(Texture* tex);
     void destroyShader(Shader* shader);
     void destroyBuffer(Buffer* buf);
+    void destroyPipeline(Pipeline* pipeline);
+    void destroySampler(Sampler* sampler);
 
     u32  backbufferWidth()  const { return m_config.width; }
     u32  backbufferHeight() const { return m_config.height; }

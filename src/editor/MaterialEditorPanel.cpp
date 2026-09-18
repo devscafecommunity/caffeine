@@ -1,4 +1,6 @@
 #include "editor/MaterialEditorPanel.hpp"
+#include "editor/MaterialSerializer.hpp"
+#include "assets/MaterialCache.hpp"
 #include <imnodes.h>
 #include <imgui.h>
 #include <unordered_map>
@@ -19,15 +21,30 @@ static int s_nextAttrId = 1;
 MaterialEditorPanel::MaterialEditorPanel() {
     ImNodes::CreateContext();
     m_codeBuffer[0] = '\0';
+    m_material = &m_ownedMaterial;
     addDefaultNodes();
+    recompileShader();
 }
 
 MaterialEditorPanel::~MaterialEditorPanel() {
     ImNodes::DestroyContext();
 }
 
+#ifdef CF_HAS_SDL3
+void MaterialEditorPanel::initGpu(RHI::RenderDevice* device) {
+    m_previewRenderer.init(device);
+}
+
+void MaterialEditorPanel::shutdownGpu() {
+    m_previewRenderer.shutdown();
+}
+#endif
+
 void MaterialEditorPanel::addDefaultNodes() {
-    m_graph.addNode(NodeType::OutputPBR);
+    m_graph.clear();
+    const uint32_t colorId = m_graph.addNode(NodeType::ColorConstant);
+    const uint32_t outputId = m_graph.addNode(NodeType::OutputPBR);
+    m_graph.connect(colorId, 0, outputId, 0);
 }
 
 void MaterialEditorPanel::onImGuiRender() {
@@ -66,10 +83,21 @@ void MaterialEditorPanel::onImGuiRender() {
 void MaterialEditorPanel::renderMenuBar() {
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New")) { m_graph.clear(); addDefaultNodes(); }
+            if (ImGui::MenuItem("New")) {
+                m_graph.clear();
+                addDefaultNodes();
+                m_materialPath.clear();
+                m_ownedMaterial = Assets::Material3D{};
+                m_material = &m_ownedMaterial;
+                recompileShader();
+            }
+            if (ImGui::MenuItem("Save", "Ctrl+S")) saveCurrent();
             if (ImGui::MenuItem("Compile", "F5")) recompileShader();
             ImGui::Separator();
             ImGui::MenuItem("Auto-Compile", nullptr, &m_autoCompile);
+            if (!m_materialPath.empty()) {
+                ImGui::TextDisabled("%s", m_materialPath.filename().string().c_str());
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
@@ -121,6 +149,7 @@ void MaterialEditorPanel::renderGraphCanvas(ImVec2 size) {
     style.Colors[ImNodesCol_NodeBackgroundHovered] = IM_COL32(40, 40, 40, 255);
     style.Colors[ImNodesCol_NodeBackgroundSelected] = IM_COL32(50, 50, 50, 255);
 
+    bool graphEdited = false;
     for (auto& node : m_graph.nodes()) {
         ImNodes::BeginNode(static_cast<int>(node->id()));
 
@@ -138,6 +167,7 @@ void MaterialEditorPanel::renderGraphCanvas(ImVec2 size) {
 
         ImGui::Spacing();
         node->renderProperties();
+        graphEdited |= ImGui::IsItemEdited();
         ImGui::Spacing();
 
         for (int i = 0; i < static_cast<int>(node->outputs().size()); i++) {
@@ -218,6 +248,11 @@ void MaterialEditorPanel::renderGraphCanvas(ImVec2 size) {
         ImGui::OpenPopup("AddNodePopup");
     }
     renderNodeContextMenu();
+
+    if (m_autoCompile && graphEdited) {
+        recompileShader();
+    }
+
     ImGui::EndChild();
 }
 
@@ -247,7 +282,29 @@ void MaterialEditorPanel::renderPreviewWindow(float height) {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     avail.y -= 30;
 
-    m_previewRenderer.renderFallback(m_previewRotation, avail.x, avail.y);
+    if (m_autoCompile && m_mode == EditorMode::Graph) {
+        for (const auto& node : m_graph.nodes()) {
+            if (node->type() == NodeType::Time) {
+                m_evaluated = m_graph.evaluateMaterial(static_cast<f32>(ImGui::GetTime()));
+                break;
+            }
+        }
+    }
+
+    if (m_evaluated.valid) {
+#ifdef CF_HAS_SDL3
+        if (m_frameCmd && m_previewRenderer.gpuReady()) {
+            m_previewRenderer.render(m_frameCmd, m_compiledShaderCode);
+            m_previewRenderer.renderGpu(m_frameCmd, m_evaluated.albedo, m_evaluated.metallic,
+                                      m_evaluated.roughness, m_previewRotation);
+        }
+#endif
+        m_previewRenderer.renderMaterial(m_evaluated.albedo, m_evaluated.metallic,
+                                         m_evaluated.roughness, m_previewRotation,
+                                         avail.x, avail.y);
+    } else {
+        m_previewRenderer.renderFallback(m_previewRotation, avail.x, avail.y);
+    }
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 15);
     ImGui::SliderFloat("Rotation", &m_previewRotation, 0.0f, 360.0f, "%.0f deg");
@@ -267,11 +324,24 @@ void MaterialEditorPanel::renderInspector(float height) {
     if (m_material) {
         ImGui::TextUnformatted("Material Properties");
         ImGui::Separator();
-        ImGui::ColorEdit4("Albedo", &m_material->albedoColor.r);
-        ImGui::SliderFloat("Roughness", &m_material->roughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("Metallic", &m_material->metallic, 0.0f, 1.0f);
+        if (ImGui::ColorEdit4("Albedo", &m_material->albedoColor.r)) {
+            if (m_autoCompile) recompileShader();
+        }
+        if (ImGui::SliderFloat("Roughness", &m_material->roughness, 0.0f, 1.0f)) {
+            if (m_autoCompile) recompileShader();
+        }
+        if (ImGui::SliderFloat("Metallic", &m_material->metallic, 0.0f, 1.0f)) {
+            if (m_autoCompile) recompileShader();
+        }
+        if (m_evaluated.valid) {
+            ImGui::Separator();
+            ImGui::Text("Graph Output");
+            ImGui::ColorEdit4("Preview Albedo", &m_evaluated.albedo.x, ImGuiColorEditFlags_NoInputs);
+            ImGui::Text("Metallic: %.2f  Roughness: %.2f", m_evaluated.metallic, m_evaluated.roughness);
+        }
     } else {
         ImGui::TextUnformatted("No material selected");
+        ImGui::TextDisabled("Double-click a .mat file in Asset Browser");
     }
 
     if (m_mode == EditorMode::Graph && !m_graph.empty()) {
@@ -306,23 +376,62 @@ void MaterialEditorPanel::recompileShader() {
     std::string code;
     if (m_mode == EditorMode::Graph) {
         code = m_graph.compileGLSL();
+        m_evaluated = m_graph.evaluateMaterial(static_cast<f32>(ImGui::GetTime()));
     } else {
         code = m_codeBuffer;
+        m_evaluated.valid = false;
     }
 
     if (code.empty()) {
         m_hasError = true;
         m_lastCompileError = "Generated shader code is empty";
+        m_evaluated.valid = false;
         return;
     }
 
     if (code.find("void main()") == std::string::npos) {
         m_hasError = true;
         m_lastCompileError = "Shader missing main() function";
+        m_evaluated.valid = false;
         return;
     }
 
     m_compiledShaderCode = code;
+    if (m_material && m_evaluated.valid) {
+        m_material->albedoColor.r = m_evaluated.albedo.x;
+        m_material->albedoColor.g = m_evaluated.albedo.y;
+        m_material->albedoColor.b = m_evaluated.albedo.z;
+        m_material->albedoColor.a = m_evaluated.albedo.w;
+        m_material->metallic = m_evaluated.metallic;
+        m_material->roughness = m_evaluated.roughness;
+    }
+}
+
+MaterialDocument MaterialEditorPanel::buildDocument() const {
+    MaterialDocument doc;
+    doc.properties = m_material ? *m_material : m_ownedMaterial;
+    doc.name = m_materialPath.empty() ? "Material" : m_materialPath.stem().string();
+    return doc;
+}
+
+bool MaterialEditorPanel::saveCurrent() {
+    if (m_materialPath.empty()) return false;
+    const bool ok = MaterialSerializer::save(m_materialPath, buildDocument(), m_graph);
+    if (ok) {
+        Assets::MaterialCache::instance().invalidate(m_materialPath.string());
+    }
+    return ok;
+}
+
+bool MaterialEditorPanel::openFromPath(const std::filesystem::path& path) {
+    MaterialDocument doc;
+    if (!MaterialSerializer::load(path, doc, m_graph)) return false;
+    m_ownedMaterial = doc.properties;
+    m_material = &m_ownedMaterial;
+    m_materialPath = path;
+    m_open = true;
+    recompileShader();
+    return true;
 }
 
 } // namespace Caffeine::Editor

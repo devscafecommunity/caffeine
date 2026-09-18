@@ -4,6 +4,8 @@
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
+#include "ecs/TerrainComponents.hpp"
+#include "terrain/TerrainCache.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
@@ -53,6 +55,19 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Rendering", "Mesh Renderer",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::MeshRendererComponent>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::MeshRendererComponent>(e); }
+    });
+    reg.registerComponent({
+        "Environment", "Skybox",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::SkyboxComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<ECS::SkyboxComponent>(e); }
+    });
+    reg.registerComponent({
+        "Environment", "Terrain",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::TerrainComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            w.add<ECS::TerrainComponent>(e);
+            Terrain::TerrainCache::instance().initializeEntity(w, e);
+        }
     });
     reg.registerComponent({
         "Audio", "Audio Source",

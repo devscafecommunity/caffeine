@@ -9,6 +9,8 @@
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/EnvironmentSystem.hpp"
+#include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "rhi/CommandBuffer.hpp"
@@ -49,6 +51,8 @@ std::filesystem::path findProjectFile(int argc, char** argv) {
 #ifdef CF_HAS_IMGUI
 
 constexpr float kDegToRad = 3.14159265f / 180.0f;
+
+Caffeine::Render::SkyboxRenderer g_skyboxRenderer;
 
 Caffeine::Mat4 buildLocalMatrix3D(const Caffeine::ECS::Position3D* p,
                                   const Caffeine::ECS::Rotation3D* r,
@@ -157,7 +161,8 @@ bool findActiveCamera3D(Caffeine::ECS::World& world, Caffeine::ECS::Entity& outE
 }
 
 void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext& ctx,
-                    Caffeine::Runtime::RuntimeSceneRenderer& renderer) {
+                    Caffeine::Runtime::RuntimeSceneRenderer& renderer,
+                    const std::string& projectRoot) {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -201,9 +206,28 @@ void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext
         Caffeine::Mat4::perspective(cam3D->fov * kDegToRad, aspect, cam3D->nearClip, cam3D->farClip);
     const Caffeine::Mat4 vp = proj * view;
 
-    dl->AddRectFilledMultiColor(
-        origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), IM_COL32(20, 20, 24, 255),
-        IM_COL32(20, 20, 24, 255), IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    const Caffeine::Mat4 worldMatrix = entityMatrix(world, cameraEntity);
+    Caffeine::Render::SkyboxCamera skyCamera;
+    skyCamera.forward = entityForward(world, cameraEntity).normalized();
+    skyCamera.right = matrixAxis(worldMatrix, 0, Caffeine::Vec3(1.0f, 0.0f, 0.0f));
+    skyCamera.up = matrixAxis(worldMatrix, 1, Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+    skyCamera.fovY = cam3D->fov * kDegToRad;
+    skyCamera.aspect = aspect;
+
+    bool drewSky = false;
+    const Caffeine::Scene::ActiveSkybox activeSky = Caffeine::Scene::findActiveSkybox(world);
+    if (activeSky.component) {
+        const auto skyPath =
+            Caffeine::Scene::resolveSkyboxTexturePath(*activeSky.component, projectRoot);
+        if (!skyPath.empty()) {
+            drewSky = g_skyboxRenderer.draw(dl, origin, panelSize, skyCamera, skyPath.string());
+        }
+    }
+    if (!drewSky) {
+        dl->AddRectFilledMultiColor(
+            origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), IM_COL32(20, 20, 24, 255),
+            IM_COL32(20, 20, 24, 255), IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    }
 
     renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity);
 
@@ -327,7 +351,7 @@ int main(int argc, char** argv) {
 #ifdef CF_HAS_IMGUI
             imgui.beginFrame();
             if (sceneLoaded) {
-                renderGameView(world, editorCtx, renderer);
+                renderGameView(world, editorCtx, renderer, buildRoot.string());
             } else {
                 ImGui::SetNextWindowPos(ImVec2(0, 0));
                 ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);

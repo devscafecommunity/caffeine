@@ -47,6 +47,15 @@ void TextureSampleNode::renderProperties() {
     ImGui::InputText("Path", m_texturePath, sizeof(m_texturePath));
 }
 
+void TextureSampleNode::setTexturePath(const char* path) {
+    if (!path) {
+        m_texturePath[0] = '\0';
+        return;
+    }
+    strncpy(m_texturePath, path, sizeof(m_texturePath) - 1);
+    m_texturePath[sizeof(m_texturePath) - 1] = '\0';
+}
+
 ColorConstantNode::ColorConstantNode(uint32_t id)
     : ShaderNode(id, NodeType::ColorConstant, "Color")
 {
@@ -162,13 +171,14 @@ std::string OutputPBRNode::generateCode(const std::vector<std::string>& inputVar
     std::string metal   = inputVars.size() > 2 && !inputVars[2].empty() ? inputVars[2] : "0.0f";
     std::string rough   = inputVars.size() > 3 && !inputVars[3].empty() ? inputVars[3] : "0.5f";
 
+    (void)normal;
     return str(
         "    float metallic_%u = %s;\n"
         "    float roughness_%u = %s;\n"
-        "    // PBR Output: albedo=%s, metallic=%s, roughness=%s, normal=%s",
+        "    vec4 var_%u = %s;",
         m_id, metal.c_str(),
         m_id, rough.c_str(),
-        albedo.c_str(), metal.c_str(), rough.c_str(), normal.c_str()
+        m_id, albedo.c_str()
     );
 }
 

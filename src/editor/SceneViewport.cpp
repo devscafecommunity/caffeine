@@ -1,6 +1,8 @@
 #include "editor/SceneViewport.hpp"
 #include "debug/Profiler.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "scene/EnvironmentSystem.hpp"
+#include "assets/MaterialCache.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/TestInstrumentation.hpp"
@@ -19,6 +21,16 @@
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/LightingSystem.hpp"
+#include "scene/CpuDirectionalShadowMap.hpp"
+#include "scene/TerrainSystem.hpp"
+#include "ecs/TerrainComponents.hpp"
+#include "terrain/TerrainCache.hpp"
+#include "terrain/TerrainSculptor.hpp"
+#include "terrain/TerrainSplatPainter.hpp"
+#include "terrain/TerrainLodSystem.hpp"
+#include "terrain/TerrainGpuTextures.hpp"
+#include "editor/EditorPaths.hpp"
+#include "spatial/Octree.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -42,6 +54,13 @@ namespace {
 constexpr f32 kDegToRad = 3.14159265f / 180.0f;
 constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
 
+std::string resolveProjectRootFromScenePath(const std::string& scenePath) {
+    if (scenePath.empty()) return {};
+    const auto sceneDir = std::filesystem::path(scenePath).parent_path();
+    const std::string root = sceneDir.parent_path().string();
+    return root.empty() ? sceneDir.string() : root;
+}
+
 Mat4 buildLocalMatrix(const ECS::Transform& t) {
     return Mat4::translation(t.position)
          * Mat4::rotationZ(t.rotation.z * kDegToRad)
@@ -56,6 +75,37 @@ Mat4 buildLocalMatrix3D(const ECS::Position3D* p, const ECS::Rotation3D* r, cons
                : Mat4::identity();
     Mat4 S = s ? Mat4::scale(s->scale.x, s->scale.y, s->scale.z) : Mat4::identity();
     return T * R * S;
+}
+
+struct ViewportRay {
+    Vec3 origin;
+    Vec3 direction;
+};
+
+ViewportRay computeViewportRay(const EditorContext& ctx, ImVec2 viewportOrigin, ImVec2 viewportSize,
+                               ImVec2 mousePos) {
+    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+    const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+    const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+    const f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+    const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+    const Mat4 vp = proj * view;
+    const Mat4 vpInverse = vp.inverted();
+
+    const f32 ndcX = (2.0f * (mousePos.x - viewportOrigin.x)) / viewportSize.x - 1.0f;
+    const f32 ndcY = 1.0f - (2.0f * (mousePos.y - viewportOrigin.y)) / viewportSize.y;
+    Vec4 worldNear = vpInverse.transformVec4(Vec4(ndcX, ndcY, -1.0f, 1.0f));
+    if (std::abs(worldNear.w) > 0.0001f) {
+        worldNear.x /= worldNear.w;
+        worldNear.y /= worldNear.w;
+        worldNear.z /= worldNear.w;
+    }
+
+    ViewportRay ray;
+    ray.origin = camPos;
+    ray.direction = (Vec3(worldNear.x, worldNear.y, worldNear.z) - camPos).normalized();
+    return ray;
 }
 
 Mat4 entityMatrix(ECS::World& world, ECS::Entity entity) {
@@ -106,17 +156,12 @@ ImU32 lightColor(const ECS::LightComponent& lc, bool selected) {
         static_cast<ImU8>(std::clamp(lc.color.w * lc.intensity * alphaScale, 0.0f, 1.0f) * 255.0f));
 }
 
-ImU32 sampleDrawTexture(const MeshDrawTexture& tex, const Vec2& uv, const Vec3& lightRgb) {
+Vec3 sampleTextureRgb(const MeshDrawTexture& tex, const Vec2& uv) {
     if (!tex.pixels || tex.width == 0 || tex.height == 0) {
-        const f32 a = 0.35f;
-        return IM_COL32(
-            static_cast<ImU8>(100.0f * a + lightRgb.x * 255.0f * (1.0f - a)),
-            static_cast<ImU8>(150.0f * a + lightRgb.y * 255.0f * (1.0f - a)),
-            static_cast<ImU8>(200.0f * a + lightRgb.z * 255.0f * (1.0f - a)),
-            255);
+        return Vec3(0.39f, 0.59f, 0.78f);
     }
 
-    int channels = tex.channels > 0 ? tex.channels : 3;
+    const int channels = tex.channels > 0 ? tex.channels : 3;
     const u32 tw = tex.width;
     const u32 th = tex.height;
 
@@ -128,19 +173,72 @@ ImU32 sampleDrawTexture(const MeshDrawTexture& tex, const Vec2& uv, const Vec3& 
     const u32 idx = (y * tw + x) * static_cast<u32>(channels);
     const size_t pixelBytes = static_cast<size_t>(tw) * static_cast<size_t>(th) * static_cast<size_t>(channels);
     if (idx + static_cast<u32>(channels - 1) >= pixelBytes) {
-        return IM_COL32(100, 150, 200, 255);
+        return Vec3(0.39f, 0.59f, 0.78f);
     }
 
-    const f32 r = static_cast<f32>(tex.pixels[idx]) / 255.0f;
-    const f32 g = static_cast<f32>(tex.pixels[idx + 1]) / 255.0f;
-    const f32 b = static_cast<f32>(tex.pixels[idx + 2]) / 255.0f;
+    Vec3 rgb(static_cast<f32>(tex.pixels[idx]) / 255.0f,
+             static_cast<f32>(tex.pixels[idx + 1]) / 255.0f,
+             static_cast<f32>(tex.pixels[idx + 2]) / 255.0f);
+    if (tex.hasMaterial) {
+        rgb.x *= tex.materialAlbedo.x;
+        rgb.y *= tex.materialAlbedo.y;
+        rgb.z *= tex.materialAlbedo.z;
+    }
+    return rgb;
+}
+
+ImU32 shadeTextureRgb(const Vec3& rgb, const Vec3& lightRgb, const MeshDrawTexture& tex) {
     const f32 ambient = 0.5f;
     const f32 lit = 0.5f;
+    const f32 spec = tex.hasMaterial
+        ? tex.materialMetallic * (1.0f - tex.materialRoughness) * 0.35f
+        : 0.0f;
     return IM_COL32(
-        static_cast<ImU8>(std::clamp((r * ambient + r * lightRgb.x * lit) * 255.0f, 0.0f, 255.0f)),
-        static_cast<ImU8>(std::clamp((g * ambient + g * lightRgb.y * lit) * 255.0f, 0.0f, 255.0f)),
-        static_cast<ImU8>(std::clamp((b * ambient + b * lightRgb.z * lit) * 255.0f, 0.0f, 255.0f)),
+        static_cast<ImU8>(std::clamp((rgb.x * ambient + rgb.x * lightRgb.x * lit + spec) * 255.0f, 0.0f, 255.0f)),
+        static_cast<ImU8>(std::clamp((rgb.y * ambient + rgb.y * lightRgb.y * lit + spec) * 255.0f, 0.0f, 255.0f)),
+        static_cast<ImU8>(std::clamp((rgb.z * ambient + rgb.z * lightRgb.z * lit + spec) * 255.0f, 0.0f, 255.0f)),
         255);
+}
+
+ImU32 sampleDrawTexture(const MeshDrawTexture& tex, const Vec2& uv, const Vec3& lightRgb) {
+    if (!tex.pixels || tex.width == 0 || tex.height == 0) {
+        const f32 a = 0.35f;
+        return IM_COL32(
+            static_cast<ImU8>(100.0f * a + lightRgb.x * 255.0f * (1.0f - a)),
+            static_cast<ImU8>(150.0f * a + lightRgb.y * 255.0f * (1.0f - a)),
+            static_cast<ImU8>(200.0f * a + lightRgb.z * 255.0f * (1.0f - a)),
+            255);
+    }
+    return shadeTextureRgb(sampleTextureRgb(tex, uv), lightRgb, tex);
+}
+
+ImU32 sampleTerrainSurfaceColor(const TerrainSplatDrawContext& splat,
+                                const Vec3& worldPos,
+                                const Vec2& uv,
+                                const MeshDrawTexture& fallback,
+                                const Vec3& lightRgb) {
+    if (!splat.active || !splat.splatmap || !splat.settings) {
+        return sampleDrawTexture(fallback, uv, lightRgb);
+    }
+
+    const Vec3 local = splat.worldMatrixInverse.transformPoint(worldPos);
+    const Vec4 weights = splat.splatmap->sampleWorldXZ(local.x, local.z,
+                                                       splat.settings->worldSizeX,
+                                                       splat.settings->worldSizeZ);
+
+    Vec3 albedo(0.0f, 0.0f, 0.0f);
+    for (u32 i = 0; i < splat.layerCount; ++i) {
+        const f32 w = (i == 0) ? weights.x :
+                      (i == 1) ? weights.y :
+                      (i == 2) ? weights.z : weights.w;
+        if (w <= 1e-4f || !splat.layers[i].pixels) continue;
+        albedo += sampleTextureRgb(splat.layers[i], uv) * w;
+    }
+
+    if (albedo.x + albedo.y + albedo.z <= 1e-4f) {
+        return sampleDrawTexture(fallback, uv, lightRgb);
+    }
+    return shadeTextureRgb(albedo, lightRgb, fallback);
 }
 
 ImVec2 projectVP(const Mat4& vp, ImVec2 origin, ImVec2 viewportSize, const Vec3& p) {
@@ -173,7 +271,9 @@ void rasterizeTriangleCpu(
     const RasterVert& v0, const RasterVert& v1, const RasterVert& v2,
     const Vec3& faceNormal, const Vec3& camPos,
     const MeshDrawTexture& tex,
-    const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt) {
+    bool receiveShadows,
+    const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt,
+    const TerrainSplatDrawContext* splatContext = nullptr) {
     const Vec3 center = (v0.worldPos + v1.worldPos + v2.worldPos) * (1.0f / 3.0f);
     const Vec3 viewDelta(camPos.x - center.x, camPos.y - center.y, camPos.z - center.z);
     if (faceNormal.dot(viewDelta) <= 0.0f) return;
@@ -214,7 +314,10 @@ void rasterizeTriangleCpu(
                 worldNormal = faceNormal;
             }
 
-            const ImU32 col = sampleDrawTexture(tex, Vec2(u, v), lightColorAt(worldPos, worldNormal));
+            const Vec3 lightRgb = lightColorAt(worldPos, worldNormal, receiveShadows);
+            const ImU32 col = splatContext && splatContext->active
+                ? sampleTerrainSurfaceColor(*splatContext, worldPos, Vec2(u, v), tex, lightRgb)
+                : sampleDrawTexture(tex, Vec2(u, v), lightRgb);
             fb.depth[depthIdx] = z;
             const int colorIdx = depthIdx * 4;
             fb.color[colorIdx + 0] = static_cast<u8>((col >> IM_COL32_R_SHIFT) & 0xFF);
@@ -228,7 +331,6 @@ void rasterizeTriangleCpu(
 } // namespace
 
 constexpr int kMeshRasterMaxDim = 720;
-
 void MeshCpuRasterizer::begin(ImVec2 origin_, ImVec2 size) {
     origin = origin_;
     panelW = std::max(1, static_cast<int>(size.x));
@@ -373,6 +475,7 @@ bool SceneViewport::init(RHI::RenderDevice* device, Config cfg) {
      if (m_initialized) {
          m_lastCanvasWidth = cfg.width;
          m_lastCanvasHeight = cfg.height;
+         m_gpuSceneReady = m_gpuSceneRenderer.init(device);
      }
      return m_initialized;
 }
@@ -405,6 +508,8 @@ void SceneViewport::resizeCanvasIfNeeded(u32 newWidth, u32 newHeight) {
 void SceneViewport::shutdown() {
      releaseSpriteTextures();
      if (!m_initialized || !m_device) return;
+     m_gpuSceneRenderer.shutdown();
+     m_gpuSceneReady = false;
      m_device->destroyTexture(m_colorTarget);
      m_device->destroyTexture(m_depthTarget);
      m_colorTarget = nullptr;
@@ -470,8 +575,27 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     
     resizeCanvasIfNeeded((u32)viewportSize.x, (u32)viewportSize.y);
 
-    // CPU-drawn viewport overlays; GPU color target reserved for future scene pass.
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        Scene::syncTerrainMeshes(world);
+    }
+
+    const bool useMeshRaster = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+                                m_meshPreviewMode == MeshPreviewMode::Textured);
+    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+    u32 gpuMeshDrawCount = 0;
+    // Textured meshes are composited via CPU raster on top of the skybox. The GPU
+    // offscreen pass sits under that skybox layer, so enabling it disables the CPU
+    // overlay and makes meshes vanish after the first successful GPU upload.
+    const bool gpuSceneActive = m_frameCmd && m_gpuSceneReady && m_useGpuScene && m_colorTarget &&
+                                m_depthTarget && ctx.viewMode == EditorContext::ViewMode::Mode3D;
+    if (gpuSceneActive) {
+        gpuMeshDrawCount = m_gpuSceneRenderer.render(m_frameCmd, world, ctx, m_colorTarget,
+                                                     m_depthTarget, m_lastCanvasWidth,
+                                                     m_lastCanvasHeight, projectRoot);
+    }
     ImGui::Dummy(viewportSize);
+    m_lastGpuSceneActive = gpuSceneActive;
+    m_lastGpuMeshDrawCount = gpuMeshDrawCount;
 #else
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) {
@@ -584,8 +708,17 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     bool hovered = ImGui::IsItemHovered();
 
+    const bool terrainSelected = ctx.selectedEntity.isValid() &&
+                                 world.has<ECS::TerrainComponent>(ctx.selectedEntity) &&
+                                 ctx.viewMode == EditorContext::ViewMode::Mode3D;
+    const bool terrainSculptMode = terrainSelected &&
+                                   ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt;
+    const bool terrainSplatMode = terrainSelected &&
+                                    ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat;
+    const bool terrainEditActive = terrainSculptMode || terrainSplatMode;
+
     // Handle entity selection via raycasting (only in 3D mode, not during gizmo drag)
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging && 
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging && !terrainEditActive &&
         ctx.viewMode == EditorContext::ViewMode::Mode3D) {
         
         ImVec2 mousePos = ImGui::GetMousePos();
@@ -624,7 +757,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             
             std::string projectRoot;
             if (!ctx.currentScenePath.empty()) {
-                projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
+                projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
             }
             ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world, projectRoot);
             
@@ -672,7 +805,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     bool leftDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
     bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    if ((hovered || m_gizmoDragging) && ctx.selectedEntity.isValid() && ctx.gizmoMode != EditorContext::GizmoMode::None) {
+    if ((hovered || m_gizmoDragging) && ctx.selectedEntity.isValid() &&
+        ctx.gizmoMode != EditorContext::GizmoMode::None && !terrainEditActive) {
         if (leftDragging && !m_gizmoDragging) {
             ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
             m_gizmoDragging = true;
@@ -689,15 +823,97 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetItemRectMin();
 
+    m_terrainBrushHitValid = false;
+    if (terrainEditActive) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        const bool mouseInViewport = mousePos.x >= origin.x && mousePos.x <= origin.x + viewportSize.x &&
+                                     mousePos.y >= origin.y && mousePos.y <= origin.y + viewportSize.y;
+
+        if (mouseInViewport && (leftDown || hovered)) {
+            const ViewportRay ray = computeViewportRay(ctx, origin, viewportSize, mousePos);
+            auto* terrain = world.get<ECS::TerrainComponent>(ctx.selectedEntity);
+            auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(ctx.selectedEntity);
+            if (terrain && heightmap) {
+                const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
+                Vec3 hitWorld;
+                if (Terrain::TerrainSculptor::raycast(worldMatrix, *heightmap, *terrain,
+                                                       ray.origin, ray.direction, hitWorld)) {
+                    m_terrainBrushHitWorld = hitWorld;
+                    m_terrainBrushHitValid = true;
+
+                    if (leftDown) {
+                        if (!m_terrainSculptDragging) {
+                            ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
+                            m_terrainSculptDragging = true;
+                        }
+
+                        if (terrainSculptMode) {
+                            Terrain::TerrainBrushSettings brush;
+                            switch (ctx.terrainBrushMode) {
+                                case EditorContext::TerrainBrushMode::Raise:
+                                    brush.mode = Terrain::TerrainBrushMode::Raise; break;
+                                case EditorContext::TerrainBrushMode::Lower:
+                                    brush.mode = Terrain::TerrainBrushMode::Lower; break;
+                                case EditorContext::TerrainBrushMode::Smooth:
+                                    brush.mode = Terrain::TerrainBrushMode::Smooth; break;
+                            }
+                            brush.radius = ctx.terrainBrushRadius;
+                            brush.strength = ctx.terrainBrushStrength;
+                            Terrain::TerrainVertexBounds bounds;
+                            Terrain::TerrainSculptor::applyBrush(*heightmap, *terrain, worldMatrix, hitWorld,
+                                                                 brush, ImGui::GetIO().DeltaTime, &bounds);
+                            if (bounds.valid) {
+                                Terrain::TerrainCache::instance().rebuildRegion(
+                                    ctx.selectedEntity, *terrain,
+                                    bounds.minX, bounds.minZ, bounds.maxX, bounds.maxZ);
+                            } else {
+                                terrain->dataRevision++;
+                            }
+                            ctx.isDirty = true;
+                        } else if (terrainSplatMode) {
+                            auto* splatmap = Terrain::TerrainCache::instance().splatmapFor(ctx.selectedEntity);
+                            if (splatmap) {
+                                Terrain::TerrainSplatBrushSettings brush;
+                                brush.targetLayer = std::min(ctx.terrainSplatLayer,
+                                                             ECS::kTerrainSplatLayerCount - 1);
+                                brush.radius = ctx.terrainBrushRadius;
+                                brush.strength = ctx.terrainBrushStrength;
+                                Terrain::TerrainSplatPainter::applyBrush(*splatmap, *terrain, worldMatrix,
+                                                                         hitWorld, brush,
+                                                                         ImGui::GetIO().DeltaTime);
+                                terrain->splatRevision++;
+                                ctx.isDirty = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (!leftDown && m_terrainSculptDragging) {
+        ctx.endUndo(world);
+        m_terrainSculptDragging = false;
+    }
+
     const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);
     if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-        drawList->AddRectFilledMultiColor(
-            origin, viewportMax,
-            IM_COL32(26, 26, 31, 255), IM_COL32(26, 26, 31, 255),
-            IM_COL32(42, 48, 62, 255), IM_COL32(42, 48, 62, 255));
+        if (!drawSkybox(drawList, origin, viewportSize, world, ctx)) {
+            drawList->AddRectFilledMultiColor(
+                origin, viewportMax,
+                IM_COL32(26, 26, 31, 255), IM_COL32(26, 26, 31, 255),
+                IM_COL32(42, 48, 62, 255), IM_COL32(42, 48, 62, 255));
+        }
     } else {
         drawList->AddRectFilled(origin, viewportMax, IM_COL32(26, 26, 31, 255));
     }
+
+#ifdef CF_HAS_SDL3
+    // GPU scene is rendered into an offscreen target with transparent clear.
+    // Composite it after the skybox so terrain/meshes sit in front of the sky.
+    if (m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
+        drawList->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin, viewportMax);
+    }
+#endif
 
     if (m_config.grid) {
         char modeStr[16];
@@ -768,6 +984,138 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wireframe polygon density");
         ImGui::EndDisabled();
 
+        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+            ImGui::SameLine();
+            if (ctx.skyboxEnabled) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.45f, 0.75f, 0.85f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
+            }
+            if (ImGui::Button("Sky")) {
+                ctx.skyboxEnabled = !ctx.skyboxEnabled;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Toggle 3D skybox background");
+            }
+            ImGui::PopStyleColor();
+
+            if (!Scene::hasSceneSkybox(world)) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(88.0f);
+                int skyIdx = std::clamp(ctx.skyboxIndex, 0, ECS::kSkyboxPresetCount - 1);
+                if (ImGui::Combo("##skybox", &skyIdx, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount)) {
+                    ctx.skyboxIndex = skyIdx;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Fallback skybox preset (create a Skybox entity to save in scene)");
+                }
+            } else {
+                ImGui::SameLine();
+                ImGui::BeginDisabled();
+                ImGui::Button("Scene Sky");
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Skybox is controlled by a Skybox entity in the scene");
+                }
+            }
+        }
+
+        ImGui::PopStyleVar();
+    }
+
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+        ctx.selectedEntity.isValid() &&
+        world.has<ECS::TerrainComponent>(ctx.selectedEntity)) {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 52));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 2));
+
+        auto terrainToolButton = [&](const char* label, bool active) -> bool {
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.65f, 0.35f, 0.9f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
+            }
+            const bool pressed = ImGui::Button(label);
+            ImGui::PopStyleColor();
+            return pressed;
+        };
+
+        if (terrainToolButton("Sculpt",
+                              ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt)) {
+            ctx.terrainEditMode = (ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt)
+                ? EditorContext::TerrainEditMode::None
+                : EditorContext::TerrainEditMode::Sculpt;
+            if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
+                ctx.gizmoMode = EditorContext::GizmoMode::None;
+            }
+        }
+        ImGui::SameLine();
+        if (terrainToolButton("Splat",
+                              ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat)) {
+            ctx.terrainEditMode = (ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat)
+                ? EditorContext::TerrainEditMode::None
+                : EditorContext::TerrainEditMode::Splat;
+            if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
+                ctx.gizmoMode = EditorContext::GizmoMode::None;
+            }
+        }
+        ImGui::SameLine();
+
+        if (ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt) {
+            if (terrainToolButton("Raise",
+                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Raise)) {
+                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Raise;
+            }
+            ImGui::SameLine();
+            if (terrainToolButton("Lower",
+                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Lower)) {
+                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Lower;
+            }
+            ImGui::SameLine();
+            if (terrainToolButton("Smooth",
+                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Smooth)) {
+                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Smooth;
+            }
+            ImGui::SameLine();
+        } else if (ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat) {
+            const char* layerNames[] = {"Grass", "Rock", "Sand", "Dirt"};
+            for (u32 layer = 0; layer < ECS::kTerrainSplatLayerCount; ++layer) {
+                if (layer > 0) ImGui::SameLine();
+                if (terrainToolButton(layerNames[layer], ctx.terrainSplatLayer == layer)) {
+                    ctx.terrainSplatLayer = layer;
+                }
+            }
+            ImGui::SameLine();
+        }
+
+        if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
+            ImGui::SetNextItemWidth(72.0f);
+            ImGui::SliderFloat("##brush_radius", &ctx.terrainBrushRadius, 0.5f, 64.0f, "R %.0f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(72.0f);
+            ImGui::SliderFloat("##brush_strength", &ctx.terrainBrushStrength, 0.01f, 1.0f, "S %.2f");
+            ImGui::SameLine();
+        }
+
+        if (ImGui::Button("Chunks")) {
+            ctx.terrainShowChunkDebug = !ctx.terrainShowChunkDebug;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle chunk bounds debug overlay");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Flatten")) {
+            if (auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(ctx.selectedEntity)) {
+                if (auto* terrain = world.get<ECS::TerrainComponent>(ctx.selectedEntity)) {
+                    ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
+                    heightmap->fill(0.0f);
+                    terrain->dataRevision++;
+                    ctx.isDirty = true;
+                    ctx.endUndo(world);
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset terrain height to flat");
+
         ImGui::PopStyleVar();
     }
 
@@ -800,8 +1148,23 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     drawCameraFrustums(world, ctx, origin, viewportSize);
     drawLightGizmos(world, ctx, origin, viewportSize);
 
-    if (ctx.selectedEntity.isValid()) {
+    if (ctx.selectedEntity.isValid() && !terrainEditActive) {
         drawGizmo(world, ctx, origin, viewportSize);
+    }
+
+    if (terrainEditActive && m_terrainBrushHitValid) {
+        const ImVec2 center = projectToScreen(m_terrainBrushHitWorld, origin, viewportSize, ctx);
+        const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
+        const Vec3 axisX = matrixAxis(worldMatrix, 0, Vec3::right());
+        const ImVec2 edge = projectToScreen(
+            m_terrainBrushHitWorld + axisX.normalized() * ctx.terrainBrushRadius,
+            origin, viewportSize, ctx);
+        const f32 screenRadius = std::sqrt(
+            (edge.x - center.x) * (edge.x - center.x) +
+            (edge.y - center.y) * (edge.y - center.y));
+        const ImU32 brushColor = IM_COL32(120, 220, 120, 200);
+        drawList->AddCircle(center, screenRadius, brushColor, 48, 2.0f);
+        drawList->AddCircleFilled(center, 3.0f, brushColor, 12);
     }
 
     drawNavigationWidget(world, ctx, origin, viewportSize);
@@ -1079,90 +1442,16 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float r = 7.0f;
 
-    struct DirLightEval { Vec3 dir; f32 intensity; Vec3 color; };
-    struct PointLightEval { Vec3 pos; f32 intensity; f32 radius; Vec3 color; };
-    struct SpotLightEval { Vec3 pos; Vec3 dir; f32 intensity; f32 radius; f32 cosHalfAngle; Vec3 color; };
-    std::vector<DirLightEval> dirLights;
-    std::vector<PointLightEval> pointLights;
-    std::vector<SpotLightEval> spotLights;
-
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::DirectionalLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 ldir = entityForward(world, e).normalized();
-                dirLights.push_back({ldir, lc.intensity, Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
+    std::string projectRoot;
+    if (!ctx.currentScenePath.empty()) {
+        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
     }
+    Scene::SceneLighting sceneLighting;
+    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting);
 
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::PointLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::PointLightComponent& pl) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 p;
-                if (!tryGetEntityPosition(world, e, p)) return;
-                pointLights.push_back({p, lc.intensity, std::max(0.001f, pl.radius), Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
-    }
-
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::SpotLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::SpotLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::SpotLightComponent& sl) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 p;
-                if (!tryGetEntityPosition(world, e, p)) return;
-                Vec3 d = entityForward(world, e).normalized();
-                const f32 halfAngle = std::clamp(sl.angle * kDegToRad * 0.5f, 0.01f, 1.5533f);
-                spotLights.push_back({p, d, lc.intensity, std::max(0.001f, sl.radius), std::cos(halfAngle), Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
-    }
-
-    auto lightColorAt = [&](const Vec3& p, const Vec3& n) -> Vec3 {
-        const Vec3 nn = n.normalized();
-        Vec3 diffuse(0.18f, 0.18f, 0.18f);
-
-        for (const auto& l : dirLights) {
-            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * l.dir));
-            const f32 gain = ndotl * l.intensity * 0.65f;
-            diffuse += l.color * gain;
-        }
-        for (const auto& l : pointLights) {
-            Vec3 toLight = l.pos - p;
-            f32 dist = std::max(0.001f, toLight.length());
-            if (dist > l.radius) continue;
-            Vec3 ldir = toLight / dist;
-            f32 atten = 1.0f - (dist / l.radius);
-            atten *= atten;
-            const f32 ndotl = std::max(0.0f, nn.dot(ldir));
-            diffuse += l.color * (ndotl * l.intensity * atten * 0.9f);
-        }
-        for (const auto& l : spotLights) {
-            Vec3 toPoint = p - l.pos;
-            f32 dist = std::max(0.001f, toPoint.length());
-            if (dist > l.radius) continue;
-            Vec3 fromLight = toPoint / dist;
-            f32 cone = l.dir.dot(fromLight);
-            if (cone < l.cosHalfAngle) continue;
-            f32 spotAtten = (cone - l.cosHalfAngle) / std::max(0.0001f, 1.0f - l.cosHalfAngle);
-            f32 rangeAtten = 1.0f - (dist / l.radius);
-            rangeAtten *= rangeAtten;
-            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * fromLight));
-            diffuse += l.color * (ndotl * l.intensity * spotAtten * rangeAtten);
-        }
-
-        diffuse.x = std::clamp(diffuse.x, 0.06f, 1.65f);
-        diffuse.y = std::clamp(diffuse.y, 0.06f, 1.65f);
-        diffuse.z = std::clamp(diffuse.z, 0.06f, 1.65f);
-        return diffuse;
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
+        return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
+                                              receiveShadows);
     };
 
     auto toColor = [](const Vec3& v, f32 a = 0.94f) -> ImU32 {
@@ -1222,9 +1511,9 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         }
     };
 
-    MeshCpuRasterizer meshRaster;
     const bool useMeshRaster = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
                                 m_meshPreviewMode == MeshPreviewMode::Textured);
+    MeshCpuRasterizer meshRaster;
     if (useMeshRaster) {
         meshRaster.begin(origin, viewportSize);
         meshRaster.clear(0, 0, 0, 0);
@@ -1326,7 +1615,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         if (fi == 0 || fi == 2 || fi == 5) nWorld = -1.0f * nWorld;
 
                         Vec3 center = (wp[faces[fi][0]] + wp[faces[fi][1]] + wp[faces[fi][2]] + wp[faces[fi][3]]) * 0.25f;
-                        const Vec3 lit = lightColorAt(center, nWorld);
+                        const Vec3 lit =
+                            lightColorAt(center, nWorld, Scene::meshReceivesShadows(world, entity));
                         const f32 checker = (fi % 2 == 0) ? 0.86f : 0.74f;
                         const ImU32 fill = toColor(Vec3(lit.x * checker, lit.y * checker, lit.z * checker), 0.92f);
 
@@ -1357,14 +1647,17 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                 break;
             }
             case ECS::MeshPrimitive::Custom: {
-                if (!mesh->customMeshPath.empty()) {
+                if (!mesh->customMeshPath.empty() || world.has<ECS::TerrainComponent>(entity)) {
                     std::string projectRoot;
                     if (!ctx.currentScenePath.empty()) {
-                        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
+                        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
                     }
 
                     auto& meshCache = Assets::MeshCache::getInstance();
-                    auto* loadedMesh = meshCache.getMesh(mesh->customMeshPath, projectRoot);
+                    Assets::Mesh3D* loadedMesh = Terrain::TerrainCache::instance().meshFor(entity);
+                    if (!loadedMesh) {
+                        loadedMesh = meshCache.getMesh(mesh->customMeshPath, projectRoot);
+                    }
                     const std::string& loadError = meshCache.getLastError();
 
                     if (!loadedMesh || loadedMesh->vertices.empty() || loadedMesh->indices.empty()) {
@@ -1405,9 +1698,64 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     Mat4 vpMat = projMat * viewMat;
 
                     const bool drawTextured = (m_meshPreviewMode == MeshPreviewMode::Textured);
-                    drawCustomMeshGeometry(world, ctx, entity, mesh, worldMatrix, dl, vpMat, camPos,
-                                           origin, viewportSize, lightColorAt, drawTextured, wireMode,
-                                           useMeshRaster ? &meshRaster : nullptr);
+                    const bool isTerrain = world.has<ECS::TerrainComponent>(entity);
+                    // Textured terrain is rendered on the GPU path (splat blending in shader).
+                    // CPU per-pixel splat was extremely slow when looking down at the surface
+                    // (millions of pixels × 4 texture samples) while backface culling made
+                    // looking up from below appear fast because almost no pixels were shaded.
+                    const bool terrainGpuTextured = isTerrain && drawTextured &&
+                                                    m_gpuSceneReady && m_useGpuScene &&
+                                                    m_lastGpuSceneActive &&
+                                                    Terrain::TerrainGpuTextureCache::instance()
+                                                        .hasRenderableTextures(entity);
+                    if (terrainGpuTextured) {
+                        if (ctx.terrainShowChunkDebug) {
+                            auto* terrain = world.get<ECS::TerrainComponent>(entity);
+                            if (terrain) {
+                                const f32 aspectFrustum = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                                const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
+                                    camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f), 1.0472f, aspectFrustum,
+                                    0.1f, 10000.0f);
+                                m_terrainCullStats = {};
+                                m_terrainDrawChunks.clear();
+                                Terrain::TerrainCache::instance().gatherDrawMeshes(
+                                    entity, *terrain, worldMatrix, camPos, frustum, m_terrainDrawChunks,
+                                    &m_terrainCullStats);
+                                drawTerrainChunkDebug(dl, worldMatrix, m_terrainDrawChunks,
+                                                      origin, viewportSize, ctx);
+                            }
+                        }
+                    } else if (isTerrain) {
+                        auto* terrain = world.get<ECS::TerrainComponent>(entity);
+                        const f32 aspectFrustum = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                        const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
+                            camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f), 1.0472f, aspectFrustum,
+                            0.1f, 10000.0f);
+                        m_terrainCullStats = {};
+                        m_terrainDrawChunks.clear();
+                        Terrain::TerrainCache::instance().gatherDrawMeshes(
+                            entity, *terrain, worldMatrix, camPos, frustum, m_terrainDrawChunks,
+                            &m_terrainCullStats);
+                        // CPU fallback: single texture only (no per-pixel splat blending).
+                        MeshCpuRasterizer* terrainRaster =
+                            (drawTextured && useMeshRaster) ? &meshRaster : nullptr;
+                        for (const Terrain::TerrainDrawChunk& drawChunk : m_terrainDrawChunks) {
+                            drawCustomMeshGeometry(world, ctx, entity, mesh, worldMatrix, dl, vpMat,
+                                                   camPos, origin, viewportSize, lightColorAt,
+                                                   drawTextured, wireMode,
+                                                   Scene::meshReceivesShadows(world, entity),
+                                                   terrainRaster, drawChunk.mesh, nullptr);
+                        }
+                        if (ctx.terrainShowChunkDebug) {
+                            drawTerrainChunkDebug(dl, worldMatrix, m_terrainDrawChunks,
+                                                  origin, viewportSize, ctx);
+                        }
+                    } else {
+                        drawCustomMeshGeometry(world, ctx, entity, mesh, worldMatrix, dl, vpMat, camPos,
+                                               origin, viewportSize, lightColorAt, drawTextured, wireMode,
+                                               Scene::meshReceivesShadows(world, entity),
+                                               useMeshRaster ? &meshRaster : nullptr);
+                    }
 
                     if (selected && drawTextured) {
                         Vec3 bMin = loadedMesh->bounds.min;
@@ -1446,7 +1794,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                 if (m_meshPreviewMode == MeshPreviewMode::Textured) {
                     Vec3 nWorld = matrixAxis(worldMatrix, 1, Vec3::up());
                     Vec3 center = (wp[0] + wp[1] + wp[2] + wp[3]) * 0.25f;
-                    const Vec3 lit = lightColorAt(center, nWorld);
+                    const Vec3 lit =
+                        lightColorAt(center, nWorld, Scene::meshReceivesShadows(world, entity));
                     const ImU32 fill = toColor(Vec3(lit.x * 0.80f, lit.y * 0.80f, lit.z * 0.80f), 0.88f);
                     dl->AddQuadFilled(projectToScreen(wp[0], origin, viewportSize, ctx),
                                       projectToScreen(wp[1], origin, viewportSize, ctx),
@@ -1471,7 +1820,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                 ImVec2 pxs = projectToScreen(px, origin, viewportSize, ctx);
                 f32 rad = std::sqrt((pxs.x - cs.x) * (pxs.x - cs.x) + (pxs.y - cs.y) * (pxs.y - cs.y));
                 if (m_meshPreviewMode == MeshPreviewMode::Textured) {
-                    const Vec3 lit = lightColorAt(center, entityAxis(world, entity, 2, Vec3(0, 0, 1)));
+                    const Vec3 lit = lightColorAt(center, entityAxis(world, entity, 2, Vec3(0, 0, 1)),
+                                                  Scene::meshReceivesShadows(world, entity));
                     dl->AddCircleFilled(cs, rad, toColor(Vec3(lit.x * 0.78f, lit.y * 0.78f, lit.z * 0.78f), 0.90f), 24);
                 }
                 if (drawContour) {
@@ -1494,7 +1844,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cMid = (cTop + cBottom) * 0.5f;
-                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 0, Vec3::right()));
+                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 0, Vec3::right()),
+                                                  Scene::meshReceivesShadows(world, entity));
                     dl->AddLine(projectToScreen(cTop, origin, viewportSize, ctx),
                                 projectToScreen(cBottom, origin, viewportSize, ctx),
                                 toColor(Vec3(lit.x * 0.72f, lit.y * 0.72f, lit.z * 0.72f), 0.75f), 18.0f * ctx.viewportZoom);
@@ -1526,7 +1877,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cMid = (cTop + cBottom) * 0.5f;
-                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 1, Vec3::up()));
+                    const Vec3 lit = lightColorAt(cMid, entityAxis(world, entity, 1, Vec3::up()),
+                                                  Scene::meshReceivesShadows(world, entity));
                     dl->AddLine(projectToScreen(cTop, origin, viewportSize, ctx),
                                 projectToScreen(cBottom, origin, viewportSize, ctx),
                                 toColor(Vec3(lit.x * 0.70f, lit.y * 0.70f, lit.z * 0.70f), 0.70f), 20.0f * ctx.viewportZoom);
@@ -1583,6 +1935,23 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     world.forEach<ECS::Position3D>(pos3Query, [&](ECS::Entity entity, ECS::Position3D&) {
         drawEntity(entity);
     });
+
+    if (ctx.selectedEntity.isValid() &&
+        world.has<ECS::TerrainComponent>(ctx.selectedEntity) &&
+        m_terrainCullStats.totalChunks > 0) {
+        char statsBuf[192];
+        snprintf(statsBuf, sizeof(statsBuf),
+                 "Chunks %u/%u (%u culled)  LOD0:%u LOD1:%u LOD2:%u LOD3:%u",
+                 m_terrainCullStats.visibleChunks,
+                 m_terrainCullStats.totalChunks,
+                 m_terrainCullStats.culledChunks,
+                 m_terrainCullStats.lodCounts[0],
+                 m_terrainCullStats.lodCounts[1],
+                 m_terrainCullStats.lodCounts[2],
+                 m_terrainCullStats.lodCounts[3]);
+        dl->AddText(ImVec2(origin.x + 8, origin.y + viewportSize.y - 22),
+                    IM_COL32(180, 220, 180, 220), statsBuf);
+    }
 
     if (useMeshRaster) {
         blitMeshRasterizer(dl, meshRaster, m_meshRasterTexture);
@@ -1738,51 +2107,91 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);
     const bool  zDimmed = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
 
-    // vx   = cosY*ax + sinY*az
-    // vy2  = cosP*ay + sinP*(-sinY*ax + cosY*az)
-    // vz2  = -sinP*ay + cosP*(-sinY*ax + cosY*az)
     float sinY = 0, cosY = 1, sinP = 0, cosP = 1;
     if (is3D) { sinY=std::sin(ctx.camYaw); cosY=std::cos(ctx.camYaw); sinP=std::sin(ctx.camPitch); cosP=std::cos(ctx.camPitch); }
 
-    auto proj2D = [&](float ax, float ay, float az) -> ImVec2 {
-        if (!is3D) return ImVec2(ax, -ay);
-        float vx  = cosY*ax + sinY*az;
-        float vzc = -sinY*ax + cosY*az;
-        float vy2 = cosP*ay + sinP*vzc;
-        return ImVec2(vx, -vy2);
-    };
-    auto vdepth = [&](float ax, float ay, float az) -> float {
-        float vzc = -sinY*ax + cosY*az;
-        return -sinP*ay + cosP*vzc;
-    };
-
-    ImVec2 rawX = proj2D(1,0,0), rawY = proj2D(0,1,0), rawZ = proj2D(0,0,1);
-
-    if (is3D) {
+    Vec3 worldAxisX(1.f, 0.f, 0.f);
+    Vec3 worldAxisY(0.f, 1.f, 0.f);
+    Vec3 worldAxisZ(0.f, 0.f, 1.f);
+    if (is3D && ctx.gizmoSpace == EditorContext::GizmoSpace::Local) {
         const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
-        rawX = proj2D(worldMatrix(0,0), worldMatrix(1,0), worldMatrix(2,0));
-        rawY = proj2D(worldMatrix(0,1), worldMatrix(1,1), worldMatrix(2,1));
-        rawZ = proj2D(worldMatrix(0,2), worldMatrix(1,2), worldMatrix(2,2));
+        worldAxisX = matrixAxis(worldMatrix, 0, worldAxisX);
+        worldAxisY = matrixAxis(worldMatrix, 1, worldAxisY);
+        worldAxisZ = matrixAxis(worldMatrix, 2, worldAxisZ);
     }
-    m_axisRawDirs[0] = rawX; m_axisRawDirs[1] = rawY; m_axisRawDirs[2] = rawZ;
+
+    ImVec2 rawX, rawY, rawZ;
+    if (is3D) {
+        const float axisWorldStep = std::max(0.25f, ctx.camDistance * 0.02f);
+        auto axisScreenDelta = [&](const Vec3& axis) -> ImVec2 {
+            Vec3 dir = axis;
+            const float len = dir.length();
+            if (len > 1e-6f) dir = dir / len;
+            ImVec2 s0 = projectToScreen(worldPos, origin, viewportSize, ctx);
+            ImVec2 s1 = projectToScreen(worldPos + dir * axisWorldStep, origin, viewportSize, ctx);
+            return ImVec2(s1.x - s0.x, s1.y - s0.y);
+        };
+        rawX = axisScreenDelta(worldAxisX);
+        rawY = axisScreenDelta(worldAxisY);
+        rawZ = axisScreenDelta(worldAxisZ);
+    } else {
+        rawX = ImVec2(1.f, 0.f);
+        rawY = ImVec2(0.f, -1.f);
+        rawZ = ImVec2(0.f, 0.f);
+    }
+
+    auto axisViewDepth = [&](const Vec3& axis) -> float {
+        Vec3 dir = axis;
+        const float len = dir.length();
+        if (len > 1e-6f) dir = dir / len;
+        float vzc = -sinY * dir.x + cosY * dir.z;
+        return -sinP * dir.y + cosP * vzc;
+    };
+    auto axisForeshorten = [&](const Vec3& axis) -> float {
+        if (!is3D) return 1.f;
+        Vec3 dir = axis;
+        const float len = dir.length();
+        if (len > 1e-6f) dir = dir / len;
+        float vx  = cosY * dir.x + sinY * dir.z;
+        float vzc = -sinY * dir.x + cosY * dir.z;
+        float vy2 = cosP * dir.y + sinP * vzc;
+        return std::sqrt(vx * vx + vy2 * vy2);
+    };
+    auto norm2D = [](ImVec2 v) -> ImVec2 {
+        float mag = std::sqrt(v.x * v.x + v.y * v.y);
+        if (mag < 1e-4f) return ImVec2(0.f, 0.f);
+        return ImVec2(v.x / mag, v.y / mag);
+    };
+    const ImVec2 nX = norm2D(rawX);
+    const ImVec2 nY = norm2D(rawY);
+    const ImVec2 nZ = norm2D(rawZ);
+    m_axisRawDirs[0] = nX;
+    m_axisRawDirs[1] = nY;
+    m_axisRawDirs[2] = nZ;
     m_gizmoScreenOrigin = screenPos;
 
-    auto axisEnd = [&](ImVec2 raw) -> ImVec2 {
-        float mag = std::sqrt(raw.x*raw.x + raw.y*raw.y);
-        float len = HL * std::max(mag, 0.4f);
-        if (mag < 0.001f) return screenPos;
-        return ImVec2(screenPos.x + raw.x/mag*len, screenPos.y + raw.y/mag*len);
+    const float fsX = axisForeshorten(worldAxisX);
+    const float fsY = axisForeshorten(worldAxisY);
+    const float fsZ = axisForeshorten(worldAxisZ);
+
+    auto axisEnd = [&](ImVec2 dir, float foreshorten) -> ImVec2 {
+        if (foreshorten < 0.001f) return screenPos;
+        float len = HL * std::max(foreshorten, 0.4f);
+        return ImVec2(screenPos.x + dir.x * len, screenPos.y + dir.y * len);
     };
-    auto axisAlpha = [](ImVec2 raw) -> float {
-        float mag = std::sqrt(raw.x*raw.x + raw.y*raw.y);
-        return 0.4f + 0.6f * mag;
+    auto axisAlpha = [](float foreshorten) -> float {
+        return 0.4f + 0.6f * std::min(foreshorten, 1.f);
     };
 
-    ImVec2 endX = axisEnd(rawX), endY = axisEnd(rawY), endZ = axisEnd(rawZ);
-    float  alpX = axisAlpha(rawX), alpY = axisAlpha(rawY), alpZ = axisAlpha(rawZ);
+    ImVec2 endX = axisEnd(nX, fsX), endY = axisEnd(nY, fsY), endZ = axisEnd(nZ, fsZ);
+    float  alpX = axisAlpha(fsX), alpY = axisAlpha(fsY), alpZ = axisAlpha(fsZ);
 
     struct DrawEntry { int id; float depth; };
-    DrawEntry order[3] = {{1,vdepth(1,0,0)},{2,vdepth(0,1,0)},{3,vdepth(0,0,1)}};
+    DrawEntry order[3] = {
+        {1, axisViewDepth(worldAxisX)},
+        {2, axisViewDepth(worldAxisY)},
+        {3, axisViewDepth(worldAxisZ)}
+    };
     std::sort(order, order+3, [](const DrawEntry& a, const DrawEntry& b){ return a.depth > b.depth; });
 
     int keyAxis = 0;
@@ -1803,20 +2212,46 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
             if (cdist < 9.f) {
                 m_hoveredAxis = 4;
             } else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
-                auto ringHit = [&](ImVec2 b1, ImVec2 b2) -> bool {
+                auto screenScaleForAxis = [&](const Vec3& axis) -> float {
+                    Vec3 dir = axis;
+                    const float len = dir.length();
+                    if (len < 1e-6f) return 0.f;
+                    dir = dir / len;
+                    ImVec2 s0 = projectToScreen(worldPos, origin, viewportSize, ctx);
+                    ImVec2 s1 = projectToScreen(worldPos + dir, origin, viewportSize, ctx);
+                    const float dx = s1.x - s0.x;
+                    const float dy = s1.y - s0.y;
+                    return std::sqrt(dx * dx + dy * dy);
+                };
+                auto worldRadiusForRing = [&](const Vec3& axisA, const Vec3& axisB) -> float {
+                    const float scaleA = screenScaleForAxis(axisA);
+                    const float scaleB = screenScaleForAxis(axisB);
+                    const float pxPerUnit = std::max(0.01f, 0.5f * (scaleA + scaleB));
+                    return HL / pxPerUnit;
+                };
+                auto ringHit = [&](const Vec3& axisA, const Vec3& axisB) -> bool {
+                    Vec3 a = axisA;
+                    Vec3 b = axisB;
+                    const float aLen = a.length();
+                    const float bLen = b.length();
+                    if (aLen < 1e-6f || bLen < 1e-6f) return false;
+                    a = a / aLen;
+                    b = b / bLen;
+                    const float worldRadius = worldRadiusForRing(a, b);
                     const int N = 48;
                     for (int i = 0; i < N; ++i) {
-                        float a = 6.28318f * i / N;
-                        float px = screenPos.x + HL*(std::cos(a)*b1.x + std::sin(a)*b2.x);
-                        float py = screenPos.y + HL*(std::cos(a)*b1.y + std::sin(a)*b2.y);
-                        float dx = mouse.x-px, dy = mouse.y-py;
-                        if (dx*dx+dy*dy < 64.f) return true;
+                        const float ang = 6.28318f * static_cast<float>(i) / static_cast<float>(N);
+                        const Vec3 wp = worldPos + (a * std::cos(ang) + b * std::sin(ang)) * worldRadius;
+                        const ImVec2 sp = projectToScreen(wp, origin, viewportSize, ctx);
+                        const float dx = mouse.x - sp.x;
+                        const float dy = mouse.y - sp.y;
+                        if (dx * dx + dy * dy < 64.f) return true;
                     }
                     return false;
                 };
-                if      (ringHit(proj2D(0,1,0), proj2D(0,0,1))) m_hoveredAxis = 1;
-                else if (ringHit(proj2D(1,0,0), proj2D(0,0,1))) m_hoveredAxis = 2;
-                else if (ringHit(proj2D(1,0,0), proj2D(0,1,0))) m_hoveredAxis = 3;
+                if      (ringHit(worldAxisY, worldAxisZ)) m_hoveredAxis = 1;
+                else if (ringHit(worldAxisX, worldAxisZ)) m_hoveredAxis = 2;
+                else if (ringHit(worldAxisX, worldAxisY)) m_hoveredAxis = 3;
             } else {
                 auto ptLineDist = [&](ImVec2 b, ImVec2 e) -> float {
                     float dx=e.x-b.x, dy=e.y-b.y, l2=dx*dx+dy*dy;
@@ -1854,13 +2289,42 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         dl->AddLine(from, to, col, 2.f);
         dl->AddRectFilled(ImVec2(to.x-5.f,to.y-5.f), ImVec2(to.x+5.f,to.y+5.f), col);
     };
-    auto drawRing = [&](ImVec2 b1, ImVec2 b2, u32 col) {
+    auto screenScaleForAxis = [&](const Vec3& axis) -> float {
+        Vec3 dir = axis;
+        const float len = dir.length();
+        if (len < 1e-6f) return 0.f;
+        dir = dir / len;
+        ImVec2 s0 = projectToScreen(worldPos, origin, viewportSize, ctx);
+        ImVec2 s1 = projectToScreen(worldPos + dir, origin, viewportSize, ctx);
+        const float dx = s1.x - s0.x;
+        const float dy = s1.y - s0.y;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    auto worldRadiusForRing = [&](const Vec3& axisA, const Vec3& axisB) -> float {
+        const float scaleA = screenScaleForAxis(axisA);
+        const float scaleB = screenScaleForAxis(axisB);
+        const float pxPerUnit = std::max(0.01f, 0.5f * (scaleA + scaleB));
+        return HL / pxPerUnit;
+    };
+    auto drawRing = [&](const Vec3& axisA, const Vec3& axisB, u32 col) {
+        Vec3 a = axisA;
+        Vec3 b = axisB;
+        const float aLen = a.length();
+        const float bLen = b.length();
+        if (aLen < 1e-6f || bLen < 1e-6f) return;
+        a = a / aLen;
+        b = b / bLen;
+        const float worldRadius = worldRadiusForRing(a, b);
         const int N = 64;
-        for (int i = 0; i < N; ++i) {
-            float a0=6.28318f*i/N, a1=6.28318f*(i+1)/N;
-            ImVec2 p0(screenPos.x+HL*(std::cos(a0)*b1.x+std::sin(a0)*b2.x), screenPos.y+HL*(std::cos(a0)*b1.y+std::sin(a0)*b2.y));
-            ImVec2 p1(screenPos.x+HL*(std::cos(a1)*b1.x+std::sin(a1)*b2.x), screenPos.y+HL*(std::cos(a1)*b1.y+std::sin(a1)*b2.y));
-            dl->AddLine(p0, p1, col, 2.f);
+        ImVec2 prev;
+        bool hasPrev = false;
+        for (int i = 0; i <= N; ++i) {
+            const float ang = 6.28318f * static_cast<float>(i) / static_cast<float>(N);
+            const Vec3 wp = worldPos + (a * std::cos(ang) + b * std::sin(ang)) * worldRadius;
+            const ImVec2 sp = projectToScreen(wp, origin, viewportSize, ctx);
+            if (hasPrev) dl->AddLine(prev, sp, col, 2.f);
+            prev = sp;
+            hasPrev = true;
         }
     };
 
@@ -1873,9 +2337,9 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         if      (ctx.gizmoMode == EditorContext::GizmoMode::Translate) drawArrow(screenPos, end, col);
         else if (ctx.gizmoMode == EditorContext::GizmoMode::Scale)     drawScaleBox(screenPos, end, col);
         else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
-            ImVec2 b1 = (axId==1) ? proj2D(0,1,0) : proj2D(1,0,0);
-            ImVec2 b2 = (axId==3) ? proj2D(0,1,0) : proj2D(0,0,1);
-            drawRing(b1, b2, axisColor(axId, 1.f));
+            const Vec3& ringA = (axId == 1) ? worldAxisY : worldAxisX;
+            const Vec3& ringB = (axId == 3) ? worldAxisY : worldAxisZ;
+            drawRing(ringA, ringB, axisColor(axId, 1.f));
         }
     }
 
@@ -1931,6 +2395,58 @@ void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVe
                 dl->AddCircle(sc, col.radius * worldToScreen, color, 32, 1.5f);
             }
         });
+}
+
+bool SceneViewport::drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
+                                      ECS::World& world, const EditorContext& ctx,
+                                      const Render::SkyboxCamera& camera,
+                                      bool respectEditorToggle,
+                                      Render::SkyboxRenderer* renderer) {
+    if (!drawList) return false;
+    if (respectEditorToggle && !ctx.skyboxEnabled) return false;
+
+    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+
+    int presetIndex = ctx.skyboxIndex;
+    std::filesystem::path texturePath;
+
+    const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
+    if (active.component) {
+        presetIndex = active.component->presetIndex;
+        texturePath = Scene::resolveSkyboxTexturePath(*active.component, projectRoot);
+    } else {
+        texturePath = Scene::resolveBuiltinSkyboxPath(presetIndex);
+    }
+
+    if (texturePath.empty()) return false;
+
+    const std::string textureKey = texturePath.string();
+    Render::SkyboxRenderer& target = renderer ? *renderer : m_skyboxRenderer;
+    return target.draw(drawList, origin, viewportSize, camera, textureKey);
+}
+
+bool SceneViewport::drawSkybox(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
+                               ECS::World& world, EditorContext& ctx) {
+    if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return false;
+
+    Render::SkyboxCamera skyCamera;
+    const f32 sinY = std::sin(ctx.camYaw);
+    const f32 cosY = std::cos(ctx.camYaw);
+    const f32 sinP = std::sin(ctx.camPitch);
+    const f32 cosP = std::cos(ctx.camPitch);
+    skyCamera.forward = Vec3(-sinY * cosP, sinP, cosY * cosP).normalized();
+    const Vec3 worldUp(0.0f, 1.0f, 0.0f);
+    skyCamera.right = skyCamera.forward.cross(worldUp);
+    if (skyCamera.right.lengthSquared() < 1e-6f) {
+        skyCamera.right = Vec3(1.0f, 0.0f, 0.0f);
+    } else {
+        skyCamera.right = skyCamera.right.normalized();
+    }
+    skyCamera.up = skyCamera.right.cross(skyCamera.forward).normalized();
+    skyCamera.fovY = 1.0472f;
+    skyCamera.aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+
+    return drawSkyboxForView(drawList, origin, viewportSize, world, ctx, skyCamera, true);
 }
 
 void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
@@ -2371,32 +2887,25 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
     ctx.isDirty = true;
 }
 
-MeshDrawTexture SceneViewport::resolveDrawTexture(
-    const Assets::Mesh3D* mesh,
-    const ECS::MeshFilterComponent* filter,
-    const std::string& resolvedMeshPath,
-    const std::string& projectRoot) {
+MeshDrawTexture SceneViewport::resolveTextureFromPath(const std::string& path,
+                                                      const std::string& projectRoot) {
     MeshDrawTexture result{};
-    std::vector<std::string> fileCandidates;
+    if (path.empty()) return result;
 
-    auto addFileCandidates = [&](const std::filesystem::path& path) {
-        if (path.empty()) return;
-        for (const std::string& candidate :
-             Assets::MeshCache::buildCandidatePaths(path.string(), projectRoot)) {
-            if (std::find(fileCandidates.begin(), fileCandidates.end(), candidate) == fileCandidates.end()) {
-                fileCandidates.push_back(candidate);
-            }
+    std::vector<std::string> fileCandidates;
+    auto addResolved = [&](const std::string& candidatePath) {
+        if (candidatePath.empty()) return;
+        const std::string resolved =
+            Assets::MeshCache::resolveTexturePath(candidatePath, projectRoot);
+        if (!resolved.empty() &&
+            std::find(fileCandidates.begin(), fileCandidates.end(), resolved) == fileCandidates.end()) {
+            fileCandidates.push_back(resolved);
         }
     };
 
-    if (filter && !filter->customTexturePath.empty()) {
-        addFileCandidates(filter->customTexturePath);
-    } else {
-        addFileCandidates(std::filesystem::path(resolvedMeshPath).replace_extension(".png"));
-        for (const std::string& uri :
-             Assets::MeshImportValidator::listGltfExternalUris(resolvedMeshPath)) {
-            addFileCandidates(std::filesystem::path(resolvedMeshPath).parent_path() / uri);
-        }
+    addResolved(path);
+    if (EditorPaths::isReady()) {
+        addResolved(EditorPaths::resolve(path).string());
     }
 
     for (const std::string& candidate : fileCandidates) {
@@ -2432,6 +2941,86 @@ MeshDrawTexture SceneViewport::resolveDrawTexture(
         }
     }
 
+    return result;
+}
+
+TerrainSplatDrawContext SceneViewport::resolveTerrainSplatContext(ECS::World& world,
+                                                                  ECS::Entity entity,
+                                                                  const Mat4& worldMatrix,
+                                                                  const std::string& projectRoot) {
+    TerrainSplatDrawContext context;
+    auto* terrain = world.get<ECS::TerrainComponent>(entity);
+    if (!terrain || !terrain->useSplatmap) return context;
+
+    context.splatmap = Terrain::TerrainCache::instance().splatmapFor(entity);
+    context.settings = terrain;
+    context.worldMatrixInverse = worldMatrix.inverted();
+    context.layerCount = ECS::kTerrainSplatLayerCount;
+    for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+        context.layers[i] = resolveTextureFromPath(terrain->splatLayerPaths[i], projectRoot);
+    }
+    context.active = context.splatmap != nullptr;
+    return context;
+}
+
+void SceneViewport::drawTerrainChunkDebug(ImDrawList* dl, const Mat4& worldMatrix,
+                                          const std::vector<Terrain::TerrainDrawChunk>& chunks,
+                                          ImVec2 origin, ImVec2 viewportSize,
+                                          const EditorContext& ctx) {
+    const Mat4 vp = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        ? computeVP3D(viewportSize, ctx) : Mat4::identity();
+
+    for (const Terrain::TerrainDrawChunk& chunk : chunks) {
+        const Vec3 corners[8] = {
+            {chunk.localBoundsMin.x, chunk.localBoundsMin.y, chunk.localBoundsMin.z},
+            {chunk.localBoundsMax.x, chunk.localBoundsMin.y, chunk.localBoundsMin.z},
+            {chunk.localBoundsMin.x, chunk.localBoundsMax.y, chunk.localBoundsMin.z},
+            {chunk.localBoundsMax.x, chunk.localBoundsMax.y, chunk.localBoundsMin.z},
+            {chunk.localBoundsMin.x, chunk.localBoundsMin.y, chunk.localBoundsMax.z},
+            {chunk.localBoundsMax.x, chunk.localBoundsMin.y, chunk.localBoundsMax.z},
+            {chunk.localBoundsMin.x, chunk.localBoundsMax.y, chunk.localBoundsMax.z},
+            {chunk.localBoundsMax.x, chunk.localBoundsMax.y, chunk.localBoundsMax.z},
+        };
+        ImVec2 screen[8];
+        for (int i = 0; i < 8; ++i) {
+            screen[i] = projectVP(vp, origin, viewportSize, worldMatrix.transformPoint(corners[i]));
+        }
+
+        const ImU32 col = IM_COL32(120, 220, 120, 180);
+        const int edges[][2] = {
+            {0,1}, {1,3}, {3,2}, {2,0},
+            {4,5}, {5,7}, {7,6}, {6,4},
+            {0,4}, {1,5}, {3,7}, {2,6}
+        };
+        for (const auto& edge : edges) {
+            if (screen[edge[0]].x > -5000.0f && screen[edge[1]].x > -5000.0f) {
+                dl->AddLine(screen[edge[0]], screen[edge[1]], col, 1.5f);
+            }
+        }
+    }
+}
+
+MeshDrawTexture SceneViewport::resolveDrawTexture(
+    const Assets::Mesh3D* mesh,
+    const ECS::MeshFilterComponent* filter,
+    const std::string& resolvedMeshPath,
+    const std::string& projectRoot) {
+    if (filter && !filter->customTexturePath.empty()) {
+        MeshDrawTexture result = resolveTextureFromPath(filter->customTexturePath, projectRoot);
+        if (result.pixels) return result;
+    }
+
+    MeshDrawTexture result = resolveTextureFromPath(
+        std::filesystem::path(resolvedMeshPath).replace_extension(".png").string(), projectRoot);
+    if (result.pixels) return result;
+
+    for (const std::string& uri :
+         Assets::MeshImportValidator::listGltfExternalUris(resolvedMeshPath)) {
+        result = resolveTextureFromPath(
+            (std::filesystem::path(resolvedMeshPath).parent_path() / uri).string(), projectRoot);
+        if (result.pixels) return result;
+    }
+
     if (mesh && mesh->textureWidth > 0 && !mesh->baseColorTexture.empty()) {
         result.pixels = mesh->baseColorTexture.data();
         result.width = mesh->textureWidth;
@@ -2454,19 +3043,26 @@ void SceneViewport::drawCustomMeshGeometry(
     const Vec3& camPos,
     ImVec2 origin,
     ImVec2 panelSize,
-    const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt,
+    const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt,
     bool drawTextured,
     bool wireMode,
-    MeshCpuRasterizer* rasterizer) {
-    if (!meshFilter || meshFilter->customMeshPath.empty()) return;
+    bool receiveShadows,
+    MeshCpuRasterizer* rasterizer,
+    Assets::Mesh3D* meshOverride,
+    const TerrainSplatDrawContext* splatContext) {
+    if (!meshFilter) return;
+    if (meshFilter->customMeshPath.empty() && !world.has<ECS::TerrainComponent>(entity)) return;
 
-    std::string projectRoot;
-    if (!ctx.currentScenePath.empty()) {
-        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
-    }
+    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
 
     auto& meshCache = Assets::MeshCache::getInstance();
-    auto* loadedMesh = meshCache.getMesh(meshFilter->customMeshPath, projectRoot);
+    Assets::Mesh3D* loadedMesh = meshOverride;
+    if (!loadedMesh) {
+        loadedMesh = Terrain::TerrainCache::instance().meshFor(entity);
+    }
+    if (!loadedMesh && !meshFilter->customMeshPath.empty()) {
+        loadedMesh = meshCache.getMesh(meshFilter->customMeshPath, projectRoot);
+    }
     const std::string& meshPath = meshCache.getResolvedPath().empty()
         ? meshFilter->customMeshPath : meshCache.getResolvedPath();
 
@@ -2474,7 +3070,17 @@ void SceneViewport::drawCustomMeshGeometry(
         return;
     }
 
-    const MeshDrawTexture drawTex = resolveDrawTexture(loadedMesh, meshFilter, meshPath, projectRoot);
+    MeshDrawTexture drawTex = resolveDrawTexture(loadedMesh, meshFilter, meshPath, projectRoot);
+    if (!meshFilter->customMaterialPath.empty()) {
+        const Assets::MaterialSurface surface =
+            Assets::MaterialCache::instance().resolve(meshFilter->customMaterialPath, projectRoot);
+        if (surface.valid) {
+            drawTex.hasMaterial = true;
+            drawTex.materialAlbedo = surface.albedo;
+            drawTex.materialMetallic = surface.metallic;
+            drawTex.materialRoughness = surface.roughness;
+        }
+    }
 
     auto transformNormal = [&](const Vec3& n) -> Vec3 {
         Vec3 wn = worldMatrix.transformVector(n);
@@ -2545,7 +3151,8 @@ void SceneViewport::drawCustomMeshGeometry(
             const RasterVert rv2 = buildRasterVert(p2, transformNormal(loadedMesh->vertices[i2].normal),
                                                    loadedMesh->vertices[i2].texcoord);
             if (rv0.sx < -5000.0f || rv1.sx < -5000.0f || rv2.sx < -5000.0f) continue;
-            rasterizeTriangleCpu(*rasterizer, rv0, rv1, rv2, faceNormal, camPos, drawTex, lightColorAt);
+            rasterizeTriangleCpu(*rasterizer, rv0, rv1, rv2, faceNormal, camPos, drawTex, receiveShadows,
+                                 lightColorAt, splatContext);
         }
 
         if (wireMode) {
@@ -2572,56 +3179,16 @@ void SceneViewport::drawSceneMeshesForCamera(
     ImVec2 origin,
     ImVec2 panelSize,
     ECS::Entity skipEntity) {
-    struct DirLightEval { Vec3 dir; f32 intensity; Vec3 color; };
-    struct PointLightEval { Vec3 pos; f32 intensity; f32 radius; Vec3 color; };
-    std::vector<DirLightEval> dirLights;
-    std::vector<PointLightEval> pointLights;
-
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::DirectionalLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 ldir = entityForward(world, e).normalized();
-                dirLights.push_back({ldir, lc.intensity, Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
+    std::string projectRoot;
+    if (!ctx.currentScenePath.empty()) {
+        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
     }
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::PointLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::PointLightComponent& pl) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 p;
-                if (!tryGetEntityPosition(world, e, p)) return;
-                pointLights.push_back({p, lc.intensity, std::max(0.001f, pl.radius),
-                                       Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
-    }
+    Scene::SceneLighting sceneLighting;
+    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting, skipEntity);
 
-    auto lightColorAt = [&](const Vec3& p, const Vec3& n) -> Vec3 {
-        const Vec3 nn = n.normalized();
-        Vec3 diffuse(0.22f, 0.22f, 0.24f);
-        for (const auto& l : dirLights) {
-            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * l.dir));
-            diffuse += l.color * (ndotl * l.intensity * 0.65f);
-        }
-        for (const auto& l : pointLights) {
-            Vec3 toLight = l.pos - p;
-            const f32 dist = std::max(0.001f, toLight.length());
-            if (dist > l.radius) continue;
-            const Vec3 ldir = toLight / dist;
-            const f32 atten = 1.0f - (dist / l.radius);
-            const f32 ndotl = std::max(0.0f, nn.dot(ldir));
-            diffuse += l.color * (ndotl * l.intensity * atten * atten * 0.9f);
-        }
-        diffuse.x = std::clamp(diffuse.x, 0.08f, 1.65f);
-        diffuse.y = std::clamp(diffuse.y, 0.08f, 1.65f);
-        diffuse.z = std::clamp(diffuse.z, 0.08f, 1.65f);
-        return diffuse;
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
+        return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
+                                              receiveShadows, Vec3(0.22f, 0.22f, 0.24f));
     };
 
     MeshCpuRasterizer meshRaster;
@@ -2635,11 +3202,13 @@ void SceneViewport::drawSceneMeshesForCamera(
             if (entity == skipEntity) return;
             if (Scene::isEffectivelyDisabled(world, entity)) return;
             if (meshFilter.primitive != ECS::MeshPrimitive::Custom) return;
-            if (meshFilter.customMeshPath.empty()) return;
+            const bool isTerrain = world.has<ECS::TerrainComponent>(entity);
+            if (!isTerrain && meshFilter.customMeshPath.empty()) return;
 
             const Mat4 worldMatrix = entityMatrix(world, entity);
             drawCustomMeshGeometry(world, ctx, entity, &meshFilter, worldMatrix, dl, vp, camPos,
-                                   origin, panelSize, lightColorAt, true, false, &meshRaster);
+                                   origin, panelSize, lightColorAt, true, false,
+                                   Scene::meshReceivesShadows(world, entity), &meshRaster);
         });
 
     blitMeshRasterizer(dl, meshRaster, m_camMeshRasterTexture);
@@ -2696,7 +3265,27 @@ std::string SceneViewport::resolveSpritePath(const std::string& spriteName, cons
 }
 
 void SceneViewport::releaseSpriteTextures() {
+    auto destroyEntry = [](SpriteTextureCacheEntry& entry) {
+        if (entry.texture) {
+            if (entry.texture->GetTexID() != ImTextureID_Invalid) {
+                entry.texture->UnusedFrames = 1;
+                entry.texture->SetStatus(ImTextureStatus_WantDestroy);
+                ImGui_ImplSDLGPU3_UpdateTexture(entry.texture.get());
+            }
+            entry.texture.reset();
+        }
+        entry.width = 0;
+        entry.height = 0;
+        entry.loadFailed = false;
+    };
+
+    for (auto& pair : m_spriteTextureCache) {
+        destroyEntry(pair.second);
+    }
     m_spriteTextureCache.clear();
+    destroyEntry(m_meshRasterTexture);
+    destroyEntry(m_camMeshRasterTexture);
+    m_skyboxRenderer.releaseGpuTextures();
 }
 
 void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {

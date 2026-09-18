@@ -5,6 +5,8 @@
 #include "ecs/PrefabComponents.hpp"
 #include "ui/UIComponents.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "ecs/TerrainComponents.hpp"
+#include "terrain/TerrainCache.hpp"
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -420,6 +422,20 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         world.add<ECS::MeshFilterComponent>(e, mf);
         world.add<ECS::MeshRendererComponent>(e);
     }
+    else if (strcmp(componentType, "Skybox") == 0) {
+        ECS::SkyboxComponent sky;
+        sky.presetIndex = 0;
+        sky.enabled = true;
+        world.add<ECS::SkyboxComponent>(e, sky);
+        world.add<ECS::PersistentComponent>(e);
+    }
+    else if (strcmp(componentType, "Terrain") == 0) {
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+        world.add<ECS::TerrainComponent>(e);
+        Terrain::TerrainCache::instance().initializeEntity(world, e);
+    }
     else if (strcmp(componentType, "GameManager") == 0) {
         world.add<ECS::PersistentComponent>(e);
     }
@@ -514,6 +530,12 @@ void HierarchyPanel::renderEmptyContextMenu() {
                 if (ImGui::MenuItem("Directional Light")) createEntityWithType(*m_world, "Directional Light", "DirectionalLight");
                 if (ImGui::MenuItem("Point Light"))       createEntityWithType(*m_world, "Point Light",       "PointLight");
                 if (ImGui::MenuItem("Spot Light"))        createEntityWithType(*m_world, "Spot Light",        "SpotLight");
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::BeginMenu("Environment")) {
+                if (ImGui::MenuItem("Skybox"))  createEntityWithType(*m_world, "Skybox",  "Skybox");
+                if (ImGui::MenuItem("Terrain")) createEntityWithType(*m_world, "Terrain", "Terrain");
                 ImGui::EndMenu();
             }
 

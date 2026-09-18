@@ -19,6 +19,7 @@
 #include "editor/MaterialEditorPanel.hpp"
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
+#include "editor/TerrainEditorPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -69,6 +70,7 @@ public:
     bool init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
               const ProjectConfig& projectConfig);
     void shutdown();
+    void setFrameCommandBuffer(RHI::CommandBuffer* cmd) { m_frameCmd = cmd; }
 #endif
 
     void render(f32 deltaTime = 0.016f);
@@ -146,6 +148,7 @@ private:
     MaterialEditorPanel m_materialEditor;
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
+    TerrainEditorPanel  m_terrainEditor;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;
@@ -158,6 +161,8 @@ private:
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
     ProjectConfig m_currentProjectConfig;
+    RHI::RenderDevice* m_renderDevice = nullptr;
+    RHI::CommandBuffer* m_frameCmd = nullptr;
 #endif
 
     void closeTab(int index);

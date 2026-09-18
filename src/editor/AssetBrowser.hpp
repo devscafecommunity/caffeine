@@ -69,6 +69,9 @@ public:
     void setOnScriptOpen(std::function<void(const std::filesystem::path&)> cb) {
         m_onScriptOpen = std::move(cb);
     }
+    void setOnMaterialOpen(std::function<void(const std::filesystem::path&)> cb) {
+        m_onMaterialOpen = std::move(cb);
+    }
 
     // ── Data layer ─────────────────────────────────────────────────────
     void init(const char* rootPath);
@@ -179,6 +182,7 @@ private:
     std::filesystem::path m_currentCapPath;
 
     std::function<void(const std::filesystem::path&)> m_onScriptOpen;
+    std::function<void(const std::filesystem::path&)> m_onMaterialOpen;
 };
 
 } // namespace Caffeine::Editor

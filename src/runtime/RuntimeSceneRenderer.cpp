@@ -11,6 +11,8 @@
 #include "math/Quat.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
+#include "scene/CpuDirectionalShadowMap.hpp"
+#include "scene/LightingSystem.hpp"
 
 #include <stb/stb_image.h>
 #include <imgui_impl_sdlgpu3.h>
@@ -160,8 +162,8 @@ ImU32 sampleDrawTexture(const MeshDrawTexture& tex, const Vec2& uv, const Vec3& 
 
 void rasterizeTriangleCpu(MeshCpuRasterizer& fb, const RasterVert& v0, const RasterVert& v1,
                           const RasterVert& v2, const Vec3& faceNormal, const Vec3& camPos,
-                          const MeshDrawTexture& tex,
-                          const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt) {
+                          const MeshDrawTexture& tex, bool receiveShadows,
+                          const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt) {
     const Vec3 center = (v0.worldPos + v1.worldPos + v2.worldPos) * (1.0f / 3.0f);
     const Vec3 viewDelta(camPos.x - center.x, camPos.y - center.y, camPos.z - center.z);
     if (faceNormal.dot(viewDelta) <= 0.0f) return;
@@ -207,7 +209,8 @@ void rasterizeTriangleCpu(MeshCpuRasterizer& fb, const RasterVert& v0, const Ras
                 worldNormal = faceNormal;
             }
 
-            const ImU32 col = sampleDrawTexture(tex, Vec2(u, v), lightColorAt(worldPos, worldNormal));
+            const ImU32 col =
+                sampleDrawTexture(tex, Vec2(u, v), lightColorAt(worldPos, worldNormal, receiveShadows));
             fb.depth[depthIdx] = z;
             const int colorIdx = depthIdx * 4;
             fb.color[colorIdx + 0] = static_cast<u8>((col >> IM_COL32_R_SHIFT) & 0xFF);
@@ -345,68 +348,6 @@ void blitRasterizer(ImDrawList* dl, ImVec2 origin, ImVec2 panelSize, MeshCpuRast
 void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx, ImDrawList* dl,
                                   const Mat4& vp, const Vec3& camPos, ImVec2 origin,
                                   ImVec2 panelSize, ECS::Entity skipEntity) {
-    struct DirLightEval {
-        Vec3 dir;
-        f32 intensity;
-        Vec3 color;
-    };
-    struct PointLightEval {
-        Vec3 pos;
-        f32 intensity;
-        f32 radius;
-        Vec3 color;
-    };
-    std::vector<DirLightEval> dirLights;
-    std::vector<PointLightEval> pointLights;
-
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::DirectionalLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                dirLights.push_back(
-                    {entityForward(world, e).normalized(), lc.intensity,
-                     Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
-    }
-    {
-        ECS::ComponentQuery q;
-        q.with<ECS::LightComponent>();
-        q.with<ECS::PointLightComponent>();
-        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
-            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::PointLightComponent& pl) {
-                if (Scene::isEffectivelyDisabled(world, e)) return;
-                Vec3 p;
-                if (!tryGetEntityPosition(world, e, p)) return;
-                pointLights.push_back({p, lc.intensity, std::max(0.001f, pl.radius),
-                                       Vec3(lc.color.x, lc.color.y, lc.color.z)});
-            });
-    }
-
-    auto lightColorAt = [&](const Vec3& p, const Vec3& n) -> Vec3 {
-        const Vec3 nn = n.normalized();
-        Vec3 diffuse(0.22f, 0.22f, 0.24f);
-        for (const auto& l : dirLights) {
-            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * l.dir));
-            diffuse += l.color * (ndotl * l.intensity * 0.65f);
-        }
-        for (const auto& l : pointLights) {
-            Vec3 toLight = l.pos - p;
-            const f32 dist = std::max(0.001f, toLight.length());
-            if (dist > l.radius) continue;
-            const Vec3 ldir = toLight / dist;
-            const f32 atten = 1.0f - (dist / l.radius);
-            const f32 ndotl = std::max(0.0f, nn.dot(ldir));
-            diffuse += l.color * (ndotl * l.intensity * atten * atten * 0.9f);
-        }
-        diffuse.x = std::clamp(diffuse.x, 0.08f, 1.65f);
-        diffuse.y = std::clamp(diffuse.y, 0.08f, 1.65f);
-        diffuse.z = std::clamp(diffuse.z, 0.08f, 1.65f);
-        return diffuse;
-    };
-
     std::string projectRoot = std::filesystem::current_path().string();
     {
         std::filesystem::path probe = std::filesystem::current_path();
@@ -419,6 +360,14 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
             probe = probe.parent_path();
         }
     }
+
+    Scene::SceneLighting sceneLighting;
+    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting, skipEntity);
+
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
+        return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
+                                              receiveShadows, Vec3(0.22f, 0.22f, 0.24f));
+    };
 
     std::unordered_map<std::string, FileTextureEntry> fileTextures;
 
@@ -508,7 +457,7 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
                 if (rv0.sx < -5000.0f || rv1.sx < -5000.0f || rv2.sx < -5000.0f) continue;
 
                 rasterizeTriangleCpu(meshRaster, rv0, rv1, rv2, faceNormal, camPos, drawTex,
-                                     lightColorAt);
+                                     Scene::meshReceivesShadows(world, entity), lightColorAt);
             }
         });
 

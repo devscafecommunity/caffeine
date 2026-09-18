@@ -126,7 +126,7 @@ struct FileWatcher::Impl {
     std::filesystem::path directory;
 };
 
-FileWatcher::~FileWatcher() = default;
+FileWatcher::~FileWatcher() { stop(); }
 
 bool FileWatcher::start(const std::filesystem::path& directory, bool) {
     m_Impl   = new Impl{ directory };

@@ -33,6 +33,7 @@ struct MeshFilterComponent {
     MeshPrimitive primitive   = MeshPrimitive::Cube;
     std::string   customMeshPath;
     std::string   customTexturePath;
+    std::string   customMaterialPath;
 };
 
 }  // namespace Caffeine::ECS

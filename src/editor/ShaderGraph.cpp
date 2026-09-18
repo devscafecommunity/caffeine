@@ -1,8 +1,11 @@
 #include "editor/ShaderGraph.hpp"
+#include <imgui.h>
 #include <algorithm>
+#include <cmath>
 #include <queue>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <cstdio>
 #include <cstdarg>
 
@@ -18,10 +21,15 @@ static std::string str(const char* fmt, ...) {
 }
 
 uint32_t ShaderGraph::addNode(NodeType type) {
-    auto node = createNode(type, m_nextID);
+    return addNodeWithId(type, m_nextID);
+}
+
+uint32_t ShaderGraph::addNodeWithId(NodeType type, uint32_t id) {
+    auto node = createNode(type, id);
     if (!node) return 0;
     m_nodes.push_back(std::move(node));
-    return m_nextID++;
+    m_nextID = std::max(m_nextID, id + 1);
+    return id;
 }
 
 bool ShaderGraph::removeNode(uint32_t nodeID) {
@@ -184,6 +192,142 @@ std::string ShaderGraph::compileGLSL() const {
 
 std::string ShaderGraph::compileHLSL() const {
     return compileGLSL();
+}
+
+namespace {
+
+enum class ValueKind : u8 { None, Float, Vec4 };
+
+struct GraphValue {
+    ValueKind kind = ValueKind::None;
+    f32 f = 0.0f;
+    Vec4 v4{0.0f, 0.0f, 0.0f, 0.0f};
+};
+
+GraphValue defaultForPin(PinType type) {
+    GraphValue v;
+    if (type == PinType::Vec4) {
+        v.kind = ValueKind::Vec4;
+        v.v4 = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    } else {
+        v.kind = ValueKind::Float;
+        v.f = (type == PinType::Float) ? 1.0f : 0.5f;
+    }
+    return v;
+}
+
+f32 asFloat(const GraphValue& v, f32 fallback = 0.0f) {
+    if (v.kind == ValueKind::Float) return v.f;
+    if (v.kind == ValueKind::Vec4) return (v.v4.x + v.v4.y + v.v4.z) / 3.0f;
+    return fallback;
+}
+
+Vec4 asVec4(const GraphValue& v, const Vec4& fallback = Vec4(1.0f, 1.0f, 1.0f, 1.0f)) {
+    if (v.kind == ValueKind::Vec4) return v.v4;
+    if (v.kind == ValueKind::Float) return Vec4(v.f, v.f, v.f, 1.0f);
+    return fallback;
+}
+
+}  // namespace
+
+EvaluatedMaterial ShaderGraph::evaluateMaterial(f32 time) const {
+    EvaluatedMaterial result;
+    if (m_nodes.empty()) return result;
+
+    std::vector<uint32_t> sorted;
+    topologicalSort(sorted);
+
+    std::unordered_map<uint32_t, GraphValue> values;
+    auto inputValue = [&](uint32_t nodeId, int pin, PinType pinType) -> GraphValue {
+        for (const auto& c : m_connections) {
+            if (c.toNode == nodeId && c.toPin == pin) {
+                auto it = values.find(c.fromNode);
+                if (it != values.end()) return it->second;
+            }
+        }
+        return defaultForPin(pinType);
+    };
+
+    for (uint32_t id : sorted) {
+        const ShaderNode* node = getNode(id);
+        if (!node) continue;
+
+        GraphValue out;
+        switch (node->type()) {
+            case NodeType::ColorConstant: {
+                const auto* n = static_cast<const ColorConstantNode*>(node);
+                out.kind = ValueKind::Vec4;
+                out.v4 = Vec4(n->color[0], n->color[1], n->color[2], n->color[3]);
+                break;
+            }
+            case NodeType::FloatConstant: {
+                const auto* n = static_cast<const FloatConstantNode*>(node);
+                out.kind = ValueKind::Float;
+                out.f = n->value;
+                break;
+            }
+            case NodeType::Multiply: {
+                const f32 a = asFloat(inputValue(id, 0, PinType::Float), 1.0f);
+                const f32 b = asFloat(inputValue(id, 1, PinType::Float), 1.0f);
+                out.kind = ValueKind::Float;
+                out.f = a * b;
+                break;
+            }
+            case NodeType::Add: {
+                const f32 a = asFloat(inputValue(id, 0, PinType::Float), 0.0f);
+                const f32 b = asFloat(inputValue(id, 1, PinType::Float), 0.0f);
+                out.kind = ValueKind::Float;
+                out.f = a + b;
+                break;
+            }
+            case NodeType::Lerp: {
+                const Vec4 from = asVec4(inputValue(id, 0, PinType::Vec4), Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                const Vec4 to = asVec4(inputValue(id, 1, PinType::Vec4), Vec4(1.0f, 1.0f, 1.0f, 1.0f));
+                const f32 t = std::clamp(asFloat(inputValue(id, 2, PinType::Float), 0.5f), 0.0f, 1.0f);
+                out.kind = ValueKind::Vec4;
+                out.v4 = from * (1.0f - t) + to * t;
+                break;
+            }
+            case NodeType::Time: {
+                out.kind = ValueKind::Float;
+                out.f = time;
+                break;
+            }
+            case NodeType::TextureSample: {
+                out.kind = ValueKind::Vec4;
+                out.v4 = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
+                break;
+            }
+            case NodeType::VertexPosition: {
+                out.kind = ValueKind::Vec4;
+                out.v4 = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                break;
+            }
+            case NodeType::OutputPBR: {
+                result.albedo = asVec4(inputValue(id, 0, PinType::Vec4));
+                result.metallic = std::clamp(asFloat(inputValue(id, 2, PinType::Float), 0.0f), 0.0f, 1.0f);
+                result.roughness = std::clamp(asFloat(inputValue(id, 3, PinType::Float), 0.5f), 0.0f, 1.0f);
+                result.valid = true;
+                out.kind = ValueKind::Vec4;
+                out.v4 = result.albedo;
+                break;
+            }
+        }
+        values[id] = out;
+    }
+
+    if (!result.valid) {
+        for (const auto& n : m_nodes) {
+            if (n->type() == NodeType::ColorConstant) {
+                const auto* colorNode = static_cast<const ColorConstantNode*>(n.get());
+                result.albedo = Vec4(colorNode->color[0], colorNode->color[1],
+                                     colorNode->color[2], colorNode->color[3]);
+                result.valid = true;
+                break;
+            }
+        }
+    }
+    return result;
 }
 
 } // namespace Caffeine::Editor

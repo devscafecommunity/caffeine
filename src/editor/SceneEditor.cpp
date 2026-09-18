@@ -1,4 +1,7 @@
 #include "editor/SceneEditor.hpp"
+#include "assets/MeshCache.hpp"
+#include "render/GpuProceduralMeshes.hpp"
+#include "terrain/TerrainCache.hpp"
 #include "ecs/Components.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "editor/ComponentRegistry.hpp"
@@ -18,11 +21,17 @@ namespace Caffeine::Editor {
 #ifdef CF_HAS_SDL3
 bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
                        const ProjectConfig& projectConfig) {
+    m_renderDevice = device;
     if (!m_viewport.init(device)) return false;
+    m_materialEditor.initGpu(device);
     m_assetBrowser.init(projectConfig);
     m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
         m_scriptEditor.open();
         m_scriptEditor.openFile(path);
+    });
+    m_assetBrowser.setOnMaterialOpen([this](const std::filesystem::path& path) {
+        m_materialEditor.open();
+        m_materialEditor.openFromPath(path);
     });
     m_assetManager = assetManager;
     m_currentProjectConfig = projectConfig;
@@ -65,6 +74,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      });
      m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Panels", [this]() {
          m_materialEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Panels", [this]() {
+         m_terrainEditor.open();
      });
      m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
          m_settingsPanel.open();
@@ -149,8 +161,20 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
 void SceneEditor::shutdown() {
     PluginManager::instance().shutdown();
+#ifdef CF_HAS_SDL3
+    if (m_renderDevice) {
+        m_materialEditor.shutdownGpu();
+        Assets::MeshCache::getInstance().releaseGpuResources(m_renderDevice);
+        Render::GpuProceduralMeshes::releaseGpuResources(m_renderDevice);
+        Terrain::TerrainCache::instance().releaseGpuResources(m_renderDevice);
+    }
+#endif
+    Terrain::TerrainCache::instance().clear();
+    m_tabManager.clearAll();
     m_viewport.shutdown();
     m_audioPreview.shutdown();
+    m_scriptFileWatcher.stop();
+    m_scriptWatcherStarted = false;
 }
 
 bool SceneEditor::hasUnsavedChanges() const {
@@ -371,6 +395,7 @@ void SceneEditor::render(f32 deltaTime) {
          profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
          profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
          m_materialEditor.open();
+         m_terrainEditor.open();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -384,7 +409,9 @@ void SceneEditor::render(f32 deltaTime) {
     m_hierarchy.render(*activeWorld, m_ctx);
     m_inspector.render(*activeWorld, m_ctx);
     renderPlaybar(*activeWorld);
+    m_viewport.setFrameCommandBuffer(m_frameCmd);
     m_viewport.render(*activeWorld, m_ctx);
+    m_viewport.setFrameCommandBuffer(nullptr);
     m_assetBrowser.render(*activeWorld, m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
@@ -392,6 +419,7 @@ void SceneEditor::render(f32 deltaTime) {
     m_scriptEditor.render();
     m_settingsPanel.render();
     m_materialEditor.onImGuiRender();
+    m_terrainEditor.render(*activeWorld, m_ctx);
     m_audioPreview.onImGuiRender();
     m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
     m_animationTimeline.render(deltaTime);
@@ -431,6 +459,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
      ImGui::DockBuilderDockWindow("Entity Debugger", dockBottom);
      ImGui::DockBuilderDockWindow("Plugin Manager", dockBottom);
      ImGui::DockBuilderDockWindow("Material Editor", dockBottom);
+     ImGui::DockBuilderDockWindow("Terrain Editor", dockBottom);
 
      ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -557,6 +586,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool acOpen = m_animatorController.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Animator, "Animator Controller", nullptr, &acOpen))
                 acOpen ? m_animatorController.open() : m_animatorController.close();
+            bool terrainEditorOpen = m_terrainEditor.isOpen();
+            if (ImGui::MenuItem("Terrain Editor", nullptr, terrainEditorOpen)) {
+                terrainEditorOpen ? m_terrainEditor.close() : m_terrainEditor.open();
+            }
             syncLayoutProfileFromPanels();
             ImGui::EndMenu();
         }
@@ -1052,6 +1085,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
         if (profile.scriptEditorOpen) ImGui::DockBuilderDockWindow("Script Editor", dockBottomRegion);
         ImGui::DockBuilderDockWindow("Build & Run", dockBottomRegion);
         ImGui::DockBuilderDockWindow("Audio Preview", dockBottomRegion);
+        ImGui::DockBuilderDockWindow("Terrain Editor", dockBottomRegion);
         ImGui::DockBuilderDockWindow("Settings", dockBottomRegion);
     }
 

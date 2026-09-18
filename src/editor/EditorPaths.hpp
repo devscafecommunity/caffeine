@@ -17,6 +17,7 @@ public:
     static std::filesystem::path fontPath(const std::string& relativePath);
     static std::filesystem::path iconPath(const std::string& name);
     static std::filesystem::path spinnerPath(const std::string& name);
+    static std::filesystem::path skyboxPath(const std::string& fileName);
     static std::filesystem::path brandLogoPath();
 
 private:

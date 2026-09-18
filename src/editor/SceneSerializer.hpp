@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
+#include "ecs/TerrainComponents.hpp"
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
 #include <string>
@@ -59,9 +60,11 @@ private:
     static constexpr u32 kTypeUISlider       = 38;
     static constexpr u32 kTypeUICheckbox     = 39;
     static constexpr u32 kTypeAnimator       = 40;
-    static constexpr u32 kTypeCount          = 41;
+    static constexpr u32 kTypeSkybox         = 41;
+    static constexpr u32 kTypeTerrain        = 42;
+    static constexpr u32 kTypeCount          = 43;
 
-    static constexpr u32 kFormatVersion    = 6;
+    static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────
@@ -98,6 +101,8 @@ private:
     void collectSkinnedMeshRendererComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
     void collectUIWidgetComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
     void collectAnimatorComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectTerrainComponents(const std::string& scenePath,
+                                  std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
     template<typename T>
     void emitPodComponents(u32 typeId,
@@ -120,6 +125,11 @@ private:
     bool applySkinnedMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyUIWidgetComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyAnimatorComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyTerrainComponent(ECS::Entity e, const u8* data, u32 size,
+                               const std::string& scenePath);
+
+    static std::vector<u8> serializeTerrainComponent(const ECS::TerrainComponent& terrain);
+    static bool deserializeTerrainComponent(const u8* data, u32 size, ECS::TerrainComponent& terrain);
 
     template<typename T>
     static bool applyPODComponent(ECS::Entity e, const u8* data, u32 size,

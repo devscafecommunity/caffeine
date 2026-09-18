@@ -394,10 +394,25 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
     const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
     const Mat4 vp = proj * view;
 
-    dl->AddRectFilledMultiColor(
-        origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-        IM_COL32(20, 20, 24, 255), IM_COL32(20, 20, 24, 255),
-        IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    Render::SkyboxCamera skyCamera;
+    skyCamera.forward = Vec3(-sinY * cosP, sinP, cosY * cosP).normalized();
+    const Vec3 worldUp(0.0f, 1.0f, 0.0f);
+    skyCamera.right = skyCamera.forward.cross(worldUp);
+    if (skyCamera.right.lengthSquared() < 1e-6f) {
+        skyCamera.right = Vec3(1.0f, 0.0f, 0.0f);
+    } else {
+        skyCamera.right = skyCamera.right.normalized();
+    }
+    skyCamera.up = skyCamera.right.cross(skyCamera.forward).normalized();
+    skyCamera.fovY = 1.0472f;
+    skyCamera.aspect = panelSize.x / std::max(panelSize.y, 1.0f);
+    if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
+                                    skyCamera, false, &m_skyboxRenderer)) {
+        dl->AddRectFilledMultiColor(
+            origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+            IM_COL32(20, 20, 24, 255), IM_COL32(20, 20, 24, 255),
+            IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    }
 
     const ImU32 gridColor = IM_COL32(90, 90, 110, 120);
     const float gridExtent = 20.0f;
@@ -443,10 +458,20 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
     const Mat4 proj = Mat4::perspective(fovRad, aspect, cam.nearClip, cam.farClip);
     const Mat4 vp = proj * view;
 
-    dl->AddRectFilledMultiColor(
-        origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-        IM_COL32(20, 20, 24, 255), IM_COL32(20, 20, 24, 255),
-        IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    const Mat4 worldMatrix = entityMatrix(world, cameraEntity);
+    Render::SkyboxCamera skyCamera;
+    skyCamera.forward = entityForward(world, cameraEntity).normalized();
+    skyCamera.right = matrixAxis(worldMatrix, 0, Vec3(1.0f, 0.0f, 0.0f));
+    skyCamera.up = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
+    skyCamera.fovY = fovRad;
+    skyCamera.aspect = aspect;
+    if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
+                                    skyCamera, false, &m_skyboxRenderer)) {
+        dl->AddRectFilledMultiColor(
+            origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+            IM_COL32(20, 20, 24, 255), IM_COL32(20, 20, 24, 255),
+            IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
+    }
 
     const ImU32 gridColor = IM_COL32(90, 90, 110, 120);
     const ImU32 majorGridColor = IM_COL32(120, 120, 145, 160);

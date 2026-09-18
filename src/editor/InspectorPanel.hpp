@@ -53,6 +53,8 @@ private:
     void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawSkybox(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawTerrain(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawPrefabInstance(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 
      void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);

@@ -8,6 +8,10 @@
 #include "math/Math.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/TransformGizmo.hpp"
+#include "render/SkyboxRenderer.hpp"
+#include "render/GpuSceneRenderer.hpp"
+#include "terrain/TerrainLodSystem.hpp"
+#include "terrain/TerrainSplatmap.hpp"
 #include "assets/MeshTypes.hpp"
 #include "ecs/MeshComponents.hpp"
 
@@ -38,6 +42,19 @@ struct MeshDrawTexture {
     u32 height = 0;
     int channels = 0;
     bool flipV = false;
+    Vec4 materialAlbedo{1.0f, 1.0f, 1.0f, 1.0f};
+    f32  materialMetallic = 0.0f;
+    f32  materialRoughness = 0.5f;
+    bool hasMaterial = false;
+};
+
+struct TerrainSplatDrawContext {
+    const Terrain::TerrainSplatmap* splatmap = nullptr;
+    MeshDrawTexture layers[ECS::kTerrainSplatLayerCount]{};
+    u32 layerCount = 0;
+    const ECS::TerrainComponent* settings = nullptr;
+    Mat4 worldMatrixInverse;
+    bool active = false;
 };
 
 #ifdef CF_HAS_IMGUI
@@ -90,7 +107,9 @@ public:
 #ifdef CF_HAS_SDL3
     bool init(RHI::RenderDevice* device, Config cfg = Config::defaults());
     void shutdown();
+    void setFrameCommandBuffer(RHI::CommandBuffer* cmd) { m_frameCmd = cmd; }
     RHI::Texture* colorTarget() const { return m_colorTarget; }
+    bool gpuSceneReady() const { return m_gpuSceneReady; }
 #endif
 
     void render(ECS::World& world, EditorContext& ctx);
@@ -119,6 +138,11 @@ public:
                                   const Mat4& vp, const Vec3& camPos,
                                   ImVec2 origin, ImVec2 panelSize,
                                   ECS::Entity skipEntity = ECS::Entity::INVALID);
+    bool drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
+                           ECS::World& world, const EditorContext& ctx,
+                           const Render::SkyboxCamera& camera,
+                           bool respectEditorToggle = true,
+                           Render::SkyboxRenderer* renderer = nullptr);
     #endif
 
 private:
@@ -136,6 +160,8 @@ private:
      void handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize);
      void drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
      void drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
+     bool drawSkybox(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
+                     ECS::World& world, EditorContext& ctx);
      void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
      void resizeCanvasIfNeeded(u32 newWidth, u32 newHeight);
      std::string resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const;
@@ -171,29 +197,50 @@ private:
                                        const ECS::MeshFilterComponent* filter,
                                        const std::string& resolvedMeshPath,
                                        const std::string& projectRoot);
+    MeshDrawTexture resolveTextureFromPath(const std::string& path,
+                                           const std::string& projectRoot);
+    TerrainSplatDrawContext resolveTerrainSplatContext(ECS::World& world, ECS::Entity entity,
+                                                       const Mat4& worldMatrix,
+                                                       const std::string& projectRoot);
 
     void drawCustomMeshGeometry(ECS::World& world, EditorContext& ctx, ECS::Entity entity,
                                 ECS::MeshFilterComponent* meshFilter, const Mat4& worldMatrix,
                                 ImDrawList* dl, const Mat4& vpMat, const Vec3& camPos,
                                 ImVec2 origin, ImVec2 panelSize,
-                                const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt,
-                                bool drawTextured, bool wireMode,
-                                MeshCpuRasterizer* rasterizer = nullptr);
+                                const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt,
+                                bool drawTextured, bool wireMode, bool receiveShadows,
+                                MeshCpuRasterizer* rasterizer = nullptr,
+                                Assets::Mesh3D* meshOverride = nullptr,
+                                const TerrainSplatDrawContext* splatContext = nullptr);
+    void drawTerrainChunkDebug(ImDrawList* dl, const Mat4& worldMatrix,
+                               const std::vector<Terrain::TerrainDrawChunk>& chunks,
+                               ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx);
 
     void blitMeshRasterizer(ImDrawList* dl, MeshCpuRasterizer& rasterizer,
                             SpriteTextureCacheEntry& texEntry);
-
     std::unordered_map<std::string, SpriteTextureCacheEntry> m_spriteTextureCache;
     std::unordered_map<std::string, FileTextureCacheEntry> m_fileTextureCache;
     SpriteTextureCacheEntry m_meshRasterTexture;
     SpriteTextureCacheEntry m_camMeshRasterTexture;
+    Render::SkyboxRenderer m_skyboxRenderer;
+    Render::GpuSceneRenderer m_gpuSceneRenderer;
+    RHI::CommandBuffer* m_frameCmd = nullptr;
+    bool m_gpuSceneReady = false;
+    bool m_useGpuScene = true;
+    bool m_lastGpuSceneActive = false;
+    u32 m_lastGpuMeshDrawCount = 0;
 #endif
 
     bool m_open = true;
     bool m_initialized = false;
     TransformGizmo m_Gizmo;
     bool m_gizmoDragging = false;
+    bool m_terrainSculptDragging = false;
     bool m_boxSelecting = false;
+    Vec3 m_terrainBrushHitWorld{};
+    bool m_terrainBrushHitValid = false;
+    Terrain::TerrainCullStats m_terrainCullStats{};
+    std::vector<Terrain::TerrainDrawChunk> m_terrainDrawChunks;
     int  m_hoveredAxis   = 0;
     int  m_gizmoDragAxis = 0;
     ImVec2 m_axisRawDirs[3] = {};

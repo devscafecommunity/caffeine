@@ -4,6 +4,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
+#include "ecs/TerrainComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "animation/AnimationComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
@@ -11,15 +12,99 @@
 #include "ui/UIComponents.hpp"
 #include "editor/EditorContext.hpp"
 #include "scene/SceneComponents.hpp"
+#include "terrain/TerrainCache.hpp"
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <fstream>
 #include <cstring>
+#include <cctype>
+#include <filesystem>
 
 namespace Caffeine::Editor {
 
 namespace IO = SceneSerializerIO;
+
+namespace {
+
+constexpr u32 kTerrainBlobVersion = 2;
+
+std::filesystem::path projectRootFromScenePath(const std::string& scenePath) {
+    if (scenePath.empty()) return {};
+    const auto sceneDir = std::filesystem::path(scenePath).parent_path();
+    std::filesystem::path root = sceneDir.parent_path();
+    return root.empty() ? sceneDir : root;
+}
+
+std::string sanitizeTerrainFileStem(const std::string& name) {
+    std::string stem = name.empty() ? "Terrain" : name;
+    for (char& c : stem) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    if (stem.empty()) stem = "Terrain";
+    return stem;
+}
+
+void appendU32(std::vector<u8>& out, u32 value) {
+    const usize offset = out.size();
+    out.resize(offset + sizeof(u32));
+    std::memcpy(out.data() + offset, &value, sizeof(u32));
+}
+
+void appendF32(std::vector<u8>& out, f32 value) {
+    const usize offset = out.size();
+    out.resize(offset + sizeof(f32));
+    std::memcpy(out.data() + offset, &value, sizeof(f32));
+}
+
+void appendU8(std::vector<u8>& out, u8 value) {
+    out.push_back(value);
+}
+
+void appendString(std::vector<u8>& out, const char* str) {
+    const u32 len = static_cast<u32>(std::strlen(str));
+    appendU32(out, len);
+    if (len == 0) return;
+    const usize offset = out.size();
+    out.resize(offset + len);
+    std::memcpy(out.data() + offset, str, len);
+}
+
+bool readU32(const u8*& cursor, const u8* end, u32& value) {
+    if (cursor + sizeof(u32) > end) return false;
+    std::memcpy(&value, cursor, sizeof(u32));
+    cursor += sizeof(u32);
+    return true;
+}
+
+bool readF32(const u8*& cursor, const u8* end, f32& value) {
+    if (cursor + sizeof(f32) > end) return false;
+    std::memcpy(&value, cursor, sizeof(f32));
+    cursor += sizeof(f32);
+    return true;
+}
+
+bool readU8(const u8*& cursor, const u8* end, u8& value) {
+    if (cursor >= end) return false;
+    value = *cursor++;
+    return true;
+}
+
+bool readString(const u8*& cursor, const u8* end, char* dst, usize dstSize) {
+    u32 len = 0;
+    if (!readU32(cursor, end, len)) return false;
+    if (cursor + len > end || len >= dstSize) return false;
+    if (len > 0) {
+        std::memcpy(dst, cursor, len);
+        cursor += len;
+    }
+    dst[len] = '\0';
+    return true;
+}
+
+}  // namespace
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -63,7 +148,8 @@ void SceneSerializer::collectMeshFilterComponents(
         u8 prim = static_cast<u8>(mf.primitive);
         u32 meshPathLen = static_cast<u32>(mf.customMeshPath.size());
         u32 texturePathLen = static_cast<u32>(mf.customTexturePath.size());
-        std::vector<u8> data(9 + meshPathLen + texturePathLen);
+        u32 materialPathLen = static_cast<u32>(mf.customMaterialPath.size());
+        std::vector<u8> data(13 + meshPathLen + texturePathLen + materialPathLen);
         u32 offset = 0;
         memcpy(data.data() + offset, &prim, 1); offset += 1;
         memcpy(data.data() + offset, &meshPathLen, 4); offset += 4;
@@ -74,6 +160,11 @@ void SceneSerializer::collectMeshFilterComponents(
         memcpy(data.data() + offset, &texturePathLen, 4); offset += 4;
         if (texturePathLen > 0) {
             memcpy(data.data() + offset, mf.customTexturePath.data(), texturePathLen);
+            offset += texturePathLen;
+        }
+        memcpy(data.data() + offset, &materialPathLen, 4); offset += 4;
+        if (materialPathLen > 0) {
+            memcpy(data.data() + offset, mf.customMaterialPath.data(), materialPathLen);
         }
         entries.push_back({e.id(), std::move(data)});
     });
@@ -336,6 +427,189 @@ void SceneSerializer::collectAnimatorComponents(
     });
 }
 
+void SceneSerializer::collectTerrainComponents(
+    const std::string& scenePath,
+    std::vector<std::pair<u32, std::vector<u8>>>& entries)
+{
+    const std::filesystem::path projectRoot = projectRootFromScenePath(scenePath);
+    auto& cache = Terrain::TerrainCache::instance();
+
+    ECS::ComponentQuery q;
+    q.with<ECS::TerrainComponent>();
+    m_world.forEach<ECS::TerrainComponent>(q, [&](ECS::Entity e, ECS::TerrainComponent& terrain) {
+        cache.syncEntity(m_world, e);
+
+        if (terrain.terrainDataPath[0] == '\0') {
+            std::string entityName = "Terrain";
+            if (auto* name = m_world.get<NameComponent>(e)) {
+                if (name->name[0] != '\0') entityName = name->name;
+            }
+            const std::string relPath = "terrain/" + sanitizeTerrainFileStem(entityName) + "_" +
+                                        std::to_string(e.id()) + ".cterrain";
+            std::strncpy(terrain.terrainDataPath, relPath.c_str(), sizeof(terrain.terrainDataPath) - 1);
+            terrain.terrainDataPath[sizeof(terrain.terrainDataPath) - 1] = '\0';
+        }
+
+        if (!projectRoot.empty()) {
+            cache.saveTerrainFile(e, projectRoot / terrain.terrainDataPath, terrain.useSplatmap);
+        }
+
+        entries.push_back({e.id(), serializeTerrainComponent(terrain)});
+    });
+}
+
+std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainComponent& terrain) {
+    std::vector<u8> data;
+    appendU32(data, kTerrainBlobVersion);
+    appendU32(data, terrain.resolutionX);
+    appendU32(data, terrain.resolutionZ);
+    appendF32(data, terrain.worldSizeX);
+    appendF32(data, terrain.worldSizeZ);
+    appendF32(data, terrain.maxHeight);
+    appendU32(data, terrain.dataRevision);
+    appendU32(data, terrain.meshRevision);
+    appendU32(data, terrain.splatRevision);
+    appendU8(data, terrain.castShadows ? 1 : 0);
+    appendU8(data, terrain.receiveShadows ? 1 : 0);
+    appendU8(data, terrain.useSplatmap ? 1 : 0);
+    appendU8(data, terrain.useChunks ? 1 : 0);
+    appendU8(data, terrain.frustumCull ? 1 : 0);
+    appendU32(data, terrain.chunkVertexCount);
+    appendU32(data, terrain.maxLodLevels);
+    appendF32(data, terrain.textureTileSize);
+    appendF32(data, terrain.splatTileSize);
+    appendF32(data, terrain.lodDistanceScale);
+    appendF32(data, terrain.lodHysteresis);
+    appendString(data, terrain.texturePath);
+    appendString(data, terrain.terrainDataPath);
+    for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+        appendString(data, terrain.splatLayerPaths[i]);
+    }
+    const ECS::TerrainGenerationSettings& gen = terrain.generation;
+    appendU32(data, gen.seed);
+    appendF32(data, gen.noiseScale);
+    appendU32(data, gen.octaves);
+    appendF32(data, gen.persistence);
+    appendF32(data, gen.lacunarity);
+    appendF32(data, gen.amplitude);
+    appendF32(data, gen.baseHeight);
+    appendU8(data, static_cast<u8>(gen.noiseAlgorithm));
+    appendU8(data, gen.domainWarp ? 1 : 0);
+    appendF32(data, gen.domainWarpStrength);
+    appendU8(data, gen.thermalErosion ? 1 : 0);
+    appendU32(data, gen.thermalIterations);
+    appendF32(data, gen.thermalTalus);
+    appendU8(data, gen.hydraulicErosion ? 1 : 0);
+    appendU32(data, gen.hydraulicIterations);
+    appendF32(data, gen.hydraulicRain);
+    appendF32(data, gen.hydraulicErode);
+    appendF32(data, gen.hydraulicDeposit);
+    appendU8(data, gen.smoothPass ? 1 : 0);
+    appendU32(data, gen.smoothIterations);
+    appendF32(data, gen.heightQuantize);
+    appendU8(data, gen.autoSplat ? 1 : 0);
+    appendU8(data, static_cast<u8>(gen.style));
+    return data;
+}
+
+bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
+                                                  ECS::TerrainComponent& terrain) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+
+    u32 blobVersion = 0;
+    if (!readU32(cursor, end, blobVersion) || blobVersion < 1 || blobVersion > kTerrainBlobVersion) {
+        return false;
+    }
+
+    u8 castShadows = 1;
+    u8 receiveShadows = 1;
+    u8 useSplatmap = 1;
+    u8 useChunks = 1;
+    u8 frustumCull = 1;
+
+    if (!readU32(cursor, end, terrain.resolutionX)) return false;
+    if (!readU32(cursor, end, terrain.resolutionZ)) return false;
+    if (!readF32(cursor, end, terrain.worldSizeX)) return false;
+    if (!readF32(cursor, end, terrain.worldSizeZ)) return false;
+    if (!readF32(cursor, end, terrain.maxHeight)) return false;
+    if (!readU32(cursor, end, terrain.dataRevision)) return false;
+    if (!readU32(cursor, end, terrain.meshRevision)) return false;
+    if (!readU32(cursor, end, terrain.splatRevision)) return false;
+    if (!readU8(cursor, end, castShadows)) return false;
+    if (!readU8(cursor, end, receiveShadows)) return false;
+    if (!readU8(cursor, end, useSplatmap)) return false;
+    if (!readU8(cursor, end, useChunks)) return false;
+    if (!readU8(cursor, end, frustumCull)) return false;
+    if (!readU32(cursor, end, terrain.chunkVertexCount)) return false;
+    if (!readU32(cursor, end, terrain.maxLodLevels)) return false;
+    if (!readF32(cursor, end, terrain.textureTileSize)) return false;
+    if (!readF32(cursor, end, terrain.splatTileSize)) return false;
+    if (!readF32(cursor, end, terrain.lodDistanceScale)) return false;
+    if (!readF32(cursor, end, terrain.lodHysteresis)) return false;
+
+    terrain.castShadows = castShadows != 0;
+    terrain.receiveShadows = receiveShadows != 0;
+    terrain.useSplatmap = useSplatmap != 0;
+    terrain.useChunks = useChunks != 0;
+    terrain.frustumCull = frustumCull != 0;
+
+    if (!readString(cursor, end, terrain.texturePath, sizeof(terrain.texturePath))) return false;
+    if (!readString(cursor, end, terrain.terrainDataPath, sizeof(terrain.terrainDataPath))) {
+        return false;
+    }
+    for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+        if (!readString(cursor, end, terrain.splatLayerPaths[i], sizeof(terrain.splatLayerPaths[i]))) {
+            return false;
+        }
+    }
+
+    if (blobVersion >= 2) {
+        ECS::TerrainGenerationSettings& gen = terrain.generation;
+        u8 noiseAlgorithm = 0;
+        u8 domainWarp = 0;
+        u8 thermalErosion = 0;
+        u8 hydraulicErosion = 0;
+        u8 smoothPass = 0;
+        u8 autoSplat = 1;
+        u8 style = 0;
+
+        if (!readU32(cursor, end, gen.seed)) return false;
+        if (!readF32(cursor, end, gen.noiseScale)) return false;
+        if (!readU32(cursor, end, gen.octaves)) return false;
+        if (!readF32(cursor, end, gen.persistence)) return false;
+        if (!readF32(cursor, end, gen.lacunarity)) return false;
+        if (!readF32(cursor, end, gen.amplitude)) return false;
+        if (!readF32(cursor, end, gen.baseHeight)) return false;
+        if (!readU8(cursor, end, noiseAlgorithm)) return false;
+        if (!readU8(cursor, end, domainWarp)) return false;
+        if (!readF32(cursor, end, gen.domainWarpStrength)) return false;
+        if (!readU8(cursor, end, thermalErosion)) return false;
+        if (!readU32(cursor, end, gen.thermalIterations)) return false;
+        if (!readF32(cursor, end, gen.thermalTalus)) return false;
+        if (!readU8(cursor, end, hydraulicErosion)) return false;
+        if (!readU32(cursor, end, gen.hydraulicIterations)) return false;
+        if (!readF32(cursor, end, gen.hydraulicRain)) return false;
+        if (!readF32(cursor, end, gen.hydraulicErode)) return false;
+        if (!readF32(cursor, end, gen.hydraulicDeposit)) return false;
+        if (!readU8(cursor, end, smoothPass)) return false;
+        if (!readU32(cursor, end, gen.smoothIterations)) return false;
+        if (!readF32(cursor, end, gen.heightQuantize)) return false;
+        if (!readU8(cursor, end, autoSplat)) return false;
+        if (!readU8(cursor, end, style)) return false;
+
+        gen.noiseAlgorithm = static_cast<Terrain::TerrainNoiseAlgorithm>(noiseAlgorithm);
+        gen.domainWarp = domainWarp != 0;
+        gen.thermalErosion = thermalErosion != 0;
+        gen.hydraulicErosion = hydraulicErosion != 0;
+        gen.smoothPass = smoothPass != 0;
+        gen.autoSplat = autoSplat != 0;
+        gen.style = static_cast<ECS::TerrainGenStyle>(style);
+    }
+
+    return cursor <= end;
+}
+
 // ── Serialize ────────────────────────────────────────────────────
 
 bool SceneSerializer::serialize(const std::string& filepath) {
@@ -571,6 +845,16 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         }
     }
 
+    emitPodComponents<ECS::SkyboxComponent>(kTypeSkybox, entityMap);
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectTerrainComponents(filepath, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeTerrain, std::move(data));
+        }
+    }
+
     // Write binary file
     std::ofstream fout(filepath, std::ios::binary);
     if (!fout.is_open()) return false;
@@ -799,6 +1083,12 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeAnimator:
                 applyAnimatorComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
+            case kTypeSkybox:
+                applyPODComponent<ECS::SkyboxComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeTerrain:
+                applyTerrainComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()), filepath);
+                break;
             default:
                 break;
         }
@@ -844,12 +1134,21 @@ bool SceneSerializer::applyMeshFilterComponent(ECS::Entity e, const u8* data, u3
         mf.customMeshPath.assign(reinterpret_cast<const char*>(data + 5), pathLen);
     }
 
+    u32 texturePathLen = 0;
     const u32 textureOffset = 5 + pathLen;
     if (textureOffset + 4 <= size) {
-        u32 texturePathLen = 0;
         memcpy(&texturePathLen, data + textureOffset, 4);
         if (textureOffset + 4 + texturePathLen <= size && texturePathLen > 0) {
             mf.customTexturePath.assign(reinterpret_cast<const char*>(data + textureOffset + 4), texturePathLen);
+        }
+    }
+
+    const u32 materialOffset = textureOffset + 4 + texturePathLen;
+    if (materialOffset + 4 <= size) {
+        u32 materialPathLen = 0;
+        memcpy(&materialPathLen, data + materialOffset, 4);
+        if (materialOffset + 4 + materialPathLen <= size && materialPathLen > 0) {
+            mf.customMaterialPath.assign(reinterpret_cast<const char*>(data + materialOffset + 4), materialPathLen);
         }
     }
     return true;
@@ -1177,6 +1476,32 @@ bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 
     }
 
     anim.onFrameEvent = nullptr;
+    return true;
+}
+
+bool SceneSerializer::applyTerrainComponent(ECS::Entity e, const u8* data, u32 size,
+                                            const std::string& scenePath) {
+    ECS::TerrainComponent terrain;
+    if (!deserializeTerrainComponent(data, size, terrain)) return false;
+
+    m_world.add<ECS::TerrainComponent>(e, terrain);
+    auto* terrainComponent = m_world.get<ECS::TerrainComponent>(e);
+    if (!terrainComponent) return false;
+
+    Terrain::TerrainCache::instance().repairTexturePaths(*terrainComponent);
+    const std::filesystem::path projectRoot = projectRootFromScenePath(scenePath);
+    auto& cache = Terrain::TerrainCache::instance();
+    bool loaded = false;
+    if (!projectRoot.empty() && terrainComponent->terrainDataPath[0] != '\0') {
+        loaded = cache.loadTerrainFile(m_world, e, *terrainComponent,
+                                       projectRoot / terrainComponent->terrainDataPath);
+    }
+
+    if (!loaded) {
+        cache.initializeEntity(m_world, e);
+    } else {
+        cache.syncEntity(m_world, e);
+    }
     return true;
 }
 
