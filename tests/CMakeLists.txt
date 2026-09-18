@@ -37,6 +37,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/CommandPalette.cpp
     ../src/editor/BuildSystem.cpp
     ../src/editor/BuildDialog.cpp
+    ../src/editor/BuildLog.cpp
     ../src/editor/AssetCooker.cpp
     ../src/editor/CapLoader.cpp
     ../src/editor/AudioWaveformRenderer.cpp

@@ -31,6 +31,27 @@ public:
     
     u32 entityCount() const { return m_entityCount; }
     u32 archetypeCount() const { return static_cast<u32>(m_archetypes.size()); }
+
+    struct EntityLocation {
+        u32 archetypeIndex = u32_max;
+        u32 indexInArchetype = u32_max;
+        bool alive = false;
+    };
+
+    EntityLocation getEntityLocation(Entity e) const;
+    bool isEntityAlive(Entity e) const;
+
+    const Archetype* getArchetype(u32 index) const;
+    Archetype* getArchetype(u32 index);
+
+    template<typename Fn>
+    void forEachArchetype(Fn&& fn) const {
+        for (usize i = 0; i < m_archetypes.size(); ++i) {
+            if (m_archetypes[i]) {
+                fn(*m_archetypes[i]);
+            }
+        }
+    }
     
     template<typename T, typename... Args>
     T& add(Entity e, Args&&... args);
@@ -68,8 +89,6 @@ private:
     HashMap<ComponentSet, u32> m_archetypeIndex;
     
     Archetype* getOrCreateArchetype(const ComponentSet& set);
-    Archetype* getArchetype(u32 index);
-    const Archetype* getArchetype(u32 index) const;
 };
 
 template<typename T, typename... Args>

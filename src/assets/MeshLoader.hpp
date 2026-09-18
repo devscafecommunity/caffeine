@@ -181,8 +181,10 @@ public:
         return parseOBJ(buffer.data(), size);
     }
     
-    static Mesh3D* parseGLTF(const u8* data, usize dataLen, const char* filename);
+    static Mesh3D* parseGLTF(const u8* data, usize dataLen, const char* filename,
+                             std::string* outError = nullptr);
     
+    static bool loadTextureFromFile(Mesh3D* mesh, const char* imagePath);
     static void loadPNGTexture(Mesh3D* mesh, const char* pngPath);
 
 

@@ -14,16 +14,78 @@
 namespace Caffeine::Assets {
 using namespace Caffeine;
 
-Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filename) {
-    if (!data || dataLen == 0 || !filename) {
+namespace {
+
+void ensureGltfImagesLoaded(tinygltf::Model& model, const std::string& basePath) {
+    for (auto& image : model.images) {
+        if (!image.image.empty()) continue;
+        if (image.uri.empty() || image.uri.rfind("data:", 0) == 0) continue;
+
+        const std::string path = basePath + image.uri;
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        u8* imgData = stbi_load(path.c_str(), &width, &height, &channels, 0);
+        if (!imgData) continue;
+
+        image.width = width;
+        image.height = height;
+        image.component = channels;
+        image.image.assign(imgData, imgData + static_cast<size_t>(width * height * channels));
+        stbi_image_free(imgData);
+    }
+}
+
+bool assignImageToMesh(const tinygltf::Image& image, Mesh3D* mesh) {
+    if (!mesh || image.image.empty() || image.width <= 0 || image.height <= 0) {
+        return false;
+    }
+
+    mesh->baseColorTexture = image.image;
+    mesh->textureWidth = static_cast<u32>(image.width);
+    mesh->textureHeight = static_cast<u32>(image.height);
+    mesh->textureChannels = image.component > 0 ? image.component : 4;
+    return true;
+}
+
+bool extractBaseColorTexture(const tinygltf::Model& model, int materialIndex, Mesh3D* mesh) {
+    if (materialIndex < 0 || materialIndex >= static_cast<int>(model.materials.size())) {
+        return false;
+    }
+
+    const auto& mat = model.materials[materialIndex];
+    const int texIndex = mat.pbrMetallicRoughness.baseColorTexture.index;
+    if (texIndex < 0 || texIndex >= static_cast<int>(model.textures.size())) {
+        return false;
+    }
+
+    const int imageIndex = model.textures[texIndex].source;
+    if (imageIndex < 0 || imageIndex >= static_cast<int>(model.images.size())) {
+        return false;
+    }
+
+    return assignImageToMesh(model.images[imageIndex], mesh);
+}
+
+}  // namespace
+
+Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filename,
+                              std::string* outError) {
+    if (!filename) {
+        if (outError) *outError = "Dados glTF invalidos";
+        return nullptr;
+    }
+
+    const std::string filenameStr(filename);
+    const bool isGlb = filenameStr.ends_with(".glb");
+    if (isGlb && (!data || dataLen == 0)) {
+        if (outError) *outError = "Dados glTF invalidos";
         return nullptr;
     }
     
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
     std::string err, warn;
-    
-    std::string filenameStr(filename);
     std::string basePath;
     
     size_t lastSlash = filenameStr.find_last_of("/\\");
@@ -33,7 +95,7 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     
     bool success = false;
     
-    if (filenameStr.ends_with(".glb")) {
+    if (isGlb) {
         success = loader.LoadBinaryFromMemory(&model, &err, &warn, 
                                              reinterpret_cast<const unsigned char*>(data), 
                                              static_cast<unsigned int>(dataLen),
@@ -42,48 +104,40 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         success = loader.LoadASCIIFromFile(&model, &err, &warn, filenameStr);
     }
     
-    if (!success || model.meshes.empty()) {
+    if (!warn.empty() && outError && outError->empty()) {
+        *outError = warn;
+    }
+
+    if (!success) {
+        if (outError) {
+            *outError = err.empty() ? "Falha ao carregar glTF" : err;
+        }
+        return nullptr;
+    }
+
+    if (model.meshes.empty()) {
+        if (outError) *outError = "glTF nao contem meshes";
         return nullptr;
     }
     
     auto mesh = new Mesh3D();
+    mesh->flipTextureV = false;
     std::vector<Vertex3D> vertices;
     std::vector<u32> indices;
-    
-    // Try to load external textures manually if not already loaded by TinyGLTF
-    if (model.images.empty() && !model.textures.empty() && !basePath.empty()) {
-        // Check if textures reference external files
-        for (const auto& texture : model.textures) {
-            if (texture.source >= 0 && texture.source < (int)model.images.size()) {
-                // Image already loaded
-                continue;
-            }
-        }
-        
-        // Look for companion PNG file (same base name as glTF)
-        std::string pngPath = filenameStr;
-        size_t dotPos = pngPath.find_last_of('.');
-        if (dotPos != std::string::npos) {
-            pngPath = pngPath.substr(0, dotPos) + ".png";
-            int width, height, channels;
-            u8* imgData = stbi_load(pngPath.c_str(), &width, &height, &channels, 3);
-            if (imgData) {
-                tinygltf::Image extImage;
-                extImage.image.resize(width * height * 3);
-                std::memcpy(extImage.image.data(), imgData, width * height * 3);
-                extImage.width = width;
-                extImage.height = height;
-                extImage.component = 3;
-                model.images.push_back(extImage);
-                stbi_image_free(imgData);
-            }
-        }
+    int primaryMaterialIndex = -1;
+
+    if (!basePath.empty()) {
+        ensureGltfImagesLoaded(model, basePath);
     }
-    
+
     u32 indexOffset = 0;
     
     for (const auto& gltfMesh : model.meshes) {
         for (const auto& primitive : gltfMesh.primitives) {
+        if (primitive.material >= 0 && primaryMaterialIndex < 0) {
+            primaryMaterialIndex = primitive.material;
+        }
+
         auto posIt = primitive.attributes.find("POSITION");
         auto normIt = primitive.attributes.find("NORMAL");
         auto texIt = primitive.attributes.find("TEXCOORD_0");
@@ -180,6 +234,7 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     
     if (vertices.empty()) {
         delete mesh;
+        if (outError) *outError = "glTF sem vertices validos";
         return nullptr;
     }
     
@@ -194,14 +249,12 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         mesh->subMeshes.push_back(submesh);
     }
     
-    for (const auto& texture : model.textures) {
-        if (texture.source >= 0 && texture.source < (int)model.images.size()) {
-            const auto& image = model.images[texture.source];
-            if (!image.image.empty()) {
-                mesh->baseColorTexture = image.image;
-                mesh->textureWidth = image.width;
-                mesh->textureHeight = image.height;
-                break;
+    if (!extractBaseColorTexture(model, primaryMaterialIndex, mesh)) {
+        for (const auto& texture : model.textures) {
+            if (texture.source >= 0 && texture.source < static_cast<int>(model.images.size())) {
+                if (assignImageToMesh(model.images[texture.source], mesh)) {
+                    break;
+                }
             }
         }
     }
@@ -213,21 +266,25 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     return mesh;
 }
 
-void MeshLoader::loadPNGTexture(Mesh3D* mesh, const char* pngPath) {
-    if (!mesh || !pngPath) return;
-    
-    int width, height, channels;
-    u8* data = stbi_load(pngPath, &width, &height, &channels, 3);
-    
-    if (!data) return;
-    
-    mesh->baseColorTexture.resize(width * height * 3);
-    std::memcpy(mesh->baseColorTexture.data(), data, width * height * 3);
-    mesh->textureWidth = width;
-    mesh->textureHeight = height;
-    mesh->textureChannels = 3;
-    
+bool MeshLoader::loadTextureFromFile(Mesh3D* mesh, const char* imagePath) {
+    if (!mesh || !imagePath) return false;
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    u8* data = stbi_load(imagePath, &width, &height, &channels, 0);
+    if (!data) return false;
+
+    mesh->baseColorTexture.assign(data, data + static_cast<size_t>(width * height * channels));
+    mesh->textureWidth = static_cast<u32>(width);
+    mesh->textureHeight = static_cast<u32>(height);
+    mesh->textureChannels = channels;
     stbi_image_free(data);
+    return true;
+}
+
+void MeshLoader::loadPNGTexture(Mesh3D* mesh, const char* pngPath) {
+    loadTextureFromFile(mesh, pngPath);
 }
 
 }

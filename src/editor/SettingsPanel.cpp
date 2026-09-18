@@ -1,7 +1,11 @@
 #include "editor/SettingsPanel.hpp"
+#include "editor/EditorTheme.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
+#ifdef CF_HAS_SDL3
+#include <imgui_impl_sdlgpu3.h>
+#endif
 #endif
 
 namespace Caffeine::Editor {
@@ -134,15 +138,20 @@ void SettingsPanel::renderGeneralSettings() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Requires restart to take effect.");
 
     if (ImGui::SliderInt("UI Font Size", &m_fontSize, 10, 20)) {
-        ImGui::GetIO().FontGlobalScale = static_cast<float>(m_fontSize) / 13.0f;
+        EditorTheme::setFontSize(static_cast<f32>(m_fontSize));
+#ifdef CF_HAS_SDL3
+        ImGui_ImplSDLGPU3_CreateDeviceObjects();
+#endif
     }
 
     if (ImGui::Checkbox("Dark Mode", &m_darkMode)) {
-        if (m_darkMode) {
-            ImGui::StyleColorsDark();
-        } else {
-            ImGui::StyleColorsLight();
-        }
+        EditorThemeSettings theme;
+        theme.darkMode = m_darkMode;
+        theme.fontSize = static_cast<f32>(m_fontSize);
+        EditorTheme::apply(theme);
+#ifdef CF_HAS_SDL3
+        ImGui_ImplSDLGPU3_CreateDeviceObjects();
+#endif
     }
 
     ImGui::Spacing();

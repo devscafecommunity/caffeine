@@ -46,11 +46,23 @@ public:
     // to the recent projects list.
     bool OpenProject(const std::filesystem::path& projectFilePath);
 
+    // Load project metadata without touching the recent-projects list.
+    bool TryLoadProject(const std::filesystem::path& projectFilePath, ProjectConfig& out) const;
+
     const ProjectConfig&              GetCurrentProject() const { return m_CurrentConfig; }
     const std::vector<std::filesystem::path>& GetRecentProjects() const { return m_RecentProjects; }
 
     // Save the current project configuration back to disk.
     bool SaveProjectFile(const ProjectConfig& config);
+
+    // True when project.caffeine lives inside a packaged game build folder.
+    static bool IsPackagedBuildRoot(const std::filesystem::path& root, const ProjectConfig& cfg);
+
+    // Map a build-output project.caffeine back to the editor project file.
+    static std::filesystem::path ResolveEditorProjectFile(std::filesystem::path projectFile);
+
+    // Canonical editor project root (never a nested build/ output folder).
+    static std::filesystem::path ResolveEditorProjectRoot(std::filesystem::path root);
 
     // Override the recent projects file path (used for testing).
     // Reloads from the new path immediately.
@@ -63,9 +75,10 @@ public:
     static std::filesystem::path DefaultRecentPath();
 
 private:
-    bool LoadProjectFile(const std::filesystem::path& path, ProjectConfig& out);
+    bool LoadProjectFile(const std::filesystem::path& path, ProjectConfig& out) const;
     void CreateDirectoryStructure(const std::filesystem::path& root);
     void UpdateRecentProjects(const std::filesystem::path& path);
+    void PruneRecentProjectsList();
     void LoadRecentProjects();
     void SaveRecentProjects();
 

@@ -36,7 +36,9 @@ private:
     static constexpr u32 kTypeMeshFilter    = 18;
     static constexpr u32 kTypeMeshRenderer  = 19;
     static constexpr u32 kTypePrefabInstance = 20;
-    static constexpr u32 kTypeCount         = 21;
+    static constexpr u32 kTypeCamera3D       = 21;
+    static constexpr u32 kTypeCameraActive   = 22;
+    static constexpr u32 kTypeCount         = 23;
 
     static constexpr u32 kFormatVersion    = 5;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian

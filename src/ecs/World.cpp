@@ -104,4 +104,35 @@ const Archetype* World::getArchetype(u32 index) const {
     return m_archetypes[index].get();
 }
 
+World::EntityLocation World::getEntityLocation(Entity e) const {
+    EntityLocation loc;
+    if (!e.isValid() || e.id() >= m_entities.size()) {
+        return loc;
+    }
+
+    const EntityData& data = m_entities[e.id()];
+    loc.archetypeIndex = data.archetypeIndex;
+    loc.indexInArchetype = data.indexInArchetype;
+    loc.alive = isEntityAlive(e);
+    return loc;
+}
+
+bool World::isEntityAlive(Entity e) const {
+    if (!e.isValid() || e.id() >= m_entities.size()) {
+        return false;
+    }
+
+    const EntityData& data = m_entities[e.id()];
+    const Archetype* arch = getArchetype(data.archetypeIndex);
+    if (!arch) {
+        return false;
+    }
+
+    if (data.indexInArchetype >= arch->entityCount()) {
+        return false;
+    }
+
+    return arch->getEntityID(data.indexInArchetype) == e.id();
+}
+
 }

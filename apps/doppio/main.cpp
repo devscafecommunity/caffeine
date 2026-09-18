@@ -3,6 +3,8 @@
 #include "assets/AssetManager.hpp"
 
 #include "editor/ImGuiIntegration.hpp"
+#include "editor/EditorTheme.hpp"
+#include "editor/EditorIcons.hpp"
 #include "editor/SceneEditor.hpp"
 #include "editor/ProjectStartupDialog.hpp"
 #include "editor/TestRequestHandler.hpp"
@@ -12,6 +14,7 @@
 #include "scene/SceneComponents.hpp"
 #include "math/Mat4.hpp"
 #include <SDL3/SDL.h>
+#include <imgui_impl_sdlgpu3.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -140,6 +143,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    Caffeine::Editor::EditorTheme::init();
+    Caffeine::Editor::EditorIcons::init();
+    ImGui_ImplSDLGPU3_CreateDeviceObjects();
+
     Caffeine::Editor::ProjectConfig selectedProject;
     selectedProject.Name = "TestProject";
     selectedProject.RootPath = std::filesystem::path(scenePath).parent_path();
@@ -224,7 +231,9 @@ int main(int argc, char** argv) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             imgui.processEvent(event);
-            if (event.type == SDL_EVENT_QUIT) running = false;
+            if (event.type == SDL_EVENT_QUIT) {
+                editor.onQuitRequested();
+            }
         }
 
         Uint64 currentFrameTime = SDL_GetTicksNS();

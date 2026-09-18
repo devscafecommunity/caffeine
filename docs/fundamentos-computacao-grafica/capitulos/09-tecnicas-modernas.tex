@@ -1,0 +1,345 @@
+\chapter{Técnicas Modernas de Renderização}
+
+A computação gráfica em tempo real passou por uma transformação radical na última década, migrando de pipelines de função fixa para sistemas altamente programáveis e orientados a dados. O desafio moderno não reside apenas na capacidade de processar vértices e fragmentos, mas em gerenciar a complexidade de cenas que contêm bilhões de polígonos e centenas de fontes de luz dinâmicas. Motores contemporâneos utilizam uma combinação de arquiteturas híbridas, estruturas de dados espaciais sofisticadas e técnicas de reprojeção temporal para manter taxas de quadros estáveis sem sacrificar a fidelidade visual. Como argumentam \textcite{akenine2018realtime}, a eficiência de um motor de renderização moderno é medida pela sua capacidade de descartar agressivamente qualquer dado que não contribua para a imagem final o mais cedo possível no pipeline.
+
+\section{Arquiteturas de Iluminação}
+
+A organização do pipeline de renderização determina como a geometria da cena interage com as fontes de luz e define os limites de escalabilidade do motor gráfico.
+
+\subsection{Forward Rendering}
+
+O \textit{Forward Rendering} representa a abordagem clássica e direta. Cada objeto é processado individualmente, percorrendo todo o pipeline de geometria antes de ser iluminado no fragment shader. Para cada fragmento gerado, o shader itera sobre todas as luzes que afetam aquele objeto.
+
+\begin{formula}{Complexidade do Forward Rendering}
+A complexidade de tempo para iluminar uma cena no modelo forward tradicional pode ser expressa como:
+\begin{equation}
+    O(G \cdot L)
+\end{equation}
+Onde $G$ representa a quantidade total de geometria processada (incluindo o custo de overdraw) e $L$ representa o número total de fontes de luz ativas.
+\end{formula}
+
+Em cenas densas, o \textit{overdraw} (pixels desenhados múltiplas vezes devido à sobreposição de objetos) torna-se o principal gargalo. Se um pixel é coberto por quatro objetos diferentes, o motor executa o cálculo de iluminação completo quatro vezes, mesmo que apenas o objeto mais próximo seja visível no final. Além disso, a rigidez do loop de luzes limita severamente o número de fontes dinâmicas, pois cada luz adicionada aumenta o custo de todos os objetos da cena.
+
+Apesar das limitações, o Forward Rendering ainda é a escolha preferida para dispositivos móveis e aplicações de Realidade Virtual (VR). Isso ocorre devido ao seu suporte nativo a \textit{Multi-Sample Anti-Aliasing} (MSAA) e à sua capacidade natural de lidar com transparências e materiais com propriedades ópticas complexas, já que o estado da cor é resolvido de forma imediata.
+
+\subsection{Deferred Shading}
+
+O \textit{Deferred Shading} foi introduzido para desacoplar a complexidade geométrica do custo de iluminação. A ideia central é "adiar" o cálculo da luz até que toda a visibilidade da cena tenha sido resolvida.
+
+\subsubsection{A Estrutura do G-Buffer}
+
+O coração desta técnica é o \textbf{Geometry Buffer} (G-Buffer), um conjunto de texturas simultâneas (\textit{Multiple Render Targets}) que armazenam as propriedades físicas da superfície visível. Um layout típico de G-Buffer em um motor moderno inclui:
+
+\begin{itemize}
+    \item \textbf{RT0 (Albedo + Roughness):} Armazena a cor base (RGB) e a rugosidade (A), geralmente em formato de 8 bits por canal (RGBA8).
+    \item \textbf{RT1 (Normal Vector):} Armazena o vetor normal. Para otimizar o espaço, as normais são frequentemente comprimidas de 3 para 2 componentes usando \textit{Octahedral Encoding}, permitindo o uso de formatos de 16 bits float.
+    \item \textbf{RT2 (Material Properties):} Metalness, Oclusão Ambiental (AO) e possivelmente emissividade.
+    \item \textbf{Depth Buffer:} Essencial para reconstruir a posição 3D e realizar testes de profundidade.
+\end{itemize}
+
+\begin{formula}{Pressão de Bandwidth do G-Buffer}
+Considere uma resolução de $1920 \times 1080$ (Full HD). Se utilizarmos 128 bits por pixel (4 texturas de 32 bits), o consumo de memória por quadro apenas para o G-Buffer é:
+\begin{align}
+    \text{Bytes por quadro} &= 1920 \times 1080 \times 16 \text{ bytes} \approx 33,17 \text{ MB} \nonumber \\
+    \text{Taxa de escrita (60 FPS)} &= 33,17 \text{ MB} \times 60 \approx 1,99 \text{ GB/s} \nonumber
+\end{align}
+\end{formula}
+
+\subsubsection{Execução em Passagens}
+
+O processo ocorre em duas fases principais:
+1. \textbf{Geometry Pass:} A cena é renderizada e os dados de superfície são escritos no G-Buffer. Nenhum cálculo de luz é executado aqui.
+2. \textbf{Lighting Pass:} O motor renderiza \textbf{Light Volumes} (geometrias como esferas para luzes pontuais ou cones para focais). Para cada pixel dentro do volume da luz, o fragment shader lê o G-Buffer, reconstrói a posição 3D e aplica o modelo de iluminação.
+
+\begin{lstlisting}[language=GLSL, caption=G-Buffer Geometry Pass Fragment Shader]
+#version 450 core
+layout (location = 0) out vec4 gAlbedoRoughness;
+layout (location = 1) out vec4 gNormalMetal;
+layout (location = 2) out vec4 gPositionDepth;
+
+in vec3 vPosition;
+in vec3 vNormal;
+in vec2 vTexCoord;
+
+uniform sampler2D uMainTex;
+uniform float uRoughness;
+uniform float uMetalness;
+
+void main() {
+    // Escrita nos múltiplos render targets
+    vec3 albedo = texture(uMainTex, vTexCoord).rgb;
+    gAlbedoRoughness = vec4(albedo, uRoughness);
+    
+    // Normais no espaço de visão para consistência
+    vec3 normal = normalize(vNormal);
+    gNormalMetal = vec4(normal, uMetalness);
+    
+    // Posição e profundidade linear
+    gPositionDepth.xyz = vPosition;
+    gPositionDepth.w = gl_FragCoord.z;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=GLSL, caption=Deferred Lighting Pass Fragment Shader]
+#version 450 core
+out vec4 fragColor;
+uniform sampler2D gAlbedoRoughness;
+uniform sampler2D gNormalMetal;
+uniform sampler2D gPositionDepth;
+uniform vec3 uLightPos;
+uniform vec3 uLightColor;
+uniform vec3 uViewPos;
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / textureSize(gAlbedoRoughness, 0).xy;
+    
+    // Amostragem do G-Buffer
+    vec4 albedoRough = texture(gAlbedoRoughness, uv);
+    vec4 normalMetal = texture(gNormalMetal, uv);
+    vec3 worldPos = texture(gPositionDepth, uv).xyz;
+    
+    vec3 albedo = albedoRough.rgb;
+    vec3 normal = normalize(normalMetal.xyz);
+    float roughness = albedoRough.a;
+    
+    // Cálculo de iluminação simples (Lambert)
+    vec3 lightDir = normalize(uLightPos - worldPos);
+    float diff = max(dot(normal, lightDir), 0.0);
+    vec3 diffuse = diff * albedo * uLightColor;
+    
+    fragColor = vec4(diffuse, 1.0);
+}
+\end{lstlisting}
+
+Isso torna a iluminação independente da geometria, permitindo milhares de luzes dinâmicas. No entanto, o custo de memória é elevado e o MSAA não funciona nativamente, exigindo soluções de pós-processamento como TAA.
+
+\begin{formula}{Reconstrução de Posição a partir do Depth Buffer}
+Em vez de armazenar a posição explicitamente, podemos reconstruí-la usando a profundidade do buffer $d$ e a inversa da matriz de projeção $P^{-1}$. No espaço de clip, a posição é $(x, y, d, 1)$, onde $x, y \in [-1, 1]$.
+\begin{equation}
+    P_{view} = P^{-1} \cdot \begin{pmatrix} x_{clip} \\ y_{clip} \\ z_{depth} \\ 1 \end{pmatrix}, \quad P_{final} = \frac{P_{view}.xyz}{P_{view}.w}
+\end{equation}
+Essa técnica economiza 12-16 bytes por pixel no G-Buffer, reduzindo drasticamente a pressão sobre a banda de memória da GPU.
+\end{formula}
+
+\subsection{Forward+ e Clustered Shading}
+
+O \textit{Forward+} busca combinar o melhor dos dois mundos. Ele utiliza um compute shader para dividir a tela em \textit{tiles} (blocos de $16 \times 16$ pixels) e realizar o \textit{Light Culling}. Cada tile gera uma lista de luzes que o interceptam. Na fase de renderização, os objetos consultam a lista do seu tile, permitindo performance similar ao deferred mas mantendo suporte a MSAA e transparência.
+
+\begin{lstlisting}[language=GLSL, caption=Pseudocódigo de Light Culling em Compute Shader]
+layout(local_size_x = 16, local_size_y = 16) in;
+
+shared uint minDepthInt;
+shared uint maxDepthInt;
+shared uint visibleLightCount;
+shared uint visibleLightIndices[1024];
+
+void main() {
+    // 1. Determina profundidade min/max para o tile
+    float depth = texelFetch(uDepthBuffer, ivec2(gl_GlobalInvocationID.xy), 0).r;
+    uint depthInt = floatBitsToUint(depth);
+    atomicMin(minDepthInt, depthInt);
+    atomicMax(maxDepthInt, depthInt);
+    barrier();
+
+    // 2. Cria planos do frustum para este tile específico
+    float minDepth = uintBitsToFloat(minDepthInt);
+    float maxDepth = uintBitsToFloat(maxDepthInt);
+    Frustum tileFrustum = createTileFrustum(gl_WorkGroupID.xy);
+
+    // 3. Testa cada luz contra o frustum do tile e profundidade
+    for (uint i = gl_LocalInvocationIndex; i < uTotalLights; i += 256) {
+        Light light = uLights[i];
+        if (sphereInsideFrustum(light.sphere, tileFrustum, minDepth, maxDepth)) {
+            uint index = atomicAdd(visibleLightCount, 1);
+            visibleLightIndices[index] = i;
+        }
+    }
+}
+\end{lstlisting}
+
+O \textbf{Clustered Shading} estende esse conceito dividindo o frustum também em profundidade (Z), criando clusters 3D (voxels). Isso resolve o problema de tiles que contêm objetos em distâncias muito diferentes, eliminando luzes que estão no fundo da cena para objetos que estão à frente.
+
+\section{Screen-Space Ambient Occlusion (SSAO)}
+
+O SSAO é uma técnica de pós-processamento que simula a oclusão ambiental em tempo real, aproximando o sombreamento suave que ocorre em cantos e fendas onde a luz ambiente tem dificuldade de penetrar.
+
+\subsection{Algoritmo e Derivação}
+
+A ideia fundamental do SSAO, introduzida por Mittring em 2007, é amostrar o buffer de profundidade ao redor de cada pixel em um hemisfério orientado pela normal da superfície. Se uma amostra vizinha estiver mais próxima da câmera do que o ponto projetado no hemisfério, assume-se que essa amostra oclui a luz ambiente.
+
+O processo segue estes passos:
+1. Gerar um \textit{kernel} de amostras aleatórias dentro de um hemisfério unitário.
+2. Para cada pixel, rotacionar o kernel usando uma textura de ruído para evitar artefatos de bandeamento.
+3. Projetar cada amostra do espaço de visão para o espaço de tela e ler a profundidade real.
+4. Comparar a profundidade da amostra com a profundidade lida; o fator de oclusão é a razão entre amostras ocluídas e o total.
+
+\begin{lstlisting}[language=GLSL, caption=Loop de amostragem SSAO]
+float occlusion = 0.0;
+for(int i = 0; i < kernelSize; ++i) {
+    // Obtém amostra do kernel e transforma para o espaço de visão
+    vec3 samplePos = TBN * samples[i]; 
+    samplePos = fragPos + samplePos * radius; 
+    
+    // Projeta amostra para o espaço de tela (UV)
+    vec4 offset = vec4(samplePos, 1.0);
+    offset = projection * offset; 
+    offset.xyz /= offset.w; 
+    offset.xyz = offset.xyz * 0.5 + 0.5; 
+    
+    // Lê profundidade real do buffer
+    float sampleDepth = texture(gPosition, offset.xy).z;
+    
+    // Checagem de oclusão com range check para evitar halos
+    float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+    occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;           
+}
+occlusion = 1.0 - (occlusion / kernelSize);
+\end{lstlisting}
+
+Melhorias modernas como o \textbf{HBAO+} (Horizon-Based Ambient Occlusion) utilizam integração por amostragem de horizonte para obter resultados mais precisos fisicamente, eliminando a necessidade de kernels volumosos e reduzindo artefatos em superfícies planas.
+
+\section{Screen-Space Reflections (SSR)}
+
+As reflexões em espaço de tela permitem que superfícies brilhantes reflitam objetos da cena sem o custo proibitivo do ray tracing tradicional. O algoritmo funciona realizando o \textit{ray-marching} de um raio refletido através do buffer de profundidade.
+
+\subsection{Ray-Marching e Refinamento}
+
+Dada a posição do fragmento $P$ e o vetor de reflexão $R$, o shader caminha em passos discretos ao longo de $R$. Em cada passo, a posição do raio é projetada na tela para comparar sua profundidade com o valor armazenado no Z-buffer. Quando uma colisão é detectada ($Z_{raio} > Z_{buffer}$), uma \textbf{busca binária} é realizada entre o último ponto livre e o ponto de colisão para localizar a interseção com precisão sub-pixel.
+
+\begin{lstlisting}[language=GLSL, caption=Pseudocódigo de SSR com Ray-Marching]
+vec3 hitPos = startPos;
+for(int i = 0; i < MAX_STEPS; i++) {
+    hitPos += reflectionDir * stepSize;
+    vec2 uv = projectToScreen(hitPos);
+    float depth = getLinearDepth(uv);
+    
+    if(hitPos.z < depth) {
+        // Colisão encontrada, inicia busca binária
+        return binarySearch(hitPos, reflectionDir);
+    }
+}
+\end{lstlisting}
+
+As limitações do SSR incluem a incapacidade de refletir objetos fora do campo de visão (off-screen) ou objetos ocluídos por outros. Além disso, a precisão do depth buffer limita a qualidade das reflexões em ângulos rasos.
+
+\section{Gerenciamento de Geometria e LOD}
+
+O processamento de bilhões de triângulos exige técnicas que adaptem a complexidade à necessidade visual.
+
+\subsection{Level of Detail (LOD)}
+
+O \textit{Level of Detail} consiste em substituir modelos complexos por versões simplificadas à medida que se afastam do observador. O critério para a troca é o \textbf{Screen-Space Error} ($\epsilon_{screen}$).
+
+\begin{formula}{Cálculo do Erro de Tela}
+\begin{equation}
+    \epsilon_{screen} = \frac{\epsilon_{world} \cdot f}{d}
+\end{equation}
+Onde $\epsilon_{world}$ é o erro geométrico no modelo, $f$ é a distância focal e $d$ é a distância da câmera ao objeto.
+\end{formula}
+
+\subsection{Geometria Virtualizada (Nanite)}
+
+Motores modernos como o Unreal Engine 5 utilizam o conceito de clusters de triângulos fixos (ex: 128 triângulos). A GPU decide o nível de detalhe de cada cluster de forma independente em tempo real. Isso permite que a densidade geométrica seja sempre próxima de um triângulo por pixel, eliminando desperdícios e a necessidade de LODs manuais.
+
+\section{Técnicas de Culling e Estruturas de Dados}
+
+\subsection{Frustum Culling Avançado}
+
+O descarte de objetos fora do campo de visão é feito através da extração dos planos do frustum da matriz combinada $M = P \cdot V$. Se $r_1, r_2, r_3, r_4$ são as linhas da matriz, os planos são derivados como combinações lineares dessas linhas (ex: Left = $r_4 + r_1$). Um teste de esfera vs plano ($d = \hat{n} \cdot C + offset$) determina a visibilidade.
+
+\subsection{Hierarchical Z-Buffer (HZB)}
+
+O HZB é uma pirâmide de profundidade onde cada nível superior armazena o valor máximo de $Z$ dos quatro pixels inferiores. Isso permite testar a oclusão de objetos inteiros com uma única leitura de textura em um nível de mipmap apropriado.
+
+\subsection{Comparação de Estruturas Espaciais}
+
+\begin{itemize}
+    \item \textbf{Octree:} Particionamento recursivo do espaço em 8. Ótima para grandes áreas abertas.
+    \item \textbf{BVH (Bounding Volume Hierarchy):} Hierarquia de volumes (AABB). Essencial para Ray Tracing dinâmico.
+    \item \textbf{k-d Tree:} Partição binária alinhada aos eixos. Eficiente para buscas estáticas.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Estrutura} & \textbf{Construção} & \textbf{Memória} & \textbf{Aplicação Principal} \\ \hline
+Octree & Média & Baixa & Culling de Cena \\ \hline
+BVH & Média & Média & Ray Tracing / Dynamic \\ \hline
+k-d Tree & Lenta & Alta & Busca de Vizinhos \\ \hline
+BSP & Muito Lenta & Média & Interiores Estáticos \\ \hline
+\end{tabular}
+\caption{Comparativo técnico de estruturas de aceleração.}
+\end{table}
+
+\section{Pós-Processamento e Efeitos Temporais}
+
+A imagem gerada pelo pipeline de renderização é refinada no espaço da tela usando buffers HDR.
+
+\subsection{TAA e Reprojeção}
+
+O \textit{Temporal Anti-Aliasing} (TAA) utiliza informações de quadros passados para suavizar a imagem atual. Através de um jitter sub-pixel na câmera e do uso de um \textbf{Velocity Buffer}, o motor projeta o pixel atual de volta no tempo e realiza um blend: $C_{final} = \alpha \cdot C_{current} + (1-\alpha) \cdot C_{history}$. 
+
+\subsubsection{Derivação da Matriz de Reprojeção}
+
+Para encontrar a posição de um pixel no quadro anterior, usamos a matriz de visualização-projeção atual ($M_{curr}$) e a anterior ($M_{prev}$). A posição no espaço de clip atual $P_{clip}$ é transformada para o espaço de clip anterior via:
+\begin{equation}
+    P_{prev\_clip} = M_{prev} \cdot M_{curr}^{-1} \cdot P_{clip}
+\end{equation}
+A diferença entre as coordenadas de tela resultantes define o vetor de velocidade.
+
+\subsubsection{Sequência de Halton e Jitter}
+
+Para que o TAA funcione, a câmera deve sofrer um pequeno deslocamento (\textit{jitter}) a cada quadro, cobrindo diferentes áreas do pixel ao longo do tempo. A sequência de Halton é ideal por ser de baixa discrepância.
+
+\begin{formula}{Sequência de Halton}
+Para uma base $b$, a sequência é definida pela função de inversão radical $\phi_b(n)$. Para $b=2$ e $b=3$, os valores são:
+\begin{align}
+    \phi_2(n) &= \sum_{i=0}^k a_i 2^{-(i+1)} \quad \text{(binário)} \nonumber \\
+    \phi_3(n) &= \sum_{i=0}^k a_i 3^{-(i+1)} \quad \text{(ternário)} \nonumber
+\end{align}
+\end{formula}
+
+\subsubsection{Neighborhood Clipping}
+
+Para evitar o \textit{ghosting} em objetos em movimento rápido, o histórico de cor é "preso" (\textit{clamped}) ou cortado (\textit{clipped}) dentro da caixa delimitadora dos vizinhos $3 \times 3$ do pixel atual no espaço de cor (YCbCr ou RGB). Isso garante que o valor acumulado não divirja drasticamente da realidade atual do fragmento.
+
+\subsection{Efeitos de Lente e Movimento}
+
+\begin{itemize}
+    \item \textbf{Bloom:} Simula o espalhamento de luz intensa usando o algoritmo Dual Kawase para borrão eficiente.
+    \item \textbf{Depth of Field:} Simula o foco da lente baseado no \textit{Circle of Confusion} ($c = A \cdot |d - f|/d \cdot f/(d_f - f)$).
+    \item \textbf{Motion Blur:} Borrão baseado na velocidade vetorial de cada pixel.
+    \item \textbf{Chromatic Aberration:} Separação radial dos canais de cor.
+\end{itemize}
+
+\section{Reconstrução de Posição do Depth}
+
+Para economizar largura de banda, a posição no espaço de visão é reconstruída dinamicamente a partir do Depth Buffer:
+
+\begin{lstlisting}[language=GLSL]
+vec3 getPos(vec2 uv, float depth, mat4 invP) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 view = invP * clip;
+    return view.xyz / view.w;
+}
+\end{lstlisting}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Calcule o bandwidth necessário para um G-Buffer 4K ($3840 \times 2160$) a $120$ Hz usando 4 texturas de 32 bits.
+    \item Derive os 6 planos do frustum a partir de uma matriz de visualização-projeção.
+    \item Explique por que o Clustered Shading é superior ao Tiled Forward em cenas com muita variação de profundidade.
+    \item No contexto do TAA, qual a importância da sequência de Halton para o jitter da câmera?
+    \item Como o Hierarchical Z-Buffer auxilia na otimização de reflexões em espaço de tela (SSR)?
+    \item Compare as vantagens de uma BVH sobre uma Octree para objetos que se movem a cada quadro.
+    \item Explique como o Octahedral Encoding permite armazenar normais unitárias em apenas dois componentes.
+    \item Descreva o impacto do overdraw no Forward Rendering e como o Early-Z ajuda a mitigá-lo.
+\end{enumerate}
+
+\textcite{shirley2021fundamentals}
+\textcite{akenine2018realtime}
+\textcite{pharr2016pbr}
+\textcite{kajiya1986rendering}
+\textcite{foley1995computer}

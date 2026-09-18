@@ -1,0 +1,281 @@
+\chapter{Cor e Espaço de Cor}
+
+A percepção de cor é um dos aspectos mais fundamentais e, ao mesmo tempo, um dos mais complexos da computação gráfica moderna. Longe de ser apenas um trio de intensidades $[R, G, B]$ em um shader, a cor representa o resultado final de uma intrincada cadeia de interações físicas, biológicas e psicológicas. Como afirma \textcite{shirley2021fundamentals}, para renderizar imagens convincentes, o desenvolvedor deve tratar a cor não como uma propriedade absoluta dos objetos, mas como um fenômeno dinâmico que depende da fonte de luz, das propriedades ópticas dos materiais e da sensibilidade do observador humano. Este capítulo detalha como a radiação eletromagnética se torna cor e como os motores gráficos modernos gerenciam esse processo através de pipelines de iluminação linear, HDR e técnicas avançadas de gerenciamento de cor.
+
+\section{A Física da Luz e da Cor}
+
+A luz é uma forma de radiação eletromagnética que apresenta um comportamento dual de onda-partícula, conforme descrito pela mecânica quântica. Do ponto de vista da renderização, estamos interessados principalmente na sua natureza ondulatória e na sua distribuição de energia através do espectro.
+
+\subsection{O Espectro Visível}
+
+O espectro eletromagnético é vasto, abrangendo desde ondas de rádio até raios gama, mas o sistema visual humano é sensível apenas a uma faixa extremamente estreita. Os comprimentos de onda visíveis situam-se aproximadamente entre $380$ nm (limite do violeta) e $780$ nm (limite do vermelho). 
+
+\begin{itemize}
+    \item \textbf{Monocromatismo:} Luzes que contêm apenas um comprimento de onda são chamadas de cores espectrais puras. Elas são raras na natureza, ocorrendo principalmente em fenômenos de dispersão como o arco-íris ou através de dispositivos artificiais como lasers.
+    \item \textbf{Espectro Contínuo:} A luz solar e as lâmpadas incandescentes emitem uma mistura de quase todos os comprimentos de onda visíveis em intensidades variadas. Essa mistura é descrita matematicamente por uma Distribuição de Potência Espectral (SPD), que mapeia a energia em função do comprimento de onda $\lambda$.
+\end{itemize}
+
+A cor não existe no mundo físico de forma independente da percepção. O que existe é a radiação com diferentes frequências. A cor é uma interpretação subjetiva gerada pelo sistema nervoso central em resposta aos impulsos elétricos gerados nos olhos.
+
+\section{Percepção Humana de Cor}
+
+O sistema visual humano é o filtro final através do qual toda imagem digital é interpretada. Compreender suas limitações e sensibilidades é crucial para projetar algoritmos gráficos eficientes e realistas.
+
+\subsection{Bastonetes e Cones}
+
+A retina humana possui dois tipos principais de células fotorreceptoras que operam em diferentes regimes de iluminação:
+1. \textbf{Bastonetes:} São responsáveis pela visão escotópica, ativa em condições de baixíssima luminosidade. Eles são extremamente sensíveis ao brilho, permitindo-nos detectar formas e movimentos no escuro, mas são incapazes de distinguir comprimentos de onda, o que resulta em uma visão acromática (tons de cinza).
+2. \textbf{Cones:} São responsáveis pela visão fotópica (luz do dia) e pela percepção cromática. Existem três tipos de cones em um olho humano padrão, cada um com pigmentos sensíveis a diferentes partes do espectro:
+\begin{itemize}
+    \item \textbf{S (Short):} Sensível a comprimentos de onda curtos, com pico de absorção em aproximadamente $420$ nm (Azul).
+    \item \textbf{M (Medium):} Sensível a comprimentos de onda médios, com pico em $530$ nm (Verde).
+    \item \textbf{L (Long):} Sensível a comprimentos de onda longos, com pico em $560$ nm (Vermelho).
+\end{itemize}
+
+\subsection{Teoria Tricromática e o Fenômeno do Metamerismo}
+
+A existência de apenas três tipos de cones implica que a visão humana realiza uma redução drástica de dados. Qualquer SPD complexa, composta por infinitos comprimentos de onda, é projetada em apenas três valores de estimulação neural ($S, M, L$), conhecidos como valores tristimulus.
+
+Este fato biológico dá origem ao \textbf{Metamerismo}: duas fontes de luz com SPDs completamente distintas podem ser percebidas como a mesma cor exata se a estimulação que elas provocam nos cones for idêntica. Este princípio é a pedra angular da tecnologia de displays; ele permite que monitores combinem apenas três primários (Vermelho, Verde e Azul) para simular quase qualquer cor perceptível pelo olho humano, mesmo sem reproduzir o espectro original da luz refletida pelos objetos reais.
+
+\subsection{Sensibilidade Seletiva e Implicações na Engenharia}
+
+A sensibilidade do olho humano não é uniforme através do espectro. Devido à evolução, temos uma densidade muito maior de cones M e L do que de cones S. Além disso, os picos de sensibilidade dos cones M e L estão muito próximos. Isso nos torna significativamente mais sensíveis a variações na região do verde e do amarelo do que na região do azul. 
+
+Essa característica biológica dita padrões fundamentais na engenharia de sensores e compressão:
+\begin{enumerate}
+    \item \textbf{Bayer Pattern:} Os sensores de câmeras digitais utilizam o dobro de pixels verdes em relação aos vermelhos ou azuis para mimetizar a maior resolução espacial do olho humano nessa faixa cromática.
+    \item \textbf{Formatos de Pixel:} Formatos de cor históricos como o R5G6B5 dedicam 6 bits ao canal verde e apenas 5 aos demais, priorizando a precisão onde ela é mais notada.
+    \item \textbf{Luminância:} Ao converter uma cor para um valor de brilho, o canal verde recebe o maior peso matemático.
+\end{enumerate}
+
+\section{Metrologia de Cor: CIE XYZ e o Diagrama de Cromaticidade}
+
+Para quantificar a cor de forma científica, a \textit{Commission Internationale de l'Éclairage} (CIE) estabeleceu em 1931 o espaço de cor XYZ. Este sistema é baseado em funções de combinação de cores padronizadas $\bar{x}(\lambda), \bar{y}(\lambda), \bar{z}(\lambda)$, que representam a resposta média de um observador humano.
+
+\subsection{Derivação dos Valores XYZ}
+
+Os valores tristimulus $X, Y, Z$ de uma fonte de luz com distribuição de potência espectral $S(\lambda)$ são calculados através de integrais sobre o espectro visível:
+
+\begin{formula}{Cálculo dos Valores Tristimulus CIE XYZ}
+\begin{align}
+    X &= \int_{380}^{780} S(\lambda)\bar{x}(\lambda)d\lambda \nonumber \\
+    Y &= \int_{380}^{780} S(\lambda)\bar{y}(\lambda)d\lambda \nonumber \\
+    Z &= \int_{380}^{780} S(\lambda)\bar{z}(\lambda)d\lambda \nonumber
+\end{align}
+Onde $Y$ é definido propositalmente para corresponder à luminância percebida.
+\end{formula}
+
+\subsection{O Diagrama de Cromaticidade}
+
+Para visualizar as cores independentemente do seu brilho, utilizamos as coordenadas de cromaticidade $x, y, z$, que normalizam os valores tristimulus:
+
+\begin{equation}
+    x = \frac{X}{X+Y+Z}, \quad y = \frac{Y}{X+Y+Z}, \quad z = \frac{Z}{X+Y+Z}
+\end{equation}
+
+Como $x+y+z=1$, basta plotar $x$ e $y$ para representar todas as cores possíveis no famoso "diagrama de ferradura" (horseshoe diagram). A borda curva do diagrama representa as cores espectrais puras, enquanto a linha reta na base representa a "linha das púrpuras". 
+
+\subsubsection{Locus Planckiano e Temperatura de Cor}
+
+Dentro do diagrama de cromaticidade, o \textbf{Locus Planckiano} é a curva que representa as cores emitidas por um corpo negro ideal à medida que sua temperatura aumenta. Esta curva atravessa a região central do diagrama, partindo do vermelho profundo (baixas temperaturas) em direção ao azul (altas temperaturas). A temperatura de cor de uma luz é definida pelo ponto nesta curva que mais se aproxima da cromaticidade da luz em questão.
+
+\section{O Modelo de Cor RGB}
+
+O modelo RGB (Red, Green, Blue) é um sistema de cor aditivo, fundamentado na soma de luzes primárias. Ele pode ser visualizado como um espaço vetorial tridimensional, onde cada cor possível é representada como um ponto dentro de um cubo unitário.
+
+\subsection{Luminância Relativa}
+
+A luminância ($Y$) é uma medida fotométrica da intensidade luminosa por unidade de área, ponderada pela sensibilidade espectral humana. Para o padrão de monitores modernos e sinal de vídeo de alta definição (ITU-R BT.709), a fórmula de luminância relativa é:
+
+\begin{formula}{Luminância Relativa Rec. 709}
+\begin{equation}
+    Y = 0.2126R + 0.7152G + 0.0722B
+\end{equation}
+\end{formula}
+
+Observe que o verde contribui com aproximadamente $71,5\%$ da percepção de brilho, enquanto o azul contribui com apenas $7,2\%$. Esta fórmula é essencial para tarefas como a conversão de imagens para escala de cinza ou para o cálculo de efeitos de pós-processamento que dependem do brilho local, como o Bloom.
+
+\section{Modelos de Cor Intuitivos: HSV e HSL}
+
+Enquanto o RGB é ideal para o controle eletrônico de hardware, modelos cilíndricos são muito mais intuitivos para a criação artística e seleção de cores.
+
+\subsection{HSV (Hue, Saturation, Value)}
+
+O modelo HSV organiza as cores de forma que o matiz (Hue) seja um ângulo em um círculo cromático. A saturação representa a "pureza" da cor, e o valor (Value) representa a intensidade máxima de qualquer um dos canais primários.
+
+\begin{align}
+    V &= \max(R, G, B) \nonumber \\
+    \Delta &= V - \min(R, G, B) \nonumber \\
+    S &= \begin{cases} 0, & \text{se } V = 0 \\ \frac{\Delta}{V}, & \text{caso contrário} \end{cases} \nonumber
+\end{align}
+
+\subsection{HSL (Hue, Saturation, Lightness)}
+
+O HSL é semelhante, mas define a luminosidade ($L$) como a média entre os componentes RGB máximo e mínimo. Isso coloca o branco puro no topo do cilindro ($L=1$), enquanto no HSV o branco é alcançado com valor máximo e saturação zero.
+
+\section{Gamma e o Fluxo de Trabalho Linear}
+
+Esta é a seção técnica mais crítica para a fidelidade de qualquer motor gráfico moderno. A relação entre a voltagem de entrada de um monitor e a luz efetivamente emitida não é linear, mas segue uma curva de potência.
+
+\subsection{O Princípio de Weber-Fechner e Gamma}
+
+A percepção humana de brilho é logarítmica. Somos muito mais sensíveis a pequenas variações em tons escuros do que em tons claros. Se armazenássemos cores de forma linear em 8 bits por canal (256 níveis), sofreríamos com o efeito de \textbf{banding} nas sombras, enquanto desperdiçaríamos enorme precisão nas altas luzes.
+
+\subsection{A Curva sRGB}
+
+Para otimizar o armazenamento e a transmissão de imagens, aplicamos uma função de transferência chamada \textbf{Gamma Encoding}. O padrão sRGB utiliza uma curva que dedica mais valores numéricos aos tons escuros, alinhando-se à sensibilidade humana.
+
+\begin{formula}{Aproximação da Curva Gamma}
+A relação simplificada entre o valor linear ($C_{lin}$) e o valor sRGB armazenado ($C_{srgb}$) é dada por:
+\begin{equation}
+    C_{srgb} = C_{lin}^{\frac{1}{2.2}}
+\end{equation}
+\end{formula}
+
+\subsection{Shading Linear: A Regra de Ouro}
+
+O erro clássico em computação gráfica é realizar cálculos de iluminação diretamente em cores sRGB. Como as leis da física da luz são lineares, os cálculos de BRDF e transporte de luz devem ser feitos obrigatoriamente em espaço linear. Se você iluminar um pixel sRGB de valor $0.5$ e dobrar a intensidade da luz, o resultado visual não será o dobro do brilho percebido.
+
+\textbf{O Ciclo Linear Correto:}
+1. \textbf{Entrada:} Todas as texturas que representam cor (Albedo, Emissive) devem ser convertidas para linear ao serem lidas: $c^{2.2}$.
+2. \textbf{Processamento:} Cálculos de luz e reflexões ocorrem no espaço linear.
+3. \textbf{Saída:} Antes da exibição final, o valor linear deve passar pela correção de gamma: $c^{1/2.2}$.
+
+\begin{lstlisting}[language=GLSL]
+// Shader com Linear Workflow
+void main() {
+    // Leitura e Degamma
+    vec3 baseColor = pow(texture(uTex, uv).rgb, vec3(2.2));
+    
+    // Calculos de Shading (Lineares)
+    vec3 light = calculateLight(baseColor);
+    
+    // Gamma Correction final
+    fragColor = vec4(pow(light, vec3(1.0/2.2)), 1.0);
+}
+\end{lstlisting}
+
+\section{High Dynamic Range (HDR) e Tone Mapping}
+
+No mundo real, a diferença de intensidade luminosa entre uma chama de vela e o brilho do sol é de várias ordens de magnitude. O HDR permite que o motor gráfico use valores muito acima de $1.0$, preservando toda a energia da cena.
+
+\subsection{Tone Mapping: Operadores Clássicos}
+
+Tone mapping é a técnica de mapear o vasto intervalo dinâmico do HDR para o intervalo limitado $[0, 1]$ dos monitores SDR comuns. O operador de Reinhard é um dos mais simples:
+\begin{equation}
+    T(x) = \frac{x}{1+x}
+\end{equation}
+
+\subsection{ACES (Academy Color Encoding System)}
+
+O ACES é o padrão moderno utilizado no cinema e em motores AAA. Ele produz uma curva em "S" que preserva o contraste nas sombras e cria transições suaves nas altas luzes. Uma aproximação comum para o pipeline RRT+ODT do ACES é:
+
+\begin{formula}{Aproximação ACES Filmic Tone Mapping}
+Para um valor de entrada HDR $x$, o valor mapeado é:
+\begin{equation}
+    ACES(x) = \frac{x(ax+b)}{x(cx+d)+e}
+\end{equation}
+Onde as constantes são $a=2.51, b=0.03, c=2.43, d=0.59, e=0.14$.
+\end{formula}
+
+\begin{lstlisting}[language=GLSL, caption=Implementação GLSL do ACES]
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+\end{lstlisting}
+
+\section{Espaços de Cor para Renderização: ACES AP0/AP1}
+
+Para garantir a maior fidelidade cromática, grandes estúdios utilizam o pipeline ACES completo, que divide o processo em etapas claras:
+\begin{itemize}
+    \item \textbf{Input Transform (IDT):} Converte o formato de entrada para o espaço de trabalho ACES.
+    \item \textbf{ACES AP1 (ACEScg):} É o espaço de cores otimizado para renderização e composição, com primários que cobrem quase todo o espectro visível mas evitam cores negativas. Seus primários são baseados em luzes reais, ao contrário dos primários matemáticos do sRGB.
+    \item \textbf{Reference Rendering Transform (RRT):} Aplica a estética visual de filme fotográfico.
+    \item \textbf{Output Transform (ODT):} Converte o resultado final para o gamut do monitor específico (sRGB, Rec.709, Rec.2020).
+\end{itemize}
+
+O uso do ACES AP1 garante que cores intensas e luzes super-brilhantes se comportem de maneira previsível durante o cálculo de iluminação, evitando o "estouro" de canais individuais que causa artefatos de cor em pipelines sRGB simples.
+
+A padronização do ACES permite que diferentes softwares e motores gráficos mantenham a consistência visual durante todo o processo de produção, desde a captura até a exibição final.
+
+\section{Funções de Mistura de Cor (Color Grading)}
+
+O \textit{Color Grading} é o processo final de estilização da imagem. Em vez de aplicar dezenas de filtros matemáticos complexos para cada pixel, motores modernos utilizam \textbf{Look-Up Tables (LUTs) 3D}.
+
+Uma LUT 3D é uma textura cúbica (geralmente $32 \times 32 \times 32$) onde os eixos RGB originais servem como coordenadas para buscar a nova cor desejada.
+O pipeline funciona assim:
+1. O artista visualiza a cena e gera um "neutral LUT" (uma imagem que representa a identidade, onde $R_{in}=R_{out}$, etc.).
+2. O artista aplica as correções de cor desejadas no Photoshop ou DaVinci Resolve sobre essa imagem LUT.
+3. O motor gráfico lê a LUT modificada e a utiliza no fragment shader final para transformar cada pixel da cena original.
+
+\subsubsection{Interpolação em LUTs}
+
+Para evitar artefatos de bandeamento em LUTs de baixa resolução, o shader utiliza \textbf{interpolação trilinear}. No entanto, implementações de alta performance podem utilizar a \textbf{interpolação tetraédrica}, que oferece uma precisão superior ao dividir cada cubo da LUT em seis tetraedros, reduzindo a carga computacional e melhorando a fidelidade cromática nas transições de matiz.
+
+\begin{lstlisting}[language=GLSL, caption=Amostragem de LUT 3D]
+vec3 applyLUT(sampler3D lut, vec3 color) {
+    float size = float(textureSize(lut, 0).x);
+    vec3 scale = vec3((size - 1.0) / size);
+    vec3 offset = vec3(1.0 / (2.0 * size));
+    return texture(lut, color * scale + offset).rgb;
+}
+\end{lstlisting}
+
+\section{White Balance e Adaptação Cromática}
+
+O \textbf{Balanço de Branco} ajusta a temperatura de cor da imagem para compensar a cor da luz ambiente. O cérebro humano faz isso automaticamente através da constância de cor, mas os motores gráficos precisam de ajustes explícitos.
+
+\subsection{Transformação de Bradford e von Kries}
+
+A adaptação cromática moderna utiliza o modelo de von Kries, que escala os canais de resposta dos cones. A matriz de Bradford é a mais utilizada para converter cores entre diferentes iluminantes (ex: de D65 para D50).
+
+\begin{formula}{Matriz de Adaptação Cromática de Bradford}
+A transformação para o espaço de resposta de cones "espectralmente aguçado" é dada por:
+\begin{equation}
+M_B = \begin{bmatrix} 0.8951 & 0.2664 & -0.1614 \\ -0.7502 & 1.7135 & 0.0367 \\ 0.0389 & -0.0685 & 1.0296 \end{bmatrix}
+\end{equation}
+\end{formula}
+
+Para aplicar a transformação, primeiro converte-se do espaço XYZ para o espaço de cones usando $M_B$, ajusta-se o ganho baseado na razão entre as respostas dos iluminantes de origem e destino, e então inverte-se a transformação para retornar ao espaço XYZ.
+
+\begin{lstlisting}[language=GLSL, caption=Implementação simples de Temperatura de Cor]
+vec3 applyWhiteBalance(vec3 color, float temperature) {
+    // Aproximação para ajuste de temperatura (K)
+    // Cores quentes diminuem o azul e aumentam o vermelho
+    vec3 factor = vec3(1.0 + temperature, 1.0, 1.0 - temperature);
+    return color * factor;
+}
+\end{lstlisting}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Explique por que a sensibilidade do olho humano ao verde influenciou o design dos sensores Bayer.
+    \item Calcule a luminância Rec. 709 para um pixel com cor RGB $[0.2, 0.5, 0.3]$.
+    \item Demonstre matematicamente por que a soma de cores em espaço sRGB distorce o resultado visual final.
+    \item Implemente em pseudocódigo a função de conversão completa de RGB para HSV.
+    \item Compare os operadores de Tone Mapping Reinhard e ACES em termos de preservação de contraste.
+    \item O que acontece se aplicarmos a correção de gamma sobre uma imagem de dados, como um normal map?
+    \item Descreva a estrutura do formato de arquivo .hdr (RGBE).
+    \item Explique o fenômeno do metamerismo e por que ele é essencial para a existência de monitores coloridos.
+    \item Como o espaço de cor Rec. 2020 se compara ao sRGB em termos de cobertura do espectro visível?
+    \item Derive as coordenadas de cromaticidade $(x, y)$ para uma fonte de luz com valores $X=20, Y=50, Z=30$.
+    \item Explique a diferença entre os espaços de cor ACES AP0 e AP1 e qual deles é recomendado para renderização.
+    \item Como a interpolação tetraédrica melhora a performance e a qualidade do color grading via LUTs?
+\end{enumerate}
+
+\textcite{shirley2021fundamentals}
+\textcite{akenine2018realtime}
+\textcite{pharr2016pbr}
+\textcite{reinhard2010high}
+\textcite{hable2010filmic}
+\textcite{poynton2012digital}
+\textcite{wyszecki1982color}
+\textcite{stokes1996standard}
+

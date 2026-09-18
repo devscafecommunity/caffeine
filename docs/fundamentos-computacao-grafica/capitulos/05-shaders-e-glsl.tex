@@ -1,0 +1,322 @@
+\chapter{Shaders e GLSL}
+
+Até o início dos anos 2000, as placas de vídeo operavam com o que chamamos de \textbf{Pipeline de Função Fixa}. Isso significava que os cálculos de iluminação, transformação e rasterização eram rígidos e embutidos diretamente nos circuitos eletrônicos do hardware. A introdução dos \textit{shaders} e do pipeline totalmente programável revolucionou a computação gráfica, permitindo que desenvolvedores escrevessem seus próprios programas para serem executados diretamente nos núcleos da GPU. Como explica \textcite{akenine2018realtime}, essa flexibilidade é o que permite desde o realismo fotorrealista extremo do PBR até estilos artísticos não-fotorrealistas complexos como o \textit{cel shading}, o \textit{hatching} e efeitos de pós-processamento cinematográficos que vemos nos jogos e filmes modernos.
+
+\section{O Que é um Shader?}
+
+Um \textit{shader} é um programa especializado projetado para ser executado em um ambiente de processamento paralelo massivo. Enquanto um programa tradicional escrito em C++ ou Java na CPU roda um pequeno punhado de threads pesadas, independentes e complexas, um \textit{shader} é executado simultaneamente em milhares de núcleos leves da GPU. Na arquitetura moderna, a linguagem padrão para interagir com o OpenGL e outras APIs gráficas é o \textbf{GLSL} (\textit{OpenGL Shading Language}). Trata-se de uma linguagem de alto nível com sintaxe baseada em C, mas enriquecida com tipos de dados nativos para álgebra linear, como vetores de diversas dimensões e matrizes quadradas, além de uma vasta biblioteca de funções intrínsecas otimizadas para cálculos geométricos e de cores.
+
+\section{O Pipeline Gráfico Programável}
+
+O pipeline gráfico moderno é uma sequência de estágios que transformam dados geométricos em pixels na tela. Alguns desses estágios são fixos, enquanto outros são totalmente programáveis:
+
+\begin{enumerate}
+    \item \textbf{Input Assembler:} Coleta os dados de vértices dos buffers (VBOs) e os organiza em primitivas (triângulos, linhas ou pontos).
+    \item \textbf{Vertex Shader:} (Programável) Responsável por transformar cada vértice individualmente, geralmente do espaço local para o espaço de recorte (\textit{Clip Space}).
+    \item \textbf{Tessellation Control Shader:} (Programável) Determina o nível de subdivisão de uma superfície (patch) e as regras de geração de novos vértices.
+    \item \textbf{Tessellation Evaluation Shader:} (Programável) Calcula a posição final e os atributos dos novos vértices gerados pelo hardware de tesselação.
+    \item \textbf{Geometry Shader:} (Programável) Recebe primitivas inteiras e pode gerar novas primitivas (como transformar pontos em quadriláteros) ou descartá-las.
+    \item \textbf{Rasterização:} (Fixo) Converte primitivas geométricas em fragmentos de pixel, determinando a cobertura da tela.
+    \item \textbf{Fragment Shader:} (Programável) Calcula a cor final, profundidade e estêncil de cada fragmento gerado pela rasterização.
+    \item \textbf{Blending / Output Merger:} (Configurável) Combina a cor do fragmento com o frame buffer, aplicando testes de profundidade e transparência (\textit{Alpha Blending}).
+\end{enumerate}
+
+\section{Arquitetura da GPU e o Modelo de Execução}
+
+Diferente das CPUs, que são projetadas para minimizar a latência de execução sequencial através de predição de desvio agressiva, execução fora de ordem e grandes hierarquias de cache, as GPUs são otimizadas para o rendimento total (\textit{throughput}). Elas operam sob o modelo \textbf{SIMT} (\textit{Single Instruction, Multiple Threads}), onde uma única unidade de controle gerencia múltiplas unidades de processamento que executam a mesma instrução sobre dados diferentes.
+
+\subsection{Hierarquia de Execução: Grids, Blocks e Warps}
+
+A execução na GPU é organizada hierarquicamente para facilitar o gerenciamento de milhões de threads:
+\begin{itemize}
+    \item \textbf{Threads:} A unidade básica e atômica de execução. Cada thread possui seu próprio conjunto de registradores e contador de programa (PC), embora compartilhem a unidade de instrução em grupos.
+    \item \textbf{Warps / Wavefronts:} Grupos de threads (geralmente 32 na arquitetura NVIDIA e 64 na AMD) que são agendadas e executadas fisicamente juntas. O hardware executa a mesma instrução para todas as threads do warp simultaneamente.
+    \item \textbf{Blocks / Workgroups:} Conjuntos de warps que podem compartilhar dados através de uma memória local rápida (\textit{Shared Memory}) e sincronizar sua execução via barreiras (\texttt{barrier()}).
+    \item \textbf{Grids:} O conjunto total de blocos disparados por um comando de execução. Representa o problema computacional completo disparado pela API (OpenGL/Vulkan).
+\end{itemize}
+
+\subsection{Hierarquia de Memória na GPU}
+
+A eficiência de um shader depende drasticamente de como ele acessa os diferentes níveis de memória:
+\begin{enumerate}
+    \item \textbf{Registradores:} A memória mais rápida, privada a cada thread. O uso excessivo de registradores diminui a ocupação da GPU.
+    \item \textbf{Shared Memory (L1):} Memória de baixa latência compartilhada por threads dentro de um mesmo bloco. Crucial para algoritmos de redução e filtros de imagem.
+    \item \textbf{L2 Cache:} Cache global compartilhado por todos os multiprocessadores da GPU.
+    \item \textbf{VRAM (Global Memory):} Grande capacidade, mas alta latência. Acessos aqui devem ser \textbf{coalescentes} para garantir performance.
+    \item \textbf{Constant Cache:} Otimizado para leitura de dados que são iguais para todas as threads (como matrizes de projeção).
+\end{enumerate}
+
+\subsection{Warp Divergence e Performance}
+
+O principal gargalo do modelo SIMT é a \textbf{Divergência de Warp}. Se um código shader contém uma estrutura condicional (\texttt{if/else}) e as threads de um mesmo warp tomam caminhos diferentes, a GPU executa os dois caminhos serialmente. As threads "inativas" são mascaradas, desperdiçando ciclos de clock. Otimizar shaders envolve garantir que threads próximas processem dados similares.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Característica} & \textbf{CPU} & \textbf{GPU} \\ \hline
+Filosofia de Design & Latência Mínima & Throughput Máximo \\ \hline
+Núcleos & Poucos e muito complexos & Milhares e muito simples \\ \hline
+Unidades de Controle & Complexas (Predição de Desvio) & Simples (Compartilhadas por Warp) \\ \hline
+Hierarquia de Memória & Caches L1/L2/L3 massivos & Registradores e VRAM rápida \\ \hline
+Troca de Contexto & Pesada (Salva registradores no stack) & Instantânea (Troca de ponteiro) \\ \hline
+\end{tabular}
+\caption{Comparação detalhada entre as arquiteturas de CPU e GPU.}
+\end{table}
+
+\section{Linguagens de Shading: Evolução e Padronização}
+
+A programação de GPUs evoluiu de códigos em Assembly para linguagens de alto nível:
+\begin{itemize}
+    \item \textbf{GLSL (OpenGL Shading Language):} Focada em portabilidade, é a linguagem nativa do OpenGL.
+    \item \textbf{HLSL (High Level Shading Language):} O padrão da Microsoft para o ecossistema DirectX.
+    \item \textbf{SPIR-V:} Formato binário intermediário que permite que kernels escritos em diversas linguagens (GLSL, HLSL, C++) sejam executados de forma portável e eficiente em APIs modernas.
+\end{itemize}
+
+\section{Tipos de Dados e Sintaxe GLSL}
+
+O GLSL possui tipos de dados projetados para álgebra linear:
+\begin{itemize}
+    \item \textbf{Vetores (\texttt{vec2}, \texttt{vec3}, \texttt{vec4}):} Suportam \textbf{Swizzling} (ex: \texttt{color.bgra}) e operações elemento a elemento.
+    \item \textbf{Matrizes (\texttt{mat2}, \texttt{mat3}, \texttt{mat4}):} Armazenadas em \textit{column-major}. Multiplicações matriz-vetor são instruções únicas de hardware.
+    \item \textbf{Samplers:} Interfaces programáveis com as unidades de textura e filtragem de hardware (bilinear, anisotrópica).
+\end{itemize}
+
+\section{O Vertex Shader e Espaço Tangente (TBN)}
+
+O Vertex Shader é o primeiro estágio programável. Além de transformar coordenadas de modelo para o espaço de recorte, ele prepara os vetores necessários para o \textit{normal mapping} através da matriz TBN.
+
+\begin{lstlisting}[language=GLSL, caption={Vertex Shader de Transformação e TBN}]
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+layout (location = 2) in vec2 aTexCoords;
+layout (location = 3) in vec3 aTangent;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+out vec3 FragPos;
+out vec2 TexCoords;
+out mat3 TBN;
+
+void main() {
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    TexCoords = aTexCoords;
+    
+    // Matriz de Normal: lida com escalas nao-uniformes
+    mat3 normalMatrix = mat3(transpose(inverse(model)));
+    vec3 T = normalize(normalMatrix * aTangent);
+    vec3 N = normalize(normalMatrix * aNormal);
+    
+    // Gram-Schmidt para garantir ortogonalidade
+    T = normalize(T - dot(T, N) * N);
+    vec3 B = cross(N, T);
+    TBN = mat3(T, B, N);
+    
+    gl_Position = projection * view * vec4(FragPos, 1.0);
+}
+\end{lstlisting}
+
+\section{Tessellation e Geometry Shaders}
+
+O \textbf{Tessellation} subdivide superfícies dinamicamente. O \textit{Tessellation Control Shader} (TCS) define os níveis de subdivisão, enquanto o \textit{Tessellation Evaluation Shader} (TES) calcula a posição dos novos vértices, permitindo detalhes como ondas em superfícies de água sem sobrecarregar a CPU. O \textbf{Geometry Shader} manipula primitivas inteiras, sendo capaz de criar novas geometrias, como converter pontos em \textit{billboards} ou gerar as silhuetas de sombreamento (\textit{shadow volumes}).
+
+\section{Mesh Shaders: O Novo Paradigma da Geometria}
+
+A arquitetura de Mesh Shaders (introduzida na NVIDIA Turing e suportada no DirectX 12 Ultimate e Vulkan) representa a mudança mais significativa no pipeline geométrico em décadas. O modelo tradicional de \textit{Input Assembler} é inerentemente serial e rígido, o que limita a capacidade de renderizar cenas com trilhões de triângulos, como as vistas no Unreal Engine 5 (Nanite).
+
+\subsection{Meshlets e Task Shaders}
+
+Em vez de enviar uma lista linear de índices de vértices, a geometria é pré-processada em \textbf{Meshlets}. Cada meshlet contém um pequeno aglomerado de geometria (geralmente até 64 vértices e 126 triângulos) que cabe inteiramente no cache L1 da GPU.
+\begin{itemize}
+    \item \textbf{Task Shader (Amplification Shader):} Atua como um pré-processador. Ele pode decidir, por exemplo, que um meshlet está muito longe e não precisa ser desenhado, ou que deve ser subdividido. Ele emite uma contagem de grupos de Mesh Shaders a serem disparados.
+    \item \textbf{Mesh Shader:} Recebe o meshlet e realiza as transformações e cálculos de iluminação. Por operar em blocos, ele permite que a GPU ignore geometrias invisíveis com uma eficiência ordens de grandeza superior ao \textit{Frustum Culling} tradicional feito na CPU.
+\end{itemize}
+
+\section{O Fragment Shader e Normal Mapping}
+
+O Fragment Shader decide a cor de cada pixel. Ele utiliza a interpolação baricêntrica para obter valores suaves entre vértices. O \textit{Normal Mapping} é aplicado aqui para simular relevo sem adicionar geometria real.
+
+\begin{lstlisting}[language=GLSL, caption={Fragment Shader com Normal Mapping e Correção Gama}]
+in vec3 FragPos;
+in vec2 TexCoords;
+in mat3 TBN;
+
+uniform sampler2D diffuseMap;
+uniform sampler2D normalMap;
+uniform vec3 lightPos;
+
+out vec4 FragColor;
+
+void main() {
+    // Transforma a normal do mapa (0..1) para o espaco do mundo (-1..1)
+    vec3 normal = texture(normalMap, TexCoords).rgb;
+    normal = normalize(normal * 2.0 - 1.0);
+    normal = normalize(TBN * normal); 
+    
+    vec3 albedo = texture(diffuseMap, TexCoords).rgb;
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(normal, lightDir), 0.0);
+    vec3 lighting = (0.05 + diff) * albedo;
+    
+    // Linear para sRGB (Correcao Gama)
+    FragColor = vec4(pow(lighting, vec3(1.0/2.2)), 1.0);
+}
+\end{lstlisting}
+
+\section{Compute Shaders e Aplicações Práticas}
+
+Além de processar imagens, os Compute Shaders são amplamente utilizados para simulações que antes seriam impossíveis em tempo real:
+
+\begin{itemize}
+    \item \textbf{Sistemas de Partículas:} Simulação de milhões de partículas individuais com colisões e forças gravitacionais, onde cada thread gerencia a física de uma partícula.
+    \item \textbf{Simulação de Tecidos e Cabelos:} Utilizando modelos de mola-massa (\textit{mass-spring systems}) resolvidos em paralelo para movimento realista de vestimentas.
+    \item \textbf{Culling de Geometria:} Antes de enviar objetos para o Vertex Shader, um Compute Shader pode verificar quais objetos estão visíveis e construir um buffer de comandos de desenho (\textit{Indirect Drawing}), economizando tempo de CPU.
+\end{itemize}
+
+\subsection{Redução Paralela e Shared Memory}
+
+Um dos algoritmos fundamentais em Compute Shaders é a \textbf{Redução Paralela}. Se precisamos somar o valor de luminosidade de todos os pixels de uma imagem para calcular a exposição automática (\textit{Tone Mapping}), não podemos simplesmente usar uma variável global, pois isso causaria colisões. Em vez disso, cada thread carrega seu dado para a \textbf{Shared Memory} e realiza uma soma em árvore sincronizada por barreiras, reduzindo a complexidade de $O(N)$ para $O(\log N)$.
+
+Os Compute Shaders permitem usar a GPU para cálculos gerais (\textbf{GPGPU}). Eles introduzem \textbf{Operações Atômicas} (\texttt{atomicAdd}, \texttt{atomicMin}), que garantem que múltiplas threads possam atualizar o mesmo local de memória sem conflitos de condição de corrida (\textit{race conditions}).
+
+\begin{lstlisting}[language=GLSL, caption={Redução Paralela em Compute Shader}]
+layout(local_size_x = 256) in; 
+layout(std430, binding = 0) buffer DataBuffer {
+    float data[];
+};
+shared float scratch[256];
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint gid = gl_GlobalInvocationID.x;
+    scratch[lid] = data[gid];
+    barrier();
+    memoryBarrierShared();
+
+    for(uint s = 128; s > 0; s >>= 1) {
+        if(lid < s) scratch[lid] += scratch[lid + s];
+        barrier();
+    }
+    if(lid == 0) data[gl_WorkGroupID.x] = scratch[0];
+}
+\end{lstlisting}
+
+\section{Ray Tracing Shaders: O Futuro do Tempo Real}
+
+Com o advento do hardware dedicado (RT Cores), novas etapas de shader foram introduzidas para permitir o traçado de raios em tempo real, superando as limitações da rasterização:
+\begin{itemize}
+    \item \textbf{Ray Generation Shader (RGS):} O ponto de entrada. Aqui calculamos a direção do raio para cada pixel e disparamos o traçado via \texttt{traceRayEXT()}.
+    \item \textbf{Closest Hit Shader (CHS):} Executado quando um raio atinge a superfície mais próxima. É aqui que calculamos sombras, reflexos secundários e refrações.
+    \item \textbf{Miss Shader (MISS):} Executado quando um raio não atinge nada. Geralmente usado para retornar a cor do céu ou de um mapa de ambiente (\textit{Skybox}).
+    \item \textbf{Any Hit Shader (AHS):} Utilizado principalmente para testar transparências em texturas (\textit{alpha testing}) sem interromper o traçado prematuramente.
+\end{itemize}
+
+\subsection{Aceleração e Denoising}
+
+Para que o Ray Tracing seja viável, a GPU utiliza uma \textbf{BVH (Bounding Volume Hierarchy)}, uma estrutura de árvore que organiza os objetos da cena em volumes delimitadores. O hardware percorre essa árvore de forma extremamente rápida. Além disso, como traçar raios suficientes para uma imagem limpa é impossível em 16ms, utilizamos algoritmos de \textbf{Denoising} baseados em IA (como NVIDIA DLSS ou AMD FSR) que "limpam" o ruído de imagens geradas com poucos raios por pixel.
+
+\section{Iluminação Global (GI) e Light Probes}
+
+A Iluminação Global simula como a luz rebate múltiplas vezes nas superfícies (\textit{indirect lighting}). Enquanto o Ray Tracing resolve isso via força bruta, técnicas baseadas em \textbf{Light Probes} ou \textbf{Voxel Cone Tracing} armazenam a irradiância da cena em estruturas de dados espaciais. Shaders modernos amostram essas estruturas para adicionar cores de "sangramento" (\textit{color bleeding}), onde uma parede vermelha ilumina levemente um chão branco próximo, conferindo um nível de realismo impossível com modelos puramente diretos.
+
+\section{Técnicas Avançadas no Espaço de Tela}
+
+\begin{itemize}
+    \item \textbf{SSR (Screen-Space Reflections):} Gera reflexos traçando raios no buffer de profundidade da cena.
+    \item \textbf{HBAO (Horizon-Based Ambient Occlusion):} Uma evolução do SSAO que usa o horizonte de amostragem para sombras de contato superiores.
+    \item \textbf{Bloom:} Simula o espalhamento de luz em lentes de câmera reais através de \textit{Gaussian Blur} em áreas de alta luminância.
+\end{itemize}
+
+\section{Transparência Independente de Ordem (OIT)}
+
+Um dos maiores desafios da rasterização é lidar com múltiplos objetos transparentes. O método tradicional exige ordenar os objetos de trás para frente, o que é caro para a CPU. Técnicas de \textbf{OIT}, como o \textit{Depth Peeling} ou o uso de \textit{Linked Lists} em SSBOs (via Compute Shaders), permitem que a GPU armazene e ordene todos os fragmentos de um mesmo pixel antes da composição final, garantindo transparências perfeitas sem necessidade de ordenação prévia na CPU.
+
+\section{Iluminação Volumétrica e Efeitos Atmosféricos}
+
+Efeitos como \textit{God Rays} e neblina volumétrica são implementados via \textbf{Ray Marching} no Fragment Shader. O shader caminha ao longo do raio de visão do observador e, para cada ponto, amostra o \textit{Shadow Map} para verificar se o ponto está iluminado. A soma dessas contribuições resulta em feixes de luz visíveis, simulando o espalhamento de luz em partículas suspensas no ar (Efeito Tyndall).
+
+\section{Otimização Avançada: Estrutura de Dados e Occupancy}
+
+\subsection{SoA (Structure of Arrays) vs AoS (Array of Structures)}
+
+Diferente da CPU, onde o AoS é intuitivo, as GPUs preferem o modelo \textbf{SoA} para garantir o acesso coalescente à memória. Quando threads de um warp acessam o mesmo atributo (ex: posição X) de múltiplos objetos, o hardware pode consolidar essas leituras em uma única transação de memória se elas estiverem contíguas, aumentando drasticamente o rendimento.
+
+\subsection{Register Pressure e Latência}
+
+Se um shader utiliza 64 registradores por thread em vez de 32, a GPU pode ser forçada a reduzir o número de warps ativos pela metade. Isso é crítico porque, com menos warps, a GPU perde sua capacidade de \textit{Latency Hiding} (esconder latência). Cada vez que uma instrução de leitura de textura é executada, o warp fica parado por centenas de ciclos; sem outros warps para trocar, o multiprocessador fica ocioso.
+
+\subsection{Precisão de Ponto Flutuante: FP32 vs FP16}
+
+Em dispositivos móveis e arquiteturas modernas de desktop, o uso de precisão reduzida (\texttt{mediump} ou \texttt{float16}) pode dobrar o rendimento de cálculos aritméticos. Enquanto o \texttt{highp} (FP32) é essencial para cálculos de posição e matrizes de transformação para evitar artefatos de \textit{jittering}, muitos cálculos de cor e iluminação podem ser realizados em FP16 sem perda visual. A otimização de shaders passa pela escolha criteriosa da precisão, equilibrando a fidelidade visual com a economia de energia e o ganho de ciclos de clock, especialmente em operações matemáticas intensivas como exponenciação e funções trigonométricas.
+
+\section{Pós-processamento e Filtros de Imagem}
+
+A maioria das cenas modernas não é exibida diretamente na tela. Em vez disso, elas são renderizadas em um \textit{Frame Buffer Object} (FBO) e depois processadas por shaders de pós-processamento. Um exemplo clássico é o \textbf{Desfoque Gaussiano}, utilizado em efeitos de profundidade de campo ou \textit{bloom}.
+
+\begin{lstlisting}[language=GLSL, caption={Fragment Shader: Filtro de Desfoque de Dois Passos}]
+uniform sampler2D image;
+uniform bool horizontal;
+uniform float weight[5] = float[] (0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+
+in vec2 TexCoords;
+out vec4 FragColor;
+
+void main() {             
+    vec2 tex_offset = 1.0 / textureSize(image, 0); 
+    vec3 result = texture(image, TexCoords).rgb * weight[0]; 
+    if(horizontal) {
+        for(int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + vec2(tex_offset.x * i, 0.0)).rgb * weight[i];
+            result += texture(image, TexCoords - vec2(tex_offset.x * i, 0.0)).rgb * weight[i];
+        }
+    } else {
+        for(int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + vec2(0.0, tex_offset.y * i)).rgb * weight[i];
+            result += texture(image, TexCoords - vec2(0.0, tex_offset.y * i)).rgb * weight[i];
+        }
+    }
+    FragColor = vec4(result, 1.0);
+}
+\end{lstlisting}
+
+\section{Debugging e Ferramentas de Profiling}
+
+Desenvolver shaders pode ser desafiador devido à natureza "caixa preta" da GPU. Ferramentas como o \textbf{RenderDoc} permitem capturar um frame completo e inspecionar cada estágio do pipeline, vendo exatamente como os triângulos são transformados e como as texturas são amostradas. Ferramentas de fabricantes como o \textbf{NVIDIA Nsight} oferecem estatísticas detalhadas de ocupação de registradores, uso de largura de banda e gargalos de hardware, permitindo identificar se o shader está limitado por aritmética (\textit{ALU Bound}) ou por memória (\textit{Memory Bound}).
+
+\section{Variable Rate Shading (VRS) e Foveated Rendering}
+
+A rasterização tradicional aplica o \textit{Fragment Shader} uniformemente em cada pixel coberto por uma primitiva. No entanto, em cenas complexas, muitos pixels possuem cores idênticas ou estão em áreas de baixo detalhe (como sombras densas ou áreas com desfoque de movimento). O \textbf{Variable Rate Shading (VRS)} permite que o desenvolvedor varie a taxa de sombreamento dinamicamente. Em vez de 1:1 (um shader por pixel), a GPU pode executar um único shader para blocos de $2 \times 2$ ou $4 \times 4$ pixels, espalhando o resultado. Isso é fundamental para o \textbf{Foveated Rendering} em Realidade Virtual, onde apenas a área para onde o usuário está olhando (a fóvea) é renderizada em resolução total, enquanto a periferia utiliza taxas reduzidas, economizando até 40\% de processamento sem perda perceptível de qualidade.
+
+\section{Bindless Textures e Virtual Texturing}
+
+O modelo clássico de texturização no OpenGL exige que cada textura seja "vinculada" (\textit{bind}) a uma unidade de textura específica antes do desenho, o que gera um gargalo de CPU devido às constantes mudanças de estado. As \textbf{Bindless Textures} eliminam essa necessidade ao tratar texturas como ponteiros de 64 bits (handles) que podem ser passados diretamente em buffers ou estruturas de dados. Combinado ao \textbf{Virtual Texturing} (ou \textit{Sparse Textures}), isso permite que o motor gráfico gerencie gigabytes de texturas, carregando apenas os "tiles" de 128 KB que são visíveis no momento. Como detalhado por \textcite{akenine2018realtime}, essa técnica é a base para terrenos de escala planetária e megatexturas, onde a fidelidade visual não é limitada pela quantidade de VRAM disponível, mas pela inteligência do sistema de \textit{streaming}.
+
+\section*{Exercícios de Consolidação}
+
+\begin{enumerate}
+    \item \textbf{Arquitetura:} Explique detalhadamente por que a troca de contexto (\textit{context switch}) é quase instantânea em GPUs em comparação com CPUs. Como o hardware gerencia os registradores para que isso seja possível?
+    \item \textbf{SIMT:} O que acontece fisicamente em um multiprocessador da GPU quando ocorre uma divergência de warp? Descreva o processo de execução serial e o papel das máscaras de ativação.
+    \item \textbf{Memória:} O que define um acesso de memória coalescente? Como 32 threads devem acessar um array para maximizar a utilização da largura de banda da VRAM?
+    \item \textbf{GLSL:} Explique o ciclo de vida de uma variável \texttt{uniform}. Por que não é possível modificar o valor de uma \texttt{uniform} dentro do shader?
+    \item \textbf{Matemática:} Prove matematicamente por que a transposta da inversa da matriz de modelo é necessária para transformar vetores normais corretamente quando há escalas não-uniformes envolvidas.
+    \item \textbf{TBN:} Como o mapa de normais (armazenado no espaço tangente) é combinado com o vetor de luz para o cálculo final de iluminação?
+    \item \textbf{Tessellation:} Descreva o funcionamento do \textit{Patch Vertices}. Qual a vantagem de subdividir uma malha na GPU em vez de simplesmente carregar um modelo com alta resolução?
+    \item \textbf{Geometry Shader:} Proponha uma implementação para um efeito de "explosão" onde cada triângulo de um objeto se afasta do centro do objeto ao longo do tempo.
+    \item \textbf{Mesh Shaders:} Como o conceito de \textit{Meshlets} resolve o gargalo histórico do \textit{Input Assembler} em cenas com altíssima densidade geométrica?
+    \item \textbf{Fragment Shader:} Explique o conceito de \textit{Overdraw} e por que ele é prejudicial à performance em resoluções como 4K.
+    \item \textbf{PBR e Gama:} Por que realizar cálculos de iluminação em espaço sRGB (não-linear) gera sombras que parecem muito mais escuras do que deveriam ser fisicamente?
+    \item \textbf{Compute Shaders:} Explique o que são \textit{Race Conditions} em GPGPU. Como o uso de \texttt{atomicAdd} garante a corretude de um contador global?
+    \item \textbf{Barreiras de Memória:} Qual a diferença fundamental entre uma barreira de execução (\texttt{barrier()}) e uma barreira de memória (\texttt{memoryBarrierShared()})?
+    \item \textbf{SSR:} Quais as limitações técnicas das reflexões em espaço de tela? O que acontece quando o objeto refletido está fora do campo de visão da câmera?
+    \item \textbf{HBAO:} Por que o HBAO produz resultados superiores ao SSAO tradicional? Explique o conceito de ângulo de elevação do horizonte.
+    \item \textbf{Ray Tracing:} Descreva os estágios de um pipeline de Ray Tracing moderno (RGS, CHS, MISS).
+    \item \textbf{Atômicos:} Implemente (em pseudo-código GLSL) um contador de oclusão que conte quantos fragmentos passaram no teste de profundidade para um determinado objeto.
+    \item \textbf{Otimização:} O que é \textit{Early-Z Culling}? Como o uso da instrução \texttt{discard} pode desabilitar essa otimização?
+    \item \textbf{Profiling:} Em um profiler como o RenderDoc, como você identificaria que um shader está limitado pela velocidade de leitura de texturas?
+    \item \textbf{Projeto de Pipeline:} Desenvolva o fluxograma de dados de um sistema de renderização híbrido combinando Rasterização, Compute Shaders e Ray Tracing.
+    \item \textbf{VRS:} Explique a diferença entre \textit{foveated rendering} fixo e dinâmico (com \textit{eye tracking}). Como o VRS ajuda a manter taxas de quadros estáveis em VR?
+    \item \textbf{Bindless:} Qual o impacto das \textit{Bindless Textures} na sobrecarga do driver da API gráfica (\textit{CPU overhead})?
+\end{enumerate}
+

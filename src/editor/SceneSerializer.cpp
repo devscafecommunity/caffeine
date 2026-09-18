@@ -1,5 +1,6 @@
 #include "editor/SceneSerializer.hpp"
 #include "ecs/Components.hpp"
+#include "ecs/CameraComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "audio/AudioComponents.hpp"
@@ -51,14 +52,21 @@ void SceneSerializer::collectMeshFilterComponents(
     ECS::ComponentQuery q;
     q.with<ECS::MeshFilterComponent>();
     m_world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity e, ECS::MeshFilterComponent& mf) {
-        // Format: primitive (1 byte) + pathLength (4 bytes) + pathData
+        // Format: primitive (1) + meshPathLen (4) + meshPath + texturePathLen (4) + texturePath
         u8 prim = static_cast<u8>(mf.primitive);
-        u32 pathLen = static_cast<u32>(mf.customMeshPath.size());
-        std::vector<u8> data(5 + pathLen);
-        memcpy(data.data(), &prim, 1);
-        memcpy(data.data() + 1, &pathLen, 4);
-        if (pathLen > 0) {
-            memcpy(data.data() + 5, mf.customMeshPath.data(), pathLen);
+        u32 meshPathLen = static_cast<u32>(mf.customMeshPath.size());
+        u32 texturePathLen = static_cast<u32>(mf.customTexturePath.size());
+        std::vector<u8> data(9 + meshPathLen + texturePathLen);
+        u32 offset = 0;
+        memcpy(data.data() + offset, &prim, 1); offset += 1;
+        memcpy(data.data() + offset, &meshPathLen, 4); offset += 4;
+        if (meshPathLen > 0) {
+            memcpy(data.data() + offset, mf.customMeshPath.data(), meshPathLen);
+            offset += meshPathLen;
+        }
+        memcpy(data.data() + offset, &texturePathLen, 4); offset += 4;
+        if (texturePathLen > 0) {
+            memcpy(data.data() + offset, mf.customTexturePath.data(), texturePathLen);
         }
         entries.push_back({e.id(), std::move(data)});
     });
@@ -101,14 +109,62 @@ void SceneSerializer::collectPrefabInstanceComponents(
     ECS::ComponentQuery q;
     q.with<ECS::PrefabInstance>();
     m_world.forEach<ECS::PrefabInstance>(q, [&](ECS::Entity e, ECS::PrefabInstance& pi) {
-        // Format: pathLength (4 bytes) + pathData + rootEntityId (4 bytes)
+        // Format: pathLen + path + rootEntityId + mapCount + [index,eid]* +
+        //         overrideCount + [index, compLen, comp, propLen, prop, valLen, val]*
         u32 pathLen = static_cast<u32>(pi.prefabPath.size());
-        std::vector<u8> data(4 + pathLen + 4);
-        memcpy(data.data(), &pathLen, 4);
-        if (pathLen > 0) {
-            memcpy(data.data() + 4, pi.prefabPath.data(), pathLen);
+        const u32 mapCount = static_cast<u32>(pi.entityIndexMap.size());
+        const u32 overrideCount = static_cast<u32>(pi.overrides.size());
+
+        usize size = 4 + pathLen + 4 + 4 + mapCount * 8 + 4;
+        for (const auto& o : pi.overrides) {
+            size += 4 + 4 + o.componentName.size() + 4 + o.propertyName.size() + 4 + o.value.size();
         }
-        memcpy(data.data() + 4 + pathLen, &pi.rootEntityId, 4);
+
+        std::vector<u8> data(size);
+        u32 offset = 0;
+        memcpy(data.data() + offset, &pathLen, 4);
+        offset += 4;
+        if (pathLen > 0) {
+            memcpy(data.data() + offset, pi.prefabPath.data(), pathLen);
+            offset += pathLen;
+        }
+        memcpy(data.data() + offset, &pi.rootEntityId, 4);
+        offset += 4;
+        memcpy(data.data() + offset, &mapCount, 4);
+        offset += 4;
+        for (const auto& [index, eid] : pi.entityIndexMap) {
+            memcpy(data.data() + offset, &index, 4);
+            offset += 4;
+            memcpy(data.data() + offset, &eid, 4);
+            offset += 4;
+        }
+        memcpy(data.data() + offset, &overrideCount, 4);
+        offset += 4;
+        for (const auto& o : pi.overrides) {
+            memcpy(data.data() + offset, &o.entityIndex, 4);
+            offset += 4;
+            const u32 compLen = static_cast<u32>(o.componentName.size());
+            memcpy(data.data() + offset, &compLen, 4);
+            offset += 4;
+            if (compLen > 0) {
+                memcpy(data.data() + offset, o.componentName.data(), compLen);
+                offset += compLen;
+            }
+            const u32 propLen = static_cast<u32>(o.propertyName.size());
+            memcpy(data.data() + offset, &propLen, 4);
+            offset += 4;
+            if (propLen > 0) {
+                memcpy(data.data() + offset, o.propertyName.data(), propLen);
+                offset += propLen;
+            }
+            const u32 valLen = static_cast<u32>(o.value.size());
+            memcpy(data.data() + offset, &valLen, 4);
+            offset += 4;
+            if (valLen > 0) {
+                memcpy(data.data() + offset, o.value.data(), valLen);
+                offset += valLen;
+            }
+        }
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -265,6 +321,22 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         collectPrefabInstanceComponents(entries);
         for (auto& [eid, data] : entries) {
             entityMap[eid].emplace_back(kTypePrefabInstance, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::Camera3DComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeCamera3D, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<ECS::CameraActiveComponent>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeCameraActive, std::move(data));
         }
     }
 
@@ -436,6 +508,12 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypePrefabInstance:
                 applyPrefabInstanceComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
+            case kTypeCamera3D:
+                applyPODComponent<ECS::Camera3DComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeCameraActive:
+                applyPODComponent<ECS::CameraActiveComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
             default:
                 break;
         }
@@ -480,6 +558,15 @@ bool SceneSerializer::applyMeshFilterComponent(ECS::Entity e, const u8* data, u3
     if (pathLen > 0) {
         mf.customMeshPath.assign(reinterpret_cast<const char*>(data + 5), pathLen);
     }
+
+    const u32 textureOffset = 5 + pathLen;
+    if (textureOffset + 4 <= size) {
+        u32 texturePathLen = 0;
+        memcpy(&texturePathLen, data + textureOffset, 4);
+        if (textureOffset + 4 + texturePathLen <= size && texturePathLen > 0) {
+            mf.customTexturePath.assign(reinterpret_cast<const char*>(data + textureOffset + 4), texturePathLen);
+        }
+    }
     return true;
 }
 
@@ -516,22 +603,84 @@ bool SceneSerializer::applyMeshRendererComponent(ECS::Entity e, const u8* data, 
 }
 
 bool SceneSerializer::applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size) {
-    if (size < 8) return false;
-    u32 pathLen;
+    if (size < 12) return false;
+    u32 pathLen = 0;
     memcpy(&pathLen, data, 4);
-    
+
     if (4 + pathLen + 4 > size) return false;
     std::string prefabPath;
     if (pathLen > 0) {
         prefabPath.assign(reinterpret_cast<const char*>(data + 4), pathLen);
     }
-    
-    u32 rootEntityId;
-    memcpy(&rootEntityId, data + 4 + pathLen, 4);
-    
+
+    u32 offset = 4 + pathLen;
+    u32 rootEntityId = 0;
+    memcpy(&rootEntityId, data + offset, 4);
+    offset += 4;
+
     auto& pi = m_world.add<ECS::PrefabInstance>(e);
     pi.prefabPath = std::move(prefabPath);
     pi.rootEntityId = rootEntityId;
+
+    if (offset + 4 > size) return true;
+    u32 mapCount = 0;
+    memcpy(&mapCount, data + offset, 4);
+    offset += 4;
+
+    for (u32 i = 0; i < mapCount; ++i) {
+        if (offset + 8 > size) break;
+        u32 index = 0;
+        u32 eid = 0;
+        memcpy(&index, data + offset, 4);
+        offset += 4;
+        memcpy(&eid, data + offset, 4);
+        offset += 4;
+        pi.entityIndexMap[index] = eid;
+    }
+
+    if (offset + 4 > size) return true;
+    u32 overrideCount = 0;
+    memcpy(&overrideCount, data + offset, 4);
+    offset += 4;
+
+    for (u32 i = 0; i < overrideCount; ++i) {
+        if (offset + 4 > size) break;
+        ECS::PrefabOverride o;
+        memcpy(&o.entityIndex, data + offset, 4);
+        offset += 4;
+
+        if (offset + 4 > size) break;
+        u32 compLen = 0;
+        memcpy(&compLen, data + offset, 4);
+        offset += 4;
+        if (offset + compLen > size) break;
+        if (compLen > 0) {
+            o.componentName.assign(reinterpret_cast<const char*>(data + offset), compLen);
+            offset += compLen;
+        }
+
+        if (offset + 4 > size) break;
+        u32 propLen = 0;
+        memcpy(&propLen, data + offset, 4);
+        offset += 4;
+        if (offset + propLen > size) break;
+        if (propLen > 0) {
+            o.propertyName.assign(reinterpret_cast<const char*>(data + offset), propLen);
+            offset += propLen;
+        }
+
+        if (offset + 4 > size) break;
+        u32 valLen = 0;
+        memcpy(&valLen, data + offset, 4);
+        offset += 4;
+        if (offset + valLen > size) break;
+        if (valLen > 0) {
+            o.value.assign(data + offset, data + offset + valLen);
+            offset += valLen;
+        }
+        pi.overrides.push_back(std::move(o));
+    }
+
     return true;
 }
 

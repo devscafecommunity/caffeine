@@ -7,6 +7,7 @@
 #include "math/Mat4.hpp"
 #include <math.h>
 #include <cstdint>
+#include <vector>
 
 namespace Caffeine::Scene {
 
@@ -45,26 +46,37 @@ inline Mat4 buildLocalTRS_3D(const ECS::Position3D* p, const ECS::Rotation3D* r,
 // Supports arbitrary nesting depth up to MAX_DEPTH levels.
 inline void propagateTransforms(ECS::World& world) {
     // Pass 1: seed WorldTransform with each entity's local TRS.
-    // For entities with a parent this is just the initial value;
-    // Pass 2+ will overwrite it with the correct world matrix.
+    // Collect entities first — adding components during forEach invalidates iteration.
     {
+        std::vector<ECS::Entity> entities;
         ECS::ComponentQuery q;
         q.with<ECS::Transform>();
-        world.forEach<ECS::Transform>(q, [&](ECS::Entity e, ECS::Transform& t) {
-            WorldTransform& wt = world.add<WorldTransform>(e);
-            wt.matrix = buildLocalTRS(t);
+        world.forEach<ECS::Transform>(q, [&](ECS::Entity e, ECS::Transform&) {
+            entities.push_back(e);
         });
+        for (ECS::Entity e : entities) {
+            if (auto* t = world.get<ECS::Transform>(e)) {
+                WorldTransform& wt = world.add<WorldTransform>(e);
+                wt.matrix = buildLocalTRS(*t);
+            }
+        }
     }
     {
+        std::vector<ECS::Entity> entities;
         ECS::ComponentQuery q;
         q.with<ECS::Position3D>();
-        world.forEach<ECS::Position3D>(q, [&](ECS::Entity e, ECS::Position3D& p) {
-            if (world.has<ECS::Transform>(e)) return;
+        world.forEach<ECS::Position3D>(q, [&](ECS::Entity e, ECS::Position3D&) {
+            entities.push_back(e);
+        });
+        for (ECS::Entity e : entities) {
+            if (world.has<ECS::Transform>(e)) continue;
+            auto* p = world.get<ECS::Position3D>(e);
+            if (!p) continue;
             auto* r = world.get<ECS::Rotation3D>(e);
             auto* s = world.get<ECS::Scale3D>(e);
             WorldTransform& wt = world.add<WorldTransform>(e);
-            wt.matrix = buildLocalTRS_3D(&p, r, s);
-        });
+            wt.matrix = buildLocalTRS_3D(p, r, s);
+        }
     }
 
     // Pass 2..N: propagate parent WorldTransform down to children.
@@ -94,6 +106,7 @@ inline void propagateTransforms(ECS::World& world) {
     }
 
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {
+        std::vector<std::pair<ECS::Entity, u32>> layerAssignments;
         ECS::ComponentQuery q;
         q.with<Scene::Parent>();
         world.forEach<Scene::Parent>(q, [&](ECS::Entity child, Scene::Parent& pc) {
@@ -101,8 +114,11 @@ inline void propagateTransforms(ECS::World& world) {
             if (world.has<EntityLayer>(child)) return;
             auto* parentLayer = world.get<EntityLayer>(pc.parent);
             if (!parentLayer) return;
-            world.add<EntityLayer>(child).layer = parentLayer->layer;
+            layerAssignments.emplace_back(child, parentLayer->layer);
         });
+        for (const auto& [child, layer] : layerAssignments) {
+            world.add<EntityLayer>(child).layer = layer;
+        }
     }
 }
 

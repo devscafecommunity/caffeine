@@ -1,0 +1,242 @@
+\chapter{Soluções dos Exercícios}
+
+Este apêndice serve como guia de referência para a resolução dos problemas técnicos e conceituais propostos ao longo da obra. Cada solução busca não apenas apresentar a resposta final, mas também detalhar o raciocínio matemático, as derivações físicas e as decisões de implementação que um engenheiro de computação gráfica deve dominar. Recomendamos que o leitor tente resolver os problemas exaustivamente antes de consultar este material, usando as dicas aqui presentes para validar seu entendimento e aprofundar-se em tópicos avançados.
+
+\section*{Capítulo 00: Introdução}
+\begin{enumerate}
+    \item \textbf{Sketchpad:} Introduziu o conceito de objetos gráficos, restrições geométricas, hierarquia e o uso de dispositivos de entrada direta (caneta ótica), que evoluíram para as GUIs e softwares de CAD modernos. Foi o primeiro sistema a demonstrar que computadores podiam ser usados para criação artística e técnica interativa.
+    \item \textbf{Real-Time vs Offline:} Tempo real foca em interatividade (mínimo de 30-60 FPS), sacrificando fidelidade por velocidade (ex: jogos). Offline foca na máxima qualidade física, levando horas ou dias por quadro (ex: Toy Story). A principal diferença reside no uso de aproximações heurísticas em tempo real versus simulações baseadas na física em offline.
+    \item \textbf{Kajiya:} O artigo de 1986 introduziu a \textit{Equação de Renderização}, unificando todas as técnicas de renderização sob uma única base teórica de transporte de luz. Ele formalizou o conceito de que a luz saindo de um ponto é a soma da luz emitida e da luz refletida de todas as direções incidentes.
+    \item \textbf{Varredura Progressiva vs Entrelaçada:} Na progressiva, todos os pixels de um quadro são desenhados sequencialmente. Na entrelaçada, desenham-se as linhas ímpares e depois as pares. O entrelaçamento foi criado para economizar largura de banda em TVs CRT, mas gera artefatos de \textit{combing} em movimento rápido, exigindo filtros de desentrelaçamento.
+    \item \textbf{Impacto da GPU:} A evolução das GPUs permitiu a transição do pipeline de função fixa para o pipeline programável. Isso possibilitou que desenvolvedores implementassem seus próprios algoritmos de iluminação e efeitos pós-processamento diretamente no hardware, resultando em um salto massivo na fidelidade visual dos jogos modernos.
+\end{enumerate}
+
+\section*{Capítulo 01: Matemática Essencial}
+\begin{enumerate}
+    \item \textbf{Operações Vetoriais:}
+    \begin{equation}
+    \mathbf{a} \cdot \mathbf{b} = 1(4) + 2(-5) + 3(6) = 4 - 10 + 18 = 12
+    \end{equation}
+    \begin{equation}
+    \mathbf{a} \times \mathbf{b} = \begin{vmatrix} \mathbf{i} & \mathbf{j} & \mathbf{k} \\ 1 & 2 & 3 \\ 4 & -5 & 6 \end{vmatrix} = (12 - (-15))\mathbf{i} - (6 - 12)\mathbf{j} + (-5 - 8)\mathbf{k} = (27, 6, -13)
+    \end{equation}
+    \item $\hat{\mathbf{v}} \cdot \hat{\mathbf{v}} = \|\hat{\mathbf{v}}\| \|\hat{\mathbf{v}}\| \cos(0) = 1 \cdot 1 \cdot 1 = 1$. Isso prova que o produto escalar de um vetor unitário por ele mesmo é sempre a unidade.
+    \item $M = T \cdot S = \begin{bmatrix} 1 & 0 & 0 & 10 \\ 0 & 1 & 0 & 5 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix} \begin{bmatrix} 2 & 0 & 0 & 0 \\ 0 & 2 & 0 & 0 \\ 0 & 0 & 2 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix} = \begin{bmatrix} 2 & 0 & 0 & 10 \\ 0 & 2 & 0 & 5 \\ 0 & 0 & 2 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$. A escala é aplicada primeiro (estando à direita na multiplicação), seguida pela translação.
+    \item $R_y(\theta) = \begin{bmatrix} \cos\theta & 0 & \sin\theta & 0 \\ 0 & 1 & 0 & 0 \\ -\sin\theta & 0 & \cos\theta & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$. Esta matriz rotaciona pontos ao redor do eixo vertical, mantendo a coordenada Y inalterada.
+    \item A transposta da inversa para a escala $(1, 2, 1)$ resulta na matriz diagonal $(1, 0.5, 1)$. Isso compensa o "achatamento" da normal quando o objeto é esticado. Se usássemos a mesma matriz de transformação de vértices, a normal deixaria de ser perpendicular à superfície.
+    \item \textbf{Projeção de Vetores:} Para projetar $\mathbf{a}$ sobre $\mathbf{b}$, usamos a fórmula:
+    \begin{formula}{Projeção Vetorial}
+    \text{proj}_{\mathbf{b}} \mathbf{a} = \left( \frac{\mathbf{a} \cdot \mathbf{b}}{\|\mathbf{b}\|^2} \right) \mathbf{b}
+    \end{formula}
+    \begin{dica}
+    Se $\mathbf{b}$ for um vetor unitário ($\hat{\mathbf{b}}$), a fórmula simplifica significativamente para $(\mathbf{a} \cdot \hat{\mathbf{b}}) \hat{\mathbf{b}}$. Isso é comum em cálculos de iluminação para encontrar componentes de reflexão.
+    \end{dica}
+\end{enumerate}
+
+\section*{Capítulo 02: Pipeline de Renderização}
+\begin{enumerate}
+    \item Pelo teorema de Tales, a razão entre a altura do objeto ($y$) e sua distância ($z$) deve ser igual à altura na tela ($y'$) e a distância do plano próximo ($n$): $y'/n = y/(-z) \Rightarrow y' = (n \cdot y)/(-z)$. O $z$ é negativo pois a câmera olha para $-Z$ no espaço de visão \textit{right-handed}.
+    \item A quarta componente $w$ armazena o valor de $-z$. Se não dividíssemos por $w$, não teríamos o efeito de perspectiva (encolhimento com a distância) e estaríamos em uma projeção ortográfica deformada. A divisão por $w$ é o que "achata" a pirâmide do frustum em um cubo canônico (NDC).
+    \item Back-face culling usa $\hat{\mathbf{n}} \cdot \hat{\mathbf{v}} > 0$ para descartar faces voltadas para longe da câmera. Deve ser desativado em objetos transparentes (onde vemos o interior) ou planos sem espessura, como folhas de árvores ou tecidos.
+    \item \textbf{Clipping de Cohen-Sutherland:} Este algoritmo usa códigos de região (\textit{outcodes}) para determinar rapidamente se uma linha está totalmente dentro, totalmente fora ou se intersecta as bordas da janela de visualização. Cada bit do código de 4 bits representa uma borda: [Topo, Fundo, Direita, Esquerda].
+    \item \textbf{Transformação de Viewport:} A conversão de coordenadas NDC $[-1, 1]$ para coordenadas de janela (pixels) $[0, W]$ e $[0, H]$ é dada por:
+    \begin{equation}
+    x_{screen} = \frac{(x_{ndc} + 1) \cdot W}{2}, \quad y_{screen} = \frac{(y_{ndc} + 1) \cdot H}{2}
+    \end{equation}
+\end{enumerate}
+
+\section*{Capítulo 03: Rasterização}
+\begin{enumerate}
+    \item Bresenham (0,0) a (5,3): O algoritmo usa apenas aritmética de inteiros. Os pixels resultantes são (0,0), (1,1), (2,1), (3,2), (4,2), (5,3). O parâmetro de decisão $p$ acumula o erro em relação à reta ideal para decidir quando incrementar o eixo Y.
+    \item Área de $ABC = 50$. Ponto $P(2,2)$ gera sub-triângulos de áreas 20, 10 e 20. As coordenadas baricêntricas ($\alpha, \beta, \gamma$) são calculadas como a razão entre as áreas parciais e a área total: $(0.4, 0.2, 0.4)$. Como todas são positivas e somam 1.0, o ponto está dentro do triângulo.
+    \item Interpolação de perspectiva: Atributos (como cores e UVs) não variam linearmente no espaço da tela devido à projeção. Eles devem ser interpolados como $A/z$ e o resultado dividido pelo valor interpolado de $1/z$ em cada pixel para recuperar o valor correto no espaço 3D.
+    \item \textbf{Scanline Filling:} O algoritmo percorre cada linha horizontal (scanline) e encontra as interseções com as arestas do polígono. Os pixels entre pares de interseções são preenchidos. É crucial manter uma Tabela de Arestas Ativas (AET) para evitar testes redundantes.
+    \item \textbf{Z-Fighting:} Ocorre quando dois polígonos têm valores de profundidade muito próximos, fazendo com que a imprecisão do buffer de profundidade alterne entre qual fragmento é visível.
+    \begin{aviso}
+    Para mitigar o Z-fighting, aumente a precisão do Depth Buffer (ex: use 24-bit ou 32-bit float) ou afaste os planos \textit{near} e \textit{far} para reduzir a compressão logarítmica da profundidade.
+    \end{aviso}
+\end{enumerate}
+
+\section*{Capítulo 04: Modelos de Iluminação}
+\begin{enumerate}
+    \item \textbf{Vetor de Reflexão:} $\hat{\mathbf{r}} = \hat{\mathbf{l}} - 2(\hat{\mathbf{n}} \cdot \hat{\mathbf{l}})\hat{\mathbf{n}}$. Note que nesta convenção $\hat{\mathbf{l}}$ aponta para a fonte de luz e $\hat{\mathbf{r}}$ aponta para fora da superfície, na direção oposta à incidência.
+    \item O expoente de brilho $n$ controla a concentração da energia especular. Quanto maior $n$, mais "polida" a superfície parece, pois a mancha especular diminui de tamanho. Valores baixos (ex: 10) representam plástico ou madeira envernizada, enquanto valores altos (ex: 200) representam metais polidos.
+    \item Fresnel descreve que a refletividade aumenta em ângulos rasantes. É por isso que você vê o fundo de um lago ao olhar diretamente para baixo, mas vê o reflexo perfeito do céu ao olhar para o horizonte.
+    \item \textbf{Blinn-Phong vs Phong:} O modelo de Blinn-Phong usa o vetor médio $\hat{\mathbf{h}} = \frac{\hat{\mathbf{l}} + \hat{\mathbf{v}}}{\|\hat{\mathbf{l}} + \hat{\mathbf{v}}\|}$ em vez do vetor de reflexão. É computacionalmente mais eficiente e fisicamente mais plausível para superfícies rugosas.
+    \item \textbf{Atenuação de Luz Pontual:} A intensidade da luz decai com o quadrado da distância. No entanto, para fins artísticos em tempo real, usamos a fórmula:
+    \begin{formula}{Fator de Atenuação}
+    F_{att} = \frac{1}{K_c + K_l \cdot d + K_q \cdot d^2}
+    \end{formula}
+    Onde $K_c=1.0$ evita divisões por zero quando a luz está muito próxima do objeto.
+\end{enumerate}
+
+\section*{Capítulo 05: Shaders e GLSL}
+\begin{enumerate}
+    \item Implementação de iluminação Lambertiana simples em Fragment Shader:
+    \begin{lstlisting}[language=GLSL]
+    void main() {
+        vec3 norm = normalize(Normal);
+        vec3 lightDir = normalize(lightPos - FragPos);
+        float diff = max(dot(norm, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor;
+        FragColor = vec4(diffuse * objectColor, 1.0);
+    }
+    \end{lstlisting}
+    \item Sem a matriz TBN (Tangent, Bitangent, Normal), a normal lida do mapa de normais estaria em coordenadas locais da imagem. A TBN permite transformar essas normais para o \textit{World Space}, orientando-as corretamente de acordo com a curvatura e rotação da malha.
+    \item O fluxo de dados: VBO/VAO na CPU $\to$ \texttt{in} no Vertex Shader $\to$ \texttt{out} para o Rasterizador (Interpolação Baricêntrica automática) $\to$ \texttt{in} no Fragment Shader.
+    \item \textbf{Vertex vs Fragment Shader:} O Vertex Shader processa vértices individuais (milhares de vezes por quadro), enquanto o Fragment Shader processa pixels (milhões de vezes por quadro). Por isso, cálculos pesados devem ser movidos para o Vertex Shader sempre que possível.
+    \item \textbf{Uniforms vs Attributes:} \texttt{Uniforms} são constantes durante uma chamada de desenho (como \texttt{time} ou \texttt{projectionMatrix}). \texttt{Attributes} são dados que mudam a cada vértice, como a posição $x,y,z$ ou as coordenadas UV.
+\end{enumerate}
+
+\section*{Capítulo 06: Texturas}
+\begin{enumerate}
+    \item \textbf{Derivação de Mip-mapping:} O nível de mipmap ($L$) é escolhido com base na taxa de variação das coordenadas de textura ($u,v$) em relação aos pixels da tela ($x,y$).
+    \begin{formula}{Nível de Mipmap}
+    \rho = \max\left(\sqrt{\left(\frac{\partial u}{\partial x}\right)^2 + \left(\frac{\partial v}{\partial x}\right)^2}, \sqrt{\left(\frac{\partial u}{\partial y}\right)^2 + \left(\frac{\partial v}{\partial y}\right)^2}\right) \\
+    L = \log_2(\rho)
+    \end{formula}
+    \item \textbf{Filtragem Anisotrópica:} Melhora a qualidade das texturas em superfícies vistas de ângulos oblíquos. Ao invés de usar uma amostra quadrada (mipmap), ela usa uma amostra retangular ou elíptica que acompanha a deformação da perspectiva.
+    \item \textbf{Modos de Wrapping:}
+    \begin{itemize}
+        \item \textbf{Repeat:} Repete o padrão da textura. Útil para paredes e terrenos.
+        \item \textbf{Clamp to Edge:} "Estica" os pixels da borda. Evita artefatos de borda em texturas que não devem se repetir.
+        \item \textbf{Mirrored Repeat:} Inverte a textura a cada repetição, eliminando costuras visíveis em texturas não ladrilháveis (\textit{non-seamless}).
+    \end{itemize}
+    \item \textbf{Filtragem Triliner:} Realiza uma interpolação linear entre os resultados de duas filtragens bilineares feitas em níveis de mipmap consecutivos. Isso elimina o "degrau" visível na transição entre níveis de detalhe.
+    \item \textbf{Compressão BC7:} Diferente do BC1 que é muito destrutivo, o BC7 usa múltiplos modos de partição para blocos de pixels, permitindo uma representação muito mais fiel de gradientes e texturas com canal alfa complexo, mantendo uma taxa de compressão fixa.
+\end{enumerate}
+
+\section*{Capítulo 07: Iluminação Avançada}
+\begin{enumerate}
+    \item \textbf{Split-Sum Approximation:} Introduzida pela Epic Games para o Unreal Engine 4, esta aproximação permite que o cálculo da integral de luz ambiente (IBL) seja feito em tempo real multiplicando um mapa pré-filtrado por uma LUT 2D.
+    \item \textbf{Prefiltered Environment Map:} O ambiente é pré-calculado para diferentes níveis de rugosidade ($Roughness$). O mipmap 0 armazena o reflexo nítido (espelho), enquanto mipmaps superiores armazenam versões progressivamente mais borradas (convolucionadas).
+    \item \textbf{BRDF LUT:} Uma textura que armazena os coeficientes da integral da BRDF. Os eixos da textura representam o Cosseno de Theta (ângulo de visão) e a Rugosidade.
+    \item \textbf{Derivação de Shadow Map:} Para cada pixel, calculamos sua posição projetada a partir da perspectiva da luz.
+    \begin{equation}
+    P_{light} = M_{proj\_light} \cdot M_{view\_light} \cdot P_{world}
+    \end{equation}
+    Comparamos $P_{light}.z$ com o valor no mapa de sombras. Se $z$ for maior, o pixel está em sombra.
+    \item \textbf{PCSS (Percentage-Closer Soft Shadows):} Simula sombras suaves reais. Primeiro, busca bloqueadores próximos para determinar a distância média do oclusor. Quanto maior a distância entre o oclusor e o receptor, maior será o raio de busca do PCF, criando uma penumbra maior.
+\end{enumerate}
+
+\section*{Capítulo 08: Ray Tracing}
+\begin{enumerate}
+    \item \textbf{Interseção Raio-Esfera:} Substituindo a equação do raio $\mathbf{r}(t) = \mathbf{O} + t\mathbf{D}$ na equação da esfera $(\mathbf{P} - \mathbf{C})^2 = R^2$:
+    \begin{equation}
+    (\mathbf{D} \cdot \mathbf{D})t^2 + 2\mathbf{D} \cdot (\mathbf{O} - \mathbf{C})t + (\mathbf{O} - \mathbf{C}) \cdot (\mathbf{O} - \mathbf{C}) - R^2 = 0
+    \end{equation}
+    Resolvemos para $t$ usando a fórmula de Bhaskara. O menor $t$ positivo é a interseção mais próxima.
+    \item Whitted falha na luz indireta difusa (como o \textit{color bleeding}) porque ele só considera raios secundários para reflexão especular e refração. O Path Tracing moderno resolve isso lançando raios aleatórios em todas as direções do hemisfério.
+    \item \textbf{Next Event Estimation (NEE):} É uma técnica de redução de variância. Em cada interseção, lançamos um raio de "prova" diretamente para as fontes de luz. Se houver visibilidade, somamos a contribuição da luz imediatamente, sem esperar pelo acaso do caminho estocástico.
+    \item \textbf{BVH (Bounding Volume Hierarchy):} É uma árvore de volumes envolventes (geralmente AABBs). Ao testar um raio contra a árvore, podemos descartar milhares de triângulos de uma vez se o raio não atingir o volume pai, acelerando o processo de $O(N)$ para $O(\log N)$.
+    \item \textbf{Algoritmo Möller-Trumbore:}
+    \begin{lstlisting}[language=C]
+    bool IntersectTriangle(Ray ray, Triangle tri, float &t, float &u, float &v) {
+        vec3 edge1 = tri.v1 - tri.v0;
+        vec3 edge2 = tri.v2 - tri.v0;
+        vec3 h = cross(ray.dir, edge2);
+        float a = dot(edge1, h);
+        if (a > -0.0001 && a < 0.0001) return false; // Raio paralelo
+        // ... continuacao do calculo de coordenadas baricentricas
+    }
+    \end{lstlisting}
+\end{enumerate}
+
+\section*{Capítulo 09: Técnicas Modernas}
+\begin{enumerate}
+    \item \textbf{Banda de Memória em Deferred Shading:} Para uma cena a 1080p@60FPS, o G-Buffer (Normal, Albedo, Specular, Depth) exige uma transferência massiva de dados. O uso de formatos compactados (como \texttt{R11G11B10F} para normais) é essencial para não saturar o barramento da GPU.
+    \item \textbf{Sequência de Halton:} É uma sequência quasi-aleatória determinística. Em TAA, usamos as bases 2 e 3 para gerar um padrão de jitter que nunca se repete exatamente no mesmo lugar em quadros consecutivos, permitindo uma reconstrução de imagem superior ao MSAA.
+    \item \textbf{Extração de Planos do Frustum:} Os coeficientes do plano $Ax + By + Cz + D = 0$ podem ser extraídos somando ou subtraindo as colunas da matriz MVP. Por exemplo, o plano de clipping próximo (\textit{Near}) é obtido de $Row_4 + Row_3$.
+    \item \textbf{SSAO Hemisphere Sampling:} Amostrar pontos dentro de um volume esférico é ineficiente. O SSAO moderno usa um hemisfério orientado pela normal e uma textura de ruído rotacionada aleatoriamente para esconder artefatos de amostragem sistemática.
+    \item \textbf{TAA Neighborhood Clipping:} Resolve o problema de objetos em movimento rápido que deixam rastros. O algoritmo calcula a caixa envolvente (AABB) das cores dos vizinhos no quadro atual e força a cor do quadro anterior a ficar dentro desse limite.
+\end{enumerate}
+
+\section*{Capítulo 10: Cor e Espaço de Cor}
+\begin{enumerate}
+    \item \textbf{Double Gamma Correction:} Se você aplicar a correção gamma ($1/2.2$) em uma imagem que já está em sRGB, as cores ficarão extremamente lavadas. Os valores de cinza médio saltarão de 0.5 para quase 0.9, destruindo o contraste e a saturação.
+    \item \textbf{ACES (Academy Color Encoding System):} É o padrão da indústria cinematográfica. Diferente de operadores puramente matemáticos como Reinhard, o ACES simula a resposta química do filme, criando um \textit{shoulder} (suavização nas altas luzes) e um \textit{toe} (detalhe nas sombras) esteticamente superiores.
+    \item \textbf{Fluxo Linear:} Todas as texturas "não-coloridas" (Normal Maps, Roughness, Metalness) devem ser lidas como \texttt{Linear}, enquanto texturas de Albedo e Specular Color são quase sempre \texttt{sRGB}.
+    \item \textbf{Luminância e Percepção:} O olho humano é mais sensível ao Verde do que ao Azul. Por isso, a fórmula de luminância atribui pesos maiores ao canal G (cerca de 71\%) e menores ao canal B (cerca de 7\%).
+    \item \textbf{White Point:} Representa a cor da luz branca sob uma determinada temperatura de cor (ex: D65 para luz do dia). O balanço de branco ajusta a imagem para que objetos brancos pareçam brancos, independentemente da cor da fonte de luz.
+\end{enumerate}
+
+\section*{Nota sobre Notação}
+Para manter a clareza e o rigor acadêmico ao longo desta obra, adotamos as seguintes convenções de notação matemática e técnica:
+\begin{itemize}
+    \item \textbf{Vetores:} Representados por letras minúsculas em negrito ($\mathbf{v}, \mathbf{u}, \mathbf{p}$).
+    \item \textbf{Vetores Unitários:} Representados com um acento circunflexo para indicar normalização ($\hat{\mathbf{n}}, \hat{\mathbf{l}}, \hat{\mathbf{v}}$).
+    \item \textbf{Matrizes:} Representadas por letras maiúsculas em itálico ($M, T, R, P$). A ordem de aplicação é da direita para a esquerda.
+    \item \textbf{Sistemas de Coordenadas:} Usamos preferencialmente o sistema \textit{Right-Handed} (Mão Direita), onde o eixo Z positivo aponta para o observador.
+    \item \textbf{Convenção de Vetor-Coluna:} Todos os vetores são considerados colunas $4 \times 1$ em transformações homogêneas, resultando na operação $P' = M \cdot P$.
+\end{itemize}
+
+    \item \textbf{Filtragem Triliner:} É a combinação de filtragem bilinear em dois níveis adjacentes de mipmap, seguida por uma interpolação linear entre os dois resultados.
+    \begin{equation}
+    C_{final} = (1-d) \cdot C_{bilinear\_L0} + d \cdot C_{bilinear\_L1}
+    \end{equation}
+    Onde $d$ é a parte fracionária do nível de mipmap calculado.
+    \item \textbf{Compressão de Textura (BC1-BC7):} Formatos como BC1 (DXT1) usam quantização de cores em blocos de $4 \times 4$ pixels, armazenando apenas duas cores de referência e um índice de 2 bits por pixel. BC7 é mais moderno e suporta HDR e canais alfa com alta fidelidade.
+\end{enumerate}
+
+\section*{Capítulo 07: Iluminação Avançada}
+\begin{enumerate}
+    \item \textbf{Split-Sum Approximation:} Usada em IBL (Image Based Lighting) para resolver a integral de iluminação em tempo real. Ela separa a integral em dois termos que podem ser pré-calculados.
+    \begin{equation}
+    \int L_i f_r \cos\theta \approx \left( \int L_i \right) \left( \int f_r \cos\theta \right)
+    \end{equation}
+    \item \textbf{Prefiltered Environment Map:} É o primeiro termo da split-sum. O mapa de ambiente é convolucionado com diferentes níveis de rugosidade e armazenado nos níveis de mipmap de uma Cubemap.
+    \item \textbf{BRDF LUT:} O segundo termo da split-sum é uma textura 2D (Look-Up Table) que armazena a escala e o bias da Fresnel em função do cosseno do ângulo e da rugosidade.
+    \item \textbf{Derivação de Shadow Map:} A posição do fragmento no mundo é multiplicada pela matriz de visão e projeção da luz ($M_{light\_VP}$). O valor resultante $z$ é comparado com o valor armazenado na textura de profundidade da luz.
+    \item \textbf{PCF vs PCSS:} PCF (\textit{Percentage-Closer Filtering}) suaviza as bordas da sombra amostrando múltiplos pontos fixos ao redor. PCSS (\textit{Percentage-Closer Soft Shadows}) varia o raio de amostragem com base na distância entre o objeto e o emissor de sombra, simulando a \textit{penumbra} física.
+\end{enumerate}
+
+\section*{Capítulo 08: Ray Tracing}
+\begin{enumerate}
+    \item A equação quadrática é derivada substituindo a reta $O+tD$ na esfera $(P-C)^2 = r^2$. Resultando em:
+    \begin{equation}
+    (D \cdot D)t^2 + 2D \cdot (O - C)t + (O - C) \cdot (O - C) - r^2 = 0
+    \end{equation}
+    \item Whitted falha na luz indireta difusa porque ele só segue raios em direções perfeitas (reflexão/refração). Ele não captura a luz que rebate de uma parede branca para iluminar o teto, por exemplo.
+    \item \textbf{Next Event Estimation:} Em vez de esperar que um raio aleatório atinja uma lâmpada, lançamos um raio explicitamente para a fonte de luz a cada rebote, reduzindo drasticamente o ruído estocástico.
+    \item \textbf{Estruturas de Aceleração:}
+    \begin{itemize}
+        \item \textbf{BVH (Bounding Volume Hierarchy):} Agrupa objetos em volumes envolventes. É fácil de atualizar para objetos dinâmicos.
+        \item \textbf{KD-Tree:} Divide o espaço de forma recursiva. Geralmente oferece buscas mais rápidas, mas é custosa para reconstruir.
+    \end{itemize}
+    \item \textbf{Interseção Möller-Trumbore:} Um algoritmo eficiente para interseção raio-triângulo que usa coordenadas baricêntricas sem precisar calcular a equação do plano explicitamente.
+\end{enumerate}
+
+\section*{Capítulo 09: Técnicas Modernas}
+\begin{enumerate}
+    \item \textbf{Cálculo de Banda de G-Buffer:} Em um Deferred Renderer, o consumo de banda é crítico. Para uma resolução $1920 \times 1080$ a 60 FPS com 4 targets de 32 bits (16 bytes) cada:
+    \begin{formula}{Cálculo de Banda}
+    Bandwidth = 1920 \cdot 1080 \cdot 16 \text{ bytes} \cdot 60 \text{ fps} \approx 2.0 \text{ GB/s}
+    \end{formula}
+    Isso apenas para a escrita; a leitura no shader de iluminação dobra esse valor.
+    \item \textbf{Sequência de Halton:} Usada em técnicas de \textit{Antialiasing Temporal} (TAA) para gerar um jitter de sub-pixel de baixo discrepância, garantindo uma cobertura uniforme dos pixels ao longo do tempo.
+    \item \textbf{Extração de Planos do Frustum:} Dado o produto das matrizes de Projeção e Visão ($M = P \cdot V$), as equações dos 6 planos do frustum podem ser extraídas diretamente das linhas de $M$. Exemplo para o plano esquerdo: $Row_4 + Row_1$.
+    \item \textbf{SSAO Hemisphere Sampling:} O SSAO (\textit{Screen Space Ambient Occlusion}) amostra pontos em um hemisfério orientado pela normal. A oclusão é calculada verificando quantos desses pontos estão "atrás" da profundidade lida do Z-buffer.
+    \item \textbf{TAA Neighborhood Clipping:} Para evitar o \textit{ghosting} (rastro de quadros anteriores), o TAA compara a cor do quadro anterior com os valores mínimos e máximos da vizinhança $3 \times 3$ do pixel atual, cortando (\textit{clipping}) cores fora desse intervalo.
+\end{enumerate}
+
+\section*{Capítulo 10: Cor e Espaço de Cor}
+\begin{enumerate}
+    \item Se aplicar gamma duas vezes, a imagem parecerá extremamente "lavada" e clara, pois os tons escuros foram elevados ao quadrado da curva de compensação ($V^{1/2.2 \cdot 1/2.2}$).
+    \item \textbf{ACES} é superior ao Reinhard pois mantém a saturação em altas luzes e preserva o contraste de forma fílmica, enquanto o Reinhard tende a tornar tudo acinzentado conforme se aproxima de 1.0.
+    \item \textbf{sRGB vs Linear:} Shaders devem operar em espaço Linear para que cálculos de luz (somas e multiplicações) sejam fisicamente corretos. A textura sRGB deve ser convertida para Linear na leitura ($C^{2.2}$) e de volta para sRGB na escrita final ($C^{1/2.2}$).
+    \item \textbf{Luminância Relativa:} Para converter uma cor RGB para tons de cinza preservando o brilho percebido pelo olho humano:
+    \begin{equation}
+    Y = 0.2126R + 0.7152G + 0.0722B
+    \end{equation}
+    \item \textbf{Balanço de Branco:} Consiste em escalar os canais RGB para que uma superfície neutra (cinza ou branca) sob uma iluminação colorida seja mapeada para $(1, 1, 1)$. Geralmente usa-se a Transformada de von Kries.
+\end{enumerate}
+
+\section*{Nota sobre Notação}
+Para manter a clareza ao longo desta obra, adotamos as seguintes convenções de notação:
+\begin{itemize}
+    \item \textbf{Vetores:} Representados por letras minúsculas em negrito ($\mathbf{v}, \mathbf{u}, \mathbf{p}$).
+    \item \textbf{Vetores Unitários:} Representados com um acento circunflexo ($\hat{\mathbf{n}}, \hat{\mathbf{l}}, \hat{\mathbf{v}}$).
+    \item \textbf{Matrizes:} Representadas por letras maiúsculas em itálico ($M, T, R, P$).
+    \item \textbf{Pontos vs Vetores:} Pontos são tratados como vetores de posição. Em coordenadas homogêneas, pontos têm $w=1$ e vetores direcionais têm $w=0$.
+    \item \textbf{Multiplicação Matriz-Vetor:} Usamos a convenção de vetor-coluna, onde o vetor fica à direita da matriz ($M\mathbf{v}$).
+\end{itemize}

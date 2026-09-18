@@ -3,14 +3,18 @@
 #include "editor/FilePicker.hpp"
 #include "editor/InspectorWidgets.hpp"
 #include "assets/PrefabSerializer.hpp"
+#include "editor/PrefabSystem.hpp"
+#include "ecs/PrefabComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "assets/MeshCache.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "math/Quat.hpp"
 #include "script/CppScript.hpp"
 #include <filesystem>
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <vector>
 #include <iostream>
@@ -23,6 +27,10 @@ namespace Caffeine::Editor {
 
 void InspectorPanel::registerDrawer(u32 componentTypeId, ComponentDrawer drawer) {
     m_drawers.set(componentTypeId, std::move(drawer));
+}
+
+void InspectorPanel::unregisterDrawer(u32 componentTypeId) {
+    m_drawers.remove(componentTypeId);
 }
 
 // ── Main render ──────────────────────────────────────────────────
@@ -75,6 +83,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
          ImGui::Separator();
         ImGui::BeginChild("components");
 
+        drawPrefabInstance(world, e, ctx);
         drawTransform(world, e, ctx);
         drawSprite(world, e, ctx);
         drawCamera(world, e, ctx);
@@ -160,7 +169,21 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
             }
         } else {
             if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { changed = true; }
-            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) { changed = true; }
+            ImGui::Checkbox("Manter proporcao", &ctx.uniformScale);
+            const Vec3 oldScale = t->scale;
+            if (Widgets::DragVec3("Scale", t->scale, 0.05f, 0.01f, 100.0f)) {
+                if (ctx.uniformScale) {
+                    const f32 dx = std::abs(t->scale.x - oldScale.x);
+                    const f32 dy = std::abs(t->scale.y - oldScale.y);
+                    const f32 dz = std::abs(t->scale.z - oldScale.z);
+                    f32 factor = 1.0f;
+                    if (dx >= dy && dx >= dz && oldScale.x != 0.0f) factor = t->scale.x / oldScale.x;
+                    else if (dy >= dx && dy >= dz && oldScale.y != 0.0f) factor = t->scale.y / oldScale.y;
+                    else if (oldScale.z != 0.0f) factor = t->scale.z / oldScale.z;
+                    t->scale = oldScale * factor;
+                }
+                changed = true;
+            }
         }
 
         if (changed) {
@@ -176,12 +199,19 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
                                                t->rotation.z * kDegToRad).normalized();
                 r3->quaternion = Vec4(q.x, q.y, q.z, q.w);
             }
+            PrefabSystem::RecordOverride(world, e, "Transform", "position",
+                                         PrefabSystem::SerializeVec3(t->position));
             ctx.isDirty = true;
         }
     } else if (auto* p3 = world.get<ECS::Position3D>(e)) {
+        const bool posOverride = PrefabSystem::IsOverridden(world, e, "Position3D", "position");
+        if (posOverride) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 1.0f, 1.0f));
         if (Widgets::DragVec3("Position", p3->position, 0.5f)) {
+            PrefabSystem::RecordOverride(world, e, "Position3D", "position",
+                                         PrefabSystem::SerializeVec3(p3->position));
             ctx.isDirty = true;
         }
+        if (posOverride) ImGui::PopStyleColor();
 
         Vec3 eulerDeg(0.0f, 0.0f, 0.0f);
         if (auto* r3 = world.get<ECS::Rotation3D>(e)) {
@@ -204,7 +234,19 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
         if (auto* s3 = world.get<ECS::Scale3D>(e)) {
             scale = s3->scale;
         }
+        ImGui::Checkbox("Manter proporcao", &ctx.uniformScale);
+        const Vec3 oldScale = scale;
         if (Widgets::DragVec3("Scale", scale, 0.05f, 0.01f, 100.0f)) {
+            if (ctx.uniformScale) {
+                const f32 dx = std::abs(scale.x - oldScale.x);
+                const f32 dy = std::abs(scale.y - oldScale.y);
+                const f32 dz = std::abs(scale.z - oldScale.z);
+                f32 factor = 1.0f;
+                if (dx >= dy && dx >= dz && oldScale.x != 0.0f) factor = scale.x / oldScale.x;
+                else if (dy >= dx && dy >= dz && oldScale.y != 0.0f) factor = scale.y / oldScale.y;
+                else if (oldScale.z != 0.0f) factor = scale.z / oldScale.z;
+                scale = oldScale * factor;
+            }
             world.add<ECS::Scale3D>(e).scale = scale;
             ctx.isDirty = true;
         }
@@ -494,10 +536,43 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         ctx.isDirty = true;
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
-        if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf", resolveProjectRoot(ctx)))
+        if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
-        if (Widgets::AssetField("Texture", mf->customTexturePath, ".png", resolveProjectRoot(ctx)))
+        if (Widgets::AssetField("Texture", mf->customTexturePath, ".png;.jpg;.jpeg", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
+        if (!mf->customTexturePath.empty()) {
+            std::string projectRoot = resolveProjectRoot(ctx).string();
+            bool textureFound = false;
+            for (const std::string& candidate :
+                 Assets::MeshCache::buildCandidatePaths(mf->customTexturePath, projectRoot)) {
+                if (std::filesystem::exists(candidate)) {
+                    textureFound = true;
+                    break;
+                }
+            }
+            if (!textureFound) {
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                                   "Textura nao encontrada: %s", mf->customTexturePath.c_str());
+            }
+        }
+        if (!mf->customMeshPath.empty()) {
+            const std::string ext = std::filesystem::path(mf->customMeshPath).extension().string();
+            if (ext == ".fbx" || ext == ".FBX") {
+                ImGui::TextDisabled("FBX requer export OBJ/glTF (mesmo nome) para preview.");
+            }
+            if (ext == ".gltf" || ext == ".GLTF") {
+                ImGui::TextDisabled("glTF separado precisa do .bin e texturas na mesma pasta.");
+            }
+
+            std::string projectRoot = resolveProjectRoot(ctx).string();
+            auto& meshCache = Assets::MeshCache::getInstance();
+            if (!meshCache.getMesh(mf->customMeshPath, projectRoot)) {
+                const std::string& err = meshCache.getLastError();
+                if (!err.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", err.c_str());
+                }
+            }
+        }
     } else {
         ImGui::TextDisabled("3D renderer pending — mesh data will be loaded when renderer is implemented");
     }
@@ -749,20 +824,50 @@ void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& 
     }
 }
 
+void InspectorPanel::drawPrefabInstance(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    const ECS::Entity instanceRoot = PrefabSystem::FindInstanceRoot(world, e);
+    if (!instanceRoot.isValid()) return;
+
+    auto* inst = world.get<ECS::PrefabInstance>(instanceRoot);
+    if (!inst) return;
+
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Prefab Instance");
+    ImGui::TextDisabled("%s", inst->prefabPath.c_str());
+    if (!inst->overrides.empty()) {
+        ImGui::TextDisabled("%zu override(s)", inst->overrides.size());
+    }
+
+    if (ImGui::Button("Revert All", ImVec2(-1, 0))) {
+        ctx.beginUndo(EditorCommand::SetField, instanceRoot.id(), world);
+        PrefabSystem::RevertOverrides(world, instanceRoot);
+        ctx.selectEntity(instanceRoot);
+        ctx.endUndo(world);
+        ctx.isDirty = true;
+    }
+    if (ImGui::Button("Apply to Prefab", ImVec2(-1, 0))) {
+        ctx.beginUndo(EditorCommand::SetField, instanceRoot.id(), world);
+        if (PrefabSystem::ApplyOverridesToPrefab(world, instanceRoot)) {
+            ctx.selectEntity(instanceRoot);
+        }
+        ctx.endUndo(world);
+        ctx.isDirty = true;
+    }
+    ImGui::Separator();
+}
+
 void InspectorPanel::savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path) {
     if (!e.isValid()) {
         std::cerr << "Error: Invalid entity. Cannot save prefab.\n";
         return;
     }
-    
+
     if (path.empty()) {
         std::cerr << "Error: Invalid path. Cannot save prefab.\n";
         return;
     }
-    
-    Assets::PrefabSerializer serializer(world);
-    bool success = serializer.save(path.string(), e);
-    
+
+    const bool success = PrefabSystem::CreateFromEntity(world, e, path);
+
     if (success) {
         std::cout << "Prefab saved successfully: " << path.string() << "\n";
     } else {

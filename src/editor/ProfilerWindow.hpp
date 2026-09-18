@@ -2,6 +2,7 @@
 #include "core/Types.hpp"
 #include "debug/Profiler.hpp"
 #include "containers/Vector.hpp"
+#include <algorithm>
 #include <array>
 
 #ifdef CF_HAS_IMGUI
@@ -39,21 +40,38 @@ public:
     void render(const Debug::Profiler& profiler) {
         if (!m_open) return;
         if (ImGui::Begin("Profiler", &m_open)) {
+            const f32 lastMs = lastFrameTime();
+            const f32 fps = lastMs > 0.0f ? 1000.0f / lastMs : 0.0f;
+
             if (ImGui::Button(m_paused ? "Resume" : "Pause")) {
                 m_paused = !m_paused;
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset Stats")) {
+                Debug::Profiler::instance().reset();
+            }
 
-            f32 maxVal = 50.0f;
-            ImGui::PlotLines("Frame ms", m_frameTimes.data(), 120,
-                             static_cast<int>(m_frameIdx % 120),
-                             nullptr, 0.0f, maxVal, ImVec2(0, 60));
+            ImGui::Text("Frame: %.2f ms   FPS: %.1f", lastMs, fps);
+
+            f32 maxVal = 33.3f;
+            for (const f32 sample : m_frameTimes) {
+                maxVal = std::max(maxVal, sample);
+            }
+            maxVal = std::min(maxVal * 1.15f, 200.0f);
+
+            ImGui::PlotLines("Frame time (ms)", m_frameTimes.data(), 120, 0,
+                             nullptr, 0.0f, maxVal, ImVec2(-1, 80));
+            ImGui::TextDisabled("Budget: 16.7 ms (60 FPS)");
 
             Vector<Debug::Profiler::ScopeStats> scopes;
             profiler.report(scopes);
-            if (ImGui::BeginTable("scopes", 4)) {
+            if (scopes.empty()) {
+                ImGui::TextDisabled("No scope samples yet. Instrument hot paths with CF_PROFILE_SCOPE.");
+            } else if (ImGui::BeginTable("scopes", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
                 ImGui::TableSetupColumn("Scope");
                 ImGui::TableSetupColumn("avg ms");
                 ImGui::TableSetupColumn("max ms");
+                ImGui::TableSetupColumn("total ms");
                 ImGui::TableSetupColumn("calls");
                 ImGui::TableHeadersRow();
                 for (usize i = 0; i < scopes.size(); ++i) {
@@ -62,7 +80,8 @@ public:
                     ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(s.name ? s.name : "");
                     ImGui::TableSetColumnIndex(1); ImGui::Text("%.3f", static_cast<f32>(s.avgMs));
                     ImGui::TableSetColumnIndex(2); ImGui::Text("%.3f", static_cast<f32>(s.maxMs));
-                    ImGui::TableSetColumnIndex(3); ImGui::Text("%llu", static_cast<unsigned long long>(s.callCount));
+                    ImGui::TableSetColumnIndex(3); ImGui::Text("%.3f", static_cast<f32>(s.totalMs));
+                    ImGui::TableSetColumnIndex(4); ImGui::Text("%llu", static_cast<unsigned long long>(s.callCount));
                 }
                 ImGui::EndTable();
             }

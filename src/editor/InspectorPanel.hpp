@@ -28,6 +28,7 @@ public:
     InspectorPanel() = default;
 
     void registerDrawer(u32 componentTypeId, ComponentDrawer drawer);
+    void unregisterDrawer(u32 componentTypeId);
     void render(ECS::World& world, EditorContext& ctx);
 
     bool isOpen() const { return m_open; }
@@ -52,6 +53,7 @@ private:
     void drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawPrefabInstance(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 
      void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);
      std::filesystem::path resolveProjectRoot(const EditorContext& ctx) const;

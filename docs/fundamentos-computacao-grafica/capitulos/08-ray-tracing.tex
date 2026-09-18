@@ -1,0 +1,354 @@
+\chapter{Ray Tracing}
+
+O \textit{Ray Tracing} (Traçado de Raios) representa uma mudança fundamental de paradigma na síntese de imagens digitais. Enquanto a rasterização projeta geometria 3D em um plano 2D de forma linear e local, o Ray Tracing simula o comportamento físico da luz ao seguir trajetórias de raios através da cena. Como observa \textcite{shirley2021fundamentals}, esta técnica é inerentemente recursiva e global, permitindo a simulação natural de fenômenos ópticos complexos como sombras suaves, reflexões especulares, refrações e iluminação indireta. Com o advento de hardware especializado em GPUs modernas, o Ray Tracing deixou de ser restrito ao render offline de alta qualidade e passou a integrar pipelines de tempo real em jogos e simulações profissionais de alta fidelidade.
+
+\section{Evolução Histórica e Modelos de Renderização}
+
+A trajetória das técnicas de traçado de raios reflete o aumento exponencial do poder computacional e a sofisticação dos modelos físicos de transporte de luz. Historicamente, o desenvolvimento seguiu os seguintes marcos:
+
+\begin{itemize}
+    \item \textbf{Ray Casting (Appel, 1968):} O ponto de partida da visibilidade 3D. O algoritmo lança um único raio por pixel para determinar qual objeto é visível para o observador. Embora resolva o problema de superfícies ocultas, ele não lida com reflexões, refrações ou sombras de forma recursiva, limitando-se a modelos de iluminação local.
+    \item \textbf{Recursive Ray Tracing (Whitted, 1980):} Turner Whitted revolucionou a área ao introduzir o transporte recursivo de luz. Ao atingir uma superfície, o raio primário pode gerar novos raios de reflexão e refração ideais (espelhadas), além de raios de sombra direcionados às fontes de luz pontuais. Este modelo permitiu, pela primeira vez, a renderização de objetos transparentes e reflexivos de forma convincente.
+    \item \textbf{Distributed Ray Tracing (Cook et al., 1984):} Introduziu a amostragem estocástica (Monte Carlo) para simular efeitos de "foco suave". Ao lançar múltiplos raios levemente perturbados por pixel, o algoritmo permitiu renderizar reflexões borradas (\textit{glossy}), sombras suaves de luzes de área, \textit{motion blur} e profundidade de campo (\textit{depth of field}), aproximando-se da fotografia real.
+    \item \textbf{Path Tracing (Kajiya, 1986):} A técnica definitiva que utiliza integração de Monte Carlo para resolver a Equação de Renderização completa. O Path Tracing permite a simulação de luz indireta difusa (\textit{color bleeding}), cáusticas e outros fenômenos complexos de iluminação global. Atualmente, é o padrão ouro na indústria cinematográfica e de efeitos visuais.
+\end{itemize}
+
+\section{Fundamentos de Radiometria}
+
+Para construir um renderizador fisicamente correto (\textit{Physically Based Rendering} - PBR), é essencial compreender as grandezas físicas que regem o transporte de energia luminosa:
+
+\begin{itemize}
+    \item \textbf{Fluxo Radiante ($\Phi$):} A potência total emitida, refletida ou recebida por uma superfície, medida em Watts ($W$).
+    \item \textbf{Irradiância ($E$):} O fluxo recebido por unidade de área de uma superfície ($W/m^2$). É fundamental para o cálculo de iluminação incidente.
+    \item \textbf{Radiância ($L$):} A grandeza mais importante em Ray Tracing. Representa o fluxo por unidade de área por unidade de ângulo sólido ($W/(m^2 \cdot sr)$). A radiância é invariante ao longo de um raio no vácuo, o que justifica o lançamento de raios a partir da câmera para "buscar" a cor na cena.
+    \item \textbf{Ângulo Sólido ($\omega$):} A extensão tridimensional de um ângulo plano, medida em esferorradianos (sr). Uma esfera completa engloba $4\pi$ sr.
+\end{itemize}
+
+\section{A Geometria Analítica do Raio}
+
+Um raio é uma estrutura geométrica que representa a trajetória retilínea da luz. Formalmente, é uma semirreta definida por um ponto de origem $\mathbf{O}$ e um vetor de direção unitário $\mathbf{D}$.
+
+\begin{formula}{Equação Paramétrica do Raio}
+    R(t) = \mathbf{O} + t\mathbf{D}, \quad t \in [t_{min}, t_{max}]
+\end{formula}
+
+O parâmetro escalar $t$ representa a distância percorrida a partir da origem. Para que o raio avance na direção de interesse, devemos garantir que $t > 0$. Em implementações práticas, define-se um limite inferior $t_{min} \approx 0.0001$ para mitigar artefatos de precisão numérica (\textit{shadow acne}) e um limite superior $t_{max}$ para limitar o alcance da busca espacial.
+
+\section{Sistemas de Coordenadas e Câmera}
+
+A geração de raios primários exige a transformação de coordenadas do espaço da imagem (2D) para o espaço do mundo (3D). Este processo simula o funcionamento de uma câmera \textit{pinhole}.
+
+\subsection{Câmera Pinhole e Viewport}
+
+Considere uma câmera na origem $\mathbf{E}$ (olho), olhando para a direção $-\mathbf{W}$ (vetor unitário), com vetor "up" $\mathbf{V}$ e vetor lateral $\mathbf{U}$. Definimos um plano de imagem a uma distância $d$ do olho. Para um pixel $(i, j)$ em uma imagem de resolução $N_x \times N_y$:
+\begin{align}
+    u = l + (r-l)\frac{i+0.5}{N_x} \\
+    v = b + (t-b)\frac{j+0.5}{N_y}
+\end{align}
+Onde $l, r, b, t$ são as coordenadas das bordas esquerda, direita, baixo e topo do viewport. A direção do raio primário $\mathbf{D}$ é dada por:
+\begin{equation}
+    \mathbf{D} = -d\mathbf{W} + u\mathbf{U} + v\mathbf{V}
+\end{equation}
+
+\subsection{Lentes Reais e Profundidade de Campo}
+
+Para simular o efeito de desfoque (\textit{Depth of Field}), substituímos o ponto matemático da câmera por um disco de abertura. Em vez de todos os raios partirem da mesma origem, amostramos um ponto aleatório na lente e calculamos a direção tal que o raio passe pelo ponto de foco no plano focal. Isso resulta em objetos fora do plano focal aparecendo borrados (\textit{Circle of Confusion}).
+
+\section{Interseção Raio-Geometria}
+
+\section{Sistemas de Coordenadas e Câmera}
+
+A geração de raios primários exige a transformação de coordenadas do espaço da imagem (2D) para o espaço do mundo (3D). Este processo simula o funcionamento de uma câmera \textit{pinhole}.
+
+\subsection{Câmera Pinhole e Viewport}
+
+Considere uma câmera na origem $\mathbf{E}$ (olho), olhando para a direção $-\mathbf{W}$ (vetor unitário), com vetor "up" $\mathbf{V}$ e vetor lateral $\mathbf{U}$. Definimos um plano de imagem a uma distância $d$ do olho. Para um pixel $(i, j)$ em uma imagem de resolução $N_x \times N_y$:
+\begin{align}
+    u = l + (r-l)\frac{i+0.5}{N_x} \\
+    v = b + (t-b)\frac{j+0.5}{N_y}
+\end{align}
+Onde $l, r, b, t$ são as coordenadas das bordas esquerda, direita, baixo e topo do viewport. A direção do raio primário $\mathbf{D}$ é dada por:
+\begin{equation}
+    \mathbf{D} = -d\mathbf{W} + u\mathbf{U} + v\mathbf{V}
+\end{equation}
+
+\subsection{Lentes Reais e Profundidade de Campo}
+
+Para simular o efeito de desfoque (\textit{Depth of Field}), substituímos o ponto matemático da câmera por um disco de abertura. Em vez de todos os raios partirem da mesma origem, amostramos um ponto aleatório na lente e calculamos a direção tal que o raio passe pelo ponto de foco no plano focal. Isso resulta em objetos fora do plano focal aparecendo borrados (\textit{Circle of Confusion}).
+
+\section{Interseção Raio-Geometria}
+
+O cálculo de interseção é a operação mais custosa de um renderizador, ocupando frequentemente mais de 90\% do tempo de CPU/GPU.
+
+\subsection{Interseção com Esferas: Derivação Algébrica Detalhada}
+
+Uma esfera é definida pelo centro $\mathbf{C}$ e raio $r$. Qualquer ponto $\mathbf{P}$ na superfície satisfaz $\|\mathbf{P}-\mathbf{C}\|^2 = r^2$. Ao substituir a equação do raio $R(t) = \mathbf{O} + t\mathbf{D}$, obtemos:
+\begin{equation}
+    (\mathbf{O} + t\mathbf{D} - \mathbf{C}) \cdot (\mathbf{O} + t\mathbf{D} - \mathbf{C}) - r^2 = 0
+\end{equation}
+Expandindo os termos e organizando como uma equação quadrática na forma $at^2 + bt + c = 0$:
+\begin{itemize}
+    \item $a = \mathbf{D} \cdot \mathbf{D} = 1$ (assumindo direção normalizada)
+    \item $b = 2\mathbf{D} \cdot (\mathbf{O} - \mathbf{C})$
+    \item $c = (\mathbf{O} - \mathbf{C}) \cdot (\mathbf{O} - \mathbf{C}) - r^2$
+\end{itemize}
+O discriminante $\Delta = b^2 - 4ac$ determina o número de interseções. Se $\Delta < 0$, o raio erra a esfera. Se $\Delta = 0$, o raio é tangente. Se $\Delta > 0$, existem duas interseções; em Ray Tracing, estamos interessados no menor valor de $t$ que seja maior que $t_{min}$.
+
+\subsection{Interseção com Triângulos: O Algoritmo de Möller-Trumbore}
+
+O algoritmo de Möller-Trumbore é amplamente utilizado por ser rápido e não exigir o armazenamento das normais dos planos das faces. Ele utiliza coordenadas baricêntricas para verificar se o ponto de interseção com o plano do triângulo (vértices $A, B, C$) está dentro dos limites da geometria.
+
+Definimos as arestas $\mathbf{E}_1 = B - A$ e $\mathbf{E}_2 = C - A$. Um ponto no triângulo é expresso como $P(u, v) = A + u\mathbf{E}_1 + v\mathbf{E}_2$. Igualando ao raio:
+\begin{equation}
+    \mathbf{O} + t\mathbf{D} = A + u\mathbf{E}_1 + v\mathbf{E}_2 \Rightarrow [-D, \mathbf{E}_1, \mathbf{E}_2] \begin{bmatrix} t \\ u \\ v \end{bmatrix} = \mathbf{O} - A
+\end{equation}
+Aplicando a Regra de Cramer, obtemos $t, u, v$. A interseção é válida se e somente se:
+\begin{formula}{Condições de Interseção em Triângulos}
+    t > t_{min}, \quad u \ge 0, \quad v \ge 0, \quad (u + v) \le 1
+\end{formula}
+
+\subsection{Interseção com AABB: O Método das Fatias (Slabs)}
+
+Volumes envolventes alinhados aos eixos (AABBs) são definidos por dois pontos: $\mathbf{P}_{min}$ e $\mathbf{P}_{max}$. O método de Kay-Kajiya trata o AABB como a interseção de três "fatias" infinitas (uma para cada eixo).
+
+Para cada eixo $i \in \{x, y, z\}$:
+\begin{align}
+    t_{1} = (P_{min, i} - O_i) / D_i \\
+    t_{2} = (P_{max, i} - O_i) / D_i \\
+    t_{near, i} = \min(t_1, t_2), \quad t_{far, i} = \max(t_1, t_2)
+\end{align}
+O intervalo de interseção global é dado por:
+\begin{equation}
+    t_{enter} = \max(t_{near, x}, t_{near, y}, t_{near, z}), \quad t_{exit} = \min(t_{far, x}, t_{far, y}, t_{far, z})
+\end{equation}
+O raio atinge o volume se $t_{enter} \le t_{exit}$ e $t_{exit} > 0$. Esta operação é extremamente eficiente pois utiliza apenas subtrações e multiplicações (o inverso da direção $1/D_i$ pode ser pré-calculado).
+
+\section{Estruturas de Aceleração Espacial: BVH e KD-Trees}
+
+Em cenas de produção com milhões de triângulos, realizar testes lineares contra toda a geometria é computacionalmente proibitivo ($O(N)$). Estruturas de dados espaciais reduzem essa complexidade para $O(\log N)$.
+
+\subsection{Bounding Volume Hierarchy (BVH)}
+
+A BVH é a estrutura mais comum em Ray Tracing moderno (incluindo hardware de RT). Ela organiza os objetos em uma árvore onde cada nó armazena um AABB que engloba todos os seus descendentes.
+\begin{itemize}
+    \item \textbf{Construção:} O conjunto de primitivas é dividido recursivamente. A escolha do plano de corte é crítica para a performance.
+    \item \textbf{Surface Area Heuristic (SAH):} Em vez de dividir o espaço ao meio, a SAH estima o custo de interseção baseado na probabilidade de um raio atingir um nó, que é proporcional à sua área de superfície. O custo de um corte é $C = C_{trav} + P(A) \cdot N_A \cdot C_{int} + P(B) \cdot N_B \cdot C_{int}$, onde $P(X) = SurfaceArea(X) / SurfaceArea(Parent)$.
+    \item \textbf{Travessia:} Um raio é testado contra o AABB da raiz. Se atingir, o processo se repete para os filhos. Se um nó folha é alcançado, o raio é testado contra as primitivas reais.
+\end{itemize}
+
+\subsection{Grades Espaciais e KD-Trees}
+
+Enquanto a BVH subdivide os objetos, as KD-Trees subdividem o espaço. Grades uniformes são excelentes para cenas com distribuição homogênea de objetos, mas sofrem com o problema do "estádio no deserto" (grandes áreas vazias consumindo memória). KD-Trees resolvem isso com subdivisões adaptativas, sendo historicamente populares para busca de fótons em \textit{Photon Mapping}.
+
+
+\section{A Equação de Renderização: O Modelo Unificado}
+
+Formulada independentemente por \textcite{kajiya1986rendering} e Immel et al. em 1986, a Equação de Renderização é a base teórica de toda a síntese de imagem baseada em física. Ela descreve o balanço de energia luminosa (radiância) em um sistema fechado, assumindo que a luz viaja instantaneamente e que o meio não interfere na propagação (vácuo).
+
+A forma integral da equação para a radiância de saída $L_o$ em um ponto $p$ na direção $\omega_o$ é:
+\begin{formula}{A Equação de Renderização}
+    L_o(p, \omega_o) = L_e(p, \omega_o) + \int_{\Omega} f_r(p, \omega_i, \omega_o) L_i(p, \omega_i) (\omega_i \cdot \mathbf{n}) d\omega_i
+\end{formula}
+
+Componentes da equação:
+\begin{itemize}
+    \item $L_o(p, \omega_o)$: A radiância total saindo de $p$ na direção $\omega_o$. Este é o valor que a câmera eventualmente captura.
+    \item $L_e(p, \omega_o)$: Radiância emitida diretamente pelo ponto (se ele for parte de uma fonte de luz).
+    \item $\int_{\Omega} \dots d\omega_i$: Integral sobre o hemisfério $\Omega$ centrado na normal $\mathbf{n}$. Ela soma a luz vinda de todas as direções incidentes $\omega_i$.
+    \item $f_r(p, \omega_i, \omega_o)$: A BRDF (\textit{Bidirectional Reflectance Distribution Function}). Define a proporção de luz vinda de $\omega_i$ que é refletida para $\omega_o$. Deve respeitar a conservação de energia e a reciprocidade de Helmholtz.
+    \item $L_i(p, \omega_i)$: Radiância incidente vinda de outras partes da cena. Em um sistema de Ray Tracing, este termo é resolvido recursivamente: $L_i(p, \omega_i) = L_o(p', -\omega_i)$, onde $p'$ é o primeiro ponto atingido pelo raio disparado de $p$ na direção $\omega_i$.
+    \item $(\omega_i \cdot \mathbf{n})$ ou $\cos \theta_i$: O termo de atenuação de Lambert. Representa a redução da densidade de fluxo quando a luz atinge a superfície em um ângulo oblíquo.
+\end{itemize}
+
+Resolver esta integral é o desafio central do Ray Tracing. Métodos como o \textit{Path Tracing} utilizam integração de Monte Carlo para estimar o valor da integral amostrando o hemisfério de forma estocástica.
+
+\section{Raios Secundários e Fenômenos Ópticos}
+
+A versatilidade do Ray Tracing reside na sua capacidade de simular efeitos globais simplesmente disparando raios adicionais a partir do ponto de impacto primário.
+
+\subsection{Sombra e Oclusão}
+
+Diferente da rasterização (que usa \textit{shadow maps} ou volumes), o Ray Tracing resolve sombras disparando raios de oclusão (\textit{shadow rays}) em direção às luzes. Se um raio disparado de $p$ em direção à luz $L$ encontrar qualquer objeto com $t < \|L-p\|$, o ponto está na sombra. Luzes de área (não pontuais) produzem sombras suaves naturalmente se dispararmos múltiplos raios para pontos aleatórios na superfície da lâmpada, simulando a \textbf{penumbra}.
+
+\subsection{Reflexão e Refração Especular}
+
+Materiais perfeitamente polidos (espelhos) ou dielétricos (vidro) geram raios secundários em direções determinísticas:
+\begin{itemize}
+    \item \textbf{Reflexão:} A direção refletida $\mathbf{r}$ para um raio incidente com direção $\mathbf{d}$ e normal $\mathbf{n}$ é $\mathbf{r} = \mathbf{d} - 2(\mathbf{d}\cdot\mathbf{n})\mathbf{n}$.
+    \item \textbf{Refração:} Regida pela Lei de Snell ($n_1 \sin \theta_1 = n_2 \sin \theta_2$). O raio muda de direção ao passar de um meio para outro com índices de refração (\textit{IOR}) diferentes.
+    \item \textbf{Efeito Fresnel:} Em materiais reais, a razão entre luz refletida e refratada depende do ângulo de incidência. Observadores próximos à perpendicular de uma superfície de vidro veem mais refração; em ângulos rasos (\textit{grazing angles}), a reflexão domina.
+\end{itemize}
+
+\section{Path Tracing e Monte Carlo}
+
+O Path Tracing resolve a integral da Equação de Renderização através da amostragem estocástica de caminhos de luz. Em vez de calcular a integral analiticamente (o que é impossível para a maioria das cenas), estimamos o valor médio da radiância através de $N$ amostras aleatórias no domínio do hemisfério $\Omega$.
+
+\begin{formula}{Estimador de Monte Carlo para Radiância}
+    L_o(p, \omega_o) \approx \frac{1}{N} \sum_{k=1}^N \frac{f_r(p, \omega_{i,k}, \omega_o) L_i(p, \omega_{i,k}) \cos \theta_{i,k}}{p(\omega_{i,k})}
+\end{formula}
+
+Onde $p(\omega_{i,k})$ é a função de densidade de probabilidade (PDF) da amostra $k$. A precisão do resultado aumenta conforme $1/\sqrt{N}$, o que significa que para reduzir o ruído visível pela metade, precisamos quadruplicar o número de raios por pixel.
+
+\subsection{Técnicas de Redução de Variância}
+
+A variância no Path Tracing manifesta-se visualmente como ruído (\textit{fireflies} ou granulação). Para acelerar a convergência sem viés (\textit{bias}), utilizamos:
+
+\begin{itemize}
+    \item \textbf{Importance Sampling:} Em vez de escolher direções $\omega_i$ uniformemente, amostramos direções que provavelmente trarão mais energia (conforme a BRDF ou apontando para luzes). Se a PDF for proporcional ao integrando, a variância é minimizada.
+    \item \textbf{Russian Roulette:} Caminhos de luz podem, teoricamente, ter comprimento infinito. Para evitar recursão infinita e desperdício em caminhos de baixa contribuição, usamos a Roleta Russa. Dado uma probabilidade de sobrevivência $q$:
+    \begin{equation}
+        L_{new} = \begin{cases} L/q & \text{se } \xi < q \\ 0 & \text{se } \xi \ge q \end{cases}
+    \end{equation}
+    Onde $\xi$ é um número aleatório uniforme em $[0, 1)$. O termo $1/q$ garante que o estimador permaneça não-viesado.
+    \item \textbf{Next Event Estimation (NEE):} Separa a iluminação direta da indireta. Em cada interseção, lança-se explicitamente um raio para um ponto aleatório em cada fonte de luz (\textit{shadow ray}). Isso resolve o problema de luzes pequenas que seriam raramente atingidas por amostragem aleatória do hemisfério.
+    \item \textbf{Multiple Importance Sampling (MIS):} Introduzido por Veach, o MIS combina múltiplas estratégias de amostragem (ex: amostrar a BRDF e amostrar as luzes) ponderando-as de modo a minimizar a variância total, mesmo quando uma das estratégias falha (como uma luz muito grande ou um material muito especular).
+\end{itemize}
+
+\section{Modelos de Microfacetas e PBR}
+
+A renderização baseada em física (\textit{Physically Based Rendering} - PBR) revolucionou a indústria ao fornecer um modelo matemático unificado que garante a consistência da iluminação sob diferentes condições.
+
+\subsection{A BRDF de Cook-Torrance}
+
+O modelo assume que superfícies macroscópicas são formadas por microfacetas microscópicas orientadas de forma estatística. A BRDF especular é composta por três termos principais:
+\begin{equation}
+    f_{spec} = \frac{D \cdot G \cdot F}{4(\omega_i \cdot \mathbf{n})(\omega_o \cdot \mathbf{n})}
+\end{equation}
+
+\begin{itemize}
+    \item \textbf{D (Distribuição):} A função NDF (\textit{Normal Distribution Function}) define a fração de microfacetas orientadas na direção do \textit{half-vector} $\mathbf{h} = \text{normalize}(\omega_i + \omega_o)$. O modelo \textbf{GGX} é o padrão moderno devido ao seu "glint" característico e transição suave entre o pico especular e a área difusa.
+    \item \textbf{G (Geometria):} Modela a auto-oclusão. Em ângulos rasos, uma microfaceta pode bloquear a luz incidente ou refletida de outra microfaceta. Isso é essencial para evitar que materiais pareçam excessivamente brilhantes nas bordas.
+    \item \textbf{F (Fresnel):} Descreve a refletância em função do ângulo. A aproximação de \textbf{Schlick} simplifica o cálculo: $R(\theta) = R_0 + (1 - R_0)(1 - \cos \theta)^5$. Onde $R_0$ é a refletância em incidência normal, que define se o material é metal ou dielétrico.
+\end{itemize}
+
+\subsection{Conservação de Energia}
+
+Um princípio fundamental do PBR é que a energia refletida nunca pode exceder a energia incidente. No código, isso é implementado garantindo que a soma das componentes difusa ($k_d$) e especular ($k_s$) seja menor ou igual a 1, e que o termo de Fresnel seja usado para ponderar essas componentes dinamicamente.
+
+\section{Pseudocódigo: Kernel de Path Tracing}
+
+Abaixo, apresentamos a estrutura de um integrador de caminhos (\textit{path integrator}) robusto com NEE (\textit{Next Event Estimation}) e Roleta Russa:
+
+\begin{lstlisting}[language=C++, caption=Kernel de Path Tracing Moderno]
+Color Radiance(Ray ray, Scene scene, int depth) {
+    if (depth > max_depth) return Color(0);
+
+    Hit hit = scene.intersect(ray);
+    if (!hit.occurred()) return scene.backgroundColor(ray.dir);
+
+    Color L = 0;
+    Material mat = hit.material;
+
+    // Emissao direta (atingiu uma luz)
+    L += mat.emission;
+
+    // Next Event Estimation (Shadow Rays)
+    for (Light light : scene.lights) {
+        ShadowRay sRay = sampleLight(hit.p, light);
+        if (!scene.occluded(sRay)) {
+            L += mat.eval(hit.wo, sRay.wi) * light.intensity * 
+                 dot(hit.n, sRay.wi) / sRay.pdf;
+        }
+    }
+
+    // Amostragem da BRDF para o proximo rebote
+    Sample bSample = mat.sample(hit.wo, hit.n);
+    Ray nextRay(hit.p, bSample.wi);
+    
+    // Roleta Russa
+    float q = max(0.05f, 1.0f - bSample.albedo);
+    if (random() > q) {
+        L += bSample.weight * Radiance(nextRay, scene, depth + 1) / (1-q);
+    }
+
+    return L;
+}
+\end{lstlisting}
+
+\section{Materiais Participantes e Espalhamento}
+
+Efeitos como fumaça, névoa e a aparência da pele humana exigem a simulação de luz viajando através de volumes.
+
+\begin{itemize}
+    \item \textbf{Absorption and Out-scattering:} A radiância diminui à medida que o raio viaja pelo volume, sendo absorvida ou desviada para outras direções.
+    \item \textbf{Phase Functions:} Análogo à BRDF para superfícies, a função de fase (ex: Henyey-Greenstein) define a distribuição angular do espalhamento dentro do volume.
+    \item \textbf{Subsurface Scattering (SSS):} Ocorre quando a luz entra em um objeto translúcido, sofre múltiplos espalhamentos internos e sai em um ponto diferente. Essencial para renderizar materiais orgânicos com realismo fotográfico.
+\end{itemize}
+
+\section{Técnicas de Monte Carlo e Redução de Variância}
+
+A eficiência de um renderizador de caminhos (\textit{Path Tracer}) depende de quão rápido ele consegue reduzir a variância (ruído) da imagem.
+
+\subsection{Importância da Amostragem (Importance Sampling)}
+
+Em vez de escolher direções $\omega_i$ uniformemente no hemisfério, escolhemos direções que possuem maior probabilidade de contribuir para a integral da Equação de Renderização. Se conhecemos a forma da BRDF ou a posição das luzes, podemos concentrar os raios nessas áreas. Matematicamente, se a PDF $p(\omega)$ for perfeitamente proporcional ao integrando $f(\omega)$, a variância cai para zero com uma única amostra (embora isso seja impossível na prática para cenas complexas).
+
+\subsection{Múltipla Amostragem de Importância (MIS)}
+
+Um problema clássico ocorre quando temos uma fonte de luz pequena e intensa junto a um material altamente especular. Amostrar apenas a luz gera ruído no material; amostrar apenas a BRDF gera ruído na luz. O \textbf{MIS}, introduzido por Eric Veach, combina os estimadores de ambas as estratégias usando pesos heurísticos baseados em suas respectivas PDFs:
+\begin{equation}
+    w_i(x) = \frac{p_i(x)^\beta}{\sum_j p_j(x)^\beta}
+\end{equation}
+Isso garante que o renderizador use a melhor estratégia para cada região da cena, resultando em uma convergência muito mais rápida.
+
+\subsection{Roleta Russa e Caminhos Infinitos}
+
+Caminhos de luz poderiam, em teoria, sofrer infinitos rebotes. Para evitar loops infinitos e desperdício de processamento em raios que já perderam quase toda a sua energia (baixo peso), usamos a \textbf{Roleta Russa}.
+\begin{enumerate}
+    \item Escolhemos uma probabilidade de terminação $q$ (baseada no albedo do material).
+    \item Geramos um número aleatório $\xi \in [0, 1)$.
+    \item Se $\xi < q$, o caminho é terminado.
+    \item Se sobreviver, o peso do raio é escalado por $1/(1-q)$ para manter o estimador não-viesado.
+\end{enumerate}
+
+\section{Hardware Acceleration e o Futuro}
+
+O Ray Tracing, historicamente restrito a supercomputadores e renderizadores offline para cinema, atingiu o mercado de consumo através de GPUs modernas com núcleos de aceleração dedicados (\textit{RT Cores}).
+
+\subsection{Aceleração em Hardware}
+
+Processadores gráficos contemporâneos implementam a travessia de BVH e o teste de interseção raio-triângulo diretamente em circuitos lógicos especializados. Isso permite que jogos executem milhões de raios por segundo, viabilizando iluminação global, reflexos dinâmicos e sombras fisicamente corretas em tempo real. A API \textbf{DirectX Raytracing (DXR)} e extensões do \textbf{Vulkan} padronizaram o acesso a esses recursos.
+
+\subsection{Denoising e Inteligência Artificial}
+
+Mesmo com hardware potente, gerar centenas de amostras por pixel em 16ms é impossível. A solução moderna é renderizar com pouquíssimas amostras (1 a 4 SPP) e utilizar filtros de \textbf{Denoising} (redução de ruído) espaciais e temporais. Técnicas baseadas em Deep Learning, como o NVIDIA DLSS, Intel XeSS e AMD FSR, utilizam vetores de movimento e dados históricos para reconstruir imagens limpas e de alta resolução a partir de entradas ruidosas e de baixa fidelidade.
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Derive os coeficientes da equação quadrática para a interseção raio-esfera $\|\mathbf{O} + t\mathbf{D} - \mathbf{C}\|^2 = r^2$.
+    \item No algoritmo de Möller-Trumbore, explique matematicamente o que ocorre quando o determinante é nulo. Qual o significado geométrico deste caso para a relação entre o raio e o plano do triângulo?
+    \item Escreva o pseudocódigo para a travessia de uma árvore BVH usando uma pilha (\textit{stack}). Como você otimizaria a ordem de visita dos nós filhos para acelerar a busca?
+    \item Demonstre matematicamente que a Roleta Russa mantém o estimador de Monte Carlo não-viesado (\textit{unbiased}). Por que o peso do raio deve ser dividido pela probabilidade de sobrevivência?
+    \item Dada uma fonte de luz esférica de raio $R$ a uma distância $d$ do ponto $p$, como você realizaria \textit{importance sampling} diretamente sobre o ângulo sólido subtendido pela luz?
+    \item Explique as diferenças físicas e as unidades de medida entre radiância, irradiância e fluxo radiante. Qual dessas grandezas é preservada ao longo de um raio no vácuo?
+    \item Compare a complexidade computacional da rasterização vs. ray tracing em termos de número de primitivas ($N$) e número de pixels ($P$). Como as estruturas de aceleração mudam essa relação?
+    \item O que é a aproximação de Schlick para o termo de Fresnel? Explique como ela varia com o ângulo de incidência e o índice de refração do material.
+    \item Descreva o modelo de microfacetas GGX. Por que sua distribuição de normais é considerada superior ao modelo de Phong para materiais metálicos?
+    \item Explique o conceito de Multiple Importance Sampling (MIS). Desenhe um cenário (configuração de luz e material) onde a amostragem da luz falha mas a da BRDF funciona, e vice-versa.
+    \item Explique o fenômeno de \textit{total internal reflection} (Reflexão Total Interna) usando a Lei de Snell. Em que condições ele ocorre e como deve ser tratado no código de refração?
+    \item O que é a SAH (\textit{Surface Area Heuristic})? Deduza a fórmula de custo e explique por que a área de superfície é um bom preditor da probabilidade de interseção de um raio aleatório.
+\end{enumerate}
+
+
+
+
+\begin{dica}
+    No Path Tracing, o ruído diminui com a raiz quadrada do número de amostras ($1/\sqrt{N}$). Para reduzir o ruído visível pela metade, é necessário quadruplicar o número de amostras por pixel (SPP).
+\end{dica}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Derive os coeficientes da equação quadrática para a interseção raio-esfera e resolva para $t$.
+    \item No algoritmo de Möller-Trumbore, explique matematicamente o que ocorre quando o determinante é nulo. Qual o significado geométrico deste caso?
+    \item Escreva o pseudocódigo para a travessia de uma árvore BVH usando uma pilha (\textit{stack}) de forma eficiente.
+    \item Demonstre matematicamente que a Roleta Russa mantém o estimador de Monte Carlo não-viesado.
+    \item Dada uma fonte de luz esférica, como você realizaria \textit{importance sampling} diretamente sobre a área da luz em vez de amostrar o hemisfério uniformemente?
+    \item Explique as diferenças físicas entre radiância, irradiância e fluxo radiante.
+    \item Compare a complexidade computacional da rasterização vs ray tracing conforme o número de triângulos e luzes na cena cresce.
+    \item Como o fenômeno de \textit{total internal reflection} afeta o cálculo de refração em materiais vítreos? Use a Lei de Snell para justificar.
+    \item O que é o modelo de microfacetas GGX e como ele difere do modelo de sombreamento de Phong?
+    \item Explique o conceito de Multiple Importance Sampling (MIS) e dê um exemplo de cenário onde ele é essencial para reduzir a variância.
+\end{enumerate}
+

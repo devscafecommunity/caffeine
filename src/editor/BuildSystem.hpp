@@ -7,6 +7,7 @@
 
 #include "core/Types.hpp"
 #include <atomic>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,11 @@ enum class BuildStatus : u8 {
 struct BuildSettings {
     std::string projectName;
     std::string outputDir;
+    std::filesystem::path projectRoot;
+    std::filesystem::path assetsRawPath = "assets/raw";
+    std::filesystem::path assetsProcessedPath = "assets/processed";
+    std::filesystem::path scriptsPath = "scripts";
+    std::string startupScene;
     BuildPlatform platform = BuildPlatform::Windows_x64;
     bool isDebug = false;
     bool incrementalBuild = true;
@@ -72,8 +78,11 @@ struct BuildProgress {
 
 class BuildSystem {
 public:
-    // Entry point: schedule build in background job
+    // Schedule build in background thread (non-blocking UI).
     static void ExecuteBuild(const BuildSettings& settings);
+
+    // Run build on caller thread (for tests / CLI).
+    static bool ExecuteBuildBlocking(const BuildSettings& settings);
 
     // Request cancellation
     static void CancelBuild();

@@ -2,6 +2,10 @@
 #include "ecs/Components.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "editor/ComponentRegistry.hpp"
+#include "editor/EditorIcons.hpp"
+#include "debug/Profiler.hpp"
+#include "editor/PluginSystem.hpp"
+#include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 
 #ifdef CF_HAS_IMGUI
@@ -22,6 +26,8 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     });
     m_assetManager = assetManager;
     m_currentProjectConfig = projectConfig;
+    m_currentProjectConfig.RootPath =
+        ProjectManager::ResolveEditorProjectRoot(projectConfig.RootPath);
     m_tabManager.newScene("Untitled");
 
     m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {
@@ -35,6 +41,12 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     });
     m_commandPalette.registerCommand("panel_profiler", "Profiler", "Panels", [this]() {
         m_profiler.open();
+    });
+    m_commandPalette.registerCommand("panel_entity_debugger", "Entity Debugger", "Panels", [this]() {
+        m_entityDebugger.open();
+    });
+    m_commandPalette.registerCommand("panel_plugin_manager", "Plugin Manager", "Panels", [this]() {
+        PluginManager::instance().openManager();
     });
     m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Panels", [this]() {
         m_assetBrowser.open();
@@ -74,6 +86,20 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
      m_audioPreview.init();
 
+    m_buildDialog.setPrepareBuildCallback([this]() { return prepareSceneForBuild(); });
+    m_buildDialog.setProjectContext(projectConfig);
+
+    const std::filesystem::path pluginsDir =
+        projectConfig.RootPath.empty()
+            ? (std::filesystem::current_path() / "plugins")
+            : (projectConfig.RootPath / "plugins");
+    std::filesystem::path bundledPluginsDir;
+    if (EditorPaths::isReady()) {
+        bundledPluginsDir = EditorPaths::root().parent_path() / "plugins";
+    }
+    PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
+                                         bundledPluginsDir);
+
      m_inspector.open();
      m_assetBrowser.open();
 
@@ -84,11 +110,21 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
     // Auto-load last scene if project config has one
     if (!projectConfig.LastScene.empty()) {
-        std::filesystem::path scenePath = projectConfig.RootPath / projectConfig.LastScene;
-         if (std::filesystem::exists(scenePath)) {
+        std::string lastScene = projectConfig.LastScene;
+        if (lastScene.find("/build/") != std::string::npos ||
+            lastScene.find("\\build\\") != std::string::npos ||
+            lastScene.rfind("build/", 0) == 0) {
+            lastScene = "scenes/main.caf";
+        }
+        std::filesystem::path scenePath = projectConfig.RootPath / lastScene;
+        if (!std::filesystem::exists(scenePath) && lastScene != "scenes/main.caf") {
+            scenePath = projectConfig.RootPath / "scenes" / "main.caf";
+        }
+        if (std::filesystem::exists(scenePath)) {
             if (auto* world = m_tabManager.activeWorld()) {
                 loadScene(scenePath.string().c_str(), *world);
-                m_tabManager.activeTab().name = std::filesystem::path(projectConfig.LastScene).stem().string();
+                m_tabManager.activeTab().name = scenePath.stem().string();
+                m_tabManager.activeTab().path = scenePath.string();
             }
         }
     }
@@ -110,8 +146,19 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 }
 
 void SceneEditor::shutdown() {
+    PluginManager::instance().shutdown();
     m_viewport.shutdown();
     m_audioPreview.shutdown();
+}
+
+void SceneEditor::onQuitRequested() {
+    if (!m_ctx.isDirty) {
+        m_open = false;
+        m_quitConfirmed = true;
+        return;
+    }
+    m_pendingAction = PendingAction::Exit;
+    m_showQuitPopup = true;
 }
 
 // ── Play mode control ───────────────────────────────────────────
@@ -195,12 +242,24 @@ void SceneEditor::renderPlaybar(ECS::World& world) {
 // ── Main render ─────────────────────────────────────────────────
 
 void SceneEditor::render(f32 deltaTime) {
+    CF_PROFILE_SCOPE("SceneEditor::render");
     if (!m_open) return;
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
     if (!activeWorld) return;
 
+    if (m_tabManager.activeTabIndex() >= 0) {
+        m_tabManager.activeTab().isDirty = m_ctx.isDirty;
+    }
+
+    if (m_showQuitPopup) {
+        ImGui::OpenPopup("Unsaved Changes?");
+        m_showQuitPopup = false;
+    }
+
     tickSystems(*activeWorld, deltaTime);
+    m_ctx.tickTransientStatus(deltaTime);
+    PluginManager::instance().refreshPlugins(deltaTime);
 
     handleShortcuts(*activeWorld);
 
@@ -299,23 +358,27 @@ void SceneEditor::render(f32 deltaTime) {
     m_inspector.render(*activeWorld, m_ctx);
     renderPlaybar(*activeWorld);
     m_viewport.render(*activeWorld, m_ctx);
-    m_assetBrowser.render(m_ctx);
+    m_assetBrowser.render(*activeWorld, m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
+    m_entityDebugger.render(*activeWorld, m_ctx);
     m_scriptEditor.render();
     m_settingsPanel.render();
     m_materialEditor.onImGuiRender();
     m_audioPreview.onImGuiRender();
-    m_cameraPreview.onImGuiRender(*activeWorld, m_ctx);
+    m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
     m_animationTimeline.render(deltaTime);
     m_animatorController.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
+    PluginManager::instance().renderPanels();
+    PluginManager::instance().renderManagerUI();
 
     ImGui::End(); // DockSpace
 
     renderStatusBar(*activeWorld);
+    m_profiler.pushFrameTime(deltaTime * 1000.0f);
 }
 
 // ── Dockspace setup ─────────────────────────────────────────────
@@ -337,6 +400,8 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
      ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
      ImGui::DockBuilderDockWindow("Console", dockBottom);
      ImGui::DockBuilderDockWindow("Profiler", dockBottom);
+     ImGui::DockBuilderDockWindow("Entity Debugger", dockBottom);
+     ImGui::DockBuilderDockWindow("Plugin Manager", dockBottom);
      ImGui::DockBuilderDockWindow("Material Editor", dockBottom);
 
      ImGui::DockBuilderFinish(dockspaceId);
@@ -346,8 +411,13 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
 
 void SceneEditor::renderMainMenuBar(ECS::World& world) {
     if (ImGui::BeginMainMenuBar()) {
+        if (EditorIcons::hasBrandLogo()) {
+            EditorIcons::brandLogo(ImGui::GetFrameHeight() * 0.85f);
+            ImGui::SameLine();
+        }
+
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
+            if (EditorIcons::menuItem(EditorIcon::NewScene, "New Scene", "Ctrl+N")) {
                 if (m_ctx.isDirty) {
                     m_pendingAction = PendingAction::NewScene;
                     ImGui::OpenPopup("Unsaved Changes?");
@@ -355,17 +425,17 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                     doNewScene();
                 }
             }
-            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            if (EditorIcons::menuItem(EditorIcon::Save, "Save", "Ctrl+S")) {
                 if (m_ctx.currentScenePath.empty()) {
                     saveSceneAs(world);
                 } else {
                     saveScene(m_ctx.currentScenePath.c_str(), world);
                 }
             }
-            if (ImGui::MenuItem("Save As...")) {
+            if (EditorIcons::menuItem(EditorIcon::SaveAs, "Save As...")) {
                 saveSceneAs(world);
             }
-            if (ImGui::MenuItem("Open...", "Ctrl+O")) {
+            if (EditorIcons::menuItem(EditorIcon::Open, "Open...", "Ctrl+O")) {
                 if (m_ctx.isDirty) {
                     m_pendingAction = PendingAction::OpenScene;
                     ImGui::OpenPopup("Unsaved Changes?");
@@ -378,8 +448,9 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                     }
                 }
             }
+            PluginManager::instance().renderMenuItems("File");
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit")) {
+            if (EditorIcons::menuItem(EditorIcon::Exit, "Exit")) {
                 if (m_ctx.isDirty) {
                     m_pendingAction = PendingAction::Exit;
                     ImGui::OpenPopup("Unsaved Changes?");
@@ -390,35 +461,78 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
+            if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
                 m_ctx.undoStack.undo(world);
             }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
+            if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
                 m_ctx.undoStack.redo(world);
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
                 m_ctx.clipboardEntity = m_ctx.selectedEntity;
             }
-            if (ImGui::MenuItem("Paste", "Ctrl+V", false, m_ctx.clipboardEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Paste, "Paste", "Ctrl+V", false, m_ctx.clipboardEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
             }
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Duplicate, "Duplicate", "Ctrl+D", false, m_ctx.selectedEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
+            }
+            PluginManager::instance().renderMenuItems("Edit");
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Help")) {
+            PluginManager::instance().renderMenuItems("Help");
+            ImGui::EndMenu();
+        }
+
+        PluginManager::instance().renderMenuExtensions();
+
+        if (ImGui::BeginMenu("Plugins")) {
+            if (EditorIcons::menuItem(EditorIcon::Plugins, "Plugin Manager...")) {
+                PluginManager::instance().openManager();
+            }
+            if (EditorIcons::menuItem(EditorIcon::Refresh, "Refresh Plugins")) {
+                PluginManager::instance().refreshPluginsDirectory();
             }
             ImGui::EndMenu();
         }
+
         if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Hierarchy", nullptr, &m_ctx.hierarchyOpen);
-            ImGui::MenuItem("Inspector", nullptr, &m_ctx.inspectorOpen);
-            ImGui::MenuItem("Viewport",  nullptr, &m_ctx.viewportOpen);
-            ImGui::MenuItem("Assets",    nullptr, &m_ctx.assetsOpen);
+            bool hierarchyOpen = m_hierarchy.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Hierarchy, "Hierarchy", nullptr, &hierarchyOpen)) {
+                hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
+            }
+            bool inspectorOpen = m_inspector.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Inspector, "Inspector", nullptr, &inspectorOpen)) {
+                inspectorOpen ? m_inspector.open() : m_inspector.close();
+            }
+            bool viewportOpen = m_viewport.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Viewport, "Viewport", nullptr, &viewportOpen)) {
+                viewportOpen ? m_viewport.open() : m_viewport.close();
+            }
+            bool assetsOpen = m_assetBrowser.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Assets, "Assets", nullptr, &assetsOpen)) {
+                assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
+            }
+            bool consoleOpen = m_console.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Console, "Console", nullptr, &consoleOpen)) {
+                consoleOpen ? m_console.open() : m_console.close();
+            }
+            bool profilerOpen = m_profiler.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::Profiler, "Profiler", nullptr, &profilerOpen)) {
+                profilerOpen ? m_profiler.open() : m_profiler.close();
+            }
+            bool entityDebuggerOpen = m_entityDebugger.isOpen();
+            if (EditorIcons::menuItem(EditorIcon::EntityDebugger, "Entity Debugger", nullptr, &entityDebuggerOpen)) {
+                entityDebuggerOpen ? m_entityDebugger.open() : m_entityDebugger.close();
+            }
             ImGui::Separator();
             bool atOpen = m_animationTimeline.isOpen();
-            if (ImGui::MenuItem("Animation Timeline", nullptr, &atOpen))
+            if (EditorIcons::menuItem(EditorIcon::Animation, "Animation Timeline", nullptr, &atOpen))
                 atOpen ? m_animationTimeline.open() : m_animationTimeline.close();
             bool acOpen = m_animatorController.isOpen();
-            if (ImGui::MenuItem("Animator Controller", nullptr, &acOpen))
+            if (EditorIcons::menuItem(EditorIcon::Animator, "Animator Controller", nullptr, &acOpen))
                 acOpen ? m_animatorController.open() : m_animatorController.close();
             ImGui::EndMenu();
         }
@@ -434,19 +548,26 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.55f, 0.18f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.70f, 0.22f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.12f, 0.40f, 0.12f, 1.0f));
-                if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25B6 Play"), ImVec2(btnW, 0)))
-                    enterPlayMode(world);
+                bool playClicked = EditorIcons::hasIcon("arrow-right")
+                    ? EditorIcons::iconButton("arrow-right", "play", 18.0f)
+                    : ImGui::Button("Play", ImVec2(btnW, 0));
+                if (playClicked) enterPlayMode(world);
                 ImGui::PopStyleColor(3);
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.45f, 0.10f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.58f, 0.14f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.33f, 0.08f, 1.0f));
+                bool transportClicked = false;
                 if (m_isPaused) {
-                    if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25B6 Resume"), ImVec2(btnW, 0)))
-                        m_isPaused = false;
+                    transportClicked = EditorIcons::hasIcon("arrow-right")
+                        ? EditorIcons::iconButton("arrow-right", "resume", 18.0f)
+                        : ImGui::Button("Resume", ImVec2(btnW, 0));
+                    if (transportClicked) m_isPaused = false;
                 } else {
-                    if (ImGui::Button(reinterpret_cast<const char*>(u8"\u23F8 Pause"), ImVec2(btnW, 0)))
-                        m_isPaused = true;
+                    transportClicked = EditorIcons::hasIcon("arrow-close-down")
+                        ? EditorIcons::iconButton("arrow-close-down", "pause", 18.0f)
+                        : ImGui::Button("Pause", ImVec2(btnW, 0));
+                    if (transportClicked) m_isPaused = true;
                 }
                 ImGui::PopStyleColor(3);
 
@@ -455,8 +576,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.40f, 0.12f, 0.12f, 1.0f));
-                if (ImGui::Button(reinterpret_cast<const char*>(u8"\u25A0 Stop"), ImVec2(btnW, 0)))
-                    exitPlayMode(world);
+                const bool stopClicked = EditorIcons::hasIcon("arrow-close-left")
+                    ? EditorIcons::iconButton("arrow-close-left", "stop", 18.0f)
+                    : ImGui::Button("Stop", ImVec2(btnW, 0));
+                if (stopClicked) exitPlayMode(world);
                 ImGui::PopStyleColor(3);
             }
 #else
@@ -505,6 +628,27 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 
         // Undo stack depth
         ImGui::Text("Undo: %u", m_ctx.undoStack.count());
+
+        if (!m_ctx.transientStatus.empty()) {
+            ImGui::SameLine();
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine();
+            const ImVec4 color = m_ctx.transientStatusIsError
+                ? ImVec4(1.0f, 0.45f, 0.35f, 1.0f)
+                : ImVec4(0.45f, 0.9f, 0.45f, 1.0f);
+            ImGui::TextColored(color, "%s", m_ctx.transientStatus.c_str());
+        }
+
+        const f32 frameMs = m_profiler.lastFrameTime();
+        if (frameMs > 0.0f) {
+            const f32 fps = 1000.0f / frameMs;
+            ImGui::SameLine(ImGui::GetWindowWidth() - 170.0f);
+            if (frameMs > 33.0f) {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
+            } else {
+                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.65f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
+            }
+        }
 
         ImGui::EndMainMenuBar();
     }
@@ -585,7 +729,15 @@ bool SceneEditor::saveScene(const char* path, ECS::World& world) {
         // Store relative path if scene is inside the project root
         std::error_code ec;
         auto rel = std::filesystem::relative(scenePath, root, ec);
-        m_currentProjectConfig.LastScene = (!ec && !rel.empty()) ? rel.string() : scenePath.string();
+        std::string lastScene = (!ec && !rel.empty()) ? rel.string() : scenePath.string();
+        if (lastScene.rfind("data/scenes/", 0) == 0) {
+            lastScene = "scenes/" + std::filesystem::path(lastScene).filename().string();
+        }
+        if (lastScene.find("/build/") != std::string::npos ||
+            lastScene.find("\\build\\") != std::string::npos) {
+            lastScene = "scenes/" + std::filesystem::path(lastScene).filename().string();
+        }
+        m_currentProjectConfig.LastScene = lastScene;
         ProjectManager pm;
         pm.SaveProjectFile(m_currentProjectConfig);
     }
@@ -596,11 +748,37 @@ bool SceneEditor::saveScene(const char* path, ECS::World& world) {
 bool SceneEditor::saveSceneAs(ECS::World& world) {
     std::filesystem::path defaultPath;
     if (!m_currentProjectConfig.RootPath.empty()) {
-        defaultPath = m_currentProjectConfig.RootPath / "scene.caf";
+        defaultPath = m_currentProjectConfig.RootPath / "scenes" / "main.caf";
+        std::error_code ec;
+        std::filesystem::create_directories(defaultPath.parent_path(), ec);
     } else {
-        defaultPath = "scene.caf";
+        defaultPath = "scenes/main.caf";
     }
     return saveScene(defaultPath.string().c_str(), world);
+}
+
+std::string SceneEditor::prepareSceneForBuild() {
+    ECS::World* world = m_tabManager.activeWorld();
+    if (!world || m_currentProjectConfig.RootPath.empty()) {
+        return {};
+    }
+
+    // Always snapshot the active editor scene to a stable project path for packaging.
+    const std::filesystem::path scenePath =
+        m_currentProjectConfig.RootPath / "scenes" / "main.caf";
+
+    std::error_code ec;
+    std::filesystem::create_directories(scenePath.parent_path(), ec);
+    if (!saveScene(scenePath.string().c_str(), *world)) {
+        return {};
+    }
+
+    if (m_tabManager.activeTabIndex() >= 0) {
+        m_tabManager.activeTab().path = scenePath.string();
+        m_tabManager.activeTab().name = scenePath.stem().string();
+    }
+
+    return "scenes/main.caf";
 }
 
 bool SceneEditor::loadScene(const char* path, ECS::World& world) {
@@ -609,6 +787,11 @@ bool SceneEditor::loadScene(const char* path, ECS::World& world) {
     m_ctx.currentScenePath = path;
     m_ctx.selectedEntity = ECS::Entity::INVALID;
     m_ctx.isDirty = false;
+    if (m_tabManager.activeTabIndex() >= 0) {
+        m_tabManager.activeTab().path = path;
+        m_tabManager.activeTab().name = std::filesystem::path(path).stem().string();
+        m_tabManager.activeTab().isDirty = false;
+    }
     return true;
 }
 
@@ -617,7 +800,8 @@ bool SceneEditor::loadScene(const char* path, ECS::World& world) {
 void SceneEditor::closeTab(int index) {
     if (index < 0 || index >= m_tabManager.tabCount()) return;
     auto& tab = m_tabManager.tab(index);
-    if (tab.isDirty) {
+    const bool dirty = (index == m_tabManager.activeTabIndex()) ? m_ctx.isDirty : tab.isDirty;
+    if (dirty) {
         m_pendingCloseTab = index;
         ImGui::OpenPopup("Unsaved Tab?");
     } else {
@@ -669,11 +853,19 @@ void SceneEditor::renderUnsavedChangesPopup(ECS::World& world) {
 
             if (ImGui::Button("Save", ImVec2(120, 0))) {
                 auto& tab = m_tabManager.tab(m_pendingCloseTab);
-                // Save if we have a path, otherwise save-as with default name
-                const char* savePath = tab.path.empty() ? "scene.caf" : tab.path.c_str();
-                Editor::SceneSerializer serializer(*tab.world);
-                if (serializer.serialize(savePath)) {
-                    tab.isDirty = false;
+                if (m_pendingCloseTab == m_tabManager.activeTabIndex()) {
+                    if (m_ctx.currentScenePath.empty()) {
+                        saveSceneAs(*tab.world);
+                    } else {
+                        saveScene(m_ctx.currentScenePath.c_str(), *tab.world);
+                    }
+                } else if (!tab.path.empty()) {
+                    Editor::SceneSerializer serializer(*tab.world);
+                    if (serializer.serialize(tab.path)) {
+                        tab.isDirty = false;
+                    }
+                } else {
+                    saveSceneAs(*tab.world);
                 }
                 m_tabManager.closeScene(m_pendingCloseTab);
                 ImGui::CloseCurrentPopup();
@@ -715,6 +907,7 @@ void SceneEditor::executePendingAction(ECS::World& world) {
         }
         case PendingAction::Exit:
             m_open = false;
+            m_quitConfirmed = true;
             break;
         default:
             break;

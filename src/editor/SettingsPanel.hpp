@@ -40,7 +40,7 @@ private:
     std::function<void()> m_onLayoutChange;
 
     bool m_vsyncEnabled    = true;
-    int  m_fontSize        = 13;
+    int  m_fontSize        = 14;
     bool m_darkMode        = true;
     bool m_autoSaveEnabled = true;
     int  m_autoSaveInterval = 300;

@@ -1,4 +1,5 @@
 #include "editor/ProjectStartupDialog.hpp"
+#include "editor/EditorIcons.hpp"
 #include <filesystem>
 #include <cstring>
 
@@ -33,7 +34,14 @@ std::optional<ProjectConfig> ProjectStartupDialog::render() {
     ImGui::SetNextWindowSize(ImVec2(620, 520), ImGuiCond_Appearing);
     
     if (ImGui::Begin("Project Manager", &m_open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
-        ImGui::Text("Welcome to Doppio — Select or Create a Project");
+        if (EditorIcons::hasBrandLogo()) {
+            EditorIcons::brandLogo(52.0f);
+            ImGui::SameLine();
+        }
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted("Doppio");
+        ImGui::TextDisabled("Caffeine Studio IDE — Select or create a project");
+        ImGui::EndGroup();
         ImGui::Separator();
         
         if (ImGui::BeginTabBar("ProjectDialogTabs")) {
@@ -234,6 +242,10 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     ImGui::Separator();
 
     ImGui::Text("Location: %s", m_selectedLocation.c_str());
+    if (EditorIcons::hasIcon(EditorIcon::Folder)) {
+        EditorIcons::image(EditorIcon::Folder, ImGui::GetFontSize());
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Browse Location...##Create", ImVec2(150, 0))) {
         m_showLocationPicker = true;
     }
@@ -255,6 +267,10 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     bool canCreate = (m_projectName[0] != '\0');
     if (!canCreate) ImGui::BeginDisabled();
     
+    if (EditorIcons::hasIcon(EditorIcon::NewScene)) {
+        EditorIcons::image(EditorIcon::NewScene, ImGui::GetFontSize());
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Create & Open", ImVec2(150, 0))) {
         result = tryCreateProject();
         if (result) {
@@ -272,16 +288,30 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
 std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
     std::optional<ProjectConfig> result;
 
-    auto projectDisplayName = [](const std::filesystem::path& projectPath) {
-        if (projectPath.filename() == "project.caffeine" && projectPath.has_parent_path()) {
-            return projectPath.parent_path().filename().string();
-        }
+    struct RecentEntry {
+        std::string name;
+        std::string folder;
+        std::filesystem::path file;
+    };
 
-        std::string name = projectPath.stem().string();
-        if (name.empty()) {
-            name = projectPath.filename().string();
+    auto buildRecentEntry = [&](const std::filesystem::path& projectPath) -> RecentEntry {
+        RecentEntry entry;
+        entry.file = projectPath;
+        entry.folder = projectPath.parent_path().string();
+
+        ProjectConfig cfg;
+        ProjectManager loader;
+        if (loader.TryLoadProject(projectPath, cfg) && !cfg.Name.empty()) {
+            entry.name = cfg.Name;
+        } else if (projectPath.filename() == "project.caffeine" && projectPath.has_parent_path()) {
+            entry.name = projectPath.parent_path().filename().string();
+        } else {
+            entry.name = projectPath.stem().string();
+            if (entry.name.empty()) {
+                entry.name = projectPath.filename().string();
+            }
         }
-        return name;
+        return entry;
     };
 
     ImGui::InputTextWithHint("##search_recent", "Search projects...", m_searchFilter, sizeof(m_searchFilter));
@@ -296,37 +326,49 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
             ImGui::TextDisabled("No projects yet. Create one in 'Create New' tab!");
         } else {
              for (size_t i = 0; i < m_recentProjects.size(); ++i) {
-                 const auto& projPath = m_recentProjects[i];
-                 std::string projName = projectDisplayName(projPath);
-                 
+                 const RecentEntry entry = buildRecentEntry(m_recentProjects[i]);
+
                  if (strlen(m_searchFilter) > 0) {
-                     if (projName.find(m_searchFilter) == std::string::npos) {
+                     if (entry.name.find(m_searchFilter) == std::string::npos &&
+                         entry.folder.find(m_searchFilter) == std::string::npos) {
                          continue;
                      }
                  }
 
                  ImGui::PushID((int)i);
-                 
+
                  bool selected = (m_selectedRecentIndex == (int)i);
                  const float openButtonWidth = 70.0f;
                  const float spacing = ImGui::GetStyle().ItemSpacing.x;
-                 float selectableWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
-                 if (selectableWidth < 1.0f) selectableWidth = 1.0f;
+                 float rowWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
+                 if (rowWidth < 1.0f) rowWidth = 1.0f;
 
-                 if (ImGui::Selectable(projName.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(selectableWidth, 0.0f))) {
-                     m_selectedRecentIndex = i;
+                 ImGui::BeginGroup();
+                 if (ImGui::Selectable("##recent_row", selected,
+                                       ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_SpanAllColumns,
+                                       ImVec2(rowWidth, 42.0f))) {
+                     m_selectedRecentIndex = (int)i;
                  }
 
+                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 38.0f);
+                 ImGui::Indent(8.0f);
+                 ImGui::TextUnformatted(entry.name.c_str());
+                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                 ImGui::TextWrapped("%s", entry.folder.c_str());
+                 ImGui::PopStyleColor();
+                 ImGui::Unindent(8.0f);
+                 ImGui::EndGroup();
+
                  ImGui::SameLine();
-                 if (ImGui::Button("Open", ImVec2(openButtonWidth, 0))) {
-                     result = tryOpenProject(projPath);
+                 if (ImGui::Button("Open", ImVec2(openButtonWidth, 42.0f))) {
+                     result = tryOpenProject(entry.file);
                      if (result) {
                          showToast("Project opened!", ToastType::Success);
                      } else {
                          showToast("Failed to open project", ToastType::Error);
                      }
                  }
-                 
+
                  ImGui::PopID();
              }
         }

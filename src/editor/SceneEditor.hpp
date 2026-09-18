@@ -8,6 +8,8 @@
 #include "editor/AssetBrowser.hpp"
 #include "editor/ConsoleWindow.hpp"
 #include "editor/ProfilerWindow.hpp"
+#include "editor/EntityDebugger.hpp"
+#include "editor/PluginSystem.hpp"
 #include "editor/SceneSerializer.hpp"
 #include "editor/SceneTabManager.hpp"
 #include "editor/ScriptEditorWindow.hpp"
@@ -76,6 +78,7 @@ public:
     bool saveScene(const char* path, ECS::World& world);
     bool saveSceneAs(ECS::World& world);
     bool loadScene(const char* path, ECS::World& world);
+    std::string prepareSceneForBuild();
 
     // ── Accessors ──
 
@@ -87,6 +90,7 @@ public:
     SceneTabManager& tabManager() { return m_tabManager; }
     ConsoleWindow&  console() { return m_console; }
     ProfilerWindow& profiler() { return m_profiler; }
+    EntityDebuggerPanel& entityDebugger() { return m_entityDebugger; }
     ScriptEditorWindow& scriptEditor() { return m_scriptEditor; }
     AnimationTimelinePanel& animationTimeline() { return m_animationTimeline; }
     AnimatorControllerWindow& animatorController() { return m_animatorController; }
@@ -100,6 +104,10 @@ public:
     void close() { m_open = false; }
     void open()  { m_open = true; }
     void requestLayoutRebuild() { m_layoutNeedsRebuild = true; }
+
+    // Called when the OS window close button is pressed.
+    void onQuitRequested();
+    bool quitConfirmed() const { return m_quitConfirmed; }
 
 
 private:
@@ -128,6 +136,7 @@ private:
     SceneTabManager m_tabManager;
     ConsoleWindow   m_console;
     ProfilerWindow  m_profiler;
+    EntityDebuggerPanel m_entityDebugger;
     ScriptEditorWindow m_scriptEditor;
 
 #ifdef CF_HAS_IMGUI
@@ -151,6 +160,8 @@ private:
     void closeTab(int index);
 
     bool m_open         = true;
+    bool m_quitConfirmed = false;
+    bool m_showQuitPopup = false;
     bool m_dockingSetup = false;
     ImGuiID m_dockspaceId = 0;
     bool m_layoutNeedsRebuild = false;

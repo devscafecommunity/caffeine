@@ -61,6 +61,7 @@ add_library(caffeine-core
     src/assets/TextureCompiler.cpp
     src/assets/MeshLoader.cpp
     src/assets/MeshCache.cpp
+    src/assets/MeshImportValidator.cpp
     src/assets/MeshLOD.cpp
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
@@ -314,6 +315,14 @@ with open(sys.argv[1], 'w') as f:
      )
      FetchContent_MakeAvailable(imgui_test_engine)
 
+     FetchContent_Declare(
+         nanosvg
+         GIT_REPOSITORY https://github.com/memononen/nanosvg.git
+         GIT_TAG        master
+         GIT_SHALLOW    TRUE
+     )
+     FetchContent_MakeAvailable(nanosvg)
+
       add_executable(doppio
           apps/doppio/main.cpp
           src/editor/HierarchyPanel.cpp
@@ -338,8 +347,12 @@ with open(sys.argv[1], 'w') as f:
           src/editor/PreviewRenderer.cpp
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp
-           src/editor/BuildSystem.cpp
-           src/editor/BuildDialog.cpp
+          src/editor/BuildSystem.cpp
+          src/editor/BuildDialog.cpp
+          src/editor/BuildLog.cpp
+          src/editor/PrefabSystem.cpp
+          src/editor/EntityDebugger.cpp
+          src/editor/PluginSystem.cpp
            src/editor/TestUIMapper.cpp
            src/editor/TestRequestHandler.cpp
            src/editor/AssetCooker.cpp
@@ -347,6 +360,10 @@ with open(sys.argv[1], 'w') as f:
           src/editor/ProjectStartupDialog.cpp
           src/editor/ProjectManager.cpp
           src/editor/FilePicker.cpp
+          src/editor/EditorPaths.cpp
+          src/editor/EditorTheme.cpp
+          src/editor/EditorIcons.cpp
+          src/editor/EditorSpinner.cpp
           assets/scripts/ScriptBindings.cpp
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
@@ -357,13 +374,99 @@ with open(sys.argv[1], 'w') as f:
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
      )
-     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes)
+     target_link_libraries(doppio PRIVATE caffeine-core ImGui ImNodes ${CMAKE_DL_LIBS})
+     if(NOT MSVC)
+         target_link_options(doppio PRIVATE "-rdynamic")
+     endif()
      if(CAF_PACK_AVAILABLE)
          target_link_libraries(doppio PRIVATE caf-pack-lib)
          target_compile_definitions(doppio PRIVATE CF_HAS_CAF_PACK=1)
      endif()
-      target_include_directories(doppio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts ${imgui_test_engine_SOURCE_DIR})
-      target_compile_definitions(doppio PRIVATE CF_HAS_IMGUI=1)
+      target_include_directories(doppio PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts
+          ${imgui_test_engine_SOURCE_DIR}
+          ${nanosvg_SOURCE_DIR}/src)
+      add_executable(caffeine-runtime
+          apps/runtime/main.cpp
+          src/runtime/RuntimeSceneRenderer.cpp
+          src/editor/SceneSerializer.cpp
+          src/editor/ProjectManager.cpp
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_engine.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_exporters.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_perftool.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
+          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
+      )
+      target_link_libraries(caffeine-runtime PRIVATE caffeine-core ImGui)
+      target_include_directories(caffeine-runtime PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${imgui_SOURCE_DIR}
+          ${imgui_SOURCE_DIR}/backends)
+      target_compile_definitions(caffeine-runtime PRIVATE CF_HAS_IMGUI=1)
+      target_compile_features(caffeine-runtime PRIVATE cxx_std_20)
+      if(NOT MSVC)
+          target_compile_options(caffeine-runtime PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+      add_dependencies(doppio caffeine-runtime hello_plugin)
+
+      add_executable(build-smoke
+          apps/build_smoke/main.cpp
+          src/editor/BuildSystem.cpp
+          src/editor/AssetCooker.cpp
+          src/editor/BuildLog.cpp
+      )
+      target_link_libraries(build-smoke PRIVATE caffeine-core)
+      target_include_directories(build-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+      target_compile_features(build-smoke PRIVATE cxx_std_20)
+      add_dependencies(build-smoke caffeine-runtime)
+      target_compile_definitions(build-smoke PRIVATE
+          CAFFEINE_RUNTIME_PATH="$<TARGET_FILE:caffeine-runtime>")
+      if(NOT MSVC)
+          target_compile_options(build-smoke PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+
+      add_library(hello_plugin SHARED
+          apps/plugins/hello_plugin/main.cpp
+      )
+      target_include_directories(hello_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${imgui_SOURCE_DIR})
+      target_compile_definitions(hello_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
+      target_compile_features(hello_plugin PRIVATE cxx_std_20)
+      set_target_properties(hello_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "hello_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(hello_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+      add_custom_command(TARGET doppio POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:doppio>/plugins
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_FILE:hello_plugin>
+              $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:hello_plugin>
+          COMMENT "Copying hello_plugin to editor plugins folder")
+
+      target_compile_definitions(doppio PRIVATE
+          CF_HAS_IMGUI=1
+          CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+          CAFFEINE_RUNTIME_PATH="$<TARGET_FILE:caffeine-runtime>")
+      add_custom_command(TARGET doppio POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:doppio>/assets
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              ${CMAKE_SOURCE_DIR}/assets/café_no_back_logo.png
+              $<TARGET_FILE_DIR:doppio>/assets/café_no_back_logo.png
+          COMMAND ${CMAKE_COMMAND} -E copy_directory
+              ${CMAKE_SOURCE_DIR}/assets/icons $<TARGET_FILE_DIR:doppio>/assets/icons
+          COMMAND ${CMAKE_COMMAND} -E copy_directory
+              ${CMAKE_SOURCE_DIR}/assets/spinners $<TARGET_FILE_DIR:doppio>/assets/spinners
+          COMMAND ${CMAKE_COMMAND} -E copy_directory
+              ${CMAKE_SOURCE_DIR}/assets/jetbrains-mono $<TARGET_FILE_DIR:doppio>/assets/jetbrains-mono
+          COMMENT "Copying editor UI assets")
      target_compile_features(doppio PRIVATE cxx_std_20)
      # Suppress redefinition warning for IMGUI_DEFINE_MATH_OPERATORS (defined in header)
      if(NOT MSVC)

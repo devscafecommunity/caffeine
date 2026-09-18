@@ -57,6 +57,15 @@ public:
     u64 hash() const {
         return m_bits;
     }
+
+    template<typename Fn>
+    void forEachComponentId(Fn&& fn) const {
+        for (u32 i = 0; i < 64; ++i) {
+            if (has(i)) {
+                fn(i);
+            }
+        }
+    }
     
     bool operator==(const ComponentSet& other) const {
         return m_bits == other.m_bits;

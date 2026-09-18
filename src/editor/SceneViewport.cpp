@@ -1,5 +1,7 @@
 #include "editor/SceneViewport.hpp"
+#include "debug/Profiler.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/TestInstrumentation.hpp"
 #include "editor/TestUIMapper.hpp"
@@ -7,6 +9,9 @@
 #include "audio/AudioComponents.hpp"
 #include "assets/MeshLoader.hpp"
 #include "assets/MeshCache.hpp"
+#include "assets/MeshImportValidator.hpp"
+#include <functional>
+#include "ecs/CameraComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "math/Mat4.hpp"
@@ -101,7 +106,199 @@ ImU32 lightColor(const ECS::LightComponent& lc, bool selected) {
         static_cast<ImU8>(std::clamp(lc.color.w * lc.intensity * alphaScale, 0.0f, 1.0f) * 255.0f));
 }
 
+ImU32 sampleDrawTexture(const MeshDrawTexture& tex, const Vec2& uv, const Vec3& lightRgb) {
+    if (!tex.pixels || tex.width == 0 || tex.height == 0) {
+        const f32 a = 0.35f;
+        return IM_COL32(
+            static_cast<ImU8>(100.0f * a + lightRgb.x * 255.0f * (1.0f - a)),
+            static_cast<ImU8>(150.0f * a + lightRgb.y * 255.0f * (1.0f - a)),
+            static_cast<ImU8>(200.0f * a + lightRgb.z * 255.0f * (1.0f - a)),
+            255);
+    }
+
+    int channels = tex.channels > 0 ? tex.channels : 3;
+    const u32 tw = tex.width;
+    const u32 th = tex.height;
+
+    const f32 u = uv.x - std::floor(uv.x);
+    const f32 v = uv.y - std::floor(uv.y);
+    const f32 sampleV = tex.flipV ? (1.0f - v) : v;
+    const u32 x = static_cast<u32>(std::clamp(u, 0.0f, 1.0f) * (tw - 1));
+    const u32 y = static_cast<u32>(std::clamp(sampleV, 0.0f, 1.0f) * (th - 1));
+    const u32 idx = (y * tw + x) * static_cast<u32>(channels);
+    const size_t pixelBytes = static_cast<size_t>(tw) * static_cast<size_t>(th) * static_cast<size_t>(channels);
+    if (idx + static_cast<u32>(channels - 1) >= pixelBytes) {
+        return IM_COL32(100, 150, 200, 255);
+    }
+
+    const f32 r = static_cast<f32>(tex.pixels[idx]) / 255.0f;
+    const f32 g = static_cast<f32>(tex.pixels[idx + 1]) / 255.0f;
+    const f32 b = static_cast<f32>(tex.pixels[idx + 2]) / 255.0f;
+    const f32 ambient = 0.5f;
+    const f32 lit = 0.5f;
+    return IM_COL32(
+        static_cast<ImU8>(std::clamp((r * ambient + r * lightRgb.x * lit) * 255.0f, 0.0f, 255.0f)),
+        static_cast<ImU8>(std::clamp((g * ambient + g * lightRgb.y * lit) * 255.0f, 0.0f, 255.0f)),
+        static_cast<ImU8>(std::clamp((b * ambient + b * lightRgb.z * lit) * 255.0f, 0.0f, 255.0f)),
+        255);
+}
+
+ImVec2 projectVP(const Mat4& vp, ImVec2 origin, ImVec2 viewportSize, const Vec3& p) {
+    Vec4 clip = vp.transformVec4(Vec4(p.x, p.y, p.z, 1.0f));
+    if (clip.w <= 0.1f) return ImVec2(-10000.0f, -10000.0f);
+    const f32 ndcX = clip.x / clip.w;
+    const f32 ndcY = clip.y / clip.w;
+    return ImVec2(
+        origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x,
+        origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y
+    );
+}
+
+f32 edgeFunction(f32 ax, f32 ay, f32 bx, f32 by, f32 cx, f32 cy) {
+    return (cx - ax) * (by - ay) - (cy - ay) * (bx - ax);
+}
+
+struct RasterVert {
+    f32 sx = 0.0f;
+    f32 sy = 0.0f;
+    f32 ndcZ = 0.0f;
+    f32 invW = 0.0f;
+    Vec3 worldPos;
+    Vec3 worldNormal;
+    Vec2 uv;
+};
+
+void rasterizeTriangleCpu(
+    MeshCpuRasterizer& fb,
+    const RasterVert& v0, const RasterVert& v1, const RasterVert& v2,
+    const Vec3& faceNormal, const Vec3& camPos,
+    const MeshDrawTexture& tex,
+    const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt) {
+    const Vec3 center = (v0.worldPos + v1.worldPos + v2.worldPos) * (1.0f / 3.0f);
+    const Vec3 viewDelta(camPos.x - center.x, camPos.y - center.y, camPos.z - center.z);
+    if (faceNormal.dot(viewDelta) <= 0.0f) return;
+
+    const f32 area = edgeFunction(v0.sx, v0.sy, v1.sx, v1.sy, v2.sx, v2.sy);
+    if (std::abs(area) < 1e-4f) return;
+
+    const int minX = std::max(0, static_cast<int>(std::floor(std::min({v0.sx, v1.sx, v2.sx}))));
+    const int maxX = std::min(fb.width - 1, static_cast<int>(std::ceil(std::max({v0.sx, v1.sx, v2.sx}))));
+    const int minY = std::max(0, static_cast<int>(std::floor(std::min({v0.sy, v1.sy, v2.sy}))));
+    const int maxY = std::min(fb.height - 1, static_cast<int>(std::ceil(std::max({v0.sy, v1.sy, v2.sy}))));
+
+    for (int y = minY; y <= maxY; ++y) {
+        const f32 py = static_cast<f32>(y) + 0.5f;
+        for (int x = minX; x <= maxX; ++x) {
+            const f32 px = static_cast<f32>(x) + 0.5f;
+            const f32 w0 = edgeFunction(v1.sx, v1.sy, v2.sx, v2.sy, px, py) / area;
+            const f32 w1 = edgeFunction(v2.sx, v2.sy, v0.sx, v0.sy, px, py) / area;
+            const f32 w2 = edgeFunction(v0.sx, v0.sy, v1.sx, v1.sy, px, py) / area;
+            if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) continue;
+
+            const f32 invWInterp = w0 * v0.invW + w1 * v1.invW + w2 * v2.invW;
+            if (invWInterp <= 1e-8f) continue;
+
+            const f32 z = (w0 * v0.ndcZ * v0.invW + w1 * v1.ndcZ * v1.invW + w2 * v2.ndcZ * v2.invW) / invWInterp;
+            const int depthIdx = y * fb.width + x;
+            if (z >= fb.depth[depthIdx]) continue;
+
+            const f32 u = (w0 * v0.uv.x * v0.invW + w1 * v1.uv.x * v1.invW + w2 * v2.uv.x * v2.invW) / invWInterp;
+            const f32 v = (w0 * v0.uv.y * v0.invW + w1 * v1.uv.y * v1.invW + w2 * v2.uv.y * v2.invW) / invWInterp;
+
+            const Vec3 worldPos = v0.worldPos * w0 + v1.worldPos * w1 + v2.worldPos * w2;
+            Vec3 worldNormal = v0.worldNormal * w0 + v1.worldNormal * w1 + v2.worldNormal * w2;
+            const f32 normalLenSq = worldNormal.lengthSquared();
+            if (normalLenSq > 1e-8f) {
+                worldNormal = worldNormal / std::sqrt(normalLenSq);
+            } else {
+                worldNormal = faceNormal;
+            }
+
+            const ImU32 col = sampleDrawTexture(tex, Vec2(u, v), lightColorAt(worldPos, worldNormal));
+            fb.depth[depthIdx] = z;
+            const int colorIdx = depthIdx * 4;
+            fb.color[colorIdx + 0] = static_cast<u8>((col >> IM_COL32_R_SHIFT) & 0xFF);
+            fb.color[colorIdx + 1] = static_cast<u8>((col >> IM_COL32_G_SHIFT) & 0xFF);
+            fb.color[colorIdx + 2] = static_cast<u8>((col >> IM_COL32_B_SHIFT) & 0xFF);
+            fb.color[colorIdx + 3] = 255;
+        }
+    }
+}
+
 } // namespace
+
+constexpr int kMeshRasterMaxDim = 720;
+
+void MeshCpuRasterizer::begin(ImVec2 origin_, ImVec2 size) {
+    origin = origin_;
+    panelW = std::max(1, static_cast<int>(size.x));
+    panelH = std::max(1, static_cast<int>(size.y));
+
+    width = panelW;
+    height = panelH;
+    if (width > kMeshRasterMaxDim || height > kMeshRasterMaxDim) {
+        const f32 scale = static_cast<f32>(kMeshRasterMaxDim) /
+                          static_cast<f32>(std::max(width, height));
+        width = std::max(1, static_cast<int>(static_cast<f32>(width) * scale));
+        height = std::max(1, static_cast<int>(static_cast<f32>(height) * scale));
+    }
+
+    color.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+    depth.resize(static_cast<size_t>(width) * static_cast<size_t>(height));
+}
+
+void MeshCpuRasterizer::clear(u8 r, u8 g, u8 b, u8 a) {
+    for (size_t i = 0; i < color.size(); i += 4) {
+        color[i + 0] = r;
+        color[i + 1] = g;
+        color[i + 2] = b;
+        color[i + 3] = a;
+    }
+    std::fill(depth.begin(), depth.end(), 1.1f);
+}
+
+void SceneViewport::blitMeshRasterizer(ImDrawList* dl, MeshCpuRasterizer& rasterizer,
+                                       SpriteTextureCacheEntry& texEntry) {
+    if (!dl || rasterizer.width <= 0 || rasterizer.height <= 0) return;
+
+#ifdef CF_HAS_SDL3
+    const bool sizeChanged = !texEntry.texture ||
+        texEntry.width != rasterizer.width ||
+        texEntry.height != rasterizer.height;
+
+    if (sizeChanged) {
+        if (texEntry.texture && texEntry.texture->GetTexID() != ImTextureID_Invalid) {
+            texEntry.texture->UnusedFrames = 1;
+            texEntry.texture->SetStatus(ImTextureStatus_WantDestroy);
+            ImGui_ImplSDLGPU3_UpdateTexture(texEntry.texture.get());
+        }
+        texEntry.width = rasterizer.width;
+        texEntry.height = rasterizer.height;
+        texEntry.texture = std::make_unique<ImTextureData>();
+        texEntry.texture->Create(ImTextureFormat_RGBA32, rasterizer.width, rasterizer.height);
+        texEntry.loadFailed = false;
+    }
+
+    std::memcpy(texEntry.texture->GetPixels(), rasterizer.color.data(), rasterizer.color.size());
+
+    if (texEntry.texture->Status == ImTextureStatus_WantCreate) {
+        ImGui_ImplSDLGPU3_UpdateTexture(texEntry.texture.get());
+    } else {
+        texEntry.texture->UpdateRect.x = 0;
+        texEntry.texture->UpdateRect.y = 0;
+        texEntry.texture->UpdateRect.w = static_cast<unsigned short>(rasterizer.width);
+        texEntry.texture->UpdateRect.h = static_cast<unsigned short>(rasterizer.height);
+        texEntry.texture->SetStatus(ImTextureStatus_WantUpdates);
+        ImGui_ImplSDLGPU3_UpdateTexture(texEntry.texture.get());
+    }
+
+    if (texEntry.texture->GetTexID() != ImTextureID_Invalid) {
+        dl->AddImage(texEntry.texture->GetTexRef(), rasterizer.origin,
+                     ImVec2(rasterizer.origin.x + static_cast<f32>(rasterizer.panelW),
+                            rasterizer.origin.y + static_cast<f32>(rasterizer.panelH)));
+    }
+#endif
+}
 
 static std::vector<ECS::Entity> getSceneEntities(ECS::World& world) {
     std::vector<ECS::Entity> entities;
@@ -253,6 +450,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     
     if (!m_open) return;
 
+    CF_PROFILE_SCOPE("SceneViewport::render");
+
     if (!ImGui::Begin("Scene Viewport", &m_open,
             (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
              ctx.viewMode == EditorContext::ViewMode::Isometric)
@@ -271,11 +470,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     
     resizeCanvasIfNeeded((u32)viewportSize.x, (u32)viewportSize.y);
 
-    if (m_initialized && m_colorTarget) {
-        ImGui::Image((ImTextureID)(intptr_t)m_colorTarget->handle, viewportSize);
-    } else {
-        ImGui::Dummy(viewportSize);
-    }
+    // CPU-drawn viewport overlays; GPU color target reserved for future scene pass.
+    ImGui::Dummy(viewportSize);
 #else
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
     if (viewportSize.x < 1 || viewportSize.y < 1) {
@@ -287,43 +483,103 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     // ── Drag-drop target for assets ──
     if (const auto* asset = DragDropManager::AcceptAssetDrop()) {
-        ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
-
-        ECS::Entity entity = world.create();
         std::filesystem::path assetPath(asset->path);
-        setEntityName(world, entity, assetPath.stem().string().c_str());
-
-        // Convert mouse position to world coordinates
-        ImVec2 mousePos  = ImGui::GetMousePos();
-        ImVec2 viewportTL = ImGui::GetItemRectMin();
-        f32 localX = (mousePos.x - viewportTL.x) - viewportSize.x * 0.5f;
-        f32 localY = (mousePos.y - viewportTL.y) - viewportSize.y * 0.5f;
-        f32 scale  = ctx.viewportZoom * 50.0f;
-        f32 worldX = (localX - ctx.viewportPanX) / scale;
-        f32 worldY = (localY - ctx.viewportPanY) / scale;
-        auto t = ECS::Transform{};
-        t.position.x = worldX;
-        t.position.y = -worldY;
-        world.add<ECS::Transform>(entity, t);
-
-        if (asset->type == AssetType::Texture) {
-            world.add<ECS::Sprite>(entity, asset->path, 0);
-        }
-
-        if (asset->type == AssetType::Audio) {
-            auto& emitter = world.add<Audio::AudioEmitter>(entity);
-            emitter.clipPath = assetPath.filename().string().c_str();
-        }
-
+        bool canDrop = true;
         if (asset->type == AssetType::Mesh) {
-            world.add<ECS::MeshFilterComponent>(entity, 
-                ECS::MeshPrimitive::Custom, assetPath.string());
-            world.add<ECS::MeshRendererComponent>(entity, 
-                assetPath.string(), "");
+            const auto report = Assets::MeshImportValidator::analyze(assetPath);
+            if (!report.readyToLoad) {
+                std::string msg = report.errorSummary;
+                if (!report.suggestion.empty()) {
+                    msg += " — " + report.suggestion;
+                }
+                ctx.pushTransientStatus(msg, true);
+                canDrop = false;
+            }
         }
 
-        ctx.selectedEntity = entity;
-        ctx.endUndo(world);
+        if (canDrop) {
+            ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
+
+            const bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                               ctx.viewMode == EditorContext::ViewMode::Isometric);
+            ImVec2 mousePos   = ImGui::GetMousePos();
+            ImVec2 viewportTL = ImGui::GetItemRectMin();
+            Vec3 dropPos(0.0f, 0.0f, 0.0f);
+
+            if (is3D) {
+                const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+                const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+                const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+                const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+                const f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+                const Mat4 vp = proj * view;
+                const Mat4 vpInverse = vp.inverted();
+
+                const f32 ndcX = (2.0f * (mousePos.x - viewportTL.x)) / viewportSize.x - 1.0f;
+                const f32 ndcY = 1.0f - (2.0f * (mousePos.y - viewportTL.y)) / viewportSize.y;
+                Vec4 worldNear = vpInverse.transformVec4(Vec4(ndcX, ndcY, -1.0f, 1.0f));
+                Vec4 worldFar  = vpInverse.transformVec4(Vec4(ndcX, ndcY,  1.0f, 1.0f));
+                if (std::abs(worldNear.w) > 0.0001f) {
+                    worldNear.x /= worldNear.w; worldNear.y /= worldNear.w; worldNear.z /= worldNear.w;
+                }
+                if (std::abs(worldFar.w) > 0.0001f) {
+                    worldFar.x /= worldFar.w; worldFar.y /= worldFar.w; worldFar.z /= worldFar.w;
+                }
+                const Vec3 rayDir = (Vec3(worldFar.x, worldFar.y, worldFar.z) - camPos).normalized();
+                if (std::abs(rayDir.y) > 1e-5f) {
+                    const f32 t = -camPos.y / rayDir.y;
+                    if (t > 0.0f) {
+                        dropPos = camPos + rayDir * t;
+                    }
+                }
+            } else {
+                const f32 localX = (mousePos.x - viewportTL.x) - viewportSize.x * 0.5f;
+                const f32 localY = (mousePos.y - viewportTL.y) - viewportSize.y * 0.5f;
+                const f32 scale  = ctx.viewportZoom * 50.0f;
+                dropPos.x = (localX - ctx.viewportPanX) / scale;
+                dropPos.y = -(localY - ctx.viewportPanY) / scale;
+            }
+
+            if (asset->type == AssetType::Prefab) {
+                ECS::Entity root = PrefabSystem::Instantiate(world, asset->path, dropPos);
+                ctx.selectedEntity = root;
+            } else {
+                ECS::Entity entity = world.create();
+                setEntityName(world, entity, assetPath.stem().string().c_str());
+
+                if (is3D) {
+                    world.add<ECS::Position3D>(entity, dropPos);
+                    world.add<ECS::Rotation3D>(entity);
+                    world.add<ECS::Scale3D>(entity);
+                } else {
+                    auto t = ECS::Transform{};
+                    t.position.x = dropPos.x;
+                    t.position.y = dropPos.y;
+                    world.add<ECS::Transform>(entity, t);
+                }
+
+                if (asset->type == AssetType::Texture) {
+                    world.add<ECS::Sprite>(entity, asset->path, 0);
+                }
+
+                if (asset->type == AssetType::Audio) {
+                    auto& emitter = world.add<Audio::AudioEmitter>(entity);
+                    emitter.clipPath = assetPath.filename().string().c_str();
+                }
+
+                if (asset->type == AssetType::Mesh) {
+                    world.add<ECS::MeshFilterComponent>(entity,
+                        ECS::MeshPrimitive::Custom, assetPath.string());
+                    world.add<ECS::MeshRendererComponent>(entity,
+                        assetPath.string(), "");
+                }
+
+                ctx.selectedEntity = entity;
+            }
+
+            ctx.endUndo(world);
+        }
     }
 
     bool hovered = ImGui::IsItemHovered();
@@ -366,7 +622,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             Vec3 rayOrigin = camPos;
             Vec3 rayDirection = (Vec3(worldNear.x, worldNear.y, worldNear.z) - camPos).normalized();
             
-            ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world);
+            std::string projectRoot;
+            if (!ctx.currentScenePath.empty()) {
+                projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
+            }
+            ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world, projectRoot);
             
             bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
             
@@ -428,6 +688,16 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 origin = ImGui::GetItemRectMin();
+
+    const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        drawList->AddRectFilledMultiColor(
+            origin, viewportMax,
+            IM_COL32(26, 26, 31, 255), IM_COL32(26, 26, 31, 255),
+            IM_COL32(42, 48, 62, 255), IM_COL32(42, 48, 62, 255));
+    } else {
+        drawList->AddRectFilled(origin, viewportMax, IM_COL32(26, 26, 31, 255));
+    }
 
     if (m_config.grid) {
         char modeStr[16];
@@ -538,10 +808,26 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
-        ctx.viewportPanX += delta.x;
-         ctx.viewportPanY += delta.y;
-         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
-     }
+        const bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                              ctx.viewMode == EditorContext::ViewMode::Isometric);
+        if (is3DIso) {
+            const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+            const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+            const Vec3 forward(-sinY * cosP, sinP, cosY * cosP);
+            const Vec3 worldUp(0.0f, 1.0f, 0.0f);
+            Vec3 right = forward.cross(worldUp);
+            if (right.lengthSquared() < 1e-6f) right = Vec3(1.0f, 0.0f, 0.0f);
+            else right = right.normalized();
+            const Vec3 up = right.cross(forward).normalized();
+            const f32 panSpeed = ctx.camDistance * 0.002f;
+            ctx.camFocus -= right * (delta.x * panSpeed);
+            ctx.camFocus += up * (delta.y * panSpeed);
+        } else {
+            ctx.viewportPanX += delta.x;
+            ctx.viewportPanY += delta.y;
+        }
+        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
+    }
 
      // 2D View: Left mouse button drag to pan
      if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -558,44 +844,28 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
           bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
                           ctx.viewMode == EditorContext::ViewMode::Isometric);
           if (is3DIso) {
-             float speed = ctx.camDistance * 0.04f / ctx.viewportZoom;
-             float sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-             float sinP  = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-             
-             // WASD movement with full 3D orientation (yaw + pitch)
-             if (ImGui::IsKeyDown(ImGuiKey_W)) {
-                 // Forward: move in camera forward direction
-                 ctx.camFocus.x += -sinY * cosP * speed;
-                 ctx.camFocus.y +=  sinP * speed;
-                 ctx.camFocus.z +=  cosY * cosP * speed;
-             }
-             if (ImGui::IsKeyDown(ImGuiKey_S)) {
-                 // Backward: opposite of forward
-                 ctx.camFocus.x -= -sinY * cosP * speed;
-                 ctx.camFocus.y -=  sinP * speed;
-                 ctx.camFocus.z -=  cosY * cosP * speed;
-             }
-             if (ImGui::IsKeyDown(ImGuiKey_A)) {
-                 // Left: strafe perpendicular to forward
-                 ctx.camFocus.x -= cosY * speed;
-                 ctx.camFocus.z -= sinY * speed;
-             }
-             if (ImGui::IsKeyDown(ImGuiKey_D)) {
-                 // Right: opposite of left
-                 ctx.camFocus.x += cosY * speed;
-                 ctx.camFocus.z += sinY * speed;
-             }
+             const f32 speed = ctx.camDistance * 0.04f;
+             const f32 sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+             const Vec3 flatForward(-sinY, 0.0f, cosY);
+             const Vec3 flatRight(cosY, 0.0f, sinY);
+
+             if (ImGui::IsKeyDown(ImGuiKey_W)) ctx.camFocus += flatForward * speed;
+             if (ImGui::IsKeyDown(ImGuiKey_S)) ctx.camFocus -= flatForward * speed;
+             if (ImGui::IsKeyDown(ImGuiKey_A)) ctx.camFocus += flatRight * speed;
+             if (ImGui::IsKeyDown(ImGuiKey_D)) ctx.camFocus -= flatRight * speed;
+             if (ImGui::IsKeyDown(ImGuiKey_Q)) ctx.camFocus.y -= speed;
+             if (ImGui::IsKeyDown(ImGuiKey_E)) ctx.camFocus.y += speed;
          }
      }
 
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
         if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-            ctx.camYaw   += delta.x * 0.005f;
-            ctx.camPitch += delta.y * 0.005f;
-            ctx.camPitch  = std::max(-1.5f, std::min(1.5f, ctx.camPitch));
+            ctx.camYaw   -= delta.x * 0.005f;
+            ctx.camPitch -= delta.y * 0.005f;
+            ctx.camPitch  = std::max(-1.4f, std::min(1.4f, ctx.camPitch));
         } else if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
-            ctx.camYaw += delta.x * 0.005f;
+            ctx.camYaw -= delta.x * 0.005f;
         }
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
     }
@@ -605,7 +875,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
          if (scroll != 0) {
              if (ctx.viewMode == EditorContext::ViewMode::Mode3D || 
                  ctx.viewMode == EditorContext::ViewMode::Isometric) {
-                 ctx.camDistance *= (scroll > 0) ? 0.8f : 1.25f;
+                 const f32 zoomFactor = (scroll > 0) ? 0.85f : 1.18f;
+                 ctx.camDistance *= zoomFactor;
                  ctx.camDistance = std::max(0.5f, std::min(1000.0f, ctx.camDistance));
              } else {
                  ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
@@ -665,8 +936,7 @@ ImVec2 SceneViewport::projectToScreenVP(Vec3 p, ImVec2 origin, ImVec2 viewportSi
     if (clip.w <= 0.1f) return ImVec2(-10000.0f, -10000.0f);
     f32 ndcX = clip.x / clip.w;
     f32 ndcY = clip.y / clip.w;
-    if (ndcX < -1.0f || ndcX > 1.0f || ndcY < -1.0f || ndcY > 1.0f)
-        return ImVec2(-10000.0f, -10000.0f);
+    // Off-screen NDC coords are allowed — ImGui clips line segments automatically.
     return ImVec2(
         origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x,
         origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y
@@ -906,6 +1176,14 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         return IM_COL32(cr, cg, cb, alpha);
     };
 
+    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        ? computeVP3D(viewportSize, ctx) : Mat4::identity();
+    auto projectCached = [&](const Vec3& p) -> ImVec2 {
+        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+            ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
+            : projectToScreen(p, origin, viewportSize, ctx);
+    };
+
     auto drawMarker = [&](ECS::Entity entity, const Vec3& worldPosition) {
         ImVec2 sp = projectCached(worldPosition);
 
@@ -929,17 +1207,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     };
 
     auto drawSegment = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
-        dl->AddLine(projectToScreen(a, origin, viewportSize, ctx),
-                    projectToScreen(b, origin, viewportSize, ctx),
-                    col, thickness);
-    };
-
-    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
-        ? computeVP3D(viewportSize, ctx) : Mat4::identity();
-    auto projectCached = [&](const Vec3& p) -> ImVec2 {
-        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
-            ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
-            : projectToScreen(p, origin, viewportSize, ctx);
+        dl->AddLine(projectCached(a), projectCached(b), col, thickness);
     };
 
     auto drawRing = [&](const Mat4& worldMatrix, const Vec3& axisA, const Vec3& axisB,
@@ -954,6 +1222,14 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         }
     };
 
+    MeshCpuRasterizer meshRaster;
+    const bool useMeshRaster = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+                                m_meshPreviewMode == MeshPreviewMode::Textured);
+    if (useMeshRaster) {
+        meshRaster.begin(origin, viewportSize);
+        meshRaster.clear(0, 0, 0, 0);
+    }
+
     auto drawMeshPreview = [&](ECS::Entity entity) {
         auto* mesh = world.get<ECS::MeshFilterComponent>(entity);
         if (!mesh) return false;
@@ -965,10 +1241,6 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         const ImU32 polyCol = selected ? IM_COL32(95, 170, 255, 210) : IM_COL32(130, 150, 190, 170);
         const float thickness = selected ? 2.0f : 1.25f;
         const float polyThickness = selected ? 1.5f : 1.0f;
-
-        if (wireMode && !selected) {
-            return true;
-        }
 
         const bool drawContour = wireMode || selected;
         const bool drawPolygons = wireMode;
@@ -1086,120 +1358,74 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             }
             case ECS::MeshPrimitive::Custom: {
                 if (!mesh->customMeshPath.empty()) {
-                    std::string meshPath = mesh->customMeshPath;
-                    auto* loadedMesh = Assets::MeshCache::getInstance().getMesh(meshPath);
-                    
-                    if (!loadedMesh) {
-                        meshPath = std::string("assets/raw/") + mesh->customMeshPath;
-                        loadedMesh = Assets::MeshCache::getInstance().getMesh(meshPath);
+                    std::string projectRoot;
+                    if (!ctx.currentScenePath.empty()) {
+                        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
                     }
-                    
-                    if (loadedMesh && !loadedMesh->vertices.empty() && !loadedMesh->indices.empty()) {
-                        if (loadedMesh->baseColorTexture.empty() && loadedMesh->textureWidth == 0) {
-                            std::string texturePath;
-                            if (!mesh->customTexturePath.empty()) {
-                                texturePath = mesh->customTexturePath;
-                                if (texturePath.find("assets/raw") == std::string::npos) {
-                                    texturePath = std::string("assets/raw/") + mesh->customTexturePath;
-                                }
-                            } else {
-                                texturePath = meshPath;
-                                size_t dotPos = texturePath.find_last_of('.');
-                                if (dotPos != std::string::npos) {
-                                    texturePath = texturePath.substr(0, dotPos) + ".png";
-                                }
-                            }
-                            if (!texturePath.empty()) {
-                                Assets::MeshLoader::loadPNGTexture(loadedMesh, texturePath.c_str());
-                            }
-                        }
-                        
-                        f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-                        f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-                        Vec3 camPos;
-                        camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
-                        camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
-                        camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
-                        Mat4 viewMat = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
-                        f32 aspectR = viewportSize.x / std::max(viewportSize.y, 1.0f);
-                        Mat4 projMat = Mat4::perspective(1.0472f, aspectR, 0.1f, 10000.0f);
-                        Mat4 vpMat = projMat * viewMat;
 
+                    auto& meshCache = Assets::MeshCache::getInstance();
+                    auto* loadedMesh = meshCache.getMesh(mesh->customMeshPath, projectRoot);
+                    const std::string& loadError = meshCache.getLastError();
+
+                    if (!loadedMesh || loadedMesh->vertices.empty() || loadedMesh->indices.empty()) {
+                        const std::array<Vec3, 8> corners = {{
+                            {-0.5f, -0.5f, -0.5f}, { 0.5f, -0.5f, -0.5f},
+                            { 0.5f,  0.5f, -0.5f}, {-0.5f,  0.5f, -0.5f},
+                            {-0.5f, -0.5f,  0.5f}, { 0.5f, -0.5f,  0.5f},
+                            { 0.5f,  0.5f,  0.5f}, {-0.5f,  0.5f,  0.5f},
+                        }};
+                        const int edges[][2] = {
+                            {0,1}, {1,2}, {2,3}, {3,0},
+                            {4,5}, {5,6}, {6,7}, {7,4},
+                            {0,4}, {1,5}, {2,6}, {3,7}
+                        };
+                        const ImU32 errCol = IM_COL32(255, 90, 90, 220);
+                        for (const auto& edge : edges) {
+                            drawEdge(worldMatrix.transformPoint(corners[edge[0]]),
+                                     worldMatrix.transformPoint(corners[edge[1]]));
+                        }
+                        Vec3 labelPos = worldMatrix.transformPoint(Vec3(0.0f, 0.7f, 0.0f));
+                        ImVec2 sp = projectCached(labelPos);
+                        if (sp.x > -5000.0f) {
+                            const char* msg = loadError.empty() ? "Mesh nao carregado" : loadError.c_str();
+                            dl->AddText(sp, errCol, msg);
+                        }
+                        break;
+                    }
+
+                    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+                    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+                    Vec3 camPos;
+                    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
+                    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
+                    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+                    Mat4 viewMat = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
+                    f32 aspectR = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                    Mat4 projMat = Mat4::perspective(1.0472f, aspectR, 0.1f, 10000.0f);
+                    Mat4 vpMat = projMat * viewMat;
+
+                    const bool drawTextured = (m_meshPreviewMode == MeshPreviewMode::Textured);
+                    drawCustomMeshGeometry(world, ctx, entity, mesh, worldMatrix, dl, vpMat, camPos,
+                                           origin, viewportSize, lightColorAt, drawTextured, wireMode,
+                                           useMeshRaster ? &meshRaster : nullptr);
+
+                    if (selected && drawTextured) {
                         Vec3 bMin = loadedMesh->bounds.min;
                         Vec3 bMax = loadedMesh->bounds.max;
-                        Vec3 bbCorners[8] = {
+                        const Vec3 bbCorners[8] = {
                             {bMin.x, bMin.y, bMin.z}, {bMax.x, bMin.y, bMin.z},
                             {bMin.x, bMax.y, bMin.z}, {bMax.x, bMax.y, bMin.z},
                             {bMin.x, bMin.y, bMax.z}, {bMax.x, bMin.y, bMax.z},
                             {bMin.x, bMax.y, bMax.z}, {bMax.x, bMax.y, bMax.z}
                         };
-
-                        bool anyVisible = false;
-                        for (int ci = 0; ci < 8; ++ci) {
-                            Vec3 wp = worldMatrix.transformPoint(bbCorners[ci]);
-                            Vec4 clip = vpMat.transformVec4(Vec4(wp.x, wp.y, wp.z, 1.0f));
-                            if (clip.w > 0.01f) {
-                                f32 nx = clip.x / clip.w;
-                                f32 ny = clip.y / clip.w;
-                                if (nx >= -1.5f && nx <= 1.5f && ny >= -1.5f && ny <= 1.5f) {
-                                    anyVisible = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!anyVisible) break;
-                        
-                        auto sampleTexture = [loadedMesh](const Vec2& uv) -> ImU32 {
-                            if (loadedMesh->baseColorTexture.empty() || loadedMesh->textureWidth == 0) {
-                                return IM_COL32(100, 150, 200, 180);
-                            }
-                            u32 x = (u32)(uv.x * (loadedMesh->textureWidth - 1));
-                            u32 y = (u32)(uv.y * (loadedMesh->textureHeight - 1));
-                            u32 idx = (y * loadedMesh->textureWidth + x) * 3;
-                            if (idx + 2 < loadedMesh->baseColorTexture.size()) {
-                                u8 r = loadedMesh->baseColorTexture[idx];
-                                u8 g = loadedMesh->baseColorTexture[idx + 1];
-                                u8 b = loadedMesh->baseColorTexture[idx + 2];
-                                return IM_COL32(r, g, b, 180);
-                            }
-                            return IM_COL32(100, 150, 200, 180);
+                        const int bbEdges[][2] = {
+                            {0,1}, {1,3}, {3,2}, {2,0},
+                            {4,5}, {5,7}, {7,6}, {6,4},
+                            {0,4}, {1,5}, {3,7}, {2,6}
                         };
-                        
-                        for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
-                            u32 i0 = loadedMesh->indices[i];
-                            u32 i1 = loadedMesh->indices[i + 1];
-                            u32 i2 = loadedMesh->indices[i + 2];
-                            
-                            if (i0 >= loadedMesh->vertices.size() ||
-                                i1 >= loadedMesh->vertices.size() ||
-                                i2 >= loadedMesh->vertices.size()) continue;
-                            
-                            Vec3 v0 = loadedMesh->vertices[i0].position;
-                            Vec3 v1 = loadedMesh->vertices[i1].position;
-                            Vec3 v2 = loadedMesh->vertices[i2].position;
-                            
-                            Vec3 p0 = worldMatrix.transformPoint(v0);
-                            Vec3 p1 = worldMatrix.transformPoint(v1);
-                            Vec3 p2 = worldMatrix.transformPoint(v2);
-                            
-                            Vec4 c0 = vpMat.transformVec4(Vec4(p0.x, p0.y, p0.z, 1.0f));
-                            Vec4 c1 = vpMat.transformVec4(Vec4(p1.x, p1.y, p1.z, 1.0f));
-                            Vec4 c2 = vpMat.transformVec4(Vec4(p2.x, p2.y, p2.z, 1.0f));
-                            if (c0.w <= 0.01f && c1.w <= 0.01f && c2.w <= 0.01f) continue;
-                            
-                            ImVec2 sp0 = projectToScreen(p0, origin, viewportSize, ctx);
-                            ImVec2 sp1 = projectToScreen(p1, origin, viewportSize, ctx);
-                            ImVec2 sp2 = projectToScreen(p2, origin, viewportSize, ctx);
-                            
-                            if (sp0.x < -5000.0f || sp1.x < -5000.0f || sp2.x < -5000.0f) continue;
-                            
-                            Vec2 uv0 = loadedMesh->vertices[i0].texcoord;
-                            Vec2 uv1 = loadedMesh->vertices[i1].texcoord;
-                            Vec2 uv2 = loadedMesh->vertices[i2].texcoord;
-                            Vec2 uvAvg = Vec2((uv0.x + uv1.x + uv2.x) / 3.0f, (uv0.y + uv1.y + uv2.y) / 3.0f);
-                            
-                            ImU32 triColor = sampleTexture(uvAvg);
-                            dl->AddTriangleFilled(sp0, sp1, sp2, triColor);
+                        for (const auto& edge : bbEdges) {
+                            drawEdge(worldMatrix.transformPoint(bbCorners[edge[0]]),
+                                     worldMatrix.transformPoint(bbCorners[edge[1]]));
                         }
                     }
                 }
@@ -1357,6 +1583,10 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     world.forEach<ECS::Position3D>(pos3Query, [&](ECS::Entity entity, ECS::Position3D&) {
         drawEntity(entity);
     });
+
+    if (useMeshRaster) {
+        blitMeshRasterizer(dl, meshRaster, m_meshRasterTexture);
+    }
 }
 
 void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
@@ -1751,11 +1981,18 @@ void SceneViewport::drawGrid(ImDrawList* drawList, ImVec2 origin, ImVec2 viewpor
 }
 
 void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSize, const EditorContext& ctx) {
-    ImU32 gridColor  = IM_COL32(100, 100, 120, 60);
+    const ImU32 gridColorBase  = IM_COL32(100, 100, 120, 255);
+    const ImU32 majorGridColor = IM_COL32(130, 130, 155, 255);
     ImU32 axisColorX = IM_COL32(220, 60, 60, 200);
     ImU32 axisColorZ = IM_COL32(60, 60, 220, 200);
 
     Mat4 vp = computeVP3D(viewportSize, ctx);
+    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+    const Vec3 camPos(
+        ctx.camFocus.x + sinY * cosP * ctx.camDistance,
+        ctx.camFocus.y - sinP * ctx.camDistance,
+        ctx.camFocus.z - cosY * cosP * ctx.camDistance);
 
     // Projects a world point to screen. Returns false only if behind the near plane (w <= 0.1).
     // Off-screen (NDC > 1) coords are intentionally allowed — ImGui clips them automatically,
@@ -1770,13 +2007,24 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
         return true;
     };
 
-    auto drawLine3D = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
+    auto fadeColor = [&](ImU32 color, const Vec3& a, const Vec3& b, bool major) -> ImU32 {
+        const Vec3 mid = (a + b) * 0.5f;
+        const f32 dist = (mid - camPos).length();
+        const f32 t = std::clamp((dist - ctx.camDistance * 0.4f) / (ctx.camDistance * 2.5f), 0.0f, 1.0f);
+        const f32 fade = (1.0f - t) * (major ? 1.0f : 0.75f);
+        const ImU32 baseAlpha = (color >> 24) & 0xFF;
+        const ImU32 alpha = static_cast<ImU32>(baseAlpha * fade);
+        return (color & 0x00FFFFFF) | (alpha << 24);
+    };
+
+    auto drawLine3D = [&](Vec3 a, Vec3 b, ImU32 color, float thickness, bool major = false) {
         ImVec2 sa, sb;
         bool va = projectLine(a, sa);
         bool vb = projectLine(b, sb);
         if (!va && !vb) return;
+        const ImU32 faded = fadeColor(color, a, b, major);
         if (va && vb) {
-            dl->AddLine(sa, sb, color, thickness);
+            dl->AddLine(sa, sb, faded, thickness);
             return;
         }
         // One endpoint is behind the near plane — clip the segment in clip space.
@@ -1796,20 +2044,26 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
             sb.x = origin.x + (clipped.x/wMin + 1.0f) * 0.5f * viewportSize.x;
             sb.y = origin.y + (1.0f - clipped.y/wMin) * 0.5f * viewportSize.y;
         }
-        dl->AddLine(sa, sb, color, thickness);
+        dl->AddLine(sa, sb, faded, thickness);
     };
 
     float visibleRange = ctx.camDistance;
     float spacing = 1.0f;
-    while (visibleRange / spacing > 30.0f) spacing *= 2.0f;
-    while (visibleRange / spacing < 5.0f && spacing > 0.5f) spacing *= 0.5f;
-    spacing = std::max(spacing, 0.5f);
+    while (visibleRange / spacing > 40.0f) spacing *= 2.0f;
+    while (visibleRange / spacing < 8.0f && spacing > 0.25f) spacing *= 0.5f;
+    spacing = std::max(spacing, 0.25f);
 
-    float renderDist = visibleRange * 2.0f;
-    int maxLines = 120;
+    const float majorSpacing = spacing * 10.0f;
+    float renderDist = visibleRange * 4.0f;
+    const int maxLines = 200;
     if ((renderDist * 2.0f / spacing) > maxLines) {
         renderDist = (maxLines * spacing) / 2.0f;
     }
+
+    auto isMajorLine = [&](float coord) -> bool {
+        const float m = std::fmod(std::abs(coord), majorSpacing);
+        return m < spacing * 0.05f || std::abs(coord) < spacing * 0.05f;
+    };
 
     float camX = ctx.camFocus.x;
     float camZ = ctx.camFocus.z;
@@ -1824,11 +2078,15 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
         for (float x = startX; x <= endX; x += spacing) {
             if (x == 0.f) continue;
-            drawLine3D({x, camZ - lineDist, 0.f}, {x, camZ + lineDist, 0.f}, gridColor, 0.5f);
+            const bool major = isMajorLine(x);
+            drawLine3D({x, camZ - lineDist, 0.f}, {x, camZ + lineDist, 0.f},
+                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
         }
         for (float z = startZ; z <= endZ; z += spacing) {
             if (z == 0.f) continue;
-            drawLine3D({camX - lineDist, z, 0.f}, {camX + lineDist, z, 0.f}, gridColor, 0.5f);
+            const bool major = isMajorLine(z);
+            drawLine3D({camX - lineDist, z, 0.f}, {camX + lineDist, z, 0.f},
+                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
         }
         float axisLen = visibleRange * 100.0f;
         drawLine3D({0.f, -axisLen, 0.f}, {0.f, axisLen, 0.f}, axisColorX, 2.5f);
@@ -1836,11 +2094,15 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     } else {
         for (float x = startX; x <= endX; x += spacing) {
             if (x == 0.f) continue;
-            drawLine3D({x, 0.f, camZ - lineDist}, {x, 0.f, camZ + lineDist}, gridColor, 0.5f);
+            const bool major = isMajorLine(x);
+            drawLine3D({x, 0.f, camZ - lineDist}, {x, 0.f, camZ + lineDist},
+                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
         }
         for (float z = startZ; z <= endZ; z += spacing) {
             if (z == 0.f) continue;
-            drawLine3D({camX - lineDist, 0.f, z}, {camX + lineDist, 0.f, z}, gridColor, 0.5f);
+            const bool major = isMajorLine(z);
+            drawLine3D({camX - lineDist, 0.f, z}, {camX + lineDist, 0.f, z},
+                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
         }
         float axisLen = visibleRange * 100.0f;
         drawLine3D({0.f, 0.f, -axisLen}, {0.f, 0.f, axisLen}, axisColorZ, 2.5f);
@@ -1961,7 +2223,8 @@ f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
 }
 
 ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
-                                               ECS::World& world) {
+                                               ECS::World& world,
+                                               const std::string& projectRoot) {
     ECS::Entity closestEntity = ECS::Entity::INVALID;
     f32 closestT = 1e10f;
     
@@ -1976,11 +2239,8 @@ ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3
         
         if (auto* meshFilter = world.get<ECS::MeshFilterComponent>(entity)) {
             if (!meshFilter->customMeshPath.empty()) {
-                auto* mesh = Assets::MeshCache::getInstance().getMesh(meshFilter->customMeshPath);
-                if (!mesh) {
-                    std::string fullPath = std::string("assets/raw/") + meshFilter->customMeshPath;
-                    mesh = Assets::MeshCache::getInstance().getMesh(fullPath);
-                }
+                auto* mesh = Assets::MeshCache::getInstance().getMesh(
+                    meshFilter->customMeshPath, projectRoot);
                 
                 if (mesh && !mesh->vertices.empty()) {
                     Vec3 meshMin = mesh->bounds.min;
@@ -2111,6 +2371,280 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
     ctx.isDirty = true;
 }
 
+MeshDrawTexture SceneViewport::resolveDrawTexture(
+    const Assets::Mesh3D* mesh,
+    const ECS::MeshFilterComponent* filter,
+    const std::string& resolvedMeshPath,
+    const std::string& projectRoot) {
+    MeshDrawTexture result{};
+    std::vector<std::string> fileCandidates;
+
+    auto addFileCandidates = [&](const std::filesystem::path& path) {
+        if (path.empty()) return;
+        for (const std::string& candidate :
+             Assets::MeshCache::buildCandidatePaths(path.string(), projectRoot)) {
+            if (std::find(fileCandidates.begin(), fileCandidates.end(), candidate) == fileCandidates.end()) {
+                fileCandidates.push_back(candidate);
+            }
+        }
+    };
+
+    if (filter && !filter->customTexturePath.empty()) {
+        addFileCandidates(filter->customTexturePath);
+    } else {
+        addFileCandidates(std::filesystem::path(resolvedMeshPath).replace_extension(".png"));
+        for (const std::string& uri :
+             Assets::MeshImportValidator::listGltfExternalUris(resolvedMeshPath)) {
+            addFileCandidates(std::filesystem::path(resolvedMeshPath).parent_path() / uri);
+        }
+    }
+
+    for (const std::string& candidate : fileCandidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(candidate, ec) || ec) continue;
+
+        std::string cacheKey = candidate;
+        std::filesystem::path canonical = std::filesystem::weakly_canonical(candidate, ec);
+        if (!ec) cacheKey = canonical.string();
+
+        auto& entry = m_fileTextureCache[cacheKey];
+        if (!entry.loaded) {
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            u8* data = stbi_load(cacheKey.c_str(), &width, &height, &channels, 0);
+            if (!data) continue;
+            entry.pixels.assign(data, data + static_cast<size_t>(width * height * channels));
+            entry.width = static_cast<u32>(width);
+            entry.height = static_cast<u32>(height);
+            entry.channels = channels;
+            entry.loaded = true;
+            stbi_image_free(data);
+        }
+
+        if (entry.loaded) {
+            result.pixels = entry.pixels.data();
+            result.width = entry.width;
+            result.height = entry.height;
+            result.channels = entry.channels;
+            result.flipV = false;
+            return result;
+        }
+    }
+
+    if (mesh && mesh->textureWidth > 0 && !mesh->baseColorTexture.empty()) {
+        result.pixels = mesh->baseColorTexture.data();
+        result.width = mesh->textureWidth;
+        result.height = mesh->textureHeight;
+        result.channels = mesh->textureChannels > 0 ? mesh->textureChannels : 4;
+        result.flipV = mesh->flipTextureV;
+    }
+
+    return result;
+}
+
+void SceneViewport::drawCustomMeshGeometry(
+    ECS::World& world,
+    EditorContext& ctx,
+    ECS::Entity entity,
+    ECS::MeshFilterComponent* meshFilter,
+    const Mat4& worldMatrix,
+    ImDrawList* dl,
+    const Mat4& vpMat,
+    const Vec3& camPos,
+    ImVec2 origin,
+    ImVec2 panelSize,
+    const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt,
+    bool drawTextured,
+    bool wireMode,
+    MeshCpuRasterizer* rasterizer) {
+    if (!meshFilter || meshFilter->customMeshPath.empty()) return;
+
+    std::string projectRoot;
+    if (!ctx.currentScenePath.empty()) {
+        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path().string();
+    }
+
+    auto& meshCache = Assets::MeshCache::getInstance();
+    auto* loadedMesh = meshCache.getMesh(meshFilter->customMeshPath, projectRoot);
+    const std::string& meshPath = meshCache.getResolvedPath().empty()
+        ? meshFilter->customMeshPath : meshCache.getResolvedPath();
+
+    if (!loadedMesh || loadedMesh->vertices.empty() || loadedMesh->indices.empty()) {
+        return;
+    }
+
+    const MeshDrawTexture drawTex = resolveDrawTexture(loadedMesh, meshFilter, meshPath, projectRoot);
+
+    auto transformNormal = [&](const Vec3& n) -> Vec3 {
+        Vec3 wn = worldMatrix.transformVector(n);
+        const f32 lenSq = wn.lengthSquared();
+        return lenSq > 1e-8f ? wn / std::sqrt(lenSq) : Vec3(0.0f, 1.0f, 0.0f);
+    };
+
+    struct WireEdge { ImVec2 a, b; };
+    std::vector<WireEdge> wireEdges;
+    if (wireMode) {
+        wireEdges.reserve(loadedMesh->indices.size());
+    }
+
+    const f32 rasterW = rasterizer ? static_cast<f32>(rasterizer->width) : panelSize.x;
+    const f32 rasterH = rasterizer ? static_cast<f32>(rasterizer->height) : panelSize.y;
+
+    auto buildRasterVert = [&](const Vec3& worldPos, const Vec3& worldNormal, const Vec2& uv) -> RasterVert {
+        RasterVert rv;
+        const Vec4 clip = vpMat.transformVec4(Vec4(worldPos.x, worldPos.y, worldPos.z, 1.0f));
+        if (clip.w <= 0.1f) {
+            rv.sx = -10000.0f;
+            rv.sy = -10000.0f;
+            return rv;
+        }
+        const f32 invW = 1.0f / clip.w;
+        const f32 ndcX = clip.x * invW;
+        const f32 ndcY = clip.y * invW;
+        rv.sx = (ndcX + 1.0f) * 0.5f * rasterW;
+        rv.sy = (1.0f - ndcY) * 0.5f * rasterH;
+        rv.ndcZ = clip.z * invW;
+        rv.invW = invW;
+        rv.worldPos = worldPos;
+        rv.worldNormal = worldNormal;
+        rv.uv = uv;
+        return rv;
+    };
+
+    for (size_t i = 0; i + 2 < loadedMesh->indices.size(); i += 3) {
+        const u32 i0 = loadedMesh->indices[i];
+        const u32 i1 = loadedMesh->indices[i + 1];
+        const u32 i2 = loadedMesh->indices[i + 2];
+
+        if (i0 >= loadedMesh->vertices.size() ||
+            i1 >= loadedMesh->vertices.size() ||
+            i2 >= loadedMesh->vertices.size()) continue;
+
+        const Vec3 p0 = worldMatrix.transformPoint(loadedMesh->vertices[i0].position);
+        const Vec3 p1 = worldMatrix.transformPoint(loadedMesh->vertices[i1].position);
+        const Vec3 p2 = worldMatrix.transformPoint(loadedMesh->vertices[i2].position);
+
+        const Vec3 edge1 = p1 - p0;
+        const Vec3 edge2 = p2 - p0;
+        Vec3 faceNormal = edge1.cross(edge2);
+        const f32 normalLenSq = faceNormal.lengthSquared();
+        if (normalLenSq < 1e-8f) continue;
+        faceNormal = faceNormal / std::sqrt(normalLenSq);
+
+        const ImVec2 sp0 = projectVP(vpMat, origin, panelSize, p0);
+        const ImVec2 sp1 = projectVP(vpMat, origin, panelSize, p1);
+        const ImVec2 sp2 = projectVP(vpMat, origin, panelSize, p2);
+        if (sp0.x < -5000.0f && sp1.x < -5000.0f && sp2.x < -5000.0f) continue;
+
+        if (drawTextured && rasterizer) {
+            const RasterVert rv0 = buildRasterVert(p0, transformNormal(loadedMesh->vertices[i0].normal),
+                                                   loadedMesh->vertices[i0].texcoord);
+            const RasterVert rv1 = buildRasterVert(p1, transformNormal(loadedMesh->vertices[i1].normal),
+                                                   loadedMesh->vertices[i1].texcoord);
+            const RasterVert rv2 = buildRasterVert(p2, transformNormal(loadedMesh->vertices[i2].normal),
+                                                   loadedMesh->vertices[i2].texcoord);
+            if (rv0.sx < -5000.0f || rv1.sx < -5000.0f || rv2.sx < -5000.0f) continue;
+            rasterizeTriangleCpu(*rasterizer, rv0, rv1, rv2, faceNormal, camPos, drawTex, lightColorAt);
+        }
+
+        if (wireMode) {
+            wireEdges.push_back({sp0, sp1});
+            wireEdges.push_back({sp1, sp2});
+            wireEdges.push_back({sp2, sp0});
+        }
+    }
+
+    if (!wireEdges.empty()) {
+        const ImU32 edgeCol = IM_COL32(170, 190, 230, 210);
+        for (const WireEdge& edge : wireEdges) {
+            dl->AddLine(edge.a, edge.b, edgeCol, 1.25f);
+        }
+    }
+}
+
+void SceneViewport::drawSceneMeshesForCamera(
+    ECS::World& world,
+    EditorContext& ctx,
+    ImDrawList* dl,
+    const Mat4& vp,
+    const Vec3& camPos,
+    ImVec2 origin,
+    ImVec2 panelSize,
+    ECS::Entity skipEntity) {
+    struct DirLightEval { Vec3 dir; f32 intensity; Vec3 color; };
+    struct PointLightEval { Vec3 pos; f32 intensity; f32 radius; Vec3 color; };
+    std::vector<DirLightEval> dirLights;
+    std::vector<PointLightEval> pointLights;
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::DirectionalLightComponent>();
+        world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
+            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent&) {
+                if (Scene::isEffectivelyDisabled(world, e)) return;
+                Vec3 ldir = entityForward(world, e).normalized();
+                dirLights.push_back({ldir, lc.intensity, Vec3(lc.color.x, lc.color.y, lc.color.z)});
+            });
+    }
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::LightComponent>();
+        q.with<ECS::PointLightComponent>();
+        world.forEach<ECS::LightComponent, ECS::PointLightComponent>(
+            q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::PointLightComponent& pl) {
+                if (Scene::isEffectivelyDisabled(world, e)) return;
+                Vec3 p;
+                if (!tryGetEntityPosition(world, e, p)) return;
+                pointLights.push_back({p, lc.intensity, std::max(0.001f, pl.radius),
+                                       Vec3(lc.color.x, lc.color.y, lc.color.z)});
+            });
+    }
+
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n) -> Vec3 {
+        const Vec3 nn = n.normalized();
+        Vec3 diffuse(0.22f, 0.22f, 0.24f);
+        for (const auto& l : dirLights) {
+            const f32 ndotl = std::max(0.0f, nn.dot(-1.0f * l.dir));
+            diffuse += l.color * (ndotl * l.intensity * 0.65f);
+        }
+        for (const auto& l : pointLights) {
+            Vec3 toLight = l.pos - p;
+            const f32 dist = std::max(0.001f, toLight.length());
+            if (dist > l.radius) continue;
+            const Vec3 ldir = toLight / dist;
+            const f32 atten = 1.0f - (dist / l.radius);
+            const f32 ndotl = std::max(0.0f, nn.dot(ldir));
+            diffuse += l.color * (ndotl * l.intensity * atten * atten * 0.9f);
+        }
+        diffuse.x = std::clamp(diffuse.x, 0.08f, 1.65f);
+        diffuse.y = std::clamp(diffuse.y, 0.08f, 1.65f);
+        diffuse.z = std::clamp(diffuse.z, 0.08f, 1.65f);
+        return diffuse;
+    };
+
+    MeshCpuRasterizer meshRaster;
+    meshRaster.begin(origin, panelSize);
+    meshRaster.clear(0, 0, 0, 0);
+
+    ECS::ComponentQuery meshQ;
+    meshQ.with<ECS::MeshFilterComponent>();
+    world.forEach<ECS::MeshFilterComponent>(meshQ,
+        [&](ECS::Entity entity, ECS::MeshFilterComponent& meshFilter) {
+            if (entity == skipEntity) return;
+            if (Scene::isEffectivelyDisabled(world, entity)) return;
+            if (meshFilter.primitive != ECS::MeshPrimitive::Custom) return;
+            if (meshFilter.customMeshPath.empty()) return;
+
+            const Mat4 worldMatrix = entityMatrix(world, entity);
+            drawCustomMeshGeometry(world, ctx, entity, &meshFilter, worldMatrix, dl, vp, camPos,
+                                   origin, panelSize, lightColorAt, true, false, &meshRaster);
+        });
+
+    blitMeshRasterizer(dl, meshRaster, m_camMeshRasterTexture);
+}
+
 std::string SceneViewport::resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const {
     if (spriteName.empty()) {
         return "";
@@ -2167,17 +2701,16 @@ void SceneViewport::releaseSpriteTextures() {
 
 void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const f32 worldToScreen = ctx.viewportZoom * 50.0f;
 
     auto w2s = [&](f32 wx, f32 wy) -> ImVec2 {
         return projectToScreen({wx, wy, 0.0f}, origin, viewportSize, ctx);
     };
 
-    ECS::ComponentQuery q;
-    q.with<ECS::Camera2DComponent>();
-    q.with<ECS::Transform>();
+    ECS::ComponentQuery q2d;
+    q2d.with<ECS::Camera2DComponent>();
+    q2d.with<ECS::Transform>();
 
-    world.forEach<ECS::Camera2DComponent, ECS::Transform>(q,
+    world.forEach<ECS::Camera2DComponent, ECS::Transform>(q2d,
         [&](ECS::Entity, ECS::Camera2DComponent& cam, ECS::Transform& pos) {
         const f32 halfW = 8.0f / cam.zoom;
         const f32 halfH = 4.5f / cam.zoom;
@@ -2200,7 +2733,76 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
         dl->AddLine(bl, ImVec2(bl.x + cLen, bl.y), col, 1.5f);
         dl->AddLine(bl, ImVec2(bl.x, bl.y - cLen), col, 1.5f);
 
-        dl->AddText(ImVec2(tl.x + 4.0f, tl.y - 16.0f), col, "Camera");
+        dl->AddText(ImVec2(tl.x + 4.0f, tl.y - 16.0f), col, "Camera 2D");
+    });
+
+    if (ctx.viewMode != EditorContext::ViewMode::Mode3D &&
+        ctx.viewMode != EditorContext::ViewMode::Isometric) {
+        return;
+    }
+
+    const Mat4 vp = computeVP3D(viewportSize, ctx);
+    auto projectFrustum = [&](const Vec3& p) -> ImVec2 {
+        return projectToScreenVP(p, origin, viewportSize, vp);
+    };
+    auto drawFrustumLine = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
+        ImVec2 sa = projectFrustum(a);
+        ImVec2 sb = projectFrustum(b);
+        if (sa.x < -5000.0f && sb.x < -5000.0f) return;
+        dl->AddLine(sa, sb, col, thickness);
+    };
+
+    ECS::ComponentQuery q3d;
+    q3d.with<ECS::Camera3DComponent>();
+    world.forEach<ECS::Camera3DComponent>(q3d,
+        [&](ECS::Entity entity, ECS::Camera3DComponent& cam) {
+        Vec3 camPos;
+        if (!tryGetEntityPosition(world, entity, camPos)) return;
+
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const Vec3 forward = entityForward(world, entity).normalized();
+        const Vec3 right   = matrixAxis(worldMatrix, 0, Vec3(1.0f, 0.0f, 0.0f));
+        const Vec3 up      = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
+
+        const f32 fovRad = cam.fov * kDegToRad;
+        const f32 aspect = std::max(0.1f, cam.aspectRatio);
+        const f32 nearD  = std::max(0.01f, cam.nearClip);
+        const f32 farD   = std::min(std::max(cam.farClip, nearD * 2.0f), nearD * 40.0f);
+
+        const f32 nearHalfH = std::tan(fovRad * 0.5f) * nearD;
+        const f32 nearHalfW = nearHalfH * aspect;
+        const f32 farHalfH  = std::tan(fovRad * 0.5f) * farD;
+        const f32 farHalfW  = farHalfH * aspect;
+
+        const Vec3 nearCenter = camPos + forward * nearD;
+        const Vec3 farCenter  = camPos + forward * farD;
+
+        const Vec3 nearCorners[4] = {
+            nearCenter + right * nearHalfW + up * nearHalfH,
+            nearCenter - right * nearHalfW + up * nearHalfH,
+            nearCenter - right * nearHalfW - up * nearHalfH,
+            nearCenter + right * nearHalfW - up * nearHalfH,
+        };
+        const Vec3 farCorners[4] = {
+            farCenter + right * farHalfW + up * farHalfH,
+            farCenter - right * farHalfW + up * farHalfH,
+            farCenter - right * farHalfW - up * farHalfH,
+            farCenter + right * farHalfW - up * farHalfH,
+        };
+
+        const ImU32 col = IM_COL32(255, 220, 50, 220);
+        for (int i = 0; i < 4; ++i) {
+            const int next = (i + 1) % 4;
+            drawFrustumLine(nearCorners[i], nearCorners[next], col, 1.5f);
+            drawFrustumLine(farCorners[i], farCorners[next], col, 1.5f);
+            drawFrustumLine(nearCorners[i], farCorners[i], col, 1.5f);
+        }
+        drawFrustumLine(camPos, nearCenter, col, 1.5f);
+
+        ImVec2 labelPos = projectFrustum(nearCenter);
+        if (labelPos.x > -5000.0f) {
+            dl->AddText(ImVec2(labelPos.x + 4.0f, labelPos.y - 16.0f), col, "Camera 3D");
+        }
     });
 }
 

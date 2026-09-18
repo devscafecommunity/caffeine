@@ -226,26 +226,26 @@ private:
 ## Layout Visual do Editor
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────────┐
 │  Caffeine Studio — Scene: "Level01.caf"               ● unsaved     │
 │  File | Edit | View | Build | Run                                   │
 ├────────────┬──────────────────────────────────┬─────────────────────┤
 │ Hierarchy  │                                  │  Inspector          │
-│            │         Scene Viewport            │                     │
+│            │         Scene Viewport           │                     │
 │ ▸ Root     │                                  │  Entity: "Hero"     │
-│   ├─ Hero  │   +──────────+                  │  ────────────────── │
-│   ├─ Enemy │   │  Sprite  │                  │  ▾ Transform        │
-│   └─ Floor │   │  (Gizmo) │                  │    Pos: [120, 340]  │
-│            │   │   ←→     │                  │    Rot:  45.0°      │
-│            │   +──────────+                  │    Scl: [1.0, 1.0]  │
+│   ├─ Hero  │   +──────────+                   │  ────────────────── │
+│   ├─ Enemy │   │  Sprite  │                   │  ▾ Transform        │
+│   └─ Floor │   │  (Gizmo) │                   │    Pos: [120, 340]  │
+│            │   │   ←→     │                   │    Rot:  45.0°      │
+│            │   +──────────+                   │    Scl: [1.0, 1.0]  │
 │            │                                  │  ▾ Sprite Renderer  │
 │            │   Grid: ON    Translate [W]      │    Tex: hero.caf    │
 │            │                                  │  ▾ RigidBody2D      │
 │            │                                  │    Mass: 1.0        │
 ├────────────┴──────────────────────────────────┴─────────────────────┤
 │  Assets /sprites/          │  Console   │  Profiler                 │
-│  📁 hero.caf  📁 floor.caf │  [INFO]... │  Frame: 16.7ms / 60fps   │
-└────────────────────────────────────────────────────────────────────-─┘
+│  📁 hero.caf  📁 floor.caf │  [INFO]... │  Frame: 16.7ms / 60fps    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

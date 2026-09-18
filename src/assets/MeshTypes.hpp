@@ -57,6 +57,8 @@ struct Mesh3D {
     u32 textureWidth = 0;
     u32 textureHeight = 0;
     int textureChannels = 0;
+    /// OBJ uses V-up from bottom; glTF 2.0 uses top-left (V=0 at top).
+    bool flipTextureV = true;
     
 #ifdef CF_HAS_SDL3
     RHI::Buffer* vertexBuffer = nullptr;

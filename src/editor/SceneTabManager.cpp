@@ -86,9 +86,10 @@ void SceneTabManager::captureContext(const EditorContext& ctx) {
 void SceneTabManager::applyContext(EditorContext& ctx) const {
     if (m_activeTabIndex < 0) return;
     const auto& t = *m_tabs[m_activeTabIndex];
-    ctx.selectedEntity   = t.selectedEntity;
-    ctx.isDirty          = t.isDirty;
-    ctx.undoStack        = t.undoStack;
+    ctx.selectedEntity     = t.selectedEntity;
+    ctx.isDirty            = t.isDirty;
+    ctx.undoStack          = t.undoStack;
+    ctx.currentScenePath   = t.path;
 }
 
 } // namespace Caffeine::Editor

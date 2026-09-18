@@ -1,6 +1,7 @@
 #include "editor/HierarchyPanel.hpp"
 #include "editor/DragDropSystem.hpp"
-#include "assets/PrefabSerializer.hpp"
+#include "editor/PrefabSystem.hpp"
+#include "editor/DragDropSystem.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ui/UIComponents.hpp"
 #include "scene/HierarchySystem.hpp"
@@ -64,6 +65,21 @@ void HierarchyPanel::onImGuiRender() {
 
         for (u32 i = 0; i < m_entityCount; ++i) {
             renderEntityNode(m_entities[i]);
+        }
+
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
+                const auto* asset = static_cast<const AssetDropPayload*>(payload->Data);
+                if (asset->type == AssetType::Prefab) {
+                    m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+                    ECS::Entity root = PrefabSystem::Instantiate(*m_world, asset->path);
+                    if (root.isValid()) {
+                        m_context->selectEntity(root);
+                    }
+                    m_context->endUndo(*m_world);
+                }
+            }
+            ImGui::EndDragDropTarget();
         }
 
         renderEmptyContextMenu();
@@ -146,11 +162,14 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
     }
 
     const bool effectivelyDisabled = Scene::isEffectivelyDisabled(*m_world, entity);
+    const bool isPrefabLinked = PrefabSystem::FindInstanceRoot(*m_world, entity).isValid();
     if (effectivelyDisabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    else if (isPrefabLinked) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.0f, 1.0f));
 
-    bool open = ImGui::TreeNodeEx((void*)(uintptr_t)entity.id(), flags, "%s", name);
+    const char* label = isPrefabLinked ? "[P] %s" : "%s";
+    bool open = ImGui::TreeNodeEx((void*)(uintptr_t)entity.id(), flags, label, name);
 
-    if (effectivelyDisabled) ImGui::PopStyleColor();
+    if (effectivelyDisabled || isPrefabLinked) ImGui::PopStyleColor();
 
     if (entity == m_context->selectedEntity && entity != m_lastScrollTarget) {
         ImGui::SetScrollHereY(0.5f);
@@ -168,7 +187,21 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
     }
 
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
+            const auto* asset = static_cast<const AssetDropPayload*>(payload->Data);
+            if (asset->type == AssetType::Prefab) {
+                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+                ECS::Entity root = PrefabSystem::Instantiate(*m_world, asset->path);
+                if (root.isValid()) {
+                    auto& parentComp = m_world->add<Scene::Parent>(root);
+                    parentComp.parent = entity;
+                    parentComp.dirty = true;
+                    m_context->selectEntity(root);
+                    m_expandEntity = entity;
+                }
+                m_context->endUndo(*m_world);
+            }
+        } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
             ECS::Entity dragged(*(u32*)payload->Data, m_world);
             if (dragged != entity) {
                 m_context->beginUndo(EditorCommand::MoveEntity, dragged.id(), *m_world);
@@ -537,14 +570,9 @@ void HierarchyPanel::renderEmptyContextMenu() {
             } else {
                 m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
                 
-                Assets::PrefabSerializer serializer(*m_world);
-                ECS::Entity rootEntity = serializer.load(prefabPath);
-                
+                ECS::Entity rootEntity = PrefabSystem::Instantiate(*m_world, prefabPath);
+
                 if (rootEntity.isValid()) {
-                    auto& prefabInst = m_world->add<ECS::PrefabInstance>(rootEntity);
-                    prefabInst.prefabPath = prefabPath;
-                    prefabInst.rootEntityId = rootEntity.id();
-                    
                     m_context->selectEntity(rootEntity);
                     m_context->endUndo(*m_world);
                     

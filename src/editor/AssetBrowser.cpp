@@ -1,8 +1,13 @@
 #include "editor/AssetBrowser.hpp"
+#include "editor/EditorIcons.hpp"
 #include "editor/CapLoader.hpp"
 #include "editor/FilePicker.hpp"
 #include "editor/DragDropSystem.hpp"
+#include "editor/PrefabSystem.hpp"
+#include "editor/EditorContext.hpp"
+#include "core/io/CafTypes.hpp"
 #include "assets/TextureCompiler.hpp"
+#include "assets/MeshImportValidator.hpp"
 #ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
 #include "caf-pack/HeaderGenerator.hpp"
@@ -17,6 +22,26 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 namespace Caffeine::Editor {
+
+namespace {
+
+AssetType readCafAssetType(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return AssetType::Unknown;
+    CafHeader header{};
+    in.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (!in || header.magic != CafHeader::kMagic) return AssetType::Unknown;
+    return header.type;
+}
+
+bool needsMeshBundleImport(const std::filesystem::path& path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext == ".gltf" || ext == ".obj";
+}
+
+}  // namespace
 
 // ── Init / Refresh ──────────────────────────────────────────────────────────
 
@@ -65,19 +90,34 @@ void AssetBrowser::refresh() {
 
         if (!e.isDirectory) {
             const auto ext = entry.path().extension().string();
-            if      (ext == ".caf")                  e.type = AssetType::Scene;
+            if (ext == ".prefab") {
+                e.type = AssetType::Prefab;
+            } else if (ext == ".caf") {
+                e.type = readCafAssetType(entry.path());
+                if (e.type == AssetType::Unknown) e.type = AssetType::Scene;
+            }
             else if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" || ext == ".tga")  e.type = AssetType::Texture;
             else if (ext == ".wav"  || ext == ".ogg"  || ext == ".mp3")   e.type = AssetType::Audio;
-            else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb")   e.type = AssetType::Mesh;
+            else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb" || ext == ".fbx") e.type = AssetType::Mesh;
             else if (ext == ".lua")                      e.type = AssetType::Unknown;
             else                                     e.type = AssetType::Unknown;
 
             std::error_code ec;
             e.fileSize = std::filesystem::file_size(entry.path(), ec);
+
+            if (e.type == AssetType::Mesh) {
+                const auto report = Assets::MeshImportValidator::analyze(e.path);
+                e.meshImportIncomplete = !report.readyToLoad;
+            }
         }
 
         m_entries.push_back(std::move(e));
     }
+
+    std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
+        if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
+        return a.name < b.name;
+    });
 
     applySearchFilter();
 }
@@ -179,6 +219,59 @@ void AssetBrowser::navigateBack() {
     }
 }
 
+void AssetBrowser::navigateUp() {
+    if (!m_currentDir.has_parent_path()) return;
+    const auto parent = m_currentDir.parent_path();
+    if (!m_projectRoot.empty()) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(parent, m_projectRoot, ec);
+        if (ec || rel.empty()) return;
+        if (rel.generic_string().rfind("..", 0) == 0) return;
+    }
+    navigateTo(parent);
+}
+
+void AssetBrowser::navigateToProjectRoot() {
+    if (m_projectRoot.empty()) return;
+    m_pathHistory.clear();
+    m_currentDir = m_projectRoot;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
+void AssetBrowser::navigateToAssets() {
+    if (!m_rawRoot.empty()) {
+        m_pathHistory.clear();
+        m_currentDir = m_rawRoot;
+        m_assetScope = AssetScope::Raw;
+        m_rootPath = m_rawRoot.string();
+        m_browseMode = BrowseMode::Filesystem;
+        refresh();
+    }
+}
+
+void AssetBrowser::navigateToScenes() {
+    if (m_projectRoot.empty()) return;
+    const auto scenes = m_projectRoot / "scenes";
+    std::error_code ec;
+    std::filesystem::create_directories(scenes, ec);
+    m_pathHistory.clear();
+    m_currentDir = scenes;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
+void AssetBrowser::navigateToScripts() {
+    if (m_projectRoot.empty()) return;
+    const auto scripts = m_projectRoot / "scripts";
+    std::error_code ec;
+    std::filesystem::create_directories(scripts, ec);
+    m_pathHistory.clear();
+    m_currentDir = scripts;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
 bool AssetBrowser::canGoBack() const {
     return !m_pathHistory.empty();
 }
@@ -255,7 +348,38 @@ const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::pat
         case AssetType::Audio:   return "[A]";
         case AssetType::Mesh:    return "[M]";
         case AssetType::Scene:   return "[S]";
+        case AssetType::Prefab:  return "[F]";
         default:                 return "[ ]";
+    }
+}
+
+const char* AssetBrowser::iconNameForType(AssetType type, const std::filesystem::path& path) {
+    if (path.extension() == ".lua") return "at";
+    switch (type) {
+        case AssetType::Texture: return "beer";
+        case AssetType::Audio:   return "bell";
+        case AssetType::Mesh:    return "arrows-diagonal";
+        case AssetType::Scene:   return "account";
+        case AssetType::Prefab:  return "account-small";
+        default:                 return "alert-circle";
+    }
+}
+
+void AssetBrowser::drawTypeIcon(AssetType type, const std::filesystem::path& path, bool isDirectory, f32 size) {
+    if (isDirectory) {
+        if (EditorIcons::hasIcon("arrow-open-down")) {
+            EditorIcons::image("arrow-open-down", size);
+        } else {
+            ImGui::Text("[dir]");
+        }
+        return;
+    }
+
+    const char* iconName = iconNameForType(type, path);
+    if (EditorIcons::hasIcon(iconName)) {
+        EditorIcons::image(iconName, size);
+    } else {
+        ImGui::Text("%s", iconForType(type, path));
     }
 }
 
@@ -271,6 +395,22 @@ void AssetBrowser::renderToolbar() {
         if (ImGui::Button("<- Back")) {
             navigateBack();
         }
+        ImGui::SameLine();
+    }
+
+    if (ImGui::Button("^ Up")) {
+        navigateUp();
+    }
+    ImGui::SameLine();
+
+    if (!m_projectRoot.empty()) {
+        if (ImGui::Button("Project")) navigateToProjectRoot();
+        ImGui::SameLine();
+        if (ImGui::Button("Assets")) navigateToAssets();
+        ImGui::SameLine();
+        if (ImGui::Button("Scenes")) navigateToScenes();
+        ImGui::SameLine();
+        if (ImGui::Button("Scripts")) navigateToScripts();
         ImGui::SameLine();
     }
 
@@ -355,27 +495,37 @@ void AssetBrowser::renderToolbar() {
 // ── Breadcrumbs ─────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderBreadcrumbs() {
-    std::filesystem::path rel;
-    if (m_currentDir == m_rootPath) {
-        ImGui::TextUnformatted(m_rootPath.c_str());
-        return;
+    std::vector<std::filesystem::path> crumbs;
+    std::filesystem::path anchor = !m_projectRoot.empty() ? m_projectRoot : std::filesystem::path(m_rootPath);
+
+    std::error_code ec;
+    auto rel = std::filesystem::relative(m_currentDir, anchor, ec);
+    if (!ec && !rel.empty() && rel.generic_string().rfind("..", 0) != 0) {
+        crumbs.push_back(anchor);
+        for (const auto& part : rel) {
+            crumbs.push_back(crumbs.back() / part);
+        }
+    } else {
+        crumbs.push_back(m_currentDir);
     }
 
-    // Build relative path to show clickable segments
-    std::string display;
-    if (m_currentDir.string().find(m_rootPath) == 0) {
-        auto relPath = std::filesystem::relative(m_currentDir, m_rootPath);
-        display = m_rootPath + "/" + relPath.generic_string();
-    } else {
-        display = m_currentDir.generic_string();
-    }
+    for (size_t i = 0; i < crumbs.size(); ++i) {
+        if (i > 0) {
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextUnformatted("/");
+            ImGui::SameLine(0.0f, 4.0f);
+        }
 
-    // Show first portion
-    float availWidth = ImGui::GetContentRegionAvail().x - 320.0f; // leave room for other toolbar widgets
-    if (availWidth > 100.0f) {
-        ImGui::TextUnformatted(display.c_str());
-    } else {
-        ImGui::TextUnformatted(m_currentDir.filename().string().c_str());
+        const std::string label = (i == 0 && !m_projectRoot.empty())
+                                      ? "Project"
+                                      : crumbs[i].filename().string();
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton(label.c_str())) {
+            navigateTo(crumbs[i]);
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
     }
 }
 
@@ -438,12 +588,11 @@ void AssetBrowser::renderGridView() {
 
         ImGui::SetCursorPos(cursorPos);
         ImGui::BeginGroup();
-        if (entry.isDirectory) {
-            ImGui::Text("[dir]");
-        } else {
-            ImGui::Text("%s", iconForType(entry.type, entry.path));
-        }
+        drawTypeIcon(entry.type, entry.path, entry.isDirectory, 20.0f);
         ImGui::TextWrapped("%s", entry.name.c_str());
+        if (entry.meshImportIncomplete) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "[incompleto]");
+        }
         ImGui::EndGroup();
 
         ImGui::PopID();
@@ -512,9 +661,17 @@ void AssetBrowser::renderListView() {
 
         ImGui::SameLine();
         if (entry.isDirectory) {
-            ImGui::Text("[dir] %s", entry.name.c_str());
+            drawTypeIcon(entry.type, entry.path, true, 16.0f);
+            ImGui::SameLine();
+            ImGui::TextUnformatted(entry.name.c_str());
         } else {
-            ImGui::Text("%s %s", iconForType(entry.type, entry.path), entry.name.c_str());
+            drawTypeIcon(entry.type, entry.path, false, 16.0f);
+            ImGui::SameLine();
+            ImGui::TextUnformatted(entry.name.c_str());
+            if (entry.meshImportIncomplete) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "[!]");
+            }
         }
 
         ImGui::NextColumn();
@@ -709,6 +866,33 @@ void AssetBrowser::renderPreviewPane() {
             ImGui::Text("Channels: %d", channels);
         }
     }
+
+    if (entry.type == AssetType::Mesh && m_browseMode == BrowseMode::Filesystem) {
+        const auto report = Assets::MeshImportValidator::analyze(entry.path);
+        ImGui::Spacing();
+        if (report.readyToLoad) {
+            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "Pronto para usar");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", report.errorSummary.c_str());
+            if (!report.suggestion.empty()) {
+                ImGui::TextWrapped("%s", report.suggestion.c_str());
+            }
+        }
+        if (!report.dependencies.empty()) {
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Dependencias:");
+            for (const std::string& dep : report.dependencies) {
+                const bool missing = std::find(report.missingDependencies.begin(),
+                                               report.missingDependencies.end(),
+                                               dep) != report.missingDependencies.end();
+                if (missing) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "  [x] %s", dep.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "  [ok] %s", dep.c_str());
+                }
+            }
+        }
+    }
 }
 
 bool AssetBrowser::isSupportedRawAsset(const std::filesystem::path& path) const {
@@ -895,6 +1079,40 @@ bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool auto
                 return false;
             }
         }
+    } else if (needsMeshBundleImport(sourcePath)) {
+        const auto sourceDir = sourcePath.parent_path();
+        const auto bundle = Assets::MeshImportValidator::collectImportBundle(sourcePath);
+
+        for (const auto& file : bundle) {
+            std::filesystem::path rel = file.filename();
+            std::error_code relEc;
+            const auto computed = std::filesystem::relative(file, sourceDir, relEc);
+            if (!relEc) rel = computed;
+
+            if (!importSingleFile(file, m_rawRoot / rel)) {
+                setStatusMessage("Falha ao importar ficheiros do mesh", true);
+                refresh();
+                return false;
+            }
+        }
+
+        refresh();
+        if (m_assetScope == AssetScope::Processed && convertedCount > 0) {
+            setAssetScope(AssetScope::Processed);
+        }
+
+        const auto report = Assets::MeshImportValidator::analyze(m_rawRoot / sourcePath.filename());
+        std::string message = "Mesh importado (" + std::to_string(copiedCount) + " ficheiro(s))";
+        if (!report.readyToLoad) {
+            message = "Importado mas incompleto: " + report.errorSummary;
+            if (!report.suggestion.empty()) {
+                message += " — " + report.suggestion;
+            }
+            setStatusMessage(message, true);
+            return true;
+        }
+        setStatusMessage(message, false);
+        return true;
     } else {
         if (!importSingleFile(sourcePath, m_rawRoot / sourcePath.filename())) {
             setStatusMessage("Failed to import file", true);
@@ -982,8 +1200,10 @@ void AssetBrowser::renderAssetCreatorModal() {
             drawOption("[G]", "GIF", "GIF", 2, true);
             drawOption("[V]", "Video", "MP4/AVI/MOV", 3, true);
         } else if (m_assetCreatorCategory == 1) {
+            ImGui::TextWrapped("Prefira .glb (um ficheiro). glTF separado precisa do .bin e texturas.");
+            ImGui::Spacing();
             drawOption("[O]", "OBJ Model", ".obj", 4, true);
-            drawOption("[G]", "GLTF Model", ".gltf/.glb", 5, true);
+            drawOption("[G]", "GLB Model", ".glb (recomendado)", 5, true);
         } else if (m_assetCreatorCategory == 2) {
             drawOption("[L]", "Lua Script", ".lua", 6, false);
             drawOption("[C]", "C++ Script", ".cpp/.hpp", 7, false);
@@ -1052,8 +1272,9 @@ void AssetBrowser::renderNamingPopup() {
     }
 }
 
-void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
+void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx) {
     if (!m_open) return;
+    m_world = &world;
 
     if (ImGui::Begin("Asset Browser", &m_open)) {
 
@@ -1101,6 +1322,25 @@ void AssetBrowser::render([[maybe_unused]] EditorContext& ctx) {
             renderListView();
         }
         renderContextMenu();
+
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadEntityDrag)) {
+                const u32 eid = *static_cast<const u32*>(payload->Data);
+                ECS::Entity entity(eid, m_world);
+                if (entity.isValid()) {
+                    const char* entityName = getEntityName(*m_world, entity);
+                    std::filesystem::path out = m_currentDir / (std::string(entityName) + ".prefab.caf");
+                    if (PrefabSystem::CreateFromEntity(*m_world, entity, out)) {
+                        setStatusMessage("Prefab created: " + out.filename().string(), false);
+                        refresh();
+                    } else {
+                        setStatusMessage("Failed to create prefab", true);
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
         ImGui::EndChild();
 
         ImGui::SameLine();

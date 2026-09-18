@@ -2,6 +2,7 @@
 #include "core/Types.hpp"
 #include "core/io/CafTypes.hpp"
 #include "editor/EditorContext.hpp"
+#include "ecs/World.hpp"
 #include "editor/ProjectManager.hpp"
 
 #include <vector>
@@ -53,6 +54,7 @@ public:
         std::string           name;
         u64                   fileSize   = 0;
         bool                  isDirectory = false;
+        bool                  meshImportIncomplete = false;
     };
 
     AssetBrowser() = default;
@@ -78,6 +80,11 @@ public:
     // Navigation
     void navigateTo(const std::filesystem::path& dir);
     void navigateBack();
+    void navigateUp();
+    void navigateToProjectRoot();
+    void navigateToAssets();
+    void navigateToScenes();
+    void navigateToScripts();
     bool canGoBack() const;
     const std::filesystem::path& currentPath() const;
 
@@ -101,7 +108,7 @@ public:
 
     // ── UI layer (requires ImGui) ─────────────────────────────────────
     #ifdef CF_HAS_IMGUI
-    void render(EditorContext& ctx);
+    void render(ECS::World& world, EditorContext& ctx);
     std::optional<std::filesystem::path> getDroppedAsset() const;
 
     private:
@@ -113,6 +120,8 @@ public:
     void renderPreviewPane();
     void renderContextMenu();
     const char* iconForType(AssetType type, const std::filesystem::path& path = {});
+    const char* iconNameForType(AssetType type, const std::filesystem::path& path = {});
+    void drawTypeIcon(AssetType type, const std::filesystem::path& path, bool isDirectory, f32 size);
     bool importPath(const std::filesystem::path& sourcePath, bool autoConvert = true);
     bool convertRawAssetToCaf(const std::filesystem::path& rawPath, std::string* errorMessage = nullptr);
     usize convertAllSupportedAssets();
@@ -132,6 +141,7 @@ public:
     int  m_pendingCreateType = -1;
     std::filesystem::path m_clipboardPath;
     bool m_clipboardIsCut = false;
+    ECS::World* m_world = nullptr;
     int  m_renamingEntry = -1;
     char m_renameBuf[256] = {};
     void renderAssetCreatorModal();

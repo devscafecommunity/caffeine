@@ -8,11 +8,15 @@
 #include "math/Math.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/TransformGizmo.hpp"
+#include "assets/MeshTypes.hpp"
+#include "ecs/MeshComponents.hpp"
 
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #ifdef CF_HAS_SDL3
 #include "rhi/RenderDevice.hpp"
@@ -27,6 +31,29 @@
 #include "ecs/CameraComponents.hpp"
 
 namespace Caffeine::Editor {
+
+struct MeshDrawTexture {
+    const u8* pixels = nullptr;
+    u32 width = 0;
+    u32 height = 0;
+    int channels = 0;
+    bool flipV = false;
+};
+
+#ifdef CF_HAS_IMGUI
+struct MeshCpuRasterizer {
+    int width = 0;
+    int height = 0;
+    int panelW = 0;
+    int panelH = 0;
+    ImVec2 origin{};
+    std::vector<u8> color;
+    std::vector<f32> depth;
+
+    void begin(ImVec2 origin_, ImVec2 size);
+    void clear(u8 r, u8 g, u8 b, u8 a = 0);
+};
+#endif
 
 class SceneViewport {
 public:
@@ -87,6 +114,13 @@ public:
      static ImVec2 projectToScreenVP(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
                                      const Mat4& vp);
 
+    #ifdef CF_HAS_IMGUI
+    void drawSceneMeshesForCamera(ECS::World& world, EditorContext& ctx, ImDrawList* dl,
+                                  const Mat4& vp, const Vec3& camPos,
+                                  ImVec2 origin, ImVec2 panelSize,
+                                  ECS::Entity skipEntity = ECS::Entity::INVALID);
+    #endif
+
 private:
 #ifdef CF_HAS_IMGUI
     void drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
@@ -115,7 +149,8 @@ private:
      // Find closest entity under a ray (for click-to-select)
      // Returns INVALID if no hit
      ECS::Entity raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
-                                     ECS::World& world);
+                                     ECS::World& world,
+                                     const std::string& projectRoot = "");
 
      struct SpriteTextureCacheEntry {
         std::unique_ptr<ImTextureData> texture;
@@ -124,7 +159,34 @@ private:
         bool loadFailed = false;
     };
 
+    struct FileTextureCacheEntry {
+        std::vector<u8> pixels;
+        u32 width = 0;
+        u32 height = 0;
+        int channels = 0;
+        bool loaded = false;
+    };
+
+    MeshDrawTexture resolveDrawTexture(const Assets::Mesh3D* mesh,
+                                       const ECS::MeshFilterComponent* filter,
+                                       const std::string& resolvedMeshPath,
+                                       const std::string& projectRoot);
+
+    void drawCustomMeshGeometry(ECS::World& world, EditorContext& ctx, ECS::Entity entity,
+                                ECS::MeshFilterComponent* meshFilter, const Mat4& worldMatrix,
+                                ImDrawList* dl, const Mat4& vpMat, const Vec3& camPos,
+                                ImVec2 origin, ImVec2 panelSize,
+                                const std::function<Vec3(const Vec3&, const Vec3&)>& lightColorAt,
+                                bool drawTextured, bool wireMode,
+                                MeshCpuRasterizer* rasterizer = nullptr);
+
+    void blitMeshRasterizer(ImDrawList* dl, MeshCpuRasterizer& rasterizer,
+                            SpriteTextureCacheEntry& texEntry);
+
     std::unordered_map<std::string, SpriteTextureCacheEntry> m_spriteTextureCache;
+    std::unordered_map<std::string, FileTextureCacheEntry> m_fileTextureCache;
+    SpriteTextureCacheEntry m_meshRasterTexture;
+    SpriteTextureCacheEntry m_camMeshRasterTexture;
 #endif
 
     bool m_open = true;
@@ -138,7 +200,7 @@ private:
     ImVec2 m_gizmoScreenOrigin = {};
     ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
     ProjectionMode m_projectionMode = ProjectionMode::Perspective;
-    MeshPreviewMode m_meshPreviewMode = MeshPreviewMode::Wireframe;
+    MeshPreviewMode m_meshPreviewMode = MeshPreviewMode::Textured;
     WireframeDensity m_wireframeDensity = WireframeDensity::Medium;
 #ifdef CF_HAS_SDL3
     RHI::RenderDevice* m_device = nullptr;

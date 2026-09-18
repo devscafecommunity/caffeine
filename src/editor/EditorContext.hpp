@@ -106,6 +106,9 @@ public:
     bool snapToGrid   = false;
     f32  snapGridSize = 1.0f;
 
+    // ── Inspector ──────────────────────────────────────────────────────
+    bool uniformScale = true;
+
     // ── Debug overlays ─────────────────────────────────────────────────
     bool physicsDebugVisible = true;
 
@@ -168,6 +171,25 @@ public:
     bool hasMultiSelection() const { return selectedEntities.size() > 1; }
 
     void markDirty() { isDirty = true; }
+
+    // ── Transient status (viewport / import feedback) ────────────────
+    std::string transientStatus;
+    bool        transientStatusIsError = false;
+    float       transientStatusTimeLeft = 0.f;
+
+    void pushTransientStatus(const std::string& msg, bool isError = true, float durationSec = 6.f) {
+        transientStatus = msg;
+        transientStatusIsError = isError;
+        transientStatusTimeLeft = durationSec;
+    }
+
+    void tickTransientStatus(float dt) {
+        if (transientStatusTimeLeft <= 0.f) return;
+        transientStatusTimeLeft -= dt;
+        if (transientStatusTimeLeft <= 0.f) {
+            transientStatus.clear();
+        }
+    }
 
     void clearSelection() {
         selectedEntity = ECS::Entity::INVALID;
