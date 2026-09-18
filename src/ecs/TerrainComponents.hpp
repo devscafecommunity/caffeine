@@ -9,8 +9,9 @@ namespace Caffeine::ECS {
 inline constexpr u32 kTerrainSplatLayerCount = 4;
 
 struct TerrainComponent {
-    u32 resolutionX = 65;
-    u32 resolutionZ = 65;
+    u32 resolutionX = 257;
+    u32 resolutionZ = 257;
+    u32 splatResolutionScale = 2;
     f32 worldSizeX = 64.0f;
     f32 worldSizeZ = 64.0f;
     f32 maxHeight = 16.0f;

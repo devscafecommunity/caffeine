@@ -126,6 +126,13 @@ public:
     Vec3            camFocus    = {0.0f, 0.0f, 0.0f};
     f32             camDistance = 10.0f;
 
+    bool            isPlayMode = false;
+
+    static constexpr f32 kCamDistanceMin = 0.5f;
+    static constexpr f32 kCamDistanceMax = 50000.0f;
+    static constexpr f32 kCamPitchMin = -1.55f;
+    static constexpr f32 kCamPitchMax = 1.4f;
+
     // ── Skybox (3D viewport) ───────────────────────────────────────────
     bool skyboxEnabled = true;
     int  skyboxIndex   = 0;

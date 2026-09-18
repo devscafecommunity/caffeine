@@ -27,7 +27,7 @@ namespace IO = SceneSerializerIO;
 
 namespace {
 
-constexpr u32 kTerrainBlobVersion = 2;
+constexpr u32 kTerrainBlobVersion = 8;
 
 std::filesystem::path projectRootFromScenePath(const std::string& scenePath) {
     if (scenePath.empty()) return {};
@@ -463,6 +463,7 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     appendU32(data, kTerrainBlobVersion);
     appendU32(data, terrain.resolutionX);
     appendU32(data, terrain.resolutionZ);
+    appendU32(data, terrain.splatResolutionScale);
     appendF32(data, terrain.worldSizeX);
     appendF32(data, terrain.worldSizeZ);
     appendF32(data, terrain.maxHeight);
@@ -509,6 +510,66 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     appendF32(data, gen.heightQuantize);
     appendU8(data, gen.autoSplat ? 1 : 0);
     appendU8(data, static_cast<u8>(gen.style));
+    if (kTerrainBlobVersion >= 4) {
+        appendU8(data, gen.useRidgedNoise ? 1 : 0);
+        appendU32(data, gen.domainWarpPasses);
+        appendU32(data, gen.hydraulicMaxSteps);
+        appendF32(data, gen.hydraulicInertia);
+        appendF32(data, gen.hydraulicEvaporation);
+        appendF32(data, gen.splatBlendRange);
+        const ECS::TerrainSimulationSettings& sim = gen.simulation;
+        appendU8(data, sim.enabled ? 1 : 0);
+        appendU8(data, static_cast<u8>(sim.environment));
+        appendU32(data, sim.totalIterations);
+        appendU32(data, sim.dropletsPerIteration);
+        appendU32(data, sim.maxDropletSteps);
+        appendF32(data, sim.convergenceThreshold);
+        appendU8(data, sim.autoConvergence ? 1 : 0);
+        appendF32(data, sim.tectonicActivity);
+        appendF32(data, sim.erosionWater);
+        appendF32(data, sim.erosionThermal);
+        appendF32(data, sim.erosionGlacial);
+        appendF32(data, sim.erosionWind);
+        appendF32(data, sim.erosionBiological);
+        appendF32(data, sim.temperature);
+        appendF32(data, sim.humidity);
+        appendF32(data, sim.windDirection);
+        appendF32(data, sim.rainfallBase);
+        appendF32(data, gen.ridgedBlend);
+        appendU32(data, gen.postSimSmoothIterations);
+        appendU32(data, gen.splatBlurPasses);
+    }
+    if (kTerrainBlobVersion >= 6) {
+        appendU8(data, static_cast<u8>(gen.heightModel));
+        appendF32(data, gen.ridgeOffset);
+        appendF32(data, gen.ridgeGain);
+        appendF32(data, gen.multiplicativeContrast);
+        appendU8(data, gen.fractalDomainWarp ? 1 : 0);
+        appendF32(data, gen.domainWarpScale);
+        appendU8(data, gen.slopeWeighting ? 1 : 0);
+        appendF32(data, gen.slopeWeightAlpha);
+    }
+    if (kTerrainBlobVersion >= 7) {
+        appendU8(data, gen.useClimateBiomes ? 1 : 0);
+        appendF32(data, gen.climate.prevailingWindAngle);
+        appendF32(data, gen.climate.baseHumidity);
+        appendF32(data, gen.climate.temperature);
+        appendF32(data, gen.climate.seaLevel);
+        appendU8(data, gen.hydrology.traceRivers ? 1 : 0);
+        appendU32(data, gen.hydrology.maxRiverSources);
+        appendF32(data, gen.hydrology.riverSourceMinHeight);
+        appendF32(data, gen.hydrology.riverSourceMaxHeight);
+        appendF32(data, gen.hydrology.riverCarveStrength);
+        appendU32(data, gen.hydrology.rainShadowSteps);
+        appendF32(data, gen.hydrology.waterMoistureRadius);
+        appendF32(data, gen.hydrology.sedimentDepositStrength);
+    }
+    if (kTerrainBlobVersion >= 8) {
+        appendF32(data, gen.fractalRoughness);
+        appendF32(data, gen.spectralExponent);
+        appendU8(data, static_cast<u8>(gen.multiplyLayerA));
+        appendU8(data, static_cast<u8>(gen.multiplyLayerB));
+    }
     return data;
 }
 
@@ -530,6 +591,11 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
 
     if (!readU32(cursor, end, terrain.resolutionX)) return false;
     if (!readU32(cursor, end, terrain.resolutionZ)) return false;
+    if (blobVersion >= 3) {
+        if (!readU32(cursor, end, terrain.splatResolutionScale)) return false;
+    } else {
+        terrain.splatResolutionScale = 4;
+    }
     if (!readF32(cursor, end, terrain.worldSizeX)) return false;
     if (!readF32(cursor, end, terrain.worldSizeZ)) return false;
     if (!readF32(cursor, end, terrain.maxHeight)) return false;
@@ -605,6 +671,124 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
         gen.smoothPass = smoothPass != 0;
         gen.autoSplat = autoSplat != 0;
         gen.style = static_cast<ECS::TerrainGenStyle>(style);
+
+        if (blobVersion >= 4) {
+            u8 useRidgedNoise = 1;
+            u8 simEnabled = 1;
+            u8 simEnvironment = 0;
+            u8 simAutoConvergence = 1;
+            if (!readU8(cursor, end, useRidgedNoise)) return false;
+            if (!readU32(cursor, end, gen.domainWarpPasses)) return false;
+            if (!readU32(cursor, end, gen.hydraulicMaxSteps)) return false;
+            if (!readF32(cursor, end, gen.hydraulicInertia)) return false;
+            if (!readF32(cursor, end, gen.hydraulicEvaporation)) return false;
+            if (!readF32(cursor, end, gen.splatBlendRange)) return false;
+            ECS::TerrainSimulationSettings& sim = gen.simulation;
+            if (!readU8(cursor, end, simEnabled)) return false;
+            if (!readU8(cursor, end, simEnvironment)) return false;
+            if (!readU32(cursor, end, sim.totalIterations)) return false;
+            if (!readU32(cursor, end, sim.dropletsPerIteration)) return false;
+            if (!readU32(cursor, end, sim.maxDropletSteps)) return false;
+            if (!readF32(cursor, end, sim.convergenceThreshold)) return false;
+            if (!readU8(cursor, end, simAutoConvergence)) return false;
+            if (!readF32(cursor, end, sim.tectonicActivity)) return false;
+            if (!readF32(cursor, end, sim.erosionWater)) return false;
+            if (!readF32(cursor, end, sim.erosionThermal)) return false;
+            if (!readF32(cursor, end, sim.erosionGlacial)) return false;
+            if (!readF32(cursor, end, sim.erosionWind)) return false;
+            if (!readF32(cursor, end, sim.erosionBiological)) return false;
+            if (!readF32(cursor, end, sim.temperature)) return false;
+            if (!readF32(cursor, end, sim.humidity)) return false;
+            if (!readF32(cursor, end, sim.windDirection)) return false;
+            if (!readF32(cursor, end, sim.rainfallBase)) return false;
+            gen.useRidgedNoise = useRidgedNoise != 0;
+            sim.enabled = simEnabled != 0;
+            sim.environment = static_cast<ECS::TerrainEnvironment>(simEnvironment);
+            sim.autoConvergence = simAutoConvergence != 0;
+        } else {
+            gen.useRidgedNoise = false;
+            gen.domainWarpPasses = 1;
+            gen.hydraulicMaxSteps = 64;
+            gen.hydraulicInertia = 0.85f;
+            gen.hydraulicEvaporation = 0.05f;
+            gen.splatBlendRange = 0.15f;
+        }
+
+        if (blobVersion >= 5) {
+            if (!readF32(cursor, end, gen.ridgedBlend)) return false;
+            if (!readU32(cursor, end, gen.postSimSmoothIterations)) return false;
+            if (!readU32(cursor, end, gen.splatBlurPasses)) return false;
+        } else {
+            gen.ridgedBlend = gen.useRidgedNoise ? 0.45f : 0.0f;
+            gen.postSimSmoothIterations = 4;
+            gen.splatBlurPasses = 2;
+        }
+
+        if (blobVersion >= 6) {
+            u8 heightModel = 0;
+            u8 fractalDomainWarp = 1;
+            u8 slopeWeighting = 1;
+            if (!readU8(cursor, end, heightModel)) return false;
+            if (!readF32(cursor, end, gen.ridgeOffset)) return false;
+            if (!readF32(cursor, end, gen.ridgeGain)) return false;
+            if (!readF32(cursor, end, gen.multiplicativeContrast)) return false;
+            if (!readU8(cursor, end, fractalDomainWarp)) return false;
+            if (!readF32(cursor, end, gen.domainWarpScale)) return false;
+            if (!readU8(cursor, end, slopeWeighting)) return false;
+            if (!readF32(cursor, end, gen.slopeWeightAlpha)) return false;
+            gen.heightModel = static_cast<Terrain::TerrainHeightModel>(heightModel);
+            gen.fractalDomainWarp = fractalDomainWarp != 0;
+            gen.slopeWeighting = slopeWeighting != 0;
+        } else {
+            gen.heightModel = gen.useRidgedNoise ? Terrain::TerrainHeightModel::Hybrid
+                                                 : Terrain::TerrainHeightModel::RollingHills;
+            gen.ridgeOffset = 1.0f;
+            gen.ridgeGain = 1.5f;
+            gen.multiplicativeContrast = 1.2f;
+            gen.fractalDomainWarp = true;
+            gen.domainWarpScale = 48.0f;
+            gen.slopeWeighting = true;
+            gen.slopeWeightAlpha = 0.18f;
+        }
+
+        if (blobVersion >= 7) {
+            u8 useClimateBiomes = 1;
+            u8 traceRivers = 1;
+            if (!readU8(cursor, end, useClimateBiomes)) return false;
+            if (!readF32(cursor, end, gen.climate.prevailingWindAngle)) return false;
+            if (!readF32(cursor, end, gen.climate.baseHumidity)) return false;
+            if (!readF32(cursor, end, gen.climate.temperature)) return false;
+            if (!readF32(cursor, end, gen.climate.seaLevel)) return false;
+            if (!readU8(cursor, end, traceRivers)) return false;
+            if (!readU32(cursor, end, gen.hydrology.maxRiverSources)) return false;
+            if (!readF32(cursor, end, gen.hydrology.riverSourceMinHeight)) return false;
+            if (!readF32(cursor, end, gen.hydrology.riverSourceMaxHeight)) return false;
+            if (!readF32(cursor, end, gen.hydrology.riverCarveStrength)) return false;
+            if (!readU32(cursor, end, gen.hydrology.rainShadowSteps)) return false;
+            if (!readF32(cursor, end, gen.hydrology.waterMoistureRadius)) return false;
+            if (!readF32(cursor, end, gen.hydrology.sedimentDepositStrength)) return false;
+            gen.useClimateBiomes = useClimateBiomes != 0;
+            gen.hydrology.traceRivers = traceRivers != 0;
+        } else {
+            gen.useClimateBiomes = true;
+            gen.hydrology.traceRivers = true;
+        }
+
+        if (blobVersion >= 8) {
+            if (!readF32(cursor, end, gen.fractalRoughness)) return false;
+            if (!readF32(cursor, end, gen.spectralExponent)) return false;
+            u8 multiplyLayerA = 0;
+            u8 multiplyLayerB = 2;
+            if (!readU8(cursor, end, multiplyLayerA)) return false;
+            if (!readU8(cursor, end, multiplyLayerB)) return false;
+            gen.multiplyLayerA = static_cast<Terrain::TerrainHeightModel>(multiplyLayerA);
+            gen.multiplyLayerB = static_cast<Terrain::TerrainHeightModel>(multiplyLayerB);
+        } else {
+            gen.fractalRoughness = 0.55f;
+            gen.spectralExponent = 2.0f;
+            gen.multiplyLayerA = Terrain::TerrainHeightModel::RollingHills;
+            gen.multiplyLayerB = Terrain::TerrainHeightModel::RidgedMountains;
+        }
     }
 
     return cursor <= end;

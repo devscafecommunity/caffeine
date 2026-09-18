@@ -44,37 +44,49 @@ void TerrainSplatPainter::applyBrush(TerrainSplatmap& splatmap,
     const u32 resZ = splatmap.resolutionZ();
     const f32 stepX = settings.worldSizeX / static_cast<f32>(std::max(1u, resX - 1));
     const f32 stepZ = settings.worldSizeZ / static_cast<f32>(std::max(1u, resZ - 1));
-    const f32 radiusSq = brush.radius * brush.radius;
     const f32 frameStrength = brush.strength * std::max(deltaTime, 1.0f / 120.0f) * 60.0f;
+
+    const f32 gridX = (centerLocal.x + halfX) / stepX;
+    const f32 gridZ = (centerLocal.z + halfZ) / stepZ;
+    const f32 radiusCellsX = brush.radius / stepX;
+    const f32 radiusCellsZ = brush.radius / stepZ;
+
+    const i32 minX = std::max(0, static_cast<i32>(std::floor(gridX - radiusCellsX)) - 1);
+    const i32 maxX =
+        std::min(static_cast<i32>(resX) - 1, static_cast<i32>(std::ceil(gridX + radiusCellsX)) + 1);
+    const i32 minZ = std::max(0, static_cast<i32>(std::floor(gridZ - radiusCellsZ)) - 1);
+    const i32 maxZ =
+        std::min(static_cast<i32>(resZ) - 1, static_cast<i32>(std::ceil(gridZ + radiusCellsZ)) + 1);
 
     TerrainVertexBounds bounds;
     bounds.valid = false;
 
-    for (u32 z = 0; z < resZ; ++z) {
-        for (u32 x = 0; x < resX; ++x) {
+    for (i32 z = minZ; z <= maxZ; ++z) {
+        for (i32 x = minX; x <= maxX; ++x) {
             const f32 px = -halfX + static_cast<f32>(x) * stepX;
             const f32 pz = -halfZ + static_cast<f32>(z) * stepZ;
             const f32 dx = px - centerLocal.x;
             const f32 dz = pz - centerLocal.z;
-            const f32 distSq = dx * dx + dz * dz;
-            if (distSq > radiusSq) continue;
+            const f32 dist = std::sqrt(dx * dx + dz * dz);
+            if (dist > brush.radius) continue;
 
-            const f32 dist = std::sqrt(distSq);
             const f32 falloff = smoothstep(1.0f - dist / brush.radius);
             const f32 amount = frameStrength * falloff;
 
-            Vec4 weights = splatmap.sample(x, z);
-            splatmap.set(x, z, addLayerWeight(weights, brush.targetLayer, amount));
+            const u32 ux = static_cast<u32>(x);
+            const u32 uz = static_cast<u32>(z);
+            Vec4 weights = splatmap.sample(ux, uz);
+            splatmap.set(ux, uz, addLayerWeight(weights, brush.targetLayer, amount));
 
             if (!bounds.valid) {
-                bounds.minX = bounds.maxX = x;
-                bounds.minZ = bounds.maxZ = z;
+                bounds.minX = bounds.maxX = ux;
+                bounds.minZ = bounds.maxZ = uz;
                 bounds.valid = true;
             } else {
-                bounds.minX = std::min(bounds.minX, x);
-                bounds.minZ = std::min(bounds.minZ, z);
-                bounds.maxX = std::max(bounds.maxX, x);
-                bounds.maxZ = std::max(bounds.maxZ, z);
+                bounds.minX = std::min(bounds.minX, ux);
+                bounds.minZ = std::min(bounds.minZ, uz);
+                bounds.maxX = std::max(bounds.maxX, ux);
+                bounds.maxZ = std::max(bounds.maxZ, uz);
             }
         }
     }

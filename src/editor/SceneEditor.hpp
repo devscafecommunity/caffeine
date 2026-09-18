@@ -34,6 +34,8 @@
 #include "physics/PhysicsSystem2D.hpp"
 #include "ui/UISystem.hpp"
 #include "events/EventBus.hpp"
+#include "animation/AnimationSystem.hpp"
+#include "render/Camera2D.hpp"
 
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptEngine.hpp"
@@ -131,6 +133,8 @@ private:
     void exitPlayMode(ECS::World& world);
     void tickSystems(ECS::World& world, f32 dt);
     void renderPlaybar(ECS::World& world);
+    void registerPlayModeEventListeners();
+    void handleCollision2D(ECS::World& world, const Events::OnCollision2D& event);
 #endif
 
     EditorContext  m_ctx;
@@ -183,6 +187,17 @@ private:
     Events::EventBus m_eventBus;
     Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
     UI::UISystem m_uiSystem{&m_eventBus};
+    Animation::AnimationSystem m_animationSystem;
+    Render::Camera2D m_playCamera2D;
+    Events::ListenerHandle m_collisionListener = 0;
+    bool m_playListenersRegistered = false;
+
+    struct ViewportPlaySnapshot {
+        f32 panX = 0.0f;
+        f32 panY = 0.0f;
+        f32 zoom = 1.0f;
+    };
+    ViewportPlaySnapshot m_viewportPlaySnapshot{};
 
 #ifdef CF_HAS_SCRIPTING
     Script::ScriptEngine m_scriptEngine;

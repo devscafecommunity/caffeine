@@ -181,7 +181,9 @@ TEST_CASE("Camera2D - setBounds clamps position", "[camera2d]") {
 TEST_CASE("Camera2D - follow + update moves camera toward entity", "[camera2d]") {
     World world;
     Entity e = world.create("player");
-    world.add<Position2D>(e, Position2D{ 1000.0f, 500.0f });
+    auto& pos = world.add<ECS::Transform>(e);
+    pos.position.x = 1000.0f;
+    pos.position.y = 500.0f;
 
     Camera2D cam;
     cam.follow(e, 0.5f);
@@ -195,7 +197,9 @@ TEST_CASE("Camera2D - follow + update moves camera toward entity", "[camera2d]")
 TEST_CASE("Camera2D - stopFollowing stops camera movement", "[camera2d]") {
     World world;
     Entity e = world.create("player");
-    world.add<Position2D>(e, Position2D{ 1000.0f, 500.0f });
+    auto& pos = world.add<ECS::Transform>(e);
+    pos.position.x = 1000.0f;
+    pos.position.y = 500.0f;
 
     Camera2D cam;
     cam.follow(e, 0.5f);

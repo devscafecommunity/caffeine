@@ -35,6 +35,10 @@ bool TerrainSerializer::save(const std::filesystem::path& path,
               static_cast<std::streamsize>(heights.size() * sizeof(f32)));
 
     if (flags & kFlagHasSplat) {
+        const u32 splatResX = splatmap.resolutionX();
+        const u32 splatResZ = splatmap.resolutionZ();
+        out.write(reinterpret_cast<const char*>(&splatResX), sizeof(splatResX));
+        out.write(reinterpret_cast<const char*>(&splatResZ), sizeof(splatResZ));
         const auto& weights = splatmap.weights();
         out.write(reinterpret_cast<const char*>(weights.data()),
                   static_cast<std::streamsize>(weights.size() * sizeof(Vec4)));
@@ -67,7 +71,7 @@ bool TerrainSerializer::load(const std::filesystem::path& path,
     in.read(reinterpret_cast<char*>(&resZ), sizeof(resZ));
     in.read(reinterpret_cast<char*>(&flags), sizeof(flags));
 
-    if (!in || signature != kSignature || version != kVersion) return false;
+    if (!in || signature != kSignature || (version != 1 && version != kVersion)) return false;
     if (resX < 2 || resZ < 2) return false;
 
     const usize heightCount = static_cast<usize>(resX) * static_cast<usize>(resZ);
@@ -82,18 +86,28 @@ bool TerrainSerializer::load(const std::filesystem::path& path,
     heightmap.resize(resX, resZ);
     std::copy(heights.begin(), heights.end(), heightmap.heights().begin());
 
-    splatmap.resize(resX, resZ);
     if (flags & kFlagHasSplat) {
-        const usize splatBytes = heightCount * sizeof(Vec4);
+        u32 splatResX = resX;
+        u32 splatResZ = resZ;
+        if (version >= 2) {
+            in.read(reinterpret_cast<char*>(&splatResX), sizeof(splatResX));
+            in.read(reinterpret_cast<char*>(&splatResZ), sizeof(splatResZ));
+            if (!in || splatResX < 2 || splatResZ < 2) return false;
+        }
+
+        const usize splatCount = static_cast<usize>(splatResX) * static_cast<usize>(splatResZ);
+        const usize splatBytes = splatCount * sizeof(Vec4);
         if (static_cast<usize>(fileSize) < minSize + splatBytes) return false;
 
-        std::vector<Vec4> weights(heightCount);
+        std::vector<Vec4> weights(splatCount);
         in.read(reinterpret_cast<char*>(weights.data()), static_cast<std::streamsize>(splatBytes));
         if (!in) return false;
 
+        splatmap.resize(splatResX, splatResZ);
         std::copy(weights.begin(), weights.end(), splatmap.weights().begin());
         if (hadSplat) *hadSplat = true;
     } else {
+        splatmap.resize(resX, resZ);
         splatmap.fillLayer(3, 1.0f);
     }
 

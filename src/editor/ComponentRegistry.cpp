@@ -10,6 +10,7 @@
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
+#include "animation/AnimationComponents.hpp"
 
 namespace Caffeine::Editor {
 
@@ -115,6 +116,25 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PersistentComponent>(e); }
     });
     reg.registerComponent({
+        "Animation", "Animator",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::Animator>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            w.add<Animation::Animator>(e);
+            if (!w.has<ECS::Sprite>(e)) {
+                w.add<ECS::Sprite>(e);
+            }
+        }
+    });
+    reg.registerComponent({
+        "Camera", "Camera Active",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::CameraActiveComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            ECS::CameraActiveComponent active;
+            active.is2D = true;
+            w.add<ECS::CameraActiveComponent>(e, active);
+        }
+    });
+    reg.registerComponent({
         "Camera", "Camera2D",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::Camera2DComponent>(e); },
         [](ECS::World& w, ECS::Entity e){
@@ -122,6 +142,11 @@ void registerAllComponents(ComponentRegistry& reg) {
             cam.zoom = 1.0f;
             w.add<ECS::Camera2DComponent>(e, cam);
             if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+            if (!w.has<ECS::CameraActiveComponent>(e)) {
+                ECS::CameraActiveComponent active;
+                active.is2D = true;
+                w.add<ECS::CameraActiveComponent>(e, active);
+            }
         }
     });
     reg.registerComponent({

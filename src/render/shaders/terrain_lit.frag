@@ -69,7 +69,25 @@ float sampleDirShadow(int slot, vec3 worldPos, mat4 lightVP) {
     return ndc.z - bias > stored ? 0.2 : 1.0;
 }
 
-vec3 sampleTerrainAlbedo() {
+vec3 triplanarSample(sampler2D tex, vec3 localPos, vec3 blend, float tileScale) {
+    vec3 scaled = localPos / max(tileScale, 0.1);
+    vec3 xProj = texture(tex, scaled.yz).rgb;
+    vec3 yProj = texture(tex, scaled.xz).rgb;
+    vec3 zProj = texture(tex, scaled.xy).rgb;
+    return xProj * blend.x + yProj * blend.y + zProj * blend.z;
+}
+
+vec3 applyDetailVariation(vec3 albedo, vec3 localPos) {
+    float macro = sin(localPos.x * 0.08) * sin(localPos.z * 0.06) * 0.015;
+    return clamp(albedo * (1.0 + macro), 0.0, 1.0);
+}
+
+vec3 sampleTerrainAlbedo(vec3 n) {
+    const float tileScale = max(terrainMat.uWorldSize.z, 0.1);
+    vec3 blend = abs(normalize(n));
+    blend = max(blend, vec3(0.0001));
+    blend /= (blend.x + blend.y + blend.z);
+
     if (terrainMat.uFlags.x > 0.5) {
         vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
         float halfX = terrainMat.uWorldSize.x * 0.5;
@@ -78,23 +96,24 @@ vec3 sampleTerrainAlbedo() {
         float sv = clamp((local.z + halfZ) / max(terrainMat.uWorldSize.y, 0.0001), 0.0, 1.0);
         vec4 weights = texture(uSplatMap, vec2(su, sv));
         vec3 albedo = vec3(0.0);
-        albedo += texture(uLayer0, v_texCoord).rgb * weights.r;
-        albedo += texture(uLayer1, v_texCoord).rgb * weights.g;
-        albedo += texture(uLayer2, v_texCoord).rgb * weights.b;
-        albedo += texture(uLayer3, v_texCoord).rgb * weights.a;
+        albedo += triplanarSample(uLayer0, local, blend, tileScale) * weights.r;
+        albedo += triplanarSample(uLayer1, local, blend, tileScale) * weights.g;
+        albedo += triplanarSample(uLayer2, local, blend, tileScale) * weights.b;
+        albedo += triplanarSample(uLayer3, local, blend, tileScale) * weights.a;
         if (dot(albedo, vec3(1.0)) > 1e-4) {
-            return albedo;
+            return applyDetailVariation(albedo, local);
         }
     }
     if (terrainMat.uFlags.y > 0.5) {
-        return texture(uAlbedoTex, v_texCoord).rgb;
+        vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
+        return applyDetailVariation(triplanarSample(uAlbedoTex, local, blend, tileScale), local);
     }
     return lights.uAlbedo.rgb;
 }
 
 void main() {
-    vec3 surfaceAlbedo = sampleTerrainAlbedo();
     vec3 n = normalize(v_normal);
+    vec3 surfaceAlbedo = sampleTerrainAlbedo(n);
     vec3 ambient = lights.uAmbient.rgb * surfaceAlbedo;
     vec3 color = ambient;
 

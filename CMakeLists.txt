@@ -65,6 +65,7 @@ add_library(caffeine-core
     src/assets/MeshLOD.cpp
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
+    src/scene/PlayMode2D.cpp
     src/scene/EnvironmentSystem.cpp
     src/scene/CpuDirectionalShadowMap.cpp
     src/scene/LightingSystem.cpp
@@ -79,7 +80,10 @@ add_library(caffeine-core
     src/terrain/TerrainSerializer.cpp
     src/terrain/TerrainGpuTextures.cpp
     src/terrain/generation/TerrainNoise.cpp
+    src/terrain/generation/TerrainFractal.cpp
     src/terrain/generation/TerrainGenerator.cpp
+    src/terrain/generation/GeologicalSimulator.cpp
+    src/terrain/generation/TerrainHydrology.cpp
     src/render/SkyboxRenderer.cpp
     src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp

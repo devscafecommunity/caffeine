@@ -13,15 +13,66 @@ f32 hashNoise(u32 x, u32 z, u32 seed) {
     return static_cast<f32>(n & 0xFFFFu) / 65535.0f;
 }
 
+f32 sampleBilinearFromGrid(const std::vector<f32>& heights, u32 resX, u32 resZ, f32 u, f32 v) {
+    if (heights.empty() || resX < 2 || resZ < 2) return 0.0f;
+
+    u = std::clamp(u, 0.0f, 1.0f);
+    v = std::clamp(v, 0.0f, 1.0f);
+
+    const f32 fx = u * static_cast<f32>(resX - 1);
+    const f32 fz = v * static_cast<f32>(resZ - 1);
+
+    const u32 x0 = static_cast<u32>(fx);
+    const u32 z0 = static_cast<u32>(fz);
+    const u32 x1 = std::min(x0 + 1, resX - 1);
+    const u32 z1 = std::min(z0 + 1, resZ - 1);
+
+    const f32 tx = fx - static_cast<f32>(x0);
+    const f32 tz = fz - static_cast<f32>(z0);
+
+    const f32 h00 = heights[z0 * resX + x0];
+    const f32 h10 = heights[z0 * resX + x1];
+    const f32 h01 = heights[z1 * resX + x0];
+    const f32 h11 = heights[z1 * resX + x1];
+
+    const f32 hx0 = h00 + (h10 - h00) * tx;
+    const f32 hx1 = h01 + (h11 - h01) * tx;
+    return hx0 + (hx1 - hx0) * tz;
+}
+
 }  // namespace
 
 TerrainHeightmap::TerrainHeightmap(u32 resolutionX, u32 resolutionZ) {
     resize(resolutionX, resolutionZ);
 }
 
-void TerrainHeightmap::resize(u32 resolutionX, u32 resolutionZ) {
-    m_resolutionX = std::max(2u, resolutionX);
-    m_resolutionZ = std::max(2u, resolutionZ);
+void TerrainHeightmap::resize(u32 resolutionX, u32 resolutionZ, bool resampleExisting) {
+    const u32 newResX = std::max(2u, resolutionX);
+    const u32 newResZ = std::max(2u, resolutionZ);
+
+    if (resampleExisting && m_resolutionX >= 2 && m_resolutionZ >= 2 && !m_heights.empty() &&
+        (newResX != m_resolutionX || newResZ != m_resolutionZ)) {
+        const std::vector<f32> oldHeights = m_heights;
+        const u32 oldResX = m_resolutionX;
+        const u32 oldResZ = m_resolutionZ;
+
+        m_resolutionX = newResX;
+        m_resolutionZ = newResZ;
+        m_heights.resize(static_cast<size_t>(m_resolutionX) * static_cast<size_t>(m_resolutionZ));
+
+        for (u32 z = 0; z < m_resolutionZ; ++z) {
+            for (u32 x = 0; x < m_resolutionX; ++x) {
+                const f32 u = static_cast<f32>(x) / static_cast<f32>(m_resolutionX - 1);
+                const f32 v = static_cast<f32>(z) / static_cast<f32>(m_resolutionZ - 1);
+                m_heights[z * m_resolutionX + x] =
+                    sampleBilinearFromGrid(oldHeights, oldResX, oldResZ, u, v);
+            }
+        }
+        return;
+    }
+
+    m_resolutionX = newResX;
+    m_resolutionZ = newResZ;
     m_heights.assign(static_cast<size_t>(m_resolutionX) * static_cast<size_t>(m_resolutionZ), 0.0f);
 }
 
@@ -50,29 +101,7 @@ void TerrainHeightmap::setNormalized(u32 x, u32 z, f32 value) {
 
 f32 TerrainHeightmap::sampleBilinear(f32 u, f32 v) const {
     if (m_heights.empty()) return 0.0f;
-
-    u = std::clamp(u, 0.0f, 1.0f);
-    v = std::clamp(v, 0.0f, 1.0f);
-
-    const f32 fx = u * static_cast<f32>(m_resolutionX - 1);
-    const f32 fz = v * static_cast<f32>(m_resolutionZ - 1);
-
-    const u32 x0 = static_cast<u32>(fx);
-    const u32 z0 = static_cast<u32>(fz);
-    const u32 x1 = std::min(x0 + 1, m_resolutionX - 1);
-    const u32 z1 = std::min(z0 + 1, m_resolutionZ - 1);
-
-    const f32 tx = fx - static_cast<f32>(x0);
-    const f32 tz = fz - static_cast<f32>(z0);
-
-    const f32 h00 = sampleNormalized(x0, z0);
-    const f32 h10 = sampleNormalized(x1, z0);
-    const f32 h01 = sampleNormalized(x0, z1);
-    const f32 h11 = sampleNormalized(x1, z1);
-
-    const f32 hx0 = h00 + (h10 - h00) * tx;
-    const f32 hx1 = h01 + (h11 - h01) * tx;
-    return hx0 + (hx1 - hx0) * tz;
+    return sampleBilinearFromGrid(m_heights, m_resolutionX, m_resolutionZ, u, v);
 }
 
 Vec3 TerrainHeightmap::sampleNormalBilinear(f32 u, f32 v, f32 worldSizeX, f32 worldSizeZ,

@@ -466,6 +466,9 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             if (draw.terrainSettings) {
                 mat.worldSize[0] = draw.terrainSettings->worldSizeX;
                 mat.worldSize[1] = draw.terrainSettings->worldSizeZ;
+                mat.worldSize[2] = draw.terrainSettings->useSplatmap
+                    ? draw.terrainSettings->splatTileSize
+                    : draw.terrainSettings->textureTileSize;
                 const Mat4 inv = draw.worldMatrix.inverted();
                 std::memcpy(mat.modelInv, inv.data(), sizeof(mat.modelInv));
             }

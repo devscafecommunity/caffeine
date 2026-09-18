@@ -168,6 +168,91 @@ f32 sampleFbm2D(TerrainNoiseAlgorithm type, f32 x, f32 z, u32 seed, u32 octaves,
     return maxAmp > 0.0f ? std::clamp(sum / maxAmp, 0.0f, 1.0f) : 0.0f;
 }
 
+f32 sampleRidgedMultifractal2D(TerrainNoiseAlgorithm type, f32 x, f32 z, u32 seed, u32 octaves,
+                               f32 persistence, f32 lacunarity, f32 ridgeOffset, f32 ridgeGain) {
+    octaves = std::max(1u, octaves);
+    persistence = std::clamp(persistence, 0.01f, 1.0f);
+    lacunarity = std::max(1.01f, lacunarity);
+    ridgeOffset = std::clamp(ridgeOffset, 0.1f, 2.0f);
+    ridgeGain = std::clamp(ridgeGain, 0.5f, 3.0f);
+
+    f32 result = 0.0f;
+    f32 amplitude = 1.0f;
+    f32 frequency = 1.0f;
+    f32 weight = 1.0f;
+    f32 maxAmp = 0.0f;
+
+    for (u32 i = 0; i < octaves; ++i) {
+        const f32 centered = sampleNoise2D(type, x * frequency, z * frequency, seed + i * 131u) * 2.0f -
+                             1.0f;
+        const f32 ridgeDelta = ridgeOffset - std::abs(centered);
+        f32 signal = std::max(0.0f, 1.0f - ridgeDelta * ridgeDelta);
+        signal *= weight;
+        result += signal * amplitude;
+        weight = std::pow(std::clamp(signal * ridgeGain, 0.0f, 1.0f), 0.8f);
+        maxAmp += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+
+    return maxAmp > 0.0f ? std::clamp(result / maxAmp, 0.0f, 1.0f) : 0.0f;
+}
+
+f32 sampleMultiplicativeNoise2D(TerrainNoiseAlgorithm type, f32 x, f32 z, u32 seed, u32 octaves,
+                                f32 lacunarity, f32 contrast) {
+    octaves = std::max(1u, octaves);
+    lacunarity = std::max(1.01f, lacunarity);
+    contrast = std::clamp(contrast, 0.25f, 4.0f);
+
+    f32 product = 1.0f;
+    f32 frequency = 1.0f;
+    for (u32 i = 0; i < octaves; ++i) {
+        const f32 layer =
+            std::pow(std::clamp(sampleNoise2D(type, x * frequency, z * frequency, seed + i * 97u),
+                                0.001f, 1.0f),
+                     contrast);
+        product *= layer;
+        frequency *= lacunarity;
+    }
+
+    return std::clamp(std::pow(product, 1.0f / static_cast<f32>(octaves)), 0.0f, 1.0f);
+}
+
+f32 sampleHeightModel2D(TerrainHeightModel model, TerrainNoiseAlgorithm type, f32 x, f32 z, u32 seed,
+                        u32 octaves, f32 persistence, f32 lacunarity, f32 ridgedBlend,
+                        f32 ridgeOffset, f32 ridgeGain, f32 multiplicativeContrast) {
+    const f32 fbm = sampleFbm2D(type, x, z, seed, octaves, persistence, lacunarity);
+    switch (model) {
+        case TerrainHeightModel::RollingHills:
+        case TerrainHeightModel::FractalFBM:
+            return fbm;
+        case TerrainHeightModel::RidgedMountains:
+            return sampleRidgedMultifractal2D(type, x, z, seed + 53u, octaves, persistence,
+                                              lacunarity, ridgeOffset, ridgeGain);
+        case TerrainHeightModel::Multiplicative:
+            return sampleMultiplicativeNoise2D(type, x, z, seed + 211u, octaves, lacunarity,
+                                               multiplicativeContrast);
+        case TerrainHeightModel::Hybrid: {
+            const f32 ridged = sampleRidgedMultifractal2D(type, x, z, seed + 53u, octaves,
+                                                          persistence, lacunarity, ridgeOffset,
+                                                          ridgeGain);
+            const f32 blend = std::clamp(ridgedBlend, 0.0f, 1.0f);
+            return ridged * blend + fbm * (1.0f - blend);
+        }
+        case TerrainHeightModel::Combined: {
+            const f32 mult = sampleMultiplicativeNoise2D(type, x, z, seed + 211u, octaves, lacunarity,
+                                                         multiplicativeContrast);
+            const f32 blend = std::clamp(ridgedBlend, 0.0f, 1.0f);
+            return fbm * (1.0f - blend) + mult * blend;
+        }
+        case TerrainHeightModel::DiamondSquare:
+        case TerrainHeightModel::SpectralFFT:
+        case TerrainHeightModel::HeightfieldMultiply:
+            return 0.5f;
+    }
+    return fbm;
+}
+
 void warpDomain2D(f32 x, f32 z, u32 seed, f32 strength, f32& outX, f32& outZ) {
     strength = std::max(0.0f, strength);
     const f32 warpX = (sampleNoise2D(TerrainNoiseAlgorithm::Perlin, x + 17.0f, z + 3.0f, seed + 91u) -
@@ -178,6 +263,48 @@ void warpDomain2D(f32 x, f32 z, u32 seed, f32 strength, f32& outX, f32& outZ) {
                       2.0f;
     outX = x + warpX * strength;
     outZ = z + warpZ * strength;
+}
+
+void warpDomainFractal2D(f32 x, f32 z, u32 seed, f32 warpScale, f32 strength, u32 octaves,
+                         f32& outX, f32& outZ) {
+    octaves = std::max(1u, octaves);
+    warpScale = std::max(warpScale, 0.0001f);
+    strength = std::max(0.0f, strength);
+
+    f32 warpX = 0.0f;
+    f32 warpZ = 0.0f;
+    f32 amplitude = 1.0f;
+    f32 frequency = 1.0f;
+    f32 maxAmp = 0.0f;
+
+    for (u32 i = 0; i < octaves; ++i) {
+        const f32 sx = x * frequency / warpScale;
+        const f32 sz = z * frequency / warpScale;
+        warpX += (sampleNoise2D(TerrainNoiseAlgorithm::Perlin, sx + 17.0f, sz + 3.0f, seed + 1000u + i) -
+                  0.5f) *
+                 2.0f * amplitude;
+        warpZ += (sampleNoise2D(TerrainNoiseAlgorithm::Perlin, sx + 5.0f, sz + 29.0f, seed + 2000u + i) -
+                  0.5f) *
+                 2.0f * amplitude;
+        maxAmp += amplitude;
+        amplitude *= 0.5f;
+        frequency *= 2.0f;
+    }
+
+    const f32 invMax = maxAmp > 0.0f ? 1.0f / maxAmp : 1.0f;
+    outX = x + warpX * invMax * strength;
+    outZ = z + warpZ * invMax * strength;
+}
+
+void warpDomain2DMultiPass(f32 x, f32 z, u32 seed, f32 strength, u32 passes, f32& outX,
+                           f32& outZ) {
+    passes = std::max(1u, passes);
+    outX = x;
+    outZ = z;
+    for (u32 pass = 0; pass < passes; ++pass) {
+        const f32 passStrength = strength * (pass == 0 ? 1.0f : 0.5f);
+        warpDomain2D(outX, outZ, seed + pass * 997u, passStrength, outX, outZ);
+    }
 }
 
 }  // namespace Caffeine::Terrain

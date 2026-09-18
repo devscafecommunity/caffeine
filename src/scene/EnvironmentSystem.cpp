@@ -31,8 +31,10 @@ std::filesystem::path findEngineAssetsRoot() {
 
     for (const auto& root : roots) {
         std::error_code ec;
-        const auto skyboxDir = root / "kenney_skyboxes" / "Skyboxes";
-        if (std::filesystem::exists(skyboxDir, ec) && !ec) {
+        const auto kenneySkyboxDir = root / "kenney_skyboxes" / "Skyboxes";
+        const auto hdrAssetDir = root / "hdr-assets-texture";
+        if ((std::filesystem::exists(kenneySkyboxDir, ec) && !ec) ||
+            (std::filesystem::exists(hdrAssetDir, ec) && !ec)) {
             return std::filesystem::weakly_canonical(root, ec);
         }
     }
@@ -41,8 +43,7 @@ std::filesystem::path findEngineAssetsRoot() {
 
 std::filesystem::path resolveBuiltinSkyboxPath(int presetIndex) {
     const int idx = std::clamp(presetIndex, 0, ECS::kSkyboxPresetCount - 1);
-    const std::filesystem::path relative =
-        std::filesystem::path("kenney_skyboxes") / "Skyboxes" / ECS::kSkyboxPresetFiles[idx];
+    const std::filesystem::path relative = ECS::kSkyboxPresetFiles[idx];
 
     const std::filesystem::path assetsRoot = findEngineAssetsRoot();
     if (!assetsRoot.empty()) {

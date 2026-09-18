@@ -10,7 +10,7 @@ namespace Caffeine::Terrain {
 class TerrainSerializer {
 public:
     static constexpr u32 kSignature = 0x4E525443;  // "CTRN"
-    static constexpr u32 kVersion = 1;
+    static constexpr u32 kVersion = 2;
     static constexpr u32 kFlagHasSplat = 1u << 0;
 
     static bool save(const std::filesystem::path& path,

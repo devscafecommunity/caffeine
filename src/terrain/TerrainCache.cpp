@@ -2,11 +2,13 @@
 
 #include "ecs/MeshComponents.hpp"
 #include "terrain/TerrainMeshBuilder.hpp"
+#include "terrain/TerrainResolution.hpp"
 #include "terrain/TerrainSerializer.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
 #include "terrain/generation/TerrainGenerator.hpp"
 #include "assets/MeshCache.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace Caffeine::Terrain {
@@ -51,6 +53,14 @@ void TerrainCache::syncTextureToFilter(ECS::World& world, ECS::Entity entity,
 
 void TerrainCache::generateTerrain(ECS::World& world, ECS::Entity entity,
                                    ECS::TerrainComponent& terrain) {
+    if (terrain.resolutionX < 129 || terrain.resolutionZ < 129) {
+        terrain.resolutionX = std::max(terrain.resolutionX, 257u);
+        terrain.resolutionZ = std::max(terrain.resolutionZ, 257u);
+    }
+    if (terrain.splatResolutionScale < 2) {
+        terrain.splatResolutionScale = 2;
+    }
+
     TerrainEntry& entry = ensureEntry(entity);
     TerrainGenerator::generate(entry.heightmap, entry.splatmap, terrain, terrain.generation);
     terrain.dataRevision++;
@@ -67,7 +77,7 @@ void TerrainCache::initializeEntity(ECS::World& world, ECS::Entity entity) {
     TerrainEntry& entry = ensureEntry(entity);
     entry.heightmap.resize(terrain->resolutionX, terrain->resolutionZ);
     entry.heightmap.fill(0.0f);
-    entry.splatmap.resize(terrain->resolutionX, terrain->resolutionZ);
+    entry.splatmap.resize(splatResolutionX(*terrain), splatResolutionZ(*terrain));
     entry.splatmap.fillLayer(3, 1.0f);
     terrain->dataRevision = 1;
     terrain->meshRevision = 0;
@@ -157,25 +167,35 @@ void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
 #endif
 
     TerrainEntry& entry = ensureEntry(entity);
+    const u32 targetSplatX = splatResolutionX(*terrain);
+    const u32 targetSplatZ = splatResolutionZ(*terrain);
+    bool resolutionChanged = false;
+
     if (entry.heightmap.resolutionX() != terrain->resolutionX ||
         entry.heightmap.resolutionZ() != terrain->resolutionZ ||
         entry.heightmap.empty()) {
-        entry.heightmap.resize(terrain->resolutionX, terrain->resolutionZ);
-        if (entry.heightmap.heights().empty()) {
+        const bool resample = !entry.heightmap.empty();
+        entry.heightmap.resize(terrain->resolutionX, terrain->resolutionZ, resample);
+        if (!resample) {
             entry.heightmap.fill(0.0f);
         }
+        resolutionChanged = true;
     }
 
-    if (entry.splatmap.resolutionX() != terrain->resolutionX ||
-        entry.splatmap.resolutionZ() != terrain->resolutionZ ||
+    if (entry.splatmap.resolutionX() != targetSplatX ||
+        entry.splatmap.resolutionZ() != targetSplatZ ||
         entry.splatmap.empty()) {
-        entry.splatmap.resize(terrain->resolutionX, terrain->resolutionZ);
-        if (entry.splatmap.weights().empty()) {
+        const bool resample = !entry.splatmap.empty();
+        entry.splatmap.resize(targetSplatX, targetSplatZ, resample);
+        if (!resample) {
             entry.splatmap.fillLayer(3, 1.0f);
         }
+        terrain->splatRevision++;
+        resolutionChanged = true;
     }
 
-    if (terrain->meshRevision != terrain->dataRevision || (!entry.mesh && entry.chunks.empty())) {
+    if (resolutionChanged || terrain->meshRevision != terrain->dataRevision ||
+        (!entry.mesh && entry.chunks.empty())) {
         rebuildMesh(entity, entry, *terrain);
     }
 
@@ -249,6 +269,8 @@ bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
 
     terrain.resolutionX = entry.heightmap.resolutionX();
     terrain.resolutionZ = entry.heightmap.resolutionZ();
+    terrain.splatResolutionScale =
+        inferSplatResolutionScale(terrain.resolutionX, entry.splatmap.resolutionX());
     terrain.dataRevision++;
     terrain.splatRevision++;
     rebuildMesh(entity, entry, terrain);

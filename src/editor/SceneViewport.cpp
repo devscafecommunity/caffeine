@@ -18,6 +18,7 @@
 #include "ecs/MeshComponents.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
+#include "animation/AnimationComponents.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/LightingSystem.hpp"
@@ -1207,7 +1208,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
           bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
                           ctx.viewMode == EditorContext::ViewMode::Isometric);
           if (is3DIso) {
-             const f32 speed = ctx.camDistance * 0.04f;
+             const f32 moveBoost = ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 4.0f : 1.0f;
+             const f32 speed = ctx.camDistance * 0.04f * moveBoost;
              const f32 sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
              const Vec3 flatForward(-sinY, 0.0f, cosY);
              const Vec3 flatRight(cosY, 0.0f, sinY);
@@ -1226,7 +1228,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
             ctx.camYaw   -= delta.x * 0.005f;
             ctx.camPitch -= delta.y * 0.005f;
-            ctx.camPitch  = std::max(-1.4f, std::min(1.4f, ctx.camPitch));
+            ctx.camPitch = std::clamp(ctx.camPitch, EditorContext::kCamPitchMin,
+                                      EditorContext::kCamPitchMax);
         } else if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
             ctx.camYaw -= delta.x * 0.005f;
         }
@@ -1240,7 +1243,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                  ctx.viewMode == EditorContext::ViewMode::Isometric) {
                  const f32 zoomFactor = (scroll > 0) ? 0.85f : 1.18f;
                  ctx.camDistance *= zoomFactor;
-                 ctx.camDistance = std::max(0.5f, std::min(1000.0f, ctx.camDistance));
+                 ctx.camDistance = std::clamp(ctx.camDistance, EditorContext::kCamDistanceMin,
+                                              EditorContext::kCamDistanceMax);
              } else {
                  ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
                  ctx.viewportZoom = std::max(0.1f, std::min(10.0f, ctx.viewportZoom));
@@ -1339,6 +1343,8 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
 
         ImTextureRef texRef;
         bool hasTexture = false;
+        u32 texWidth = 0;
+        u32 texHeight = 0;
         if (!sprite.name.empty()) {
             const std::string spritePath = resolveSpritePath(sprite.name, ctx);
             if (!spritePath.empty()) {
@@ -1381,6 +1387,8 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
                     
                     if (hasTexture) {
                         texRef = it->second.texture->GetTexRef();
+                        texWidth = it->second.width;
+                        texHeight = it->second.height;
                         if (it->second.width > 0 && it->second.height > 0) {
                             const f32 aspect = static_cast<f32>(it->second.width) / static_cast<f32>(it->second.height);
                             if (aspect > 1.0f) {
@@ -1405,13 +1413,49 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
         const ImVec2 p3 = rotatePoint(halfW, halfH);
         const ImVec2 p4 = rotatePoint(-halfW, halfH);
 
+        f32 uv0x = 0.0f;
+        f32 uv0y = 0.0f;
+        f32 uv1x = 1.0f;
+        f32 uv1y = 1.0f;
+        if (hasTexture && texWidth > 0 && texHeight > 0) {
+            const f32 invW = 1.0f / static_cast<f32>(texWidth);
+            const f32 invH = 1.0f / static_cast<f32>(texHeight);
+            bool resolved = false;
+            if (auto* animator = world.get<Animation::Animator>(entity)) {
+                const Animation::AnimationState* state =
+                    animator->states.get(animator->currentState);
+                if (state && state->clip && !state->clip->frames.empty()) {
+                    const u32 frameIdx =
+                        std::min(sprite.frameIndex, static_cast<u32>(state->clip->frames.size() - 1));
+                    const Animation::FrameRect& frame = state->clip->frames[frameIdx];
+                    if (frame.w > 0.0f && frame.h > 0.0f) {
+                        uv0x = frame.x * invW;
+                        uv0y = frame.y * invH;
+                        uv1x = (frame.x + frame.w) * invW;
+                        uv1y = (frame.y + frame.h) * invH;
+                        resolved = true;
+                    }
+                }
+            }
+            if (!resolved && sprite.frameIndex > 0) {
+                const u32 frameSize = std::max(1u, texHeight);
+                const u32 frameCount = std::max(1u, texWidth / frameSize);
+                const u32 frameIdx = sprite.frameIndex % frameCount;
+                uv0x = static_cast<f32>(frameIdx * frameSize) * invW;
+                uv0y = 0.0f;
+                uv1x = static_cast<f32>((frameIdx + 1) * frameSize) * invW;
+                uv1y = static_cast<f32>(frameSize) * invH;
+            }
+        }
+
         const bool selected = (ctx.selectedEntity == entity);
         const ImU32 fill = selected ? IM_COL32(100, 170, 255, 80) : IM_COL32(180, 180, 200, 45);
         const ImU32 border = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(190, 190, 220, 200);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         if (hasTexture) {
-            dl->AddImageQuad(texRef, p1, p2, p3, p4);
+            dl->AddImageQuad(texRef, p1, p2, p3, p4, ImVec2(uv0x, uv0y), ImVec2(uv1x, uv0y),
+                             ImVec2(uv1x, uv1y), ImVec2(uv0x, uv1y));
         } else {
             // Draw checkerboard pattern for missing texture
             dl->AddQuadFilled(p1, p2, p3, p4, IM_COL32(64, 64, 64, 200));

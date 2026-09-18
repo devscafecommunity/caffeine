@@ -4,16 +4,23 @@
 #include "terrain/TerrainHeightmap.hpp"
 #include "terrain/TerrainSplatmap.hpp"
 #include "terrain/generation/TerrainGeneratorTypes.hpp"
+#include "terrain/generation/TerrainHydrology.hpp"
 
 #include <vector>
 
 namespace Caffeine::Terrain {
+
+struct TerrainGenerationState {
+    std::vector<f32> moistureMap;
+    RiverNetwork riverNetwork;
+};
 
 struct TerrainGeneratorContext {
     TerrainHeightmap& heightmap;
     TerrainSplatmap& splatmap;
     const ECS::TerrainComponent& terrain;
     ECS::TerrainGenerationSettings& settings;
+    TerrainGenerationState* state = nullptr;
 };
 
 class ITerrainGeneratorModule {

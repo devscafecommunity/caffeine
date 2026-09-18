@@ -15,7 +15,7 @@ public:
     u32 resolutionZ() const { return m_resolutionZ; }
     bool empty() const { return m_heights.empty(); }
 
-    void resize(u32 resolutionX, u32 resolutionZ);
+    void resize(u32 resolutionX, u32 resolutionZ, bool resampleExisting = false);
     void fill(f32 normalizedHeight);
 
     f32 sampleNormalized(u32 x, u32 z) const;

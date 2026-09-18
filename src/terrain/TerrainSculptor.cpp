@@ -55,8 +55,10 @@ bool TerrainSculptor::raycast(const Mat4& worldMatrix,
     if (tEnter > tExit || tExit < 0.0f) return false;
 
     tEnter = std::max(0.0f, tEnter);
+    const u32 resX = heightmap.resolutionX();
+    const u32 resZ = heightmap.resolutionZ();
     const f32 step = std::min(settings.worldSizeX, settings.worldSizeZ) /
-                     static_cast<f32>(std::max(settings.resolutionX, settings.resolutionZ)) * 0.5f;
+                     static_cast<f32>(std::max(resX, resZ)) * 0.5f;
 
     f32 prevT = tEnter;
     Vec3 prevPoint = origin + dir * prevT;
@@ -115,30 +117,42 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
 
     const f32 halfX = settings.worldSizeX * 0.5f;
     const f32 halfZ = settings.worldSizeZ * 0.5f;
-    const u32 resX = settings.resolutionX;
-    const u32 resZ = settings.resolutionZ;
+    const u32 resX = heightmap.resolutionX();
+    const u32 resZ = heightmap.resolutionZ();
     const f32 stepX = settings.worldSizeX / static_cast<f32>(std::max(1u, resX - 1));
     const f32 stepZ = settings.worldSizeZ / static_cast<f32>(std::max(1u, resZ - 1));
-    const f32 radiusSq = brush.radius * brush.radius;
     const f32 frameStrength = brush.strength * std::max(deltaTime, 1.0f / 120.0f) * 60.0f;
+
+    const f32 gridX = (centerLocal.x + halfX) / stepX;
+    const f32 gridZ = (centerLocal.z + halfZ) / stepZ;
+    const f32 radiusCellsX = brush.radius / stepX;
+    const f32 radiusCellsZ = brush.radius / stepZ;
+
+    const i32 minX = std::max(0, static_cast<i32>(std::floor(gridX - radiusCellsX)) - 1);
+    const i32 maxX =
+        std::min(static_cast<i32>(resX) - 1, static_cast<i32>(std::ceil(gridX + radiusCellsX)) + 1);
+    const i32 minZ = std::max(0, static_cast<i32>(std::floor(gridZ - radiusCellsZ)) - 1);
+    const i32 maxZ =
+        std::min(static_cast<i32>(resZ) - 1, static_cast<i32>(std::ceil(gridZ + radiusCellsZ)) + 1);
 
     TerrainVertexBounds bounds;
     bounds.valid = false;
 
-    for (u32 z = 0; z < resZ; ++z) {
-        for (u32 x = 0; x < resX; ++x) {
+    for (i32 z = minZ; z <= maxZ; ++z) {
+        for (i32 x = minX; x <= maxX; ++x) {
             const f32 px = -halfX + static_cast<f32>(x) * stepX;
             const f32 pz = -halfZ + static_cast<f32>(z) * stepZ;
             const f32 dx = px - centerLocal.x;
             const f32 dz = pz - centerLocal.z;
-            const f32 distSq = dx * dx + dz * dz;
-            if (distSq > radiusSq) continue;
+            const f32 dist = std::sqrt(dx * dx + dz * dz);
+            if (dist > brush.radius) continue;
 
-            const f32 dist = std::sqrt(distSq);
             const f32 falloff = smoothstep(1.0f - dist / brush.radius);
             const f32 amount = frameStrength * falloff;
 
-            f32 height = heightmap.sampleNormalized(x, z);
+            const u32 ux = static_cast<u32>(x);
+            const u32 uz = static_cast<u32>(z);
+            f32 height = heightmap.sampleNormalized(ux, uz);
             switch (brush.mode) {
                 case TerrainBrushMode::Raise:
                     height += amount;
@@ -149,12 +163,12 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
                 case TerrainBrushMode::Smooth: {
                     f32 sum = 0.0f;
                     u32 count = 0;
-                    for (int dzOff = -1; dzOff <= 1; ++dzOff) {
-                        for (int dxOff = -1; dxOff <= 1; ++dxOff) {
-                            const int sx = static_cast<int>(x) + dxOff;
-                            const int sz = static_cast<int>(z) + dzOff;
-                            if (sx < 0 || sz < 0 ||
-                                sx >= static_cast<int>(resX) || sz >= static_cast<int>(resZ)) {
+                    for (i32 dzOff = -1; dzOff <= 1; ++dzOff) {
+                        for (i32 dxOff = -1; dxOff <= 1; ++dxOff) {
+                            const i32 sx = x + dxOff;
+                            const i32 sz = z + dzOff;
+                            if (sx < 0 || sz < 0 || sx >= static_cast<i32>(resX) ||
+                                sz >= static_cast<i32>(resZ)) {
                                 continue;
                             }
                             sum += heightmap.sampleNormalized(static_cast<u32>(sx), static_cast<u32>(sz));
@@ -168,17 +182,17 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
                     break;
                 }
             }
-            heightmap.setNormalized(x, z, height);
+            heightmap.setNormalized(ux, uz, height);
 
             if (!bounds.valid) {
-                bounds.minX = bounds.maxX = x;
-                bounds.minZ = bounds.maxZ = z;
+                bounds.minX = bounds.maxX = ux;
+                bounds.minZ = bounds.maxZ = uz;
                 bounds.valid = true;
             } else {
-                bounds.minX = std::min(bounds.minX, x);
-                bounds.minZ = std::min(bounds.minZ, z);
-                bounds.maxX = std::max(bounds.maxX, x);
-                bounds.maxZ = std::max(bounds.maxZ, z);
+                bounds.minX = std::min(bounds.minX, ux);
+                bounds.minZ = std::min(bounds.minZ, uz);
+                bounds.maxX = std::max(bounds.maxX, ux);
+                bounds.maxZ = std::max(bounds.maxZ, uz);
             }
         }
     }

@@ -12,15 +12,66 @@ Vec4 normalizeWeights(Vec4 w) {
     return Vec4(w.x / sum, w.y / sum, w.z / sum, w.w / sum);
 }
 
+Vec4 sampleBilinearFromGrid(const std::vector<Vec4>& weights, u32 resX, u32 resZ, f32 u, f32 v) {
+    if (weights.empty() || resX < 2 || resZ < 2) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+    u = std::clamp(u, 0.0f, 1.0f);
+    v = std::clamp(v, 0.0f, 1.0f);
+
+    const f32 fx = u * static_cast<f32>(resX - 1);
+    const f32 fz = v * static_cast<f32>(resZ - 1);
+
+    const u32 x0 = static_cast<u32>(fx);
+    const u32 z0 = static_cast<u32>(fz);
+    const u32 x1 = std::min(x0 + 1, resX - 1);
+    const u32 z1 = std::min(z0 + 1, resZ - 1);
+
+    const f32 tx = fx - static_cast<f32>(x0);
+    const f32 tz = fz - static_cast<f32>(z0);
+
+    const Vec4 h00 = weights[z0 * resX + x0];
+    const Vec4 h10 = weights[z0 * resX + x1];
+    const Vec4 h01 = weights[z1 * resX + x0];
+    const Vec4 h11 = weights[z1 * resX + x1];
+
+    const Vec4 hx0 = h00 + (h10 - h00) * tx;
+    const Vec4 hx1 = h01 + (h11 - h01) * tx;
+    return normalizeWeights(hx0 + (hx1 - hx0) * tz);
+}
+
 }  // namespace
 
 TerrainSplatmap::TerrainSplatmap(u32 resolutionX, u32 resolutionZ) {
     resize(resolutionX, resolutionZ);
 }
 
-void TerrainSplatmap::resize(u32 resolutionX, u32 resolutionZ) {
-    m_resolutionX = std::max(2u, resolutionX);
-    m_resolutionZ = std::max(2u, resolutionZ);
+void TerrainSplatmap::resize(u32 resolutionX, u32 resolutionZ, bool resampleExisting) {
+    const u32 newResX = std::max(2u, resolutionX);
+    const u32 newResZ = std::max(2u, resolutionZ);
+
+    if (resampleExisting && m_resolutionX >= 2 && m_resolutionZ >= 2 && !m_weights.empty() &&
+        (newResX != m_resolutionX || newResZ != m_resolutionZ)) {
+        const std::vector<Vec4> oldWeights = m_weights;
+        const u32 oldResX = m_resolutionX;
+        const u32 oldResZ = m_resolutionZ;
+
+        m_resolutionX = newResX;
+        m_resolutionZ = newResZ;
+        m_weights.resize(static_cast<size_t>(m_resolutionX) * static_cast<size_t>(m_resolutionZ));
+
+        for (u32 z = 0; z < m_resolutionZ; ++z) {
+            for (u32 x = 0; x < m_resolutionX; ++x) {
+                const f32 u = static_cast<f32>(x) / static_cast<f32>(m_resolutionX - 1);
+                const f32 v = static_cast<f32>(z) / static_cast<f32>(m_resolutionZ - 1);
+                m_weights[z * m_resolutionX + x] =
+                    sampleBilinearFromGrid(oldWeights, oldResX, oldResZ, u, v);
+            }
+        }
+        return;
+    }
+
+    m_resolutionX = newResX;
+    m_resolutionZ = newResZ;
     m_weights.assign(static_cast<size_t>(m_resolutionX) * static_cast<size_t>(m_resolutionZ),
                      Vec4(0.0f, 0.0f, 0.0f, 1.0f));
 }
@@ -56,29 +107,7 @@ void TerrainSplatmap::set(u32 x, u32 z, const Vec4& weights) {
 
 Vec4 TerrainSplatmap::sampleBilinear(f32 u, f32 v) const {
     if (m_weights.empty()) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-
-    u = std::clamp(u, 0.0f, 1.0f);
-    v = std::clamp(v, 0.0f, 1.0f);
-
-    const f32 fx = u * static_cast<f32>(m_resolutionX - 1);
-    const f32 fz = v * static_cast<f32>(m_resolutionZ - 1);
-
-    const u32 x0 = static_cast<u32>(fx);
-    const u32 z0 = static_cast<u32>(fz);
-    const u32 x1 = std::min(x0 + 1, m_resolutionX - 1);
-    const u32 z1 = std::min(z0 + 1, m_resolutionZ - 1);
-
-    const f32 tx = fx - static_cast<f32>(x0);
-    const f32 tz = fz - static_cast<f32>(z0);
-
-    const Vec4 h00 = sample(x0, z0);
-    const Vec4 h10 = sample(x1, z0);
-    const Vec4 h01 = sample(x0, z1);
-    const Vec4 h11 = sample(x1, z1);
-
-    const Vec4 hx0 = h00 + (h10 - h00) * tx;
-    const Vec4 hx1 = h01 + (h11 - h01) * tx;
-    return normalizeWeights(hx0 + (hx1 - hx0) * tz);
+    return sampleBilinearFromGrid(m_weights, m_resolutionX, m_resolutionZ, u, v);
 }
 
 Vec4 TerrainSplatmap::sampleWorldXZ(f32 localX, f32 localZ, f32 worldSizeX, f32 worldSizeZ) const {

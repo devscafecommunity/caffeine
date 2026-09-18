@@ -13,6 +13,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "terrain/TerrainCache.hpp"
+#include "terrain/TerrainResolution.hpp"
 #include "terrain/generation/TerrainGenerator.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
 #include "math/Quat.hpp"
@@ -883,15 +884,33 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
 
     int resX = static_cast<int>(terrain->resolutionX);
     int resZ = static_cast<int>(terrain->resolutionZ);
-    if (ImGui::SliderInt("Resolution X", &resX, 17, 257)) {
+    if (ImGui::SliderInt("Resolution X", &resX, 17, 513)) {
         terrain->resolutionX = static_cast<u32>(resX);
         terrain->dataRevision++;
+        Terrain::TerrainCache::instance().syncEntity(world, e);
         ctx.isDirty = true;
     }
-    if (ImGui::SliderInt("Resolution Z", &resZ, 17, 257)) {
+    if (ImGui::SliderInt("Resolution Z", &resZ, 17, 513)) {
         terrain->resolutionZ = static_cast<u32>(resZ);
         terrain->dataRevision++;
+        Terrain::TerrainCache::instance().syncEntity(world, e);
         ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Heightmap vertex count. Existing heights are resampled when changed.");
+    }
+    int splatScale = static_cast<int>(terrain->splatResolutionScale);
+    if (ImGui::SliderInt("Splat Resolution Scale", &splatScale, 1, 8)) {
+        terrain->splatResolutionScale = static_cast<u32>(splatScale);
+        terrain->splatRevision++;
+        Terrain::TerrainCache::instance().syncEntity(world, e);
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Splat resolution: %u x %u (height scale x%d)",
+                          Terrain::splatResolutionX(*terrain),
+                          Terrain::splatResolutionZ(*terrain),
+                          splatScale);
     }
     if (ImGui::DragFloat("World Size X", &terrain->worldSizeX, 0.5f, 4.0f, 512.0f, "%.1f")) {
         terrain->dataRevision++;

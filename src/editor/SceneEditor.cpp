@@ -10,6 +10,9 @@
 #include "editor/PluginSystem.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/PlayMode2D.hpp"
+#include "script/ScriptTypes.hpp"
+#include "events/Events.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui_internal.h>
@@ -155,6 +158,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 #endif
 
     registerAllComponents(ComponentRegistry::instance());
+    registerPlayModeEventListeners();
 
     return true;
 }
@@ -212,7 +216,42 @@ void SceneEditor::onQuitRequested() {
 
 // ── Play mode control ───────────────────────────────────────────
 
+void SceneEditor::registerPlayModeEventListeners() {
+    if (m_playListenersRegistered) return;
+    m_collisionListener = m_eventBus.subscribe<Events::OnCollision2D>(
+        [this](const Events::OnCollision2D& event) {
+            if (!m_isPlaying || m_isPaused) return;
+            ECS::World* world = m_tabManager.activeWorld();
+            if (!world) return;
+            handleCollision2D(*world, event);
+        });
+    m_playListenersRegistered = true;
+}
+
+void SceneEditor::handleCollision2D(ECS::World& world, const Events::OnCollision2D& event) {
+#ifdef CF_HAS_SCRIPTING
+    if (!m_scriptEngineReady) return;
+
+    auto notify = [&](u32 entityId, u32 otherId) {
+        ECS::Entity self(entityId, &world);
+        ECS::Entity other(otherId, &world);
+        if (!self.isValid() || !other.isValid()) return;
+        const auto* script = world.get<Script::ScriptComponent>(self);
+        if (!script || script->scriptPath.empty()) return;
+        m_scriptEngine.callOnCollision(script->scriptPath, self, other);
+    };
+
+    notify(event.entityA, event.entityB);
+    notify(event.entityB, event.entityA);
+#endif
+}
+
 void SceneEditor::enterPlayMode(ECS::World& world) {
+    m_viewportPlaySnapshot.panX = m_ctx.viewportPanX;
+    m_viewportPlaySnapshot.panY = m_ctx.viewportPanY;
+    m_viewportPlaySnapshot.zoom = m_ctx.viewportZoom;
+    m_ctx.isPlayMode = true;
+
     m_playSnapshot.clear();
     ECS::ComponentQuery q;
     q.with<ECS::Transform>();
@@ -240,6 +279,12 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
 void SceneEditor::exitPlayMode(ECS::World& world) {
     m_isPlaying = false;
     m_isPaused  = false;
+    m_ctx.isPlayMode = false;
+    m_ctx.viewportPanX = m_viewportPlaySnapshot.panX;
+    m_ctx.viewportPanY = m_viewportPlaySnapshot.panY;
+    m_ctx.viewportZoom = m_viewportPlaySnapshot.zoom;
+    m_playCamera2D.stopFollowing();
+
     for (auto& snap : m_playSnapshot) {
         ECS::Entity e(snap.id, &world);
         if (!e.isValid()) continue;
@@ -250,6 +295,7 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     if (!m_isPlaying || m_isPaused) return;
+    m_animationSystem.onUpdate(world, dt);
     m_physicsSystem.onUpdate(world, dt);
 #ifdef CF_HAS_SCRIPTING
     if (m_scriptEngineReady) m_scriptSystem.onUpdate(world, dt);
@@ -260,6 +306,19 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
         m_uiSystem.injectMouseClick(io.MouseDown[0]);
     }
     m_uiSystem.onUpdate(world, dt);
+
+    if (m_ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+        const ECS::Entity cameraEntity = Scene::findActiveCamera2DEntity(world);
+        if (cameraEntity.isValid()) {
+            const auto* transform = world.get<ECS::Transform>(cameraEntity);
+            const auto* camera = world.get<ECS::Camera2DComponent>(cameraEntity);
+            if (transform && camera) {
+                m_playCamera2D.update(dt, world);
+                Scene::syncViewportFromCamera2D(m_ctx, *transform, *camera);
+            }
+        }
+    }
+
     m_eventBus.dispatch();
 }
 

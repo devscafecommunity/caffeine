@@ -29,25 +29,46 @@ bool SkyboxCamera::nearlyEqual(const SkyboxCamera& other, f32 epsilon) const {
 
 namespace {
 
-constexpr int kSkyboxRasterMaxDim = 320;
+// Cap GPU upload size; match viewport resolution up to this limit.
+constexpr int kSkyboxRasterMaxDim = 2048;
 constexpr f32 kTwoPi = 6.2831853f;
 
-void sampleEquirectNearest(const u8* pixels, u32 width, u32 height, float u, float v, u8 outRgba[4]) {
-    if (!pixels || width == 0 || height == 0) {
-        outRgba[0] = 26; outRgba[1] = 26; outRgba[2] = 31; outRgba[3] = 255;
-        return;
-    }
-
+u8 sampleChannelBilinear(const u8* pixels, u32 width, u32 height, f32 u, f32 v, u32 channel) {
     while (u < 0.f) u += 1.f;
     while (u >= 1.f) u -= 1.f;
     v = std::clamp(v, 0.f, 1.f);
 
-    const int x = static_cast<int>(u * static_cast<float>(width - 1));
-    const int y = static_cast<int>(v * static_cast<float>(height - 1));
-    const size_t idx = static_cast<size_t>(y * width + x) * 4;
-    outRgba[0] = pixels[idx + 0];
-    outRgba[1] = pixels[idx + 1];
-    outRgba[2] = pixels[idx + 2];
+    const f32 fx = u * static_cast<f32>(width - 1);
+    const f32 fy = v * static_cast<f32>(height - 1);
+    const u32 x0 = static_cast<u32>(fx);
+    const u32 y0 = static_cast<u32>(fy);
+    const u32 x1 = std::min(x0 + 1, width - 1);
+    const u32 y1 = std::min(y0 + 1, height - 1);
+    const f32 tx = fx - static_cast<f32>(x0);
+    const f32 ty = fy - static_cast<f32>(y0);
+
+    const f32 c00 = static_cast<f32>(pixels[(y0 * width + x0) * 4 + channel]);
+    const f32 c10 = static_cast<f32>(pixels[(y0 * width + x1) * 4 + channel]);
+    const f32 c01 = static_cast<f32>(pixels[(y1 * width + x0) * 4 + channel]);
+    const f32 c11 = static_cast<f32>(pixels[(y1 * width + x1) * 4 + channel]);
+    const f32 cx0 = c00 + (c10 - c00) * tx;
+    const f32 cx1 = c01 + (c11 - c01) * tx;
+    return static_cast<u8>(std::clamp(cx0 + (cx1 - cx0) * ty, 0.0f, 255.0f));
+}
+
+void sampleEquirectBilinear(const u8* pixels, u32 width, u32 height, float u, float v,
+                            u8 outRgba[4]) {
+    if (!pixels || width == 0 || height == 0) {
+        outRgba[0] = 26;
+        outRgba[1] = 26;
+        outRgba[2] = 31;
+        outRgba[3] = 255;
+        return;
+    }
+
+    outRgba[0] = sampleChannelBilinear(pixels, width, height, u, v, 0);
+    outRgba[1] = sampleChannelBilinear(pixels, width, height, u, v, 1);
+    outRgba[2] = sampleChannelBilinear(pixels, width, height, u, v, 2);
     outRgba[3] = 255;
 }
 
@@ -131,7 +152,7 @@ void SkyboxRenderer::renderPixels(SourceImage& source, FrameCache& frame, ImVec2
             f32 u = 0.f;
             f32 v = 0.f;
             directionToEquirectUVFast(dx, dy, dz, u, v);
-            sampleEquirectNearest(source.pixels.data(), source.width, source.height, u, v, row + x * 4);
+            sampleEquirectBilinear(source.pixels.data(), source.width, source.height, u, v, row + x * 4);
         }
     }
 
