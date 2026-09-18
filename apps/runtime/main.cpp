@@ -224,11 +224,11 @@ int main(int argc, char** argv) {
     }
 
     Caffeine::Editor::ProjectManager pm;
-    if (!pm.OpenProject(projectFile)) {
+    Caffeine::Editor::ProjectConfig config;
+    if (!pm.LoadProjectFromFile(projectFile, config)) {
         std::fprintf(stderr, "caffeine-runtime: failed to parse %s\n", projectFile.string().c_str());
         return 1;
     }
-    Caffeine::Editor::ProjectConfig config = pm.GetCurrentProject();
 
     const std::filesystem::path buildRoot = std::filesystem::absolute(projectFile.parent_path());
     config.RootPath = buildRoot;

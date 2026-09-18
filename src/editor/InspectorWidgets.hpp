@@ -1,4 +1,5 @@
 #pragma once
+#include "editor/EditorIcons.hpp"
 #include "math/Vec2.hpp"
 #include "math/Vec3.hpp"
 #include "math/Vec4.hpp"
@@ -11,24 +12,80 @@
 
 namespace Caffeine::Editor::Widgets {
 
+inline void AxisLabels2() {
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float colW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX());
+    ImGui::Text("X");
+    ImGui::SameLine(ImGui::GetCursorPosX() + colW + spacing);
+    ImGui::Text("Y");
+    ImGui::PopStyleColor();
+}
+
+inline void AxisLabels3() {
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float colW = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::Text("X");
+    ImGui::SameLine(0.0f, colW - ImGui::CalcTextSize("X").x + spacing);
+    ImGui::Text("Y");
+    ImGui::SameLine(0.0f, colW - ImGui::CalcTextSize("Y").x + spacing);
+    ImGui::Text("Z");
+    ImGui::PopStyleColor();
+}
+
 inline bool DragVec3(const char* label, Vec3& v, float speed = 0.1f,
                      float lo = -1e9f, float hi = 1e9f) {
-    float tmp[3] = { v.x, v.y, v.z };
-    if (ImGui::DragFloat3(label, tmp, speed, lo, hi)) {
-        v.x = tmp[0]; v.y = tmp[1]; v.z = tmp[2];
-        return true;
+    ImGui::TextUnformatted(label);
+    AxisLabels3();
+    ImGui::PushID(label);
+
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float colW = (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
+    bool changed = false;
+    float tmp[3] = {v.x, v.y, v.z};
+
+    ImGui::PushItemWidth(colW);
+    if (ImGui::DragFloat("##x", &tmp[0], speed, lo, hi, "%.3f")) changed = true;
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::DragFloat("##y", &tmp[1], speed, lo, hi, "%.3f")) changed = true;
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::DragFloat("##z", &tmp[2], speed, lo, hi, "%.3f")) changed = true;
+    ImGui::PopItemWidth();
+    ImGui::PopID();
+
+    if (changed) {
+        v.x = tmp[0];
+        v.y = tmp[1];
+        v.z = tmp[2];
     }
-    return false;
+    return changed;
 }
 
 inline bool DragVec2(const char* label, Vec2& v, float speed = 0.1f,
                      float lo = -1e9f, float hi = 1e9f) {
-    float tmp[2] = { v.x, v.y };
-    if (ImGui::DragFloat2(label, tmp, speed, lo, hi)) {
-        v.x = tmp[0]; v.y = tmp[1];
-        return true;
+    ImGui::TextUnformatted(label);
+    AxisLabels2();
+    ImGui::PushID(label);
+
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float colW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+    bool changed = false;
+    float tmp[2] = {v.x, v.y};
+
+    ImGui::PushItemWidth(colW);
+    if (ImGui::DragFloat("##x", &tmp[0], speed, lo, hi, "%.3f")) changed = true;
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::DragFloat("##y", &tmp[1], speed, lo, hi, "%.3f")) changed = true;
+    ImGui::PopItemWidth();
+    ImGui::PopID();
+
+    if (changed) {
+        v.x = tmp[0];
+        v.y = tmp[1];
     }
-    return false;
+    return changed;
 }
 
 inline bool InputText(const char* label, std::string& str) {
@@ -84,13 +141,24 @@ inline bool AssetField(const char* label, std::string& path,
     return changed;
 }
 
-inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove) {
+inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove,
+                            const char* iconName = nullptr) {
     outRemove = false;
     ImGui::PushID(label);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 4.0f));
     bool open = ImGui::CollapsingHeader("##hdr", ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopStyleVar();
+
     ImGui::SameLine();
     ImGui::Checkbox("##en", &enabled);
     ImGui::SameLine();
+
+    if (iconName && EditorIcons::hasIcon(iconName)) {
+        EditorIcons::image(iconName, ImGui::GetFontSize());
+        ImGui::SameLine();
+    }
+
     ImGui::TextUnformatted(label);
     ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 24.0f);
     if (ImGui::SmallButton("...")) {

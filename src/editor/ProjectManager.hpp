@@ -47,7 +47,12 @@ public:
     bool OpenProject(const std::filesystem::path& projectFilePath);
 
     // Load project metadata without touching the recent-projects list.
+    // Resolves build-output paths back to the editor project.caffeine.
     bool TryLoadProject(const std::filesystem::path& projectFilePath, ProjectConfig& out) const;
+
+    // Load the exact project.caffeine path (no editor-root resolution).
+    // Use for packaged builds and the standalone runtime.
+    bool LoadProjectFromFile(const std::filesystem::path& projectFilePath, ProjectConfig& out) const;
 
     const ProjectConfig&              GetCurrentProject() const { return m_CurrentConfig; }
     const std::vector<std::filesystem::path>& GetRecentProjects() const { return m_RecentProjects; }

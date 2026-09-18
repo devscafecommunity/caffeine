@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Types.hpp"
 #include "core/io/CafTypes.hpp"
+#include "editor/AssetPreviewRenderer.hpp"
 #include "editor/EditorContext.hpp"
 #include "ecs/World.hpp"
 #include "editor/ProjectManager.hpp"
@@ -63,6 +64,7 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+    void dismissTransientUI();
 
     void setOnScriptOpen(std::function<void(const std::filesystem::path&)> cb) {
         m_onScriptOpen = std::move(cb);
@@ -149,6 +151,8 @@ public:
     void renderRenamePopup();
     std::string m_statusMessage;
     bool m_statusIsError = false;
+    AssetPreviewRenderer m_previewRenderer;
+    std::string m_previewSourceKey;
     #endif
 
 private:

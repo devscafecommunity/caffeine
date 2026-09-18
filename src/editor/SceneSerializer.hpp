@@ -3,6 +3,9 @@
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace Caffeine::Editor {
 
@@ -38,9 +41,27 @@ private:
     static constexpr u32 kTypePrefabInstance = 20;
     static constexpr u32 kTypeCamera3D       = 21;
     static constexpr u32 kTypeCameraActive   = 22;
-    static constexpr u32 kTypeCount         = 23;
+    static constexpr u32 kTypeCamera2D       = 23;
+    static constexpr u32 kTypeRigidBody2D    = 24;
+    static constexpr u32 kTypeCollider2D     = 25;
+    static constexpr u32 kTypeScript         = 26;
+    static constexpr u32 kTypeCppScript      = 27;
+    static constexpr u32 kTypePersistent     = 28;
+    static constexpr u32 kTypeDisabledTag    = 29;
+    static constexpr u32 kTypeParticleEmitter = 30;
+    static constexpr u32 kTypeWorldTransform   = 31;
+    static constexpr u32 kTypeEntityLayer      = 32;
+    static constexpr u32 kTypeSkinnedMeshRenderer = 33;
+    static constexpr u32 kTypeUIWidget       = 34;
+    static constexpr u32 kTypeUIButton       = 35;
+    static constexpr u32 kTypeUILabel        = 36;
+    static constexpr u32 kTypeUIProgressBar  = 37;
+    static constexpr u32 kTypeUISlider       = 38;
+    static constexpr u32 kTypeUICheckbox     = 39;
+    static constexpr u32 kTypeAnimator       = 40;
+    static constexpr u32 kTypeCount          = 41;
 
-    static constexpr u32 kFormatVersion    = 5;
+    static constexpr u32 kFormatVersion    = 6;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
 
     // ── Per-component serialization helpers ──────────────────────────────────
@@ -71,12 +92,34 @@ private:
 
     void collectPrefabInstanceComponents(
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectScriptComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectCppScriptComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectParticleEmitterComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectSkinnedMeshRendererComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectUIWidgetComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectAnimatorComponents(std::vector<std::pair<u32, std::vector<u8>>>& entries);
+
+    template<typename T>
+    void emitPodComponents(u32 typeId,
+                           std::unordered_map<u32, std::vector<std::pair<u32, std::vector<u8>>>>& entityMap) {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectComponent<T>(m_world, entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(typeId, std::move(data));
+        }
+    }
 
     bool applyNameComponent(ECS::Entity e, const u8* data, u32 size);
     bool applySpriteComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyScriptComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyCppScriptComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyParticleEmitterComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applySkinnedMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyUIWidgetComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyAnimatorComponent(ECS::Entity e, const u8* data, u32 size);
 
     template<typename T>
     static bool applyPODComponent(ECS::Entity e, const u8* data, u32 size,

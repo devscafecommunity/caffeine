@@ -1,7 +1,8 @@
 #include "editor/ProjectStartupDialog.hpp"
 #include "editor/EditorIcons.hpp"
-#include <filesystem>
+#include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -17,6 +18,26 @@ namespace Caffeine::Editor {
 ProjectStartupDialog::ProjectStartupDialog() = default;
 
 void ProjectStartupDialog::init() {
+    if (m_selectedLocation.empty()) {
+#ifdef _WIN32
+        const char* userProfile = std::getenv("USERPROFILE");
+        if (userProfile) {
+            m_selectedLocation = (std::filesystem::path(userProfile) / "Documents" / "CaffeineProjects").string();
+        }
+#else
+        const char* home = std::getenv("HOME");
+        if (home) {
+            m_selectedLocation = (std::filesystem::path(home) / "Documents" / "CaffeineProjects").string();
+        }
+#endif
+        if (m_selectedLocation.empty()) {
+            m_selectedLocation = (std::filesystem::current_path() / "CaffeineProjects").string();
+        }
+    }
+
+    if (m_browsePathBuf[0] == '\0') {
+        std::strncpy(m_browsePathBuf, m_selectedLocation.c_str(), sizeof(m_browsePathBuf) - 1);
+    }
 }
 
 std::optional<ProjectConfig> ProjectStartupDialog::render() {
@@ -209,34 +230,49 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderCreateTab() {
     ImGui::Separator();
 
     ImGui::Text("Template:");
-    ImGui::BeginGroup();
-    
     const char* templates[] = {"Empty", "2D", "3D"};
     const char* descriptions[] = {
         "Blank project, no starter assets",
         "Pre-configured for 2D games",
         "Pre-configured for 3D games"
     };
-    
-    for (int i = 0; i < 3; ++i) {
-        bool selected = (m_templateIndex == i);
-        ImVec4 borderColor = selected ? ImVec4(1.0f, 1.0f, 0.0f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 0.5f);
-        
-        ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
-        
-        if (ImGui::Selectable(templates[i], selected, ImGuiSelectableFlags_None, ImVec2(150, 80))) {
-            m_templateIndex = i;
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextWrapped("%s", descriptions[i]);
-        
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
-    }
+    const char* templateIcons[] = {"align-justify", "arrows-horizontal", "arrows-diagonal"};
 
-    ImGui::EndGroup();
+    const float cardH = 132.0f;
+    if (ImGui::BeginTable("project_templates", 3, ImGuiTableFlags_SizingStretchSame)) {
+        for (int i = 0; i < 3; ++i) {
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            const bool selected = (m_templateIndex == i);
+
+            if (ImGui::InvisibleButton("##template_card", ImVec2(-1.0f, cardH))) {
+                m_templateIndex = i;
+            }
+
+            const ImVec2 cardMin = ImGui::GetItemRectMin();
+            const ImVec2 cardMax = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImU32 borderCol = selected ? IM_COL32(220, 170, 90, 255) : IM_COL32(90, 90, 100, 180);
+            const ImU32 fillCol = selected ? IM_COL32(48, 42, 36, 255) : IM_COL32(28, 28, 34, 255);
+            dl->AddRectFilled(cardMin, cardMax, fillCol, 8.0f);
+            dl->AddRect(cardMin, cardMax, borderCol, 8.0f, 0, selected ? 2.0f : 1.0f);
+
+            const float iconSize = 36.0f;
+            const float cardW = cardMax.x - cardMin.x;
+            const ImVec2 iconPos(cardMin.x + (cardW - iconSize) * 0.5f, cardMin.y + 18.0f);
+            if (EditorIcons::hasIcon(templateIcons[i])) {
+                const ImTextureRef tex = EditorIcons::get(templateIcons[i]);
+                dl->AddImage(tex, iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize));
+            }
+
+            dl->AddText(ImVec2(cardMin.x + 10.0f, cardMin.y + 68.0f), IM_COL32(230, 225, 220, 255),
+                        templates[i]);
+            dl->AddText(ImVec2(cardMin.x + 10.0f, cardMin.y + 88.0f), IM_COL32(150, 150, 160, 255),
+                        descriptions[i]);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -378,6 +414,46 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderRecentTab() {
     return result;
 }
 
+void ProjectStartupDialog::scanBrowseDirectory(const std::filesystem::path& root) {
+    m_browseResults.clear();
+    m_selectedBrowseIndex = -1;
+
+    std::error_code ec;
+    if (root.empty() || !std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
+        return;
+    }
+
+    const auto addProject = [&](const std::filesystem::path& projectFile) {
+        const auto absPath = std::filesystem::weakly_canonical(projectFile, ec);
+        const std::filesystem::path resolved = ec ? projectFile : absPath;
+        if (std::find(m_browseResults.begin(), m_browseResults.end(), resolved) == m_browseResults.end()) {
+            m_browseResults.push_back(resolved);
+        }
+    };
+
+    if (std::filesystem::exists(root / "project.caffeine", ec)) {
+        addProject(root / "project.caffeine");
+    }
+
+    try {
+        auto it = std::filesystem::recursive_directory_iterator(
+            root, std::filesystem::directory_options::skip_permission_denied, ec);
+        const auto end = std::filesystem::recursive_directory_iterator();
+        for (; it != end; ++it) {
+            if (it.depth() > 6) {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (it->path().filename() == "project.caffeine") {
+                addProject(it->path());
+            }
+        }
+    } catch (const std::exception&) {
+    }
+
+    std::sort(m_browseResults.begin(), m_browseResults.end());
+}
+
 std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
     std::optional<ProjectConfig> result;
 
@@ -393,30 +469,49 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
         return name;
     };
 
-    ImGui::InputTextWithHint("##browse_path", "Enter directory path...", 
-                            m_browsePath.data(), m_browsePath.capacity());
+    bool scanRequested = false;
+    ImGui::SetNextItemWidth(-220.0f);
+    if (ImGui::InputTextWithHint("##browse_path", "Enter directory path and press Enter...",
+                                 m_browsePathBuf, sizeof(m_browsePathBuf),
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+        scanRequested = true;
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Browse Folder...##browse", ImVec2(120, 0))) {
+    if (ImGui::Button("Scan", ImVec2(56, 0))) {
+        scanRequested = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse Folder...", ImVec2(140, 0))) {
         m_showBrowsePicker = true;
     }
 
+    if (scanRequested) {
+        scanBrowseDirectory(std::filesystem::path(m_browsePathBuf));
+        showToast(m_browseResults.empty() ? "No projects found in folder"
+                                          : "Found " + std::to_string(m_browseResults.size()) + " project(s)",
+                  m_browseResults.empty() ? ToastType::Info : ToastType::Success);
+    }
+
     if (m_showBrowsePicker) {
-        std::filesystem::path browsePathFs = m_browsePath.empty() ? std::filesystem::current_path() : std::filesystem::path(m_browsePath);
-         if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Folder to Browse", browsePathFs)) {
-             m_browsePath = path.value().string();
-             m_showBrowsePicker = false;
-             showToast("Scanning directory...", ToastType::Info);
-         } else if (FilePicker::consumeCloseEvent("Select Folder to Browse")) {
-             m_showBrowsePicker = false;
-         }
-     }
+        const std::filesystem::path browsePathFs =
+            m_browsePathBuf[0] != '\0' ? std::filesystem::path(m_browsePathBuf)
+                                        : std::filesystem::path(m_selectedLocation);
+        if (auto path = FilePicker::pickPath(FilePicker::Mode::PickFolder, "Select Folder to Browse", browsePathFs)) {
+            std::strncpy(m_browsePathBuf, path->string().c_str(), sizeof(m_browsePathBuf) - 1);
+            m_showBrowsePicker = false;
+            scanBrowseDirectory(*path);
+            showToast("Found " + std::to_string(m_browseResults.size()) + " project(s)", ToastType::Success);
+        } else if (FilePicker::consumeCloseEvent("Select Folder to Browse")) {
+            m_showBrowsePicker = false;
+        }
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
 
     if (ImGui::BeginChild("browse_list", ImVec2(0, 300), true)) {
         if (m_browseResults.empty()) {
-            ImGui::TextDisabled("No projects found. Type a path and press Enter.");
+            ImGui::TextDisabled("Choose a folder and press Scan to find project.caffeine files.");
         } else {
             ImGui::Text("Found %zu project(s):", m_browseResults.size());
             ImGui::Separator();
@@ -425,20 +520,35 @@ std::optional<ProjectConfig> ProjectStartupDialog::renderBrowseTab() {
                 const auto& projPath = m_browseResults[i];
                 std::string projName = projectDisplayName(projPath);
 
-                ImGui::PushID((int)i);
-                
-                bool selected = (m_selectedBrowseIndex == (int)i);
+                ImGui::PushID(static_cast<int>(i));
+
+                const bool selected = (m_selectedBrowseIndex == static_cast<int>(i));
                 const float openButtonWidth = 70.0f;
                 const float spacing = ImGui::GetStyle().ItemSpacing.x;
-                float selectableWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
-                if (selectableWidth < 1.0f) selectableWidth = 1.0f;
+                float rowWidth = ImGui::GetContentRegionAvail().x - openButtonWidth - spacing;
+                if (rowWidth < 1.0f) rowWidth = 1.0f;
 
-                if (ImGui::Selectable(projName.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(selectableWidth, 0.0f))) {
-                    m_selectedBrowseIndex = i;
+                ImGui::BeginGroup();
+                if (ImGui::Selectable("##browse_row", selected,
+                                      ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_SpanAllColumns,
+                                      ImVec2(rowWidth, 42.0f))) {
+                    m_selectedBrowseIndex = static_cast<int>(i);
                 }
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 38.0f);
+                ImGui::Indent(8.0f);
+                if (EditorIcons::hasIcon("beer")) {
+                    EditorIcons::image("beer", ImGui::GetFontSize());
+                    ImGui::SameLine();
+                }
+                ImGui::TextUnformatted(projName.c_str());
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", projPath.parent_path().string().c_str());
+                ImGui::PopStyleColor();
+                ImGui::Unindent(8.0f);
+                ImGui::EndGroup();
 
                 ImGui::SameLine();
-                if (ImGui::Button("Open", ImVec2(openButtonWidth, 0))) {
+                if (ImGui::Button("Open", ImVec2(openButtonWidth, 42.0f))) {
                     result = tryOpenProject(projPath);
                     if (result) {
                         showToast("Project opened!", ToastType::Success);

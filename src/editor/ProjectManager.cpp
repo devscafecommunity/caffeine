@@ -144,6 +144,36 @@ static bool readJsonString(const std::string& json, const std::string& key, std:
     return false;
 }
 
+static bool loadProjectConfigFromFile(const std::filesystem::path& path, ProjectConfig& out) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string& json = buffer.str();
+
+    ProjectConfig cfg;
+    cfg.RootPath = std::filesystem::absolute(path.parent_path());
+
+    std::string val;
+
+    if (readJsonString(json, "project_name", val))
+        cfg.Name = val;
+    if (readJsonString(json, "engine_version", val))
+        cfg.Version = val;
+    if (readJsonString(json, "paths.assets_raw", val))
+        cfg.AssetRawPath = val;
+    if (readJsonString(json, "paths.assets_processed", val))
+        cfg.AssetProcessedPath = val;
+    if (readJsonString(json, "paths.scripts", val))
+        cfg.ScriptsPath = val;
+    if (readJsonString(json, "last_scene", val))
+        cfg.LastScene = val;
+
+    out = cfg;
+    return true;
+}
+
 // Serialize a ProjectConfig to JSON string.
 static std::string serializeConfig(const ProjectConfig& cfg) {
     std::ostringstream json;
@@ -225,8 +255,7 @@ std::filesystem::path ProjectManager::ResolveEditorProjectFile(std::filesystem::
         const std::filesystem::path candidate = dir / "project.caffeine";
         if (std::filesystem::exists(candidate)) {
             ProjectConfig cfg;
-            ProjectManager loader;
-            if (loader.LoadProjectFile(candidate, cfg) && !IsPackagedBuildRoot(dir, cfg)) {
+            if (loadProjectConfigFromFile(candidate, cfg) && !IsPackagedBuildRoot(dir, cfg)) {
                 return candidate;
             }
         }
@@ -266,32 +295,13 @@ bool ProjectManager::TryLoadProject(const std::filesystem::path& projectFilePath
 }
 
 bool ProjectManager::LoadProjectFile(const std::filesystem::path& path, ProjectConfig& out) const {
-    std::ifstream file(path);
-    if (!file.is_open()) return false;
+    return loadProjectConfigFromFile(path, out);
+}
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    const std::string& json = buffer.str();
-
-    ProjectConfig cfg;
-    cfg.RootPath = std::filesystem::absolute(path.parent_path());
-
-    std::string val;
-
-    if (readJsonString(json, "project_name", val))
-        cfg.Name = val;
-    if (readJsonString(json, "engine_version", val))
-        cfg.Version = val;
-    if (readJsonString(json, "paths.assets_raw", val))
-        cfg.AssetRawPath = val;
-    if (readJsonString(json, "paths.assets_processed", val))
-        cfg.AssetProcessedPath = val;
-    if (readJsonString(json, "paths.scripts", val))
-        cfg.ScriptsPath = val;
-    if (readJsonString(json, "last_scene", val))
-        cfg.LastScene = val;
-
-    out = cfg;
+bool ProjectManager::LoadProjectFromFile(const std::filesystem::path& projectFilePath,
+                                         ProjectConfig& out) const {
+    if (!LoadProjectFile(projectFilePath, out)) return false;
+    out.RootPath = std::filesystem::absolute(projectFilePath.parent_path());
     return true;
 }
 

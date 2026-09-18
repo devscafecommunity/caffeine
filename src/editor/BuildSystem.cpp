@@ -134,7 +134,9 @@ std::string serializeBuildProject(const BuildSettings& settings) {
     bool first = true;
     for (const auto& scene : settings.scenesToInclude) {
         if (!first) json << ", ";
-        json << "\"" << scene << "\"";
+        const std::string packaged =
+            "data/scenes/" + fs::path(scene).filename().string();
+        json << "\"" << packaged << "\"";
         first = false;
     }
     json << "],\n";
@@ -554,7 +556,7 @@ bool BuildSystem::GenerateProject(const BuildSettings& settings) {
 
     ProjectConfig built;
     ProjectManager verify;
-    if (!verify.TryLoadProject(projectFile, built)) {
+    if (!verify.LoadProjectFromFile(projectFile, built)) {
         BuildLog::error("Could not read back project.caffeine for verification");
         return false;
     }

@@ -328,6 +328,8 @@ with open(sys.argv[1], 'w') as f:
           src/editor/HierarchyPanel.cpp
           src/editor/SceneViewport.cpp
           src/editor/AssetBrowser.cpp
+          src/editor/AssetPreviewRenderer.cpp
+          src/editor/EditorPreferences.cpp
           src/editor/InspectorPanel.cpp
           src/editor/ComponentRegistry.cpp
           src/editor/SettingsPanel.cpp

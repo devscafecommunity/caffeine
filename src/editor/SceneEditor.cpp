@@ -107,9 +107,11 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_settingsPanel.setLayoutChangeCallback([this]() {
          requestLayoutRebuild();
      });
+     m_settingsPanel.setEditorContext(&m_ctx);
+     m_settingsPanel.applyPreferencesToContext(m_ctx);
 
     // Auto-load last scene if project config has one
-    if (!projectConfig.LastScene.empty()) {
+    if (m_settingsPanel.preferences().reopenLastSceneOnStartup && !projectConfig.LastScene.empty()) {
         std::string lastScene = projectConfig.LastScene;
         if (lastScene.find("/build/") != std::string::npos ||
             lastScene.find("\\build\\") != std::string::npos ||
@@ -151,12 +153,35 @@ void SceneEditor::shutdown() {
     m_audioPreview.shutdown();
 }
 
+bool SceneEditor::hasUnsavedChanges() const {
+    if (m_ctx.isDirty) {
+        return true;
+    }
+    for (int i = 0; i < m_tabManager.tabCount(); ++i) {
+        if (i != m_tabManager.activeTabIndex() && m_tabManager.tab(i).isDirty) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SceneEditor::dismissBlockingPopups() {
+    m_assetBrowser.dismissTransientUI();
+    m_buildDialog.close();
+    m_settingsPanel.close();
+    ImGuiContext& g = *GImGui;
+    while (g.OpenPopupStack.Size > 0) {
+        ImGui::ClosePopupToLevel(g.OpenPopupStack.Size - 1, false);
+    }
+}
+
 void SceneEditor::onQuitRequested() {
-    if (!m_ctx.isDirty) {
+    if (!hasUnsavedChanges() || !m_settingsPanel.preferences().confirmOnSceneClose) {
         m_open = false;
         m_quitConfirmed = true;
         return;
     }
+    dismissBlockingPopups();
     m_pendingAction = PendingAction::Exit;
     m_showQuitPopup = true;
 }
@@ -246,14 +271,17 @@ void SceneEditor::render(f32 deltaTime) {
     if (!m_open) return;
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
-    if (!activeWorld) return;
+    if (!activeWorld) {
+        renderUnsavedChangesPopup(nullptr);
+        return;
+    }
 
     if (m_tabManager.activeTabIndex() >= 0) {
         m_tabManager.activeTab().isDirty = m_ctx.isDirty;
     }
 
     if (m_showQuitPopup) {
-        ImGui::OpenPopup("Unsaved Changes?");
+        dismissBlockingPopups();
         m_showQuitPopup = false;
     }
 
@@ -349,7 +377,6 @@ void SceneEditor::render(f32 deltaTime) {
     }
 
     renderMainMenuBar(*activeWorld);
-    renderUnsavedChangesPopup(*activeWorld);
 
     Scene::propagateTransforms(*activeWorld);
 
@@ -377,6 +404,7 @@ void SceneEditor::render(f32 deltaTime) {
 
     ImGui::End(); // DockSpace
 
+    renderUnsavedChangesPopup(activeWorld);
     renderStatusBar(*activeWorld);
     m_profiler.pushFrameTime(deltaTime * 1000.0f);
 }
@@ -451,12 +479,7 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             PluginManager::instance().renderMenuItems("File");
             ImGui::Separator();
             if (EditorIcons::menuItem(EditorIcon::Exit, "Exit")) {
-                if (m_ctx.isDirty) {
-                    m_pendingAction = PendingAction::Exit;
-                    ImGui::OpenPopup("Unsaved Changes?");
-                } else {
-                    m_open = false;
-                }
+                onQuitRequested();
             }
             ImGui::EndMenu();
         }
@@ -534,6 +557,7 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool acOpen = m_animatorController.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Animator, "Animator Controller", nullptr, &acOpen))
                 acOpen ? m_animatorController.open() : m_animatorController.close();
+            syncLayoutProfileFromPanels();
             ImGui::EndMenu();
         }
 
@@ -639,14 +663,16 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
             ImGui::TextColored(color, "%s", m_ctx.transientStatus.c_str());
         }
 
-        const f32 frameMs = m_profiler.lastFrameTime();
-        if (frameMs > 0.0f) {
-            const f32 fps = 1000.0f / frameMs;
-            ImGui::SameLine(ImGui::GetWindowWidth() - 170.0f);
-            if (frameMs > 33.0f) {
-                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
-            } else {
-                ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.65f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
+        if (m_settingsPanel.preferences().showFPSInStatusBar) {
+            const f32 frameMs = m_profiler.lastFrameTime();
+            if (frameMs > 0.0f) {
+                const f32 fps = 1000.0f / frameMs;
+                ImGui::SameLine(ImGui::GetWindowWidth() - 170.0f);
+                if (frameMs > 33.0f) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
+                } else {
+                    ImGui::TextColored(ImVec4(0.55f, 0.9f, 0.65f, 1.0f), "%.1f FPS  %.1f ms", fps, frameMs);
+                }
             }
         }
 
@@ -811,18 +837,24 @@ void SceneEditor::closeTab(int index) {
 
 // ── Unsaved changes popup ───────────────────────────────────────
 
-void SceneEditor::renderUnsavedChangesPopup(ECS::World& world) {
+void SceneEditor::renderUnsavedChangesPopup(ECS::World* world) {
     // "Unsaved Changes?" — triggered by menu actions (New/Open/Exit)
     if (m_pendingAction != PendingAction::None) {
+        if (!ImGui::IsPopupOpen("Unsaved Changes?", ImGuiPopupFlags_AnyPopupId)) {
+            dismissBlockingPopups();
+            ImGui::OpenPopup("Unsaved Changes?");
+        }
         if (ImGui::BeginPopupModal("Unsaved Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("There are unsaved changes. Do you want to save before continuing?");
             ImGui::Separator();
 
             if (ImGui::Button("Save", ImVec2(120, 0))) {
-                if (m_ctx.currentScenePath.empty()) {
-                    saveSceneAs(world);
-                } else {
-                    saveScene(m_ctx.currentScenePath.c_str(), world);
+                if (world) {
+                    if (m_ctx.currentScenePath.empty()) {
+                        saveSceneAs(*world);
+                    } else {
+                        saveScene(m_ctx.currentScenePath.c_str(), *world);
+                    }
                 }
                 ImGui::CloseCurrentPopup();
                 executePendingAction(world);
@@ -890,13 +922,15 @@ void SceneEditor::renderUnsavedChangesPopup(ECS::World& world) {
     }
 }
 
-void SceneEditor::executePendingAction(ECS::World& world) {
-    (void)world;
+void SceneEditor::executePendingAction(ECS::World* world) {
     switch (m_pendingAction) {
         case PendingAction::NewScene:
             doNewScene();
             break;
         case PendingAction::OpenScene: {
+            if (world) {
+                (void)world;
+            }
             auto newWorld = std::make_unique<ECS::World>();
             Editor::SceneSerializer serializer(*newWorld);
             if (serializer.deserialize("scene.caf")) {
@@ -943,6 +977,22 @@ void SceneEditor::handleAssetDrop(ECS::World& world) {
 }
 
 // ── Layout profile application ──────────────────────────────────
+
+void SceneEditor::syncLayoutProfileFromPanels() {
+    LayoutProfile profile = m_settingsPanel.layoutManager().currentProfile();
+    profile.hierarchyOpen = m_hierarchy.isOpen();
+    profile.inspectorOpen = m_inspector.isOpen();
+    profile.viewportOpen = m_viewport.isOpen();
+    profile.assetsOpen = m_assetBrowser.isOpen();
+    profile.consoleOpen = m_console.isOpen();
+    profile.profilerOpen = m_profiler.isOpen();
+    profile.animationTimelineOpen = m_animationTimeline.isOpen();
+    profile.animatorControllerOpen = m_animatorController.isOpen();
+    profile.tilemapEditorOpen = m_tilemapEditor.isOpen();
+    profile.scriptEditorOpen = m_scriptEditor.isOpen();
+    m_settingsPanel.layoutManager().updateCurrentProfile(profile);
+    m_settingsPanel.savePreferences();
+}
 
 void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile) {
     // Remove the old dockspace layout

@@ -88,6 +88,8 @@ struct AnimationState {
 };
 
 struct Animator {
+    // Clip storage for deserialized scenes (state.clip may point here).
+    std::vector<AnimationClip>                   embeddedClips;
     HashMap<FixedString<32>, AnimationState>     states;
     FixedString<32>                              currentState;
     FixedString<32>                              previousState;

@@ -233,6 +233,9 @@ int main(int argc, char** argv) {
             imgui.processEvent(event);
             if (event.type == SDL_EVENT_QUIT) {
                 editor.onQuitRequested();
+                if (!editor.isOpen()) {
+                    running = false;
+                }
             }
         }
 

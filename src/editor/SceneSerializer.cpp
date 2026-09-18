@@ -1,9 +1,14 @@
 #include "editor/SceneSerializer.hpp"
+#include "editor/SceneSerializerIO.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "audio/AudioComponents.hpp"
+#include "animation/AnimationComponents.hpp"
+#include "physics/PhysicsComponents2D.hpp"
+#include "script/ScriptTypes.hpp"
+#include "ui/UIComponents.hpp"
 #include "editor/EditorContext.hpp"
 #include "scene/SceneComponents.hpp"
 #include <vector>
@@ -13,6 +18,8 @@
 #include <cstring>
 
 namespace Caffeine::Editor {
+
+namespace IO = SceneSerializerIO;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -169,6 +176,166 @@ void SceneSerializer::collectPrefabInstanceComponents(
     });
 }
 
+void SceneSerializer::collectScriptComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<Script::ScriptComponent>();
+    m_world.forEach<Script::ScriptComponent>(q, [&](ECS::Entity e, Script::ScriptComponent& sc) {
+        std::vector<u8> data;
+        IO::appendString(data, sc.scriptPath);
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectCppScriptComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<Script::CppScriptComponent>();
+    m_world.forEach<Script::CppScriptComponent>(q, [&](ECS::Entity e, Script::CppScriptComponent& sc) {
+        std::vector<u8> data;
+        IO::appendString(data, sc.className);
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectParticleEmitterComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<ECS::ParticleEmitterComponent>();
+    m_world.forEach<ECS::ParticleEmitterComponent>(q, [&](ECS::Entity e, ECS::ParticleEmitterComponent& pe) {
+        std::vector<u8> data;
+        IO::appendI32(data, pe.maxParticles);
+        IO::appendF32(data, pe.emissionRate);
+        IO::appendF32(data, pe.lifetime);
+        IO::appendPOD(data, pe.velocityMin);
+        IO::appendPOD(data, pe.velocityMax);
+        IO::appendU32(data, pe.startColor);
+        IO::appendU32(data, pe.endColor);
+        IO::appendF32(data, pe.startSize);
+        IO::appendF32(data, pe.endSize);
+        const u32 count = static_cast<u32>(pe.activeParticles.size());
+        IO::appendU32(data, count);
+        for (const auto& p : pe.activeParticles) {
+            IO::appendPOD(data, p);
+        }
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectSkinnedMeshRendererComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<ECS::SkinnedMeshRendererComponent>();
+    m_world.forEach<ECS::SkinnedMeshRendererComponent>(q, [&](ECS::Entity e, ECS::SkinnedMeshRendererComponent& mr) {
+        std::vector<u8> data;
+        IO::appendString(data, mr.meshPath);
+        IO::appendString(data, mr.materialPath);
+        IO::appendString(data, mr.skeletonPath);
+        IO::appendU8(data, mr.castShadows ? 1 : 0);
+        IO::appendU8(data, mr.receiveShadows ? 1 : 0);
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectUIWidgetComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<UI::UIWidget>();
+    m_world.forEach<UI::UIWidget>(q, [&](ECS::Entity e, UI::UIWidget& w) {
+        std::vector<u8> data;
+        IO::appendU8(data, static_cast<u8>(w.type));
+        IO::appendU32(data, w.parentId);
+        IO::appendU8(data, w.visible ? 1 : 0);
+        IO::appendU8(data, w.interactable ? 1 : 0);
+        IO::appendI32(data, w.siblingOrder);
+        IO::appendPOD(data, w.style);
+        IO::appendPOD(data, w.transform);
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectAnimatorComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries) {
+    ECS::ComponentQuery q;
+    q.with<Animation::Animator>();
+    m_world.forEach<Animation::Animator>(q, [&](ECS::Entity e, Animation::Animator& anim) {
+        std::vector<const Animation::AnimationClip*> clipPtrs;
+        auto clipIndex = [&](const Animation::AnimationClip* clip) -> u32 {
+            if (!clip) return 0xFFFFFFFFu;
+            for (u32 i = 0; i < clipPtrs.size(); ++i) {
+                if (clipPtrs[i] == clip) return i;
+            }
+            clipPtrs.push_back(clip);
+            return static_cast<u32>(clipPtrs.size() - 1);
+        };
+
+        for (auto& [_, state] : anim.states) {
+            clipIndex(state.clip);
+        }
+        for (const auto& clip : anim.embeddedClips) {
+            clipIndex(&clip);
+        }
+
+        std::vector<u8> data;
+        IO::appendU32(data, static_cast<u32>(clipPtrs.size()));
+        for (const auto* clip : clipPtrs) {
+            IO::appendString(data, clip->name.cStr());
+            IO::appendU32(data, clip->fps);
+            IO::appendU8(data, clip->loop ? 1 : 0);
+            IO::appendU32(data, static_cast<u32>(clip->frames.size()));
+            for (const auto& frame : clip->frames) {
+                IO::appendPOD(data, frame);
+            }
+        }
+
+        IO::appendU32(data, static_cast<u32>(anim.parameters.size()));
+        for (const auto& p : anim.parameters) {
+            IO::appendString(data, p.name.cStr());
+            IO::appendU8(data, static_cast<u8>(p.type));
+            IO::appendU8(data, p.triggered ? 1 : 0);
+            IO::appendU8(data, p.boolValue ? 1 : 0);
+            IO::appendF32(data, p.floatValue);
+            IO::appendI32(data, p.intValue);
+        }
+
+        IO::appendU32(data, static_cast<u32>(anim.states.size()));
+        for (auto& [stateName, state] : anim.states) {
+            IO::appendString(data, stateName.cStr());
+            IO::appendU32(data, clipIndex(state.clip));
+            IO::appendF32(data, state.speed);
+            IO::appendU32(data, static_cast<u32>(state.transitions.size()));
+            for (const auto& tr : state.transitions) {
+                IO::appendString(data, tr.toState.cStr());
+                IO::appendF32(data, tr.blendTime);
+                IO::appendU8(data, tr.hasExitTime ? 1 : 0);
+                IO::appendU32(data, static_cast<u32>(tr.conditions.size()));
+                for (const auto& cond : tr.conditions) {
+                    IO::appendString(data, cond.parameterName.cStr());
+                    IO::appendU8(data, static_cast<u8>(cond.op));
+                    IO::appendU8(data, cond.boolValue ? 1 : 0);
+                    IO::appendF32(data, cond.floatValue);
+                    IO::appendI32(data, cond.intValue);
+                }
+            }
+        }
+
+        IO::appendString(data, anim.currentState.cStr());
+        IO::appendString(data, anim.previousState.cStr());
+        IO::appendF32(data, anim.timeInState);
+        IO::appendF32(data, anim.blendWeight);
+        IO::appendF32(data, anim.playbackScale);
+        IO::appendU8(data, anim.paused ? 1 : 0);
+
+        IO::appendU32(data, static_cast<u32>(anim.frameEvents.size()));
+        for (const auto& [frame, evt] : anim.frameEvents) {
+            IO::appendU32(data, frame);
+            IO::appendString(data, evt.cStr());
+        }
+
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
 // ── Serialize ────────────────────────────────────────────────────
 
 bool SceneSerializer::serialize(const std::string& filepath) {
@@ -240,9 +407,10 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         q.with<Scene::Parent>();
         m_world.forEach<Scene::Parent>(q, [&](ECS::Entity e, Scene::Parent& pc) {
             if (!pc.parent.isValid()) return;
-            std::vector<u8> data(4);
+            std::vector<u8> data(5);
             u32 parentId = pc.parent.id();
             memcpy(data.data(), &parentId, 4);
+            data[4] = pc.dirty ? 1 : 0;
             entityMap[e.id()].emplace_back(kTypeParent, std::move(data));
         });
     }
@@ -340,6 +508,69 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         }
     }
 
+    emitPodComponents<ECS::Camera2DComponent>(kTypeCamera2D, entityMap);
+    emitPodComponents<Physics2D::RigidBody2D>(kTypeRigidBody2D, entityMap);
+    emitPodComponents<Physics2D::Collider2D>(kTypeCollider2D, entityMap);
+    emitPodComponents<ECS::PersistentComponent>(kTypePersistent, entityMap);
+    emitPodComponents<Scene::WorldTransform>(kTypeWorldTransform, entityMap);
+    emitPodComponents<Scene::EntityLayer>(kTypeEntityLayer, entityMap);
+    emitPodComponents<UI::UIButton>(kTypeUIButton, entityMap);
+    emitPodComponents<UI::UILabel>(kTypeUILabel, entityMap);
+    emitPodComponents<UI::UIProgressBar>(kTypeUIProgressBar, entityMap);
+    emitPodComponents<UI::UISlider>(kTypeUISlider, entityMap);
+    emitPodComponents<UI::UICheckbox>(kTypeUICheckbox, entityMap);
+
+    {
+        ECS::ComponentQuery q;
+        q.with<ECS::DisabledTag>();
+        m_world.forEach<ECS::DisabledTag>(q, [&](ECS::Entity e, ECS::DisabledTag&) {
+            entityMap[e.id()].emplace_back(kTypeDisabledTag, std::vector<u8>{});
+        });
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectScriptComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeScript, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectCppScriptComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeCppScript, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectParticleEmitterComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeParticleEmitter, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectSkinnedMeshRendererComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeSkinnedMeshRenderer, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectUIWidgetComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeUIWidget, std::move(data));
+        }
+    }
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectAnimatorComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeAnimator, std::move(data));
+        }
+    }
+
     // Write binary file
     std::ofstream fout(filepath, std::ios::binary);
     if (!fout.is_open()) return false;
@@ -397,7 +628,7 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
     memcpy(&entityCount, buffer.data() + 8,  4);
 
     if (signature != kSignature) return false;
-    if (version != 4 && version != kFormatVersion) return false;
+    if (version != 4 && version != 5 && version != kFormatVersion) return false;
 
     // ── Pass 1: collect all entity IDs ────────────────────────────
     struct Entry {
@@ -474,7 +705,7 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 if (pit != remap.end()) {
                     auto& pc = m_world.add<Scene::Parent>(e);
                     pc.parent = pit->second;
-                    pc.dirty  = true;
+                    pc.dirty  = entry.data.size() >= 5 ? (entry.data[4] != 0) : true;
                 }
                 break;
             }
@@ -513,6 +744,60 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 break;
             case kTypeCameraActive:
                 applyPODComponent<ECS::CameraActiveComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeCamera2D:
+                applyPODComponent<ECS::Camera2DComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeRigidBody2D:
+                applyPODComponent<Physics2D::RigidBody2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeCollider2D:
+                applyPODComponent<Physics2D::Collider2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeScript:
+                applyScriptComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeCppScript:
+                applyCppScriptComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypePersistent:
+                applyPODComponent<ECS::PersistentComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeDisabledTag:
+                m_world.add<ECS::DisabledTag>(e);
+                break;
+            case kTypeParticleEmitter:
+                applyParticleEmitterComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeWorldTransform:
+                applyPODComponent<Scene::WorldTransform>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeEntityLayer:
+                applyPODComponent<Scene::EntityLayer>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeSkinnedMeshRenderer:
+                applySkinnedMeshRendererComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeUIWidget:
+                applyUIWidgetComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeUIButton:
+                applyPODComponent<UI::UIButton>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeUILabel:
+                applyPODComponent<UI::UILabel>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeUIProgressBar:
+                applyPODComponent<UI::UIProgressBar>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeUISlider:
+                applyPODComponent<UI::UISlider>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeUICheckbox:
+                applyPODComponent<UI::UICheckbox>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeAnimator:
+                applyAnimatorComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
             default:
                 break;
@@ -681,6 +966,217 @@ bool SceneSerializer::applyPrefabInstanceComponent(ECS::Entity e, const u8* data
         pi.overrides.push_back(std::move(o));
     }
 
+    return true;
+}
+
+bool SceneSerializer::applyScriptComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    std::string path;
+    if (!IO::readString(cursor, end, path)) return false;
+    auto& sc = m_world.add<Script::ScriptComponent>(e);
+    sc.scriptPath = std::move(path);
+    return true;
+}
+
+bool SceneSerializer::applyCppScriptComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    std::string className;
+    if (!IO::readString(cursor, end, className)) return false;
+    auto& sc = m_world.add<Script::CppScriptComponent>(e);
+    sc.className = std::move(className);
+    sc.instance.reset();
+    sc.initialized = false;
+    return true;
+}
+
+bool SceneSerializer::applyParticleEmitterComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    auto& pe = m_world.add<ECS::ParticleEmitterComponent>(e);
+    if (!IO::readI32(cursor, end, pe.maxParticles)) return false;
+    if (!IO::readF32(cursor, end, pe.emissionRate)) return false;
+    if (!IO::readF32(cursor, end, pe.lifetime)) return false;
+    if (!IO::readPOD(cursor, end, pe.velocityMin)) return false;
+    if (!IO::readPOD(cursor, end, pe.velocityMax)) return false;
+    if (!IO::readU32(cursor, end, pe.startColor)) return false;
+    if (!IO::readU32(cursor, end, pe.endColor)) return false;
+    if (!IO::readF32(cursor, end, pe.startSize)) return false;
+    if (!IO::readF32(cursor, end, pe.endSize)) return false;
+    u32 count = 0;
+    if (!IO::readU32(cursor, end, count)) return false;
+    pe.activeParticles.clear();
+    pe.activeParticles.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        ECS::ParticleEmitterComponent::Particle p{};
+        if (!IO::readPOD(cursor, end, p)) return false;
+        pe.activeParticles.push_back(p);
+    }
+    return true;
+}
+
+bool SceneSerializer::applySkinnedMeshRendererComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    std::string meshPath;
+    std::string materialPath;
+    std::string skeletonPath;
+    if (!IO::readString(cursor, end, meshPath)) return false;
+    if (!IO::readString(cursor, end, materialPath)) return false;
+    if (!IO::readString(cursor, end, skeletonPath)) return false;
+    u8 castShadows = 1;
+    u8 receiveShadows = 1;
+    if (!IO::readU8(cursor, end, castShadows)) return false;
+    if (!IO::readU8(cursor, end, receiveShadows)) return false;
+    auto& mr = m_world.add<ECS::SkinnedMeshRendererComponent>(e);
+    mr.meshPath = std::move(meshPath);
+    mr.materialPath = std::move(materialPath);
+    mr.skeletonPath = std::move(skeletonPath);
+    mr.castShadows = castShadows != 0;
+    mr.receiveShadows = receiveShadows != 0;
+    return true;
+}
+
+bool SceneSerializer::applyUIWidgetComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    auto& w = m_world.add<UI::UIWidget>(e);
+    u8 type = 0;
+    if (!IO::readU8(cursor, end, type)) return false;
+    w.type = static_cast<UI::UIWidgetType>(type);
+    if (!IO::readU32(cursor, end, w.parentId)) return false;
+    u8 visible = 1;
+    u8 interactable = 1;
+    if (!IO::readU8(cursor, end, visible)) return false;
+    if (!IO::readU8(cursor, end, interactable)) return false;
+    w.visible = visible != 0;
+    w.interactable = interactable != 0;
+    if (!IO::readI32(cursor, end, w.siblingOrder)) return false;
+    if (!IO::readPOD(cursor, end, w.style)) return false;
+    if (!IO::readPOD(cursor, end, w.transform)) return false;
+    w.computedRect = {};
+    w.onClick = nullptr;
+    w.onHoverEnter = nullptr;
+    w.onHoverExit = nullptr;
+    w.onValueChanged = nullptr;
+    return true;
+}
+
+bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 size) {
+    const u8* cursor = data;
+    const u8* end = data + size;
+    auto& anim = m_world.add<Animation::Animator>(e);
+    anim = Animation::Animator{};
+    anim.embeddedClips.clear();
+
+    u32 clipCount = 0;
+    if (!IO::readU32(cursor, end, clipCount)) return false;
+    anim.embeddedClips.resize(clipCount);
+    for (u32 i = 0; i < clipCount; ++i) {
+        std::string clipName;
+        if (!IO::readString(cursor, end, clipName)) return false;
+        anim.embeddedClips[i].name = clipName.c_str();
+        if (!IO::readU32(cursor, end, anim.embeddedClips[i].fps)) return false;
+        u8 loop = 1;
+        if (!IO::readU8(cursor, end, loop)) return false;
+        anim.embeddedClips[i].loop = loop != 0;
+        u32 frameCount = 0;
+        if (!IO::readU32(cursor, end, frameCount)) return false;
+        anim.embeddedClips[i].frames.resize(frameCount);
+        for (u32 f = 0; f < frameCount; ++f) {
+            if (!IO::readPOD(cursor, end, anim.embeddedClips[i].frames[f])) return false;
+        }
+    }
+
+    u32 paramCount = 0;
+    if (!IO::readU32(cursor, end, paramCount)) return false;
+    anim.parameters.resize(paramCount);
+    for (u32 i = 0; i < paramCount; ++i) {
+        std::string name;
+        if (!IO::readString(cursor, end, name)) return false;
+        anim.parameters[i].name = name.c_str();
+        u8 type = 0;
+        u8 triggered = 0;
+        u8 boolValue = 0;
+        if (!IO::readU8(cursor, end, type)) return false;
+        if (!IO::readU8(cursor, end, triggered)) return false;
+        if (!IO::readU8(cursor, end, boolValue)) return false;
+        if (!IO::readF32(cursor, end, anim.parameters[i].floatValue)) return false;
+        if (!IO::readI32(cursor, end, anim.parameters[i].intValue)) return false;
+        anim.parameters[i].type = static_cast<Animation::ParameterType>(type);
+        anim.parameters[i].triggered = triggered != 0;
+        anim.parameters[i].boolValue = boolValue != 0;
+    }
+
+    u32 stateCount = 0;
+    if (!IO::readU32(cursor, end, stateCount)) return false;
+    for (u32 i = 0; i < stateCount; ++i) {
+        std::string stateName;
+        if (!IO::readString(cursor, end, stateName)) return false;
+        Animation::AnimationState state;
+        u32 clipIndex = 0xFFFFFFFFu;
+        if (!IO::readU32(cursor, end, clipIndex)) return false;
+        if (!IO::readF32(cursor, end, state.speed)) return false;
+        if (clipIndex != 0xFFFFFFFFu && clipIndex < anim.embeddedClips.size()) {
+            state.clip = &anim.embeddedClips[clipIndex];
+        }
+        u32 transitionCount = 0;
+        if (!IO::readU32(cursor, end, transitionCount)) return false;
+        state.transitions.resize(transitionCount);
+        for (u32 t = 0; t < transitionCount; ++t) {
+            std::string toState;
+            if (!IO::readString(cursor, end, toState)) return false;
+            state.transitions[t].toState = toState.c_str();
+            if (!IO::readF32(cursor, end, state.transitions[t].blendTime)) return false;
+            u8 hasExit = 0;
+            if (!IO::readU8(cursor, end, hasExit)) return false;
+            state.transitions[t].hasExitTime = hasExit != 0;
+            u32 condCount = 0;
+            if (!IO::readU32(cursor, end, condCount)) return false;
+            state.transitions[t].conditions.resize(condCount);
+            for (u32 c = 0; c < condCount; ++c) {
+                std::string paramName;
+                if (!IO::readString(cursor, end, paramName)) return false;
+                state.transitions[t].conditions[c].parameterName = paramName.c_str();
+                u8 op = 0;
+                u8 boolValue = 0;
+                if (!IO::readU8(cursor, end, op)) return false;
+                if (!IO::readU8(cursor, end, boolValue)) return false;
+                if (!IO::readF32(cursor, end, state.transitions[t].conditions[c].floatValue)) return false;
+                if (!IO::readI32(cursor, end, state.transitions[t].conditions[c].intValue)) return false;
+                state.transitions[t].conditions[c].op = static_cast<Animation::ConditionOperator>(op);
+                state.transitions[t].conditions[c].boolValue = boolValue != 0;
+            }
+        }
+        anim.states.set(stateName.c_str(), state);
+    }
+
+    std::string currentState;
+    std::string previousState;
+    if (!IO::readString(cursor, end, currentState)) return false;
+    if (!IO::readString(cursor, end, previousState)) return false;
+    anim.currentState = currentState.c_str();
+    anim.previousState = previousState.c_str();
+    if (!IO::readF32(cursor, end, anim.timeInState)) return false;
+    if (!IO::readF32(cursor, end, anim.blendWeight)) return false;
+    if (!IO::readF32(cursor, end, anim.playbackScale)) return false;
+    u8 paused = 0;
+    if (!IO::readU8(cursor, end, paused)) return false;
+    anim.paused = paused != 0;
+
+    u32 eventCount = 0;
+    if (!IO::readU32(cursor, end, eventCount)) return false;
+    anim.frameEvents.resize(eventCount);
+    for (u32 i = 0; i < eventCount; ++i) {
+        u32 frame = 0;
+        std::string evt;
+        if (!IO::readU32(cursor, end, frame)) return false;
+        if (!IO::readString(cursor, end, evt)) return false;
+        anim.frameEvents[i] = {frame, evt.c_str()};
+    }
+
+    anim.onFrameEvent = nullptr;
     return true;
 }
 

@@ -148,7 +148,7 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
 
     bool enabled = !world.has<ECS::DisabledTag>(e);
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Transform", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Transform", enabled, removeRequested, "arrows-diagonal-rotated")) return;
 
     if (!enabled) {
         if (!world.has<ECS::DisabledTag>(e)) world.add<ECS::DisabledTag>(e);
@@ -163,9 +163,11 @@ void InspectorPanel::drawTransform(ECS::World& world, ECS::Entity e, EditorConte
         if (Widgets::DragVec3("Position", t->position, 0.5f)) { changed = true; }
         if (is2D) {
             if (ImGui::DragFloat("Rotation", &t->rotation.z, 1.0f, -360.0f, 360.0f)) { changed = true; }
-            float s[2] = { t->scale.x, t->scale.y };
-            if (ImGui::DragFloat2("Scale", s, 0.05f, 0.01f, 100.0f)) {
-                t->scale.x = s[0]; t->scale.y = s[1]; changed = true;
+            Vec2 scale2D(t->scale.x, t->scale.y);
+            if (Widgets::DragVec2("Scale", scale2D, 0.05f, 0.01f, 100.0f)) {
+                t->scale.x = scale2D.x;
+                t->scale.y = scale2D.y;
+                changed = true;
             }
         } else {
             if (Widgets::DragVec3("Rotation", t->rotation, 1.0f, -360.0f, 360.0f)) { changed = true; }
@@ -260,7 +262,7 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Sprite Renderer", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Sprite Renderer", enabled, removeRequested, "beer")) return;
     if (removeRequested) {
         world.remove<ECS::Sprite>(e);
         ctx.isDirty = true;
@@ -288,7 +290,7 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
 
     if (has2D) {
         bool enabled = true, removeRequested = false;
-        if (!Widgets::ComponentHeader("Camera2D", enabled, removeRequested)) return;
+        if (!Widgets::ComponentHeader("Camera2D", enabled, removeRequested, "account")) return;
         if (removeRequested) { world.remove<ECS::Camera2DComponent>(e); ctx.isDirty = true; return; }
 
         auto* cam = world.get<ECS::Camera2DComponent>(e);
@@ -299,7 +301,7 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
 
     if (has3D) {
         bool enabled = true, removeRequested = false;
-        if (!Widgets::ComponentHeader("Camera3D", enabled, removeRequested)) return;
+        if (!Widgets::ComponentHeader("Camera3D", enabled, removeRequested, "account")) return;
         if (removeRequested) { world.remove<ECS::Camera3DComponent>(e); ctx.isDirty = true; return; }
 
         auto* cam = world.get<ECS::Camera3DComponent>(e);
@@ -314,7 +316,7 @@ void InspectorPanel::drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorCon
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("RigidBody2D", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("RigidBody2D", enabled, removeRequested, "arrows-vertical")) return;
     if (removeRequested) {
         world.remove<Physics2D::RigidBody2D>(e);
         ctx.isDirty = true;
@@ -349,7 +351,7 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Audio Source", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Audio Source", enabled, removeRequested, "bell")) return;
     if (removeRequested) {
         world.remove<Audio::AudioEmitter>(e);
         ctx.isDirty = true;
@@ -383,7 +385,7 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Collider2D", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Collider2D", enabled, removeRequested, "alert-square")) return;
     if (removeRequested) {
         world.remove<Physics2D::Collider2D>(e);
         ctx.isDirty = true;
@@ -401,9 +403,10 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
     }
 
     if (col->shape == Physics2D::ColliderShape::AABB) {
-        float sz[2] = { col->size.x, col->size.y };
-        if (ImGui::DragFloat2("Size", sz, 0.01f, 0.01f, 2000.0f)) {
-            col->size.x = sz[0]; col->size.y = sz[1];
+        Vec2 size(col->size.x, col->size.y);
+        if (Widgets::DragVec2("Size", size, 0.01f, 0.01f, 2000.0f)) {
+            col->size.x = size.x;
+            col->size.y = size.y;
             ctx.isDirty = true;
         }
     } else {
@@ -412,9 +415,10 @@ void InspectorPanel::drawCollider2D(ECS::World& world, ECS::Entity e, EditorCont
         }
     }
 
-    float off[2] = { col->offset.x, col->offset.y };
-    if (ImGui::DragFloat2("Offset", off, 0.5f)) {
-        col->offset.x = off[0]; col->offset.y = off[1];
+    Vec2 offset(col->offset.x, col->offset.y);
+    if (Widgets::DragVec2("Offset", offset, 0.5f)) {
+        col->offset.x = offset.x;
+        col->offset.y = offset.y;
         ctx.isDirty = true;
     }
 
@@ -451,7 +455,7 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Script", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Script", enabled, removeRequested, "at")) return;
     if (removeRequested) {
         world.remove<Script::ScriptComponent>(e);
         ctx.isDirty = true;
@@ -505,7 +509,7 @@ void InspectorPanel::drawPersistent(ECS::World& world, ECS::Entity e, EditorCont
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Persistent", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Persistent", enabled, removeRequested, "backup-restore")) return;
     if (removeRequested) {
         world.remove<ECS::PersistentComponent>(e);
         ctx.isDirty = true;
@@ -522,7 +526,7 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("Mesh Filter", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("Mesh Filter", enabled, removeRequested, "arrows-diagonal")) return;
     if (removeRequested) {
         world.remove<ECS::MeshFilterComponent>(e);
         ctx.isDirty = true;
@@ -584,7 +588,7 @@ void InspectorPanel::drawUIWidget(ECS::World& world, ECS::Entity e, EditorContex
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("UI Widget", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("UI Widget", enabled, removeRequested, "align-left")) return;
     if (removeRequested) {
         world.remove<UI::UIWidget>(e);
         ctx.isDirty = true;
@@ -626,7 +630,7 @@ void InspectorPanel::drawUIButton(ECS::World& world, ECS::Entity e, EditorContex
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("UI Button", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("UI Button", enabled, removeRequested, "arrow-down-square")) return;
     if (removeRequested) {
         world.remove<UI::UIButton>(e);
         ctx.isDirty = true;
@@ -652,7 +656,7 @@ void InspectorPanel::drawUILabel(ECS::World& world, ECS::Entity e, EditorContext
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("UI Label", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("UI Label", enabled, removeRequested, "align-left")) return;
     if (removeRequested) {
         world.remove<UI::UILabel>(e);
         ctx.isDirty = true;
@@ -675,7 +679,7 @@ void InspectorPanel::drawUIProgressBar(ECS::World& world, ECS::Entity e, EditorC
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("UI Progress Bar", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("UI Progress Bar", enabled, removeRequested, "arrows-horizontal")) return;
     if (removeRequested) {
         world.remove<UI::UIProgressBar>(e);
         ctx.isDirty = true;
@@ -701,7 +705,7 @@ void InspectorPanel::drawUISlider(ECS::World& world, ECS::Entity e, EditorContex
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("UI Slider", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("UI Slider", enabled, removeRequested, "arrows-horizontal")) return;
     if (removeRequested) {
         world.remove<UI::UISlider>(e);
         ctx.isDirty = true;
@@ -727,7 +731,7 @@ void InspectorPanel::drawCppScript(ECS::World& world, ECS::Entity e, EditorConte
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader("C++ Script", enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader("C++ Script", enabled, removeRequested, "at")) return;
     if (removeRequested) {
         world.remove<Script::CppScriptComponent>(e);
         ctx.isDirty = true;
@@ -782,7 +786,7 @@ void InspectorPanel::drawLight(ECS::World& world, ECS::Entity e, EditorContext& 
 
     bool enabled = true;
     bool removeRequested = false;
-    if (!Widgets::ComponentHeader(lightLabel, enabled, removeRequested)) return;
+    if (!Widgets::ComponentHeader(lightLabel, enabled, removeRequested, "bell-alert")) return;
     if (removeRequested) {
         world.remove<ECS::LightComponent>(e);
         if (world.has<ECS::DirectionalLightComponent>(e)) world.remove<ECS::DirectionalLightComponent>(e);

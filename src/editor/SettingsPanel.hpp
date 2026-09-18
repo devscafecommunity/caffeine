@@ -1,6 +1,8 @@
 #pragma once
+#include "editor/EditorPreferences.hpp"
 #include "editor/LayoutProfile.hpp"
 #include "editor/LayoutManager.hpp"
+#include "editor/EditorContext.hpp"
 #include <string>
 #include <functional>
 
@@ -21,32 +23,42 @@ public:
 
     void render();
 
-    // Apply layout profile to scene editor
     void applyLayoutProfile(const std::string& profileName);
+    void savePreferences();
+    void applyPreferencesToContext(EditorContext& ctx);
 
-    // Get layout manager (for integration with SceneEditor)
     LayoutManager& layoutManager() { return m_layoutManager; }
-    // Set callback for layout changes
-    void setLayoutChangeCallback(std::function<void()> callback) { m_onLayoutChange = callback; }
+    const EditorPreferences& preferences() const { return m_preferences; }
 
+    void setLayoutChangeCallback(std::function<void()> callback) { m_onLayoutChange = callback; }
+    void setEditorContext(EditorContext* ctx) { m_editorContext = ctx; }
 
 private:
     bool m_open = false;
     LayoutManager m_layoutManager;
-    
+    EditorPreferences m_preferences;
+
     std::string m_newProfileName;
     std::string m_selectedProfileName;
     int m_selectedProfileIndex = 0;
     std::function<void()> m_onLayoutChange;
+    EditorContext* m_editorContext = nullptr;
 
-    bool m_vsyncEnabled    = true;
-    int  m_fontSize        = 14;
-    bool m_darkMode        = true;
+    bool m_vsyncEnabled = true;
+    int  m_fontSize = 14;
+    bool m_darkMode = true;
     bool m_autoSaveEnabled = true;
     int  m_autoSaveInterval = 300;
+    int  m_settingsSection = 0;
 
+    void loadPreferences();
+    void syncUIFromPreferences();
+    void syncPreferencesFromUI();
     void renderLayoutProfiles();
     void renderGeneralSettings();
+    void renderEditorSettings();
+    void renderViewportSettings();
+    void renderPanelSettings();
 };
 
 } // namespace Caffeine::Editor

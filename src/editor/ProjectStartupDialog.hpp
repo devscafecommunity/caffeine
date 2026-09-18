@@ -65,7 +65,7 @@ private:
      bool m_showError = false;
 
     // ── Browse tab state ────────────────────────────────────────────────
-    std::string m_browsePath;
+    char m_browsePathBuf[1024] = {};
     std::vector<std::filesystem::path> m_browseResults;
     int m_selectedBrowseIndex = -1;
 
@@ -117,6 +117,7 @@ private:
     void showToast(const std::string& message, ToastType type);
     void updateToasts();
     void renderToasts();
+    void scanBrowseDirectory(const std::filesystem::path& root);
     #endif
 };
 

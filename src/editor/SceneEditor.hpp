@@ -114,10 +114,13 @@ private:
 #ifdef CF_HAS_IMGUI
     void setupDockspace(ImGuiID dockspaceId);
     void applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile);
+    void syncLayoutProfileFromPanels();
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
-    void renderUnsavedChangesPopup(ECS::World& world);
-    void executePendingAction(ECS::World& world);
+    void renderUnsavedChangesPopup(ECS::World* world);
+    void executePendingAction(ECS::World* world);
+    void dismissBlockingPopups();
+    bool hasUnsavedChanges() const;
     void handleAssetDrop(ECS::World& world);
     void handleShortcuts(ECS::World& world);
     void doNewScene();

@@ -44,12 +44,13 @@ struct LayoutProfile {
         return LayoutProfile{
             "Default",
             true,   // hierarchy
-            false,  // inspector - HIDDEN BY DEFAULT
+            true,   // inspector
             true,   // viewport
-            false,  // assets - HIDDEN BY DEFAULT
-            false,  // console - HIDDEN BY DEFAULT
+            true,   // assets
+            false,  // console
             false,  // profiler
             false,  // animation timeline
+            false,  // animator controller
             false,  // tilemap
             false   // script editor
         };

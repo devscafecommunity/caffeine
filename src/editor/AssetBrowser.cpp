@@ -96,10 +96,16 @@ void AssetBrowser::refresh() {
                 e.type = readCafAssetType(entry.path());
                 if (e.type == AssetType::Unknown) e.type = AssetType::Scene;
             }
-            else if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" || ext == ".tga")  e.type = AssetType::Texture;
-            else if (ext == ".wav"  || ext == ".ogg"  || ext == ".mp3")   e.type = AssetType::Audio;
-            else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb" || ext == ".fbx") e.type = AssetType::Mesh;
-            else if (ext == ".lua")                      e.type = AssetType::Unknown;
+            else if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" || ext == ".tga" ||
+                     ext == ".bmp" || ext == ".webp" || ext == ".gif"  || ext == ".hdr" ||
+                     ext == ".exr") e.type = AssetType::Texture;
+            else if (ext == ".wav"  || ext == ".ogg"  || ext == ".mp3"  || ext == ".flac" ||
+                     ext == ".aac") e.type = AssetType::Audio;
+            else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb"  || ext == ".fbx"  ||
+                     ext == ".dae" || ext == ".bin") e.type = AssetType::Mesh;
+            else if (ext == ".lua"  || ext == ".cpp"  || ext == ".hpp"  || ext == ".h") e.type = AssetType::Unknown;
+            else if (ext == ".mat"  || ext == ".shader" || ext == ".glsl") e.type = AssetType::Unknown;
+            else if (ext == ".mp4"  || ext == ".avi"  || ext == ".mov"  || ext == ".webm") e.type = AssetType::Unknown;
             else                                     e.type = AssetType::Unknown;
 
             std::error_code ec;
@@ -339,10 +345,25 @@ namespace Caffeine::Editor {
 
 // ── Icon helper ─────────────────────────────────────────────────────────────
 
+namespace {
+
+std::string lowerExtension(const std::filesystem::path& path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+}  // namespace
+
 const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
-    if (path.extension() == ".lua") {
-        return "[L]";
-    }
+    const std::string ext = lowerExtension(path);
+    if (ext == ".lua") return "[L]";
+    if (ext == ".cpp" || ext == ".hpp" || ext == ".h") return "[C]";
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") return "[T]";
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "[A]";
+    if (ext == ".gltf" || ext == ".glb" || ext == ".obj" || ext == ".fbx" || ext == ".bin") return "[M]";
+    if (ext == ".caf" || ext == ".prefab") return "[S]";
     switch (type) {
         case AssetType::Texture: return "[T]";
         case AssetType::Audio:   return "[A]";
@@ -354,7 +375,43 @@ const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::pat
 }
 
 const char* AssetBrowser::iconNameForType(AssetType type, const std::filesystem::path& path) {
-    if (path.extension() == ".lua") return "at";
+    if (path.filename() == "project.caffeine") return "beer";
+    if (path.filename() == "game.cap") return "arrow-down-square";
+
+    const std::string ext = lowerExtension(path);
+    if (ext == ".lua" || ext == ".luac") return "at";
+    if (ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".cxx") return "align-left";
+    if (ext == ".cs" || ext == ".ts" || ext == ".js") return "at";
+
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+        ext == ".webp" || ext == ".gif" || ext == ".hdr" || ext == ".exr") {
+        return "beer";
+    }
+
+    if (ext == ".wav") return "bell";
+    if (ext == ".ogg" || ext == ".mp3" || ext == ".flac" || ext == ".aac") return "bell-twotone";
+
+    if (ext == ".glb") return "arrows-long-diagonal";
+    if (ext == ".gltf") return "arrows-diagonal";
+    if (ext == ".obj") return "arrows-diagonal-rotated";
+    if (ext == ".fbx" || ext == ".dae" || ext == ".blend") return "arrows-vertical";
+    if (ext == ".bin" || ext == ".mesh") return "arrow-down-square";
+
+    if (ext == ".caf" || ext == ".scene") return "account";
+    if (ext == ".prefab") return "account-small";
+    if (ext == ".cap") return "arrow-down-square";
+    if (ext == ".mat" || ext == ".material") return "beer-alt";
+    if (ext == ".shader" || ext == ".glsl" || ext == ".vert" || ext == ".frag") return "alert-circle";
+    if (ext == ".anim" || ext == ".controller") return "arrow-right-circle";
+
+    if (ext == ".json" || ext == ".yaml" || ext == ".yml") return "align-left";
+    if (ext == ".txt" || ext == ".md" || ext == ".readme") return "align-justify";
+    if (ext == ".xml" || ext == ".csv") return "align-center";
+
+    if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || ext == ".webm") return "arrow-right-circle";
+    if (ext == ".ttf" || ext == ".otf" || ext == ".woff" || ext == ".woff2") return "align-right";
+    if (ext == ".zip" || ext == ".7z" || ext == ".rar") return "arrow-down-square-twotone";
+
     switch (type) {
         case AssetType::Texture: return "beer";
         case AssetType::Audio:   return "bell";
@@ -367,8 +424,16 @@ const char* AssetBrowser::iconNameForType(AssetType type, const std::filesystem:
 
 void AssetBrowser::drawTypeIcon(AssetType type, const std::filesystem::path& path, bool isDirectory, f32 size) {
     if (isDirectory) {
-        if (EditorIcons::hasIcon("arrow-open-down")) {
-            EditorIcons::image("arrow-open-down", size);
+        const std::string name = path.filename().string();
+        const char* folderIcon = "arrow-open-down";
+        if (name == "assets" || name == "raw" || name == "processed") folderIcon = "arrow-down-square";
+        else if (name == "scenes") folderIcon = "account";
+        else if (name == "scripts") folderIcon = "at";
+        else if (name == "build") folderIcon = "beer";
+        else if (name == "plugins") folderIcon = "beer-alt";
+
+        if (EditorIcons::hasIcon(folderIcon)) {
+            EditorIcons::image(folderIcon, size);
         } else {
             ImGui::Text("[dir]");
         }
@@ -588,7 +653,8 @@ void AssetBrowser::renderGridView() {
 
         ImGui::SetCursorPos(cursorPos);
         ImGui::BeginGroup();
-        drawTypeIcon(entry.type, entry.path, entry.isDirectory, 20.0f);
+        drawTypeIcon(entry.type, entry.path, entry.isDirectory,
+                     static_cast<f32>(std::max(20, static_cast<int>(m_thumbnailSize * 0.45f))));
         ImGui::TextWrapped("%s", entry.name.c_str());
         if (entry.meshImportIncomplete) {
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "[incompleto]");
@@ -828,67 +894,83 @@ void AssetBrowser::renderPreviewPane() {
     }
 
     const auto& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
-    ImGui::TextWrapped("%s", entry.name.c_str());
-    ImGui::Spacing();
-
-    if (entry.isDirectory) {
-        ImGui::TextUnformatted("Type: Folder");
-        ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
-        return;
+    const std::string previewKey = entry.path.string();
+    if (previewKey != m_previewSourceKey) {
+        m_previewRenderer.invalidate();
+        m_previewSourceKey = previewKey;
     }
 
-    const char* typeLabel = "Unknown";
-    switch (entry.type) {
-        case AssetType::Texture: typeLabel = "Texture"; break;
-        case AssetType::Audio:   typeLabel = "Audio"; break;
-        case AssetType::Mesh:    typeLabel = "Mesh"; break;
-        case AssetType::Scene:   typeLabel = "Scene/CAF"; break;
-        default: break;
-    }
-
-    ImGui::Text("Type: %s", typeLabel);
-    ImGui::Text("Kind: %s", entry.path.extension().string().c_str());
-    ImGui::Text("Size: %.2f KB", static_cast<float>(entry.fileSize) / 1024.0f);
-
-    if (m_browseMode == BrowseMode::Filesystem) {
-        ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
-    } else {
-        ImGui::TextWrapped("Source CAP: %s", m_currentCapPath.string().c_str());
-        ImGui::TextWrapped("Asset ID: %s", entry.name.c_str());
-    }
-
-    if (entry.type == AssetType::Texture && m_browseMode == BrowseMode::Filesystem) {
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        if (stbi_info(entry.path.string().c_str(), &width, &height, &channels)) {
-            ImGui::Text("Resolution: %d x %d", width, height);
-            ImGui::Text("Channels: %d", channels);
-        }
-    }
-
-    if (entry.type == AssetType::Mesh && m_browseMode == BrowseMode::Filesystem) {
-        const auto report = Assets::MeshImportValidator::analyze(entry.path);
+    if (!entry.isDirectory && m_browseMode == BrowseMode::Filesystem) {
+        const float previewHeight = std::clamp(ImGui::GetContentRegionAvail().y * 0.42f, 160.0f, 260.0f);
+        m_previewRenderer.renderVisual(entry.path, entry.type, m_projectRoot.string(),
+                                     ImVec2(ImGui::GetContentRegionAvail().x, previewHeight));
         ImGui::Spacing();
-        if (report.readyToLoad) {
-            ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "Pronto para usar");
+    }
+
+    if (ImGui::CollapsingHeader("Details", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("%s", entry.name.c_str());
+        ImGui::Spacing();
+
+        if (entry.isDirectory) {
+            ImGui::TextUnformatted("Type: Folder");
+            ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
+            return;
+        }
+
+        const char* typeLabel = "Unknown";
+        switch (entry.type) {
+            case AssetType::Texture: typeLabel = "Texture"; break;
+            case AssetType::Audio:   typeLabel = "Audio"; break;
+            case AssetType::Mesh:    typeLabel = "Mesh"; break;
+            case AssetType::Scene:   typeLabel = "Scene/CAF"; break;
+            default: break;
+        }
+
+        ImGui::Text("Type: %s", typeLabel);
+        ImGui::Text("Kind: %s", entry.path.extension().string().c_str());
+        ImGui::Text("Size: %.2f KB", static_cast<float>(entry.fileSize) / 1024.0f);
+
+        if (m_browseMode == BrowseMode::Filesystem) {
+            ImGui::TextWrapped("Path: %s", entry.path.string().c_str());
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", report.errorSummary.c_str());
-            if (!report.suggestion.empty()) {
-                ImGui::TextWrapped("%s", report.suggestion.c_str());
+            ImGui::TextWrapped("Source CAP: %s", m_currentCapPath.string().c_str());
+            ImGui::TextWrapped("Asset ID: %s", entry.name.c_str());
+        }
+
+        if (entry.type == AssetType::Texture && m_browseMode == BrowseMode::Filesystem) {
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            if (stbi_info(entry.path.string().c_str(), &width, &height, &channels)) {
+                ImGui::Text("Resolution: %d x %d", width, height);
+                ImGui::Text("Channels: %d", channels);
             }
         }
-        if (!report.dependencies.empty()) {
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Dependencias:");
-            for (const std::string& dep : report.dependencies) {
-                const bool missing = std::find(report.missingDependencies.begin(),
-                                               report.missingDependencies.end(),
-                                               dep) != report.missingDependencies.end();
-                if (missing) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "  [x] %s", dep.c_str());
-                } else {
-                    ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "  [ok] %s", dep.c_str());
+    }
+
+    if (!entry.isDirectory && entry.type == AssetType::Mesh && m_browseMode == BrowseMode::Filesystem) {
+        if (ImGui::CollapsingHeader("Import Status", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const auto report = Assets::MeshImportValidator::analyze(entry.path);
+            if (report.readyToLoad) {
+                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "Pronto para usar");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", report.errorSummary.c_str());
+                if (!report.suggestion.empty()) {
+                    ImGui::TextWrapped("%s", report.suggestion.c_str());
+                }
+            }
+            if (!report.dependencies.empty()) {
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Dependencias:");
+                for (const std::string& dep : report.dependencies) {
+                    const bool missing = std::find(report.missingDependencies.begin(),
+                                                   report.missingDependencies.end(),
+                                                   dep) != report.missingDependencies.end();
+                    if (missing) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "  [x] %s", dep.c_str());
+                    } else {
+                        ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "  [ok] %s", dep.c_str());
+                    }
                 }
             }
         }
@@ -1139,6 +1221,13 @@ void AssetBrowser::setStatusMessage(const std::string& message, bool isError) {
     m_statusIsError = isError;
 }
 
+void AssetBrowser::dismissTransientUI() {
+    m_showAssetCreator = false;
+    m_showNamingPopup = false;
+    m_showImportFilePicker = false;
+    m_showImportFolderPicker = false;
+}
+
 // ── Main render ─────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderAssetCreatorModal() {
@@ -1147,74 +1236,139 @@ void AssetBrowser::renderAssetCreatorModal() {
         m_showAssetCreator = false;
     }
 
-    if (ImGui::BeginPopupModal("Asset Creator", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::SetNextWindowSize(ImVec2(680.0f, 430.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Asset Creator", nullptr, ImGuiWindowFlags_NoResize)) {
         ImGui::TextUnformatted("Create or Import Asset");
         ImGui::Separator();
 
-        ImGui::BeginChild("CategoryList", ImVec2(140, 300), true);
-        const char* categories[] = { "Media", "3D Models", "Scripts", "Prefabs & Scenes", "Folders" };
-        for (int i = 0; i < 5; ++i) {
-            bool isSelected = (m_assetCreatorCategory == i);
-            if (isSelected) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.4f, 0.8f, 1.0f));
-            }
-            if (ImGui::Selectable(categories[i], isSelected)) {
+        ImGui::BeginChild("CategoryList", ImVec2(180.0f, 320.0f), true);
+        struct CategoryItem {
+            const char* label;
+            const char* icon;
+        };
+        static const CategoryItem categories[] = {
+            {"Media", "beer"},
+            {"3D Models", "arrows-diagonal"},
+            {"Scripts", "at"},
+            {"Prefabs & Scenes", "account"},
+            {"Folders", "arrow-open-down"},
+        };
+        const float rowH = ImGui::GetFontSize() + 12.0f;
+        const float iconSize = ImGui::GetFontSize();
+        for (int i = 0; i < IM_ARRAYSIZE(categories); ++i) {
+            ImGui::PushID(i);
+            const bool isSelected = (m_assetCreatorCategory == i);
+            const float rowW = ImGui::GetContentRegionAvail().x;
+
+            if (ImGui::Selectable("##category", isSelected, 0, ImVec2(rowW, rowH))) {
                 m_assetCreatorCategory = i;
             }
+
+            const ImVec2 rowMin = ImGui::GetItemRectMin();
+            const ImVec2 rowMax = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
             if (isSelected) {
-                ImGui::PopStyleColor();
+                dl->AddRectFilled(rowMin, rowMax, IM_COL32(70, 90, 150, 255), 4.0f);
             }
+
+            const ImVec2 iconPos(rowMin.x + 8.0f, rowMin.y + (rowH - iconSize) * 0.5f);
+            if (EditorIcons::hasIcon(categories[i].icon)) {
+                const ImTextureRef tex = EditorIcons::get(categories[i].icon);
+                dl->AddImage(tex, iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize));
+            }
+
+            const ImVec2 textPos(rowMin.x + 8.0f + iconSize + 8.0f,
+                                 rowMin.y + (rowH - ImGui::GetFontSize()) * 0.5f);
+            dl->AddText(textPos, IM_COL32(230, 225, 220, 255), categories[i].label);
+            ImGui::PopID();
         }
         ImGui::EndChild();
 
         ImGui::SameLine();
 
-        ImGui::BeginChild("AssetOptions", ImVec2(460, 300), true);
-        ImGui::Columns(4, nullptr, false);
-
-        auto drawOption = [&](const char* icon, const char* name, const char* ext, int typeId, bool isImport) {
-            ImGui::PushID(name);
-            if (ImGui::Button(icon, ImVec2(96, 80))) {
-                if (isImport) {
-                    m_showImportFilePicker = true;
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    m_pendingCreateType = typeId;
-                    m_showNamingPopup = true;
-                    std::strncpy(m_assetNamingBuf, name, sizeof(m_assetNamingBuf) - 1);
-                    for (int i = 0; m_assetNamingBuf[i]; ++i) {
-                        if (m_assetNamingBuf[i] == ' ') m_assetNamingBuf[i] = '_';
-                    }
-                    ImGui::CloseCurrentPopup();
-                }
-            }
-            ImGui::TextWrapped("%s", name);
-            ImGui::TextDisabled("%s", ext);
-            ImGui::PopID();
-            ImGui::NextColumn();
-        };
-
-        if (m_assetCreatorCategory == 0) {
-            drawOption("[I]", "Image", "PNG/JPG/TGA", 0, true);
-            drawOption("[A]", "Audio", "MP3/OGG/WAV", 1, true);
-            drawOption("[G]", "GIF", "GIF", 2, true);
-            drawOption("[V]", "Video", "MP4/AVI/MOV", 3, true);
-        } else if (m_assetCreatorCategory == 1) {
+        ImGui::BeginChild("AssetOptions", ImVec2(0.0f, 320.0f), true);
+        if (m_assetCreatorCategory == 1) {
             ImGui::TextWrapped("Prefira .glb (um ficheiro). glTF separado precisa do .bin e texturas.");
             ImGui::Spacing();
-            drawOption("[O]", "OBJ Model", ".obj", 4, true);
-            drawOption("[G]", "GLB Model", ".glb (recomendado)", 5, true);
-        } else if (m_assetCreatorCategory == 2) {
-            drawOption("[L]", "Lua Script", ".lua", 6, false);
-            drawOption("[C]", "C++ Script", ".cpp/.hpp", 7, false);
-        } else if (m_assetCreatorCategory == 3) {
-            drawOption("[P]", "Prefab", ".prefab", 8, false);
-            drawOption("[M]", "Material", ".mat", 9, false);
-        } else if (m_assetCreatorCategory == 4) {
-            drawOption("[D]", "New Folder", "dir", 10, false);
         }
 
-        ImGui::Columns(1);
+        struct CreatorOption {
+            const char* icon;
+            const char* name;
+            const char* ext;
+            int typeId;
+            bool isImport;
+        };
+
+        CreatorOption options[8];
+        int optionCount = 0;
+
+        if (m_assetCreatorCategory == 0) {
+            options[optionCount++] = {"beer", "Image", "PNG/JPG/TGA", 0, true};
+            options[optionCount++] = {"bell", "Audio", "MP3/OGG/WAV", 1, true};
+            options[optionCount++] = {"beer-twotone", "GIF", "GIF", 2, true};
+            options[optionCount++] = {"arrow-right-circle", "Video", "MP4/AVI/MOV", 3, true};
+        } else if (m_assetCreatorCategory == 1) {
+            options[optionCount++] = {"arrows-diagonal-rotated", "OBJ Model", ".obj", 4, true};
+            options[optionCount++] = {"arrows-long-diagonal", "GLB Model", ".glb", 5, true};
+            options[optionCount++] = {"arrows-diagonal", "glTF Model", ".gltf + sidecars", 4, true};
+        } else if (m_assetCreatorCategory == 2) {
+            options[optionCount++] = {"at", "Lua Script", ".lua", 6, false};
+            options[optionCount++] = {"align-left", "C++ Script", ".cpp/.hpp", 7, false};
+        } else if (m_assetCreatorCategory == 3) {
+            options[optionCount++] = {"account-small", "Prefab", ".prefab", 8, false};
+            options[optionCount++] = {"beer-alt", "Material", ".mat", 9, false};
+            options[optionCount++] = {"account", "Scene", ".caf", 8, false};
+        } else if (m_assetCreatorCategory == 4) {
+            options[optionCount++] = {"arrow-open-down", "New Folder", "directory", 10, false};
+        }
+
+        const int columns = 3;
+        const float cardH = 112.0f;
+        if (ImGui::BeginTable("creator_grid", columns, ImGuiTableFlags_SizingStretchSame)) {
+            for (int i = 0; i < optionCount; ++i) {
+                const CreatorOption& opt = options[i];
+                ImGui::TableNextColumn();
+                ImGui::PushID(opt.name);
+
+                if (ImGui::InvisibleButton("##creator_card", ImVec2(-1.0f, cardH))) {
+                    if (opt.isImport) {
+                        m_showImportFilePicker = true;
+                        ImGui::CloseCurrentPopup();
+                    } else {
+                        m_pendingCreateType = opt.typeId;
+                        m_showNamingPopup = true;
+                        std::strncpy(m_assetNamingBuf, opt.name, sizeof(m_assetNamingBuf) - 1);
+                        for (int c = 0; m_assetNamingBuf[c]; ++c) {
+                            if (m_assetNamingBuf[c] == ' ') m_assetNamingBuf[c] = '_';
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+
+                const ImVec2 cardMin = ImGui::GetItemRectMin();
+                const ImVec2 cardMax = ImGui::GetItemRectMax();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(cardMin, cardMax, IM_COL32(30, 32, 40, 255), 8.0f);
+                dl->AddRect(cardMin, cardMax, IM_COL32(80, 86, 100, 255), 8.0f);
+
+                const float iconSize = 30.0f;
+                const float cardW = cardMax.x - cardMin.x;
+                const ImVec2 iconPos(cardMin.x + (cardW - iconSize) * 0.5f, cardMin.y + 14.0f);
+                if (EditorIcons::hasIcon(opt.icon)) {
+                    const ImTextureRef tex = EditorIcons::get(opt.icon);
+                    dl->AddImage(tex, iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize));
+                }
+
+                dl->AddText(ImVec2(cardMin.x + 8.0f, cardMin.y + 54.0f), IM_COL32(230, 225, 220, 255),
+                            opt.name);
+                dl->AddText(ImVec2(cardMin.x + 8.0f, cardMin.y + 72.0f), IM_COL32(150, 150, 160, 255),
+                            opt.ext);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+
         ImGui::EndChild();
 
         ImGui::Separator();
