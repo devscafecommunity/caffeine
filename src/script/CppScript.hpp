@@ -12,6 +12,12 @@ namespace Caffeine::ECS { class World; }
 
 namespace Caffeine::Script {
 
+struct ExposedScriptField {
+    const char* name = "";
+    enum class Type { Float, Int, Bool } type = Type::Float;
+    void* ptr = nullptr;
+};
+
 class CppScript {
 public:
     virtual ~CppScript() = default;
@@ -20,6 +26,7 @@ public:
     virtual void onUpdate(ECS::Entity entity, ECS::World& world, f32 dt) { (void)entity; (void)world; (void)dt; }
     virtual void onDestroy(ECS::Entity entity, ECS::World& world) { (void)entity; (void)world; }
     virtual void onCollision(ECS::Entity entity, ECS::Entity other, ECS::World& world) { (void)entity; (void)other; (void)world; }
+    virtual void gatherExposedFields(std::vector<ExposedScriptField>& fields) { (void)fields; }
 };
 
 class CppScriptRegistry {

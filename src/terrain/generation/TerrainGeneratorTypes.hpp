@@ -10,6 +10,7 @@ enum class TerrainGenStyle : u8 {
     LowPoly = 1,
     Stylized = 2,
     Custom = 3,
+    UltraRealistic = 4,
 };
 
 enum class TerrainEnvironment : u8 {
@@ -51,7 +52,7 @@ struct TerrainClimateSettings {
 };
 
 struct TerrainHydrologySettings {
-    bool traceRivers = true;
+    bool traceRivers = false;
     u32 maxRiverSources = 48;
     f32 riverSourceMinHeight = 0.35f;
     f32 riverSourceMaxHeight = 0.55f;
@@ -85,10 +86,10 @@ struct TerrainGenerationSettings {
     f32 domainWarpStrength = 0.12f;
     f32 domainWarpScale = 48.0f;
     u32 domainWarpPasses = 2;
-    bool slopeWeighting = true;
+    bool slopeWeighting = false;
     f32 slopeWeightAlpha = 0.06f;
     bool thermalErosion = true;
-    u32 thermalIterations = 50;
+    u32 thermalIterations = 10;
     f32 thermalTalus = 0.01f;
     bool hydraulicErosion = false;
     u32 hydraulicIterations = 10000;
@@ -98,6 +99,11 @@ struct TerrainGenerationSettings {
     f32 hydraulicDeposit = 0.25f;
     f32 hydraulicInertia = 0.85f;
     f32 hydraulicEvaporation = 0.05f;
+    bool microSculpt = true;
+    f32 microSculptStrength = 0.42f;
+    f32 microSculptSoftness = 0.35f;
+    f32 microRiverCarve = 0.0f;
+    f32 plateauSharpen = 0.55f;
     bool smoothPass = true;
     u32 smoothIterations = 1;
     u32 postSimSmoothIterations = 4;

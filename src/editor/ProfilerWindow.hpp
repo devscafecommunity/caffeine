@@ -1,6 +1,7 @@
 #pragma once
 #include "core/Types.hpp"
 #include "debug/Profiler.hpp"
+#include "debug/SystemMetrics.hpp"
 #include "containers/Vector.hpp"
 #include <algorithm>
 #include <array>
@@ -52,6 +53,23 @@ public:
             }
 
             ImGui::Text("Frame: %.2f ms   FPS: %.1f", lastMs, fps);
+
+            const Debug::SystemMetrics sys = Debug::sampleSystemMetrics();
+            ImGui::SeparatorText("Hardware");
+            ImGui::Text("CPU (process):  %.1f%%", sys.processCpuPercent);
+            if (sys.gpuAvailable && sys.gpuBusyPercent >= 0.0f) {
+                ImGui::Text("GPU:            %.1f%%", sys.gpuBusyPercent);
+            } else {
+                ImGui::TextDisabled("GPU:            n/a");
+            }
+            if (sys.ramTotalMiB > 0.0f) {
+                ImGui::Text("RAM:            %.0f / %.0f MiB", sys.ramUsedMiB, sys.ramTotalMiB);
+            } else {
+                ImGui::Text("RAM:            %.0f MiB", sys.ramUsedMiB);
+            }
+            if (sys.vramTotalMiB > 0.0f) {
+                ImGui::Text("VRAM:           %.0f / %.0f MiB", sys.vramUsedMiB, sys.vramTotalMiB);
+            }
 
             f32 maxVal = 33.3f;
             for (const f32 sample : m_frameTimes) {

@@ -72,6 +72,7 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
     colorTarget.texture       = colorTexture;
     colorTarget.mip_level     = desc.colorMipLevel;
     colorTarget.layer_or_depth_plane = desc.colorLayer;
+    colorTarget.cycle         = desc.cycle;
     colorTarget.load_op       = SDL_GPU_LOADOP_CLEAR;
     colorTarget.store_op      = SDL_GPU_STOREOP_STORE;
     colorTarget.clear_color.r = desc.clearColor[0];
@@ -83,6 +84,7 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
     SDL_GPUDepthStencilTargetInfo* depthPtr = nullptr;
     if (desc.depthTarget && desc.depthTarget->handle) {
         depthTarget.texture = desc.depthTarget->handle;
+        depthTarget.cycle = desc.cycle;
         depthTarget.load_op = desc.clearDepth ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
         depthTarget.store_op = SDL_GPU_STOREOP_STORE;
         depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
@@ -137,7 +139,7 @@ void CommandBuffer::bindIndexBuffer(Buffer* buf) {
 }
 
 void CommandBuffer::bindTexture(Texture* tex, u32 slot, Sampler* sampler) {
-    if (!m_renderPass || !tex || !tex->handle) {
+    if (!m_renderPass || !tex || !tex->handle || !sampler || !sampler->handle) {
         return;
     }
     SDL_GPUTextureSamplerBinding samplerBinding{};

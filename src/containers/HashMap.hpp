@@ -2,6 +2,7 @@
 
 #include "../core/Types.hpp"
 #include "Vector.hpp"
+#include <utility>
 
 namespace Caffeine {
 
@@ -35,6 +36,16 @@ public:
             }
         }
         m_data.pushBack({key, value});
+    }
+
+    void set(const Key& key, Value&& value) {
+        for (auto& pair : m_data) {
+            if (pair.key == key) {
+                pair.value = std::move(value);
+                return;
+            }
+        }
+        m_data.pushBack({key, std::move(value)});
     }
 
     bool contains(const Key& key) const {

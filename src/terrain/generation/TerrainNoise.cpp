@@ -35,10 +35,10 @@ f32 valueNoise2D(f32 x, f32 z, u32 seed) {
     const f32 tx = x - static_cast<f32>(x0);
     const f32 tz = z - static_cast<f32>(z0);
 
-    const f32 v00 = static_cast<f32>(hash2D(x0, z0, seed) & 0xFFFFu) * kInv255;
-    const f32 v10 = static_cast<f32>(hash2D(x1, z0, seed) & 0xFFFFu) * kInv255;
-    const f32 v01 = static_cast<f32>(hash2D(x0, z1, seed) & 0xFFFFu) * kInv255;
-    const f32 v11 = static_cast<f32>(hash2D(x1, z1, seed) & 0xFFFFu) * kInv255;
+    const f32 v00 = static_cast<f32>(hash2D(x0, z0, seed) & 0xFFFFu) / 65535.0f;
+    const f32 v10 = static_cast<f32>(hash2D(x1, z0, seed) & 0xFFFFu) / 65535.0f;
+    const f32 v01 = static_cast<f32>(hash2D(x0, z1, seed) & 0xFFFFu) / 65535.0f;
+    const f32 v11 = static_cast<f32>(hash2D(x1, z1, seed) & 0xFFFFu) / 65535.0f;
 
     const f32 sx = fade(tx);
     const f32 sz = fade(tz);

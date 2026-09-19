@@ -115,6 +115,8 @@ private:
     static bool hostRegisterComponentDrawer(void* ctx, const char* pluginName, u32 componentTypeId,
                                               void (*drawFn)(void* componentData, void* userData),
                                               void* userData);
+    static bool hostRegisterEntityPresetManifest(void* ctx, const char* pluginName,
+                                                 const char* manifestPath);
 
     std::filesystem::path m_pluginsDirectory;
     std::filesystem::path m_bundledPluginsDirectory;

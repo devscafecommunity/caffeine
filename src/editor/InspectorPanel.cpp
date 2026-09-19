@@ -12,6 +12,7 @@
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
+#include "core/WorldUnits.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "terrain/TerrainResolution.hpp"
 #include "terrain/generation/TerrainGenerator.hpp"
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstring>
 #include <vector>
 #include <iostream>
 
@@ -506,6 +508,40 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
         ImGui::TextWrapped("%s", lastError.c_str());
         ImGui::PopStyleColor();
     }
+    if (ctx.scriptEngine && !sc->scriptPath.empty()) {
+        if (!ctx.scriptEngine->isLoaded(sc->scriptPath)) {
+            std::string err;
+            ctx.scriptEngine->loadScript(sc->scriptPath, &err);
+        }
+        auto vars = ctx.scriptEngine->listExposedVars(sc->scriptPath);
+        if (!vars.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Exposed");
+            for (auto& var : vars) {
+                ImGui::PushID(var.name.c_str());
+                if (var.kind == Script::ScriptEngine::ExposedVar::Kind::Boolean) {
+                    if (ImGui::Checkbox(var.name.c_str(), &var.boolean)) {
+                        ctx.scriptEngine->setExposedVar(sc->scriptPath, var);
+                    }
+                } else if (var.kind == Script::ScriptEngine::ExposedVar::Kind::Number) {
+                    float v = static_cast<float>(var.number);
+                    if (ImGui::DragFloat(var.name.c_str(), &v, 0.05f)) {
+                        var.number = static_cast<double>(v);
+                        ctx.scriptEngine->setExposedVar(sc->scriptPath, var);
+                    }
+                } else {
+                    char buf[256];
+                    std::strncpy(buf, var.string.c_str(), sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = 0;
+                    if (ImGui::InputText(var.name.c_str(), buf, sizeof(buf))) {
+                        var.string = buf;
+                        ctx.scriptEngine->setExposedVar(sc->scriptPath, var);
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+    }
 #else
     (void)world; (void)e; (void)ctx;
 #endif
@@ -803,6 +839,27 @@ void InspectorPanel::drawCppScript(ECS::World& world, ECS::Entity e, EditorConte
             ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), csc->instance ? "Active" : "Inactive (play to activate)");
         }
     }
+
+    if (csc->instance) {
+        std::vector<Script::ExposedScriptField> fields;
+        csc->instance->gatherExposedFields(fields);
+        if (!fields.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Properties");
+            for (const auto& field : fields) {
+                if (!field.ptr || !field.name) continue;
+                ImGui::PushID(field.name);
+                if (field.type == Script::ExposedScriptField::Type::Float) {
+                    ImGui::DragFloat(field.name, static_cast<float*>(field.ptr), 0.05f);
+                } else if (field.type == Script::ExposedScriptField::Type::Int) {
+                    ImGui::DragInt(field.name, static_cast<int*>(field.ptr));
+                } else if (field.type == Script::ExposedScriptField::Type::Bool) {
+                    ImGui::Checkbox(field.name, static_cast<bool*>(field.ptr));
+                }
+                ImGui::PopID();
+            }
+        }
+    }
 }
 
 // ── Light drawer ─────────────────────────────────────────────────
@@ -912,17 +969,27 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
                           Terrain::splatResolutionZ(*terrain),
                           splatScale);
     }
-    if (ImGui::DragFloat("World Size X", &terrain->worldSizeX, 0.5f, 4.0f, 512.0f, "%.1f")) {
+    ImGui::TextDisabled("1 world unit = 1 meter");
+    if (ImGui::DragFloat("World Size X (m)", &terrain->worldSizeX, 1.0f, 16.0f, 10000.0f, "%.1f m")) {
         terrain->dataRevision++;
         ctx.isDirty = true;
     }
-    if (ImGui::DragFloat("World Size Z", &terrain->worldSizeZ, 0.5f, 4.0f, 512.0f, "%.1f")) {
+    if (ImGui::DragFloat("World Size Z (m)", &terrain->worldSizeZ, 1.0f, 16.0f, 10000.0f, "%.1f m")) {
         terrain->dataRevision++;
         ctx.isDirty = true;
     }
-    if (ImGui::DragFloat("Max Height", &terrain->maxHeight, 0.25f, 0.0f, 256.0f, "%.1f")) {
+    if (ImGui::DragFloat("Max Height (m)", &terrain->maxHeight, 0.5f, 4.0f, 2000.0f, "%.1f m")) {
         terrain->dataRevision++;
         ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        const f32 suggested = Caffeine::WorldUnits::suggestedHeightM(
+            std::max(terrain->worldSizeX, terrain->worldSizeZ));
+        ImGui::SetTooltip(
+            "Local relief in meters. Heightmap 0–1 maps into this range without stretching.\n"
+            "Suggested for this footprint: ~%.0f m (about 12%% of width). 1000 m tall on a 1000 m "
+            "map is a crater wall, not a valley.",
+            suggested);
     }
     if (ImGui::Checkbox("Cast Shadows", &terrain->castShadows)) {
         ctx.isDirty = true;
@@ -995,7 +1062,7 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
             terrain->dataRevision++;
             ctx.isDirty = true;
         }
-        if (ImGui::DragFloat("LOD Distance", &terrain->lodDistanceScale, 1.0f, 8.0f, 256.0f, "%.0f")) {
+        if (ImGui::DragFloat("LOD Distance", &terrain->lodDistanceScale, 1.0f, 32.0f, 4096.0f, "%.0f")) {
             terrain->dataRevision++;
             ctx.isDirty = true;
         }

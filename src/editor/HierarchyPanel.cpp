@@ -99,7 +99,7 @@ void HierarchyPanel::renderSearchBar() {
 }
 
 void HierarchyPanel::renderToolbar() {
-    if (ImGui::Button("+", ImVec2(24, 0))) {
+    if (ImGui::Button("+##hierarchy_add", ImVec2(24, 0))) {
         m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
         ECS::Entity e = m_world->create();
         setEntityName(*m_world, e, "New Entity");
@@ -108,7 +108,14 @@ void HierarchyPanel::renderToolbar() {
         m_context->endUndo(*m_world);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Delete")) {
+    if (ImGui::Button("Presets##hierarchy_presets", ImVec2(72, 0))) {
+        if (m_openPresets) m_openPresets();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Open Entity Presets wizard");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Delete##hierarchy_delete")) {
         if (m_context->hasMultiSelection()) {
             m_context->beginUndo(EditorCommand::RemoveEntity, u32_max, *m_world);
             for (auto& e : m_context->selectedEntities) {

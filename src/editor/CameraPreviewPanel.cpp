@@ -1,6 +1,10 @@
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/SceneViewport.hpp"
 
+#ifdef CF_HAS_SDL3
+#include "rhi/RenderDevice.hpp"
+#endif
+
 #ifdef CF_HAS_IMGUI
 
 #include "ecs/CameraComponents.hpp"
@@ -197,6 +201,20 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
     bool found2D = false;
     bool found3D = false;
 
+    if (ctx.isPlayMode) {
+        ECS::ComponentQuery aq;
+        aq.with<ECS::Camera3DComponent>();
+        aq.with<ECS::CameraActiveComponent>();
+        world.forEach<ECS::Camera3DComponent, ECS::CameraActiveComponent>(aq,
+            [&](ECS::Entity e, ECS::Camera3DComponent& cam, ECS::CameraActiveComponent&) {
+                if (!found3D) {
+                    cameraEntity = e;
+                    cam3D = &cam;
+                    found3D = true;
+                }
+            });
+    }
+
     if (ctx.selectedEntity.isValid() && world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
         cameraEntity = ctx.selectedEntity;
         cam3D = world.get<ECS::Camera3DComponent>(cameraEntity);
@@ -391,7 +409,8 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
     const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
     const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
-    const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);
+    const f32 farPlane = ctx.cameraFarPlane();
+    const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, farPlane);
     const Mat4 vp = proj * view;
 
     Render::SkyboxCamera skyCamera;
@@ -405,7 +424,8 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
     }
     skyCamera.up = skyCamera.right.cross(skyCamera.forward).normalized();
     skyCamera.fovY = 1.0472f;
-    skyCamera.aspect = panelSize.x / std::max(panelSize.y, 1.0f);
+    skyCamera.aspect = aspect;
+
     if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
                                     skyCamera, false, &m_skyboxRenderer)) {
         dl->AddRectFilledMultiColor(
@@ -427,7 +447,8 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
                    gridColor, 0.5f);
     }
 
-    viewport.drawSceneMeshesForCamera(world, ctx, dl, vp, camPos, origin, panelSize);
+    viewport.drawSceneMeshesForCamera(world, ctx, dl, vp, camPos, origin, panelSize,
+                                      ECS::Entity::INVALID, 480);
 
     dl->PopClipRect();
 
@@ -446,17 +467,54 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
                                             ECS::Camera3DComponent& cam) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
+    Vec3 camPos;
+    const Mat4 view = buildCameraViewMatrix(world, cameraEntity, camPos);
+    const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
+    const f32 fovRad = cam.fov * kDegToRad;
+    const f32 farClip = std::max(cam.farClip, 12000.0f);
+    const Mat4 proj = Mat4::perspective(fovRad, aspect, cam.nearClip, farClip);
+
+#ifdef CF_HAS_SDL3
+    if (viewport.cameraPreviewGpuReady() && viewport.frameCommandBuffer()) {
+        std::string projectRoot;
+        if (!ctx.currentScenePath.empty()) {
+            const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
+            projectRoot = sceneDir.parent_path().string();
+            if (projectRoot.empty()) projectRoot = sceneDir.string();
+        }
+        const Vec3 focus = camPos + entityForward(world, cameraEntity).normalized();
+        const bool gpuOk = viewport.renderCameraPreviewGpu(
+            viewport.frameCommandBuffer(), world, ctx, view, proj, camPos, focus,
+            fovRad, cam.nearClip, farClip,
+            static_cast<u32>(std::max(panelSize.x, 8.0f)),
+            static_cast<u32>(std::max(panelSize.y, 8.0f)),
+            projectRoot);
+        RHI::Texture* preview = viewport.cameraPreviewColorTarget();
+        if (gpuOk && preview && preview->handle) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(preview->handle), origin,
+                         ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                         ImVec2(0, 0), ImVec2(1, 1));
+            const char* name = getEntityName(world, cameraEntity);
+            if (ctx.isPlayMode) {
+                dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 4.0f),
+                            IM_COL32(180, 255, 180, 230), "PLAY");
+            } else if (name && name[0] != '\0') {
+                dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 4.0f),
+                            IM_COL32(200, 200, 210, 230), name);
+            }
+            dl->AddRect(origin,
+                        ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                        IM_COL32(80, 140, 255, 160), 0.0f, 0, 1.5f);
+            return;
+        }
+    }
+#endif
+
+    const Mat4 vp = proj * view;
+
     dl->PushClipRect(origin,
                      ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                      true);
-
-    Vec3 camPos;
-    const Mat4 view = buildCameraViewMatrix(world, cameraEntity, camPos);
-
-    const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
-    const f32 fovRad = cam.fov * kDegToRad;
-    const Mat4 proj = Mat4::perspective(fovRad, aspect, cam.nearClip, cam.farClip);
-    const Mat4 vp = proj * view;
 
     const Mat4 worldMatrix = entityMatrix(world, cameraEntity);
     Render::SkyboxCamera skyCamera;
@@ -465,6 +523,7 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
     skyCamera.up = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
     skyCamera.fovY = fovRad;
     skyCamera.aspect = aspect;
+
     if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
                                     skyCamera, false, &m_skyboxRenderer)) {
         dl->AddRectFilledMultiColor(
@@ -512,7 +571,7 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
                Vec3(0.0f, 0.0f, camZ - gridExtent), Vec3(0.0f, 0.0f, camZ + gridExtent),
                IM_COL32(60, 60, 220, 200), 1.5f);
 
-    viewport.drawSceneMeshesForCamera(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity);
+    viewport.drawSceneMeshesForCamera(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity, 480);
 
     ECS::ComponentQuery posQ;
     posQ.with<ECS::Position3D>();

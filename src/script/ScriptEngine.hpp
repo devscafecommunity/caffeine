@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Caffeine { namespace Input { class InputManager; } }
 namespace Caffeine { namespace Events { class EventBus; } }
@@ -27,6 +28,19 @@ public:
 
     bool init(const InitParams& params);
     void shutdown();
+    void setWorld(ECS::World* world);
+    void setInput(Input::InputManager* input);
+
+    struct ExposedVar {
+        enum class Kind { Number, Boolean, String };
+        std::string name;
+        Kind kind = Kind::Number;
+        double number = 0.0;
+        bool boolean = false;
+        std::string string;
+    };
+    std::vector<ExposedVar> listExposedVars(const std::string& path);
+    bool setExposedVar(const std::string& path, const ExposedVar& var);
 
     bool loadScript(const std::string& path, std::string* outError = nullptr);
     bool loadString(const std::string& code, const std::string& virtualPath,

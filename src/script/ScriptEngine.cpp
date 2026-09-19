@@ -2,9 +2,11 @@
 #include "script/ScriptTypes.hpp"
 #include "ecs/World.hpp"
 #include "ecs/Components.hpp"
+#include "ecs/Components3D.hpp"
 #include "input/InputManager.hpp"
 #include "events/EventBus.hpp"
 #include "debug/LogSystem.hpp"
+#include "math/Quat.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "containers/HashMap.hpp"
 #include "containers/Vector.hpp"
@@ -81,43 +83,66 @@ HashMap<std::string, Input::Axis> makeAxisMap() {
 // Binding registration helpers
 // ============================================================================
 
-void registerWorldBindings(sol::state& lua, ECS::World* world) {
+void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
     lua["caffeine"]["world"] = lua.create_table();
     sol::table wt = lua["caffeine"]["world"];
 
-    wt["create"] = [world]() -> u32 {
+    wt["create"] = [worldPtr]() -> u32 {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return 0u;
         ECS::Entity e = world->create("LuaEntity");
         return e.id();
     };
 
-    wt["destroy"] = [world](u32 entityId) {
+    wt["destroy"] = [worldPtr](u32 entityId) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         world->destroy(ECS::Entity(entityId, world));
     };
 
-    wt["hasComponent"] = [world](u32 entityId, const std::string& type) -> bool {
+    wt["hasComponent"] = [worldPtr](u32 entityId, const std::string& type) -> bool {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return false;
         ECS::Entity e(entityId, world);
-        if (type == "Transform")  return e.has<ECS::Transform>();
+        if (type == "Transform")  return e.has<ECS::Transform>() || e.has<ECS::Position3D>();
         if (type == "Sprite")     return e.has<ECS::Sprite>();
         if (type == "RigidBody2D") return e.has<Physics2D::RigidBody2D>();
         if (type == "Collider2D") return e.has<Physics2D::Collider2D>();
         return false;
     };
 
-    wt["getTransform"] = [&lua, world](u32 entityId) -> sol::table {
-        ECS::Entity e(entityId, world);
+    wt["getTransform"] = [&lua, worldPtr](u32 entityId) -> sol::table {
         sol::table t = lua.create_table();
-        auto* transform = e.get<ECS::Transform>();
-        t["x"] = transform ? transform->position.x : 0.0f;
-        t["y"] = transform ? transform->position.y : 0.0f;
-        t["z"] = transform ? transform->position.z : 0.0f;
-        t["rotation"] = transform ? transform->rotation.z : 0.0f;
-        t["scaleX"] = transform ? transform->scale.x : 1.0f;
-        t["scaleY"] = transform ? transform->scale.y : 1.0f;
+        t["x"] = 0.0f; t["y"] = 0.0f; t["z"] = 0.0f;
+        t["rotation"] = 0.0f; t["scaleX"] = 1.0f; t["scaleY"] = 1.0f;
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return t;
+        ECS::Entity e(entityId, world);
+        if (auto* p3 = e.get<ECS::Position3D>()) {
+            t["x"] = p3->position.x;
+            t["y"] = p3->position.y;
+            t["z"] = p3->position.z;
+        } else if (auto* transform = e.get<ECS::Transform>()) {
+            t["x"] = transform->position.x;
+            t["y"] = transform->position.y;
+            t["z"] = transform->position.z;
+            t["rotation"] = transform->rotation.z;
+            t["scaleX"] = transform->scale.x;
+            t["scaleY"] = transform->scale.y;
+        }
         return t;
     };
 
-    wt["setTransform"] = [world](u32 entityId, sol::table t) {
+    wt["setTransform"] = [worldPtr](u32 entityId, sol::table t) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         ECS::Entity e(entityId, world);
+        if (auto* p3 = e.get<ECS::Position3D>()) {
+            p3->position.x = t["x"].get_or(p3->position.x);
+            p3->position.y = t["y"].get_or(p3->position.y);
+            p3->position.z = t["z"].get_or(p3->position.z);
+            return;
+        }
         auto& transform = e.getOrAdd<ECS::Transform>();
         transform.position.x = t["x"].get_or(0.0f);
         transform.position.y = t["y"].get_or(0.0f);
@@ -129,9 +154,20 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
 
     wt["addTransform"] = wt["setTransform"];
 
-    wt["getRigidBody2D"] = [&lua, world](u32 entityId) -> sol::table {
+    wt["setYawPitch"] = [worldPtr](u32 entityId, f32 yawRad, f32 pitchRad) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         ECS::Entity e(entityId, world);
+        auto& rot = e.getOrAdd<ECS::Rotation3D>();
+        const Quat q = Quat::fromEuler(pitchRad, yawRad, 0.0f);
+        rot.quaternion = Vec4(q.x, q.y, q.z, q.w);
+    };
+
+    wt["getRigidBody2D"] = [&lua, worldPtr](u32 entityId) -> sol::table {
         sol::table t = lua.create_table();
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return t;
+        ECS::Entity e(entityId, world);
         auto* rb = e.get<Physics2D::RigidBody2D>();
         if (rb) {
             t["mass"] = rb->mass;
@@ -144,7 +180,9 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
         return t;
     };
 
-    wt["setRigidBody2D"] = [world](u32 entityId, sol::table t) {
+    wt["setRigidBody2D"] = [worldPtr](u32 entityId, sol::table t) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         ECS::Entity e(entityId, world);
         auto& rb = e.getOrAdd<Physics2D::RigidBody2D>();
         rb.mass = t["mass"].get_or(1.0f);
@@ -155,9 +193,11 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
         rb.lockRotation = t["lockRotation"].get_or(true);
     };
 
-    wt["getSprite"] = [&lua, world](u32 entityId) -> sol::table {
-        ECS::Entity e(entityId, world);
+    wt["getSprite"] = [&lua, worldPtr](u32 entityId) -> sol::table {
         sol::table t = lua.create_table();
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return t;
+        ECS::Entity e(entityId, world);
         auto* s = e.get<ECS::Sprite>();
         if (s) {
             t["name"] = s->name;
@@ -166,7 +206,9 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
         return t;
     };
 
-    wt["setSprite"] = [world](u32 entityId, sol::table t) {
+    wt["setSprite"] = [worldPtr](u32 entityId, sol::table t) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         ECS::Entity e(entityId, world);
         auto& s = e.getOrAdd<ECS::Sprite>();
         s.name = t["name"].get_or(std::string());
@@ -175,7 +217,9 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
 
     wt["addSprite"] = wt["setSprite"];
 
-    wt["addParticleEmitter"] = [world](u32 entityId, sol::table t) {
+    wt["addParticleEmitter"] = [worldPtr](u32 entityId, sol::table t) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
         ECS::Entity e(entityId, world);
         auto& p = e.getOrAdd<ECS::ParticleEmitterComponent>();
         p.maxParticles = t["maxParticles"].get_or(100);
@@ -205,31 +249,38 @@ void registerWorldBindings(sol::state& lua, ECS::World* world) {
     };
 }
 
-void registerInputBindings(sol::state& lua, Input::InputManager* input) {
-    // Build key/axis name mappings (static, built once)
+void registerInputBindings(sol::state& lua, Input::InputManager** inputPtr) {
     static const HashMap<std::string, Input::Key> s_keyMap = makeKeyMap();
     static const HashMap<std::string, Input::Axis> s_axisMap = makeAxisMap();
 
     sol::table it = lua["caffeine"]["input"];
 
-    it["isKeyDown"] = [input](const std::string& keyName) -> bool {
+    it["isKeyDown"] = [inputPtr](const std::string& keyName) -> bool {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return false;
         auto* key = s_keyMap.get(keyName);
         if (!key) return false;
         return input->isKeyDown(*key);
     };
 
-    it["getAxis"] = [input](const std::string& axisName) -> f32 {
+    it["getAxis"] = [inputPtr](const std::string& axisName) -> f32 {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return 0.0f;
         auto* axis = s_axisMap.get(axisName);
         if (!axis) return 0.0f;
         return input->axisState(*axis).value;
     };
 
-    it["mousePosition"] = [input]() -> std::pair<f32, f32> {
+    it["mousePosition"] = [inputPtr]() -> std::pair<f32, f32> {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return {0.0f, 0.0f};
         auto pos = input->mousePosition();
         return {pos.x, pos.y};
     };
 
-    it["isMouseButtonDown"] = [input](u32 btn) -> bool {
+    it["isMouseButtonDown"] = [inputPtr](u32 btn) -> bool {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return false;
         Input::MouseButton mb;
         switch (btn) {
             case 1:  mb = Input::MouseButton::Left; break;
@@ -378,8 +429,8 @@ bool ScriptEngine::init(const InitParams& params) {
     lua["caffeine"]["math"]  = lua.create_table();
     lua["caffeine"]["particles"] = lua.create_table();
 
-    registerWorldBindings(lua, m_impl->m_world);
-    registerInputBindings(lua, m_impl->m_input);
+    registerWorldBindings(lua, &m_impl->m_world);
+    registerInputBindings(lua, &m_impl->m_input);
 
     // Event bindings (inline: needs access to Impl internals)
     {
@@ -473,10 +524,72 @@ void ScriptEngine::shutdown() {
     m_impl->m_luaEvents.clear();
 }
 
+void ScriptEngine::setWorld(ECS::World* world) {
+    m_impl->m_world = world;
+}
+
+void ScriptEngine::setInput(Input::InputManager* input) {
+    m_impl->m_input = input;
+}
+
+std::vector<ScriptEngine::ExposedVar> ScriptEngine::listExposedVars(const std::string& path) {
+    std::vector<ExposedVar> out;
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return out;
+
+    sol::table env = *envPtr;
+    env.for_each([&](sol::object key, sol::object value) {
+        if (!key.is<std::string>()) return;
+        const std::string name = key.as<std::string>();
+        if (name.empty() || name[0] == '_') return;
+        if (name == "onCreate" || name == "onUpdate" || name == "onDestroy" ||
+            name == "onCollision" || name == "caffeine") {
+            return;
+        }
+        if (value.is<sol::function>() || value.is<sol::table>()) return;
+
+        ExposedVar var;
+        var.name = name;
+        if (value.is<bool>()) {
+            var.kind = ExposedVar::Kind::Boolean;
+            var.boolean = value.as<bool>();
+        } else if (value.is<double>() || value.is<int>() || value.is<float>()) {
+            var.kind = ExposedVar::Kind::Number;
+            var.number = value.as<double>();
+        } else if (value.is<std::string>()) {
+            var.kind = ExposedVar::Kind::String;
+            var.string = value.as<std::string>();
+        } else {
+            return;
+        }
+        out.push_back(std::move(var));
+    });
+    return out;
+}
+
+bool ScriptEngine::setExposedVar(const std::string& path, const ExposedVar& var) {
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::environment& env = *envPtr;
+    switch (var.kind) {
+        case ExposedVar::Kind::Boolean:
+            env[var.name] = var.boolean;
+            break;
+        case ExposedVar::Kind::Number:
+            env[var.name] = var.number;
+            break;
+        case ExposedVar::Kind::String:
+            env[var.name] = var.string;
+            break;
+    }
+    return true;
+}
+
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
     sol::environment env(lua, sol::create, lua.globals());
+    env["caffeine"] = lua["caffeine"];
     auto result = lua.safe_script_file(path, env, sol::script_pass_on_error);
     if (!result.valid()) {
         sol::error err = result;
@@ -496,6 +609,7 @@ bool ScriptEngine::loadString(const std::string& code,
     auto& lua = m_impl->m_lua;
 
     sol::environment env(lua, sol::create, lua.globals());
+    env["caffeine"] = lua["caffeine"];
     auto result = lua.safe_script(code, env, sol::script_pass_on_error, virtualPath);
     if (!result.valid()) {
         sol::error err = result;

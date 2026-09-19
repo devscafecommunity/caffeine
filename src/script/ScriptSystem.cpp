@@ -10,6 +10,11 @@ namespace Caffeine::Script {
 ScriptSystem::ScriptSystem(ScriptEngine* engine)
     : m_engine(engine) {}
 
+void ScriptSystem::resetPlayState() {
+    m_initializedLua.clear();
+    m_initializedNative.clear();
+}
+
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
     processLuaScripts(world, dt);

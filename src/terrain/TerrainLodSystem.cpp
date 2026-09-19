@@ -23,7 +23,8 @@ u32 TerrainLodSystem::chunkCountAlongAxis(u32 resolution, u32 chunkVertexCount) 
 
 u32 TerrainLodSystem::selectLodLevel(f32 distance, const ECS::TerrainComponent& settings) {
     const u32 maxLod = std::max(1u, settings.maxLodLevels);
-    const f32 scale = std::max(settings.lodDistanceScale, 1.0f);
+    const f32 terrainSpan = std::max(settings.worldSizeX, settings.worldSizeZ);
+    const f32 scale = std::max(std::max(settings.lodDistanceScale, 80.0f), terrainSpan * 2.5f);
     const u32 lod = static_cast<u32>(distance / scale);
     return std::min(lod, maxLod - 1);
 }
@@ -33,7 +34,8 @@ u32 TerrainLodSystem::selectLodLevelWithHysteresis(f32 distance, u32 currentLod,
     const u32 maxLod = std::max(1u, settings.maxLodLevels);
     currentLod = std::min(currentLod, maxLod - 1);
 
-    const f32 scale = std::max(settings.lodDistanceScale, 1.0f);
+    const f32 scale = std::max(std::max(settings.lodDistanceScale, 80.0f),
+                               std::max(settings.worldSizeX, settings.worldSizeZ) * 2.5f);
     const f32 hysteresis = std::clamp(settings.lodHysteresis, 0.0f, 0.9f) * scale;
     const u32 desired = selectLodLevel(distance, settings);
 

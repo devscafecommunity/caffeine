@@ -13,6 +13,8 @@ enum class TerrainBrushMode : u8 {
     Raise,
     Lower,
     Smooth,
+    Flatten,
+    Noise,
 };
 
 struct TerrainBrushSettings {

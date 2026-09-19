@@ -51,7 +51,9 @@ add_library(caffeine-core
     src/core/io/FileWatcher.cpp
     src/input/InputManager.cpp
     src/debug/LogSystem.cpp
+    src/debug/CrashHandler.cpp
     src/debug/Profiler.cpp
+    src/debug/SystemMetrics.cpp
     src/threading/JobSystem.cpp
     src/ecs/CommandBuffer.cpp
     src/ecs/World.cpp
@@ -170,7 +172,7 @@ else()
             src/render/GpuDirectionalShadowMap.cpp
             src/render/GpuProceduralMeshes.cpp
         )
-        target_link_libraries(caffeine-core PUBLIC SDL3::SDL3)
+        target_link_libraries(caffeine-core PUBLIC SDL3::SDL3 ${CMAKE_DL_LIBS})
         find_library(SHADERC_LIBRARY shaderc_shared)
         find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp)
         if(SHADERC_LIBRARY AND SHADERC_INCLUDE_DIR)
@@ -439,6 +441,11 @@ with open(sys.argv[1], 'w') as f:
           src/assets/MaterialCache.cpp
           src/editor/MaterialEditorPanel.cpp
           src/editor/TerrainEditorPanel.cpp
+          src/editor/EntityPresetTypes.cpp
+          src/editor/EntityPresetRegistry.cpp
+          src/editor/EntityPresetPackages.cpp
+          src/editor/EntityPresetFactories.cpp
+          src/editor/EntityPresetsPanel.cpp
           src/editor/PreviewRenderer.cpp
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp

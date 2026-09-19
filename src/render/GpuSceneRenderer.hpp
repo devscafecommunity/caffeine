@@ -11,14 +11,26 @@
 #include "../assets/MeshTypes.hpp"
 #include "render/GpuPointShadowMap.hpp"
 #include "render/GpuDirectionalShadowMap.hpp"
+#include "spatial/Octree.hpp"
 
 #include <string>
+#include <vector>
 
 namespace Caffeine::Editor {
 struct EditorContext;
 }
 
 namespace Caffeine::Render {
+
+struct GpuSceneCamera {
+    Vec3 position{};
+    Vec3 focus{};
+    Mat4 view = Mat4::identity();
+    Mat4 proj = Mat4::identity();
+    f32 fovRad = 1.0472f;
+    f32 nearClip = 0.1f;
+    f32 farClip = 10000.0f;
+};
 
 class GpuSceneRenderer {
 public:
@@ -30,6 +42,10 @@ public:
     u32 render(RHI::CommandBuffer* cmd, ECS::World& world, const Editor::EditorContext& ctx,
                RHI::Texture* colorTarget, RHI::Texture* depthTarget, u32 width, u32 height,
                const std::string& projectRoot);
+
+    u32 renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& world, const GpuSceneCamera& camera,
+                         RHI::Texture* colorTarget, RHI::Texture* depthTarget, u32 width,
+                         u32 height, const std::string& projectRoot);
 
 private:
     struct MeshDraw {
@@ -61,6 +77,9 @@ private:
                      u32 width, u32 height);
     void pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw, const Mat4& mvp,
                         const Vec3& lightPos, int mode);
+    std::vector<MeshDraw> gatherMeshDraws(ECS::World& world, const Vec3& cameraPos,
+                                          const Spatial::Frustum& frustum,
+                                          const std::string& projectRoot);
 
     RHI::RenderDevice* m_device = nullptr;
     RHI::Shader* m_sceneVert = nullptr;

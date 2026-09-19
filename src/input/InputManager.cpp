@@ -202,6 +202,15 @@ void InputManager::setupDefaultBindings() {
     bind(Action::MoveDown,  Binding::fromKey(Key::Down));
     bind(Action::MoveLeft,  Binding::fromKey(Key::Left));
     bind(Action::MoveRight, Binding::fromKey(Key::Right));
+
+    bindAxis(Axis::MoveX, Binding::fromKey(Key::A), Binding::fromKey(Key::D));
+    bindAxis(Axis::MoveY, Binding::fromKey(Key::S), Binding::fromKey(Key::W));
+    bindAxis(Axis::LookX,
+             Binding::fromGamepadAxis(GamepadAxis::RightX),
+             Binding::fromGamepadAxis(GamepadAxis::RightX));
+    bindAxis(Axis::LookY,
+             Binding::fromGamepadAxis(GamepadAxis::RightY),
+             Binding::fromGamepadAxis(GamepadAxis::RightY));
 }
 
 bool InputManager::isBindingActive(const Binding& binding) const {

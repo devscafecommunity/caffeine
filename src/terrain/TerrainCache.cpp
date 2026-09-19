@@ -7,6 +7,7 @@
 #include "terrain/TerrainGpuTextures.hpp"
 #include "terrain/generation/TerrainGenerator.hpp"
 #include "assets/MeshCache.hpp"
+#include "core/WorldUnits.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -60,6 +61,11 @@ void TerrainCache::generateTerrain(ECS::World& world, ECS::Entity entity,
     if (terrain.splatResolutionScale < 2) {
         terrain.splatResolutionScale = 2;
     }
+    if (terrain.maxHeight < 4.0f) {
+        terrain.maxHeight = Caffeine::WorldUnits::kDefaultTerrainHeightM;
+    }
+    if (terrain.worldSizeX < 16.0f) terrain.worldSizeX = Caffeine::WorldUnits::kDefaultTerrainSizeM;
+    if (terrain.worldSizeZ < 16.0f) terrain.worldSizeZ = Caffeine::WorldUnits::kDefaultTerrainSizeM;
 
     TerrainEntry& entry = ensureEntry(entity);
     TerrainGenerator::generate(entry.heightmap, entry.splatmap, terrain, terrain.generation);
@@ -99,23 +105,26 @@ void TerrainCache::initializeEntity(ECS::World& world, ECS::Entity entity) {
     syncTextureToFilter(world, entity, *terrain);
 }
 
-void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
-                               ECS::TerrainComponent& component) {
 #ifdef CF_HAS_SDL3
-    if (entry.mesh && entry.mesh->vertexBuffer) {
-        entry.mesh->vertexBuffer = nullptr;
-        entry.mesh->indexBuffer = nullptr;
+void TerrainCache::releaseMeshGpu(Assets::Mesh3D& mesh) {
+    if (!m_gpuDevice) {
+        mesh.vertexBuffer = nullptr;
+        mesh.indexBuffer = nullptr;
+        return;
     }
-    for (auto& chunk : entry.chunks) {
-        for (auto& lodMesh : chunk.lodMeshes) {
-            if (lodMesh && lodMesh->vertexBuffer) {
-                lodMesh->vertexBuffer = nullptr;
-                lodMesh->indexBuffer = nullptr;
-            }
-        }
+    if (mesh.vertexBuffer) {
+        m_gpuDevice->destroyBuffer(mesh.vertexBuffer);
+        mesh.vertexBuffer = nullptr;
     }
+    if (mesh.indexBuffer) {
+        m_gpuDevice->destroyBuffer(mesh.indexBuffer);
+        mesh.indexBuffer = nullptr;
+    }
+}
 #endif
 
+void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
+                               ECS::TerrainComponent& component) {
     entry.useChunks = component.useChunks;
     if (entry.useChunks) {
         TerrainLodSystem::rebuildChunks(entry.chunks, entry.heightmap, component);
@@ -327,6 +336,9 @@ void TerrainCache::gatherDrawMeshes(ECS::Entity entity,
 void TerrainCache::syncGpuTextures(RHI::RenderDevice* device, ECS::Entity entity,
                                    const ECS::TerrainComponent& terrain,
                                    const std::string& projectRoot) {
+    if (device) {
+        m_gpuDevice = device;
+    }
     auto it = m_entries.find(entity.id());
     const TerrainSplatmap* splatmap = (it != m_entries.end()) ? &it->second.splatmap : nullptr;
     TerrainGpuTextureCache::instance().sync(device, entity, terrain, splatmap, projectRoot);
@@ -338,25 +350,16 @@ const TerrainGpuTextures* TerrainCache::gpuTexturesFor(ECS::Entity entity) const
 
 void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     if (!device) return;
+    m_gpuDevice = device;
     TerrainGpuTextureCache::instance().releaseAll(device);
-    auto releaseMesh = [&](Assets::Mesh3D& mesh) {
-        if (mesh.vertexBuffer) {
-            device->destroyBuffer(mesh.vertexBuffer);
-            mesh.vertexBuffer = nullptr;
-        }
-        if (mesh.indexBuffer) {
-            device->destroyBuffer(mesh.indexBuffer);
-            mesh.indexBuffer = nullptr;
-        }
-    };
 
     for (auto& pair : m_entries) {
         if (pair.second.mesh) {
-            releaseMesh(*pair.second.mesh);
+            releaseMeshGpu(*pair.second.mesh);
         }
         for (auto& chunk : pair.second.chunks) {
             for (auto& lodMesh : chunk.lodMeshes) {
-                if (lodMesh) releaseMesh(*lodMesh);
+                if (lodMesh) releaseMeshGpu(*lodMesh);
             }
         }
     }

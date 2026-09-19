@@ -67,7 +67,7 @@ struct MeshCpuRasterizer {
     std::vector<u8> color;
     std::vector<f32> depth;
 
-    void begin(ImVec2 origin_, ImVec2 size);
+    void begin(ImVec2 origin_, ImVec2 size, int maxDim = 1920);
     void clear(u8 r, u8 g, u8 b, u8 a = 0);
 };
 #endif
@@ -108,8 +108,15 @@ public:
     bool init(RHI::RenderDevice* device, Config cfg = Config::defaults());
     void shutdown();
     void setFrameCommandBuffer(RHI::CommandBuffer* cmd) { m_frameCmd = cmd; }
+    RHI::CommandBuffer* frameCommandBuffer() const { return m_frameCmd; }
     RHI::Texture* colorTarget() const { return m_colorTarget; }
     bool gpuSceneReady() const { return m_gpuSceneReady; }
+    bool cameraPreviewGpuReady() const { return m_gpuSceneReady && m_useGpuScene; }
+    RHI::Texture* cameraPreviewColorTarget() const { return m_previewColorTarget; }
+    bool renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& world, EditorContext& ctx,
+                                const Mat4& view, const Mat4& proj, const Vec3& cameraPos,
+                                const Vec3& focus, f32 fovRad, f32 nearClip, f32 farClip,
+                                u32 width, u32 height, const std::string& projectRoot);
 #endif
 
     void render(ECS::World& world, EditorContext& ctx);
@@ -137,7 +144,8 @@ public:
     void drawSceneMeshesForCamera(ECS::World& world, EditorContext& ctx, ImDrawList* dl,
                                   const Mat4& vp, const Vec3& camPos,
                                   ImVec2 origin, ImVec2 panelSize,
-                                  ECS::Entity skipEntity = ECS::Entity::INVALID);
+                                  ECS::Entity skipEntity = ECS::Entity::INVALID,
+                                  int maxRasterDim = 1920);
     bool drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
                            ECS::World& world, const EditorContext& ctx,
                            const Render::SkyboxCamera& camera,
@@ -164,6 +172,7 @@ private:
                      ECS::World& world, EditorContext& ctx);
      void drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
      void resizeCanvasIfNeeded(u32 newWidth, u32 newHeight);
+     void resizePreviewCanvasIfNeeded(u32 newWidth, u32 newHeight);
      std::string resolveSpritePath(const std::string& spriteName, const EditorContext& ctx) const;
      void releaseSpriteTextures();
 
@@ -218,6 +227,8 @@ private:
 
     void blitMeshRasterizer(ImDrawList* dl, MeshCpuRasterizer& rasterizer,
                             SpriteTextureCacheEntry& texEntry);
+    void retireImTexture(std::unique_ptr<ImTextureData>& texture);
+    void pruneRetiredTextures();
     std::unordered_map<std::string, SpriteTextureCacheEntry> m_spriteTextureCache;
     std::unordered_map<std::string, FileTextureCacheEntry> m_fileTextureCache;
     SpriteTextureCacheEntry m_meshRasterTexture;
@@ -227,6 +238,7 @@ private:
     RHI::CommandBuffer* m_frameCmd = nullptr;
     bool m_gpuSceneReady = false;
     bool m_useGpuScene = true;
+    std::vector<std::unique_ptr<ImTextureData>> m_retiredTextures;
     bool m_lastGpuSceneActive = false;
     u32 m_lastGpuMeshDrawCount = 0;
 #endif
@@ -253,9 +265,13 @@ private:
     RHI::RenderDevice* m_device = nullptr;
     RHI::Texture* m_colorTarget = nullptr;
     RHI::Texture* m_depthTarget = nullptr;
+    RHI::Texture* m_previewColorTarget = nullptr;
+    RHI::Texture* m_previewDepthTarget = nullptr;
     Config m_config;
     u32 m_lastCanvasWidth = 0;
     u32 m_lastCanvasHeight = 0;
+    u32 m_previewCanvasWidth = 0;
+    u32 m_previewCanvasHeight = 0;
 #endif
 };
 

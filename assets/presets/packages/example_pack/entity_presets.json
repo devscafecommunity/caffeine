@@ -1,0 +1,16 @@
+{
+  "package_name": "Example Preset Pack",
+  "version": "1.0.0",
+  "author": "Caffeine",
+  "description": "Demonstrates how asset packages can ship entity presets.",
+  "presets": [
+    {
+      "id": "example_crate",
+      "name": "Example Crate",
+      "category": "objects",
+      "description": "Package-defined preset placeholder. Add a prefab at prefabs/example_crate.prefab.caf to enable full spawning.",
+      "default_entity_name": "Crate",
+      "prefab": "prefabs/example_crate.prefab.caf"
+    }
+  ]
+}

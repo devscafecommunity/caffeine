@@ -63,6 +63,10 @@ void RenderDevice::shutdown() {
     }
 
     SDL_WaitForGPUIdle(m_device);
+    for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        releasePendingTransfers(i);
+    }
+    m_activeFrameCmd = nullptr;
 
     if (m_window) {
         SDL_ReleaseWindowFromGPUDevice(m_device, m_window);
@@ -103,8 +107,20 @@ CommandBuffer* RenderDevice::beginFrame() {
     }
 
     cmd->m_swapchainTexture = swapchainTexture;
+    m_activeFrameCmd = cmd;
 
     return cmd;
+}
+
+void RenderDevice::releasePendingTransfers(u32 slot) {
+    if (!m_device || slot >= MAX_FRAMES_IN_FLIGHT) return;
+    for (u32 i = 0; i < m_pendingTransferCounts[slot]; ++i) {
+        if (m_pendingTransfers[slot][i]) {
+            SDL_ReleaseGPUTransferBuffer(m_device, m_pendingTransfers[slot][i]);
+            m_pendingTransfers[slot][i] = nullptr;
+        }
+    }
+    m_pendingTransferCounts[slot] = 0;
 }
 
 void RenderDevice::endFrame(CommandBuffer* cmd) {
@@ -117,9 +133,14 @@ void RenderDevice::endFrame(CommandBuffer* cmd) {
     }
 
     cmd->submit();
+    if (m_activeFrameCmd == cmd) {
+        m_activeFrameCmd = nullptr;
+    }
     delete cmd;
 
+    // Release transfer buffers from the frame that just retired (3 frames ago).
     m_frameIndex = (m_frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+    releasePendingTransfers(m_frameIndex);
 }
 
 Texture* RenderDevice::createTexture(const TextureDesc& desc) {
@@ -318,6 +339,7 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
     blend.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
     blend.color_write_mask = SDL_GPU_COLORCOMPONENT_R | SDL_GPU_COLORCOMPONENT_G |
                              SDL_GPU_COLORCOMPONENT_B | SDL_GPU_COLORCOMPONENT_A;
+    blend.enable_color_write_mask = true;
 
     SDL_GPUColorTargetDescription colorTarget{};
     colorTarget.format = static_cast<SDL_GPUTextureFormat>(desc.colorFormat);
@@ -406,13 +428,23 @@ bool RenderDevice::uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 
     std::memcpy(mapped, data, size);
     SDL_UnmapGPUTransferBuffer(m_device, transferBuffer);
 
-    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    const bool useFrameCmd = m_activeFrameCmd && m_activeFrameCmd->nativeHandle() &&
+                             !m_activeFrameCmd->isInRenderPass();
+    SDL_GPUCommandBuffer* cmd =
+        useFrameCmd ? m_activeFrameCmd->nativeHandle() : SDL_AcquireGPUCommandBuffer(m_device);
     if (!cmd) {
         SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
         return false;
     }
 
     SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(cmd);
+    if (!copyPass) {
+        if (!useFrameCmd) {
+            SDL_SubmitGPUCommandBuffer(cmd);
+        }
+        SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
+        return false;
+    }
 
     SDL_GPUTransferBufferLocation src{};
     src.transfer_buffer = transferBuffer;
@@ -425,9 +457,21 @@ bool RenderDevice::uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 
 
     SDL_UploadToGPUBuffer(copyPass, &src, &dst, false);
     SDL_EndGPUCopyPass(copyPass);
+
+    if (useFrameCmd) {
+        const u32 slot = m_frameIndex;
+        if (m_pendingTransferCounts[slot] < 32) {
+            m_pendingTransfers[slot][m_pendingTransferCounts[slot]++] = transferBuffer;
+        } else {
+            // Overflow: wait this frame so we can free the extra transfer.
+            SDL_WaitForGPUIdle(m_device);
+            SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
+        }
+        return true;
+    }
+
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_WaitForGPUIdle(m_device);
-
     SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
     return true;
 }
@@ -460,13 +504,23 @@ bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width
     std::memcpy(mapped, pixels, transferSize);
     SDL_UnmapGPUTransferBuffer(m_device, transferBuffer);
 
-    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    const bool useFrameCmd = m_activeFrameCmd && m_activeFrameCmd->nativeHandle() &&
+                             !m_activeFrameCmd->isInRenderPass();
+    SDL_GPUCommandBuffer* cmd =
+        useFrameCmd ? m_activeFrameCmd->nativeHandle() : SDL_AcquireGPUCommandBuffer(m_device);
     if (!cmd) {
         SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
         return false;
     }
 
     SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(cmd);
+    if (!copyPass) {
+        if (!useFrameCmd) {
+            SDL_SubmitGPUCommandBuffer(cmd);
+        }
+        SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
+        return false;
+    }
 
     SDL_GPUTextureTransferInfo src{};
     src.transfer_buffer = transferBuffer;
@@ -487,9 +541,20 @@ bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width
 
     SDL_UploadToGPUTexture(copyPass, &src, &dst, false);
     SDL_EndGPUCopyPass(copyPass);
+
+    if (useFrameCmd) {
+        const u32 slot = m_frameIndex;
+        if (m_pendingTransferCounts[slot] < 32) {
+            m_pendingTransfers[slot][m_pendingTransferCounts[slot]++] = transferBuffer;
+        } else {
+            SDL_WaitForGPUIdle(m_device);
+            SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
+        }
+        return true;
+    }
+
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_WaitForGPUIdle(m_device);
-
     SDL_ReleaseGPUTransferBuffer(m_device, transferBuffer);
     return true;
 }

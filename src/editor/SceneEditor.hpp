@@ -20,6 +20,7 @@
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/TerrainEditorPanel.hpp"
+#include "editor/EntityPresetsPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -36,6 +37,7 @@
 #include "events/EventBus.hpp"
 #include "animation/AnimationSystem.hpp"
 #include "render/Camera2D.hpp"
+#include "input/InputManager.hpp"
 
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptEngine.hpp"
@@ -153,6 +155,7 @@ private:
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     TerrainEditorPanel  m_terrainEditor;
+    EntityPresetsPanel  m_entityPresets;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;
@@ -207,13 +210,17 @@ private:
 
     struct EntitySnapshot {
         u32 id;
-        float px = 0, py = 0;
+        bool hasTransform = false;
+        bool hasPos3 = false;
+        float px = 0, py = 0, pz = 0;
         float rz = 0;
     };
     std::vector<EntitySnapshot> m_playSnapshot;
+    Input::InputManager m_input;
 
     IO::FileWatcher m_scriptFileWatcher;
     bool m_scriptWatcherStarted = false;
+    std::string m_pendingStartupScene;
 };
 
 } // namespace Caffeine::Editor

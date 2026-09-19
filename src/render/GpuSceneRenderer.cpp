@@ -15,6 +15,7 @@
 #include "spatial/Octree.hpp"
 #include "math/Quat.hpp"
 #include "ecs/Components.hpp"
+#include "debug/CrashHandler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -211,9 +212,9 @@ bool GpuSceneRenderer::createPipelines() {
     m_sceneVert = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitVertex,
                                           RHI::ShaderStage::Vertex, 1);
     m_sceneFrag = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitFragment,
-                                          RHI::ShaderStage::Fragment, 1, 4);
+                                          RHI::ShaderStage::Fragment, 1, 0);
     m_terrainFrag = createShaderFromBuiltin(m_device, BuiltinShader::TerrainLitFragment,
-                                            RHI::ShaderStage::Fragment, 2, 10);
+                                            RHI::ShaderStage::Fragment, 2, 5);
     m_shadowVert = createShaderFromBuiltin(m_device, BuiltinShader::ShadowDepthVertex,
                                            RHI::ShaderStage::Vertex, 1);
     m_shadowFrag = createShaderFromBuiltin(m_device, BuiltinShader::ShadowDepthFragment,
@@ -366,6 +367,7 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                                    const Scene::SceneLighting& lighting,
                                    RHI::Texture* colorTarget, RHI::Texture* depthTarget,
                                    u32 width, u32 height) {
+    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderMeshes");
     if (!m_scenePipeline || draws.empty()) return 0;
 
     u32 drawnMeshes = 0;
@@ -378,22 +380,14 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     pass.clearColor[2] = 0.0f;
     pass.clearColor[3] = 0.0f;
     pass.clearDepth = true;
+    pass.cycle = true;
     cmd->beginRenderPass(pass);
     cmd->bindPipeline(m_scenePipeline);
     cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
 
-    u32 dirShadowSlot = 0;
-    for (u32 i = 0; i < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++i) {
-        if (m_directionalShadows.valid(i)) {
-            RHI::Texture* tex = m_directionalShadows.texture(i);
-            if (tex) {
-                cmd->bindTexture(tex, 2 + i, m_sampler);
-            }
-        }
-    }
-
     for (const auto& draw : draws) {
-        if (!draw.mesh || !ensureMeshUploaded(draw.mesh)) continue;
+        if (!draw.mesh || draw.mesh->indices.empty()) continue;
+        if (!draw.mesh->vertexBuffer || !draw.mesh->indexBuffer) continue;
 
         if (draw.isTerrain && m_terrainPipeline) {
             cmd->bindPipeline(m_terrainPipeline);
@@ -415,7 +409,7 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
         lights.roughness = draw.roughness;
 
         lights.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
-        dirShadowSlot = 0;
+        u32 dirShadowSlot = 0;
         for (int i = 0; i < lights.dirCount; ++i) {
             const auto& d = lighting.lights.directionals[i];
             lights.dirData[i * 4 + 0] = d.direction.x;
@@ -453,10 +447,6 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 pointShadowSlot < GpuPointShadowMap::kMaxPointShadowLights) {
                 lights.pointShadow[i * 4 + 0] = 1.0f;
                 lights.pointShadow[i * 4 + 1] = static_cast<float>(pointShadowSlot);
-                RHI::Texture* cube = m_pointShadows.cubemap(pointShadowSlot);
-                if (cube) {
-                    cmd->bindTexture(cube, pointShadowSlot, m_sampler);
-                }
                 ++pointShadowSlot;
             }
         }
@@ -476,26 +466,25 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 Terrain::TerrainCache::instance().gpuTexturesFor(draw.entity);
             RHI::Texture* whiteTex =
                 Terrain::TerrainGpuTextureCache::instance().whiteTexture(m_device);
-            // SDL_GPU requires every sampler declared by the shader to be bound.
-            for (u32 slot = 0; slot < 10; ++slot) {
+            for (u32 slot = 0; slot < 5; ++slot) {
                 if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
             }
             if (gpu && gpu->useSplatmap) {
                 mat.flags[0] = 1.0f;
                 if (gpu->splatMap) {
-                    cmd->bindTexture(gpu->splatMap, 4, m_sampler);
+                    cmd->bindTexture(gpu->splatMap, 0, m_sampler);
                 }
                 for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
                     RHI::Texture* layerTex = gpu->layers[i] ? gpu->layers[i] : whiteTex;
                     if (layerTex) {
-                        cmd->bindTexture(layerTex, 5 + i, m_repeatSampler);
+                        cmd->bindTexture(layerTex, 1 + i, m_repeatSampler);
                     }
                 }
             } else if (gpu) {
                 RHI::Texture* albedoTex = gpu->albedo ? gpu->albedo : whiteTex;
                 if (albedoTex) {
                     mat.flags[1] = 1.0f;
-                    cmd->bindTexture(albedoTex, 9, m_repeatSampler);
+                    cmd->bindTexture(albedoTex, 4, m_repeatSampler);
                 }
             }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &mat, sizeof(mat));
@@ -518,25 +507,10 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     return drawnMeshes;
 }
 
-u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
-                              const Editor::EditorContext& ctx, RHI::Texture* colorTarget,
-                              RHI::Texture* depthTarget, u32 width, u32 height,
-                              const std::string& projectRoot) {
-    if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
-    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D) return 0;
-
-    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-    const Vec3 cameraPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
-    const Mat4 view = Mat4::lookAt(cameraPos, ctx.camFocus, Vec3(0, 1, 0));
-    const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
-    const Mat4 proj = Mat4::perspective(60.0f * 3.14159265f / 180.0f, aspect, 0.1f, 10000.0f);
-    const Mat4 vp = proj * view;
-
+std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
+    ECS::World& world, const Vec3& cameraPos, const Spatial::Frustum& frustum,
+    const std::string& projectRoot) {
     std::vector<MeshDraw> draws;
-    const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
-        cameraPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f),
-        60.0f * 3.14159265f / 180.0f, aspect, 0.1f, 10000.0f);
 
     ECS::ComponentQuery q;
     q.with<ECS::MeshFilterComponent>();
@@ -593,26 +567,67 @@ u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
         draws.push_back(draw);
     });
 
+    return draws;
+}
+
+u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& world,
+                                        const GpuSceneCamera& camera, RHI::Texture* colorTarget,
+                                        RHI::Texture* depthTarget, u32 width, u32 height,
+                                        const std::string& projectRoot) {
+    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderWithCamera");
+    if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
+
+    const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
+    const Mat4 vp = camera.proj * camera.view;
+    const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
+        camera.position, camera.focus, Vec3(0.0f, 1.0f, 0.0f), camera.fovRad, aspect,
+        camera.nearClip, camera.farClip);
+
+    std::vector<MeshDraw> draws =
+        gatherMeshDraws(world, camera.position, frustum, projectRoot);
+
+    // Upload GPU buffers before any render pass. Creating/uploading buffers
+    // while a pass is recording is a common NVIDIA driver SIGSEGV.
+    draws.erase(std::remove_if(draws.begin(), draws.end(),
+                               [this](const MeshDraw& draw) {
+                                   return !draw.mesh || !ensureMeshUploaded(draw.mesh) ||
+                                          !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer;
+                               }),
+                draws.end());
     if (draws.empty()) return 0;
 
     Scene::SceneLighting lighting;
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
 
-    const bool wantsDirShadows = std::any_of(
-        lighting.lights.directionals.begin(), lighting.lights.directionals.end(),
-        [](const Scene::DirectionalLightData& l) { return l.castShadows; });
-    const bool wantsPointShadows = std::any_of(
-        lighting.lights.points.begin(), lighting.lights.points.end(),
-        [](const Scene::PointLightData& l) { return l.castShadows; });
+    return renderMeshes(cmd, draws, vp, camera.position, lighting, colorTarget, depthTarget, width,
+                        height);
+}
 
-    if (wantsDirShadows) {
-        renderDirectionalShadows(cmd, world, lighting, draws, ctx.camFocus);
-    }
-    if (wantsPointShadows) {
-        renderPointShadows(cmd, world, lighting, draws);
-    }
-    return renderMeshes(cmd, draws, vp, cameraPos, lighting, colorTarget, depthTarget, width, height);
+u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
+                              const Editor::EditorContext& ctx, RHI::Texture* colorTarget,
+                              RHI::Texture* depthTarget, u32 width, u32 height,
+                              const std::string& projectRoot) {
+    if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
+    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D) return 0;
+
+    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+    const Vec3 cameraPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+    const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
+    const f32 farPlane = ctx.cameraFarPlane();
+
+    GpuSceneCamera camera;
+    camera.position = cameraPos;
+    camera.focus = ctx.camFocus;
+    camera.view = Mat4::lookAt(cameraPos, ctx.camFocus, Vec3(0, 1, 0));
+    camera.proj = Mat4::perspective(60.0f * 3.14159265f / 180.0f, aspect, 0.1f, farPlane);
+    camera.fovRad = 60.0f * 3.14159265f / 180.0f;
+    camera.nearClip = 0.1f;
+    camera.farClip = farPlane;
+
+    return renderWithCamera(cmd, world, camera, colorTarget, depthTarget, width, height,
+                            projectRoot);
 }
 
 }  // namespace Caffeine::Render

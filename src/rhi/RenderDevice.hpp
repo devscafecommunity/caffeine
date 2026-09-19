@@ -191,6 +191,7 @@ struct RenderPassDesc {
     f32  clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     bool clearDepth    = false;
     f32  depthValue    = 1.0f;
+    bool cycle         = false;
 };
 
 // ============================================================================
@@ -244,8 +245,13 @@ private:
     SDL_Window*    m_window     = nullptr;
     RenderConfig   m_config;
     u32            m_frameIndex = 0;
+    CommandBuffer* m_activeFrameCmd = nullptr;
+    SDL_GPUTransferBuffer* m_pendingTransfers[3][32]{};
+    u32 m_pendingTransferCounts[3]{};
 
     static constexpr u32 MAX_FRAMES_IN_FLIGHT = 3;
+
+    void releasePendingTransfers(u32 slot);
 };
 
 }  // namespace Caffeine::RHI

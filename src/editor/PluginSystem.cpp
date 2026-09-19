@@ -2,6 +2,8 @@
 #include "editor/InspectorPanel.hpp"
 #include "editor/CommandPalette.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/EntityPresetPackages.hpp"
+#include "editor/EntityPresetRegistry.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -66,6 +68,7 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_hostApi.registerPanel = &PluginManager::hostRegisterPanel;
     m_hostApi.registerMenuAction = &PluginManager::hostRegisterMenuAction;
     m_hostApi.registerComponentDrawer = &PluginManager::hostRegisterComponentDrawer;
+    m_hostApi.registerEntityPresetManifest = &PluginManager::hostRegisterEntityPresetManifest;
 
     std::error_code ec;
     std::filesystem::create_directories(m_pluginsDirectory, ec);
@@ -130,6 +133,24 @@ bool PluginManager::hostRegisterComponentDrawer(void* ctx, const char* pluginNam
     auto* manager = static_cast<PluginManager*>(ctx);
     return manager->registerComponentDrawer(pluginName, componentTypeId,
                                           [drawFn, userData](void* data) { drawFn(data, userData); });
+}
+
+bool PluginManager::hostRegisterEntityPresetManifest(void* ctx, const char* pluginName,
+                                                     const char* manifestPath) {
+    if (!ctx || !pluginName || !manifestPath) return false;
+    auto* manager = static_cast<PluginManager*>(ctx);
+    auto loaded = loadEntityPresetPackage(manifestPath);
+    if (!loaded.presets.empty()) {
+        for (auto& preset : loaded.presets) {
+            preset.source = pluginName;
+            EntityPresetRegistry::instance().registerPreset(std::move(preset));
+        }
+        return true;
+    }
+    if (!loaded.error.empty()) {
+        hostLogError(manager, loaded.error.c_str());
+    }
+    return false;
 }
 
 bool PluginManager::registerPanel(const std::string& pluginName, const std::string& title,

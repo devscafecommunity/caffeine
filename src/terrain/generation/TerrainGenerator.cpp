@@ -40,18 +40,6 @@ f32 samplePointHeightNoise(const ECS::TerrainGenerationSettings& gen, TerrainHei
                                gen.ridgeGain, gen.multiplicativeContrast);
 }
 
-void applyBaseHeightFromNoise(TerrainHeightmap& heightmap, const ECS::TerrainGenerationSettings& gen,
-                              f32 minNoise, f32 maxNoise) {
-    const f32 amplitude = std::clamp(gen.amplitude, 0.08f, 1.0f);
-    const f32 base = std::clamp(gen.baseHeight, 0.0f, 1.0f);
-    const f32 noiseSpan = std::max(maxNoise - minNoise, 0.0001f);
-
-    for (f32& h : heightmap.heights()) {
-        const f32 normalized = (h - minNoise) / noiseSpan;
-        h = std::clamp(base + (normalized - 0.5f) * amplitude * 2.0f, 0.0f, 1.0f);
-    }
-}
-
 class BaseNoiseModule final : public ITerrainGeneratorModule {
 public:
     const char* name() const override { return "Base Noise"; }
@@ -66,7 +54,6 @@ public:
         const u32 resZ = heightmap.resolutionZ();
         const f32 scale = std::clamp(gen.noiseScale, 0.005f, 0.25f);
         const f32 amplitude = std::clamp(gen.amplitude, 0.08f, 1.0f);
-        const f32 base = std::clamp(gen.baseHeight, 0.0f, 1.0f);
         const f32 spanX = static_cast<f32>(std::max(1u, resX - 1));
         const f32 spanZ = static_cast<f32>(std::max(1u, resZ - 1));
 
@@ -75,26 +62,11 @@ public:
             model = TerrainHeightModel::Hybrid;
         }
 
-        f32 minHeight = 1.0f;
-        f32 maxHeight = 0.0f;
-
         if (model == TerrainHeightModel::DiamondSquare) {
             generateDiamondSquare(heightmap, gen.seed, gen.fractalRoughness);
-            for (f32& h : heightmap.heights()) {
-                h = std::clamp(base + (h - 0.5f) * amplitude * 2.0f, 0.0f, 1.0f);
-                minHeight = std::min(minHeight, h);
-                maxHeight = std::max(maxHeight, h);
-            }
         } else if (model == TerrainHeightModel::SpectralFFT) {
             generateSpectralFft(heightmap, gen.seed + 31u, gen.spectralExponent);
-            for (f32& h : heightmap.heights()) {
-                h = std::clamp(base + (h - 0.5f) * amplitude * 2.0f, 0.0f, 1.0f);
-                minHeight = std::min(minHeight, h);
-                maxHeight = std::max(maxHeight, h);
-            }
         } else if (model == TerrainHeightModel::HeightfieldMultiply) {
-            f32 minNoise = 1.0f;
-            f32 maxNoise = 0.0f;
             for (u32 z = 0; z < resZ; ++z) {
                 for (u32 x = 0; x < resX; ++x) {
                     const f32 u = static_cast<f32>(x) / spanX;
@@ -122,13 +94,8 @@ public:
                     const f32 product =
                         std::pow(std::clamp(layerA * layerB, 0.0f, 1.0f), 1.0f / contrast);
                     heightmap.setNormalized(x, z, product);
-                    minNoise = std::min(minNoise, product);
-                    maxNoise = std::max(maxNoise, product);
                 }
             }
-            applyBaseHeightFromNoise(heightmap, gen, minNoise, maxNoise);
-            minHeight = *std::min_element(heightmap.heights().begin(), heightmap.heights().end());
-            maxHeight = *std::max_element(heightmap.heights().begin(), heightmap.heights().end());
         } else {
             for (u32 z = 0; z < resZ; ++z) {
                 for (u32 x = 0; x < resX; ++x) {
@@ -150,17 +117,10 @@ public:
                     }
 
                     const f32 noise = samplePointHeightNoise(gen, model, nx, nz);
-                    const f32 height =
-                        std::clamp(base + (noise - 0.5f) * amplitude * 2.0f, 0.0f, 1.0f);
+                    const f32 height = std::clamp(gen.baseHeight + noise * amplitude, 0.0f, 1.0f);
                     heightmap.setNormalized(x, z, height);
-                    minHeight = std::min(minHeight, height);
-                    maxHeight = std::max(maxHeight, height);
                 }
             }
-        }
-
-        if (maxHeight - minHeight < 0.002f) {
-            heightmap.applyProceduralNoise(amplitude, gen.seed + 17u);
         }
     }
 };
@@ -199,6 +159,86 @@ public:
                 }
             }
             heightmap.heights() = scratch;
+        }
+    }
+};
+
+f32 pingpong01(f32 value) {
+    value = std::fmod(value, 2.0f);
+    if (value < 0.0f) value += 2.0f;
+    return 1.0f - std::abs(value - 1.0f);
+}
+
+class MicroSculptErosionModule final : public ITerrainGeneratorModule {
+public:
+    const char* name() const override { return "Micro Sculpt Erosion"; }
+
+    void apply(TerrainGeneratorContext& ctx) override {
+        if (!ctx.settings.microSculpt) return;
+
+        const auto& gen = ctx.settings;
+        auto& heightmap = ctx.heightmap;
+        const u32 resX = heightmap.resolutionX();
+        const u32 resZ = heightmap.resolutionZ();
+        const f32 spanX = static_cast<f32>(std::max(1u, resX - 1));
+        const f32 spanZ = static_cast<f32>(std::max(1u, resZ - 1));
+        const f32 scale = std::clamp(gen.noiseScale, 0.005f, 0.25f);
+        const f32 sculptStrength = std::clamp(gen.microSculptStrength, 0.0f, 1.0f);
+        const f32 riverCarve = std::clamp(gen.microRiverCarve, 0.0f, 1.0f);
+        const f32 plateau = std::clamp(gen.plateauSharpen, 0.0f, 1.0f);
+
+        for (u32 z = 0; z < resZ; ++z) {
+            for (u32 x = 0; x < resX; ++x) {
+                const f32 u = static_cast<f32>(x) / spanX;
+                const f32 v = static_cast<f32>(z) / spanZ;
+                const f32 wx = u * spanX * scale;
+                const f32 wz = v * spanZ * scale;
+
+                f32 terrain = heightmap.sampleNormalized(x, z);
+
+                const f32 biome =
+                    sampleFbm2D(gen.noiseAlgorithm, wx + 500.0f, wz + 500.0f, gen.seed + 4u, 1u,
+                                0.5f, 2.0f);
+                const f32 erosionSoftness =
+                    std::clamp(biome * 0.6f - 0.1f + gen.microSculptSoftness, 0.0f, 1.5f);
+
+                f32 erosion =
+                    sampleFbm2D(gen.noiseAlgorithm, wx, wz, gen.seed + 1u, 3u, 0.5f, 1.8f);
+                erosion = smoothstep(0.0f, 1.0f, erosion);
+                erosion = std::pow(erosion, 1.0f + erosionSoftness);
+                erosion = std::clamp(pingpong01(erosion * 2.0f) - 0.3f, 0.0f, 1.0f);
+
+                terrain *= std::lerp(1.0f, erosion, sculptStrength * terrain);
+
+                if (riverCarve > 0.001f) {
+                    f32 rivers = sampleFbm2D(gen.noiseAlgorithm, wx, wz, gen.seed + 77u, 4u, 0.35f,
+                                             2.0f);
+                    rivers = (std::abs(rivers) - 0.5f) * 2.0f;
+                    rivers = pingpong01(rivers);
+                    rivers = 1.0f - smoothstep(0.44f, 0.62f, rivers);
+                    terrain -= rivers * riverCarve * 0.35f;
+                }
+
+                const f32 altitudeNoise = biome * 1.4f - 0.75f;
+                terrain = terrain + gen.baseHeight * 0.35f + altitudeNoise * 0.18f;
+
+                const f32 squared = terrain * terrain;
+                const f32 cubed = squared * terrain;
+                terrain = std::lerp(squared, cubed, plateau);
+
+                // High-frequency surface grain — breaks up overly smooth slopes.
+                const f32 grain =
+                    sampleFbm2D(gen.noiseAlgorithm, wx * 3.6f, wz * 3.6f, gen.seed + 211u, 4u,
+                                0.55f, 2.35f);
+                const f32 grain2 =
+                    sampleFbm2D(gen.noiseAlgorithm, wx * 9.0f, wz * 9.0f, gen.seed + 313u, 3u,
+                                0.45f, 2.6f);
+                const f32 surfaceGrain = (grain * 0.65f + grain2 * 0.35f - 0.5f);
+                const f32 slopeMask = std::clamp(terrain * 1.35f, 0.0f, 1.0f);
+                terrain += surfaceGrain * sculptStrength * 0.11f * slopeMask;
+
+                heightmap.setNormalized(x, z, std::clamp(terrain, 0.0f, 1.0f));
+            }
         }
     }
 };
@@ -614,6 +654,29 @@ public:
     }
 };
 
+class NormalizeHeightModule final : public ITerrainGeneratorModule {
+public:
+    const char* name() const override { return "Normalize Height"; }
+
+    void apply(TerrainGeneratorContext& ctx) override {
+        auto& heights = ctx.heightmap.heights();
+        if (heights.empty()) return;
+        f32 minH = heights[0];
+        f32 maxH = heights[0];
+        for (f32 h : heights) {
+            minH = std::min(minH, h);
+            maxH = std::max(maxH, h);
+        }
+        const f32 range = maxH - minH;
+        if (range < 0.02f) return;
+        // Stretch local relief into the authored maxHeight (meters). Without this,
+        // geological simulation leaves a nearly flat 0–1 band.
+        for (f32& h : heights) {
+            h = std::clamp((h - minH) / range, 0.0f, 1.0f);
+        }
+    }
+};
+
 class GeologicalSimulationModule final : public ITerrainGeneratorModule {
 public:
     const char* name() const override { return "Geological Simulation"; }
@@ -625,6 +688,7 @@ public:
 };
 
 BaseNoiseModule g_baseNoise;
+MicroSculptErosionModule g_microSculpt;
 SmoothFilterModule g_smooth;
 ThermalErosionModule g_thermal;
 HydraulicErosionModule g_hydraulic;
@@ -635,6 +699,7 @@ GeologicalSimulationModule g_geological;
 PostSimulationSmoothModule g_postSimSmooth;
 ExponentialSlopeWeightingModule g_slopeWeighting;
 RiverTracingModule g_riverTracing;
+NormalizeHeightModule g_normalizeHeight;
 
 }  // namespace
 
@@ -653,65 +718,117 @@ void applyGenerationStylePreset(ECS::TerrainGenerationSettings& settings, ECS::T
     switch (style) {
         case ECS::TerrainGenStyle::Realistic:
             settings.noiseAlgorithm = TerrainNoiseAlgorithm::Simplex;
-            settings.heightModel = TerrainHeightModel::RollingHills;
-            settings.noiseScale = 0.025f;
-            settings.octaves = 5;
-            settings.persistence = 0.5f;
-            settings.lacunarity = 2.0f;
-            settings.amplitude = 0.38f;
-            settings.baseHeight = 0.28f;
+            settings.heightModel = TerrainHeightModel::Hybrid;
+            settings.noiseScale = 0.018f;
+            settings.octaves = 6;
+            settings.persistence = 0.48f;
+            settings.lacunarity = 2.05f;
+            settings.amplitude = 0.85f;
+            settings.baseHeight = 0.12f;
+            settings.ridgedBlend = 0.45f;
             settings.domainWarp = true;
             settings.fractalDomainWarp = true;
-            settings.domainWarpStrength = 0.12f;
-            settings.domainWarpScale = 32.0f;
-            settings.slopeWeighting = true;
-            settings.slopeWeightAlpha = 0.06f;
+            settings.domainWarpStrength = 0.18f;
+            settings.domainWarpScale = 40.0f;
+            settings.slopeWeighting = false;
+            settings.slopeWeightAlpha = 0.04f;
+            settings.microSculpt = true;
+            settings.microSculptStrength = 0.48f;
+            settings.microSculptSoftness = 0.32f;
+            settings.plateauSharpen = 0.5f;
             settings.thermalErosion = true;
             settings.thermalIterations = 18;
-            settings.hydraulicErosion = false;
-            settings.hydrology.traceRivers = true;
-            settings.hydrology.maxRiverSources = 32;
-            settings.hydrology.riverCarveStrength = 0.00004f;
-            settings.smoothPass = true;
-            settings.smoothIterations = 1;
+            settings.thermalTalus = 0.008f;
+            settings.hydraulicErosion = true;
+            settings.hydraulicIterations = 6000;
+            settings.hydraulicErode = 0.22f;
+            settings.hydraulicDeposit = 0.28f;
+            settings.hydrology.traceRivers = false;
+            settings.microRiverCarve = 0.15f;
+            settings.smoothPass = false;
+            settings.smoothIterations = 0;
             settings.useClimateBiomes = true;
             settings.simulation.enabled = false;
             break;
         case ECS::TerrainGenStyle::LowPoly:
             settings.noiseAlgorithm = TerrainNoiseAlgorithm::Value;
             settings.heightModel = TerrainHeightModel::FractalFBM;
-            settings.noiseScale = 0.03f;
+            settings.noiseScale = 0.022f;
             settings.octaves = 3;
-            settings.persistence = 0.45f;
+            settings.persistence = 0.5f;
             settings.lacunarity = 2.0f;
-            settings.amplitude = 0.42f;
-            settings.baseHeight = 0.25f;
+            settings.amplitude = 0.9f;
+            settings.baseHeight = 0.1f;
             settings.domainWarp = false;
             settings.slopeWeighting = false;
             settings.thermalErosion = false;
             settings.hydraulicErosion = false;
             settings.hydrology.traceRivers = false;
             settings.smoothPass = false;
-            settings.heightQuantize = 12.0f;
+            settings.heightQuantize = 8.0f;
             settings.simulation.enabled = false;
             break;
         case ECS::TerrainGenStyle::Stylized:
             settings.noiseAlgorithm = TerrainNoiseAlgorithm::Perlin;
-            settings.heightModel = TerrainHeightModel::FractalFBM;
-            settings.noiseScale = 0.028f;
-            settings.octaves = 4;
-            settings.persistence = 0.55f;
+            settings.heightModel = TerrainHeightModel::RidgedMountains;
+            settings.noiseScale = 0.02f;
+            settings.octaves = 5;
+            settings.persistence = 0.5f;
             settings.lacunarity = 2.1f;
-            settings.amplitude = 0.52f;
-            settings.baseHeight = 0.22f;
-            settings.domainWarp = false;
+            settings.amplitude = 0.9f;
+            settings.baseHeight = 0.08f;
+            settings.domainWarp = true;
+            settings.fractalDomainWarp = true;
+            settings.domainWarpStrength = 0.1f;
             settings.slopeWeighting = false;
             settings.thermalErosion = false;
             settings.hydraulicErosion = false;
             settings.hydrology.traceRivers = false;
             settings.smoothPass = true;
-            settings.smoothIterations = 2;
+            settings.smoothIterations = 1;
             settings.simulation.enabled = false;
+            break;
+        case ECS::TerrainGenStyle::UltraRealistic:
+            settings.noiseAlgorithm = TerrainNoiseAlgorithm::Simplex;
+            settings.heightModel = TerrainHeightModel::Hybrid;
+            settings.noiseScale = 0.012f;
+            settings.octaves = 7;
+            settings.persistence = 0.52f;
+            settings.lacunarity = 2.08f;
+            settings.amplitude = 1.0f;
+            settings.baseHeight = 0.08f;
+            settings.ridgedBlend = 0.5f;
+            settings.domainWarp = true;
+            settings.fractalDomainWarp = true;
+            settings.domainWarpStrength = 0.2f;
+            settings.domainWarpScale = 36.0f;
+            settings.slopeWeighting = true;
+            settings.slopeWeightAlpha = 0.05f;
+            settings.microSculpt = true;
+            settings.microSculptStrength = 0.68f;
+            settings.microSculptSoftness = 0.22f;
+            settings.microRiverCarve = 0.32f;
+            settings.plateauSharpen = 0.35f;
+            settings.thermalErosion = false;
+            settings.hydraulicErosion = false;
+            settings.hydrology.traceRivers = false;
+            settings.smoothPass = false;
+            settings.smoothIterations = 0;
+            settings.postSimSmoothIterations = 2;
+            settings.useClimateBiomes = true;
+            settings.simulation.enabled = true;
+            settings.simulation.environment = ECS::TerrainEnvironment::AlpineGlacial;
+            settings.simulation.totalIterations = 420;
+            settings.simulation.dropletsPerIteration = 18;
+            settings.simulation.maxDropletSteps = 96;
+            settings.simulation.tectonicActivity = 0.62f;
+            settings.simulation.erosionWater = 0.92f;
+            settings.simulation.erosionThermal = 0.58f;
+            settings.simulation.erosionGlacial = 0.18f;
+            settings.simulation.erosionWind = 0.14f;
+            settings.simulation.erosionBiological = 0.42f;
+            settings.simulation.temperature = 0.42f;
+            settings.simulation.humidity = 0.72f;
             break;
         case ECS::TerrainGenStyle::Custom:
             break;
@@ -754,6 +871,8 @@ void TerrainGenerator::generate(TerrainHeightmap& heightmap, TerrainSplatmap& sp
     }
     pipeline.addModule(g_slopeWeighting);
     pipeline.addModule(g_smooth);
+    pipeline.addModule(g_microSculpt);
+    pipeline.addModule(g_normalizeHeight);
     pipeline.addModule(g_quantize);
     pipeline.addModule(g_autoSplat);
     pipeline.run(ctx);

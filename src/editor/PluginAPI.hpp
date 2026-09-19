@@ -52,6 +52,10 @@ struct PluginHostApi {
     bool (*registerComponentDrawer)(void* ctx, const char* pluginName, u32 componentTypeId,
                                     void (*drawFn)(void* componentData, void* userData),
                                     void* userData) = nullptr;
+
+    // Registers presets from an entity_presets.json manifest (package/plugin format).
+    bool (*registerEntityPresetManifest)(void* ctx, const char* pluginName,
+                                         const char* manifestPath) = nullptr;
 };
 
 using CreatePluginFn = IPlugin* (*)(const PluginHostApi* host);

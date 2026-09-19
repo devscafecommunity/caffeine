@@ -128,10 +128,17 @@ public:
 
     bool            isPlayMode = false;
 
-    static constexpr f32 kCamDistanceMin = 0.5f;
+    static constexpr f32 kCamDistanceMin = 0.25f;
     static constexpr f32 kCamDistanceMax = 50000.0f;
-    static constexpr f32 kCamPitchMin = -1.55f;
-    static constexpr f32 kCamPitchMax = 1.4f;
+    static constexpr f32 kCamPitchMin = -1.57f;
+    static constexpr f32 kCamPitchMax = 1.57f;
+
+    f32 cameraFarPlane() const {
+        const f32 orbit = std::abs(camDistance);
+        const f32 reach = std::max({orbit, std::abs(camFocus.x), std::abs(camFocus.y),
+                                    std::abs(camFocus.z)});
+        return std::max(12000.0f, reach * 32.0f + 4000.0f);
+    }
 
     // ── Skybox (3D viewport) ───────────────────────────────────────────
     bool skyboxEnabled = true;
@@ -139,7 +146,7 @@ public:
 
     // ── Terrain editing (3D viewport) ────────────────────────────────
     enum class TerrainEditMode : u8 { None, Sculpt, Splat };
-    enum class TerrainBrushMode : u8 { Raise, Lower, Smooth };
+    enum class TerrainBrushMode : u8 { Raise, Lower, Smooth, Flatten, Noise };
 
     TerrainEditMode  terrainEditMode     = TerrainEditMode::None;
     TerrainBrushMode terrainBrushMode    = TerrainBrushMode::Raise;

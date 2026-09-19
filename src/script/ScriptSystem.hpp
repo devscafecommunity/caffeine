@@ -13,6 +13,7 @@ public:
     explicit ScriptSystem(ScriptEngine* engine);
 
     void onUpdate(ECS::World& world, f32 dt) override;
+    void resetPlayState();
 
 private:
     void processLuaScripts(ECS::World& world, f32 dt);

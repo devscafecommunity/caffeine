@@ -27,47 +27,13 @@ layout(set = 3, binding = 1) uniform TerrainMaterialUBO {
     mat4 uModelInv;
 } terrainMat;
 
-layout(set = 2, binding = 0) uniform samplerCube uPointShadow0;
-layout(set = 2, binding = 1) uniform samplerCube uPointShadow1;
-layout(set = 2, binding = 2) uniform sampler2D uDirShadow0;
-layout(set = 2, binding = 3) uniform sampler2D uDirShadow1;
-layout(set = 2, binding = 4) uniform sampler2D uSplatMap;
-layout(set = 2, binding = 5) uniform sampler2D uLayer0;
-layout(set = 2, binding = 6) uniform sampler2D uLayer1;
-layout(set = 2, binding = 7) uniform sampler2D uLayer2;
-layout(set = 2, binding = 8) uniform sampler2D uLayer3;
-layout(set = 2, binding = 9) uniform sampler2D uAlbedoTex;
+layout(set = 2, binding = 0) uniform sampler2D uSplatMap;
+layout(set = 2, binding = 1) uniform sampler2D uLayer0;
+layout(set = 2, binding = 2) uniform sampler2D uLayer1;
+layout(set = 2, binding = 3) uniform sampler2D uLayer2;
+layout(set = 2, binding = 4) uniform sampler2D uLayer3;
 
 layout(location = 0) out vec4 outColor;
-
-float samplePointShadow(int slot, vec3 worldPos, vec3 lightPos, float radius) {
-    vec3 toFrag = worldPos - lightPos;
-    float dist = length(toFrag);
-    if (dist > radius) return 1.0;
-
-    vec3 dir = normalize(toFrag);
-    float stored = 0.0;
-    if (slot == 0) stored = texture(uPointShadow0, dir).r;
-    else if (slot == 1) stored = texture(uPointShadow1, dir).r;
-
-    const float bias = 0.02;
-    return dist - bias > stored ? 0.15 : 1.0;
-}
-
-float sampleDirShadow(int slot, vec3 worldPos, mat4 lightVP) {
-    vec4 clip = lightVP * vec4(worldPos, 1.0);
-    if (clip.w <= 0.0) return 1.0;
-    vec3 ndc = clip.xyz / clip.w;
-    if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0) return 1.0;
-
-    vec2 uv = ndc.xy * 0.5 + 0.5;
-    float stored = 0.0;
-    if (slot == 0) stored = texture(uDirShadow0, uv).r;
-    else if (slot == 1) stored = texture(uDirShadow1, uv).r;
-
-    const float bias = 0.002;
-    return ndc.z - bias > stored ? 0.2 : 1.0;
-}
 
 vec3 triplanarSample(sampler2D tex, vec3 localPos, vec3 blend, float tileScale) {
     vec3 scaled = localPos / max(tileScale, 0.1);
@@ -87,9 +53,9 @@ vec3 sampleTerrainAlbedo(vec3 n) {
     vec3 blend = abs(normalize(n));
     blend = max(blend, vec3(0.0001));
     blend /= (blend.x + blend.y + blend.z);
+    vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
 
     if (terrainMat.uFlags.x > 0.5) {
-        vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
         float halfX = terrainMat.uWorldSize.x * 0.5;
         float halfZ = terrainMat.uWorldSize.y * 0.5;
         float su = clamp((local.x + halfX) / max(terrainMat.uWorldSize.x, 0.0001), 0.0, 1.0);
@@ -104,11 +70,7 @@ vec3 sampleTerrainAlbedo(vec3 n) {
             return applyDetailVariation(albedo, local);
         }
     }
-    if (terrainMat.uFlags.y > 0.5) {
-        vec3 local = (terrainMat.uModelInv * vec4(v_worldPos, 1.0)).xyz;
-        return applyDetailVariation(triplanarSample(uAlbedoTex, local, blend, tileScale), local);
-    }
-    return lights.uAlbedo.rgb;
+    return applyDetailVariation(triplanarSample(uLayer3, local, blend, tileScale), local);
 }
 
 void main() {
@@ -120,12 +82,7 @@ void main() {
     for (int i = 0; i < lights.uDirCount; ++i) {
         vec3 dir = normalize(-lights.uDirData[i].xyz);
         float ndotl = max(dot(n, dir), 0.0);
-        float shadow = 1.0;
-        if (lights.uDirShadow[i].x > 0.5) {
-            int slot = int(lights.uDirShadow[i].y);
-            shadow = sampleDirShadow(slot, v_worldPos, lights.uDirShadowVP[slot]);
-        }
-        vec3 diffuse = lights.uDirColor[i].rgb * lights.uDirData[i].w * ndotl * shadow;
+        vec3 diffuse = lights.uDirColor[i].rgb * lights.uDirData[i].w * ndotl;
         color += diffuse * surfaceAlbedo;
     }
 
@@ -138,12 +95,7 @@ void main() {
         vec3 ldir = toLight / dist;
         float atten = 1.0 - smoothstep(radius * 0.75, radius, dist);
         float ndotl = max(dot(n, ldir), 0.0);
-        float shadow = 1.0;
-        if (lights.uPointShadow[i].x > 0.5) {
-            int slot = int(lights.uPointShadow[i].y);
-            shadow = samplePointShadow(slot, v_worldPos, lights.uPointData[i].xyz, radius);
-        }
-        vec3 diffuse = lights.uPointColor[i].rgb * lights.uPointData[i].w * ndotl * atten * shadow;
+        vec3 diffuse = lights.uPointColor[i].rgb * lights.uPointData[i].w * ndotl * atten;
         color += diffuse * surfaceAlbedo;
     }
 

@@ -7,12 +7,20 @@
 #include "editor/ComponentRegistry.hpp"
 #include "editor/EditorIcons.hpp"
 #include "debug/Profiler.hpp"
+#include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
+#include "editor/EntityPresetRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
 #include "script/ScriptTypes.hpp"
 #include "events/Events.hpp"
+#include "input/InputManager.hpp"
+#include "ecs/Components3D.hpp"
+#include "ecs/CameraComponents.hpp"
+#ifdef CF_HAS_SDL3
+#include <SDL3/SDL.h>
+#endif
 
 #ifdef CF_HAS_IMGUI
 #include <imgui_internal.h>
@@ -40,6 +48,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_currentProjectConfig = projectConfig;
     m_currentProjectConfig.RootPath =
         ProjectManager::ResolveEditorProjectRoot(projectConfig.RootPath);
+
+    EntityPresetRegistry::instance().registerBuiltIns();
+    EntityPresetRegistry::instance().scanProject(m_currentProjectConfig.RootPath);
+    m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
+    m_entityPresets.setOnScriptOpen([this](const std::string& path) {
+        m_scriptEditor.openFile(std::filesystem::path(path));
+        m_scriptEditor.open();
+    });
+    m_hierarchy.setOpenPresetsCallback([this]() { m_entityPresets.open(); });
     m_tabManager.newScene("Untitled");
 
     m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {
@@ -80,6 +97,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      });
      m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Panels", [this]() {
          m_terrainEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Panels", [this]() {
+         m_entityPresets.open();
      });
      m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
          m_settingsPanel.open();
@@ -138,11 +158,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
             scenePath = projectConfig.RootPath / "scenes" / "main.caf";
         }
         if (std::filesystem::exists(scenePath)) {
-            if (auto* world = m_tabManager.activeWorld()) {
-                loadScene(scenePath.string().c_str(), *world);
-                m_tabManager.activeTab().name = scenePath.stem().string();
-                m_tabManager.activeTab().path = scenePath.string();
-            }
+            m_pendingStartupScene = scenePath.string();
         }
     }
 
@@ -150,11 +166,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     Script::ScriptEngine::InitParams scriptParams;
     scriptParams.world  = nullptr;
     scriptParams.events = &m_eventBus;
+    scriptParams.input  = &m_input;
     if (!m_scriptEngineReady) {
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
      m_ctx.scriptEngine = &m_scriptEngine;
      m_scriptEditor.setScriptEngine(&m_scriptEngine);
+     if (m_scriptEngineReady) {
+         m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+     }
 #endif
 
     registerAllComponents(ComponentRegistry::instance());
@@ -259,20 +279,42 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
         [&](ECS::Entity e, ECS::Transform& pos) {
             EntitySnapshot snap;
             snap.id = e.id();
-            snap.px = pos.position.x; snap.py = pos.position.y;
+            snap.hasTransform = true;
+            snap.px = pos.position.x; snap.py = pos.position.y; snap.pz = pos.position.z;
             snap.rz = pos.rotation.z;
+            m_playSnapshot.push_back(snap);
+        });
+    ECS::ComponentQuery q3;
+    q3.with<ECS::Position3D>();
+    world.forEach<ECS::Position3D>(q3,
+        [&](ECS::Entity e, ECS::Position3D& p) {
+            EntitySnapshot snap;
+            snap.id = e.id();
+            snap.hasPos3 = true;
+            snap.px = p.position.x; snap.py = p.position.y; snap.pz = p.position.z;
             m_playSnapshot.push_back(snap);
         });
     m_isPlaying = true;
     m_isPaused  = false;
+    CF_INFO("Play", "Simulation started");
 #ifdef CF_HAS_SCRIPTING
+    m_scriptEngine.setWorld(&world);
+    m_scriptEngine.setInput(&m_input);
     if (!m_scriptEngineReady) {
         Script::ScriptEngine::InitParams p;
         p.world  = &world;
         p.events = &m_eventBus;
+        p.input  = &m_input;
         m_scriptEngineReady = m_scriptEngine.init(p);
-        m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
     }
+    m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+    m_scriptSystem.resetPlayState();
+    ECS::ComponentQuery cppQ;
+    cppQ.with<Script::CppScriptComponent>();
+    world.forEach<Script::CppScriptComponent>(cppQ,
+        [](ECS::Entity, Script::CppScriptComponent& csc) {
+            csc.initialized = false;
+        });
 #endif
 }
 
@@ -288,17 +330,80 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
     for (auto& snap : m_playSnapshot) {
         ECS::Entity e(snap.id, &world);
         if (!e.isValid()) continue;
-        if (auto* pos = world.get<ECS::Transform>(e)) { pos->position.x = snap.px; pos->position.y = snap.py; pos->rotation.z = snap.rz; }
+        if (snap.hasTransform) {
+            if (auto* pos = world.get<ECS::Transform>(e)) {
+                pos->position.x = snap.px;
+                pos->position.y = snap.py;
+                pos->position.z = snap.pz;
+                pos->rotation.z = snap.rz;
+            }
+        }
+        if (snap.hasPos3) {
+            if (auto* p = world.get<ECS::Position3D>(e)) {
+                p->position = Vec3(snap.px, snap.py, snap.pz);
+            }
+        }
     }
     m_playSnapshot.clear();
+#ifdef CF_HAS_SCRIPTING
+    m_scriptSystem.resetPlayState();
+#endif
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     if (!m_isPlaying || m_isPaused) return;
+
+    m_input.beginFrame();
+    {
+        auto& io = ImGui::GetIO();
+#ifdef CF_HAS_SDL3
+        const bool* ks = SDL_GetKeyboardState(nullptr);
+        auto syncScan = [&](SDL_Scancode scan, Input::Key key) {
+            if (ks && ks[scan]) m_input.injectKeyDown(key);
+            else m_input.injectKeyUp(key);
+        };
+        syncScan(SDL_SCANCODE_W, Input::Key::W);
+        syncScan(SDL_SCANCODE_A, Input::Key::A);
+        syncScan(SDL_SCANCODE_S, Input::Key::S);
+        syncScan(SDL_SCANCODE_D, Input::Key::D);
+        syncScan(SDL_SCANCODE_SPACE, Input::Key::Space);
+        syncScan(SDL_SCANCODE_UP, Input::Key::Up);
+        syncScan(SDL_SCANCODE_DOWN, Input::Key::Down);
+        syncScan(SDL_SCANCODE_LEFT, Input::Key::Left);
+        syncScan(SDL_SCANCODE_RIGHT, Input::Key::Right);
+        float relX = 0.0f, relY = 0.0f;
+        SDL_GetRelativeMouseState(&relX, &relY);
+        const f32 lookX = (std::abs(relX) > std::abs(io.MouseDelta.x)) ? relX : io.MouseDelta.x;
+        const f32 lookY = (std::abs(relY) > std::abs(io.MouseDelta.y)) ? relY : io.MouseDelta.y;
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, lookX * 0.12f);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, lookY * 0.12f);
+#else
+        auto syncKey = [&](ImGuiKey imguiKey, Input::Key key) {
+            if (ImGui::IsKeyDown(imguiKey)) m_input.injectKeyDown(key);
+            else m_input.injectKeyUp(key);
+        };
+        syncKey(ImGuiKey_W, Input::Key::W);
+        syncKey(ImGuiKey_A, Input::Key::A);
+        syncKey(ImGuiKey_S, Input::Key::S);
+        syncKey(ImGuiKey_D, Input::Key::D);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, io.MouseDelta.x * 0.12f);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, io.MouseDelta.y * 0.12f);
+#endif
+        m_input.injectMouseMove(io.MousePos.x, io.MousePos.y);
+        if (io.MouseDown[0]) m_input.injectMouseButtonDown(Input::MouseButton::Left);
+        else m_input.injectMouseButtonUp(Input::MouseButton::Left);
+        if (io.MouseDown[1]) m_input.injectMouseButtonDown(Input::MouseButton::Right);
+        else m_input.injectMouseButtonUp(Input::MouseButton::Right);
+    }
+    m_input.endFrame();
+
     m_animationSystem.onUpdate(world, dt);
     m_physicsSystem.onUpdate(world, dt);
 #ifdef CF_HAS_SCRIPTING
-    if (m_scriptEngineReady) m_scriptSystem.onUpdate(world, dt);
+    if (m_scriptEngineReady) {
+        m_scriptEngine.setWorld(&world);
+        m_scriptSystem.onUpdate(world, dt);
+    }
 #endif
     {
         auto& io = ImGui::GetIO();
@@ -357,6 +462,15 @@ void SceneEditor::render(f32 deltaTime) {
     if (!activeWorld) {
         renderUnsavedChangesPopup(nullptr);
         return;
+    }
+
+    if (!m_pendingStartupScene.empty()) {
+        const std::string scenePath = m_pendingStartupScene;
+        m_pendingStartupScene.clear();
+        if (loadScene(scenePath.c_str(), *activeWorld)) {
+            m_tabManager.activeTab().name = std::filesystem::path(scenePath).stem().string();
+            m_tabManager.activeTab().path = scenePath;
+        }
     }
 
     if (m_tabManager.activeTabIndex() >= 0) {
@@ -454,7 +568,6 @@ void SceneEditor::render(f32 deltaTime) {
          profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
          profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
          m_materialEditor.open();
-         m_terrainEditor.open();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -470,7 +583,6 @@ void SceneEditor::render(f32 deltaTime) {
     renderPlaybar(*activeWorld);
     m_viewport.setFrameCommandBuffer(m_frameCmd);
     m_viewport.render(*activeWorld, m_ctx);
-    m_viewport.setFrameCommandBuffer(nullptr);
     m_assetBrowser.render(*activeWorld, m_ctx);
     m_console.render();
     m_profiler.render(Debug::Profiler::instance());
@@ -479,8 +591,11 @@ void SceneEditor::render(f32 deltaTime) {
     m_settingsPanel.render();
     m_materialEditor.onImGuiRender();
     m_terrainEditor.render(*activeWorld, m_ctx);
+    m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
+    m_entityPresets.render(*activeWorld, m_ctx);
     m_audioPreview.onImGuiRender();
     m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
+    m_viewport.setFrameCommandBuffer(nullptr);
     m_animationTimeline.render(deltaTime);
     m_animatorController.render();
     m_tilemapEditor.render();
@@ -519,6 +634,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
      ImGui::DockBuilderDockWindow("Plugin Manager", dockBottom);
      ImGui::DockBuilderDockWindow("Material Editor", dockBottom);
      ImGui::DockBuilderDockWindow("Terrain Editor", dockBottom);
+     ImGui::DockBuilderDockWindow("Entity Presets", dockBottom);
 
      ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -648,6 +764,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool terrainEditorOpen = m_terrainEditor.isOpen();
             if (ImGui::MenuItem("Terrain Editor", nullptr, terrainEditorOpen)) {
                 terrainEditorOpen ? m_terrainEditor.close() : m_terrainEditor.open();
+            }
+            bool entityPresetsOpen = m_entityPresets.isOpen();
+            if (ImGui::MenuItem("Entity Presets", nullptr, entityPresetsOpen)) {
+                entityPresetsOpen ? m_entityPresets.close() : m_entityPresets.open();
             }
             syncLayoutProfileFromPanels();
             ImGui::EndMenu();

@@ -1,3 +1,4 @@
+#include "debug/CrashHandler.hpp"
 #include "rhi/RenderDevice.hpp"
 #include "rhi/CommandBuffer.hpp"
 #include "assets/AssetManager.hpp"
@@ -7,6 +8,7 @@
 #include "editor/EditorIcons.hpp"
 #include "editor/SceneEditor.hpp"
 #include "editor/ProjectStartupDialog.hpp"
+#include "editor/ProjectManager.hpp"
 #include "editor/TestRequestHandler.hpp"
 #include "editor/EditorContext.hpp"
 #include "ecs/World.hpp"
@@ -26,13 +28,19 @@
 #include <iostream>
 
 int main(int argc, char** argv) {
+    Caffeine::Debug::installCrashHandler();
+    Caffeine::Debug::setCrashBreadcrumb("main");
     std::string scenePath;
+    std::string projectPath;
     bool testMode = false;
     
-    for (int i = 1; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--scene") {
+    for (int i = 1; i < argc; ++i) {
+        if (i + 1 < argc && std::string(argv[i]) == "--scene") {
             scenePath = argv[i + 1];
-            break;
+            ++i;
+        } else if (i + 1 < argc && std::string(argv[i]) == "--project") {
+            projectPath = argv[i + 1];
+            ++i;
         }
     }
     
@@ -151,12 +159,25 @@ int main(int argc, char** argv) {
     selectedProject.Name = "TestProject";
     selectedProject.RootPath = std::filesystem::path(scenePath).parent_path();
     selectedProject.AssetRawPath = selectedProject.RootPath / "assets";
+
+    bool projectSelected = false;
+    if (!projectPath.empty()) {
+        Caffeine::Editor::ProjectManager projectManager;
+        if (projectManager.TryLoadProject(projectPath, selectedProject)) {
+            projectSelected = true;
+        } else {
+            std::fprintf(stderr, "Failed to load project: %s\n", projectPath.c_str());
+            imgui.shutdown();
+            device.shutdown();
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 1;
+        }
+    }
     
-    if (scenePath.empty() || !std::filesystem::exists(scenePath)) {
+    if (!projectSelected && (scenePath.empty() || !std::filesystem::exists(scenePath))) {
         Caffeine::Editor::ProjectStartupDialog projectDialog;
         projectDialog.init();
-
-        bool projectSelected = false;
 
         while (projectDialog.isOpen() && !projectSelected) {
             SDL_Event event;
@@ -247,9 +268,11 @@ int main(int argc, char** argv) {
         if (!cmd) continue;
 
         imgui.beginFrame();
+        Caffeine::Debug::setCrashBreadcrumb("editor.render");
         editor.setFrameCommandBuffer(cmd);
         editor.render(deltaTime);
         editor.setFrameCommandBuffer(nullptr);
+        Caffeine::Debug::setCrashBreadcrumb("imgui.prepareRender");
         imgui.prepareRender(cmd);
 
         Caffeine::RHI::RenderPassDesc passDesc;

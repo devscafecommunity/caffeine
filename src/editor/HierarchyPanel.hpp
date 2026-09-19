@@ -8,6 +8,8 @@
 #include "editor/EditorContext.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 
+#include <functional>
+
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #include <cstring>
@@ -32,6 +34,8 @@ public:
 
     void duplicateEntity(ECS::World& world, ECS::Entity src);
 
+    void setOpenPresetsCallback(std::function<void()> callback) { m_openPresets = std::move(callback); }
+
 private:
     void renderSearchBar();
     void renderToolbar();
@@ -55,6 +59,7 @@ private:
     ECS::Entity m_renaming = ECS::Entity::INVALID;
     ECS::Entity m_lastScrollTarget = ECS::Entity::INVALID;
     ECS::Entity m_expandEntity = ECS::Entity::INVALID;
+    std::function<void()> m_openPresets;
 };
 
 } // namespace Caffeine::Editor

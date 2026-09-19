@@ -15,7 +15,7 @@ struct Camera2DComponent {
 struct Camera3DComponent {
     f32 fov = 60.0f;
     f32 nearClip = 0.1f;
-    f32 farClip = 1000.0f;
+    f32 farClip = 8000.0f;
     f32 aspectRatio = 16.0f / 9.0f;
 };
 

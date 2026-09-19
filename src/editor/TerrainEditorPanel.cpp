@@ -11,11 +11,13 @@
 #include "terrain/generation/GeologicalSimulator.hpp"
 #include "terrain/generation/TerrainGenerator.hpp"
 
+#include <imnodes.h>
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace Caffeine::Editor {
 namespace {
@@ -36,12 +38,9 @@ void copyCString(char* dest, usize destSize, const char* src) {
 void applyHdrGroundPreset(ECS::TerrainComponent& terrain, int presetIndex) {
     presetIndex = std::clamp(presetIndex, 0, Assets::kHdrGroundPresetCount - 1);
     const char* grass = Assets::kHdrGroundPresetPaths[presetIndex];
-    constexpr const char* kRock =
-        "hdr-assets-texture/Ground108_1K-JPG/Ground108_1K-JPG_Color.jpg";
-    constexpr const char* kSand =
-        "hdr-assets-texture/Ground079L_1K-JPG/Ground079L_1K-JPG_Color.jpg";
-    constexpr const char* kDirt =
-        "hdr-assets-texture/Ground051_1K-JPG/Ground051_1K-JPG_Color.jpg";
+    constexpr const char* kRock = Assets::kHdrGroundPresetPaths[5];
+    constexpr const char* kSand = Assets::kHdrGroundPresetPaths[1];
+    constexpr const char* kDirt = Assets::kHdrGroundPresetPaths[4];
 
     copyCString(terrain.texturePath, sizeof(terrain.texturePath), grass);
     copyCString(terrain.splatLayerPaths[0], sizeof(terrain.splatLayerPaths[0]), grass);
@@ -52,7 +51,222 @@ void applyHdrGroundPreset(ECS::TerrainComponent& terrain, int presetIndex) {
     terrain.splatTileSize = 4.0f;
 }
 
+constexpr int kAttrStride = 1000;
+
+int nodeInputAttr(int nodeId) { return nodeId * kAttrStride + 1; }
+int nodeOutputAttr(int nodeId) { return nodeId * kAttrStride + 2; }
+int nodeIdFromAttr(int attrId) { return attrId / kAttrStride; }
+
+bool isGeneratorNode(TerrainGraphNodeType type) {
+    return type == TerrainGraphNodeType::Noise || type == TerrainGraphNodeType::Ridged ||
+           type == TerrainGraphNodeType::Hybrid || type == TerrainGraphNodeType::DiamondSquare ||
+           type == TerrainGraphNodeType::SpectralFFT;
+}
+
+const char* nodeTitle(TerrainGraphNodeType type) {
+    switch (type) {
+        case TerrainGraphNodeType::Noise: return "Noise FBM";
+        case TerrainGraphNodeType::Ridged: return "Ridged";
+        case TerrainGraphNodeType::Hybrid: return "Hybrid";
+        case TerrainGraphNodeType::DiamondSquare: return "Diamond-Square";
+        case TerrainGraphNodeType::SpectralFFT: return "FFT Spectral";
+        case TerrainGraphNodeType::Thermal: return "Thermal Erosion";
+        case TerrainGraphNodeType::MicroSculpt: return "Micro Sculpt";
+        case TerrainGraphNodeType::Rivers: return "Rivers";
+        case TerrainGraphNodeType::GeoSim: return "Geo Simulation";
+        case TerrainGraphNodeType::Smooth: return "Smooth";
+        case TerrainGraphNodeType::Output: return "Output";
+    }
+    return "Node";
+}
+
 }  // namespace
+
+TerrainEditorPanel::TerrainEditorPanel() {
+    if (!ImNodes::GetCurrentContext()) {
+        ImNodes::CreateContext();
+    }
+    m_editorContext = ImNodes::EditorContextCreate();
+    ensureDefaultGraph();
+}
+
+TerrainEditorPanel::~TerrainEditorPanel() {
+    if (m_editorContext) {
+        ImNodes::EditorContextFree(m_editorContext);
+        m_editorContext = nullptr;
+    }
+}
+
+void TerrainEditorPanel::ensureDefaultGraph() {
+    if (!m_graphNodes.empty()) return;
+    syncGraphFromStyle(ECS::TerrainGenStyle::Realistic);
+}
+
+void TerrainEditorPanel::syncGraphFromStyle(ECS::TerrainGenStyle style) {
+    m_graphNodes.clear();
+    m_graphLinks.clear();
+    m_selectedNodeId = 0;
+    m_graphLayoutDirty = true;
+
+    auto add = [&](TerrainGraphNodeType type) {
+        TerrainGraphNode node;
+        node.id = m_nextNodeId++;
+        node.type = type;
+        m_graphNodes.push_back(node);
+    };
+
+    m_nextNodeId = 1;
+    m_nextLinkId = 1;
+    switch (style) {
+        case ECS::TerrainGenStyle::Realistic:
+            add(TerrainGraphNodeType::Hybrid);
+            add(TerrainGraphNodeType::Thermal);
+            add(TerrainGraphNodeType::MicroSculpt);
+            add(TerrainGraphNodeType::Output);
+            break;
+        case ECS::TerrainGenStyle::UltraRealistic:
+            add(TerrainGraphNodeType::Hybrid);
+            add(TerrainGraphNodeType::GeoSim);
+            add(TerrainGraphNodeType::MicroSculpt);
+            add(TerrainGraphNodeType::Output);
+            break;
+        case ECS::TerrainGenStyle::LowPoly:
+            add(TerrainGraphNodeType::Noise);
+            add(TerrainGraphNodeType::Output);
+            break;
+        case ECS::TerrainGenStyle::Stylized:
+            add(TerrainGraphNodeType::Ridged);
+            add(TerrainGraphNodeType::Smooth);
+            add(TerrainGraphNodeType::Output);
+            break;
+        case ECS::TerrainGenStyle::Custom:
+            add(TerrainGraphNodeType::Noise);
+            add(TerrainGraphNodeType::Thermal);
+            add(TerrainGraphNodeType::Smooth);
+            add(TerrainGraphNodeType::Output);
+            break;
+    }
+
+    for (size_t i = 0; i + 1 < m_graphNodes.size(); ++i) {
+        TerrainGraphLink link;
+        link.id = m_nextLinkId++;
+        link.fromAttr = nodeOutputAttr(m_graphNodes[i].id);
+        link.toAttr = nodeInputAttr(m_graphNodes[i + 1].id);
+        m_graphLinks.push_back(link);
+    }
+
+    layoutGraphNodes();
+}
+
+void TerrainEditorPanel::layoutGraphNodes() {
+    constexpr f32 kStartX = 48.0f;
+    constexpr f32 kStartY = 96.0f;
+    constexpr f32 kXSpacing = 260.0f;
+    constexpr f32 kYSpacing = 150.0f;
+    constexpr int kColumns = 2;
+
+    for (size_t i = 0; i < m_graphNodes.size(); ++i) {
+        const int col = static_cast<int>(i % kColumns);
+        const int row = static_cast<int>(i / kColumns);
+        m_graphNodes[i].posX = kStartX + static_cast<f32>(col) * kXSpacing;
+        m_graphNodes[i].posY = kStartY + static_cast<f32>(row) * kYSpacing;
+    }
+}
+
+void TerrainEditorPanel::applyGraphToSettings(ECS::TerrainGenerationSettings& gen) const {
+    gen.microSculpt = false;
+    gen.microRiverCarve = 0.0f;
+    gen.thermalErosion = false;
+    gen.hydraulicErosion = false;
+    gen.hydrology.traceRivers = false;
+    gen.smoothPass = false;
+    gen.slopeWeighting = false;
+    gen.simulation.enabled = false;
+
+    int outputId = 0;
+    for (const auto& node : m_graphNodes) {
+        if (node.type == TerrainGraphNodeType::Output) outputId = node.id;
+    }
+    if (outputId == 0) return;
+
+    auto findNode = [&](int id) -> const TerrainGraphNode* {
+        for (const auto& node : m_graphNodes) {
+            if (node.id == id) return &node;
+        }
+        return nullptr;
+    };
+    auto sourceOf = [&](int nodeId) -> int {
+        const int inAttr = nodeInputAttr(nodeId);
+        for (const auto& link : m_graphLinks) {
+            if (link.toAttr == inAttr) {
+                return nodeIdFromAttr(link.fromAttr);
+            }
+        }
+        return 0;
+    };
+
+    int current = outputId;
+    for (int hop = 0; hop < 32 && current != 0; ++hop) {
+        const TerrainGraphNode* node = findNode(current);
+        if (!node) break;
+        switch (node->type) {
+            case TerrainGraphNodeType::Noise:
+                gen.heightModel = Terrain::TerrainHeightModel::FractalFBM;
+                gen.useRidgedNoise = false;
+                break;
+            case TerrainGraphNodeType::Ridged:
+                gen.heightModel = Terrain::TerrainHeightModel::RidgedMountains;
+                gen.useRidgedNoise = true;
+                break;
+            case TerrainGraphNodeType::Hybrid:
+                gen.heightModel = Terrain::TerrainHeightModel::Hybrid;
+                gen.useRidgedNoise = true;
+                gen.ridgedBlend = std::max(gen.ridgedBlend, 0.4f);
+                break;
+            case TerrainGraphNodeType::DiamondSquare:
+                gen.heightModel = Terrain::TerrainHeightModel::DiamondSquare;
+                gen.domainWarp = false;
+                break;
+            case TerrainGraphNodeType::SpectralFFT:
+                gen.heightModel = Terrain::TerrainHeightModel::SpectralFFT;
+                gen.domainWarp = false;
+                break;
+            case TerrainGraphNodeType::Thermal:
+                gen.thermalErosion = true;
+                gen.thermalIterations = std::max(12u, gen.thermalIterations);
+                break;
+            case TerrainGraphNodeType::MicroSculpt:
+                gen.microSculpt = true;
+                break;
+            case TerrainGraphNodeType::GeoSim:
+                gen.simulation.enabled = true;
+                gen.thermalErosion = false;
+                gen.hydraulicErosion = false;
+                gen.hydrology.traceRivers = false;
+                break;
+            case TerrainGraphNodeType::Rivers:
+                gen.microRiverCarve = std::max(gen.microRiverCarve, 0.35f);
+                gen.hydrology.traceRivers = true;
+                gen.hydraulicErosion = true;
+                gen.hydraulicIterations = std::max(gen.hydraulicIterations, 4000u);
+                break;
+            case TerrainGraphNodeType::Smooth:
+                gen.smoothPass = true;
+                gen.smoothIterations = std::max(1u, gen.smoothIterations);
+                break;
+            case TerrainGraphNodeType::Output:
+                break;
+        }
+        current = sourceOf(current);
+    }
+}
+
+void TerrainEditorPanel::generateFromGraph(ECS::World& world, ECS::Entity entity,
+                                           ECS::TerrainComponent& terrain, EditorContext& ctx) {
+    applyGraphToSettings(terrain.generation);
+    Terrain::TerrainCache::instance().generateTerrain(world, entity, terrain);
+    ctx.isDirty = true;
+}
 
 void TerrainEditorPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
@@ -100,466 +314,275 @@ void TerrainEditorPanel::render(ECS::World& world, EditorContext& ctx) {
 void TerrainEditorPanel::drawGeneration(ECS::World& world, ECS::Entity entity, EditorContext& ctx) {
     auto* terrain = world.get<ECS::TerrainComponent>(entity);
     if (!terrain) return;
-
     auto& gen = terrain->generation;
-    auto markCustom = [&]() {
-        gen.style = ECS::TerrainGenStyle::Custom;
-        ctx.isDirty = true;
+
+    static const char* styleNames[] = {
+        "Realistic", "Low Poly", "Stylized", "Custom", "Ultra Realistic"
     };
-
-    constexpr ImGuiTreeNodeFlags sectionOpen = ImGuiTreeNodeFlags_DefaultOpen;
-
-    // ── Preset & ações ──────────────────────────────────────────
-    if (ImGui::CollapsingHeader("Preset e Acoes", sectionOpen)) {
-        static const char* styleNames[] = {"Realistic", "Low Poly", "Stylized", "Custom"};
-        int style = static_cast<int>(gen.style);
-        if (ImGui::Combo("Estilo", &style, styleNames, 4)) {
-            gen.style = static_cast<ECS::TerrainGenStyle>(style);
-            if (gen.style != ECS::TerrainGenStyle::Custom) {
-                Terrain::applyGenerationStylePreset(gen, gen.style);
+    int style = static_cast<int>(gen.style);
+    if (ImGui::Combo("Preset", &style, styleNames, 5)) {
+        gen.style = static_cast<ECS::TerrainGenStyle>(style);
+        Terrain::applyGenerationStylePreset(gen, gen.style);
+        if (gen.style == ECS::TerrainGenStyle::UltraRealistic) {
+            copyCString(terrain->texturePath, sizeof(terrain->texturePath),
+                        Assets::kUltraRealisticAlbedo);
+            for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+                copyCString(terrain->splatLayerPaths[i], sizeof(terrain->splatLayerPaths[i]),
+                            Assets::kUltraRealisticSplatLayers[i]);
             }
-            ctx.isDirty = true;
-        }
-
-        int seed = static_cast<int>(gen.seed);
-        if (ImGui::InputInt("Seed", &seed)) {
-            gen.seed = static_cast<u32>(std::max(0, seed));
-            ctx.isDirty = true;
-        }
-
-        if (ImGui::Button("Defaults de Qualidade")) {
-            terrain->resolutionX = 257;
-            terrain->resolutionZ = 257;
-            terrain->splatResolutionScale = 2;
-            Terrain::applyGenerationStylePreset(gen, ECS::TerrainGenStyle::Realistic);
-            gen.simulation.enabled = false;
-            ctx.isDirty = true;
-        }
-        if (ImGui::Button("Preset Fractal")) {
-            Terrain::applyGenerationStylePreset(gen, ECS::TerrainGenStyle::Realistic);
-            gen.heightModel = Terrain::TerrainHeightModel::DiamondSquare;
-            gen.domainWarp = false;
-            gen.fractalRoughness = 0.55f;
-            gen.style = ECS::TerrainGenStyle::Custom;
-            ctx.isDirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Preset FFT")) {
-            Terrain::applyGenerationStylePreset(gen, ECS::TerrainGenStyle::Realistic);
-            gen.heightModel = Terrain::TerrainHeightModel::SpectralFFT;
-            gen.domainWarp = false;
-            gen.spectralExponent = 2.0f;
-            gen.slopeWeightAlpha = 0.04f;
-            gen.style = ECS::TerrainGenStyle::Custom;
-            ctx.isDirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Gerar Terreno")) {
-            Terrain::TerrainCache::instance().generateTerrain(world, entity, *terrain);
-            ctx.isDirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Aplanar")) {
-            if (auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity)) {
-                heightmap->fill(0.0f);
-                terrain->dataRevision++;
-                Terrain::TerrainCache::instance().syncEntity(world, entity);
-                ctx.isDirty = true;
-            }
-        }
-
-        ImGui::TextDisabled("Resolucao do mesh: Inspector > Terrain > Resolution");
-    }
-
-    // ── 1. Algoritmo de altura ───────────────────────────────────
-    if (ImGui::CollapsingHeader("1. Algoritmo de Altura", sectionOpen)) {
-        static const char* algoFamilyNames[] = {"Noise (Perlin/Simplex/FBM)",
-                                                "Fractal (Diamond-Square)",
-                                                "Espectral (FFT 1/f)",
-                                                "Combinador (2 campos)"};
-        int algoFamily = 0;
-        switch (gen.heightModel) {
-            case Terrain::TerrainHeightModel::DiamondSquare:
-                algoFamily = 1;
-                break;
-            case Terrain::TerrainHeightModel::SpectralFFT:
-                algoFamily = 2;
-                break;
-            case Terrain::TerrainHeightModel::HeightfieldMultiply:
-                algoFamily = 3;
-                break;
-            default:
-                algoFamily = 0;
-                break;
-        }
-        if (ImGui::Combo("Familia", &algoFamily, algoFamilyNames, 4)) {
-            switch (algoFamily) {
-                case 1:
-                    gen.heightModel = Terrain::TerrainHeightModel::DiamondSquare;
-                    gen.domainWarp = false;
-                    break;
-                case 2:
-                    gen.heightModel = Terrain::TerrainHeightModel::SpectralFFT;
-                    gen.domainWarp = false;
-                    break;
-                case 3:
-                    gen.heightModel = Terrain::TerrainHeightModel::HeightfieldMultiply;
-                    break;
-                default:
-                    gen.heightModel = Terrain::TerrainHeightModel::RollingHills;
-                    break;
-            }
-            markCustom();
-        }
-
-        if (algoFamily == 0) {
-            static const char* heightModelNames[] = {"Colinas (FBM)", "FBM Fractal",
-                                                     "Montanhas (Ridged)", "Multiplicativo (octaves)",
-                                                     "Hibrido (FBM+Ridged)", "Combinado (FBM+Mult)"};
-            int heightModel = static_cast<int>(gen.heightModel);
-            heightModel = std::clamp(heightModel, 0, 5);
-            if (ImGui::Combo("Modelo de Noise", &heightModel, heightModelNames, 6)) {
-                gen.heightModel = static_cast<Terrain::TerrainHeightModel>(heightModel);
-                markCustom();
-            }
-
-            static const char* noiseNames[] = {"Perlin", "Simplex", "Value", "Worley"};
-            int noiseType = static_cast<int>(gen.noiseAlgorithm);
-            if (ImGui::Combo("Sampler", &noiseType, noiseNames, 4)) {
-                gen.noiseAlgorithm = static_cast<Terrain::TerrainNoiseAlgorithm>(noiseType);
-                markCustom();
-            }
-            ImGui::TextDisabled("Simplex: isotropico e rapido. Perlin: classico CGI.");
-        } else if (algoFamily == 1) {
-            ImGui::TextDisabled("Midpoint displacement / Diamond-Square (Bird et al.).");
-            if (ImGui::SliderFloat("Rugosidade (H)", &gen.fractalRoughness, 0.1f, 0.9f)) {
-                markCustom();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Maior H = terreno mais suave. Menor H = picos mais acentuados.");
-            }
-        } else if (algoFamily == 2) {
-            ImGui::TextDisabled("FFT + filtro 1/f^beta — colinas suaves e tileable.");
-            if (ImGui::SliderFloat("Expoente Espectral", &gen.spectralExponent, 1.0f, 3.5f)) {
-                markCustom();
-            }
-        } else {
-            ImGui::TextDisabled("Multiplica dois heightmaps: vales suaves, picos acentuados.");
-            static const char* layerNames[] = {"Colinas (FBM)", "FBM Fractal", "Montanhas (Ridged)",
-                                               "Multiplicativo", "Hibrido", "Combinado"};
-            int layerA = static_cast<int>(gen.multiplyLayerA);
-            int layerB = static_cast<int>(gen.multiplyLayerB);
-            layerA = std::clamp(layerA, 0, 5);
-            layerB = std::clamp(layerB, 0, 5);
-            if (ImGui::Combo("Camada A", &layerA, layerNames, 6)) {
-                gen.multiplyLayerA = static_cast<Terrain::TerrainHeightModel>(layerA);
-                markCustom();
-            }
-            if (ImGui::Combo("Camada B", &layerB, layerNames, 6)) {
-                gen.multiplyLayerB = static_cast<Terrain::TerrainHeightModel>(layerB);
-                markCustom();
-            }
-            if (ImGui::SliderFloat("Contraste do Produto", &gen.multiplicativeContrast, 0.5f, 3.0f)) {
-                markCustom();
-            }
-        }
-
-        ImGui::SeparatorText("Parametros globais");
-        if (ImGui::DragFloat("Escala", &gen.noiseScale, 0.001f, 0.001f, 0.2f, "%.3f")) {
-            markCustom();
-        }
-        if (algoFamily == 0 || algoFamily == 3) {
-            int octaves = static_cast<int>(gen.octaves);
-            if (ImGui::SliderInt("Octaves", &octaves, 1, 8)) {
-                gen.octaves = static_cast<u32>(octaves);
-                markCustom();
-            }
-            if (ImGui::SliderFloat("Persistence", &gen.persistence, 0.1f, 1.0f)) {
-                markCustom();
-            }
-            if (ImGui::SliderFloat("Lacunarity", &gen.lacunarity, 1.1f, 4.0f)) {
-                markCustom();
-            }
-        }
-        if (ImGui::SliderFloat("Amplitude", &gen.amplitude, 0.05f, 1.0f)) {
-            markCustom();
-        }
-        if (ImGui::SliderFloat("Altura Base", &gen.baseHeight, 0.0f, 0.8f)) {
-            markCustom();
-        }
-
-        if (algoFamily == 0) {
-            const bool showRidge =
-                gen.heightModel == Terrain::TerrainHeightModel::RidgedMountains ||
-                gen.heightModel == Terrain::TerrainHeightModel::Hybrid;
-            const bool showBlend = gen.heightModel == Terrain::TerrainHeightModel::Hybrid ||
-                                   gen.heightModel == Terrain::TerrainHeightModel::Combined;
-            const bool showMult = gen.heightModel == Terrain::TerrainHeightModel::Multiplicative ||
-                                  gen.heightModel == Terrain::TerrainHeightModel::Combined;
-
-            if (showRidge || showBlend || showMult) {
-                ImGui::SeparatorText("Parametros do modelo");
-            }
-            if (showRidge) {
-                if (ImGui::SliderFloat("Ridge Offset", &gen.ridgeOffset, 0.5f, 1.5f)) {
-                    markCustom();
-                }
-                if (ImGui::SliderFloat("Ridge Gain", &gen.ridgeGain, 0.5f, 2.5f)) {
-                    markCustom();
-                }
-            }
-            if (showBlend) {
-                if (ImGui::SliderFloat("Blend de Camadas", &gen.ridgedBlend, 0.0f, 1.0f)) {
-                    markCustom();
-                }
-            }
-            if (showMult) {
-                if (ImGui::SliderFloat("Contraste da Mascara", &gen.multiplicativeContrast, 0.5f, 3.0f)) {
-                    markCustom();
-                }
-            }
-        }
-
-        if (algoFamily == 3) {
-            static const char* noiseNames[] = {"Perlin", "Simplex", "Value", "Worley"};
-            int noiseType = static_cast<int>(gen.noiseAlgorithm);
-            if (ImGui::Combo("Sampler das Camadas", &noiseType, noiseNames, 4)) {
-                gen.noiseAlgorithm = static_cast<Terrain::TerrainNoiseAlgorithm>(noiseType);
-                markCustom();
-            }
-        }
-    }
-
-    // ── 2. Domain Warp ──────────────────────────────────────────
-    if (ImGui::CollapsingHeader("2. Domain Warp", 0)) {
-        if (ImGui::Checkbox("Ativar", &gen.domainWarp)) {
-            markCustom();
-        }
-        if (gen.domainWarp) {
-            if (ImGui::Checkbox("Warp Fractal", &gen.fractalDomainWarp)) {
-                markCustom();
-            }
-            if (ImGui::SliderFloat("Forca", &gen.domainWarpStrength, 0.0f, 1.5f)) {
-                markCustom();
-            }
-            if (gen.fractalDomainWarp) {
-                if (ImGui::SliderFloat("Escala do Warp", &gen.domainWarpScale, 8.0f, 128.0f)) {
-                    markCustom();
-                }
-            } else {
-                int warpPasses = static_cast<int>(gen.domainWarpPasses);
-                if (ImGui::SliderInt("Passagens", &warpPasses, 1, 3)) {
-                    gen.domainWarpPasses = static_cast<u32>(warpPasses);
-                    markCustom();
-                }
-            }
-        }
-    }
-
-    // ── 3. Erosao rapida ────────────────────────────────────────
-    if (ImGui::CollapsingHeader("3. Erosao Rapida", sectionOpen)) {
-        const bool geoSim = gen.simulation.enabled;
-        if (geoSim) {
-            ImGui::TextDisabled("Desativada: Simulacao Geologica esta ativa.");
-        }
-
-        if (ImGui::Checkbox("Erosao Termica", &gen.thermalErosion)) {
-            markCustom();
-        }
-        if (gen.thermalErosion && !geoSim) {
-            int thermalIters = static_cast<int>(gen.thermalIterations);
-            if (ImGui::SliderInt("Iteracoes Termicas", &thermalIters, 0, 100)) {
-                gen.thermalIterations = static_cast<u32>(thermalIters);
-                ctx.isDirty = true;
-            }
-            if (ImGui::SliderFloat("Talus", &gen.thermalTalus, 0.001f, 0.05f, "%.3f")) {
-                markCustom();
-            }
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::Checkbox("Rastrear Rios", &gen.hydrology.traceRivers)) {
-            markCustom();
-        }
-        if (gen.hydrology.traceRivers && !geoSim) {
-            ImGui::TextDisabled("Substitui erosao hidraulica por gotas.");
-            int riverSources = static_cast<int>(gen.hydrology.maxRiverSources);
-            if (ImGui::SliderInt("Nascentes Max", &riverSources, 8, 128)) {
-                gen.hydrology.maxRiverSources = static_cast<u32>(riverSources);
-                ctx.isDirty = true;
-            }
-            if (ImGui::SliderFloat("Forca de Escavação", &gen.hydrology.riverCarveStrength, 0.00001f,
-                                   0.001f, "%.5f")) {
-                markCustom();
-            }
-        }
-
-        const bool riversActive = gen.hydrology.traceRivers && !geoSim;
-        ImGui::BeginDisabled(riversActive || geoSim);
-        if (ImGui::Checkbox("Erosao Hidraulica (gotas)", &gen.hydraulicErosion)) {
-            markCustom();
-        }
-        if (gen.hydraulicErosion) {
-            int hydroIters = static_cast<int>(gen.hydraulicIterations);
-            if (ImGui::SliderInt("Gotas", &hydroIters, 0, 20000)) {
-                gen.hydraulicIterations = static_cast<u32>(hydroIters);
-                ctx.isDirty = true;
-            }
-            int hydroSteps = static_cast<int>(gen.hydraulicMaxSteps);
-            if (ImGui::SliderInt("Passos por Gota", &hydroSteps, 16, 200)) {
-                gen.hydraulicMaxSteps = static_cast<u32>(hydroSteps);
-                ctx.isDirty = true;
-            }
-            if (ImGui::SliderFloat("Inercia", &gen.hydraulicInertia, 0.0f, 1.0f)) {
-                markCustom();
-            }
-            if (ImGui::SliderFloat("Evaporacao", &gen.hydraulicEvaporation, 0.01f, 0.2f)) {
-                markCustom();
-            }
-        }
-        ImGui::EndDisabled();
-    }
-
-    // ── 4. Simulacao geologica (offline) ────────────────────────
-    if (ImGui::CollapsingHeader("4. Simulacao Geologica (offline)", 0)) {
-        auto& sim = gen.simulation;
-        if (ImGui::Checkbox("Ativar", &sim.enabled)) {
-            markCustom();
-        }
-        if (sim.enabled) {
-            ImGui::TextDisabled("Substitui erosao rapida + rios por iteracoes longas.");
-
-            static const char* envNames[] = {"Custom", "Tropical", "Deserto", "Alpino",
-                                             "Costeiro", "Vulcanico"};
-            int env = static_cast<int>(sim.environment);
-            if (ImGui::Combo("Ambiente", &env, envNames, 6)) {
-                sim.environment = static_cast<ECS::TerrainEnvironment>(env);
-                if (sim.environment != ECS::TerrainEnvironment::Custom) {
-                    Terrain::applyEnvironmentPreset(gen, sim.environment);
-                }
-                markCustom();
-            }
-
-            int totalIters = static_cast<int>(sim.totalIterations);
-            if (ImGui::SliderInt("Iteracoes", &totalIters, 50, 800)) {
-                sim.totalIterations = static_cast<u32>(totalIters);
-                ctx.isDirty = true;
-            }
-            int droplets = static_cast<int>(sim.dropletsPerIteration);
-            if (ImGui::SliderInt("Gotas / Iteracao", &droplets, 4, 64)) {
-                sim.dropletsPerIteration = static_cast<u32>(droplets);
-                ctx.isDirty = true;
-            }
-
-            ImGui::SeparatorText("Forcas");
-            if (ImGui::SliderFloat("Agua", &sim.erosionWater, 0.0f, 1.0f)) ctx.isDirty = true;
-            if (ImGui::SliderFloat("Termica", &sim.erosionThermal, 0.0f, 1.0f)) ctx.isDirty = true;
-            if (ImGui::SliderFloat("Glacial", &sim.erosionGlacial, 0.0f, 1.0f)) ctx.isDirty = true;
-            if (ImGui::SliderFloat("Vento", &sim.erosionWind, 0.0f, 1.0f)) ctx.isDirty = true;
-            if (ImGui::SliderFloat("Tectonica", &sim.tectonicActivity, 0.0f, 1.0f)) {
-                ctx.isDirty = true;
-            }
-            if (ImGui::Checkbox("Convergencia Auto", &sim.autoConvergence)) {
-                ctx.isDirty = true;
-            }
-        }
-    }
-
-    // ── 5. Pos-processamento ────────────────────────────────────
-    if (ImGui::CollapsingHeader("5. Pos-processamento", sectionOpen)) {
-        if (ImGui::Checkbox("Slope Weighting (exp)", &gen.slopeWeighting)) {
-            markCustom();
-        }
-        if (gen.slopeWeighting) {
-            if (ImGui::SliderFloat("Slope Alpha", &gen.slopeWeightAlpha, 0.0f, 0.6f)) {
-                markCustom();
-            }
-            ImGui::TextDisabled("Maior alpha = colinas mais suaves e caminhaveis.");
-        }
-
-        ImGui::Separator();
-
-        if (ImGui::Checkbox("Suavizar", &gen.smoothPass)) {
-            markCustom();
-        }
-        if (gen.smoothPass) {
-            int smoothIters = static_cast<int>(gen.smoothIterations);
-            if (ImGui::SliderInt("Passagens de Suavizacao", &smoothIters, 1, 8)) {
-                gen.smoothIterations = static_cast<u32>(smoothIters);
-                ctx.isDirty = true;
-            }
-        }
-
-        if (ImGui::SliderFloat("Quantizar Altura", &gen.heightQuantize, 0.0f, 24.0f, "%.0f")) {
-            markCustom();
-        }
-    }
-
-    // ── 6. Clima & biomas ────────────────────────────────────────
-    if (ImGui::CollapsingHeader("6. Clima e Biomas", sectionOpen)) {
-        if (ImGui::Checkbox("Biomas por Clima", &gen.useClimateBiomes)) {
-            ctx.isDirty = true;
-        }
-        if (gen.useClimateBiomes) {
-            ImGui::TextDisabled("Splat usa elevacao + umidade + temperatura.");
-        }
-
-        ImGui::SeparatorText("Clima");
-        if (ImGui::SliderFloat("Vento (graus)", &gen.climate.prevailingWindAngle, 0.0f, 360.0f)) {
-            ctx.isDirty = true;
-        }
-        if (ImGui::SliderFloat("Umidade Base", &gen.climate.baseHumidity, 0.0f, 1.0f)) {
-            ctx.isDirty = true;
-        }
-        if (ImGui::SliderFloat("Temperatura", &gen.climate.temperature, 0.0f, 1.0f)) {
-            ctx.isDirty = true;
-        }
-        if (ImGui::SliderFloat("Nivel do Mar", &gen.climate.seaLevel, 0.2f, 0.5f)) {
-            ctx.isDirty = true;
-        }
-        int rainShadow = static_cast<int>(gen.hydrology.rainShadowSteps);
-        if (ImGui::SliderInt("Passos Rain Shadow", &rainShadow, 4, 40)) {
-            gen.hydrology.rainShadowSteps = static_cast<u32>(rainShadow);
-            ctx.isDirty = true;
-        }
-    }
-
-    // ── 7. Texturas (splat) ─────────────────────────────────────
-    if (ImGui::CollapsingHeader("7. Texturas (Splat)", sectionOpen)) {
-        if (ImGui::Checkbox("Auto Splat", &gen.autoSplat)) {
-            ctx.isDirty = true;
-        }
-        if (gen.autoSplat) {
-            if (ImGui::SliderFloat("Blend entre Biomas", &gen.splatBlendRange, 0.1f, 0.5f)) {
-                ctx.isDirty = true;
-            }
-            int blurPasses = static_cast<int>(gen.splatBlurPasses);
-            if (ImGui::SliderInt("Blur do Splat", &blurPasses, 0, 4)) {
-                gen.splatBlurPasses = static_cast<u32>(blurPasses);
-                ctx.isDirty = true;
-            }
-        }
-        ImGui::TextDisabled("Camadas: R=Grama G=Rocha B=Areia A=Neve");
-
-        ImGui::SeparatorText("HDR Ground (PBR)");
-        static int hdrGroundPreset = 0;
-        hdrGroundPreset =
-            std::clamp(hdrGroundPreset, 0, Assets::kHdrGroundPresetCount - 1);
-        if (ImGui::Combo("Preset de Solo", &hdrGroundPreset, Assets::kHdrGroundPresetLabels,
-                         Assets::kHdrGroundPresetCount)) {
-            applyHdrGroundPreset(*terrain, hdrGroundPreset);
-            Terrain::TerrainCache::instance().syncTextureToFilter(world, entity, *terrain);
-#ifdef CF_HAS_SDL3
-            Terrain::TerrainGpuTextureCache::instance().invalidateEntity(entity, nullptr);
-#endif
+            terrain->useSplatmap = true;
+            terrain->textureTileSize = 12.0f;
+            terrain->splatTileSize = 12.0f;
             terrain->splatRevision++;
+        }
+        if (gen.style != ECS::TerrainGenStyle::Custom) {
+            syncGraphFromStyle(gen.style);
+        }
+        generateFromGraph(world, entity, *terrain, ctx);
+        ctx.isDirty = true;
+    }
+    ImGui::SameLine();
+    int seed = static_cast<int>(gen.seed);
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::InputInt("Seed", &seed)) {
+        gen.seed = static_cast<u32>(std::max(0, seed));
+        ctx.isDirty = true;
+    }
+    if (ImGui::Button("Gerar")) {
+        generateFromGraph(world, entity, *terrain, ctx);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Aplanar")) {
+        if (auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity)) {
+            heightmap->fill(0.0f);
+            terrain->dataRevision++;
+            Terrain::TerrainCache::instance().syncEntity(world, entity);
             ctx.isDirty = true;
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(
-                "Aplica texturas HDR ao terreno base e camadas de splat (grama, rocha, areia, "
-                "terra).");
+    }
+
+    ImGui::TextDisabled("Liga geradores a filtros e depois a Output. Clique Gerar para aplicar.");
+    drawGenerationGraph(world, entity, ctx);
+
+    ImGui::SeparatorText("HDR Ground");
+    static int hdrGroundPreset = 0;
+    hdrGroundPreset = std::clamp(hdrGroundPreset, 0, Assets::kHdrGroundPresetCount - 1);
+    if (ImGui::Combo("Solo", &hdrGroundPreset, Assets::kHdrGroundPresetLabels,
+                     Assets::kHdrGroundPresetCount)) {
+        applyHdrGroundPreset(*terrain, hdrGroundPreset);
+        Terrain::TerrainCache::instance().syncTextureToFilter(world, entity, *terrain);
+#ifdef CF_HAS_SDL3
+        Terrain::TerrainGpuTextureCache::instance().invalidateEntity(entity, nullptr);
+#endif
+        terrain->splatRevision++;
+        ctx.isDirty = true;
+    }
+}
+
+void TerrainEditorPanel::drawGenerationGraph(ECS::World& world, ECS::Entity entity,
+                                             EditorContext& ctx) {
+    auto* terrain = world.get<ECS::TerrainComponent>(entity);
+    if (!terrain) return;
+    ensureDefaultGraph();
+
+    if (m_editorContext) {
+        ImNodes::EditorContextSet(m_editorContext);
+    }
+    ImNodes::GetIO().AutoPanningSpeed = 0.0f;
+
+    if (ImGui::Button("Adicionar node")) {
+        ImGui::OpenPopup("##add_terrain_node");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reorganizar")) {
+        layoutGraphNodes();
+    }
+    if (ImGui::BeginPopup("##add_terrain_node")) {
+        auto add = [&](TerrainGraphNodeType type) {
+            TerrainGraphNode node;
+            node.id = m_nextNodeId++;
+            node.type = type;
+            node.posX = 24.0f + static_cast<f32>(m_graphNodes.size()) * 36.0f;
+            node.posY = 48.0f + static_cast<f32>(m_graphNodes.size()) * 12.0f;
+            m_graphNodes.push_back(node);
+            ImNodes::SetNodeEditorSpacePos(node.id, ImVec2(node.posX, node.posY));
+            ImGui::CloseCurrentPopup();
+        };
+        if (ImGui::MenuItem("Noise FBM")) add(TerrainGraphNodeType::Noise);
+        if (ImGui::MenuItem("Ridged")) add(TerrainGraphNodeType::Ridged);
+        if (ImGui::MenuItem("Hybrid")) add(TerrainGraphNodeType::Hybrid);
+        if (ImGui::MenuItem("Diamond-Square")) add(TerrainGraphNodeType::DiamondSquare);
+        if (ImGui::MenuItem("FFT Spectral")) add(TerrainGraphNodeType::SpectralFFT);
+        if (ImGui::MenuItem("Thermal Erosion")) add(TerrainGraphNodeType::Thermal);
+        if (ImGui::MenuItem("Micro Sculpt")) add(TerrainGraphNodeType::MicroSculpt);
+        if (ImGui::MenuItem("Rivers")) add(TerrainGraphNodeType::Rivers);
+        if (ImGui::MenuItem("Geo Simulation")) add(TerrainGraphNodeType::GeoSim);
+        if (ImGui::MenuItem("Smooth")) add(TerrainGraphNodeType::Smooth);
+        ImGui::EndPopup();
+    }
+
+    const f32 canvasHeight =
+        std::clamp(ImGui::GetContentRegionAvail().y * 0.58f, 240.0f, 520.0f);
+    ImGui::PushID("##terrain_graph_editor");
+    ImGui::BeginChild("##terrain_graph_canvas", ImVec2(0.0f, canvasHeight), true,
+                      ImGuiWindowFlags_NoScrollbar);
+
+    if (m_graphLayoutDirty) {
+        layoutGraphNodes();
+        m_graphLayoutDirty = false;
+    }
+
+    ImNodes::BeginNodeEditor();
+    for (const auto& node : m_graphNodes) {
+        ImNodes::SetNodeEditorSpacePos(node.id, ImVec2(node.posX, node.posY));
+        ImNodes::BeginNode(node.id);
+        ImNodes::BeginNodeTitleBar();
+        ImGui::TextUnformatted(nodeTitle(node.type));
+        ImNodes::EndNodeTitleBar();
+
+        if (!isGeneratorNode(node.type)) {
+            ImNodes::BeginInputAttribute(nodeInputAttr(node.id));
+            ImGui::TextUnformatted("in");
+            ImNodes::EndInputAttribute();
+        }
+        if (node.type != TerrainGraphNodeType::Output) {
+            ImNodes::BeginOutputAttribute(nodeOutputAttr(node.id));
+            ImGui::TextUnformatted("out");
+            ImNodes::EndOutputAttribute();
+        }
+        ImNodes::EndNode();
+    }
+    for (const auto& link : m_graphLinks) {
+        ImNodes::Link(link.id, link.fromAttr, link.toAttr);
+    }
+    ImNodes::EndNodeEditor();
+
+    for (auto& node : m_graphNodes) {
+        const ImVec2 pos = ImNodes::GetNodeEditorSpacePos(node.id);
+        node.posX = pos.x;
+        node.posY = pos.y;
+    }
+
+    int startAttr = 0;
+    int endAttr = 0;
+    if (ImNodes::IsLinkCreated(&startAttr, &endAttr)) {
+        TerrainGraphLink link;
+        link.id = m_nextLinkId++;
+        link.fromAttr = startAttr;
+        link.toAttr = endAttr;
+        m_graphLinks.push_back(link);
+        ctx.isDirty = true;
+    }
+    int destroyed = 0;
+    if (ImNodes::IsLinkDestroyed(&destroyed)) {
+        m_graphLinks.erase(std::remove_if(m_graphLinks.begin(), m_graphLinks.end(),
+                                          [destroyed](const TerrainGraphLink& link) {
+                                              return link.id == destroyed;
+                                          }),
+                           m_graphLinks.end());
+        ctx.isDirty = true;
+    }
+
+    const int selectedCount = ImNodes::NumSelectedNodes();
+    if (selectedCount == 1) {
+        std::vector<int> selectedIds(static_cast<size_t>(selectedCount));
+        ImNodes::GetSelectedNodes(selectedIds.data());
+        m_selectedNodeId = selectedIds[0];
+    } else if (selectedCount == 0) {
+        m_selectedNodeId = 0;
+    }
+
+    ImGui::EndChild();
+    ImGui::PopID();
+
+    if (m_selectedNodeId != 0) {
+        TerrainGraphNode* selected = nullptr;
+        for (auto& node : m_graphNodes) {
+            if (node.id == m_selectedNodeId) selected = &node;
+        }
+        if (selected) {
+            auto& gen = terrain->generation;
+            ImGui::SeparatorText(nodeTitle(selected->type));
+            if (selected->type == TerrainGraphNodeType::Noise ||
+                selected->type == TerrainGraphNodeType::Ridged ||
+                selected->type == TerrainGraphNodeType::Hybrid) {
+                static const char* noiseNames[] = {"Perlin", "Simplex", "Value", "Worley"};
+                int noiseType = static_cast<int>(gen.noiseAlgorithm);
+                if (ImGui::Combo("Sampler", &noiseType, noiseNames, 4)) {
+                    gen.noiseAlgorithm = static_cast<Terrain::TerrainNoiseAlgorithm>(noiseType);
+                    ctx.isDirty = true;
+                }
+                if (ImGui::DragFloat("Escala", &gen.noiseScale, 0.001f, 0.005f, 0.2f, "%.3f")) {
+                    ctx.isDirty = true;
+                }
+                int octaves = static_cast<int>(gen.octaves);
+                if (ImGui::SliderInt("Octaves", &octaves, 1, 8)) {
+                    gen.octaves = static_cast<u32>(octaves);
+                    ctx.isDirty = true;
+                }
+            }
+            if (selected->type == TerrainGraphNodeType::DiamondSquare) {
+                if (ImGui::SliderFloat("Rugosidade", &gen.fractalRoughness, 0.1f, 0.9f)) {
+                    ctx.isDirty = true;
+                }
+            }
+            if (selected->type == TerrainGraphNodeType::SpectralFFT) {
+                if (ImGui::SliderFloat("Expoente", &gen.spectralExponent, 1.0f, 3.5f)) {
+                    ctx.isDirty = true;
+                }
+            }
+            if (selected->type == TerrainGraphNodeType::MicroSculpt) {
+                if (ImGui::SliderFloat("Strength", &gen.microSculptStrength, 0.0f, 1.0f)) {
+                    ctx.isDirty = true;
+                }
+                if (ImGui::SliderFloat("Softness", &gen.microSculptSoftness, 0.0f, 1.0f)) {
+                    ctx.isDirty = true;
+                }
+                if (ImGui::SliderFloat("Rivers", &gen.microRiverCarve, 0.0f, 1.0f)) {
+                    ctx.isDirty = true;
+                }
+            }
+            if (selected->type == TerrainGraphNodeType::GeoSim) {
+                ImGui::TextDisabled("Mais lento, mais detalhe geologico.");
+                int iterations = static_cast<int>(gen.simulation.totalIterations);
+                if (ImGui::SliderInt("Iterations", &iterations, 80, 800)) {
+                    gen.simulation.totalIterations = static_cast<u32>(iterations);
+                    ctx.isDirty = true;
+                }
+                int droplets = static_cast<int>(gen.simulation.dropletsPerIteration);
+                if (ImGui::SliderInt("Droplets", &droplets, 4, 32)) {
+                    gen.simulation.dropletsPerIteration = static_cast<u32>(droplets);
+                    ctx.isDirty = true;
+                }
+                if (ImGui::SliderFloat("Tectonic", &gen.simulation.tectonicActivity, 0.0f, 1.0f)) {
+                    ctx.isDirty = true;
+                }
+                if (ImGui::SliderFloat("Water Erosion", &gen.simulation.erosionWater, 0.0f, 1.0f)) {
+                    ctx.isDirty = true;
+                }
+            }
+            if (selected->type == TerrainGraphNodeType::Thermal) {
+                int thermalIters = static_cast<int>(gen.thermalIterations);
+                if (ImGui::SliderInt("Iterations", &thermalIters, 1, 48)) {
+                    gen.thermalIterations = static_cast<u32>(thermalIters);
+                    ctx.isDirty = true;
+                }
+            }
+            if (ImGui::Button("Apagar node") && selected->type != TerrainGraphNodeType::Output) {
+                const int id = selected->id;
+                m_graphLinks.erase(std::remove_if(m_graphLinks.begin(), m_graphLinks.end(),
+                                                  [id](const TerrainGraphLink& link) {
+                                                      return nodeIdFromAttr(link.fromAttr) == id ||
+                                                             nodeIdFromAttr(link.toAttr) == id;
+                                                  }),
+                                   m_graphLinks.end());
+                m_graphNodes.erase(std::remove_if(m_graphNodes.begin(), m_graphNodes.end(),
+                                                  [id](const TerrainGraphNode& node) {
+                                                      return node.id == id;
+                                                  }),
+                                   m_graphNodes.end());
+                m_selectedNodeId = 0;
+            }
         }
     }
 }
@@ -617,6 +640,14 @@ void TerrainEditorPanel::drawEditTools(ECS::World& world, ECS::Entity entity, Ed
         ImGui::SameLine();
         if (ImGui::RadioButton("Smooth", brushMode == 2)) {
             ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Smooth;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Flatten", brushMode == 3)) {
+            ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Flatten;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Noise", brushMode == 4)) {
+            ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Noise;
         }
         if (ImGui::SliderFloat("Brush Radius", &ctx.terrainBrushRadius, 0.5f, 64.0f, "%.1f")) {
             ctx.terrainBrushRadius = std::max(0.5f, ctx.terrainBrushRadius);

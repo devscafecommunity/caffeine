@@ -181,6 +181,16 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
                     }
                     break;
                 }
+                case TerrainBrushMode::Flatten:
+                    height += (0.35f - height) * amount;
+                    break;
+                case TerrainBrushMode::Noise: {
+                    u32 n = ux * 374761393u + uz * 668265263u + 9176u;
+                    n = (n ^ (n >> 13u)) * 1274126177u;
+                    const f32 noise = static_cast<f32>(n & 0xFFFFu) / 65535.0f;
+                    height += (noise - 0.5f) * amount * 2.0f;
+                    break;
+                }
             }
             heightmap.setNormalized(ux, uz, height);
 

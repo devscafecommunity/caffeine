@@ -83,8 +83,14 @@ private:
 
     TerrainEntry& ensureEntry(ECS::Entity entity);
     void rebuildMesh(ECS::Entity entity, TerrainEntry& entry, ECS::TerrainComponent& component);
+#ifdef CF_HAS_SDL3
+    void releaseMeshGpu(Assets::Mesh3D& mesh);
+#endif
 
     std::unordered_map<u32, TerrainEntry> m_entries;
+#ifdef CF_HAS_SDL3
+    RHI::RenderDevice* m_gpuDevice = nullptr;
+#endif
 };
 
 }  // namespace Caffeine::Terrain
