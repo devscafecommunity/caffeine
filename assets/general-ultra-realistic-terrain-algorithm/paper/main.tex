@@ -1,0 +1,851 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\title{%
+  \textbf{Geração Procedural de Terreno Ultra-Realista}\\[0.4em]
+  \large Modelo Físico-Matemático Unificado via Domain Warping\\
+  e Operadores Geomorphológicos Iterativos
+}
+\author{Pedro}
+\date{Versão 5.0 --- 20 de Setembro de 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Apresentamos um algoritmo de geração procedural de terreno que transita da síntese estocástica
+para a modelagem geodinâmica explícita. O método define uma superfície de elevação
+$h : \Omega \subset \mathbb{R}^2 \to \mathbb{R}$ como solução de um processo em duas fases:
+(i)~síntese da condição inicial $h_0$ via \emph{domain warping} fractal sobre movimento
+browniano fracionário (fBm); e (ii)~evolução iterativa governada por uma equação diferencial
+parcial (EDP) de transporte e erosão que incorpora termos de uplift tectônico, erosão hídrica
+(\emph{stream power law}) modulada por resistência litológica estratificada e anisotrópica
+$R(\mathbf{x}, h)$, intemperismo, erosão glacial e estruturas vulcânicas; seguida de
+\emph{passes} de deslizamento gravitacional com ângulo crítico, erosão eólica planar,
+e perturbação multifractal condicionada por incisão hídrica; com litologia de \emph{caprock}
+para mesas, tepuis e escarpas verticais; e mescla multi-domínio via máscaras de peso
+$W_k(\mathbf{x})$ entre árvores de nós geomorfológicos independentes.
+Posteriormente, campos escalares de temperatura e umidade são derivados da morfologia final,
+e classificação universal de biomas via espaço paramétrico contínuo
+$\mathbf{B} = (T, P, D, S, R)$ com interpolação Gaussiana sobre ${>}30$ âncoras Holdridge/Whittaker.
+Documentamos a formulação contínua, a discretização em malha regular, a complexidade
+computacional e os hiperparâmetros da implementação de referência.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introdução}
+%==============================================================================
+
+A geração procedural de terreno constitui um problema central em computação gráfica,
+simulação geofísica e modelagem de mundos virtuais. Abordagens clássicas baseadas em
+somas de ruído de Perlin ou Simplex produzem paisagens visualmente plausíveis, porém carecem
+de fundamentação geológica: vales em V, redes de drenagem, cristas tectônicas e feições
+vulcânicas não emergem naturalmente de campos de ruído estáticos.
+
+O algoritmo aqui descrito adota uma arquitetura em \emph{pipeline} de três estágios:
+
+\begin{enumerate}
+  \item \textbf{Síntese inicial} ($t = 0$): geração de $h_0(\mathbf{x})$ por domain warping fractal;
+  \item \textbf{Escultura geomorphológica} ($t > 0$): iterações de uma EDP discreta com operadores
+        tectônicos, hídricos, glaciais e vulcânicos;
+  \item \textbf{Classificação ecológica}: derivação de $T(\mathbf{x})$ e $M(\mathbf{x})$ e mapeamento
+        para biomas.
+\end{enumerate}
+
+Este documento serve como \textbf{registro formal versionado} do estado atual do algoritmo.
+Qualquer alteração na implementação deve ser refletida numa nova versão deste paper.
+
+%==============================================================================
+\section{Modelo Matemático Unificado}
+%==============================================================================
+
+\subsection{Domínio e Notação}
+
+Seja $\Omega = [0, L_x] \times [0, L_z] \subset \mathbb{R}^2$ a região planar do terreno,
+com $\mathbf{x} = (x, z)^\top \in \Omega$. A elevação é modelada como campo escalar
+dependente do tempo:
+\begin{equation}
+  h : \Omega \times [0, T] \longrightarrow \mathbb{R}, \qquad h(\mathbf{x}, t) \in \mathbb{R}.
+\end{equation}
+
+Denotamos o gradiente espacial por $\nabla h = \left(\frac{\partial h}{\partial x},\,
+\frac{\partial h}{\partial z}\right)^\top$ e o laplaciano por $\nabla^2 h = \frac{\partial^2 h}{\partial x^2}
++ \frac{\partial^2 h}{\partial z^2}$.
+
+\subsection{EDP de Evolução Morfológica}
+
+A evolução temporal do terreno é governada pela seguinte EDP de transporte e erosão:
+
+\begin{equation}
+  \frac{\partial h}{\partial t}
+  = \mathcal{U}(\mathbf{x})
+  - \mathcal{E}_w(h, \nabla h)
+  - \mathcal{E}_h(h, A, \nabla h;\, R)
+  - \mathcal{E}_g(h, \nabla h)
+  - \mathcal{E}_{\text{wind}}(h, \nabla h)
+  + K_d \,\nabla^2 h
+  \label{eq:pde}
+\end{equation}
+
+com \emph{passes} pós-EDP $\mathcal{L}_{\text{slip}}$ (deslizamentos) e $\mathcal{D}_{\text{hyd}}$ (detalhe hídrico):
+$h^{(I)} \xrightarrow{\mathcal{L}_{\text{slip}}} h^{\star} \xrightarrow{\mathcal{D}_{\text{hyd}}} h_{\text{final}}$.
+
+Os termos da EDP são definidos como:
+
+\begin{align}
+  \mathcal{U}(\mathbf{x})      &\coloneqq \text{uplift tectônico} \label{eq:uplift}\\
+  \mathcal{E}_w(h, \nabla h)   &\coloneqq K_w \, h \cdot \min\!\left(\|\nabla h\|,\, 1\right) \label{eq:weathering}\\
+  \mathcal{E}_h(h, A, \nabla h) &\coloneqq \frac{K_e}{R(\mathbf{x}, h) + \epsilon} \, A^m \,\|\nabla h\|^n \label{eq:erosion}\\
+  \mathcal{E}_g(h, \nabla h)   &\coloneqq K_g \,\|\mathbf{u}_{\text{gelo}}\|^k \,\|\nabla h\| \label{eq:glacial}\\
+  \mathcal{E}_{\text{wind}}(h, \nabla h) &\coloneqq K_{\text{wind}} \cdot \max(0, \mathbf{w}\cdot\nabla h) \cdot (h - \bar{h}_{\text{local}}) \label{eq:wind}
+\end{align}
+
+com $K_d, K_w, K_e, K_g > 0$ coeficientes de difusão, intemperismo, erosão hídrica e erosão glacial,
+respectivamente; $A(\mathbf{x})$ a área de drenagem acumulada; e $\mathbf{u}_{\text{gelo}}$ o campo de
+velocidade do gelo.
+
+\subsection{Estruturas Vulcânicas (Condição de Contorno Interna)}
+
+Feições vulcânicas são impostas como perturbação \emph{instantânea} sobre $h_0$, antes da
+integração temporal da EDP~\eqref{eq:pde}:
+
+\begin{equation}
+  h_{\text{vulc}}(\mathbf{x}) = H_v \exp\!\left(-\frac{\|\mathbf{x} - \mathbf{x}_c\|}{\sigma}\right)
+  - R_v \max\!\left(0,\, 1 - \frac{\|\mathbf{x} - \mathbf{x}_c\|}{r_{\text{caldera}}}\right)^2
+  \label{eq:volcanic}
+\end{equation}
+
+onde $\mathbf{x}_c$ é o centro eruptivo, $H_v$ a altura do cone, $\sigma$ o raio de decaimento
+exponencial, $r_{\text{caldera}}$ o raio da caldera e $R_v$ a profundidade da depressão central.
+
+%==============================================================================
+\section{Condição Inicial: Domain Warping Fractal}
+%==============================================================================
+
+\subsection{Movimento Browniano Fracionário}
+
+Seja $\mathcal{N}_p : \mathbb{R}^2 \times \mathbb{Z} \to [-1,1]$ uma função de ruído
+gradiente contínuo (implementada via Simplex Noise 2D com semente pseudo-aleatória determinística).
+O fBm de $N$ oitavas sobre escala $\lambda$ é definido por:
+
+\begin{equation}
+  \text{fBm}(\mathbf{x};\, \lambda, N, S)
+  = \frac{1}{\sum_{i=0}^{N-1} 2^{-i}}
+    \sum_{i=0}^{N-1} 2^{-i} \cdot \mathcal{N}_p\!\left(\frac{2^i}{\lambda}\mathbf{x},\, S\right)
+  \label{eq:fbm}
+\end{equation}
+
+\subsection{Campo de Deslocamento}
+
+O campo vetorial de distorção $\boldsymbol{\Psi} : \Omega \to \mathbb{R}^2$ é composto por
+dois campos escalares independentes:
+
+\begin{equation}
+  \boldsymbol{\Psi}(\mathbf{x}) =
+  \begin{pmatrix}
+    \Psi_x(\mathbf{x}) \\
+    \Psi_z(\mathbf{x})
+  \end{pmatrix}
+  =
+  \begin{pmatrix}
+    \text{fBm}(\mathbf{x};\, \lambda_w, N_w, S_x) \\
+    \text{fBm}(\mathbf{x};\, \lambda_w, N_w, S_y)
+  \end{pmatrix}
+  \label{eq:psi}
+\end{equation}
+
+\subsection{Mapeamento de Coordenadas Distorcidas}
+
+As coordenadas amostradas são obtidas por perturbação linear:
+
+\begin{equation}
+  \mathbf{x}' = \mathbf{x} + \gamma \,\boldsymbol{\Psi}(\mathbf{x})
+  \label{eq:warp}
+\end{equation}
+
+onde $\gamma > 0$ é a \emph{força de distorção} (\texttt{warpStrength}).
+
+\subsection{Elevação Inicial}
+
+\begin{equation}
+  h_0(\mathbf{x}) = H_b \cdot \text{fBm}(\mathbf{x}'; \lambda_b, N_b, S_0)
+  \label{eq:h0}
+\end{equation}
+
+onde $H_b$ é a amplitude base (\texttt{baseHeight}), $\lambda_b$ a escala espacial
+(\texttt{baseScale}) e $N_b$ o número de oitavas (\texttt{baseOctaves}).
+
+\subsection{Complexidade da Síntese Inicial}
+
+Para uma malha de $N_g \times N_g$ vértices, cada ponto requer $2 N_w + N_b$ avaliações de
+$\mathcal{N}_p$, totalizando:
+\begin{equation}
+  \mathcal{O}\!\left(N_g^2 \cdot (2N_w + N_b)\right).
+\end{equation}
+
+%==============================================================================
+\section{Operadores Geomorphológicos}
+%==============================================================================
+
+\subsection{Uplift Tectônico}
+
+Montanhas de origem estrutural (dobramentos, falhas) são modeladas por:
+
+\begin{equation}
+  \mathcal{U}(\mathbf{x}) = U_0 \left|\sin\!\left(\mathbf{k}^\top\mathbf{x}
+  + \alpha \cdot \text{fBm}(\mathbf{x};\, 80, 3, S_t)\right)\right|^p
+  \label{eq:tectonic}
+\end{equation}
+
+onde $\mathbf{k} = (k_x, k_z)^\top$ define direção e frequência dos dobramentos,
+$\alpha$ modula perturbação estocástica e $p \geq 1$ controla a conicidade das cristas.
+
+\subsection{Erosão Hídrica: Lei de Potência de Corrente}
+
+A taxa de incisão fluvial segue a \emph{stream power law} com erodibilidade espacialmente variável:
+
+\begin{equation}
+  \mathcal{E}_h = K_e(\mathbf{x}) \cdot A(\mathbf{x})^m \cdot \|\nabla h(\mathbf{x})\|^n
+  \label{eq:stream-power}
+\end{equation}
+
+com expoentes tipicamente $m \approx 0.5$ e $n \approx 1.0$.
+
+\subsection{Estratificação Sedimentar com Caprock}
+
+Modelamos a resistência litológica 3D $R : \Omega \times \mathbb{R} \to [\epsilon, \infty)$:
+
+\begin{equation}
+  R(\mathbf{x}, z) = \left(R_{\text{base}} + \Delta R \cdot \text{step}(\sin(k_{\text{strata}} z + \mathcal{N}_{\text{fault}}(\mathbf{x})))\right)
+  \cdot R_{\text{dip}}(\mathbf{x}, z)
+  \cdot R_{\text{cap}}(\mathbf{x}, z)
+  \label{eq:strata}
+\end{equation}
+
+onde $R_{\text{dip}}$ captura anisotropia tectónica (dip/strike) e o fator de \emph{caprock}:
+
+\begin{equation}
+  R_{\text{cap}} = \begin{cases}
+    R_{\text{cap}}^{\text{hard}} & \sin(k_{\text{strata}} z + \mathcal{N}_{\text{fault}}) > \tau_{\text{cap}} \\
+    1 & \text{caso contrário}
+  \end{cases}
+  \label{eq:caprock}
+\end{equation}
+
+Camadas superiores resistentes ($R_{\text{cap}} \gg 1$) protegem a rocha inferior macia;
+quando erodida, o topo colapsa em blocos verticais, gerando mesas e tepuis.
+
+\begin{equation}
+  \mathcal{E}_h = \frac{K_e}{R(\mathbf{x}, h(\mathbf{x})) + \epsilon}
+  \cdot A_{\text{eff}}^m \,\|\nabla h\|^n
+  \label{eq:ke-hetero}
+\end{equation}
+
+\subsection{Campo de Drenagem}
+
+A precipitação uniforme $P > 0$ é aplicada em cada célula. O fluxo segue a direção de
+máxima descida (esquema D8): para cada célula $(i,j)$, define-se o receptor
+$r(i,j) = \arg\max_{\mathbf{d} \in \mathcal{D}_8} \frac{h(i,j) - h(i+d_i, j+d_j)}{\|\mathbf{d}\|}$,
+onde $\mathcal{D}_8$ é o conjunto das 8 direções vizinhas.
+
+A área de drenagem acumulada satisfaz, discretamente:
+
+\begin{equation}
+  A_r \mathrel{+}= A_c, \qquad \forall\, c \to r
+  \label{eq:accumulation}
+\end{equation}
+
+com $A_c \leftarrow P$ na inicialização. A propagação segue ordenação topológica dos
+receptores (algoritmo inspirado em \emph{priority-flood}).
+
+\subsection{Erosão Glacial}
+
+Para altitudes abaixo da linha de neve $h_s$:
+
+\begin{align}
+  H_{\text{gelo}}(\mathbf{x}) &= \max(0,\, h_s - h(\mathbf{x})) \\
+  \|\mathbf{u}_{\text{gelo}}\| &= \beta \cdot H_{\text{gelo}} \\
+  \mathcal{E}_g &= K_g \cdot \|\mathbf{u}_{\text{gelo}}\|^k \cdot \|\nabla h\|
+  \label{eq:glacial-detail}
+\end{align}
+
+produzindo vales em U característicos de escultura glacial.
+
+\subsection{Intemperismo}
+
+Modelo simplificado de desintegração em encostas íngremes:
+
+\begin{equation}
+  \mathcal{E}_w = K_w \cdot h \cdot \min(\|\nabla h\|,\, 1).
+\end{equation}
+
+\subsection{Operador de Deslizamento por Ângulo Crítico (Landslides)}
+
+Após a EDP, aplica-se redistribuição gravitacional. Para $\|\nabla h\| > \tan\theta_c$
+($\theta_c \approx 32^\circ$--$36^\circ$):
+
+\begin{equation}
+  \Delta h_{\text{slip}} = -\alpha \cdot \max\!\left(0,\, \|\nabla h\| - \tan\theta_c\right) / R_{\text{cap}}
+  \label{eq:landslide}
+\end{equation}
+
+Forma divergente contínua:
+
+\begin{equation}
+  \frac{\partial h_{\text{landslide}}}{\partial t}
+  = \nabla \cdot \left(K_{\text{slip}} \cdot \max(0, \|\nabla h\| - \tan\theta_c)\, \frac{\nabla h}{\|\nabla h\|}\right)
+  \label{eq:landslide-pde}
+\end{equation}
+
+O sedimento desliza ao longo do gradiente, depositando-se na base e formando planos
+inclinados com gradiente constante (linhas de escorregamento retas).
+
+\subsection{Erosão Eólica e Aplainamento Planar}
+
+O vento dominante $\mathbf{w}$ abranda superfícies expostas:
+
+\begin{equation}
+  \mathcal{E}_{\text{wind}} = K_{\text{wind}} \cdot \max(0, \mathbf{w}\cdot\nabla h)
+  \cdot (h(\mathbf{x}) - \bar{h}_{\text{local}}(\mathbf{x}))
+  \label{eq:wind-detail}
+\end{equation}
+
+Este termo suaviza cristas expostas ao vento sem remover falésias verticais protegidas por caprock.
+
+\subsection{Perturbação Multifractal Condicionada por Incisão Hídrica}
+
+Em vez de ruído aleatório global, aplicamos detalhe de alta frequência proporcional ao
+fluxo acumulado e ao gradiente local (passe final único):
+
+\begin{equation}
+  h_{\text{detail}}(\mathbf{x}) = h(\mathbf{x})
+  + \lambda \cdot \log\!\left(1 + A(\mathbf{x})\right)
+  \cdot \|\nabla h(\mathbf{x})\|
+  \cdot \text{fBm}_{\text{high}}(\mathbf{x};\, \lambda_{\text{fine}})
+  \label{eq:hydraulic-detail}
+\end{equation}
+
+Micro-ravinas e fendas rochosas emergem exclusivamente onde a água flui e a inclinação
+é íngreme, evitando textura artificial em planícies.
+
+\subsection{Resolução de Grelha e Mitigação de Aliasing}
+
+Em malha $N \times N$ sobre domínio físico $L \times L$, a resolução espacial é
+$\Delta x = L/(N-1)$. Para $N=128$ e $L=100$, cada célula representa $\approx 0.8$\,m
+de detalhe mínimo resolvível; micro-ravinas sub-métricas ficam sub-amostradas.
+
+Recomendamos $N \geq 192$ para testes e $N \in \{256, 512\}$ para validação visual.
+O coeficiente difusivo foi reduzido para $K_d = 0.008$ (v2.0), com compensação via
+\eqref{eq:thermal-detail}--\eqref{eq:hydraulic-detail}.
+
+%==============================================================================
+\section{Discretização Numérica}
+%==============================================================================
+
+\subsection{Malha Regular}
+
+O domínio $\Omega$ é discretizado numa malha regular de $N \times N$ células com espaçamento
+$\Delta x = L / (N-1)$. O campo discreto é $h_{i,j}^{(n)}$ na iteração temporal $n$,
+com passo $\Delta t$.
+
+\subsection{Aproximações de Diferenças Finitas}
+
+O laplaciano é aproximado pelo operador de 5 pontos:
+
+\begin{equation}
+  \nabla^2 h_{i,j} \approx h_{i-1,j} + h_{i+1,j} + h_{i,j-1} + h_{i,j+1} - 4h_{i,j}.
+  \label{eq:laplacian}
+\end{equation}
+
+O gradiente utiliza diferenças centrais:
+
+\begin{equation}
+  \frac{\partial h}{\partial x}\bigg|_{i,j} \approx \frac{h_{i+1,j} - h_{i-1,j}}{2\Delta x},
+  \qquad
+  \frac{\partial h}{\partial z}\bigg|_{i,j} \approx \frac{h_{i,j+1} - h_{i,j-1}}{2\Delta x}.
+  \label{eq:gradient}
+\end{equation}
+
+\subsection{Esquema de Euler Explícito}
+
+A integração temporal adota Euler explícito com atualização por célula:
+
+\begin{equation}
+  h_{i,j}^{(n+1)} = h_{i,j}^{(n)} + \Delta t \left[
+    K_d \nabla^2 h_{i,j}^{(n)}
+    + \mathcal{U}_{i,j}
+    - \mathcal{E}_{w,i,j}
+    - \mathcal{E}_{h,i,j}
+    - \mathcal{E}_{g,i,j}
+  \right],
+  \quad n = 0,\ldots,I-1
+  \label{eq:euler}
+\end{equation}
+
+seguido de $h^{\star} \gets \mathcal{T}_{\text{th}}^{N_{\text{th}}}(h^{(I)})$ e
+$h_{\text{final}} \gets \mathcal{D}_{\text{hyd}}(h^{\star})$ via
+\eqref{eq:thermal-detail}--\eqref{eq:hydraulic-detail}.
+
+\subsection{Pipeline Completo}
+
+\begin{algorithm}[H]
+\caption{Geração de Terreno Ultra-Realista}
+\label{alg:main}
+\begin{algorithmic}[1]
+\Require Parâmetros $\Theta$, semente $S$, resolução $N$, iterações $I$
+\State Inicializar geradores $\mathcal{N}_p(\cdot; S)$, $\mathcal{N}_p(\cdot; S{+}1000)$, etc.
+\ForAll{$(i,j) \in \{0,\ldots,N{-}1\}^2$}
+  \State Calcular $\mathbf{x}_{i,j}$ em coordenadas mundiais
+  \State $h_{i,j}^{(0)} \gets h_0(\mathbf{x}_{i,j})$ via \eqref{eq:h0}--\eqref{eq:warp}
+\EndFor
+\If{operador vulcânico ativo}
+  \State $h_{i,j}^{(0)} \mathrel{+}= h_{\text{vulc}}(\mathbf{x}_{i,j})$ via \eqref{eq:volcanic}
+\EndIf
+\For{$n = 0$ \textbf{to} $I - 1$}
+  \State $A \gets \textsc{ComputeFlowAccumulation}(h^{(n)}, P)$
+  \ForAll{células internas $(i,j)$}
+    \State $R_{i,j} \gets R(\mathbf{x}_{i,j}, h_{i,j}^{(n)})$ via \eqref{eq:strata}
+    \State Atualizar $h_{i,j}^{(n+1)}$ via \eqref{eq:euler} e \eqref{eq:ke-hetero}
+  \EndFor
+\EndFor
+\State $h^{\star} \gets \textsc{ThermalFinalPass}(h^{(I)}, \theta_c, \mu, N_{\text{th}})$
+\State $h_{\text{final}} \gets \textsc{HydraulicDetailPass}(h^{\star}, \lambda, A)$
+\State Calcular $T_{i,j}$, $M_{i,j}$ e classificar biomas
+\State \Return $h^{(I)}$, campos climáticos, malha triangular
+\end{algorithmic}
+\end{algorithm}
+
+%==============================================================================
+\section{Sistema Universal de Biomas}
+%==============================================================================
+
+\subsection{Espaço Paramétrico $\mathbf{B} = (T, P, D, S, R)$}
+
+Em vez de classificar biomas por \texttt{if/else} discreto, cada ponto $(x,y)$ possui
+um vetor de ambiente normalizado:
+
+\begin{equation}
+  \mathbf{B}(\mathbf{x}) =
+  \begin{pmatrix}
+    T(\mathbf{x}) \\ P(\mathbf{x}) \\ D(\mathbf{x}) \\ S(\mathbf{x}) \\ R(\mathbf{x})
+  \end{pmatrix}
+  \in [0,1]^5
+  \label{eq:biome-vector}
+\end{equation}
+
+onde $T$ é temperatura (lapse + latitude), $P$ precipitação/umidade orográfica,
+$D$ drenagem normalizada ($\log(1+A/N)$), $S = \|\nabla h\|$ normalizado, e
+$R$ rugosidade geomórfica local.
+
+\subsection{Âncoras e Interpolação Gaussiana (IDW)}
+
+Cada bioma da taxonomia (ex: \emph{tropical\_rainforest}, \emph{taiga}, \emph{mangrove\_swamp})
+é um centróide $\mathbf{B}_k$ no espaço paramétrico, com propriedades físicas associadas
+(cor, $\mu_{\text{erosão}}$, $K_{d,k}$).
+
+Os pesos de mistura são:
+
+\begin{equation}
+  w_k(\mathbf{x}) = \frac{\exp(-\alpha \cdot \|\mathbf{B}(\mathbf{x}) - \mathbf{B}_k\|_W^2)}
+  {\sum_j \exp(-\alpha \cdot \|\mathbf{B}(\mathbf{x}) - \mathbf{B}_j\|_W^2)}
+  \label{eq:biome-weights}
+\end{equation}
+
+com norma ponderada $\|\cdot\|_W^2 = 2d_T^2 + 2d_P^2 + 1.5d_D^2 + d_S^2 + 0.8d_R^2$.
+
+Propriedades interpoladas (cor, erosão, difusão):
+
+\begin{equation}
+  \mathbf{c}(\mathbf{x}) = \sum_k w_k \mathbf{c}_k, \qquad
+  \mu_e(\mathbf{x}) = \sum_k w_k \mu_{e,k}
+  \label{eq:biome-interp}
+\end{equation}
+
+Sub-biomas emergem automaticamente como pontos intermediários no espaço contínuo,
+sem codificação explícita de transições.
+
+\subsection{Taxonomia Implementada}
+
+A implementação (\texttt{src/universalBiome.js}) define $N = 32$ âncoras cobrindo:
+florestas tropicais e montanas, taiga, elfin woodland, thorn scrub, savanna,
+desertos temperados/tropicais, bog, mangrove, salt marsh, wetland, tundra e neve.
+
+\subsection{Campos Ambientais Base}
+
+\subsubsection{Campo de Temperatura}
+
+\begin{equation}
+  T(\mathbf{x}) = T_0 - \alpha_T \cdot h(\mathbf{x})
+  + \eta_T \cdot \text{fBm}(\mathbf{x};\, \lambda_T, 3, S_T)
+  \label{eq:temperature}
+\end{equation}
+
+onde $\alpha_T$ é a taxa de lapse térmico (°C por unidade de altitude).
+
+\subsection{Campo de Umidade com Sombra de Chuva}
+
+Seja $\mathbf{w} = (w_x, w_z)^\top$ o vento dominante. O efeito orográfico é:
+
+\begin{equation}
+  M(\mathbf{x}) = M_0
+  + \eta \cdot \max(0,\, \mathbf{w} \cdot \nabla h)
+  - \xi \cdot \max(0,\, -\mathbf{w} \cdot \nabla h)
+  + \eta_M \cdot \text{fBm}(\mathbf{x};\, \lambda_M, 3, S_M)
+  \label{eq:moisture}
+\end{equation}
+
+\subsection{Acoplamento Geomorfológico}
+
+A erosão adapta-se localmente via propriedades interpoladas:
+
+\begin{equation}
+  K_e^{\text{local}} = K_e \cdot \mu_e(\mathbf{x}), \qquad
+  K_d^{\text{local}} = K_d \cdot \sum_k w_k K_{d,k}
+  \label{eq:biome-erosion-coupling}
+\end{equation}
+
+Rainforest ($\mu_e \approx 1.8$) favorece ravinagem; desertos ($\mu_e \approx 0.05$)
+resistem incisão; tundra ($K_d$ elevado) simula freeze-thaw.
+
+%==============================================================================
+\section{Mescla Multi-Domínio e Slope Masking}
+%==============================================================================
+
+\subsection{Pipeline de Produção}
+
+O fluxo completo de geração segue o \emph{pipeline} clássico de produção:
+
+\begin{equation}
+  \text{Noise} \to \text{Domain Warping} \to \text{EDP + Passes}
+  \to \text{Blend} \to \text{Slope Mask} \to \text{Biomas} \to \text{Output}
+  \label{eq:pipeline}
+\end{equation}
+
+\subsection{Sistema Multi-Domínio Ponderado}
+
+Em vez de aplicar a mesma EDP homogénea em todo o mapa, definimos $N$ árvores de nós
+geomorfológicos independentes (ex: \emph{alpine}, \emph{mesa}). A evolução pode ser
+expressa como:
+
+\begin{equation}
+  \frac{\partial h(\mathbf{x}, t)}{\partial t}
+  = \sum_{k=1}^{N} W_k(\mathbf{x}) \cdot \left[
+    \mathcal{U}_k + K_{d,k} \nabla^2 h - \mathcal{E}_{h,k}(A, \nabla h)
+    - \mathcal{E}_{\text{wind},k} + \mathcal{L}_k(h)
+  \right]
+  \label{eq:multi-domain}
+\end{equation}
+
+onde $W_k(\mathbf{x}) \in [0,1]$, $\sum_k W_k = 1$, e $\mathcal{L}_k$ é o operador
+de deslizamento com ângulo crítico $\theta_{c,k}$ específico do domínio $k$.
+
+Na implementação, cada domínio $k$ é simulado integralmente, produzindo $h_k(\mathbf{x})$,
+e a mescla pós-processamento utiliza interpolação \emph{smoothstep}:
+
+\begin{equation}
+  h_{\text{final}}(\mathbf{x}) = \sum_{k=1}^{N} \tilde{W}_k(\mathbf{x}) \cdot h_k(\mathbf{x}),
+  \qquad \tilde{W}_k = \text{smoothstep}(W_k)
+  \label{eq:blend}
+\end{equation}
+
+Para $N=2$: $h_{\text{final}} = (1 - \tilde{W}) h_A + \tilde{W} h_B$.
+
+\subsection{Máscaras de Peso}
+
+O campo $W(\mathbf{x})$ pode ser gerado por:
+\begin{itemize}
+  \item \textbf{Ruído macro}: $W = \text{smoothstep}((\text{fBm}(\mathbf{x}) + 1)/2)$;
+  \item \textbf{Gradiente}: transição linear ao longo de um eixo;
+  \item \textbf{Pintura}: \emph{pixel sheet} editável pelo utilizador (extensão futura).
+\end{itemize}
+
+\subsection{Slope Masking para Materiais}
+
+Escarpas verticais activam bandas rochosas procedurais quando
+$\|\nabla h\| > \tau_{\text{cliff}}$:
+
+\begin{equation}
+  \mathbf{c}_{\text{final}} = \text{lerp}(\mathbf{c}_{\text{bioma}},\, \mathbf{c}_{\text{rock}},\,
+  \text{smoothstep}(\|\nabla h\| - \tau_{\text{cliff}}))
+  \label{eq:slope-mask}
+\end{equation}
+
+Neve, vegetação e solo continuam governados por $h$, $T$ e $M$ via $\mathcal{B}$.
+
+%==============================================================================
+\section{Hiperparâmetros da Implementação de Referência}
+%==============================================================================
+
+A Tabela~\ref{tab:noise}--\ref{tab:biome} listam os valores padrão da implementação
+(\texttt{src/terrain.js}, versão 5.0). $32$ âncoras de bioma. Resolução padrão: $N = 192$.
+
+\begin{table}[H]
+\centering
+\caption{Parâmetros de Domain Warping e fBm inicial}
+\label{tab:noise}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Módulo} \\
+\midrule
+$\lambda_w$  & \texttt{warpScale}     & 40   & \texttt{noise.js} \\
+$\gamma$     & \texttt{warpStrength}  & 12   & \texttt{noise.js} \\
+$N_w$        & \texttt{warpOctaves}   & 3    & \texttt{noise.js} \\
+$\lambda_b$  & \texttt{baseScale}     & 60   & \texttt{noise.js} \\
+$H_b$        & \texttt{baseHeight}    & 15   & \texttt{noise.js} \\
+$N_b$        & \texttt{baseOctaves}   & 5    & \texttt{noise.js} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Parâmetros da EDP geomorphológica}
+\label{tab:geomorph}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Eq.} \\
+\midrule
+$I$     & \texttt{iterations}   & 15    & Algoritmo~\ref{alg:main} \\
+$\Delta t$ & \texttt{dt}        & 1.0   & \eqref{eq:euler} \\
+$K_d$   & \texttt{Kd}           & 0.008 & \eqref{eq:pde} \\
+$K_e$   & \texttt{Ke}           & 0.0035 & \eqref{eq:ke-hetero} \\
+$K_w$   & \texttt{Kw}           & 0.0006 & \eqref{eq:weathering} \\
+$N$     & \texttt{gridSize}     & 192   & Malha \\
+$m$     & \texttt{m}            & 0.5   & \eqref{eq:stream-power} \\
+$n$     & \texttt{n}            & 1.0   & \eqref{eq:stream-power} \\
+$P$     & \texttt{precipitation}& 1.0   & \eqref{eq:accumulation} \\
+$U_0$   & \texttt{tectonic.U0}  & 0.02  & \eqref{eq:tectonic} \\
+$k_x$   & \texttt{tectonic.kx}  & 0.08  & \eqref{eq:tectonic} \\
+$k_z$   & \texttt{tectonic.ky}  & 0.05  & \eqref{eq:tectonic} \\
+$\alpha$& \texttt{tectonic.alpha}& 2.0  & \eqref{eq:tectonic} \\
+$p$     & \texttt{tectonic.p}   & 1.5   & \eqref{eq:tectonic} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Caprock e estratificação sedimentar (v3.0)}
+\label{tab:strata}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Eq.} \\
+\midrule
+$k_{\text{strata}}$ & \texttt{lithology.kStrata} & 0.8 & \eqref{eq:strata} \\
+$R_{\text{cap}}^{\text{hard}}$ & \texttt{lithology.caprockHardness} & 3.0 & \eqref{eq:caprock} \\
+$\tau_{\text{cap}}$ & \texttt{lithology.caprockThreshold} & 0.55 & \eqref{eq:caprock} \\
+$R_{\text{base}}$ & \texttt{lithology.Rbase} & 0.5 & \eqref{eq:strata} \\
+$\Delta R$ & \texttt{lithology.deltaR} & 0.5 & \eqref{eq:strata} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Deslizamentos, vento e detalhe hídrico (v3.0)}
+\label{tab:postpass}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Eq.} \\
+\midrule
+$\theta_c$    & \texttt{landslide.thetaC}     & 33°   & \eqref{eq:landslide} \\
+$K_{\text{slip}}$ & \texttt{landslide.slipRate} & 0.12  & \eqref{eq:landslide} \\
+$N_{\text{slip}}$ & \texttt{landslide.finalPasses}& 6  & \eqref{eq:landslide} \\
+$K_{\text{wind}}$ & \texttt{wind.Kwind}       & 0.002 & \eqref{eq:wind-detail} \\
+$\mathbf{w}$  & \texttt{wind.windX/Z}         & (1, 0.35) & \eqref{eq:wind-detail} \\
+$\lambda$     & \texttt{hydraulicDetail.lambda}& 0.08 & \eqref{eq:hydraulic-detail} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Parâmetros vulcânicos e glaciais (desativados por padrão)}
+\label{tab:volcanic}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Eq.} \\
+\midrule
+$H_v$              & \texttt{volcanic.Hv}           & 20 & \eqref{eq:volcanic} \\
+$\sigma$           & \texttt{volcanic.sigma}        & 15 & \eqref{eq:volcanic} \\
+$r_{\text{caldera}}$ & \texttt{volcanic.calderaRadius}& 8  & \eqref{eq:volcanic} \\
+$R_v$              & \texttt{volcanic.calderaDepth} & 5  & \eqref{eq:volcanic} \\
+$h_s$              & \texttt{glacial.snowLine}      & 12 & \eqref{eq:glacial-detail} \\
+$\beta$            & \texttt{glacial.beta}          & 0.1 & \eqref{eq:glacial-detail} \\
+$k$                & \texttt{glacial.k}             & 1.5 & \eqref{eq:glacial-detail} \\
+$K_g$              & \texttt{glacial.coeff}         & 0.005 & \eqref{eq:glacial-detail} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Parâmetros climáticos e de bioma}
+\label{tab:biome}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Símbolo} & \textbf{Parâmetro} & \textbf{Valor} & \textbf{Eq.} \\
+\midrule
+$T_0$       & \texttt{temperature.T0}         & 25   & \eqref{eq:temperature} \\
+$\alpha_T$  & \texttt{temperature.lapseRate}  & 0.6  & \eqref{eq:temperature} \\
+$M_0$       & \texttt{moisture.M0}            & 0.5  & \eqref{eq:moisture} \\
+$\mathbf{w}$& \texttt{moisture.windX/Z}       & (1, 0.3) & \eqref{eq:moisture} \\
+$\eta$      & \texttt{moisture.condensation}  & 0.8  & \eqref{eq:moisture} \\
+$\xi$       & \texttt{moisture.evaporation}   & 0.5  & \eqref{eq:moisture} \\
+$h_{\text{neve}}$ & \texttt{snowLine}         & 14   & $\mathcal{B}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Presets Geológicos}
+
+A implementação expõe quatro configurações pré-definidas:
+
+\begin{itemize}
+  \item \textbf{default}: tectônica + erosão hídrica;
+  \item \textbf{volcanic}: estrutura vulcânica \eqref{eq:volcanic} ativa;
+  \item \textbf{glacial}: erosão glacial \eqref{eq:glacial-detail} ativa;
+  \item \textbf{alpine}: tectônica intensa ($U_0 = 0.05$, $p = 2.0$) + glaciação;
+  \item \textbf{mesa}: caprock intenso + deslizamentos + erosão eólica (mesas/tepui);
+  \item \textbf{blend}: mescla \emph{alpine} $\oplus$ \emph{mesa} via máscara de ruído macro.
+\end{itemize}
+
+%==============================================================================
+\section{Análise de Complexidade}
+%==============================================================================
+
+Para malha $N \times N$ e $I$ iterações:
+
+\begin{align}
+  \text{Custo síntese } h_0 &: \mathcal{O}(N^2 \cdot (2N_w + N_b)) \\
+  \text{Custo drenagem}     &: \mathcal{O}(N^2) \quad \text{por iteração} \\
+  \text{Custo EDP}            &: \mathcal{O}(N^2) \quad \text{por iteração} \\
+  \text{Custo total}          &: \mathcal{O}\!\left(N^2 \cdot \left[(2N_w + N_b) + I\right]\right)
+\end{align}
+
+Com $N_w = 3$, $N_b = 5$, $N = 128$, $I = 15$: aproximadamente
+$128^2 \times (11 + 15) \approx 4.3 \times 10^5$ operações de célula,
+executáveis em $< 2$\,s em hardware de referência (Node.js v20, CPU single-thread).
+
+%==============================================================================
+\section{Mapeamento Código $\leftrightarrow$ Equações}
+%==============================================================================
+
+\begin{table}[H]
+\centering
+\caption{Correspondência entre formulação matemática e implementação}
+\label{tab:code-map}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Equação} & \textbf{Função / Arquivo} \\
+\midrule
+\eqref{eq:fbm}           & \texttt{fBm()} --- \texttt{src/noise.js} \\
+\eqref{eq:psi}           & \texttt{displacementField()} --- \texttt{src/noise.js} \\
+\eqref{eq:h0}            & \texttt{initialHeight()} --- \texttt{src/noise.js} \\
+\eqref{eq:volcanic}      & \texttt{volcanicContribution()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:tectonic}      & \texttt{tectonicUplift()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:accumulation}  & \texttt{computeFlowAccumulation()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:strata}--\eqref{eq:caprock} & \texttt{lithologicResistance()} --- \texttt{src/noise.js} \\
+\eqref{eq:wind-detail}   & erosão eólica em \texttt{applyGeomorphologicalStep()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:landslide}     & \texttt{applyLandslideFinalPass()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:hydraulic-detail}& \texttt{applyHydraulicDetailPass()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:blend}         & \texttt{blendHeights()}, \texttt{generateWeightMask()} --- \texttt{src/blend.js} \\
+\eqref{eq:slope-mask}    & \texttt{applySlopeRockMask()} --- \texttt{src/blend.js} \\
+\eqref{eq:multi-domain}  & \texttt{generateBlendedTerrain()} --- \texttt{src/terrain.js} \\
+\eqref{eq:euler}         & \texttt{applyGeomorphologicalStep()} --- \texttt{src/geomorphology.js} \\
+\eqref{eq:temperature}   & \texttt{temperatureField()} --- \texttt{src/biome.js} \\
+\eqref{eq:moisture}      & \texttt{moistureField()} --- \texttt{src/biome.js} \\
+\eqref{eq:biome-vector}  & \texttt{getEnvironmentalVector()} --- \texttt{src/universalBiome.js} \\
+\eqref{eq:biome-weights} & \texttt{evaluateBiomeWeights()} --- \texttt{src/universalBiome.js} \\
+\eqref{eq:biome-interp}  & \texttt{interpolateBiomeProperties()} --- \texttt{src/universalBiome.js} \\
+Algoritmo~\ref{alg:main} & \texttt{generateTerrain()} --- \texttt{src/terrain.js} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Trabalhos Relacionados}
+%==============================================================================
+
+\begin{itemize}
+  \item \textbf{Perlin (1985)}: ruído gradiente contínuo $\mathcal{N}_p$;
+  \item \textbf{Musgrave et al. (1989)}: síntese fractal e erosão hídrica em heightmaps;
+  \item \textbf{Inigo Quilez}: domain warping para distorção de coordenadas;
+  \item \textbf{Cordonnier et al. (2016)}: erosão baseada em fluvial incision (SIGGRAPH);
+  \item \textbf{Weiss et al. (2022)}: modelos de paisagem baseados em física aprendida.
+\end{itemize}
+
+%==============================================================================
+\section{Controle de Versão do Documento}
+%==============================================================================
+
+\begin{table}[H]
+\centering
+\caption{Histórico de versões}
+\label{tab:versions}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Versão} & \textbf{Data} & \textbf{Alterações} \\
+\midrule
+1.0 & 2026-09-20 & Documentação inicial: domain warping, EDP geomorphológica, \\
+    &            & erosão D8, tectônica, vulcânica, glacial, biomas Whittaker. \\
+1.1 & 2026-09-20 & Erodibilidade litológica $K_e(\mathbf{x})$, erosão térmica com \\
+    &            & tálus, perturbação micro-fractal, redução de $K_d$. \\
+2.0 & 2026-09-20 & Estratificação anisotrópica $R(\mathbf{x},h)$, erosão \\
+    &            & $K_e/(R+\epsilon)$, passes finais térmico + hídrico, $N=192$. \\
+2.1 & 2026-09-20 & Estabilização numérica: drenagem $\log(1+A/N)$, envelope. \\
+3.0 & 2026-09-20 & Caprock, deslizamentos (landslides), erosão eólica, preset mesa. \\
+4.0 & 2026-09-20 & Mescla multi-domínio $W_k$, slope masking, preset \texttt{blend}. \\
+5.0 & 2026-09-20 & Sistema universal $\mathbf{B}=(T,P,D,S,R)$, 32 âncoras, IDW Gaussiano. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Instrução de manutenção}: ao modificar qualquer módulo em \texttt{src/},
+atualizar as Tabelas~\ref{tab:noise}--\ref{tab:biome}, o mapeamento
+Tabela~\ref{tab:code-map} e o histórico Tabela~\ref{tab:versions}.
+
+%==============================================================================
+\section{Conclusão e Direções Futuras}
+%==============================================================================
+
+O algoritmo apresentado unifica síntese estocástica e modelagem geodinâmica num
+\emph{framework} matematicamente explícito. Direções de investigação incluem:
+
+\begin{enumerate}
+  \item Comparação quantitativa com DEMs reais (SRTM, ASTER): distribuição de
+        inclinação, índice de rugosidade, espectro de potência;
+  \item Modelagem karst (tower karst) e validação quantitativa com DEMs reais;
+  \item Esquemas de integração implícitos para estabilidade com $\Delta t$ maiores;
+  \item Paralelização GPU dos operadores de drenagem e EDP;
+  \item Exportação temporal da evolução $h(\mathbf{x}, t_n)$ para visualização
+        da dinâmica geológica.
+\end{enumerate}
+
+\end{document}

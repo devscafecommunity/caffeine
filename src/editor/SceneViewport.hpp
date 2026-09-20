@@ -132,6 +132,7 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+    bool isDetached() const { return m_detached; }
 
      static ImVec2 projectToScreen(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
                                     const EditorContext& ctx);
@@ -244,6 +245,7 @@ private:
 #endif
 
     bool m_open = true;
+    bool m_detached = false;
     bool m_initialized = false;
     TransformGizmo m_Gizmo;
     bool m_gizmoDragging = false;

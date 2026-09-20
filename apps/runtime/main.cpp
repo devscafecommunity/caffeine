@@ -1,3 +1,12 @@
+#include "animation/AnimationSystem.hpp"
+#include "debug/LogSystem.hpp"
+#include "events/EventBus.hpp"
+#include "events/Events.hpp"
+#include "input/InputManager.hpp"
+#include "physics/PhysicsSystem2D.hpp"
+#include "script/ScriptEngine.hpp"
+#include "script/ScriptSystem.hpp"
+#include "script/ScriptTypes.hpp"
 #include "editor/ProjectManager.hpp"
 #include "editor/SceneSerializer.hpp"
 #include "editor/ImGuiIntegration.hpp"
@@ -9,7 +18,10 @@
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "ui/UISystem.hpp"
+#include "ui/UIRenderer.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "render/GpuSceneRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
@@ -17,6 +29,8 @@
 #include "rhi/RenderDevice.hpp"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cmath>
 #include <filesystem>
@@ -48,11 +62,123 @@ std::filesystem::path findProjectFile(int argc, char** argv) {
     return {};
 }
 
+void pumpRuntimeInput(Caffeine::Input::InputManager& input) {
+    input.beginFrame();
+#ifdef CF_HAS_IMGUI
+    const bool typing = ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+#else
+    const bool typing = false;
+#endif
+    int keyCount = 0;
+    const bool* ks = SDL_GetKeyboardState(&keyCount);
+    const int limit = std::min(keyCount, static_cast<int>(Caffeine::Input::Key::KeyCount));
+    if (!typing && ks) {
+        for (int i = 0; i < limit; ++i) {
+            const auto key = static_cast<Caffeine::Input::Key>(i);
+            if (ks[i]) input.injectKeyDown(key);
+            else input.injectKeyUp(key);
+        }
+    } else {
+        for (int i = 0; i < static_cast<int>(Caffeine::Input::Key::KeyCount); ++i) {
+            input.injectKeyUp(static_cast<Caffeine::Input::Key>(i));
+        }
+    }
+
+    float mx = 0.0f, my = 0.0f;
+    const SDL_MouseButtonFlags mouseButtons = SDL_GetMouseState(&mx, &my);
+    input.injectMouseMove(mx, my);
+    auto syncMouse = [&](SDL_MouseButtonFlags mask, Caffeine::Input::MouseButton button) {
+        if (mouseButtons & mask) input.injectMouseButtonDown(button);
+        else input.injectMouseButtonUp(button);
+    };
+    syncMouse(SDL_BUTTON_LMASK, Caffeine::Input::MouseButton::Left);
+    syncMouse(SDL_BUTTON_MMASK, Caffeine::Input::MouseButton::Middle);
+    syncMouse(SDL_BUTTON_RMASK, Caffeine::Input::MouseButton::Right);
+
+    float stickLX = 0.0f, stickLY = 0.0f, stickRX = 0.0f, stickRY = 0.0f;
+    int padCount = 0;
+    SDL_JoystickID* pads = SDL_GetGamepads(&padCount);
+    if (pads && padCount > 0) {
+        SDL_Gamepad* gp = SDL_GetGamepadFromID(pads[0]);
+        if (!gp) gp = SDL_OpenGamepad(pads[0]);
+        if (gp) {
+            auto axis = [&](SDL_GamepadAxis a) -> float {
+                const float v = static_cast<float>(SDL_GetGamepadAxis(gp, a)) / 32767.0f;
+                return (std::abs(v) < 0.18f) ? 0.0f : v;
+            };
+            stickLX = axis(SDL_GAMEPAD_AXIS_LEFTX);
+            stickLY = -axis(SDL_GAMEPAD_AXIS_LEFTY);
+            stickRX = axis(SDL_GAMEPAD_AXIS_RIGHTX);
+            stickRY = axis(SDL_GAMEPAD_AXIS_RIGHTY);
+            auto syncBtn = [&](SDL_GamepadButton b, Caffeine::Input::GamepadButton ib) {
+                if (SDL_GetGamepadButton(gp, b)) input.injectGamepadButtonDown(ib);
+                else input.injectGamepadButtonUp(ib);
+            };
+            syncBtn(SDL_GAMEPAD_BUTTON_SOUTH, Caffeine::Input::GamepadButton::A);
+            syncBtn(SDL_GAMEPAD_BUTTON_EAST, Caffeine::Input::GamepadButton::B);
+            syncBtn(SDL_GAMEPAD_BUTTON_WEST, Caffeine::Input::GamepadButton::X);
+            syncBtn(SDL_GAMEPAD_BUTTON_NORTH, Caffeine::Input::GamepadButton::Y);
+            syncBtn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Caffeine::Input::GamepadButton::LeftBumper);
+            syncBtn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Caffeine::Input::GamepadButton::RightBumper);
+        }
+    }
+    if (pads) SDL_free(pads);
+
+    float relX = 0.0f, relY = 0.0f;
+    SDL_GetRelativeMouseState(&relX, &relY);
+    input.injectGamepadAxis(Caffeine::Input::GamepadAxis::LeftX, stickLX);
+    input.injectGamepadAxis(Caffeine::Input::GamepadAxis::LeftY, stickLY);
+    input.injectGamepadAxis(Caffeine::Input::GamepadAxis::RightX, stickRX + relX * 0.12f);
+    input.injectGamepadAxis(Caffeine::Input::GamepadAxis::RightY, stickRY + relY * 0.12f);
+    input.endFrame();
+}
+
 #ifdef CF_HAS_IMGUI
 
 constexpr float kDegToRad = 3.14159265f / 180.0f;
 
 Caffeine::Render::SkyboxRenderer g_skyboxRenderer;
+Caffeine::Render::GpuSceneRenderer g_gpuScene;
+Caffeine::RHI::Texture* g_gpuColor = nullptr;
+Caffeine::RHI::Texture* g_gpuDepth = nullptr;
+uint32_t g_gpuW = 0;
+uint32_t g_gpuH = 0;
+
+void destroyGpuCanvas(Caffeine::RHI::RenderDevice& device) {
+    if (g_gpuColor) {
+        device.destroyTexture(g_gpuColor);
+        g_gpuColor = nullptr;
+    }
+    if (g_gpuDepth) {
+        device.destroyTexture(g_gpuDepth);
+        g_gpuDepth = nullptr;
+    }
+    g_gpuW = 0;
+    g_gpuH = 0;
+}
+
+void resizeGpuCanvas(Caffeine::RHI::RenderDevice& device, uint32_t width, uint32_t height) {
+    if (width < 1 || height < 1) return;
+    if (g_gpuW == width && g_gpuH == height && g_gpuColor && g_gpuDepth) return;
+    destroyGpuCanvas(device);
+
+    Caffeine::RHI::TextureDesc colorDesc;
+    colorDesc.width = width;
+    colorDesc.height = height;
+    colorDesc.format = Caffeine::RHI::TextureFormat::R8G8B8A8_UNORM;
+    colorDesc.usage = Caffeine::RHI::TextureUsage::Sampler | Caffeine::RHI::TextureUsage::ColorTarget;
+    g_gpuColor = device.createTexture(colorDesc);
+
+    Caffeine::RHI::TextureDesc depthDesc;
+    depthDesc.width = width;
+    depthDesc.height = height;
+    depthDesc.format = Caffeine::RHI::TextureFormat::D32_FLOAT;
+    depthDesc.usage = Caffeine::RHI::TextureUsage::DepthStencil;
+    g_gpuDepth = device.createTexture(depthDesc);
+
+    g_gpuW = width;
+    g_gpuH = height;
+}
 
 Caffeine::Mat4 buildLocalMatrix3D(const Caffeine::ECS::Position3D* p,
                                   const Caffeine::ECS::Rotation3D* r,
@@ -162,6 +288,7 @@ bool findActiveCamera3D(Caffeine::ECS::World& world, Caffeine::ECS::Entity& outE
 
 void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext& ctx,
                     Caffeine::Runtime::RuntimeSceneRenderer& renderer,
+                    Caffeine::RHI::RenderDevice& device, Caffeine::RHI::CommandBuffer* cmd,
                     const std::string& projectRoot) {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -229,7 +356,33 @@ void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext
             IM_COL32(20, 20, 24, 255), IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
     }
 
-    renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity);
+    bool drewGpu = false;
+    if (cmd && g_gpuScene.isReady()) {
+        const uint32_t w = static_cast<uint32_t>(std::max(panelSize.x, 8.0f));
+        const uint32_t h = static_cast<uint32_t>(std::max(panelSize.y, 8.0f));
+        resizeGpuCanvas(device, w, h);
+        Caffeine::Render::GpuSceneCamera gpuCam;
+        gpuCam.position = camPos;
+        gpuCam.focus = camPos + entityForward(world, cameraEntity).normalized();
+        gpuCam.view = view;
+        gpuCam.proj = proj;
+        gpuCam.fovRad = cam3D->fov * kDegToRad;
+        gpuCam.nearClip = std::max(cam3D->nearClip, 0.05f);
+        gpuCam.farClip = std::max(cam3D->farClip, 50.0f);
+        const uint32_t drawn =
+            g_gpuScene.renderWithCamera(cmd, world, gpuCam, g_gpuColor, g_gpuDepth, w, h, projectRoot);
+        if (drawn > 0 && g_gpuColor && g_gpuColor->handle) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(g_gpuColor->handle), origin,
+                         ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),
+                         ImVec2(1, 1));
+            drewGpu = true;
+        }
+    }
+    if (!drewGpu) {
+        renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity);
+    }
+
+    Caffeine::UI::drawWidgets(world, dl, origin, panelSize);
 
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -257,7 +410,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path buildRoot = std::filesystem::absolute(projectFile.parent_path());
     config.RootPath = buildRoot;
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -296,6 +449,10 @@ int main(int argc, char** argv) {
     }
     ImGui_ImplSDLGPU3_CreateDeviceObjects();
 
+    if (!g_gpuScene.init(&device)) {
+        std::fprintf(stderr, "GpuSceneRenderer::init failed — CPU mesh fallback\n");
+    }
+
     Caffeine::Runtime::RuntimeSceneRenderer renderer;
     Caffeine::Editor::EditorContext editorCtx;
     editorCtx.viewMode = Caffeine::Editor::EditorContext::ViewMode::Mode3D;
@@ -322,6 +479,47 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    Caffeine::Debug::LogSystem::instance().addSink(
+        [](Caffeine::Debug::LogLevel level, const char* category, const char* message) {
+            std::fprintf(stderr, "[%s] %s: %s\n",
+                         Caffeine::Debug::LogSystem::levelToString(level),
+                         category ? category : "", message ? message : "");
+        });
+
+    Caffeine::Input::InputManager input;
+    Caffeine::Events::EventBus eventBus;
+    Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
+    Caffeine::Animation::AnimationSystem animation;
+    Caffeine::Script::ScriptEngine scriptEngine;
+    Caffeine::Script::ScriptEngine::InitParams scriptParams;
+    scriptParams.world = &world;
+    scriptParams.input = &input;
+    scriptParams.events = &eventBus;
+    const bool scriptsReady = scriptEngine.init(scriptParams);
+    scriptEngine.setSearchRoot(buildRoot.string());
+    Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr);
+    Caffeine::UI::UISystem uiSystem(&eventBus);
+    if (scriptsReady) {
+        scriptSystem.resetPlayState();
+        eventBus.subscribe<Caffeine::Events::OnCollision2D>(
+            [&](const Caffeine::Events::OnCollision2D& event) {
+                if (!sceneLoaded) return;
+                auto notify = [&](Caffeine::u32 entityId, Caffeine::u32 otherId) {
+                    Caffeine::ECS::Entity self(entityId, &world);
+                    Caffeine::ECS::Entity other(otherId, &world);
+                    if (!self.isValid() || !other.isValid()) return;
+                    const auto* script = world.get<Caffeine::Script::ScriptComponent>(self);
+                    if (!script || script->scriptPath.empty()) return;
+                    scriptEngine.callOnCollision(script->scriptPath, self, other);
+                };
+                notify(event.entityA, event.entityB);
+                notify(event.entityB, event.entityA);
+            });
+        std::printf("Script engine ready (search root: %s)\n", buildRoot.string().c_str());
+    } else {
+        std::fprintf(stderr, "caffeine-runtime: script engine failed to init\n");
+    }
+
     if (!sceneLoaded) {
         if (config.LastScene.empty()) {
             std::fprintf(stderr,
@@ -344,6 +542,30 @@ int main(int argc, char** argv) {
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) running = false;
         }
 
+        const Uint64 nowNs = SDL_GetTicksNS();
+        static Uint64 lastNs = nowNs;
+        float dt = static_cast<float>(nowNs - lastNs) / 1'000'000'000.0f;
+        lastNs = nowNs;
+        if (dt <= 0.0f) dt = 1.0f / 60.0f;
+        if (dt > 0.1f) dt = 0.1f;
+
+#ifdef CF_HAS_IMGUI
+        if (ImGui::GetCurrentContext()) {
+            ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+        }
+#endif
+        pumpRuntimeInput(input);
+        if (sceneLoaded) {
+            animation.onUpdate(world, dt);
+            physics.onUpdate(world, dt);
+            if (scriptsReady) {
+                scriptEngine.setWorld(&world);
+                scriptEngine.setInput(&input);
+                scriptSystem.onUpdate(world, dt);
+            }
+            uiSystem.onUpdate(world, dt);
+        }
+
         Caffeine::Scene::propagateTransforms(world);
 
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
@@ -351,7 +573,7 @@ int main(int argc, char** argv) {
 #ifdef CF_HAS_IMGUI
             imgui.beginFrame();
             if (sceneLoaded) {
-                renderGameView(world, editorCtx, renderer, buildRoot.string());
+                renderGameView(world, editorCtx, renderer, device, cmd, buildRoot.string());
             } else {
                 ImGui::SetNextWindowPos(ImVec2(0, 0));
                 ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
@@ -381,7 +603,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    scriptEngine.shutdown();
 #ifdef CF_HAS_IMGUI
+    g_skyboxRenderer.releaseGpuTextures();
+    g_gpuScene.shutdown();
+    destroyGpuCanvas(device);
     imgui.shutdown();
 #endif
     device.shutdown();

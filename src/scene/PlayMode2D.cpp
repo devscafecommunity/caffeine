@@ -1,6 +1,7 @@
 #include "scene/PlayMode2D.hpp"
 
 #include "editor/EditorContext.hpp"
+#include "scene/SceneComponents.hpp"
 
 #include <algorithm>
 
@@ -33,12 +34,20 @@ ECS::Entity findActiveCamera2DEntity(ECS::World& world) {
     return fallback;
 }
 
-void syncViewportFromCamera2D(Editor::EditorContext& ctx, const ECS::Transform& transform,
-                              const ECS::Camera2DComponent& camera) {
+void syncViewportFromCamera2D(ECS::World& world, ECS::Entity cameraEntity,
+                              Editor::EditorContext& ctx, const ECS::Camera2DComponent& camera) {
     ctx.viewportZoom = std::clamp(camera.zoom, 0.05f, 10.0f);
     const f32 pixelsPerUnit = ctx.viewportZoom * 50.0f;
-    ctx.viewportPanX = -transform.position.x * pixelsPerUnit;
-    ctx.viewportPanY = transform.position.y * pixelsPerUnit;
+
+    Vec3 worldPos = Vec3(0.0f, 0.0f, 0.0f);
+    if (auto* wt = world.get<WorldTransform>(cameraEntity)) {
+        worldPos = wt->matrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+    } else if (auto* transform = world.get<ECS::Transform>(cameraEntity)) {
+        worldPos = transform->position;
+    }
+
+    ctx.viewportPanX = -worldPos.x * pixelsPerUnit;
+    ctx.viewportPanY = worldPos.y * pixelsPerUnit;
 }
 
 }  // namespace Caffeine::Scene

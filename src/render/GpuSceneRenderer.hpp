@@ -56,6 +56,7 @@ private:
         Vec4 albedo{1, 1, 1, 1};
         f32 metallic = 0.0f;
         f32 roughness = 0.5f;
+        RHI::Texture* albedoMap = nullptr;
         bool castShadows = true;
         bool receiveShadows = true;
         bool isTerrain = false;

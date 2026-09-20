@@ -43,9 +43,6 @@ struct LightingUBO {
     float dirColor[16];
     float pointData[16];
     float pointColor[16];
-    float pointShadow[16];
-    float dirShadow[16];
-    float dirShadowVP[32];
 };
 
 struct ShadowUBO {
@@ -212,7 +209,7 @@ bool GpuSceneRenderer::createPipelines() {
     m_sceneVert = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitVertex,
                                           RHI::ShaderStage::Vertex, 1);
     m_sceneFrag = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitFragment,
-                                          RHI::ShaderStage::Fragment, 1, 0);
+                                          RHI::ShaderStage::Fragment, 1, 1);
     m_terrainFrag = createShaderFromBuiltin(m_device, BuiltinShader::TerrainLitFragment,
                                             RHI::ShaderStage::Fragment, 2, 5);
     m_shadowVert = createShaderFromBuiltin(m_device, BuiltinShader::ShadowDepthVertex,
@@ -409,7 +406,6 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
         lights.roughness = draw.roughness;
 
         lights.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
-        u32 dirShadowSlot = 0;
         for (int i = 0; i < lights.dirCount; ++i) {
             const auto& d = lighting.lights.directionals[i];
             lights.dirData[i * 4 + 0] = d.direction.x;
@@ -419,20 +415,9 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             lights.dirColor[i * 4 + 0] = d.color.x;
             lights.dirColor[i * 4 + 1] = d.color.y;
             lights.dirColor[i * 4 + 2] = d.color.z;
-
-            if (draw.receiveShadows && d.castShadows &&
-                dirShadowSlot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights &&
-                m_directionalShadows.valid(dirShadowSlot)) {
-                lights.dirShadow[i * 4 + 0] = 1.0f;
-                lights.dirShadow[i * 4 + 1] = static_cast<float>(dirShadowSlot);
-                std::memcpy(lights.dirShadowVP + dirShadowSlot * 16,
-                            m_directionalShadows.lightVP(dirShadowSlot).data(), sizeof(float) * 16);
-                ++dirShadowSlot;
-            }
         }
 
         lights.pointCount = static_cast<int>(std::min(lighting.lights.points.size(), size_t{4}));
-        u32 pointShadowSlot = 0;
         for (int i = 0; i < lights.pointCount; ++i) {
             const auto& p = lighting.lights.points[i];
             lights.pointData[i * 4 + 0] = p.position.x;
@@ -442,13 +427,6 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             lights.pointColor[i * 4 + 0] = p.color.x;
             lights.pointColor[i * 4 + 1] = p.color.y;
             lights.pointColor[i * 4 + 2] = p.color.z;
-
-            if (draw.receiveShadows && p.castShadows &&
-                pointShadowSlot < GpuPointShadowMap::kMaxPointShadowLights) {
-                lights.pointShadow[i * 4 + 0] = 1.0f;
-                lights.pointShadow[i * 4 + 1] = static_cast<float>(pointShadowSlot);
-                ++pointShadowSlot;
-            }
         }
 
         if (draw.isTerrain) {
@@ -488,6 +466,11 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 }
             }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &mat, sizeof(mat));
+        } else {
+            RHI::Texture* whiteTex =
+                Terrain::TerrainGpuTextureCache::instance().whiteTexture(m_device);
+            RHI::Texture* albedo = draw.albedoMap ? draw.albedoMap : whiteTex;
+            if (albedo) cmd->bindTexture(albedo, 0, m_repeatSampler);
         }
 
         VertexUBO vubo{};
@@ -554,6 +537,28 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         }
         if (!mesh || mesh->vertices.empty()) return;
 
+        const Vec3 bsz = mesh->bounds.max - mesh->bounds.min;
+        if (bsz.lengthSquared() > 1e-6f) {
+            Spatial::AABB3D aabb;
+            const Vec3 c[2] = {mesh->bounds.min, mesh->bounds.max};
+            aabb.min = Vec3(1e30f, 1e30f, 1e30f);
+            aabb.max = Vec3(-1e30f, -1e30f, -1e30f);
+            for (int ix = 0; ix < 2; ++ix) {
+                for (int iy = 0; iy < 2; ++iy) {
+                    for (int iz = 0; iz < 2; ++iz) {
+                        const Vec3 wp = worldMatrix.transformPoint(Vec3(c[ix].x, c[iy].y, c[iz].z));
+                        aabb.min.x = std::min(aabb.min.x, wp.x);
+                        aabb.min.y = std::min(aabb.min.y, wp.y);
+                        aabb.min.z = std::min(aabb.min.z, wp.z);
+                        aabb.max.x = std::max(aabb.max.x, wp.x);
+                        aabb.max.y = std::max(aabb.max.y, wp.y);
+                        aabb.max.z = std::max(aabb.max.z, wp.z);
+                    }
+                }
+            }
+            if (!frustum.intersects(aabb)) return;
+        }
+
         MeshDraw draw;
         draw.entity = entity;
         draw.mesh = mesh;
@@ -563,6 +568,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
             draw.castShadows = renderer->castShadows;
             draw.receiveShadows = renderer->receiveShadows;
+        }
+        if (!filter.customTexturePath.empty()) {
+            draw.albedoMap = Terrain::TerrainGpuTextureCache::instance().textureFromPath(
+                m_device, filter.customTexturePath, projectRoot);
         }
         draws.push_back(draw);
     });

@@ -449,6 +449,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/PreviewRenderer.cpp
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp
+           src/editor/GameplayPreviewPanel.cpp
           src/editor/BuildSystem.cpp
           src/editor/BuildDialog.cpp
           src/editor/BuildLog.cpp
@@ -513,7 +514,7 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(caffeine-runtime PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
-      add_dependencies(doppio caffeine-runtime hello_plugin)
+      add_dependencies(doppio caffeine-runtime hello_plugin post_processing_plugin)
 
       add_executable(build-smoke
           apps/build_smoke/main.cpp
@@ -546,12 +547,31 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(hello_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
+      add_library(post_processing_plugin SHARED
+          apps/plugins/post_processing_plugin/main.cpp
+      )
+      target_include_directories(post_processing_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${imgui_SOURCE_DIR})
+      target_compile_definitions(post_processing_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
+      target_compile_features(post_processing_plugin PRIVATE cxx_std_20)
+      set_target_properties(post_processing_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "post_processing_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(post_processing_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+
       add_custom_command(TARGET doppio POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:doppio>/plugins
           COMMAND ${CMAKE_COMMAND} -E copy_if_different
               $<TARGET_FILE:hello_plugin>
               $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:hello_plugin>
-          COMMENT "Copying hello_plugin to editor plugins folder")
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_FILE:post_processing_plugin>
+              $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:post_processing_plugin>
+          COMMENT "Copying editor plugins to plugins folder")
 
       target_compile_definitions(doppio PRIVATE
           CF_HAS_IMGUI=1

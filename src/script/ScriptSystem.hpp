@@ -23,6 +23,7 @@ private:
     ScriptEngine* m_engine;
     Vector<ECS::Entity> m_initializedLua;
     Vector<ECS::Entity> m_initializedNative;
+    bool m_warnedNoLua = false;
 };
 
 }

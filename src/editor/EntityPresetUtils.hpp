@@ -7,6 +7,7 @@
 #include "ecs/Components3D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "scene/SceneComponents.hpp"
+#include "ui/UIComponents.hpp"
 
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptTypes.hpp"
@@ -21,6 +22,13 @@ inline void parentEntity(ECS::World& world, ECS::Entity child, ECS::Entity paren
     auto& pc = world.add<Scene::Parent>(child);
     pc.parent = parent;
     pc.dirty = true;
+}
+
+inline void parentUIWidget(ECS::World& world, ECS::Entity child, ECS::Entity parent) {
+    parentEntity(world, child, parent);
+    if (auto* widget = world.get<UI::UIWidget>(child)) {
+        widget->parentId = parent.id();
+    }
 }
 
 inline ECS::Entity make3DPrimitive(ECS::World& world, const char* name, ECS::MeshPrimitive primitive,

@@ -36,6 +36,8 @@ public:
     bool hasRenderableTextures(ECS::Entity entity) const;
     void invalidateEntity(ECS::Entity entity, RHI::RenderDevice* device);
     RHI::Texture* whiteTexture(RHI::RenderDevice* device);
+    RHI::Texture* textureFromPath(RHI::RenderDevice* device, const std::string& path,
+                                 const std::string& projectRoot);
     void removeEntity(ECS::Entity entity, RHI::RenderDevice* device);
     void releaseAll(RHI::RenderDevice* device);
 
@@ -46,6 +48,7 @@ private:
     void releaseTextures(TerrainGpuTextures& gpu, RHI::RenderDevice* device);
 
     std::unordered_map<u32, TerrainGpuTextures> m_entries;
+    std::unordered_map<std::string, RHI::Texture*> m_sharedTextures;
     RHI::Texture* m_whiteTexture = nullptr;
 };
 

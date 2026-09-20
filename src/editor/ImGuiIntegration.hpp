@@ -25,6 +25,7 @@ public:
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
         ImGui_ImplSDL3_InitForSDLGPU(window);
 
@@ -65,6 +66,11 @@ public:
             ImGui::GetDrawData(),
             cmd->nativeHandle(),
             cmd->nativeRenderPass());
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
     }
 
     bool processEvent(const SDL_Event& event) {

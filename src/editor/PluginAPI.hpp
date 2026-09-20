@@ -56,6 +56,9 @@ struct PluginHostApi {
     // Registers presets from an entity_presets.json manifest (package/plugin format).
     bool (*registerEntityPresetManifest)(void* ctx, const char* pluginName,
                                          const char* manifestPath) = nullptr;
+
+    // Stable component type id from the host (safe across plugin DLL boundaries).
+    u32 (*getComponentTypeId)(void* ctx, const char* componentName) = nullptr;
 };
 
 using CreatePluginFn = IPlugin* (*)(const PluginHostApi* host);

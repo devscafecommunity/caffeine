@@ -9,6 +9,7 @@
 #include "ecs/MeshComponents.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
+#include "render/GpuProceduralMeshes.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/CpuDirectionalShadowMap.hpp"
@@ -164,10 +165,6 @@ void rasterizeTriangleCpu(MeshCpuRasterizer& fb, const RasterVert& v0, const Ras
                           const RasterVert& v2, const Vec3& faceNormal, const Vec3& camPos,
                           const MeshDrawTexture& tex, bool receiveShadows,
                           const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt) {
-    const Vec3 center = (v0.worldPos + v1.worldPos + v2.worldPos) * (1.0f / 3.0f);
-    const Vec3 viewDelta(camPos.x - center.x, camPos.y - center.y, camPos.z - center.z);
-    if (faceNormal.dot(viewDelta) <= 0.0f) return;
-
     const f32 area = edgeFunction(v0.sx, v0.sy, v1.sx, v1.sy, v2.sx, v2.sy);
     if (std::abs(area) < 1e-4f) return;
 
@@ -381,15 +378,19 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
         meshQ, [&](ECS::Entity entity, ECS::MeshFilterComponent& meshFilter) {
             if (entity == skipEntity) return;
             if (Scene::isEffectivelyDisabled(world, entity)) return;
-            if (meshFilter.primitive != ECS::MeshPrimitive::Custom) return;
-            if (meshFilter.customMeshPath.empty()) return;
 
             const Mat4 worldMatrix = entityMatrix(world, entity);
-            auto& meshCache = Assets::MeshCache::getInstance();
-            auto* loadedMesh = meshCache.getMesh(meshFilter.customMeshPath, projectRoot);
-            const std::string& meshPath = meshCache.getResolvedPath().empty()
-                                               ? meshFilter.customMeshPath
-                                               : meshCache.getResolvedPath();
+            Assets::Mesh3D* loadedMesh = nullptr;
+            std::string meshPath;
+            if (meshFilter.primitive == ECS::MeshPrimitive::Custom) {
+                if (meshFilter.customMeshPath.empty()) return;
+                auto& meshCache = Assets::MeshCache::getInstance();
+                loadedMesh = meshCache.getMesh(meshFilter.customMeshPath, projectRoot);
+                meshPath = meshCache.getResolvedPath().empty() ? meshFilter.customMeshPath
+                                                               : meshCache.getResolvedPath();
+            } else {
+                loadedMesh = Render::GpuProceduralMeshes::get(meshFilter.primitive);
+            }
             if (!loadedMesh || loadedMesh->vertices.empty() || loadedMesh->indices.empty()) return;
 
             const MeshDrawTexture drawTex =

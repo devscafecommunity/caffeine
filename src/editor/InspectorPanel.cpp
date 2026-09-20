@@ -1,4 +1,6 @@
 #include "editor/InspectorPanel.hpp"
+#include "editor/EntitySnapshotExport.hpp"
+#include "editor/EditorPanelUtils.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "editor/FilePicker.hpp"
 #include "editor/InspectorWidgets.hpp"
@@ -11,6 +13,7 @@
 #include "assets/MeshCache.hpp"
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/PostProcessComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "core/WorldUnits.hpp"
 #include "terrain/TerrainCache.hpp"
@@ -24,6 +27,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <vector>
 #include <iostream>
 
@@ -45,7 +49,9 @@ void InspectorPanel::unregisterDrawer(u32 componentTypeId) {
 
 void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
+    editorPanelApplyDetach(m_detached, ImVec2(420, 640));
     if (ImGui::Begin("Inspector", &m_open)) {
+        editorPanelDetachTabButton(m_detached);
         if (!ctx.selectedEntity.isValid()) {
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No entity selected");
             ImGui::End();
@@ -75,6 +81,27 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         }
          ImGui::SameLine();
          ImGui::TextDisabled("Entity %u", e.id());
+
+         if (ImGui::Button("Copy snapshot")) {
+             const std::string snapshot = exportEntitySnapshot(world, e);
+             ImGui::SetClipboardText(snapshot.c_str());
+         }
+         ImGui::SameLine();
+         if (ImGui::Button("Export .txt")) {
+             const std::string snapshot = exportEntitySnapshot(world, e);
+             const std::filesystem::path out =
+                 std::filesystem::path("exports") / ("entity_" + std::to_string(e.id()) + ".txt");
+             std::error_code ec;
+             std::filesystem::create_directories(out.parent_path(), ec);
+             std::ofstream file(out);
+             if (file) {
+                 file << snapshot;
+                 ctx.pushTransientStatus("Exported " + out.string(), false);
+             }
+         }
+         if (ImGui::IsItemHovered()) {
+             ImGui::SetTooltip("Copy position, rotation, camera and mesh params to clipboard or file");
+         }
 
          ImGui::Separator();
          if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
@@ -110,6 +137,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawLight(world, e, ctx);
         drawSkybox(world, e, ctx);
         drawTerrain(world, e, ctx);
+        drawPostProcess(world, e, ctx);
 
         ImGui::Separator();
 
@@ -1115,6 +1143,35 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
 
     ImGui::Separator();
     ImGui::TextDisabled("Generation, sculpt and paint live in the Terrain Editor panel.");
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawPostProcess(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::PostProcessComponent>(e)) return;
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Post Process", enabled, removeRequested, "sparkles")) return;
+    if (removeRequested) {
+        world.remove<ECS::PostProcessComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* fx = world.get<ECS::PostProcessComponent>(e);
+    if (!fx) return;
+
+    ImGui::PushID("postprocess");
+    if (ImGui::Checkbox("Enabled", &fx->enabled)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Exposure", &fx->exposure, 0.2f, 3.0f)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Contrast", &fx->contrast, 0.5f, 2.0f)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Saturation", &fx->saturation, 0.0f, 2.0f)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Vignette", &fx->vignette, 0.0f, 1.0f)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Bloom", &fx->bloom, 0.0f, 1.0f)) ctx.isDirty = true;
+    if (ImGui::SliderFloat("Chromatic Aberration", &fx->chromaticAberration, 0.0f, 1.0f)) {
+        ctx.isDirty = true;
+    }
+    if (ImGui::SliderFloat("Film Grain", &fx->filmGrain, 0.0f, 1.0f)) ctx.isDirty = true;
     ImGui::PopID();
 }
 

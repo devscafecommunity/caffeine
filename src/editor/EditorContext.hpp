@@ -127,6 +127,7 @@ public:
     f32             camDistance = 10.0f;
 
     bool            isPlayMode = false;
+    ECS::World*     activeWorld = nullptr;
 
     static constexpr f32 kCamDistanceMin = 0.25f;
     static constexpr f32 kCamDistanceMax = 50000.0f;
@@ -137,7 +138,7 @@ public:
         const f32 orbit = std::abs(camDistance);
         const f32 reach = std::max({orbit, std::abs(camFocus.x), std::abs(camFocus.y),
                                     std::abs(camFocus.z)});
-        return std::max(12000.0f, reach * 32.0f + 4000.0f);
+        return std::clamp(reach * 6.0f + 400.0f, 400.0f, 4000.0f);
     }
 
     // ── Skybox (3D viewport) ───────────────────────────────────────────

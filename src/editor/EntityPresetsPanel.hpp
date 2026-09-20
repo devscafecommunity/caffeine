@@ -30,10 +30,11 @@ private:
     void createSelectedPreset(ECS::World& world, EditorContext& ctx);
 
     bool m_open = false;
+    bool m_detached = false;
     std::filesystem::path m_projectRoot;
     std::function<void(const std::string&)> m_onScriptOpen;
 
-    std::string m_selectedCategory = "playable";
+    std::string m_selectedCategory = "playable_2d";
     std::string m_selectedPresetId;
     EntityPresetWizardState m_wizard;
     std::string m_statusMessage;

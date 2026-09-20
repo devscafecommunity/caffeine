@@ -15,7 +15,7 @@ namespace Caffeine::Scene {
 
 ECS::Entity findActiveCamera2DEntity(ECS::World& world);
 
-void syncViewportFromCamera2D(Editor::EditorContext& ctx, const ECS::Transform& transform,
+void syncViewportFromCamera2D(ECS::World& world, ECS::Entity cameraEntity, Editor::EditorContext& ctx,
                               const ECS::Camera2DComponent& camera);
 
 }  // namespace Caffeine::Scene

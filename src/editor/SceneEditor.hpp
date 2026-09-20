@@ -19,6 +19,7 @@
 #include "editor/MaterialEditorPanel.hpp"
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
+#include "editor/GameplayPreviewPanel.hpp"
 #include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #endif
@@ -154,6 +155,7 @@ private:
     MaterialEditorPanel m_materialEditor;
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
+    GameplayPreviewPanel m_gameplayPreview;
     TerrainEditorPanel  m_terrainEditor;
     EntityPresetsPanel  m_entityPresets;
 #endif
@@ -192,6 +194,7 @@ private:
     UI::UISystem m_uiSystem{&m_eventBus};
     Animation::AnimationSystem m_animationSystem;
     Render::Camera2D m_playCamera2D;
+    bool m_playCamera2DFollowsCamera = false;
     Events::ListenerHandle m_collisionListener = 0;
     bool m_playListenersRegistered = false;
 
@@ -212,8 +215,10 @@ private:
         u32 id;
         bool hasTransform = false;
         bool hasPos3 = false;
+        bool hasRot3 = false;
         float px = 0, py = 0, pz = 0;
         float rz = 0;
+        float qx = 0, qy = 0, qz = 0, qw = 1;
     };
     std::vector<EntitySnapshot> m_playSnapshot;
     Input::InputManager m_input;

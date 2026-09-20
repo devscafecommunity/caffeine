@@ -33,6 +33,8 @@
 #include "terrain/TerrainGpuTextures.hpp"
 #include "render/GpuProceduralMeshes.hpp"
 #include "editor/EditorPaths.hpp"
+#include "editor/EditorPanelUtils.hpp"
+#include "ui/UIRenderer.hpp"
 #include "spatial/Octree.hpp"
 #include <filesystem>
 #include <algorithm>
@@ -348,9 +350,6 @@ void rasterizeTriangleCpu(
     const std::function<Vec3(const Vec3&, const Vec3&, bool)>& lightColorAt,
     const TerrainSplatDrawContext* splatContext = nullptr) {
     const Vec3 center = (v0.worldPos + v1.worldPos + v2.worldPos) * (1.0f / 3.0f);
-    const Vec3 viewDelta(camPos.x - center.x, camPos.y - center.y, camPos.z - center.z);
-    if (faceNormal.dot(viewDelta) <= 0.0f) return;
-
     const f32 area = edgeFunction(v0.sx, v0.sy, v1.sx, v1.sy, v2.sx, v2.sy);
     if (std::abs(area) < 1e-4f) return;
 
@@ -702,6 +701,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     CF_PROFILE_SCOPE("SceneViewport::render");
     pruneRetiredTextures();
 
+    editorPanelApplyDetach(m_detached, ImVec2(1280, 720));
     if (!ImGui::Begin("Scene Viewport", &m_open,
             (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
              ctx.viewMode == EditorContext::ViewMode::Isometric)
@@ -710,6 +710,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::End();
         return;
     }
+    editorPanelDetachTabButton(m_detached);
 
 #ifdef CF_HAS_SDL3
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
@@ -1301,7 +1302,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     drawCameraFrustums(world, ctx, origin, viewportSize);
     drawLightGizmos(world, ctx, origin, viewportSize);
 
-    if (ctx.selectedEntity.isValid() && !terrainEditActive) {
+    if (ctx.selectedEntity.isValid() && !terrainEditActive && !ctx.isPlayMode) {
         drawGizmo(world, ctx, origin, viewportSize);
     }
 
@@ -1322,7 +1323,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     drawNavigationWidget(world, ctx, origin, viewportSize);
 
-    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    if (!ctx.isPlayMode && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
         const bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
                               ctx.viewMode == EditorContext::ViewMode::Isometric);
@@ -1345,8 +1346,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
     }
 
-     // 2D View: Left mouse button drag to pan
-     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+     // 2D View: Left mouse button drag to pan (disabled during play — camera drives the view)
+     if (!ctx.isPlayMode && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
          if (ctx.viewMode == EditorContext::ViewMode::Mode2D) {
              ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
              f32 s = ctx.viewportZoom * 50.0f;
@@ -1404,7 +1405,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
     }
 
-     if (hovered && !ImGui::GetIO().WantCaptureMouse) {
+     if (!ctx.isPlayMode && hovered && !ImGui::GetIO().WantCaptureMouse) {
          f32 scroll = ImGui::GetIO().MouseWheel;
          if (scroll != 0) {
              if (ctx.viewMode == EditorContext::ViewMode::Mode3D || 
@@ -1429,6 +1430,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
              }
          }
      }
+
+    if (ctx.isPlayMode) {
+        UI::drawWidgets(world, drawList, origin, viewportSize);
+    }
 
     ImGui::End();
 }
@@ -1976,7 +1981,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                             drawTerrainChunkDebug(dl, worldMatrix, m_terrainDrawChunks,
                                                   origin, viewportSize, ctx);
                         }
-                    } else {
+                    } else if (!(gpuTextured3D && !wireMode)) {
                         drawCustomMeshGeometry(world, ctx, entity, mesh, worldMatrix, dl, vpMat, camPos,
                                                origin, viewportSize, lightColorAt, drawTextured, wireMode,
                                                Scene::meshReceivesShadows(world, entity),

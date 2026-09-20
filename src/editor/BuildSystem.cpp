@@ -6,6 +6,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <cctype>
+#include <vector>
+#include <iterator>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -483,6 +486,17 @@ bool BuildSystem::LinkExecutable(const BuildSettings& settings) {
         return false;
     }
 
+#ifdef CAFFEINE_SOURCE_DIR
+    {
+        const fs::path engineSky = fs::path(CAFFEINE_SOURCE_DIR) / "assets" / "kenney_skyboxes";
+        if (fs::exists(engineSky)) {
+            copyTree(engineSky, dataRoot / "assets" / "kenney_skyboxes", settings.incrementalBuild);
+            copyTree(engineSky, fs::path(settings.outputDir) / "assets" / "kenney_skyboxes",
+                     settings.incrementalBuild);
+        }
+    }
+#endif
+
     auto resolveSceneSource = [&](const std::string& sceneRel) -> fs::path {
         if (sceneRel.empty()) return {};
         fs::path rel(sceneRel);
@@ -522,6 +536,85 @@ bool BuildSystem::LinkExecutable(const BuildSettings& settings) {
     for (const auto& scene : settings.scenesToInclude) {
         if (scene == settings.startupScene) continue;
         copyScene(scene);
+    }
+
+    auto packReferencedAsset = [&](const fs::path& src) {
+        if (src.empty()) return;
+        std::error_code existsEc;
+        if (!fs::exists(src, existsEc) || !fs::is_regular_file(src, existsEc)) return;
+        const fs::path dest = dataRoot / "assets" / "raw" / src.filename();
+        fs::create_directories(dest.parent_path());
+        std::error_code copyEc;
+        fs::copy_file(src, dest, fs::copy_options::overwrite_existing, copyEc);
+        if (!copyEc) {
+            BuildLog::info("Packaged referenced asset: " + src.filename().string());
+        }
+    };
+
+    auto harvestMeshPathsFromScene = [&](const fs::path& sceneFile) {
+        std::ifstream in(sceneFile, std::ios::binary);
+        if (!in) return;
+        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string current;
+        auto consider = [&](const std::string& s) {
+            const std::string lower = [&] {
+                std::string out = s;
+                for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return out;
+            }();
+            if (lower.size() < 5) return;
+            if (lower.find(".lua") != std::string::npos) {
+                fs::path candidate(s);
+                auto packScript = [&](const fs::path& src) {
+                    if (src.empty()) return;
+                    std::error_code existsEc;
+                    if (!fs::exists(src, existsEc) || !fs::is_regular_file(src, existsEc)) return;
+                    const fs::path dest = dataRoot / "scripts" / src.filename();
+                    fs::create_directories(dest.parent_path());
+                    std::error_code copyEc;
+                    fs::copy_file(src, dest, fs::copy_options::overwrite_existing, copyEc);
+                    if (!copyEc) {
+                        BuildLog::info("Packaged script: " + src.filename().string());
+                    }
+                    const fs::path destPreset = dataRoot / "scripts" / "presets" / src.filename();
+                    fs::create_directories(destPreset.parent_path());
+                    fs::copy_file(src, destPreset, fs::copy_options::overwrite_existing, copyEc);
+                };
+                if (candidate.is_absolute()) {
+                    packScript(candidate);
+                } else {
+                    packScript(settings.projectRoot / candidate);
+                    packScript(settings.projectRoot / "scripts" / candidate.filename());
+                    packScript(settings.projectRoot / "scripts" / "presets" / candidate.filename());
+                }
+                return;
+            }
+            if (lower.find(".obj") == std::string::npos && lower.find(".gltf") == std::string::npos &&
+                lower.find(".glb") == std::string::npos && lower.find(".fbx") == std::string::npos) {
+                return;
+            }
+            fs::path candidate(s);
+            if (candidate.is_absolute()) {
+                packReferencedAsset(candidate);
+            } else {
+                packReferencedAsset(settings.projectRoot / candidate);
+                packReferencedAsset(settings.projectRoot / "assets" / "raw" / candidate.filename());
+            }
+        };
+        for (unsigned char ch : data) {
+            if (ch >= 32 && ch < 127) {
+                current.push_back(static_cast<char>(ch));
+            } else {
+                if (!current.empty()) consider(current);
+                current.clear();
+            }
+        }
+        if (!current.empty()) consider(current);
+    };
+
+    harvestMeshPathsFromScene(resolveSceneSource(settings.startupScene));
+    for (const auto& scene : settings.scenesToInclude) {
+        harvestMeshPathsFromScene(resolveSceneSource(scene));
     }
 
     s_progress.progress.store(0.85f, std::memory_order_relaxed);

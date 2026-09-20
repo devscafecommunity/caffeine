@@ -30,6 +30,7 @@ public:
     void shutdown();
     void setWorld(ECS::World* world);
     void setInput(Input::InputManager* input);
+    void setSearchRoot(const std::string& root);
 
     struct ExposedVar {
         enum class Kind { Number, Boolean, String };

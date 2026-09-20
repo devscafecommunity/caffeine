@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terrain Generator — Domain Warping + Geomorphological PDE</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #0a0a12; font-family: 'Segoe UI', system-ui, sans-serif; color: #e0e0e0; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    #panel {
+      position: fixed; top: 16px; left: 16px; width: 300px; max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      background: rgba(10, 10, 20, 0.85); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+      padding: 20px; z-index: 10;
+    }
+    h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; color: #a0c4ff; }
+    .subtitle { font-size: 11px; color: #666; margin-bottom: 16px; }
+    label { display: block; font-size: 11px; color: #888; margin-top: 10px; margin-bottom: 4px; }
+    select, button {
+      width: 100%; padding: 8px 10px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
+      color: #e0e0e0; font-size: 12px; cursor: pointer;
+    }
+    button { margin-top: 12px; background: #3a5a9a; border-color: #4a6aaa; font-weight: 600; }
+    button:hover { background: #4a6aaa; }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    #stats { margin-top: 14px; font-size: 11px; color: #777; line-height: 1.6; }
+    #stats span { color: #a0c4ff; }
+    #loading {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      display: none; align-items: center; justify-content: center;
+      z-index: 100; font-size: 14px; color: #a0c4ff;
+    }
+    .legend { margin-top: 12px; display: grid; grid-template-columns: 12px 1fr; gap: 4px 8px; font-size: 10px; color: #888; }
+    .legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
+    .biome-list {
+      max-height: 140px; overflow-y: auto; margin-top: 6px;
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 6px;
+      display: none;
+    }
+    .biome-list.visible { display: block; }
+    .biome-item {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; color: #aaa; padding: 2px 0; cursor: pointer;
+    }
+    .biome-item input { cursor: pointer; }
+    .biome-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .biome-actions button { margin-top: 0; flex: 1; padding: 4px; font-size: 10px; }
+    .hint { font-size: 10px; color: #555; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="panel">
+    <h1>Ultra-Realistic Terrain</h1>
+    <div class="subtitle">Domain Warping + Geomorphological PDE</div>
+
+    <label>Modo</label>
+    <select id="blendMode">
+      <option value="single">Preset único</option>
+      <option value="blend" selected>Blend multi-domínio (A ⊕ B)</option>
+    </select>
+
+    <label id="presetLabel">Preset Geológico</label>
+    <select id="preset">
+      <option value="default">Default (erosão + tectônica)</option>
+      <option value="volcanic">Volcanic (cone + caldera)</option>
+      <option value="glacial">Glacial (U-valleys)</option>
+      <option value="alpine">Alpine (tectônica + gelo)</option>
+      <option value="mesa">Mesa / Tepui (caprock + deslizamentos)</option>
+    </select>
+
+    <div id="blendControls">
+      <label>Domínio A (montanhas)</label>
+      <select id="presetA">
+        <option value="alpine" selected>Alpine</option>
+        <option value="default">Default</option>
+        <option value="glacial">Glacial</option>
+      </select>
+      <label>Domínio B (deserto/canyon)</label>
+      <select id="presetB">
+        <option value="mesa" selected>Mesa / Tepui</option>
+        <option value="volcanic">Volcanic</option>
+        <option value="default">Default</option>
+      </select>
+      <label>Máscara de peso W(x,y)</label>
+      <select id="maskType">
+        <option value="noise" selected>Ruído macro (continente)</option>
+        <option value="gradient">Gradiente X</option>
+        <option value="radial">Radial</option>
+      </select>
+    </div>
+
+    <label>Resolução (grid)</label>
+    <select id="size">
+      <option value="96">96 × 96</option>
+      <option value="128">128 × 128</option>
+      <option value="192" selected>192 × 192</option>
+      <option value="256">256 × 256</option>
+      <option value="320">320 × 320</option>
+      <option value="384">384 × 384</option>
+      <option value="512">512 × 512 (recomendado 500)</option>
+      <option value="640">640 × 640</option>
+      <option value="768">768 × 768</option>
+      <option value="1024">1024 × 1024 (lento)</option>
+    </select>
+    <div class="hint" id="gridHint">~1 vértice/unidade para mapas grandes</div>
+
+    <label>Tamanho do mapa (unidades)</label>
+    <select id="worldSize">
+      <option value="50">50 × 50 (pequeno)</option>
+      <option value="100" selected>100 × 100 (padrão)</option>
+      <option value="150">150 × 150</option>
+      <option value="200">200 × 200</option>
+      <option value="300">300 × 300</option>
+      <option value="500">500 × 500 (grande)</option>
+    </select>
+
+    <label>Grupo de biomas</label>
+    <select id="biomeGroup">
+      <option value="all" selected>Todos (32)</option>
+      <option value="tropical">Tropical</option>
+      <option value="temperate">Temperado</option>
+      <option value="arid">Árido / Savana</option>
+      <option value="cold">Frio / Alpino</option>
+      <option value="wetland">Úmido / Pântano</option>
+      <option value="montane">Montano</option>
+      <option value="custom">Personalizado…</option>
+    </select>
+    <div class="hint" id="biomeGroupHint">Todos os 32 biomas ativos</div>
+
+    <div id="biomeCustom" class="biome-list"></div>
+    <div class="biome-actions" id="biomeActions" style="display:none">
+      <button type="button" id="biomeSelectAll">Todos</button>
+      <button type="button" id="biomeSelectNone">Nenhum</button>
+    </div>
+
+    <label>Iterações PDE</label>
+    <select id="iterations">
+      <option value="5">5</option>
+      <option value="10">10</option>
+      <option value="15" selected>15</option>
+      <option value="25">25</option>
+      <option value="40">40</option>
+    </select>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="useGpu" checked style="width:auto;cursor:pointer">
+      <span>Acelerar com GPU (WebGPU + Worker)</span>
+    </label>
+    <div class="hint" id="gpuHint">Geração local — não bloqueia o browser</div>
+
+    <button id="generate">Regenerar Terreno</button>
+
+    <div id="stats"></div>
+
+    <div class="legend">
+      <div class="legend-swatch" style="background:#1a8040"></div><div>Tropical Rainforest</div>
+      <div class="legend-swatch" style="background:#338825"></div><div>Temperate Forest</div>
+      <div class="legend-swatch" style="background:#73a633"></div><div>Grassland</div>
+      <div class="legend-swatch" style="background:#d9bf73"></div><div>Desert</div>
+      <div class="legend-swatch" style="background:#99a68c"></div><div>Tundra</div>
+      <div class="legend-swatch" style="background:#f2f2ff"></div><div>Snow / Alpine</div>
+    </div>
+  </div>
+  <div id="loading">Gerando terreno...</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

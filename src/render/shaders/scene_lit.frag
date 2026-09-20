@@ -16,23 +16,23 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uDirColor[4];
     vec4 uPointData[4];
     vec4 uPointColor[4];
-    vec4 uPointShadow[4];
-    vec4 uDirShadow[4];
-    mat4 uDirShadowVP[2];
 } lights;
+
+layout(set = 2, binding = 0) uniform sampler2D uAlbedoMap;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
     vec3 n = normalize(v_normal);
-    vec3 ambient = lights.uAmbient.rgb * lights.uAlbedo.rgb;
+    vec3 surfaceAlbedo = texture(uAlbedoMap, v_texCoord).rgb * lights.uAlbedo.rgb;
+    vec3 ambient = lights.uAmbient.rgb * surfaceAlbedo;
     vec3 color = ambient;
 
     for (int i = 0; i < lights.uDirCount; ++i) {
         vec3 dir = normalize(-lights.uDirData[i].xyz);
         float ndotl = max(dot(n, dir), 0.0);
         vec3 diffuse = lights.uDirColor[i].rgb * lights.uDirData[i].w * ndotl;
-        color += diffuse * lights.uAlbedo.rgb;
+        color += diffuse * surfaceAlbedo;
     }
 
     for (int i = 0; i < lights.uPointCount; ++i) {
@@ -45,7 +45,7 @@ void main() {
         float atten = 1.0 - smoothstep(radius * 0.75, radius, dist);
         float ndotl = max(dot(n, ldir), 0.0);
         vec3 diffuse = lights.uPointColor[i].rgb * lights.uPointData[i].w * ndotl * atten;
-        color += diffuse * lights.uAlbedo.rgb;
+        color += diffuse * surfaceAlbedo;
     }
 
     outColor = vec4(color, 1.0);

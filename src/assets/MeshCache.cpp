@@ -47,13 +47,17 @@ std::filesystem::path findEngineAssetsRoot() {
         exePath[len] = '\0';
         const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
         roots.push_back(exeDir / "assets");
+        roots.push_back(exeDir / "data" / "assets");
         roots.push_back(exeDir / ".." / "assets");
     }
 #endif
+    roots.push_back(std::filesystem::current_path() / "data" / "assets");
 
     for (const auto& root : roots) {
         std::error_code ec;
-        if (std::filesystem::exists(root / "kenney_prototype-textures", ec) && !ec) {
+        if ((std::filesystem::exists(root / "kenney_prototype-textures", ec) && !ec) ||
+            (std::filesystem::exists(root / "kenney_skyboxes", ec) && !ec) ||
+            (std::filesystem::exists(root / "raw", ec) && !ec)) {
             return std::filesystem::weakly_canonical(root, ec);
         }
     }
@@ -189,8 +193,23 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
 
     appendUnique(candidates, input);
     if (input.is_absolute()) {
-        return candidates;
+        appendUnique(candidates, input.filename());
+        if (!projectRoot.empty()) {
+            const std::filesystem::path root(projectRoot);
+            appendUnique(candidates, root / "assets" / "raw" / input.filename());
+            appendUnique(candidates, root / "data" / "assets" / "raw" / input.filename());
+            appendUnique(candidates, root / "data" / "assets" / "processed" / input.filename());
+            const std::string generic = input.generic_string();
+            auto assetsPos = generic.find("/assets/");
+            if (assetsPos == std::string::npos) assetsPos = generic.find("\\assets\\");
+            if (assetsPos != std::string::npos) {
+                appendUnique(candidates, root / generic.substr(assetsPos + 1));
+                appendUnique(candidates, root / "data" / generic.substr(assetsPos + 1));
+            }
+        }
     }
+
+    if (!input.is_absolute()) {
 
     appendUnique(candidates, std::filesystem::current_path() / input);
     appendUnique(candidates, std::filesystem::path("assets/raw") / input.filename());
@@ -208,6 +227,7 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
         appendUnique(candidates, root / "data/assets/raw" / input);
         appendUnique(candidates, root / "data/assets/processed" / input.filename());
         appendUnique(candidates, root / "data/assets/processed" / input);
+    }
     }
 
     const std::filesystem::path engineAssets = findEngineAssetsRoot();

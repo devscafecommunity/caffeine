@@ -1,5 +1,6 @@
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/EntityPresetRegistry.hpp"
+#include "editor/EditorPanelUtils.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -147,11 +148,13 @@ void EntityPresetsPanel::renderWizard() {
 void EntityPresetsPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
+    editorPanelApplyDetach(m_detached, ImVec2(1100, 680));
     ImGui::SetNextWindowSize(ImVec2(920, 520), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Entity Presets", &m_open)) {
         ImGui::End();
         return;
     }
+    editorPanelDetachTabButton(m_detached);
 
     if (ImGui::BeginTable("entity_presets_layout", 3,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {

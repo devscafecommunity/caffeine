@@ -16,9 +16,6 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uDirColor[4];
     vec4 uPointData[4];
     vec4 uPointColor[4];
-    vec4 uPointShadow[4];
-    vec4 uDirShadow[4];
-    mat4 uDirShadowVP[2];
 } lights;
 
 layout(set = 3, binding = 1) uniform TerrainMaterialUBO {

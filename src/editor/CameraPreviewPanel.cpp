@@ -1,4 +1,5 @@
 #include "editor/CameraPreviewPanel.hpp"
+#include "editor/EditorPanelUtils.hpp"
 #include "editor/SceneViewport.hpp"
 
 #ifdef CF_HAS_SDL3
@@ -15,7 +16,10 @@
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/PlayMode2D.hpp"
 #include "scene/SceneComponents.hpp"
+#include "ecs/PostProcessComponents.hpp"
+#include "render/PostProcessRenderer.hpp"
 
 #include <stb/stb_image.h>
 #include <array>
@@ -185,11 +189,15 @@ void drawCubeWireframe(ImDrawList* dl, const Mat4& vp, ImVec2 origin, ImVec2 pan
 void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, SceneViewport& viewport) {
     if (!m_open) return;
 
+    editorPanelApplyDetach(m_detached, ImVec2(640, 480));
     ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Camera Preview", &m_open)) {
         ImGui::End();
         return;
     }
+    editorPanelDetachTabButton(m_detached);
+
+    Scene::propagateTransforms(world);
 
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
     if (panelSize.x < 4.0f) panelSize.x = 4.0f;
@@ -201,66 +209,68 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
     bool found2D = false;
     bool found3D = false;
 
-    if (ctx.isPlayMode) {
+    auto resolveCamera2D = [&](ECS::Entity e) {
+        if (!e.isValid() || !world.has<ECS::Camera2DComponent>(e)) return;
+        cameraEntity = e;
+        found2D = true;
+        found3D = false;
+        cam3D = nullptr;
+        if (auto* cam = world.get<ECS::Camera2DComponent>(e)) zoom = cam->zoom;
+        Vec3 worldPos;
+        if (tryGetEntityPosition(world, e, worldPos)) {
+            camX = worldPos.x;
+            camY = worldPos.y;
+        }
+    };
+
+    auto resolveCamera3D = [&](ECS::Entity e) {
+        if (!e.isValid() || !world.has<ECS::Camera3DComponent>(e)) return;
+        cameraEntity = e;
+        cam3D = world.get<ECS::Camera3DComponent>(e);
+        found3D = cam3D != nullptr;
+        found2D = false;
+    };
+
+    if (ctx.selectedEntity.isValid()) {
+        if (world.has<ECS::Camera2DComponent>(ctx.selectedEntity)) {
+            resolveCamera2D(ctx.selectedEntity);
+        } else if (world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
+            resolveCamera3D(ctx.selectedEntity);
+        }
+    }
+
+    if (!found2D && !found3D && ctx.isPlayMode) {
         ECS::ComponentQuery aq;
         aq.with<ECS::Camera3DComponent>();
         aq.with<ECS::CameraActiveComponent>();
         world.forEach<ECS::Camera3DComponent, ECS::CameraActiveComponent>(aq,
             [&](ECS::Entity e, ECS::Camera3DComponent& cam, ECS::CameraActiveComponent&) {
-                if (!found3D) {
-                    cameraEntity = e;
-                    cam3D = &cam;
-                    found3D = true;
-                }
-            });
-    }
-
-    if (ctx.selectedEntity.isValid() && world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
-        cameraEntity = ctx.selectedEntity;
-        cam3D = world.get<ECS::Camera3DComponent>(cameraEntity);
-        found3D = (cam3D != nullptr);
-    }
-
-    if (!found3D) {
-        ECS::ComponentQuery q;
-        q.with<ECS::Camera3DComponent>();
-        world.forEach<ECS::Camera3DComponent>(q,
-            [&](ECS::Entity e, ECS::Camera3DComponent& cam) {
-                if (!found3D) {
-                    cameraEntity = e;
-                    cam3D = &cam;
-                    found3D = true;
-                }
-            });
-    }
-
-    if (!found3D) {
-        ECS::ComponentQuery q;
-        q.with<ECS::Camera2DComponent>();
-        q.with<ECS::Transform>();
-        world.forEach<ECS::Camera2DComponent, ECS::Transform>(q,
-            [&](ECS::Entity e, ECS::Camera2DComponent& cam, ECS::Transform& pos) {
-                if (!found2D) {
-                    cameraEntity = e;
-                    camX  = pos.position.x;
-                    camY  = pos.position.y;
-                    zoom  = cam.zoom;
-                    found2D = true;
-                }
+                if (!found3D) resolveCamera3D(e);
             });
     }
 
     if (!found2D && !found3D) {
         ECS::ComponentQuery q;
-        q.with<ECS::Camera2DComponent>();
-        world.forEach<ECS::Camera2DComponent>(q,
-            [&](ECS::Entity e, ECS::Camera2DComponent& cam) {
-                if (!found2D) {
-                    cameraEntity = e;
-                    zoom  = cam.zoom;
-                    found2D = true;
-                }
+        q.with<ECS::Camera3DComponent>();
+        world.forEach<ECS::Camera3DComponent>(q,
+            [&](ECS::Entity e, ECS::Camera3DComponent&) {
+                if (!found3D) resolveCamera3D(e);
             });
+    }
+
+    if (!found2D && !found3D) {
+        const ECS::Entity active2D = Scene::findActiveCamera2DEntity(world);
+        if (active2D.isValid()) {
+            resolveCamera2D(active2D);
+        }
+    }
+
+    if (!found2D && !found3D) {
+        ECS::ComponentQuery q;
+        q.with<ECS::Camera2DComponent>();
+        world.forEach<ECS::Camera2DComponent>(q, [&](ECS::Entity e, ECS::Camera2DComponent&) {
+            if (!found2D) resolveCamera2D(e);
+        });
     }
 
     ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -274,6 +284,19 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
     } else {
         ImGui::InvisibleButton("##campreview", panelSize);
         renderCameraView(world, ctx, origin, panelSize, camX, camY, zoom);
+        ImDrawList* previewDl = ImGui::GetWindowDrawList();
+        if (const ECS::PostProcessComponent* fx =
+                Render::findPostProcessForCamera(world, cameraEntity)) {
+            Render::applyPostProcessOverlay(previewDl, origin, panelSize, *fx);
+        }
+        if (cameraEntity.isValid()) {
+            const char* camName = getEntityName(world, cameraEntity);
+            ImDrawList* badgeDl = previewDl;
+            badgeDl->AddText(ImVec2(origin.x + 8.0f, origin.y + 6.0f), IM_COL32(180, 220, 255, 230),
+                             camName ? camName : "Camera2D");
+            badgeDl->AddText(ImVec2(origin.x + 8.0f, origin.y + 22.0f), IM_COL32(140, 140, 150, 200),
+                             "2D preview");
+        }
     }
 
     ImGui::End();
@@ -322,10 +345,24 @@ void CameraPreviewPanel::renderCameraView(ECS::World& world, EditorContext& ctx,
     spriteQ.with<ECS::Transform>();
     spriteQ.with<ECS::Sprite>();
 
+    int spriteCount = 0;
     world.forEach<ECS::Transform, ECS::Sprite>(spriteQ,
-        [&](ECS::Entity, ECS::Transform& pos, ECS::Sprite& sprite) {
-            float scaleX = std::max(0.1f, pos.scale.x), scaleY = std::max(0.1f, pos.scale.y);
-            ImVec2 screenPos = w2s(pos.position.x, pos.position.y);
+        [&](ECS::Entity entity, ECS::Transform& pos, ECS::Sprite& sprite) {
+            if (Scene::isEffectivelyDisabled(world, entity)) return;
+            ++spriteCount;
+
+            Vec3 worldPosition = pos.position;
+            float scaleX = std::max(0.1f, pos.scale.x);
+            float scaleY = std::max(0.1f, pos.scale.y);
+            if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+                worldPosition = Vec3(wt->matrix(0, 3), wt->matrix(1, 3), wt->matrix(2, 3));
+                scaleX = std::max(0.1f, std::sqrt(wt->matrix(0, 0) * wt->matrix(0, 0) +
+                                                  wt->matrix(1, 0) * wt->matrix(1, 0)));
+                scaleY = std::max(0.1f, std::sqrt(wt->matrix(0, 1) * wt->matrix(0, 1) +
+                                                  wt->matrix(1, 1) * wt->matrix(1, 1)));
+            }
+
+            ImVec2 screenPos = w2s(worldPosition.x, worldPosition.y);
 
             float halfW = std::max(8.0f, 0.5f * worldToScreen * scaleX);
             float halfH = std::max(8.0f, 0.5f * worldToScreen * scaleY);
@@ -386,6 +423,14 @@ void CameraPreviewPanel::renderCameraView(ECS::World& world, EditorContext& ctx,
         });
 
     dl->PopClipRect();
+
+    if (spriteCount == 0) {
+        const char* msg = "No sprites in camera view";
+        ImVec2 ts = ImGui::CalcTextSize(msg);
+        dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
+                           origin.y + (panelSize.y - ts.y) * 0.5f),
+                    IM_COL32(150, 150, 160, 200), msg);
+    }
 
     const float borderAlpha = 160;
     dl->AddRect(origin,
@@ -471,7 +516,7 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
     const Mat4 view = buildCameraViewMatrix(world, cameraEntity, camPos);
     const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
     const f32 fovRad = cam.fov * kDegToRad;
-    const f32 farClip = std::max(cam.farClip, 12000.0f);
+    const f32 farClip = std::max(cam.farClip, 50.0f);
     const Mat4 proj = Mat4::perspective(fovRad, aspect, cam.nearClip, farClip);
 
 #ifdef CF_HAS_SDL3
@@ -491,6 +536,15 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
             projectRoot);
         RHI::Texture* preview = viewport.cameraPreviewColorTarget();
         if (gpuOk && preview && preview->handle) {
+            const Mat4 worldMatrix = entityMatrix(world, cameraEntity);
+            Render::SkyboxCamera skyCamera;
+            skyCamera.forward = entityForward(world, cameraEntity).normalized();
+            skyCamera.right = matrixAxis(worldMatrix, 0, Vec3(1.0f, 0.0f, 0.0f));
+            skyCamera.up = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
+            skyCamera.fovY = fovRad;
+            skyCamera.aspect = aspect;
+            viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx, skyCamera, false,
+                                       &m_skyboxRenderer);
             dl->AddImage(reinterpret_cast<ImTextureID>(preview->handle), origin,
                          ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                          ImVec2(0, 0), ImVec2(1, 1));

@@ -243,15 +243,11 @@ private:
     
     class PoolRegistry {
     public:
-        static constexpr u32 MAX_COMPONENTS = 64;
+        static constexpr u32 MAX_COMPONENTS = ComponentSet::kMaxComponents;
         
-        PoolRegistry()
-            : m_validIDs(0) {
+        PoolRegistry() {
             for (u32 i = 0; i < MAX_COMPONENTS; ++i) {
-                m_pools[i].pool = nullptr;
-                m_pools[i].copyFunc = nullptr;
-                m_pools[i].createPoolFunc = nullptr;
-                m_pools[i].removeFunc = nullptr;
+                m_pools[i] = {};
             }
         }
         
@@ -265,7 +261,6 @@ private:
             m_pools[componentID].createPoolFunc = createPoolFunc;
             m_pools[componentID].removeFunc = removeFunc;
             m_pools[componentID].destroyFunc = destroyFunc;
-            m_validIDs = m_validIDs | (1ULL << componentID);
         }
 
         DestroyPoolFunc getDestroyFunc(u32 componentID) const {
@@ -277,15 +272,11 @@ private:
 
         void clear() {
             for (u32 i = 0; i < MAX_COMPONENTS; ++i) {
-                if ((m_validIDs & (1ULL << i)) == 0) {
-                    continue;
-                }
                 if (m_pools[i].pool && m_pools[i].destroyFunc) {
                     m_pools[i].destroyFunc(m_pools[i].pool);
                 }
                 m_pools[i] = {};
             }
-            m_validIDs = 0;
         }
         
         void* getPool(u32 componentID) const {
@@ -319,7 +310,7 @@ private:
         template<typename Fn>
         void forEach(Fn&& fn) const {
             for (u32 i = 0; i < MAX_COMPONENTS; ++i) {
-                if ((m_validIDs & (1ULL << i)) != 0) {
+                if (m_pools[i].pool) {
                     fn(i, m_pools[i].pool, m_pools[i].copyFunc, m_pools[i].createPoolFunc, m_pools[i].removeFunc);
                 }
             }
@@ -329,12 +320,11 @@ private:
             if (componentID >= MAX_COMPONENTS) {
                 return false;
             }
-            return (m_validIDs & (1ULL << componentID)) != 0;
+            return m_pools[componentID].pool != nullptr;
         }
         
     private:
         PoolEntry m_pools[MAX_COMPONENTS];
-        u64 m_validIDs;
     };
     
     ComponentSet m_componentSet;

@@ -13,6 +13,7 @@ ScriptSystem::ScriptSystem(ScriptEngine* engine)
 void ScriptSystem::resetPlayState() {
     m_initializedLua.clear();
     m_initializedNative.clear();
+    m_warnedNoLua = false;
 }
 
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
@@ -37,6 +38,14 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
             if (sc.scriptPath.empty()) return;
             entries.pushBack({entity.id(), sc.scriptPath});
         });
+
+    if (entries.empty()) {
+        if (!m_warnedNoLua) {
+            CF_WARN("Script", "Play mode: no Lua ScriptComponent found on any entity");
+            m_warnedNoLua = true;
+        }
+        return;
+    }
 
     for (auto& entry : entries) {
         ECS::Entity entity(entry.entityId, &world);

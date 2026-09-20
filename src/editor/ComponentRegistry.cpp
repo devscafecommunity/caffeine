@@ -11,6 +11,8 @@
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "ecs/PostProcessComponents.hpp"
+#include "editor/ComponentTypeRegistry.hpp"
 
 namespace Caffeine::Editor {
 
@@ -186,6 +188,13 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::PrefabInstance>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PrefabInstance>(e); }
     });
+    reg.registerComponent({
+        "Rendering", "Post Process",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
+    });
+
+    ComponentTypeRegistry::instance().registerType<ECS::PostProcessComponent>("PostProcess");
 }
 
 } // namespace Caffeine::Editor

@@ -25,6 +25,7 @@ std::filesystem::path findEngineAssetsRoot() {
         exePath[len] = '\0';
         const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
         roots.push_back(exeDir / "assets");
+        roots.push_back(exeDir / "data" / "assets");
         roots.push_back(exeDir / ".." / "assets");
     }
 #endif
@@ -56,6 +57,7 @@ std::filesystem::path resolveBuiltinSkyboxPath(int presetIndex) {
 
     std::vector<std::filesystem::path> candidates;
     candidates.push_back(std::filesystem::current_path() / "assets" / relative);
+    candidates.push_back(std::filesystem::current_path() / "data" / "assets" / relative);
     candidates.push_back(std::filesystem::current_path() / ".." / "assets" / relative);
 
 #ifdef __linux__
@@ -65,6 +67,7 @@ std::filesystem::path resolveBuiltinSkyboxPath(int presetIndex) {
         exePath[len] = '\0';
         const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
         candidates.push_back(exeDir / "assets" / relative);
+        candidates.push_back(exeDir / "data" / "assets" / relative);
         candidates.push_back(exeDir / ".." / "assets" / relative);
     }
 #endif

@@ -117,6 +117,7 @@ private:
                                               void* userData);
     static bool hostRegisterEntityPresetManifest(void* ctx, const char* pluginName,
                                                  const char* manifestPath);
+    static u32 hostGetComponentTypeId(void* ctx, const char* componentName);
 
     std::filesystem::path m_pluginsDirectory;
     std::filesystem::path m_bundledPluginsDirectory;

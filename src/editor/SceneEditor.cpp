@@ -18,6 +18,8 @@
 #include "input/InputManager.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/CameraComponents.hpp"
+#include <algorithm>
+#include <cmath>
 #ifdef CF_HAS_SDL3
 #include <SDL3/SDL.h>
 #endif
@@ -34,6 +36,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
                        const ProjectConfig& projectConfig) {
     m_renderDevice = device;
     if (!m_viewport.init(device)) return false;
+    m_gameplayPreview.init(device);
     m_materialEditor.initGpu(device);
     m_assetBrowser.init(projectConfig);
     m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
@@ -100,6 +103,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      });
      m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Panels", [this]() {
          m_entityPresets.open();
+     });
+     m_commandPalette.registerCommand("panel_gameplay_preview", "Gameplay Preview", "Panels", [this]() {
+         m_gameplayPreview.open();
      });
      m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
          m_settingsPanel.open();
@@ -171,6 +177,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
      m_ctx.scriptEngine = &m_scriptEngine;
+     m_scriptEngine.setSearchRoot(m_currentProjectConfig.RootPath.string());
      m_scriptEditor.setScriptEngine(&m_scriptEngine);
      if (m_scriptEngineReady) {
          m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
@@ -179,6 +186,10 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
     registerAllComponents(ComponentRegistry::instance());
     registerPlayModeEventListeners();
+
+    Debug::LogSystem::instance().addSink([this](Debug::LogLevel level, const char* category, const char* message) {
+        m_console.addLog(level, category ? category : "", message ? message : "");
+    });
 
     return true;
 }
@@ -196,6 +207,9 @@ void SceneEditor::shutdown() {
     Terrain::TerrainCache::instance().clear();
     m_tabManager.clearAll();
     m_viewport.shutdown();
+#ifdef CF_HAS_SDL3
+    m_gameplayPreview.shutdown();
+#endif
     m_audioPreview.shutdown();
     m_scriptFileWatcher.stop();
     m_scriptWatcherStarted = false;
@@ -292,14 +306,56 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
             snap.id = e.id();
             snap.hasPos3 = true;
             snap.px = p.position.x; snap.py = p.position.y; snap.pz = p.position.z;
+            if (auto* r = world.get<ECS::Rotation3D>(e)) {
+                snap.hasRot3 = true;
+                snap.qx = r->quaternion.x;
+                snap.qy = r->quaternion.y;
+                snap.qz = r->quaternion.z;
+                snap.qw = r->quaternion.w;
+            }
             m_playSnapshot.push_back(snap);
         });
     m_isPlaying = true;
     m_isPaused  = false;
+
+    m_playCamera2DFollowsCamera = false;
+    if (m_ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+        Scene::propagateTransforms(world);
+        const ECS::Entity cameraEntity = Scene::findActiveCamera2DEntity(world);
+        if (cameraEntity.isValid()) {
+            if (auto* camera = world.get<ECS::Camera2DComponent>(cameraEntity)) {
+                if (!world.has<Scene::Parent>(cameraEntity)) {
+                    ECS::Entity followTarget;
+                    ECS::ComponentQuery playerQ;
+                    playerQ.with<Script::ScriptComponent>();
+                    world.forEach<Script::ScriptComponent>(playerQ,
+                        [&](ECS::Entity e, Script::ScriptComponent&) {
+                            if (!followTarget.isValid()) followTarget = e;
+                        });
+                    if (!followTarget.isValid()) {
+                        ECS::ComponentQuery spriteQ;
+                        spriteQ.with<ECS::Sprite>();
+                        world.forEach<ECS::Sprite>(spriteQ, [&](ECS::Entity e, ECS::Sprite&) {
+                            if (!followTarget.isValid()) followTarget = e;
+                        });
+                    }
+                    if (followTarget.isValid()) {
+                        m_playCamera2D.setZoom(camera->zoom);
+                        m_playCamera2D.follow(followTarget, 0.18f);
+                        m_playCamera2DFollowsCamera = true;
+                    }
+                } else {
+                    Scene::syncViewportFromCamera2D(world, cameraEntity, m_ctx, *camera);
+                }
+            }
+        }
+    }
+
     CF_INFO("Play", "Simulation started");
 #ifdef CF_HAS_SCRIPTING
     m_scriptEngine.setWorld(&world);
     m_scriptEngine.setInput(&m_input);
+    m_scriptEngine.setSearchRoot(m_currentProjectConfig.RootPath.string());
     if (!m_scriptEngineReady) {
         Script::ScriptEngine::InitParams p;
         p.world  = &world;
@@ -322,10 +378,14 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
     m_isPlaying = false;
     m_isPaused  = false;
     m_ctx.isPlayMode = false;
+#ifdef CF_HAS_IMGUI
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+#endif
     m_ctx.viewportPanX = m_viewportPlaySnapshot.panX;
     m_ctx.viewportPanY = m_viewportPlaySnapshot.panY;
     m_ctx.viewportZoom = m_viewportPlaySnapshot.zoom;
     m_playCamera2D.stopFollowing();
+    m_playCamera2DFollowsCamera = false;
 
     for (auto& snap : m_playSnapshot) {
         ECS::Entity e(snap.id, &world);
@@ -343,6 +403,11 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
                 p->position = Vec3(snap.px, snap.py, snap.pz);
             }
         }
+        if (snap.hasRot3) {
+            if (auto* r = world.get<ECS::Rotation3D>(e)) {
+                r->quaternion = Vec4(snap.qx, snap.qy, snap.qz, snap.qw);
+            }
+        }
     }
     m_playSnapshot.clear();
 #ifdef CF_HAS_SCRIPTING
@@ -353,47 +418,119 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     if (!m_isPlaying || m_isPaused) return;
 
+    {
+        auto& io = ImGui::GetIO();
+        if (m_isPlaying) {
+            io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+        } else {
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        }
+    }
+
     m_input.beginFrame();
     {
         auto& io = ImGui::GetIO();
+        const bool typing = io.WantTextInput;
 #ifdef CF_HAS_SDL3
-        const bool* ks = SDL_GetKeyboardState(nullptr);
-        auto syncScan = [&](SDL_Scancode scan, Input::Key key) {
-            if (ks && ks[scan]) m_input.injectKeyDown(key);
-            else m_input.injectKeyUp(key);
+        int keyCount = 0;
+        const bool* ks = SDL_GetKeyboardState(&keyCount);
+        const int limit = std::min(keyCount, static_cast<int>(Input::Key::KeyCount));
+        if (!typing && ks) {
+            for (int i = 0; i < limit; ++i) {
+                const auto key = static_cast<Input::Key>(i);
+                if (ks[i]) m_input.injectKeyDown(key);
+                else m_input.injectKeyUp(key);
+            }
+        } else {
+            for (int i = 0; i < static_cast<int>(Input::Key::KeyCount); ++i) {
+                m_input.injectKeyUp(static_cast<Input::Key>(i));
+            }
+        }
+
+        float mx = 0.0f, my = 0.0f;
+        const SDL_MouseButtonFlags mouseButtons = SDL_GetMouseState(&mx, &my);
+        m_input.injectMouseMove(mx, my);
+        auto syncMouse = [&](SDL_MouseButtonFlags mask, Input::MouseButton button) {
+            if (mouseButtons & mask) m_input.injectMouseButtonDown(button);
+            else m_input.injectMouseButtonUp(button);
         };
-        syncScan(SDL_SCANCODE_W, Input::Key::W);
-        syncScan(SDL_SCANCODE_A, Input::Key::A);
-        syncScan(SDL_SCANCODE_S, Input::Key::S);
-        syncScan(SDL_SCANCODE_D, Input::Key::D);
-        syncScan(SDL_SCANCODE_SPACE, Input::Key::Space);
-        syncScan(SDL_SCANCODE_UP, Input::Key::Up);
-        syncScan(SDL_SCANCODE_DOWN, Input::Key::Down);
-        syncScan(SDL_SCANCODE_LEFT, Input::Key::Left);
-        syncScan(SDL_SCANCODE_RIGHT, Input::Key::Right);
+        syncMouse(SDL_BUTTON_LMASK, Input::MouseButton::Left);
+        syncMouse(SDL_BUTTON_MMASK, Input::MouseButton::Middle);
+        syncMouse(SDL_BUTTON_RMASK, Input::MouseButton::Right);
+
+        float stickLX = 0.0f, stickLY = 0.0f, stickRX = 0.0f, stickRY = 0.0f;
+        int padCount = 0;
+        SDL_JoystickID* pads = SDL_GetGamepads(&padCount);
+        if (pads && padCount > 0) {
+            SDL_Gamepad* gp = SDL_GetGamepadFromID(pads[0]);
+            if (!gp) gp = SDL_OpenGamepad(pads[0]);
+            if (gp) {
+                auto axis = [&](SDL_GamepadAxis a) -> f32 {
+                    const f32 v = static_cast<f32>(SDL_GetGamepadAxis(gp, a)) / 32767.0f;
+                    return (std::abs(v) < 0.18f) ? 0.0f : v;
+                };
+                stickLX = axis(SDL_GAMEPAD_AXIS_LEFTX);
+                stickLY = -axis(SDL_GAMEPAD_AXIS_LEFTY);
+                stickRX = axis(SDL_GAMEPAD_AXIS_RIGHTX);
+                stickRY = axis(SDL_GAMEPAD_AXIS_RIGHTY);
+                auto syncBtn = [&](SDL_GamepadButton b, Input::GamepadButton ib) {
+                    if (SDL_GetGamepadButton(gp, b)) m_input.injectGamepadButtonDown(ib);
+                    else m_input.injectGamepadButtonUp(ib);
+                };
+                syncBtn(SDL_GAMEPAD_BUTTON_SOUTH, Input::GamepadButton::A);
+                syncBtn(SDL_GAMEPAD_BUTTON_EAST, Input::GamepadButton::B);
+                syncBtn(SDL_GAMEPAD_BUTTON_WEST, Input::GamepadButton::X);
+                syncBtn(SDL_GAMEPAD_BUTTON_NORTH, Input::GamepadButton::Y);
+                syncBtn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, Input::GamepadButton::LeftBumper);
+                syncBtn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, Input::GamepadButton::RightBumper);
+            }
+        }
+        if (pads) SDL_free(pads);
+
         float relX = 0.0f, relY = 0.0f;
         SDL_GetRelativeMouseState(&relX, &relY);
         const f32 lookX = (std::abs(relX) > std::abs(io.MouseDelta.x)) ? relX : io.MouseDelta.x;
         const f32 lookY = (std::abs(relY) > std::abs(io.MouseDelta.y)) ? relY : io.MouseDelta.y;
-        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, lookX * 0.12f);
-        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, lookY * 0.12f);
+        m_input.injectGamepadAxis(Input::GamepadAxis::LeftX, stickLX);
+        m_input.injectGamepadAxis(Input::GamepadAxis::LeftY, stickLY);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, stickRX + lookX * 0.12f);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, stickRY + lookY * 0.12f);
 #else
-        auto syncKey = [&](ImGuiKey imguiKey, Input::Key key) {
-            if (ImGui::IsKeyDown(imguiKey)) m_input.injectKeyDown(key);
-            else m_input.injectKeyUp(key);
-        };
-        syncKey(ImGuiKey_W, Input::Key::W);
-        syncKey(ImGuiKey_A, Input::Key::A);
-        syncKey(ImGuiKey_S, Input::Key::S);
-        syncKey(ImGuiKey_D, Input::Key::D);
-        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, io.MouseDelta.x * 0.12f);
-        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, io.MouseDelta.y * 0.12f);
-#endif
+        if (!typing) {
+            const ImGuiKey keys[] = {
+                ImGuiKey_A, ImGuiKey_B, ImGuiKey_C, ImGuiKey_D, ImGuiKey_E, ImGuiKey_F, ImGuiKey_G,
+                ImGuiKey_H, ImGuiKey_I, ImGuiKey_J, ImGuiKey_K, ImGuiKey_L, ImGuiKey_M, ImGuiKey_N,
+                ImGuiKey_O, ImGuiKey_P, ImGuiKey_Q, ImGuiKey_R, ImGuiKey_S, ImGuiKey_T, ImGuiKey_U,
+                ImGuiKey_V, ImGuiKey_W, ImGuiKey_X, ImGuiKey_Y, ImGuiKey_Z, ImGuiKey_Space,
+                ImGuiKey_UpArrow, ImGuiKey_DownArrow, ImGuiKey_LeftArrow, ImGuiKey_RightArrow,
+                ImGuiKey_LeftShift, ImGuiKey_RightShift, ImGuiKey_LeftCtrl, ImGuiKey_RightCtrl,
+                ImGuiKey_Escape, ImGuiKey_Enter, ImGuiKey_Tab
+            };
+            const Input::Key mapped[] = {
+                Input::Key::A, Input::Key::B, Input::Key::C, Input::Key::D, Input::Key::E, Input::Key::F,
+                Input::Key::G, Input::Key::H, Input::Key::I, Input::Key::J, Input::Key::K, Input::Key::L,
+                Input::Key::M, Input::Key::N, Input::Key::O, Input::Key::P, Input::Key::Q, Input::Key::R,
+                Input::Key::S, Input::Key::T, Input::Key::U, Input::Key::V, Input::Key::W, Input::Key::X,
+                Input::Key::Y, Input::Key::Z, Input::Key::Space, Input::Key::Up, Input::Key::Down,
+                Input::Key::Left, Input::Key::Right, Input::Key::LShift, Input::Key::RShift,
+                Input::Key::LCtrl, Input::Key::RCtrl, Input::Key::Escape, Input::Key::Return,
+                Input::Key::Tab
+            };
+            for (int i = 0; i < static_cast<int>(sizeof(keys) / sizeof(keys[0])); ++i) {
+                if (ImGui::IsKeyDown(keys[i])) m_input.injectKeyDown(mapped[i]);
+                else m_input.injectKeyUp(mapped[i]);
+            }
+        }
         m_input.injectMouseMove(io.MousePos.x, io.MousePos.y);
         if (io.MouseDown[0]) m_input.injectMouseButtonDown(Input::MouseButton::Left);
         else m_input.injectMouseButtonUp(Input::MouseButton::Left);
+        if (io.MouseDown[2]) m_input.injectMouseButtonDown(Input::MouseButton::Middle);
+        else m_input.injectMouseButtonUp(Input::MouseButton::Middle);
         if (io.MouseDown[1]) m_input.injectMouseButtonDown(Input::MouseButton::Right);
         else m_input.injectMouseButtonUp(Input::MouseButton::Right);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightX, io.MouseDelta.x * 0.12f);
+        m_input.injectGamepadAxis(Input::GamepadAxis::RightY, io.MouseDelta.y * 0.12f);
+#endif
     }
     m_input.endFrame();
 
@@ -413,13 +550,20 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     m_uiSystem.onUpdate(world, dt);
 
     if (m_ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+        Scene::propagateTransforms(world);
         const ECS::Entity cameraEntity = Scene::findActiveCamera2DEntity(world);
         if (cameraEntity.isValid()) {
-            const auto* transform = world.get<ECS::Transform>(cameraEntity);
             const auto* camera = world.get<ECS::Camera2DComponent>(cameraEntity);
-            if (transform && camera) {
-                m_playCamera2D.update(dt, world);
-                Scene::syncViewportFromCamera2D(m_ctx, *transform, *camera);
+            if (camera) {
+                if (m_playCamera2DFollowsCamera) {
+                    m_playCamera2D.update(dt, world);
+                    if (auto* camTransform = world.get<ECS::Transform>(cameraEntity)) {
+                        const Vec2 camPos = m_playCamera2D.position();
+                        camTransform->position.x = camPos.x;
+                        camTransform->position.y = camPos.y;
+                    }
+                }
+                Scene::syncViewportFromCamera2D(world, cameraEntity, m_ctx, *camera);
             }
         }
     }
@@ -459,6 +603,7 @@ void SceneEditor::render(f32 deltaTime) {
     if (!m_open) return;
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
+    m_ctx.activeWorld = activeWorld;
     if (!activeWorld) {
         renderUnsavedChangesPopup(nullptr);
         return;
@@ -582,6 +727,9 @@ void SceneEditor::render(f32 deltaTime) {
     m_inspector.render(*activeWorld, m_ctx);
     renderPlaybar(*activeWorld);
     m_viewport.setFrameCommandBuffer(m_frameCmd);
+#ifdef CF_HAS_SDL3
+    m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
+#endif
     m_viewport.render(*activeWorld, m_ctx);
     m_assetBrowser.render(*activeWorld, m_ctx);
     m_console.render();
@@ -595,7 +743,11 @@ void SceneEditor::render(f32 deltaTime) {
     m_entityPresets.render(*activeWorld, m_ctx);
     m_audioPreview.onImGuiRender();
     m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
+    m_gameplayPreview.render(*activeWorld, m_ctx);
     m_viewport.setFrameCommandBuffer(nullptr);
+#ifdef CF_HAS_SDL3
+    m_gameplayPreview.setFrameCommandBuffer(nullptr);
+#endif
     m_animationTimeline.render(deltaTime);
     m_animatorController.render();
     m_tilemapEditor.render();
@@ -627,6 +779,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
      ImGui::DockBuilderDockWindow("Inspector", dockRight);
      ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
      ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
+     ImGui::DockBuilderDockWindow("Gameplay Preview", dockCenter);
      ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
      ImGui::DockBuilderDockWindow("Console", dockBottom);
      ImGui::DockBuilderDockWindow("Profiler", dockBottom);
@@ -737,6 +890,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool viewportOpen = m_viewport.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Viewport, "Viewport", nullptr, &viewportOpen)) {
                 viewportOpen ? m_viewport.open() : m_viewport.close();
+            }
+            bool gameplayPreviewOpen = m_gameplayPreview.isOpen();
+            if (ImGui::MenuItem("Gameplay Preview", nullptr, gameplayPreviewOpen)) {
+                gameplayPreviewOpen ? m_gameplayPreview.close() : m_gameplayPreview.open();
             }
             bool assetsOpen = m_assetBrowser.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Assets, "Assets", nullptr, &assetsOpen)) {

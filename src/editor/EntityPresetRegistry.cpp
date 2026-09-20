@@ -12,11 +12,13 @@ EntityPresetRegistry& EntityPresetRegistry::instance() {
 
 void EntityPresetRegistry::registerBuiltIns() {
     m_categories = {
+        {"playable_2d", "2D Playable", "Sprites, physics and cameras for side-view and top-down 2D."},
         {"playable", "Playable", "Player rigs for 2D, FPP, third-person and vehicles."},
         {"npcs", "NPCs", "Non-hostile characters with behavior scripts."},
         {"enemies", "Enemies", "Hostile actors with combat-oriented scripts."},
         {"items", "Items", "Collectibles, pickups and interactables."},
-        {"objects", "Objects", "World objects like destructibles and props."},
+        {"objects", "Objects", "World objects like destructibles, props and lights."},
+        {"gameplay", "Gameplay", "Triggers, doors, platforms and volume logic."},
         {"ui", "UI", "HUDs, menus and interface scaffolding."},
     };
 

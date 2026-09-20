@@ -314,7 +314,7 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
 
     SDL_GPURasterizerState rasterizer{};
     rasterizer.fill_mode = SDL_GPU_FILLMODE_FILL;
-    rasterizer.cull_mode = SDL_GPU_CULLMODE_BACK;
+    rasterizer.cull_mode = SDL_GPU_CULLMODE_NONE;
     rasterizer.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
     rasterizer.enable_depth_bias = false;
     rasterizer.enable_depth_clip = true;

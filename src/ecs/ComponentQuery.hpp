@@ -50,7 +50,7 @@ public:
             return false;
         }
         
-        for (u32 i = 0; i < 64; ++i) {
+        for (u32 i = 0; i < ComponentSet::kMaxComponents; ++i) {
             if (m_excluded.has(i) && archetypeComponents.has(i)) {
                 return false;
             }
@@ -59,7 +59,7 @@ public:
         for (usize i = 0; i < m_any.size(); ++i) {
             bool hasAny = false;
             const ComponentSet& anySet = m_any[i];
-            for (u32 j = 0; j < 64; ++j) {
+            for (u32 j = 0; j < ComponentSet::kMaxComponents; ++j) {
                 if (anySet.has(j) && archetypeComponents.has(j)) {
                     hasAny = true;
                     break;

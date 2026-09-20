@@ -2,6 +2,7 @@
 
 #include "ui/UIComponents.hpp"
 #include "ecs/World.hpp"
+#include "scene/SceneComponents.hpp"
 #include "ecs/Entity.hpp"
 #include "ecs/ISystem.hpp"
 #include "ecs/ComponentQuery.hpp"
@@ -186,11 +187,17 @@ private:
         });
 
         for (int pass = 0; pass < 8; ++pass) {
-            world.forEach<UIWidget>(q, [&](ECS::Entity e, UIWidget& w) {
-                if (w.type == UIWidgetType::Canvas) return;
-                if (!w.visible) return;
-                auto it = computed.find(w.parentId);
-                if (it == computed.end()) return;
+        world.forEach<UIWidget>(q, [&](ECS::Entity e, UIWidget& w) {
+            if (w.type == UIWidgetType::Canvas) return;
+            if (!w.visible) return;
+            u32 parentId = w.parentId;
+            if (parentId == kUIInvalidParent) {
+                if (auto* parent = world.get<Scene::Parent>(e)) {
+                    parentId = parent->parent.id();
+                }
+            }
+            auto it = computed.find(parentId);
+            if (it == computed.end()) return;
                 UIRect rect    = computeRect(w.transform, it->second);
                 w.computedRect = rect;
                 computed[e.id()] = rect;

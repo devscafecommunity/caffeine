@@ -1,4 +1,5 @@
 #include "InputManager.hpp"
+#include <algorithm>
 
 namespace Caffeine::Input {
 
@@ -111,6 +112,14 @@ AxisState InputManager::axisState(Axis axis) const {
         f32 neg = isBindingActive(pair.negative) ? -1.0f : 0.0f;
         f32 pos = isBindingActive(pair.positive) ?  1.0f : 0.0f;
         value = neg + pos;
+    }
+
+    if (axis == Axis::MoveX) {
+        const f32 stick = m_gamepadAxisState[static_cast<usize>(GamepadAxis::LeftX)];
+        value = std::clamp(value + stick, -1.0f, 1.0f);
+    } else if (axis == Axis::MoveY) {
+        const f32 stick = m_gamepadAxisState[static_cast<usize>(GamepadAxis::LeftY)];
+        value = std::clamp(value + stick, -1.0f, 1.0f);
     }
 
     f32 prevValue = 0.0f;

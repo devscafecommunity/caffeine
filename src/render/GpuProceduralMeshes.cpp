@@ -1,6 +1,7 @@
 #include "render/GpuProceduralMeshes.hpp"
 
 #include <cmath>
+#include <utility>
 
 namespace Caffeine::Render {
 namespace {
@@ -10,12 +11,18 @@ Assets::Vertex3D vtx(Vec3 pos, Vec3 normal, Vec2 uv) {
 }
 
 void addQuad(std::vector<Assets::Vertex3D>& vertices, std::vector<u32>& indices,
-             const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, Vec3 normal) {
+             Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 outward) {
+    Vec3 n = (p1 - p0).cross(p2 - p0);
+    if (n.dot(outward) < 0.0f) {
+        std::swap(p1, p3);
+    }
+    Vec3 nn = outward;
+    if (nn.lengthSquared() > 1e-8f) nn = nn.normalized();
     const u32 base = static_cast<u32>(vertices.size());
-    vertices.push_back(vtx(p0, normal, {0.0f, 0.0f}));
-    vertices.push_back(vtx(p1, normal, {1.0f, 0.0f}));
-    vertices.push_back(vtx(p2, normal, {1.0f, 1.0f}));
-    vertices.push_back(vtx(p3, normal, {0.0f, 1.0f}));
+    vertices.push_back(vtx(p0, nn, {0.0f, 0.0f}));
+    vertices.push_back(vtx(p1, nn, {1.0f, 0.0f}));
+    vertices.push_back(vtx(p2, nn, {1.0f, 1.0f}));
+    vertices.push_back(vtx(p3, nn, {0.0f, 1.0f}));
     indices.push_back(base + 0);
     indices.push_back(base + 1);
     indices.push_back(base + 2);
@@ -71,12 +78,19 @@ void buildSphere(Assets::Mesh3D& mesh, int segments = 24) {
         for (int lon = 0; lon < segments; ++lon) {
             const u32 first = static_cast<u32>(lat * (segments + 1) + lon);
             const u32 second = first + static_cast<u32>(segments + 1);
-            mesh.indices.push_back(first);
-            mesh.indices.push_back(second);
-            mesh.indices.push_back(first + 1);
-            mesh.indices.push_back(second);
-            mesh.indices.push_back(second + 1);
-            mesh.indices.push_back(first + 1);
+            auto emit = [&](u32 i0, u32 i1, u32 i2) {
+                const Vec3 a = mesh.vertices[i0].position;
+                const Vec3 b = mesh.vertices[i1].position;
+                const Vec3 c = mesh.vertices[i2].position;
+                const Vec3 outward = a + b + c;
+                Vec3 n = (b - a).cross(c - a);
+                if (n.dot(outward) < 0.0f) std::swap(i1, i2);
+                mesh.indices.push_back(i0);
+                mesh.indices.push_back(i1);
+                mesh.indices.push_back(i2);
+            };
+            emit(first, first + 1, second);
+            emit(second, first + 1, second + 1);
         }
     }
     mesh.bounds = {{-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}};
@@ -114,9 +128,17 @@ void buildCylinder(Assets::Mesh3D& mesh, int segments = 24) {
         const u32 v1 = static_cast<u32>(mesh.vertices.size());
         mesh.vertices.push_back(
             vtx({std::cos(a1) * radius, halfH, std::sin(a1) * radius}, {0, 1, 0}, {0.5f, 0.5f}));
-        mesh.indices.push_back(topCenter);
-        mesh.indices.push_back(v0);
-        mesh.indices.push_back(v1);
+        auto emit = [&](u32 i0, u32 i1, u32 i2, Vec3 outward) {
+            const Vec3 a = mesh.vertices[i0].position;
+            const Vec3 b = mesh.vertices[i1].position;
+            const Vec3 c = mesh.vertices[i2].position;
+            Vec3 n = (b - a).cross(c - a);
+            if (n.dot(outward) < 0.0f) std::swap(i1, i2);
+            mesh.indices.push_back(i0);
+            mesh.indices.push_back(i1);
+            mesh.indices.push_back(i2);
+        };
+        emit(topCenter, v0, v1, {0.0f, 1.0f, 0.0f});
     }
 
     const u32 bottomCenter = static_cast<u32>(mesh.vertices.size());
@@ -131,9 +153,17 @@ void buildCylinder(Assets::Mesh3D& mesh, int segments = 24) {
         const u32 v1 = static_cast<u32>(mesh.vertices.size());
         mesh.vertices.push_back(
             vtx({std::cos(a1) * radius, -halfH, std::sin(a1) * radius}, {0, -1, 0}, {0.5f, 0.5f}));
-        mesh.indices.push_back(bottomCenter);
-        mesh.indices.push_back(v1);
-        mesh.indices.push_back(v0);
+        auto emit = [&](u32 i0, u32 i1, u32 i2, Vec3 outward) {
+            const Vec3 a = mesh.vertices[i0].position;
+            const Vec3 b = mesh.vertices[i1].position;
+            const Vec3 c = mesh.vertices[i2].position;
+            Vec3 n = (b - a).cross(c - a);
+            if (n.dot(outward) < 0.0f) std::swap(i1, i2);
+            mesh.indices.push_back(i0);
+            mesh.indices.push_back(i1);
+            mesh.indices.push_back(i2);
+        };
+        emit(bottomCenter, v0, v1, {0.0f, -1.0f, 0.0f});
     }
 
     mesh.bounds = {{-radius, -halfH, -radius}, {radius, halfH, radius}};

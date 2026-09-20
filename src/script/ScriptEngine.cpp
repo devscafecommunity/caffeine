@@ -1,6 +1,7 @@
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ecs/World.hpp"
+#include "ecs/ComponentQuery.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
 #include "input/InputManager.hpp"
@@ -8,10 +9,12 @@
 #include "debug/LogSystem.hpp"
 #include "math/Quat.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "ui/UIComponents.hpp"
 #include "containers/HashMap.hpp"
 #include "containers/Vector.hpp"
 
 #include <sol/sol.hpp>
+#include <filesystem>
 
 namespace Caffeine::Script {
 
@@ -27,6 +30,7 @@ struct ScriptEngine::Impl {
     Events::EventBus* m_events = nullptr;
 
     HashMap<std::string, sol::environment> m_envs;
+    std::string m_searchRoot;
 
     struct LuaEventEntry {
         std::string eventName;
@@ -130,6 +134,11 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
             t["scaleX"] = transform->scale.x;
             t["scaleY"] = transform->scale.y;
         }
+        if (auto* transform = e.get<ECS::Transform>()) {
+            t["scaleX"] = transform->scale.x;
+            t["scaleY"] = transform->scale.y;
+            t["rotation"] = transform->rotation.z;
+        }
         return t;
     };
 
@@ -137,22 +146,91 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
         ECS::World* world = worldPtr ? *worldPtr : nullptr;
         if (!world) return;
         ECS::Entity e(entityId, world);
+        const f32 x = t["x"].get_or(0.0f);
+        const f32 y = t["y"].get_or(0.0f);
+        const f32 z = t["z"].get_or(0.0f);
         if (auto* p3 = e.get<ECS::Position3D>()) {
             p3->position.x = t["x"].get_or(p3->position.x);
             p3->position.y = t["y"].get_or(p3->position.y);
             p3->position.z = t["z"].get_or(p3->position.z);
-            return;
         }
-        auto& transform = e.getOrAdd<ECS::Transform>();
-        transform.position.x = t["x"].get_or(0.0f);
-        transform.position.y = t["y"].get_or(0.0f);
-        transform.position.z = t["z"].get_or(0.0f);
-        transform.rotation.z = t["rotation"].get_or(0.0f);
-        transform.scale.x = t["scaleX"].get_or(1.0f);
-        transform.scale.y = t["scaleY"].get_or(1.0f);
+        if (auto* transform = e.get<ECS::Transform>()) {
+            transform->position.x = t["x"].get_or(transform->position.x);
+            transform->position.y = t["y"].get_or(transform->position.y);
+            transform->position.z = t["z"].get_or(transform->position.z);
+            if (t["rotation"].valid()) transform->rotation.z = t["rotation"].get_or(transform->rotation.z);
+            if (t["scaleX"].valid()) transform->scale.x = t["scaleX"].get_or(transform->scale.x);
+            if (t["scaleY"].valid()) transform->scale.y = t["scaleY"].get_or(transform->scale.y);
+        } else if (!e.get<ECS::Position3D>()) {
+            auto& transform = e.getOrAdd<ECS::Transform>();
+            transform.position.x = x;
+            transform.position.y = y;
+            transform.position.z = z;
+            transform.rotation.z = t["rotation"].get_or(0.0f);
+            transform.scale.x = t["scaleX"].get_or(1.0f);
+            transform.scale.y = t["scaleY"].get_or(1.0f);
+        }
     };
 
     wt["addTransform"] = wt["setTransform"];
+
+    auto readPosition = [](ECS::World* world, ECS::Entity e, f32& x, f32& y, f32& z) -> bool {
+        if (!world) return false;
+        if (auto* p3 = e.get<ECS::Position3D>()) {
+            x = p3->position.x;
+            y = p3->position.y;
+            z = p3->position.z;
+            return true;
+        }
+        if (auto* transform = e.get<ECS::Transform>()) {
+            x = transform->position.x;
+            y = transform->position.y;
+            z = transform->position.z;
+            return true;
+        }
+        return false;
+    };
+
+    wt["distanceTo"] = [worldPtr, readPosition](u32 aId, u32 bId) -> f32 {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return 1.0e9f;
+        ECS::Entity a(aId, world);
+        ECS::Entity b(bId, world);
+        f32 ax = 0, ay = 0, az = 0, bx = 0, by = 0, bz = 0;
+        if (!readPosition(world, a, ax, ay, az) || !readPosition(world, b, bx, by, bz)) return 1.0e9f;
+        const f32 dx = ax - bx, dy = ay - by, dz = az - bz;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    wt["findNearest"] = [worldPtr, readPosition](u32 fromId, f32 maxDist) -> u32 {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world || maxDist <= 0.0f) return 0u;
+        ECS::Entity from(fromId, world);
+        f32 ox = 0, oy = 0, oz = 0;
+        if (!readPosition(world, from, ox, oy, oz)) return 0u;
+
+        u32 best = 0;
+        f32 bestD = maxDist;
+        auto consider = [&](ECS::Entity e) {
+            if (e.id() == fromId) return;
+            f32 x = 0, y = 0, z = 0;
+            if (!readPosition(world, e, x, y, z)) return;
+            const f32 dx = x - ox, dy = y - oy, dz = z - oz;
+            const f32 d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (d < bestD) {
+                bestD = d;
+                best = e.id();
+            }
+        };
+
+        ECS::ComponentQuery q3;
+        q3.with<ECS::Position3D>();
+        world->forEach<ECS::Position3D>(q3, [&](ECS::Entity e, ECS::Position3D&) { consider(e); });
+        ECS::ComponentQuery q2;
+        q2.with<ECS::Transform>();
+        world->forEach<ECS::Transform>(q2, [&](ECS::Entity e, ECS::Transform&) { consider(e); });
+        return best;
+    };
 
     wt["setYawPitch"] = [worldPtr](u32 entityId, f32 yawRad, f32 pitchRad) {
         ECS::World* world = worldPtr ? *worldPtr : nullptr;
@@ -161,6 +239,12 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
         auto& rot = e.getOrAdd<ECS::Rotation3D>();
         const Quat q = Quat::fromEuler(pitchRad, yawRad, 0.0f);
         rot.quaternion = Vec4(q.x, q.y, q.z, q.w);
+        if (auto* transform = e.get<ECS::Transform>()) {
+            constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
+            transform->rotation.x = pitchRad * kRadToDeg;
+            transform->rotation.y = yawRad * kRadToDeg;
+            transform->rotation.z = 0.0f;
+        }
     };
 
     wt["getRigidBody2D"] = [&lua, worldPtr](u32 entityId) -> sol::table {
@@ -217,6 +301,28 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
 
     wt["addSprite"] = wt["setSprite"];
 
+    lua["caffeine"]["ui"] = lua.create_table();
+    sol::table uit = lua["caffeine"]["ui"];
+
+    uit["setProgress"] = [worldPtr](u32 entityId, f32 normalized) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
+        ECS::Entity e(entityId, world);
+        if (auto* pb = e.get<UI::UIProgressBar>()) {
+            const f32 t = std::clamp(normalized, 0.0f, 1.0f);
+            pb->currentValue = pb->minValue + (pb->maxValue - pb->minValue) * t;
+        }
+    };
+
+    uit["setLabel"] = [worldPtr](u32 entityId, const std::string& text) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
+        ECS::Entity e(entityId, world);
+        if (auto* lbl = e.get<UI::UILabel>()) {
+            lbl->text = UI::FixedString<256>(text.c_str());
+        }
+    };
+
     wt["addParticleEmitter"] = [worldPtr](u32 entityId, sol::table t) {
         ECS::World* world = worldPtr ? *worldPtr : nullptr;
         if (!world) return;
@@ -249,9 +355,23 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
     };
 }
 
+HashMap<std::string, Input::Action> makeActionMap() {
+    HashMap<std::string, Input::Action> map;
+    map.set("MoveUp", Input::Action::MoveUp);
+    map.set("MoveDown", Input::Action::MoveDown);
+    map.set("MoveLeft", Input::Action::MoveLeft);
+    map.set("MoveRight", Input::Action::MoveRight);
+    map.set("Jump", Input::Action::Jump);
+    map.set("Attack", Input::Action::Attack);
+    map.set("Interact", Input::Action::Interact);
+    map.set("Pause", Input::Action::Pause);
+    return map;
+}
+
 void registerInputBindings(sol::state& lua, Input::InputManager** inputPtr) {
     static const HashMap<std::string, Input::Key> s_keyMap = makeKeyMap();
     static const HashMap<std::string, Input::Axis> s_axisMap = makeAxisMap();
+    static const HashMap<std::string, Input::Action> s_actionMap = makeActionMap();
 
     sol::table it = lua["caffeine"]["input"];
 
@@ -269,6 +389,29 @@ void registerInputBindings(sol::state& lua, Input::InputManager** inputPtr) {
         auto* axis = s_axisMap.get(axisName);
         if (!axis) return 0.0f;
         return input->axisState(*axis).value;
+    };
+
+    it["isActionDown"] = [inputPtr](const std::string& actionName) -> bool {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return false;
+        auto* action = s_actionMap.get(actionName);
+        if (!action) return false;
+        return input->actionState(*action).pressed;
+    };
+
+    it["isActionPressed"] = [inputPtr](const std::string& actionName) -> bool {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return false;
+        auto* action = s_actionMap.get(actionName);
+        if (!action) return false;
+        return input->actionState(*action).justPressed;
+    };
+
+    it["mouseDelta"] = [inputPtr]() -> std::pair<f32, f32> {
+        Input::InputManager* input = inputPtr ? *inputPtr : nullptr;
+        if (!input) return {0.0f, 0.0f};
+        auto d = input->mouseDelta();
+        return {d.x, d.y};
     };
 
     it["mousePosition"] = [inputPtr]() -> std::pair<f32, f32> {
@@ -532,6 +675,10 @@ void ScriptEngine::setInput(Input::InputManager* input) {
     m_impl->m_input = input;
 }
 
+void ScriptEngine::setSearchRoot(const std::string& root) {
+    m_impl->m_searchRoot = root;
+}
+
 std::vector<ScriptEngine::ExposedVar> ScriptEngine::listExposedVars(const std::string& path) {
     std::vector<ExposedVar> out;
     auto* envPtr = m_impl->m_envs.get(path);
@@ -588,18 +735,56 @@ bool ScriptEngine::setExposedVar(const std::string& path, const ExposedVar& var)
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
+    std::string file = path;
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (!fs::exists(file, ec) && !m_impl->m_searchRoot.empty()) {
+            const fs::path root(m_impl->m_searchRoot);
+            const fs::path p(path);
+            const fs::path candidates[] = {
+                root / p,
+                root / p.filename(),
+                root / "scripts" / p.filename(),
+                root / "scripts" / "presets" / p.filename(),
+                root / "data" / "scripts" / p,
+                root / "data" / "scripts" / p.filename(),
+                root / "data" / "scripts" / "presets" / p.filename(),
+                fs::current_path() / "data" / "scripts" / p.filename(),
+                fs::current_path() / "scripts" / p.filename(),
+            };
+            for (const auto& c : candidates) {
+                if (fs::exists(c, ec)) {
+                    file = c.string();
+                    break;
+                }
+            }
+        }
+    }
+
     sol::environment env(lua, sol::create, lua.globals());
     env["caffeine"] = lua["caffeine"];
-    auto result = lua.safe_script_file(path, env, sol::script_pass_on_error);
+
+    sol::load_result loaded = lua.load_file(file);
+    if (!loaded.valid()) {
+        sol::error err = loaded;
+        if (outError) *outError = err.what();
+        CF_ERROR("Script", "Failed to load %s: %s", file.c_str(), err.what());
+        return false;
+    }
+
+    sol::protected_function chunk = loaded;
+    sol::set_environment(env, chunk);
+    auto result = chunk();
     if (!result.valid()) {
         sol::error err = result;
         if (outError) *outError = err.what();
-        CF_ERROR("Script", "Failed to load %s: %s", path.c_str(), err.what());
+        CF_ERROR("Script", "Failed to run %s: %s", file.c_str(), err.what());
         return false;
     }
 
     m_impl->m_envs.set(path, std::move(env));
-    CF_INFO("Script", "Loaded script: %s", path.c_str());
+    CF_INFO("Script", "Loaded script: %s", file.c_str());
     return true;
 }
 

@@ -34,6 +34,7 @@ public:
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
     void open()  { m_open = true; }
+    bool isDetached() const { return m_detached; }
 
 private:
 #ifdef CF_HAS_IMGUI
@@ -55,6 +56,7 @@ private:
      void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawSkybox(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawTerrain(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawPostProcess(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawPrefabInstance(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 
      void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);
@@ -62,6 +64,7 @@ private:
 #endif
 
     bool m_open = true;
+    bool m_detached = false;
     bool m_undoStarted = false;
     HashMap<u32, ComponentDrawer> m_drawers;
     char m_addComponentSearch[128] = {};

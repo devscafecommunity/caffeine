@@ -1,0 +1,28 @@
+{
+  "name": "general-ultra-realistic-terrain-algorithm",
+  "version": "1.0.0",
+  "description": "Physically-based procedural terrain generation with domain warping and geomorphological PDEs",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build:client": "node scripts/build-client.js",
+    "dev": "pnpm run build:client && node server.js",
+    "generate": "node index.js",
+    "view": "pnpm run build:client && node server.js",
+    "paper": "cd paper && make pdf"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "simplex-noise": "^4.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  },
+  "keywords": [
+    "terrain",
+    "procedural",
+    "geomorphology",
+    "domain-warping"
+  ],
+  "license": "MIT"
+}

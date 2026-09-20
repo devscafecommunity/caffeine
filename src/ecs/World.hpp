@@ -116,7 +116,7 @@ T& World::add(Entity e, Args&&... args) {
     u32 newIndexInArchetype = newArchetype->addEntity(entityID);
     
     const ComponentSet& oldSet = oldArchetype->getComponentSet();
-    for (u32 cid = 0; cid < 64; ++cid) {
+    for (u32 cid = 0; cid < ComponentSet::kMaxComponents; ++cid) {
         if (oldSet.has(cid)) {
             newArchetype->copyComponent(cid, entityData.indexInArchetype, oldArchetype);
         }
@@ -161,7 +161,7 @@ void World::remove(Entity e) {
     u32 newIndexInArchetype = newArchetype->addEntity(entityID);
     
     const ComponentSet& oldSet = oldArchetype->getComponentSet();
-    for (u32 cid = 0; cid < 64; ++cid) {
+    for (u32 cid = 0; cid < ComponentSet::kMaxComponents; ++cid) {
         if (oldSet.has(cid) && cid != componentID) {
             newArchetype->copyComponent(cid, entityData.indexInArchetype, oldArchetype);
         }

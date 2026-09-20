@@ -4,6 +4,7 @@
 #include "editor/EditorContext.hpp"
 #include "editor/EntityPresetPackages.hpp"
 #include "editor/EntityPresetRegistry.hpp"
+#include "editor/ComponentTypeRegistry.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -69,6 +70,7 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_hostApi.registerMenuAction = &PluginManager::hostRegisterMenuAction;
     m_hostApi.registerComponentDrawer = &PluginManager::hostRegisterComponentDrawer;
     m_hostApi.registerEntityPresetManifest = &PluginManager::hostRegisterEntityPresetManifest;
+    m_hostApi.getComponentTypeId = &PluginManager::hostGetComponentTypeId;
 
     std::error_code ec;
     std::filesystem::create_directories(m_pluginsDirectory, ec);
@@ -151,6 +153,11 @@ bool PluginManager::hostRegisterEntityPresetManifest(void* ctx, const char* plug
         hostLogError(manager, loaded.error.c_str());
     }
     return false;
+}
+
+u32 PluginManager::hostGetComponentTypeId(void* ctx, const char* componentName) {
+    (void)ctx;
+    return ComponentTypeRegistry::instance().lookup(componentName);
 }
 
 bool PluginManager::registerPanel(const std::string& pluginName, const std::string& title,

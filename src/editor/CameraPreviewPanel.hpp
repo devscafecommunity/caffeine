@@ -51,6 +51,7 @@ private:
 #endif
 
     bool m_open = true;
+    bool m_detached = false;
 };
 
 }

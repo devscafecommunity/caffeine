@@ -207,6 +207,17 @@ RHI::Texture* TerrainGpuTextureCache::whiteTexture(RHI::RenderDevice* device) {
     return ensureWhiteTexture(device);
 }
 
+RHI::Texture* TerrainGpuTextureCache::textureFromPath(RHI::RenderDevice* device,
+                                                      const std::string& path,
+                                                      const std::string& projectRoot) {
+    if (!device || path.empty()) return nullptr;
+    auto it = m_sharedTextures.find(path);
+    if (it != m_sharedTextures.end()) return it->second;
+    RHI::Texture* tex = loadTexture(device, path, projectRoot);
+    if (tex) m_sharedTextures[path] = tex;
+    return tex;
+}
+
 void TerrainGpuTextureCache::removeEntity(ECS::Entity entity, RHI::RenderDevice* device) {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end()) return;
@@ -219,6 +230,13 @@ void TerrainGpuTextureCache::releaseAll(RHI::RenderDevice* device) {
         releaseTextures(gpu, device);
     }
     m_entries.clear();
+
+    for (auto& [_, tex] : m_sharedTextures) {
+        if (device && tex && tex != m_whiteTexture) {
+            device->destroyTexture(tex);
+        }
+    }
+    m_sharedTextures.clear();
 
     if (m_whiteTexture) {
         if (device) {

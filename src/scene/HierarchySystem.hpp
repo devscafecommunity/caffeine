@@ -11,8 +11,6 @@
 
 namespace Caffeine::Scene {
 
-namespace {
-
 inline Mat4 buildLocalTRS(const ECS::Transform& t) {
     static constexpr float DEG2RAD = 3.14159265f / 180.f;
     Mat4 T = Mat4::translation(t.position.x, t.position.y, t.position.z);
@@ -39,49 +37,50 @@ inline Mat4 buildLocalTRS_3D(const ECS::Position3D* p, const ECS::Rotation3D* r,
     return T * R * S;
 }
 
-} // anonymous namespace
+inline Mat4 localMatrix(ECS::World& world, ECS::Entity e) {
+    if (auto* p = world.get<ECS::Position3D>(e)) {
+        auto* r = world.get<ECS::Rotation3D>(e);
+        auto* s = world.get<ECS::Scale3D>(e);
+        return buildLocalTRS_3D(p, r, s);
+    }
+    if (auto* t = world.get<ECS::Transform>(e)) return buildLocalTRS(*t);
+    return Mat4::identity();
+}
+
+inline Mat4 computeWorldMatrix(ECS::World& world, ECS::Entity e, int depth = 0) {
+    if (depth > 8) return localMatrix(world, e);
+    Mat4 local = localMatrix(world, e);
+    auto* pc = world.get<Parent>(e);
+    if (pc && pc->parent.isValid() && pc->parent.id() != e.id()) {
+        return computeWorldMatrix(world, pc->parent, depth + 1) * local;
+    }
+    return local;
+}
 
 // Computes Scene::WorldTransform for all entities in the world.
 // Must be called once per frame before rendering.
 // Supports arbitrary nesting depth up to MAX_DEPTH levels.
 inline void propagateTransforms(ECS::World& world) {
-    // Pass 1: seed WorldTransform with each entity's local TRS.
-    // Collect entities first — adding components during forEach invalidates iteration.
+    std::vector<ECS::Entity> entities;
     {
-        std::vector<ECS::Entity> entities;
         ECS::ComponentQuery q;
         q.with<ECS::Transform>();
         world.forEach<ECS::Transform>(q, [&](ECS::Entity e, ECS::Transform&) {
             entities.push_back(e);
         });
-        for (ECS::Entity e : entities) {
-            if (auto* t = world.get<ECS::Transform>(e)) {
-                WorldTransform& wt = world.add<WorldTransform>(e);
-                wt.matrix = buildLocalTRS(*t);
-            }
-        }
     }
     {
-        std::vector<ECS::Entity> entities;
         ECS::ComponentQuery q;
         q.with<ECS::Position3D>();
         world.forEach<ECS::Position3D>(q, [&](ECS::Entity e, ECS::Position3D&) {
             entities.push_back(e);
         });
-        for (ECS::Entity e : entities) {
-            if (world.has<ECS::Transform>(e)) continue;
-            auto* p = world.get<ECS::Position3D>(e);
-            if (!p) continue;
-            auto* r = world.get<ECS::Rotation3D>(e);
-            auto* s = world.get<ECS::Scale3D>(e);
-            WorldTransform& wt = world.add<WorldTransform>(e);
-            wt.matrix = buildLocalTRS_3D(p, r, s);
-        }
+    }
+    for (ECS::Entity e : entities) {
+        WorldTransform& wt = world.add<WorldTransform>(e);
+        wt.matrix = localMatrix(world, e);
     }
 
-    // Pass 2..N: propagate parent WorldTransform down to children.
-    // Each iteration correctly handles one additional level of nesting,
-    // regardless of entity iteration order within a pass.
     static constexpr int MAX_DEPTH = 8;
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {
         ECS::ComponentQuery q;
@@ -90,18 +89,8 @@ inline void propagateTransforms(ECS::World& world) {
             if (!pc.parent.isValid()) return;
             auto* parentWT = world.get<WorldTransform>(pc.parent);
             if (!parentWT) return;
-            auto* childWT = world.get<WorldTransform>(child);
-            if (!childWT) return;
-
-            if (auto* t = world.get<ECS::Transform>(child)) {
-                childWT->matrix = parentWT->matrix * buildLocalTRS(*t);
-            } else {
-                auto* p3 = world.get<ECS::Position3D>(child);
-                if (!p3) return;
-                auto* r3 = world.get<ECS::Rotation3D>(child);
-                auto* s3 = world.get<ECS::Scale3D>(child);
-                childWT->matrix = parentWT->matrix * buildLocalTRS_3D(p3, r3, s3);
-            }
+            WorldTransform& childWT = world.add<WorldTransform>(child);
+            childWT.matrix = parentWT->matrix * localMatrix(world, child);
         });
     }
 
