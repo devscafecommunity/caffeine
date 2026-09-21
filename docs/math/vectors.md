@@ -13,10 +13,11 @@ The Math module provides vector and matrix types optimized for game development.
 | File | Description | Status |
 |------|-------------|--------|
 | [`Vec2.hpp`](../../src/math/Vec2.hpp) | 2D vector (x, y) | ✅ Complete |
-| [`Vec3.hpp`](../../src/math/Vec3.hpp) | 3D vector (x, y, z) | ✅ Complete |
+| [`Vec3.hpp`](../../src/math/Vec3.hpp) | 3D vector (x, y, z) + `cross()` | ✅ Complete |
 | [`Vec4.hpp`](../../src/math/Vec4.hpp) | 4D vector (x, y, z, w) | ✅ Complete |
 | [`Mat4.hpp`](../../src/math/Mat4.hpp) | 4x4 matrix (column-major) | ✅ Complete |
-| [`Math.hpp`](../../src/math/Math.hpp) | Utility functions | ✅ Complete |
+| [`Quat.hpp`](../../src/math/Quat.hpp) | Quaternion rotations | ✅ Complete — see [quaternions.md](quaternions.md) |
+| [`Math.hpp`](../../src/math/Math.hpp) | Utility functions (`Caffeine::Math`) | ✅ Complete |
 
 ## Vector Types
 
@@ -69,33 +70,45 @@ Caffeine::Vec3 transformed = transform.transformPoint(point);
 
 | Method | Description |
 |--------|-------------|
-| `identity()` | Create identity matrix |
-| `translation(x, y, z)` | Translation matrix |
+| `identity()` / `zero()` | Identity / all-zero matrix |
+| `translation(x, y, z)` / `translation(Vec3)` | Translation matrix |
 | `scale(s)` or `scale(x, y, z)` | Scale matrix |
-| `rotationZ(radians)` | Z-axis rotation |
-| `rotationY(radians)` | Y-axis rotation |
-| `rotationX(radians)` | X-axis rotation |
-| `transformPoint(p)` | Transform 3D point |
-| `transformVector(v)` | Transform 3D vector (w=0) |
-| `transposed()` | Transpose matrix |
-| `inverse()` | Matrix inverse |
+| `rotationX/Y/Z(radians)` | Axis rotations |
+| `ortho(l, r, b, t, n, f)` | Orthographic projection |
+| `perspective(fovY, aspect, near, far)` | Perspective projection (OpenGL RH) |
+| `lookAt(eye, target, up)` | Right-handed view matrix |
+| `transformPoint(p)` | Transform 3D point (w=1, perspective divide) |
+| `transformVector(v)` | Transform direction (w=0, no translation) |
+| `transformVec4(v)` | Raw 4D transform |
+| `transposed()` | Transpose |
+| `inverted()` | Inverse via cofactor expansion (returns identity on singular — see note) |
+| `operator()(row, col)` | Element access over `m[col * 4 + row]` (column-major) |
 | `operator*` | Matrix multiplication |
 
-## Math Utilities
+> ⚠️ `inverted()` retorna identidade em matriz singular (fallback silencioso);
+> `lookAt()` degenera se `eye == target` (ver `AUDIT_REPORT.md` MA-2/MA-4).
+> Não existe `Mat4::fromQuat` — use `Quat::toMatrix()` ([quaternions.md](quaternions.md)).
+
+## Math Utilities (`Caffeine::Math`)
 
 | Function | Description |
 |----------|-------------|
-| `Math::lerp(a, b, t)` | Linear interpolation |
-| `Math::clamp(value, min, max)` | Clamp value |
-| `Math::saturate(value)` | Clamp to [0, 1] |
-| `Math::degToRad(degrees)` | Degrees to radians |
-| `Math::radToDeg(radians)` | Radians to degrees |
-| `Math::isPowerOfTwo(value)` | Check power of two |
-| `Math::nextPowerOfTwo(value)` | Next power of two |
-| `Math::absf(value)` | Absolute value (float) |
-| `Math::sqrtf(value)` | Square root |
-| `Math::sinf(value)` | Sine |
-| `Math::cosf(value)` | Cosine |
+| `PI` / `PI_HALF` / `TAU` / `E` | Constants |
+| `degToRad(degrees)` / `radToDeg(radians)` | Angle conversion |
+| `clamp(value, min, max)` | Clamp value |
+| `saturate(value)` | Clamp to [0, 1] |
+| `lerp(a, b, t)` / `inverseLerp(a, b, v)` | Interpolation and inverse |
+| `smoothstep(edge0, edge1, x)` | Smooth Hermite step |
+| `moveTowards(current, target, maxDelta)` | Stepped approach |
+| `absf(value)` / `minf(a, b)` / `maxf(a, b)` | Scalar helpers |
+| `approximatelyEqual(a, b, eps=1e-5)` | Epsilon comparison |
+| `sqrtf_safe(value)` | `sqrt` guarded (≤0 → 0) |
+| `isPowerOfTwo(usize)` | Check power of two |
+| `nextPowerOfTwo(usize)` | Next power of two (32-bit lanes only) |
+
+> ⚠️ `floorf()` / `ceilf()` / `roundf()` / `powf()` chamam a si mesmas por
+> lookup não-qualificado (recursão infinita) — não usar até correção.
+> `normalized()` de vetor zero retorna vetor zero (silencioso).
 
 ## DOD (Data-Oriented Design)
 

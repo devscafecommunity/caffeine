@@ -44,49 +44,69 @@ Caffeine::Vector<int> vec2(&alloc);
 
 ## HashMap<K, V>
 
-Open addressing hash map with linear probing.
+Small associative container backed by `Vector<Pair>` with **linear search**
+— O(n) `get`/`set`/`contains`/`remove`. There is no hashing and no open
+addressing; it is suited for small tables (dozens of entries), not hot paths
+over thousands of keys.
 
 ```cpp
 Caffeine::HashMap<int, const char*> map;
-map.set(1, “one”);
-map.set(2, “two”);
+map.set(1, "one");
+map.set(2, "two");
 
-const char* val = map.get(1);
+const char* const* val = map.get(1);  // pointer; nullptr if missing
 bool exists = map.contains(1);
+map.remove(1);  // swap-with-back removal (unordered)
 ```
 
 ### Key Methods
 
 | Method | Complexity | Description |
 |--------|------------|--------------|
-| `set()` | O(1) amortized | Insert or update |
-| `get()` | O(1) | Retrieve value |
-| `contains()` | O(1) | Check key exists |
-| `remove()` | O(1) | Delete key-value |
+| `set()` (lvalue + rvalue overloads) | O(n) | Insert or update |
+| `get()` (const + non-const) | O(n) | Pointer to value, `nullptr` if missing |
+| `contains()` | O(n) | Check key exists |
+| `remove()` | O(n) | Swap-with-back delete (order not preserved) |
+| `clear()` / `size()` / `empty()` | O(n) / O(1) / O(1) | Reset / count / check |
+| `begin()` / `end()` (const + non-const) | O(1) | Iterate pairs |
+| `explicit HashMap(usize capacity)` | — | Pre-reserve storage |
 
 ## StringView
 
-Zero-copy string reference (pointer + length).
+Zero-copy string reference (pointer + length, no ownership).
 
 ```cpp
-Caffeine::StringView sv(“Hello World”, 5); // “Hello”
+Caffeine::StringView sv("Hello World", 5); // "Hello"
+Caffeine::StringView full("Hello");        // length computed
 ```
 
-## FixedString<T, N>
+Provides `data()` / `length()` / `size()` / `empty()`, `operator[]`,
+and lexicographic `compare()` with `==`, `!=`, `<` operators.
+Not null-terminated — do not pass `data()` to `%s` APIs unless length is honored.
 
-Stack-allocated string with inline buffer.
+## FixedString<N>
+
+Stack-allocated string with inline buffer. Single template parameter:
+`FixedString<32>`, **not** `FixedString<T, N>`.
 
 ```cpp
-Caffeine::FixedString<char, 32> fs;
-fs.append(“Hello”);
+Caffeine::FixedString<32> fs;
+fs.append("Hello");
+const char* s = fs.cStr();  // always null-terminated
 ```
+
+Provides `cStr()` / `data()` / `length()` / `size()` / `capacity()` (returns `N`),
+`empty()` / `full()`, `clear()`, `append(const char*)` / `append(char)`,
+`==` / `!=`, `operator[]`. Appends **silently truncate** at `N - 1` chars
+(buffer always keeps room for `'\0'`).
 
 ## DOD (Data-Oriented Design)
 
-- **Vector<T>**: Contiguous memory, no fragmentation
-- **HashMap<K,V>**: Linear probing for cache-friendly access
+- **Vector<T>**: Contiguous memory, no fragmentation; optional `IAllocator*`
+  (defaults to global `new`/`delete` when none is given)
+- **HashMap<K,V>**: Linear search over contiguous pairs — cache-friendly but O(n)
 - **StringView**: Zero-copy, no allocation
-- **FixedString<T,N>**: Inline buffer, zero heap
+- **FixedString<N>**: Inline buffer, zero heap
 
 ## See Also
 

@@ -8,6 +8,8 @@ The Memory module provides custom allocators for zero-dependency memory manageme
 
 **Location:** `src/memory/`
 
+**Namespace:** `Caffeine` (not `Caffeine::Memory` — allocators live directly in the root namespace).
+
 ## Files
 
 | File | Description | Status |
@@ -34,15 +36,37 @@ public:
     virtual usize allocationCount() const = 0;
     virtual const char* name() const = 0;
 };
+
+// Free helpers (Allocator.hpp)
+inline usize calculatePadding(void* ptr, usize alignment);
+inline usize calculateAlignedSize(usize size, usize alignment);
 ```
 
 ## Allocators Comparison
 
 | Allocator | Allocation | Deallocation | Use Case |
 |-----------|------------|--------------|----------|
-| **Linear** | O(1) | reset() only | Frame scratch memory |
-| **Pool** | O(1) amortized | O(1) | Fixed-size objects (particles) |
-| **Stack** | O(1) | freeToMarker() | Scoped allocations |
+| **Linear** | O(1) | `reset()` only (`free()` is a no-op) | Frame scratch memory |
+| **Pool** | O(1) | O(1); `free(nullptr)` safe; **no double-free detection** | Fixed-size objects (particles) |
+| **Stack** | O(1) | `freeToMarker()` (`free()` is a no-op) | Scoped allocations |
+
+## Semantics confirmed in code
+
+- **Constructors:** each allocator can own its buffer (`explicit X(usize size)`,
+  allocated with `new u8[]`) or wrap an external buffer (`X(void* buffer, usize size)`,
+  no ownership transfer).
+- **Out of memory:** `alloc()` returns `nullptr` — always check the result.
+- **Pool specifics:** constructor asserts `alignment >= 8` and power-of-two;
+  `alloc()` ignores its `size`/`alignment` parameters (always returns one fixed
+  slot, asserts `size <= slotSize` in debug); slots must fit a pointer
+  (min. 8 bytes — free list is intrusive); `reset()` rebuilds the free list.
+  Introspection: `freeSlots()`, `slotSize()`, `maxSlots()`.
+- **Stack specifics:** `Marker` is a `usize` offset from the buffer start
+  (`setMarker()`); `freeToMarker()` ignores markers beyond the cursor and resets
+  the allocation count; `free(ptr)` does nothing.
+- **Stats:** `usedMemory()` / `totalSize()` / `peakMemory()` /
+  `allocationCount()` are tracked live; `reset()` zeroes the allocation count
+  (Linear/Stack) or the used count (Pool).
 
 ## Usage Examples
 

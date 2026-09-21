@@ -1,25 +1,26 @@
 # 📐 3D Math Extension
 
 > **Fase:** 5 — Transição Dimensional  
-> **Namespace:** `Caffeine::Math`  
-> **Arquivo:** `src/math/Quat.hpp` (extensão de `Mat4.hpp`)  
+> **Namespace:** `Caffeine` (tipos) / `Caffeine::Math` (funções)  
+> **Arquivos:** `src/math/Quat.hpp`, `src/math/Mat4.hpp` (perspective, lookAt)  
 > **Status:** ✅ Implementado  
+> **Testes:** `tests/test_math.cpp` (48 casos, incl. slerp/toMatrix/fromMatrix)  
 > **RF:** RF5.1
 
 ---
 
 ## Visão Geral
 
-Extensão da biblioteca matemática da Fase 1 para suportar operações 3D completas. O foco é `Quaternion` para rotações 3D (mais estável que Euler, sem gimbal lock) e extensões SIMD nos vetores existentes.
+Extensão da biblioteca matemática da Fase 1 para suportar operações 3D completas. O foco é `Quaternion` para rotações 3D (mais estável que Euler, sem gimbal lock).
 
-**Nota:** `Vec2`, `Vec3`, `Vec4`, `Mat4` já existem da Fase 1. Esta fase adiciona `Quat` e completa os métodos 3D de `Mat4` (perspective, lookAt).
+**Nota:** `Vec2`, `Vec3`, `Vec4`, `Mat4` já existem da Fase 1. Esta fase adiciona `Quat` e os métodos 3D de `Mat4` (rotationX/Y, perspective, lookAt).
 
 ---
 
-## API Planejada
+## API Real
 
 ```cpp
-namespace Caffeine::Math {
+namespace Caffeine {
 
 // ============================================================================
 // @brief  Quaternion para rotações 3D.
@@ -32,58 +33,42 @@ struct Quat {
 
     // ── Construtores estáticos ──────────────────────────────────
     static Quat identity()   { return {0, 0, 0, 1}; }
-    static Quat fromAxisAngle(Vec3 axis, f32 angleRad);
-    static Quat fromEuler(f32 pitchRad, f32 yawRad, f32 rollRad);
-    static Quat lookAt(Vec3 forward, Vec3 up = {0, 1, 0});
+    static Quat fromAxisAngle(Vec3 axis, f32 angleRad);  // eixo normalizado internamente
+    static Quat fromEuler(f32 pitchRad, f32 yawRad, f32 rollRad);  // convenção ZYX
+    static Quat lookAt(Vec3 forward, Vec3 up);  // SEM default: passar up explicitamente
+    static Quat fromMatrix(const Mat4& m);      // algoritmo de Shoemake (1987)
 
     // ── Interpolação ────────────────────────────────────────────
-    static Quat slerp(Quat a, Quat b, f32 t);   // spherical linear
-    static Quat nlerp(Quat a, Quat b, f32 t);   // normalized linear (mais rápido)
+    static Quat slerp(Quat a, Quat b, f32 t);   // esférica (arco mais curto; fallback linear se a·b > 0.9999)
+    static Quat nlerp(Quat a, Quat b, f32 t);   // linear normalizada (mais rápida, sem velocidade angular constante)
 
     // ── Conversões ─────────────────────────────────────────────
-    Vec3 toEuler()  const;   // pitch, yaw, roll em radianos
-    Mat4 toMatrix() const;   // Mat4 column-major para shader
+    Vec3 toEuler()  const;   // ZYX, inverso de fromEuler()
+    Mat4 toMatrix() const;   // rotação column-major (v' = q·v·q⁻¹)
 
     // ── Operações ──────────────────────────────────────────────
-    Vec3 rotate(Vec3 v) const;          // rota um vetor por este quaternion
+    Vec3 rotate(Vec3 v) const;          // rota um vetor (2 cross products)
     Quat conjugate()    const { return {-x, -y, -z, w}; }
-    Quat inverse()      const;          // conjugate / length²
-    Quat normalized()   const;
+    Quat inverse()      const;          // conjugate / |q|²
+    Quat normalized()   const;          // identidade se comprimento zero (silencioso)
     f32  length()       const;
+    f32  lengthSquared() const;
     f32  dot(Quat o)    const { return x*o.x + y*o.y + z*o.z + w*o.w; }
 
-    Quat operator*(Quat o)  const;   // composição de rotações
+    Quat operator*(Quat o)  const;   // composição (aplica o primeiro, depois this)
     Vec3 operator*(Vec3 v)  const { return rotate(v); }
-    bool operator==(Quat o) const;
+    bool operator==(Quat o) const;   // igualdade EXATA de floats
 };
 
 // ============================================================================
-// @brief  Extensões 3D para Mat4 (completando Fase 1).
+// @brief  Métodos 3D de Mat4 (todos implementados).
 //
-//  Métodos já presentes na Fase 1: identity, translate, scale, rotateZ, ortho.
-//  Esta fase adiciona: rotateX, rotateY, perspective, lookAt.
+//  Já existentes: identity, zero, translation, scale, rotationX/Y/Z,
+//  ortho, perspective, lookAt. NÃO existe Mat4::fromQuat —
+//  use Quat::toMatrix() para quaternion → matriz.
 // ============================================================================
-// Em Mat4.hpp — adicionados na Fase 5:
-// static Mat4 rotateY(f32 angle);                     // yaw
-// static Mat4 rotateX(f32 angle);                     // pitch
-// static Mat4 fromQuat(Quat q);                        // de Quaternion
-// static Mat4 perspective(f32 fovY, f32 aspect,
-//                          f32 near, f32 far);          // perspectiva
-// static Mat4 lookAt(Vec3 eye, Vec3 target, Vec3 up);  // view matrix
 
-// ============================================================================
-// @brief  SIMD hints para Vec4 (aligned access).
-//
-//  Vec4 já tem alignas(16) da Fase 1.
-//  Funções SIMD usam intrinsics se CF_SIMD definido.
-// ============================================================================
-#ifdef CF_SIMD
-Vec4 simdAdd(Vec4 a, Vec4 b);
-Vec4 simdMul(Vec4 a, Vec4 b);
-f32  simdDot(Vec4 a, Vec4 b);
-#endif
-
-}  // namespace Caffeine::Math
+}  // namespace Caffeine
 ```
 
 ---
@@ -104,57 +89,58 @@ f32  simdDot(Vec4 a, Vec4 b);
 
 ```cpp
 // ── Rotação por eixo ──────────────────────────────────────────
-Caffeine::Math::Quat rot = Quat::fromAxisAngle({0, 1, 0}, Math::PI_HALF);  // 90° em Y
-Vec3 rotated = rot * Vec3{1, 0, 0};  // → {0, 0, -1}
+Caffeine::Quat rot = Caffeine::Quat::fromAxisAngle({0, 1, 0}, Caffeine::Math::PI_HALF);  // 90° em Y
+Caffeine::Vec3 rotated = rot * Caffeine::Vec3{1, 0, 0};  // → {0, 0, -1}
 
 // ── Euler para Quaternion ─────────────────────────────────────
-Quat camRot = Quat::fromEuler(pitch, yaw, 0);
+Caffeine::Quat camRot = Caffeine::Quat::fromEuler(pitch, yaw, 0);
 
 // ── SLERP para câmera suave ───────────────────────────────────
-Quat current = entity.get<Rotation3D>().quat;
-Quat target  = Quat::lookAt(direction);
-entity.get<Rotation3D>().quat = Quat::slerp(current, target, 0.1f * dt * 60);
+Caffeine::Quat current = /* orientação atual */;
+Caffeine::Quat target  = Caffeine::Quat::lookAt(direction, {0, 1, 0});
+Caffeine::Quat smooth  = Caffeine::Quat::slerp(current, target, 0.1f * dt * 60);
 
 // ── Converter para shader ─────────────────────────────────────
-Mat4 modelMatrix = Mat4::translate(pos) * quat.toMatrix() * Mat4::scale(scale);
+Caffeine::Mat4 modelMatrix = Caffeine::Mat4::translation(pos) * quat.toMatrix() * Caffeine::Mat4::scale(scale);
 // upload modelMatrix para shader via UniformBuffer
 ```
 
 ---
 
-## Componentes ECS 3D
+## Componentes ECS 3D (reais)
 
 ```cpp
-namespace Caffeine::Components {
+namespace Caffeine::ECS {
 
-struct Position3D  { f32 x = 0, y = 0, z = 0; };
-struct Rotation3D  { Caffeine::Math::Quat quat = Quat::identity(); };
-struct Scale3D     { f32 x = 1, y = 1, z = 1; };
-struct Velocity3D  { f32 x = 0, y = 0, z = 0; };
+struct Position3D { Vec3 position; };
+// ⚠️ Rotation3D guarda Vec4 (x, y, z, w), NÃO Quat — converta manualmente:
+struct Rotation3D { Vec4 quaternion = Vec4(0.0f, 0.0f, 0.0f, 1.0f); };
+struct Scale3D    { Vec3 scale = Vec3(1.0f, 1.0f, 1.0f); };
 
-struct WorldTransform3D {
-    Caffeine::Math::Mat4 matrix = Mat4::identity();
-};
-
-}  // namespace Caffeine::Components
+}  // namespace Caffeine::ECS
 ```
+
+> Não existem `Velocity3D` nem `WorldTransform3D` no código. Ver
+> `src/ecs/Components3D.hpp`.
 
 ---
 
 ## Critério de Aceitação
 
-- [x] `Quat::slerp` produz interpolação correta entre quaisquer duas orientações
-- [x] `quat.toMatrix()` produz mesma matrix que `Mat4::fromAxisAngle`
-- [x] `Quat * Vec3` rota corretamente (comparado com reference impl)
-- [x] Sem gimbal lock em rotações compostas de 3 eixos
-- [ ] `Vec4` acessos SIMD-aligned (alinhado a 16 bytes)
+- [x] `Quat::slerp` interpolação correta (`tests/test_math.cpp`: mesmo quat, t=0/t=1)
+- [x] `quat.toMatrix()` == `Mat4::rotationY(angle)` para o mesmo ângulo (testado)
+- [x] `fromMatrix(identity)` == identidade; `fromEuler`/`toEuler` round-trip testado
+- [x] `Quat * Vec3` rota corretamente (`rotate` preserva comprimento)
+- [ ] `Mat4::fromQuat` — não existe (usar `toMatrix()`); decidir se cria o helper
+- [ ] SIMD (`CF_SIMD`, `simdAdd`…) — não existe no código; seção removida
+- [ ] `Rotation3D` guardar `Quat` em vez de `Vec4` (melhoria de API)
 
 ---
 
 ## Dependências
 
-- **Upstream:** [Fase 1 — Vec3, Vec4, Mat4](../math/vectors.md)
-- **Downstream:** [Camera3D](camera3d.md), [Skeletal Animation](skeletal-animation.md), [Mesh Loading](mesh-loading.md)
+- **Upstream:** [Vec3, Vec4, Mat4](vectors.md)
+- **Downstream:** [Camera 3D](../rendering/camera-3d.md), [Skeletal Animation](../animation/skeletal-animation.md), [Mesh Loading](../assets/mesh-loading.md)
 
 ---
 

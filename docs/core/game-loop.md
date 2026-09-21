@@ -1,9 +1,10 @@
 # 🎬 Game Loop
 
 > **Fase:** 2 — O Pulso e a Concorrência  
-> **Namespace:** `Caffeine::Core`  
-> **Arquivo:** `src/core/GameLoop.hpp`  
-> **Status:** 📅 Planejado  
+> **Namespace:** `Caffeine` (não `Caffeine::Core`)  
+> **Arquivos:** `src/core/GameLoop.hpp`, `src/core/GameLoop.cpp`  
+> **Status:** ✅ Implementado  
+> **Testes:** `tests/test_gameloop.cpp`  
 > **RFs:** RF2.7, RF2.8
 
 ---
@@ -16,137 +17,127 @@ O Game Loop é o coração da engine — o ciclo que corre do início ao fim do 
 
 Inspirado em [Game Programming Patterns — Game Loop](https://gameprogrammingpatterns.com/game-loop.html).
 
+> **Responsabilidade do chamador:** o `GameLoop` não possui clock próprio e não
+> faz polling de input — ele recebe `deltaTime` pronto via `tick(dt)`. Medir o
+> tempo real (ex: com [`Timer`](timer.md)) e bombear `SDL_PollEvent` é tarefa do
+> código que chama `tick()`, normalmente o `main` da aplicação.
+
 ---
 
-## API Planejada
+## API Real
 
 ```cpp
-namespace Caffeine::Core {
+namespace Caffeine {
 
-// ============================================================================
-// @brief  Estados possíveis do game loop.
-// ============================================================================
 enum class GameState : u8 {
-    Init,      // Inicializando recursos
-    Running,   // Loop ativo
-    Paused,    // Lógica pausada, render continua
-    Shutdown   // Limpeza e encerramento
+    Init,      // tick() é ignorado; aguardando init()
+    Running,   // update + render
+    Paused,    // sem fixed update; render continua (UI, menu)
+    Shutdown   // tick() é ignorado
 };
 
-// ============================================================================
-// @brief  Configuração do game loop.
-// ============================================================================
 struct GameLoopConfig {
     f64  fixedDeltaTime = 1.0 / 60.0;  // 60 updates lógicos/segundo
-    f64  maxFrameTime   = 0.25;          // Clamp — evita "spiral of death"
-    u32  targetFPS      = 0;             // 0 = unlimited
-    bool vsync          = true;
-    bool interpolation  = true;          // Interpolar posições para render
+    f64  maxFrameTime   = 0.25;          // clamp do dt — evita "spiral of death"
+    u32  targetFPS      = 0;             // 0 = unlimited (armazenado; não aplicado pelo loop)
+    bool vsync          = true;          // idem — controle real é do RHI/janela
+    bool interpolation  = true;          // calcula alpha; se false, alpha = 0
 };
 
 // ============================================================================
-// @brief  Game loop principal com fixed timestep + interpolação.
-//
-//  Ciclo por frame:
-//
-//  1. processInput()       — SDL_PollEvent, alimenta Input System
-//  2. accumulator += dt     — Acumula tempo real desde o último frame
-//  3. while (accum >= fdt)  — Update em passos fixos:
-//       - EventBus.dispatch()
-//       - World.update(fdt)   (Fase 4)
-//       - accumulator -= fdt
-//  4. alpha = accum / fdt   — Fração do próximo step para interpolação
-//  5. render(alpha)         — Render com posições interpoladas
-//  6. endFrame()            — Stats, debug draw, profiler
+// @brief  Interface alternativa aos std::function: derive e registre via
+//  setCallbacks(). Os dois mecanismos coexistem e AMBOS são chamados
+//  (primeiro m_callbacks, depois os std::function).
 // ============================================================================
+class IGameCallbacks {
+public:
+    virtual ~IGameCallbacks() = default;
+    virtual void onBeginFrame() {}
+    virtual void onFixedUpdate(f64 dt) { (void)dt; }
+    virtual void onRender(f64 alpha) { (void)alpha; }
+    virtual void onEndFrame() {}
+};
+
 class GameLoop {
 public:
     explicit GameLoop(const GameLoopConfig& config = {});
+    ~GameLoop();
 
-    // Inicializa o timer e subsistemas
-    void init();
+    void init();            // Init → Running (só a partir de Init)
+    void tick(f64 deltaTime);  // um frame; ignorado em Init/Shutdown
+    void pause();           // Running → Paused (só a partir de Running)
+    void resume();          // Paused → Running (só a partir de Paused)
+    void shutdown();        // Running/Paused → Shutdown
 
-    // Avança um frame completo (chame a cada iteração do while(running))
-    void tick(f64 deltaTime);
-
-    // Controle de estado
-    void pause();
-    void resume();
-    void shutdown();
-
-    // Consulta de estado
-    GameState state()            const { return m_state; }
-    f64       elapsedTime()      const;
+    GameState state()              const { return m_state; }
+    f64       elapsedTime()        const { return m_elapsedTime; }
     f64       interpolationAlpha() const { return m_alpha; }
-    u64       frameCount()       const { return m_frameCount; }
+    u64       frameCount()         const { return m_frameCount; }
+    f64       accumulator()        const { return m_accumulator; }
 
-    // Callbacks do jogo (injetar lógica aqui)
-    std::function<void(f64 dt)>   onFixedUpdate;
+    void setCallbacks(IGameCallbacks* callbacks);
+    const GameLoopConfig& config() const { return m_config; }
+
+    // Hooks livres (chamados DEPOIS do IGameCallbacks, se ambos existirem)
+    std::function<void(f64 dt)>    onFixedUpdate;
     std::function<void(f64 alpha)> onRender;
     std::function<void()>          onBeginFrame;
     std::function<void()>          onEndFrame;
 
 private:
-    void processInput();
     void processFixedUpdate(f64 dt);
-    void processInterpolation(f64 alpha);
 
-    GameLoopConfig m_config;
-    GameState      m_state       = GameState::Init;
+    GameLoopConfig  m_config;
+    IGameCallbacks* m_callbacks   = nullptr;
+    GameState       m_state       = GameState::Init;
     f64             m_accumulator = 0.0;
     f64             m_elapsedTime = 0.0;
     f64             m_alpha       = 0.0;
     u64             m_frameCount  = 0;
 };
 
-}  // namespace Caffeine::Core
+}  // namespace Caffeine
 ```
 
 ---
 
-## Fluxo Detalhado por Frame
+## Fluxo Detalhado por Frame (`tick(dt)`)
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    FRAME N                                   │
-│                                                              │
-│  beginFrame()                                                │
-│    └── limpa transients, inicia GPU frame                    │
-│                                                              │
-│  processInput()                                              │
-│    └── SDL_PollEvent → InputManager.beginFrame()             │
-│                                                              │
-│  accumulator += realDeltaTime                                │
-│  accumulator = min(accum, maxFrameTime)   ← spiral guard    │
-│                                                              │
-│  while (accumulator >= fixedDt):                             │
-│    ├── EventBus.dispatch()                                   │
-│    ├── World.update(fixedDt)    ← ECS systems (Fase 4)       │
-│    │     ├── PhysicsSystem (priority 100)                    │
-│    │     ├── MovementSystem (priority 150)                   │
-│    │     └── AnimationSystem (priority 200)                  │
-│    └── accumulator -= fixedDt                                │
-│                                                              │
-│  alpha = accumulator / fixedDt                               │
-│  render(alpha)                  ← BatchRenderer (Fase 3)     │
-│                                                              │
-│  endFrame()                                                  │
-│    └── debug stats, Profiler.report()                        │
-└──────────────────────────────────────────────────────────────┘
+tick() ignorado se state ∈ {Init, Shutdown}
+
+  onBeginFrame()
+  dt = min(dt, maxFrameTime)        ← spiral guard
+  elapsedTime += dt                  ← avança MESMO quando Paused
+  frameCount++
+
+  se Running:
+    accumulator += dt
+    while (accumulator >= fixedDeltaTime):
+        onFixedUpdate(fixedDeltaTime)
+        accumulator -= fixedDeltaTime
+    alpha = interpolation ? accumulator / fixedDeltaTime : 0.0
+
+  onRender(alpha)                    ← chamado também quando Paused
+  onEndFrame()
 ```
+
+Notas de comportamento (confirmadas pelo código e pelos testes):
+- **Pausado:** `onRender`/`onBeginFrame`/`onEndFrame` continuam; `accumulator`
+  fica congelado e os steps pendentes disparam ao dar `resume()`.
+- **`targetFPS`/`vsync`:** apenas armazenados — o loop não dorme nem sincroniza;
+  cabe ao chamador/RHI aplicar throttling e vsync.
+- **`shutdown()`** a partir de `Init` é ignorado (sem transição).
 
 ---
 
 ## Spiral of Death Prevention
 
-Se o update ficar para trás (sistema lento), o acumulador cresce indefinidamente levando a um loop infinito de updates:
-
 ```cpp
-// Clamp para no máximo 250ms — pula frames se necessário
-m_accumulator = min(m_accumulator, m_config.maxFrameTime);
+deltaTime = std::min(deltaTime, m_config.maxFrameTime);  // default 250ms
 ```
 
-**Efeito:** Em hardware lento, o jogo parece "slow motion" temporariamente, mas não trava.
+**Efeito:** em hardware lento, o jogo entra em "slow motion" temporário em vez de travar num loop infinito de catch-up.
 
 ---
 
@@ -155,13 +146,12 @@ m_accumulator = min(m_accumulator, m_config.maxFrameTime);
 Sem interpolação, entidades "teletransportam" entre posições a cada fixed step:
 
 ```cpp
-// Com interpolação:
 Vec2 renderPos = lerp(entity.prevPos, entity.currPos, alpha);
-// alpha = 0.0 → posição no início do step atual
-// alpha = 1.0 → posição no fim do step atual
+// alpha = 0.0 → início do step atual
+// alpha = 1.0 → fim do step atual
 ```
 
-**Requisito:** Sistemas de física devem salvar `prevPos` antes de atualizar `currPos`.
+**Requisito:** sistemas de física devem salvar `prevPos` antes de atualizar `currPos`. Com `interpolation = false`, `alpha` é sempre `0.0`.
 
 ---
 
@@ -169,12 +159,11 @@ Vec2 renderPos = lerp(entity.prevPos, entity.currPos, alpha);
 
 ```cpp
 // ── Setup básico ──────────────────────────────────────────────
-Caffeine::Core::GameLoopConfig cfg;
+Caffeine::GameLoopConfig cfg;
 cfg.fixedDeltaTime = 1.0 / 60.0;
-cfg.vsync          = true;
 cfg.interpolation  = true;
 
-Caffeine::Core::GameLoop loop(cfg);
+Caffeine::GameLoop loop(cfg);
 
 loop.onFixedUpdate = [&](f64 dt) {
     world.update(dt);
@@ -182,19 +171,30 @@ loop.onFixedUpdate = [&](f64 dt) {
 };
 
 loop.onRender = [&](f64 alpha) {
-    batchRenderer.beginFrame();
-    renderSystems.run(alpha);
-    batchRenderer.endFrame(cmd);
+    renderer.render(alpha);
 };
 
 loop.init();
 
-// ── Main loop ─────────────────────────────────────────────────
+// ── Main loop (o chamador mede o tempo e bombeia input) ───────
 Caffeine::Core::Timer timer;
-while (loop.state() != GameState::Shutdown) {
-    f64 dt = timer.tick();
-    loop.tick(dt);
+timer.start();
+while (loop.state() != Caffeine::GameState::Shutdown) {
+    SDL_PumpEvents();  // ou InputManager::beginFrame(), conforme o app
+    Caffeine::Core::Duration dt = timer.tick();
+    loop.tick(dt.seconds);
 }
+```
+
+Com `IGameCallbacks` em vez de lambdas:
+
+```cpp
+class MyGame : public Caffeine::IGameCallbacks {
+    void onFixedUpdate(f64 dt) override { world.update(dt); }
+    void onRender(f64 alpha) override { renderer.render(alpha); }
+};
+MyGame game;
+loop.setCallbacks(&game);
 ```
 
 ---
@@ -203,58 +203,52 @@ while (loop.state() != GameState::Shutdown) {
 
 ```
  Init ──► Running ◄──► Paused
-                 │
-                 ▼
-              Shutdown
+                │
+                ▼
+             Shutdown
 ```
 
 | Estado | Comportamento |
 |--------|-------------|
-| `Init` | Carrega recursos, inicializa subsistemas |
-| `Running` | Loop normal: input → update → render |
-| `Paused` | Sem fixed update, render continua (UI, menu) |
-| `Shutdown` | Cleanup, flush logs, exit code |
+| `Init` | `tick()` ignorado; `pause()`/`resume()`/`shutdown()` ignorados |
+| `Running` | Loop normal: begin → N×fixed update → render(alpha) → end |
+| `Paused` | Sem fixed update; `elapsedTime` e `frameCount` avançam; render continua |
+| `Shutdown` | Terminal; `tick()` ignorado |
 
 ---
 
 ## Decisões de Design
 
 | Decisão | Justificativa |
-|---------|-------------|
+|---------|---------------|
 | Fixed timestep para lógica | Física determinística, replay, multiplayer |
-| Acumulador com clamp | Evita "spiral of death" em hardware lento |
-| `vsync` configurável | Permite benchmark sem vsync |
-| `interpolation` configurável | Debug mais fácil sem interpolação |
-| Callbacks `onFixedUpdate`/`onRender` | Loop não acopla a subsistemas específicos |
+| Acumulador com clamp (`min`) | Evita "spiral of death" em hardware lento |
+| Loop sem clock/input próprios | Testável (`tick(dt)` determinístico) e sem acoplamento a SDL |
+| `IGameCallbacks` + `std::function` | Classe de jogo ou lambdas, à escolha do chamador |
+| `targetFPS`/`vsync` só armazenados | Throttling real pertence ao RHI/janela, não ao loop |
 
 ---
 
 ## Critério de Aceitação
 
-- [ ] 3600 frames com `fixedDt` acumulado = 60.0 ± 0.001 (sem drift)
-- [ ] Spiral of death não ocorre: FPS pode cair mas loop não trava
-- [ ] `state()` transiciona corretamente Init → Running → Paused → Running → Shutdown
-- [ ] `interpolationAlpha()` está sempre em [0.0, 1.0)
+- [x] `tests/test_gameloop.cpp`: defaults, transições de estado, contagem de frames, taxa de fixed update, clamp anti-spiral, `alpha ∈ [0,1)`
+- [x] Spiral of death não ocorre: FPS pode cair mas loop não trava
+- [x] `state()` transiciona Init → Running ⇄ Paused → Shutdown (transições inválidas ignoradas)
+- [ ] 3600 frames com `fixedDt` acumulado = 60.0 ± 0.001 (sem drift) — teste de longa duração ainda pendente
 
 ---
 
 ## Dependências
 
-- **Upstream:** [Timer](timer.md), `SDL3::SDL_PollEvent`
-- **Downstream:** [Fase 3 — BatchRenderer](../rendering/batch-renderer.md), [Fase 4 — ECS World](../ecs/core.md), [Input](../input/input-system.md)
+- **Upstream:** [Timer](timer.md) (chamador mede `dt`), tipos de [`src/core/Types.hpp`](../../src/core/Types.hpp)
+- **Downstream:** ECS World ([`../ecs/core.md`](../ecs/core.md)), Renderer, Input ([`../input/input-system.md`](../input/input-system.md)) — todos via callbacks, sem acoplamento
 
 ---
 
-## 🔗 Tópicos Relacionados
-
-| Tópico | Descrição |
-|--------|-----------|
-| [Concorrência & Runtime]() | Game Loop como coordenador do frame |
-
 ## Referências
 
+- [`src/core/GameLoop.hpp`](../../src/core/GameLoop.hpp) / [`src/core/GameLoop.cpp`](../../src/core/GameLoop.cpp)
+- [`tests/test_gameloop.cpp`](../../tests/test_gameloop.cpp)
 - [`docs/architecture_specs.md`](../architecture_specs.md) — §1 Game Loop
-- [`core/timer.md`](timer.md) — Timer usado internamente
+- [`core/timer.md`](timer.md) — Mede o `dt` alimentado ao loop
 - [Game Programming Patterns — Game Loop](https://gameprogrammingpatterns.com/game-loop.html)
-- [Fixed Timestep Demo](https://github.com/jakubtomsu/fixed-timestep-demo)
-- [Índice de Tópicos Transversais]()

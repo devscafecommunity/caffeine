@@ -59,7 +59,7 @@ public:
 
 ### Tipo ID de Evento
 
-Cada tipo `T` recebe um ID único em runtime via endereço de variável static local — zero colisão, zero registro manual:
+Cada tipo `T` recebe um ID único em runtime via endereço de variável static local — zero colisão prática, zero registro manual:
 
 ```cpp
 template<typename T>
@@ -68,6 +68,10 @@ u32 eventTypeId() {
     return static_cast<u32>(reinterpret_cast<uintptr_t>(&s_sentinel));
 }
 ```
+
+> Nota: o endereço de 64 bits é truncado para `u32`. Colisão teórica é
+> possível mas desprezível na prática (exigiria dois statics a exatamente
+> 4 GiB de distância com os mesmos 32 bits baixos).
 
 ---
 
@@ -223,6 +227,7 @@ Frame N+1:
 | Mutex apenas na fila deferred | `publish()` e `subscribe()` são main-thread only; só `publishDeferred()` precisa de lock |
 | `ListenerHandle = u32` | Sem ponteiros pendentes; unsubscribe por ID, não por referência |
 | `eventTypeId<T>()` via `static char` | Zero custo de registro; ID único garantido por endereço de static |
+| `unsubscribe()` com busca linear | O(tipos × listeners); aceitável porque unsubscribe é raro (não hot path) |
 
 ---
 
@@ -280,7 +285,11 @@ Frame N+1:
 ## Dependências
 
 - **Upstream:** `Caffeine::Core::Types`, `src/math/Vec2.hpp`
-- **Downstream:** [Physics](physics.md) (publica `OnCollision2D`), [Audio](audio.md) (reage a eventos), [UI](ui.md) (reage a eventos de gameplay), [GameLoop](../core/game-loop.md) (chama `dispatch()`)
+- **Downstream (uso real no código):** `PhysicsSystem2D` (`src/physics/`) publica colisão;
+  `ScriptEngine` (`src/script/`) expõe `on`/`emit` para Lua; `UISystem` (`src/ui/`)
+  e `SceneEditor` (`src/editor/`) consomem eventos
+- **Docs relacionados:** [Physics 2D](../physics/physics-2d.md), [Audio](../audio/audio-system.md),
+  [Game UI](../ui/game-ui.md), [GameLoop](../core/game-loop.md) (chama `dispatch()`)
 
 ---
 
@@ -294,6 +303,6 @@ Frame N+1:
 ## Referências
 
 - [`docs/architecture_specs.md`](../architecture_specs.md) — §6 Event Bus
-- [`physics/physics-2d.md`](physics.md) — publica `OnCollision2D`
+- [`../physics/physics-2d.md`](../physics/physics-2d.md) — publica `OnCollision2D`
 - [`core/game-loop.md`](../core/game-loop.md) — chama `eventBus.dispatch()`
 - [Índice de Tópicos Transversais]()

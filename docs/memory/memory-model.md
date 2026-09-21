@@ -1,7 +1,11 @@
 # 🧠 Memory Model — Especificação de Allocators
 
-> ⚠️ **Status:** Versão 1.0 — Completo para as Fases 1-4.  
-> ⚠️ Para contexto completo, consulte [`MASTER.md`](MASTER.md) §8 e [`architecture_specs.md`](architecture_specs.md).
+> ⚠️ **Status:** Revisado contra o código em 2026-09-21.  
+> Seções A–B.1–B.3 e F descrevem código real (`src/memory/`).  
+> **ProxyAllocator (§B.4) e AllocatorRegistry (§C) NÃO existem no código** —
+> estão marcados como planejados.  
+> Para contexto completo, consulte [`../MASTER.md`](../MASTER.md) e
+> [`../architecture_specs.md`](../architecture_specs.md).
 
 Este documento contém as **especificações técnicas detalhadas** dos sistemas de gerenciamento de memória da Caffeine Engine.
 
@@ -27,12 +31,22 @@ Este documento contém as **especificações técnicas detalhadas** dos sistemas
 
 ```
 ╔════════════════════════════════════════════════════════════════╗
-║  PROIBIDO: new e delete soltos no código da aplicação.     ║
-║  TODA alocação deve passar pelos Custom Allocators.         ║
+║  REGRA: hot paths da engine usam Custom Allocators.         ║
+║  Toda alocação de sistema deve aceitar IAllocator*.           ║
 ╚════════════════════════════════════════════════════════════════╝
 ```
 
-### A.2 Mapa de Allocators por Uso
+> Realidade verificada: a regra vale para o núcleo (ECS `World`/`Archetype`/
+> `CommandBuffer`, `AssetManager` com `LinearAllocator` próprio, `BlobLoader`,
+> `Vector<T>` com `IAllocator*` opcional). `Vector` sem allocator usa
+> `new`/`delete` global, os próprios allocators alocam o buffer inicial com
+> `new u8[]`, e subsistemas de ferramenta/editor usam STL livremente. Ou seja:
+> a política é "allocator injetável nos sistemas", não "zero `new` no repositório".
+
+### A.2 Mapa de Allocators por Uso (política-alvo)
+
+> ⚠️ O diagrama abaixo é a **política desejada**, não o uso verificado.
+> O uso real confirmado em código está na tabela "Uso real verificado" logo após.
 
 ```mermaid
 flowchart TB
@@ -97,10 +111,25 @@ flowchart TB
     style S4 fill:#5a4a7f,stroke:#b8d,color:#fff
 ```
 
+### A.2b Uso real verificado (código, 2026-09-21)
+
+| Sistema | Uso real | Arquivo |
+|---|---|---|
+| **ECS** | `World`, `Archetype`/`ComponentPool`, `CommandBuffer` aceitam `IAllocator*` (opcional, pode ser `nullptr`) | `src/ecs/World.hpp`, `Archetype.hpp`, `CommandBuffer.hpp` |
+| **Assets** | `AssetManager` possui `LinearAllocator` próprio (arena por asset) | `src/assets/AssetManager.hpp` |
+| **IO** | `BlobLoader::load(path, IAllocator*)` carrega binários no allocator dado | `src/core/io/BlobLoader.hpp` |
+| **Containers** | `Vector<T>` aceita `IAllocator*`; sem allocator usa `new`/`delete` global | `src/containers/Vector.hpp` |
+| **Testes/bench** | `tests/test_allocators.cpp`, `BENCHMARK`s em `tests/benchmarks.cpp` | `tests/` |
+
+Physics, EventBus, Render, JobSystem, Audio, UI e Debug **não** usam estes
+allocators hoje (usam std/malloc) — a migração para o mapa-alvo acima está pendente.
+
 ### A.3 Interface Base
 
+> Namespace real: `Caffeine` (não `Caffeine::Memory`).
+
 ```cpp
-namespace Caffeine::Memory {
+namespace Caffeine {
 
 // ============================================================================
 // @brief  Interface base para todos os allocators.
@@ -159,19 +188,11 @@ public:
     virtual const char* name() const = 0;
 };
 
-// ============================================================================
-// @brief  Trait para detectar se T tem método destroy().
-// ============================================================================
-template<typename T>
-using AlwaysFalse = std::false_type;
+// Helpers livres (Allocator.hpp)
+inline usize calculatePadding(void* ptr, usize alignment);
+inline usize calculateAlignedSize(usize size, usize alignment);
 
-template<typename T>
-struct has_destroy : AlwaysFalse<T> {};
-
-template<typename T>
-constexpr bool has_destroy_v = has_destroy<T>::value;
-
-}  // namespace Caffeine::Memory
+}  // namespace Caffeine
 ```
 
 ---
@@ -195,7 +216,7 @@ constexpr bool has_destroy_v = has_destroy<T>::value;
 ### Interface
 
 ```cpp
-namespace Caffeine::Memory {
+namespace Caffeine {
 
 // ============================================================================
 // @brief  Allocator linear — aloca do início ao fim, reset limpa tudo.
@@ -215,7 +236,7 @@ namespace Caffeine::Memory {
 //
 //  Thread Safety: NÃO thread-safe. Usar apenas na main thread.
 // ============================================================================
-class LinearAllocator : public IAllocator {
+class LinearAllocator final : public IAllocator {
 public:
     // -----------------------------------------------------------------------
     // @brief  Constrói com um buffer pré-alocado.
@@ -226,7 +247,7 @@ public:
     LinearAllocator(void* buffer, usize size);
 
     // -----------------------------------------------------------------------
-    // @brief  Constrói e aloca buffer internamente (via malloc).
+    // @brief  Constrói e aloca buffer internamente (via new u8[]).
     // -----------------------------------------------------------------------
     explicit LinearAllocator(usize size);
 
@@ -234,7 +255,7 @@ public:
 
     void* alloc(usize size, usize alignment = 8) override;
     void  free(void* ptr) override;   // No-op (reset limpa tudo)
-    void  reset() override;           // Volta ao início
+    void  reset() override;           // Volta ao início (zera allocCount)
 
     usize usedMemory()   const override { return m_cursor - m_start; }
     usize totalSize()    const override { return m_end - m_start; }
@@ -253,17 +274,15 @@ public:
     void* currentPointer() const { return m_cursor; }
 
 private:
-    void advanceCursor(usize size, usize alignment);
-
-    u8*  m_start   = nullptr;
-    u8*  m_end     = nullptr;
-    u8*  m_cursor  = nullptr;
-    usize m_peak    = 0;
+    u8*  m_start;
+    u8*  m_end;
+    u8*  m_cursor;
+    usize m_peak = 0;
     usize m_allocCount = 0;
     bool  m_ownsBuffer = false;
 };
 
-}  // namespace Caffeine::Memory
+}  // namespace Caffeine
 ```
 
 ### Implementação
@@ -291,7 +310,7 @@ void* LinearAllocator::alloc(usize size, usize alignment) {
 }
 ```
 
-### Uso por Sistema
+### Uso por Sistema (alvo — ver §A.2b para o uso real atual)
 
 | Sistema | Uso | Tamanho típico |
 |---|---|---|
@@ -318,7 +337,7 @@ void* LinearAllocator::alloc(usize size, usize alignment) {
 ### Interface
 
 ```cpp
-namespace Caffeine::Memory {
+namespace Caffeine {
 
 // ============================================================================
 // @brief  Pool Allocator — aloca blocos de tamanho fixo.
@@ -330,33 +349,40 @@ namespace Caffeine::Memory {
 //  │    ●      │    ○    │    ●    │     │    ○               │
 //  │  (usado)  │ (livre) │ (usado) │     │   (livre)         │
 //  └─────────────────────────────────────────────────────────────┘
-//       ▲                                                    ▲
-//     m_firstFree ──── linked list de slots livres          │
-//                                                          m_end
-//  Performance: O(1) amortizado (primeiro slot livre).
+//       ▲
+//     m_freeList ──── free list intrusiva (cada slot livre guarda
+//                     o ponteiro do próximo; slot mínimo: 8 bytes)
+//
+//  Performance: O(1) para alloc e free.
 //  Thread Safety: NÃO thread-safe. Usar TLS se necessário.
 // ============================================================================
-class PoolAllocator : public IAllocator {
+class PoolAllocator final : public IAllocator {
 public:
     // -----------------------------------------------------------------------
     // @brief  Constrói com buffer e tamanho de slot.
-    // @param  buffer    Ponteiro para o buffer.
-    // @param  size      Tamanho total do buffer.
+    // @param  buffer    Ponteiro para o buffer (sem ownership).
+    // @param  poolSize  Tamanho total do buffer.
     // @param  slotSize  Tamanho de cada slot (mínimo 8 bytes).
-    // @param  alignment Alinhamento dos slots (padrão 8).
+    // @param  alignment Alinhamento (padrão 8; exige >= 8 e potência de 2,
+    //         verificado com CF_ASSERT no construtor).
     // -----------------------------------------------------------------------
-    PoolAllocator(void* buffer, usize size, usize slotSize,
+    PoolAllocator(void* buffer, usize poolSize, usize slotSize,
                   usize alignment = 8);
 
     // -----------------------------------------------------------------------
-    // @brief  Constrói e aloca buffer internamente.
+    // @brief  Constrói e aloca buffer internamente (via new u8[]).
     // -----------------------------------------------------------------------
-    PoolAllocator(usize poolSize, usize slotSize, usize alignment = 8);
+    explicit PoolAllocator(usize poolSize, usize slotSize, usize alignment = 8);
     ~PoolAllocator() override;
 
+    // @note  alloc() IGNORA size/alignment e retorna sempre 1 slot fixo.
+    //        Em debug, CF_ASSERT(size <= m_slotSize). Retorna nullptr se
+    //        o pool estiver exausto.
     void* alloc(usize size, usize alignment = 8) override;
+    // @note  free(nullptr) é seguro (no-op). NÃO há detecção de double-free:
+    //        liberar 2x o mesmo slot corrompe silenciosamente a free list.
     void  free(void* ptr) override;
-    void  reset() override;  // Marca todos os slots como livres
+    void  reset() override;  // Reconstrói a free list, zera usados
 
     usize usedMemory()    const override { return m_usedCount * m_slotSize; }
     usize totalSize()     const override { return m_poolSize; }
@@ -375,23 +401,25 @@ public:
     usize slotSize() const { return m_slotSize; }
 
     // -----------------------------------------------------------------------
-    // @brief  Retorna o número máximo de slots.
+    // @brief  Retorna o número máximo de slots (poolSize / slotSize).
     // -----------------------------------------------------------------------
     usize maxSlots() const { return m_maxSlots; }
 
 private:
-    // Free list: cada slot livre aponta para o próximo
-    void** m_freeList  = nullptr;
+    void initializeFreeList();  // Reconstrói a free list (usado no ctor/reset)
+
+    u8*    m_freeList = nullptr;
     u8*    m_poolStart = nullptr;
-    usize  m_poolSize  = 0;
-    usize  m_slotSize  = 0;
-    usize  m_maxSlots   = 0;
-    usize  m_usedCount  = 0;
+    usize  m_poolSize = 0;
+    usize  m_slotSize = 0;
+    usize  m_alignment = 8;
+    usize  m_maxSlots = 0;
+    usize  m_usedCount = 0;
     usize  m_peakSlots = 0;
     bool   m_ownsBuffer = false;
 };
 
-}  // namespace Caffeine::Memory
+}  // namespace Caffeine
 ```
 
 ### Implementação
@@ -423,7 +451,7 @@ void PoolAllocator::free(void* ptr) {
 }
 ```
 
-### Uso por Sistema
+### Uso por Sistema (alvo — ver §A.2b para o uso real atual)
 
 | Sistema | Uso | Tamanho de slot |
 |---|---|---|
@@ -450,7 +478,10 @@ void PoolAllocator::free(void* ptr) {
 ### Interface
 
 ```cpp
-namespace Caffeine::Memory {
+namespace Caffeine {
+
+// Marker = offset em bytes a partir do início do buffer (usize, não ponteiro).
+using Marker = usize;
 
 // ============================================================================
 // @brief  Stack Allocator — aloca em pilha com marcadores.
@@ -458,7 +489,7 @@ namespace Caffeine::Memory {
 //  Algoritmo:
 //
 //  1. Allocate: avança cursor como LinearAllocator
-//  2. SetMarker: salva posição atual
+//  2. SetMarker: salva posição atual (offset)
 //  3. FreeToMarker: libera tudo após o marker
 //
 //  ┌─────────────────────────────────────────────────────────────┐
@@ -472,23 +503,24 @@ namespace Caffeine::Memory {
 //  Performance: O(1) para todas as operações.
 //  Thread Safety: NÃO thread-safe.
 // ============================================================================
-class StackAllocator : public IAllocator {
+class StackAllocator final : public IAllocator {
 public:
     StackAllocator(void* buffer, usize size);
     explicit StackAllocator(usize size);
     ~StackAllocator() override;
 
     void* alloc(usize size, usize alignment = 8) override;
-    void  free(void* ptr) override;  // Free to marker implícito (último alloc)
+    void  free(void* ptr) override;  // No-op total (ignora ptr)
     void  reset() override;
 
     // -----------------------------------------------------------------------
-    // @brief  Salva um marcador na posição atual.
+    // @brief  Salva um marcador (offset atual).
     // -----------------------------------------------------------------------
     Marker setMarker();
 
     // -----------------------------------------------------------------------
-    // @brief  Libera toda a memória após o marcador.
+    // @brief  Libera tudo após o marcador. Markers além do cursor são
+    //         ignorados (guard). Zera allocationCount.
     // -----------------------------------------------------------------------
     void freeToMarker(Marker marker);
 
@@ -499,18 +531,18 @@ public:
     const char* name()     const override { return "Stack"; }
 
 private:
-    u8*  m_start  = nullptr;
-    u8*  m_end    = nullptr;
-    u8*  m_cursor = nullptr;
-    usize m_peak   = 0;
+    u8*  m_start;
+    u8*  m_end;
+    u8*  m_cursor;
+    usize m_peak = 0;
     usize m_allocCount = 0;
     bool  m_ownsBuffer = false;
 };
 
-}  // namespace Caffeine::Memory
+}  // namespace Caffeine
 ```
 
-### Uso por Sistema
+### Uso por Sistema (alvo — ver §A.2b para o uso real atual)
 
 | Sistema | Uso | Tamanho típico |
 |---|---|---|
@@ -523,136 +555,37 @@ private:
 
 ## 4. Proxy Allocator
 
-**Fase:** 1
+> ❌ **NÃO IMPLEMENTADO** — seção de especificação futura. Não existe
+> `ProxyAllocator` em `src/memory/` (apenas `Allocator`, `Linear`, `Pool`,
+> `Stack`). Mantido aqui como intenção de design.
 
-### Propósito
+**Fase:** 1 (planejado)
 
-Wrapper que adiciona logging, debugging ou accounting a qualquer allocator existente.
+### Propósito (planejado)
 
-### Interface
-
-```cpp
-namespace Caffeine::Memory {
-
-// ============================================================================
-// @brief  Proxy Allocator — wrapper com logging e accounting.
-//
-//  Útil para debugging de memory leaks e profiling de alocações.
-// ============================================================================
-class ProxyAllocator : public IAllocator {
-public:
-    ProxyAllocator(IAllocator* backend, const char* name);
-    ~ProxyAllocator() override;
-
-    void* alloc(usize size, usize alignment = 8) override;
-    void  free(void* ptr) override;
-    void  reset() override;
-
-    usize usedMemory()      const override;
-    usize totalSize()       const override;
-    usize peakMemory()      const override;
-    usize allocationCount()  const override;
-    const char* name()     const override;
-
-    // -----------------------------------------------------------------------
-    // @brief  Retorna relatório de alocações.
-    // -----------------------------------------------------------------------
-    struct AllocationReport {
-        const char* allocatorName;
-        usize currentUsed;
-        usize peakUsed;
-        usize totalAllocations;
-        usize totalFrees;
-        usize failedAllocations;
-    };
-    AllocationReport report() const;
-
-private:
-    IAllocator* m_backend;
-    const char*  m_name;
-
-    usize m_currentUsed      = 0;
-    usize m_peakUsed        = 0;
-    usize m_totalAllocs     = 0;
-    usize m_totalFrees      = 0;
-    usize m_failedAllocs    = 0;
-
-    // Allocation header para tracking
-    struct Header {
-        usize size;
-        usize alignment;
-    };
-    static constexpr usize HEADER_SIZE = sizeof(Header);
-};
-
-}  // namespace Caffeine::Memory
-```
+Wrapper que adiciona logging, debugging ou accounting a qualquer allocator
+existente. Útil para debugging de memory leaks e profiling de alocações.
+Interface prevista: `ProxyAllocator(IAllocator* backend, const char* name)`
+com relatório `AllocationReport` (uso atual, pico, total de allocs/frees/falhas)
+e header de tracking por alocação.
 
 ---
 
 ## C. Allocator Registry
 
-**Fase:** 1
+> ❌ **NÃO IMPLEMENTADO** — não existe `AllocatorRegistry` no código.
+> Mantido como intenção de design.
 
-### Visão Geral
+**Fase:** 1 (planejado)
 
-Para debugging e profiling, todo allocator é registrado em um registry global.
+### Visão Geral (planejada)
 
-### Interface
+Para debugging e profiling, todo allocator seria registrado em um registry
+global, permitindo verificar memory leaks no shutdown, profiling de uso e
+detecção de fragmentação (`registerAllocator` / `unregisterAllocator` /
+`globalStats` / `printReport` / `hasLeaks`).
 
-```cpp
-namespace Caffeine::Memory {
-
-// ============================================================================
-// @brief  Registry global de allocators.
-//
-//  Permite:
-//  - Verificar memory leaks no shutdown
-//  - Profiling de uso de memória
-//  - Detectar fragmentation
-// ============================================================================
-class AllocatorRegistry {
-public:
-    // -----------------------------------------------------------------------
-    // @brief  Registra um allocator.
-    // -----------------------------------------------------------------------
-    static void registerAllocator(IAllocator* alloc, const char* name);
-
-    // -----------------------------------------------------------------------
-    // @brief  Remove um allocator do registry.
-    // -----------------------------------------------------------------------
-    static void unregisterAllocator(IAllocator* alloc);
-
-    // -----------------------------------------------------------------------
-    // @brief  Retorna estatísticas agregadas de todos os allocators.
-    // -----------------------------------------------------------------------
-    struct GlobalStats {
-        usize totalAllocators;
-        usize totalUsedMemory;
-        usize totalPeakMemory;
-        usize totalAllocations;
-    };
-    static GlobalStats globalStats();
-
-    // -----------------------------------------------------------------------
-    // @brief  Imprime relatório de todos os allocators (debug).
-    // -----------------------------------------------------------------------
-    static void printReport();
-
-    // -----------------------------------------------------------------------
-    // @brief  Verifica se há memory leaks (chamar no shutdown).
-    // -----------------------------------------------------------------------
-    static bool hasLeaks();
-
-private:
-    static std::vector<ProxyAllocator*> s_allocators;
-    static std::mutex s_mutex;
-};
-
-}  // namespace Caffeine::Memory
-```
-
-### Exemplo de Saída
+### Exemplo de Saída (formato desejado, não gerado hoje)
 
 ```
 === Memory Report ===
@@ -667,7 +600,9 @@ Total: 664.0 KB used, 3.3 MB peak, 1.2M allocs
 
 ---
 
-## D. Uso por Sistema — Mapa Completo
+## D. Uso por Sistema — Mapa Completo (política-alvo)
+
+> ⚠️ Mapa desejado, não uso verificado — ver §A.2b.
 
 ```mermaid
 flowchart TB
@@ -731,6 +666,10 @@ flowchart TB
 
 ## E. Benchmarks de Referência
 
+> ⚠️ Metas de projeto **não medidas** — `tests/benchmarks.cpp` contém apenas
+> `BENCHMARK`s básicos de Linear/Pool sem números-alvo assertados. Os valores
+> abaixo são estimativas, não resultados.
+
 ### E.1 Linear Allocator
 
 | Métrica | Valor |
@@ -747,8 +686,8 @@ flowchart TB
 | `alloc()` throughput | ~30M allocs/segundo |
 | `free()` throughput | ~40M frees/segundo |
 | Fragmentação | 0% (slots fixos) |
-| Overhead por slot | 0 bytes (exceto bookkeeping) |
-| Max slots | 65,535 por pool |
+| Overhead por slot | 0 bytes (free list intrusiva usa o próprio slot livre) |
+| Max slots | `poolSize / slotSize` (sem teto fixo no código) |
 
 ### E.3 Stack Allocator
 
@@ -757,7 +696,7 @@ flowchart TB
 | `alloc()` throughput | ~50M allocs/segundo |
 | `freeToMarker()` throughput | ~100M frees/segundo |
 | Fragmentação | 0% (free to marker) |
-| Max markers por stack | 255 |
+| Max markers por stack | Ilimitado (marker = offset, sem tabela) |
 
 ---
 
@@ -769,7 +708,6 @@ Antes de usar um allocator em um novo sistema:
 - [ ] Sistema reseta allocators lineares no início de cada frame
 - [ ] Sistema usa Pool para objetos de tamanho fixo
 - [ ] Sistema usa Stack para escopos aninhados
-- [ ] Sistema loga estatísticas via AllocatorRegistry
-- [ ] Sistema verifica `alloc()` returnou nullptr
-- [ ] Sistema NÃO usa `new` ou `delete`
+- [ ] Sistema verifica `alloc()` retornou `nullptr` (out-of-memory)
 - [ ] Sistema NÃO guarda ponteiros após `reset()` ou `freeToMarker()`
+- [ ] (Futuro) Sistema loga estatísticas via AllocatorRegistry — ainda não existe (§C)
