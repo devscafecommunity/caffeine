@@ -2,7 +2,6 @@
 
 #include "../core/Types.hpp"
 #include "../core/Timer.hpp"
-#include "../containers/HashMap.hpp"
 #include "../containers/Vector.hpp"
 
 namespace Caffeine::Debug {
@@ -14,16 +13,27 @@ public:
     void beginScope(const char* name);
     void endScope(const char* name);
 
+    static constexpr u32 kInvalidNode = static_cast<u32>(-1);
+
     struct ScopeStats {
         const char* name = nullptr;
+        u32 nodeIndex = kInvalidNode;
+        u32 parentIndex = kInvalidNode;
+        u32 firstChildIndex = kInvalidNode;
+        u32 nextSiblingIndex = kInvalidNode;
+        u32 depth = 0;
         u64  callCount = 0;
-        f64  totalMs   = 0.0;
+        f64  totalMs   = 0.0;  // inclusive (scope + children)
+        f64  selfMs    = 0.0;  // exclusive (scope only)
         f64  avgMs     = 0.0;
-        f64  minMs     = 1e18;
+        f64  avgSelfMs = 0.0;
+        f64  minMs     = 0.0;
         f64  maxMs     = 0.0;
     };
 
+    // Fills out[0..nodeCount()-1]; index 0 is the virtual root (no samples).
     void report(Vector<ScopeStats>& out) const;
+
     void reset();
 
     void setEnabled(bool enabled) { m_enabled = enabled; }
@@ -32,29 +42,41 @@ public:
     usize scopeCount() const;
 
 private:
-    Profiler() = default;
+    Profiler();
     ~Profiler() = default;
     Profiler(const Profiler&) = delete;
     Profiler& operator=(const Profiler&) = delete;
 
-    struct InternalScopeData {
+    struct ScopeNode {
+        u32 parent = kInvalidNode;
+        u32 firstChild = kInvalidNode;
+        u32 nextSibling = kInvalidNode;
         const char* name = nullptr;
         u64  callCount = 0;
-        f64  totalMs   = 0.0;
-        f64  minMs     = 1e18;
-        f64  maxMs     = 0.0;
-        Core::Timer activeTimer;
+        f64  totalMs = 0.0;
+        f64  selfMs = 0.0;
+        f64  minMs = 1e18;
+        f64  maxMs = 0.0;
     };
+
+    struct ActiveScope {
+        u32 nodeIndex = kInvalidNode;
+        f64 childrenMs = 0.0;
+        Core::Timer timer;
+    };
+
+    static constexpr usize MAX_SCOPE_NODES = 512;
+    static constexpr usize MAX_SCOPE_DEPTH = 64;
 
     bool m_enabled = true;
 
-    static constexpr usize MAX_SCOPES = 256;
-    InternalScopeData m_scopes[MAX_SCOPES]{};
-    usize m_scopeCount = 0;
+    ScopeNode m_nodes[MAX_SCOPE_NODES]{};
+    usize m_nodeCount = 0;
+    ActiveScope m_activeStack[MAX_SCOPE_DEPTH]{};
+    usize m_activeDepth = 0;
 
-    InternalScopeData* findScope(const char* name);
-    const InternalScopeData* findScope(const char* name) const;
-    InternalScopeData* findOrCreateScope(const char* name);
+    u32 findOrCreateChild(u32 parentIndex, const char* name);
+    void initRoot();
 };
 
 class ProfileScope {

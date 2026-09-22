@@ -1,4 +1,5 @@
 #include "render/GpuSceneRenderer.hpp"
+#include "debug/Profiler.hpp"
 #include "render/ShaderBytecode.hpp"
 #include "render/GpuProceduralMeshes.hpp"
 #include "editor/EditorContext.hpp"
@@ -685,6 +686,9 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     cmd->beginRenderPass(pass);
     cmd->bindPipeline(wireframeMeshes ? m_wireframePipeline : m_scenePipeline);
     cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
+    if (!wireframeMeshes) {
+        cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
+    }
 
     auto bindShadowTextures = [&](u32 dirBase, u32 pointBase, u32 spotBase) {
         for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
@@ -712,7 +716,11 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             }
         }
     };
+    // Shaders always declare shadow samplers — bind fallbacks even when shadow passes are skipped.
     bindShadowTextures(2, 4, 6);
+
+    ECS::Entity lastTerrainTexEntity = ECS::Entity::INVALID;
+    u32 lastTerrainTexTier = ~0u;
 
     for (const auto& draw : draws) {
         if (!draw.mesh || draw.mesh->indices.empty()) continue;
@@ -821,58 +829,68 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 Terrain::TerrainCache::instance().gpuTexturesFor(draw.entity);
             const u32 texTier =
                 textureQualityTier(draw.viewerDistance, options.textureQuality);
-            auto& texCache = GpuTextureCache::instance();
-            for (u32 slot = 0; slot < 6; ++slot) {
-                if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
-            }
             if (gpu && gpu->useSplatmap) {
                 mat.flags[0] = 1.0f;
-                if (gpu->splatMap) {
-                    cmd->bindTexture(gpu->splatMap, 0, m_sampler);
-                }
-                for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
-                    RHI::Texture* layerTex = whiteTex;
-                    if (!gpu->cachedLayerPaths[i].empty()) {
-                        layerTex = texCache.acquire(m_device, gpu->cachedLayerPaths[i], projectRoot,
-                                                    texTier);
-                    } else if (gpu->layers[i]) {
-                        layerTex = gpu->layers[i];
-                    }
-                    if (layerTex) {
-                        cmd->bindTexture(layerTex, 1 + i, m_repeatSampler);
-                    }
-                }
-            } else if (gpu) {
-                RHI::Texture* albedoTex = whiteTex;
-                if (!gpu->cachedAlbedoPath.empty()) {
-                    albedoTex =
-                        texCache.acquire(m_device, gpu->cachedAlbedoPath, projectRoot, texTier);
-                } else if (gpu->albedo) {
-                    albedoTex = gpu->albedo;
-                }
-                if (albedoTex) {
-                    mat.flags[1] = 1.0f;
-                    cmd->bindTexture(albedoTex, 4, m_repeatSampler);
-                }
+            } else if (gpu && (!gpu->cachedAlbedoPath.empty() || gpu->albedo)) {
+                mat.flags[1] = 1.0f;
             }
-            if (gpu) {
-                RHI::Texture* normalTex = nullptr;
-                if (!gpu->cachedNormalPath.empty()) {
-                    normalTex =
-                        texCache.acquire(m_device, gpu->cachedNormalPath, projectRoot, texTier);
-                } else if (gpu->normalMap) {
-                    normalTex = gpu->normalMap;
+            if (gpu && (!gpu->cachedNormalPath.empty() || gpu->normalMap)) {
+                lights.flags[1] = 1.0f;
+            }
+
+            const bool rebindTerrainTextures = draw.entity != lastTerrainTexEntity
+                || texTier != lastTerrainTexTier;
+            if (rebindTerrainTextures) {
+                lastTerrainTexEntity = draw.entity;
+                lastTerrainTexTier = texTier;
+                auto& texCache = GpuTextureCache::instance();
+                for (u32 slot = 0; slot < 6; ++slot) {
+                    if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
                 }
-                if (normalTex) {
-                    lights.flags[1] = 1.0f;
-                    cmd->bindTexture(normalTex, 5, m_repeatSampler);
+                if (gpu && gpu->useSplatmap) {
+                    if (gpu->splatMap) {
+                        cmd->bindTexture(gpu->splatMap, 0, m_sampler);
+                    }
+                    for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+                        RHI::Texture* layerTex = whiteTex;
+                        if (!gpu->cachedLayerPaths[i].empty()) {
+                            layerTex = texCache.acquire(m_device, gpu->cachedLayerPaths[i],
+                                                          projectRoot, texTier);
+                        } else if (gpu->layers[i]) {
+                            layerTex = gpu->layers[i];
+                        }
+                        if (layerTex) {
+                            cmd->bindTexture(layerTex, 1 + i, m_repeatSampler);
+                        }
+                    }
+                } else if (gpu) {
+                    RHI::Texture* albedoTex = whiteTex;
+                    if (!gpu->cachedAlbedoPath.empty()) {
+                        albedoTex =
+                            texCache.acquire(m_device, gpu->cachedAlbedoPath, projectRoot, texTier);
+                    } else if (gpu->albedo) {
+                        albedoTex = gpu->albedo;
+                    }
+                    if (albedoTex) {
+                        cmd->bindTexture(albedoTex, 4, m_repeatSampler);
+                    }
+                }
+                if (gpu) {
+                    RHI::Texture* normalTex = nullptr;
+                    if (!gpu->cachedNormalPath.empty()) {
+                        normalTex =
+                            texCache.acquire(m_device, gpu->cachedNormalPath, projectRoot, texTier);
+                    } else if (gpu->normalMap) {
+                        normalTex = gpu->normalMap;
+                    }
+                    if (normalTex) {
+                        cmd->bindTexture(normalTex, 5, m_repeatSampler);
+                    }
                 }
             }
             bindShadowTextures(6, 8, 10);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 2, &mat, sizeof(mat));
         }
-
-        cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
 
         VertexUBO vubo{};
         const Mat4 mvp = vp * draw.worldMatrix;
@@ -972,7 +990,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
 
             std::vector<Terrain::TerrainDrawChunk> terrainChunks;
             cache.gatherDrawMeshes(entity, *terrain, worldMatrix, cameraPos, frustum,
-                                   terrainChunks);
+                                   terrainChunks, nullptr, options.terrainLodDistanceScale);
             for (const Terrain::TerrainDrawChunk& chunk : terrainChunks) {
                 if (!chunk.mesh || chunk.mesh->vertices.empty()) continue;
                 MeshDraw draw;
@@ -1057,6 +1075,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
                                         RHI::Texture* depthTarget, u32 width, u32 height,
                                         const std::string& projectRoot,
                                         const GpuSceneRenderOptions& options) {
+    CF_PROFILE_SCOPE("GpuSceneRenderer::renderWithCamera");
     Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderWithCamera");
     if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
 
@@ -1066,8 +1085,11 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         camera.position, camera.focus, Vec3(0.0f, 1.0f, 0.0f), camera.fovRad, aspect,
         camera.nearClip, camera.farClip);
 
-    std::vector<MeshDraw> draws =
-        gatherMeshDraws(world, camera.position, frustum, projectRoot, options);
+    std::vector<MeshDraw> draws;
+    {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::gather");
+        draws = gatherMeshDraws(world, camera.position, frustum, projectRoot, options);
+    }
 
     // Upload GPU buffers before any render pass. Creating/uploading buffers
     // while a pass is recording is a common NVIDIA driver SIGSEGV.
@@ -1084,13 +1106,17 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     Scene::collectSceneLights(world, lighting.lights);
 
     if (!options.wireframeMeshes && options.enableShadows) {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
     }
 
-    return renderMeshes(cmd, draws, vp, camera.position, camera.view, lighting, colorTarget,
-                        depthTarget, width, height, projectRoot, options);
+    {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::draw");
+        return renderMeshes(cmd, draws, vp, camera.position, camera.view, lighting, colorTarget,
+                            depthTarget, width, height, projectRoot, options);
+    }
 }
 
 u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,

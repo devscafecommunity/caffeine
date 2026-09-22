@@ -14,6 +14,7 @@
 | **Rendering Roadmap** | [`plans/2026-09-21-rendering-roadmap.md`](plans/2026-09-21-rendering-roadmap.md) | Plano P0–P6: GPU único, texturas, LOD, PBR, sombras, reflexos, volumétricos |
 | **Sessão 2026-09-22 (Phong)** | [`plans/2026-09-22-phong-gpu-handles-session.md`](plans/2026-09-22-phong-gpu-handles-session.md) | Changelog: Phong GPU, sombras, handles, normal maps, inspector |
 | **Sessão 2026-09-22 (Viewport)** | [`plans/2026-09-22-viewport-rendering-quality-session.md`](plans/2026-09-22-viewport-rendering-quality-session.md) | HiDPI, wireframe GPU, LOD texturas, performance câmara |
+| **Performance — Editor Viewport** | [`performance/editor-viewport-performance.md`](performance/editor-viewport-performance.md) | FPS Doppio, GPU/CPU exclusivo, sombras, profiler, SIGSEGV NVIDIA |
 
 ### Engine Core
 

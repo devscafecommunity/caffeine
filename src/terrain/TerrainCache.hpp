@@ -46,7 +46,8 @@ public:
                           const Vec3& cameraPos,
                           const Spatial::Frustum& frustum,
                           std::vector<TerrainDrawChunk>& outDraws,
-                          TerrainCullStats* stats = nullptr);
+                          TerrainCullStats* stats = nullptr,
+                          f32 lodDistanceScale = 1.0f);
 
     void syncTextureToFilter(ECS::World& world, ECS::Entity entity,
                              const ECS::TerrainComponent& terrain);

@@ -37,6 +37,8 @@ struct GpuSceneCamera {
 struct GpuSceneRenderOptions {
     bool wireframeMeshes = false;
     bool enableShadows   = true;
+    /// Values > 1 bias terrain toward coarser LOD (editor preview).
+    f32  terrainLodDistanceScale = 1.0f;
     TextureQualitySettings textureQuality{};
     std::vector<Vec3>      textureQualityViewers;
 };

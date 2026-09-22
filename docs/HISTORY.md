@@ -2,6 +2,15 @@
 
 > Artefatos de desenvolvimento comprimidos — fases, roadmaps, planos e revisões.
 > Para documentação técnica real da engine, consulte o [`README.md`](README.md).
+> Para o registo cronológico completo de commits, consulte o [`CHANGELOG.md`](../CHANGELOG.md) na raiz do repositório.
+
+---
+
+## Performance — Editor Viewport (2026-09-23)
+
+Investigação de FPS no Doppio: **~10 FPS → ~100 FPS** após corrigir redundância em `GpuSceneRenderer::draw` (shadow UBO + binds por chunk de terreno), LOD/cap de resolução, skybox throttle, separação GPU/CPU por frame.
+
+**Documentação:** [`performance/editor-viewport-performance.md`](performance/editor-viewport-performance.md)
 
 ---
 

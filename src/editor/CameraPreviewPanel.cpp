@@ -165,6 +165,79 @@ void drawLine3D(ImDrawList* dl, const Mat4& vp, ImVec2 origin, ImVec2 panelSize,
     dl->AddLine(sa, sb, col, thickness);
 }
 
+std::string resolveProjectRoot(const EditorContext& ctx) {
+    if (ctx.currentScenePath.empty()) return {};
+    const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
+    std::string projectRoot = sceneDir.parent_path().string();
+    if (projectRoot.empty()) projectRoot = sceneDir.string();
+    return projectRoot;
+}
+
+#ifdef CF_HAS_SDL3
+bool renderCameraPreviewGpuOnly(SceneViewport& viewport, ECS::World& world, EditorContext& ctx,
+                                ImDrawList* dl, ImVec2 origin, ImVec2 panelSize,
+                                const Mat4& view, const Mat4& proj, const Vec3& camPos,
+                                const Vec3& focus, f32 fovRad, f32 nearClip, f32 farClip,
+                                const Render::SkyboxCamera& skyCamera,
+                                Render::SkyboxRenderer& skyboxRenderer,
+                                CameraPreviewGpuCache& cache,
+                                const char* labelText, ImU32 labelColor) {
+    if (!viewport.cameraPreviewGpuReady() || !viewport.frameCommandBuffer()) {
+        return false;
+    }
+
+    RHI::Texture* preview = viewport.cameraPreviewColorTarget();
+    const bool camChanged = (camPos - cache.lastCamPos).length() > 0.001f
+        || (focus - cache.lastFocus).length() > 0.001f
+        || std::abs(fovRad - cache.lastFov) > 0.001f;
+    const ImVec2 fbSizeProbe = imguiFramebufferSize(panelSize, 960);
+    const u32 probeW = static_cast<u32>(std::max(fbSizeProbe.x, 8.0f));
+    const u32 probeH = static_cast<u32>(std::max(fbSizeProbe.y, 8.0f));
+    const bool sizeChanged = probeW != cache.lastW || probeH != cache.lastH;
+    const u32 gpuInterval = camChanged ? 1u : 2u;
+    const bool rerunGpu = (camChanged || sizeChanged || !cache.hasFrame)
+        && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
+    if (rerunGpu) {
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
+        const bool gpuOk = viewport.renderCameraPreviewGpu(
+            viewport.frameCommandBuffer(), world, ctx, view, proj, camPos, focus,
+            fovRad, nearClip, farClip,
+            static_cast<u32>(std::max(fbSize.x, 8.0f)),
+            static_cast<u32>(std::max(fbSize.y, 8.0f)),
+            resolveProjectRoot(ctx));
+        if (!gpuOk) {
+            return false;
+        }
+        preview = viewport.cameraPreviewColorTarget();
+        cache.lastCamPos = camPos;
+        cache.lastFocus = focus;
+        cache.lastFov = fovRad;
+        cache.lastW = probeW;
+        cache.lastH = probeH;
+        cache.hasFrame = true;
+    }
+    if (!preview || !preview->handle) {
+        return false;
+    }
+
+    {
+        const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
+        const int skyCap = std::clamp(longest, 256, 512);
+        viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx, skyCamera, false,
+                                   &skyboxRenderer, skyCap);
+    }
+    dl->AddImage(reinterpret_cast<ImTextureID>(preview->handle), origin,
+                 ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                 ImVec2(0, 0), ImVec2(1, 1));
+    if (labelText && labelText[0] != '\0') {
+        dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 4.0f), labelColor, labelText);
+    }
+    dl->AddRect(origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                IM_COL32(80, 140, 255, 160), 0.0f, 0, 1.5f);
+    return true;
+}
+#endif
+
 void drawCubeWireframe(ImDrawList* dl, const Mat4& vp, ImVec2 origin, ImVec2 panelSize,
                        const Mat4& worldMatrix, ImU32 col, float thickness) {
     const std::array<Vec3, 8> corners = {{
@@ -210,9 +283,16 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
     }
     editorPanelDetachTabButton(m_detached);
 
-    Scene::propagateTransforms(world);
+    if (ImGui::IsWindowCollapsed()) {
+        ImGui::End();
+        return;
+    }
 
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
+    if (panelSize.x < 32.0f || panelSize.y < 32.0f) {
+        ImGui::End();
+        return;
+    }
     if (panelSize.x < 4.0f) panelSize.x = 4.0f;
     if (panelSize.y < 4.0f) panelSize.y = 4.0f;
 
@@ -357,17 +437,12 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
                                                     ImVec2 origin, ImVec2 panelSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    dl->PushClipRect(origin,
-                     ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                     true);
-
     const Vec3 camPos =
         editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
     const f32 farPlane = ctx.cameraFarPlane();
     const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, farPlane);
-    const Mat4 vp = proj * view;
 
     Render::SkyboxCamera skyCamera;
     skyCamera.forward = editorLookDirection(ctx.camYaw, ctx.camPitch).normalized();
@@ -381,6 +456,22 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
     skyCamera.up = skyCamera.right.cross(skyCamera.forward).normalized();
     skyCamera.fovY = 1.0472f;
     skyCamera.aspect = aspect;
+
+#ifdef CF_HAS_SDL3
+    if (renderCameraPreviewGpuOnly(viewport, world, ctx, dl, origin, panelSize, view, proj, camPos,
+                                   ctx.camFocus, 1.0472f, 0.1f, farPlane, skyCamera,
+                                   m_skyboxRenderer, m_gpuCache,
+                                   "Editor Camera (sem Camera3D na cena)",
+                                   IM_COL32(200, 200, 210, 230))) {
+        return;
+    }
+#endif
+
+    // CPU-only fallback when GPU preview is unavailable or failed.
+    const Mat4 vp = proj * view;
+    dl->PushClipRect(origin,
+                     ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                     true);
 
     if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
                                     skyCamera, false, &m_skyboxRenderer)) {
@@ -430,58 +521,6 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
     const f32 farClip = std::max(cam.farClip, 50.0f);
     const Mat4 proj = Mat4::perspective(fovRad, aspect, cam.nearClip, farClip);
 
-#ifdef CF_HAS_SDL3
-    if (viewport.cameraPreviewGpuReady() && viewport.frameCommandBuffer()) {
-        std::string projectRoot;
-        if (!ctx.currentScenePath.empty()) {
-            const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
-            projectRoot = sceneDir.parent_path().string();
-            if (projectRoot.empty()) projectRoot = sceneDir.string();
-        }
-        const Vec3 focus = camPos + entityForward(world, cameraEntity).normalized();
-        const ImVec2 fbSize = imguiFramebufferSize(panelSize);
-        const bool gpuOk = viewport.renderCameraPreviewGpu(
-            viewport.frameCommandBuffer(), world, ctx, view, proj, camPos, focus,
-            fovRad, cam.nearClip, farClip,
-            static_cast<u32>(std::max(fbSize.x, 8.0f)),
-            static_cast<u32>(std::max(fbSize.y, 8.0f)),
-            projectRoot);
-        RHI::Texture* preview = viewport.cameraPreviewColorTarget();
-        if (gpuOk && preview && preview->handle) {
-            const Mat4 worldMatrix = entityMatrix(world, cameraEntity);
-            Render::SkyboxCamera skyCamera;
-            skyCamera.forward = entityForward(world, cameraEntity).normalized();
-            skyCamera.right = matrixAxis(worldMatrix, 0, Vec3(1.0f, 0.0f, 0.0f));
-            skyCamera.up = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
-            skyCamera.fovY = fovRad;
-            skyCamera.aspect = aspect;
-            viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx, skyCamera, false,
-                                       &m_skyboxRenderer);
-            dl->AddImage(reinterpret_cast<ImTextureID>(preview->handle), origin,
-                         ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                         ImVec2(0, 0), ImVec2(1, 1));
-            const char* name = getEntityName(world, cameraEntity);
-            if (ctx.isPlayMode) {
-                dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 4.0f),
-                            IM_COL32(180, 255, 180, 230), "PLAY");
-            } else if (name && name[0] != '\0') {
-                dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 4.0f),
-                            IM_COL32(200, 200, 210, 230), name);
-            }
-            dl->AddRect(origin,
-                        ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                        IM_COL32(80, 140, 255, 160), 0.0f, 0, 1.5f);
-            return;
-        }
-    }
-#endif
-
-    const Mat4 vp = proj * view;
-
-    dl->PushClipRect(origin,
-                     ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                     true);
-
     const Mat4 worldMatrix = entityMatrix(world, cameraEntity);
     Render::SkyboxCamera skyCamera;
     skyCamera.forward = entityForward(world, cameraEntity).normalized();
@@ -489,6 +528,28 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
     skyCamera.up = matrixAxis(worldMatrix, 1, Vec3(0.0f, 1.0f, 0.0f));
     skyCamera.fovY = fovRad;
     skyCamera.aspect = aspect;
+
+#ifdef CF_HAS_SDL3
+    {
+        const Vec3 focus = camPos + entityForward(world, cameraEntity).normalized();
+        const char* camName = getEntityName(world, cameraEntity);
+        const char* gpuLabel = ctx.isPlayMode ? "PLAY" : camName;
+        const ImU32 gpuLabelColor = ctx.isPlayMode ? IM_COL32(180, 255, 180, 230)
+                                                   : IM_COL32(200, 200, 210, 230);
+        if (renderCameraPreviewGpuOnly(viewport, world, ctx, dl, origin, panelSize, view, proj,
+                                       camPos, focus, fovRad, cam.nearClip, farClip, skyCamera,
+                                       m_skyboxRenderer, m_gpuCache, gpuLabel, gpuLabelColor)) {
+            return;
+        }
+    }
+#endif
+
+    // CPU-only fallback when GPU preview is unavailable or failed.
+    const Mat4 vp = proj * view;
+
+    dl->PushClipRect(origin,
+                     ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                     true);
 
     if (!viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx,
                                     skyCamera, false, &m_skyboxRenderer)) {

@@ -152,7 +152,9 @@ void TerrainLodSystem::gatherDrawMeshes(std::vector<TerrainChunk>& chunks,
                                       const Vec3& cameraPos,
                                       const Spatial::Frustum& frustum,
                                       std::vector<TerrainDrawChunk>& outDraws,
-                                      TerrainCullStats* stats) {
+                                      TerrainCullStats* stats,
+                                      f32 lodDistanceScale) {
+    lodDistanceScale = std::max(lodDistanceScale, 1.0f);
     if (activeLods.size() != chunks.size()) {
         activeLods.assign(chunks.size(), 0);
     }
@@ -170,7 +172,7 @@ void TerrainLodSystem::gatherDrawMeshes(std::vector<TerrainChunk>& chunks,
 
         const Vec3 centerLocal = (chunk.localBoundsMin + chunk.localBoundsMax) * 0.5f;
         const Vec3 centerWorld = worldMatrix.transformPoint(centerLocal);
-        const f32 distance = (centerWorld - cameraPos).length();
+        const f32 distance = (centerWorld - cameraPos).length() * lodDistanceScale;
         const Spatial::AABB3D worldBounds =
             worldBoundsFromLocal(worldMatrix, chunk.localBoundsMin, chunk.localBoundsMax);
 

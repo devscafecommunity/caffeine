@@ -343,14 +343,16 @@ void TerrainCache::gatherDrawMeshes(ECS::Entity entity,
                                     const Vec3& cameraPos,
                                     const Spatial::Frustum& frustum,
                                     std::vector<TerrainDrawChunk>& outDraws,
-                                    TerrainCullStats* stats) {
+                                    TerrainCullStats* stats,
+                                    f32 lodDistanceScale) {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end()) return;
 
     TerrainEntry& entry = it->second;
     if (entry.useChunks && !entry.chunks.empty()) {
         TerrainLodSystem::gatherDrawMeshes(entry.chunks, entry.chunkActiveLods, settings,
-                                           worldMatrix, cameraPos, frustum, outDraws, stats);
+                                           worldMatrix, cameraPos, frustum, outDraws, stats,
+                                           lodDistanceScale);
         return;
     }
 

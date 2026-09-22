@@ -56,13 +56,27 @@ Espelhado em C++ (`GpuSceneRenderer.cpp`) e GLSL:
 
 ## Editor vs runtime
 
-| Contexto | CPU shadows | GPU shadows |
-|----------|-------------|-------------|
-| Editor 3D GPU texturizado | ❌ desligado | ✅ |
-| Editor wireframe / sem GPU | ✅ opcional | — |
-| Runtime (`RuntimeSceneRenderer`) | ❌ fallback CPU sem sombras | ✅ GPU-first via `GpuSceneRenderer` |
+| Contexto | Shadow **passes** | Shadow **samplers** ligados |
+|----------|-------------------|----------------------------|
+| Editor Scene Viewport | ❌ `enableShadows=false` | ✅ sempre (`bindShadowTextures`) |
+| Editor previews | ❌ | ✅ |
+| Runtime (`RuntimeSceneRenderer`) | ✅ quando `enableShadows=true` | ✅ |
 
-`SceneViewport` passa `buildCpuShadowMaps = !gpuTextured3D` a `gatherSceneLighting`.
+### ⚠️ Regra de segurança (SIGSEGV NVIDIA)
+
+`enableShadows=false` **omite** `renderDirectionalShadows` / point / spot — não omite `bindShadowTextures()`.
+
+Os fragment shaders declaram samplers de sombra mesmo quando `uDirShadowValid=0`. Slots não ligados podem causar **segmentation fault** no driver NVIDIA.
+
+```cpp
+// GpuSceneRenderer::renderMeshes — padrão correcto
+if (options.enableShadows) {
+    renderDirectionalShadows(...);
+}
+bindShadowTextures(2, 4, 6);  // obrigatório no início do pass opaco
+```
+
+Com GPU activo no editor, `gatherSceneLighting` com CPU shadow maps **não** corre para meshes (`gpuOwnsSceneMeshes`).
 
 ---
 

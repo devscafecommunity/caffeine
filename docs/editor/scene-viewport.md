@@ -2,7 +2,8 @@
 
 > **Namespace:** `Caffeine::Editor::SceneViewport`  
 > **Ficheiro:** `src/editor/SceneViewport.cpp`  
-> **Status:** ✅ Implementado (GPU-first em 3D)
+> **Status:** ✅ Implementado (GPU-first em 3D)  
+> **Performance:** ~10 → ~100 FPS no editor (ver [performance](../performance/editor-viewport-performance.md))
 
 ---
 
@@ -16,32 +17,32 @@ O **Scene Viewport** renderiza a cena 3D num target offscreen GPU e compõe o re
 
 | Modo | GPU | CPU overlay |
 |------|-----|-------------|
-| **Textured** | `GpuSceneRenderer` Phong + sombras (se estável) | Só entidade **selecionada** (contorno) |
-| **Wireframe** | `GpuSceneRenderer` pipeline `FillMode::Line` | Só entidade **selecionada** |
+| **Textured** | `GpuSceneRenderer` Phong (sem shadow passes no editor) | Marcadores, gizmos, grid — **não** redesenha meshes |
+| **Wireframe** | `GpuSceneRenderer` pipeline `FillMode::Line` | Idem |
 
 Alternar: botão **Textured / Wireframe** na barra do viewport.
 
-**Importante:** em Textured, o CPU **não** redesenha meshes não seleccionados — evita double render e queda de FPS.
+**Importante:** com GPU activo (`gpuOwnsSceneMeshes`), o CPU **não** rasteriza meshes nem terreno no mesmo frame. Ver [performance do viewport](../performance/editor-viewport-performance.md).
 
 ---
 
 ## Pipeline por frame (3D)
 
 ```
-1. resizeCanvasIfNeeded(imguiFramebufferSize(viewportSize))  // HiDPI, cap 1920px
+1. resizeCanvasIfNeeded(imguiFramebufferSize(viewportSize, 1280))
 2. syncTerrainMeshes(world)
 3. GpuSceneRenderer::render(cmd, world, ctx, colorTarget, depthTarget, opts)
-   ├── gatherMeshDraws (frustum cull, distância a visualizadores)
-   ├── shadow passes (se enableShadows)
-   └── renderMeshes (Phong ou wireframe)
-4. ImGui: skybox → grid (atrás) → AddImage(GPU) → overlays
-   ├── drawEmptyEntities (marcadores, seleção)
+   ├── gatherMeshDraws (frustum cull, LOD terreno ×2 no editor)
+   ├── shadow passes — omitidos no editor (enableShadows=false)
+   └── renderMeshes (samplers dummy sempre ligados; Phong ou wireframe)
+4. ImGui: skybox (CPU, throttled) → AddImage(GPU) → grid → overlays
+   ├── drawEmptyEntities (marcadores apenas; sem meshes se GPU activo)
    ├── drawCameraFrustums
    ├── drawLightGizmos
    └── TransformGizmo
 ```
 
-Ordem de desenho garante que o grid fica **atrás** do GPU (desenhado antes do `AddImage`), e gizmos **à frente**.
+Ordem: skybox CPU → composite GPU → grid por cima do GPU (se activo) → gizmos à frente.
 
 ---
 
@@ -81,12 +82,12 @@ Usado por: grid 3D, frustums `Camera3D`, wireframe CPU, anéis de primitivas.
 
 ```cpp
 // ImGuiGpuTexture.hpp
-ImVec2 fb = imguiFramebufferSize(viewportSize, 1920);
+ImVec2 fb = imguiFramebufferSize(viewportSize, 1280);
 resizeCanvasIfNeeded((u32)fb.x, (u32)fb.y);
 ```
 
 - `DisplayFramebufferScale` do ImGui reflecte DPI do monitor
-- Cap no maior lado evita render 4K+ no painel do editor
+- Cap **1280** px no maior lado (editor); previews usam **960**
 - `AddImage` estica o target GPU para o tamanho lógico do ImGui (downscale suave)
 
 ---
@@ -98,18 +99,11 @@ Construídas em `SceneViewport::render()`:
 | Campo | Comportamento no viewport |
 |-------|---------------------------|
 | `wireframeMeshes` | `true` em modo Wireframe |
-| `enableShadows` | `false` se câmara em movimento rápido (`m_editorCamMotion >= 1.25`) |
-| `textureQuality` | Copiado de `EditorContext` |
-| `textureQualityViewers` | Câmara editor + posições de todas `Camera3DComponent` |
+| `enableShadows` | **`false`** no editor (shadow passes omitidos; samplers dummy ligados) |
+| `terrainLodDistanceScale` | **`2.0`** — LOD de terreno mais agressivo |
+| `textureQuality.enabled` | **`false`** no editor (menos churn por draw) |
 
-### Detecção de movimento de câmara
-
-```cpp
-frameMotion = |Δyaw|*14 + |Δpitch|*14 + |Δpos|
-m_editorCamMotion = m_editorCamMotion * 0.75 + frameMotion * 0.25
-```
-
-Sombras voltam quando a câmara estabiliza (~200 ms).
+> **Nota:** `enableShadows=false` desliga apenas os **passes** de sombra. Os samplers continuam ligados — ver [shadow-mapping.md](../rendering/shadow-mapping.md#editor-vs-runtime).
 
 ---
 
@@ -126,12 +120,12 @@ Afecta grid, gizmos e linhas ImGui — **não** substitui MSAA no pass GPU (pend
 
 ---
 
-## Camera Preview GPU
+## Camera / Gameplay Preview GPU
 
-`renderCameraPreviewGpu()` usa o mesmo `GpuSceneRenderer` com:
-
-- `textureQualityViewers = { cameraPos }` (só a câmara do painel)
-- Targets `m_previewColorTarget` / `m_previewDepthTarget`
+- `renderCameraPreviewGpu()` — partilha `GpuSceneRenderer` do viewport; targets `m_previewColorTarget`
+- `GameplayPreviewPanel` — renderer próprio, mesmo command buffer
+- **Um caminho por frame:** GPU **ou** `drawSceneMeshesForCamera()` (CPU), nunca ambos
+- Throttle: `editorPanelWorthGpuRender(origin, size, 2)` — ver `EditorPanelUtils.hpp`
 
 ---
 
@@ -165,12 +159,13 @@ Campos em `EditorContext` sincronizados via `SettingsPanel::applyPreferencesToCo
 |------|-------|
 | MSAA no pass GPU | Não implementado; silhuetas podem serrilhar |
 | Gizmos ImGui | Sem depth test contra cena GPU (intencional — sempre visíveis) |
-| Runtime / Gameplay Preview | Mesma API GPU; shadows sempre ligadas salvo lógica própria |
+| Runtime play | `enableShadows` conforme contexto; ver `RuntimeSceneRenderer` |
 
 ---
 
 ## Ver também
 
+- [**Performance — Editor Viewport**](../performance/editor-viewport-performance.md)
 - [Sessão 2026-09-22 — Viewport & Quality](../plans/2026-09-22-viewport-rendering-quality-session.md)
 - [Texture Quality LOD](../rendering/texture-quality-lod.md)
 - [Materials Phong](../rendering/materials-phong.md)

@@ -161,7 +161,8 @@ public:
                            ECS::World& world, const EditorContext& ctx,
                            const Render::SkyboxCamera& camera,
                            bool respectEditorToggle = true,
-                           Render::SkyboxRenderer* renderer = nullptr);
+                           Render::SkyboxRenderer* renderer = nullptr,
+                           int skyboxMaxRasterDim = 0);
     #endif
 
 private:
@@ -288,8 +289,14 @@ private:
     u32 m_previewCanvasHeight = 0;
     f32 m_lastEditorCamYaw = 0.0f;
     f32 m_lastEditorCamPitch = 0.0f;
+    f32 m_lastEditorCamDistance = 0.0f;
     Vec3 m_lastEditorCamPos{};
+    Vec3 m_lastEditorCamFocus{};
     f32 m_editorCamMotion = 0.0f;
+    MeshPreviewMode m_lastMeshPreviewMode = MeshPreviewMode::Textured;
+    u32 m_gpuCacheWidth = 0;
+    u32 m_gpuCacheHeight = 0;
+    bool m_hasValidGpuFrame = false;
 #endif
 };
 

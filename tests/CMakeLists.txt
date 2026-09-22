@@ -71,6 +71,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/EntityDebugger.cpp
     ../src/editor/PluginSystem.cpp
     ../src/editor/PluginServiceRegistry.cpp
+    ../src/editor/PluginSymbolExports.cpp
     ../src/editor/TestUIMapper.cpp
     ../src/editor/TestRequestHandler.cpp
     ../src/editor/ScriptEditorWindow.cpp

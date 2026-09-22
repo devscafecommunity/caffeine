@@ -28,7 +28,8 @@ struct SkyboxCamera {
 class SkyboxRenderer {
 public:
     bool draw(ImDrawList* drawList, ImVec2 origin, ImVec2 panelSize,
-              const SkyboxCamera& camera, const std::string& texturePath);
+              const SkyboxCamera& camera, const std::string& texturePath,
+              int maxRasterDim = 1024);
     void releaseGpuTextures();
 
 private:
@@ -63,12 +64,13 @@ private:
 
     bool loadSource(const std::string& path, SourceImage& out);
     void renderPixels(SourceImage& source, FrameCache& frame, ImVec2 origin, ImVec2 panelSize,
-                      const SkyboxCamera& camera);
+                      const SkyboxCamera& camera, int maxRasterDim);
     void blitFrame(ImDrawList* drawList, FrameCache& frame, GpuTexture& gpu);
 
     std::unordered_map<std::string, SourceImage> m_sources;
     FrameCache m_frame;
     GpuTexture m_gpu;
+    u32 m_settledFrames = 0;
 };
 
 #endif

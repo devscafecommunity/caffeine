@@ -644,6 +644,7 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     camera.farClip = farClip;
 
     Render::GpuSceneRenderOptions previewOpts;
+    previewOpts.enableShadows = false;
     previewOpts.textureQuality.enabled = ctx.textureQualityEnabled;
     previewOpts.textureQuality.fullRadius = ctx.textureQualityRadius;
     previewOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
@@ -731,8 +732,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         return;
     }
     
-    const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize);
-    resizeCanvasIfNeeded((u32)framebufferSize.x, (u32)framebufferSize.y);
+    const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize, 1280);
+    const u32 targetCanvasW = static_cast<u32>(framebufferSize.x);
+    const u32 targetCanvasH = static_cast<u32>(framebufferSize.y);
+    const bool canvasResized = m_gpuCacheWidth != targetCanvasW || m_gpuCacheHeight != targetCanvasH;
+    resizeCanvasIfNeeded(targetCanvasW, targetCanvasH);
 
     if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
         Scene::syncTerrainMeshes(world);
@@ -746,39 +750,43 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (gpuSceneActive) {
         const Vec3 camPos =
             editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
-        const f32 yawDelta = std::abs(ctx.camYaw - m_lastEditorCamYaw);
-        const f32 pitchDelta = std::abs(ctx.camPitch - m_lastEditorCamPitch);
-        const f32 posDelta = (camPos - m_lastEditorCamPos).length();
-        const f32 frameMotion = yawDelta * 14.0f + pitchDelta * 14.0f + posDelta;
-        m_editorCamMotion = m_editorCamMotion * 0.75f + frameMotion * 0.25f;
-        m_lastEditorCamYaw = ctx.camYaw;
-        m_lastEditorCamPitch = ctx.camPitch;
-        m_lastEditorCamPos = camPos;
+        const f32 camMotion = std::abs(ctx.camYaw - m_lastEditorCamYaw)
+            + std::abs(ctx.camPitch - m_lastEditorCamPitch)
+            + std::abs(ctx.camDistance - m_lastEditorCamDistance)
+            + (camPos - m_lastEditorCamPos).length()
+            + (ctx.camFocus - m_lastEditorCamFocus).length();
+        m_editorCamMotion = camMotion;
+        const bool editorCameraMoved = camMotion > 0.0001f;
+        const bool previewModeChanged = m_meshPreviewMode != m_lastMeshPreviewMode;
+        const bool gpuNeedsRedraw =
+            editorCameraMoved || canvasResized || previewModeChanged || !m_hasValidGpuFrame;
 
-        Render::GpuSceneRenderOptions gpuOpts;
-        gpuOpts.wireframeMeshes = wireframePreview;
-        // Shadow passes re-draw the whole scene (x4 cascades + point faces). Skip while orbiting.
-        gpuOpts.enableShadows = !wireframePreview && m_editorCamMotion < 1.25f;
-        gpuOpts.textureQuality.enabled = ctx.textureQualityEnabled;
-        gpuOpts.textureQuality.fullRadius = ctx.textureQualityRadius;
-        gpuOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
-        gpuOpts.textureQuality.minScale = ctx.textureQualityMinScale;
-        gpuOpts.textureQualityViewers.push_back(camPos);
-        ECS::ComponentQuery camQuery;
-        camQuery.with<ECS::Camera3DComponent>();
-        world.forEach<ECS::Camera3DComponent>(camQuery,
-            [&](ECS::Entity entity, ECS::Camera3DComponent&) {
-                Vec3 camEntityPos;
-                if (tryGetEntityPosition(world, entity, camEntityPos)) {
-                    gpuOpts.textureQualityViewers.push_back(camEntityPos);
-                }
-            });
+        if (gpuNeedsRedraw) {
+            CF_PROFILE_SCOPE("SceneViewport::gpuPass");
+            Render::GpuSceneRenderOptions gpuOpts;
+            gpuOpts.wireframeMeshes = wireframePreview;
+            // Editor viewport: shadows multiply scene draws (4 cascades × lights). Runtime/gameplay
+            // previews keep their own lighting; shadows belong in play mode / runtime, not edit mode.
+            gpuOpts.enableShadows = false;
+            gpuOpts.terrainLodDistanceScale = 2.0f;
+            gpuOpts.textureQuality.enabled = false;
 
-        Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer");
-        gpuMeshDrawCount = m_gpuSceneRenderer.render(m_frameCmd, world, ctx, m_colorTarget,
-                                                     m_depthTarget, m_lastCanvasWidth,
-                                                     m_lastCanvasHeight, projectRoot, gpuOpts);
-        Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer.done");
+            Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer");
+            gpuMeshDrawCount = m_gpuSceneRenderer.render(m_frameCmd, world, ctx, m_colorTarget,
+                                                         m_depthTarget, m_lastCanvasWidth,
+                                                         m_lastCanvasHeight, projectRoot, gpuOpts);
+            Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer.done");
+
+            m_lastEditorCamYaw = ctx.camYaw;
+            m_lastEditorCamPitch = ctx.camPitch;
+            m_lastEditorCamDistance = ctx.camDistance;
+            m_lastEditorCamPos = camPos;
+            m_lastEditorCamFocus = ctx.camFocus;
+            m_lastMeshPreviewMode = m_meshPreviewMode;
+            m_gpuCacheWidth = m_lastCanvasWidth;
+            m_gpuCacheHeight = m_lastCanvasHeight;
+            m_hasValidGpuFrame = true;
+        }
     }
     ImGui::Dummy(viewportSize);
     m_lastGpuSceneActive = gpuSceneActive;
@@ -1118,14 +1126,17 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);
     if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        CF_PROFILE_SCOPE("SceneViewport::skybox");
         if (!drawSkybox(drawList, origin, viewportSize, world, ctx)) {
             drawList->AddRectFilledMultiColor(
                 origin, viewportMax,
                 IM_COL32(26, 26, 31, 255), IM_COL32(26, 26, 31, 255),
                 IM_COL32(42, 48, 62, 255), IM_COL32(42, 48, 62, 255));
         }
-        // Grid behind GPU terrain so it is occluded instead of looking transparent.
-        drawGrid(drawList, origin, viewportSize, ctx);
+        // Skip CPU grid under the GPU composite — it was fully covered and wasted draw calls.
+        if (!m_lastGpuSceneActive) {
+            drawGrid(drawList, origin, viewportSize, ctx);
+        }
     } else {
         drawList->AddRectFilled(origin, viewportMax, IM_COL32(26, 26, 31, 255));
     }
@@ -1136,6 +1147,9 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
         drawList->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin, viewportMax,
                            ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE);
+        if (m_config.grid) {
+            drawGrid(drawList, origin, viewportSize, ctx);
+        }
     }
 #endif
 
@@ -1375,8 +1389,14 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {
         drawGrid(drawList, origin, viewportSize, ctx);
     }
-    drawSprites(world, ctx, origin, viewportSize);
-    drawEmptyEntities(world, ctx, origin, viewportSize);
+    {
+        CF_PROFILE_SCOPE("SceneViewport::sprites");
+        drawSprites(world, ctx, origin, viewportSize);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneViewport::entities");
+        drawEmptyEntities(world, ctx, origin, viewportSize);
+    }
     drawPhysicsDebug(world, ctx, origin, viewportSize);
     drawCameraFrustums(world, ctx, origin, viewportSize);
     drawLightGizmos(world, ctx, origin, viewportSize);
@@ -1530,26 +1550,30 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         UI::drawWidgets(world, drawList, origin, viewportSize);
     }
 
-    ECS::Entity previewCamera = ctx.selectedEntity;
-    if (!previewCamera.isValid() ||
-        (!world.has<ECS::Camera2DComponent>(previewCamera) &&
-         !world.has<ECS::Camera3DComponent>(previewCamera))) {
-        ECS::ComponentQuery cameraQuery;
-        cameraQuery.with<ECS::Camera3DComponent>();
-        world.forEach<ECS::Camera3DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera3DComponent&) {
-            if (!previewCamera.isValid()) previewCamera = e;
-        });
-        if (!previewCamera.isValid()) {
-            cameraQuery = {};
-            cameraQuery.with<ECS::Camera2DComponent>();
-            world.forEach<ECS::Camera2DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera2DComponent&) {
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        ECS::Entity previewCamera = ctx.selectedEntity;
+        if (!previewCamera.isValid() ||
+            (!world.has<ECS::Camera2DComponent>(previewCamera) &&
+             !world.has<ECS::Camera3DComponent>(previewCamera))) {
+            ECS::ComponentQuery cameraQuery;
+            cameraQuery.with<ECS::Camera3DComponent>();
+            world.forEach<ECS::Camera3DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera3DComponent&) {
                 if (!previewCamera.isValid()) previewCamera = e;
             });
+            if (!previewCamera.isValid()) {
+                cameraQuery = {};
+                cameraQuery.with<ECS::Camera2DComponent>();
+                world.forEach<ECS::Camera2DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera2DComponent&) {
+                    if (!previewCamera.isValid()) previewCamera = e;
+                });
+            }
         }
-    }
-    if (const ECS::PostProcessComponent* fx =
-            Render::findPostProcessForCamera(world, previewCamera)) {
-        Render::applyPostProcessOverlay(drawList, origin, viewportSize, *fx);
+        if (const ECS::PostProcessComponent* fx =
+                Render::findPostProcessForCamera(world, previewCamera)) {
+            if (fx->enabled) {
+                Render::applyPostProcessOverlay(drawList, origin, viewportSize, *fx);
+            }
+        }
     }
 
     ImGui::End();
@@ -1832,10 +1856,14 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                                 m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
     const bool gpuWireframe3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && wireMode &&
                                  m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
+    // GPU and CPU must not rasterize the same meshes in one frame.
+    const bool gpuOwnsSceneMeshes = gpuTextured3D || gpuWireframe3D;
 
     Scene::SceneLighting sceneLighting;
-    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting,
-                               ECS::Entity::INVALID, !gpuTextured3D);
+    if (!gpuOwnsSceneMeshes) {
+        Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting,
+                                   ECS::Entity::INVALID, true);
+    }
 
     auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
         return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
@@ -1918,10 +1946,25 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 
         const Mat4 worldMatrix = entityMatrix(world, entity);
         const bool selected = (ctx.selectedEntity == entity);
-        if (gpuTextured3D && !selected) {
-            return true;
-        }
-        if (gpuWireframe3D && !selected) {
+        if (gpuOwnsSceneMeshes) {
+            if (ctx.terrainShowChunkDebug && world.has<ECS::TerrainComponent>(entity)) {
+                auto* terrain = world.get<ECS::TerrainComponent>(entity);
+                if (terrain) {
+                    const Vec3 camPos =
+                        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
+                    const f32 aspectFrustum = viewportSize.x / std::max(viewportSize.y, 1.0f);
+                    const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
+                        camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f), 1.0472f, aspectFrustum,
+                        0.1f, ctx.cameraFarPlane());
+                    m_terrainCullStats = {};
+                    m_terrainDrawChunks.clear();
+                    Terrain::TerrainCache::instance().gatherDrawMeshes(
+                        entity, *terrain, worldMatrix, camPos, frustum, m_terrainDrawChunks,
+                        &m_terrainCullStats);
+                    drawTerrainChunkDebug(dl, worldMatrix, m_terrainDrawChunks,
+                                          origin, viewportSize, ctx);
+                }
+            }
             return true;
         }
         const ImU32 wireCol = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(170, 190, 230, 210);
@@ -2347,6 +2390,12 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     auto drawEntity = [&](ECS::Entity entity) {
         if (Scene::isEffectivelyDisabled(world, entity)) return;
         if (world.has<ECS::LightComponent>(entity)) return;
+        if (gpuOwnsSceneMeshes && world.has<ECS::MeshFilterComponent>(entity)) {
+            if (ctx.terrainShowChunkDebug && world.has<ECS::TerrainComponent>(entity)) {
+                drawMeshPreview(entity);
+            }
+            return;
+        }
 
         if (drawMeshPreview(entity)) return;
 
@@ -2835,7 +2884,8 @@ bool SceneViewport::drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec
                                       ECS::World& world, const EditorContext& ctx,
                                       const Render::SkyboxCamera& camera,
                                       bool respectEditorToggle,
-                                      Render::SkyboxRenderer* renderer) {
+                                      Render::SkyboxRenderer* renderer,
+                                      int skyboxMaxRasterDim) {
     if (!drawList) return false;
     if (respectEditorToggle && !ctx.skyboxEnabled) return false;
 
@@ -2856,7 +2906,11 @@ bool SceneViewport::drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec
 
     const std::string textureKey = texturePath.string();
     Render::SkyboxRenderer& target = renderer ? *renderer : m_skyboxRenderer;
-    return target.draw(drawList, origin, viewportSize, camera, textureKey);
+    const int longestEdge = static_cast<int>(std::max(viewportSize.x, viewportSize.y));
+    const int skyRasterCap = skyboxMaxRasterDim > 0
+        ? skyboxMaxRasterDim
+        : std::clamp(longestEdge, 384, 640);
+    return target.draw(drawList, origin, viewportSize, camera, textureKey, skyRasterCap);
 }
 
 bool SceneViewport::drawSkybox(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
@@ -3614,6 +3668,8 @@ void SceneViewport::drawSceneMeshesForCamera(
     ImVec2 panelSize,
     ECS::Entity skipEntity,
     int maxRasterDim) {
+    // CPU-only mesh rasterization for camera previews. Callers must choose either this
+    // or renderCameraPreviewGpu() per frame — never both.
     // Viewport already syncs terrain in 3D mode. Avoid rebuilding meshes mid-frame
     // while GPU commands from the viewport pass may still reference chunk buffers.
     if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {

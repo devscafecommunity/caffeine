@@ -62,7 +62,7 @@ std::string projectRootFromContext(const EditorContext& ctx) {
 
 void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& world,
                      const EditorContext& ctx, const Render::SkyboxCamera& camera,
-                     Render::SkyboxRenderer& renderer) {
+                     Render::SkyboxRenderer& renderer, int maxRasterDim) {
     const std::string projectRoot = projectRootFromContext(ctx);
     std::filesystem::path texturePath;
     const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
@@ -72,7 +72,7 @@ void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& wor
         texturePath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex);
     }
     if (texturePath.empty()) return;
-    renderer.draw(dl, origin, size, camera, texturePath.string());
+    renderer.draw(dl, origin, size, camera, texturePath.string(), maxRasterDim);
 }
 
 }  // namespace
@@ -106,6 +106,7 @@ void GameplayPreviewPanel::shutdown() {
     m_width = 0;
     m_height = 0;
     m_ready = false;
+    m_hasGpuFrame = false;
 }
 
 void GameplayPreviewPanel::resizeCanvas(u32 width, u32 height) {
@@ -145,15 +146,22 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     }
     editorPanelDetachTabButton(m_detached);
 
+    if (ImGui::IsWindowCollapsed()) {
+        ImGui::End();
+        return;
+    }
+
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
+    if (panelSize.x < 32.0f || panelSize.y < 32.0f) {
+        ImGui::End();
+        return;
+    }
     if (panelSize.x < 8.0f) panelSize.x = 8.0f;
     if (panelSize.y < 8.0f) panelSize.y = 8.0f;
 
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImGui::InvisibleButton("##gameplay_preview", panelSize);
-
-    Scene::propagateTransforms(world);
 
     ECS::Entity cameraEntity;
     ECS::Camera3DComponent* cam = nullptr;
@@ -202,13 +210,12 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     } else
 #ifdef CF_HAS_SDL3
     if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
-        const ImVec2 fbSize = imguiFramebufferSize(panelSize);
-        u32 w = static_cast<u32>(fbSize.x);
-        u32 h = static_cast<u32>(fbSize.y);
-        w = std::clamp(w, 8u, 2560u);
-        h = std::clamp(h, 8u, 1440u);
-        resizeCanvas(w, h);
-
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
+        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 1280u);
+        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 720u);
+        if (!m_colorTarget || !m_depthTarget || m_width != targetW || m_height != targetH) {
+            resizeCanvas(targetW, targetH);
+        }
         const Mat4 worldMatrix = Scene::computeWorldMatrix(world, cameraEntity);
         Vec3 position = worldMatrix.transformPoint(Vec3(0, 0, 0));
         Vec3 right(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0));
@@ -238,19 +245,45 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         camera.fovRad = cam->fov * kDegToRad;
         camera.nearClip = std::max(cam->nearClip, 0.05f);
         camera.farClip = std::max(cam->farClip, 50.0f);
-        const f32 aspect = static_cast<f32>(w) / static_cast<f32>(std::max(h, 1u));
+        const u32 renderW = std::max(m_width, 1u);
+        const u32 renderH = std::max(m_height, 1u);
+        const f32 aspect = static_cast<f32>(renderW) / static_cast<f32>(renderH);
         camera.proj = Mat4::perspective(camera.fovRad, aspect, camera.nearClip, camera.farClip);
 
-        m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget, w, h,
-                                    projectRootFromContext(ctx));
+        Render::GpuSceneRenderOptions previewOpts;
+        previewOpts.enableShadows = false;
+        previewOpts.wireframeMeshes = false;
 
-        Render::SkyboxCamera skyCamera;
-        skyCamera.forward = forward;
-        skyCamera.right = right;
-        skyCamera.up = up;
-        skyCamera.fovY = camera.fovRad;
-        skyCamera.aspect = aspect;
-        drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer);
+        const bool camChanged = (position - m_lastCamPos).length() > 0.001f
+            || (forward - m_lastCamForward).length() > 0.001f
+            || std::abs(camera.fovRad - m_lastFovRad) > 0.001f;
+        const bool sizeChanged = targetW != m_lastTargetW || targetH != m_lastTargetH;
+        const u32 gpuInterval = camChanged ? 1u : 2u;
+        const bool rerunGpu = (camChanged || sizeChanged || !m_hasGpuFrame)
+            && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
+
+        {
+            Render::SkyboxCamera skyCamera;
+            skyCamera.forward = forward;
+            skyCamera.right = right;
+            skyCamera.up = up;
+            skyCamera.fovY = camera.fovRad;
+            skyCamera.aspect = aspect;
+            const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
+            const int skyCap = std::clamp(longest, 256, 512);
+            drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer, skyCap);
+        }
+
+        if (rerunGpu) {
+            m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget,
+                                        m_width, m_height, projectRootFromContext(ctx), previewOpts);
+            m_lastCamPos = position;
+            m_lastCamForward = forward;
+            m_lastFovRad = camera.fovRad;
+            m_lastTargetW = targetW;
+            m_lastTargetH = targetH;
+            m_hasGpuFrame = true;
+        }
 
         if (m_colorTarget && m_colorTarget->handle) {
             dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,

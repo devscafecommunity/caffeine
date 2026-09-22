@@ -5,6 +5,7 @@
 #include "editor/EditorContext.hpp"
 #include "editor/Camera2DPreviewRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
+#include "math/Vec3.hpp"
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -17,6 +18,15 @@
 namespace Caffeine::Editor {
 
 class SceneViewport;
+
+struct CameraPreviewGpuCache {
+    Vec3 lastCamPos{};
+    Vec3 lastFocus{};
+    f32 lastFov = 0.0f;
+    u32 lastW = 0;
+    u32 lastH = 0;
+    bool hasFrame = false;
+};
 
 class CameraPreviewPanel {
 public:
@@ -42,6 +52,7 @@ private:
 
     std::unordered_map<std::string, Camera2DPreviewTextureEntry> m_texCache;
     Render::SkyboxRenderer m_skyboxRenderer;
+    CameraPreviewGpuCache m_gpuCache;
 
     std::string resolveSpritePath(const std::string& name, const EditorContext& ctx) const;
 #endif

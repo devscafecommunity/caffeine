@@ -31,6 +31,7 @@ namespace {
 
 // Cap GPU upload size; match viewport resolution up to this limit.
 constexpr int kSkyboxRasterMaxDim = 2048;
+constexpr int kSkyboxRasterMinDim = 256;
 constexpr f32 kTwoPi = 6.2831853f;
 
 u8 sampleChannelBilinear(const u8* pixels, u32 width, u32 height, f32 u, f32 v, u32 channel) {
@@ -101,13 +102,14 @@ bool SkyboxRenderer::loadSource(const std::string& path, SourceImage& out) {
 }
 
 void SkyboxRenderer::renderPixels(SourceImage& source, FrameCache& frame, ImVec2 origin,
-                                  ImVec2 panelSize, const SkyboxCamera& camera) {
+                                  ImVec2 panelSize, const SkyboxCamera& camera, int maxRasterDim) {
     const int panelW = std::max(1, static_cast<int>(panelSize.x));
     const int panelH = std::max(1, static_cast<int>(panelSize.y));
+    const int rasterCap = std::clamp(maxRasterDim, kSkyboxRasterMinDim, kSkyboxRasterMaxDim);
     int renderW = panelW;
     int renderH = panelH;
-    if (renderW > kSkyboxRasterMaxDim || renderH > kSkyboxRasterMaxDim) {
-        const f32 scale = static_cast<f32>(kSkyboxRasterMaxDim) /
+    if (renderW > rasterCap || renderH > rasterCap) {
+        const f32 scale = static_cast<f32>(rasterCap) /
                           static_cast<f32>(std::max(renderW, renderH));
         renderW = std::max(1, static_cast<int>(static_cast<f32>(renderW) * scale));
         renderH = std::max(1, static_cast<int>(static_cast<f32>(renderH) * scale));
@@ -217,10 +219,12 @@ void SkyboxRenderer::releaseGpuTextures() {
     destroyGpuTexture(m_gpu);
     m_frame.valid = false;
     m_frame.gpuDirty = false;
+    m_settledFrames = 0;
 }
 
 bool SkyboxRenderer::draw(ImDrawList* drawList, ImVec2 origin, ImVec2 panelSize,
-                          const SkyboxCamera& camera, const std::string& texturePath) {
+                          const SkyboxCamera& camera, const std::string& texturePath,
+                          int maxRasterDim) {
     if (!drawList || texturePath.empty()) return false;
 
     auto& source = m_sources[texturePath];
@@ -228,15 +232,29 @@ bool SkyboxRenderer::draw(ImDrawList* drawList, ImVec2 origin, ImVec2 panelSize,
 
     const int panelW = std::max(1, static_cast<int>(panelSize.x));
     const int panelH = std::max(1, static_cast<int>(panelSize.y));
+    const int rasterCap = std::clamp(maxRasterDim, kSkyboxRasterMinDim, kSkyboxRasterMaxDim);
+    const bool cameraChanged = !m_frame.camera.nearlyEqual(camera, 0.006f);
+    if (cameraChanged) {
+        m_settledFrames = 0;
+    } else if (m_settledFrames < 8u) {
+        m_settledFrames++;
+    }
+    // Cheaper raster while orbiting; full quality after the camera settles.
+    constexpr int kMotionRasterCap = 384;
+    const int effectiveCap =
+        (m_settledFrames < 2u) ? std::min(rasterCap, kMotionRasterCap) : rasterCap;
     const bool needsRender = !m_frame.valid
         || m_frame.texturePath != texturePath
         || m_frame.panelW != panelW
         || m_frame.panelH != panelH
-        || !m_frame.camera.nearlyEqual(camera);
+        || m_frame.renderW > effectiveCap
+        || m_frame.renderH > effectiveCap
+        || cameraChanged
+        || (m_settledFrames == 2u && effectiveCap > kMotionRasterCap);
 
     if (needsRender) {
         m_frame.texturePath = texturePath;
-        renderPixels(source, m_frame, origin, panelSize, camera);
+        renderPixels(source, m_frame, origin, panelSize, camera, effectiveCap);
     } else {
         m_frame.origin = origin;
     }

@@ -719,7 +719,6 @@ void SceneEditor::render(f32 deltaTime) {
          profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
          profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
          profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
-         m_materialEditor.open();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -727,30 +726,78 @@ void SceneEditor::render(f32 deltaTime) {
 
     renderMainMenuBar(*activeWorld);
 
-    Scene::propagateTransforms(*activeWorld);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::propagateTransforms");
+        Scene::propagateTransforms(*activeWorld);
+    }
 
     // Render panels
-    m_hierarchy.render(*activeWorld, m_ctx);
-    m_inspector.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::hierarchy");
+        m_hierarchy.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::inspector");
+        m_inspector.render(*activeWorld, m_ctx);
+    }
     renderPlaybar(*activeWorld);
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
 #endif
-    m_viewport.render(*activeWorld, m_ctx);
-    m_assetBrowser.render(*activeWorld, m_ctx);
-    m_console.render();
-    m_profiler.render(Debug::Profiler::instance());
-    m_entityDebugger.render(*activeWorld, m_ctx);
-    m_scriptEditor.render();
-    m_settingsPanel.render();
-    m_materialEditor.onImGuiRender();
-    m_terrainEditor.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::viewport");
+        m_viewport.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::assetBrowser");
+        m_assetBrowser.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::console");
+        m_console.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::profiler");
+        m_profiler.render(Debug::Profiler::instance());
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::entityDebugger");
+        m_entityDebugger.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::scriptEditor");
+        m_scriptEditor.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::settings");
+        m_settingsPanel.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::materialEditor");
+        m_materialEditor.onImGuiRender();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
+        m_terrainEditor.render(*activeWorld, m_ctx);
+    }
     m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
-    m_entityPresets.render(*activeWorld, m_ctx);
-    m_audioPreview.onImGuiRender();
-    m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
-    m_gameplayPreview.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::entityPresets");
+        m_entityPresets.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::audioPreview");
+        m_audioPreview.onImGuiRender();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::cameraPreview");
+        m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::gameplayPreview");
+        m_gameplayPreview.render(*activeWorld, m_ctx);
+    }
     m_viewport.setFrameCommandBuffer(nullptr);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
@@ -760,8 +807,11 @@ void SceneEditor::render(f32 deltaTime) {
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
-    PluginManager::instance().renderPanels();
-    PluginManager::instance().renderManagerUI();
+    {
+        CF_PROFILE_SCOPE("SceneEditor::plugins");
+        PluginManager::instance().renderPanels();
+        PluginManager::instance().renderManagerUI();
+    }
 
     ImGui::End(); // DockSpace
 
