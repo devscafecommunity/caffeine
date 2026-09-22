@@ -13,6 +13,7 @@
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
+#include "procedural/ProceduralWorldSystem.hpp"
 #include "script/ScriptTypes.hpp"
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
@@ -130,14 +131,12 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_buildDialog.setPrepareBuildCallback([this]() { return prepareSceneForBuild(); });
     m_buildDialog.setProjectContext(projectConfig);
 
+    EditorPaths::init();
     const std::filesystem::path pluginsDir =
         projectConfig.RootPath.empty()
             ? (std::filesystem::current_path() / "plugins")
             : (projectConfig.RootPath / "plugins");
-    std::filesystem::path bundledPluginsDir;
-    if (EditorPaths::isReady()) {
-        bundledPluginsDir = EditorPaths::root().parent_path() / "plugins";
-    }
+    const std::filesystem::path bundledPluginsDir = EditorPaths::bundledPluginsDirectory();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
                                          bundledPluginsDir);
 
@@ -365,6 +364,7 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
     }
     m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
     m_scriptSystem.resetPlayState();
+    Procedural::ProceduralWorldSystem::reset();
     ECS::ComponentQuery cppQ;
     cppQ.with<Script::CppScriptComponent>();
     world.forEach<Script::CppScriptComponent>(cppQ,
@@ -413,6 +413,7 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 #ifdef CF_HAS_SCRIPTING
     m_scriptSystem.resetPlayState();
 #endif
+    Procedural::ProceduralWorldSystem::reset();
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
@@ -540,6 +541,7 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     if (m_scriptEngineReady) {
         m_scriptEngine.setWorld(&world);
         m_scriptSystem.onUpdate(world, dt);
+    Procedural::ProceduralWorldSystem::update(world);
     }
 #endif
     {
@@ -1056,6 +1058,11 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 void SceneEditor::handleShortcuts(ECS::World& world) {
     bool ctrl = ImGui::GetIO().KeyCtrl;
     bool shift = ImGui::GetIO().KeyShift;
+
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_L)) {
+        m_commandPalette.toggle();
+        return;
+    }
 
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_P)) {
         m_commandPalette.toggle();

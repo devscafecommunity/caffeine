@@ -6,6 +6,13 @@
 
 ## Índice da Documentação
 
+### Roadmap & Planos
+
+| Documento | Descrição |
+|-----------|-----------|
+| **Engine Pillars** | [`plans/2026-09-22-engine-pillars-roadmap.md`](plans/2026-09-22-engine-pillars-roadmap.md) | Pilares fundamentais: Phong 3D, Bullet3, OpenAL, ECS, handles, networking, PBR, animação, scripting, Android |
+| **Rendering Roadmap** | [`plans/2026-09-21-rendering-roadmap.md`](plans/2026-09-21-rendering-roadmap.md) | Plano P0–P6: GPU único, texturas, LOD, PBR, sombras, reflexos, volumétricos |
+
 ### Engine Core
 
 | Módulo | Documentação | Descrição |
@@ -46,6 +53,7 @@
 
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
+| **Post-Processing** | [`rendering/post-processing.md`](rendering/post-processing.md) | Stack modular de efeitos, Lua, benchmarks opcionais |
 | **RHI** | [`rendering/rhi.md`](rendering/rhi.md) | RenderDevice, CommandBuffer, Triple Buffering, abstração SDL_GPU |
 | **Batch Renderer** | [`rendering/batch-renderer.md`](rendering/batch-renderer.md) | Sprite batching, Texture Atlas, Radix Sort, Persistent Mapped Buffers |
 | **Camera 2D** | [`rendering/camera-2d.md`](rendering/camera-2d.md) | Projeção ortográfica, follow, shake, bounds |
@@ -68,6 +76,21 @@
 | **Scene Manager** | [`ecs/scene.md`](ecs/scene.md) | Scene stack, hierarquia parent/child, serialização `.caf` |
 | **ECS Overview** | [`ecs/README.md`](ecs/README.md) | Visão geral do ECS |
 | **ECS Examples** | [`ecs/examples.md`](ecs/examples.md) | Exemplos de uso do ECS |
+
+### Editor
+
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Plugin SDK** | [`editor/plugin-sdk.md`](editor/plugin-sdk.md) | Doppio lean + plugins dinâmicos, serviços, UI |
+| **Git Plugin** | [`editor/git-plugin.md`](editor/git-plugin.md) | Painel opcional de gestão Git do projeto |
+
+### Terrain
+
+| Módulo | Documentação | Descrição |
+|--------|-------------|-----------|
+| **Terrain System** | [`terrain/terrain-system.md`](terrain/terrain-system.md) | Heightmap, mesh, LOD, colisão, sculpt/paint, `.cterrain` |
+| **Terrain Generator Plugin** | [`terrain/terrain-plugin.md`](terrain/terrain-plugin.md) | Geração procedural via algoritmo ultra-realistic (Node.js) |
+| **Procedural Tools Plugin** | [`terrain/procedural-tools-plugin.md`](terrain/procedural-tools-plugin.md) | Streaming procedural (exploração, backrooms, corrida) + Lua |
 
 ### Physics
 

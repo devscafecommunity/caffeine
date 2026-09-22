@@ -188,6 +188,8 @@ private:
                                      ECS::World& world,
                                      const std::string& projectRoot = "");
 
+     ECS::Entity pickEntity2D(const Vec2& worldPos, ECS::World& world) const;
+
      struct SpriteTextureCacheEntry {
         std::unique_ptr<ImTextureData> texture;
         int width = 0;

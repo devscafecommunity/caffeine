@@ -14,11 +14,11 @@
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "editor/ComponentTypeRegistry.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "core/WorldUnits.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "terrain/TerrainResolution.hpp"
-#include "terrain/generation/TerrainGenerator.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
 #include "math/Quat.hpp"
 #include "script/CppScript.hpp"
@@ -54,6 +54,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         editorPanelDetachTabButton(m_detached);
         if (!ctx.selectedEntity.isValid()) {
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No entity selected");
+            ImGui::TextDisabled("Click an entity in the Hierarchy to inspect it.");
             ImGui::End();
             return;
         }
@@ -66,7 +67,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             return;
         }
 
-        ECS::Entity e = ctx.selectedEntity;
+        ECS::Entity e(ctx.selectedEntity.id(), &world);
 
         // Entity header
         const char* name = getEntityName(world, e);
@@ -1142,7 +1143,25 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
     }
 
     ImGui::Separator();
-    ImGui::TextDisabled("Generation, sculpt and paint live in the Terrain Editor panel.");
+    ImGui::TextUnformatted("Collision");
+    int collisionStep = static_cast<int>(terrain->collisionSampleStep);
+    if (ImGui::SliderInt("Collision Sample Step", &collisionStep, 1, 16)) {
+        terrain->collisionSampleStep = static_cast<u32>(collisionStep);
+        terrain->dataRevision++;
+        Terrain::TerrainCache::instance().syncEntity(world, e);
+        ctx.isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Higher = fewer collision triangles (render mesh unchanged)");
+    }
+    if (ImGui::Checkbox("Build Collision Mesh", &terrain->buildCollisionMesh)) {
+        terrain->dataRevision++;
+        Terrain::TerrainCache::instance().syncEntity(world, e);
+        ctx.isDirty = true;
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Sculpt/paint: Terrain Editor. Generation: Terrain Generator plugin.");
     ImGui::PopID();
 }
 
@@ -1162,16 +1181,13 @@ void InspectorPanel::drawPostProcess(ECS::World& world, ECS::Entity e, EditorCon
     if (!fx) return;
 
     ImGui::PushID("postprocess");
-    if (ImGui::Checkbox("Enabled", &fx->enabled)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Exposure", &fx->exposure, 0.2f, 3.0f)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Contrast", &fx->contrast, 0.5f, 2.0f)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Saturation", &fx->saturation, 0.0f, 2.0f)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Vignette", &fx->vignette, 0.0f, 1.0f)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Bloom", &fx->bloom, 0.0f, 1.0f)) ctx.isDirty = true;
-    if (ImGui::SliderFloat("Chromatic Aberration", &fx->chromaticAberration, 0.0f, 1.0f)) {
-        ctx.isDirty = true;
+    const u32 typeId = ComponentTypeRegistry::instance().lookup("PostProcess");
+    if (const ComponentDrawer* drawer = m_drawers.get(typeId)) {
+        (*drawer)(fx);
+        ImGui::PopID();
+        return;
     }
-    if (ImGui::SliderFloat("Film Grain", &fx->filmGrain, 0.0f, 1.0f)) ctx.isDirty = true;
+    ImGui::TextDisabled("Install the Post Processing plugin for the full effect stack editor.");
     ImGui::PopID();
 }
 

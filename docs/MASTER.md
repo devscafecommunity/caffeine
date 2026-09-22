@@ -2,7 +2,7 @@
 
 **Versão:** 1.1.0  
 **Status:** Alpha (Pré-produção)  
-**Última Atualização:** 2026-04-14  
+**Última Atualização:** 2026-09-22  
 **Mantido por:** Codex Studio Guild
 
 ---
@@ -17,6 +17,8 @@
 | **HISTORY.md** | Histórico de desenvolvimento (roadmap, planos, revisões) | [`docs/HISTORY.md`](docs/HISTORY.md) |
 | **architecture_specs.md** | Especificações técnicas detalhadas | [`docs/architecture_specs.md`](docs/architecture_specs.md) |
 | **Índice Funcional** | Documentação por módulo | [`docs/README.md`](docs/README.md) |
+| **Engine Pillars** | Pilares fundamentais da engine (Phong, Bullet3, OpenAL, ECS, networking, PBR…) | [`docs/plans/2026-09-22-engine-pillars-roadmap.md`](docs/plans/2026-09-22-engine-pillars-roadmap.md) |
+| **Rendering Roadmap** | Plano técnico de rendering 3D (P0–P6) | [`docs/plans/2026-09-21-rendering-roadmap.md`](docs/plans/2026-09-21-rendering-roadmap.md) |
 
 ---
 
@@ -38,6 +40,7 @@ docs/
 ├── rendering/                # 🎨 Rendering (rhi, batch-renderer, camera-2d, camera-3d)
 ├── assets/                   # 📦 Assets (asset-manager, caf-format, mesh-loading, asset-pipeline)
 ├── ecs/                      # 🧩 ECS (core, scene, examples)
+├── terrain/                  # 🏔️ Terrain (heightmap, LOD, plugin de geração)
 ├── physics/                  # 🌌 Physics (physics-2d, spatial-partitioning)
 ├── animation/                # 🎬 Animation (animation-2d, skeletal-animation)
 ├── audio/                    # 🔊 Audio (audio-system)
@@ -84,6 +87,8 @@ docs/
 ### 1. Visão Geral & Desenvolvimento
 
 - [**HISTORY.md**](HISTORY.md) — Histórico completo de desenvolvimento
+- [**Engine Pillars**](plans/2026-09-22-engine-pillars-roadmap.md) — Roadmap de sistemas fundamentais (Phong, Bullet3, OpenAL, ECS, networking, PBR, animação…)
+- [**Rendering Roadmap**](plans/2026-09-21-rendering-roadmap.md) — Plano técnico de rendering 3D de alto volume
 - [**architecture_specs.md**](architecture_specs.md) — Especificações técnicas detalhadas
 
 ### 2. Documentação por Módulo

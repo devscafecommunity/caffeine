@@ -21,6 +21,7 @@
 #include "ui/UISystem.hpp"
 #include "ui/UIRenderer.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "procedural/ProceduralWorldSystem.hpp"
 #include "render/GpuSceneRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
@@ -563,6 +564,7 @@ int main(int argc, char** argv) {
                 scriptEngine.setInput(&input);
                 scriptSystem.onUpdate(world, dt);
             }
+            Caffeine::Procedural::ProceduralWorldSystem::update(world);
             uiSystem.onUpdate(world, dt);
         }
 

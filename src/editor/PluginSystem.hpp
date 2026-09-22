@@ -4,6 +4,7 @@
 #include "core/Types.hpp"
 #include "core/io/FileWatcher.hpp"
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -23,6 +24,7 @@ class EditorContext;
 struct PluginPanel {
     std::string pluginName;
     std::string title;
+    std::string commandId;
     std::function<void()> render;
     bool open = true;
 };
@@ -91,6 +93,7 @@ public:
     // Editor-side registration (also used by host API callbacks)
     bool registerPanel(const std::string& pluginName, const std::string& title,
                        std::function<void()> renderFunc);
+    bool openPanel(const std::string& title);
     bool registerMenuAction(const std::string& pluginName, const std::string& menuPath,
                             std::function<void()> action);
     bool registerComponentDrawer(const std::string& pluginName, u32 componentTypeId,
@@ -102,6 +105,8 @@ private:
     PluginManager() = default;
 
     bool loadPluginInternal(const std::string& path, bool fromHotReload);
+    bool unloadPluginByPath(const std::string& path);
+    const struct PluginHandle* findLoadedPluginByStem(const std::string& stem) const;
     void scanPluginsDirectory();
     void ensureWatcher();
     std::filesystem::path pluginsDirectory() const;
@@ -110,6 +115,7 @@ private:
     static void hostLogError(void* ctx, const char* message);
     static bool hostRegisterPanel(void* ctx, const char* pluginName, const char* title,
                                   void (*renderFn)(void* userData), void* userData);
+    static bool hostOpenPanel(void* ctx, const char* title);
     static bool hostRegisterMenuAction(void* ctx, const char* pluginName, const char* menuPath,
                                        void (*actionFn)(void* userData), void* userData);
     static bool hostRegisterComponentDrawer(void* ctx, const char* pluginName, u32 componentTypeId,
@@ -118,6 +124,14 @@ private:
     static bool hostRegisterEntityPresetManifest(void* ctx, const char* pluginName,
                                                  const char* manifestPath);
     static u32 hostGetComponentTypeId(void* ctx, const char* componentName);
+    static void* hostGetActiveWorld(void* editorContext);
+    static CaffeinePluginU32 hostGetSelectedEntityId(void* editorContext);
+    static void hostMarkSceneDirty(void* editorContext);
+    static bool hostInvokeService(void* ctx, const char* serviceName, const void* request,
+                                  std::size_t requestSize, void* response, std::size_t responseSize);
+    static bool hostRegisterService(void* ctx, const char* pluginName, const char* serviceName,
+                                    PluginServiceHandler handler);
+    static bool hostGetProjectRootPath(void* editorContext, char* buffer, std::size_t bufferSize);
 
     std::filesystem::path m_pluginsDirectory;
     std::filesystem::path m_bundledPluginsDirectory;

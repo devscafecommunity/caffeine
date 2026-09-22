@@ -10,10 +10,16 @@
 namespace Caffeine::Editor {
 
 std::filesystem::path EditorPaths::s_root;
+std::filesystem::path EditorPaths::s_bundledPlugins;
 
 void EditorPaths::init() {
-    if (!s_root.empty()) return;
-    s_root = findAssetsRoot();
+    if (!s_root.empty() && !s_bundledPlugins.empty()) return;
+    if (s_root.empty()) {
+        s_root = findAssetsRoot();
+    }
+    if (s_bundledPlugins.empty()) {
+        s_bundledPlugins = findBundledPluginsRoot();
+    }
 }
 
 std::filesystem::path EditorPaths::findAssetsRoot() {
@@ -46,6 +52,48 @@ std::filesystem::path EditorPaths::findAssetsRoot() {
     }
 
     return {};
+}
+
+std::filesystem::path EditorPaths::findBundledPluginsRoot() {
+    std::vector<std::filesystem::path> candidates;
+
+#ifdef __linux__
+    char exePath[PATH_MAX] = {};
+    const ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0) {
+        exePath[len] = '\0';
+        const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+        candidates.push_back(exeDir / "plugins");
+        candidates.push_back(exeDir / ".." / "plugins");
+    }
+#endif
+
+    candidates.push_back(std::filesystem::current_path() / "plugins");
+    candidates.push_back(std::filesystem::current_path() / ".." / "plugins");
+
+#ifdef CAFFEINE_SOURCE_DIR
+    candidates.push_back(std::filesystem::path(CAFFEINE_SOURCE_DIR) / "build" / "plugins");
+#endif
+
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(candidate, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(candidate, ec)) {
+            if (ec) break;
+            const auto ext = entry.path().extension().string();
+            if (ext == ".so" || ext == ".dll") {
+                std::error_code canonEc;
+                return std::filesystem::weakly_canonical(candidate, canonEc);
+            }
+        }
+    }
+
+    return {};
+}
+
+std::filesystem::path EditorPaths::bundledPluginsDirectory() {
+    if (s_bundledPlugins.empty()) init();
+    return s_bundledPlugins;
 }
 
 std::filesystem::path EditorPaths::resolve(const std::string& relativePath) {

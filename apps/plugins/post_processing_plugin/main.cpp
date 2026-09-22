@@ -1,4 +1,6 @@
-#include "editor/PluginAPI.hpp"
+#include "caffeine/plugin/PluginAPI.hpp"
+#include "caffeine/postprocess/PostProcessEditorUI.hpp"
+#include "caffeine/postprocess/PostProcessPresets.hpp"
 #include "editor/EditorContext.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/CameraComponents.hpp"
@@ -21,8 +23,8 @@ public:
         }
         if (m_host->registerMenuAction) {
             m_host->registerMenuAction(m_host->editorContext, GetName(),
-                                       "Effects/Add Post Process to Camera",
-                                       &PostProcessingPlugin::addToSelectedCamera, this);
+                                     "Effects/Add Post Process to Camera",
+                                     &PostProcessingPlugin::addToSelectedCamera, this);
         }
         if (m_host->registerComponentDrawer && m_host->getComponentTypeId) {
             const Caffeine::u32 typeId =
@@ -35,13 +37,12 @@ public:
     }
 
     void OnUnload() override {}
-
     void OnUpdate(float) override {}
 
     const char* GetName() const override { return "Post Processing"; }
-    const char* GetVersion() const override { return "0.1.0"; }
+    const char* GetVersion() const override { return "0.2.0"; }
     const char* GetDescription() const override {
-        return "Camera post-processing stack: bloom, vignette, color grading and more.";
+        return "Modular post-processing stack: per-effect modules, Lua control, optional benchmarks.";
     }
 
 private:
@@ -59,8 +60,9 @@ private:
         }
         Caffeine::ECS::World& world = *ctx->activeWorld;
         if (!ctx->selectedEntity.isValid()) {
-            ImGui::TextWrapped("Select a camera entity, then use the presets below or add the "
-                               "Post Process component from the Inspector.");
+            ImGui::TextWrapped(
+                "Select a camera entity. Combine effect modules below — Cinematic / Horror / Arcade "
+                "are optional benchmark looks, not game types.");
             return;
         }
 
@@ -68,7 +70,7 @@ private:
         ImGui::Text("Target: %s (entity %u)", Caffeine::Editor::getEntityName(world, e), e.id());
 
         if (!world.has<Caffeine::ECS::PostProcessComponent>(e)) {
-            if (ImGui::Button("Add Post Process Component")) {
+            if (ImGui::Button("Add Post Process Stack")) {
                 world.add<Caffeine::ECS::PostProcessComponent>(e);
                 ctx->isDirty = true;
             }
@@ -78,38 +80,19 @@ private:
         auto* fx = world.get<Caffeine::ECS::PostProcessComponent>(e);
         if (!fx) return;
 
-        ImGui::Separator();
-        ImGui::TextUnformatted("Presets");
-        if (ImGui::Button("Cinematic")) applyPreset(*fx, 1.05f, 1.1f, 1.05f, 0.35f, 0.15f, 0.02f, 0.04f);
-        ImGui::SameLine();
-        if (ImGui::Button("Horror")) applyPreset(*fx, 0.75f, 1.25f, 0.7f, 0.55f, 0.0f, 0.08f, 0.12f);
-        ImGui::SameLine();
-        if (ImGui::Button("Arcade")) applyPreset(*fx, 1.2f, 1.15f, 1.3f, 0.1f, 0.25f, 0.0f, 0.0f);
+        ImGui::TextWrapped(
+            "Modular effect stack — enable and tune each module independently. GPU passes are "
+            "planned; editor preview uses approximate overlays.");
+
+        if (ImGui::CollapsingHeader("Benchmark looks (optional)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (Caffeine::PostProcess::EditorUI::drawBenchmarkPresets(*fx)) ctx->isDirty = true;
+        }
 
         ImGui::Separator();
-        if (ImGui::Checkbox("Enabled", &fx->enabled)) ctx->isDirty = true;
-        if (ImGui::SliderFloat("Exposure", &fx->exposure, 0.2f, 3.0f)) ctx->isDirty = true;
-        if (ImGui::SliderFloat("Vignette", &fx->vignette, 0.0f, 1.0f)) ctx->isDirty = true;
-        if (ImGui::SliderFloat("Bloom", &fx->bloom, 0.0f, 1.0f)) ctx->isDirty = true;
-        if (ImGui::SliderFloat("Chromatic", &fx->chromaticAberration, 0.0f, 1.0f)) {
-            ctx->isDirty = true;
-        }
-        if (ImGui::SliderFloat("Film Grain", &fx->filmGrain, 0.0f, 1.0f)) ctx->isDirty = true;
+        if (Caffeine::PostProcess::EditorUI::drawEffectStack(*fx)) ctx->isDirty = true;
 #else
         (void)userData;
 #endif
-    }
-
-    static void applyPreset(Caffeine::ECS::PostProcessComponent& fx, float exposure, float contrast,
-                            float saturation, float vignette, float bloom, float chroma, float grain) {
-        fx.enabled = true;
-        fx.exposure = exposure;
-        fx.contrast = contrast;
-        fx.saturation = saturation;
-        fx.vignette = vignette;
-        fx.bloom = bloom;
-        fx.chromaticAberration = chroma;
-        fx.filmGrain = grain;
     }
 
     static void addToSelectedCamera(void* userData) {
@@ -131,7 +114,7 @@ private:
             ctx->isDirty = true;
         }
         if (self->m_host->logInfo) {
-            self->m_host->logInfo(self->m_host->editorContext, "Post Process added to camera.");
+            self->m_host->logInfo(self->m_host->editorContext, "Post-process stack added to camera.");
         }
     }
 
@@ -140,10 +123,7 @@ private:
         (void)userData;
         auto* fx = static_cast<Caffeine::ECS::PostProcessComponent*>(componentData);
         if (!fx) return;
-        ImGui::Checkbox("Enabled", &fx->enabled);
-        ImGui::SliderFloat("Exposure", &fx->exposure, 0.2f, 3.0f);
-        ImGui::SliderFloat("Vignette", &fx->vignette, 0.0f, 1.0f);
-        ImGui::SliderFloat("Bloom", &fx->bloom, 0.0f, 1.0f);
+        Caffeine::PostProcess::EditorUI::drawEffectStack(*fx);
 #else
         (void)componentData;
         (void)userData;

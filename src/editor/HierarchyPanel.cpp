@@ -185,7 +185,7 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
         m_lastScrollTarget = entity;
     }
 
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         if (ImGui::GetIO().KeyCtrl) {
             m_context->toggleSelection(entity);
         } else if (ImGui::GetIO().KeyShift) {

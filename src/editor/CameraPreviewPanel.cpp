@@ -1,4 +1,5 @@
 #include "editor/CameraPreviewPanel.hpp"
+#include "editor/Camera2DPreviewRenderer.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "editor/SceneViewport.hpp"
 
@@ -323,119 +324,20 @@ void CameraPreviewPanel::renderCameraView(ECS::World& world, EditorContext& ctx,
                                           ImVec2 origin, ImVec2 panelSize,
                                           float camX, float camY, float zoom) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    dl->AddRectFilled(origin,
-                      ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                      IM_COL32(15, 15, 18, 255));
-
-    dl->PushClipRect(origin,
-                     ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                     true);
-
-    const float worldToScreen = zoom * 50.0f;
-    const float cx = origin.x + panelSize.x * 0.5f;
-    const float cy = origin.y + panelSize.y * 0.5f;
-
-    auto w2s = [&](float wx, float wy) -> ImVec2 {
-        return ImVec2(cx + (wx - camX) * worldToScreen,
-                      cy - (wy - camY) * worldToScreen);
-    };
-
-    ECS::ComponentQuery spriteQ;
-    spriteQ.with<ECS::Transform>();
-    spriteQ.with<ECS::Sprite>();
-
-    int spriteCount = 0;
-    world.forEach<ECS::Transform, ECS::Sprite>(spriteQ,
-        [&](ECS::Entity entity, ECS::Transform& pos, ECS::Sprite& sprite) {
-            if (Scene::isEffectivelyDisabled(world, entity)) return;
-            ++spriteCount;
-
-            Vec3 worldPosition = pos.position;
-            float scaleX = std::max(0.1f, pos.scale.x);
-            float scaleY = std::max(0.1f, pos.scale.y);
-            if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
-                worldPosition = Vec3(wt->matrix(0, 3), wt->matrix(1, 3), wt->matrix(2, 3));
-                scaleX = std::max(0.1f, std::sqrt(wt->matrix(0, 0) * wt->matrix(0, 0) +
-                                                  wt->matrix(1, 0) * wt->matrix(1, 0)));
-                scaleY = std::max(0.1f, std::sqrt(wt->matrix(0, 1) * wt->matrix(0, 1) +
-                                                  wt->matrix(1, 1) * wt->matrix(1, 1)));
-            }
-
-            ImVec2 screenPos = w2s(worldPosition.x, worldPosition.y);
-
-            float halfW = std::max(8.0f, 0.5f * worldToScreen * scaleX);
-            float halfH = std::max(8.0f, 0.5f * worldToScreen * scaleY);
-
-            bool hasTexture = false;
-            ImTextureRef texRef;
-
-            if (!sprite.name.empty()) {
-                const std::string path = resolveSpritePath(sprite.name, ctx);
-                if (!path.empty()) {
-                    auto it = m_texCache.find(path);
-                    if (it == m_texCache.end()) {
-                        int w = 0, h = 0, ch = 0;
-                        unsigned char* px = stbi_load(path.c_str(), &w, &h, &ch, 4);
-                        TexEntry entry;
-                        if (px && w > 0 && h > 0) {
-                            entry.width  = w;
-                            entry.height = h;
-                            entry.texture = std::make_unique<ImTextureData>();
-                            entry.texture->Create(ImTextureFormat_RGBA32, w, h);
-                            std::memcpy(entry.texture->GetPixels(), px,
-                                        static_cast<size_t>(w * h * 4));
-                            entry.texture->SetStatus(ImTextureStatus_WantCreate);
-                            ImGui_ImplSDLGPU3_UpdateTexture(entry.texture.get());
-                        } else {
-                            entry.loadFailed = true;
-                        }
-                        if (px) stbi_image_free(px);
-                        auto [newIt, ok] = m_texCache.emplace(path, std::move(entry));
-                        it = newIt;
-                    }
-                    if (!it->second.loadFailed && it->second.texture) {
-                        if (it->second.texture->Status == ImTextureStatus_WantCreate)
-                            ImGui_ImplSDLGPU3_UpdateTexture(it->second.texture.get());
-                        ImTextureID tid = it->second.texture->GetTexID();
-                        hasTexture = (tid != ImTextureID_Invalid);
-                        if (hasTexture) {
-                            texRef = it->second.texture->GetTexRef();
-                            const float aspect = static_cast<float>(it->second.width) /
-                                                 static_cast<float>(it->second.height);
-                            if (aspect > 1.0f) halfH = std::max(8.0f, halfW / aspect);
-                            else               halfW = std::max(8.0f, halfH * aspect);
-                        }
-                    }
-                }
-            }
-
-            const ImVec2 p1 = ImVec2(screenPos.x - halfW, screenPos.y - halfH);
-            const ImVec2 p2 = ImVec2(screenPos.x + halfW, screenPos.y - halfH);
-            const ImVec2 p3 = ImVec2(screenPos.x + halfW, screenPos.y + halfH);
-            const ImVec2 p4 = ImVec2(screenPos.x - halfW, screenPos.y + halfH);
-
-            if (hasTexture) {
-                dl->AddImageQuad(texRef, p1, p2, p3, p4);
-            } else {
-                dl->AddRectFilled(p1, p3, IM_COL32(64, 64, 64, 200));
-            }
-        });
-
-    dl->PopClipRect();
+    const int spriteCount =
+        renderCamera2DPreview(world, ctx, dl, origin, panelSize, camX, camY, zoom, m_texCache);
 
     if (spriteCount == 0) {
-        const char* msg = "No sprites in camera view";
+        const char* msg =
+            "Camera OK — add sprites (Entity Presets: 2D Character, Parallax BG)";
         ImVec2 ts = ImGui::CalcTextSize(msg);
         dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
-                           origin.y + (panelSize.y - ts.y) * 0.5f),
-                    IM_COL32(150, 150, 160, 200), msg);
+                           origin.y + panelSize.y * 0.55f),
+                    IM_COL32(170, 170, 180, 220), msg);
     }
 
-    const float borderAlpha = 160;
-    dl->AddRect(origin,
-                ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
-                IM_COL32(80, 140, 255, borderAlpha), 0.0f, 0, 1.5f);
+    dl->AddRect(origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
+                IM_COL32(80, 140, 255, 160), 0.0f, 0, 1.5f);
 }
 
 void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorContext& ctx,

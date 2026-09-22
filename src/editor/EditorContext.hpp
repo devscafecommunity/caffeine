@@ -117,6 +117,9 @@ public:
     f32 viewportPanY = 0.0f;
     f32 viewportZoom = 1.0f;
 
+    static constexpr f32 kViewport2DZoomMin = 0.02f;
+    static constexpr f32 kViewport2DZoomMax = 64.0f;
+
     // ── Viewport camera ────────────────────────────────────────────────
     enum class ViewMode : u8 { Mode2D, Mode3D, Isometric };
 

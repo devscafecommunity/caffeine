@@ -12,6 +12,7 @@
 #include "ui/UIComponents.hpp"
 #include "editor/EditorContext.hpp"
 #include "scene/SceneComponents.hpp"
+#include "editor/TerrainGenerationBlobLegacy.hpp"
 #include "terrain/TerrainCache.hpp"
 #include <vector>
 #include <unordered_map>
@@ -27,7 +28,7 @@ namespace IO = SceneSerializerIO;
 
 namespace {
 
-constexpr u32 kTerrainBlobVersion = 8;
+constexpr u32 kTerrainBlobVersion = 9;
 
 std::filesystem::path projectRootFromScenePath(const std::string& scenePath) {
     if (scenePath.empty()) return {};
@@ -486,90 +487,8 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
         appendString(data, terrain.splatLayerPaths[i]);
     }
-    const ECS::TerrainGenerationSettings& gen = terrain.generation;
-    appendU32(data, gen.seed);
-    appendF32(data, gen.noiseScale);
-    appendU32(data, gen.octaves);
-    appendF32(data, gen.persistence);
-    appendF32(data, gen.lacunarity);
-    appendF32(data, gen.amplitude);
-    appendF32(data, gen.baseHeight);
-    appendU8(data, static_cast<u8>(gen.noiseAlgorithm));
-    appendU8(data, gen.domainWarp ? 1 : 0);
-    appendF32(data, gen.domainWarpStrength);
-    appendU8(data, gen.thermalErosion ? 1 : 0);
-    appendU32(data, gen.thermalIterations);
-    appendF32(data, gen.thermalTalus);
-    appendU8(data, gen.hydraulicErosion ? 1 : 0);
-    appendU32(data, gen.hydraulicIterations);
-    appendF32(data, gen.hydraulicRain);
-    appendF32(data, gen.hydraulicErode);
-    appendF32(data, gen.hydraulicDeposit);
-    appendU8(data, gen.smoothPass ? 1 : 0);
-    appendU32(data, gen.smoothIterations);
-    appendF32(data, gen.heightQuantize);
-    appendU8(data, gen.autoSplat ? 1 : 0);
-    appendU8(data, static_cast<u8>(gen.style));
-    if (kTerrainBlobVersion >= 4) {
-        appendU8(data, gen.useRidgedNoise ? 1 : 0);
-        appendU32(data, gen.domainWarpPasses);
-        appendU32(data, gen.hydraulicMaxSteps);
-        appendF32(data, gen.hydraulicInertia);
-        appendF32(data, gen.hydraulicEvaporation);
-        appendF32(data, gen.splatBlendRange);
-        const ECS::TerrainSimulationSettings& sim = gen.simulation;
-        appendU8(data, sim.enabled ? 1 : 0);
-        appendU8(data, static_cast<u8>(sim.environment));
-        appendU32(data, sim.totalIterations);
-        appendU32(data, sim.dropletsPerIteration);
-        appendU32(data, sim.maxDropletSteps);
-        appendF32(data, sim.convergenceThreshold);
-        appendU8(data, sim.autoConvergence ? 1 : 0);
-        appendF32(data, sim.tectonicActivity);
-        appendF32(data, sim.erosionWater);
-        appendF32(data, sim.erosionThermal);
-        appendF32(data, sim.erosionGlacial);
-        appendF32(data, sim.erosionWind);
-        appendF32(data, sim.erosionBiological);
-        appendF32(data, sim.temperature);
-        appendF32(data, sim.humidity);
-        appendF32(data, sim.windDirection);
-        appendF32(data, sim.rainfallBase);
-        appendF32(data, gen.ridgedBlend);
-        appendU32(data, gen.postSimSmoothIterations);
-        appendU32(data, gen.splatBlurPasses);
-    }
-    if (kTerrainBlobVersion >= 6) {
-        appendU8(data, static_cast<u8>(gen.heightModel));
-        appendF32(data, gen.ridgeOffset);
-        appendF32(data, gen.ridgeGain);
-        appendF32(data, gen.multiplicativeContrast);
-        appendU8(data, gen.fractalDomainWarp ? 1 : 0);
-        appendF32(data, gen.domainWarpScale);
-        appendU8(data, gen.slopeWeighting ? 1 : 0);
-        appendF32(data, gen.slopeWeightAlpha);
-    }
-    if (kTerrainBlobVersion >= 7) {
-        appendU8(data, gen.useClimateBiomes ? 1 : 0);
-        appendF32(data, gen.climate.prevailingWindAngle);
-        appendF32(data, gen.climate.baseHumidity);
-        appendF32(data, gen.climate.temperature);
-        appendF32(data, gen.climate.seaLevel);
-        appendU8(data, gen.hydrology.traceRivers ? 1 : 0);
-        appendU32(data, gen.hydrology.maxRiverSources);
-        appendF32(data, gen.hydrology.riverSourceMinHeight);
-        appendF32(data, gen.hydrology.riverSourceMaxHeight);
-        appendF32(data, gen.hydrology.riverCarveStrength);
-        appendU32(data, gen.hydrology.rainShadowSteps);
-        appendF32(data, gen.hydrology.waterMoistureRadius);
-        appendF32(data, gen.hydrology.sedimentDepositStrength);
-    }
-    if (kTerrainBlobVersion >= 8) {
-        appendF32(data, gen.fractalRoughness);
-        appendF32(data, gen.spectralExponent);
-        appendU8(data, static_cast<u8>(gen.multiplyLayerA));
-        appendU8(data, static_cast<u8>(gen.multiplyLayerB));
-    }
+    appendU32(data, terrain.collisionSampleStep);
+    appendU8(data, terrain.buildCollisionMesh ? 1 : 0);
     return data;
 }
 
@@ -630,8 +549,8 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
         }
     }
 
-    if (blobVersion >= 2) {
-        ECS::TerrainGenerationSettings& gen = terrain.generation;
+    if (blobVersion >= 2 && blobVersion <= 8) {
+        LegacyTerrainGenerationSettings gen;
         u8 noiseAlgorithm = 0;
         u8 domainWarp = 0;
         u8 thermalErosion = 0;
@@ -664,13 +583,13 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
         if (!readU8(cursor, end, autoSplat)) return false;
         if (!readU8(cursor, end, style)) return false;
 
-        gen.noiseAlgorithm = static_cast<Terrain::TerrainNoiseAlgorithm>(noiseAlgorithm);
+        gen.noiseAlgorithm = static_cast<LegacyTerrainNoiseAlgorithm>(noiseAlgorithm);
         gen.domainWarp = domainWarp != 0;
         gen.thermalErosion = thermalErosion != 0;
         gen.hydraulicErosion = hydraulicErosion != 0;
         gen.smoothPass = smoothPass != 0;
         gen.autoSplat = autoSplat != 0;
-        gen.style = static_cast<ECS::TerrainGenStyle>(style);
+        gen.style = static_cast<LegacyTerrainGenStyle>(style);
 
         if (blobVersion >= 4) {
             u8 useRidgedNoise = 1;
@@ -683,7 +602,7 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
             if (!readF32(cursor, end, gen.hydraulicInertia)) return false;
             if (!readF32(cursor, end, gen.hydraulicEvaporation)) return false;
             if (!readF32(cursor, end, gen.splatBlendRange)) return false;
-            ECS::TerrainSimulationSettings& sim = gen.simulation;
+            LegacyTerrainSimulationSettings& sim = gen.simulation;
             if (!readU8(cursor, end, simEnabled)) return false;
             if (!readU8(cursor, end, simEnvironment)) return false;
             if (!readU32(cursor, end, sim.totalIterations)) return false;
@@ -703,7 +622,7 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
             if (!readF32(cursor, end, sim.rainfallBase)) return false;
             gen.useRidgedNoise = useRidgedNoise != 0;
             sim.enabled = simEnabled != 0;
-            sim.environment = static_cast<ECS::TerrainEnvironment>(simEnvironment);
+            sim.environment = static_cast<LegacyTerrainEnvironment>(simEnvironment);
             sim.autoConvergence = simAutoConvergence != 0;
         } else {
             gen.useRidgedNoise = false;
@@ -736,12 +655,12 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
             if (!readF32(cursor, end, gen.domainWarpScale)) return false;
             if (!readU8(cursor, end, slopeWeighting)) return false;
             if (!readF32(cursor, end, gen.slopeWeightAlpha)) return false;
-            gen.heightModel = static_cast<Terrain::TerrainHeightModel>(heightModel);
+            gen.heightModel = static_cast<LegacyTerrainHeightModel>(heightModel);
             gen.fractalDomainWarp = fractalDomainWarp != 0;
             gen.slopeWeighting = slopeWeighting != 0;
         } else {
-            gen.heightModel = gen.useRidgedNoise ? Terrain::TerrainHeightModel::Hybrid
-                                                 : Terrain::TerrainHeightModel::RollingHills;
+            gen.heightModel = gen.useRidgedNoise ? LegacyTerrainHeightModel::Hybrid
+                                                 : LegacyTerrainHeightModel::RollingHills;
             gen.ridgeOffset = 1.0f;
             gen.ridgeGain = 1.5f;
             gen.multiplicativeContrast = 1.2f;
@@ -781,14 +700,22 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
             u8 multiplyLayerB = 2;
             if (!readU8(cursor, end, multiplyLayerA)) return false;
             if (!readU8(cursor, end, multiplyLayerB)) return false;
-            gen.multiplyLayerA = static_cast<Terrain::TerrainHeightModel>(multiplyLayerA);
-            gen.multiplyLayerB = static_cast<Terrain::TerrainHeightModel>(multiplyLayerB);
+            gen.multiplyLayerA = static_cast<LegacyTerrainHeightModel>(multiplyLayerA);
+            gen.multiplyLayerB = static_cast<LegacyTerrainHeightModel>(multiplyLayerB);
         } else {
             gen.fractalRoughness = 0.55f;
             gen.spectralExponent = 2.0f;
-            gen.multiplyLayerA = Terrain::TerrainHeightModel::RollingHills;
-            gen.multiplyLayerB = Terrain::TerrainHeightModel::RidgedMountains;
+            gen.multiplyLayerA = LegacyTerrainHeightModel::RollingHills;
+            gen.multiplyLayerB = LegacyTerrainHeightModel::RidgedMountains;
         }
+        (void)gen;
+    }
+
+    if (blobVersion >= 9) {
+        if (!readU32(cursor, end, terrain.collisionSampleStep)) return false;
+        u8 buildCollision = 1;
+        if (!readU8(cursor, end, buildCollision)) return false;
+        terrain.buildCollisionMesh = buildCollision != 0;
     }
 
     return cursor <= end;

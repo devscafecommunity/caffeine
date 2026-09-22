@@ -5,7 +5,7 @@
 #include "terrain/TerrainResolution.hpp"
 #include "terrain/TerrainSerializer.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
-#include "terrain/generation/TerrainGenerator.hpp"
+#include "terrain/TerrainCollisionMeshBuilder.hpp"
 #include "assets/MeshCache.hpp"
 #include "core/WorldUnits.hpp"
 
@@ -52,27 +52,13 @@ void TerrainCache::syncTextureToFilter(ECS::World& world, ECS::Entity entity,
     }
 }
 
-void TerrainCache::generateTerrain(ECS::World& world, ECS::Entity entity,
-                                   ECS::TerrainComponent& terrain) {
-    if (terrain.resolutionX < 129 || terrain.resolutionZ < 129) {
-        terrain.resolutionX = std::max(terrain.resolutionX, 257u);
-        terrain.resolutionZ = std::max(terrain.resolutionZ, 257u);
+void TerrainCache::rebuildCollisionMesh(TerrainEntry& entry, const ECS::TerrainComponent& component) {
+    if (!component.buildCollisionMesh || entry.heightmap.empty()) {
+        entry.collisionMesh.reset();
+        return;
     }
-    if (terrain.splatResolutionScale < 2) {
-        terrain.splatResolutionScale = 2;
-    }
-    if (terrain.maxHeight < 4.0f) {
-        terrain.maxHeight = Caffeine::WorldUnits::kDefaultTerrainHeightM;
-    }
-    if (terrain.worldSizeX < 16.0f) terrain.worldSizeX = Caffeine::WorldUnits::kDefaultTerrainSizeM;
-    if (terrain.worldSizeZ < 16.0f) terrain.worldSizeZ = Caffeine::WorldUnits::kDefaultTerrainSizeM;
-
-    TerrainEntry& entry = ensureEntry(entity);
-    TerrainGenerator::generate(entry.heightmap, entry.splatmap, terrain, terrain.generation);
-    terrain.dataRevision++;
-    terrain.splatRevision++;
-    rebuildMesh(entity, entry, terrain);
-    syncTextureToFilter(world, entity, terrain);
+    entry.collisionMesh = std::make_unique<Assets::Mesh3D>(
+        TerrainCollisionMeshBuilder::build(entry.heightmap, component));
 }
 
 void TerrainCache::initializeEntity(ECS::World& world, ECS::Entity entity) {
@@ -139,6 +125,7 @@ void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
 
     component.meshRevision = component.dataRevision;
     entry.builtRevision = component.dataRevision;
+    rebuildCollisionMesh(entry, component);
     (void)entity;
 }
 
@@ -248,6 +235,18 @@ TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) {
 const TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) const {
     auto it = m_entries.find(entity.id());
     return it != m_entries.end() ? &it->second.splatmap : nullptr;
+}
+
+Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
+    return it->second.collisionMesh.get();
+}
+
+const Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
+    return it->second.collisionMesh.get();
 }
 
 Assets::Mesh3D* TerrainCache::meshFor(ECS::Entity entity) {

@@ -1,11 +1,32 @@
 #pragma once
 
+// Legacy terrain generation blob (v2–v8 scene files). Generation lives in the terrain plugin;
+// this header exists only so old scenes deserialize without pulling generation into core.
+
 #include "core/Types.hpp"
-#include "terrain/generation/TerrainNoise.hpp"
 
-namespace Caffeine::ECS {
+namespace Caffeine::Editor {
 
-enum class TerrainGenStyle : u8 {
+enum class LegacyTerrainNoiseAlgorithm : u8 {
+    Perlin = 0,
+    Simplex = 1,
+    Value = 2,
+    Worley = 3,
+};
+
+enum class LegacyTerrainHeightModel : u8 {
+    RollingHills = 0,
+    FractalFBM = 1,
+    RidgedMountains = 2,
+    Multiplicative = 3,
+    Hybrid = 4,
+    Combined = 5,
+    DiamondSquare = 6,
+    SpectralFFT = 7,
+    HeightfieldMultiply = 8,
+};
+
+enum class LegacyTerrainGenStyle : u8 {
     Realistic = 0,
     LowPoly = 1,
     Stylized = 2,
@@ -13,7 +34,7 @@ enum class TerrainGenStyle : u8 {
     UltraRealistic = 4,
 };
 
-enum class TerrainEnvironment : u8 {
+enum class LegacyTerrainEnvironment : u8 {
     Custom = 0,
     TropicalWet = 1,
     AridDesert = 2,
@@ -22,36 +43,34 @@ enum class TerrainEnvironment : u8 {
     Volcanic = 5,
 };
 
-struct TerrainSimulationSettings {
+struct LegacyTerrainSimulationSettings {
     bool enabled = false;
-    TerrainEnvironment environment = TerrainEnvironment::TropicalWet;
+    LegacyTerrainEnvironment environment = LegacyTerrainEnvironment::TropicalWet;
     u32 totalIterations = 250;
     u32 dropletsPerIteration = 12;
     u32 maxDropletSteps = 80;
     f32 convergenceThreshold = 0.00008f;
     bool autoConvergence = true;
-
     f32 tectonicActivity = 0.55f;
     f32 erosionWater = 0.85f;
     f32 erosionThermal = 0.5f;
     f32 erosionGlacial = 0.0f;
     f32 erosionWind = 0.1f;
     f32 erosionBiological = 0.35f;
-
     f32 temperature = 0.75f;
     f32 humidity = 0.8f;
     f32 windDirection = 180.0f;
     f32 rainfallBase = 0.04f;
 };
 
-struct TerrainClimateSettings {
+struct LegacyTerrainClimateSettings {
     f32 prevailingWindAngle = 225.0f;
     f32 baseHumidity = 0.7f;
     f32 temperature = 0.6f;
     f32 seaLevel = 0.38f;
 };
 
-struct TerrainHydrologySettings {
+struct LegacyTerrainHydrologySettings {
     bool traceRivers = false;
     u32 maxRiverSources = 48;
     f32 riverSourceMinHeight = 0.35f;
@@ -62,7 +81,7 @@ struct TerrainHydrologySettings {
     f32 sedimentDepositStrength = 0.00008f;
 };
 
-struct TerrainGenerationSettings {
+struct LegacyTerrainGenerationSettings {
     u32 seed = 1337;
     f32 noiseScale = 0.025f;
     u32 octaves = 5;
@@ -70,8 +89,8 @@ struct TerrainGenerationSettings {
     f32 lacunarity = 2.0f;
     f32 amplitude = 0.38f;
     f32 baseHeight = 0.28f;
-    Terrain::TerrainNoiseAlgorithm noiseAlgorithm = Terrain::TerrainNoiseAlgorithm::Simplex;
-    Terrain::TerrainHeightModel heightModel = Terrain::TerrainHeightModel::RollingHills;
+    LegacyTerrainNoiseAlgorithm noiseAlgorithm = LegacyTerrainNoiseAlgorithm::Simplex;
+    LegacyTerrainHeightModel heightModel = LegacyTerrainHeightModel::RollingHills;
     bool useRidgedNoise = false;
     f32 ridgedBlend = 0.25f;
     f32 ridgeOffset = 1.0f;
@@ -79,8 +98,8 @@ struct TerrainGenerationSettings {
     f32 multiplicativeContrast = 1.2f;
     f32 fractalRoughness = 0.55f;
     f32 spectralExponent = 2.0f;
-    Terrain::TerrainHeightModel multiplyLayerA = Terrain::TerrainHeightModel::RollingHills;
-    Terrain::TerrainHeightModel multiplyLayerB = Terrain::TerrainHeightModel::RidgedMountains;
+    LegacyTerrainHeightModel multiplyLayerA = LegacyTerrainHeightModel::RollingHills;
+    LegacyTerrainHeightModel multiplyLayerB = LegacyTerrainHeightModel::RidgedMountains;
     bool domainWarp = true;
     bool fractalDomainWarp = true;
     f32 domainWarpStrength = 0.12f;
@@ -99,11 +118,6 @@ struct TerrainGenerationSettings {
     f32 hydraulicDeposit = 0.25f;
     f32 hydraulicInertia = 0.85f;
     f32 hydraulicEvaporation = 0.05f;
-    bool microSculpt = true;
-    f32 microSculptStrength = 0.42f;
-    f32 microSculptSoftness = 0.35f;
-    f32 microRiverCarve = 0.0f;
-    f32 plateauSharpen = 0.55f;
     bool smoothPass = true;
     u32 smoothIterations = 1;
     u32 postSimSmoothIterations = 4;
@@ -112,10 +126,10 @@ struct TerrainGenerationSettings {
     f32 splatBlendRange = 0.28f;
     u32 splatBlurPasses = 2;
     bool useClimateBiomes = true;
-    TerrainClimateSettings climate;
-    TerrainHydrologySettings hydrology;
-    TerrainGenStyle style = TerrainGenStyle::Realistic;
-    TerrainSimulationSettings simulation;
+    LegacyTerrainClimateSettings climate;
+    LegacyTerrainHydrologySettings hydrology;
+    LegacyTerrainGenStyle style = LegacyTerrainGenStyle::Realistic;
+    LegacyTerrainSimulationSettings simulation;
 };
 
-}  // namespace Caffeine::ECS
+}  // namespace Caffeine::Editor

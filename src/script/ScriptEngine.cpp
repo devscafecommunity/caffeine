@@ -18,6 +18,9 @@
 
 namespace Caffeine::Script {
 
+void registerProceduralScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerPostProcessScriptBindings(sol::state& lua, ECS::World** worldPtr);
+
 // ============================================================================
 // Internal implementation (Pimpl) — all sol2 types are here
 // ============================================================================
@@ -616,6 +619,8 @@ bool ScriptEngine::init(const InitParams& params) {
 
     registerDebugBindings(lua);
     registerMathBindings(lua);
+    registerProceduralScriptBindings(lua, &m_impl->m_world);
+    registerPostProcessScriptBindings(lua, &m_impl->m_world);
 
     {
         sol::table pt = lua["caffeine"]["particles"];

@@ -5,6 +5,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
+#include "ecs/ProceduralComponents.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "audio/AudioComponents.hpp"
@@ -193,8 +194,15 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
     });
+    reg.registerComponent({
+        "Procedural", "Procedural World",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); }
+    });
 
     ComponentTypeRegistry::instance().registerType<ECS::PostProcessComponent>("PostProcess");
+    ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
+        "ProceduralWorld");
 }
 
 } // namespace Caffeine::Editor

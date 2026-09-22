@@ -32,6 +32,7 @@
 #include "terrain/TerrainLodSystem.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
 #include "render/GpuProceduralMeshes.hpp"
+#include "render/PostProcessRenderer.hpp"
 #include "editor/EditorPaths.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "ui/UIRenderer.hpp"
@@ -924,6 +925,35 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         }
     }
 
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging && hovered &&
+        ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+        const bool panModifier = ImGui::IsKeyDown(ImGuiKey_Space) ||
+                                 ImGui::IsKeyDown(ImGuiKey_LeftAlt) ||
+                                 ImGui::IsKeyDown(ImGuiKey_RightAlt);
+        if (!panModifier) {
+            ImVec2 mousePos = ImGui::GetMousePos();
+            ImVec2 vpMin = ImGui::GetItemRectMin();
+            const f32 cx = vpMin.x + viewportSize.x * 0.5f;
+            const f32 cy = vpMin.y + viewportSize.y * 0.5f;
+            const f32 s = ctx.viewportZoom * 50.0f;
+            const Vec2 worldPos((mousePos.x - cx - ctx.viewportPanX) / s,
+                                -(mousePos.y - cy - ctx.viewportPanY) / s);
+            ECS::Entity picked = pickEntity2D(worldPos, world);
+            const bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) ||
+                                      ImGui::IsKeyDown(ImGuiKey_RightShift);
+            if (picked.isValid()) {
+                if (shiftPressed) {
+                    ctx.toggleSelection(picked);
+                } else {
+                    ctx.selectEntity(picked);
+                }
+                TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
+            } else if (!shiftPressed) {
+                ctx.clearSelection();
+            }
+        }
+    }
+
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         if (ImGui::IsKeyPressed(ImGuiKey_T)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
@@ -1323,39 +1353,45 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     drawNavigationWidget(world, ctx, origin, viewportSize);
 
-    if (!ctx.isPlayMode && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-        ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle);
+    if (!ctx.isPlayMode && hovered) {
+        const bool is2D = ctx.viewMode == EditorContext::ViewMode::Mode2D;
         const bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
                               ctx.viewMode == EditorContext::ViewMode::Isometric);
-        if (is3DIso) {
-            const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            const Vec3 forward(-sinY * cosP, sinP, cosY * cosP);
-            const Vec3 worldUp(0.0f, 1.0f, 0.0f);
-            Vec3 right = forward.cross(worldUp);
-            if (right.lengthSquared() < 1e-6f) right = Vec3(1.0f, 0.0f, 0.0f);
-            else right = right.normalized();
-            const Vec3 up = right.cross(forward).normalized();
-            const f32 panSpeed = ctx.camDistance * 0.002f;
-            ctx.camFocus += right * (delta.x * panSpeed);
-            ctx.camFocus -= up * (delta.y * panSpeed);
-        } else {
-            ctx.viewportPanX += delta.x;
-            ctx.viewportPanY += delta.y;
-        }
-        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
-    }
+        const bool spaceHeld = ImGui::IsKeyDown(ImGuiKey_Space);
+        const bool altHeld = ImGui::IsKeyDown(ImGuiKey_LeftAlt) ||
+                             ImGui::IsKeyDown(ImGuiKey_RightAlt);
 
-     // 2D View: Left mouse button drag to pan (disabled during play — camera drives the view)
-     if (!ctx.isPlayMode && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-         if (ctx.viewMode == EditorContext::ViewMode::Mode2D) {
-             ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-             f32 s = ctx.viewportZoom * 50.0f;
-             ctx.viewportPanX -= delta.x / s;
-             ctx.viewportPanY -= delta.y / s;
-             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-         }
-     }
+        bool panning = false;
+        ImGuiMouseButton panButton = ImGuiMouseButton_Middle;
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+            panning = true;
+        } else if (is2D && !m_gizmoDragging && (spaceHeld || altHeld) &&
+                   ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            panning = true;
+            panButton = ImGuiMouseButton_Left;
+        }
+
+        if (panning) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(panButton);
+            if (is3DIso && panButton == ImGuiMouseButton_Middle) {
+                const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
+                const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
+                const Vec3 forward(-sinY * cosP, sinP, cosY * cosP);
+                const Vec3 worldUp(0.0f, 1.0f, 0.0f);
+                Vec3 right = forward.cross(worldUp);
+                if (right.lengthSquared() < 1e-6f) right = Vec3(1.0f, 0.0f, 0.0f);
+                else right = right.normalized();
+                const Vec3 up = right.cross(forward).normalized();
+                const f32 panSpeed = ctx.camDistance * 0.002f;
+                ctx.camFocus += right * (delta.x * panSpeed);
+                ctx.camFocus -= up * (delta.y * panSpeed);
+            } else {
+                ctx.viewportPanX += delta.x;
+                ctx.viewportPanY += delta.y;
+            }
+            ImGui::ResetMouseDragDelta(panButton);
+        }
+    }
 
       if (hovered && !ImGui::GetIO().WantTextInput && !ctx.isPlayMode) {
           bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
@@ -1405,7 +1441,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
     }
 
-     if (!ctx.isPlayMode && hovered && !ImGui::GetIO().WantCaptureMouse) {
+     if (!ctx.isPlayMode && hovered) {
          f32 scroll = ImGui::GetIO().MouseWheel;
          if (scroll != 0) {
              if (ctx.viewMode == EditorContext::ViewMode::Mode3D || 
@@ -1425,14 +1461,50 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                      ctx.camFocus += lookDir * (scroll * step);
                  }
              } else {
-                 ctx.viewportZoom *= (scroll > 0) ? 1.1f : 0.9f;
-                 ctx.viewportZoom = std::max(0.1f, std::min(10.0f, ctx.viewportZoom));
+                 ImVec2 mousePos = ImGui::GetMousePos();
+                 ImVec2 vpMin = ImGui::GetItemRectMin();
+                 const f32 cx = vpMin.x + viewportSize.x * 0.5f;
+                 const f32 cy = vpMin.y + viewportSize.y * 0.5f;
+                 const f32 sBefore = ctx.viewportZoom * 50.0f;
+                 const f32 worldX = (mousePos.x - cx - ctx.viewportPanX) / sBefore;
+                 const f32 worldY = -(mousePos.y - cy - ctx.viewportPanY) / sBefore;
+
+                 const f32 zoomFactor = (scroll > 0) ? 1.12f : (1.0f / 1.12f);
+                 ctx.viewportZoom *= zoomFactor;
+                 ctx.viewportZoom = std::clamp(ctx.viewportZoom, EditorContext::kViewport2DZoomMin,
+                                               EditorContext::kViewport2DZoomMax);
+
+                 const f32 sAfter = ctx.viewportZoom * 50.0f;
+                 ctx.viewportPanX = mousePos.x - cx - worldX * sAfter;
+                 ctx.viewportPanY = mousePos.y - cy + worldY * sAfter;
              }
          }
      }
 
     if (ctx.isPlayMode) {
         UI::drawWidgets(world, drawList, origin, viewportSize);
+    }
+
+    ECS::Entity previewCamera = ctx.selectedEntity;
+    if (!previewCamera.isValid() ||
+        (!world.has<ECS::Camera2DComponent>(previewCamera) &&
+         !world.has<ECS::Camera3DComponent>(previewCamera))) {
+        ECS::ComponentQuery cameraQuery;
+        cameraQuery.with<ECS::Camera3DComponent>();
+        world.forEach<ECS::Camera3DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera3DComponent&) {
+            if (!previewCamera.isValid()) previewCamera = e;
+        });
+        if (!previewCamera.isValid()) {
+            cameraQuery = {};
+            cameraQuery.with<ECS::Camera2DComponent>();
+            world.forEach<ECS::Camera2DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera2DComponent&) {
+                if (!previewCamera.isValid()) previewCamera = e;
+            });
+        }
+    }
+    if (const ECS::PostProcessComponent* fx =
+            Render::findPostProcessForCamera(world, previewCamera)) {
+        Render::applyPostProcessOverlay(drawList, origin, viewportSize, *fx);
     }
 
     ImGui::End();
@@ -1449,9 +1521,9 @@ ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize
 
     switch (ctx.viewMode) {
         case EditorContext::ViewMode::Mode2D: {
-            f32 s = ctx.viewportZoom * 50.0f;
-            return ImVec2(cx + (p.x + ctx.viewportPanX / s) * s,
-                          cy + (-p.y + ctx.viewportPanY / s) * s);
+            const f32 s = ctx.viewportZoom * 50.0f;
+            return ImVec2(cx + p.x * s + ctx.viewportPanX,
+                          cy - p.y * s + ctx.viewportPanY);
         }
         case EditorContext::ViewMode::Isometric: {
             f32 s = ctx.viewportZoom * 50.0f;
@@ -2967,6 +3039,52 @@ f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
     }
     
     return -1.0f;
+}
+
+ECS::Entity SceneViewport::pickEntity2D(const Vec2& worldPos, ECS::World& world) const {
+    ECS::Entity best = ECS::Entity::INVALID;
+    f32 bestDistSq = 1e10f;
+
+    ECS::ComponentQuery query;
+    query.with<ECS::Transform>();
+
+    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+
+        Vec3 worldPosition = pos.position;
+        f32 scaleX = std::max(0.1f, pos.scale.x);
+        f32 scaleY = std::max(0.1f, pos.scale.y);
+
+        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
+            worldPosition = Vec3(wt->matrix(0, 3), wt->matrix(1, 3), wt->matrix(2, 3));
+            scaleX = std::max(0.1f, sqrtf(wt->matrix(0, 0) * wt->matrix(0, 0) +
+                                           wt->matrix(1, 0) * wt->matrix(1, 0)));
+            scaleY = std::max(0.1f, sqrtf(wt->matrix(0, 1) * wt->matrix(0, 1) +
+                                           wt->matrix(1, 1) * wt->matrix(1, 1)));
+        }
+
+        f32 halfW = std::max(0.25f, 0.5f * scaleX);
+        f32 halfH = std::max(0.25f, 0.5f * scaleY);
+        if (world.has<ECS::Sprite>(entity)) {
+            halfW = std::max(0.5f, halfW);
+            halfH = std::max(0.5f, halfH);
+        }
+
+        if (worldPos.x < worldPosition.x - halfW || worldPos.x > worldPosition.x + halfW ||
+            worldPos.y < worldPosition.y - halfH || worldPos.y > worldPosition.y + halfH) {
+            return;
+        }
+
+        const f32 dx = worldPos.x - worldPosition.x;
+        const f32 dy = worldPos.y - worldPosition.y;
+        const f32 distSq = dx * dx + dy * dy;
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            best = entity;
+        }
+    });
+
+    return best;
 }
 
 ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,

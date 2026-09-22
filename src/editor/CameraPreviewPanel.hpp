@@ -3,6 +3,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/Camera2DPreviewRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
 
 #ifdef CF_HAS_IMGUI
@@ -38,13 +39,7 @@ private:
     void renderEditorCameraFallback(ECS::World& world, EditorContext& ctx, SceneViewport& viewport,
                                     ImVec2 origin, ImVec2 panelSize);
 
-    struct TexEntry {
-        std::unique_ptr<ImTextureData> texture;
-        int width  = 0;
-        int height = 0;
-        bool loadFailed = false;
-    };
-    std::unordered_map<std::string, TexEntry> m_texCache;
+    std::unordered_map<std::string, Camera2DPreviewTextureEntry> m_texCache;
     Render::SkyboxRenderer m_skyboxRenderer;
 
     std::string resolveSpritePath(const std::string& name, const EditorContext& ctx) const;

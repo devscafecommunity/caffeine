@@ -3,6 +3,9 @@
 #include "core/Types.hpp"
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/Camera2DPreviewRenderer.hpp"
+
+#include <unordered_map>
 
 #ifdef CF_HAS_SDL3
 #include "render/GpuSceneRenderer.hpp"
@@ -45,6 +48,7 @@ private:
 #endif
 #ifdef CF_HAS_IMGUI
     Render::SkyboxRenderer m_skyboxRenderer;
+    std::unordered_map<std::string, Camera2DPreviewTextureEntry> m_texCache2D;
 #endif
     bool m_open = true;
     bool m_detached = false;

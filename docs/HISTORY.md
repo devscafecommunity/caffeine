@@ -5,6 +5,16 @@
 
 ---
 
+## Pilares Fundamentais (2026-09-22)
+
+Os subsistemas que a engine deve ter de forma **sólida** — Phong 3D, eventos com timers, Bullet3, OpenAL, ECS integrado, handles com refcount, networking, deferred PBR, animação, scene management, scripting futuro (C#/Python) e Android (maybe) — estão documentados em:
+
+**[`plans/2026-09-22-engine-pillars-roadmap.md`](plans/2026-09-22-engine-pillars-roadmap.md)**
+
+Este roadmap complementa as fases abaixo com critérios de aceitação por pilar e ordem de implementação sugerida.
+
+---
+
 ## Fases de Desenvolvimento
 
 O projeto foi estruturado em 6 fases progressivas. Abaixo, o resumo de cada fase e seu status atual.

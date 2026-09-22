@@ -22,6 +22,8 @@ Este plano divide o desenvolvimento em **4 milestones** progressivas:
 
 > **Nota:** Cada milestone é autónoma — pode ser entregue e testada independentemente.
 
+> **Engine pillars:** subsistemas de runtime (rendering Phong, Bullet3, OpenAL, networking, PBR, etc.) estão no roadmap de pilares — [`docs/plans/2026-09-22-engine-pillars-roadmap.md`](../docs/plans/2026-09-22-engine-pillars-roadmap.md).
+
 ---
 
 ## Estado Atual (Pré-M1)

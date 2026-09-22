@@ -13,6 +13,7 @@
 #include "math/Mat4.hpp"
 #include "scene/EnvironmentSystem.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/PlayMode2D.hpp"
 #include "render/SkyboxRenderer.hpp"
 
 #include <imgui.h>
@@ -147,12 +148,55 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImGui::InvisibleButton("##gameplay_preview", panelSize);
 
+    Scene::propagateTransforms(world);
+
     ECS::Entity cameraEntity;
     ECS::Camera3DComponent* cam = nullptr;
-    const bool found = findGameplayCamera(world, cameraEntity, cam);
+    const bool found3D = findGameplayCamera(world, cameraEntity, cam);
 
+    const bool prefer2D = ctx.viewMode == EditorContext::ViewMode::Mode2D;
+    ECS::Entity camera2D = findPreviewCamera2D(world, ctx);
+    float cam2DX = 0.0f, cam2DY = 0.0f, cam2DZoom = 1.0f;
+    if (camera2D.isValid()) {
+        if (auto* camComp = world.get<ECS::Camera2DComponent>(camera2D)) {
+            cam2DZoom = camComp->zoom;
+        }
+        Vec3 worldPos;
+        if (auto* wt = world.get<Scene::WorldTransform>(camera2D)) {
+            worldPos = wt->matrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+        } else if (auto* t = world.get<ECS::Transform>(camera2D)) {
+            worldPos = t->position;
+        }
+        cam2DX = worldPos.x;
+        cam2DY = worldPos.y;
+    }
+
+    if ((prefer2D || !found3D) && camera2D.isValid()) {
+        cameraEntity = camera2D;
+        const int spriteCount =
+            renderCamera2DPreview(world, ctx, dl, origin, panelSize, cam2DX, cam2DY, cam2DZoom,
+                                  m_texCache2D);
+        const char* badge = ctx.isPlayMode ? "PLAY" : "STOPPED";
+        const ImU32 badgeCol =
+            ctx.isPlayMode ? IM_COL32(120, 230, 140, 230) : IM_COL32(220, 180, 90, 220);
+        dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 6.0f), badgeCol, badge);
+        if (const char* name = getEntityName(world, camera2D); name && name[0] != '\0') {
+            dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 22.0f), IM_COL32(200, 200, 210, 200),
+                        name);
+        }
+        dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 38.0f), IM_COL32(140, 180, 255, 200),
+                    "2D preview");
+        if (spriteCount == 0) {
+            const char* hint =
+                "Camera OK — add sprites (Entity Presets: 2D Character, Parallax BG)";
+            ImVec2 ts = ImGui::CalcTextSize(hint);
+            dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
+                               origin.y + panelSize.y * 0.55f),
+                        IM_COL32(170, 170, 180, 220), hint);
+        }
+    } else
 #ifdef CF_HAS_SDL3
-    if (found && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
+    if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
         u32 w = static_cast<u32>(panelSize.x);
         u32 h = static_cast<u32>(panelSize.y);
         w = std::clamp(w, 8u, 1280u);
@@ -218,7 +262,7 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     {
         dl->AddRectFilled(origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                           IM_COL32(18, 18, 22, 255));
-        const char* msg = found ? "Gameplay GPU not ready" : "No Camera3D in the scene";
+        const char* msg = found3D ? "Gameplay GPU not ready" : "No camera in the scene";
         const ImVec2 ts = ImGui::CalcTextSize(msg);
         dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
                            origin.y + (panelSize.y - ts.y) * 0.5f),
