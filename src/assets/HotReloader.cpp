@@ -66,10 +66,11 @@ void HotReloader::ReloadOne(const std::string& cafPath) {
     u32 assetId = m_Manager->reloadAsset(cafPath.c_str());
     if (assetId == ~0u) return;
 
-    auto status = m_Manager->getStatus(assetId);
-    if (status != LoadStatus::Loaded) return;
+    const u16 generation = m_Manager->entryGeneration(assetId);
+    auto status = m_Manager->getStatus(assetId, generation);
+    if (status != LoadStatus::Ready) return;
 
-    auto* tex = m_Manager->getResolved<Texture>(assetId);
+    auto* tex = m_Manager->getResolved<Texture>(assetId, generation);
 
     HotReloadedAsset info;
     info.assetId = assetId;
@@ -80,9 +81,9 @@ void HotReloader::ReloadOne(const std::string& cafPath) {
     // type.  This is a lightweight heuristic for the notification only.
     if (tex) {
         info.type = AssetType::Texture;
-    } else if (m_Manager->getResolved<AudioClip>(assetId)) {
+    } else if (m_Manager->getResolved<AudioClip>(assetId, generation)) {
         info.type = AssetType::Audio;
-    } else if (m_Manager->getResolved<ShaderBlob>(assetId)) {
+    } else if (m_Manager->getResolved<ShaderBlob>(assetId, generation)) {
         info.type = AssetType::Shader;
     }
 

@@ -55,15 +55,15 @@ flowchart LR
 
 ### 1. Rendering 3D Phong (sombras dinâmicas, bump mapping, câmaras)
 
-**Estado:** 🟡 Parcial — pipeline GPU híbrido; Lambert/PBR parcial; sombras CPU no editor; normal maps não ligados.
+**Estado:** 🟡 Parcial — Phong GPU + CSM (4 cascatas) + sombras point/spot GPU; normal maps mesh+terreno; runtime GPU-first; `GpuTextureCache` com mips e **LOD de texturas por distância**; viewport HiDPI (cap 1920px), wireframe GPU (`FillMode::Line`), skip shadows em movimento rápido; CPU shadows off no viewport GPU. Falta: mesh geometry LOD/batching, 60 FPS gate.
 
 **Deve ter de forma sólida:**
 
 | Requisito | Critério de aceitação |
 |-----------|----------------------|
 | Iluminação Phong (ambient + diffuse + specular) | Materiais com `shininess`, luzes direcionais/pontuais estáveis a 60 FPS |
-| Sombras dinâmicas | Shadow mapping GPU para luz direcional principal; sem fallback CPU no caminho default |
-| Bump / normal mapping | Normal maps em meshes e terreno; tangentes corretas no vertex buffer |
+| Sombras dinâmicas | Shadow mapping GPU direcional CSM (2) + point cubemap (2) + spot (2); sem fallback CPU no viewport GPU |
+| Bump / normal mapping | Normal maps em meshes (TBN) e terreno (triplanar); tangentes no vertex buffer |
 | Sistema de câmaras 3D | Componente `Camera3D` + follow/orbit/FPS; editor e runtime partilham a mesma API |
 | Pipeline único GPU | Sem dual-path CPU raster no viewport shaded (ver rendering roadmap P0) |
 
@@ -71,13 +71,13 @@ flowchart LR
 
 **Relação com PBR:** Phong é o **degrau imediato** (P0 rendering). O deferred PBR (P1) evolui sobre a mesma infraestrutura de G-buffer, shadow maps e materiais — não substitui o trabalho de câmaras, sombras e normal mapping.
 
-**Docs:** [`rendering/camera-3d.md`](../rendering/camera-3d.md), [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md)
+**Docs:** [`rendering/materials-phong.md`](../rendering/materials-phong.md), [`rendering/shadow-mapping.md`](../rendering/shadow-mapping.md), [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md), [`editor/scene-viewport.md`](../editor/scene-viewport.md), [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md), [`2026-09-22-phong-gpu-handles-session.md`](2026-09-22-phong-gpu-handles-session.md), [`2026-09-22-viewport-rendering-quality-session.md`](2026-09-22-viewport-rendering-quality-session.md)
 
 ---
 
 ### 2. Sistema de eventos (timers + tipos customizados)
 
-**Estado:** 🟡 Parcial — `EventBus` tipado com `publish` / `publishDeferred` existe; timers de engine e tipos custom registáveis ainda limitados.
+**Estado:** 🟡 Parcial — `EventBus` tipado + `TimerScheduler` (`scheduleOnce` / `scheduleRepeating` no fixed timestep). Tipos custom runtime e thread-safety doc ainda limitados.
 
 **Deve ter de forma sólida:**
 
@@ -157,7 +157,7 @@ flowchart LR
 
 ### 6. Gestão de recursos com handles e reference counting
 
-**Estado:** 🟡 Parcial — `AssetManager`, caches de mesh/textura; handles tipados e refcount explícito incompletos.
+**Estado:** 🟡 Parcial — generation counter, refcount RAII (`AssetHandle`), LRU, invalidation callbacks; `GpuTextureCache` GPU com mips. Falta: async decode→upload N+1, `.caf` checksum header.
 
 **Deve ter de forma sólida:**
 
@@ -297,12 +297,12 @@ flowchart LR
 
 | # | Pilar | Tier | Estado | Backend / notas |
 |---|-------|------|--------|-----------------|
-| 1 | Phong 3D + sombras + bump + câmaras | P0 | 🟡 Parcial | GPU pipeline; ver rendering roadmap |
-| 2 | Eventos + timers + tipos custom | P0 | 🟡 Parcial | `EventBus` existe |
+| 1 | Phong 3D + sombras + bump + câmaras | P0 | 🟡 Parcial | CSM + point/spot GPU; `GpuTextureCache`; `Camera3DControllerComponent` |
+| 2 | Eventos + timers + tipos custom | P0 | 🟡 Parcial | `EventBus` + `TimerScheduler` |
 | 3 | Rigid body 3D | P0 | 🔴 Não iniciado | **Bullet3** |
 | 4 | Áudio 3D | P0 | 🟡 Parcial | **OpenAL** |
 | 5 | ECS próprio + editor/runtime | P0 | 🟢 Avançado | Core da engine |
-| 6 | Handles + refcount | P0 | 🟡 Parcial | `AssetManager` |
+| 6 | Handles + refcount | P0 | 🟡 Parcial | Generation + RAII + LRU + `GpuTextureCache` |
 | 7 | Networking + serialização | P1 | 🔴 Não iniciado | Binário custom |
 | 8 | Deferred PBR | P1 | 🟡 Parcial | Após Phong sólido |
 | 9 | Animação | P1 | 🟡 Parcial | 2D + skeletal |
@@ -332,3 +332,180 @@ flowchart LR
 - **Antes de implementar** um subsistema: abrir o pilar correspondente e verificar critérios de aceitação.
 - **Ao fechar uma feature:** atualizar coluna “Estado” neste ficheiro e linkar doc técnica em `docs/<módulo>/`.
 - **Rendering:** detalhe fase-a-fase continua em [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md); este doc define *o quê*; aquele define *como*.
+
+---
+
+## Critérios quantitativos de “production-ready”
+
+| Métrica | Alvo | Medição |
+|---------|------|---------|
+| Frame time | ≤16 ms (60 FPS) no 95th percentile | Profiling em hardware mínimo alvo |
+| Memory baseline | ≤512 MB idle | Process working set (Windows/Linux) |
+| Load time | ≤3 s cena 50 MB | Cold boot, SSD |
+| Crash rate | ≤0,1% sessões | Telemetria em beta fechado |
+| Build reproducibility | 100% determinístico | CI hash comparison |
+
+---
+
+## Caminho crítico de dependências
+
+```mermaid
+flowchart TD
+    subgraph CriticalPath["⏱️ Caminho Crítico"]
+        Handles["6. Handles + Refcount"] --> Rendering["1. Rendering Phong"]
+        Rendering --> Anim["9. Animação"]
+        Anim --> Scene["10. Scene Manager"]
+        Scene --> Production["🎮 Ready for 3D Games"]
+    end
+
+    subgraph Blockers["🔴 Bloqueadores Conhecidos"]
+        Physics["3. Bullet3"] -.->|block| Gameplay["Gameplay systems"]
+        Audio["4. OpenAL 3D"] -.->|block| Immersion["Imersão completa"]
+    end
+
+    subgraph NiceToHave["✨ Pós-Lançamento 1.0"]
+        NET["7. Networking"]
+        PBR["8. Deferred PBR"]
+        SCRIPT["11. C# / Python"]
+    end
+```
+
+---
+
+## Análise técnica e melhorias
+
+### ECS — requisitos adicionais
+
+| Área | Recomendação |
+|------|--------------|
+| Reflection | Macro-based codegen em tempo de compilação (C++20 modules ou generators) em vez de RTTI manual |
+| Serialization | Schema versioning com forward/backward compatibility desde o início (field numbering estilo protobuf) |
+| Cache locality | Documentar layout de memória (SoA vs AoS) e alignment para SIMD |
+| Multi-threading | Ownership model claro: quem owns ECS data? Job system acessa via snapshots? |
+
+**Adicionar aos critérios de aceitação (pilar 5):**
+
+- **Schema evolution:** compatibilidade entre versões `.cscene` (major.minor.patch)
+- **Storage strategy:** Hybrid archetype + chunk-based (semelhante EnTT/SparseSet)
+- **Query cache:** Compiled query plans reutilizados entre frames
+- **Hot reload safety:** Versionamento de componentes durante play mode
+
+---
+
+### Rendering — transição Phong → PBR
+
+| Aspecto | Problema | Solução |
+|---------|----------|---------|
+| Shader reuse | Phong shaders não compatíveis com G-buffer | Material abstraction layer que traduz Phong→PBR automaticamente |
+| Shadow maps | CPU shadows no editor ≠ GPU shadows no runtime | Unificar shadow pipeline desde P0 (GPU-only mesmo no editor) |
+| Memory budget | Deferred requer ~2× VRAM do forward | Documentar VRAM budgets por plataforma (desktop mínimo 4 GB) |
+| TAA/PostFX | Não mencionado | PostFX pipeline (bloom, SSAO, TAA) como parte do P1 |
+
+**Critério de aceitação adicional (pilar 8):**
+
+> Migração automática de materiais Phong→PBR via converter tool que mapeia `shininess↔roughness`, `specular↔metallic` com validação visual ≤5% diferença RMS.
+
+---
+
+### Física — política de determinismo e backend
+
+| Decisão | Opção A | Opção B | Recomendação |
+|---------|---------|---------|--------------|
+| Backend | Bullet3 | Jolt Physics | Jolt tem melhor multithreading e C++20; **Bullet3 mantido por decisão explícita** até reavaliação |
+| Sync transform | Pull (physics→render) | Push (render→physics) | Pull com interpolação para evitar stutter |
+| Terrain collision | Heightfield | Mesh collision | Heightfield LOD para performance escalável |
+| Determinismo | Documentado | Cross-platform verified | Teste x86/arm/Windows/Linux com tolerance <0,001% |
+
+**Política de determinismo (pilar 3):**
+
+- Fixed timestep: 1/60 s (configurável até 1/240 s)
+- Float precision: single (`float`) com **quantização opcional** para replay
+- Cross-platform tolerance: posição <0,001 unidades, rotação <0,1 graus
+- Rollback network: support documentado para rollback windows ≥16 frames
+
+---
+
+### Handles — protocolo de segurança
+
+| Mecanismo | Descrição |
+|-----------|-----------|
+| **Generation counter** | `TextureHandle = { id: u32, generation: u16 }` — previne uso após asset removido |
+| **Invalidation callback** | Sistema registra listeners quando handle fica inválido |
+| **Async load states** | `{ Pending, Loading, Ready, Failed, Invalid }` |
+| **Memory pressure** | LRU eviction com callbacks para libertar recursos críticos |
+| **Bundle format** | `.caf` com checksum SHA-256 + schema version header |
+
+**Estado atual (2026-09-22):** `AssetHandle<T> = { id: u32, generation: u16 }` com validação em `get()`; `LoadStatus` explícito (`Pending | Loading | Ready | Failed | Invalid`); generation incrementada em `collectGarbage` (evict); hot-reload mantém generation para handles activos.
+
+---
+
+### Networking — arquitetura proposta (P1)
+
+| Componente | Protocolo | Notas |
+|------------|-----------|-------|
+| Transporte | ENet ou Nakama | Reliable UDP built-in |
+| Serialização | FlatBuffers ou Cap'n Proto | Zero-copy parsing (alternativa ao binário custom) |
+| Authority model | Server-authoritative | Client-prediction + server reconciliation |
+| Tick rate | 30 Hz (mínimo), 60 Hz (recomendado) | Trade-off bandwidth × responsiveness |
+| Reconciliation | Interpolation lag 100 ms + prediction | Buffer de 2–3 s para entities |
+
+**Critério de aceitação adicional:**
+
+> Test de stress: 100 entidades simuladas, 32 players simultâneos, latência 150 ms, packet loss 5% → <10% entities dessincronizadas após 5 minutos.
+
+---
+
+### Animação — separação 2D vs 3D
+
+| Subsystem | P0 | P1 | P2 |
+|-----------|----|----|-----|
+| Sprite animation | ✅ | — | — |
+| Skeletal import (glTF/FBX) | — | ✅ | — |
+| GPU skinning | — | ✅ | — |
+| Blend shapes / morph targets | — | ⚠️ Parcial | ✅ Completo |
+| IK solvers | — | — | ✅ |
+| Retargeting between rigs | — | — | ✅ |
+
+**Critério adicional (pilar 9):**
+
+> Import pipeline glTF 2.0 com validation: bones ≤255, weights ≤4 per vertex, animations ≥30 fps sample rate.
+
+---
+
+### Scripting — comparativo
+
+| Critério | Lua (atual) | C# | Python |
+|----------|-------------|----|--------|
+| Performance | ✅ 2–5× C++ | ⚠️ 3–8× (GC stalls) | ❌ 10–50× |
+| GC predictability | ✅ Manual/yield | ❌ Geracional | ❌ Reference counting |
+| Tooling | ⚠️ VSCode + LSP | ✅ Rider/VS full | ⚠️ VSCode |
+| Bindings ECS | Manual/cbindgen | Generated (source gen) | ctypes/CFFI |
+| Hot reload | ✅ Native | ⚠️ Assembly load | ✅ |
+| Sandboxing | ⚠️ `lua_open()` | ⚠️ AppDomain | ✅ `ast.parse` |
+| Team skill | ⚠️ Curva de aprendizado | ✅ Common em game dev | ✅ Common outside games |
+
+**Recomendação:** manter **Lua como primary scripting layer** (gameplay, AI, UI). C# como secondary layer apenas se parceiro empresarial exigir, complexidade gameplay >50k linhas, ou tooling interno em C# predominante.
+
+---
+
+## Documentação técnica pendente
+
+| Documento | Prioridade | Conteúdo |
+|-----------|------------|----------|
+| `docs/architecture/threat-model.md` | P0 | Security (anti-tamper, cheat prevention) |
+| `docs/performance/profiling-guidelines.md` | P0 | Como profilear CPU/GPU/memory |
+| `docs/assets/pipeline-spec.md` | P0 | Import formats, compression, validation rules |
+| `docs/builds/platform-support-matrix.md` | P1 | Compilers, SDKs, minimum versions |
+| `docs/networking/protocol-spec.md` | P1 | Wire format, message IDs, versioning |
+
+---
+
+## Estado atual da branch `feature/editor-plugin-sdk`
+
+Esta branch isola o **Plugin SDK** do core do Doppio:
+
+- Terrain, procedural tools, post-process e git UI movidos para plugins `.so`
+- `PluginServiceRegistry` genérico — core não hardcoda feature services
+- Ver [`docs/editor/plugin-sdk.md`](../editor/plugin-sdk.md)
+
+**Impacto nos pilares:** o pilar 10 (Scene + tipos user) e o pilar 5 (ECS reflection) beneficiam diretamente desta arquitetura — plugins registam drawers e serializers sem recompilar o editor.

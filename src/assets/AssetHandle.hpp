@@ -12,7 +12,7 @@ template<typename T>
 class AssetHandle {
 public:
     AssetHandle();
-    AssetHandle(AssetManager* mgr, u32 id);
+    AssetHandle(AssetManager* mgr, u32 id, u16 generation);
     ~AssetHandle();
 
     AssetHandle(const AssetHandle& o);
@@ -27,13 +27,15 @@ public:
 
     explicit operator bool() const;
 
-    u32 id() const { return m_id; }
+    u32  id()         const { return m_id; }
+    u16  generation() const { return m_generation; }
 
 private:
     void reset();
 
-    AssetManager* m_mgr = nullptr;
-    u32           m_id  = ~u32(0);
+    AssetManager* m_mgr        = nullptr;
+    u32           m_id         = ~u32(0);
+    u16           m_generation = 0;
 };
 
 } // namespace Caffeine::Assets

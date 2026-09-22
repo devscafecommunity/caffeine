@@ -6,6 +6,11 @@
 #include "ui/UIComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "ecs/TerrainComponents.hpp"
+#include "ecs/LightComponents.hpp"
+#include "ecs/CameraComponents.hpp"
+#include "ecs/Components3D.hpp"
+#include "scene/LightingSystem.hpp"
+#include "math/Quat.hpp"
 #include "terrain/TerrainCache.hpp"
 #include <cctype>
 #include <cstdio>
@@ -100,12 +105,11 @@ void HierarchyPanel::renderSearchBar() {
 
 void HierarchyPanel::renderToolbar() {
     if (ImGui::Button("+##hierarchy_add", ImVec2(24, 0))) {
-        m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-        ECS::Entity e = m_world->create();
-        setEntityName(*m_world, e, "New Entity");
-        m_world->add<ECS::Transform>(e);
-        m_context->selectEntity(e);
-        m_context->endUndo(*m_world);
+        ImGui::OpenPopup("hierarchy_create_entity");
+    }
+    if (ImGui::BeginPopup("hierarchy_create_entity")) {
+        renderCreateEntityMenuItems();
+        ImGui::EndPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Presets##hierarchy_presets", ImVec2(72, 0))) {
@@ -334,6 +338,8 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     else if (strcmp(componentType, "DirectionalLight") == 0) {
         world.add<ECS::LightComponent>(e);
         world.add<ECS::DirectionalLightComponent>(e);
+        world.add<ECS::Rotation3D>(e);
+        Scene::applyDefaultSunOrientation(world, e);
     }
     else if (strcmp(componentType, "PointLight") == 0) {
         world.add<ECS::LightComponent>(e);
@@ -429,6 +435,33 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         world.add<ECS::MeshFilterComponent>(e, mf);
         world.add<ECS::MeshRendererComponent>(e);
     }
+    else if (strcmp(componentType, "Cone3D") == 0) {
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+        ECS::MeshFilterComponent mf;
+        mf.primitive = ECS::MeshPrimitive::Cone;
+        world.add<ECS::MeshFilterComponent>(e, mf);
+        world.add<ECS::MeshRendererComponent>(e);
+    }
+    else if (strcmp(componentType, "Pyramid3D") == 0) {
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+        ECS::MeshFilterComponent mf;
+        mf.primitive = ECS::MeshPrimitive::Pyramid;
+        world.add<ECS::MeshFilterComponent>(e, mf);
+        world.add<ECS::MeshRendererComponent>(e);
+    }
+    else if (strcmp(componentType, "Torus3D") == 0) {
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        world.add<ECS::Scale3D>(e);
+        ECS::MeshFilterComponent mf;
+        mf.primitive = ECS::MeshPrimitive::Torus;
+        world.add<ECS::MeshFilterComponent>(e, mf);
+        world.add<ECS::MeshRendererComponent>(e);
+    }
     else if (strcmp(componentType, "Skybox") == 0) {
         ECS::SkyboxComponent sky;
         sky.presetIndex = 0;
@@ -497,72 +530,78 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
     m_context->endUndo(world);
 }
 
+void HierarchyPanel::renderCreateEntityMenuItems() {
+    if (ImGui::MenuItem("Empty Entity")) {
+        m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+        ECS::Entity e = m_world->create();
+        setEntityName(*m_world, e, "New Entity");
+        m_world->add<ECS::Transform>(e);
+        m_context->selectEntity(e);
+        m_context->endUndo(*m_world);
+    }
+    ImGui::Separator();
+
+    if (ImGui::BeginMenu("2D Objects")) {
+        if (ImGui::MenuItem("Sprite"))                    createEntityWithType(*m_world, "Sprite",            "Sprite2D");
+        if (ImGui::MenuItem("Sprite (Box Collider)"))     createEntityWithType(*m_world, "Sprite",            "Sprite2DBox");
+        if (ImGui::MenuItem("Sprite (Circle Collider)"))  createEntityWithType(*m_world, "Sprite",            "Sprite2DCircle");
+        if (ImGui::MenuItem("Sprite (Capsule Collider)")) createEntityWithType(*m_world, "Sprite",            "Sprite2DCapsule");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("3D Objects")) {
+        if (ImGui::MenuItem("Cube"))      createEntityWithType(*m_world, "Cube",      "Cube3D");
+        if (ImGui::MenuItem("Sphere"))    createEntityWithType(*m_world, "Sphere",    "Sphere3D");
+        if (ImGui::MenuItem("Capsule"))   createEntityWithType(*m_world, "Capsule",   "Capsule3D");
+        if (ImGui::MenuItem("Cylinder"))  createEntityWithType(*m_world, "Cylinder",  "Cylinder3D");
+        if (ImGui::MenuItem("Plane"))     createEntityWithType(*m_world, "Plane",     "Plane3D");
+        if (ImGui::MenuItem("Cone"))      createEntityWithType(*m_world, "Cone",      "Cone3D");
+        if (ImGui::MenuItem("Pyramid"))   createEntityWithType(*m_world, "Pyramid",   "Pyramid3D");
+        if (ImGui::MenuItem("Torus"))     createEntityWithType(*m_world, "Torus",     "Torus3D");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Camera")) {
+        if (ImGui::MenuItem("Camera 2D")) createEntityWithType(*m_world, "Camera 2D", "Camera2D");
+        if (ImGui::MenuItem("Camera 3D")) createEntityWithType(*m_world, "Camera 3D", "Camera3D");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Light")) {
+        if (ImGui::MenuItem("Directional Light")) createEntityWithType(*m_world, "Directional Light", "DirectionalLight");
+        if (ImGui::MenuItem("Point Light"))       createEntityWithType(*m_world, "Point Light",       "PointLight");
+        if (ImGui::MenuItem("Spot Light"))        createEntityWithType(*m_world, "Spot Light",        "SpotLight");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Environment")) {
+        if (ImGui::MenuItem("Skybox"))  createEntityWithType(*m_world, "Skybox",  "Skybox");
+        if (ImGui::MenuItem("Terrain")) createEntityWithType(*m_world, "Terrain", "Terrain");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("UI")) {
+        if (ImGui::MenuItem("Canvas"))       createEntityWithType(*m_world, "Canvas",       "UICanvas");
+        if (ImGui::MenuItem("Panel"))        createEntityWithType(*m_world, "Panel",        "UIPanel");
+        if (ImGui::MenuItem("Label"))        createEntityWithType(*m_world, "Label",        "UILabel");
+        if (ImGui::MenuItem("Button"))       createEntityWithType(*m_world, "Button",       "UIButton");
+        if (ImGui::MenuItem("Progress Bar")) createEntityWithType(*m_world, "Progress Bar", "UIProgressBar");
+        if (ImGui::MenuItem("Slider"))       createEntityWithType(*m_world, "Slider",       "UISlider");
+        ImGui::EndMenu();
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::BeginMenu("System")) {
+        if (ImGui::MenuItem("Game Manager")) createEntityWithType(*m_world, "Game Manager", "GameManager");
+        ImGui::EndMenu();
+    }
+}
+
 void HierarchyPanel::renderEmptyContextMenu() {
     if (ImGui::BeginPopupContextWindow("hierarchy_empty_ctx")) {
         if (ImGui::BeginMenu("Create Entity")) {
-            if (ImGui::MenuItem("Empty Entity")) {
-                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-                ECS::Entity e = m_world->create();
-                setEntityName(*m_world, e, "New Entity");
-                m_world->add<ECS::Transform>(e);
-                m_context->selectEntity(e);
-                m_context->endUndo(*m_world);
-            }
-            ImGui::Separator();
-
-            if (ImGui::BeginMenu("2D Objects")) {
-                if (ImGui::MenuItem("Sprite"))                    createEntityWithType(*m_world, "Sprite",            "Sprite2D");
-                if (ImGui::MenuItem("Sprite (Box Collider)"))     createEntityWithType(*m_world, "Sprite",            "Sprite2DBox");
-                if (ImGui::MenuItem("Sprite (Circle Collider)"))  createEntityWithType(*m_world, "Sprite",            "Sprite2DCircle");
-                if (ImGui::MenuItem("Sprite (Capsule Collider)")) createEntityWithType(*m_world, "Sprite",            "Sprite2DCapsule");
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("3D Objects")) {
-                if (ImGui::MenuItem("Cube"))      createEntityWithType(*m_world, "Cube",      "Cube3D");
-                if (ImGui::MenuItem("Sphere"))    createEntityWithType(*m_world, "Sphere",    "Sphere3D");
-                if (ImGui::MenuItem("Capsule"))   createEntityWithType(*m_world, "Capsule",   "Capsule3D");
-                if (ImGui::MenuItem("Cylinder"))  createEntityWithType(*m_world, "Cylinder",  "Cylinder3D");
-                if (ImGui::MenuItem("Plane"))     createEntityWithType(*m_world, "Plane",     "Plane3D");
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Camera")) {
-                if (ImGui::MenuItem("Camera 2D")) createEntityWithType(*m_world, "Camera 2D", "Camera2D");
-                if (ImGui::MenuItem("Camera 3D")) createEntityWithType(*m_world, "Camera 3D", "Camera3D");
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Light")) {
-                if (ImGui::MenuItem("Directional Light")) createEntityWithType(*m_world, "Directional Light", "DirectionalLight");
-                if (ImGui::MenuItem("Point Light"))       createEntityWithType(*m_world, "Point Light",       "PointLight");
-                if (ImGui::MenuItem("Spot Light"))        createEntityWithType(*m_world, "Spot Light",        "SpotLight");
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Environment")) {
-                if (ImGui::MenuItem("Skybox"))  createEntityWithType(*m_world, "Skybox",  "Skybox");
-                if (ImGui::MenuItem("Terrain")) createEntityWithType(*m_world, "Terrain", "Terrain");
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("UI")) {
-                if (ImGui::MenuItem("Canvas"))       createEntityWithType(*m_world, "Canvas",       "UICanvas");
-                if (ImGui::MenuItem("Panel"))        createEntityWithType(*m_world, "Panel",        "UIPanel");
-                if (ImGui::MenuItem("Label"))        createEntityWithType(*m_world, "Label",        "UILabel");
-                if (ImGui::MenuItem("Button"))       createEntityWithType(*m_world, "Button",       "UIButton");
-                if (ImGui::MenuItem("Progress Bar")) createEntityWithType(*m_world, "Progress Bar", "UIProgressBar");
-                if (ImGui::MenuItem("Slider"))       createEntityWithType(*m_world, "Slider",       "UISlider");
-                ImGui::EndMenu();
-            }
-
-            ImGui::Separator();
-
-            if (ImGui::BeginMenu("System")) {
-                if (ImGui::MenuItem("Game Manager")) createEntityWithType(*m_world, "Game Manager", "GameManager");
-                ImGui::EndMenu();
-            }
-
+            renderCreateEntityMenuItems();
             ImGui::EndMenu();
         }
         if (m_context->clipboardEntity.isValid()) {

@@ -232,6 +232,92 @@ TEST_CASE("AssetManager - failed load returns handle with Failed status", "[asse
     REQUIRE(handle.isValid());
     REQUIRE_FALSE(handle.isReady());
     REQUIRE(handle.get() == nullptr);
+    REQUIRE(mgr.getStatus(handle.id(), handle.generation()) == LoadStatus::Failed);
+}
+
+TEST_CASE("AssetManager - stale handle after eviction returns nullptr", "[assets]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+
+    u32 id  = 0;
+    u16 gen = 0;
+    {
+        auto loaded = mgr.loadSync<Texture>(kTexturePath);
+        id  = loaded.id();
+        gen = loaded.generation();
+        REQUIRE(loaded.isReady());
+        REQUIRE(gen == 1);
+    }
+    mgr.collectGarbage();
+
+    AssetHandle<Texture> stale(&mgr, id, gen);
+    REQUIRE_FALSE(stale.isReady());
+    REQUIRE(stale.get() == nullptr);
+    REQUIRE(mgr.getStatus(id, gen) == LoadStatus::Invalid);
+    REQUIRE(mgr.entryGeneration(id) == 2);
+}
+
+TEST_CASE("AssetManager - invalidation callback fires on collectGarbage", "[assets]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+
+    std::pair<u32, u16> captured{~0u, 0};
+    mgr.registerInvalidationCallback(
+        [](const InvalidatedAsset& info, void* userData) {
+            auto* out = static_cast<std::pair<u32, u16>*>(userData);
+            out->first  = info.id;
+            out->second = info.generation;
+        },
+        &captured);
+
+    u32 id = 0;
+    u16 gen = 0;
+    {
+        auto handle = mgr.loadSync<Texture>(kTexturePath);
+        id  = handle.id();
+        gen = handle.generation();
+        REQUIRE(gen == 1);
+    }
+    mgr.collectGarbage();
+
+    REQUIRE(captured.first == id);
+    REQUIRE(captured.second == gen);
+}
+
+TEST_CASE("AssetManager - LRU evicts unreferenced assets when over budget", "[assets]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "", 0);
+
+    {
+        auto first = mgr.loadSync<Texture>(kTexturePath);
+        REQUIRE(first.isReady());
+    }
+
+    auto second = mgr.loadSync<AudioClip>(kAudioPath);
+    REQUIRE(second.isReady());
+
+    CacheStats stats = mgr.cacheStats();
+    REQUIRE(stats.evictedCount >= 1);
+}
+
+TEST_CASE("AssetManager - reload after eviction works with new generation", "[assets]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+
+    u32 id  = 0;
+    u16 gen = 0;
+    {
+        auto first = mgr.loadSync<Texture>(kTexturePath);
+        id  = first.id();
+        gen = first.generation();
+    }
+    mgr.collectGarbage();
+
+    auto second = mgr.loadSync<Texture>(kTexturePath);
+    REQUIRE(second.id() == id);
+    REQUIRE(second.generation() == gen + 1);
+    REQUIRE(second.isReady());
+    REQUIRE(second.get() != nullptr);
 }
 
 TEST_CASE("AssetManager - tick advances frame index", "[assets]") {

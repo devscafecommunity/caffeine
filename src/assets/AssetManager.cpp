@@ -2,8 +2,10 @@
 #include "core/io/BlobLoader.hpp"
 #include "tools/PipelineTypes.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <limits>
 
 #ifdef CF_DEBUG
 #include <filesystem>
@@ -45,12 +47,71 @@ u32 AssetManager::acquireOrCreate(const char* path, AssetType type) {
 
     u32  id    = static_cast<u32>(m_assets.size());
     auto entry = std::make_unique<AssetEntry>();
-    entry->path    = key;
-    entry->cafType = type;
+    entry->path       = key;
+    entry->cafType    = type;
+    entry->generation = 1;
+    entry->status.store(LoadStatus::Pending, std::memory_order_release);
     m_assets.push_back(std::move(entry));
     m_pathIndex[key] = id;
     ++m_totalLoads;
     return id;
+}
+
+void AssetManager::clearEntryData(AssetEntry& e) {
+    m_cachedBytes.fetch_sub(e.sizeBytes, std::memory_order_relaxed);
+    e.allocator.reset();
+    e.header    = nullptr;
+    e.metadata  = nullptr;
+    e.payload   = nullptr;
+    e.resolved  = {};
+    e.sizeBytes = 0;
+}
+
+void AssetManager::touchEntry(AssetEntry& e) {
+    e.lastAccessFrame = m_frame;
+}
+
+void AssetManager::notifyInvalidated(u32 id, u16 generation, AssetType type) {
+    if (m_invalidationListeners.empty()) return;
+
+    const InvalidatedAsset info{id, generation, type};
+    for (const auto& listener : m_invalidationListeners) {
+        if (listener.callback) {
+            listener.callback(info, listener.userData);
+        }
+    }
+}
+
+void AssetManager::invalidateEntry(u32 id, AssetEntry& e) {
+    const u16 invalidatedGeneration = e.generation;
+    const AssetType type = e.cafType;
+    clearEntryData(e);
+    ++e.generation;
+    if (e.generation == 0) e.generation = 1;
+    e.status.store(LoadStatus::Invalid, std::memory_order_release);
+    ++m_evictedCount;
+    notifyInvalidated(id, invalidatedGeneration, type);
+}
+
+void AssetManager::evictLruToFitBudget() {
+    while (m_cachedBytes.load(std::memory_order_relaxed) > m_maxCacheBytes) {
+        u32 victimId = ~u32(0);
+        u64 oldestFrame = std::numeric_limits<u64>::max();
+
+        for (u32 i = 0; i < static_cast<u32>(m_assets.size()); ++i) {
+            const auto& entry = m_assets[i];
+            if (!entry) continue;
+            if (entry->refCount.load(std::memory_order_acquire) != 0) continue;
+            if (entry->status.load(std::memory_order_acquire) != LoadStatus::Ready) continue;
+            if (entry->lastAccessFrame <= oldestFrame) {
+                oldestFrame = entry->lastAccessFrame;
+                victimId = i;
+            }
+        }
+
+        if (victimId == ~u32(0)) break;
+        invalidateEntry(victimId, *m_assets[victimId]);
+    }
 }
 
 void AssetManager::scheduleLoad(u32 id) {
@@ -58,7 +119,7 @@ void AssetManager::scheduleLoad(u32 id) {
         std::lock_guard<std::mutex> lock(m_mutex);
         AssetEntry& e      = *m_assets[id];
         LoadStatus  status = e.status.load(std::memory_order_acquire);
-        if (status == LoadStatus::Loading || status == LoadStatus::Loaded) return;
+        if (status == LoadStatus::Loading || status == LoadStatus::Ready) return;
         e.status.store(LoadStatus::Loading, std::memory_order_release);
     }
 
@@ -82,9 +143,7 @@ void AssetManager::loadInternal(u32 id) {
         if (id >= static_cast<u32>(m_assets.size())) return;
         eptr = m_assets[id].get();
         LoadStatus status = eptr->status.load(std::memory_order_acquire);
-        if (status == LoadStatus::Loading || status == LoadStatus::Loaded) {
-            if (status != LoadStatus::Loading) return;
-        }
+        if (status == LoadStatus::Ready) return;
         eptr->status.store(LoadStatus::Loading, std::memory_order_release);
     }
 
@@ -126,7 +185,13 @@ void AssetManager::loadInternal(u32 id) {
     e.lastWriteTime = getFileWriteTime(e.path);
 #endif
 
-    e.status.store(LoadStatus::Loaded, std::memory_order_release);
+    e.status.store(LoadStatus::Ready, std::memory_order_release);
+    e.lastAccessFrame = m_frame;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        evictLruToFitBudget();
+    }
 }
 
 void AssetManager::resolveEntry(AssetEntry& e) {
@@ -176,11 +241,11 @@ void AssetManager::resolveShader(AssetEntry& e) {
 void AssetManager::resolveMesh(AssetEntry& e) {
     const auto* meta = static_cast<const Tools::MeshMetadata*>(e.metadata);
     const u8* payload = static_cast<const u8*>(e.payload);
-    
+
     u64 vertexDataSize = static_cast<u64>(meta->vertexCount) * sizeof(Vertex3D);
     const Vertex3D* vertices = reinterpret_cast<const Vertex3D*>(payload);
     const u32* indices = reinterpret_cast<const u32*>(payload + vertexDataSize);
-    
+
     e.resolved.mesh = Mesh{
         vertices,
         meta->vertexCount,
@@ -200,20 +265,14 @@ void AssetManager::resolvePrefab(AssetEntry& e) {
 
 void AssetManager::collectGarbage() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& entry : m_assets) {
+    for (u32 i = 0; i < static_cast<u32>(m_assets.size()); ++i) {
+        auto& entry = m_assets[i];
         if (!entry) continue;
         if (entry->refCount.load(std::memory_order_acquire) != 0) continue;
-        if (entry->status.load(std::memory_order_acquire) != LoadStatus::Loaded) continue;
-
-        m_cachedBytes.fetch_sub(entry->sizeBytes, std::memory_order_relaxed);
-        entry->allocator.reset();
-        entry->header    = nullptr;
-        entry->metadata  = nullptr;
-        entry->payload   = nullptr;
-        entry->resolved  = {};
-        entry->sizeBytes = 0;
-        entry->status.store(LoadStatus::Unloaded, std::memory_order_release);
+        if (entry->status.load(std::memory_order_acquire) != LoadStatus::Ready) continue;
+        invalidateEntry(i, *entry);
     }
+    evictLruToFitBudget();
 }
 
 CacheStats AssetManager::cacheStats() const {
@@ -225,7 +284,7 @@ CacheStats AssetManager::cacheStats() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (const auto& entry : m_assets) {
         if (!entry) continue;
-        if (entry->status.load(std::memory_order_relaxed) != LoadStatus::Loaded) continue;
+        if (entry->status.load(std::memory_order_relaxed) != LoadStatus::Ready) continue;
         switch (entry->cafType) {
             case AssetType::Texture: ++stats.textureCount; break;
             case AssetType::Audio:   ++stats.audioCount;   break;
@@ -235,37 +294,81 @@ CacheStats AssetManager::cacheStats() const {
     stats.cacheHitRate = (m_totalLoads > 0)
         ? static_cast<f32>(m_cacheHits) / static_cast<f32>(m_totalLoads)
         : 0.0f;
+    stats.evictedCount = static_cast<u32>(m_evictedCount);
 
     return stats;
 }
 
 void AssetManager::tick(u64 frameIndex) {
     m_frame = frameIndex;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        evictLruToFitBudget();
+    }
 #ifdef CF_DEBUG
     checkHotReload();
 #endif
 }
 
-void AssetManager::incRef(u32 id) {
+void AssetManager::registerInvalidationCallback(AssetInvalidationCallback callback,
+                                                 void* userData) {
+    if (!callback) return;
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (id < static_cast<u32>(m_assets.size()) && m_assets[id]) {
-        m_assets[id]->refCount.fetch_add(1, std::memory_order_relaxed);
+    for (const auto& listener : m_invalidationListeners) {
+        if (listener.callback == callback && listener.userData == userData) return;
     }
+    m_invalidationListeners.push_back({callback, userData});
 }
 
-void AssetManager::decRef(u32 id) {
+void AssetManager::unregisterInvalidationCallback(AssetInvalidationCallback callback,
+                                                   void* userData) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (id < static_cast<u32>(m_assets.size()) && m_assets[id]) {
-        m_assets[id]->refCount.fetch_sub(1, std::memory_order_acq_rel);
-    }
+    m_invalidationListeners.erase(
+        std::remove_if(m_invalidationListeners.begin(), m_invalidationListeners.end(),
+                       [&](const InvalidationListener& listener) {
+                           return listener.callback == callback &&
+                                  listener.userData == userData;
+                       }),
+        m_invalidationListeners.end());
 }
 
-LoadStatus AssetManager::getStatus(u32 id) const {
+void AssetManager::incRef(u32 id, u16 generation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (id >= static_cast<u32>(m_assets.size()) || !m_assets[id]) return;
+    AssetEntry& e = *m_assets[id];
+    if (e.generation != generation) return;
+    touchEntry(e);
+    e.refCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AssetManager::decRef(u32 id, u16 generation) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (id >= static_cast<u32>(m_assets.size()) || !m_assets[id]) return;
+    AssetEntry& e = *m_assets[id];
+    if (e.generation != generation) return;
+    e.refCount.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+LoadStatus AssetManager::getStatus(u32 id, u16 generation) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (id >= static_cast<u32>(m_assets.size()) || !m_assets[id]) {
-        return LoadStatus::Unloaded;
+        return LoadStatus::Invalid;
     }
-    return m_assets[id]->status.load(std::memory_order_acquire);
+    const AssetEntry& e = *m_assets[id];
+    if (e.generation != generation) return LoadStatus::Invalid;
+    return e.status.load(std::memory_order_acquire);
+}
+
+bool AssetManager::isHandleAlive(u32 id, u16 generation) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (id >= static_cast<u32>(m_assets.size()) || !m_assets[id]) return false;
+    return m_assets[id]->generation == generation;
+}
+
+u16 AssetManager::entryGeneration(u32 id) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (id >= static_cast<u32>(m_assets.size()) || !m_assets[id]) return 0;
+    return m_assets[id]->generation;
 }
 
 u32 AssetManager::reloadAsset(const char* path) {
@@ -279,16 +382,8 @@ u32 AssetManager::reloadAsset(const char* path) {
         auto it = m_pathIndex.find(key);
         if (it == m_pathIndex.end()) return ~0u;
         id = it->second;
-
-        auto& e = *m_assets[id];
-        m_cachedBytes.fetch_sub(e.sizeBytes, std::memory_order_relaxed);
-        e.allocator.reset();
-        e.header    = nullptr;
-        e.metadata  = nullptr;
-        e.payload   = nullptr;
-        e.resolved  = {};
-        e.sizeBytes = 0;
-        e.status.store(LoadStatus::Unloaded, std::memory_order_release);
+        clearEntryData(*m_assets[id]);
+        m_assets[id]->status.store(LoadStatus::Pending, std::memory_order_release);
     }
 
     loadInternal(id);
@@ -310,7 +405,7 @@ void AssetManager::checkHotReload() {
         for (u32 i = 0; i < static_cast<u32>(m_assets.size()); ++i) {
             const auto& e = m_assets[i];
             if (!e) continue;
-            if (e->status.load(std::memory_order_acquire) != LoadStatus::Loaded) continue;
+            if (e->status.load(std::memory_order_acquire) != LoadStatus::Ready) continue;
             u64 current = getFileWriteTime(e->path);
             if (current != 0 && current != e->lastWriteTime) {
                 toReload.push_back(i);
@@ -321,15 +416,8 @@ void AssetManager::checkHotReload() {
     for (u32 id : toReload) {
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            auto& e = *m_assets[id];
-            m_cachedBytes.fetch_sub(e.sizeBytes, std::memory_order_relaxed);
-            e.allocator.reset();
-            e.header    = nullptr;
-            e.metadata  = nullptr;
-            e.payload   = nullptr;
-            e.resolved  = {};
-            e.sizeBytes = 0;
-            e.status.store(LoadStatus::Unloaded, std::memory_order_release);
+            clearEntryData(*m_assets[id]);
+            m_assets[id]->status.store(LoadStatus::Pending, std::memory_order_release);
         }
         loadInternal(id);
     }

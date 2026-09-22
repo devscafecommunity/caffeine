@@ -606,20 +606,41 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         return;
     }
 
-    static const char* primitiveNames[] = { "Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane" };
+    static const char* primitiveNames[] = {
+        "Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Cone", "Pyramid", "Torus"};
     int current = static_cast<int>(mf->primitive);
-    if (ImGui::Combo("Primitive", &current, primitiveNames, 6)) {
+    if (ImGui::Combo("Primitive", &current, primitiveNames, IM_ARRAYSIZE(primitiveNames))) {
         mf->primitive = static_cast<ECS::MeshPrimitive>(current);
         ctx.isDirty = true;
+    }
+    if (mf->primitive != ECS::MeshPrimitive::Custom) {
+        if (!world.has<ECS::Scale3D>(e)) {
+            world.add<ECS::Scale3D>(e);
+        }
+        if (auto* scale = world.get<ECS::Scale3D>(e)) {
+            if (ImGui::DragFloat3("Shape Size", &scale->scale.x, 0.05f, 0.01f, 1000.0f, "%.2f")) {
+                ctx.isDirty = true;
+            }
+            ImGui::TextDisabled("Non-uniform scale stretches the primitive.");
+        }
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
         if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
         if (world.has<ECS::TerrainComponent>(e)) {
             ImGui::TextDisabled("Texture managed by Terrain component");
-        } else if (Widgets::AssetField("Mesh Texture", mf->customTexturePath, ".png;.jpg;.jpeg",
+        } else if (Widgets::AssetField("Albedo Texture", mf->customTexturePath, ".png;.jpg;.jpeg",
                                        resolveProjectRoot(ctx))) {
             ctx.isDirty = true;
+        }
+        if (!world.has<ECS::TerrainComponent>(e)) {
+            if (Widgets::AssetField("Normal Map", mf->customNormalPath, ".png;.jpg;.jpeg",
+                                    resolveProjectRoot(ctx))) {
+                ctx.isDirty = true;
+            }
+            if (ImGui::SliderFloat("Shininess", &mf->shininess, 1.0f, 128.0f)) {
+                ctx.isDirty = true;
+            }
         }
         if (Widgets::AssetField("Material", mf->customMaterialPath, ".mat", resolveProjectRoot(ctx)))
             ctx.isDirty = true;
@@ -1029,6 +1050,15 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
 
     ImGui::Separator();
     ImGui::TextUnformatted("Surface");
+    if (ImGui::InputText("Normal Map", terrain->normalMapPath, sizeof(terrain->normalMapPath))) {
+#ifdef CF_HAS_SDL3
+        Terrain::TerrainGpuTextureCache::instance().invalidateEntity(e, nullptr);
+#endif
+        ctx.isDirty = true;
+    }
+    if (ImGui::SliderFloat("Shininess", &terrain->shininess, 1.0f, 128.0f)) {
+        ctx.isDirty = true;
+    }
     if (ImGui::InputText("Albedo Texture", terrain->texturePath, sizeof(terrain->texturePath))) {
         Terrain::TerrainCache::instance().repairTexturePaths(*terrain);
         Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);

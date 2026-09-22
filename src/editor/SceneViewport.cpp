@@ -6,6 +6,8 @@
 #include "assets/MaterialCache.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/EditorCameraMath.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "editor/TestInstrumentation.hpp"
 #include "editor/TestUIMapper.hpp"
 #include "editor/TestRequestHandler.hpp"
@@ -90,9 +92,8 @@ struct ViewportRay {
 
 ViewportRay computeViewportRay(const EditorContext& ctx, ImVec2 viewportOrigin, ImVec2 viewportSize,
                                ImVec2 mousePos) {
-    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-    const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+    const Vec3 camPos =
+        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     const f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
     const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
@@ -180,6 +181,9 @@ EntityFocusBounds computeEntityFocusBounds(ECS::World& world, ECS::Entity entity
                 break;
             case ECS::MeshPrimitive::Capsule:
             case ECS::MeshPrimitive::Cylinder:
+            case ECS::MeshPrimitive::Cone:
+            case ECS::MeshPrimitive::Pyramid:
+            case ECS::MeshPrimitive::Torus:
                 bounds.radius = std::max(bounds.radius, 2.0f);
                 break;
             case ECS::MeshPrimitive::Plane:
@@ -639,8 +643,15 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     camera.nearClip = nearClip;
     camera.farClip = farClip;
 
+    Render::GpuSceneRenderOptions previewOpts;
+    previewOpts.textureQuality.enabled = ctx.textureQualityEnabled;
+    previewOpts.textureQuality.fullRadius = ctx.textureQualityRadius;
+    previewOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
+    previewOpts.textureQuality.minScale = ctx.textureQualityMinScale;
+    previewOpts.textureQualityViewers.push_back(cameraPos);
     m_gpuSceneRenderer.renderWithCamera(
-        cmd, world, camera, m_previewColorTarget, m_previewDepthTarget, width, height, projectRoot);
+        cmd, world, camera, m_previewColorTarget, m_previewDepthTarget, width, height, projectRoot,
+        previewOpts);
     (void)ctx;
     return m_previewColorTarget && m_previewColorTarget->handle != nullptr;
 }
@@ -720,7 +731,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         return;
     }
     
-    resizeCanvasIfNeeded((u32)viewportSize.x, (u32)viewportSize.y);
+    const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize);
+    resizeCanvasIfNeeded((u32)framebufferSize.x, (u32)framebufferSize.y);
 
     if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
         Scene::syncTerrainMeshes(world);
@@ -728,16 +740,44 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
     u32 gpuMeshDrawCount = 0;
-    // Textured meshes are composited via CPU raster on top of the skybox. The GPU
-    // offscreen pass sits under that skybox layer, so enabling it disables the CPU
-    // overlay and makes meshes vanish after the first successful GPU upload.
+    const bool wireframePreview = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
     const bool gpuSceneActive = m_frameCmd && m_gpuSceneReady && m_useGpuScene && m_colorTarget &&
                                 m_depthTarget && ctx.viewMode == EditorContext::ViewMode::Mode3D;
     if (gpuSceneActive) {
+        const Vec3 camPos =
+            editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
+        const f32 yawDelta = std::abs(ctx.camYaw - m_lastEditorCamYaw);
+        const f32 pitchDelta = std::abs(ctx.camPitch - m_lastEditorCamPitch);
+        const f32 posDelta = (camPos - m_lastEditorCamPos).length();
+        const f32 frameMotion = yawDelta * 14.0f + pitchDelta * 14.0f + posDelta;
+        m_editorCamMotion = m_editorCamMotion * 0.75f + frameMotion * 0.25f;
+        m_lastEditorCamYaw = ctx.camYaw;
+        m_lastEditorCamPitch = ctx.camPitch;
+        m_lastEditorCamPos = camPos;
+
+        Render::GpuSceneRenderOptions gpuOpts;
+        gpuOpts.wireframeMeshes = wireframePreview;
+        // Shadow passes re-draw the whole scene (x4 cascades + point faces). Skip while orbiting.
+        gpuOpts.enableShadows = !wireframePreview && m_editorCamMotion < 1.25f;
+        gpuOpts.textureQuality.enabled = ctx.textureQualityEnabled;
+        gpuOpts.textureQuality.fullRadius = ctx.textureQualityRadius;
+        gpuOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
+        gpuOpts.textureQuality.minScale = ctx.textureQualityMinScale;
+        gpuOpts.textureQualityViewers.push_back(camPos);
+        ECS::ComponentQuery camQuery;
+        camQuery.with<ECS::Camera3DComponent>();
+        world.forEach<ECS::Camera3DComponent>(camQuery,
+            [&](ECS::Entity entity, ECS::Camera3DComponent&) {
+                Vec3 camEntityPos;
+                if (tryGetEntityPosition(world, entity, camEntityPos)) {
+                    gpuOpts.textureQualityViewers.push_back(camEntityPos);
+                }
+            });
+
         Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer");
         gpuMeshDrawCount = m_gpuSceneRenderer.render(m_frameCmd, world, ctx, m_colorTarget,
                                                      m_depthTarget, m_lastCanvasWidth,
-                                                     m_lastCanvasHeight, projectRoot);
+                                                     m_lastCanvasHeight, projectRoot, gpuOpts);
         Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer.done");
     }
     ImGui::Dummy(viewportSize);
@@ -780,7 +820,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             if (is3D) {
                 const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
                 const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-                const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+                const Vec3 camPos =
+                    editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
                 const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
                 const f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
                 const Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
@@ -881,7 +922,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             
             f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
             f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+            Vec3 camPos =
+                editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
             Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
             f32 aspect = vpSize.x / std::max(vpSize.y, 1.0f);
             Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
@@ -994,6 +1036,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->Flags |= ImDrawListFlags_AntiAliasedLines;
+    drawList->Flags |= ImDrawListFlags_AntiAliasedFill;
     ImVec2 origin = ImGui::GetItemRectMin();
 
     m_terrainBrushHitValid = false;
@@ -1147,6 +1191,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         }
         if (ImGui::Button(texturedPreview ? "Textured" : "Wireframe")) {
             m_meshPreviewMode = texturedPreview ? MeshPreviewMode::Wireframe : MeshPreviewMode::Textured;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(texturedPreview
+                                  ? "GPU-lit meshes (fast with many objects)"
+                                  : "GPU wireframe with depth (fast with many objects)");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle 3D preview style (white/gray textured vs wireframe)");
         if (texturedPreview) {
@@ -1376,7 +1425,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             if (is3DIso && panButton == ImGuiMouseButton_Middle) {
                 const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
                 const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-                const Vec3 forward(-sinY * cosP, sinP, cosY * cosP);
+                const Vec3 forward = editorLookDirection(ctx.camYaw, ctx.camPitch);
                 const Vec3 worldUp(0.0f, 1.0f, 0.0f);
                 Vec3 right = forward.cross(worldUp);
                 if (right.lengthSquared() < 1e-6f) right = Vec3(1.0f, 0.0f, 0.0f);
@@ -1401,9 +1450,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                                     ImGui::IsKeyDown(ImGuiKey_RightShift)) ? 4.0f : 1.0f;
              const f32 dt = std::max(ImGui::GetIO().DeltaTime, 0.0001f);
              const f32 speed = std::max(18.0f, ctx.camDistance * 1.35f) * dt * moveBoost;
-             const f32 sinY  = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-             const f32 sinP  = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-             const Vec3 lookDir(-sinY * cosP, sinP, cosY * cosP);
+             const Vec3 lookDir = editorLookDirection(ctx.camYaw, ctx.camPitch);
              const Vec3 worldUp(0.0f, 1.0f, 0.0f);
              Vec3 right = lookDir.cross(worldUp);
              if (right.lengthSquared() < 1e-8f) right = Vec3(1.0f, 0.0f, 0.0f);
@@ -1425,15 +1472,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
             const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
             const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            const Vec3 lookDir(-sinY * cosP, sinP, cosY * cosP);
+            const Vec3 lookDir = editorLookDirection(ctx.camYaw, ctx.camPitch);
             const Vec3 camPos = ctx.camFocus - lookDir * ctx.camDistance;
             ctx.camYaw   += delta.x * 0.005f;
             ctx.camPitch += delta.y * 0.005f;
             ctx.camPitch = std::clamp(ctx.camPitch, EditorContext::kCamPitchMin,
                                       EditorContext::kCamPitchMax);
-            const f32 nSinY = std::sin(ctx.camYaw), nCosY = std::cos(ctx.camYaw);
-            const f32 nSinP = std::sin(ctx.camPitch), nCosP = std::cos(ctx.camPitch);
-            const Vec3 newLook(-nSinY * nCosP, nSinP, nCosY * nCosP);
+            const Vec3 newLook = editorLookDirection(ctx.camYaw, ctx.camPitch);
             ctx.camFocus = camPos + newLook * ctx.camDistance;
         } else if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
             ctx.camYaw += delta.x * 0.005f;
@@ -1448,7 +1493,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                  ctx.viewMode == EditorContext::ViewMode::Isometric) {
                  const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
                  const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-                 const Vec3 lookDir(-sinY * cosP, sinP, cosY * cosP);
+                 const Vec3 lookDir = editorLookDirection(ctx.camYaw, ctx.camPitch);
                  if (ImGui::IsKeyDown(ImGuiKey_LeftAlt) || ImGui::IsKeyDown(ImGuiKey_RightAlt)) {
                      const f32 zoomFactor = (scroll > 0) ? 0.85f : 1.18f;
                      ctx.camDistance *= zoomFactor;
@@ -1540,12 +1585,8 @@ ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize
 }
 
 Mat4 SceneViewport::computeVP3D(ImVec2 viewportSize, const EditorContext& ctx) {
-    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-    Vec3 camPos;
-    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
-    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
-    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+    const Vec3 camPos =
+        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
     Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
@@ -1554,15 +1595,56 @@ Mat4 SceneViewport::computeVP3D(ImVec2 viewportSize, const EditorContext& ctx) {
 
 ImVec2 SceneViewport::projectToScreenVP(Vec3 p, ImVec2 origin, ImVec2 viewportSize,
                                          const Mat4& vp) {
-    Vec4 clip = vp.transformVec4(Vec4(p.x, p.y, p.z, 1.0f));
-    if (clip.w <= 0.1f) return ImVec2(-10000.0f, -10000.0f);
-    f32 ndcX = clip.x / clip.w;
-    f32 ndcY = clip.y / clip.w;
-    // Off-screen NDC coords are allowed — ImGui clips line segments automatically.
-    return ImVec2(
-        origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x,
-        origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y
-    );
+    ImVec2 screen{};
+    if (!projectWorldToViewport(vp, p, origin, viewportSize, screen)) {
+        return ImVec2(-10000.0f, -10000.0f);
+    }
+    return screen;
+}
+
+bool SceneViewport::projectWorldToViewport(const Mat4& vp, Vec3 worldPos, ImVec2 origin,
+                                           ImVec2 viewportSize, ImVec2& screenOut) {
+    Vec4 clip = vp.transformVec4(Vec4(worldPos.x, worldPos.y, worldPos.z, 1.0f));
+    if (clip.w <= 0.1f) return false;
+    const f32 ndcX = clip.x / clip.w;
+    const f32 ndcY = clip.y / clip.w;
+    screenOut.x = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
+    screenOut.y = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
+    return true;
+}
+
+void SceneViewport::drawViewportWorldLine(ImDrawList* dl, const Mat4& vp, ImVec2 origin,
+                                          ImVec2 viewportSize, Vec3 a, Vec3 b, ImU32 color,
+                                          float thickness) {
+    if (!dl) return;
+
+    ImVec2 sa{};
+    ImVec2 sb{};
+    const bool va = projectWorldToViewport(vp, a, origin, viewportSize, sa);
+    const bool vb = projectWorldToViewport(vp, b, origin, viewportSize, sb);
+    if (!va && !vb) return;
+    if (va && vb) {
+        dl->AddLine(sa, sb, color, thickness);
+        return;
+    }
+
+    constexpr f32 wMin = 0.1f;
+    Vec4 clipA = vp.transformVec4(Vec4(a.x, a.y, a.z, 1.0f));
+    Vec4 clipB = vp.transformVec4(Vec4(b.x, b.y, b.z, 1.0f));
+    if (clipA.w < wMin) {
+        const f32 t = (wMin - clipA.w) / (clipB.w - clipA.w);
+        Vec4 clipped(clipA.x + t * (clipB.x - clipA.x), clipA.y + t * (clipB.y - clipA.y),
+                     clipA.z + t * (clipB.z - clipA.z), wMin);
+        sa.x = origin.x + (clipped.x / wMin + 1.0f) * 0.5f * viewportSize.x;
+        sa.y = origin.y + (1.0f - clipped.y / wMin) * 0.5f * viewportSize.y;
+    } else {
+        const f32 t = (wMin - clipB.w) / (clipA.w - clipB.w);
+        Vec4 clipped(clipB.x + t * (clipA.x - clipB.x), clipB.y + t * (clipA.y - clipB.y),
+                     clipB.z + t * (clipA.z - clipB.z), wMin);
+        sb.x = origin.x + (clipped.x / wMin + 1.0f) * 0.5f * viewportSize.x;
+        sb.y = origin.y + (1.0f - clipped.y / wMin) * 0.5f * viewportSize.y;
+    }
+    dl->AddLine(sa, sb, color, thickness);
 }
 
 // ── Gizmo drawing ─────────────────────────────────────────────────
@@ -1745,8 +1827,15 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     if (!ctx.currentScenePath.empty()) {
         projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
     }
+    const bool wireMode = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
+    const bool gpuTextured3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && !wireMode &&
+                                m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
+    const bool gpuWireframe3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && wireMode &&
+                                 m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
+
     Scene::SceneLighting sceneLighting;
-    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting);
+    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting,
+                               ECS::Entity::INVALID, !gpuTextured3D);
 
     auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
         return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
@@ -1795,7 +1884,11 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     };
 
     auto drawSegment = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
-        dl->AddLine(projectCached(a), projectCached(b), col, thickness);
+        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+            drawViewportWorldLine(dl, vpCache3D, origin, viewportSize, a, b, col, thickness);
+        } else {
+            dl->AddLine(projectCached(a), projectCached(b), col, thickness);
+        }
     };
 
     auto drawRing = [&](const Mat4& worldMatrix, const Vec3& axisA, const Vec3& axisB,
@@ -1810,9 +1903,6 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         }
     };
 
-    const bool gpuTextured3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
-                                m_meshPreviewMode == MeshPreviewMode::Textured &&
-                                m_gpuSceneReady && m_useGpuScene);
     const bool useMeshRaster = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
                                 m_meshPreviewMode == MeshPreviewMode::Textured &&
                                 !gpuTextured3D);
@@ -1828,14 +1918,19 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 
         const Mat4 worldMatrix = entityMatrix(world, entity);
         const bool selected = (ctx.selectedEntity == entity);
-        const bool wireMode = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
+        if (gpuTextured3D && !selected) {
+            return true;
+        }
+        if (gpuWireframe3D && !selected) {
+            return true;
+        }
         const ImU32 wireCol = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(170, 190, 230, 210);
         const ImU32 polyCol = selected ? IM_COL32(95, 170, 255, 210) : IM_COL32(130, 150, 190, 170);
         const float thickness = selected ? 2.0f : 1.25f;
         const float polyThickness = selected ? 1.5f : 1.0f;
 
-        const bool drawContour = wireMode || selected;
-        const bool drawPolygons = wireMode;
+        const bool drawContour = (wireMode && !gpuWireframe3D) || selected;
+        const bool drawPolygons = wireMode && !gpuWireframe3D;
         const int densityLevel = static_cast<int>(m_wireframeDensity);
         const int spherePolySegments = (densityLevel == 0) ? 8 : (densityLevel == 1 ? 12 : 18);
         const int sidePolySlices = (densityLevel == 0) ? 4 : (densityLevel == 1 ? 8 : 14);
@@ -1848,7 +1943,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                 f32 ry = wp.y - ctx.camFocus.y;
                 f32 rz = wp.z - ctx.camFocus.z;
                 f32 vz = -sinY * rx + cosY * rz;
-                f32 vz2 = -sinP * ry + cosP * vz;
+                f32 vz2 = sinP * ry + cosP * vz;
                 return vz2;
             }
             if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
@@ -1898,7 +1993,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     wp[i] = worldMatrix.transformPoint(corners[i]);
                 }
 
-                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                if (m_meshPreviewMode == MeshPreviewMode::Textured && !(gpuTextured3D && !wireMode)) {
                     struct FaceDraw {
                         int faceIndex;
                         f32 depth;
@@ -1989,12 +2084,8 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         break;
                     }
 
-                    f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-                    f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-                    Vec3 camPos;
-                    camPos.x = ctx.camFocus.x + sinY * cosP * ctx.camDistance;
-                    camPos.y = ctx.camFocus.y - sinP * ctx.camDistance;
-                    camPos.z = ctx.camFocus.z - cosY * cosP * ctx.camDistance;
+                    const Vec3 camPos =
+                        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
                     Mat4 viewMat = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
                     f32 aspectR = viewportSize.x / std::max(viewportSize.y, 1.0f);
                     Mat4 projMat = Mat4::perspective(1.0472f, aspectR, 0.1f, ctx.cameraFarPlane());
@@ -2094,7 +2185,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     worldMatrix.transformPoint(corners[3])
                 };
 
-                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                if (m_meshPreviewMode == MeshPreviewMode::Textured && !(gpuTextured3D && !wireMode)) {
                     Vec3 nWorld = matrixAxis(worldMatrix, 1, Vec3::up());
                     Vec3 center = (wp[0] + wp[1] + wp[2] + wp[3]) * 0.25f;
                     const Vec3 lit =
@@ -2122,7 +2213,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                 ImVec2 cs = projectToScreen(center, origin, viewportSize, ctx);
                 ImVec2 pxs = projectToScreen(px, origin, viewportSize, ctx);
                 f32 rad = std::sqrt((pxs.x - cs.x) * (pxs.x - cs.x) + (pxs.y - cs.y) * (pxs.y - cs.y));
-                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                if (m_meshPreviewMode == MeshPreviewMode::Textured && !(gpuTextured3D && !wireMode)) {
                     const Vec3 lit = lightColorAt(center, entityAxis(world, entity, 2, Vec3(0, 0, 1)),
                                                   Scene::meshReceivesShadows(world, entity));
                     dl->AddCircleFilled(cs, rad, toColor(Vec3(lit.x * 0.78f, lit.y * 0.78f, lit.z * 0.78f), 0.90f), 24);
@@ -2143,7 +2234,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             case ECS::MeshPrimitive::Cylinder: {
                 Mat4 topMatrix = worldMatrix * Mat4::translation(0.0f, 0.5f, 0.0f);
                 Mat4 bottomMatrix = worldMatrix * Mat4::translation(0.0f, -0.5f, 0.0f);
-                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                if (m_meshPreviewMode == MeshPreviewMode::Textured && !(gpuTextured3D && !wireMode)) {
                     Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cMid = (cTop + cBottom) * 0.5f;
@@ -2176,7 +2267,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             case ECS::MeshPrimitive::Capsule: {
                 Mat4 topMatrix = worldMatrix * Mat4::translation(0.0f, 0.25f, 0.0f);
                 Mat4 bottomMatrix = worldMatrix * Mat4::translation(0.0f, -0.25f, 0.0f);
-                if (m_meshPreviewMode == MeshPreviewMode::Textured) {
+                if (m_meshPreviewMode == MeshPreviewMode::Textured && !(gpuTextured3D && !wireMode)) {
                     Vec3 cTop = topMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cBottom = bottomMatrix.transformPoint(Vec3(0,0,0));
                     Vec3 cMid = (cTop + cBottom) * 0.5f;
@@ -2191,6 +2282,10 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     drawRing(bottomMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
                     drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.5f, 24, wireCol, thickness);
                     drawRing(worldMatrix, Vec3(0, 1, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                    Mat4 topCapMatrix = worldMatrix * Mat4::translation(0.0f, 0.75f, 0.0f);
+                    Mat4 bottomCapMatrix = worldMatrix * Mat4::translation(0.0f, -0.75f, 0.0f);
+                    drawRing(topCapMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.25f, 16, wireCol, thickness);
+                    drawRing(bottomCapMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.25f, 16, wireCol, thickness);
                 }
                 for (int i = 0; i < 4; ++i) {
                     const f32 a = (3.14159265f * 0.5f) * static_cast<f32>(i);
@@ -2205,6 +2300,42 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         const Vec3 b1(std::cos(a1) * 0.5f, -0.25f, std::sin(a1) * 0.5f);
                         drawPoly(worldMatrix.transformPoint(t0), worldMatrix.transformPoint(b1));
                     }
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Cone: {
+                const Vec3 apex = worldMatrix.transformPoint(Vec3(0.0f, 0.5f, 0.0f));
+                Mat4 baseMatrix = worldMatrix * Mat4::translation(0.0f, -0.5f, 0.0f);
+                if (drawContour) {
+                    drawRing(baseMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 24, wireCol, thickness);
+                }
+                for (int i = 0; i < 4; ++i) {
+                    const f32 a = (3.14159265f * 0.5f) * static_cast<f32>(i);
+                    const Vec3 rim(std::cos(a) * 0.5f, 0.0f, std::sin(a) * 0.5f);
+                    drawEdge(apex, baseMatrix.transformPoint(rim));
+                }
+                break;
+            }
+            case ECS::MeshPrimitive::Pyramid: {
+                const Vec3 apex = worldMatrix.transformPoint(Vec3(0.0f, 0.5f, 0.0f));
+                const Vec3 b0 = worldMatrix.transformPoint(Vec3(-0.5f, -0.5f, -0.5f));
+                const Vec3 b1 = worldMatrix.transformPoint(Vec3(0.5f, -0.5f, -0.5f));
+                const Vec3 b2 = worldMatrix.transformPoint(Vec3(0.5f, -0.5f, 0.5f));
+                const Vec3 b3 = worldMatrix.transformPoint(Vec3(-0.5f, -0.5f, 0.5f));
+                drawEdge(b0, b1);
+                drawEdge(b1, b2);
+                drawEdge(b2, b3);
+                drawEdge(b3, b0);
+                drawEdge(apex, b0);
+                drawEdge(apex, b1);
+                drawEdge(apex, b2);
+                drawEdge(apex, b3);
+                break;
+            }
+            case ECS::MeshPrimitive::Torus: {
+                if (drawContour) {
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 0, 1), 0.5f, 28, wireCol, thickness);
+                    drawRing(worldMatrix, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.2f, 20, wireCol, thickness);
                 }
                 break;
             }
@@ -2448,7 +2579,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         const float len = dir.length();
         if (len > 1e-6f) dir = dir / len;
         float vzc = -sinY * dir.x + cosY * dir.z;
-        return -sinP * dir.y + cosP * vzc;
+        return sinP * dir.y + cosP * vzc;
     };
     auto axisForeshorten = [&](const Vec3& axis) -> float {
         if (!is3D) return 1.f;
@@ -2457,7 +2588,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         if (len > 1e-6f) dir = dir / len;
         float vx  = cosY * dir.x + sinY * dir.z;
         float vzc = -sinY * dir.x + cosY * dir.z;
-        float vy2 = cosP * dir.y + sinP * vzc;
+        float vy2 = cosP * dir.y - sinP * vzc;
         return std::sqrt(vx * vx + vy2 * vy2);
     };
     auto norm2D = [](ImVec2 v) -> ImVec2 {
@@ -2733,11 +2864,7 @@ bool SceneViewport::drawSkybox(ImDrawList* drawList, ImVec2 origin, ImVec2 viewp
     if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return false;
 
     Render::SkyboxCamera skyCamera;
-    const f32 sinY = std::sin(ctx.camYaw);
-    const f32 cosY = std::cos(ctx.camYaw);
-    const f32 sinP = std::sin(ctx.camPitch);
-    const f32 cosP = std::cos(ctx.camPitch);
-    skyCamera.forward = Vec3(-sinY * cosP, sinP, cosY * cosP).normalized();
+    skyCamera.forward = editorLookDirection(ctx.camYaw, ctx.camPitch).normalized();
     const Vec3 worldUp(0.0f, 1.0f, 0.0f);
     skyCamera.right = skyCamera.forward.cross(worldUp);
     if (skyCamera.right.lengthSquared() < 1e-6f) {
@@ -2806,25 +2933,8 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     ImU32 axisColorZ = IM_COL32(60, 60, 220, 200);
 
     Mat4 vp = computeVP3D(viewportSize, ctx);
-    const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-    const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-    const Vec3 camPos(
-        ctx.camFocus.x + sinY * cosP * ctx.camDistance,
-        ctx.camFocus.y - sinP * ctx.camDistance,
-        ctx.camFocus.z - cosY * cosP * ctx.camDistance);
-
-    // Projects a world point to screen. Returns false only if behind the near plane (w <= 0.1).
-    // Off-screen (NDC > 1) coords are intentionally allowed — ImGui clips them automatically,
-    // which is required for lines whose far endpoint is outside the viewport but still in front.
-    auto projectLine = [&](Vec3 worldPt, ImVec2& screenOut) -> bool {
-        Vec4 clip = vp.transformVec4(Vec4(worldPt.x, worldPt.y, worldPt.z, 1.0f));
-        if (clip.w <= 0.1f) return false;
-        f32 ndcX = clip.x / clip.w;
-        f32 ndcY = clip.y / clip.w;
-        screenOut.x = origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x;
-        screenOut.y = origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y;
-        return true;
-    };
+    const Vec3 camPos =
+        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
 
     auto fadeColor = [&](ImU32 color, const Vec3& a, const Vec3& b, bool major) -> ImU32 {
         const Vec3 mid = (a + b) * 0.5f;
@@ -2837,33 +2947,8 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
     };
 
     auto drawLine3D = [&](Vec3 a, Vec3 b, ImU32 color, float thickness, bool major = false) {
-        ImVec2 sa, sb;
-        bool va = projectLine(a, sa);
-        bool vb = projectLine(b, sb);
-        if (!va && !vb) return;
-        const ImU32 faded = fadeColor(color, a, b, major);
-        if (va && vb) {
-            dl->AddLine(sa, sb, faded, thickness);
-            return;
-        }
-        // One endpoint is behind the near plane — clip the segment in clip space.
-        Vec4 clipA = vp.transformVec4(Vec4(a.x, a.y, a.z, 1.0f));
-        Vec4 clipB = vp.transformVec4(Vec4(b.x, b.y, b.z, 1.0f));
-        const f32 wMin = 0.1f;
-        if (clipA.w < wMin) {
-            f32 t = (wMin - clipA.w) / (clipB.w - clipA.w);
-            Vec4 clipped(clipA.x + t*(clipB.x-clipA.x), clipA.y + t*(clipB.y-clipA.y),
-                         clipA.z + t*(clipB.z-clipA.z), wMin);
-            sa.x = origin.x + (clipped.x/wMin + 1.0f) * 0.5f * viewportSize.x;
-            sa.y = origin.y + (1.0f - clipped.y/wMin) * 0.5f * viewportSize.y;
-        } else {
-            f32 t = (wMin - clipB.w) / (clipA.w - clipB.w);
-            Vec4 clipped(clipB.x + t*(clipA.x-clipB.x), clipB.y + t*(clipA.y-clipB.y),
-                         clipB.z + t*(clipA.z-clipB.z), wMin);
-            sb.x = origin.x + (clipped.x/wMin + 1.0f) * 0.5f * viewportSize.x;
-            sb.y = origin.y + (1.0f - clipped.y/wMin) * 0.5f * viewportSize.y;
-        }
-        dl->AddLine(sa, sb, faded, thickness);
+        drawViewportWorldLine(dl, vp, origin, viewportSize, a, b, fadeColor(color, a, b, major),
+                              thickness);
     };
 
     float visibleRange = ctx.camDistance;
@@ -3540,11 +3625,11 @@ void SceneViewport::drawSceneMeshesForCamera(
         projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
     }
     Scene::SceneLighting sceneLighting;
-    Scene::gatherSceneLighting(world, camPos, projectRoot, sceneLighting, skipEntity);
+    Scene::collectSceneLights(world, sceneLighting.lights);
 
-    auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
+    auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool /*receiveShadows*/) -> Vec3 {
         return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,
-                                              receiveShadows, Vec3(0.22f, 0.22f, 0.24f));
+                                              false, Vec3(0.22f, 0.22f, 0.24f));
     };
 
     MeshCpuRasterizer meshRaster;
@@ -3640,8 +3725,8 @@ std::string SceneViewport::resolveSpritePath(const std::string& spriteName, cons
 }
 
 void SceneViewport::releaseSpriteTextures() {
-    auto destroyEntry = [this](SpriteTextureCacheEntry& entry) {
-        retireImTexture(entry.texture);
+    auto destroyEntry = [](SpriteTextureCacheEntry& entry) {
+        destroyImGuiTexture(entry.texture);
         entry.width = 0;
         entry.height = 0;
         entry.loadFailed = false;
@@ -3654,7 +3739,7 @@ void SceneViewport::releaseSpriteTextures() {
     destroyEntry(m_meshRasterTexture);
     destroyEntry(m_camMeshRasterTexture);
     m_skyboxRenderer.releaseGpuTextures();
-    pruneRetiredTextures();
+    clearRetiredImGuiTextures(m_retiredTextures);
 }
 
 void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
@@ -3704,10 +3789,7 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
         return projectToScreenVP(p, origin, viewportSize, vp);
     };
     auto drawFrustumLine = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
-        ImVec2 sa = projectFrustum(a);
-        ImVec2 sb = projectFrustum(b);
-        if (sa.x < -5000.0f && sb.x < -5000.0f) return;
-        dl->AddLine(sa, sb, col, thickness);
+        drawViewportWorldLine(dl, vp, origin, viewportSize, a, b, col, thickness);
     };
 
     ECS::ComponentQuery q3d;

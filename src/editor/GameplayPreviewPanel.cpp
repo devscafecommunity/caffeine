@@ -1,5 +1,6 @@
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EditorPanelUtils.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "ui/UIRenderer.hpp"
 #include "render/PostProcessRenderer.hpp"
 
@@ -92,6 +93,10 @@ void GameplayPreviewPanel::shutdown() {
         m_renderer.shutdown();
     }
 #ifdef CF_HAS_IMGUI
+    for (auto& [_, entry] : m_texCache2D) {
+        destroyImGuiTexture(entry.texture);
+    }
+    m_texCache2D.clear();
     m_skyboxRenderer.releaseGpuTextures();
 #endif
     m_colorTarget = nullptr;
@@ -197,10 +202,11 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     } else
 #ifdef CF_HAS_SDL3
     if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
-        u32 w = static_cast<u32>(panelSize.x);
-        u32 h = static_cast<u32>(panelSize.y);
-        w = std::clamp(w, 8u, 1280u);
-        h = std::clamp(h, 8u, 720u);
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize);
+        u32 w = static_cast<u32>(fbSize.x);
+        u32 h = static_cast<u32>(fbSize.y);
+        w = std::clamp(w, 8u, 2560u);
+        h = std::clamp(h, 8u, 1440u);
         resizeCanvas(w, h);
 
         const Mat4 worldMatrix = Scene::computeWorldMatrix(world, cameraEntity);

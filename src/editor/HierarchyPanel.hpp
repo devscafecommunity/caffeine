@@ -41,6 +41,7 @@ private:
     void renderToolbar();
     void renderEntityNode(ECS::Entity entity);
     void renderEmptyContextMenu();
+    void renderCreateEntityMenuItems();
     void handleDeleteKey();
     void createEntityWithType(ECS::World& world, const char* name, const char* componentType);
 

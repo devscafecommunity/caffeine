@@ -70,6 +70,11 @@ enum class ShaderStage : u8 {
     Fragment = SDL_GPU_SHADERSTAGE_FRAGMENT
 };
 
+enum class FillMode : u8 {
+    Fill = SDL_GPU_FILLMODE_FILL,
+    Line = SDL_GPU_FILLMODE_LINE,
+};
+
 enum class ShaderBytecodeFormat : u8 {
     SPIRV,
     DXBC,
@@ -106,6 +111,7 @@ struct GraphicsPipelineDesc {
     bool depthTest  = true;
     bool depthWrite = true;
     bool enableBlend = false;
+    FillMode fillMode = FillMode::Fill;
 };
 
 struct SamplerDesc {
@@ -223,7 +229,7 @@ public:
 
     bool uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 offset = 0);
     bool uploadTexture(Texture* texture, const void* pixels, u32 width, u32 height,
-                       u32 bytesPerPixel = 4);
+                       u32 bytesPerPixel = 4, u32 mipLevel = 0);
 
     void destroyTexture(Texture* tex);
     void destroyShader(Shader* shader);

@@ -14,6 +14,8 @@
 #include "animation/AnimationComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
+#include "ecs/Components3D.hpp"
+#include "scene/LightingSystem.hpp"
 
 namespace Caffeine::Editor {
 
@@ -164,6 +166,7 @@ void registerAllComponents(ComponentRegistry& reg) {
             w.add<ECS::LightComponent>(e);
             w.add<ECS::DirectionalLightComponent>(e);
             if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+            Scene::applyDefaultSunOrientation(w, e);
         }
     });
     reg.registerComponent({

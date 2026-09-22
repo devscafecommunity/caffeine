@@ -144,6 +144,12 @@ public:
         return std::clamp(reach * 6.0f + 400.0f, 400.0f, 4000.0f);
     }
 
+    // ── Texture quality (distance-based LOD around viewers) ─────────────
+    bool textureQualityEnabled = true;
+    f32  textureQualityRadius  = 35.0f;
+    f32  textureQualityFalloff = 100.0f;
+    f32  textureQualityMinScale = 0.25f;
+
     // ── Skybox (3D viewport) ───────────────────────────────────────────
     bool skyboxEnabled = true;
     int  skyboxIndex   = 0;

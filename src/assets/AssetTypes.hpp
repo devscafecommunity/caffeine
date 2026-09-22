@@ -19,10 +19,11 @@ using namespace Caffeine;
 // Load state of a single asset slot
 // ============================================================================
 enum class LoadStatus : u8 {
-    Unloaded = 0,
-    Loading,
-    Loaded,
-    Failed
+    Pending  = 0,  // slot created, load not yet scheduled
+    Loading  = 1,  // async or sync load in progress
+    Ready    = 2,  // payload resolved and safe to use
+    Failed   = 3,  // load attempted but file missing or corrupt
+    Invalid  = 4,  // evicted or hot-reloaded; generation was bumped
 };
 
 // ============================================================================
@@ -72,12 +73,21 @@ struct Prefab {
 // ============================================================================
 // CacheStats — returned by AssetManager::cacheStats()
 // ============================================================================
+struct InvalidatedAsset {
+    u32       id         = ~u32(0);
+    u16       generation = 0;
+    AssetType type       = AssetType::Unknown;
+};
+
+using AssetInvalidationCallback = void (*)(const InvalidatedAsset& info, void* userData);
+
 struct CacheStats {
     u64 totalCachedBytes = 0;
     u64 maxCacheBytes    = 0;
     u32 textureCount     = 0;
     u32 audioCount       = 0;
     u32 pendingJobs      = 0;
+    u32 evictedCount     = 0;
     f32 cacheHitRate     = 0.0f;
 };
 

@@ -1,4 +1,5 @@
 #include "editor/EditorIcons.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "editor/EditorPaths.hpp"
 
 #include <stb/stb_image.h>
@@ -30,6 +31,9 @@ void EditorIcons::init() {
 
 void EditorIcons::shutdown() {
 #ifdef CF_HAS_IMGUI
+    for (auto& [_, entry] : s_cache) {
+        destroyImGuiTexture(entry.texture);
+    }
     s_cache.clear();
 #endif
 }

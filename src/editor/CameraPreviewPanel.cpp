@@ -14,6 +14,8 @@
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/EditorCameraMath.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "scene/HierarchySystem.hpp"
@@ -187,6 +189,16 @@ void drawCubeWireframe(ImDrawList* dl, const Mat4& vp, ImVec2 origin, ImVec2 pan
 
 } // namespace
 
+void CameraPreviewPanel::shutdownGpu() {
+#ifdef CF_HAS_IMGUI
+    for (auto& [_, entry] : m_texCache) {
+        destroyImGuiTexture(entry.texture);
+    }
+    m_texCache.clear();
+    m_skyboxRenderer.releaseGpuTextures();
+#endif
+}
+
 void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, SceneViewport& viewport) {
     if (!m_open) return;
 
@@ -349,11 +361,8 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
                      ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                      true);
 
-    const f32 sinY = std::sin(ctx.camYaw);
-    const f32 cosY = std::cos(ctx.camYaw);
-    const f32 sinP = std::sin(ctx.camPitch);
-    const f32 cosP = std::cos(ctx.camPitch);
-    const Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+    const Vec3 camPos =
+        editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     const Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     const f32 aspect = panelSize.x / std::max(panelSize.y, 1.0f);
     const f32 farPlane = ctx.cameraFarPlane();
@@ -361,7 +370,7 @@ void CameraPreviewPanel::renderEditorCameraFallback(ECS::World& world, EditorCon
     const Mat4 vp = proj * view;
 
     Render::SkyboxCamera skyCamera;
-    skyCamera.forward = Vec3(-sinY * cosP, sinP, cosY * cosP).normalized();
+    skyCamera.forward = editorLookDirection(ctx.camYaw, ctx.camPitch).normalized();
     const Vec3 worldUp(0.0f, 1.0f, 0.0f);
     skyCamera.right = skyCamera.forward.cross(worldUp);
     if (skyCamera.right.lengthSquared() < 1e-6f) {
@@ -430,11 +439,12 @@ void CameraPreviewPanel::renderCamera3DView(ECS::World& world, EditorContext& ct
             if (projectRoot.empty()) projectRoot = sceneDir.string();
         }
         const Vec3 focus = camPos + entityForward(world, cameraEntity).normalized();
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize);
         const bool gpuOk = viewport.renderCameraPreviewGpu(
             viewport.frameCommandBuffer(), world, ctx, view, proj, camPos, focus,
             fovRad, cam.nearClip, farClip,
-            static_cast<u32>(std::max(panelSize.x, 8.0f)),
-            static_cast<u32>(std::max(panelSize.y, 8.0f)),
+            static_cast<u32>(std::max(fbSize.x, 8.0f)),
+            static_cast<u32>(std::max(fbSize.y, 8.0f)),
             projectRoot);
         RHI::Texture* preview = viewport.cameraPreviewColorTarget();
         if (gpuOk && preview && preview->handle) {

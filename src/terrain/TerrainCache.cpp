@@ -107,11 +107,31 @@ void TerrainCache::releaseMeshGpu(Assets::Mesh3D& mesh) {
         mesh.indexBuffer = nullptr;
     }
 }
+
+void TerrainCache::releaseChunkGpu(TerrainChunk& chunk) {
+    for (auto& lodMesh : chunk.lodMeshes) {
+        if (lodMesh) releaseMeshGpu(*lodMesh);
+    }
+}
+
+void TerrainCache::releaseChunksGpu(std::vector<TerrainChunk>& chunks) {
+    for (TerrainChunk& chunk : chunks) {
+        releaseChunkGpu(chunk);
+    }
+}
+
+void TerrainCache::releaseEntryGpu(TerrainEntry& entry) {
+    releaseChunksGpu(entry.chunks);
+    if (entry.mesh) releaseMeshGpu(*entry.mesh);
+}
 #endif
 
 void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
                                ECS::TerrainComponent& component) {
     entry.useChunks = component.useChunks;
+#ifdef CF_HAS_SDL3
+    releaseEntryGpu(entry);
+#endif
     if (entry.useChunks) {
         TerrainLodSystem::rebuildChunks(entry.chunks, entry.heightmap, component);
         entry.chunkActiveLods.assign(entry.chunks.size(), 0);
@@ -140,12 +160,24 @@ void TerrainCache::rebuildRegion(ECS::Entity entity,
     if (entry.heightmap.empty()) return;
 
     if (entry.useChunks && !entry.chunks.empty()) {
+#ifdef CF_HAS_SDL3
+        for (TerrainChunk& chunk : entry.chunks) {
+            const bool overlapsX = chunk.startVertexX <= maxVertexX && minVertexX <= chunk.endVertexX;
+            const bool overlapsZ = chunk.startVertexZ <= maxVertexZ && minVertexZ <= chunk.endVertexZ;
+            if (overlapsX && overlapsZ) {
+                releaseChunkGpu(chunk);
+            }
+        }
+#endif
         TerrainLodSystem::rebuildChunksInRegion(entry.chunks, entry.heightmap, settings,
                                                 minVertexX, minVertexZ, maxVertexX, maxVertexZ);
         return;
     }
 
     if (entry.mesh) {
+#ifdef CF_HAS_SDL3
+        releaseMeshGpu(*entry.mesh);
+#endif
         *entry.mesh = TerrainMeshBuilder::build(entry.heightmap, settings);
     }
 }
@@ -204,15 +236,21 @@ void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
 }
 
 void TerrainCache::removeEntity(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
 #ifdef CF_HAS_SDL3
-    TerrainGpuTextureCache::instance().removeEntity(entity, nullptr);
+    releaseEntryGpu(it->second);
+    TerrainGpuTextureCache::instance().removeEntity(entity, m_gpuDevice);
 #endif
-    m_entries.erase(entity.id());
+    m_entries.erase(it);
 }
 
 void TerrainCache::clear() {
 #ifdef CF_HAS_SDL3
-    TerrainGpuTextureCache::instance().releaseAll(nullptr);
+    for (auto& [_, entry] : m_entries) {
+        releaseEntryGpu(entry);
+    }
+    TerrainGpuTextureCache::instance().releaseAll(m_gpuDevice);
 #endif
     m_entries.clear();
 }
@@ -352,15 +390,8 @@ void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     m_gpuDevice = device;
     TerrainGpuTextureCache::instance().releaseAll(device);
 
-    for (auto& pair : m_entries) {
-        if (pair.second.mesh) {
-            releaseMeshGpu(*pair.second.mesh);
-        }
-        for (auto& chunk : pair.second.chunks) {
-            for (auto& lodMesh : chunk.lodMeshes) {
-                if (lodMesh) releaseMeshGpu(*lodMesh);
-            }
-        }
+    for (auto& [_, entry] : m_entries) {
+        releaseEntryGpu(entry);
     }
 }
 #endif

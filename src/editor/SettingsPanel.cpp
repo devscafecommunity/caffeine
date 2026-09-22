@@ -63,6 +63,10 @@ void SettingsPanel::applyPreferencesToContext(EditorContext& ctx) {
     ctx.uniformScale = m_preferences.uniformScaleDefault;
     ctx.snapToGrid = m_preferences.snapEnabled;
     ctx.snapGridSize = m_preferences.snapIncrement;
+    ctx.textureQualityEnabled = m_preferences.textureQualityEnabled;
+    ctx.textureQualityRadius = m_preferences.textureQualityRadius;
+    ctx.textureQualityFalloff = m_preferences.textureQualityFalloff;
+    ctx.textureQualityMinScale = m_preferences.textureQualityMinScale;
 }
 
 void SettingsPanel::render() {
@@ -309,6 +313,34 @@ void SettingsPanel::renderViewportSettings() {
     ImGui::Separator();
     if (ImGui::Checkbox("Show grid in viewport", &m_preferences.showGrid)) {
         savePreferences();
+    }
+
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Texture quality");
+    ImGui::Separator();
+    ImGui::TextWrapped(
+        "Full-resolution textures near scene viewers (viewport camera + scene cameras). "
+        "Quality decays smoothly beyond the radius.");
+    if (ImGui::Checkbox("Distance-based texture quality", &m_preferences.textureQualityEnabled)) {
+        savePreferences();
+        if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+    }
+    if (m_preferences.textureQualityEnabled) {
+        if (ImGui::DragFloat("Full quality radius (m)", &m_preferences.textureQualityRadius, 1.0f,
+                             5.0f, 500.0f, "%.0f m")) {
+            savePreferences();
+            if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+        }
+        if (ImGui::DragFloat("Falloff distance (m)", &m_preferences.textureQualityFalloff, 2.0f,
+                             10.0f, 1000.0f, "%.0f m")) {
+            savePreferences();
+            if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+        }
+        if (ImGui::SliderFloat("Minimum quality", &m_preferences.textureQualityMinScale, 0.125f,
+                               1.0f, "%.2f")) {
+            savePreferences();
+            if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+        }
     }
 #endif
 }

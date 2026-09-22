@@ -313,7 +313,7 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
     vertexInput.num_vertex_attributes = attrCount;
 
     SDL_GPURasterizerState rasterizer{};
-    rasterizer.fill_mode = SDL_GPU_FILLMODE_FILL;
+    rasterizer.fill_mode = static_cast<SDL_GPUFillMode>(desc.fillMode);
     rasterizer.cull_mode = SDL_GPU_CULLMODE_NONE;
     rasterizer.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
     rasterizer.enable_depth_bias = false;
@@ -477,7 +477,7 @@ bool RenderDevice::uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 
 }
 
 bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width, u32 height,
-                                 u32 bytesPerPixel) {
+                                 u32 bytesPerPixel, u32 mipLevel) {
     if (!m_device || !texture || !texture->handle || !pixels || width < 1 || height < 1) {
         return false;
     }
@@ -530,7 +530,7 @@ bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width
 
     SDL_GPUTextureRegion dst{};
     dst.texture = texture->handle;
-    dst.mip_level = 0;
+    dst.mip_level = mipLevel;
     dst.layer = 0;
     dst.x = 0;
     dst.y = 0;

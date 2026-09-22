@@ -89,6 +89,9 @@ private:
     void rebuildCollisionMesh(TerrainEntry& entry, const ECS::TerrainComponent& component);
 #ifdef CF_HAS_SDL3
     void releaseMeshGpu(Assets::Mesh3D& mesh);
+    void releaseChunkGpu(TerrainChunk& chunk);
+    void releaseChunksGpu(std::vector<TerrainChunk>& chunks);
+    void releaseEntryGpu(TerrainEntry& entry);
 #endif
 
     std::unordered_map<u32, TerrainEntry> m_entries;

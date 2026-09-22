@@ -22,7 +22,9 @@ struct TerrainComponent {
     bool receiveShadows = true;
 
     char texturePath[256] = "kenney_prototype-textures/PNG/Light/texture_07.png";
+    char normalMapPath[256] = {};
     f32 textureTileSize = 8.0f;
+    f32 shininess = 16.0f;
 
     bool useSplatmap = true;
     char splatLayerPaths[kTerrainSplatLayerCount][256] = {

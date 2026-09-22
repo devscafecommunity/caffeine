@@ -384,8 +384,17 @@ void rasterizeSceneShadowCasters(ECS::World& world, const Mat4& lightVP, int res
                     rasterizeSphere(lightVP, resolution, depth, worldMatrix);
                     break;
                 case ECS::MeshPrimitive::Cylinder:
-                case ECS::MeshPrimitive::Capsule:
                     rasterizeCylinder(lightVP, resolution, depth, worldMatrix);
+                    break;
+                case ECS::MeshPrimitive::Capsule:
+                    rasterizeSphere(lightVP, resolution, depth, worldMatrix);
+                    break;
+                case ECS::MeshPrimitive::Cone:
+                case ECS::MeshPrimitive::Pyramid:
+                    rasterizeCylinder(lightVP, resolution, depth, worldMatrix);
+                    break;
+                case ECS::MeshPrimitive::Torus:
+                    rasterizeSphere(lightVP, resolution, depth, worldMatrix);
                     break;
                 case ECS::MeshPrimitive::Custom:
                     if (meshFilter.customMeshPath.empty()) return;

@@ -23,6 +23,10 @@ private:
     static Assets::Mesh3D& plane();
     static Assets::Mesh3D& sphere();
     static Assets::Mesh3D& cylinder();
+    static Assets::Mesh3D& capsule();
+    static Assets::Mesh3D& cone();
+    static Assets::Mesh3D& pyramid();
+    static Assets::Mesh3D& torus();
 };
 
 }  // namespace Caffeine::Render

@@ -12,8 +12,12 @@
 #include "render/GpuProceduralMeshes.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
-#include "scene/CpuDirectionalShadowMap.hpp"
 #include "scene/LightingSystem.hpp"
+#include "scene/TerrainSystem.hpp"
+#include "scene/EnvironmentSystem.hpp"
+#ifdef CF_HAS_SDL3
+#include <imgui_impl_sdlgpu3.h>
+#endif
 
 #include <stb/stb_image.h>
 #include <imgui_impl_sdlgpu3.h>
@@ -342,11 +346,75 @@ void blitRasterizer(ImDrawList* dl, ImVec2 origin, ImVec2 panelSize, MeshCpuRast
 
 }  // namespace
 
+#ifdef CF_HAS_SDL3
+bool RuntimeSceneRenderer::init(RHI::RenderDevice* device) {
+    if (!device || !device->isInitialized()) return false;
+    shutdown();
+    m_device = device;
+    m_gpuReady = m_gpuRenderer.init(device);
+    return m_gpuReady;
+}
+
+void RuntimeSceneRenderer::shutdown() {
+    if (m_device) {
+        if (m_colorTarget) {
+            m_device->destroyTexture(m_colorTarget);
+            m_colorTarget = nullptr;
+        }
+        if (m_depthTarget) {
+            m_device->destroyTexture(m_depthTarget);
+            m_depthTarget = nullptr;
+        }
+    }
+    m_gpuRenderer.shutdown();
+    m_skyboxRenderer.releaseGpuTextures();
+    m_device = nullptr;
+    m_frameCmd = nullptr;
+    m_canvasW = 0;
+    m_canvasH = 0;
+    m_gpuReady = false;
+}
+
+void RuntimeSceneRenderer::resizeCanvas(u32 width, u32 height) {
+    if (!m_device || width < 1 || height < 1) return;
+    if (m_canvasW == width && m_canvasH == height && m_colorTarget && m_depthTarget) return;
+
+    if (m_colorTarget) {
+        m_device->destroyTexture(m_colorTarget);
+        m_colorTarget = nullptr;
+    }
+    if (m_depthTarget) {
+        m_device->destroyTexture(m_depthTarget);
+        m_depthTarget = nullptr;
+    }
+
+    RHI::TextureDesc colorDesc;
+    colorDesc.width = width;
+    colorDesc.height = height;
+    colorDesc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
+    colorDesc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+    m_colorTarget = m_device->createTexture(colorDesc);
+
+    RHI::TextureDesc depthDesc;
+    depthDesc.width = width;
+    depthDesc.height = height;
+    depthDesc.format = RHI::TextureFormat::D32_FLOAT;
+    depthDesc.usage = RHI::TextureUsage::DepthStencil;
+    m_depthTarget = m_device->createTexture(depthDesc);
+
+    m_canvasW = width;
+    m_canvasH = height;
+}
+#endif
+
 void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx, ImDrawList* dl,
                                   const Mat4& vp, const Vec3& camPos, ImVec2 origin,
-                                  ImVec2 panelSize, ECS::Entity skipEntity) {
-    std::string projectRoot = std::filesystem::current_path().string();
-    {
+                                  ImVec2 panelSize, ECS::Entity skipEntity,
+                                  const std::string& projectRootIn,
+                                  const Render::GpuSceneCamera* gpuCamera) {
+    std::string projectRoot = projectRootIn;
+    if (projectRoot.empty()) {
+        projectRoot = std::filesystem::current_path().string();
         std::filesystem::path probe = std::filesystem::current_path();
         for (int i = 0; i < 5; ++i) {
             if (std::filesystem::exists(probe / "project.caffeine")) {
@@ -358,8 +426,26 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
         }
     }
 
+#ifdef CF_HAS_SDL3
+    if (gpuCamera && m_gpuReady && m_frameCmd && m_device) {
+        Scene::syncTerrainMeshes(world);
+        const u32 w = static_cast<u32>(std::max(panelSize.x, 8.0f));
+        const u32 h = static_cast<u32>(std::max(panelSize.y, 8.0f));
+        resizeCanvas(w, h);
+        const u32 drawn =
+            m_gpuRenderer.renderWithCamera(m_frameCmd, world, *gpuCamera, m_colorTarget,
+                                           m_depthTarget, w, h, projectRoot);
+        if (drawn > 0 && m_colorTarget && m_colorTarget->handle) {
+            dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,
+                         ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),
+                         ImVec2(1, 1));
+            return;
+        }
+    }
+#endif
+
     Scene::SceneLighting sceneLighting;
-    Scene::gatherSceneLighting(world, ctx.camFocus, projectRoot, sceneLighting, skipEntity);
+    Scene::gatherSceneLighting(world, camPos, projectRoot, sceneLighting, skipEntity, true);
 
     auto lightColorAt = [&](const Vec3& p, const Vec3& n, bool receiveShadows) -> Vec3 {
         return Scene::evaluateDiffuseLighting(sceneLighting.lights, sceneLighting.shadows, p, n,

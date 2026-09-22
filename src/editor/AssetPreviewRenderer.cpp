@@ -1,5 +1,6 @@
 #include "editor/AssetPreviewRenderer.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "assets/MeshCache.hpp"
 #include "assets/MeshImportValidator.hpp"
 #include "math/Vec3.hpp"
@@ -125,8 +126,15 @@ bool loadWavPeaks(const std::filesystem::path& path, std::vector<std::pair<float
 
 void AssetPreviewRenderer::invalidate() {
     m_cachedKey.clear();
-    m_image = {};
+    destroyImGuiTexture(m_image.texture);
+    m_image.width = 0;
+    m_image.height = 0;
+    m_image.failed = false;
     m_waveform = {};
+}
+
+void AssetPreviewRenderer::shutdownGpu() {
+    invalidate();
 }
 
 void AssetPreviewRenderer::drawPreviewFrame(ImVec2 size) {

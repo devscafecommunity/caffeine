@@ -9,6 +9,8 @@
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
+#include "editor/PluginSymbolExports.hpp"
+#include "render/GpuTextureCache.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
@@ -137,6 +139,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
             ? (std::filesystem::current_path() / "plugins")
             : (projectConfig.RootPath / "plugins");
     const std::filesystem::path bundledPluginsDir = EditorPaths::bundledPluginsDirectory();
+    anchorPluginHostSymbols();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
                                          bundledPluginsDir);
 
@@ -197,7 +200,13 @@ void SceneEditor::shutdown() {
     PluginManager::instance().shutdown();
 #ifdef CF_HAS_SDL3
     if (m_renderDevice) {
+        m_viewport.shutdown();
+        m_gameplayPreview.shutdown();
+        m_cameraPreview.shutdownGpu();
         m_materialEditor.shutdownGpu();
+        m_assetBrowser.shutdownGpu();
+        EditorIcons::shutdown();
+        Render::GpuTextureCache::instance().releaseAll(m_renderDevice);
         Assets::MeshCache::getInstance().releaseGpuResources(m_renderDevice);
         Render::GpuProceduralMeshes::releaseGpuResources(m_renderDevice);
         Terrain::TerrainCache::instance().releaseGpuResources(m_renderDevice);
@@ -205,10 +214,6 @@ void SceneEditor::shutdown() {
 #endif
     Terrain::TerrainCache::instance().clear();
     m_tabManager.clearAll();
-    m_viewport.shutdown();
-#ifdef CF_HAS_SDL3
-    m_gameplayPreview.shutdown();
-#endif
     m_audioPreview.shutdown();
     m_scriptFileWatcher.stop();
     m_scriptWatcherStarted = false;

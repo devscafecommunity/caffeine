@@ -28,7 +28,7 @@ namespace IO = SceneSerializerIO;
 
 namespace {
 
-constexpr u32 kTerrainBlobVersion = 9;
+constexpr u32 kTerrainBlobVersion = 10;
 
 std::filesystem::path projectRootFromScenePath(const std::string& scenePath) {
     if (scenePath.empty()) return {};
@@ -150,7 +150,9 @@ void SceneSerializer::collectMeshFilterComponents(
         u32 meshPathLen = static_cast<u32>(mf.customMeshPath.size());
         u32 texturePathLen = static_cast<u32>(mf.customTexturePath.size());
         u32 materialPathLen = static_cast<u32>(mf.customMaterialPath.size());
-        std::vector<u8> data(13 + meshPathLen + texturePathLen + materialPathLen);
+        u32 normalPathLen = static_cast<u32>(mf.customNormalPath.size());
+        std::vector<u8> data(17 + meshPathLen + texturePathLen + materialPathLen + normalPathLen +
+                              sizeof(f32));
         u32 offset = 0;
         memcpy(data.data() + offset, &prim, 1); offset += 1;
         memcpy(data.data() + offset, &meshPathLen, 4); offset += 4;
@@ -166,7 +168,15 @@ void SceneSerializer::collectMeshFilterComponents(
         memcpy(data.data() + offset, &materialPathLen, 4); offset += 4;
         if (materialPathLen > 0) {
             memcpy(data.data() + offset, mf.customMaterialPath.data(), materialPathLen);
+            offset += materialPathLen;
         }
+        memcpy(data.data() + offset, &normalPathLen, 4);
+        offset += 4;
+        if (normalPathLen > 0) {
+            memcpy(data.data() + offset, mf.customNormalPath.data(), normalPathLen);
+            offset += normalPathLen;
+        }
+        memcpy(data.data() + offset, &mf.shininess, sizeof(f32));
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -489,6 +499,8 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     }
     appendU32(data, terrain.collisionSampleStep);
     appendU8(data, terrain.buildCollisionMesh ? 1 : 0);
+    appendString(data, terrain.normalMapPath);
+    appendF32(data, terrain.shininess);
     return data;
 }
 
@@ -716,6 +728,13 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
         u8 buildCollision = 1;
         if (!readU8(cursor, end, buildCollision)) return false;
         terrain.buildCollisionMesh = buildCollision != 0;
+    }
+
+    if (blobVersion >= 10) {
+        if (!readString(cursor, end, terrain.normalMapPath, sizeof(terrain.normalMapPath))) {
+            return false;
+        }
+        if (!readF32(cursor, end, terrain.shininess)) return false;
     }
 
     return cursor <= end;
@@ -1254,12 +1273,26 @@ bool SceneSerializer::applyMeshFilterComponent(ECS::Entity e, const u8* data, u3
         }
     }
 
+    u32 materialPathLen = 0;
     const u32 materialOffset = textureOffset + 4 + texturePathLen;
     if (materialOffset + 4 <= size) {
-        u32 materialPathLen = 0;
         memcpy(&materialPathLen, data + materialOffset, 4);
         if (materialOffset + 4 + materialPathLen <= size && materialPathLen > 0) {
             mf.customMaterialPath.assign(reinterpret_cast<const char*>(data + materialOffset + 4), materialPathLen);
+        }
+    }
+
+    const u32 normalOffset = materialOffset + 4 + materialPathLen;
+    if (normalOffset + 4 <= size) {
+        u32 normalPathLen = 0;
+        memcpy(&normalPathLen, data + normalOffset, 4);
+        if (normalOffset + 4 + normalPathLen <= size && normalPathLen > 0) {
+            mf.customNormalPath.assign(reinterpret_cast<const char*>(data + normalOffset + 4),
+                                       normalPathLen);
+        }
+        const u32 shininessOffset = normalOffset + 4 + normalPathLen;
+        if (shininessOffset + sizeof(f32) <= size) {
+            memcpy(&mf.shininess, data + shininessOffset, sizeof(f32));
         }
     }
     return true;

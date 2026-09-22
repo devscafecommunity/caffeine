@@ -155,6 +155,7 @@ public:
         submesh.materialIndex = 0;
         mesh->subMeshes.push_back(submesh);
         
+        computeMeshTangents(*mesh);
         computeBounds(*mesh);
         
         return mesh;
@@ -219,6 +220,49 @@ public:
 #endif
 
 private:
+    static void computeMeshTangents(Mesh3D& mesh) {
+        if (mesh.vertices.empty() || mesh.indices.size() < 3) return;
+
+        std::vector<Vec3> tan1(mesh.vertices.size(), Vec3(0.0f, 0.0f, 0.0f));
+        std::vector<Vec3> tan2(mesh.vertices.size(), Vec3(0.0f, 0.0f, 0.0f));
+
+        for (usize i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const Vertex3D& v0 = mesh.vertices[mesh.indices[i]];
+            const Vertex3D& v1 = mesh.vertices[mesh.indices[i + 1]];
+            const Vertex3D& v2 = mesh.vertices[mesh.indices[i + 2]];
+
+            const Vec3 e1 = v1.position - v0.position;
+            const Vec3 e2 = v2.position - v0.position;
+            const Vec2 duv1 = v1.texcoord - v0.texcoord;
+            const Vec2 duv2 = v2.texcoord - v0.texcoord;
+
+            const f32 denom = duv1.x * duv2.y - duv2.x * duv1.y;
+            if (std::abs(denom) < 1e-8f) continue;
+            const f32 r = 1.0f / denom;
+            const Vec3 tangent = (e1 * duv2.y - e2 * duv1.y) * r;
+            const Vec3 bitangent = (e2 * duv1.x - e1 * duv2.x) * r;
+
+            tan1[mesh.indices[i]] += tangent;
+            tan1[mesh.indices[i + 1]] += tangent;
+            tan1[mesh.indices[i + 2]] += tangent;
+            tan2[mesh.indices[i]] += bitangent;
+            tan2[mesh.indices[i + 1]] += bitangent;
+            tan2[mesh.indices[i + 2]] += bitangent;
+        }
+
+        for (usize i = 0; i < mesh.vertices.size(); ++i) {
+            const Vec3& n = mesh.vertices[i].normal;
+            Vec3 t = tan1[i];
+            if (t.lengthSquared() < 1e-8f) {
+                mesh.vertices[i].tangent = Vec4(1.0f, 0.0f, 0.0f, 1.0f);
+                continue;
+            }
+            t = (t - n * n.dot(t)).normalized();
+            const f32 w = (n.cross(t).dot(tan2[i]) < 0.0f) ? -1.0f : 1.0f;
+            mesh.vertices[i].tangent = Vec4(t.x, t.y, t.z, w);
+        }
+    }
+
     static void computeBounds(Mesh3D& mesh) {
         if (mesh.vertices.empty()) {
             mesh.bounds.min = Vec3(0.0f, 0.0f, 0.0f);

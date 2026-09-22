@@ -141,6 +141,16 @@ public:
      static ImVec2 projectToScreenVP(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
                                      const Mat4& vp);
 
+#ifdef CF_HAS_IMGUI
+     /// Projects world space to viewport pixels. Returns false when behind the near plane.
+     static bool projectWorldToViewport(const Mat4& vp, Vec3 worldPos, ImVec2 origin,
+                                        ImVec2 viewportSize, ImVec2& screenOut);
+     /// Draws a world-space line with near-plane clipping (stable at grazing angles).
+     static void drawViewportWorldLine(ImDrawList* dl, const Mat4& vp, ImVec2 origin,
+                                       ImVec2 viewportSize, Vec3 a, Vec3 b, ImU32 color,
+                                       float thickness);
+#endif
+
     #ifdef CF_HAS_IMGUI
     void drawSceneMeshesForCamera(ECS::World& world, EditorContext& ctx, ImDrawList* dl,
                                   const Mat4& vp, const Vec3& camPos,
@@ -276,6 +286,10 @@ private:
     u32 m_lastCanvasHeight = 0;
     u32 m_previewCanvasWidth = 0;
     u32 m_previewCanvasHeight = 0;
+    f32 m_lastEditorCamYaw = 0.0f;
+    f32 m_lastEditorCamPitch = 0.0f;
+    Vec3 m_lastEditorCamPos{};
+    f32 m_editorCamMotion = 0.0f;
 #endif
 };
 

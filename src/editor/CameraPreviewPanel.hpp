@@ -25,6 +25,7 @@ public:
     bool isOpen() const { return m_open; }
     void open()         { m_open = true; }
     void close()        { m_open = false; }
+    void shutdownGpu();
 
 private:
 #ifdef CF_HAS_IMGUI

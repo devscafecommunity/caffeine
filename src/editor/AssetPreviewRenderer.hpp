@@ -21,6 +21,7 @@ public:
     void renderVisual(const std::filesystem::path& path, AssetType type, const std::string& projectRoot,
                       ImVec2 size);
     void invalidate();
+    void shutdownGpu();
 
 private:
     struct ImageEntry {

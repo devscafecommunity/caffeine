@@ -38,6 +38,12 @@ struct TerrainComponent {
     u32 collisionSampleStep = 4;  // passo do mesh de colisão
     bool buildCollisionMesh = true;
 
+    bool castShadows = true;
+    bool receiveShadows = true;
+    char texturePath[256];        // albedo legacy / fallback
+    char normalMapPath[256];      // normal map triplanar (GPU)
+    f32  shininess = 16.0f;       // Phong specular
+
     char terrainDataPath[256];    // caminho .cterrain no projeto
 };
 ```
@@ -77,16 +83,29 @@ TerrainCache::initializeEntity / syncEntity
 
 | Painel | Função |
 |--------|--------|
-| **Inspector → Terrain** | Resolução, tamanho, LOD, splat, colisão |
+| **Inspector → Terrain** | Resolução, tamanho, LOD, splat, colisão, Normal Map, Shininess |
 | **Terrain Editor** | Sculpt (raise/lower/smooth/flatten/noise), splat paint, export `.cterrain` |
 
 Geração procedural: painel **Terrain Generator** (plugin).
 
 ---
 
+## Renderização GPU (Phong)
+
+Com `CF_HAS_SDL3`, o terreno usa `terrain_lit.frag`:
+
+- Iluminação Phong (ambient + diffuse + specular) com `shininess`.
+- Normal map **triplanar** via `TerrainGpuTextureCache::normalMap` (sampler slot 5).
+- Sombras direcionais (slots 6–7) e pontuais cubemap (slots 8–9).
+- `castShadows` / `receiveShadows` respeitados em `GpuSceneRenderer::gatherMeshDraws`.
+
+Ver [`rendering/materials-phong.md`](../rendering/materials-phong.md) e [`rendering/shadow-mapping.md`](../rendering/shadow-mapping.md).
+
+---
+
 ## Serialização
 
-`SceneSerializer` grava `TerrainComponent` no blob de cena (versão **9**). Campos de geração legados (v2–v8) são lidos e descartados para compatibilidade. Dados de height/splat pesados vivem em `.cterrain` referenciado por `terrainDataPath`.
+`SceneSerializer` grava `TerrainComponent` no blob de cena (versão **10**). Versão 9 adicionou `collisionSampleStep` e `buildCollisionMesh`; versão 10 acrescenta `normalMapPath` e `shininess`. Campos de geração legados (v2–v8) são lidos e descartados para compatibilidade. Dados de height/splat pesados vivem em `.cterrain` referenciado por `terrainDataPath`.
 
 ---
 

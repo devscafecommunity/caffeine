@@ -77,6 +77,7 @@ public:
     void init(const char* rootPath);
     void init(const ProjectConfig& projectConfig);
     void refresh();
+    void shutdownGpu();
 
     // Search
     void setSearchFilter(const char* filter);

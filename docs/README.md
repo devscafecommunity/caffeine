@@ -12,6 +12,8 @@
 |-----------|-----------|
 | **Engine Pillars** | [`plans/2026-09-22-engine-pillars-roadmap.md`](plans/2026-09-22-engine-pillars-roadmap.md) | Pilares fundamentais: Phong 3D, Bullet3, OpenAL, ECS, handles, networking, PBR, animação, scripting, Android |
 | **Rendering Roadmap** | [`plans/2026-09-21-rendering-roadmap.md`](plans/2026-09-21-rendering-roadmap.md) | Plano P0–P6: GPU único, texturas, LOD, PBR, sombras, reflexos, volumétricos |
+| **Sessão 2026-09-22 (Phong)** | [`plans/2026-09-22-phong-gpu-handles-session.md`](plans/2026-09-22-phong-gpu-handles-session.md) | Changelog: Phong GPU, sombras, handles, normal maps, inspector |
+| **Sessão 2026-09-22 (Viewport)** | [`plans/2026-09-22-viewport-rendering-quality-session.md`](plans/2026-09-22-viewport-rendering-quality-session.md) | HiDPI, wireframe GPU, LOD texturas, performance câmara |
 
 ### Engine Core
 
@@ -58,6 +60,9 @@
 | **Batch Renderer** | [`rendering/batch-renderer.md`](rendering/batch-renderer.md) | Sprite batching, Texture Atlas, Radix Sort, Persistent Mapped Buffers |
 | **Camera 2D** | [`rendering/camera-2d.md`](rendering/camera-2d.md) | Projeção ortográfica, follow, shake, bounds |
 | **Camera 3D** | [`rendering/camera-3d.md`](rendering/camera-3d.md) | Projeção perspectiva, lookAt, frustum culling |
+| **Materiais Phong** | [`rendering/materials-phong.md`](rendering/materials-phong.md) | Iluminação Phong, normal maps, shininess (meshes + terreno) |
+| **Shadow Mapping** | [`rendering/shadow-mapping.md`](rendering/shadow-mapping.md) | Sombras GPU direcionais e pontuais |
+| **Texture Quality LOD** | [`rendering/texture-quality-lod.md`](rendering/texture-quality-lod.md) | LOD de texturas por distância aos visualizadores |
 
 ### Assets
 
@@ -124,6 +129,7 @@
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
 | **Scene Editor** | [`editor/scene-editor.md`](editor/scene-editor.md) | Entity Inspector, Hierarchy, Gizmos, drag-and-drop |
+| **Scene Viewport** | [`editor/scene-viewport.md`](editor/scene-viewport.md) | Renderização 3D GPU, HiDPI, wireframe, LOD texturas |
 
 ### Scripting
 

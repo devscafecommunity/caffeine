@@ -45,6 +45,7 @@ endif()
 # ═══════════════════════════════════════════════════════════════════
 add_library(caffeine-core
     src/core/Timer.cpp
+    src/core/TimerScheduler.cpp
     src/core/GameLoop.cpp
     src/core/io/BlobLoader.cpp
     src/core/io/CafWriter.cpp
@@ -71,6 +72,7 @@ add_library(caffeine-core
     src/scene/EnvironmentSystem.cpp
     src/scene/CpuDirectionalShadowMap.cpp
     src/scene/LightingSystem.cpp
+    src/scene/Camera3DSystem.cpp
     src/scene/TerrainSystem.cpp
     src/terrain/TerrainHeightmap.cpp
     src/terrain/TerrainMeshBuilder.cpp
@@ -174,9 +176,11 @@ else()
             src/rhi/CommandBuffer.cpp
             src/render/ShaderBytecode.cpp
             src/render/ShaderCompiler.cpp
+            src/render/GpuTextureCache.cpp
             src/render/GpuSceneRenderer.cpp
             src/render/GpuPointShadowMap.cpp
             src/render/GpuDirectionalShadowMap.cpp
+            src/render/GpuSpotShadowMap.cpp
             src/render/GpuProceduralMeshes.cpp
         )
         target_link_libraries(caffeine-core PUBLIC SDL3::SDL3 ${CMAKE_DL_LIBS})
@@ -464,6 +468,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/EntityDebugger.cpp
           src/editor/PluginSystem.cpp
           src/editor/PluginServiceRegistry.cpp
+          src/editor/PluginSymbolExports.cpp
            src/editor/TestUIMapper.cpp
            src/editor/TestRequestHandler.cpp
            src/editor/AssetCooker.cpp

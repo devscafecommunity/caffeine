@@ -22,7 +22,6 @@
 #include "ui/UIRenderer.hpp"
 #include "scene/EnvironmentSystem.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
-#include "render/GpuSceneRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
@@ -139,47 +138,6 @@ void pumpRuntimeInput(Caffeine::Input::InputManager& input) {
 constexpr float kDegToRad = 3.14159265f / 180.0f;
 
 Caffeine::Render::SkyboxRenderer g_skyboxRenderer;
-Caffeine::Render::GpuSceneRenderer g_gpuScene;
-Caffeine::RHI::Texture* g_gpuColor = nullptr;
-Caffeine::RHI::Texture* g_gpuDepth = nullptr;
-uint32_t g_gpuW = 0;
-uint32_t g_gpuH = 0;
-
-void destroyGpuCanvas(Caffeine::RHI::RenderDevice& device) {
-    if (g_gpuColor) {
-        device.destroyTexture(g_gpuColor);
-        g_gpuColor = nullptr;
-    }
-    if (g_gpuDepth) {
-        device.destroyTexture(g_gpuDepth);
-        g_gpuDepth = nullptr;
-    }
-    g_gpuW = 0;
-    g_gpuH = 0;
-}
-
-void resizeGpuCanvas(Caffeine::RHI::RenderDevice& device, uint32_t width, uint32_t height) {
-    if (width < 1 || height < 1) return;
-    if (g_gpuW == width && g_gpuH == height && g_gpuColor && g_gpuDepth) return;
-    destroyGpuCanvas(device);
-
-    Caffeine::RHI::TextureDesc colorDesc;
-    colorDesc.width = width;
-    colorDesc.height = height;
-    colorDesc.format = Caffeine::RHI::TextureFormat::R8G8B8A8_UNORM;
-    colorDesc.usage = Caffeine::RHI::TextureUsage::Sampler | Caffeine::RHI::TextureUsage::ColorTarget;
-    g_gpuColor = device.createTexture(colorDesc);
-
-    Caffeine::RHI::TextureDesc depthDesc;
-    depthDesc.width = width;
-    depthDesc.height = height;
-    depthDesc.format = Caffeine::RHI::TextureFormat::D32_FLOAT;
-    depthDesc.usage = Caffeine::RHI::TextureUsage::DepthStencil;
-    g_gpuDepth = device.createTexture(depthDesc);
-
-    g_gpuW = width;
-    g_gpuH = height;
-}
 
 Caffeine::Mat4 buildLocalMatrix3D(const Caffeine::ECS::Position3D* p,
                                   const Caffeine::ECS::Rotation3D* r,
@@ -357,31 +315,20 @@ void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext
             IM_COL32(20, 20, 24, 255), IM_COL32(34, 38, 50, 255), IM_COL32(34, 38, 50, 255));
     }
 
-    bool drewGpu = false;
-    if (cmd && g_gpuScene.isReady()) {
-        const uint32_t w = static_cast<uint32_t>(std::max(panelSize.x, 8.0f));
-        const uint32_t h = static_cast<uint32_t>(std::max(panelSize.y, 8.0f));
-        resizeGpuCanvas(device, w, h);
-        Caffeine::Render::GpuSceneCamera gpuCam;
-        gpuCam.position = camPos;
-        gpuCam.focus = camPos + entityForward(world, cameraEntity).normalized();
-        gpuCam.view = view;
-        gpuCam.proj = proj;
-        gpuCam.fovRad = cam3D->fov * kDegToRad;
-        gpuCam.nearClip = std::max(cam3D->nearClip, 0.05f);
-        gpuCam.farClip = std::max(cam3D->farClip, 50.0f);
-        const uint32_t drawn =
-            g_gpuScene.renderWithCamera(cmd, world, gpuCam, g_gpuColor, g_gpuDepth, w, h, projectRoot);
-        if (drawn > 0 && g_gpuColor && g_gpuColor->handle) {
-            dl->AddImage(reinterpret_cast<ImTextureID>(g_gpuColor->handle), origin,
-                         ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),
-                         ImVec2(1, 1));
-            drewGpu = true;
-        }
-    }
-    if (!drewGpu) {
-        renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity);
-    }
+    Caffeine::Render::GpuSceneCamera gpuCam;
+    gpuCam.position = camPos;
+    gpuCam.focus = camPos + entityForward(world, cameraEntity).normalized();
+    gpuCam.view = view;
+    gpuCam.proj = proj;
+    gpuCam.fovRad = cam3D->fov * kDegToRad;
+    gpuCam.nearClip = std::max(cam3D->nearClip, 0.05f);
+    gpuCam.farClip = std::max(cam3D->farClip, 50.0f);
+
+#ifdef CF_HAS_SDL3
+    renderer.setFrameCommandBuffer(cmd);
+#endif
+    renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity, projectRoot,
+                    &gpuCam);
 
     Caffeine::UI::drawWidgets(world, dl, origin, panelSize);
 
@@ -450,11 +397,12 @@ int main(int argc, char** argv) {
     }
     ImGui_ImplSDLGPU3_CreateDeviceObjects();
 
-    if (!g_gpuScene.init(&device)) {
-        std::fprintf(stderr, "GpuSceneRenderer::init failed — CPU mesh fallback\n");
-    }
-
     Caffeine::Runtime::RuntimeSceneRenderer renderer;
+#ifdef CF_HAS_SDL3
+    if (!renderer.init(&device)) {
+        std::fprintf(stderr, "RuntimeSceneRenderer GPU init failed — CPU mesh fallback\n");
+    }
+#endif
     Caffeine::Editor::EditorContext editorCtx;
     editorCtx.viewMode = Caffeine::Editor::EditorContext::ViewMode::Mode3D;
 #endif
@@ -608,8 +556,7 @@ int main(int argc, char** argv) {
     scriptEngine.shutdown();
 #ifdef CF_HAS_IMGUI
     g_skyboxRenderer.releaseGpuTextures();
-    g_gpuScene.shutdown();
-    destroyGpuCanvas(device);
+    renderer.shutdown();
     imgui.shutdown();
 #endif
     device.shutdown();

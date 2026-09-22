@@ -21,6 +21,45 @@ struct Transform {
     Vec3 scale    = {1.0f, 1.0f, 1.0f};
 };
 
+struct Position2D {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+
+    Position2D() = default;
+    Position2D(f32 x_, f32 y_) : x(x_), y(y_) {}
+};
+
+struct Velocity2D {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+
+    Velocity2D() = default;
+    Velocity2D(f32 x_, f32 y_) : x(x_), y(y_) {}
+};
+
+struct Scale2D {
+    f32 x = 1.0f;
+    f32 y = 1.0f;
+
+    Scale2D() = default;
+    Scale2D(f32 x_, f32 y_) : x(x_), y(y_) {}
+};
+
+struct Rotation {
+    f32 angle = 0.0f;
+
+    Rotation() = default;
+    explicit Rotation(f32 angle_) : angle(angle_) {}
+};
+
+struct Health {
+    u32 current = 100;
+    u32 max     = 100;
+
+    Health() = default;
+    Health(u32 current_, u32 max_) : current(current_), max(max_) {}
+};
+
 struct Acceleration2D {
     f32 x = 0.0f;
     f32 y = 0.0f;

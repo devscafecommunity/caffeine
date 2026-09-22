@@ -1,4 +1,5 @@
 #include "editor/TransformGizmo.hpp"
+#include "editor/EditorCameraMath.hpp"
 #include "editor/SceneViewport.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
@@ -144,8 +145,8 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
         float vx   = cosY * ax + sinY * az;
         float vy   = ay;
         float vzc  = -sinY * ax + cosY * az;
-        float vy2  = cosP * vy + sinP * vzc;
-        float vz2  = -sinP * vy + cosP * vzc;
+        float vy2  = cosP * vy - sinP * vzc;
+        float vz2  = sinP * vy + cosP * vzc;
         float sdx  = vx, sdy = -vy2;
         float smag = std::sqrt(sdx*sdx + sdy*sdy);
         float len   = handleLen * std::max(smag, 0.4f);
@@ -202,9 +203,8 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
             Vec2 mousePosGlm(mousePos.x, mousePos.y);
             
             // Build VP matrix for raycasting
-            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            Vec3 camPos = ctx.camFocus + Vec3(sinY * cosP, -sinP, -cosY * cosP) * ctx.camDistance;
+            const Vec3 camPos =
+                editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
             Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
             f32 aspect = vpSize.x / std::max(vpSize.y, 1.0f);
             Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, 10000.0f);

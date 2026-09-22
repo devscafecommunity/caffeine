@@ -1,5 +1,6 @@
 #include "assets/MeshLoader.hpp"
 #include "assets/MeshLOD.hpp"
+#include "assets/MeshNormals.hpp"
 
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -119,12 +120,44 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         if (outError) *outError = "glTF nao contem meshes";
         return nullptr;
     }
-    
+
     auto mesh = new Mesh3D();
     mesh->flipTextureV = false;
+    mesh->materials.resize(model.materials.size());
+    for (size_t mi = 0; mi < model.materials.size(); ++mi) {
+        const auto& gmat = model.materials[mi];
+        MeshSurfaceMaterial& mat = mesh->materials[mi];
+        const auto& pbr = gmat.pbrMetallicRoughness;
+        mat.albedoColor = Color{
+            static_cast<f32>(pbr.baseColorFactor[0]),
+            static_cast<f32>(pbr.baseColorFactor[1]),
+            static_cast<f32>(pbr.baseColorFactor[2]),
+            static_cast<f32>(pbr.baseColorFactor[3]),
+        };
+        mat.metallic = static_cast<f32>(pbr.metallicFactor);
+        mat.roughness = static_cast<f32>(pbr.roughnessFactor);
+        mat.doubleSided = gmat.doubleSided;
+
+        const int texIndex = pbr.baseColorTexture.index;
+        if (texIndex < 0 || texIndex >= static_cast<int>(model.textures.size())) continue;
+
+        const int imageIndex = model.textures[texIndex].source;
+        if (imageIndex < 0 || imageIndex >= static_cast<int>(model.images.size())) continue;
+
+        const auto& image = model.images[imageIndex];
+        if (!image.image.empty()) {
+            mat.albedoPixels = image.image;
+            mat.albedoWidth = static_cast<u32>(image.width);
+            mat.albedoHeight = static_cast<u32>(image.height);
+            mat.albedoChannels = image.component > 0 ? image.component : 4;
+        } else if (!image.uri.empty()) {
+            mat.albedoPath = basePath + image.uri;
+        }
+    }
     std::vector<Vertex3D> vertices;
     std::vector<u32> indices;
     int primaryMaterialIndex = -1;
+    bool generateSmoothNormals = false;
 
     if (!basePath.empty()) {
         ensureGltfImagesLoaded(model, basePath);
@@ -144,6 +177,9 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         
         if (posIt == primitive.attributes.end()) {
             continue;
+        }
+        if (normIt == primitive.attributes.end()) {
+            generateSmoothNormals = true;
         }
         
         const auto& posAccessor = model.accessors[posIt->second];
@@ -260,9 +296,14 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     }
     
      MeshLOD::generateLODs(mesh, 3);
-    
+
+    if (generateSmoothNormals) {
+        computeSmoothNormals(*mesh);
+    }
+
+    computeMeshTangents(*mesh);
     computeBounds(*mesh);
-    
+
     return mesh;
 }
 

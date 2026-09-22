@@ -12,6 +12,10 @@
 
 Carregamento de malhas 3D nos formatos `.obj` e `.gltf`, convertendo para o formato interno `.caf` (Mesh). Shaders HLSL (Windows Direct3D) / GLSL (Linux/macOS OpenGL via SDL_GPU).
 
+**Normal mapping:** após import, `computeMeshTangents()` preenche `Vertex3D::tangent` (vec4 com handedness em `.w`). O editor liga normal maps via `MeshFilterComponent::customNormalPath` no shader Phong [`materials-phong.md`](../rendering/materials-phong.md).
+
+**Smooth shading:** meshes importadas sem normais recebem `computeSmoothNormals()` em `MeshLoader.cpp`. Primitivas GPU procedurais (`GpuProceduralMeshes.cpp`) usam **normais analíticas** — não chamar `computeSmoothNormals()` nelas (evita costuras em esfera/torus/cápsula). Ver [`plans/2026-09-22-viewport-rendering-quality-session.md`](../plans/2026-09-22-viewport-rendering-quality-session.md).
+
 ---
 
 ## API Implementada
@@ -145,21 +149,31 @@ public:
 
 ---
 
-## Componente ECS para Mesh
+## Componentes ECS (editor / runtime)
 
 ```cpp
-namespace Caffeine::Components {
+namespace Caffeine::ECS {
 
-struct MeshRenderer {
-    FixedString<128>        meshPath;
-    Assets::AssetHandle<Assets::Mesh3D> mesh;
-    Assets::Material3D*     material = nullptr;
-    bool                    castShadows = true;
-    bool                    receiveShadows = true;
+struct MeshFilterComponent {
+    MeshPrimitive primitive = MeshPrimitive::Cube;
+    std::string   customMeshPath;
+    std::string   customTexturePath;
+    std::string   customNormalPath;   // normal map (relativo ao projeto)
+    std::string   customMaterialPath;
+    f32           shininess = 32.0f;    // expoente especular Phong
 };
 
-}  // namespace Caffeine::Components
+struct MeshRendererComponent {
+    std::string meshPath;
+    std::string materialPath;
+    bool castShadows = true;
+    bool receiveShadows = true;
+};
+
+}  // namespace Caffeine::ECS
 ```
+
+**Inspector:** campos Albedo Texture, Normal Map e Shininess em `MeshFilterComponent`. Serialização em `SceneSerializer` (blob após `customMaterialPath`).
 
 ---
 
@@ -186,7 +200,9 @@ meshSystem.onUpdate(world, 0.016f);
 
 ## Critério de Aceitação
 
-- [x] Vertex3D struct definido (position, normal, texcoord, tangent)
+- [x] Vertex3D struct definido (position, normal, texcoord, tangent vec4)
+- [x] `computeMeshTangents()` após import OBJ/glTF
+- [x] Normal map + shininess em `MeshFilterComponent` (GPU Phong)
 - [x] Mesh3D struct com vertices, indices, subMeshes, bounds
 - [x] MeshLoader::fromMemory cria mesh de vértices e índices
 - [x] MeshLoader::parseOBJ lê formato .obj (v, vt, vn, f)
@@ -219,4 +235,5 @@ meshSystem.onUpdate(world, 0.016f);
 
 - [`docs/architecture_specs.md`](../architecture_specs.md) — §15 Math Library
 - [`rendering/rhi.md`](../rendering/rhi.md) — Buffer/Shader creation
-- [Índice de Tópicos Transversais]()
+- [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md) — LOD de texturas no render GPU
+- [`plans/2026-09-22-viewport-rendering-quality-session.md`](../plans/2026-09-22-viewport-rendering-quality-session.md) — costuras de shading em primitivas
