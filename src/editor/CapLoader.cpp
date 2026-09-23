@@ -1,91 +1,61 @@
 #include "editor/CapLoader.hpp"
 #include "debug/LogSystem.hpp"
-#include <fstream>
+
 #include <cstring>
+
+#ifdef CF_HAS_CAF_PACK
+#include "caf-pack/Reader.hpp"
+#endif
 
 namespace Caffeine::Editor {
 
 #ifdef CF_HAS_CAF_PACK
 
-using namespace Caffeine::Assets;
-
-constexpr uint32_t CAP_MAGIC = 0x4341502F;
-constexpr uint32_t CAP_VERSION = 1;
-
 std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::path& path) {
     std::vector<LoadedAsset> assets;
-    std::ifstream file(path.string(), std::ios::binary);
-    
-    if (!file) {
-        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", 
-            "Failed to open CAP file: %s", path.string().c_str());
+    std::string error;
+    const auto loaded = CafPack::Reader::loadCap(path, &error);
+    if (loaded.empty() && !error.empty()) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", "%s",
+                                         error.c_str());
         return assets;
     }
 
-    CapHeader capHeader{};
-    file.read(reinterpret_cast<char*>(&capHeader), sizeof(CapHeader));
-    
-    if (capHeader.magic != CAP_MAGIC) {
-        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", 
-            "Invalid CAP magic bytes");
-        return assets;
-    }
-
-    if (capHeader.version != CAP_VERSION) {
-        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", 
-            "Unsupported CAP version");
-        return assets;
-    }
-
-    std::vector<CapEntry> entries(capHeader.assetCount);
-    file.read(reinterpret_cast<char*>(entries.data()), 
-              capHeader.assetCount * sizeof(CapEntry));
-
-    for (const auto& entry : entries) {
-        file.seekg(entry.offset);
-        
-        std::vector<u8> cafBlob(entry.size);
-        file.read(reinterpret_cast<char*>(cafBlob.data()), entry.size);
-        
-        CafHeader cafHeader{};
-        std::memcpy(&cafHeader, cafBlob.data(), sizeof(CafHeader));
-        
-        Editor::CapAssetMetadata metadata{
-            .magic = cafHeader.magic,
-            .version = cafHeader.version,
-            .assetType = cafHeader.assetType,
+    for (const CafPack::CafAsset& caf : loaded) {
+        CapAssetMetadata metadata{
+            .magic = caf.header.magic,
+            .version = caf.header.version,
+            .assetType = caf.header.assetType,
             .reserved = {0},
-            .payloadSize = cafHeader.payloadSize,
-            .flags = cafHeader.flags,
-            .crc64 = cafHeader.crc64
+            .payloadSize = caf.header.payloadSize,
+            .flags = caf.header.flags,
+            .crc64 = caf.header.crc64,
         };
-        std::memcpy(metadata.reserved, cafHeader.reserved, 7);
-        
-        LoadedAsset asset{
-            .hashID = entry.hashID,
-            .type = identifyAssetType(metadata),
-            .cafBlob = cafBlob,
-            .metadata = metadata
-        };
-        
-        assets.push_back(asset);
+        std::memcpy(metadata.reserved, caf.header.reserved, sizeof(metadata.reserved));
+
+        assets.push_back(LoadedAsset{
+            .hashID = caf.hashID,
+            .type = static_cast<Caffeine::Assets::CafAssetType>(caf.header.assetType),
+            .cafBlob = caf.blob,
+            .metadata = metadata,
+        });
     }
 
     return assets;
 }
 
-Caffeine::Assets::CafAssetType CapLoader::identifyAssetType(const Editor::CapAssetMetadata& metadata) {
+Caffeine::Assets::CafAssetType CapLoader::identifyAssetType(const CapAssetMetadata& metadata) {
     return static_cast<Caffeine::Assets::CafAssetType>(metadata.assetType);
 }
 
 #else
 
 std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::path& path) {
-    Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", 
+    Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
         "CAP loading not available - caf-pack submodule not included");
     return {};
 }
 
 #endif
 
-}
+}  // namespace Caffeine::Editor

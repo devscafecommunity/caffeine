@@ -2,6 +2,12 @@
 // @file    CafTypes.hpp
 // @brief   Caffeine Asset Format (.caf) — type definitions
 //
+//  MIGRATION: Runtime asset packs (.cap) and imported assets (.caf from PNG/WAV/OBJ)
+//  use caf-pack as the single source of truth:
+//    caf-pack/include/caffeine/CafTypes.hpp  (magic 0x43414621 "CAF!")
+//  This header remains for engine-internal scene/prefab serialization (magic 0xCAFECAFE)
+//  until unified in a later migration phase. See docs/architecture/cafpack.md.
+//
 //  Philosophy: Zero-parsing, Zero-copy.
 //  The file on disk is a direct mirror of RAM/VRAM layout.
 //  No deserialization: file is read as a raw byte block.

@@ -18,6 +18,10 @@ option(CAFFEINE_BUILD_HEADLESS "Build caffeine-core without SDL3/RHI" OFF)
 # ── Scripting (Lua + sol2) ──────────────────────────────────────
 option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" ON)
 
+# ── Caffeine Suite (Convoy, WaveShaper) ─────────────────────────
+option(CAFFEINE_BUILD_CONVOY "Build Convoy art station submodule" ON)
+option(CAFFEINE_BUILD_WAVESHAPER "Build WaveShaper audio DAW submodule (requires VST3 SDK)" OFF)
+
 # ── glTF Support (tinygltf for mesh encoding) ──────────────────────
 include(FetchContent)
 FetchContent_Declare(
@@ -700,7 +704,24 @@ with open(sys.argv[1], 'w') as f:
     message(STATUS "Doppio (IDE) enabled – ImGui v1.91.9 fetched")
 endif()
 
-# ── caf-encode CLI tool ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  CAFFEINE SUITE — Convoy + WaveShaper (optional submodules)
+# ═══════════════════════════════════════════════════════════════════
+if(CAFFEINE_BUILD_WAVESHAPER AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/WaveShaper/CMakeLists.txt")
+    add_subdirectory(WaveShaper)
+    message(STATUS "WaveShaper (audio DAW) enabled")
+elseif(CAFFEINE_BUILD_WAVESHAPER)
+    message(STATUS "WaveShaper submodule not initialized — skipping")
+endif()
+
+if(CAFFEINE_BUILD_CONVOY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Convoy/CMakeLists.txt")
+    add_subdirectory(Convoy)
+    message(STATUS "Convoy (art station) enabled")
+elseif(CAFFEINE_BUILD_CONVOY)
+    message(STATUS "Convoy submodule not initialized — skipping")
+endif()
+
+# ── caf-encode CLI tool (legacy — prefer caf-pack CLI) ─────────
 add_executable(caf-encode tools/caf-encode/main.cpp)
 target_link_libraries(caf-encode PRIVATE caffeine-core)
 target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -6,6 +6,12 @@
 
 ## Índice da Documentação
 
+### Arquitectura
+
+| Documento | Descrição |
+|-----------|-----------|
+| **Cafpack** | [`architecture/cafpack.md`](architecture/cafpack.md) | Camada unificada de assets — suite Adobe-style (Doppio, Convoy, WaveShaper) |
+
 ### Roadmap & Planos
 
 | Documento | Descrição |
