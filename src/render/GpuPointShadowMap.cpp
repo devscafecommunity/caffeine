@@ -23,6 +23,9 @@ bool GpuPointShadowMap::init(RHI::RenderDevice* device) {
             shutdown();
             return false;
         }
+        m_valid[i] = false;
+        m_lightPos[i] = Vec3(0.0f, 0.0f, 0.0f);
+        m_radius[i] = 0.0f;
     }
 
     m_initialized = true;
@@ -36,6 +39,7 @@ void GpuPointShadowMap::shutdown() {
                 m_device->destroyTexture(m_cubemaps[i]);
                 m_cubemaps[i] = nullptr;
             }
+            m_valid[i] = false;
         }
     }
     m_device = nullptr;
@@ -47,8 +51,15 @@ RHI::Texture* GpuPointShadowMap::cubemap(u32 slot) const {
     return m_cubemaps[slot];
 }
 
+void GpuPointShadowMap::setSlot(u32 slot, const Vec3& position, f32 radius, bool isValid) {
+    if (slot >= kMaxPointShadowLights) return;
+    m_lightPos[slot] = position;
+    m_radius[slot] = radius;
+    m_valid[slot] = isValid;
+}
+
 void GpuPointShadowMap::clearSlot(u32 slot) {
-    (void)slot;
+    setSlot(slot, Vec3(0.0f, 0.0f, 0.0f), 0.0f, false);
 }
 
 }  // namespace Caffeine::Render

@@ -1,5 +1,6 @@
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EditorPanelUtils.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "ui/UIRenderer.hpp"
 #include "render/PostProcessRenderer.hpp"
 
@@ -13,6 +14,7 @@
 #include "math/Mat4.hpp"
 #include "scene/EnvironmentSystem.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/PlayMode2D.hpp"
 #include "render/SkyboxRenderer.hpp"
 
 #include <imgui.h>
@@ -60,7 +62,7 @@ std::string projectRootFromContext(const EditorContext& ctx) {
 
 void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& world,
                      const EditorContext& ctx, const Render::SkyboxCamera& camera,
-                     Render::SkyboxRenderer& renderer) {
+                     Render::SkyboxRenderer& renderer, int maxRasterDim) {
     const std::string projectRoot = projectRootFromContext(ctx);
     std::filesystem::path texturePath;
     const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
@@ -70,7 +72,7 @@ void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& wor
         texturePath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex);
     }
     if (texturePath.empty()) return;
-    renderer.draw(dl, origin, size, camera, texturePath.string());
+    renderer.draw(dl, origin, size, camera, texturePath.string(), maxRasterDim);
 }
 
 }  // namespace
@@ -91,6 +93,10 @@ void GameplayPreviewPanel::shutdown() {
         m_renderer.shutdown();
     }
 #ifdef CF_HAS_IMGUI
+    for (auto& [_, entry] : m_texCache2D) {
+        destroyImGuiTexture(entry.texture);
+    }
+    m_texCache2D.clear();
     m_skyboxRenderer.releaseGpuTextures();
 #endif
     m_colorTarget = nullptr;
@@ -100,6 +106,7 @@ void GameplayPreviewPanel::shutdown() {
     m_width = 0;
     m_height = 0;
     m_ready = false;
+    m_hasGpuFrame = false;
 }
 
 void GameplayPreviewPanel::resizeCanvas(u32 width, u32 height) {
@@ -139,7 +146,16 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     }
     editorPanelDetachTabButton(m_detached);
 
+    if (ImGui::IsWindowCollapsed()) {
+        ImGui::End();
+        return;
+    }
+
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
+    if (panelSize.x < 32.0f || panelSize.y < 32.0f) {
+        ImGui::End();
+        return;
+    }
     if (panelSize.x < 8.0f) panelSize.x = 8.0f;
     if (panelSize.y < 8.0f) panelSize.y = 8.0f;
 
@@ -149,16 +165,57 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
 
     ECS::Entity cameraEntity;
     ECS::Camera3DComponent* cam = nullptr;
-    const bool found = findGameplayCamera(world, cameraEntity, cam);
+    const bool found3D = findGameplayCamera(world, cameraEntity, cam);
 
+    const bool prefer2D = ctx.viewMode == EditorContext::ViewMode::Mode2D;
+    ECS::Entity camera2D = findPreviewCamera2D(world, ctx);
+    float cam2DX = 0.0f, cam2DY = 0.0f, cam2DZoom = 1.0f;
+    if (camera2D.isValid()) {
+        if (auto* camComp = world.get<ECS::Camera2DComponent>(camera2D)) {
+            cam2DZoom = camComp->zoom;
+        }
+        Vec3 worldPos;
+        if (auto* wt = world.get<Scene::WorldTransform>(camera2D)) {
+            worldPos = wt->matrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+        } else if (auto* t = world.get<ECS::Transform>(camera2D)) {
+            worldPos = t->position;
+        }
+        cam2DX = worldPos.x;
+        cam2DY = worldPos.y;
+    }
+
+    if ((prefer2D || !found3D) && camera2D.isValid()) {
+        cameraEntity = camera2D;
+        const int spriteCount =
+            renderCamera2DPreview(world, ctx, dl, origin, panelSize, cam2DX, cam2DY, cam2DZoom,
+                                  m_texCache2D);
+        const char* badge = ctx.isPlayMode ? "PLAY" : "STOPPED";
+        const ImU32 badgeCol =
+            ctx.isPlayMode ? IM_COL32(120, 230, 140, 230) : IM_COL32(220, 180, 90, 220);
+        dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 6.0f), badgeCol, badge);
+        if (const char* name = getEntityName(world, camera2D); name && name[0] != '\0') {
+            dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 22.0f), IM_COL32(200, 200, 210, 200),
+                        name);
+        }
+        dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 38.0f), IM_COL32(140, 180, 255, 200),
+                    "2D preview");
+        if (spriteCount == 0) {
+            const char* hint =
+                "Camera OK — add sprites (Entity Presets: 2D Character, Parallax BG)";
+            ImVec2 ts = ImGui::CalcTextSize(hint);
+            dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
+                               origin.y + panelSize.y * 0.55f),
+                        IM_COL32(170, 170, 180, 220), hint);
+        }
+    } else
 #ifdef CF_HAS_SDL3
-    if (found && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
-        u32 w = static_cast<u32>(panelSize.x);
-        u32 h = static_cast<u32>(panelSize.y);
-        w = std::clamp(w, 8u, 1280u);
-        h = std::clamp(h, 8u, 720u);
-        resizeCanvas(w, h);
-
+    if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
+        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 1280u);
+        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 720u);
+        if (!m_colorTarget || !m_depthTarget || m_width != targetW || m_height != targetH) {
+            resizeCanvas(targetW, targetH);
+        }
         const Mat4 worldMatrix = Scene::computeWorldMatrix(world, cameraEntity);
         Vec3 position = worldMatrix.transformPoint(Vec3(0, 0, 0));
         Vec3 right(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0));
@@ -188,19 +245,45 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         camera.fovRad = cam->fov * kDegToRad;
         camera.nearClip = std::max(cam->nearClip, 0.05f);
         camera.farClip = std::max(cam->farClip, 50.0f);
-        const f32 aspect = static_cast<f32>(w) / static_cast<f32>(std::max(h, 1u));
+        const u32 renderW = std::max(m_width, 1u);
+        const u32 renderH = std::max(m_height, 1u);
+        const f32 aspect = static_cast<f32>(renderW) / static_cast<f32>(renderH);
         camera.proj = Mat4::perspective(camera.fovRad, aspect, camera.nearClip, camera.farClip);
 
-        m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget, w, h,
-                                    projectRootFromContext(ctx));
+        Render::GpuSceneRenderOptions previewOpts;
+        previewOpts.enableShadows = false;
+        previewOpts.wireframeMeshes = false;
 
-        Render::SkyboxCamera skyCamera;
-        skyCamera.forward = forward;
-        skyCamera.right = right;
-        skyCamera.up = up;
-        skyCamera.fovY = camera.fovRad;
-        skyCamera.aspect = aspect;
-        drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer);
+        const bool camChanged = (position - m_lastCamPos).length() > 0.001f
+            || (forward - m_lastCamForward).length() > 0.001f
+            || std::abs(camera.fovRad - m_lastFovRad) > 0.001f;
+        const bool sizeChanged = targetW != m_lastTargetW || targetH != m_lastTargetH;
+        const u32 gpuInterval = camChanged ? 1u : 2u;
+        const bool rerunGpu = (camChanged || sizeChanged || !m_hasGpuFrame)
+            && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
+
+        {
+            Render::SkyboxCamera skyCamera;
+            skyCamera.forward = forward;
+            skyCamera.right = right;
+            skyCamera.up = up;
+            skyCamera.fovY = camera.fovRad;
+            skyCamera.aspect = aspect;
+            const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
+            const int skyCap = std::clamp(longest, 256, 512);
+            drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer, skyCap);
+        }
+
+        if (rerunGpu) {
+            m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget,
+                                        m_width, m_height, projectRootFromContext(ctx), previewOpts);
+            m_lastCamPos = position;
+            m_lastCamForward = forward;
+            m_lastFovRad = camera.fovRad;
+            m_lastTargetW = targetW;
+            m_lastTargetH = targetH;
+            m_hasGpuFrame = true;
+        }
 
         if (m_colorTarget && m_colorTarget->handle) {
             dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,
@@ -218,7 +301,7 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     {
         dl->AddRectFilled(origin, ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                           IM_COL32(18, 18, 22, 255));
-        const char* msg = found ? "Gameplay GPU not ready" : "No Camera3D in the scene";
+        const char* msg = found3D ? "Gameplay GPU not ready" : "No camera in the scene";
         const ImVec2 ts = ImGui::CalcTextSize(msg);
         dl->AddText(ImVec2(origin.x + (panelSize.x - ts.x) * 0.5f,
                            origin.y + (panelSize.y - ts.y) * 0.5f),

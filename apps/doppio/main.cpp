@@ -26,10 +26,21 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include <csignal>
+
+namespace {
+volatile std::sig_atomic_t g_interruptRequested = 0;
+
+void onInterrupt(int) {
+    g_interruptRequested = 1;
+}
+}  // namespace
 
 int main(int argc, char** argv) {
     Caffeine::Debug::installCrashHandler();
     Caffeine::Debug::setCrashBreadcrumb("main");
+    std::signal(SIGINT, onInterrupt);
+    std::signal(SIGTERM, onInterrupt);
     std::string scenePath;
     std::string projectPath;
     bool testMode = false;
@@ -180,6 +191,9 @@ int main(int argc, char** argv) {
         projectDialog.init();
 
         while (projectDialog.isOpen() && !projectSelected) {
+            if (g_interruptRequested) {
+                break;
+            }
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 imgui.processEvent(event);
@@ -249,6 +263,12 @@ int main(int argc, char** argv) {
     bool running = true;
     Uint64 lastFrameTime = SDL_GetTicksNS();
     while (running && editor.isOpen()) {
+        if (g_interruptRequested) {
+            editor.onQuitRequested();
+            running = false;
+            break;
+        }
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             imgui.processEvent(event);

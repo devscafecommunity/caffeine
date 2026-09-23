@@ -23,6 +23,10 @@ struct EditorPreferences {
     bool uniformScaleDefault = true;
     f32  cameraMoveSpeed = 5.0f;
     f32  cameraOrbitSpeed = 0.005f;
+    bool textureQualityEnabled = true;
+    f32  textureQualityRadius = 35.0f;
+    f32  textureQualityFalloff = 100.0f;
+    f32  textureQualityMinScale = 0.25f;
     bool showFPSInStatusBar = true;
     bool confirmOnSceneClose = true;
     bool reopenLastSceneOnStartup = true;

@@ -53,12 +53,12 @@ TEST_CASE("SceneSerializer - memory output has valid CafHeader magic", "[scene]"
     REQUIRE(hdr.type  == AssetType::Scene);
 }
 
-TEST_CASE("SceneSerializer - round-trip Position2D", "[scene]") {
+TEST_CASE("SceneSerializer - round-trip Transform", "[scene]") {
     World world;
     Entity e = world.create();
-    world.add<Position2D>(e);
-    world.get<Position2D>(e)->x = 3.0f;
-    world.get<Position2D>(e)->y = 7.0f;
+    world.add<Transform>(e);
+    world.get<Transform>(e)->position.x = 3.0f;
+    world.get<Transform>(e)->position.y = 7.0f;
 
     std::vector<u8> bytes;
     SceneSerializer(world).serializeToMemory(bytes);
@@ -67,21 +67,22 @@ TEST_CASE("SceneSerializer - round-trip Position2D", "[scene]") {
     REQUIRE(SceneSerializer(world2).deserializeFromMemory(bytes));
 
     bool found = false;
-    ComponentQuery q; q.with<Position2D>();
-    world2.forEach<Position2D>(q, [&](Entity, Position2D& p) {
-        REQUIRE(approxEq(p.x, 3.0f));
-        REQUIRE(approxEq(p.y, 7.0f));
+    ComponentQuery q;
+    q.with<Transform>();
+    world2.forEach<Transform>(q, [&](Entity, Transform& t) {
+        REQUIRE(approxEq(t.position.x, 3.0f));
+        REQUIRE(approxEq(t.position.y, 7.0f));
         found = true;
     });
     REQUIRE(found);
 }
 
-TEST_CASE("SceneSerializer - round-trip Health", "[scene]") {
+TEST_CASE("SceneSerializer - round-trip Acceleration2D", "[scene]") {
     World world;
     Entity e = world.create();
-    world.add<Health>(e);
-    world.get<Health>(e)->current = 50;
-    world.get<Health>(e)->max     = 200;
+    world.add<Acceleration2D>(e);
+    world.get<Acceleration2D>(e)->x = 50.0f;
+    world.get<Acceleration2D>(e)->y = 200.0f;
 
     std::vector<u8> bytes;
     SceneSerializer(world).serializeToMemory(bytes);
@@ -90,10 +91,11 @@ TEST_CASE("SceneSerializer - round-trip Health", "[scene]") {
     SceneSerializer(world2).deserializeFromMemory(bytes);
 
     bool found = false;
-    ComponentQuery q; q.with<Health>();
-    world2.forEach<Health>(q, [&](Entity, Health& h) {
-        REQUIRE(h.current == 50u);
-        REQUIRE(h.max     == 200u);
+    ComponentQuery q;
+    q.with<Acceleration2D>();
+    world2.forEach<Acceleration2D>(q, [&](Entity, Acceleration2D& a) {
+        REQUIRE(approxEq(a.x, 50.0f));
+        REQUIRE(approxEq(a.y, 200.0f));
         found = true;
     });
     REQUIRE(found);
@@ -103,7 +105,7 @@ TEST_CASE("SceneSerializer - round-trip entity count", "[scene]") {
     World world;
     for (int i = 0; i < 5; ++i) {
         Entity e = world.create();
-        world.add<Position2D>(e);
+        world.add<Transform>(e);
     }
 
     std::vector<u8> bytes;
@@ -118,12 +120,12 @@ TEST_CASE("SceneSerializer - round-trip entity count", "[scene]") {
 TEST_CASE("SceneSerializer - round-trip multiple component types on same entity", "[scene]") {
     World world;
     Entity e = world.create();
-    world.add<Position2D>(e);
-    world.get<Position2D>(e)->x = 1.0f;
-    world.get<Position2D>(e)->y = 2.0f;
-    world.add<Health>(e);
-    world.get<Health>(e)->current = 75;
-    world.get<Health>(e)->max     = 100;
+    world.add<Transform>(e);
+    world.get<Transform>(e)->position.x = 1.0f;
+    world.get<Transform>(e)->position.y = 2.0f;
+    world.add<Acceleration2D>(e);
+    world.get<Acceleration2D>(e)->x = 75.0f;
+    world.get<Acceleration2D>(e)->y = 100.0f;
 
     std::vector<u8> bytes;
     SceneSerializer(world).serializeToMemory(bytes);
@@ -132,10 +134,11 @@ TEST_CASE("SceneSerializer - round-trip multiple component types on same entity"
     SceneSerializer(world2).deserializeFromMemory(bytes);
 
     bool found = false;
-    ComponentQuery q; q.with<Position2D, Health>();
-    world2.forEach<Position2D, Health>(q, [&](Entity, Position2D& p, Health& h) {
-        REQUIRE(approxEq(p.x, 1.0f));
-        REQUIRE(h.current == 75u);
+    ComponentQuery q;
+    q.with<Transform, Acceleration2D>();
+    world2.forEach<Transform, Acceleration2D>(q, [&](Entity, Transform& t, Acceleration2D& a) {
+        REQUIRE(approxEq(t.position.x, 1.0f));
+        REQUIRE(approxEq(a.x, 75.0f));
         found = true;
     });
     REQUIRE(found);
@@ -154,7 +157,8 @@ TEST_CASE("SceneSerializer - round-trip WorldTransform", "[scene]") {
     SceneSerializer(world2).deserializeFromMemory(bytes);
 
     bool found = false;
-    ComponentQuery q; q.with<WorldTransform>();
+    ComponentQuery q;
+    q.with<WorldTransform>();
     world2.forEach<WorldTransform>(q, [&](Entity, WorldTransform& wt) {
         REQUIRE(approxEq(wt.matrix.data()[12], 5.0f));
         REQUIRE(approxEq(wt.matrix.data()[13], 10.0f));
@@ -178,7 +182,8 @@ TEST_CASE("SceneSerializer - round-trip Parent dirty flag", "[scene]") {
     SceneSerializer(world2).deserializeFromMemory(bytes);
 
     bool found = false;
-    ComponentQuery q; q.with<Parent>();
+    ComponentQuery q;
+    q.with<Parent>();
     world2.forEach<Parent>(q, [&](Entity, Parent& p) {
         REQUIRE(p.dirty == false);
         REQUIRE(p.parent.isValid());
@@ -248,23 +253,28 @@ TEST_CASE("WorldTransform - 3 levels of hierarchy propagated correctly", "[scene
     Entity child = world.create();
     Entity grand = world.create();
 
-    world.add<Position2D>(root);   world.get<Position2D>(root)->x  = 10.0f;
+    world.add<Transform>(root);
+    world.get<Transform>(root)->position.x = 10.0f;
     world.add<WorldTransform>(root);
 
-    world.add<Position2D>(child);  world.get<Position2D>(child)->x = 5.0f;
+    world.add<Transform>(child);
+    world.get<Transform>(child)->position.x = 5.0f;
     world.add<WorldTransform>(child);
-    world.add<Parent>(child);      world.get<Parent>(child)->parent = root;
+    world.add<Parent>(child);
+    world.get<Parent>(child)->parent = root;
 
-    world.add<Position2D>(grand);  world.get<Position2D>(grand)->x = 2.0f;
+    world.add<Transform>(grand);
+    world.get<Transform>(grand)->position.x = 2.0f;
     world.add<WorldTransform>(grand);
-    world.add<Parent>(grand);      world.get<Parent>(grand)->parent = child;
+    world.add<Parent>(grand);
+    world.get<Parent>(grand)->parent = child;
 
     auto propagate = [&](Entity e) {
-        Position2D*    pos = world.get<Position2D>(e);
+        Transform* pos = world.get<Transform>(e);
         WorldTransform* wt = world.get<WorldTransform>(e);
-        Parent*        par = world.get<Parent>(e);
+        Parent* par = world.get<Parent>(e);
         if (!pos || !wt) return;
-        Mat4 local = Mat4::translation(pos->x, pos->y, 0.0f);
+        Mat4 local = Mat4::translation(pos->position);
         if (par && par->parent.isValid()) {
             WorldTransform* pwt = world.get<WorldTransform>(par->parent);
             wt->matrix = pwt ? pwt->matrix * local : local;

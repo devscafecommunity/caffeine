@@ -31,8 +31,10 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
+    ../src/editor/AssetPreviewRenderer.cpp
     ../src/editor/SceneTabManager.cpp
     ../src/editor/AnimationTimeline.cpp
+    ../src/editor/AnimatorController.cpp
     ../src/editor/TilemapEditor.cpp
     ../src/editor/CommandPalette.cpp
     ../src/editor/BuildSystem.cpp
@@ -42,8 +44,40 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/CapLoader.cpp
     ../src/editor/AudioWaveformRenderer.cpp
     ../src/editor/ProjectManager.cpp
+    ../src/editor/ProjectStartupDialog.cpp
+    ../src/editor/FilePicker.cpp
     ../src/editor/SettingsPanel.cpp
     ../src/editor/LayoutManager.cpp
+    ../src/editor/EditorPaths.cpp
+    ../src/editor/EditorIcons.cpp
+    ../src/editor/EditorSpinner.cpp
+    ../src/editor/EditorPreferences.cpp
+    ../src/editor/EditorTheme.cpp
+    ../src/editor/EditorContext.cpp
+    ../src/editor/HierarchyPanel.cpp
+    ../src/editor/SceneViewport.cpp
+    ../src/editor/InspectorPanel.cpp
+    ../src/editor/ComponentRegistry.cpp
+    ../src/editor/SceneEditor.cpp
+    ../src/editor/TransformGizmo.cpp
+    ../src/editor/PrefabSystem.cpp
+    ../src/editor/MaterialSerializer.cpp
+    ../src/editor/EntityPresetTypes.cpp
+    ../src/editor/EntityPresetRegistry.cpp
+    ../src/editor/EntityPresetPackages.cpp
+    ../src/editor/EntityPresetFactories.cpp
+    ../src/editor/EntityPresetsPanel.cpp
+    ../src/editor/TerrainEditorPanel.cpp
+    ../src/editor/EntityDebugger.cpp
+    ../src/editor/PluginSystem.cpp
+    ../src/editor/PluginServiceRegistry.cpp
+    ../src/editor/PluginSymbolExports.cpp
+    ../src/editor/TestUIMapper.cpp
+    ../src/editor/TestRequestHandler.cpp
+    ../src/editor/ScriptEditorWindow.cpp
+    ../src/editor/CameraPreviewPanel.cpp
+    ../src/editor/GameplayPreviewPanel.cpp
+    ../src/assets/MaterialCache.cpp
 )
 
 if(SDL3_FOUND)
@@ -75,13 +109,20 @@ endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
-target_link_libraries(CaffeineTest PRIVATE caffeine-core caf-pack-lib)
+target_link_libraries(CaffeineTest PRIVATE caffeine-core)
+if(CAF_PACK_AVAILABLE)
+    target_link_libraries(CaffeineTest PRIVATE caf-pack-lib)
+    target_compile_definitions(CaffeineTest PRIVATE CF_HAS_CAF_PACK=1)
+endif()
 
 # Link ImGui and test engine if SDL3 is available (needed for editor panels)
 if(SDL3_FOUND)
     target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
     target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
+    if(DEFINED nanosvg_SOURCE_DIR)
+        target_include_directories(CaffeineTest PRIVATE ${nanosvg_SOURCE_DIR}/src)
+    endif()
 endif()
 
 target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2 ${CMAKE_SOURCE_DIR}/caf-pack/include)

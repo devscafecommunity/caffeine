@@ -5,7 +5,7 @@
 #include "terrain/TerrainResolution.hpp"
 #include "terrain/TerrainSerializer.hpp"
 #include "terrain/TerrainGpuTextures.hpp"
-#include "terrain/generation/TerrainGenerator.hpp"
+#include "terrain/TerrainCollisionMeshBuilder.hpp"
 #include "assets/MeshCache.hpp"
 #include "core/WorldUnits.hpp"
 
@@ -52,27 +52,13 @@ void TerrainCache::syncTextureToFilter(ECS::World& world, ECS::Entity entity,
     }
 }
 
-void TerrainCache::generateTerrain(ECS::World& world, ECS::Entity entity,
-                                   ECS::TerrainComponent& terrain) {
-    if (terrain.resolutionX < 129 || terrain.resolutionZ < 129) {
-        terrain.resolutionX = std::max(terrain.resolutionX, 257u);
-        terrain.resolutionZ = std::max(terrain.resolutionZ, 257u);
+void TerrainCache::rebuildCollisionMesh(TerrainEntry& entry, const ECS::TerrainComponent& component) {
+    if (!component.buildCollisionMesh || entry.heightmap.empty()) {
+        entry.collisionMesh.reset();
+        return;
     }
-    if (terrain.splatResolutionScale < 2) {
-        terrain.splatResolutionScale = 2;
-    }
-    if (terrain.maxHeight < 4.0f) {
-        terrain.maxHeight = Caffeine::WorldUnits::kDefaultTerrainHeightM;
-    }
-    if (terrain.worldSizeX < 16.0f) terrain.worldSizeX = Caffeine::WorldUnits::kDefaultTerrainSizeM;
-    if (terrain.worldSizeZ < 16.0f) terrain.worldSizeZ = Caffeine::WorldUnits::kDefaultTerrainSizeM;
-
-    TerrainEntry& entry = ensureEntry(entity);
-    TerrainGenerator::generate(entry.heightmap, entry.splatmap, terrain, terrain.generation);
-    terrain.dataRevision++;
-    terrain.splatRevision++;
-    rebuildMesh(entity, entry, terrain);
-    syncTextureToFilter(world, entity, terrain);
+    entry.collisionMesh = std::make_unique<Assets::Mesh3D>(
+        TerrainCollisionMeshBuilder::build(entry.heightmap, component));
 }
 
 void TerrainCache::initializeEntity(ECS::World& world, ECS::Entity entity) {
@@ -121,11 +107,31 @@ void TerrainCache::releaseMeshGpu(Assets::Mesh3D& mesh) {
         mesh.indexBuffer = nullptr;
     }
 }
+
+void TerrainCache::releaseChunkGpu(TerrainChunk& chunk) {
+    for (auto& lodMesh : chunk.lodMeshes) {
+        if (lodMesh) releaseMeshGpu(*lodMesh);
+    }
+}
+
+void TerrainCache::releaseChunksGpu(std::vector<TerrainChunk>& chunks) {
+    for (TerrainChunk& chunk : chunks) {
+        releaseChunkGpu(chunk);
+    }
+}
+
+void TerrainCache::releaseEntryGpu(TerrainEntry& entry) {
+    releaseChunksGpu(entry.chunks);
+    if (entry.mesh) releaseMeshGpu(*entry.mesh);
+}
 #endif
 
 void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
                                ECS::TerrainComponent& component) {
     entry.useChunks = component.useChunks;
+#ifdef CF_HAS_SDL3
+    releaseEntryGpu(entry);
+#endif
     if (entry.useChunks) {
         TerrainLodSystem::rebuildChunks(entry.chunks, entry.heightmap, component);
         entry.chunkActiveLods.assign(entry.chunks.size(), 0);
@@ -139,6 +145,7 @@ void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
 
     component.meshRevision = component.dataRevision;
     entry.builtRevision = component.dataRevision;
+    rebuildCollisionMesh(entry, component);
     (void)entity;
 }
 
@@ -153,12 +160,24 @@ void TerrainCache::rebuildRegion(ECS::Entity entity,
     if (entry.heightmap.empty()) return;
 
     if (entry.useChunks && !entry.chunks.empty()) {
+#ifdef CF_HAS_SDL3
+        for (TerrainChunk& chunk : entry.chunks) {
+            const bool overlapsX = chunk.startVertexX <= maxVertexX && minVertexX <= chunk.endVertexX;
+            const bool overlapsZ = chunk.startVertexZ <= maxVertexZ && minVertexZ <= chunk.endVertexZ;
+            if (overlapsX && overlapsZ) {
+                releaseChunkGpu(chunk);
+            }
+        }
+#endif
         TerrainLodSystem::rebuildChunksInRegion(entry.chunks, entry.heightmap, settings,
                                                 minVertexX, minVertexZ, maxVertexX, maxVertexZ);
         return;
     }
 
     if (entry.mesh) {
+#ifdef CF_HAS_SDL3
+        releaseMeshGpu(*entry.mesh);
+#endif
         *entry.mesh = TerrainMeshBuilder::build(entry.heightmap, settings);
     }
 }
@@ -217,15 +236,21 @@ void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
 }
 
 void TerrainCache::removeEntity(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return;
 #ifdef CF_HAS_SDL3
-    TerrainGpuTextureCache::instance().removeEntity(entity, nullptr);
+    releaseEntryGpu(it->second);
+    TerrainGpuTextureCache::instance().removeEntity(entity, m_gpuDevice);
 #endif
-    m_entries.erase(entity.id());
+    m_entries.erase(it);
 }
 
 void TerrainCache::clear() {
 #ifdef CF_HAS_SDL3
-    TerrainGpuTextureCache::instance().releaseAll(nullptr);
+    for (auto& [_, entry] : m_entries) {
+        releaseEntryGpu(entry);
+    }
+    TerrainGpuTextureCache::instance().releaseAll(m_gpuDevice);
 #endif
     m_entries.clear();
 }
@@ -248,6 +273,18 @@ TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) {
 const TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) const {
     auto it = m_entries.find(entity.id());
     return it != m_entries.end() ? &it->second.splatmap : nullptr;
+}
+
+Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
+    return it->second.collisionMesh.get();
+}
+
+const Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
+    return it->second.collisionMesh.get();
 }
 
 Assets::Mesh3D* TerrainCache::meshFor(ECS::Entity entity) {
@@ -306,14 +343,16 @@ void TerrainCache::gatherDrawMeshes(ECS::Entity entity,
                                     const Vec3& cameraPos,
                                     const Spatial::Frustum& frustum,
                                     std::vector<TerrainDrawChunk>& outDraws,
-                                    TerrainCullStats* stats) {
+                                    TerrainCullStats* stats,
+                                    f32 lodDistanceScale) {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end()) return;
 
     TerrainEntry& entry = it->second;
     if (entry.useChunks && !entry.chunks.empty()) {
         TerrainLodSystem::gatherDrawMeshes(entry.chunks, entry.chunkActiveLods, settings,
-                                           worldMatrix, cameraPos, frustum, outDraws, stats);
+                                           worldMatrix, cameraPos, frustum, outDraws, stats,
+                                           lodDistanceScale);
         return;
     }
 
@@ -353,15 +392,8 @@ void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     m_gpuDevice = device;
     TerrainGpuTextureCache::instance().releaseAll(device);
 
-    for (auto& pair : m_entries) {
-        if (pair.second.mesh) {
-            releaseMeshGpu(*pair.second.mesh);
-        }
-        for (auto& chunk : pair.second.chunks) {
-            for (auto& lodMesh : chunk.lodMeshes) {
-                if (lodMesh) releaseMeshGpu(*lodMesh);
-            }
-        }
+    for (auto& [_, entry] : m_entries) {
+        releaseEntryGpu(entry);
     }
 }
 #endif

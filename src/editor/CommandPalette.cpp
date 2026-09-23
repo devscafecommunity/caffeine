@@ -174,7 +174,7 @@ void CommandPalette::render() {
         ImGui::EndChild();
 
         ImGui::Separator();
-        ImGui::TextDisabled("↑↓ Navigate  Enter Execute  Esc Close");
+        ImGui::TextDisabled("Ctrl+L to open  |  ↑↓ Navigate  Enter Execute  Esc Close");
     }
     ImGui::End();
 }

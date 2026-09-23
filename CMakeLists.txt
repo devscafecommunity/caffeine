@@ -45,6 +45,7 @@ endif()
 # ═══════════════════════════════════════════════════════════════════
 add_library(caffeine-core
     src/core/Timer.cpp
+    src/core/TimerScheduler.cpp
     src/core/GameLoop.cpp
     src/core/io/BlobLoader.cpp
     src/core/io/CafWriter.cpp
@@ -71,6 +72,7 @@ add_library(caffeine-core
     src/scene/EnvironmentSystem.cpp
     src/scene/CpuDirectionalShadowMap.cpp
     src/scene/LightingSystem.cpp
+    src/scene/Camera3DSystem.cpp
     src/scene/TerrainSystem.cpp
     src/terrain/TerrainHeightmap.cpp
     src/terrain/TerrainMeshBuilder.cpp
@@ -81,11 +83,15 @@ add_library(caffeine-core
     src/terrain/TerrainSplatPainter.cpp
     src/terrain/TerrainSerializer.cpp
     src/terrain/TerrainGpuTextures.cpp
-    src/terrain/generation/TerrainNoise.cpp
-    src/terrain/generation/TerrainFractal.cpp
-    src/terrain/generation/TerrainGenerator.cpp
-    src/terrain/generation/GeologicalSimulator.cpp
-    src/terrain/generation/TerrainHydrology.cpp
+    src/terrain/TerrainHeightmapImporter.cpp
+    src/terrain/TerrainCollisionMeshBuilder.cpp
+    src/procedural/ProceduralNoise.cpp
+    src/procedural/ProceduralProfiles.cpp
+    src/procedural/ProceduralGenerator.cpp
+    src/procedural/ProceduralStreamer.cpp
+    src/procedural/ProceduralWorldSystem.cpp
+    src/procedural/ProceduralBindings.cpp
+    src/script/PostProcessBindings.cpp
     src/render/SkyboxRenderer.cpp
     src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
@@ -98,12 +104,15 @@ add_library(caffeine-core
 
 target_include_directories(caffeine-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
     $<BUILD_INTERFACE:${TINYGLTF_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
 
 target_compile_features(caffeine-core PUBLIC cxx_std_20)
+# Required when editor plugins (.so) link this static library.
+set_target_properties(caffeine-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(caffeine-core PUBLIC
     CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
@@ -167,9 +176,11 @@ else()
             src/rhi/CommandBuffer.cpp
             src/render/ShaderBytecode.cpp
             src/render/ShaderCompiler.cpp
+            src/render/GpuTextureCache.cpp
             src/render/GpuSceneRenderer.cpp
             src/render/GpuPointShadowMap.cpp
             src/render/GpuDirectionalShadowMap.cpp
+            src/render/GpuSpotShadowMap.cpp
             src/render/GpuProceduralMeshes.cpp
         )
         target_link_libraries(caffeine-core PUBLIC SDL3::SDL3 ${CMAKE_DL_LIBS})
@@ -456,6 +467,8 @@ with open(sys.argv[1], 'w') as f:
           src/editor/PrefabSystem.cpp
           src/editor/EntityDebugger.cpp
           src/editor/PluginSystem.cpp
+          src/editor/PluginServiceRegistry.cpp
+          src/editor/PluginSymbolExports.cpp
            src/editor/TestUIMapper.cpp
            src/editor/TestRequestHandler.cpp
            src/editor/AssetCooker.cpp
@@ -487,6 +500,7 @@ with open(sys.argv[1], 'w') as f:
      endif()
       target_include_directories(doppio PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts
           ${imgui_test_engine_SOURCE_DIR}
           ${nanosvg_SOURCE_DIR}/src)
@@ -514,7 +528,7 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(caffeine-runtime PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
-      add_dependencies(doppio caffeine-runtime hello_plugin post_processing_plugin)
+      add_dependencies(doppio caffeine-runtime)
 
       add_executable(build-smoke
           apps/build_smoke/main.cpp
@@ -532,11 +546,16 @@ with open(sys.argv[1], 'w') as f:
           target_compile_options(build-smoke PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
 
+      option(CAFFEINE_BUNDLE_DEFAULT_PLUGINS
+          "Copy built editor plugins next to doppio (off = lean IDE, install plugins manually)"
+          OFF)
+
       add_library(hello_plugin SHARED
           apps/plugins/hello_plugin/main.cpp
       )
       target_include_directories(hello_plugin PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${imgui_SOURCE_DIR})
       target_compile_definitions(hello_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
       target_compile_features(hello_plugin PRIVATE cxx_std_20)
@@ -552,6 +571,7 @@ with open(sys.argv[1], 'w') as f:
       )
       target_include_directories(post_processing_plugin PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${imgui_SOURCE_DIR})
       target_compile_definitions(post_processing_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
       target_compile_features(post_processing_plugin PRIVATE cxx_std_20)
@@ -562,16 +582,94 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(post_processing_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
+      add_library(terrain_plugin SHARED
+          apps/plugins/terrain_plugin/main.cpp
+          apps/plugins/terrain_plugin/TerrainBridge.cpp
+          apps/plugins/terrain_plugin/TerrainPluginServices.cpp
+      )
+      target_include_directories(terrain_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+          ${CMAKE_CURRENT_SOURCE_DIR}/apps/plugins/terrain_plugin
+          ${imgui_SOURCE_DIR})
+      # Symbols resolved at load time from doppio (-rdynamic + RTLD_GLOBAL).
+      target_link_libraries(terrain_plugin PRIVATE ${CMAKE_DL_LIBS})
+      target_compile_definitions(terrain_plugin PRIVATE
+          CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1
+          CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+      target_compile_features(terrain_plugin PRIVATE cxx_std_20)
+      set_target_properties(terrain_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "terrain_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(terrain_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+      add_library(procedural_tools_plugin SHARED
+          apps/plugins/procedural_tools_plugin/main.cpp
+          apps/plugins/procedural_tools_plugin/ProceduralBridge.cpp
+          apps/plugins/procedural_tools_plugin/ProceduralPluginServices.cpp
+      )
+      target_include_directories(procedural_tools_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+          ${CMAKE_CURRENT_SOURCE_DIR}/apps/plugins/procedural_tools_plugin
+          ${imgui_SOURCE_DIR})
+      target_link_libraries(procedural_tools_plugin PRIVATE ${CMAKE_DL_LIBS})
+      target_compile_definitions(procedural_tools_plugin PRIVATE
+          CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1
+          CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+      target_compile_features(procedural_tools_plugin PRIVATE cxx_std_20)
+      set_target_properties(procedural_tools_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "procedural_tools_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(procedural_tools_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
+
+      add_library(git_plugin SHARED
+          apps/plugins/git_plugin/main.cpp
+          apps/plugins/git_plugin/GitRunner.cpp
+      )
+      target_include_directories(git_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+          ${CMAKE_CURRENT_SOURCE_DIR}/apps/plugins/git_plugin
+          ${imgui_SOURCE_DIR})
+      target_compile_definitions(git_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
+      target_compile_features(git_plugin PRIVATE cxx_std_20)
+      set_target_properties(git_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "git_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(git_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
 
       add_custom_command(TARGET doppio POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:doppio>/plugins
-          COMMAND ${CMAKE_COMMAND} -E copy_if_different
-              $<TARGET_FILE:hello_plugin>
-              $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:hello_plugin>
-          COMMAND ${CMAKE_COMMAND} -E copy_if_different
-              $<TARGET_FILE:post_processing_plugin>
-              $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:post_processing_plugin>
-          COMMENT "Copying editor plugins to plugins folder")
+          COMMENT "Ensure plugins directory exists")
+
+      if(CAFFEINE_BUNDLE_DEFAULT_PLUGINS)
+          add_custom_command(TARGET doppio POST_BUILD
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:hello_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:hello_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:post_processing_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:post_processing_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:terrain_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:terrain_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:procedural_tools_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:procedural_tools_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:git_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:git_plugin>
+              COMMENT "Copying default editor plugins to plugins folder")
+      endif()
 
       target_compile_definitions(doppio PRIVATE
           CF_HAS_IMGUI=1

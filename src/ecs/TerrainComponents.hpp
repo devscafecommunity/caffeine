@@ -2,7 +2,6 @@
 
 #include "core/Types.hpp"
 #include "core/WorldUnits.hpp"
-#include "terrain/generation/TerrainGeneratorTypes.hpp"
 #include <cstring>
 
 namespace Caffeine::ECS {
@@ -23,7 +22,9 @@ struct TerrainComponent {
     bool receiveShadows = true;
 
     char texturePath[256] = "kenney_prototype-textures/PNG/Light/texture_07.png";
+    char normalMapPath[256] = {};
     f32 textureTileSize = 8.0f;
+    f32 shininess = 16.0f;
 
     bool useSplatmap = true;
     char splatLayerPaths[kTerrainSplatLayerCount][256] = {
@@ -41,9 +42,11 @@ struct TerrainComponent {
     f32 lodDistanceScale = 520.0f;
     f32 lodHysteresis = 0.25f;
 
-    char terrainDataPath[256] = {};
+    /// Sample step for the collision mesh (1 = full resolution, 4 = ~16x fewer tris).
+    u32 collisionSampleStep = 4;
+    bool buildCollisionMesh = true;
 
-    TerrainGenerationSettings generation;
+    char terrainDataPath[256] = {};
 };
 
 }  // namespace Caffeine::ECS

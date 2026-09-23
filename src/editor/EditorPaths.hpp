@@ -20,9 +20,14 @@ public:
     static std::filesystem::path skyboxPath(const std::string& fileName);
     static std::filesystem::path brandLogoPath();
 
+    /// Editor-shipped plugins (next to doppio executable or build/plugins).
+    static std::filesystem::path bundledPluginsDirectory();
+
 private:
     static std::filesystem::path s_root;
+    static std::filesystem::path s_bundledPlugins;
     static std::filesystem::path findAssetsRoot();
+    static std::filesystem::path findBundledPluginsRoot();
 };
 
 } // namespace Caffeine::Editor

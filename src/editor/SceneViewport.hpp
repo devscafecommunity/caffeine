@@ -141,6 +141,16 @@ public:
      static ImVec2 projectToScreenVP(Vec3 worldPos, ImVec2 origin, ImVec2 viewportSize,
                                      const Mat4& vp);
 
+#ifdef CF_HAS_IMGUI
+     /// Projects world space to viewport pixels. Returns false when behind the near plane.
+     static bool projectWorldToViewport(const Mat4& vp, Vec3 worldPos, ImVec2 origin,
+                                        ImVec2 viewportSize, ImVec2& screenOut);
+     /// Draws a world-space line with near-plane clipping (stable at grazing angles).
+     static void drawViewportWorldLine(ImDrawList* dl, const Mat4& vp, ImVec2 origin,
+                                       ImVec2 viewportSize, Vec3 a, Vec3 b, ImU32 color,
+                                       float thickness);
+#endif
+
     #ifdef CF_HAS_IMGUI
     void drawSceneMeshesForCamera(ECS::World& world, EditorContext& ctx, ImDrawList* dl,
                                   const Mat4& vp, const Vec3& camPos,
@@ -151,7 +161,8 @@ public:
                            ECS::World& world, const EditorContext& ctx,
                            const Render::SkyboxCamera& camera,
                            bool respectEditorToggle = true,
-                           Render::SkyboxRenderer* renderer = nullptr);
+                           Render::SkyboxRenderer* renderer = nullptr,
+                           int skyboxMaxRasterDim = 0);
     #endif
 
 private:
@@ -187,6 +198,8 @@ private:
      ECS::Entity raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
                                      ECS::World& world,
                                      const std::string& projectRoot = "");
+
+     ECS::Entity pickEntity2D(const Vec2& worldPos, ECS::World& world) const;
 
      struct SpriteTextureCacheEntry {
         std::unique_ptr<ImTextureData> texture;
@@ -274,6 +287,16 @@ private:
     u32 m_lastCanvasHeight = 0;
     u32 m_previewCanvasWidth = 0;
     u32 m_previewCanvasHeight = 0;
+    f32 m_lastEditorCamYaw = 0.0f;
+    f32 m_lastEditorCamPitch = 0.0f;
+    f32 m_lastEditorCamDistance = 0.0f;
+    Vec3 m_lastEditorCamPos{};
+    Vec3 m_lastEditorCamFocus{};
+    f32 m_editorCamMotion = 0.0f;
+    MeshPreviewMode m_lastMeshPreviewMode = MeshPreviewMode::Textured;
+    u32 m_gpuCacheWidth = 0;
+    u32 m_gpuCacheHeight = 0;
+    bool m_hasValidGpuFrame = false;
 #endif
 };
 

@@ -3,6 +3,9 @@
 #include "core/Types.hpp"
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/Camera2DPreviewRenderer.hpp"
+
+#include <unordered_map>
 
 #ifdef CF_HAS_SDL3
 #include "render/GpuSceneRenderer.hpp"
@@ -42,9 +45,16 @@ private:
     u32 m_height = 0;
     Render::GpuSceneRenderer m_renderer;
     bool m_ready = false;
+    Vec3 m_lastCamPos{};
+    Vec3 m_lastCamForward{};
+    f32 m_lastFovRad = 0.0f;
+    u32 m_lastTargetW = 0;
+    u32 m_lastTargetH = 0;
+    bool m_hasGpuFrame = false;
 #endif
 #ifdef CF_HAS_IMGUI
     Render::SkyboxRenderer m_skyboxRenderer;
+    std::unordered_map<std::string, Camera2DPreviewTextureEntry> m_texCache2D;
 #endif
     bool m_open = true;
     bool m_detached = false;

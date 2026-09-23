@@ -41,6 +41,7 @@ public:
 
     void shutdown() {
         if (!m_initialized) return;
+        ImGui_ImplSDLGPU3_DestroyDeviceObjects();
         ImGui_ImplSDLGPU3_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();

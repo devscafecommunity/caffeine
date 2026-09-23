@@ -9,10 +9,13 @@
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
+#include "editor/PluginSymbolExports.hpp"
+#include "render/GpuTextureCache.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
+#include "procedural/ProceduralWorldSystem.hpp"
 #include "script/ScriptTypes.hpp"
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
@@ -130,14 +133,13 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_buildDialog.setPrepareBuildCallback([this]() { return prepareSceneForBuild(); });
     m_buildDialog.setProjectContext(projectConfig);
 
+    EditorPaths::init();
     const std::filesystem::path pluginsDir =
         projectConfig.RootPath.empty()
             ? (std::filesystem::current_path() / "plugins")
             : (projectConfig.RootPath / "plugins");
-    std::filesystem::path bundledPluginsDir;
-    if (EditorPaths::isReady()) {
-        bundledPluginsDir = EditorPaths::root().parent_path() / "plugins";
-    }
+    const std::filesystem::path bundledPluginsDir = EditorPaths::bundledPluginsDirectory();
+    anchorPluginHostSymbols();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
                                          bundledPluginsDir);
 
@@ -198,7 +200,13 @@ void SceneEditor::shutdown() {
     PluginManager::instance().shutdown();
 #ifdef CF_HAS_SDL3
     if (m_renderDevice) {
+        m_viewport.shutdown();
+        m_gameplayPreview.shutdown();
+        m_cameraPreview.shutdownGpu();
         m_materialEditor.shutdownGpu();
+        m_assetBrowser.shutdownGpu();
+        EditorIcons::shutdown();
+        Render::GpuTextureCache::instance().releaseAll(m_renderDevice);
         Assets::MeshCache::getInstance().releaseGpuResources(m_renderDevice);
         Render::GpuProceduralMeshes::releaseGpuResources(m_renderDevice);
         Terrain::TerrainCache::instance().releaseGpuResources(m_renderDevice);
@@ -206,10 +214,6 @@ void SceneEditor::shutdown() {
 #endif
     Terrain::TerrainCache::instance().clear();
     m_tabManager.clearAll();
-    m_viewport.shutdown();
-#ifdef CF_HAS_SDL3
-    m_gameplayPreview.shutdown();
-#endif
     m_audioPreview.shutdown();
     m_scriptFileWatcher.stop();
     m_scriptWatcherStarted = false;
@@ -365,6 +369,7 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
     }
     m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
     m_scriptSystem.resetPlayState();
+    Procedural::ProceduralWorldSystem::reset();
     ECS::ComponentQuery cppQ;
     cppQ.with<Script::CppScriptComponent>();
     world.forEach<Script::CppScriptComponent>(cppQ,
@@ -413,6 +418,7 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 #ifdef CF_HAS_SCRIPTING
     m_scriptSystem.resetPlayState();
 #endif
+    Procedural::ProceduralWorldSystem::reset();
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
@@ -540,6 +546,7 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     if (m_scriptEngineReady) {
         m_scriptEngine.setWorld(&world);
         m_scriptSystem.onUpdate(world, dt);
+    Procedural::ProceduralWorldSystem::update(world);
     }
 #endif
     {
@@ -712,7 +719,6 @@ void SceneEditor::render(f32 deltaTime) {
          profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
          profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
          profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
-         m_materialEditor.open();
         
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
@@ -720,30 +726,78 @@ void SceneEditor::render(f32 deltaTime) {
 
     renderMainMenuBar(*activeWorld);
 
-    Scene::propagateTransforms(*activeWorld);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::propagateTransforms");
+        Scene::propagateTransforms(*activeWorld);
+    }
 
     // Render panels
-    m_hierarchy.render(*activeWorld, m_ctx);
-    m_inspector.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::hierarchy");
+        m_hierarchy.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::inspector");
+        m_inspector.render(*activeWorld, m_ctx);
+    }
     renderPlaybar(*activeWorld);
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
 #endif
-    m_viewport.render(*activeWorld, m_ctx);
-    m_assetBrowser.render(*activeWorld, m_ctx);
-    m_console.render();
-    m_profiler.render(Debug::Profiler::instance());
-    m_entityDebugger.render(*activeWorld, m_ctx);
-    m_scriptEditor.render();
-    m_settingsPanel.render();
-    m_materialEditor.onImGuiRender();
-    m_terrainEditor.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::viewport");
+        m_viewport.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::assetBrowser");
+        m_assetBrowser.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::console");
+        m_console.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::profiler");
+        m_profiler.render(Debug::Profiler::instance());
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::entityDebugger");
+        m_entityDebugger.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::scriptEditor");
+        m_scriptEditor.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::settings");
+        m_settingsPanel.render();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::materialEditor");
+        m_materialEditor.onImGuiRender();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
+        m_terrainEditor.render(*activeWorld, m_ctx);
+    }
     m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
-    m_entityPresets.render(*activeWorld, m_ctx);
-    m_audioPreview.onImGuiRender();
-    m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
-    m_gameplayPreview.render(*activeWorld, m_ctx);
+    {
+        CF_PROFILE_SCOPE("SceneEditor::entityPresets");
+        m_entityPresets.render(*activeWorld, m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::audioPreview");
+        m_audioPreview.onImGuiRender();
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::cameraPreview");
+        m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::gameplayPreview");
+        m_gameplayPreview.render(*activeWorld, m_ctx);
+    }
     m_viewport.setFrameCommandBuffer(nullptr);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
@@ -753,8 +807,11 @@ void SceneEditor::render(f32 deltaTime) {
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
-    PluginManager::instance().renderPanels();
-    PluginManager::instance().renderManagerUI();
+    {
+        CF_PROFILE_SCOPE("SceneEditor::plugins");
+        PluginManager::instance().renderPanels();
+        PluginManager::instance().renderManagerUI();
+    }
 
     ImGui::End(); // DockSpace
 
@@ -1056,6 +1113,11 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 void SceneEditor::handleShortcuts(ECS::World& world) {
     bool ctrl = ImGui::GetIO().KeyCtrl;
     bool shift = ImGui::GetIO().KeyShift;
+
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_L)) {
+        m_commandPalette.toggle();
+        return;
+    }
 
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_P)) {
         m_commandPalette.toggle();

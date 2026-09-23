@@ -1,0 +1,9 @@
+[submodule "caf-pack"]
+	path = caf-pack
+	url = git@github.com:devscafecommunity/caf-pack.git
+[submodule "Convoy"]
+	path = Convoy
+	url = git@github.com:devscafecommunity/convoy.git
+[submodule "WaveShaper"]
+	path = WaveShaper
+	url = git@github.com:devscafecommunity/waveshaper.git

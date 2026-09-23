@@ -2,6 +2,7 @@
 
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/Components3D.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "scene/HierarchySystem.hpp"
@@ -72,6 +73,37 @@ Vec3 clampLighting(const Vec3& v, f32 minVal, f32 maxVal) {
 
 }  // namespace
 
+Vec3 defaultSunDirection() {
+    return Vec3(0.35f, -0.82f, 0.45f).normalized();
+}
+
+bool directionalLightHasExplicitAim(ECS::World& world, ECS::Entity entity) {
+    if (auto* r = world.get<ECS::Rotation3D>(entity)) {
+        if (std::abs(r->quaternion.x) > 1e-4f || std::abs(r->quaternion.y) > 1e-4f ||
+            std::abs(r->quaternion.z) > 1e-4f || std::abs(r->quaternion.w - 1.0f) > 1e-4f) {
+            return true;
+        }
+    }
+    if (auto* t = world.get<ECS::Transform>(entity)) {
+        if (t->rotation.lengthSquared() > 1e-6f) return true;
+    }
+    return false;
+}
+
+void applyDefaultSunOrientation(ECS::World& world, ECS::Entity entity) {
+    const Vec3 sun = defaultSunDirection();
+    const Quat q = Quat::lookAt(-1.0f * sun, Vec3(0.0f, 1.0f, 0.0f));
+    ECS::Rotation3D* rotation = world.get<ECS::Rotation3D>(entity);
+    if (!rotation) rotation = &world.add<ECS::Rotation3D>(entity);
+    rotation->quaternion = Vec4(q.x, q.y, q.z, q.w);
+
+    if (auto* t = world.get<ECS::Transform>(entity)) {
+        const Vec3 euler = q.toEuler();
+        constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
+        t->rotation = Vec3(euler.x * kRadToDeg, euler.y * kRadToDeg, euler.z * kRadToDeg);
+    }
+}
+
 void LightingData::clear() {
     directionals.clear();
     points.clear();
@@ -98,7 +130,10 @@ void collectSceneLights(ECS::World& world, LightingData& out) {
         world.forEach<ECS::LightComponent, ECS::DirectionalLightComponent>(
             q, [&](ECS::Entity e, ECS::LightComponent& lc, ECS::DirectionalLightComponent& dl) {
                 if (isEffectivelyDisabled(world, e)) return;
-                const Vec3 dir = entityForward(world, e).normalized();
+                Vec3 dir = entityForward(world, e).normalized();
+                if (!directionalLightHasExplicitAim(world, e)) {
+                    dir = defaultSunDirection();
+                }
                 out.directionals.push_back(
                     {dir, lc.color, lc.intensity, dl.shadowDistance, dl.castShadows});
             });
@@ -155,10 +190,12 @@ void buildSceneShadowMaps(ECS::World& world, const LightingData& lights, const V
 }
 
 void gatherSceneLighting(ECS::World& world, const Vec3& focus, const std::string& projectRoot,
-                         SceneLighting& out, ECS::Entity skipEntity) {
+                         SceneLighting& out, ECS::Entity skipEntity, bool buildCpuShadowMaps) {
     out.clear();
     collectSceneLights(world, out.lights);
-    buildSceneShadowMaps(world, out.lights, focus, projectRoot, out.shadows, skipEntity);
+    if (buildCpuShadowMaps) {
+        buildSceneShadowMaps(world, out.lights, focus, projectRoot, out.shadows, skipEntity);
+    }
 }
 
 Vec3 evaluateDiffuseLighting(const LightingData& lights, const SceneShadowMaps& shadows,

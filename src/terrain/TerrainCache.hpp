@@ -46,12 +46,15 @@ public:
                           const Vec3& cameraPos,
                           const Spatial::Frustum& frustum,
                           std::vector<TerrainDrawChunk>& outDraws,
-                          TerrainCullStats* stats = nullptr);
+                          TerrainCullStats* stats = nullptr,
+                          f32 lodDistanceScale = 1.0f);
 
     void syncTextureToFilter(ECS::World& world, ECS::Entity entity,
                              const ECS::TerrainComponent& terrain);
     void repairTexturePaths(ECS::TerrainComponent& terrain);
-    void generateTerrain(ECS::World& world, ECS::Entity entity, ECS::TerrainComponent& terrain);
+
+    Assets::Mesh3D* collisionMeshFor(ECS::Entity entity);
+    const Assets::Mesh3D* collisionMeshFor(ECS::Entity entity) const;
 
 #ifdef CF_HAS_SDL3
     void syncGpuTextures(RHI::RenderDevice* device, ECS::Entity entity,
@@ -75,6 +78,7 @@ private:
         TerrainHeightmap heightmap;
         TerrainSplatmap splatmap;
         std::unique_ptr<Assets::Mesh3D> mesh;
+        std::unique_ptr<Assets::Mesh3D> collisionMesh;
         std::vector<TerrainChunk> chunks;
         std::vector<u32> chunkActiveLods;
         bool useChunks = false;
@@ -83,8 +87,12 @@ private:
 
     TerrainEntry& ensureEntry(ECS::Entity entity);
     void rebuildMesh(ECS::Entity entity, TerrainEntry& entry, ECS::TerrainComponent& component);
+    void rebuildCollisionMesh(TerrainEntry& entry, const ECS::TerrainComponent& component);
 #ifdef CF_HAS_SDL3
     void releaseMeshGpu(Assets::Mesh3D& mesh);
+    void releaseChunkGpu(TerrainChunk& chunk);
+    void releaseChunksGpu(std::vector<TerrainChunk>& chunks);
+    void releaseEntryGpu(TerrainEntry& entry);
 #endif
 
     std::unordered_map<u32, TerrainEntry> m_entries;

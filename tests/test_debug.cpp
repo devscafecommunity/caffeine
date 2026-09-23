@@ -256,10 +256,16 @@ TEST_CASE("Profiler - beginScope/endScope records a call", "[debug][profiler]") 
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 1);
-    REQUIRE(std::string(stats[0].name) == "TestScope");
-    REQUIRE(stats[0].callCount == 1);
-    REQUIRE(stats[0].totalMs > 0.0);
+    bool found = false;
+    for (usize i = 0; i < stats.size(); ++i) {
+        if (stats[i].name && std::string(stats[i].name) == "TestScope") {
+            REQUIRE(stats[i].callCount == 1);
+            REQUIRE(stats[i].totalMs > 0.0);
+            REQUIRE(stats[i].selfMs > 0.0);
+            found = true;
+        }
+    }
+    REQUIRE(found);
 }
 
 TEST_CASE("Profiler - multiple calls accumulate stats", "[debug][profiler]") {
@@ -276,10 +282,16 @@ TEST_CASE("Profiler - multiple calls accumulate stats", "[debug][profiler]") {
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 1);
-    REQUIRE(stats[0].callCount == 3);
-    REQUIRE(stats[0].avgMs > 0.0);
-    REQUIRE(stats[0].totalMs >= stats[0].avgMs);
+    bool found = false;
+    for (usize i = 0; i < stats.size(); ++i) {
+        if (stats[i].name && std::string(stats[i].name) == "Loop") {
+            REQUIRE(stats[i].callCount == 3);
+            REQUIRE(stats[i].avgMs > 0.0);
+            REQUIRE(stats[i].totalMs >= stats[i].avgMs);
+            found = true;
+        }
+    }
+    REQUIRE(found);
 }
 
 TEST_CASE("Profiler - min/max tracked correctly", "[debug][profiler]") {
@@ -298,9 +310,15 @@ TEST_CASE("Profiler - min/max tracked correctly", "[debug][profiler]") {
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 1);
-    REQUIRE(stats[0].minMs < stats[0].maxMs);
-    REQUIRE(stats[0].minMs > 0.0);
+    bool found = false;
+    for (usize i = 0; i < stats.size(); ++i) {
+        if (stats[i].name && std::string(stats[i].name) == "MinMax") {
+            REQUIRE(stats[i].minMs < stats[i].maxMs);
+            REQUIRE(stats[i].minMs > 0.0);
+            found = true;
+        }
+    }
+    REQUIRE(found);
 }
 
 TEST_CASE("Profiler - multiple named scopes are independent", "[debug][profiler]") {
@@ -320,21 +338,48 @@ TEST_CASE("Profiler - multiple named scopes are independent", "[debug][profiler]
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 2);
-
     bool foundA = false, foundB = false;
     for (usize i = 0; i < stats.size(); ++i) {
-        if (std::string(stats[i].name) == "ScopeA") {
+        if (stats[i].name && std::string(stats[i].name) == "ScopeA") {
             REQUIRE(stats[i].callCount == 2);
             foundA = true;
         }
-        if (std::string(stats[i].name) == "ScopeB") {
+        if (stats[i].name && std::string(stats[i].name) == "ScopeB") {
             REQUIRE(stats[i].callCount == 1);
             foundB = true;
         }
     }
     REQUIRE(foundA);
     REQUIRE(foundB);
+}
+
+TEST_CASE("Profiler - nested scopes build hierarchy and self time", "[debug][profiler]") {
+    auto& prof = Profiler::instance();
+    prof.reset();
+    prof.setEnabled(true);
+
+    prof.beginScope("Parent");
+    prof.beginScope("Child");
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    prof.endScope("Child");
+    prof.endScope("Parent");
+
+    Vector<Profiler::ScopeStats> stats;
+    prof.report(stats);
+
+    const Profiler::ScopeStats* parent = nullptr;
+    const Profiler::ScopeStats* child = nullptr;
+    for (usize i = 0; i < stats.size(); ++i) {
+        if (stats[i].name && std::string(stats[i].name) == "Parent") parent = &stats[i];
+        if (stats[i].name && std::string(stats[i].name) == "Child") child = &stats[i];
+    }
+    REQUIRE(parent != nullptr);
+    REQUIRE(child != nullptr);
+    REQUIRE(child->parentIndex == parent->nodeIndex);
+    REQUIRE(parent->firstChildIndex == child->nodeIndex);
+    REQUIRE(child->selfMs > 0.0);
+    REQUIRE(parent->totalMs >= child->totalMs);
+    REQUIRE(parent->selfMs < parent->totalMs);
 }
 
 // ============================================================================
@@ -352,7 +397,9 @@ TEST_CASE("Profiler - disabled profiler does not record", "[debug][profiler]") {
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 0);
+    for (usize i = 0; i < stats.size(); ++i) {
+        REQUIRE(stats[i].callCount == 0);
+    }
 
     prof.setEnabled(true);
 }
@@ -370,7 +417,9 @@ TEST_CASE("Profiler - reset clears all stats", "[debug][profiler]") {
 
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
-    REQUIRE(stats.size() == 0);
+    for (usize i = 0; i < stats.size(); ++i) {
+        REQUIRE(stats[i].callCount == 0);
+    }
 }
 
 // ============================================================================
@@ -390,10 +439,15 @@ TEST_CASE("ProfileScope - RAII records scope", "[debug][profiler]") {
     Vector<Profiler::ScopeStats> stats;
     prof.report(stats);
 
-    REQUIRE(stats.size() == 1);
-    REQUIRE(std::string(stats[0].name) == "RAIIScope");
-    REQUIRE(stats[0].callCount == 1);
-    REQUIRE(stats[0].totalMs > 0.0);
+    bool found = false;
+    for (usize i = 0; i < stats.size(); ++i) {
+        if (stats[i].name && std::string(stats[i].name) == "RAIIScope") {
+            REQUIRE(stats[i].callCount == 1);
+            REQUIRE(stats[i].totalMs > 0.0);
+            found = true;
+        }
+    }
+    REQUIRE(found);
 }
 
 // ============================================================================

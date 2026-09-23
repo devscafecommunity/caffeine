@@ -70,6 +70,12 @@ void AssetBrowser::init(const ProjectConfig& projectConfig) {
     refresh();
 }
 
+void AssetBrowser::shutdownGpu() {
+#ifdef CF_HAS_IMGUI
+    m_previewRenderer.shutdownGpu();
+#endif
+}
+
 void AssetBrowser::refresh() {
     if (m_browseMode == BrowseMode::CapFile) {
         loadCapFile(m_currentCapPath);

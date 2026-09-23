@@ -5,6 +5,7 @@
 #include "editor/EntityPresetPackages.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
+#include "editor/PluginServiceRegistry.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -63,14 +64,21 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_commandPalette = commandPalette;
     m_editorContext = editorContext;
 
-    m_hostApi.editorContext = this;
+    m_hostApi.editorContext = m_editorContext;
     m_hostApi.logInfo = &PluginManager::hostLogInfo;
     m_hostApi.logError = &PluginManager::hostLogError;
     m_hostApi.registerPanel = &PluginManager::hostRegisterPanel;
+    m_hostApi.openPanel = &PluginManager::hostOpenPanel;
     m_hostApi.registerMenuAction = &PluginManager::hostRegisterMenuAction;
     m_hostApi.registerComponentDrawer = &PluginManager::hostRegisterComponentDrawer;
     m_hostApi.registerEntityPresetManifest = &PluginManager::hostRegisterEntityPresetManifest;
     m_hostApi.getComponentTypeId = &PluginManager::hostGetComponentTypeId;
+    m_hostApi.getActiveWorld = &PluginManager::hostGetActiveWorld;
+    m_hostApi.getSelectedEntityId = &PluginManager::hostGetSelectedEntityId;
+    m_hostApi.markSceneDirty = &PluginManager::hostMarkSceneDirty;
+    m_hostApi.invokeService = &PluginManager::hostInvokeService;
+    m_hostApi.registerService = &PluginManager::hostRegisterService;
+    m_hostApi.getProjectRootPath = &PluginManager::hostGetProjectRootPath;
 
     std::error_code ec;
     std::filesystem::create_directories(m_pluginsDirectory, ec);
@@ -88,12 +96,12 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
 void PluginManager::shutdown() {
     if (!m_initialized) return;
 
-    std::vector<std::string> names;
-    for (const auto& [name, handle] : m_loadedPlugins) {
-        names.push_back(name);
+    std::vector<std::string> paths;
+    for (const auto& [path, handle] : m_loadedPlugins) {
+        paths.push_back(path);
     }
-    for (const auto& name : names) {
-        unloadPlugin(name);
+    for (const auto& path : paths) {
+        unloadPluginByPath(path);
     }
 
     m_watcher.stop();
@@ -115,42 +123,59 @@ void PluginManager::hostLogError(void* ctx, const char* message) {
 
 bool PluginManager::hostRegisterPanel(void* ctx, const char* pluginName, const char* title,
                                       void (*renderFn)(void* userData), void* userData) {
-    if (!ctx || !pluginName || !title || !renderFn) return false;
-    auto* manager = static_cast<PluginManager*>(ctx);
-    return manager->registerPanel(pluginName, title, [renderFn, userData]() { renderFn(userData); });
+    if (!title || !renderFn) return false;
+    (void)ctx;
+    auto& manager = PluginManager::instance();
+    const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
+    if (!id || id[0] == '\0') return false;
+    return manager.registerPanel(id, title, [renderFn, userData]() { renderFn(userData); });
+}
+
+bool PluginManager::hostOpenPanel(void* ctx, const char* title) {
+    (void)ctx;
+    if (!title || title[0] == '\0') return false;
+    return PluginManager::instance().openPanel(title);
 }
 
 bool PluginManager::hostRegisterMenuAction(void* ctx, const char* pluginName, const char* menuPath,
                                            void (*actionFn)(void* userData), void* userData) {
-    if (!ctx || !pluginName || !menuPath || !actionFn) return false;
-    auto* manager = static_cast<PluginManager*>(ctx);
-    return manager->registerMenuAction(pluginName, menuPath,
-                                     [actionFn, userData]() { actionFn(userData); });
+    if (!menuPath || !actionFn) return false;
+    (void)ctx;
+    auto& manager = PluginManager::instance();
+    const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
+    if (!id || id[0] == '\0') return false;
+    return manager.registerMenuAction(id, menuPath,
+                                    [actionFn, userData]() { actionFn(userData); });
 }
 
 bool PluginManager::hostRegisterComponentDrawer(void* ctx, const char* pluginName, u32 componentTypeId,
                                                 void (*drawFn)(void* componentData, void* userData),
                                                 void* userData) {
-    if (!ctx || !pluginName || !drawFn) return false;
-    auto* manager = static_cast<PluginManager*>(ctx);
-    return manager->registerComponentDrawer(pluginName, componentTypeId,
-                                          [drawFn, userData](void* data) { drawFn(data, userData); });
+    if (!drawFn) return false;
+    (void)ctx;
+    auto& manager = PluginManager::instance();
+    const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
+    if (!id || id[0] == '\0') return false;
+    return manager.registerComponentDrawer(id, componentTypeId,
+                                           [drawFn, userData](void* data) { drawFn(data, userData); });
 }
 
 bool PluginManager::hostRegisterEntityPresetManifest(void* ctx, const char* pluginName,
                                                      const char* manifestPath) {
-    if (!ctx || !pluginName || !manifestPath) return false;
-    auto* manager = static_cast<PluginManager*>(ctx);
+    if (!manifestPath) return false;
+    auto& manager = PluginManager::instance();
+    const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
+    if (!id || id[0] == '\0') return false;
     auto loaded = loadEntityPresetPackage(manifestPath);
     if (!loaded.presets.empty()) {
         for (auto& preset : loaded.presets) {
-            preset.source = pluginName;
+            preset.source = id;
             EntityPresetRegistry::instance().registerPreset(std::move(preset));
         }
         return true;
     }
     if (!loaded.error.empty()) {
-        hostLogError(manager, loaded.error.c_str());
+        hostLogError(nullptr, loaded.error.c_str());
     }
     return false;
 }
@@ -160,6 +185,58 @@ u32 PluginManager::hostGetComponentTypeId(void* ctx, const char* componentName) 
     return ComponentTypeRegistry::instance().lookup(componentName);
 }
 
+void* PluginManager::hostGetActiveWorld(void* editorContext) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    return ctx ? static_cast<void*>(ctx->activeWorld) : nullptr;
+}
+
+CaffeinePluginU32 PluginManager::hostGetSelectedEntityId(void* editorContext) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    return (ctx && ctx->selectedEntity.isValid()) ? ctx->selectedEntity.id() : 0;
+}
+
+void PluginManager::hostMarkSceneDirty(void* editorContext) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (ctx) ctx->isDirty = true;
+}
+
+bool PluginManager::hostInvokeService(void* ctx, const char* serviceName, const void* request,
+                                      std::size_t requestSize, void* response,
+                                      std::size_t responseSize) {
+    (void)ctx;
+    auto& manager = PluginManager::instance();
+    if (!serviceName || !manager.m_editorContext) return false;
+    return PluginServiceRegistry::instance().invoke(serviceName, manager.m_editorContext, request,
+                                                    requestSize, response, responseSize);
+}
+
+bool PluginManager::hostRegisterService(void* ctx, const char* pluginName, const char* serviceName,
+                                        PluginServiceHandler handler) {
+    (void)ctx;
+    if (!serviceName || !handler) return false;
+    auto& manager = PluginManager::instance();
+    const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
+    if (!id || id[0] == '\0') return false;
+    return PluginServiceRegistry::instance().registerService(id, serviceName, handler);
+}
+
+bool PluginManager::hostGetProjectRootPath(void* editorContext, char* buffer,
+                                           std::size_t bufferSize) {
+    if (!buffer || bufferSize == 0) return false;
+    buffer[0] = '\0';
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (!ctx || ctx->currentScenePath.empty()) return false;
+
+    const std::filesystem::path root =
+        std::filesystem::path(ctx->currentScenePath).parent_path().parent_path();
+    if (root.empty()) return false;
+
+    const std::string path = root.string();
+    std::strncpy(buffer, path.c_str(), bufferSize - 1);
+    buffer[bufferSize - 1] = '\0';
+    return true;
+}
+
 bool PluginManager::registerPanel(const std::string& pluginName, const std::string& title,
                                   std::function<void()> renderFunc) {
     if (title.empty() || !renderFunc) return false;
@@ -167,27 +244,28 @@ bool PluginManager::registerPanel(const std::string& pluginName, const std::stri
     PluginPanel panel;
     panel.pluginName = pluginName;
     panel.title = title;
+    panel.commandId = std::string("plugin_panel_") + pluginName + "_" + title;
     panel.render = std::move(renderFunc);
     panel.open = true;
     m_panels.push_back(std::move(panel));
 
     if (m_commandPalette) {
-        FixedString<64> id("plugin_panel_");
-        id.append(pluginName.c_str());
-        id.append("_");
-        id.append(title.c_str());
+        FixedString<64> id(panel.commandId.c_str());
         m_commandPalette->registerCommand(
             id, FixedString<128>(title.c_str()), FixedString<128>("Plugins"),
-            [this, title]() {
-                for (auto& p : m_panels) {
-                    if (p.title == title) {
-                        p.open = true;
-                        break;
-                    }
-                }
-            });
+            [this, title]() { openPanel(title); });
     }
     return true;
+}
+
+bool PluginManager::openPanel(const std::string& title) {
+    for (auto& panel : m_panels) {
+        if (panel.title == title) {
+            panel.open = true;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool PluginManager::registerMenuAction(const std::string& pluginName, const std::string& menuPath,
@@ -207,6 +285,14 @@ bool PluginManager::registerComponentDrawer(const std::string& pluginName, u32 c
 }
 
 void PluginManager::unregisterPluginResources(const std::string& pluginName) {
+    if (m_commandPalette) {
+        for (const auto& panel : m_panels) {
+            if (panel.pluginName == pluginName && !panel.commandId.empty()) {
+                m_commandPalette->unregisterCommand(FixedString<64>(panel.commandId.c_str()));
+            }
+        }
+    }
+
     m_panels.erase(std::remove_if(m_panels.begin(), m_panels.end(),
                                   [&](const PluginPanel& p) { return p.pluginName == pluginName; }),
                    m_panels.end());
@@ -309,7 +395,7 @@ bool PluginManager::loadPluginInternal(const std::string& path, bool fromHotRelo
     }
 #endif
 
-    m_hostApi.editorContext = this;
+    m_hostApi.editorContext = m_editorContext;
     IPlugin* plugin = createFn(&m_hostApi);
     if (!plugin) {
 #if defined(_WIN32)
@@ -324,15 +410,24 @@ bool PluginManager::loadPluginInternal(const std::string& path, bool fromHotRelo
     entry.libraryHandle = handle;
     entry.instance = plugin;
     entry.path = path;
-    entry.name = plugin->GetName() ? plugin->GetName() : libPath.stem().string();
+    entry.name = libPath.stem().string();
+    const char* reportedName = plugin->GetName();
     entry.version = plugin->GetVersion() ? plugin->GetVersion() : "0.0.0";
     entry.description = plugin->GetDescription() ? plugin->GetDescription() : "";
+    if (reportedName && reportedName[0] != '\0') {
+        std::cout << "[Plugin] Loaded: " << reportedName << " [" << entry.name << "] (" << path
+                  << ")\n";
+    } else {
+        std::cout << "[Plugin] Loaded: " << entry.name << " (" << path << ")\n";
+    }
     entry.lastWriteTime = fileTimestamp(libPath);
     entry.status = PluginStatus::Loaded;
 
-    if (m_loadedPlugins.contains(entry.name) && !fromHotReload) {
-        unloadPlugin(entry.name);
+    if (m_loadedPlugins.contains(entry.path) && !fromHotReload) {
+        unloadPluginByPath(entry.path);
     }
+
+    m_hostApi.pluginId = entry.name.c_str();
 
     try {
         plugin->OnLoad();
@@ -346,16 +441,28 @@ bool PluginManager::loadPluginInternal(const std::string& path, bool fromHotRelo
 #else
         dlclose(handle);
 #endif
-        m_loadedPlugins[entry.name] = std::move(entry);
+        m_hostApi.pluginId = nullptr;
+        m_loadedPlugins[entry.path] = std::move(entry);
         return false;
     }
 
-    m_loadedPlugins[entry.name] = std::move(entry);
+    m_hostApi.pluginId = nullptr;
+    m_loadedPlugins[entry.path] = std::move(entry);
     return true;
 }
 
-bool PluginManager::unloadPlugin(const std::string& name) {
-    auto it = m_loadedPlugins.find(name);
+const PluginHandle* PluginManager::findLoadedPluginByStem(
+    const std::string& stem) const {
+    for (const auto& [path, handle] : m_loadedPlugins) {
+        if (handle.name == stem || path == stem) {
+            return &handle;
+        }
+    }
+    return nullptr;
+}
+
+bool PluginManager::unloadPluginByPath(const std::string& path) {
+    auto it = m_loadedPlugins.find(path);
     if (it == m_loadedPlugins.end()) return false;
 
     PluginHandle& handle = it->second;
@@ -366,7 +473,8 @@ bool PluginManager::unloadPlugin(const std::string& name) {
         }
     }
 
-    unregisterPluginResources(name);
+    unregisterPluginResources(handle.name);
+    PluginServiceRegistry::instance().unregisterPlugin(handle.name);
 
 #if defined(_WIN32)
     auto destroyFn = reinterpret_cast<DestroyPluginFn>(
@@ -391,13 +499,23 @@ bool PluginManager::unloadPlugin(const std::string& name) {
     return true;
 }
 
-bool PluginManager::reloadPlugin(const std::string& name) {
-    auto it = m_loadedPlugins.find(name);
-    if (it == m_loadedPlugins.end()) return false;
+bool PluginManager::unloadPlugin(const std::string& name) {
+    for (const auto& [path, handle] : m_loadedPlugins) {
+        if (handle.name == name || path == name) {
+            return unloadPluginByPath(path);
+        }
+    }
+    return false;
+}
 
-    const std::string path = it->second.path;
-    unloadPlugin(name);
-    return loadPluginInternal(path, true);
+bool PluginManager::reloadPlugin(const std::string& name) {
+    for (const auto& [path, handle] : m_loadedPlugins) {
+        if (handle.name == name || path == name) {
+            unloadPluginByPath(path);
+            return loadPluginInternal(handle.path, true);
+        }
+    }
+    return false;
 }
 
 void PluginManager::refreshPluginsDirectory() {
@@ -430,16 +548,17 @@ void PluginManager::refreshPlugins(float dt) {
     for (const auto& path : changed) {
         if (!isPluginLibrary(path)) continue;
 
-        std::string pluginName;
-        for (auto& [name, handle] : m_loadedPlugins) {
+        std::string pluginPath;
+        for (auto& [loadedPath, handle] : m_loadedPlugins) {
             if (handle.path == path.string()) {
-                pluginName = name;
+                pluginPath = loadedPath;
                 break;
             }
         }
 
-        if (!pluginName.empty()) {
-            reloadPlugin(pluginName);
+        if (!pluginPath.empty()) {
+            unloadPluginByPath(pluginPath);
+            loadPluginInternal(pluginPath, true);
         } else {
             loadPluginInternal(path.string(), true);
         }
@@ -462,8 +581,9 @@ void PluginManager::renderPanels() {
     for (auto& panel : m_panels) {
         if (!panel.open) continue;
 
-        const auto pluginIt = m_loadedPlugins.find(panel.pluginName);
-        if (pluginIt != m_loadedPlugins.end() && !pluginIt->second.enabled) continue;
+        if (const PluginHandle* handle = findLoadedPluginByStem(panel.pluginName)) {
+            if (!handle->enabled) continue;
+        }
 
         bool open = panel.open;
         if (ImGui::Begin(panel.title.c_str(), &open)) {
@@ -504,7 +624,10 @@ void PluginManager::renderManagerUI() {
     if (!m_managerOpen) return;
 
     if (ImGui::Begin("Plugin Manager", &m_managerOpen)) {
-        ImGui::TextDisabled("Directory: %s", m_pluginsDirectory.string().c_str());
+        ImGui::TextDisabled("Project plugins: %s", m_pluginsDirectory.string().c_str());
+        if (!m_bundledPluginsDirectory.empty()) {
+            ImGui::TextDisabled("Bundled plugins: %s", m_bundledPluginsDirectory.string().c_str());
+        }
 
         if (ImGui::Button("Refresh Directory")) {
             refreshPluginsDirectory();
@@ -530,13 +653,13 @@ void PluginManager::renderManagerUI() {
             ImGui::TableSetupColumn("Actions");
             ImGui::TableHeadersRow();
 
-            for (auto& [name, handle] : m_loadedPlugins) {
+            for (auto& [path, handle] : m_loadedPlugins) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Checkbox(("##en" + name).c_str(), &handle.enabled);
+                ImGui::Checkbox(("##en" + handle.name).c_str(), &handle.enabled);
 
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(name.c_str());
+                ImGui::TextUnformatted(handle.name.c_str());
                 if (!handle.description.empty()) {
                     ImGui::TextDisabled("%s", handle.description.c_str());
                 }
@@ -558,12 +681,12 @@ void PluginManager::renderManagerUI() {
                 }
 
                 ImGui::TableSetColumnIndex(4);
-                if (ImGui::SmallButton(("Reload##" + name).c_str())) {
-                    reloadPlugin(name);
+                if (ImGui::SmallButton(("Reload##" + handle.name).c_str())) {
+                    reloadPlugin(handle.name);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(("Unload##" + name).c_str())) {
-                    unloadPlugin(name);
+                if (ImGui::SmallButton(("Unload##" + handle.name).c_str())) {
+                    unloadPlugin(handle.name);
                 }
             }
 
@@ -575,7 +698,7 @@ void PluginManager::renderManagerUI() {
         for (const auto& path : m_discoveredPaths) {
             const auto filename = std::filesystem::path(path).filename().string();
             bool loaded = false;
-            for (const auto& [name, handle] : m_loadedPlugins) {
+            for (const auto& [loadedPath, handle] : m_loadedPlugins) {
                 if (handle.path == path) {
                     loaded = true;
                     break;

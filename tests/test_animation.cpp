@@ -69,7 +69,7 @@ TEST_CASE("AnimationTransition - defaults", "[animation]") {
     AnimationTransition t;
     REQUIRE(approxEq(t.blendTime, 0.1f));
     REQUIRE(t.hasExitTime == false);
-    REQUIRE(!t.condition);
+    REQUIRE(!t.legacyCondition);
 }
 
 // ============================================================================
@@ -245,7 +245,7 @@ TEST_CASE("AnimationSystem - transition fires when condition is true", "[animati
     idle.clip = &idleClip;
     AnimationTransition toWalk;
     toWalk.toState   = "walk";
-    toWalk.condition = []() { return true; };
+    toWalk.legacyCondition = []() { return true; };
     idle.transitions.push_back(toWalk);
 
     AnimationState walk;
@@ -278,7 +278,7 @@ TEST_CASE("AnimationSystem - transition does not fire when condition is false", 
     idle.clip = &idleClip;
     AnimationTransition t;
     t.toState   = "walk";
-    t.condition = []() { return false; };
+    t.legacyCondition = []() { return false; };
     idle.transitions.push_back(t);
 
     Animator anim;

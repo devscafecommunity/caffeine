@@ -4,6 +4,7 @@
 #include "math/Vec3.hpp"
 #include "math/Vec4.hpp"
 #include "containers/FixedString.hpp"
+#include <string>
 #include <vector>
 
 #ifdef CF_HAS_SDL3
@@ -46,10 +47,24 @@ struct SubMesh {
     FixedString<64> name;
 };
 
+/// Per-surface material data extracted from glTF (or defaults for procedural meshes).
+struct MeshSurfaceMaterial {
+    Color albedoColor = Color::white();
+    f32 roughness = 0.5f;
+    f32 metallic = 0.0f;
+    bool doubleSided = false;
+    std::vector<u8> albedoPixels;
+    u32 albedoWidth = 0;
+    u32 albedoHeight = 0;
+    int albedoChannels = 0;
+    std::string albedoPath;
+};
+
 struct Mesh3D {
     std::vector<Vertex3D> vertices;
     std::vector<u32> indices;
     std::vector<SubMesh> subMeshes;
+    std::vector<MeshSurfaceMaterial> materials;
     Rect3D bounds;
     u32 lodCount = 1;
     

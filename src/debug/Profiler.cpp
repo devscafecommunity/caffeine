@@ -4,94 +4,127 @@
 
 namespace Caffeine::Debug {
 
+Profiler::Profiler() {
+    initRoot();
+}
+
 Profiler& Profiler::instance() {
     static Profiler s;
     return s;
 }
 
+void Profiler::initRoot() {
+    m_nodeCount = 1;
+    m_activeDepth = 0;
+    m_nodes[0] = ScopeNode{};
+    m_nodes[0].name = "<root>";
+    m_nodes[0].parent = kInvalidNode;
+}
+
 void Profiler::beginScope(const char* name) {
-    if (!m_enabled) return;
+    if (!m_enabled || !name) return;
+    if (m_activeDepth >= MAX_SCOPE_DEPTH) return;
 
-    InternalScopeData* scope = findOrCreateScope(name);
-    if (!scope) return;
+    const u32 parentIndex =
+        (m_activeDepth > 0) ? m_activeStack[m_activeDepth - 1].nodeIndex : 0u;
+    const u32 nodeIndex = findOrCreateChild(parentIndex, name);
+    if (nodeIndex == kInvalidNode) return;
 
-    scope->activeTimer.reset();
-    scope->activeTimer.start();
+    ActiveScope& active = m_activeStack[m_activeDepth++];
+    active.nodeIndex = nodeIndex;
+    active.childrenMs = 0.0;
+    active.timer.reset();
+    active.timer.start();
 }
 
 void Profiler::endScope(const char* name) {
     if (!m_enabled) return;
+    if (m_activeDepth == 0) return;
 
-    InternalScopeData* scope = findScope(name);
-    if (!scope) return;
+    ActiveScope& active = m_activeStack[m_activeDepth - 1];
+    ScopeNode& node = m_nodes[active.nodeIndex];
 
-    scope->activeTimer.stop();
-    f64 ms = scope->activeTimer.elapsed().millis();
+    if (name && node.name && std::strcmp(node.name, name) != 0) {
+        // RAII scopes should always match; still close the innermost scope.
+    }
 
-    scope->callCount++;
-    scope->totalMs += ms;
-    if (ms < scope->minMs) scope->minMs = ms;
-    if (ms > scope->maxMs) scope->maxMs = ms;
+    active.timer.stop();
+    const f64 elapsedMs = active.timer.elapsed().millis();
+    const f64 selfMs = std::max(0.0, elapsedMs - active.childrenMs);
+
+    node.callCount++;
+    node.totalMs += elapsedMs;
+    node.selfMs += selfMs;
+    if (elapsedMs < node.minMs) node.minMs = elapsedMs;
+    if (elapsedMs > node.maxMs) node.maxMs = elapsedMs;
+
+    if (m_activeDepth > 1) {
+        m_activeStack[m_activeDepth - 2].childrenMs += elapsedMs;
+    }
+
+    m_activeDepth--;
 }
 
 void Profiler::report(Vector<ScopeStats>& out) const {
     out.clear();
-    for (usize i = 0; i < m_scopeCount; ++i) {
-        const auto& s = m_scopes[i];
-        ScopeStats stats;
-        stats.name = s.name;
-        stats.callCount = s.callCount;
-        stats.totalMs = s.totalMs;
-        stats.avgMs = (s.callCount > 0) ? s.totalMs / static_cast<f64>(s.callCount) : 0.0;
-        stats.minMs = s.minMs;
-        stats.maxMs = s.maxMs;
-        out.pushBack(stats);
+    out.resize(m_nodeCount);
+
+    for (usize i = 0; i < m_nodeCount; ++i) {
+        const ScopeNode& node = m_nodes[i];
+        ScopeStats& stats = out[i];
+        stats.name = node.name;
+        stats.nodeIndex = static_cast<u32>(i);
+        stats.parentIndex = node.parent;
+        stats.firstChildIndex = node.firstChild;
+        stats.nextSiblingIndex = node.nextSibling;
+        stats.callCount = node.callCount;
+        stats.totalMs = node.totalMs;
+        stats.selfMs = node.selfMs;
+        stats.avgMs = (node.callCount > 0) ? node.totalMs / static_cast<f64>(node.callCount) : 0.0;
+        stats.avgSelfMs =
+            (node.callCount > 0) ? node.selfMs / static_cast<f64>(node.callCount) : 0.0;
+        stats.minMs = (node.callCount > 0) ? node.minMs : 0.0;
+        stats.maxMs = node.maxMs;
+
+        stats.depth = 0;
+        u32 parent = node.parent;
+        while (parent != kInvalidNode && parent < m_nodeCount) {
+            stats.depth++;
+            parent = m_nodes[parent].parent;
+        }
     }
 }
 
 void Profiler::reset() {
-    m_scopeCount = 0;
-    for (usize i = 0; i < MAX_SCOPES; ++i) {
-        m_scopes[i] = InternalScopeData{};
-    }
+    initRoot();
 }
 
 usize Profiler::scopeCount() const {
-    return m_scopeCount;
+    return (m_nodeCount > 0) ? m_nodeCount - 1 : 0;
 }
 
-Profiler::InternalScopeData* Profiler::findScope(const char* name) {
-    for (usize i = 0; i < m_scopeCount; ++i) {
-        if (strcmp(m_scopes[i].name, name) == 0) {
-            return &m_scopes[i];
+u32 Profiler::findOrCreateChild(u32 parentIndex, const char* name) {
+    if (parentIndex >= m_nodeCount) return kInvalidNode;
+
+    u32 child = m_nodes[parentIndex].firstChild;
+    while (child != kInvalidNode) {
+        if (m_nodes[child].name == name
+            || (m_nodes[child].name && std::strcmp(m_nodes[child].name, name) == 0)) {
+            return child;
         }
+        child = m_nodes[child].nextSibling;
     }
-    return nullptr;
-}
 
-const Profiler::InternalScopeData* Profiler::findScope(const char* name) const {
-    for (usize i = 0; i < m_scopeCount; ++i) {
-        if (strcmp(m_scopes[i].name, name) == 0) {
-            return &m_scopes[i];
-        }
-    }
-    return nullptr;
-}
+    if (m_nodeCount >= MAX_SCOPE_NODES) return kInvalidNode;
 
-Profiler::InternalScopeData* Profiler::findOrCreateScope(const char* name) {
-    InternalScopeData* existing = findScope(name);
-    if (existing) return existing;
-
-    if (m_scopeCount >= MAX_SCOPES) return nullptr;
-
-    auto& scope = m_scopes[m_scopeCount];
-    scope.name = name;
-    scope.callCount = 0;
-    scope.totalMs = 0.0;
-    scope.minMs = 1e18;
-    scope.maxMs = 0.0;
-    ++m_scopeCount;
-    return &scope;
+    const u32 index = static_cast<u32>(m_nodeCount++);
+    ScopeNode& node = m_nodes[index];
+    node = ScopeNode{};
+    node.parent = parentIndex;
+    node.name = name;
+    node.nextSibling = m_nodes[parentIndex].firstChild;
+    m_nodes[parentIndex].firstChild = index;
+    return index;
 }
 
 ProfileScope::ProfileScope(const char* name) : m_name(name) {

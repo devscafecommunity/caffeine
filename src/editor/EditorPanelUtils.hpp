@@ -66,6 +66,16 @@ inline void editorPanelDetachTabButton(bool& detached) {
     ImGui::PopID();
 }
 
+// Skip GPU work for collapsed/hidden/throttled dock panels; still safe to blit the last target.
+inline bool editorPanelWorthGpuRender(ImVec2 origin, ImVec2 size, u32 frameInterval = 1) {
+    if (size.x < 32.0f || size.y < 32.0f) return false;
+    if (ImGui::IsWindowCollapsed()) return false;
+    const ImVec2 max(origin.x + size.x, origin.y + size.y);
+    if (!ImGui::IsRectVisible(origin, max)) return false;
+    if (frameInterval > 1u && (ImGui::GetFrameCount() % frameInterval) != 0u) return false;
+    return true;
+}
+
 #endif
 
 }  // namespace Caffeine::Editor

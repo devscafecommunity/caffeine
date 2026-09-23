@@ -1,4 +1,5 @@
 #include "editor/PreviewRenderer.hpp"
+#include "editor/ImGuiGpuTexture.hpp"
 #include "render/ShaderBytecode.hpp"
 #include "math/Mat4.hpp"
 
@@ -41,7 +42,7 @@ bool PreviewRenderer::init(RHI::RenderDevice* device) {
 
 void PreviewRenderer::shutdown() {
 #ifdef CF_HAS_IMGUI
-    m_previewTexture.reset();
+    destroyImGuiTexture(m_previewTexture);
     m_cachedAlbedo = Vec4(-1.0f, -1.0f, -1.0f, -1.0f);
     m_cachedMetallic = -1.0f;
     m_cachedRoughness = -1.0f;

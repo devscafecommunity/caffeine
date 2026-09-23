@@ -5,6 +5,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
+#include "ecs/ProceduralComponents.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "audio/AudioComponents.hpp"
@@ -13,6 +14,8 @@
 #include "animation/AnimationComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
+#include "ecs/Components3D.hpp"
+#include "scene/LightingSystem.hpp"
 
 namespace Caffeine::Editor {
 
@@ -163,6 +166,7 @@ void registerAllComponents(ComponentRegistry& reg) {
             w.add<ECS::LightComponent>(e);
             w.add<ECS::DirectionalLightComponent>(e);
             if (!w.has<ECS::Transform>(e)) w.add<ECS::Transform>(e);
+            Scene::applyDefaultSunOrientation(w, e);
         }
     });
     reg.registerComponent({
@@ -193,8 +197,15 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
     });
+    reg.registerComponent({
+        "Procedural", "Procedural World",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); }
+    });
 
     ComponentTypeRegistry::instance().registerType<ECS::PostProcessComponent>("PostProcess");
+    ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
+        "ProceduralWorld");
 }
 
 } // namespace Caffeine::Editor

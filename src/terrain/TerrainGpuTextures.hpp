@@ -18,9 +18,11 @@ struct TerrainGpuTextures {
     RHI::Texture* splatMap = nullptr;
     RHI::Texture* layers[ECS::kTerrainSplatLayerCount] = {};
     RHI::Texture* albedo = nullptr;
+    RHI::Texture* normalMap = nullptr;
     u32 uploadedSplatRevision = 0;
     std::string cachedLayerPaths[ECS::kTerrainSplatLayerCount];
     std::string cachedAlbedoPath;
+    std::string cachedNormalPath;
     bool useSplatmap = false;
 };
 
@@ -48,7 +50,6 @@ private:
     void releaseTextures(TerrainGpuTextures& gpu, RHI::RenderDevice* device);
 
     std::unordered_map<u32, TerrainGpuTextures> m_entries;
-    std::unordered_map<std::string, RHI::Texture*> m_sharedTextures;
     RHI::Texture* m_whiteTexture = nullptr;
 };
 

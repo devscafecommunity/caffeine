@@ -1,4 +1,5 @@
 #include "GameLoop.hpp"
+#include "TimerScheduler.hpp"
 #include <algorithm>
 
 namespace Caffeine {
@@ -75,6 +76,7 @@ void GameLoop::setCallbacks(IGameCallbacks* callbacks) {
 }
 
 void GameLoop::processFixedUpdate(f64 dt) {
+    TimerScheduler::instance().tick(dt);
     if (m_callbacks) m_callbacks->onFixedUpdate(dt);
     if (onFixedUpdate) onFixedUpdate(dt);
 }
