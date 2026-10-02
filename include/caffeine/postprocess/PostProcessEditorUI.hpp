@@ -43,9 +43,7 @@ inline bool drawBenchmarkPresets(ECS::PostProcessComponent& fx) {
 inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
     bool dirty = false;
 
-    ImGui::TextColored(ImVec4(0.75f, 0.8f, 0.95f, 1.0f),
-                       "Editor preview overlays are active in the Scene Viewport and camera previews. "
-                       "Full GPU post-processing passes are not wired yet.");
+    ImGui::TextDisabled("Rendered on the GPU by the engine post stack (scene viewport, previews, runtime).");
     ImGui::Spacing();
 
     if (ImGui::Checkbox("Stack enabled", &fx.enabled)) dirty = true;
@@ -71,6 +69,7 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
             if (ImGui::SliderFloat("AO radius", &fx.ambientOcclusion.radius, 0.1f, 2.0f)) {
                 dirty = true;
             }
+            if (ImGui::SliderFloat("AO bias", &fx.ambientOcclusion.bias, 0.0f, 0.2f, "%.3f")) dirty = true;
         }
     }
 
@@ -84,6 +83,9 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
                 dirty = true;
             }
             if (ImGui::SliderFloat("Adapt speed", &fx.autoExposure.adaptationSpeed, 0.1f, 5.0f)) {
+                dirty = true;
+            }
+            if (ImGui::SliderFloat("Compensation (EV)", &fx.autoExposure.compensation, -4.0f, 4.0f)) {
                 dirty = true;
             }
         }
@@ -105,7 +107,7 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
         if (dragEffectBool("Bloom", fx.bloom.enabled)) dirty = true;
         if (fx.bloom.enabled) {
             if (ImGui::SliderFloat("Bloom intensity", &fx.bloom.intensity, 0.0f, 1.0f)) dirty = true;
-            if (ImGui::SliderFloat("Threshold", &fx.bloom.threshold, 0.5f, 2.0f)) dirty = true;
+            if (ImGui::SliderFloat("Threshold", &fx.bloom.threshold, 0.0f, 8.0f)) dirty = true;
             if (ImGui::SliderFloat("Scatter", &fx.bloom.scatter, 0.0f, 1.0f)) dirty = true;
         }
         if (dragEffectBool("Depth of field", fx.depthOfField.enabled)) dirty = true;
@@ -114,6 +116,9 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
                 dirty = true;
             }
             if (ImGui::SliderFloat("Aperture", &fx.depthOfField.aperture, 0.01f, 1.0f)) dirty = true;
+            if (ImGui::SliderFloat("Focal length (mm)", &fx.depthOfField.focalLength, 10.0f, 300.0f)) {
+                dirty = true;
+            }
             if (ImGui::SliderFloat("Max blur", &fx.depthOfField.maxBlur, 0.0f, 2.0f)) dirty = true;
         }
         if (dragEffectBool("Motion blur", fx.motionBlur.enabled)) dirty = true;
@@ -121,6 +126,7 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
             if (ImGui::SliderFloat("Motion blur", &fx.motionBlur.intensity, 0.0f, 1.0f)) {
                 dirty = true;
             }
+            if (ImGui::SliderFloat("Max velocity", &fx.motionBlur.maxVelocity, 0.0f, 4.0f)) dirty = true;
         }
         if (dragEffectBool("Chromatic aberration", fx.chromaticAberration.enabled)) dirty = true;
         if (fx.chromaticAberration.enabled) {
@@ -159,6 +165,11 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
             if (ImGui::SliderFloat("Max roughness", &fx.screenSpaceReflections.maxRoughness, 0.0f, 1.0f)) {
                 dirty = true;
             }
+            int steps = static_cast<int>(fx.screenSpaceReflections.maxSteps);
+            if (ImGui::SliderInt("Max steps", &steps, 8, 256)) {
+                fx.screenSpaceReflections.maxSteps = static_cast<Caffeine::u32>(steps);
+                dirty = true;
+            }
         }
     }
 
@@ -179,7 +190,8 @@ inline bool drawEffectStack(ECS::PostProcessComponent& fx) {
                              sizeof(fx.customEffectScript))) {
             dirty = true;
         }
-        ImGui::TextDisabled("API: caffeine.postprocess.* — see docs/rendering/post-processing.md");
+        ImGui::TextDisabled("Runs onPostProcess(entityId, dt, api) each play-mode frame.");
+        ImGui::TextDisabled("API: caffeine.postprocess.* - see docs/rendering/post-processing.md");
     }
 
     return dirty;

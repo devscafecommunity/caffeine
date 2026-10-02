@@ -9,11 +9,14 @@
 #include "ecs/PrefabComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "physics/PhysicsComponents3D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "assets/MeshCache.hpp"
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "ecs/ForwardRenderComponents.hpp"
+#include "render/RenderFeatures.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "core/WorldUnits.hpp"
@@ -106,14 +109,12 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
 
          ImGui::Separator();
          if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
-             auto prefabPath = FilePicker::pickPath(
-                 FilePicker::Mode::SaveFile,
-                 "Save Entity as Prefab",
-                 "prefabs/"
-             );
-             if (prefabPath) {
-                 savePrefab(world, e, *prefabPath);
-             }
+             ctx.browse.requestFilesystem(EditorContext::BrowseSession::Kind::SaveFile,
+                                          "Save Entity as Prefab", "prefabs/", e.id());
+         }
+         if (ctx.browse.resultReady && ctx.browse.tag == e.id()) {
+             savePrefab(world, e, ctx.browse.result);
+             ctx.browse.clear();
          }
 
          ImGui::Separator();
@@ -127,6 +128,8 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawCppScript(world, e, ctx);
         drawRigidBody2D(world, e, ctx);
         drawCollider2D(world, e, ctx);
+        drawRigidBody3D(world, e, ctx);
+        drawCollider3D(world, e, ctx);
         drawAudioSource(world, e, ctx);
         drawPersistent(world, e, ctx);
         drawMeshFilter(world, e, ctx);
@@ -139,6 +142,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawSkybox(world, e, ctx);
         drawTerrain(world, e, ctx);
         drawPostProcess(world, e, ctx);
+        drawForwardRenderFeatures(world, e, ctx);
 
         ImGui::Separator();
 
@@ -309,7 +313,7 @@ void InspectorPanel::drawSprite(ECS::World& world, ECS::Entity e, EditorContext&
     }
 
     auto* sprite = world.get<ECS::Sprite>(e);
-    if (Widgets::AssetField("Texture", sprite->name, ".png;.jpg;.bmp", resolveProjectRoot(ctx)))
+    if (Widgets::AssetField(ctx, "Texture", sprite->name, ".png;.jpg;.bmp"))
         ctx.isDirty = true;
     int frame = static_cast<int>(sprite->frameIndex);
     if (ImGui::DragInt("Frame", &frame, 1, 0, 1000)) {
@@ -385,6 +389,66 @@ void InspectorPanel::drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorCon
     ImGui::Checkbox("Is Sleeping", &rb->isSleeping);
     if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
 }
+void InspectorPanel::drawRigidBody3D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Physics3D::RigidBody3D>(e)) return;
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("RigidBody3D", enabled, removeRequested, "arrows-vertical")) return;
+    if (removeRequested) {
+        world.remove<Physics3D::RigidBody3D>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* rb = world.get<Physics3D::RigidBody3D>(e);
+    ImGui::DragFloat("Mass", &rb->mass, 0.1f, 0.001f, 10000.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+    ImGui::DragFloat("Friction", &rb->friction, 0.01f, 0.0f, 1.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+    ImGui::DragFloat("Restitution", &rb->restitution, 0.01f, 0.0f, 1.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+
+    const char* types[] = {"Dynamic", "Kinematic", "Static"};
+    int type = static_cast<int>(rb->bodyType);
+    if (ImGui::Combo("Body Type", &type, types, 3)) {
+        rb->bodyType = static_cast<Physics3D::BodyType3D>(type);
+        ctx.isDirty = true;
+    }
+    if (ImGui::Checkbox("Lock Rotation", &rb->lockRotation)) ctx.isDirty = true;
+}
+
+void InspectorPanel::drawCollider3D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Physics3D::Collider3D>(e)) return;
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Collider3D", enabled, removeRequested, "box")) return;
+    if (removeRequested) {
+        world.remove<Physics3D::Collider3D>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* col = world.get<Physics3D::Collider3D>(e);
+    const char* shapes[] = {"Box", "Sphere", "Capsule"};
+    int shape = static_cast<int>(col->shape);
+    if (ImGui::Combo("Shape", &shape, shapes, 3)) {
+        col->shape = static_cast<Physics3D::ColliderShape3D>(shape);
+        ctx.isDirty = true;
+    }
+    if (col->shape == Physics3D::ColliderShape3D::Sphere) {
+        ImGui::DragFloat("Radius", &col->halfExtents.x, 0.01f, 0.01f, 100.0f, "%.2f");
+    } else if (col->shape == Physics3D::ColliderShape3D::Capsule) {
+        ImGui::DragFloat("Radius", &col->halfExtents.x, 0.01f, 0.01f, 100.0f, "%.2f");
+        ImGui::DragFloat("Height", &col->halfExtents.y, 0.01f, 0.02f, 100.0f, "%.2f");
+    } else {
+        ImGui::DragFloat3("Half Extents", &col->halfExtents.x, 0.01f, 0.01f, 100.0f, "%.2f");
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
+    if (ImGui::Checkbox("Trigger", &col->isTrigger)) ctx.isDirty = true;
+}
+
 void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
     if (!world.has<Audio::AudioEmitter>(e)) return;
 
@@ -400,7 +464,7 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
     auto* emitter = world.get<Audio::AudioEmitter>(e);
 
     std::string clipStr(emitter->clipPath.cStr());
-    if (Widgets::AssetField("Clip", clipStr, ".wav;.ogg;.mp3", resolveProjectRoot(ctx))) {
+    if (Widgets::AssetField(ctx, "Clip", clipStr, ".wav;.ogg;.mp3")) {
         emitter->clipPath = clipStr.c_str();
         ctx.isDirty = true;
     }
@@ -609,6 +673,7 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
     static const char* primitiveNames[] = {
         "Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Cone", "Pyramid", "Torus"};
     int current = static_cast<int>(mf->primitive);
+    Widgets::setWidthForLabel("Primitive");
     if (ImGui::Combo("Primitive", &current, primitiveNames, IM_ARRAYSIZE(primitiveNames))) {
         mf->primitive = static_cast<ECS::MeshPrimitive>(current);
         ctx.isDirty = true;
@@ -618,6 +683,7 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
             world.add<ECS::Scale3D>(e);
         }
         if (auto* scale = world.get<ECS::Scale3D>(e)) {
+            Widgets::setWidthForLabel("Shape Size");
             if (ImGui::DragFloat3("Shape Size", &scale->scale.x, 0.05f, 0.01f, 1000.0f, "%.2f")) {
                 ctx.isDirty = true;
             }
@@ -625,25 +691,21 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         }
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
-        if (Widgets::AssetField("Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb", resolveProjectRoot(ctx)))
+        if (Widgets::AssetField(ctx, "Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb"))
             ctx.isDirty = true;
         if (world.has<ECS::TerrainComponent>(e)) {
             ImGui::TextDisabled("Texture managed by Terrain component");
-        } else if (Widgets::AssetField("Albedo Texture", mf->customTexturePath, ".png;.jpg;.jpeg",
-                                       resolveProjectRoot(ctx))) {
+        } else if (Widgets::AssetField(ctx, "Albedo Texture", mf->customTexturePath, ".png;.jpg;.jpeg")) {
             ctx.isDirty = true;
         }
         if (!world.has<ECS::TerrainComponent>(e)) {
-            if (Widgets::AssetField("Normal Map", mf->customNormalPath, ".png;.jpg;.jpeg",
-                                    resolveProjectRoot(ctx))) {
+            if (Widgets::AssetField(ctx, "Normal Map", mf->customNormalPath, ".png;.jpg;.jpeg")) {
                 ctx.isDirty = true;
             }
             if (ImGui::SliderFloat("Shininess", &mf->shininess, 1.0f, 128.0f)) {
                 ctx.isDirty = true;
             }
         }
-        if (Widgets::AssetField("Material", mf->customMaterialPath, ".mat", resolveProjectRoot(ctx)))
-            ctx.isDirty = true;
         if (!world.has<ECS::TerrainComponent>(e) && !mf->customTexturePath.empty()) {
             std::string projectRoot = resolveProjectRoot(ctx).string();
             bool textureFound = false;
@@ -685,8 +747,14 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
                 }
             }
         }
-    } else {
-        ImGui::TextDisabled("3D renderer pending — mesh data will be loaded when renderer is implemented");
+    }
+
+    if (!world.has<ECS::TerrainComponent>(e)) {
+        if (Widgets::AssetField(ctx, "Material", mf->customMaterialPath, ".mat"))
+            ctx.isDirty = true;
+        if (!mf->customMaterialPath.empty() && ImGui::Button("Edit Material")) {
+            ctx.materialToOpen = mf->customMaterialPath;
+        }
     }
 
     if (!world.has<ECS::MeshRendererComponent>(e)) {
@@ -837,6 +905,7 @@ void InspectorPanel::drawUISlider(ECS::World& world, ECS::Entity e, EditorContex
 }
 
 std::filesystem::path InspectorPanel::resolveProjectRoot(const EditorContext& ctx) const {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath;
     if (!ctx.currentScenePath.empty()) {
         return std::filesystem::path(ctx.currentScenePath).parent_path();
     }
@@ -1192,6 +1261,97 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
 
     ImGui::Separator();
     ImGui::TextDisabled("Sculpt/paint: Terrain Editor. Generation: Terrain Generator plugin.");
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawForwardRenderFeatures(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::ForwardRenderFeaturesComponent>(e)) return;
+
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Forward Render Features", enabled, removeRequested, "sparkles")) return;
+    if (removeRequested) {
+        world.remove<ECS::ForwardRenderFeaturesComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+
+    auto* fx = world.get<ECS::ForwardRenderFeaturesComponent>(e);
+    if (!fx) return;
+
+    ImGui::PushID("forwardrender");
+    ImGui::TextWrapped(
+        "Scene-owned forward pass: instancing, IBL, occlusion, reflections, volumetrics. "
+        "Not stored in editor preferences — use this component, Lua, or C++.");
+    if (ImGui::Checkbox("Component enabled", &fx->enabled)) ctx.isDirty = true;
+
+    if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Enabled", &fx->instancing.enabled)) ctx.isDirty = true;
+        int maxBatch = static_cast<int>(fx->instancing.maxInstancesPerBatch);
+        if (ImGui::SliderInt("Max / batch", &maxBatch, 2, 256)) {
+            fx->instancing.maxInstancesPerBatch = static_cast<u32>(maxBatch);
+            ctx.isDirty = true;
+        }
+    }
+    if (ImGui::CollapsingHeader("IBL", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Enabled", &fx->ibl.enabled)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Diffuse", &fx->ibl.diffuse, 0.0f, 2.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Specular", &fx->ibl.specular, 0.0f, 2.0f)) ctx.isDirty = true;
+    }
+    if (ImGui::CollapsingHeader("Occlusion")) {
+        if (ImGui::Checkbox("Coarse CPU occlusion", &fx->occlusion.enabled)) ctx.isDirty = true;
+        int maxOcc = static_cast<int>(fx->occlusion.maxOccluders);
+        if (ImGui::SliderInt("Max occluders", &maxOcc, 1, 16)) {
+            fx->occlusion.maxOccluders = static_cast<u32>(maxOcc);
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Min radius", &fx->occlusion.minRadius, 0.05f, 0.1f, 20.0f)) ctx.isDirty = true;
+    }
+    if (ImGui::CollapsingHeader("Reflections")) {
+        if (ImGui::Checkbox("Enabled", &fx->reflections.enabled)) ctx.isDirty = true;
+        const char* modes[] = {"Off", "Planar", "Screen-space", "Probe"};
+        int mode = static_cast<int>(fx->reflections.mode);
+        if (ImGui::Combo("Mode", &mode, modes, 4)) {
+            fx->reflections.mode = static_cast<Render::ReflectionMode>(mode);
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Plane Y", &fx->reflections.planeY, 0.05f, -50.0f, 50.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Intensity", &fx->reflections.intensity, 0.0f, 1.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Resolution scale", &fx->reflections.resolutionScale, 0.25f, 1.0f)) {
+            ctx.isDirty = true;
+        }
+        int steps = static_cast<int>(fx->reflections.ssrMaxSteps);
+        if (ImGui::SliderInt("SSR steps", &steps, 1, 12)) {
+            fx->reflections.ssrMaxSteps = static_cast<u32>(steps);
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("SSR distance", &fx->reflections.ssrMaxDistance, 0.25f, 0.5f, 40.0f)) {
+            ctx.isDirty = true;
+        }
+        int probe = static_cast<int>(fx->reflections.probeResolution);
+        if (ImGui::SliderInt("Probe resolution", &probe, 16, 128)) {
+            fx->reflections.probeResolution = static_cast<u32>(probe);
+            ctx.isDirty = true;
+        }
+        if (ImGui::Checkbox("Only when camera settled", &fx->reflections.expensiveOnlyWhenSettled)) {
+            ctx.isDirty = true;
+        }
+    }
+    if (ImGui::CollapsingHeader("Volumetrics")) {
+        if (ImGui::Checkbox("Enabled", &fx->volumetrics.enabled)) ctx.isDirty = true;
+        const char* qualities[] = {"Off", "Low", "Medium"};
+        int quality = static_cast<int>(fx->volumetrics.quality);
+        if (ImGui::Combo("Quality", &quality, qualities, 3)) {
+            fx->volumetrics.quality = static_cast<Render::VolumetricQuality>(quality);
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Density", &fx->volumetrics.density, 0.001f, 0.0f, 0.2f, "%.3f")) {
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Height", &fx->volumetrics.height, 0.1f, 0.5f, 80.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Anisotropy", &fx->volumetrics.anisotropy, 0.0f, 0.9f)) ctx.isDirty = true;
+        if (ImGui::Checkbox("Sample shadows", &fx->volumetrics.sampleShadows)) ctx.isDirty = true;
+    }
     ImGui::PopID();
 }
 

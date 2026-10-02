@@ -43,6 +43,8 @@ private:
     void drawCamera(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawCollider2D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawRigidBody3D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawCollider3D(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAudioSource(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawCppScript(ECS::World& world, ECS::Entity e, EditorContext& ctx);
@@ -57,6 +59,7 @@ private:
      void drawSkybox(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawTerrain(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawPostProcess(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawForwardRenderFeatures(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawPrefabInstance(ECS::World& world, ECS::Entity e, EditorContext& ctx);
 
      void savePrefab(ECS::World& world, ECS::Entity e, const std::filesystem::path& path);

@@ -9,14 +9,14 @@
 
 ## Visão geral
 
-A Caffeine usa **Phong clássico** como modelo de iluminação imediato antes da evolução para PBR deferred:
+Meshes com um `.mat` usam metallic, roughness, ORM e emissão. Ver [`materials-pbr.md`](materials-pbr.md). O passe GPU avalia:
 
 ```
-final = ambient + Σ (diffuse + specular) × shadowAttenuation
+final = ambient + Σ (diffuse Lambert + specular GGX) × shadow
 ```
 
-- **Diffuse:** `max(dot(N, L), 0) × albedo × lightColor`
-- **Specular:** `pow(max(dot(R, V), 0), shininess) × lightColor`
+- **Diffuse:** `max(dot(N, L), 0) × albedo × lightColor × (1 - metallic)`
+- **Specular:** GGX com roughness e metallic
 - **Normal mapping:** perturbação de `N` via TBN e textura normal (meshes) ou triplanar (terreno)
 
 ---

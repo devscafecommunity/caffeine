@@ -123,6 +123,76 @@ void RenderDevice::releasePendingTransfers(u32 slot) {
     m_pendingTransferCounts[slot] = 0;
 }
 
+CommandBuffer* RenderDevice::beginOffscreen() {
+    if (!m_device) return nullptr;
+    auto* cmd = new CommandBuffer();
+    cmd->acquire(m_device);
+    if (!cmd->nativeHandle()) {
+        delete cmd;
+        return nullptr;
+    }
+    m_activeFrameCmd = cmd;
+    return cmd;
+}
+
+void RenderDevice::endOffscreen(CommandBuffer* cmd) {
+    if (!cmd) return;
+    if (cmd->isInRenderPass()) cmd->endRenderPass();
+    cmd->submit();
+    if (m_activeFrameCmd == cmd) m_activeFrameCmd = nullptr;
+    delete cmd;
+    SDL_WaitForGPUIdle(m_device);
+    for (u32 slot = 0; slot < MAX_FRAMES_IN_FLIGHT; ++slot) releasePendingTransfers(slot);
+}
+
+bool RenderDevice::readTexture(Texture* texture, std::vector<u8>& outPixels) {
+    if (!m_device || !texture || !texture->handle || texture->width == 0 || texture->height == 0) {
+        return false;
+    }
+    const u32 size = texture->width * texture->height * 4u;
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = size;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(m_device, &info);
+    if (!transfer) return false;
+
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    if (!cmd) {
+        SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+        return false;
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion src{};
+    src.texture = texture->handle;
+    src.w = texture->width;
+    src.h = texture->height;
+    src.d = 1;
+    SDL_GPUTextureTransferInfo dst{};
+    dst.transfer_buffer = transfer;
+    dst.pixels_per_row = texture->width;
+    dst.rows_per_layer = texture->height;
+    SDL_DownloadFromGPUTexture(copy, &src, &dst);
+    SDL_EndGPUCopyPass(copy);
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (fence) {
+        SDL_WaitForGPUFences(m_device, true, &fence, 1);
+        SDL_ReleaseGPUFence(m_device, fence);
+    } else {
+        SDL_WaitForGPUIdle(m_device);
+    }
+
+    const void* mapped = SDL_MapGPUTransferBuffer(m_device, transfer, false);
+    if (!mapped) {
+        SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+        return false;
+    }
+    outPixels.resize(size);
+    std::memcpy(outPixels.data(), mapped, size);
+    SDL_UnmapGPUTransferBuffer(m_device, transfer);
+    SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+    return true;
+}
+
 void RenderDevice::endFrame(CommandBuffer* cmd) {
     if (!cmd) {
         return;
@@ -280,9 +350,11 @@ static SDL_GPUVertexElementFormat toSDLVertexFormat(VertexFormat format) {
 Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fragmentShader,
                                                const GraphicsPipelineDesc& desc) {
     if (!m_device || !vertexShader || !fragmentShader ||
-        !vertexShader->handle || !fragmentShader->handle ||
-        !desc.vertexBuffers || desc.numVertexBuffers == 0 ||
-        !desc.attributes || desc.numAttributes == 0) {
+        !vertexShader->handle || !fragmentShader->handle) {
+        return nullptr;
+    }
+    if (desc.numVertexBuffers > 0 &&
+        (!desc.vertexBuffers || !desc.attributes || desc.numAttributes == 0)) {
         return nullptr;
     }
 
@@ -329,14 +401,24 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
     depthStencil.enable_stencil_test = false;
     depthStencil.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
 
+    const BlendMode blendMode =
+        (desc.blendMode == BlendMode::None && desc.enableBlend) ? BlendMode::Alpha : desc.blendMode;
     SDL_GPUColorTargetBlendState blend{};
-    blend.enable_blend = desc.enableBlend;
+    blend.enable_blend = blendMode != BlendMode::None;
     blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
     blend.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
     blend.color_blend_op = SDL_GPU_BLENDOP_ADD;
     blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
     blend.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
     blend.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+    if (blendMode == BlendMode::Premultiplied) {
+        blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    } else if (blendMode == BlendMode::Additive) {
+        blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    }
     blend.color_write_mask = SDL_GPU_COLORCOMPONENT_R | SDL_GPU_COLORCOMPONENT_G |
                              SDL_GPU_COLORCOMPONENT_B | SDL_GPU_COLORCOMPONENT_A;
     blend.enable_color_write_mask = true;
@@ -390,8 +472,10 @@ Sampler* RenderDevice::createSampler(const SamplerDesc& desc) {
     samplerInfo.mip_lod_bias = 0.0f;
     samplerInfo.min_lod = -1000.0f;
     samplerInfo.max_lod = 1000.0f;
-    samplerInfo.enable_anisotropy = false;
-    samplerInfo.max_anisotropy = 1.0f;
+    samplerInfo.enable_anisotropy = desc.linearFilter && desc.maxAnisotropy > 1.0f;
+    samplerInfo.max_anisotropy = samplerInfo.enable_anisotropy
+        ? (desc.maxAnisotropy > 16.0f ? 16.0f : desc.maxAnisotropy)
+        : 1.0f;
     samplerInfo.enable_compare = false;
 
     SDL_GPUSampler* gpuSampler = SDL_CreateGPUSampler(m_device, &samplerInfo);

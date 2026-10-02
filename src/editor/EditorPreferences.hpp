@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/Types.hpp"
-
 #include <filesystem>
 #include <string>
 
@@ -27,6 +26,8 @@ struct EditorPreferences {
     f32  textureQualityRadius = 35.0f;
     f32  textureQualityFalloff = 100.0f;
     f32  textureQualityMinScale = 0.25f;
+    /// Internal scene resolution multiplier for GPU viewport / previews (0.25–2).
+    f32  renderScale = 1.0f;
     bool showFPSInStatusBar = true;
     bool confirmOnSceneClose = true;
     bool reopenLastSceneOnStartup = true;

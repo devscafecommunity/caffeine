@@ -210,9 +210,9 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     } else
 #ifdef CF_HAS_SDL3
     if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
-        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
-        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 1280u);
-        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 720u);
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 2560);
+        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 2560u);
+        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 1600u);
         if (!m_colorTarget || !m_depthTarget || m_width != targetW || m_height != targetH) {
             resizeCanvas(targetW, targetH);
         }
@@ -253,26 +253,21 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         Render::GpuSceneRenderOptions previewOpts;
         previewOpts.enableShadows = false;
         previewOpts.wireframeMeshes = false;
+        previewOpts.environmentPath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+        previewOpts.postProcessCamera = cameraEntity;
+        previewOpts.renderScale = ctx.renderScale;
+        previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
 
         const bool camChanged = (position - m_lastCamPos).length() > 0.001f
             || (forward - m_lastCamForward).length() > 0.001f
             || std::abs(camera.fovRad - m_lastFovRad) > 0.001f;
         const bool sizeChanged = targetW != m_lastTargetW || targetH != m_lastTargetH;
-        const u32 gpuInterval = camChanged ? 1u : 2u;
-        const bool rerunGpu = (camChanged || sizeChanged || !m_hasGpuFrame)
+        const u64 sceneStamp = editorSceneContentStamp(world);
+        const bool sceneChanged = sceneStamp != m_lastSceneStamp;
+        const u32 gpuInterval = (camChanged || sceneChanged) ? 1u : 2u;
+        const bool rerunGpu = (camChanged || sizeChanged || sceneChanged || !m_hasGpuFrame ||
+                               ctx.isPlayMode || m_renderer.needsAnotherFrame())
             && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
-
-        {
-            Render::SkyboxCamera skyCamera;
-            skyCamera.forward = forward;
-            skyCamera.right = right;
-            skyCamera.up = up;
-            skyCamera.fovY = camera.fovRad;
-            skyCamera.aspect = aspect;
-            const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
-            const int skyCap = std::clamp(longest, 256, 512);
-            drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer, skyCap);
-        }
 
         if (rerunGpu) {
             m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget,
@@ -282,6 +277,7 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
             m_lastFovRad = camera.fovRad;
             m_lastTargetW = targetW;
             m_lastTargetH = targetH;
+            m_lastSceneStamp = sceneStamp;
             m_hasGpuFrame = true;
         }
 
@@ -314,9 +310,6 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
 
     if (ctx.isPlayMode) {
         UI::drawWidgets(world, dl, origin, panelSize);
-    }
-    if (const ECS::PostProcessComponent* fx = Render::findPostProcessForCamera(world, cameraEntity)) {
-        Render::applyPostProcessOverlay(dl, origin, panelSize, *fx);
     }
 
     ImGui::End();

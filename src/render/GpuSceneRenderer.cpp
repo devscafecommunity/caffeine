@@ -1,4 +1,8 @@
 #include "render/GpuSceneRenderer.hpp"
+#include "render/PostProcessRenderer.hpp"
+#include "render/CoarseOcclusion.hpp"
+#include "render/InstanceBatch.hpp"
+#include "render/ForwardRenderFeatures.hpp"
 #include "debug/Profiler.hpp"
 #include "render/ShaderBytecode.hpp"
 #include "render/GpuProceduralMeshes.hpp"
@@ -8,8 +12,11 @@
 #include "ecs/ComponentQuery.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
+#include "scene/EnvironmentSystem.hpp"
 #include "scene/CpuDirectionalShadowMap.hpp"
+#include "assets/MaterialCache.hpp"
 #include "assets/MeshCache.hpp"
+#include "assets/MeshLOD.hpp"
 #include "assets/MeshImportValidator.hpp"
 #include <filesystem>
 #include "ecs/TerrainComponents.hpp"
@@ -25,6 +32,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 namespace Caffeine::Render {
@@ -43,7 +51,7 @@ struct LightingUBO {
     float albedo[4];
     float metallic;
     float roughness;
-    float shininess;
+    float reflectance; // std140 slot shared with legacy uShininess name in terrain_lit
     float padFlags; // std140: vec4 uFlags must start at offset 64
     float flags[4];
     int dirCount;
@@ -58,7 +66,64 @@ struct LightingUBO {
     float spotDir[16];
     float spotColor[16];
     float spotAngle[16];
+    float iblColor[4];
+    float iblParams[4];
+    float volParams[4];
+    float reflectParams[4];
+    float extra[4];
+    float reflectVP[16];
+    float emission[4];
+    float uvTransform[4];
+    float materialParams[4];
+    float coat[4];
+    float sheen[4];
+    float iridescence[4];
+    float materialFlags[4];
+    float ssrParams[4];
+    float projParams[4];
+    float prevViewProj[16];
+    float prevView[16];
+    float screen[4];
+    float viewProj[16];
 };
+
+static_assert(offsetof(LightingUBO, iblColor) == 608, "LightingUBO.iblColor must match GLSL std140");
+static_assert(offsetof(LightingUBO, reflectVP) == 688, "LightingUBO.reflectVP must match GLSL std140");
+static_assert(offsetof(LightingUBO, emission) == 752, "LightingUBO.emission must match GLSL std140");
+static_assert(offsetof(LightingUBO, prevViewProj) == 896, "LightingUBO.prevViewProj must match GLSL std140");
+static_assert(offsetof(LightingUBO, viewProj) == 1040, "LightingUBO.viewProj must match GLSL std140");
+
+struct SkyUBO {
+    float invViewProj[16];
+    float params[4];
+    float zenith[4];
+    float horizon[4];
+    float ground[4];
+};
+
+struct GridUBO {
+    float invViewProj[16];
+    float viewProj[16];
+    float camera[4];
+    float params[4];
+    float minor[4];
+    float major[4];
+    float axisX[4];
+    float axisZ[4];
+};
+
+constexpr RHI::TextureFormat kHdrFormat = RHI::TextureFormat::R16G16B16A16_FLOAT;
+constexpr u32 kMaxViewTargets = 4;
+
+f32 srgbToLinear(f32 c) {
+    c = std::max(c, 0.0f);
+    if (c > 1.0f) return std::pow(c, 2.2f);
+    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+Vec3 srgbToLinear(const Vec3& c) {
+    return Vec3(srgbToLinear(c.x), srgbToLinear(c.y), srgbToLinear(c.z));
+}
 
 static_assert(offsetof(LightingUBO, flags) == 64, "LightingUBO.flags must match GLSL std140 vec4");
 static_assert(offsetof(LightingUBO, dirCount) == 80, "LightingUBO.dirCount must match GLSL std140");
@@ -118,6 +183,42 @@ Mat4 entityMatrix(ECS::World& world, ECS::Entity entity) {
     return buildLocalMatrix3D(p3, r3, s3);
 }
 
+/// Changes whenever something a probe would see changes: placement, mesh or material.
+template <typename Draws>
+u64 hashProbeScene(const Draws& draws, const std::string& environmentPath) {
+    u64 h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 1099511628211ull;
+        }
+    };
+    mix(environmentPath.data(), environmentPath.size());
+    for (const auto& draw : draws) {
+        const u32 id = draw.entity.id();
+        mix(&id, sizeof(id));
+        mix(&draw.mesh, sizeof(draw.mesh));
+        mix(draw.worldMatrix.data(), sizeof(float) * 16);
+        mix(&draw.albedo, sizeof(draw.albedo));
+        mix(&draw.emission, sizeof(draw.emission));
+        mix(&draw.metallic, sizeof(draw.metallic));
+        mix(&draw.roughness, sizeof(draw.roughness));
+        mix(&draw.reflectance, sizeof(draw.reflectance));
+        mix(draw.customTexturePath.data(), draw.customTexturePath.size());
+    }
+    return h;
+}
+
+/// Mat4::ortho / perspective produce GL depth (-1..1) but SDL GPU clips z < 0, which would cut
+/// away the half of the light volume nearest the light. Remap shadow projections to 0..1.
+Mat4 shadowDepthRange(const Mat4& proj) {
+    Mat4 remap = Mat4::identity();
+    remap(2, 2) = 0.5f;
+    remap(2, 3) = 0.5f;
+    return remap * proj;
+}
+
 Mat4 buildDirectionalLightVP(const Vec3& lightDirection, const Vec3& focus, f32 shadowDistance) {
     Vec3 lightDir = lightDirection;
     const f32 len = lightDir.length();
@@ -132,7 +233,8 @@ Mat4 buildDirectionalLightVP(const Vec3& lightDirection, const Vec3& focus, f32 
     }
 
     const Mat4 view = Mat4::lookAt(eye, focus, up);
-    const Mat4 proj = Mat4::ortho(-extent, extent, -extent, extent, 0.1f, extent * 4.0f);
+    const Mat4 proj =
+        shadowDepthRange(Mat4::ortho(-extent, extent, -extent, extent, 0.1f, extent * 4.0f));
     return proj * view;
 }
 
@@ -181,7 +283,8 @@ void buildDirectionalCascadeVPs(const GpuSceneCamera& camera, const Vec3& lightD
             up = Vec3(0.0f, 0.0f, 1.0f);
         }
         const Mat4 view = Mat4::lookAt(eye, focus, up);
-        const Mat4 proj = Mat4::ortho(-extent, extent, -extent, extent, 0.1f, extent * 4.0f);
+        const Mat4 proj =
+            shadowDepthRange(Mat4::ortho(-extent, extent, -extent, extent, 0.1f, extent * 4.0f));
         outVP[c] = proj * view;
     }
 }
@@ -200,27 +303,9 @@ Mat4 buildSpotLightVP(const Vec3& position, const Vec3& direction, f32 radius, f
         up = Vec3(0.0f, 0.0f, 1.0f);
     }
     const Mat4 view = Mat4::lookAt(position, target, up);
-    const Mat4 proj =
-        Mat4::perspective(angleDegrees * 3.14159265f / 180.0f, 1.0f, 0.1f, radius);
+    const Mat4 proj = shadowDepthRange(
+        Mat4::perspective(angleDegrees * 3.14159265f / 180.0f, 1.0f, 0.1f, radius));
     return proj * view;
-}
-
-RHI::Shader* createShaderFromBuiltin(RHI::RenderDevice* device, BuiltinShader shader,
-                                     RHI::ShaderStage stage, u32 numUniformBuffers,
-                                     u32 numSamplers = 0) {
-    const auto format = detectShaderFormat(device);
-    const auto bytecode = getBuiltinShaderBytecode(shader, format);
-    if (!bytecode.data || bytecode.size == 0) return nullptr;
-
-    RHI::ShaderDesc desc;
-    desc.code = bytecode.data;
-    desc.codeSize = bytecode.size;
-    desc.stage = stage;
-    desc.format = format;
-    desc.entryPoint = bytecode.entryPoint;
-    desc.numUniformBuffers = numUniformBuffers;
-    desc.numSamplers = numSamplers;
-    return device->createShader(desc);
 }
 
 struct ResolvedMeshAlbedo {
@@ -244,7 +329,7 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
     auto& cache = GpuTextureCache::instance();
 
     if (!customTexturePath.empty()) {
-        result.texture = cache.acquire(device, customTexturePath, projectRoot, qualityTier);
+        result.texture = cache.acquire(device, customTexturePath, projectRoot, qualityTier, true);
         if (result.texture) return result;
     }
 
@@ -256,14 +341,14 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
         result.roughness = mat.roughness;
 
         if (!mat.albedoPath.empty()) {
-            result.texture = cache.acquire(device, mat.albedoPath, projectRoot, qualityTier);
+            result.texture = cache.acquire(device, mat.albedoPath, projectRoot, qualityTier, true);
             if (result.texture) return result;
         }
         if (!mat.albedoPixels.empty() && mat.albedoWidth > 0 && mat.albedoHeight > 0) {
             const std::string key = meshPath + "#mat" + std::to_string(materialIndex);
             result.texture = cache.acquireFromPixels(device, key, mat.albedoPixels.data(),
                                                      mat.albedoWidth, mat.albedoHeight,
-                                                     mat.albedoChannels, qualityTier);
+                                                     mat.albedoChannels, qualityTier, true);
             if (result.texture) return result;
         }
         return result;
@@ -272,13 +357,13 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
     if (!meshPath.empty()) {
         const std::string pngPath =
             std::filesystem::path(meshPath).replace_extension(".png").string();
-        result.texture = cache.acquire(device, pngPath, projectRoot, qualityTier);
+        result.texture = cache.acquire(device, pngPath, projectRoot, qualityTier, true);
         if (result.texture) return result;
 
         for (const std::string& uri : Assets::MeshImportValidator::listGltfExternalUris(meshPath)) {
             const std::string texPath =
                 (std::filesystem::path(meshPath).parent_path() / uri).string();
-            result.texture = cache.acquire(device, texPath, projectRoot, qualityTier);
+            result.texture = cache.acquire(device, texPath, projectRoot, qualityTier, true);
             if (result.texture) return result;
         }
     }
@@ -287,7 +372,7 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
         const std::string key = meshPath + "#embedded";
         result.texture = cache.acquireFromPixels(device, key, mesh->baseColorTexture.data(),
                                                  mesh->textureWidth, mesh->textureHeight,
-                                                 mesh->textureChannels, qualityTier);
+                                                 mesh->textureChannels, qualityTier, true);
     }
 
     return result;
@@ -331,36 +416,129 @@ bool GpuSceneRenderer::init(RHI::RenderDevice* device) {
     RHI::SamplerDesc repeatDesc;
     repeatDesc.linearFilter = true;
     repeatDesc.clampToEdge = false;
+    repeatDesc.maxAnisotropy = 8.0f;
     m_repeatSampler = m_device->createSampler(repeatDesc);
-    m_ready = m_sampler && m_repeatSampler;
+    RHI::SamplerDesc pointDesc;
+    pointDesc.linearFilter = false;
+    pointDesc.clampToEdge = true;
+    m_pointSampler = m_device->createSampler(pointDesc);
+    RHI::TextureDesc cubeDesc;
+    cubeDesc.width = 4;
+    cubeDesc.height = 4;
+    cubeDesc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
+    cubeDesc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+    cubeDesc.type = RHI::TextureType::Cube;
+    m_fallbackCube = m_device->createTexture(cubeDesc);
+    m_views.reserve(kMaxViewTargets);
+    m_post.init(device);
+    m_ready = m_sampler && m_repeatSampler && m_pointSampler && m_post.ready();
     return m_ready;
 }
 
-void GpuSceneRenderer::shutdown() {
+void GpuSceneRenderer::destroyMeshGpu(Assets::Mesh3D& mesh) {
     if (m_device) {
+        if (mesh.vertexBuffer) m_device->destroyBuffer(mesh.vertexBuffer);
+        if (mesh.indexBuffer) m_device->destroyBuffer(mesh.indexBuffer);
+    }
+    mesh.vertexBuffer = nullptr;
+    mesh.indexBuffer = nullptr;
+}
+
+Assets::Mesh3D* GpuSceneRenderer::selectMeshLod(const Assets::Mesh3D* source, ECS::Entity entity,
+                                                 f32 distance) {
+    if (!source || source->indices.size() < 600) return const_cast<Assets::Mesh3D*>(source);
+
+    u32& level = m_entityLod[entity.id()];
+    constexpr f32 kNear = 120.0f;
+    constexpr f32 kFar = 350.0f;
+    if (level == 0 && distance > kNear * 1.12f) level = 1;
+    else if (level == 1 && distance > kFar * 1.12f) level = 2;
+    else if (level >= 1 && distance < kNear * 0.88f) level = 0;
+    else if (level == 2 && distance < kFar * 0.88f) level = 1;
+    if (level == 0) return const_cast<Assets::Mesh3D*>(source);
+
+    MeshLodCache& cache = m_meshLods[source];
+    if (!cache.built) {
+        const Vec3 extent = source->bounds.max - source->bounds.min;
+        const f32 diagonal = std::max(extent.length(), 0.25f);
+        Assets::MeshLOD::buildClusteredLod(*source, cache.medium, diagonal * 0.03f);
+        Assets::MeshLOD::buildClusteredLod(*source, cache.far, diagonal * 0.08f);
+        cache.built = true;
+    }
+    Assets::Mesh3D* chosen = (level == 1) ? &cache.medium : &cache.far;
+    if (!chosen || chosen->indices.size() < 3) return const_cast<Assets::Mesh3D*>(source);
+    return chosen;
+}
+
+void GpuSceneRenderer::shutdown() {
+    for (auto& [_, cache] : m_meshLods) {
+        destroyMeshGpu(cache.medium);
+        destroyMeshGpu(cache.far);
+    }
+    m_meshLods.clear();
+    m_entityLod.clear();
+    m_post.shutdown();
+    if (m_device) {
+        for (ViewTargets& view : m_views) releaseViewTargets(view);
+        for (ReflectionProbe& probe : m_probes) releaseProbe(probe);
         if (m_sceneVert) m_device->destroyShader(m_sceneVert);
         if (m_sceneFrag) m_device->destroyShader(m_sceneFrag);
         if (m_terrainFrag) m_device->destroyShader(m_terrainFrag);
         if (m_shadowVert) m_device->destroyShader(m_shadowVert);
         if (m_shadowFrag) m_device->destroyShader(m_shadowFrag);
+        if (m_fullscreenVert) m_device->destroyShader(m_fullscreenVert);
+        if (m_skyFrag) m_device->destroyShader(m_skyFrag);
+        if (m_gridFrag) m_device->destroyShader(m_gridFrag);
         if (m_scenePipeline) m_device->destroyPipeline(m_scenePipeline);
         if (m_wireframePipeline) m_device->destroyPipeline(m_wireframePipeline);
         if (m_terrainPipeline) m_device->destroyPipeline(m_terrainPipeline);
         if (m_shadowPipeline) m_device->destroyPipeline(m_shadowPipeline);
+        if (m_instancedPipeline) m_device->destroyPipeline(m_instancedPipeline);
+        if (m_blendPipeline) m_device->destroyPipeline(m_blendPipeline);
+        if (m_skyPipeline) m_device->destroyPipeline(m_skyPipeline);
+        if (m_gridPipeline) m_device->destroyPipeline(m_gridPipeline);
+        if (m_instancedVert) m_device->destroyShader(m_instancedVert);
+        if (m_instanceBuffer) m_device->destroyBuffer(m_instanceBuffer);
+        if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
+        if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
+        if (m_fallbackCube) m_device->destroyTexture(m_fallbackCube);
+        m_environment.release(m_device);
         if (m_sampler) m_device->destroySampler(m_sampler);
         if (m_repeatSampler) m_device->destroySampler(m_repeatSampler);
+        if (m_pointSampler) m_device->destroySampler(m_pointSampler);
     }
+    m_views.clear();
+    m_probes.clear();
     m_sceneVert = nullptr;
     m_sceneFrag = nullptr;
     m_terrainFrag = nullptr;
     m_shadowVert = nullptr;
     m_shadowFrag = nullptr;
+    m_fullscreenVert = nullptr;
+    m_skyFrag = nullptr;
+    m_gridFrag = nullptr;
     m_scenePipeline = nullptr;
     m_wireframePipeline = nullptr;
     m_terrainPipeline = nullptr;
     m_shadowPipeline = nullptr;
+    m_instancedPipeline = nullptr;
+    m_blendPipeline = nullptr;
+    m_skyPipeline = nullptr;
+    m_gridPipeline = nullptr;
+    m_instancedVert = nullptr;
+    m_instanceBuffer = nullptr;
+    m_reflectionColor = nullptr;
+    m_reflectionDepth = nullptr;
+    m_fallbackCube = nullptr;
+    m_reflectionWidth = 0;
+    m_reflectionHeight = 0;
+    m_reflectionValid = false;
+    m_probesPending = false;
+    m_needsAnotherFrame = false;
+    m_inReflectionPass = false;
     m_sampler = nullptr;
     m_repeatSampler = nullptr;
+    m_pointSampler = nullptr;
     m_pointShadows.shutdown();
     m_directionalShadows.shutdown();
     m_spotShadows.shutdown();
@@ -382,16 +560,24 @@ bool GpuSceneRenderer::createPipelines() {
         return false;
     }
 
-    m_sceneVert = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitVertex,
+    m_sceneVert = createBuiltinShader(m_device, BuiltinShader::SceneLitVertex,
+                                      RHI::ShaderStage::Vertex, 1);
+    m_sceneFrag = createBuiltinShader(m_device, BuiltinShader::SceneLitFragment,
+                                      RHI::ShaderStage::Fragment, 2, 16);
+    m_instancedVert = createBuiltinShader(m_device, BuiltinShader::SceneInstancedVertex,
                                           RHI::ShaderStage::Vertex, 1);
-    m_sceneFrag = createShaderFromBuiltin(m_device, BuiltinShader::SceneLitFragment,
-                                          RHI::ShaderStage::Fragment, 2, 8);
-    m_terrainFrag = createShaderFromBuiltin(m_device, BuiltinShader::TerrainLitFragment,
-                                            RHI::ShaderStage::Fragment, 3, 12);
-    m_shadowVert = createShaderFromBuiltin(m_device, BuiltinShader::ShadowDepthVertex,
-                                           RHI::ShaderStage::Vertex, 1);
-    m_shadowFrag = createShaderFromBuiltin(m_device, BuiltinShader::ShadowDepthFragment,
-                                           RHI::ShaderStage::Fragment, 0);
+    m_terrainFrag = createBuiltinShader(m_device, BuiltinShader::TerrainLitFragment,
+                                        RHI::ShaderStage::Fragment, 3, 12);
+    m_shadowVert = createBuiltinShader(m_device, BuiltinShader::ShadowDepthVertex,
+                                       RHI::ShaderStage::Vertex, 1);
+    m_shadowFrag = createBuiltinShader(m_device, BuiltinShader::ShadowDepthFragment,
+                                       RHI::ShaderStage::Fragment, 0);
+    m_fullscreenVert = createBuiltinShader(m_device, BuiltinShader::FullscreenVertex,
+                                           RHI::ShaderStage::Vertex, 0);
+    m_skyFrag = createBuiltinShader(m_device, BuiltinShader::SkyFragment,
+                                    RHI::ShaderStage::Fragment, 1, 1);
+    m_gridFrag = createBuiltinShader(m_device, BuiltinShader::GridFragment,
+                                     RHI::ShaderStage::Fragment, 1, 0);
 
     if (!m_sceneVert || !m_sceneFrag || !m_terrainFrag || !m_shadowVert || !m_shadowFrag) {
         return false;
@@ -400,19 +586,70 @@ bool GpuSceneRenderer::createPipelines() {
     RHI::VertexBufferLayoutDesc layout{};
     RHI::VertexAttributeDesc attrs[4]{};
     RHI::GraphicsPipelineDesc sceneDesc{};
-    fillMeshPipelineDesc(sceneDesc, layout, attrs, RHI::TextureFormat::R8G8B8A8_UNORM, true, true);
+    fillMeshPipelineDesc(sceneDesc, layout, attrs, kHdrFormat, true, true);
     m_scenePipeline = m_device->createGraphicsPipeline(m_sceneVert, m_sceneFrag, sceneDesc);
     RHI::GraphicsPipelineDesc wireDesc = sceneDesc;
     wireDesc.fillMode = RHI::FillMode::Line;
     m_wireframePipeline = m_device->createGraphicsPipeline(m_sceneVert, m_sceneFrag, wireDesc);
     m_terrainPipeline = m_device->createGraphicsPipeline(m_sceneVert, m_terrainFrag, sceneDesc);
+    RHI::GraphicsPipelineDesc blendDesc = sceneDesc;
+    blendDesc.depthWrite = false;
+    blendDesc.blendMode = RHI::BlendMode::Premultiplied;
+    m_blendPipeline = m_device->createGraphicsPipeline(m_sceneVert, m_sceneFrag, blendDesc);
+
+    if (m_fullscreenVert && m_skyFrag) {
+        RHI::GraphicsPipelineDesc skyDesc{};
+        skyDesc.colorFormat = kHdrFormat;
+        skyDesc.depthFormat = RHI::TextureFormat::D32_FLOAT;
+        skyDesc.depthTest = true;
+        skyDesc.depthWrite = false;
+        m_skyPipeline = m_device->createGraphicsPipeline(m_fullscreenVert, m_skyFrag, skyDesc);
+    }
+    if (m_fullscreenVert && m_gridFrag) {
+        RHI::GraphicsPipelineDesc gridDesc{};
+        gridDesc.colorFormat = kHdrFormat;
+        gridDesc.depthFormat = RHI::TextureFormat::D32_FLOAT;
+        gridDesc.depthTest = true;
+        gridDesc.depthWrite = false;
+        gridDesc.blendMode = RHI::BlendMode::Alpha;
+        m_gridPipeline = m_device->createGraphicsPipeline(m_fullscreenVert, m_gridFrag, gridDesc);
+    }
 
     // Color-only shadow pass (no depth attachment) for cubemap / 2D shadow maps.
     RHI::GraphicsPipelineDesc shadowDesc{};
     fillMeshPipelineDesc(shadowDesc, layout, attrs, RHI::TextureFormat::R16_FLOAT, false, false);
     m_shadowPipeline = m_device->createGraphicsPipeline(m_shadowVert, m_shadowFrag, shadowDesc);
 
-    return m_scenePipeline && m_wireframePipeline && m_terrainPipeline && m_shadowPipeline;
+    if (m_instancedVert && m_sceneFrag) {
+        RHI::VertexBufferLayoutDesc instancedLayouts[2]{};
+        instancedLayouts[0] = {0, kVertexStride, false};
+        instancedLayouts[1] = {1, sizeof(float) * 16, true};
+        RHI::VertexAttributeDesc instancedAttrs[8]{};
+        instancedAttrs[0] = {0, 0, RHI::VertexFormat::Float3, 0};
+        instancedAttrs[1] = {1, 0, RHI::VertexFormat::Float3, 12};
+        instancedAttrs[2] = {2, 0, RHI::VertexFormat::Float2, 24};
+        instancedAttrs[3] = {3, 0, RHI::VertexFormat::Float4, 32};
+        instancedAttrs[4] = {4, 1, RHI::VertexFormat::Float4, 0};
+        instancedAttrs[5] = {5, 1, RHI::VertexFormat::Float4, 16};
+        instancedAttrs[6] = {6, 1, RHI::VertexFormat::Float4, 32};
+        instancedAttrs[7] = {7, 1, RHI::VertexFormat::Float4, 48};
+        RHI::GraphicsPipelineDesc instancedDesc = sceneDesc;
+        instancedDesc.vertexBuffers = instancedLayouts;
+        instancedDesc.numVertexBuffers = 2;
+        instancedDesc.attributes = instancedAttrs;
+        instancedDesc.numAttributes = 8;
+        m_instancedPipeline = m_device->createGraphicsPipeline(m_instancedVert, m_sceneFrag, instancedDesc);
+    }
+
+    if (m_instancedPipeline) {
+        RHI::BufferDesc instanceDesc;
+        instanceDesc.size = 256ull * sizeof(float) * 16ull;
+        instanceDesc.name = "SceneInstances";
+        m_instanceBuffer = m_device->createBuffer(instanceDesc, RHI::BufferUsage::Vertex);
+    }
+
+    return m_scenePipeline && m_wireframePipeline && m_terrainPipeline && m_shadowPipeline &&
+           m_blendPipeline;
 }
 
 void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw,
@@ -487,8 +724,9 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
         RHI::Texture* map = m_directionalShadows.texture(shadowSlot);
         if (!map) continue;
 
-        const u32 cascadeCount =
-            shadowSlot == 0 ? GpuDirectionalShadowMap::kMaxCascades : 1u;
+        const u32 cascadeCount = shadowSlot == 0
+            ? std::clamp(m_activeCascadeCount, 1u, GpuDirectionalShadowMap::kMaxCascades)
+            : 1u;
         Mat4 cascadeVPs[GpuDirectionalShadowMap::kMaxCascades]{};
         f32 splits[GpuDirectionalShadowMap::kMaxCascades + 1]{};
         buildDirectionalCascadeVPs(camera, dir.direction, dir.shadowDistance, cascadeCount,
@@ -566,6 +804,43 @@ void GpuSceneRenderer::renderSpotShadows(RHI::CommandBuffer* cmd, ECS::World& wo
     }
 }
 
+namespace {
+
+constexpr f32 kPi = 3.14159265f;
+
+/// Camera for cube face `face` (+X, -X, +Y, -Y, +Z, -Z). Render targets have a top-left origin
+/// with y-up NDC, so the projection is flipped vertically to match cube-map addressing.
+void cubeFaceCamera(const Vec3& origin, u32 face, f32 nearClip, f32 farClip, Mat4& view,
+                    Mat4& proj, Vec3& focus) {
+    static const Vec3 kDirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const Vec3 kUps[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+    focus = origin + kDirs[face];
+    view = Mat4::lookAt(origin, focus, kUps[face]);
+    proj = Mat4::perspective(kPi * 0.5f, 1.0f, nearClip, farClip);
+    proj(1, 1) = -proj(1, 1);
+}
+
+void setVec4(float* out, f32 x, f32 y, f32 z, f32 w) {
+    out[0] = x;
+    out[1] = y;
+    out[2] = z;
+    out[3] = w;
+}
+
+/// Linear-space fallback sky used when the scene has no environment map.
+const Vec3 kSkyZenith{0.16f, 0.30f, 0.62f};
+const Vec3 kSkyHorizon{0.58f, 0.66f, 0.76f};
+const Vec3 kSkyGround{0.16f, 0.15f, 0.14f};
+const Vec3 kFallbackAmbient{0.34f, 0.38f, 0.45f};
+
+u32 probeMipCount(u32 resolution) {
+    u32 mips = 1;
+    while ((resolution >> mips) >= 4u) ++mips;
+    return mips;
+}
+
+}  // namespace
+
 void GpuSceneRenderer::renderPointShadows(RHI::CommandBuffer* cmd, ECS::World& world,
                                           const Scene::SceneLighting& lighting,
                                           const std::vector<MeshDraw>& draws) {
@@ -579,16 +854,11 @@ void GpuSceneRenderer::renderPointShadows(RHI::CommandBuffer* cmd, ECS::World& w
         RHI::Texture* cube = m_pointShadows.cubemap(shadowSlot);
         if (!cube) continue;
 
-        const Vec3 faceDirs[6] = {
-            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
-        };
-        const Vec3 faceUps[6] = {
-            {0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}
-        };
-
         for (u32 face = 0; face < 6; ++face) {
-            const Mat4 view = Mat4::lookAt(point.position, point.position + faceDirs[face], faceUps[face]);
-            const Mat4 proj = Mat4::perspective(90.0f * 3.14159265f / 180.0f, 1.0f, 0.1f, point.radius);
+            Mat4 view;
+            Mat4 proj;
+            Vec3 focus;
+            cubeFaceCamera(point.position, face, 0.1f, point.radius, view, proj, focus);
 
             RHI::RenderPassDesc pass;
             pass.colorTarget = cube;
@@ -616,205 +886,226 @@ void GpuSceneRenderer::renderPointShadows(RHI::CommandBuffer* cmd, ECS::World& w
     }
 }
 
-u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws,
-                                   const Mat4& vp, const Vec3& cameraPos, const Mat4& cameraView,
-                                   const Scene::SceneLighting& lighting,
-                                   RHI::Texture* colorTarget, RHI::Texture* depthTarget,
-                                   u32 width, u32 height, const std::string& projectRoot,
-                                   const GpuSceneRenderOptions& options) {
-    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderMeshes");
-    const bool wireframeMeshes = options.wireframeMeshes;
-    if ((!wireframeMeshes && !m_scenePipeline) ||
-        (wireframeMeshes && !m_wireframePipeline) || draws.empty()) {
-        return 0;
+void GpuSceneRenderer::drawSky(RHI::CommandBuffer* cmd, const GpuSceneCamera& camera,
+                               u32 targetHeight) {
+    if (!m_skyPipeline) return;
+    SkyUBO ubo{};
+    const Mat4 inv = (camera.proj * camera.view).inverted();
+    std::memcpy(ubo.invViewProj, inv.data(), sizeof(ubo.invViewProj));
+    RHI::Texture* env = m_environment.texture();
+    if (env) {
+        // Match the environment's texel density to the target's so distant detail doesn't alias.
+        const f32 envTexelsPerRadian = static_cast<f32>(env->width) / (2.0f * kPi);
+        const f32 screenTexelsPerRadian =
+            static_cast<f32>(std::max(targetHeight, 1u)) / std::max(camera.fovRad, 0.01f);
+        const f32 maxLod = static_cast<f32>(m_environment.mipCount() > 0 ? m_environment.mipCount() - 1 : 0);
+        const f32 lod = std::clamp(std::log2(std::max(envTexelsPerRadian / screenTexelsPerRadian, 1.0f)),
+                                   0.0f, maxLod);
+        setVec4(ubo.params, std::max(m_environmentExposure, 1e-4f), lod, 0.0f, 0.0f);
     }
+    setVec4(ubo.zenith, kSkyZenith.x, kSkyZenith.y, kSkyZenith.z, 1.0f);
+    setVec4(ubo.horizon, kSkyHorizon.x, kSkyHorizon.y, kSkyHorizon.z, 1.0f);
+    setVec4(ubo.ground, kSkyGround.x, kSkyGround.y, kSkyGround.z, 1.0f);
 
-    u32 drawnMeshes = 0;
+    RHI::Texture* bound = env ? env : GpuTextureCache::instance().whiteTexture(m_device);
+    cmd->bindPipeline(m_skyPipeline);
+    if (bound) cmd->bindTexture(bound, 0, m_repeatSampler);
+    cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &ubo, sizeof(ubo));
+    cmd->draw(3);
+}
 
-    RHI::RenderPassDesc pass;
-    pass.colorTarget = colorTarget;
-    pass.depthTarget = depthTarget;
-    pass.clearColor[0] = 0.0f;
-    pass.clearColor[1] = 0.0f;
-    pass.clearColor[2] = 0.0f;
-    pass.clearColor[3] = 0.0f;
-    pass.clearDepth = true;
-    pass.cycle = true;
-    SceneShadowUBO shadowUbo{};
-    std::memcpy(shadowUbo.cameraView, cameraView.data(), sizeof(shadowUbo.cameraView));
-    for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
-        if (m_directionalShadows.valid(slot)) {
-            const u32 cascades = m_directionalShadows.cascadeCount(slot);
-            for (u32 c = 0; c < cascades; ++c) {
-                std::memcpy(shadowUbo.dirShadowVP + (slot * 4 + c) * 16,
-                            m_directionalShadows.cascadeVP(slot, c).data(), sizeof(float) * 16);
-            }
-            const f32* splits = m_directionalShadows.cascadeSplits(slot);
-            shadowUbo.dirCascadeSplits[slot * 4 + 0] = splits[1];
-            shadowUbo.dirCascadeSplits[slot * 4 + 1] = splits[2];
-            shadowUbo.dirCascadeSplits[slot * 4 + 2] = splits[3];
-            shadowUbo.dirCascadeSplits[slot * 4 + 3] = static_cast<f32>(cascades);
-            shadowUbo.dirShadowValid[slot] = 1.0f;
-        }
-    }
-    for (u32 slot = 0; slot < GpuPointShadowMap::kMaxPointShadowLights; ++slot) {
-        if (m_pointShadows.valid(slot)) {
-            const Vec3 pos = m_pointShadows.lightPosition(slot);
-            shadowUbo.pointShadowPos[slot * 4 + 0] = pos.x;
-            shadowUbo.pointShadowPos[slot * 4 + 1] = pos.y;
-            shadowUbo.pointShadowPos[slot * 4 + 2] = pos.z;
-            shadowUbo.pointShadowRadius[slot] = m_pointShadows.radius(slot);
-            shadowUbo.pointShadowValid[slot] = 1.0f;
-        }
-    }
-    for (u32 slot = 0; slot < GpuSpotShadowMap::kMaxSpotShadowLights; ++slot) {
-        if (m_spotShadows.valid(slot)) {
-            const Vec3 pos = m_spotShadows.lightPosition(slot);
-            std::memcpy(shadowUbo.spotShadowVP + slot * 16, m_spotShadows.lightVP(slot).data(),
-                        sizeof(float) * 16);
-            shadowUbo.spotShadowPos[slot * 4 + 0] = pos.x;
-            shadowUbo.spotShadowPos[slot * 4 + 1] = pos.y;
-            shadowUbo.spotShadowPos[slot * 4 + 2] = pos.z;
-            shadowUbo.spotShadowParams[slot * 4 + 0] = m_spotShadows.radius(slot);
-            shadowUbo.spotShadowParams[slot * 4 + 1] = m_spotShadows.cosHalfAngle(slot);
-            shadowUbo.spotShadowValid[slot] = 1.0f;
-        }
-    }
+void GpuSceneRenderer::drawGrid(RHI::CommandBuffer* cmd, const GpuSceneCamera& camera,
+                                const GpuGridOverlay& grid) {
+    if (!m_gridPipeline || grid.opacity <= 0.0f) return;
+    GridUBO ubo{};
+    const Mat4 vp = camera.proj * camera.view;
+    const Mat4 inv = vp.inverted();
+    std::memcpy(ubo.invViewProj, inv.data(), sizeof(ubo.invViewProj));
+    std::memcpy(ubo.viewProj, vp.data(), sizeof(ubo.viewProj));
+    setVec4(ubo.camera, camera.position.x, camera.position.y, camera.position.z,
+            std::max(grid.fadeDistance, 1.0f));
+    setVec4(ubo.params, std::max(grid.cellSize, 1e-3f), std::max(grid.majorEvery, 2.0f),
+            std::clamp(grid.opacity, 0.0f, 1.0f), 1.0f);
+    setVec4(ubo.minor, 0.20f, 0.20f, 0.22f, 0.45f);
+    setVec4(ubo.major, 0.34f, 0.34f, 0.37f, 0.75f);
+    setVec4(ubo.axisX, 0.75f, 0.10f, 0.10f, 0.95f);
+    setVec4(ubo.axisZ, 0.10f, 0.22f, 0.80f, 0.95f);
+    cmd->bindPipeline(m_gridPipeline);
+    cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &ubo, sizeof(ubo));
+    cmd->draw(3);
+}
 
+void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
+                                    const std::vector<const MeshDraw*>& draws,
+                                    const GpuSceneCamera& camera,
+                                    const Scene::SceneLighting& lighting,
+                                    const std::string& projectRoot,
+                                    const GpuSceneRenderOptions& options,
+                                    const ScenePassContext& pass, RHI::Pipeline* basePipeline) {
+    if (draws.empty()) return;
+    const bool wireframe = options.wireframeMeshes;
+    const RenderFeatureSettings& features = options.features;
     RHI::Texture* whiteTex = GpuTextureCache::instance().whiteTexture(m_device);
-
-    cmd->beginRenderPass(pass);
-    cmd->bindPipeline(wireframeMeshes ? m_wireframePipeline : m_scenePipeline);
-    cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
-    if (!wireframeMeshes) {
-        cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
-    }
+    RHI::Texture* fallbackCube = m_fallbackCube ? m_fallbackCube : whiteTex;
+    auto& texCache = GpuTextureCache::instance();
 
     auto bindShadowTextures = [&](u32 dirBase, u32 pointBase, u32 spotBase) {
         for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
-            RHI::Texture* shadowTex = m_directionalShadows.texture(slot);
-            if (shadowTex) {
-                cmd->bindTexture(shadowTex, dirBase + slot, m_sampler);
-            } else if (whiteTex) {
-                cmd->bindTexture(whiteTex, dirBase + slot, m_sampler);
-            }
+            RHI::Texture* tex = m_directionalShadows.texture(slot);
+            if (!tex) tex = whiteTex;
+            if (tex) cmd->bindTexture(tex, dirBase + slot, m_sampler);
         }
         for (u32 slot = 0; slot < GpuPointShadowMap::kMaxPointShadowLights; ++slot) {
             RHI::Texture* cube = m_pointShadows.cubemap(slot);
-            if (cube) {
-                cmd->bindTexture(cube, pointBase + slot, m_sampler);
-            } else if (whiteTex) {
-                cmd->bindTexture(whiteTex, pointBase + slot, m_sampler);
-            }
+            if (!cube) cube = fallbackCube;
+            if (cube) cmd->bindTexture(cube, pointBase + slot, m_sampler);
         }
         for (u32 slot = 0; slot < GpuSpotShadowMap::kMaxSpotShadowLights; ++slot) {
-            RHI::Texture* spotTex = m_spotShadows.texture(slot);
-            if (spotTex) {
-                cmd->bindTexture(spotTex, spotBase + slot, m_sampler);
-            } else if (whiteTex) {
-                cmd->bindTexture(whiteTex, spotBase + slot, m_sampler);
-            }
+            RHI::Texture* tex = m_spotShadows.texture(slot);
+            if (!tex) tex = whiteTex;
+            if (tex) cmd->bindTexture(tex, spotBase + slot, m_sampler);
         }
     };
-    // Shaders always declare shadow samplers — bind fallbacks even when shadow passes are skipped.
-    bindShadowTextures(2, 4, 6);
+
+    // Everything that is the same for every draw of the pass.
+    LightingUBO base{};
+    setVec4(base.cameraPos, camera.position.x, camera.position.y, camera.position.z, 0.0f);
+    setVec4(base.ambient, kFallbackAmbient.x, kFallbackAmbient.y, kFallbackAmbient.z, 0.0f);
+    base.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
+    for (int i = 0; i < base.dirCount; ++i) {
+        const auto& d = lighting.lights.directionals[i];
+        const Vec3 c = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
+        setVec4(base.dirData + i * 4, d.direction.x, d.direction.y, d.direction.z, d.intensity);
+        setVec4(base.dirColor + i * 4, c.x, c.y, c.z, 0.0f);
+    }
+    base.pointCount = static_cast<int>(std::min(lighting.lights.points.size(), size_t{4}));
+    for (int i = 0; i < base.pointCount; ++i) {
+        const auto& p = lighting.lights.points[i];
+        const Vec3 c = srgbToLinear(Vec3(p.color.x, p.color.y, p.color.z));
+        setVec4(base.pointData + i * 4, p.position.x, p.position.y, p.position.z, p.radius);
+        setVec4(base.pointColor + i * 4, c.x, c.y, c.z, p.intensity);
+    }
+    base.spotCount = static_cast<int>(std::min(lighting.lights.spots.size(), size_t{4}));
+    for (int i = 0; i < base.spotCount; ++i) {
+        const auto& s = lighting.lights.spots[i];
+        const Vec3 c = srgbToLinear(Vec3(s.color.x, s.color.y, s.color.z));
+        setVec4(base.spotData + i * 4, s.position.x, s.position.y, s.position.z, s.radius);
+        setVec4(base.spotDir + i * 4, s.direction.x, s.direction.y, s.direction.z, s.intensity);
+        setVec4(base.spotColor + i * 4, c.x, c.y, c.z, 0.0f);
+        const f32 halfAngle = std::clamp(s.angle * kPi / 180.0f * 0.5f, 0.01f, 1.5533f);
+        base.spotAngle[i * 4] = std::cos(halfAngle);
+    }
+
+    const bool environmentOn = m_environment.texture() != nullptr && !wireframe;
+    const Vec3 irradiance =
+        environmentOn ? m_environment.averageColor() * m_environmentExposure : kFallbackAmbient;
+    setVec4(base.iblColor, irradiance.x, irradiance.y, irradiance.z, features.iblSpecular);
+    base.iblParams[0] = features.iblDiffuse;
+    base.iblParams[1] = (features.iblEnabled && !wireframe) ? 1.0f : 0.0f;
+    base.iblParams[3] = features.volumetricAnisotropy;
+    base.extra[0] = features.volumetricShadows ? 1.0f : 0.0f;
+    base.extra[1] = 6.0f;
+    base.extra[2] = environmentOn ? std::max(m_environmentExposure, 0.0f) : 0.0f;
+    base.extra[3] = environmentOn
+        ? static_cast<f32>(m_environment.mipCount() > 0 ? m_environment.mipCount() - 1 : 0)
+        : 0.0f;
+    base.volParams[0] = features.volumetrics == VolumetricQuality::Off ? 0.0f : 1.0f;
+    base.volParams[1] = features.volumetricDensity;
+    base.volParams[2] = features.volumetricHeight;
+    base.volParams[3] = features.volumetrics == VolumetricQuality::Medium ? 12.0f
+                        : features.volumetrics == VolumetricQuality::Low  ? 6.0f
+                                                                          : 0.0f;
+    const bool planarOn = m_reflectionValid && m_reflectionColor && !m_inReflectionPass &&
+                          !options.clipBelowEnabled &&
+                          features.reflections == ReflectionMode::Planar;
+    base.reflectParams[0] = planarOn ? features.reflectionIntensity : 0.0f;
+    base.reflectParams[1] = options.clipBelowEnabled ? options.clipBelowY : features.reflectionPlaneY;
+    base.reflectParams[2] = options.clipBelowEnabled ? 1.0f : 0.0f;
+    base.reflectParams[3] = 0.5f;
+    std::memcpy(base.reflectVP, m_reflectionVP.data(), sizeof(base.reflectVP));
+
+    ViewTargets* view = pass.view;
+    const bool historyOn = view && view->hasPrevious && !m_inReflectionPass;
+    const bool ssrOn = historyOn && pass.ssrSteps > 0 && !wireframe;
+    setVec4(base.ssrParams, pass.ssrIntensity, pass.ssrMaxRoughness,
+            static_cast<f32>(pass.ssrSteps), pass.ssrMaxDistance);
+    if (historyOn) {
+        base.projParams[0] = view->prevProj(2, 2);
+        base.projParams[1] = view->prevProj(2, 3);
+        std::memcpy(base.prevViewProj, view->prevViewProj.data(), sizeof(base.prevViewProj));
+        std::memcpy(base.prevView, view->prevView.data(), sizeof(base.prevView));
+    }
+    base.screen[0] = 1.0f / static_cast<f32>(std::max(view ? view->width : 1u, 1u));
+    base.screen[1] = 1.0f / static_cast<f32>(std::max(view ? view->height : 1u, 1u));
+    base.screen[2] = static_cast<f32>(view ? view->frameIndex % 64u : 0u);
+    std::memcpy(base.viewProj, pass.viewProj.data(), sizeof(base.viewProj));
+
+    RHI::Texture* prevColor = historyOn ? view->color[view->current ^ 1u] : whiteTex;
+    RHI::Texture* prevDepth = historyOn ? view->depth[view->current ^ 1u] : whiteTex;
+    RHI::Texture* opaqueScene =
+        (pass.opaqueCopyBound && view && view->opaqueCopy) ? view->opaqueCopy : whiteTex;
+    RHI::Texture* reflectionTex = planarOn ? m_reflectionColor : whiteTex;
+    RHI::Texture* envTex = m_environment.texture() ? m_environment.texture() : whiteTex;
 
     ECS::Entity lastTerrainTexEntity = ECS::Entity::INVALID;
     u32 lastTerrainTexTier = ~0u;
 
-    for (const auto& draw : draws) {
-        if (!draw.mesh || draw.mesh->indices.empty()) continue;
+    for (const MeshDraw* drawPtr : draws) {
+        const MeshDraw& draw = *drawPtr;
+        if (draw.skipColorDraw || !draw.mesh || draw.mesh->indices.empty()) continue;
         if (!draw.mesh->vertexBuffer || !draw.mesh->indexBuffer) continue;
 
-        if (wireframeMeshes) {
-            cmd->bindPipeline(m_wireframePipeline);
-        } else if (draw.isTerrain && m_terrainPipeline) {
-            cmd->bindPipeline(m_terrainPipeline);
-        } else {
-            cmd->bindPipeline(m_scenePipeline);
-        }
+        CF_PROFILE_SCOPE(draw.isTerrain ? "GpuSceneRenderer::terrain" : "GpuSceneRenderer::mesh");
+        RHI::Pipeline* pipeline = basePipeline;
+        if (wireframe) pipeline = m_wireframePipeline;
+        else if (draw.isTerrain && m_terrainPipeline) pipeline = m_terrainPipeline;
+        cmd->bindPipeline(pipeline);
 
-        LightingUBO lights{};
-        lights.cameraPos[0] = cameraPos.x;
-        lights.cameraPos[1] = cameraPos.y;
-        lights.cameraPos[2] = cameraPos.z;
-        if (wireframeMeshes) {
-            lights.ambient[0] = 0.72f;
-            lights.ambient[1] = 0.78f;
-            lights.ambient[2] = 0.88f;
-            lights.albedo[0] = 0.55f;
-            lights.albedo[1] = 0.62f;
-            lights.albedo[2] = 0.74f;
-            lights.metallic = 0.0f;
+        LightingUBO lights = base;
+        const u32 texTier = textureQualityTier(draw.viewerDistance, options.textureQuality);
+        if (wireframe) {
+            setVec4(lights.ambient, 0.45f, 0.52f, 0.66f, 0.0f);
+            setVec4(lights.albedo, 0.30f, 0.36f, 0.48f, 1.0f);
             lights.roughness = 1.0f;
-            lights.shininess = 1.0f;
-            lights.flags[0] = 0.0f;
-            lights.flags[1] = 0.0f;
+            lights.reflectance = 0.04f;
             lights.dirCount = 0;
             lights.pointCount = 0;
             lights.spotCount = 0;
+            setVec4(lights.uvTransform, 1.0f, 1.0f, 0.0f, 0.0f);
+            setVec4(lights.materialParams, 1.0f, 1.0f, 0.0f, 0.5f);
         } else {
-            lights.ambient[0] = draw.isTerrain ? 0.28f : 0.32f;
-            lights.ambient[1] = draw.isTerrain ? 0.28f : 0.32f;
-            lights.ambient[2] = draw.isTerrain ? 0.30f : 0.34f;
-            lights.albedo[0] = draw.albedo.x;
-            lights.albedo[1] = draw.albedo.y;
-            lights.albedo[2] = draw.albedo.z;
+            setVec4(lights.albedo, draw.albedo.x, draw.albedo.y, draw.albedo.z, draw.albedo.w);
             lights.metallic = draw.metallic;
             lights.roughness = draw.roughness;
-            lights.shininess = draw.shininess;
+            lights.reflectance = draw.reflectance;
             lights.flags[0] = draw.receiveShadows ? 1.0f : 0.0f;
             lights.flags[1] = draw.customNormalPath.empty() ? 0.0f : 1.0f;
-
-            lights.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
-            for (int i = 0; i < lights.dirCount; ++i) {
-                const auto& d = lighting.lights.directionals[i];
-                lights.dirData[i * 4 + 0] = d.direction.x;
-                lights.dirData[i * 4 + 1] = d.direction.y;
-                lights.dirData[i * 4 + 2] = d.direction.z;
-                lights.dirData[i * 4 + 3] = d.intensity;
-                lights.dirColor[i * 4 + 0] = d.color.x;
-                lights.dirColor[i * 4 + 1] = d.color.y;
-                lights.dirColor[i * 4 + 2] = d.color.z;
+            lights.flags[2] = (planarOn && draw.planarReceiver) ? 1.0f : 0.0f;
+            lights.flags[3] = draw.ormMapPath.empty() ? 0.0f : 1.0f;
+            setVec4(lights.emission, draw.emission.x, draw.emission.y, draw.emission.z, 0.0f);
+            setVec4(lights.uvTransform, draw.uvTiling.x, draw.uvTiling.y, draw.uvOffset.x,
+                    draw.uvOffset.y);
+            f32 thickness = 0.5f;
+            if (draw.hasAabb) {
+                const Vec3 extent = draw.aabbMax - draw.aabbMin;
+                thickness = std::max(0.01f, std::min(extent.x, std::min(extent.y, extent.z)) * 0.5f);
             }
-
-            lights.pointCount = static_cast<int>(std::min(lighting.lights.points.size(), size_t{4}));
-            for (int i = 0; i < lights.pointCount; ++i) {
-                const auto& p = lighting.lights.points[i];
-                lights.pointData[i * 4 + 0] = p.position.x;
-                lights.pointData[i * 4 + 1] = p.position.y;
-                lights.pointData[i * 4 + 2] = p.position.z;
-                lights.pointData[i * 4 + 3] = p.radius;
-                lights.pointColor[i * 4 + 0] = p.color.x;
-                lights.pointColor[i * 4 + 1] = p.color.y;
-                lights.pointColor[i * 4 + 2] = p.color.z;
-                lights.pointColor[i * 4 + 3] = p.intensity;
-            }
-
-            lights.spotCount = static_cast<int>(std::min(lighting.lights.spots.size(), size_t{4}));
-            for (int i = 0; i < lights.spotCount; ++i) {
-                const auto& s = lighting.lights.spots[i];
-                lights.spotData[i * 4 + 0] = s.position.x;
-                lights.spotData[i * 4 + 1] = s.position.y;
-                lights.spotData[i * 4 + 2] = s.position.z;
-                lights.spotData[i * 4 + 3] = s.radius;
-                lights.spotDir[i * 4 + 0] = s.direction.x;
-                lights.spotDir[i * 4 + 1] = s.direction.y;
-                lights.spotDir[i * 4 + 2] = s.direction.z;
-                lights.spotDir[i * 4 + 3] = s.intensity;
-                lights.spotColor[i * 4 + 0] = s.color.x;
-                lights.spotColor[i * 4 + 1] = s.color.y;
-                lights.spotColor[i * 4 + 2] = s.color.z;
-                const f32 halfAngle =
-                    std::clamp(s.angle * 3.14159265f / 180.0f * 0.5f, 0.01f, 1.5533f);
-                lights.spotAngle[i * 4 + 0] = std::cos(halfAngle);
-            }
+            setVec4(lights.materialParams, draw.normalStrength, draw.aoStrength, thickness,
+                    draw.alphaCutoff);
+            setVec4(lights.coat, draw.clearcoat, draw.clearcoatRoughness, draw.ior,
+                    draw.transmission);
+            setVec4(lights.sheen, draw.sheenColor.x, draw.sheenColor.y, draw.sheenColor.z,
+                    draw.sheenRoughness);
+            setVec4(lights.iridescence, draw.iridescence, draw.iridescenceThickness,
+                    draw.iridescenceIor, 0.0f);
+            setVec4(lights.materialFlags, static_cast<f32>(draw.alphaMode),
+                    draw.emissionMapPath.empty() ? 0.0f : 1.0f, pass.opaqueCopyBound ? 1.0f : 0.0f,
+                    ssrOn ? 1.0f : 0.0f);
         }
 
-        if (!wireframeMeshes && draw.isTerrain) {
-            // Terrain is matte: no Phong specular (shininess is ignored in terrain_lit.frag).
+        if (!wireframe && draw.isTerrain) {
             lights.roughness = 1.0f;
-            lights.shininess = 1.0f;
+            lights.reflectance = 0.04f;
             TerrainMaterialUBO mat{};
             if (draw.terrainSettings) {
                 mat.worldSize[0] = draw.terrainSettings->worldSizeX;
@@ -827,8 +1118,6 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             }
             const Terrain::TerrainGpuTextures* gpu =
                 Terrain::TerrainCache::instance().gpuTexturesFor(draw.entity);
-            const u32 texTier =
-                textureQualityTier(draw.viewerDistance, options.textureQuality);
             if (gpu && gpu->useSplatmap) {
                 mat.flags[0] = 1.0f;
             } else if (gpu && (!gpu->cachedAlbedoPath.empty() || gpu->albedo)) {
@@ -838,54 +1127,43 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 lights.flags[1] = 1.0f;
             }
 
-            const bool rebindTerrainTextures = draw.entity != lastTerrainTexEntity
-                || texTier != lastTerrainTexTier;
-            if (rebindTerrainTextures) {
+            if (draw.entity != lastTerrainTexEntity || texTier != lastTerrainTexTier) {
                 lastTerrainTexEntity = draw.entity;
                 lastTerrainTexTier = texTier;
-                auto& texCache = GpuTextureCache::instance();
                 for (u32 slot = 0; slot < 6; ++slot) {
                     if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
                 }
                 if (gpu && gpu->useSplatmap) {
-                    if (gpu->splatMap) {
-                        cmd->bindTexture(gpu->splatMap, 0, m_sampler);
-                    }
+                    if (gpu->splatMap) cmd->bindTexture(gpu->splatMap, 0, m_sampler);
                     for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
                         RHI::Texture* layerTex = whiteTex;
                         if (!gpu->cachedLayerPaths[i].empty()) {
                             layerTex = texCache.acquire(m_device, gpu->cachedLayerPaths[i],
-                                                          projectRoot, texTier);
+                                                        projectRoot, texTier, true);
                         } else if (gpu->layers[i]) {
                             layerTex = gpu->layers[i];
                         }
-                        if (layerTex) {
-                            cmd->bindTexture(layerTex, 1 + i, m_repeatSampler);
-                        }
+                        if (layerTex) cmd->bindTexture(layerTex, 1 + i, m_repeatSampler);
                     }
                 } else if (gpu) {
                     RHI::Texture* albedoTex = whiteTex;
                     if (!gpu->cachedAlbedoPath.empty()) {
-                        albedoTex =
-                            texCache.acquire(m_device, gpu->cachedAlbedoPath, projectRoot, texTier);
+                        albedoTex = texCache.acquire(m_device, gpu->cachedAlbedoPath, projectRoot,
+                                                     texTier, true);
                     } else if (gpu->albedo) {
                         albedoTex = gpu->albedo;
                     }
-                    if (albedoTex) {
-                        cmd->bindTexture(albedoTex, 4, m_repeatSampler);
-                    }
+                    if (albedoTex) cmd->bindTexture(albedoTex, 4, m_repeatSampler);
                 }
                 if (gpu) {
                     RHI::Texture* normalTex = nullptr;
                     if (!gpu->cachedNormalPath.empty()) {
-                        normalTex =
-                            texCache.acquire(m_device, gpu->cachedNormalPath, projectRoot, texTier);
+                        normalTex = texCache.acquire(m_device, gpu->cachedNormalPath, projectRoot,
+                                                     texTier);
                     } else if (gpu->normalMap) {
                         normalTex = gpu->normalMap;
                     }
-                    if (normalTex) {
-                        cmd->bindTexture(normalTex, 5, m_repeatSampler);
-                    }
+                    if (normalTex) cmd->bindTexture(normalTex, 5, m_repeatSampler);
                 }
             }
             bindShadowTextures(6, 8, 10);
@@ -893,56 +1171,15 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
         }
 
         VertexUBO vubo{};
-        const Mat4 mvp = vp * draw.worldMatrix;
+        const Mat4 mvp = pass.viewProj * draw.worldMatrix;
         std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
         std::memcpy(vubo.model, draw.worldMatrix.data(), sizeof(vubo.model));
         cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &vubo, sizeof(vubo));
         cmd->bindVertexBuffer(draw.mesh->vertexBuffer);
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
-        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex) {
-            if (indexCount == 0) return;
-
-            if (wireframeMeshes) {
-                bindShadowTextures(2, 4, 6);
-                if (whiteTex) {
-                    cmd->bindTexture(whiteTex, 0, m_sampler);
-                    cmd->bindTexture(whiteTex, 1, m_sampler);
-                }
-            } else if (!draw.isTerrain) {
-                bindShadowTextures(2, 4, 6);
-                const u32 texTier =
-                    textureQualityTier(draw.viewerDistance, options.textureQuality);
-                const ResolvedMeshAlbedo albedo =
-                    resolveMeshAlbedo(m_device, draw.mesh, draw.meshPath, projectRoot,
-                                      draw.customTexturePath, materialIndex, texTier);
-                lights.albedo[0] = draw.albedo.x * albedo.factor.x;
-                lights.albedo[1] = draw.albedo.y * albedo.factor.y;
-                lights.albedo[2] = draw.albedo.z * albedo.factor.z;
-                if (!draw.mesh->materials.empty() &&
-                    materialIndex < draw.mesh->materials.size()) {
-                    lights.metallic = albedo.metallic;
-                    lights.roughness = albedo.roughness;
-                }
-
-                RHI::Texture* albedoTex = albedo.texture ? albedo.texture : whiteTex;
-                if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
-                RHI::Texture* normalTex = whiteTex;
-                if (!draw.customNormalPath.empty()) {
-                    normalTex = GpuTextureCache::instance().acquire(
-                        m_device, draw.customNormalPath, projectRoot, texTier);
-                }
-                if (normalTex) {
-                    cmd->bindTexture(normalTex, 1, m_repeatSampler);
-                }
-            }
-
-            cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &lights, sizeof(lights));
-            cmd->drawIndexed(indexCount, firstIndex, 0);
-        };
-
         if (draw.isTerrain) {
-            if (wireframeMeshes) {
+            if (wireframe) {
                 for (u32 slot = 0; slot < 6; ++slot) {
                     if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
                 }
@@ -950,7 +1187,93 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
             }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &lights, sizeof(lights));
             cmd->drawIndexed(static_cast<u32>(draw.mesh->indices.size()));
-        } else if (draw.mesh->subMeshes.size() > 1) {
+            continue;
+        }
+
+        // Per-object probe, else sky.
+        RHI::Texture* probeTex = fallbackCube;
+        if (!m_inReflectionPass && !wireframe && draw.probeIndex >= 0 &&
+            static_cast<usize>(draw.probeIndex) < m_probes.size()) {
+            const ReflectionProbe& probe = m_probes[static_cast<usize>(draw.probeIndex)];
+            if (probe.valid && probe.cube) {
+                probeTex = probe.cube;
+                lights.iblParams[2] = 1.0f;
+                lights.projParams[2] = static_cast<f32>(probe.mipLevels > 0 ? probe.mipLevels - 1 : 0);
+            }
+        }
+
+        bindShadowTextures(2, 4, 6);
+        if (reflectionTex) cmd->bindTexture(reflectionTex, 8, m_sampler);
+        if (probeTex) cmd->bindTexture(probeTex, 9, m_sampler);
+        if (envTex) cmd->bindTexture(envTex, 11, m_repeatSampler);
+        if (prevColor) cmd->bindTexture(prevColor, 12, m_sampler);
+        if (prevDepth) cmd->bindTexture(prevDepth, 13, m_pointSampler);
+        if (opaqueScene) cmd->bindTexture(opaqueScene, 15, m_sampler);
+
+        RHI::Texture* normalTex = whiteTex;
+        RHI::Texture* ormTex = whiteTex;
+        RHI::Texture* emissionTex = whiteTex;
+        if (!wireframe) {
+            if (!draw.customNormalPath.empty()) {
+                if (RHI::Texture* t = texCache.acquire(m_device, draw.customNormalPath, projectRoot, texTier)) {
+                    normalTex = t;
+                }
+            }
+            if (!draw.ormMapPath.empty()) {
+                if (RHI::Texture* t = texCache.acquire(m_device, draw.ormMapPath, projectRoot, texTier)) {
+                    ormTex = t;
+                }
+            }
+            if (!draw.emissionMapPath.empty()) {
+                if (RHI::Texture* t = texCache.acquire(m_device, draw.emissionMapPath, projectRoot,
+                                                       texTier, true)) {
+                    emissionTex = t;
+                }
+            }
+        }
+        if (normalTex) cmd->bindTexture(normalTex, 1, m_repeatSampler);
+        if (ormTex) cmd->bindTexture(ormTex, 10, m_repeatSampler);
+        if (emissionTex) cmd->bindTexture(emissionTex, 14, m_repeatSampler);
+
+        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex) {
+            if (indexCount == 0) return;
+            LightingUBO rangeLights = lights;
+            RHI::Texture* albedoTex = whiteTex;
+            if (!wireframe) {
+                const ResolvedMeshAlbedo albedo =
+                    resolveMeshAlbedo(m_device, draw.mesh, draw.meshPath, projectRoot,
+                                      draw.customTexturePath, materialIndex, texTier);
+                const Vec4 factor = draw.hasAuthoredMaterial ? Vec4(1.0f, 1.0f, 1.0f, 1.0f) : albedo.factor;
+                rangeLights.albedo[0] = draw.albedo.x * factor.x;
+                rangeLights.albedo[1] = draw.albedo.y * factor.y;
+                rangeLights.albedo[2] = draw.albedo.z * factor.z;
+                rangeLights.albedo[3] = draw.albedo.w * factor.w;
+                if (!draw.hasAuthoredMaterial && materialIndex < draw.mesh->materials.size()) {
+                    rangeLights.metallic = albedo.metallic;
+                    rangeLights.roughness = albedo.roughness;
+                }
+                if (albedo.texture) albedoTex = albedo.texture;
+            }
+            if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
+            cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
+
+            const bool instanced = !wireframe && draw.batchCount > 1 && m_instancedPipeline &&
+                                   m_instanceBuffer;
+            if (instanced) {
+                VertexUBO instUbo{};
+                std::memcpy(instUbo.mvp, pass.viewProj.data(), sizeof(instUbo.mvp));
+                cmd->bindPipeline(m_instancedPipeline);
+                cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &instUbo, sizeof(instUbo));
+                cmd->bindVertexBuffer(draw.mesh->vertexBuffer, 0);
+                cmd->bindVertexBuffer(m_instanceBuffer, 1, draw.batchByteOffset);
+                cmd->bindIndexBuffer(draw.mesh->indexBuffer);
+                cmd->drawIndexedInstanced(indexCount, draw.batchCount, firstIndex, 0, 0);
+            } else {
+                cmd->drawIndexed(indexCount, firstIndex, 0);
+            }
+        };
+
+        if (draw.mesh->subMeshes.size() > 1) {
             for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
                 drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex);
             }
@@ -959,11 +1282,139 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                 draw.mesh->subMeshes.empty() ? 0u : draw.mesh->subMeshes[0].materialIndex;
             drawMeshRange(0, static_cast<u32>(draw.mesh->indices.size()), materialIndex);
         }
-        ++drawnMeshes;
+    }
+}
+
+u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws,
+                                   const GpuSceneCamera& camera,
+                                   const Scene::SceneLighting& lighting,
+                                   RHI::Texture* colorTarget, RHI::Texture* depthTarget,
+                                   u32 width, u32 height, const std::string& projectRoot,
+                                   const GpuSceneRenderOptions& options, ScenePassContext& pass) {
+    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderMeshes");
+    if (!m_scenePipeline || !m_wireframePipeline || !colorTarget || !depthTarget) return 0;
+    const bool wireframe = options.wireframeMeshes;
+
+    SceneShadowUBO shadowUbo{};
+    std::memcpy(shadowUbo.cameraView, camera.view.data(), sizeof(shadowUbo.cameraView));
+    for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
+        if (!m_directionalShadows.valid(slot)) continue;
+        const u32 cascades = m_directionalShadows.cascadeCount(slot);
+        for (u32 c = 0; c < cascades; ++c) {
+            std::memcpy(shadowUbo.dirShadowVP + (slot * 4 + c) * 16,
+                        m_directionalShadows.cascadeVP(slot, c).data(), sizeof(float) * 16);
+        }
+        const f32* splits = m_directionalShadows.cascadeSplits(slot);
+        shadowUbo.dirCascadeSplits[slot * 4 + 0] = splits[1];
+        shadowUbo.dirCascadeSplits[slot * 4 + 1] = splits[2];
+        shadowUbo.dirCascadeSplits[slot * 4 + 2] = splits[3];
+        shadowUbo.dirCascadeSplits[slot * 4 + 3] = static_cast<f32>(cascades);
+        shadowUbo.dirShadowValid[slot] = 1.0f;
+    }
+    for (u32 slot = 0; slot < GpuPointShadowMap::kMaxPointShadowLights; ++slot) {
+        if (!m_pointShadows.valid(slot)) continue;
+        const Vec3 pos = m_pointShadows.lightPosition(slot);
+        shadowUbo.pointShadowPos[slot * 4 + 0] = pos.x;
+        shadowUbo.pointShadowPos[slot * 4 + 1] = pos.y;
+        shadowUbo.pointShadowPos[slot * 4 + 2] = pos.z;
+        shadowUbo.pointShadowRadius[slot] = m_pointShadows.radius(slot);
+        shadowUbo.pointShadowValid[slot] = 1.0f;
+    }
+    for (u32 slot = 0; slot < GpuSpotShadowMap::kMaxSpotShadowLights; ++slot) {
+        if (!m_spotShadows.valid(slot)) continue;
+        const Vec3 pos = m_spotShadows.lightPosition(slot);
+        std::memcpy(shadowUbo.spotShadowVP + slot * 16, m_spotShadows.lightVP(slot).data(),
+                    sizeof(float) * 16);
+        shadowUbo.spotShadowPos[slot * 4 + 0] = pos.x;
+        shadowUbo.spotShadowPos[slot * 4 + 1] = pos.y;
+        shadowUbo.spotShadowPos[slot * 4 + 2] = pos.z;
+        shadowUbo.spotShadowParams[slot * 4 + 0] = m_spotShadows.radius(slot);
+        shadowUbo.spotShadowParams[slot * 4 + 1] = m_spotShadows.cosHalfAngle(slot);
+        shadowUbo.spotShadowValid[slot] = 1.0f;
     }
 
-    cmd->endRenderPass();
-    return drawnMeshes;
+    std::vector<const MeshDraw*> opaque;
+    std::vector<const MeshDraw*> translucent;
+    opaque.reserve(draws.size());
+    bool anyTransmission = false;
+    for (const MeshDraw& draw : draws) {
+        if (draw.skipColorDraw) continue;
+        if (!wireframe && draw.isTranslucent()) {
+            translucent.push_back(&draw);
+            anyTransmission = anyTransmission || draw.transmission > 0.0f;
+        } else {
+            opaque.push_back(&draw);
+        }
+    }
+
+    RHI::RenderPassDesc rp;
+    rp.colorTarget = colorTarget;
+    rp.depthTarget = depthTarget;
+    rp.colorLayer = options.colorLayer;
+    rp.clearColor[0] = 0.0f;
+    rp.clearColor[1] = 0.0f;
+    rp.clearColor[2] = 0.0f;
+    rp.clearColor[3] = 0.0f;
+    rp.clearDepth = true;
+    rp.cycle = pass.cycleTargets;
+
+    {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::opaque");
+        cmd->beginRenderPass(rp);
+        cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
+        cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
+        drawMeshList(cmd, opaque, camera, lighting, projectRoot, options, pass,
+                     wireframe ? m_wireframePipeline : m_scenePipeline);
+        if (options.drawSky) drawSky(cmd, camera, height);
+        if (options.grid.enabled) drawGrid(cmd, camera, options.grid);
+        cmd->endRenderPass();
+    }
+
+    if (!translucent.empty()) {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::translucent");
+        auto distanceSq = [&](const MeshDraw* d) {
+            const Vec3 center = d->hasAabb ? (d->aabbMin + d->aabbMax) * 0.5f
+                                           : d->worldMatrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+            return (center - camera.position).lengthSquared();
+        };
+        std::sort(translucent.begin(), translucent.end(),
+                  [&](const MeshDraw* a, const MeshDraw* b) { return distanceSq(a) > distanceSq(b); });
+
+        if (anyTransmission && pass.view && pass.view->opaqueCopy && options.colorLayer == 0 &&
+            colorTarget == pass.view->color[pass.view->current]) {
+            cmd->copyTexture(colorTarget, pass.view->opaqueCopy, width, height);
+            pass.opaqueCopyBound = true;
+        }
+
+        RHI::RenderPassDesc rp2 = rp;
+        rp2.loadColor = true;
+        rp2.clearDepth = false;
+        rp2.cycle = false;
+        cmd->beginRenderPass(rp2);
+        cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
+        cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
+        // Back to front; transmissive surfaces write depth and composite the copied scene,
+        // alpha-blended ones are premultiplied over what is already there.
+        std::vector<const MeshDraw*> run;
+        bool runTransmissive = false;
+        auto flush = [&]() {
+            if (run.empty()) return;
+            drawMeshList(cmd, run, camera, lighting, projectRoot, options, pass,
+                         runTransmissive ? m_scenePipeline : m_blendPipeline);
+            run.clear();
+        };
+        for (const MeshDraw* d : translucent) {
+            const bool transmissive = d->transmission > 0.0f;
+            if (!run.empty() && transmissive != runTransmissive) flush();
+            runTransmissive = transmissive;
+            run.push_back(d);
+        }
+        flush();
+        cmd->endRenderPass();
+        pass.opaqueCopyBound = false;
+    }
+
+    return static_cast<u32>(opaque.size() + translucent.size());
 }
 
 std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
@@ -982,6 +1433,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
     q.with<ECS::MeshFilterComponent>();
     world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
         if (Scene::isEffectivelyDisabled(world, entity)) return;
+        if (options.excludeEntity.isValid() && entity == options.excludeEntity) return;
 
         const Mat4 worldMatrix = entityMatrix(world, entity);
         if (auto* terrain = world.get<ECS::TerrainComponent>(entity)) {
@@ -1002,6 +1454,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.castShadows = terrain->castShadows;
                 draw.receiveShadows = terrain->receiveShadows;
                 draw.shininess = terrain->shininess;
+                draw.roughness = 1.0f;
                 if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
                     draw.receiveShadows = renderer->receiveShadows;
                 }
@@ -1025,8 +1478,9 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (!mesh || mesh->vertices.empty()) return;
 
         const Vec3 bsz = mesh->bounds.max - mesh->bounds.min;
+        Spatial::AABB3D aabb;
+        bool hasAabb = false;
         if (bsz.lengthSquared() > 1e-6f) {
-            Spatial::AABB3D aabb;
             const Vec3 c[2] = {mesh->bounds.min, mesh->bounds.max};
             aabb.min = Vec3(1e30f, 1e30f, 1e30f);
             aabb.max = Vec3(-1e30f, -1e30f, -1e30f);
@@ -1043,12 +1497,19 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                     }
                 }
             }
+            hasAabb = true;
             if (!frustum.intersects(aabb)) return;
         }
 
+        const f32 sx = Vec3(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0)).length();
+        const f32 sy = Vec3(worldMatrix(0, 1), worldMatrix(1, 1), worldMatrix(2, 1)).length();
+        const f32 sz = Vec3(worldMatrix(0, 2), worldMatrix(1, 2), worldMatrix(2, 2)).length();
+        const f32 scale = std::max(sx, std::max(sy, sz));
+        const f32 lodDistance = viewerDistanceFor(meshWorldCenter(worldMatrix, mesh)) / std::max(scale, 0.001f);
+
         MeshDraw draw;
         draw.entity = entity;
-        draw.mesh = mesh;
+        draw.mesh = selectMeshLod(mesh, entity, lodDistance);
         draw.worldMatrix = worldMatrix;
         draw.castShadows = Scene::meshCastsShadows(world, entity);
         draw.receiveShadows = Scene::meshReceivesShadows(world, entity);
@@ -1059,28 +1520,493 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
         draw.customNormalPath = filter.customNormalPath;
+        if (!filter.customMaterialPath.empty()) {
+            const Assets::MaterialSurface surface =
+                Assets::MaterialCache::instance().resolve(filter.customMaterialPath, projectRoot);
+            if (surface.valid) {
+                draw.hasAuthoredMaterial = true;
+                const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+                draw.albedo = Vec4(albedo.x, albedo.y, albedo.z, std::clamp(surface.albedo.w, 0.0f, 1.0f));
+                draw.metallic = std::clamp(surface.metallic, 0.0f, 1.0f);
+                draw.roughness = std::clamp(surface.roughness, 0.02f, 1.0f);
+                draw.reflectance = std::clamp(surface.reflectance, 0.0f, 1.0f);
+                draw.emission = srgbToLinear(surface.emission) * std::max(surface.emissionStrength, 0.0f);
+                if (draw.customTexturePath.empty()) draw.customTexturePath = surface.albedoMap;
+                if (draw.customNormalPath.empty()) draw.customNormalPath = surface.normalMap;
+                draw.ormMapPath = surface.ormMap;
+                draw.emissionMapPath = surface.emissionMap;
+                draw.uvTiling = surface.uvTiling;
+                draw.uvOffset = surface.uvOffset;
+                draw.normalStrength = surface.normalStrength;
+                draw.aoStrength = surface.aoStrength;
+                draw.alphaMode = static_cast<u8>(surface.alphaMode);
+                draw.alphaCutoff = surface.alphaCutoff;
+                draw.transmission = std::clamp(surface.transmission, 0.0f, 1.0f);
+                draw.ior = std::max(surface.ior, 1.0f);
+                draw.clearcoat = std::clamp(surface.clearcoat, 0.0f, 1.0f);
+                draw.clearcoatRoughness = std::clamp(surface.clearcoatRoughness, 0.02f, 1.0f);
+                draw.sheenColor = srgbToLinear(surface.sheenColor);
+                draw.sheenRoughness = surface.sheenRoughness;
+                draw.iridescence = std::clamp(surface.iridescence, 0.0f, 1.0f);
+                draw.iridescenceThickness = surface.iridescenceThickness;
+                draw.iridescenceIor = surface.iridescenceIor;
+                if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+            }
+        }
         if (filter.primitive == ECS::MeshPrimitive::Custom) {
             const std::string& resolved = Assets::MeshCache::getInstance().getResolvedPath();
             draw.meshPath = resolved.empty() ? filter.customMeshPath : resolved;
         }
-        draw.viewerDistance = viewerDistanceFor(meshWorldCenter(worldMatrix, mesh));
+        draw.viewerDistance = lodDistance * std::max(scale, 0.001f);
+        draw.hasAabb = hasAabb;
+        if (hasAabb) {
+            draw.aabbMin = aabb.min;
+            draw.aabbMax = aabb.max;
+        }
+        const bool flat = (mesh->bounds.max.y - mesh->bounds.min.y) < 0.08f;
+        const f32 midY = (mesh->bounds.min.y + mesh->bounds.max.y) * 0.5f;
+        const f32 worldY = worldMatrix.transformPoint(Vec3(0.0f, midY, 0.0f)).y;
+        draw.planarReceiver = flat && options.features.reflections == ReflectionMode::Planar &&
+                              std::abs(worldY - options.features.reflectionPlaneY) < 0.4f;
         draws.push_back(draw);
     });
 
     return draws;
 }
 
-u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& world,
-                                        const GpuSceneCamera& camera, RHI::Texture* colorTarget,
-                                        RHI::Texture* depthTarget, u32 width, u32 height,
-                                        const std::string& projectRoot,
-                                        const GpuSceneRenderOptions& options) {
-    CF_PROFILE_SCOPE("GpuSceneRenderer::renderWithCamera");
-    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderWithCamera");
-    if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
+void GpuSceneRenderer::applyCoarseOcclusion(std::vector<MeshDraw>& draws, const GpuSceneCamera& camera,
+                                            const GpuSceneRenderOptions& options) const {
+    if (options.features.occlusion != OcclusionMode::Coarse || draws.size() < 2) return;
+    CF_PROFILE_SCOPE("GpuSceneRenderer::occlusion");
+    std::vector<OcclusionPrimitive> prims(draws.size());
+    for (u32 i = 0; i < draws.size(); ++i) {
+        prims[i].aabbMin = draws[i].aabbMin;
+        prims[i].aabbMax = draws[i].aabbMax;
+        if (!draws[i].hasAabb || draws[i].isTerrain) continue;
+        const f32 radius = (draws[i].aabbMax - draws[i].aabbMin).length() * 0.5f;
+        prims[i].canBeOccluded = true;
+        prims[i].canOcclude = radius >= options.features.occlusionMinRadius && !draws[i].isTranslucent();
+    }
+    Vec3 forward = camera.focus - camera.position;
+    if (forward.lengthSquared() < 1e-8f) return;
+    forward = forward.normalized();
+    const u32 maxOccluders = std::min(options.features.occlusionMaxOccluders, 16u);
+    const std::vector<u32> visible = visibleAfterCoarseOcclusion(
+        prims, camera.proj * camera.view, camera.position, forward, maxOccluders);
+    if (visible.size() == draws.size()) return;
+    std::vector<MeshDraw> kept;
+    kept.reserve(visible.size());
+    for (u32 index : visible) kept.push_back(std::move(draws[index]));
+    draws.swap(kept);
+}
 
+void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
+                                             const GpuSceneRenderOptions& options,
+                                             std::vector<float>& instanceMatrices) const {
+    instanceMatrices.clear();
+    for (MeshDraw& draw : draws) {
+        draw.batchCount = 1;
+        draw.skipColorDraw = false;
+        draw.batchByteOffset = 0;
+    }
+    if (!options.features.instancingEnabled || options.wireframeMeshes || !m_instancedPipeline) return;
+
+    std::vector<InstanceBatchItem> items(draws.size());
+    for (u32 i = 0; i < draws.size(); ++i) {
+        const MeshDraw& draw = draws[i];
+        const bool singleSubmesh = draw.mesh && draw.mesh->subMeshes.size() <= 1;
+        // Probed and translucent draws need per-object data (cube map, sort order).
+        items[i].allow = singleSubmesh && !draw.isTerrain && draw.probeIndex < 0 &&
+                         !draw.isTranslucent();
+        u64 key = static_cast<u64>(reinterpret_cast<uintptr_t>(draw.mesh));
+        auto mixBytes = [&](const std::string& text) {
+            for (unsigned char c : text) key = key * 131u + c;
+        };
+        auto mixFloat = [&](f32 value) {
+            u32 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            key = key * 131u + bits;
+        };
+        mixBytes(draw.customTexturePath);
+        mixBytes(draw.customNormalPath);
+        mixBytes(draw.ormMapPath);
+        mixBytes(draw.emissionMapPath);
+        mixFloat(draw.albedo.x);
+        mixFloat(draw.albedo.y);
+        mixFloat(draw.albedo.z);
+        mixFloat(draw.albedo.w);
+        mixFloat(draw.metallic);
+        mixFloat(draw.roughness);
+        mixFloat(draw.reflectance);
+        mixFloat(draw.emission.x);
+        mixFloat(draw.emission.y);
+        mixFloat(draw.emission.z);
+        mixFloat(draw.uvTiling.x);
+        mixFloat(draw.uvTiling.y);
+        mixFloat(draw.uvOffset.x);
+        mixFloat(draw.uvOffset.y);
+        mixFloat(draw.normalStrength);
+        mixFloat(draw.aoStrength);
+        mixFloat(draw.clearcoat);
+        mixFloat(draw.clearcoatRoughness);
+        mixFloat(draw.sheenColor.x);
+        mixFloat(draw.sheenColor.y);
+        mixFloat(draw.sheenColor.z);
+        mixFloat(draw.sheenRoughness);
+        mixFloat(draw.iridescence);
+        mixFloat(draw.iridescenceThickness);
+        key = key * 131u + draw.alphaMode;
+        if (draw.receiveShadows) key ^= 0x9e3779b97f4a7c15ull;
+        items[i].key = key == 0 ? 1 : key;
+    }
+    const u32 limit = std::clamp(options.features.maxInstancesPerBatch, 2u, 256u);
+    const std::vector<InstanceBatchGroup> groups = buildInstanceBatches(items, limit);
+    for (const InstanceBatchGroup& group : groups) {
+        if (group.members.size() < 2) continue;
+        MeshDraw& head = draws[group.members.front()];
+        head.batchCount = static_cast<u32>(group.members.size());
+        head.batchByteOffset = static_cast<u32>(instanceMatrices.size() * sizeof(float));
+        for (u32 n = 0; n < group.members.size(); ++n) {
+            const float* matrix = draws[group.members[n]].worldMatrix.data();
+            instanceMatrices.insert(instanceMatrices.end(), matrix, matrix + 16);
+            if (n > 0) draws[group.members[n]].skipColorDraw = true;
+        }
+    }
+}
+
+bool GpuSceneRenderer::ensureReflectionTargets(u32 width, u32 height) {
+    if (m_reflectionColor && m_reflectionDepth && m_reflectionWidth == width &&
+        m_reflectionHeight == height) {
+        return true;
+    }
+    if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
+    if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
+    m_reflectionColor = nullptr;
+    m_reflectionDepth = nullptr;
+    RHI::TextureDesc colorDesc;
+    colorDesc.width = width;
+    colorDesc.height = height;
+    colorDesc.format = kHdrFormat;
+    colorDesc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+    RHI::TextureDesc depthDesc;
+    depthDesc.width = width;
+    depthDesc.height = height;
+    depthDesc.format = RHI::TextureFormat::D32_FLOAT;
+    depthDesc.usage = RHI::TextureUsage::DepthStencil;
+    m_reflectionColor = m_device->createTexture(colorDesc);
+    m_reflectionDepth = m_device->createTexture(depthDesc);
+    m_reflectionWidth = width;
+    m_reflectionHeight = height;
+    m_reflectionValid = false;
+    return m_reflectionColor && m_reflectionDepth;
+}
+
+void GpuSceneRenderer::renderPlanarReflection(RHI::CommandBuffer* cmd, ECS::World& world,
+                                              const GpuSceneCamera& camera, u32 width, u32 height,
+                                              const std::string& projectRoot,
+                                              const GpuSceneRenderOptions& options) {
+    const f32 scale = std::clamp(options.features.reflectionResolutionScale, 0.25f, 1.0f);
+    const u32 rw = std::max(64u, static_cast<u32>(static_cast<f32>(width) * scale));
+    const u32 rh = std::max(64u, static_cast<u32>(static_cast<f32>(height) * scale));
+    if (!ensureReflectionTargets(rw, rh)) return;
+
+    const f32 planeY = options.features.reflectionPlaneY;
+    auto mirrorY = [&](Vec3 p) {
+        p.y = planeY * 2.0f - p.y;
+        return p;
+    };
+    GpuSceneCamera reflected = camera;
+    reflected.position = mirrorY(camera.position);
+    reflected.focus = mirrorY(camera.focus);
+    reflected.view = Mat4::lookAt(reflected.position, reflected.focus, Vec3(0.0f, -1.0f, 0.0f));
+    const f32 aspect = static_cast<f32>(rw) / static_cast<f32>(std::max(rh, 1u));
+    reflected.proj = Mat4::perspective(camera.fovRad, aspect, camera.nearClip, camera.farClip);
+    m_reflectionVP = reflected.proj * reflected.view;
+
+    GpuSceneRenderOptions inner = options;
+    inner.features.reflections = ReflectionMode::Off;
+    inner.features.volumetrics = VolumetricQuality::Off;
+    inner.features.instancingEnabled = false;
+    inner.enableShadows = false;
+    inner.clipBelowEnabled = true;
+    inner.clipBelowY = planeY;
+    inner.cameraSettled = true;
+    inner.resolveFeaturesFromScene = false;
+    inner.resolveEnvironmentFromScene = false;
+    inner.colorLayer = 0;
+    inner.grid.enabled = false;
+    CF_PROFILE_SCOPE("GpuSceneRenderer::planarReflection");
+    const bool wasInReflection = m_inReflectionPass;
+    m_inReflectionPass = true;
+    ScenePassContext innerPass;
+    renderSceneHdr(cmd, world, reflected, m_reflectionColor, m_reflectionDepth, rw, rh, projectRoot,
+                   inner, innerPass);
+    m_inReflectionPass = wasInReflection;
+    m_reflectionValid = true;
+}
+
+void GpuSceneRenderer::resolveEnvironment(ECS::World& world, const std::string& projectRoot,
+                                          const GpuSceneRenderOptions& options) {
+    std::string path = options.environmentPath;
+    f32 exposure = options.environmentExposure;
+    if (options.resolveEnvironmentFromScene) {
+        const Scene::ActiveSkybox sky = Scene::findActiveSkybox(world);
+        if (sky.component) {
+            path = Scene::resolveSkyboxTexturePath(*sky.component, projectRoot).string();
+            exposure = sky.component->exposure;
+        }
+    }
+    m_environment.load(m_device, path);
+    m_environmentExposure = std::clamp(exposure, 0.0f, 8.0f);
+}
+
+void GpuSceneRenderer::releaseProbe(ReflectionProbe& probe) {
+    if (m_device) {
+        if (probe.cube) m_device->destroyTexture(probe.cube);
+        if (probe.depth) m_device->destroyTexture(probe.depth);
+    }
+    probe = ReflectionProbe{};
+}
+
+bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
+                                    ReflectionProbe& probe, const GpuSceneCamera& camera,
+                                    const std::string& projectRoot,
+                                    const GpuSceneRenderOptions& options) {
+    u32 resolution = 32;
+    while (resolution < std::clamp(options.features.probeResolution, 32u, 512u)) resolution <<= 1;
+    if (!probe.cube || !probe.depth || probe.resolution != resolution) {
+        if (probe.cube) m_device->destroyTexture(probe.cube);
+        if (probe.depth) m_device->destroyTexture(probe.depth);
+        RHI::TextureDesc cubeDesc;
+        cubeDesc.width = resolution;
+        cubeDesc.height = resolution;
+        cubeDesc.format = kHdrFormat;
+        cubeDesc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+        cubeDesc.type = RHI::TextureType::Cube;
+        cubeDesc.mipLevels = probeMipCount(resolution);
+        probe.cube = m_device->createTexture(cubeDesc);
+        RHI::TextureDesc depthDesc;
+        depthDesc.width = resolution;
+        depthDesc.height = resolution;
+        depthDesc.format = RHI::TextureFormat::D32_FLOAT;
+        depthDesc.usage = RHI::TextureUsage::DepthStencil;
+        probe.depth = m_device->createTexture(depthDesc);
+        probe.resolution = resolution;
+        probe.mipLevels = cubeDesc.mipLevels;
+        probe.valid = false;
+        if (!probe.cube || !probe.depth) return false;
+    }
+
+    GpuSceneRenderOptions inner = options;
+    inner.features.reflections = ReflectionMode::Off;
+    inner.features.volumetrics = VolumetricQuality::Off;
+    inner.features.occlusion = OcclusionMode::Off;
+    inner.features.instancingEnabled = false;
+    inner.resolveFeaturesFromScene = false;
+    inner.resolveEnvironmentFromScene = false;
+    inner.enableShadows = false;
+    inner.cameraSettled = true;
+    inner.clipBelowEnabled = false;
+    inner.excludeEntity = probe.entity;
+    inner.grid.enabled = false;
+    inner.drawSky = true;
+    inner.textureQualityViewers.clear();
+
+    CF_PROFILE_SCOPE("GpuSceneRenderer::probe");
+    const bool wasInReflection = m_inReflectionPass;
+    m_inReflectionPass = true;
+    for (u32 face = 0; face < 6; ++face) {
+        GpuSceneCamera faceCam;
+        faceCam.position = probe.origin;
+        faceCam.fovRad = kPi * 0.5f;
+        faceCam.nearClip = 0.05f;
+        faceCam.farClip = camera.farClip;
+        cubeFaceCamera(probe.origin, face, faceCam.nearClip, faceCam.farClip, faceCam.view,
+                       faceCam.proj, faceCam.focus);
+        inner.colorLayer = face;
+        ScenePassContext innerPass;
+        innerPass.cycleTargets = false;
+        renderSceneHdr(cmd, world, faceCam, probe.cube, probe.depth, resolution, resolution,
+                       projectRoot, inner, innerPass);
+    }
+    m_inReflectionPass = wasInReflection;
+    if (probe.mipLevels > 1) cmd->generateMipmaps(probe.cube);
+    probe.valid = true;
+    return true;
+}
+
+void GpuSceneRenderer::updateReflectionProbes(RHI::CommandBuffer* cmd, ECS::World& world,
+                                              std::vector<MeshDraw>& draws,
+                                              const GpuSceneCamera& camera,
+                                              const std::string& projectRoot,
+                                              const GpuSceneRenderOptions& options,
+                                              u64 sceneHash, bool allowCapture) {
+    for (MeshDraw& draw : draws) draw.probeIndex = -1;
+    const RenderFeatureSettings& features = options.features;
+    const u32 maxProbes = std::min(features.maxReflectionProbes, 16u);
+    if (features.reflections != ReflectionMode::Probe || maxProbes == 0 || options.wireframeMeshes) {
+        return;
+    }
+
+    struct Candidate {
+        ECS::Entity entity;
+        Vec3 center;
+        f32 distanceSq = 0.0f;
+    };
+    std::vector<Candidate> candidates;
+    for (const MeshDraw& draw : draws) {
+        if (!draw.isGlossy() || !draw.hasAabb) continue;
+        const bool seen = std::any_of(candidates.begin(), candidates.end(),
+                                      [&](const Candidate& c) { return c.entity == draw.entity; });
+        if (seen) continue;
+        const Vec3 center = (draw.aabbMin + draw.aabbMax) * 0.5f;
+        candidates.push_back({draw.entity, center, (center - camera.position).lengthSquared()});
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) { return a.distanceSq < b.distanceSq; });
+    if (candidates.size() > maxProbes) candidates.resize(maxProbes);
+
+    constexpr usize kMaxProbeSlots = 16;
+    std::vector<i32> selected;
+    for (const Candidate& candidate : candidates) {
+        i32 index = -1;
+        for (usize i = 0; i < m_probes.size(); ++i) {
+            if (m_probes[i].world == &world && m_probes[i].entity == candidate.entity) {
+                index = static_cast<i32>(i);
+                break;
+            }
+        }
+        if (index < 0) {
+            for (usize i = 0; i < m_probes.size(); ++i) {
+                if (!m_probes[i].entity.isValid()) {
+                    index = static_cast<i32>(i);
+                    break;
+                }
+            }
+        }
+        if (index < 0 && m_probes.size() < kMaxProbeSlots) {
+            m_probes.emplace_back();
+            index = static_cast<i32>(m_probes.size() - 1);
+        }
+        if (index < 0) {
+            u64 oldest = m_frameCounter;
+            for (usize i = 0; i < m_probes.size(); ++i) {
+                if (m_probes[i].lastUsed < oldest) {
+                    oldest = m_probes[i].lastUsed;
+                    index = static_cast<i32>(i);
+                }
+            }
+            if (index < 0) break;
+        }
+        ReflectionProbe& probe = m_probes[static_cast<usize>(index)];
+        if (probe.world != &world || probe.entity != candidate.entity) {
+            probe.world = &world;
+            probe.entity = candidate.entity;
+            probe.valid = false;
+        }
+        if ((probe.origin - candidate.center).lengthSquared() > 1e-4f) {
+            probe.origin = candidate.center;
+            probe.valid = false;
+        }
+        probe.lastUsed = m_frameCounter;
+        selected.push_back(index);
+        for (MeshDraw& draw : draws) {
+            if (draw.entity == candidate.entity) draw.probeIndex = index;
+        }
+    }
+
+    // Capture at most one probe per frame, nearest stale one first.
+    u32 stale = 0;
+    for (i32 index : selected) {
+        ReflectionProbe& probe = m_probes[static_cast<usize>(index)];
+        if (probe.valid && probe.sceneHash == sceneHash) continue;
+        if (allowCapture && stale == 0 && captureProbe(cmd, world, probe, camera, projectRoot, options)) {
+            probe.sceneHash = sceneHash;
+            continue;
+        }
+        ++stale;
+    }
+    m_probesPending = m_probesPending || stale > 0;
+
+    for (ReflectionProbe& probe : m_probes) {
+        if (probe.entity.isValid() && probe.lastUsed + 600 < m_frameCounter) releaseProbe(probe);
+    }
+}
+
+GpuSceneRenderer::ViewTargets* GpuSceneRenderer::acquireViewTargets(u64 viewId, u32 width,
+                                                                    u32 height) {
+    auto create = [&](ViewTargets& view) -> bool {
+        view = ViewTargets{};
+        view.viewId = viewId;
+        view.width = width;
+        view.height = height;
+        RHI::TextureDesc colorDesc;
+        colorDesc.width = width;
+        colorDesc.height = height;
+        colorDesc.format = kHdrFormat;
+        colorDesc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+        RHI::TextureDesc depthDesc;
+        depthDesc.width = width;
+        depthDesc.height = height;
+        depthDesc.format = RHI::TextureFormat::D32_FLOAT;
+        depthDesc.usage = RHI::TextureUsage::DepthStencil | RHI::TextureUsage::Sampler;
+        for (u32 i = 0; i < 2; ++i) {
+            view.color[i] = m_device->createTexture(colorDesc);
+            view.depth[i] = m_device->createTexture(depthDesc);
+        }
+        view.opaqueCopy = m_device->createTexture(colorDesc);
+        return view.color[0] && view.color[1] && view.depth[0] && view.depth[1] && view.opaqueCopy;
+    };
+
+    for (ViewTargets& view : m_views) {
+        if (view.viewId != viewId) continue;
+        if (view.width != width || view.height != height) {
+            releaseViewTargets(view);
+            if (!create(view)) return nullptr;
+        }
+        view.lastUsed = m_frameCounter;
+        return &view;
+    }
+
+    ViewTargets* slot = nullptr;
+    if (m_views.size() < kMaxViewTargets) {
+        m_views.emplace_back();
+        slot = &m_views.back();
+    } else {
+        slot = &m_views.front();
+        for (ViewTargets& view : m_views) {
+            if (view.lastUsed < slot->lastUsed) slot = &view;
+        }
+        releaseViewTargets(*slot);
+    }
+    if (!create(*slot)) {
+        releaseViewTargets(*slot);
+        return nullptr;
+    }
+    slot->lastUsed = m_frameCounter;
+    return slot;
+}
+
+void GpuSceneRenderer::releaseViewTargets(ViewTargets& view) {
+    if (m_device) {
+        for (u32 i = 0; i < 2; ++i) {
+            if (view.color[i]) m_device->destroyTexture(view.color[i]);
+            if (view.depth[i]) m_device->destroyTexture(view.depth[i]);
+        }
+        if (view.opaqueCopy) m_device->destroyTexture(view.opaqueCopy);
+    }
+    const u64 id = view.viewId;
+    view = ViewTargets{};
+    view.viewId = id;
+}
+
+u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
+                                     const GpuSceneCamera& camera, RHI::Texture* colorTarget,
+                                     RHI::Texture* depthTarget, u32 width, u32 height,
+                                     const std::string& projectRoot,
+                                     const GpuSceneRenderOptions& opts, ScenePassContext& pass) {
     const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
-    const Mat4 vp = camera.proj * camera.view;
+    pass.viewProj = camera.proj * camera.view;
     const Spatial::Frustum frustum = Spatial::Frustum::fromCamera(
         camera.position, camera.focus, Vec3(0.0f, 1.0f, 0.0f), camera.fovRad, aspect,
         camera.nearClip, camera.farClip);
@@ -1088,9 +2014,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     std::vector<MeshDraw> draws;
     {
         CF_PROFILE_SCOPE("GpuSceneRenderer::gather");
-        draws = gatherMeshDraws(world, camera.position, frustum, projectRoot, options);
+        draws = gatherMeshDraws(world, camera.position, frustum, projectRoot, opts);
     }
-
     // Upload GPU buffers before any render pass. Creating/uploading buffers
     // while a pass is recording is a common NVIDIA driver SIGSEGV.
     draws.erase(std::remove_if(draws.begin(), draws.end(),
@@ -1099,31 +2024,174 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
                                           !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer;
                                }),
                 draws.end());
-    if (draws.empty()) return 0;
+    applyCoarseOcclusion(draws, camera, opts);
+
+    if (pass.view) {
+        pass.sceneHash = hashProbeScene(draws, m_environment.path());
+        const bool allowExpensive =
+            !opts.features.expensiveEffectsOnlyWhenSettled || opts.cameraSettled;
+        if (opts.features.reflections == ReflectionMode::Planar && !opts.wireframeMeshes) {
+            if (allowExpensive && !opts.clipBelowEnabled) {
+                renderPlanarReflection(cmd, world, camera, width, height, projectRoot, opts);
+            }
+        } else {
+            m_reflectionValid = false;
+        }
+        updateReflectionProbes(cmd, world, draws, camera, projectRoot, opts, pass.sceneHash,
+                               allowExpensive);
+    }
+
+    std::vector<float> instanceMatrices;
+    assignInstanceBatches(draws, opts, instanceMatrices);
+    if (!instanceMatrices.empty() && m_instanceBuffer) {
+        m_device->uploadBuffer(m_instanceBuffer, instanceMatrices.data(),
+                               instanceMatrices.size() * sizeof(float));
+    }
 
     Scene::SceneLighting lighting;
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
 
-    if (!options.wireframeMeshes && options.enableShadows) {
+    m_activeCascadeCount = opts.directionalCascadeCount;
+    if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
     }
 
-    {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::draw");
-        return renderMeshes(cmd, draws, vp, camera.position, camera.view, lighting, colorTarget,
-                            depthTarget, width, height, projectRoot, options);
+    CF_PROFILE_SCOPE("GpuSceneRenderer::draw");
+    return renderMeshes(cmd, draws, camera, lighting, colorTarget, depthTarget, width, height,
+                        projectRoot, opts, pass);
+}
+
+ECS::PostProcessComponent GpuSceneRenderer::resolvePostProcess(
+    ECS::World& world, ECS::Entity camera, const ECS::PostProcessComponent& fallback) {
+    if (const ECS::PostProcessComponent* fx = findPostProcessForCamera(world, camera)) return *fx;
+    return fallback;
+}
+
+u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& world,
+                                        const GpuSceneCamera& cameraIn, RHI::Texture* colorTarget,
+                                        RHI::Texture* depthTarget, u32 width, u32 height,
+                                        const std::string& projectRoot,
+                                        const GpuSceneRenderOptions& options) {
+    CF_PROFILE_SCOPE("GpuSceneRenderer::renderWithCamera");
+    Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderWithCamera");
+    (void)depthTarget;
+    if (!m_ready || !cmd || !colorTarget || width < 1 || height < 1) return 0;
+    ++m_frameCounter;
+    m_probesPending = false;
+
+    GpuSceneRenderOptions opts = options;
+    if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
+    resolveEnvironment(world, projectRoot, opts);
+    const ECS::PostProcessComponent post =
+        opts.resolvePostProcessFromScene
+            ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
+            : opts.postProcess;
+
+    const f32 scale = std::clamp(opts.renderScale, 0.25f, 2.0f);
+    const u32 sceneW = std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(width) * scale)));
+    const u32 sceneH = std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(height) * scale)));
+    const u64 viewId = opts.viewId ? opts.viewId : static_cast<u64>(reinterpret_cast<uintptr_t>(colorTarget));
+    ViewTargets* view = acquireViewTargets(viewId, sceneW, sceneH);
+    if (!view) return 0;
+
+    // A large jump between frames is a camera cut: history would smear.
+    if (view->hasPrevious && (cameraIn.position - view->prevCameraPos).lengthSquared() > 25.0f) {
+        view->hasPrevious = false;
     }
+
+    GpuSceneCamera camera = cameraIn;
+    const Mat4 unjitteredViewProj = cameraIn.proj * cameraIn.view;
+    const bool taa = PostProcessStack::usesTaa(post) && !opts.wireframeMeshes;
+    Vec2 jitter(0.0f, 0.0f);
+    if (taa) {
+        jitter = PostProcessStack::taaJitter(view->frameIndex);
+        camera.proj(0, 2) += jitter.x * 2.0f / static_cast<f32>(sceneW);
+        camera.proj(1, 2) += jitter.y * 2.0f / static_cast<f32>(sceneH);
+    }
+
+    ScenePassContext pass;
+    pass.view = view;
+    const bool ssrFromPost = post.enabled && post.screenSpaceReflections.enabled;
+    const bool ssrFromFeatures =
+        opts.features.reflections == ReflectionMode::ScreenSpace ||
+        (opts.features.reflections != ReflectionMode::Off && opts.features.screenSpaceTrace);
+    if ((ssrFromPost || ssrFromFeatures) && !opts.wireframeMeshes) {
+        pass.ssrIntensity = ssrFromPost ? post.screenSpaceReflections.intensity : opts.features.ssrIntensity;
+        pass.ssrMaxRoughness =
+            ssrFromPost ? post.screenSpaceReflections.maxRoughness : opts.features.ssrMaxRoughness;
+        pass.ssrSteps = std::clamp(ssrFromPost ? post.screenSpaceReflections.maxSteps
+                                               : opts.features.ssrMaxSteps,
+                                   4u, 64u);
+        pass.ssrMaxDistance = std::max(opts.features.ssrMaxDistance, 1.0f);
+    }
+
+    RHI::Texture* hdr = view->color[view->current];
+    RHI::Texture* depth = view->depth[view->current];
+    const u32 drawn = renderSceneHdr(cmd, world, camera, hdr, depth, sceneW, sceneH, projectRoot,
+                                     opts, pass);
+
+    {
+        CF_PROFILE_SCOPE("GpuSceneRenderer::post");
+        PostProcessInputs in;
+        in.sceneColor = hdr;
+        in.sceneDepth = depth;
+        in.sceneWidth = sceneW;
+        in.sceneHeight = sceneH;
+        in.output = colorTarget;
+        in.outputWidth = width;
+        in.outputHeight = height;
+        in.proj = camera.proj;
+        in.viewProj = camera.proj * camera.view;
+        in.prevViewProj = view->hasPrevious ? view->prevViewProj : unjitteredViewProj;
+        in.cameraPos = camera.position;
+        in.deltaTime = std::clamp(opts.deltaTime, 1e-4f, 0.25f);
+        in.time = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
+        in.frameIndex = view->frameIndex;
+        in.historyValid = view->hasPrevious;
+        in.jitterPixels = jitter;
+        in.viewId = viewId;
+        m_post.execute(cmd, post, in);
+    }
+
+    // Keep redrawing until temporal effects converge after anything changes.
+    u64 changeHash = pass.sceneHash;
+    for (u32 i = 0; i < 16; ++i) {
+        u32 bits = 0;
+        std::memcpy(&bits, unjitteredViewProj.data() + i, sizeof(bits));
+        changeHash = (changeHash ^ bits) * 1099511628211ull;
+    }
+    if (changeHash != view->prevSceneHash) {
+        u32 settle = 2;
+        if (taa) settle = 16;
+        view->settleFrames = std::max(view->settleFrames, settle);
+    } else if (view->settleFrames > 0) {
+        --view->settleFrames;
+    }
+    view->prevSceneHash = changeHash;
+
+    view->prevViewProj = unjitteredViewProj;
+    view->prevView = cameraIn.view;
+    view->prevProj = cameraIn.proj;
+    view->prevCameraPos = cameraIn.position;
+    view->hasPrevious = true;
+    view->current ^= 1u;
+    ++view->frameIndex;
+
+    const bool continuous = post.enabled && (post.autoExposure.enabled ||
+                                             (post.grain.enabled && post.grain.intensity > 0.0f));
+    m_needsAnotherFrame = continuous || m_probesPending || view->settleFrames > 0;
+    return drawn;
 }
 
 u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
                               const Editor::EditorContext& ctx, RHI::Texture* colorTarget,
                               RHI::Texture* depthTarget, u32 width, u32 height,
                               const std::string& projectRoot, const GpuSceneRenderOptions& options) {
-    if (!m_ready || !cmd || !colorTarget || !depthTarget || width < 1 || height < 1) return 0;
+    if (!m_ready || !cmd || !colorTarget || width < 1 || height < 1) return 0;
     if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D) return 0;
 
     const Vec3 cameraPos =
@@ -1135,8 +2203,8 @@ u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
     camera.position = cameraPos;
     camera.focus = ctx.camFocus;
     camera.view = Mat4::lookAt(cameraPos, ctx.camFocus, Vec3(0, 1, 0));
-    camera.proj = Mat4::perspective(60.0f * 3.14159265f / 180.0f, aspect, 0.1f, farPlane);
-    camera.fovRad = 60.0f * 3.14159265f / 180.0f;
+    camera.proj = Mat4::perspective(60.0f * kPi / 180.0f, aspect, 0.1f, farPlane);
+    camera.fovRad = 60.0f * kPi / 180.0f;
     camera.nearClip = 0.1f;
     camera.farClip = farPlane;
 

@@ -190,15 +190,18 @@ bool renderCameraPreviewGpuOnly(SceneViewport& viewport, ECS::World& world, Edit
     const bool camChanged = (camPos - cache.lastCamPos).length() > 0.001f
         || (focus - cache.lastFocus).length() > 0.001f
         || std::abs(fovRad - cache.lastFov) > 0.001f;
-    const ImVec2 fbSizeProbe = imguiFramebufferSize(panelSize, 960);
+    const ImVec2 fbSizeProbe = imguiFramebufferSize(panelSize, 1920);
     const u32 probeW = static_cast<u32>(std::max(fbSizeProbe.x, 8.0f));
     const u32 probeH = static_cast<u32>(std::max(fbSizeProbe.y, 8.0f));
     const bool sizeChanged = probeW != cache.lastW || probeH != cache.lastH;
-    const u32 gpuInterval = camChanged ? 1u : 2u;
-    const bool rerunGpu = (camChanged || sizeChanged || !cache.hasFrame)
+    const u64 sceneStamp = editorSceneContentStamp(world);
+    const bool sceneChanged = sceneStamp != cache.lastSceneStamp;
+    const u32 gpuInterval = (camChanged || sceneChanged) ? 1u : 2u;
+    const bool rerunGpu = (camChanged || sizeChanged || sceneChanged || !cache.hasFrame ||
+                           viewport.cameraPreviewNeedsAnotherFrame())
         && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
     if (rerunGpu) {
-        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
+        const ImVec2 fbSize = fbSizeProbe;
         const bool gpuOk = viewport.renderCameraPreviewGpu(
             viewport.frameCommandBuffer(), world, ctx, view, proj, camPos, focus,
             fovRad, nearClip, farClip,
@@ -214,18 +217,15 @@ bool renderCameraPreviewGpuOnly(SceneViewport& viewport, ECS::World& world, Edit
         cache.lastFov = fovRad;
         cache.lastW = probeW;
         cache.lastH = probeH;
+        cache.lastSceneStamp = sceneStamp;
         cache.hasFrame = true;
     }
     if (!preview || !preview->handle) {
         return false;
     }
 
-    {
-        const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
-        const int skyCap = std::clamp(longest, 256, 512);
-        viewport.drawSkyboxForView(dl, origin, panelSize, world, ctx, skyCamera, false,
-                                   &skyboxRenderer, skyCap);
-    }
+    (void)skyCamera;
+    (void)skyboxRenderer;
     dl->AddImage(reinterpret_cast<ImTextureID>(preview->handle), origin,
                  ImVec2(origin.x + panelSize.x, origin.y + panelSize.y),
                  ImVec2(0, 0), ImVec2(1, 1));
@@ -378,10 +378,6 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
         ImGui::InvisibleButton("##campreview", panelSize);
         renderCameraView(world, ctx, origin, panelSize, camX, camY, zoom);
         ImDrawList* previewDl = ImGui::GetWindowDrawList();
-        if (const ECS::PostProcessComponent* fx =
-                Render::findPostProcessForCamera(world, cameraEntity)) {
-            Render::applyPostProcessOverlay(previewDl, origin, panelSize, *fx);
-        }
         if (cameraEntity.isValid()) {
             const char* camName = getEntityName(world, cameraEntity);
             ImDrawList* badgeDl = previewDl;

@@ -2,12 +2,14 @@
 #include "editor/SceneSerializerIO.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "animation/AnimationComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
 #include "editor/EditorContext.hpp"
@@ -915,6 +917,8 @@ bool SceneSerializer::serialize(const std::string& filepath) {
     emitPodComponents<ECS::Camera2DComponent>(kTypeCamera2D, entityMap);
     emitPodComponents<Physics2D::RigidBody2D>(kTypeRigidBody2D, entityMap);
     emitPodComponents<Physics2D::Collider2D>(kTypeCollider2D, entityMap);
+    emitPodComponents<Physics3D::RigidBody3D>(kTypeRigidBody3D, entityMap);
+    emitPodComponents<Physics3D::Collider3D>(kTypeCollider3D, entityMap);
     emitPodComponents<ECS::PersistentComponent>(kTypePersistent, entityMap);
     emitPodComponents<Scene::WorldTransform>(kTypeWorldTransform, entityMap);
     emitPodComponents<Scene::EntityLayer>(kTypeEntityLayer, entityMap);
@@ -976,6 +980,7 @@ bool SceneSerializer::serialize(const std::string& filepath) {
     }
 
     emitPodComponents<ECS::SkyboxComponent>(kTypeSkybox, entityMap);
+    emitPodComponents<ECS::ForwardRenderFeaturesComponent>(kTypeForwardRenderFeatures, entityMap);
 
     {
         std::vector<std::pair<u32, std::vector<u8>>> entries;
@@ -1168,6 +1173,12 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
             case kTypeCollider2D:
                 applyPODComponent<Physics2D::Collider2D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeRigidBody3D:
+                applyPODComponent<Physics3D::RigidBody3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeCollider3D:
+                applyPODComponent<Physics3D::Collider3D>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
             case kTypeScript:
                 applyScriptComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
@@ -1215,6 +1226,10 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 break;
             case kTypeSkybox:
                 applyPODComponent<ECS::SkyboxComponent>(e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeForwardRenderFeatures:
+                applyPODComponent<ECS::ForwardRenderFeaturesComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeTerrain:
                 applyTerrainComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()), filepath);

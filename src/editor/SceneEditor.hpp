@@ -34,6 +34,7 @@
 #include "core/io/FileWatcher.hpp"
 
 #include "physics/PhysicsSystem2D.hpp"
+#include "physics/PhysicsSystem3D.hpp"
 #include "ui/UISystem.hpp"
 #include "events/EventBus.hpp"
 #include "animation/AnimationSystem.hpp"
@@ -191,6 +192,7 @@ private:
 
     Events::EventBus m_eventBus;
     Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
+    Physics3D::PhysicsSystem3D m_physics3D;
     UI::UISystem m_uiSystem{&m_eventBus};
     Animation::AnimationSystem m_animationSystem;
     Render::Camera2D m_playCamera2D;

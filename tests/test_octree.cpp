@@ -108,6 +108,17 @@ TEST_CASE("Frustum - containsSphere", "[spatial][frustum]") {
     REQUIRE_FALSE(f.containsSphere({0, 0, 200}, 10.0f));
 }
 
+TEST_CASE("Frustum - looking straight up does not keep side points", "[spatial][frustum]") {
+    const f32 aspect = 16.0f / 9.0f;
+    const Frustum f = Frustum::fromCamera(
+        {0, 0, 0}, {0, 10, 0}, {0, 1, 0},
+        Math::degToRad(60.0f), aspect, 0.1f, 100.0f);
+
+    REQUIRE(f.contains({0, 10, 0}));
+    REQUIRE_FALSE(f.contains({40, 10, 0}));
+    REQUIRE_FALSE(f.contains({0, -5, 0}));
+}
+
 // ============================================================================
 // Octree Tests
 // ============================================================================

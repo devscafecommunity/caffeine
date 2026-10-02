@@ -2,6 +2,7 @@
 #include "script/ScriptTypes.hpp"
 #include "script/CppScript.hpp"
 #include "ecs/World.hpp"
+#include "ecs/PostProcessComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "debug/LogSystem.hpp"
 
@@ -13,6 +14,7 @@ ScriptSystem::ScriptSystem(ScriptEngine* engine)
 void ScriptSystem::resetPlayState() {
     m_initializedLua.clear();
     m_initializedNative.clear();
+    m_initializedPostProcess.clear();
     m_warnedNoLua = false;
 }
 
@@ -21,6 +23,7 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     processLuaScripts(world, dt);
     processNativeScripts(world, dt);
     processCppScripts(world, dt);
+    processPostProcessScripts(world, dt);
 }
 
 void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
@@ -158,6 +161,50 @@ void ScriptSystem::processCppScripts(ECS::World& world, f32 dt) {
         }
 
         csc->instance->onUpdate(entity, world, dt);
+    }
+}
+
+void ScriptSystem::processPostProcessScripts(ECS::World& world, f32 dt) {
+    ECS::ComponentQuery q;
+    q.with<ECS::PostProcessComponent>();
+
+    struct Entry {
+        u32 entityId;
+        std::string scriptPath;
+    };
+    Vector<Entry> entries;
+    world.forEach<ECS::PostProcessComponent>(q, [&entries](ECS::Entity entity, ECS::PostProcessComponent& fx) {
+        if (fx.customEffectScript[0] != '\0') entries.pushBack({entity.id(), fx.customEffectScript});
+    });
+
+    for (auto& entry : entries) {
+        ECS::Entity entity(entry.entityId, &world);
+        if (!entity.isValid()) continue;
+
+        const std::string key = "postprocess:" + entry.scriptPath;
+        if (!m_engine->isLoaded(key)) {
+            std::string err;
+            if (!m_engine->loadScriptAs(key, entry.scriptPath, &err)) {
+                CF_ERROR("Script", "Failed to load post-process script %s: %s", entry.scriptPath.c_str(),
+                         err.c_str());
+                ECS::PostProcessComponent* fx = entity.get<ECS::PostProcessComponent>();
+                if (fx) fx->customEffectScript[0] = '\0';
+                continue;
+            }
+        }
+
+        bool isNew = true;
+        for (usize i = 0; i < m_initializedPostProcess.size(); ++i) {
+            if (m_initializedPostProcess[i].id() == entity.id()) {
+                isNew = false;
+                break;
+            }
+        }
+        if (isNew) {
+            m_engine->callOnCreate(key, entity);
+            m_initializedPostProcess.pushBack(entity);
+        }
+        m_engine->callOnPostProcess(key, entity, dt);
     }
 }
 

@@ -50,6 +50,44 @@ void halveRgbaImage(const u8* src, u32 srcW, u32 srcH, std::vector<u8>& dst, u32
     }
 }
 
+/// Uploads `rgba` with a full box-filtered mip chain so minified textures don't shimmer.
+RHI::Texture* createMippedTexture(RHI::RenderDevice* device, std::vector<u8> rgba, u32 width,
+                                  u32 height, bool srgb) {
+    u32 mipLevels = 1;
+    for (u32 size = std::max(width, height); size > 1; size >>= 1) ++mipLevels;
+
+    RHI::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = srgb ? RHI::TextureFormat::R8G8B8A8_UNORM_SRGB : RHI::TextureFormat::R8G8B8A8_UNORM;
+    desc.usage = RHI::TextureUsage::Sampler;
+    desc.mipLevels = mipLevels;
+    RHI::Texture* texture = device->createTexture(desc);
+    if (!texture) return nullptr;
+
+    u32 levelW = width;
+    u32 levelH = height;
+    for (u32 level = 0; level < mipLevels; ++level) {
+        if (!device->uploadTexture(texture, rgba.data(), levelW, levelH, 4, level)) {
+            device->destroyTexture(texture);
+            return nullptr;
+        }
+        if (level + 1 == mipLevels) break;
+        std::vector<u8> next;
+        u32 nextW = 0;
+        u32 nextH = 0;
+        halveRgbaImage(rgba.data(), levelW, levelH, next, nextW, nextH);
+        rgba = std::move(next);
+        levelW = nextW;
+        levelH = nextH;
+    }
+    return texture;
+}
+
+std::string colorSpaceKey(const std::string& key, bool srgb) {
+    return srgb ? key + "#srgb" : key;
+}
+
 }  // namespace
 
 GpuTextureCache& GpuTextureCache::instance() {
@@ -99,7 +137,7 @@ void GpuTextureCache::destroyEntry(RHI::RenderDevice* device, Entry& entry) {
 }
 
 RHI::Texture* GpuTextureCache::loadTexture(RHI::RenderDevice* device, const std::string& resolved,
-                                           u32 qualityTier) {
+                                           u32 qualityTier, bool srgb) {
     int width = 0;
     int height = 0;
     int channels = 0;
@@ -111,46 +149,19 @@ RHI::Texture* GpuTextureCache::loadTexture(RHI::RenderDevice* device, const std:
 
     u32 uploadW = static_cast<u32>(width);
     u32 uploadH = static_cast<u32>(height);
-    std::vector<u8> rgba;
-    if (qualityTier > 0) {
-        rgba.assign(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
-        stbi_image_free(pixels);
-        pixels = nullptr;
-        downscaleRgba(rgba, uploadW, uploadH, qualityTier);
-    }
-
-    RHI::TextureDesc desc;
-    desc.width = uploadW;
-    desc.height = uploadH;
-    desc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
-    desc.usage = RHI::TextureUsage::Sampler;
-    desc.mipLevels = 1;
-
-    RHI::Texture* texture = device->createTexture(desc);
-    if (!texture) {
-        if (pixels) stbi_image_free(pixels);
-        return nullptr;
-    }
-
-    const bool uploaded = pixels
-        ? device->uploadTexture(texture, pixels, uploadW, uploadH, 4, 0)
-        : device->uploadTexture(texture, rgba.data(), uploadW, uploadH, 4, 0);
-    if (pixels) stbi_image_free(pixels);
-    if (!uploaded) {
-        device->destroyTexture(texture);
-        return nullptr;
-    }
-
-    return texture;
+    std::vector<u8> rgba(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+    stbi_image_free(pixels);
+    downscaleRgba(rgba, uploadW, uploadH, qualityTier);
+    return createMippedTexture(device, std::move(rgba), uploadW, uploadH, srgb);
 }
 
 RHI::Texture* GpuTextureCache::acquireFromPixels(RHI::RenderDevice* device,
                                                  const std::string& cacheKey, const u8* pixels,
                                                  u32 width, u32 height, int channels,
-                                                 u32 qualityTier) {
+                                                 u32 qualityTier, bool srgb) {
     if (!device || !pixels || width < 1 || height < 1 || cacheKey.empty()) return nullptr;
 
-    const std::string tieredKey = textureCacheKeyForTier(cacheKey, qualityTier);
+    const std::string tieredKey = colorSpaceKey(textureCacheKeyForTier(cacheKey, qualityTier), srgb);
     auto it = m_cache.find(tieredKey);
     if (it != m_cache.end() && it->second.texture) {
         it->second.refCount++;
@@ -185,39 +196,27 @@ RHI::Texture* GpuTextureCache::acquireFromPixels(RHI::RenderDevice* device,
     u32 uploadH = height;
     downscaleRgba(rgba, uploadW, uploadH, qualityTier);
 
-    RHI::TextureDesc desc;
-    desc.width = uploadW;
-    desc.height = uploadH;
-    desc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
-    desc.usage = RHI::TextureUsage::Sampler;
-    desc.mipLevels = 1;
-
-    RHI::Texture* texture = device->createTexture(desc);
+    RHI::Texture* texture = createMippedTexture(device, std::move(rgba), uploadW, uploadH, srgb);
     if (!texture) return nullptr;
-
-    if (!device->uploadTexture(texture, rgba.data(), uploadW, uploadH, 4, 0)) {
-        device->destroyTexture(texture);
-        return nullptr;
-    }
 
     Entry entry;
     entry.texture = texture;
     entry.refCount = 1;
     entry.width = uploadW;
     entry.height = uploadH;
-    entry.mipLevels = 1;
     m_cache[tieredKey] = entry;
     return texture;
 }
 
 RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::string& path,
-                                       const std::string& projectRoot, u32 qualityTier) {
+                                       const std::string& projectRoot, u32 qualityTier,
+                                       bool srgb) {
     if (!device || path.empty()) return nullptr;
 
     const std::string resolved = resolvePath(path, projectRoot);
     if (resolved.empty()) return nullptr;
 
-    const std::string cacheKey = textureCacheKeyForTier(resolved, qualityTier);
+    const std::string cacheKey = colorSpaceKey(textureCacheKeyForTier(resolved, qualityTier), srgb);
     const u64 stamp = fileTimestamp(resolved);
     auto it = m_cache.find(cacheKey);
     if (it != m_cache.end() && it->second.texture) {
@@ -231,7 +230,7 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
         }
     }
 
-    RHI::Texture* texture = loadTexture(device, resolved, qualityTier);
+    RHI::Texture* texture = loadTexture(device, resolved, qualityTier, srgb);
     if (!texture) return nullptr;
 
     Entry entry;
@@ -240,7 +239,6 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
     entry.fileStamp = stamp;
     entry.width = texture->width;
     entry.height = texture->height;
-    entry.mipLevels = 1;
     m_cache[cacheKey] = entry;
     return texture;
 }
@@ -248,14 +246,16 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
 void GpuTextureCache::release(RHI::RenderDevice* device, const std::string& resolvedPath) {
     if (resolvedPath.empty()) return;
     for (u32 tier = 0; tier <= kTextureQualityMaxTier; ++tier) {
-        const std::string key = textureCacheKeyForTier(resolvedPath, tier);
-        auto it = m_cache.find(key);
-        if (it == m_cache.end()) continue;
-        Entry& entry = it->second;
-        if (entry.refCount > 0) entry.refCount--;
-        if (entry.refCount == 0) {
-            destroyEntry(device, entry);
-            m_cache.erase(it);
+        for (bool srgb : {false, true}) {
+            const std::string key = colorSpaceKey(textureCacheKeyForTier(resolvedPath, tier), srgb);
+            auto it = m_cache.find(key);
+            if (it == m_cache.end()) continue;
+            Entry& entry = it->second;
+            if (entry.refCount > 0) entry.refCount--;
+            if (entry.refCount == 0) {
+                destroyEntry(device, entry);
+                m_cache.erase(it);
+            }
         }
     }
 }
@@ -295,10 +295,12 @@ RHI::Texture* GpuTextureCache::whiteTexture(RHI::RenderDevice* device) {
 
 void GpuTextureCache::invalidate(const std::string& resolvedPath) {
     for (u32 tier = 0; tier <= kTextureQualityMaxTier; ++tier) {
-        const std::string key = textureCacheKeyForTier(resolvedPath, tier);
-        auto it = m_cache.find(key);
-        if (it != m_cache.end()) {
-            it->second.fileStamp = 0;
+        for (bool srgb : {false, true}) {
+            const std::string key = colorSpaceKey(textureCacheKeyForTier(resolvedPath, tier), srgb);
+            auto it = m_cache.find(key);
+            if (it != m_cache.end()) {
+                it->second.fileStamp = 0;
+            }
         }
     }
     auto it = m_cache.find(resolvedPath);

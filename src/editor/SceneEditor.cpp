@@ -380,6 +380,7 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
 }
 
 void SceneEditor::exitPlayMode(ECS::World& world) {
+    m_physics3D.reset();
     m_isPlaying = false;
     m_isPaused  = false;
     m_ctx.isPlayMode = false;
@@ -542,6 +543,7 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
 
     m_animationSystem.onUpdate(world, dt);
     m_physicsSystem.onUpdate(world, dt);
+    m_physics3D.onUpdate(world, dt);
 #ifdef CF_HAS_SCRIPTING
     if (m_scriptEngineReady) {
         m_scriptEngine.setWorld(&world);
@@ -611,6 +613,7 @@ void SceneEditor::render(f32 deltaTime) {
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
     m_ctx.activeWorld = activeWorld;
+    m_ctx.projectRootPath = m_currentProjectConfig.RootPath;
     if (!activeWorld) {
         renderUnsavedChangesPopup(nullptr);
         return;
@@ -744,6 +747,7 @@ void SceneEditor::render(f32 deltaTime) {
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
+    m_materialEditor.setFrameCommandBuffer(m_frameCmd);
 #endif
     {
         CF_PROFILE_SCOPE("SceneEditor::viewport");
@@ -775,7 +779,13 @@ void SceneEditor::render(f32 deltaTime) {
     }
     {
         CF_PROFILE_SCOPE("SceneEditor::materialEditor");
-        m_materialEditor.onImGuiRender();
+        m_materialEditor.setProjectRoot(m_currentProjectConfig.RootPath.string());
+        if (!m_ctx.materialToOpen.empty()) {
+            m_materialEditor.open();
+            m_materialEditor.openFromPath(std::filesystem::path(m_ctx.materialToOpen));
+            m_ctx.materialToOpen.clear();
+        }
+        m_materialEditor.onImGuiRender(m_ctx);
     }
     {
         CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
@@ -801,6 +811,7 @@ void SceneEditor::render(f32 deltaTime) {
     m_viewport.setFrameCommandBuffer(nullptr);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
+    m_materialEditor.setFrameCommandBuffer(nullptr);
 #endif
     m_animationTimeline.render(deltaTime);
     m_animatorController.render();
@@ -812,6 +823,8 @@ void SceneEditor::render(f32 deltaTime) {
         PluginManager::instance().renderPanels();
         PluginManager::instance().renderManagerUI();
     }
+
+    serviceBrowseSession(m_ctx, m_assetBrowser);
 
     ImGui::End(); // DockSpace
 

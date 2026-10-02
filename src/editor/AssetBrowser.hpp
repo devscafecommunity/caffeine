@@ -73,6 +73,14 @@ public:
         m_onMaterialOpen = std::move(cb);
     }
 
+    enum class AssetPickerPoll : u8 { Idle, Selected, Cancelled };
+    void beginAssetPicker(const char* extensionFilter, const char* fieldLabel);
+    void cancelAssetPicker();
+    bool isAssetPickerActive() const { return m_assetPickerActive; }
+    AssetPickerPoll pollAssetPicker(std::string& outRelativePath);
+    /// Modal list. Call every frame while a project-asset browse is active.
+    void presentPickerModal();
+
     // ── Data layer ─────────────────────────────────────────────────────
     void init(const char* rootPath);
     void init(const ProjectConfig& projectConfig);
@@ -120,7 +128,11 @@ public:
     private:
     // UI helpers
     void renderToolbar();
+    void renderAssetPickerBar();
     void renderBreadcrumbs();
+    bool pickerAcceptsPath(const std::filesystem::path& path) const;
+    void commitAssetPicker(const std::filesystem::path& absolutePath);
+    std::string pathRelativeToProject(const std::filesystem::path& absolute) const;
     void renderGridView();
     void renderListView();
     void renderPreviewPane();
@@ -184,6 +196,11 @@ private:
 
     std::function<void(const std::filesystem::path&)> m_onScriptOpen;
     std::function<void(const std::filesystem::path&)> m_onMaterialOpen;
+    bool m_assetPickerActive = false;
+    std::string m_pickerFilter;
+    std::string m_pickerLabel;
+    std::optional<std::string> m_pickerResult;
+    bool m_pickerCancelled = false;
 };
 
 } // namespace Caffeine::Editor

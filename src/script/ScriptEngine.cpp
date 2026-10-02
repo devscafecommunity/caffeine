@@ -20,6 +20,8 @@ namespace Caffeine::Script {
 
 void registerProceduralScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerPostProcessScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerForwardRenderScriptBindings(sol::state& lua, ECS::World** worldPtr);
+sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
 // Internal implementation (Pimpl) — all sol2 types are here
@@ -621,6 +623,7 @@ bool ScriptEngine::init(const InitParams& params) {
     registerMathBindings(lua);
     registerProceduralScriptBindings(lua, &m_impl->m_world);
     registerPostProcessScriptBindings(lua, &m_impl->m_world);
+    registerForwardRenderScriptBindings(lua, &m_impl->m_world);
 
     {
         sol::table pt = lua["caffeine"]["particles"];
@@ -738,6 +741,10 @@ bool ScriptEngine::setExposedVar(const std::string& path, const ExposedVar& var)
 }
 
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
+    return loadScriptAs(path, path, outError);
+}
+
+bool ScriptEngine::loadScriptAs(const std::string& key, const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
     std::string file = path;
@@ -788,7 +795,7 @@ bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
         return false;
     }
 
-    m_impl->m_envs.set(path, std::move(env));
+    m_impl->m_envs.set(key, std::move(env));
     CF_INFO("Script", "Loaded script: %s", file.c_str());
     return true;
 }
@@ -878,6 +885,27 @@ bool ScriptEngine::callOnCollision(const std::string& path, ECS::Entity entity,
     if (!result.valid()) {
         sol::error err = result;
         CF_ERROR("Lua", "onCollision error: %s", err.what());
+        return false;
+    }
+    return true;
+}
+
+bool ScriptEngine::callOnPostProcess(const std::string& path, ECS::Entity entity, f32 dt) {
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    const u32 id = static_cast<u32>(entity.id());
+    sol::protected_function fn = (*envPtr)["onPostProcess"];
+    sol::protected_function_result result;
+    if (fn.valid()) {
+        result = fn(id, dt, makePostProcessScriptHandle(m_impl->m_lua, &m_impl->m_world, id));
+    } else {
+        fn = (*envPtr)["onUpdate"];
+        if (!fn.valid()) return false;
+        result = fn(id, dt);
+    }
+    if (!result.valid()) {
+        sol::error err = result;
+        CF_ERROR("Lua", "onPostProcess error: %s", err.what());
         return false;
     }
     return true;

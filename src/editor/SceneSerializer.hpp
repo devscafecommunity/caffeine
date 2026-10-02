@@ -62,7 +62,10 @@ private:
     static constexpr u32 kTypeAnimator       = 40;
     static constexpr u32 kTypeSkybox         = 41;
     static constexpr u32 kTypeTerrain        = 42;
-    static constexpr u32 kTypeCount          = 43;
+    static constexpr u32 kTypeRigidBody3D    = 43;
+    static constexpr u32 kTypeCollider3D     = 44;
+    static constexpr u32 kTypeForwardRenderFeatures = 45;
+    static constexpr u32 kTypeCount          = 46;
 
     static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian

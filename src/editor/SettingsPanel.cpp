@@ -2,6 +2,8 @@
 #include "editor/EditorIcons.hpp"
 #include "editor/EditorTheme.hpp"
 
+#include <algorithm>
+
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #ifdef CF_HAS_SDL3
@@ -67,6 +69,7 @@ void SettingsPanel::applyPreferencesToContext(EditorContext& ctx) {
     ctx.textureQualityRadius = m_preferences.textureQualityRadius;
     ctx.textureQualityFalloff = m_preferences.textureQualityFalloff;
     ctx.textureQualityMinScale = m_preferences.textureQualityMinScale;
+    ctx.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
 }
 
 void SettingsPanel::render() {
@@ -86,25 +89,37 @@ void SettingsPanel::render() {
             {"Layout Profiles", "backup-restore"},
         };
 
-        if (ImGui::BeginChild("settings_nav", ImVec2(190.0f, -40.0f), true)) {
+        if (ImGui::BeginChild("settings_nav", ImVec2(220.0f, -40.0f), true)) {
             ImGui::TextDisabled("Settings");
             ImGui::Separator();
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const float iconSize = ImGui::GetFontSize();
+            const float rowH = style.FramePadding.y * 2.0f + iconSize;
+            ImDrawList* navDraw = ImGui::GetWindowDrawList();
+
             for (int i = 0; i < IM_ARRAYSIZE(navItems); ++i) {
                 ImGui::PushID(i);
                 const bool selected = (m_settingsSection == i);
-                if (selected) {
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-                }
-                if (EditorIcons::hasIcon(navItems[i].icon)) {
-                    EditorIcons::image(navItems[i].icon, ImGui::GetFontSize());
-                    ImGui::SameLine();
-                }
-                if (ImGui::Selectable(navItems[i].label, selected, 0, ImVec2(-1, 0))) {
+                if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_None, ImVec2(-1.0f, rowH))) {
                     m_settingsSection = i;
                 }
-                if (selected) {
-                    ImGui::PopStyleColor();
+
+                const ImVec2 rMin = ImGui::GetItemRectMin();
+                const ImVec2 rMax = ImGui::GetItemRectMax();
+                const float labelX =
+                    rMin.x + style.FramePadding.x + iconSize + style.ItemInnerSpacing.x;
+                const float labelY = rMin.y + style.FramePadding.y;
+                if (EditorIcons::hasIcon(navItems[i].icon)) {
+                    const ImTextureRef iconTex = EditorIcons::get(navItems[i].icon);
+                    if (iconTex._TexData != nullptr || iconTex._TexID != ImTextureID_Invalid) {
+                        const ImVec2 iconPos(rMin.x + style.FramePadding.x, labelY);
+                        navDraw->AddImage(iconTex, iconPos,
+                                          ImVec2(iconPos.x + iconSize, iconPos.y + iconSize));
+                    }
                 }
+                const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+                navDraw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(labelX, labelY),
+                                 textCol, navItems[i].label);
                 ImGui::PopID();
             }
             ImGui::EndChild();
@@ -316,6 +331,18 @@ void SettingsPanel::renderViewportSettings() {
     }
 
     ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Rendering");
+    ImGui::Separator();
+    ImGui::TextWrapped(
+        "Scene viewport and play-mode previews render at viewport size times this scale "
+        "(HDR + TAA + post stack). Use 1.0 for native resolution, 1.5–2.0 for sharper edges.");
+    if (ImGui::SliderFloat("Render scale", &m_preferences.renderScale, 0.25f, 2.0f, "%.2fx")) {
+        m_preferences.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
+        savePreferences();
+        if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+    }
+
+    ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Texture quality");
     ImGui::Separator();
     ImGui::TextWrapped(
@@ -342,6 +369,7 @@ void SettingsPanel::renderViewportSettings() {
             if (m_editorContext) applyPreferencesToContext(*m_editorContext);
         }
     }
+
 #endif
 }
 

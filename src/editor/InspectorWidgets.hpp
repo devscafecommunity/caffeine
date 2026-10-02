@@ -1,11 +1,15 @@
 #pragma once
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorContext.hpp"
+#include "editor/DragDropSystem.hpp"
 #include "math/Vec2.hpp"
 #include "math/Vec3.hpp"
 #include "math/Vec4.hpp"
 #include <string>
 #include <filesystem>
 #include <functional>
+#include <algorithm>
+#include <cctype>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -99,45 +103,90 @@ inline bool InputText(const char* label, std::string& str) {
     return false;
 }
 
-inline bool AssetField(const char* label, std::string& path,
-                       const char* filter,
-                       const std::filesystem::path& projectRoot) {
+inline std::string toLowerExt(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+inline bool extensionMatchesFilter(const std::filesystem::path& path, const char* filter) {
+    if (!filter || filter[0] == '\0') return true;
+    const std::string ext = toLowerExt(path.extension().string());
+    std::string filterStr(filter);
+    size_t start = 0;
+    while (start < filterStr.size()) {
+        const size_t sep = filterStr.find(';', start);
+        std::string token = filterStr.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+        token = toLowerExt(token);
+        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+        while (!token.empty() && token.back() == ' ') token.pop_back();
+        if (!token.empty() && token.front() != '.') token.insert(token.begin(), '.');
+        if (!token.empty() && ext == token) return true;
+        if (sep == std::string::npos) break;
+        start = sep + 1;
+    }
+    return false;
+}
+
+inline std::string pathRelativeToProject(const EditorContext& ctx, const std::filesystem::path& absolute) {
+    if (!ctx.projectRootPath.empty()) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(absolute, ctx.projectRootPath, ec);
+        if (!ec && !rel.empty() && rel.generic_string().rfind("..") != 0) {
+            return rel.generic_string();
+        }
+    }
+    return absolute.string();
+}
+
+/// Leaves room for ImGui's right-side label so the control cannot consume the whole row.
+inline void setWidthForLabel(const char* label) {
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float labelW = ImGui::CalcTextSize(label).x + ImGui::GetStyle().ItemInnerSpacing.x * 2.0f;
+    const float controlW = avail - labelW;
+    ImGui::SetNextItemWidth(controlW > 48.0f ? controlW : std::max(48.0f, avail * 0.5f));
+}
+
+inline bool AssetField(EditorContext& ctx, const char* label, std::string& path, const char* filter) {
     bool changed = false;
-    std::string display = path.empty() ? "(none)" : std::filesystem::path(path).filename().string();
+    const std::string display = path.empty() ? "(none)" : std::filesystem::path(path).filename().string();
     char dispBuf[256];
     strncpy(dispBuf, display.c_str(), sizeof(dispBuf));
     dispBuf[sizeof(dispBuf) - 1] = '\0';
-    ImGui::InputText(label, dispBuf, sizeof(dispBuf), ImGuiInputTextFlags_ReadOnly);
-    ImGui::SameLine();
-    std::string btnId = std::string("...##") + label;
-    if (ImGui::Button(btnId.c_str(), ImVec2(28, 0))) {
-        ImGui::OpenPopup(label);
-    }
-    if (ImGui::BeginPopup(label)) {
-        ImGui::Text("Select asset (%s)", filter);
-        ImGui::Separator();
-        static char search[128] = {};
-        ImGui::InputText("##search", search, sizeof(search));
-        if (std::filesystem::exists(projectRoot)) {
-            std::string filterStr(filter);
-            for (auto& entry : std::filesystem::recursive_directory_iterator(
-                     projectRoot, std::filesystem::directory_options::skip_permission_denied)) {
-                if (!entry.is_regular_file()) continue;
-                std::string ext = entry.path().extension().string();
-                if (filterStr.find(ext) == std::string::npos) continue;
-                std::string fname = entry.path().filename().string();
-                if (search[0] != '\0' && fname.find(search) == std::string::npos) continue;
-                if (ImGui::Selectable(fname.c_str())) {
-                    path = entry.path().string();
-                    changed = true;
-                    ImGui::CloseCurrentPopup();
-                }
+
+    ImGui::PushID(label);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float spacing = style.ItemInnerSpacing.x;
+    const float browseW = ImGui::CalcTextSize("Browse").x + style.FramePadding.x * 2.0f + 8.0f;
+    const float clearW = path.empty() ? 0.0f : 22.0f;
+    const float buttons = browseW + (clearW > 0.0f ? spacing + clearW : 0.0f);
+
+    ImGui::TextUnformatted(label);
+    ImGui::SetNextItemWidth(std::max(48.0f, ImGui::GetContentRegionAvail().x - buttons - spacing));
+
+    ImGui::InputText("##path", dispBuf, sizeof(dispBuf), ImGuiInputTextFlags_ReadOnly);
+    if (ImGui::BeginDragDropTarget()) {
+        if (const AssetDropPayload* drop = DragDropManager::AcceptAssetDrop()) {
+            const std::filesystem::path dropped(drop->path);
+            if (extensionMatchesFilter(dropped, filter)) {
+                path = pathRelativeToProject(ctx, dropped);
+                changed = true;
             }
-        } else {
-            ImGui::TextDisabled("No project root set");
         }
-        ImGui::EndPopup();
+        ImGui::EndDragDropTarget();
     }
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::Button("Browse", ImVec2(browseW, 0.0f))) {
+        ctx.browse.requestProjectAsset(&path, filter, label);
+    }
+    if (!path.empty()) {
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("X", ImVec2(clearW, 0.0f))) {
+            path.clear();
+            changed = true;
+        }
+    }
+    ImGui::PopID();
     return changed;
 }
 

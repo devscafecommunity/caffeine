@@ -8,11 +8,13 @@
 #include "ecs/ProceduralComponents.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "physics/PhysicsComponents3D.hpp"
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
 #include "animation/AnimationComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "ecs/ForwardRenderComponents.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
 #include "ecs/Components3D.hpp"
 #include "scene/LightingSystem.hpp"
@@ -35,6 +37,16 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){
             w.add<Physics2D::RigidBody2D>(e);
         }
+    });
+    reg.registerComponent({
+        "Physics 3D", "RigidBody3D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<Physics3D::RigidBody3D>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<Physics3D::RigidBody3D>(e); }
+    });
+    reg.registerComponent({
+        "Physics 3D", "Collider3D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<Physics3D::Collider3D>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<Physics3D::Collider3D>(e); }
     });
     reg.registerComponent({
         "Physics 2D", "Collider2D",
@@ -198,12 +210,21 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
     });
     reg.registerComponent({
+        "Rendering", "Forward Render Features",
+        [](ECS::World& w, ECS::Entity e) {
+            return w.has<ECS::ForwardRenderFeaturesComponent>(e);
+        },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ForwardRenderFeaturesComponent>(e); }
+    });
+    reg.registerComponent({
         "Procedural", "Procedural World",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); }
     });
 
     ComponentTypeRegistry::instance().registerType<ECS::PostProcessComponent>("PostProcess");
+    ComponentTypeRegistry::instance().registerType<ECS::ForwardRenderFeaturesComponent>(
+        "ForwardRenderFeatures");
     ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
         "ProceduralWorld");
 }

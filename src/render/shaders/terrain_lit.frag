@@ -26,6 +26,13 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uSpotDir[4];
     vec4 uSpotColor[4];
     vec4 uSpotAngle[4];
+    vec4 uIblColor;
+    vec4 uIblParams;
+    vec4 uVolParams;
+    vec4 uReflectParams;
+    vec4 uExtra;
+    mat4 uReflectVP;
+    vec4 uEmission;
 } lights;
 
 layout(set = 3, binding = 1) uniform ShadowUBO {
@@ -63,33 +70,55 @@ layout(set = 2, binding = 11) uniform sampler2D uSpotShadow1;
 
 layout(location = 0) out vec4 outColor;
 
-float sampleShadowMapAtlas(sampler2D shadowMap, mat4 lightVP, vec3 worldPos, int cascade,
-                           int cascadeCount) {
-    vec4 clip = lightVP * vec4(worldPos, 1.0);
+const vec2 kShadowPoisson[12] = vec2[](
+    vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
+    vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
+    vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598));
+
+// Normal-offset, texel-scaled bias and a rotated Poisson PCF (TAA averages the rotation).
+float sampleShadowMapAtlas(sampler2D shadowMap, mat4 lightVP, vec3 worldPos, vec3 normal,
+                           int cascade, int cascadeCount) {
+    vec2 atlasSize = vec2(textureSize(shadowMap, 0));
+    float res = cascadeCount > 1 ? atlasSize.x * 0.5 : atlasSize.x;
+    float scaleX = length(vec3(lightVP[0][0], lightVP[1][0], lightVP[2][0]));
+    float depthPerMeter = length(vec3(lightVP[0][2], lightVP[1][2], lightVP[2][2]));
+    vec4 probe = lightVP * vec4(worldPos, 1.0);
+    if (probe.w <= 1e-5) return 1.0;
+    float texelWorld = 2.0 * probe.w / max(scaleX * res, 1e-5);
+
+    vec3 lightAxis = normalize(vec3(lightVP[0][2], lightVP[1][2], lightVP[2][2]));
+    float NoL = abs(dot(normal, lightAxis));
+    vec3 offsetPos = worldPos + normal * texelWorld * (0.6 + 1.6 * (1.0 - NoL));
+
+    vec4 clip = lightVP * vec4(offsetPos, 1.0);
     if (clip.w <= 1e-5) return 1.0;
     vec3 ndc = clip.xyz / clip.w;
-    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < -1.0 || ndc.z > 1.0) return 1.0;
+    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) return 1.0;
+
     vec2 uv = vec2(ndc.x * 0.5 + 0.5, 1.0 - (ndc.y * 0.5 + 0.5));
+    vec2 tileMin = vec2(0.0);
+    vec2 tileMax = vec2(1.0);
     if (cascadeCount > 1) {
         vec2 offset = vec2(float(cascade % 2) * 0.5, float(cascade / 2) * 0.5);
         uv = uv * 0.5 + offset;
+        tileMin = offset;
+        tileMax = offset + 0.5;
     }
-    const float bias = 0.005;
-    float depth = ndc.z;
-    float shadow = 0.0;
-    vec2 atlasSize = vec2(textureSize(shadowMap, 0));
-    vec2 texel = vec2(0.5 / atlasSize.x, 0.5 / atlasSize.y);
-    if (cascadeCount > 1) {
-        texel *= 0.5;
+    vec2 texel = 1.0 / atlasSize;
+    tileMin += texel;
+    tileMax -= texel;
+
+    float bias = depthPerMeter * texelWorld * 0.75 / max(probe.w, 1e-5) + 0.0004;
+    float depth = ndc.z - bias;
+    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    mat2 rot = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    float lit = 0.0;
+    for (int i = 0; i < 12; ++i) {
+        vec2 o = rot * kShadowPoisson[i] * texel * 1.75;
+        float stored = textureLod(shadowMap, clamp(uv + o, tileMin, tileMax), 0.0).r;
+        lit += depth > stored ? 0.0 : 1.0;
     }
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            vec2 offset = vec2(float(x), float(y)) * texel;
-            float stored = texture(shadowMap, uv + offset).r;
-            shadow += (depth - bias > stored) ? 0.0 : 1.0;
-        }
-    }
-    return shadow / 9.0;
+    return lit / 12.0;
 }
 
 int selectDirCascade(float viewDepth, vec4 splitData) {
@@ -101,17 +130,17 @@ int selectDirCascade(float viewDepth, vec4 splitData) {
     return 3;
 }
 
-float sampleDirShadow(sampler2D shadowMap, int lightIndex, vec3 worldPos) {
+float sampleDirShadow(sampler2D shadowMap, int lightIndex, vec3 worldPos, vec3 normal) {
     vec4 splitData = shadows.uDirCascadeSplits[lightIndex];
     float viewDepth = (shadows.uCameraView * vec4(worldPos, 1.0)).z;
     if (viewDepth < 0.0) viewDepth = -viewDepth;
     int cascade = selectDirCascade(viewDepth, splitData);
     mat4 lightVP = shadows.uDirShadowVP[lightIndex * 4 + cascade];
-    return sampleShadowMapAtlas(shadowMap, lightVP, worldPos, cascade, int(splitData.w));
+    return sampleShadowMapAtlas(shadowMap, lightVP, worldPos, normal, cascade, int(splitData.w));
 }
 
-float sampleSpotShadow(sampler2D shadowMap, mat4 lightVP, vec3 worldPos) {
-    return sampleShadowMapAtlas(shadowMap, lightVP, worldPos, 0, 1);
+float sampleSpotShadow(sampler2D shadowMap, mat4 lightVP, vec3 worldPos, vec3 normal) {
+    return sampleShadowMapAtlas(shadowMap, lightVP, worldPos, normal, 0, 1);
 }
 
 float samplePointShadow(samplerCube shadowCube, vec3 worldPos, vec3 lightPos, float radius) {
@@ -176,8 +205,12 @@ vec3 sampleTerrainNormal(vec3 n) {
 
 void main() {
     vec3 n = sampleTerrainNormal(v_normal);
+    vec3 shadowNormal = normalize(v_normal);
     vec3 surfaceAlbedo = sampleTerrainAlbedo(n) * lights.uAlbedo.rgb;
-    vec3 color = lights.uAmbient.rgb * surfaceAlbedo;
+    // Sky irradiance replaces the flat ambient once IBL is on, matching scene_lit.
+    vec3 ambient = lights.uIblParams.y > 0.5 ? lights.uIblColor.rgb * max(lights.uIblParams.x, 0.0)
+                                             : lights.uAmbient.rgb;
+    vec3 color = ambient * surfaceAlbedo;
     const float kDiffuseScale = 0.65;
 
     for (int i = 0; i < lights.uDirCount; ++i) {
@@ -188,9 +221,9 @@ void main() {
         float shadow = 1.0;
         if (lights.uFlags.x > 0.5) {
             if (i == 0 && shadows.uDirShadowValid.x > 0.5) {
-                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos);
+                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos, shadowNormal);
             } else if (i == 1 && shadows.uDirShadowValid.y > 0.5) {
-                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos);
+                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal);
             }
         }
         color += diffuse * surfaceAlbedo * shadow;
@@ -239,13 +272,14 @@ void main() {
         float shadow = 1.0;
         if (lights.uFlags.x > 0.5) {
             if (i == 0 && shadows.uSpotShadowValid.x > 0.5) {
-                shadow = sampleSpotShadow(uSpotShadow0, shadows.uSpotShadowVP[0], v_worldPos);
+                shadow = sampleSpotShadow(uSpotShadow0, shadows.uSpotShadowVP[0], v_worldPos, shadowNormal);
             } else if (i == 1 && shadows.uSpotShadowValid.y > 0.5) {
-                shadow = sampleSpotShadow(uSpotShadow1, shadows.uSpotShadowVP[1], v_worldPos);
+                shadow = sampleSpotShadow(uSpotShadow1, shadows.uSpotShadowVP[1], v_worldPos, shadowNormal);
             }
         }
         color += diffuse * surfaceAlbedo * shadow;
     }
 
-    outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    color += vec3(0.0) * (lights.uReflectVP[0][0] + lights.uExtra.x + lights.uEmission.x);
+    outColor = vec4(max(color, vec3(0.0)), 1.0);
 }

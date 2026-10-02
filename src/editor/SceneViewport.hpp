@@ -113,6 +113,7 @@ public:
     bool gpuSceneReady() const { return m_gpuSceneReady; }
     bool cameraPreviewGpuReady() const { return m_gpuSceneReady && m_useGpuScene; }
     RHI::Texture* cameraPreviewColorTarget() const { return m_previewColorTarget; }
+    bool cameraPreviewNeedsAnotherFrame() const { return m_previewNeedsAnotherFrame; }
     bool renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& world, EditorContext& ctx,
                                 const Mat4& view, const Mat4& proj, const Vec3& cameraPos,
                                 const Vec3& focus, f32 fovRad, f32 nearClip, f32 farClip,
@@ -296,7 +297,13 @@ private:
     MeshPreviewMode m_lastMeshPreviewMode = MeshPreviewMode::Textured;
     u32 m_gpuCacheWidth = 0;
     u32 m_gpuCacheHeight = 0;
+    u64 m_lastSceneStamp = 0;
     bool m_hasValidGpuFrame = false;
+    bool m_lastGpuFrameSettled = false;
+    f32 m_lastRenderScale = 1.0f;
+    bool m_viewportNeedsAnotherFrame = false;
+    bool m_previewNeedsAnotherFrame = false;
+    bool m_lastGridVisible = true;
 #endif
 };
 

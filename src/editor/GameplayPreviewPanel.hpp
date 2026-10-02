@@ -51,6 +51,7 @@ private:
     u32 m_lastTargetW = 0;
     u32 m_lastTargetH = 0;
     bool m_hasGpuFrame = false;
+    u64 m_lastSceneStamp = 0;
 #endif
 #ifdef CF_HAS_IMGUI
     Render::SkyboxRenderer m_skyboxRenderer;

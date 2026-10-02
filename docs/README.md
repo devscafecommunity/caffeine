@@ -20,6 +20,7 @@
 | **Rendering Roadmap** | [`plans/2026-09-21-rendering-roadmap.md`](plans/2026-09-21-rendering-roadmap.md) | Plano P0–P6: GPU único, texturas, LOD, PBR, sombras, reflexos, volumétricos |
 | **Sessão 2026-09-22 (Phong)** | [`plans/2026-09-22-phong-gpu-handles-session.md`](plans/2026-09-22-phong-gpu-handles-session.md) | Changelog: Phong GPU, sombras, handles, normal maps, inspector |
 | **Sessão 2026-09-22 (Viewport)** | [`plans/2026-09-22-viewport-rendering-quality-session.md`](plans/2026-09-22-viewport-rendering-quality-session.md) | HiDPI, wireframe GPU, LOD texturas, performance câmara |
+| **Sessão 2026-10-02 (PBR + Post)** | [`plans/2026-10-02-forward-pbr-post-session.md`](plans/2026-10-02-forward-pbr-post-session.md) | HDR, TAA, probes, stack GPU, Material Editor, Lua postprocess |
 | **Performance — Editor Viewport** | [`performance/editor-viewport-performance.md`](performance/editor-viewport-performance.md) | FPS Doppio, GPU/CPU exclusivo, sombras, profiler, SIGSEGV NVIDIA |
 
 ### Engine Core
@@ -62,12 +63,18 @@
 
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
-| **Post-Processing** | [`rendering/post-processing.md`](rendering/post-processing.md) | Stack modular de efeitos, Lua, benchmarks opcionais |
+| **Post-Processing** | [`rendering/post-processing.md`](rendering/post-processing.md) | Stack modular GPU (HDR→RGBA8), Lua, `customEffectScript` |
+| **Forward features** | [`rendering/forward-render-features.md`](rendering/forward-render-features.md) | Instancing, IBL, oclusão, reflexos, volumétricos (ECS) |
+| **Reflexos** | [`rendering/reflections.md`](rendering/reflections.md) | Planar, SSR, probes por objeto, environment map |
+| **Volumétricos** | [`rendering/volumetric-lighting.md`](rendering/volumetric-lighting.md) | Nevoeiro analítico no forward shader |
+| **Mesh LOD** | [`rendering/mesh-lod.md`](rendering/mesh-lod.md) | LOD de malhas e distâncias |
+| **Render snapshot** | [`rendering/render-snapshot.md`](rendering/render-snapshot.md) | Ferramenta CLI de regressão visual |
 | **RHI** | [`rendering/rhi.md`](rendering/rhi.md) | RenderDevice, CommandBuffer, Triple Buffering, abstração SDL_GPU |
 | **Batch Renderer** | [`rendering/batch-renderer.md`](rendering/batch-renderer.md) | Sprite batching, Texture Atlas, Radix Sort, Persistent Mapped Buffers |
 | **Camera 2D** | [`rendering/camera-2d.md`](rendering/camera-2d.md) | Projeção ortográfica, follow, shake, bounds |
 | **Camera 3D** | [`rendering/camera-3d.md`](rendering/camera-3d.md) | Projeção perspectiva, lookAt, frustum culling |
-| **Materiais Phong** | [`rendering/materials-phong.md`](rendering/materials-phong.md) | Iluminação Phong, normal maps, shininess (meshes + terreno) |
+| **Materiais Phong** | [`rendering/materials-phong.md`](rendering/materials-phong.md) | Iluminação de meshes e terreno |
+| **Materiais PBR** | [`rendering/materials-pbr.md`](rendering/materials-pbr.md) | `.mat`: albedo, metallic, roughness, ORM, emissão |
 | **Shadow Mapping** | [`rendering/shadow-mapping.md`](rendering/shadow-mapping.md) | Sombras GPU direcionais e pontuais |
 | **Texture Quality LOD** | [`rendering/texture-quality-lod.md`](rendering/texture-quality-lod.md) | LOD de texturas por distância aos visualizadores |
 
@@ -109,6 +116,7 @@
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
 | **Physics 2D** | [`physics/physics-2d.md`](physics/physics-2d.md) | AABB/circle collision, rigid body, layers, raycast |
+| **Physics 3D** | [`physics/physics-3d.md`](physics/physics-3d.md) | Bullet3: box/sphere/capsule, play mode sync |
 | **Spatial Partitioning** | [`physics/spatial-partitioning.md`](physics/spatial-partitioning.md) | Octree, broad-phase collision, frustum culling |
 
 ### Animation
@@ -136,13 +144,15 @@
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
 | **Scene Editor** | [`editor/scene-editor.md`](editor/scene-editor.md) | Entity Inspector, Hierarchy, Gizmos, drag-and-drop |
-| **Scene Viewport** | [`editor/scene-viewport.md`](editor/scene-viewport.md) | Renderização 3D GPU, HiDPI, wireframe, LOD texturas |
+| **Scene Viewport** | [`editor/scene-viewport.md`](editor/scene-viewport.md) | HDR, TAA, render scale, grelha/céu GPU |
+| **Material Editor** | [`editor/material-editor.md`](editor/material-editor.md) | `.mat` PBR, presets, preview com probes |
 
 ### Scripting
 
 | Módulo | Documentação | Descrição |
 |--------|-------------|-----------|
-| **Scripting** | [`scripting/scripting.md`](scripting/scripting.md) | Lua/AngelScript bindings, ECS integration, hot-reload |
+| **Scripting** | [`scripting/scripting.md`](scripting/scripting.md) | Visão geral (roadmap) |
+| **Lua runtime APIs** | [`scripting/runtime-apis.md`](scripting/runtime-apis.md) | `postprocess`, `forwardrender`, ciclo de vida |
 
 ### Debug
 

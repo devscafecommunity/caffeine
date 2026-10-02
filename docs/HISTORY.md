@@ -6,6 +6,14 @@
 
 ---
 
+## Forward PBR, reflexos e pós-processamento GPU (2026-10-02)
+
+Bloco que consolida renderização no **core**: pipeline HDR + `PostProcessStack` (TAA, SSAO, bloom, DoF, …), materiais PBR no `scene_lit`, reflection probes por objeto, Material Editor com preview GPU, API Lua completa de pós-processamento e execução de `customEffectScript` em play mode. Doppio deixa de simular efeitos com overlays ImGui.
+
+**Documentação:** [`plans/2026-10-02-forward-pbr-post-session.md`](plans/2026-10-02-forward-pbr-post-session.md)
+
+---
+
 ## Performance — Editor Viewport (2026-09-23)
 
 Investigação de FPS no Doppio: **~10 FPS → ~100 FPS** após corrigir redundância em `GpuSceneRenderer::draw` (shadow UBO + binds por chunk de terreno), LOD/cap de resolução, skybox throttle, separação GPU/CPU por frame.

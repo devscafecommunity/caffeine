@@ -8,6 +8,8 @@ layout(set = 3, binding = 0) uniform Uniforms {
     vec4 uAlbedo;
     float uMetallic;
     float uRoughness;
+    float uReflectance;
+    float uPad;
 } ubo;
 
 layout(location = 0) out vec4 outColor;
@@ -21,8 +23,8 @@ void main() {
     float specPower = max(4.0, (1.0 - ubo.uRoughness) * 96.0 + 8.0);
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
     vec3 halfVec = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(n, halfVec), 0.0), specPower) * ubo.uMetallic;
-
-    vec3 color = ubo.uAlbedo.rgb * diffuse + vec3(spec);
+    vec3 F0 = mix(vec3(clamp(ubo.uReflectance, 0.0, 1.0)), ubo.uAlbedo.rgb, clamp(ubo.uMetallic, 0.0, 1.0));
+    float spec = pow(max(dot(n, halfVec), 0.0), specPower);
+    vec3 color = ubo.uAlbedo.rgb * diffuse * (1.0 - F0) + F0 * spec;
     outColor = vec4(color, 1.0);
 }

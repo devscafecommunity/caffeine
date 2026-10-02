@@ -650,10 +650,14 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     previewOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
     previewOpts.textureQuality.minScale = ctx.textureQualityMinScale;
     previewOpts.textureQualityViewers.push_back(cameraPos);
+    previewOpts.environmentPath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+    previewOpts.renderScale = ctx.renderScale;
+    previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
+    previewOpts.viewId = 2;
     m_gpuSceneRenderer.renderWithCamera(
         cmd, world, camera, m_previewColorTarget, m_previewDepthTarget, width, height, projectRoot,
         previewOpts);
-    (void)ctx;
+    m_previewNeedsAnotherFrame = m_gpuSceneRenderer.needsAnotherFrame();
     return m_previewColorTarget && m_previewColorTarget->handle != nullptr;
 }
 
@@ -732,7 +736,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         return;
     }
     
-    const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize, 1280);
+    const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize, 3840);
     const u32 targetCanvasW = static_cast<u32>(framebufferSize.x);
     const u32 targetCanvasH = static_cast<u32>(framebufferSize.y);
     const bool canvasResized = m_gpuCacheWidth != targetCanvasW || m_gpuCacheHeight != targetCanvasH;
@@ -758,8 +762,16 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         m_editorCamMotion = camMotion;
         const bool editorCameraMoved = camMotion > 0.0001f;
         const bool previewModeChanged = m_meshPreviewMode != m_lastMeshPreviewMode;
-        const bool gpuNeedsRedraw =
-            editorCameraMoved || canvasResized || previewModeChanged || !m_hasValidGpuFrame;
+        const u64 sceneStamp = editorSceneContentStamp(world) ^
+                               (static_cast<u64>(ctx.skyboxIndex + 1) * 0x9E3779B97F4A7C15ull);
+        const bool sceneChanged = sceneStamp != m_lastSceneStamp;
+        // Shadows and reflection probes only run on a settled frame; draw one when the camera stops.
+        const bool settledFramePending = !m_lastGpuFrameSettled && camMotion < 0.002f;
+        const bool gpuNeedsRedraw = editorCameraMoved || canvasResized || previewModeChanged
+            || sceneChanged || settledFramePending || !m_hasValidGpuFrame || ctx.isPlayMode
+            || m_viewportNeedsAnotherFrame
+            || std::abs(ctx.renderScale - m_lastRenderScale) > 1e-4f
+            || m_config.grid != m_lastGridVisible;
 
         if (gpuNeedsRedraw) {
             CF_PROFILE_SCOPE("SceneViewport::gpuPass");
@@ -767,14 +779,38 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             gpuOpts.wireframeMeshes = wireframePreview;
             // Editor viewport: shadows multiply scene draws (4 cascades × lights). Runtime/gameplay
             // previews keep their own lighting; shadows belong in play mode / runtime, not edit mode.
-            gpuOpts.enableShadows = false;
+            // One cascade, and only after the camera settles. Four cascades while
+            // orbiting redraw the whole scene and blow the 16 ms budget.
+            gpuOpts.enableShadows = m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
+            gpuOpts.directionalCascadeCount = 1;
             gpuOpts.terrainLodDistanceScale = 2.0f;
             gpuOpts.textureQuality.enabled = false;
+            gpuOpts.cameraSettled = m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
+            gpuOpts.environmentPath = ctx.skyboxEnabled
+                ? Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string()
+                : std::string();
+            gpuOpts.renderScale = ctx.renderScale;
+            gpuOpts.deltaTime = ImGui::GetIO().DeltaTime;
+            gpuOpts.viewId = 1;
+            if (ctx.selectedEntity.isValid() && world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
+                gpuOpts.postProcessCamera = ctx.selectedEntity;
+            }
+            gpuOpts.grid.enabled = m_config.grid;
+            {
+                const f32 visibleRange = std::max(std::abs(ctx.camDistance), std::abs(camPos.y));
+                f32 spacing = 1.0f;
+                while (visibleRange / spacing > 40.0f) spacing *= 2.0f;
+                while (visibleRange / spacing < 8.0f && spacing > 0.25f) spacing *= 0.5f;
+                gpuOpts.grid.cellSize = std::max(spacing, 0.25f);
+                gpuOpts.grid.majorEvery = 10.0f;
+                gpuOpts.grid.fadeDistance = std::max(visibleRange * 8.0f, 60.0f);
+            }
 
             Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer");
             gpuMeshDrawCount = m_gpuSceneRenderer.render(m_frameCmd, world, ctx, m_colorTarget,
                                                          m_depthTarget, m_lastCanvasWidth,
                                                          m_lastCanvasHeight, projectRoot, gpuOpts);
+            m_viewportNeedsAnotherFrame = m_gpuSceneRenderer.needsAnotherFrame();
             Caffeine::Debug::setCrashBreadcrumb("SceneViewport::gpuSceneRenderer.done");
 
             m_lastEditorCamYaw = ctx.camYaw;
@@ -785,6 +821,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             m_lastMeshPreviewMode = m_meshPreviewMode;
             m_gpuCacheWidth = m_lastCanvasWidth;
             m_gpuCacheHeight = m_lastCanvasHeight;
+            m_lastSceneStamp = sceneStamp;
+            m_lastGpuFrameSettled = gpuOpts.cameraSettled;
+            m_lastRenderScale = ctx.renderScale;
+            m_lastGridVisible = m_config.grid;
             m_hasValidGpuFrame = true;
         }
     }
@@ -1125,7 +1165,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
 
     const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+    // The GPU scene draws its own sky and depth-tested grid and is fully opaque.
+    const bool gpuImageCoversViewport =
+        ctx.viewMode == EditorContext::ViewMode::Mode3D && m_lastGpuSceneActive;
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D && !gpuImageCoversViewport) {
         CF_PROFILE_SCOPE("SceneViewport::skybox");
         if (!drawSkybox(drawList, origin, viewportSize, world, ctx)) {
             drawList->AddRectFilledMultiColor(
@@ -1133,11 +1176,12 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                 IM_COL32(26, 26, 31, 255), IM_COL32(26, 26, 31, 255),
                 IM_COL32(42, 48, 62, 255), IM_COL32(42, 48, 62, 255));
         }
-        // Skip CPU grid under the GPU composite — it was fully covered and wasted draw calls.
-        if (!m_lastGpuSceneActive) {
+        // Grid is an ImGui overlay with no depth buffer. Draw it before the GPU
+        // image so opaque pixels (alpha 1) cover it; empty pixels stay transparent.
+        if (m_config.grid) {
             drawGrid(drawList, origin, viewportSize, ctx);
         }
-    } else {
+    } else if (!gpuImageCoversViewport) {
         drawList->AddRectFilled(origin, viewportMax, IM_COL32(26, 26, 31, 255));
     }
 
@@ -1145,11 +1189,9 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     // GPU scene is rendered into an offscreen target with transparent clear.
     // Composite it after the skybox so terrain/meshes sit in front of the sky.
     if (m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
+        CF_PROFILE_SCOPE("SceneViewport::composite");
         drawList->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin, viewportMax,
                            ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE);
-        if (m_config.grid) {
-            drawGrid(drawList, origin, viewportSize, ctx);
-        }
     }
 #endif
 
@@ -1548,32 +1590,6 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     if (ctx.isPlayMode) {
         UI::drawWidgets(world, drawList, origin, viewportSize);
-    }
-
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-        ECS::Entity previewCamera = ctx.selectedEntity;
-        if (!previewCamera.isValid() ||
-            (!world.has<ECS::Camera2DComponent>(previewCamera) &&
-             !world.has<ECS::Camera3DComponent>(previewCamera))) {
-            ECS::ComponentQuery cameraQuery;
-            cameraQuery.with<ECS::Camera3DComponent>();
-            world.forEach<ECS::Camera3DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera3DComponent&) {
-                if (!previewCamera.isValid()) previewCamera = e;
-            });
-            if (!previewCamera.isValid()) {
-                cameraQuery = {};
-                cameraQuery.with<ECS::Camera2DComponent>();
-                world.forEach<ECS::Camera2DComponent>(cameraQuery, [&](ECS::Entity e, ECS::Camera2DComponent&) {
-                    if (!previewCamera.isValid()) previewCamera = e;
-                });
-            }
-        }
-        if (const ECS::PostProcessComponent* fx =
-                Render::findPostProcessForCamera(world, previewCamera)) {
-            if (fx->enabled) {
-                Render::applyPostProcessOverlay(drawList, origin, viewportSize, *fx);
-            }
-        }
     }
 
     ImGui::End();

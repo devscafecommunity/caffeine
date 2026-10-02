@@ -10,7 +10,7 @@ namespace Caffeine::Render {
 
 class GpuPointShadowMap {
 public:
-    static constexpr u32 kFaceSize = 256;
+    static constexpr u32 kFaceSize = 512;
     static constexpr u32 kMaxPointShadowLights = 2;
 
     bool init(RHI::RenderDevice* device);

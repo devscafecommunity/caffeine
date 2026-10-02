@@ -18,6 +18,11 @@ set(CAFFEINE_TEST_SOURCES
     test_textureatlas.cpp
     test_scenemanager.cpp
     test_physics2d.cpp
+    test_physics3d.cpp
+    test_mesh_lod.cpp
+    test_render_features.cpp
+    test_forward_render_features.cpp
+    test_material.cpp
     test_ui.cpp
     test_animation.cpp
     test_mesh.cpp
@@ -31,6 +36,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
     ../src/editor/AssetBrowser.cpp
+    ../src/editor/BrowseSession.cpp
     ../src/editor/AssetPreviewRenderer.cpp
     ../src/editor/SceneTabManager.cpp
     ../src/editor/AnimationTimeline.cpp
@@ -78,6 +84,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/CameraPreviewPanel.cpp
     ../src/editor/GameplayPreviewPanel.cpp
     ../src/assets/MaterialCache.cpp
+    ../src/assets/MaterialFile.cpp
 )
 
 if(SDL3_FOUND)
@@ -89,7 +96,6 @@ if(SDL3_FOUND)
         ../src/editor/AudioPreviewPanel.cpp
         ../src/editor/ShaderGraph.cpp
         ../src/editor/ShaderNode.cpp
-        ../src/editor/PreviewRenderer.cpp
     )
     
      # Build imgui_test_engine library
@@ -165,6 +171,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/SceneViewport.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/HierarchyPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AssetBrowser.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/BrowseSession.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/CapLoader.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
@@ -180,7 +187,6 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/MaterialEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ShaderGraph.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ShaderNode.cpp
-          ${CMAKE_SOURCE_DIR}/src/editor/PreviewRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ScriptEditorWindow.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/BuildSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/BuildDialog.cpp

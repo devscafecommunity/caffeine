@@ -5,6 +5,8 @@
 // ============================================================================
 #pragma once
 
+#include <vector>
+
 #include "../core/Types.hpp"
 #include "../math/Mat4.hpp"
 #include "../math/Vec4.hpp"
@@ -101,7 +103,15 @@ struct VertexBufferLayoutDesc {
     bool perInstance = false;
 };
 
+enum class BlendMode : u8 {
+    None,
+    Alpha,          // src.a, 1 - src.a
+    Premultiplied,  // 1, 1 - src.a
+    Additive,       // 1, 1
+};
+
 struct GraphicsPipelineDesc {
+    /// Zero vertex buffers is valid: the vertex shader builds positions from gl_VertexIndex.
     const VertexBufferLayoutDesc* vertexBuffers = nullptr;
     u32 numVertexBuffers = 0;
     const VertexAttributeDesc* attributes = nullptr;
@@ -110,13 +120,17 @@ struct GraphicsPipelineDesc {
     TextureFormat depthFormat = TextureFormat::D32_FLOAT;
     bool depthTest  = true;
     bool depthWrite = true;
+    /// Legacy flag; equivalent to blendMode = Alpha.
     bool enableBlend = false;
+    BlendMode blendMode = BlendMode::None;
     FillMode fillMode = FillMode::Fill;
 };
 
 struct SamplerDesc {
     bool linearFilter = true;
     bool clampToEdge  = true;
+    /// > 1 enables anisotropic filtering (clamped to 16).
+    f32  maxAnisotropy = 1.0f;
 };
 
 struct Texture {
@@ -195,6 +209,8 @@ struct RenderPassDesc {
     u32      colorMipLevel = 0;
     u32      colorLayer    = 0;      // cubemap face / array layer
     f32  clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    /// Keep the existing color contents instead of clearing them.
+    bool loadColor     = false;
     bool clearDepth    = false;
     f32  depthValue    = 1.0f;
     bool cycle         = false;
@@ -219,6 +235,14 @@ public:
 
     CommandBuffer* beginFrame();
     void           endFrame(CommandBuffer* cmd);
+
+    /// Command buffer with no swapchain image (thumbnails, captures, tests). Uploads issued
+    /// while it is active are recorded into it.
+    CommandBuffer* beginOffscreen();
+    /// Submits `cmd` and waits for the GPU to finish it.
+    void           endOffscreen(CommandBuffer* cmd);
+    /// Reads mip 0 of a 4-byte-per-pixel colour texture back to the CPU. Blocks.
+    bool readTexture(Texture* texture, std::vector<u8>& outPixels);
 
     Texture* createTexture(const TextureDesc& desc);
     Shader*  createShader(const ShaderDesc& desc);

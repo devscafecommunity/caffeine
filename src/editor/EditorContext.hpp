@@ -3,6 +3,7 @@
 #include "ecs/Entity.hpp"
 #include "ecs/World.hpp"
 #include "math/Vec3.hpp"
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -94,6 +95,44 @@ public:
     // ── Scene state ────────────────────────────────────────────────────
     std::string currentScenePath;
     bool        isDirty          = false;
+    std::string materialToOpen;
+    std::filesystem::path projectRootPath;
+
+    /// One browse dialog for the whole IDE. Panels only queue it; SceneEditor
+    /// pumps it every frame until the user picks a path or closes the dialog.
+    struct BrowseSession {
+        enum class Kind : u8 { None, ProjectAsset, PickFile, PickFolder, SaveFile };
+
+        Kind kind = Kind::None;
+        bool started = false;
+        bool resultReady = false;
+        std::string title;
+        std::string filter;
+        std::filesystem::path startPath;
+        std::filesystem::path result;
+        std::string* stringTarget = nullptr;
+        u32 tag = 0;
+
+        void clear() { *this = {}; }
+
+        void requestProjectAsset(std::string* target, const char* extensionFilter, const char* fieldLabel) {
+            clear();
+            kind = Kind::ProjectAsset;
+            stringTarget = target;
+            filter = extensionFilter ? extensionFilter : "";
+            title = fieldLabel ? fieldLabel : "asset";
+        }
+
+        void requestFilesystem(Kind filesystemKind, const char* dialogTitle,
+                               const std::filesystem::path& start, u32 userTag = 0) {
+            clear();
+            kind = filesystemKind;
+            title = dialogTitle ? dialogTitle : "Browse";
+            startPath = start;
+            tag = userTag;
+        }
+    };
+    BrowseSession browse;
 
     // ── Gizmo ──────────────────────────────────────────────────────────
     enum class GizmoMode : u8 { None, Translate, Rotate, Scale };
@@ -141,8 +180,11 @@ public:
         const f32 orbit = std::abs(camDistance);
         const f32 reach = std::max({orbit, std::abs(camFocus.x), std::abs(camFocus.y),
                                     std::abs(camFocus.z)});
-        return std::clamp(reach * 6.0f + 400.0f, 400.0f, 4000.0f);
+        return std::clamp(reach * 8.0f + 1000.0f, 1000.0f, 20000.0f);
     }
+
+    /// Internal resolution of GPU viewports relative to their pixel size (0.5 – 2.0).
+    f32 renderScale = 1.0f;
 
     // ── Texture quality (distance-based LOD around viewers) ─────────────
     bool textureQualityEnabled = true;
@@ -243,5 +285,8 @@ private:
     bool            m_undoPending = false;
     EditorCommand   m_pendingCmd;
 };
+
+class AssetBrowser;
+void serviceBrowseSession(EditorContext& ctx, AssetBrowser& browser);
 
 } // namespace Caffeine::Editor
