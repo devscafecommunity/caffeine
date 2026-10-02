@@ -33,7 +33,7 @@ Configura no componente **Forward Render Features** (Inspector) ou via `caffeine
 `GpuEnvironmentMap` — equirectangular + mips (slot 11):
 
 - Fonte: `SkyboxComponent` ativo ou `GpuSceneRenderOptions::environmentPath`.
-- Especular: mip por roughness; difuso: mip mais baixo quando IBL ligado.
+- Especular: sempre que a skybox está ligada (metais). Difuso: só com IBL difuso ligado.
 
 Onde probe/planar não têm geometria, cai para o céu.
 

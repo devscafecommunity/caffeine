@@ -12,9 +12,11 @@ layout(set = 1, binding = 0) uniform EffectVertexUBO {
 
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out vec3 v_local;
 
 void main() {
     v_uv = aTexCoord;
     v_color = aTangent;
+    v_local = aNormal;
     gl_Position = ubo.uMVP * vec4(aPosition, 1.0);
 }

@@ -72,6 +72,7 @@ add_library(caffeine-core
     src/effects/EffectSystem.cpp
     src/ecs/ParticleSystem.cpp
     src/ecs/ParticleSystem.cpp
+    src/ecs/MeshGeometry.cpp
     src/assets/MeshCache.cpp
     src/assets/MeshImportValidator.cpp
     src/assets/MeshLOD.cpp
@@ -571,6 +572,7 @@ with open(sys.argv[1], 'w') as f:
           ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts
+          ${CMAKE_CURRENT_SOURCE_DIR}/caf-pack/include
           ${imgui_test_engine_SOURCE_DIR}
           ${nanosvg_SOURCE_DIR}/src)
       add_executable(caffeine-runtime

@@ -1,6 +1,7 @@
 #include "editor/EffectEditorPanel.hpp"
 
 #include "editor/EffectObjectFactory.hpp"
+#include "effects/EffectSystem.hpp"
 #include "effects/EffectTypes.hpp"
 #include "ecs/ComponentQuery.hpp"
 
@@ -119,7 +120,7 @@ void EffectEditorPanel::onImGuiRender(EditorContext& ctx) {
         spawnEffectObject(*world, ctx, "Material Shade", effect, false);
     }
     ImGui::TextDisabled("caffeine.effects.volumetricShape(entity, shape, columns, rows)");
-    ImGui::TextDisabled("shape 0 sphere, 1 cone, 2 box, 3 cylinder, 4 window. Shafts follow -Z.");
+    ImGui::TextDisabled("shape 0 sphere, 1 cone, 2 box, 3 cylinder, 4 window. The volume is the mesh.");
     ImGui::TextDisabled("caffeine.effects.fog(entity, domain, style)  style 0 fog, 1 dust, 2 mist, 3 smoke");
 
     std::vector<ECS::Entity> effects;
@@ -175,45 +176,51 @@ void EffectEditorPanel::onImGuiRender(EditorContext& ctx) {
 
     const Effects::EffectKind kind = static_cast<Effects::EffectKind>(selected->kind);
     if (kind == Effects::EffectKind::VolumetricLight) {
+        Effects::ensureVolumetricMesh(*world, selectedEntity, *selected);
+        Effects::pullVolumetricSizeFromMesh(*world, selectedEntity, *selected);
+        auto pushSize = [&]() { Effects::pushVolumetricSizeToMesh(*world, selectedEntity, *selected); };
         int shape = static_cast<int>(Effects::volumetricShapeOf(*selected));
         if (ImGui::Combo("Format", &shape, volumeShapes, 5)) {
             const Vec3 color = selected->lightColor;
             Effects::configureVolumetricLight(*selected, static_cast<Effects::VolumetricShape>(shape));
             selected->lightColor = color;
+            Effects::adoptVolumetricMesh(*world, selectedEntity, *selected);
             ctx.isDirty = true;
         }
+        ImGui::TextDisabled("The volume is the mesh. Move, rotate and scale it.");
         const Effects::VolumetricShape volume = Effects::volumetricShapeOf(*selected);
         if (volume == Effects::VolumetricShape::Sphere) {
-            if (dragFloat("Radius", selected->radius, 0.05f, 0.1f, 40.0f)) ctx.isDirty = true;
+            if (dragFloat("Radius", selected->radius, 0.05f, 0.1f, 40.0f)) {
+                pushSize();
+                ctx.isDirty = true;
+            }
         } else {
-            if (dragFloat("Length", selected->radius, 0.05f, 0.2f, 40.0f)) ctx.isDirty = true;
+            if (dragFloat("Length", selected->radius, 0.05f, 0.2f, 40.0f)) {
+                pushSize();
+                ctx.isDirty = true;
+            }
             if (volume == Effects::VolumetricShape::Cone) {
-                if (dragFloat("Near", selected->startSize, 0.01f, 0.05f, 8.0f)) ctx.isDirty = true;
-                if (dragFloat("Far", selected->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
+                f32 baseRadius = selected->endSize * 0.5f;
+                if (dragFloat("Radius", baseRadius, 0.01f, 0.05f, 12.0f)) {
+                    selected->endSize = baseRadius * 2.0f;
+                    pushSize();
+                    ctx.isDirty = true;
+                }
             } else if (volume == Effects::VolumetricShape::Cylinder) {
                 if (dragFloat("Diameter", selected->startSize, 0.01f, 0.05f, 8.0f)) {
                     selected->endSize = selected->startSize;
+                    pushSize();
                     ctx.isDirty = true;
                 }
             } else {
-                if (dragFloat("Width", selected->startSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
-                if (dragFloat("Height", selected->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
-            }
-            if (volume == Effects::VolumetricShape::Window) {
-                u32 columns = 1;
-                u32 rows = 1;
-                Effects::volumetricGridOf(*selected, columns, rows);
-                int columnCount = static_cast<int>(columns);
-                int rowCount = static_cast<int>(rows);
-                if (ImGui::SliderInt("Columns", &columnCount, 1, 8)) {
-                    Effects::setVolumetricGrid(*selected, static_cast<u32>(columnCount), rows);
+                if (dragFloat("Width", selected->startSize, 0.01f, 0.05f, 12.0f)) {
+                    pushSize();
                     ctx.isDirty = true;
                 }
-                if (ImGui::SliderInt("Rows", &rowCount, 1, 8)) {
-                    Effects::setVolumetricGrid(*selected, static_cast<u32>(columnCount), static_cast<u32>(rowCount));
+                if (dragFloat("Height", selected->endSize, 0.01f, 0.05f, 12.0f)) {
+                    pushSize();
                     ctx.isDirty = true;
                 }
-                ImGui::TextDisabled("Aim -Z from the glass toward the floor. Dust in the room makes the shafts read.");
             }
         }
         if (dragFloat("Density", selected->density, 0.005f, 0.0f, 2.0f)) ctx.isDirty = true;

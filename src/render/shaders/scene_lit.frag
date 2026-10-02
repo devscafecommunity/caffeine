@@ -428,29 +428,41 @@ vec3 specularRadiance(vec3 R, float roughness) {
 }
 
 void applyIbl(Surface s, inout vec3 diffuseOut, inout vec3 specularOut) {
-    if (lights.uIblParams.y < 0.5) return;
+    // Diffuse IBL (sky as fill light) is gated by uIblParams.y.
+    // Specular IBL (metals reflecting the sky / probes) stays on whenever an
+    // environment or probe is bound — the skybox is a reflection source, not a lamp.
+    bool diffuseIbl = lights.uIblParams.y > 0.5;
+    float specAmt = max(lights.uIblColor.a, 0.0);
+    bool envBound = lights.uExtra.z > 0.0 || lights.uIblParams.z > 0.5;
+    if (!diffuseIbl && specAmt <= 0.0) return;
+    if (!diffuseIbl && !envBound) return;
+
     float NoV = max(dot(s.n, s.v), 1e-4);
     vec3 R = reflect(-s.v, s.n);
     vec3 specWeight = iridescentWeight(s, envBrdfApprox(s.F0, s.roughness, NoV));
     vec3 kd = (1.0 - specWeight) * (1.0 - s.metallic) * (1.0 - s.transmission);
 
-    vec3 irradiance = sampleEnvironment(s.n, 1.0);
-    vec3 diffuse = kd * irradiance * s.albedo * max(lights.uIblParams.x, 0.0) * s.ao;
-    if (maxComponent(s.sheen) > 0.0) {
-        diffuse += s.sheen * irradiance * s.ao * mix(0.08, 0.5, pow(1.0 - NoV, 3.0));
+    vec3 diffuse = vec3(0.0);
+    if (diffuseIbl) {
+        vec3 irradiance = sampleEnvironment(s.n, 1.0);
+        diffuse = kd * irradiance * s.albedo * max(lights.uIblParams.x, 0.0) * s.ao;
+        if (maxComponent(s.sheen) > 0.0) {
+            diffuse += s.sheen * irradiance * s.ao * mix(0.08, 0.5, pow(1.0 - NoV, 3.0));
+        }
     }
 
     float specOcclusion =
         clamp(pow(NoV + s.ao, exp2(-16.0 * s.roughness - 1.0)) - 1.0 + s.ao, 0.0, 1.0);
-    vec3 spec = specWeight * specularRadiance(R, s.roughness) * max(lights.uIblColor.a, 0.0) *
-                specOcclusion;
-
-    if (s.clearcoat > 0.0) {
-        float Fc = (0.04 + 0.96 * pow(1.0 - NoV, 5.0)) * s.clearcoat;
-        vec3 Rc = reflect(-s.v, normalize(v_normal));
-        diffuse *= 1.0 - Fc;
-        spec = spec * (1.0 - Fc) + Fc * specularRadiance(Rc, s.clearcoatRoughness) *
-                                       max(lights.uIblColor.a, 0.0) * specOcclusion;
+    vec3 spec = vec3(0.0);
+    if (specAmt > 0.0 && (diffuseIbl || envBound)) {
+        spec = specWeight * specularRadiance(R, s.roughness) * specAmt * specOcclusion;
+        if (s.clearcoat > 0.0) {
+            float Fc = (0.04 + 0.96 * pow(1.0 - NoV, 5.0)) * s.clearcoat;
+            vec3 Rc = reflect(-s.v, normalize(v_normal));
+            diffuse *= 1.0 - Fc;
+            spec = spec * (1.0 - Fc) + Fc * specularRadiance(Rc, s.clearcoatRoughness) * specAmt *
+                                           specOcclusion;
+        }
     }
     diffuseOut += diffuse;
     specularOut += spec;

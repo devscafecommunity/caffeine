@@ -4,6 +4,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "audio/AudioComponents.hpp"
@@ -142,6 +143,30 @@ void SceneSerializer::collectSpriteComponents(
         memcpy(data.data() + 4, &nameLen, 4);
         if (nameLen > 0) {
             memcpy(data.data() + 8, s.name.data(), nameLen);
+        }
+        entries.push_back({e.id(), std::move(data)});
+    });
+}
+
+void SceneSerializer::collectMeshGeometryComponents(
+    std::vector<std::pair<u32, std::vector<u8>>>& entries)
+{
+    ECS::ComponentQuery q;
+    q.with<ECS::MeshGeometryComponent>();
+    m_world.forEach<ECS::MeshGeometryComponent>(q, [&](ECS::Entity e, ECS::MeshGeometryComponent& geometry) {
+        const u32 positionCount = static_cast<u32>(geometry.positions.size());
+        const u32 indexCount = static_cast<u32>(geometry.indices.size());
+        std::vector<u8> data(12 + positionCount * sizeof(Vec3) + indexCount * sizeof(u32));
+        u32 offset = 0;
+        memcpy(data.data() + offset, &positionCount, 4); offset += 4;
+        memcpy(data.data() + offset, &indexCount, 4); offset += 4;
+        memcpy(data.data() + offset, &geometry.revision, 4); offset += 4;
+        if (positionCount > 0) {
+            memcpy(data.data() + offset, geometry.positions.data(), positionCount * sizeof(Vec3));
+            offset += positionCount * sizeof(Vec3);
+        }
+        if (indexCount > 0) {
+            memcpy(data.data() + offset, geometry.indices.data(), indexCount * sizeof(u32));
         }
         entries.push_back({e.id(), std::move(data)});
     });
@@ -750,7 +775,7 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
 
 // ── Serialize ────────────────────────────────────────────────────
 
-bool SceneSerializer::serialize(const std::string& filepath) {
+bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string& filepath) {
     // Collect all components grouped by entity
     std::unordered_map<u32, std::vector<std::pair<u32, std::vector<u8>>>> entityMap;
 
@@ -885,6 +910,14 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         collectMeshFilterComponents(entries);
         for (auto& [eid, data] : entries) {
             entityMap[eid].emplace_back(kTypeMeshFilter, std::move(data));
+        }
+    }
+
+    {
+        std::vector<std::pair<u32, std::vector<u8>>> entries;
+        collectMeshGeometryComponents(entries);
+        for (auto& [eid, data] : entries) {
+            entityMap[eid].emplace_back(kTypeMeshGeometry, std::move(data));
         }
     }
 
@@ -1096,36 +1129,38 @@ bool SceneSerializer::serialize(const std::string& filepath) {
         }
     }
 
-    // Write binary file
-    std::ofstream fout(filepath, std::ios::binary);
-    if (!fout.is_open()) return false;
-
-    // Header
+    auto push = [&](const void* d, u32 n) {
+        const u8* p = static_cast<const u8*>(d);
+        out.insert(out.end(), p, p + n);
+    };
+    out.clear();
     u32 signature = kSignature;
     u32 version   = kFormatVersion;
     u32 count     = static_cast<u32>(entityMap.size());
-    fout.write(reinterpret_cast<const char*>(&signature), 4);
-    fout.write(reinterpret_cast<const char*>(&version), 4);
-    fout.write(reinterpret_cast<const char*>(&count), 4);
-
-    // Entity data
+    push(&signature, 4);
+    push(&version, 4);
+    push(&count, 4);
     for (auto& [eid, components] : entityMap) {
         u32 compCount = static_cast<u32>(components.size());
-        fout.write(reinterpret_cast<const char*>(&eid), 4);
-        fout.write(reinterpret_cast<const char*>(&compCount), 4);
-
+        push(&eid, 4);
+        push(&compCount, 4);
         for (auto& [typeId, data] : components) {
             u32 dataSize = static_cast<u32>(data.size());
-            fout.write(reinterpret_cast<const char*>(&typeId), 4);
-            fout.write(reinterpret_cast<const char*>(&dataSize), 4);
-            if (dataSize > 0) {
-                fout.write(reinterpret_cast<const char*>(data.data()), dataSize);
-            }
+            push(&typeId, 4);
+            push(&dataSize, 4);
+            if (dataSize > 0) push(data.data(), dataSize);
         }
     }
-
-    fout.close();
     return true;
+}
+
+bool SceneSerializer::serialize(const std::string& filepath) {
+    std::vector<u8> buffer;
+    if (!serializeToMemory(buffer, filepath)) return false;
+    std::ofstream fout(filepath, std::ios::binary);
+    if (!fout.is_open()) return false;
+    fout.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+    return fout.good();
 }
 
 // ── Deserialize ──────────────────────────────────────────────────
@@ -1133,19 +1168,18 @@ bool SceneSerializer::serialize(const std::string& filepath) {
 bool SceneSerializer::deserialize(const std::string& filepath) {
     std::ifstream fin(filepath, std::ios::binary | std::ios::ate);
     if (!fin.is_open()) return false;
-
-    // Read entire file into memory
     std::streampos fileSize = fin.tellg();
     fin.seekg(0, std::ios::beg);
-
     std::vector<u8> buffer(static_cast<usize>(fileSize));
     if (!fin.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
         fin.close();
         return false;
     }
     fin.close();
+    return deserializeFromMemory(buffer, filepath);
+}
 
-    // Parse header
+bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const std::string& filepath) {
     if (buffer.size() < 12) return false;
     u32 signature, version, entityCount;
     memcpy(&signature,   buffer.data(),      4);
@@ -1257,6 +1291,9 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 break;
             case kTypeMeshFilter:
                 applyMeshFilterComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
+                break;
+            case kTypeMeshGeometry:
+                applyMeshGeometryComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
                 break;
             case kTypeMeshRenderer:
                 applyMeshRendererComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()));
@@ -1479,6 +1516,31 @@ bool SceneSerializer::applySpriteComponent(ECS::Entity e, const u8* data, u32 si
     if (8 + nameLen > size) return false;
     std::string spriteName(reinterpret_cast<const char*>(data + 8), nameLen);
     m_world.add<ECS::Sprite>(e, std::move(spriteName), frameIndex);
+    return true;
+}
+
+bool SceneSerializer::applyMeshGeometryComponent(ECS::Entity e, const u8* data, u32 size) {
+    if (size < 12) return false;
+    u32 positionCount = 0;
+    u32 indexCount = 0;
+    u32 revision = 1;
+    memcpy(&positionCount, data, 4);
+    memcpy(&indexCount, data + 4, 4);
+    memcpy(&revision, data + 8, 4);
+    const size_t bytes = 12ull + static_cast<size_t>(positionCount) * sizeof(Vec3) +
+                         static_cast<size_t>(indexCount) * sizeof(u32);
+    if (bytes != size || positionCount > 200000u || indexCount > 600000u) return false;
+    ECS::MeshGeometryComponent geometry;
+    geometry.revision = revision == 0 ? 1 : revision;
+    geometry.positions.resize(positionCount);
+    geometry.indices.resize(indexCount);
+    if (positionCount > 0) {
+        memcpy(geometry.positions.data(), data + 12, positionCount * sizeof(Vec3));
+    }
+    if (indexCount > 0) {
+        memcpy(geometry.indices.data(), data + 12 + positionCount * sizeof(Vec3), indexCount * sizeof(u32));
+    }
+    m_world.add<ECS::MeshGeometryComponent>(e, std::move(geometry));
     return true;
 }
 

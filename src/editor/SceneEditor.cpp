@@ -169,9 +169,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_settingsPanel.setEditorContext(&m_ctx);
      m_settingsPanel.applyPreferencesToContext(m_ctx);
 
-    // Auto-load last scene if project config has one
-    if (m_settingsPanel.preferences().reopenLastSceneOnStartup && !projectConfig.LastScene.empty()) {
-        std::string lastScene = projectConfig.LastScene;
+    // Always open the project's scene in the viewport, in that project's 2D or 3D mode.
+    if (projectConfig.TemplateType == "2D") {
+        m_ctx.viewMode = EditorContext::ViewMode::Mode2D;
+    } else if (projectConfig.TemplateType == "3D") {
+        m_ctx.viewMode = EditorContext::ViewMode::Mode3D;
+    }
+    {
+        std::string lastScene = projectConfig.LastScene.empty() ? std::string("scenes/main.caf")
+                                                                : projectConfig.LastScene;
         if (lastScene.find("/build/") != std::string::npos ||
             lastScene.find("\\build\\") != std::string::npos ||
             lastScene.rfind("build/", 0) == 0) {
@@ -439,7 +445,11 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
-    if (!m_isPlaying || m_isPaused) return;
+    Animation::setSkinProjectRoot(m_ctx.projectRootPath.string());
+    if (!m_isPlaying || m_isPaused) {
+        Animation::tickSkinnedPoses(world, m_isPlaying ? 0.0f : dt);
+        return;
+    }
 
     {
         auto& io = ImGui::GetIO();
@@ -621,6 +631,126 @@ void SceneEditor::renderPlaybar(ECS::World& world) {
     }
     ImGui::End();
 }
+
+namespace {
+
+ImGuiID g_windowChromeArmed = 0;
+
+void drawWindowChromeGlyph(ImDrawList* drawList, const ImRect& hit, bool dockBack) {
+    const ImU32 col = IM_COL32(230, 230, 230, 235);
+    const float inset = ImMax(2.0f, hit.GetWidth() * 0.22f);
+    const ImVec2 a = hit.Min + ImVec2(inset, inset + 1.0f);
+    const ImVec2 b = hit.Max - ImVec2(inset + 1.0f, inset);
+    drawList->AddRect(a, b, col, 1.0f, 0, 1.0f);
+    const ImVec2 tip = dockBack
+        ? ImVec2(a.x + 1.0f, b.y - 1.0f)
+        : ImVec2(hit.Max.x - inset, hit.Min.y + inset);
+    const ImVec2 tail = dockBack
+        ? tip + ImVec2(4.0f, -4.0f)
+        : tip + ImVec2(-4.0f, 4.0f);
+    drawList->AddLine(tail, tip, col, 1.0f);
+    if (dockBack) {
+        drawList->AddLine(tip, tip + ImVec2(3.0f, 0.0f), col, 1.0f);
+        drawList->AddLine(tip, tip + ImVec2(0.0f, -3.0f), col, 1.0f);
+    } else {
+        drawList->AddLine(tip, tip + ImVec2(-3.0f, 0.0f), col, 1.0f);
+        drawList->AddLine(tip, tip + ImVec2(0.0f, 3.0f), col, 1.0f);
+    }
+}
+
+bool windowChromeButton(ImGuiID id, const ImRect& hit, bool dockBack, const char* tip,
+                        ImGuiViewport* viewport) {
+    ImGuiContext& g = *GImGui;
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    const bool hovered = hit.Contains(g.IO.MousePos);
+    if (hovered)
+        drawList->AddRectFilled(hit.Min, hit.Max, IM_COL32(255, 255, 255, 36), 2.0f);
+    drawWindowChromeGlyph(drawList, hit, dockBack);
+    if (hovered)
+        ImGui::SetTooltip("%s", tip);
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        g_windowChromeArmed = id;
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left) || g_windowChromeArmed != id)
+        return false;
+    g_windowChromeArmed = 0;
+    const ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    return hovered && std::fabs(drag.x) < 4.0f && std::fabs(drag.y) < 4.0f;
+}
+
+bool windowIsOwnOsWindow(const ImGuiWindow* window) {
+    if (!window || !window->Viewport || window->DockIsActive) return false;
+    return window->ViewportOwned && window->Viewport->ID != ImGui::GetMainViewport()->ID;
+}
+
+void popWindowToMonitor(ImGuiWindow* window) {
+    if (!window) return;
+    window->WindowClass.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
+    if (window->DockIsActive)
+        ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), window);
+}
+
+void dockWindowBack(ImGuiWindow* window, ImGuiID dockspaceId) {
+    if (!window || dockspaceId == 0) return;
+    window->WindowClass.ViewportFlagsOverrideSet &= ~ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetWindowDock(window, dockspaceId, ImGuiCond_Always);
+}
+
+void renderIndependentWindowButtons(ImGuiID dockspaceId) {
+    ImGuiContext& g = *GImGui;
+    const float buttonSz = g.FontSize;
+    const ImVec2 framePad = g.Style.FramePadding;
+
+    for (int n = 0; n < g.DockContext.Nodes.Data.Size; ++n) {
+        ImGuiDockNode* node = static_cast<ImGuiDockNode*>(g.DockContext.Nodes.Data[n].val_p);
+        if (!node || !node->IsVisible || !node->IsLeafNode() || node->LastFrameActive < g.FrameCount)
+            continue;
+        ImGuiWindow* window = node->VisibleWindow;
+        if (!window || window->Flags & ImGuiWindowFlags_NoDocking)
+            continue;
+
+        ImRect hit;
+        if (node->TabBar && !node->IsHiddenTabBar()) {
+            const ImRect tab = window->DC.DockTabItemRect;
+            if (tab.GetWidth() < buttonSz || tab.GetHeight() < 4.0f)
+                continue;
+            const float closeX = ImMax(tab.Min.x, tab.Max.x - framePad.x - buttonSz);
+            hit = ImRect(ImVec2(closeX - buttonSz - 1.0f, tab.Min.y + framePad.y),
+                         ImVec2(closeX - 1.0f, tab.Min.y + framePad.y + buttonSz));
+            if (!node->TabBar->BarRect.Contains(hit.GetCenter()))
+                continue;
+        } else {
+            hit = ImRect(ImVec2(node->Pos.x + node->Size.x - buttonSz - 8.0f, node->Pos.y + 4.0f),
+                         ImVec2(node->Pos.x + node->Size.x - 8.0f, node->Pos.y + 4.0f + buttonSz));
+        }
+
+        ImGuiViewport* viewport = node->HostWindow ? node->HostWindow->Viewport
+                                                   : ImGui::GetMainViewport();
+        if (windowChromeButton(window->ID ^ 0x510u, hit, false,
+                "Abre esta janela noutro monitor. Continua ligada a mesma cena.", viewport))
+            popWindowToMonitor(window);
+    }
+
+    for (ImGuiWindow* window : g.Windows) {
+        if (!window->WasActive || window->Hidden || !windowIsOwnOsWindow(window))
+            continue;
+        if (window->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Tooltip |
+                             ImGuiWindowFlags_Popup | ImGuiWindowFlags_NoDocking))
+            continue;
+        const ImRect title = window->TitleBarRect();
+        if (title.GetHeight() < 4.0f)
+            continue;
+        const float closeX = title.Max.x - framePad.x - buttonSz;
+        const ImRect hit(ImVec2(closeX - g.Style.ItemInnerSpacing.x - buttonSz, title.Min.y + framePad.y),
+                         ImVec2(closeX - g.Style.ItemInnerSpacing.x, title.Min.y + framePad.y + buttonSz));
+        if (windowChromeButton(window->ID ^ 0xA11u, hit, true,
+                "Encaixa outra vez na janela principal.", window->Viewport))
+            dockWindowBack(window, dockspaceId);
+    }
+}
+
+}  // namespace
+
 #endif
 
 // ── Main render ─────────────────────────────────────────────────
@@ -645,6 +775,29 @@ void SceneEditor::render(f32 deltaTime) {
             m_tabManager.activeTab().name = std::filesystem::path(scenePath).stem().string();
             m_tabManager.activeTab().path = scenePath;
         }
+        if (m_currentProjectConfig.TemplateType != "2D" &&
+            m_currentProjectConfig.TemplateType != "3D") {
+            bool has3D = false;
+            bool has2D = false;
+            ECS::ComponentQuery cameras3D;
+            cameras3D.with<ECS::Camera3DComponent>();
+            activeWorld->forEach<ECS::Camera3DComponent>(
+                cameras3D, [&](ECS::Entity, ECS::Camera3DComponent&) { has3D = true; });
+            ECS::ComponentQuery meshes;
+            meshes.with<ECS::MeshFilterComponent>();
+            activeWorld->forEach<ECS::MeshFilterComponent>(
+                meshes, [&](ECS::Entity, ECS::MeshFilterComponent&) { has3D = true; });
+            ECS::ComponentQuery cameras2D;
+            cameras2D.with<ECS::Camera2DComponent>();
+            activeWorld->forEach<ECS::Camera2DComponent>(
+                cameras2D, [&](ECS::Entity, ECS::Camera2DComponent&) { has2D = true; });
+            ECS::ComponentQuery sprites;
+            sprites.with<ECS::Sprite>();
+            activeWorld->forEach<ECS::Sprite>(sprites, [&](ECS::Entity, ECS::Sprite&) { has2D = true; });
+            m_ctx.viewMode = (has2D && !has3D) ? EditorContext::ViewMode::Mode2D
+                                               : EditorContext::ViewMode::Mode3D;
+        }
+        ImGui::SetWindowFocus("Scene Viewport");
     }
 
     if (m_tabManager.activeTabIndex() >= 0) {
@@ -759,6 +912,14 @@ void SceneEditor::render(f32 deltaTime) {
         m_hierarchy.render(*activeWorld, m_ctx);
     }
     {
+        CF_PROFILE_SCOPE("SceneEditor::toolbox");
+        if (ImGuiWindow* hierarchy = ImGui::FindWindowByName("Hierarchy")) {
+            if (hierarchy->DockId != 0)
+                ImGui::SetNextWindowDockID(hierarchy->DockId, ImGuiCond_FirstUseEver);
+        }
+        m_toolbox.render(*activeWorld, m_ctx, m_viewport);
+    }
+    {
         CF_PROFILE_SCOPE("SceneEditor::inspector");
         m_inspector.render(*activeWorld, m_ctx);
     }
@@ -852,6 +1013,7 @@ void SceneEditor::render(f32 deltaTime) {
 #endif
     m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id());
     m_animationTimeline.render(deltaTime);
+    m_animatorController.bindSelection(activeWorld, m_ctx.selectedEntity);
     m_animatorController.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
@@ -863,6 +1025,8 @@ void SceneEditor::render(f32 deltaTime) {
     }
 
     serviceBrowseSession(m_ctx, m_assetBrowser);
+
+    renderIndependentWindowButtons(m_dockspaceId);
 
     ImGui::End(); // DockSpace
 
@@ -884,6 +1048,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottom, &dockCenter);
 
      ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+     ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
      ImGui::DockBuilderDockWindow("Inspector", dockRight);
      ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
      ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
@@ -951,9 +1116,11 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
         if (ImGui::BeginMenu("Edit")) {
             if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
                 m_ctx.undoStack.undo(world);
+                if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
             if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
                 m_ctx.undoStack.redo(world);
+                if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
             ImGui::Separator();
             if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
@@ -990,6 +1157,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool hierarchyOpen = m_hierarchy.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Hierarchy, "Hierarchy", nullptr, &hierarchyOpen)) {
                 hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
+            }
+            bool toolboxOpen = m_toolbox.isOpen();
+            if (ImGui::MenuItem("Toolbox", nullptr, &toolboxOpen)) {
+                toolboxOpen ? m_toolbox.open() : m_toolbox.close();
             }
             bool inspectorOpen = m_inspector.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Inspector, "Inspector", nullptr, &inspectorOpen)) {
@@ -1192,12 +1363,15 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
     }
 
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
-        if (m_materialEditor.isOpen() && m_materialEditor.wasFocusedLastFrame()) {
-            m_materialEditor.handleSaveShortcut();
-        } else if (m_ctx.currentScenePath.empty()) {
-            saveSceneAs(world);
-        } else {
-            saveScene(m_ctx.currentScenePath.c_str(), world);
+        const bool saveMaterial = m_materialEditor.isOpen() &&
+                                  (m_materialEditor.wasFocusedLastFrame() || m_materialEditor.isDirty());
+        if (saveMaterial) m_materialEditor.handleSaveShortcut();
+        if (!m_materialEditor.wasFocusedLastFrame()) {
+            if (m_ctx.currentScenePath.empty()) {
+                saveSceneAs(world);
+            } else {
+                saveScene(m_ctx.currentScenePath.c_str(), world);
+            }
         }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
@@ -1214,9 +1388,11 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
         } else {
             if (m_ctx.undoStack.canUndo()) m_ctx.undoStack.undo(world);
         }
+        if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
         if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
+        if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
 
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
@@ -1529,6 +1705,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
     if (profile.hierarchyOpen) {
         ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, profile.hierarchyWidth, &dockLeft, &dockCenter);
         ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+        ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
     }
 
     // Right panel (Inspector) - if enabled

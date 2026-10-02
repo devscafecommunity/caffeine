@@ -87,6 +87,10 @@ struct SpriteSheetRect {
 SpriteSheetRect spriteSheetFrame(const SpriteSheet& sheet, u32 frame, f32 textureWidth, f32 textureHeight);
 
 const std::vector<Assets::Vertex3D>* skinnedVerticesFor(u32 entityId);
+const std::vector<Vec3>* jointPositionsFor(u32 entityId);
+const std::vector<i32>* jointParentsFor(u32 entityId);
+/// Editor and runtime pass the project root so `assets/...` paths resolve.
+void setSkinProjectRoot(const std::string& projectRoot);
 void tickSkinnedPoses(ECS::World& world, f32 dt);
 
 }  // namespace Caffeine::Animation

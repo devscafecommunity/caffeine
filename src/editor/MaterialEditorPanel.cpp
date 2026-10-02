@@ -66,6 +66,7 @@ bool MaterialEditorPanel::saveToPath(const std::filesystem::path& path) {
         m_materialPath = target;
     }
     publishLive();
+    m_dirty = false;
     m_status.clear();
     m_refreshAssets = true;
     return true;
@@ -73,26 +74,21 @@ bool MaterialEditorPanel::saveToPath(const std::filesystem::path& path) {
 
 bool MaterialEditorPanel::saveCurrent() {
     if (m_materialPath.empty()) {
-        m_pendingSaveAs = true;
+        m_pendingQuickSave = true;
         return false;
     }
     return saveToPath(resolvedPath(m_materialPath));
 }
 
 void MaterialEditorPanel::handleSaveShortcut() {
-    if (m_materialPath.empty()) {
-        m_pendingSaveAs = true;
-        return;
-    }
-    saveCurrent();
+    m_pendingQuickSave = true;
 }
 
-bool MaterialEditorPanel::createInAssetBrowser(EditorContext& ctx) {
-    const std::filesystem::path root = !ctx.assetRootPath.empty()
-                                           ? ctx.assetRootPath
-                                           : (m_projectRoot.empty() ? std::filesystem::path("assets")
-                                                                    : std::filesystem::path(m_projectRoot) / "assets");
-    const std::filesystem::path dir = root / "materials";
+std::filesystem::path MaterialEditorPanel::newMaterialPath(const EditorContext& ctx) const {
+    const std::filesystem::path dir = !ctx.assetRootPath.empty()
+                                          ? ctx.assetRootPath
+                                          : (m_projectRoot.empty() ? std::filesystem::path("assets")
+                                                                   : std::filesystem::path(m_projectRoot) / "assets" / "raw");
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
 
@@ -101,31 +97,91 @@ bool MaterialEditorPanel::createInAssetBrowser(EditorContext& ctx) {
         const unsigned char uc = static_cast<unsigned char>(c);
         if (!std::isalnum(uc) && c != '_' && c != '-') c = '_';
     }
+    if (stem.empty()) stem = "Material";
     std::filesystem::path target = dir / (stem + ".mat");
     int suffix = 1;
     while (std::filesystem::exists(target, ec)) {
         target = dir / (stem + "_" + std::to_string(suffix++) + ".mat");
     }
-    if (!saveToPath(target)) return false;
-    ctx.assetBrowserNavigateTo = dir;
-    applyToSelection(ctx);
-    m_status = "Created " + target.filename().string();
+    return target;
+}
+
+bool MaterialEditorPanel::ensureFile(EditorContext& ctx) {
+    if (!m_materialPath.empty()) return true;
+    const std::string adopted = materialOnSelection(ctx);
+    if (!adopted.empty()) {
+        m_materialPath = adopted;
+        return true;
+    }
+    return saveToPath(newMaterialPath(ctx));
+}
+
+std::string MaterialEditorPanel::materialOnSelection(const EditorContext& ctx) const {
+    if (!ctx.activeWorld) return {};
+    ECS::World& world = *ctx.activeWorld;
+    std::vector<ECS::Entity> targets = ctx.selectedEntities;
+    if (targets.empty() && ctx.selectedEntity.isValid()) targets.push_back(ctx.selectedEntity);
+    std::string found;
+    for (ECS::Entity entity : targets) {
+        if (!entity.isValid() || !world.has<ECS::MeshFilterComponent>(entity)) continue;
+        const ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
+        if (!filter || filter->customMaterialPath.empty()) continue;
+        if (found.empty()) found = filter->customMaterialPath;
+        else if (found != filter->customMaterialPath) return {};
+    }
+    return found;
+}
+
+void MaterialEditorPanel::assignToSelection(EditorContext& ctx, bool force) {
+    if (!ctx.activeWorld || m_materialPath.empty()) return;
+    ECS::World& world = *ctx.activeWorld;
+    const std::string path = m_materialPath.generic_string();
+    std::vector<ECS::Entity> targets = ctx.selectedEntities;
+    if (targets.empty() && ctx.selectedEntity.isValid()) targets.push_back(ctx.selectedEntity);
+    int applied = 0;
+    for (ECS::Entity entity : targets) {
+        if (!entity.isValid() || !world.has<ECS::MeshFilterComponent>(entity)) continue;
+        ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
+        if (!filter) continue;
+        if (!force && !filter->customMaterialPath.empty() && filter->customMaterialPath != path) continue;
+        filter->customMaterialPath = path;
+        if (!world.has<ECS::MeshRendererComponent>(entity)) world.add<ECS::MeshRendererComponent>(entity);
+        if (ECS::MeshRendererComponent* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
+            renderer->materialPath = path;
+        }
+        ++applied;
+    }
+    if (applied > 0) ctx.isDirty = true;
+}
+
+bool MaterialEditorPanel::createInAssetBrowser(EditorContext& ctx) {
+    m_materialPath.clear();
+    if (!saveToPath(newMaterialPath(ctx))) return false;
+    assignToSelection(ctx, true);
+    ctx.assetBrowserNavigateTo = resolvedPath(m_materialPath).parent_path();
+    m_status = "Created " + m_materialPath.filename().string();
     return true;
 }
 
 void MaterialEditorPanel::applyToSelection(EditorContext& ctx) {
-    if (!ctx.activeWorld || !ctx.selectedEntity.isValid() || m_materialPath.empty()) return;
-    ECS::World& world = *ctx.activeWorld;
-    ECS::Entity entity = ctx.selectedEntity;
-    if (!world.has<ECS::MeshFilterComponent>(entity)) return;
-    ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
-    if (!filter) return;
-    filter->customMaterialPath = m_materialPath.generic_string();
-    if (!world.has<ECS::MeshRendererComponent>(entity)) world.add<ECS::MeshRendererComponent>(entity);
-    if (ECS::MeshRendererComponent* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
-        renderer->materialPath = filter->customMaterialPath;
+    if (!ensureFile(ctx)) {
+        m_status = "Could not save material.";
+        return;
     }
-    ctx.isDirty = true;
+    if (!saveToPath(resolvedPath(m_materialPath))) {
+        m_status = "Could not save material.";
+        return;
+    }
+    assignToSelection(ctx, true);
+    publishLive();
+    int meshes = 0;
+    if (ctx.activeWorld) {
+        for (ECS::Entity entity : ctx.selectedEntities) {
+            if (entity.isValid() && ctx.activeWorld->has<ECS::MeshFilterComponent>(entity)) ++meshes;
+        }
+    }
+    if (meshes == 0) m_status = "Saved " + m_materialPath.filename().string() + ". Select a mesh to apply it.";
+    else m_status = "Applied " + m_materialPath.filename().string();
 }
 
 bool MaterialEditorPanel::openFromPath(const std::filesystem::path& path) {
@@ -138,6 +194,7 @@ bool MaterialEditorPanel::openFromPath(const std::filesystem::path& path) {
     m_surface = std::move(loaded);
     m_materialPath = resolved;
     m_status.clear();
+    m_dirty = false;
     publishLive();
     return true;
 }
@@ -163,8 +220,28 @@ void MaterialEditorPanel::renderPresetPicker() {
     ImGui::EndCombo();
 }
 
+void MaterialEditorPanel::requestOpenMaterial(EditorContext& ctx) {
+    m_pickedMaterialPath.clear();
+    m_awaitingMaterialPick = true;
+    ctx.browse.requestProjectAsset(&m_pickedMaterialPath, ".mat;.material", "Open Material");
+}
+
+void MaterialEditorPanel::pollOpenedMaterial(EditorContext& ctx) {
+    if (!m_awaitingMaterialPick) return;
+    if (ctx.browse.kind != EditorContext::BrowseSession::Kind::None) return;
+    m_awaitingMaterialPick = false;
+    if (m_pickedMaterialPath.empty()) return;
+    const std::string picked = std::move(m_pickedMaterialPath);
+    m_pickedMaterialPath.clear();
+    if (!openFromPath(picked)) m_status = "Could not read material.";
+}
+
 void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
     ImGui::PushID("MatProps");
+    if (ImGui::Button("Browse Assets")) requestOpenMaterial(ctx);
+    ImGui::SameLine();
+    if (m_materialPath.empty()) ImGui::TextDisabled("No material file");
+    else ImGui::TextDisabled("%s", m_materialPath.generic_string().c_str());
     bool changed = false;
     auto slider = [&](const char* label, float& value, float lo, float hi, const char* fmt = "%.2f") {
         Widgets::setWidthForLabel(label);
@@ -294,6 +371,19 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
 
     if (changed) {
         Assets::sanitizeMaterialSurface(m_surface);
+        m_dirty = true;
+        if (m_materialPath.empty()) {
+            const std::string adopted = materialOnSelection(ctx);
+            if (!adopted.empty()) {
+                m_materialPath = adopted;
+                m_status = "Editing " + std::filesystem::path(adopted).filename().string();
+            } else if (saveToPath(newMaterialPath(ctx))) {
+                assignToSelection(ctx, true);
+                m_status = "Saved " + m_materialPath.generic_string();
+            } else {
+                m_status = "Could not save material.";
+            }
+        }
         publishLive();
     }
 
@@ -321,7 +411,7 @@ void MaterialEditorPanel::renderPreview(const EditorContext& ctx, float width, f
     settings.yawDegrees = m_previewRotation;
     settings.pitchDegrees = m_previewPitch;
     settings.showFloor = m_previewFloor;
-    settings.environmentPath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+    settings.environmentPath.clear();
     if (ctx.activeWorld) {
         const Scene::ActiveSkybox sky = Scene::findActiveSkybox(*ctx.activeWorld);
         if (sky.component) {
@@ -360,6 +450,7 @@ void MaterialEditorPanel::renderPreview(const EditorContext& ctx, float width, f
 
 void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
+    pollOpenedMaterial(ctx);
 
     ImGui::Begin("Material Editor", &m_open, ImGuiWindowFlags_MenuBar);
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteFocused)) {
@@ -367,6 +458,9 @@ void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
     }
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File##MaterialEditor")) {
+            if (ImGui::MenuItem("Open...", nullptr, false, !m_awaitingMaterialPick)) {
+                requestOpenMaterial(ctx);
+            }
             if (ImGui::MenuItem("New")) {
                 m_surface = Assets::MaterialSurface{};
                 m_surface.valid = true;
@@ -419,9 +513,24 @@ void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
         }
     }
 
+    if (m_pendingQuickSave) {
+        m_pendingQuickSave = false;
+        if (!ensureFile(ctx) || !saveToPath(resolvedPath(m_materialPath))) {
+            m_status = "Save failed.";
+        } else {
+            assignToSelection(ctx, true);
+            publishLive();
+            m_status = "Saved " + m_materialPath.generic_string();
+            ctx.assetBrowserNavigateTo = resolvedPath(m_materialPath).parent_path();
+        }
+    }
+
+    if (m_dirty && !m_materialPath.empty() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        saveToPath(resolvedPath(m_materialPath));
+    }
+
     if (m_refreshAssets) {
         ctx.assetBrowserDirty = true;
-        applyToSelection(ctx);
         m_refreshAssets = false;
     }
 

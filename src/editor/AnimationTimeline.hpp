@@ -124,6 +124,9 @@ private:
     std::vector<std::unique_ptr<AnimationTrack>> m_tracks;
 
     f32 m_currentTime = 0.0f;
+    f32 m_timelineDuration = 0.0f;
+    std::string m_driveName;
+    bool m_applyTime = false;
     bool m_isPlaying = false;
     bool m_looping = true;
     bool m_onionSkinningEnabled = false;

@@ -26,8 +26,9 @@ struct RenderFeatureSettings {
     u32 occlusionMaxOccluders = 8;
     f32 occlusionMinRadius = 0.75f;
 
-    bool iblEnabled = true;
-    f32 iblDiffuse = 1.0f;
+    /// Diffuse IBL (sky as lamp). Specular env reflections use `iblSpecular` independently.
+    bool iblEnabled = false;
+    f32 iblDiffuse = 0.0f;
     f32 iblSpecular = 1.0f;
 
     ReflectionMode reflections = ReflectionMode::Probe;

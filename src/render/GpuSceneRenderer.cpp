@@ -11,6 +11,7 @@
 #include "editor/EditorContext.hpp"
 #include "editor/EditorCameraMath.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
@@ -875,10 +876,10 @@ void setVec4(float* out, f32 x, f32 y, f32 z, f32 w) {
 }
 
 /// Linear-space fallback sky used when the scene has no environment map.
-const Vec3 kSkyZenith{0.16f, 0.30f, 0.62f};
-const Vec3 kSkyHorizon{0.58f, 0.66f, 0.76f};
-const Vec3 kSkyGround{0.16f, 0.15f, 0.14f};
-const Vec3 kFallbackAmbient{0.34f, 0.38f, 0.45f};
+const Vec3 kSkyZenith{0.53f, 0.74f, 0.95f};
+const Vec3 kSkyHorizon{0.94f, 0.96f, 0.98f};
+const Vec3 kSkyGround{0.72f, 0.80f, 0.88f};
+const Vec3 kFallbackAmbient{0.03f, 0.03f, 0.035f};
 
 u32 probeMipCount(u32 resolution) {
     u32 mips = 1;
@@ -1512,6 +1513,12 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
     world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
         if (Scene::isEffectivelyDisabled(world, entity)) return;
         if (options.excludeEntity.isValid() && entity == options.excludeEntity) return;
+        if (const Effects::EffectComponent* volume = world.get<Effects::EffectComponent>(entity)) {
+            if (volume->enabled &&
+                volume->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+                return;
+            }
+        }
 
         const Mat4 worldMatrix = entityMatrix(world, entity);
         if (auto* terrain = world.get<ECS::TerrainComponent>(entity)) {
@@ -1544,13 +1551,13 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             return;
         }
 
-        Assets::Mesh3D* mesh = nullptr;
-        if (filter.primitive == ECS::MeshPrimitive::Custom) {
+        Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
+        if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
             if (!filter.customMeshPath.empty()) {
                 mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
             }
             if (!mesh) return;
-        } else {
+        } else if (!mesh) {
             mesh = GpuProceduralMeshes::get(filter.primitive);
         }
         if (!mesh || mesh->vertices.empty()) return;
@@ -2252,10 +2259,11 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     GpuSceneRenderOptions opts = options;
     if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
     resolveEnvironment(world, projectRoot, opts);
-    const ECS::PostProcessComponent post =
+    ECS::PostProcessComponent post =
         opts.resolvePostProcessFromScene
             ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
             : opts.postProcess;
+    if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
 
     const f32 scale = std::clamp(opts.renderScale, 0.25f, 2.0f);
     const u32 sceneW = std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(width) * scale)));

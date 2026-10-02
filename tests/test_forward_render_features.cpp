@@ -16,8 +16,8 @@ TEST_CASE("Forward render features resolve from scene component", "[forwardrende
     const RenderFeatureSettings defaults = budgetSafeForwardDefaults();
     REQUIRE(defaults.instancingEnabled);
     REQUIRE(defaults.maxInstancesPerBatch == 256u);
-    REQUIRE(defaults.iblEnabled);
-    REQUIRE(defaults.iblDiffuse == Approx(1.0f));
+    REQUIRE_FALSE(defaults.iblEnabled);
+    REQUIRE(defaults.iblDiffuse == Approx(0.0f));
     REQUIRE(defaults.iblSpecular == Approx(1.0f));
     REQUIRE(defaults.occlusion == OcclusionMode::Off);
     REQUIRE(defaults.reflections == ReflectionMode::Probe);

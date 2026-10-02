@@ -47,6 +47,7 @@ struct EffectComponent {
     /// 0 inherit the scene mode, 1 probe, 2 planar, 3 screen-space.
     u8 reflectMode = 0;
     /// Fog style when kind is Fog. See EffectFogStyle.
+    /// Volumetric lights set this to 1 after the volume mesh has been created.
     u8 pad0 = 0;
     /// Volumetric light format when kind is VolumetricLight. See VolumetricShape.
     u8 pad1 = 0;

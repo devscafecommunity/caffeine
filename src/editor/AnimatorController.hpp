@@ -1,6 +1,8 @@
 #pragma once
 #include "core/Types.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "ecs/Entity.hpp"
+#include "ecs/World.hpp"
 #include "math/Vec2.hpp"
 #include <string>
 #include <unordered_map>
@@ -21,6 +23,7 @@ public:
     AnimatorControllerWindow() = default;
 
     void setAnimator(Animation::Animator* animator);
+    void bindSelection(ECS::World* world, ECS::Entity entity);
     Animation::Animator* getAnimator() const { return m_animator; }
 
     void render();
@@ -42,6 +45,9 @@ private:
 
     Animation::Animator  m_internalAnimator;
     Animation::Animator* m_animator = &m_internalAnimator;
+    Animation::Animator* m_bound = nullptr;
+    ECS::World* m_world = nullptr;
+    ECS::Entity m_entity = ECS::Entity::INVALID;
 
     std::unordered_map<std::string, StateNodePos> m_nodePositions;
 

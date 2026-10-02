@@ -21,6 +21,7 @@ public:
     bool openFromPath(const std::filesystem::path& path);
     bool wasFocusedLastFrame() const { return m_wasFocusedLastFrame; }
     void handleSaveShortcut();
+    bool isDirty() const { return m_dirty || m_pendingQuickSave; }
     void setProjectRoot(const std::string& projectRoot) { m_projectRoot = projectRoot; }
 
     void open()  { m_open = true; }
@@ -39,15 +40,25 @@ private:
     void renderPreview(const EditorContext& ctx, float width, float height);
     bool saveCurrent();
     bool saveToPath(const std::filesystem::path& path);
+    bool ensureFile(EditorContext& ctx);
+    std::filesystem::path newMaterialPath(const EditorContext& ctx) const;
+    std::string materialOnSelection(const EditorContext& ctx) const;
+    void assignToSelection(EditorContext& ctx, bool force);
     bool createInAssetBrowser(EditorContext& ctx);
     void applyToSelection(EditorContext& ctx);
+    void requestOpenMaterial(EditorContext& ctx);
+    void pollOpenedMaterial(EditorContext& ctx);
     void publishLive();
     std::filesystem::path resolvedPath(const std::filesystem::path& path) const;
 
     bool m_open = true;
     bool m_wasFocusedLastFrame = false;
     bool m_pendingSaveAs = false;
+    bool m_pendingQuickSave = false;
     bool m_refreshAssets = false;
+    bool m_dirty = false;
+    bool m_awaitingMaterialPick = false;
+    std::string m_pickedMaterialPath;
     float m_previewRotation = 0.0f;
     float m_previewPitch = 12.0f;
     bool m_previewFloor = true;

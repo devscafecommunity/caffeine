@@ -129,6 +129,10 @@ public:
             ? ProjectionMode::Orthographic
             : ProjectionMode::Perspective;
     }
+    MeshPreviewMode meshPreviewMode() const { return m_meshPreviewMode; }
+    void setMeshPreviewMode(MeshPreviewMode mode) { m_meshPreviewMode = mode; }
+    WireframeDensity wireframeDensity() const { return m_wireframeDensity; }
+    void setWireframeDensity(WireframeDensity density) { m_wireframeDensity = density; }
 
     bool isOpen() const { return m_open; }
     void close() { m_open = false; }
@@ -174,6 +178,7 @@ private:
     void drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawCameraFrustums(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+    void drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
 
 #ifdef CF_HAS_IMGUI
     void createOrUpdateLightGizmoEntities(ECS::World& world);

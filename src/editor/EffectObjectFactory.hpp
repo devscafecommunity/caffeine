@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/EditorContext.hpp"
+#include "effects/EffectSystem.hpp"
 #include "effects/EffectTypes.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
@@ -20,6 +21,11 @@ inline ECS::Entity spawnEffectObject(ECS::World& world, EditorContext& ctx, cons
         world.add<ECS::Scale3D>(entity);
     }
     world.add<Effects::EffectComponent>(entity, effect);
+    if (Effects::EffectComponent* stored = world.get<Effects::EffectComponent>(entity)) {
+        if (stored->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+            Effects::ensureVolumetricMesh(world, entity, *stored);
+        }
+    }
     ctx.selectEntity(entity);
     ctx.isDirty = true;
     ctx.endUndo(world);

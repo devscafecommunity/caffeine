@@ -28,6 +28,8 @@ struct EditorPreferences {
     f32  textureQualityMinScale = 0.25f;
     /// Internal scene resolution multiplier for GPU viewport / previews (0.25–2).
     f32  renderScale = 1.0f;
+    /// Scene viewport anti-aliasing only: 0 = off, 1 = FXAA, 2 = TAA.
+    int  viewportAntiAlias = 2;
     bool showFPSInStatusBar = true;
     bool confirmOnSceneClose = true;
     bool reopenLastSceneOnStartup = true;

@@ -1,12 +1,17 @@
 #include "effects/EffectSystem.hpp"
 
 #include "assets/MaterialCache.hpp"
+#include "assets/MeshCache.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "ecs/ParticleSystem.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
+#ifdef CF_HAS_SDL3
+#include "render/GpuProceduralMeshes.hpp"
+#endif
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
 
@@ -294,7 +299,217 @@ void emitFog(const EffectComponent& effect, const Vec3& center, bool twoD, Emit&
     }
 }
 
+Vec3 inverseAffinePoint(const Mat4& matrix, const Vec3& world) {
+    const Vec3 c0(matrix(0, 0), matrix(1, 0), matrix(2, 0));
+    const Vec3 c1(matrix(0, 1), matrix(1, 1), matrix(2, 1));
+    const Vec3 c2(matrix(0, 2), matrix(1, 2), matrix(2, 2));
+    const Vec3 origin(matrix(0, 3), matrix(1, 3), matrix(2, 3));
+    const Vec3 delta = world - origin;
+    const f32 det = c0.dot(c1.cross(c2));
+    if (std::abs(det) < 1.0e-8f) return Vec3(0.0f, 0.0f, 0.0f);
+    const f32 invDet = 1.0f / det;
+    return Vec3(delta.dot(c1.cross(c2)) * invDet, delta.dot(c2.cross(c0)) * invDet,
+                delta.dot(c0.cross(c1)) * invDet);
+}
+
+bool emitVolumetricMesh(ECS::World& world, ECS::Entity entity, const EffectComponent& effect,
+                        const Vec3& cameraPos, Assets::Mesh3D& mesh) {
+    const ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
+    if (!filter) return false;
+    Assets::Mesh3D* source = ECS::editedMesh(world, entity);
+#ifdef CF_HAS_SDL3
+    if (!source) source = Render::GpuProceduralMeshes::get(filter->primitive);
+#endif
+    if (!source && filter->primitive == ECS::MeshPrimitive::Custom && !filter->customMeshPath.empty()) {
+        source = Assets::MeshCache::getInstance().getMesh(filter->customMeshPath, "");
+    }
+    if (!source || source->vertices.empty() || source->indices.empty()) return false;
+
+    Vec3 boundsMin(1.0e30f, 1.0e30f, 1.0e30f);
+    Vec3 boundsMax(-1.0e30f, -1.0e30f, -1.0e30f);
+    for (const Assets::Vertex3D& vertex : source->vertices) {
+        boundsMin.x = std::min(boundsMin.x, vertex.position.x);
+        boundsMin.y = std::min(boundsMin.y, vertex.position.y);
+        boundsMin.z = std::min(boundsMin.z, vertex.position.z);
+        boundsMax.x = std::max(boundsMax.x, vertex.position.x);
+        boundsMax.y = std::max(boundsMax.y, vertex.position.y);
+        boundsMax.z = std::max(boundsMax.z, vertex.position.z);
+    }
+    const Vec3 center = (boundsMin + boundsMax) * 0.5f;
+    Vec3 extent = (boundsMax - boundsMin) * 0.5f;
+    extent.x = std::max(extent.x, 1.0e-4f);
+    extent.y = std::max(extent.y, 1.0e-4f);
+    extent.z = std::max(extent.z, 1.0e-4f);
+
+    const Mat4 matrix = effectMatrix(world, entity);
+    const f32 alpha = std::clamp(0.12f + 0.35f * effect.density, 0.08f, 0.55f);
+    const Vec3 rgb = effect.lightColor * effect.intensity * alpha;
+    const Vec3 cameraMesh = inverseAffinePoint(matrix, cameraPos);
+    const Vec3 cameraLocal((cameraMesh.x - center.x) / extent.x, (cameraMesh.y - center.y) / extent.y,
+                           (cameraMesh.z - center.z) / extent.z);
+    if (mesh.vertices.size() + source->vertices.size() > 4096) return false;
+    const u32 base = static_cast<u32>(mesh.vertices.size());
+    for (const Assets::Vertex3D& vertex : source->vertices) {
+        const Vec3 local = vertex.position - center;
+        Assets::Vertex3D out{};
+        out.position = matrix.transformPoint(vertex.position);
+        out.normal = Vec3(local.x / extent.x, local.y / extent.y, local.z / extent.z);
+        // x encodes the volume sentinel plus cameraLocal.z; y is cameraLocal.x.
+        out.texcoord = {-1.0e6f + cameraLocal.z, cameraLocal.x};
+        out.tangent = Vec4(rgb.x, rgb.y, rgb.z, cameraLocal.y);
+        mesh.vertices.push_back(out);
+    }
+    for (u32 index : source->indices) mesh.indices.push_back(base + index);
+    return true;
+}
+
 }  // namespace
+
+namespace {
+
+bool transformDrivesEffect(ECS::World& world, ECS::Entity entity) {
+    return world.has<ECS::Transform>(entity) && !world.has<ECS::Position3D>(entity);
+}
+
+void aimVolumetricMesh(ECS::World& world, ECS::Entity entity, const EffectComponent& effect) {
+    if (volumetricShapeOf(effect) == VolumetricShape::Sphere) return;
+    if (transformDrivesEffect(world, entity)) {
+        world.get<ECS::Transform>(entity)->rotation.x -= 90.0f;
+        return;
+    }
+    ECS::Rotation3D* rotation = world.get<ECS::Rotation3D>(entity);
+    if (!rotation) rotation = &world.add<ECS::Rotation3D>(entity);
+    const Quat current(rotation->quaternion.x, rotation->quaternion.y, rotation->quaternion.z,
+                       rotation->quaternion.w);
+    const Quat aimed = (current * Quat::fromEuler(-1.5707963f, 0.0f, 0.0f)).normalized();
+    rotation->quaternion = Vec4(aimed.x, aimed.y, aimed.z, aimed.w);
+}
+
+}  // namespace
+
+ECS::MeshPrimitive volumetricMeshPrimitive(VolumetricShape shape) {
+    switch (shape) {
+        case VolumetricShape::Cone: return ECS::MeshPrimitive::Cone;
+        case VolumetricShape::Box: return ECS::MeshPrimitive::Cube;
+        case VolumetricShape::Cylinder: return ECS::MeshPrimitive::Cylinder;
+        case VolumetricShape::Window: return ECS::MeshPrimitive::Cube;
+        case VolumetricShape::Sphere: break;
+    }
+    return ECS::MeshPrimitive::Sphere;
+}
+
+bool volumetricShapeForMesh(ECS::MeshPrimitive primitive, VolumetricShape& shape) {
+    switch (primitive) {
+        case ECS::MeshPrimitive::Sphere: shape = VolumetricShape::Sphere; return true;
+        case ECS::MeshPrimitive::Cone: shape = VolumetricShape::Cone; return true;
+        case ECS::MeshPrimitive::Cube: shape = VolumetricShape::Box; return true;
+        case ECS::MeshPrimitive::Cylinder: shape = VolumetricShape::Cylinder; return true;
+        default: break;
+    }
+    return false;
+}
+
+Vec3 volumetricScaleForEffect(const EffectComponent& effect) {
+    const VolumetricShape shape = volumetricShapeOf(effect);
+    const f32 length = std::max(effect.radius, 0.05f);
+    const f32 width = std::max(effect.startSize, 0.05f);
+    const f32 depth = std::max(effect.endSize, 0.05f);
+    switch (shape) {
+        case VolumetricShape::Sphere: {
+            const f32 diameter = length * 2.0f;
+            return {diameter, diameter, diameter};
+        }
+        case VolumetricShape::Cone:
+            return {depth, length, depth};
+        case VolumetricShape::Cylinder:
+            return {width, length, width};
+        case VolumetricShape::Box:
+        case VolumetricShape::Window:
+            break;
+    }
+    return {width, length, depth};
+}
+
+void pushVolumetricSizeToMesh(ECS::World& world, ECS::Entity entity, const EffectComponent& effect) {
+    const Vec3 scale = volumetricScaleForEffect(effect);
+    if (transformDrivesEffect(world, entity)) {
+        world.get<ECS::Transform>(entity)->scale = scale;
+        return;
+    }
+    if (!world.has<ECS::Scale3D>(entity)) world.add<ECS::Scale3D>(entity);
+    world.get<ECS::Scale3D>(entity)->scale = scale;
+}
+
+void pullVolumetricSizeFromMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect) {
+    if (!world.has<ECS::MeshFilterComponent>(entity)) return;
+    Vec3 scale{1.0f, 1.0f, 1.0f};
+    if (transformDrivesEffect(world, entity)) scale = world.get<ECS::Transform>(entity)->scale;
+    else if (const ECS::Scale3D* sized = world.get<ECS::Scale3D>(entity)) scale = sized->scale;
+    const f32 sx = std::max(std::abs(scale.x), 0.05f);
+    const f32 sy = std::max(std::abs(scale.y), 0.05f);
+    const f32 sz = std::max(std::abs(scale.z), 0.05f);
+    switch (volumetricShapeOf(effect)) {
+        case VolumetricShape::Sphere:
+            effect.radius = sx * 0.5f;
+            effect.startSize = effect.radius;
+            effect.endSize = effect.radius;
+            break;
+        case VolumetricShape::Cone:
+            effect.radius = sy;
+            effect.endSize = sx;
+            break;
+        case VolumetricShape::Cylinder:
+            effect.radius = sy;
+            effect.startSize = sx;
+            effect.endSize = sx;
+            break;
+        case VolumetricShape::Box:
+        case VolumetricShape::Window:
+            effect.radius = sy;
+            effect.startSize = sx;
+            effect.endSize = sz;
+            break;
+    }
+}
+
+void adoptVolumetricMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect) {
+    if (static_cast<EffectKind>(effect.kind) != EffectKind::VolumetricLight) return;
+    if (world.has<ECS::MeshGeometryComponent>(entity)) world.remove<ECS::MeshGeometryComponent>(entity);
+    const ECS::MeshPrimitive primitive = volumetricMeshPrimitive(volumetricShapeOf(effect));
+    const bool creating = !world.has<ECS::MeshFilterComponent>(entity);
+    if (creating) {
+        ECS::MeshFilterComponent filter;
+        filter.primitive = primitive;
+        world.add<ECS::MeshFilterComponent>(entity, filter);
+        if (effect.pad0 == 0) {
+            pushVolumetricSizeToMesh(world, entity, effect);
+            aimVolumetricMesh(world, entity, effect);
+            effect.pad0 = 1;
+        }
+        return;
+    }
+    if (ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity)) {
+        filter->primitive = primitive;
+    }
+    pushVolumetricSizeToMesh(world, entity, effect);
+    effect.pad0 = 1;
+}
+
+void ensureVolumetricMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect) {
+    if (static_cast<EffectKind>(effect.kind) != EffectKind::VolumetricLight) return;
+    if (!world.has<ECS::MeshFilterComponent>(entity)) {
+        adoptVolumetricMesh(world, entity, effect);
+        return;
+    }
+    const ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
+    if (!filter) return;
+    const VolumetricShape shape = volumetricShapeOf(effect);
+    if (shape == VolumetricShape::Window && filter->primitive == ECS::MeshPrimitive::Cube) return;
+    VolumetricShape fromMesh = VolumetricShape::Sphere;
+    if (volumetricShapeForMesh(filter->primitive, fromMesh) && fromMesh != shape) {
+        effect.pad1 = static_cast<u8>(fromMesh);
+    }
+}
 
 void tickEffects(ECS::World& world, f32 dt, const Vec3& cameraPos) {
     ECS::ParticleSystem legacy;
@@ -387,26 +602,28 @@ void collectOverlayEffects(ECS::World& world, bool onlyTwoD, std::vector<EffectS
                 out.push_back(sprite);
             }
         } else if (static_cast<EffectKind>(effect.kind) == EffectKind::VolumetricLight && !onlyTwoD) {
-            const Vec3 origin = effectOrigin(world, entity, effect, {});
-            const VolumetricShape shape = volumetricShapeOf(effect);
-            if (shape == VolumetricShape::Sphere) {
+            ensureVolumetricMesh(world, entity, effect);
+            const Mat4 matrix = effectMatrix(world, entity);
+            const Vec3 center = matrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
+            const Vec3 side = matrix.transformPoint(Vec3(0.5f, 0.0f, 0.0f));
+            const f32 radius = std::max((side - center).length(), 0.1f);
+            const Vec4 color(effect.lightColor.x, effect.lightColor.y, effect.lightColor.z,
+                             std::clamp(effect.density, 0.0f, 1.0f));
+            if (volumetricShapeOf(effect) == VolumetricShape::Sphere) {
                 EffectSprite sprite;
-                sprite.position = origin;
-                sprite.size = effect.radius;
-                sprite.color = Vec4(effect.lightColor.x, effect.lightColor.y, effect.lightColor.z,
-                                    std::clamp(effect.density, 0.0f, 1.0f));
+                sprite.position = center;
+                sprite.size = radius;
+                sprite.color = color;
                 out.push_back(sprite);
             } else {
-                const BeamAxes axes = beamAxes(world, entity);
-                const f32 length = std::max(effect.radius, 0.2f);
+                const Vec3 start = matrix.transformPoint(Vec3(0.0f, -0.5f, 0.0f));
+                const Vec3 finish = matrix.transformPoint(Vec3(0.0f, 0.5f, 0.0f));
                 for (int step = 0; step < 5; ++step) {
                     const f32 t = static_cast<f32>(step) / 4.0f;
                     EffectSprite sprite;
-                    sprite.position = origin + axes.forward * length * t;
-                    const f32 width = effect.startSize + (effect.endSize - effect.startSize) * t;
-                    sprite.size = std::max(width, 0.1f);
-                    sprite.color = Vec4(effect.lightColor.x, effect.lightColor.y, effect.lightColor.z,
-                                        std::clamp(effect.density * (1.0f - t), 0.0f, 1.0f));
+                    sprite.position = start + (finish - start) * t;
+                    sprite.size = radius;
+                    sprite.color = color;
                     out.push_back(sprite);
                 }
             }
@@ -467,6 +684,8 @@ void buildEffectMesh(ECS::World& world, const Vec3& cameraPos, const Vec3& camer
                 pushQuad(mesh, particle.position, right, up, std::max(particle.size, 0.001f), particle.color);
             }
         } else if (kind == EffectKind::VolumetricLight) {
+            ensureVolumetricMesh(world, entity, effect);
+            if (!emitVolumetricMesh(world, entity, effect, cameraPos, mesh)) {
             const Vec3 center = effectOrigin(world, entity, effect, cameraPos);
             if (volumetricShapeOf(effect) == VolumetricShape::Sphere) {
                 const Vec3 viewDir = cameraPos - center;
@@ -484,6 +703,7 @@ void buildEffectMesh(ECS::World& world, const Vec3& cameraPos, const Vec3& camer
                 }
             } else {
                 emitVolumetricShafts(world, entity, effect, center, cameraPos, mesh);
+            }
             }
         } else if (kind == EffectKind::Fog) {
             const Vec3 center = effectOrigin(world, entity, effect, cameraPos);

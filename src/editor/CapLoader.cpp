@@ -2,9 +2,10 @@
 #include "debug/LogSystem.hpp"
 
 #include <cstring>
+#include <fstream>
 
 #ifdef CF_HAS_CAF_PACK
-#include "caf-pack/Reader.hpp"
+#include "caffeine/CafTypes.hpp"
 #endif
 
 namespace Caffeine::Editor {
@@ -13,30 +14,81 @@ namespace Caffeine::Editor {
 
 std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::path& path) {
     std::vector<LoadedAsset> assets;
-    std::string error;
-    const auto loaded = CafPack::Reader::loadCap(path, &error);
-    if (loaded.empty() && !error.empty()) {
-        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader", "%s",
-                                         error.c_str());
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
+                                         "Failed to open CAP file: %s", path.string().c_str());
         return assets;
     }
 
-    for (const CafPack::CafAsset& caf : loaded) {
+    using Caffeine::Assets::CapHeader;
+    using Caffeine::Assets::CapEntry;
+    using Caffeine::Assets::CafHeader;
+    using Caffeine::Assets::CAP_MAGIC;
+    using Caffeine::Assets::CAP_VERSION;
+    using Caffeine::Assets::CAF_MAGIC;
+
+    CapHeader cap{};
+    file.read(reinterpret_cast<char*>(&cap), sizeof(cap));
+    if (!file || file.gcount() != static_cast<std::streamsize>(sizeof(cap))) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
+                                         "CAP header truncated: %s", path.string().c_str());
+        return assets;
+    }
+    if (cap.magic != CAP_MAGIC) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
+                                         "Invalid CAP magic in %s", path.string().c_str());
+        return assets;
+    }
+    if (cap.version != CAP_VERSION) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
+                                         "Unsupported CAP version %u in %s", cap.version,
+                                         path.string().c_str());
+        return assets;
+    }
+
+    if (cap.assetCount == 0) return assets;
+
+    file.seekg(static_cast<std::streamoff>(cap.tableOffset), std::ios::beg);
+    if (!file) return assets;
+
+    std::vector<CapEntry> entries(cap.assetCount);
+    file.read(reinterpret_cast<char*>(entries.data()),
+              static_cast<std::streamsize>(cap.assetCount * sizeof(CapEntry)));
+    if (!file) {
+        Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
+                                         "CAP entry table truncated: %s", path.string().c_str());
+        return assets;
+    }
+
+    for (const CapEntry& entry : entries) {
+        if (entry.size < sizeof(CafHeader)) continue;
+
+        std::vector<u8> blob(entry.size);
+        file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+        file.read(reinterpret_cast<char*>(blob.data()), static_cast<std::streamsize>(entry.size));
+        if (!file) continue;
+
+        CafHeader cafHeader{};
+        std::memcpy(&cafHeader, blob.data(), sizeof(CafHeader));
+        if (cafHeader.magic != CAF_MAGIC) continue;
+
         CapAssetMetadata metadata{
-            .magic = caf.header.magic,
-            .version = caf.header.version,
-            .assetType = caf.header.assetType,
+            .magic = cafHeader.magic,
+            .version = cafHeader.version,
+            .assetType = cafHeader.assetType,
             .reserved = {0},
-            .payloadSize = caf.header.payloadSize,
-            .flags = caf.header.flags,
-            .crc64 = caf.header.crc64,
+            .payloadSize = cafHeader.payloadSize,
+            .flags = cafHeader.flags,
+            .crc64 = cafHeader.crc64,
         };
-        std::memcpy(metadata.reserved, caf.header.reserved, sizeof(metadata.reserved));
+        std::memcpy(metadata.reserved, cafHeader.reserved, sizeof(metadata.reserved));
 
         assets.push_back(LoadedAsset{
-            .hashID = caf.hashID,
-            .type = static_cast<Caffeine::Assets::CafAssetType>(caf.header.assetType),
-            .cafBlob = caf.blob,
+            .hashID = entry.hashID,
+            .type = static_cast<Caffeine::Assets::CafAssetType>(cafHeader.assetType),
+            .cafBlob = std::move(blob),
             .metadata = metadata,
         });
     }
@@ -51,6 +103,7 @@ Caffeine::Assets::CafAssetType CapLoader::identifyAssetType(const CapAssetMetada
 #else
 
 std::vector<CapLoader::LoadedAsset> CapLoader::loadCap(const std::filesystem::path& path) {
+    (void)path;
     Debug::LogSystem::instance().log(Debug::LogLevel::Error, "CapLoader",
         "CAP loading not available - caf-pack submodule not included");
     return {};

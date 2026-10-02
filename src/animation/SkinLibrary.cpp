@@ -13,6 +13,9 @@ namespace {
 
 std::unordered_map<std::string, ImportedSkin> g_skins;
 std::unordered_map<u32, std::vector<Assets::Vertex3D>> g_posed;
+std::unordered_map<u32, std::vector<Vec3>> g_joints;
+std::unordered_map<u32, std::vector<i32>> g_jointParents;
+std::string g_projectRoot;
 
 std::string normalizedBone(const std::string& name) {
     const auto cut = name.find_last_of(":|");
@@ -171,20 +174,56 @@ const std::vector<Assets::Vertex3D>* skinnedVerticesFor(u32 entityId) {
     return &it->second;
 }
 
+const std::vector<Vec3>* jointPositionsFor(u32 entityId) {
+    const auto it = g_joints.find(entityId);
+    if (it == g_joints.end() || it->second.empty()) return nullptr;
+    return &it->second;
+}
+
+const std::vector<i32>* jointParentsFor(u32 entityId) {
+    const auto it = g_jointParents.find(entityId);
+    if (it == g_jointParents.end() || it->second.empty()) return nullptr;
+    return &it->second;
+}
+
+void setSkinProjectRoot(const std::string& projectRoot) {
+    g_projectRoot = projectRoot;
+}
+
 void tickSkinnedPoses(ECS::World& world, f32 dt) {
     ECS::ComponentQuery query;
     query.with<SkinnedPose>();
     std::vector<u32> live;
     world.forEach<SkinnedPose>(query, [&](ECS::Entity entity, SkinnedPose& pose) {
         live.push_back(entity.id());
-        if (pose.meshPath[0] == '\0') return;
-        Assets::MeshCache::getInstance().getMesh(pose.meshPath, "");
+        if (pose.meshPath[0] == '\0') {
+            g_posed.erase(entity.id());
+            g_joints.erase(entity.id());
+            g_jointParents.erase(entity.id());
+            return;
+        }
+        Assets::MeshCache::getInstance().getMesh(pose.meshPath, g_projectRoot);
         const ImportedSkin* skin = findImportedSkin(pose.meshPath);
         const Assets::Mesh3D* mesh = skin ? skin->mesh : nullptr;
-        if (!mesh) mesh = Assets::MeshCache::getInstance().getMesh(pose.meshPath, "");
+        if (!mesh) mesh = Assets::MeshCache::getInstance().getMesh(pose.meshPath, g_projectRoot);
         if (!skin || !mesh) {
             g_posed.erase(entity.id());
+            g_joints.erase(entity.id());
+            g_jointParents.erase(entity.id());
             return;
+        }
+        if (const Animator* animator = world.get<Animator>(entity)) {
+            const char* stateName = animator->currentState.cStr();
+            if (stateName && stateName[0] != '\0') {
+                for (int clip = 0; clip < static_cast<int>(skin->clipNames.size()); ++clip) {
+                    if (skin->clipNames[static_cast<size_t>(clip)] == stateName && pose.clipIndex != clip) {
+                        pose.clipIndex = clip;
+                        pose.time = 0.0f;
+                        pose.playing = true;
+                        break;
+                    }
+                }
+            }
         }
         if (!pose.loaded) {
             pose.humanoid = matchHumanoid(*skin);
@@ -206,16 +245,31 @@ void tickSkinnedPoses(ECS::World& world, f32 dt) {
                 }
             }
             std::vector<Mat4> bones;
-            clip.sampleAt(pose.time, skin->skeleton, bones);
+            std::vector<Vec3> joints;
+            clip.sampleAt(pose.time, skin->skeleton, bones, &joints);
             skinVertices(*mesh, bones, g_posed[entity.id()]);
+            g_joints[entity.id()] = std::move(joints);
         } else {
             g_posed[entity.id()] = mesh->vertices;
+            g_joints.erase(entity.id());
         }
+        std::vector<i32> parents;
+        parents.reserve(skin->skeleton.boneCount());
+        for (const Bone& bone : skin->skeleton.bones) parents.push_back(bone.parentIndex);
+        g_jointParents[entity.id()] = std::move(parents);
     });
 
     for (auto it = g_posed.begin(); it != g_posed.end();) {
         const bool stillLive = std::find(live.begin(), live.end(), it->first) != live.end();
         if (!stillLive) it = g_posed.erase(it);
+        else ++it;
+    }
+    for (auto it = g_joints.begin(); it != g_joints.end();) {
+        if (std::find(live.begin(), live.end(), it->first) == live.end()) it = g_joints.erase(it);
+        else ++it;
+    }
+    for (auto it = g_jointParents.begin(); it != g_jointParents.end();) {
+        if (std::find(live.begin(), live.end(), it->first) == live.end()) it = g_jointParents.erase(it);
         else ++it;
     }
 }

@@ -19,6 +19,7 @@
 #include "ecs/CameraComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "animation/AnimationComponents.hpp"
@@ -69,6 +70,11 @@ std::string resolveProjectRootFromScenePath(const std::string& scenePath) {
     const auto sceneDir = std::filesystem::path(scenePath).parent_path();
     const std::string root = sceneDir.parent_path().string();
     return root.empty() ? sceneDir.string() : root;
+}
+
+std::string resolveEditorProjectRoot(const EditorContext& ctx) {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath.string();
+    return resolveProjectRootFromScenePath(ctx.currentScenePath);
 }
 
 Mat4 buildLocalMatrix(const ECS::Transform& t) {
@@ -332,6 +338,191 @@ ImVec2 projectVP(const Mat4& vp, ImVec2 origin, ImVec2 viewportSize, const Vec3&
         origin.x + (ndcX + 1.0f) * 0.5f * viewportSize.x,
         origin.y + (1.0f - ndcY) * 0.5f * viewportSize.y
     );
+}
+
+f32 edgeFunction(f32 ax, f32 ay, f32 bx, f32 by, f32 cx, f32 cy);
+
+f32 distanceToSegment(ImVec2 p, ImVec2 a, ImVec2 b) {
+    const f32 abx = b.x - a.x;
+    const f32 aby = b.y - a.y;
+    const f32 len2 = abx * abx + aby * aby;
+    f32 t = 0.0f;
+    if (len2 > 1.0e-6f) t = std::clamp(((p.x - a.x) * abx + (p.y - a.y) * aby) / len2, 0.0f, 1.0f);
+    const f32 dx = p.x - (a.x + abx * t);
+    const f32 dy = p.y - (a.y + aby * t);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+bool pointInTriangle(ImVec2 p, ImVec2 a, ImVec2 b, ImVec2 c) {
+    const f32 c0 = edgeFunction(a.x, a.y, b.x, b.y, p.x, p.y);
+    const f32 c1 = edgeFunction(b.x, b.y, c.x, c.y, p.x, p.y);
+    const f32 c2 = edgeFunction(c.x, c.y, a.x, a.y, p.x, p.y);
+    return (c0 >= 0.0f && c1 >= 0.0f && c2 >= 0.0f) || (c0 <= 0.0f && c1 <= 0.0f && c2 <= 0.0f);
+}
+
+void verticesForSelection(const ECS::MeshGeometryComponent& geometry, const EditorContext& ctx,
+                          std::vector<u32>& out) {
+    out.clear();
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Vertex) {
+        out = ctx.meshElementSelection;
+        return;
+    }
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Edge) {
+        for (u32 packed : ctx.meshElementSelection) {
+            out.push_back(packed & 0xFFFFu);
+            out.push_back(packed >> 16);
+        }
+        return;
+    }
+    for (u32 triangle : ctx.meshElementSelection) {
+        const std::vector<u32> face = ECS::faceVertexIndices(geometry, triangle);
+        out.insert(out.end(), face.begin(), face.end());
+    }
+}
+
+bool pickMeshElement(ECS::World& world, EditorContext& ctx, ImVec2 mouse, ImVec2 origin,
+                     ImVec2 viewportSize, const Mat4& vp) {
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Object) return false;
+    if (!ctx.selectedEntity.isValid() || !world.has<ECS::MeshGeometryComponent>(ctx.selectedEntity)) return false;
+    const ECS::MeshGeometryComponent* geometry = world.get<ECS::MeshGeometryComponent>(ctx.selectedEntity);
+    if (!geometry || geometry->positions.empty()) return false;
+    const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
+    std::vector<ImVec2> screen(geometry->positions.size());
+    for (size_t i = 0; i < geometry->positions.size(); ++i) {
+        screen[i] = projectVP(vp, origin, viewportSize, worldMatrix.transformPoint(geometry->positions[i]));
+    }
+
+    auto toggle = [&](u32 id) {
+        const bool shift = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+        auto& selection = ctx.meshElementSelection;
+        if (!shift) {
+            selection.clear();
+            selection.push_back(id);
+            return;
+        }
+        const auto found = std::find(selection.begin(), selection.end(), id);
+        if (found == selection.end()) selection.push_back(id);
+        else selection.erase(found);
+    };
+
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Vertex) {
+        f32 best = 12.0f;
+        u32 chosen = u32_max;
+        for (u32 i = 0; i < screen.size(); ++i) {
+            if (screen[i].x < -5000.0f) continue;
+            const f32 dx = screen[i].x - mouse.x;
+            const f32 dy = screen[i].y - mouse.y;
+            const f32 dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < best) {
+                best = dist;
+                chosen = i;
+            }
+        }
+        if (chosen == u32_max) return false;
+        toggle(chosen);
+        return true;
+    }
+
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Edge) {
+        f32 best = 10.0f;
+        u32 chosen = u32_max;
+        for (size_t i = 0; i + 2 < geometry->indices.size(); i += 3) {
+            const u32 corners[3] = {geometry->indices[i], geometry->indices[i + 1], geometry->indices[i + 2]};
+            for (int e = 0; e < 3; ++e) {
+                u32 a = corners[e];
+                u32 b = corners[(e + 1) % 3];
+                if (a > b) std::swap(a, b);
+                if (a >= screen.size() || b >= screen.size()) continue;
+                const f32 dist = distanceToSegment(mouse, screen[a], screen[b]);
+                if (dist < best) {
+                    best = dist;
+                    chosen = a | (b << 16);
+                }
+            }
+        }
+        if (chosen == u32_max) return false;
+        toggle(chosen);
+        return true;
+    }
+
+    f32 best = 1.0e9f;
+    u32 chosen = u32_max;
+    const u32 triangleCount = static_cast<u32>(geometry->indices.size() / 3);
+    for (u32 tri = 0; tri < triangleCount; ++tri) {
+        const u32 i0 = geometry->indices[tri * 3];
+        const u32 i1 = geometry->indices[tri * 3 + 1];
+        const u32 i2 = geometry->indices[tri * 3 + 2];
+        if (i0 >= screen.size() || i1 >= screen.size() || i2 >= screen.size()) continue;
+        if (!pointInTriangle(mouse, screen[i0], screen[i1], screen[i2])) continue;
+        const ImVec2 center((screen[i0].x + screen[i1].x + screen[i2].x) / 3.0f,
+                            (screen[i0].y + screen[i1].y + screen[i2].y) / 3.0f);
+        const f32 dx = center.x - mouse.x;
+        const f32 dy = center.y - mouse.y;
+        const f32 dist = dx * dx + dy * dy;
+        if (dist < best) {
+            best = dist;
+            chosen = tri;
+        }
+    }
+    if (chosen == u32_max) return false;
+    toggle(chosen);
+    return true;
+}
+
+void drawMeshElements(ImDrawList* dl, ECS::World& world, const EditorContext& ctx, ImVec2 origin,
+                      ImVec2 viewportSize, const Mat4& vp) {
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Object) return;
+    if (!ctx.selectedEntity.isValid()) return;
+    const ECS::MeshGeometryComponent* geometry = world.get<ECS::MeshGeometryComponent>(ctx.selectedEntity);
+    if (!geometry) return;
+    const Mat4 worldMatrix = entityMatrix(world, ctx.selectedEntity);
+    std::vector<ImVec2> screen(geometry->positions.size());
+    for (size_t i = 0; i < geometry->positions.size(); ++i) {
+        screen[i] = projectVP(vp, origin, viewportSize, worldMatrix.transformPoint(geometry->positions[i]));
+    }
+    std::vector<u32> selected;
+    verticesForSelection(*geometry, ctx, selected);
+    auto isSelected = [&](u32 index) {
+        return std::find(selected.begin(), selected.end(), index) != selected.end();
+    };
+    const ImU32 wire = IM_COL32(180, 220, 255, 160);
+    const ImU32 hot = IM_COL32(255, 180, 40, 255);
+    for (size_t i = 0; i + 2 < geometry->indices.size(); i += 3) {
+        const u32 corners[3] = {geometry->indices[i], geometry->indices[i + 1], geometry->indices[i + 2]};
+        for (int e = 0; e < 3; ++e) {
+            const u32 a = corners[e];
+            const u32 b = corners[(e + 1) % 3];
+            if (a >= screen.size() || b >= screen.size()) continue;
+            if (screen[a].x < -5000.0f || screen[b].x < -5000.0f) continue;
+            const bool marked = isSelected(a) && isSelected(b);
+            dl->AddLine(screen[a], screen[b], marked ? hot : wire, marked ? 2.5f : 1.0f);
+        }
+    }
+    if (ctx.meshElementMode != EditorContext::MeshElementMode::Vertex && selected.empty()) return;
+    for (u32 i = 0; i < screen.size(); ++i) {
+        if (screen[i].x < -5000.0f) continue;
+        const bool marked = isSelected(i);
+        if (ctx.meshElementMode != EditorContext::MeshElementMode::Vertex && !marked) continue;
+        dl->AddCircleFilled(screen[i], marked ? 5.0f : 3.0f, marked ? hot : IM_COL32(230, 240, 255, 220));
+    }
+}
+
+bool moveMeshSelection(ECS::World& world, EditorContext& ctx, const Vec3& worldDelta) {
+    if (ctx.meshElementMode == EditorContext::MeshElementMode::Object || ctx.meshElementSelection.empty()) {
+        return false;
+    }
+    ECS::MeshGeometryComponent* geometry = world.get<ECS::MeshGeometryComponent>(ctx.selectedEntity);
+    if (!geometry) return false;
+    std::vector<u32> vertices;
+    verticesForSelection(*geometry, ctx, vertices);
+    if (vertices.empty()) return false;
+    const Mat4 inverse = entityMatrix(world, ctx.selectedEntity).inverted();
+    const Vec3 localDelta = inverse.transformVector(worldDelta);
+    for (u32 index : vertices) {
+        if (index < geometry->positions.size()) geometry->positions[index] = geometry->positions[index] + localDelta;
+    }
+    geometry->revision++;
+    return true;
 }
 
 f32 edgeFunction(f32 ax, f32 ay, f32 bx, f32 by, f32 cx, f32 cy) {
@@ -652,7 +843,7 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     previewOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
     previewOpts.textureQuality.minScale = ctx.textureQualityMinScale;
     previewOpts.textureQualityViewers.push_back(cameraPos);
-    previewOpts.environmentPath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+    previewOpts.environmentPath.clear();
     previewOpts.renderScale = ctx.renderScale;
     previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
     previewOpts.viewId = 2;
@@ -748,7 +939,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         Scene::syncTerrainMeshes(world);
     }
 
-    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+    const std::string projectRoot = resolveEditorProjectRoot(ctx);
     u32 gpuMeshDrawCount = 0;
     const bool wireframePreview = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
     const bool gpuSceneActive = m_frameCmd && m_gpuSceneReady && m_useGpuScene && m_colorTarget &&
@@ -788,10 +979,14 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             gpuOpts.terrainLodDistanceScale = 2.0f;
             gpuOpts.textureQuality.enabled = false;
             gpuOpts.cameraSettled = m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
-            gpuOpts.environmentPath = ctx.skyboxEnabled
-                ? Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string()
-                : std::string();
+            gpuOpts.environmentPath.clear();
             gpuOpts.renderScale = ctx.renderScale;
+            gpuOpts.overrideAntiAliasing = true;
+            gpuOpts.antiAliasingOverride.enabled =
+                ctx.viewportAntiAlias != EditorContext::ViewportAntiAlias::Off;
+            gpuOpts.antiAliasingOverride.mode =
+                ctx.viewportAntiAlias == EditorContext::ViewportAntiAlias::Fxaa ? 0u : 1u;
+            gpuOpts.antiAliasingOverride.sharpness = 0.5f;
             gpuOpts.deltaTime = ImGui::GetIO().DeltaTime;
             gpuOpts.viewId = 1;
             if (ctx.selectedEntity.isValid() && world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
@@ -968,16 +1163,27 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         const ImVec2 vpSize(vpMax.x - vpMin.x, vpMax.y - vpMin.y);
         if (vpSize.x >= 1.0f && vpSize.y >= 1.0f) {
             const ViewportRay ray = computeViewportRay(ctx, vpMin, vpSize, mousePos);
-            const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+            const std::string projectRoot = resolveEditorProjectRoot(ctx);
+            bool pickedElement = false;
+            if (ctx.meshElementMode != EditorContext::MeshElementMode::Object &&
+                ctx.selectedEntity.isValid()) {
+                ECS::bakeMeshGeometry(world, ctx.selectedEntity, projectRoot);
+                const Mat4 elementVp = computeVP3D(vpSize, ctx);
+                pickedElement = pickMeshElement(world, ctx, mousePos, vpMin, vpSize, elementVp);
+            }
+            if (!pickedElement) {
             const ECS::Entity picked = raycastSelectEntity(ray.origin, ray.direction, world, projectRoot);
             const bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) ||
                                       ImGui::IsKeyDown(ImGuiKey_RightShift);
             if (picked.isValid()) {
                 if (shiftPressed) ctx.toggleSelection(picked);
                 else ctx.selectEntity(picked);
+                ctx.meshElementSelection.clear();
                 TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
             } else if (!shiftPressed) {
                 ctx.clearSelection();
+                ctx.meshElementSelection.clear();
+            }
             }
         }
     }
@@ -1155,245 +1361,22 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 #ifdef CF_HAS_SDL3
     // GPU scene is rendered into an offscreen target with transparent clear.
     // Composite it after the skybox so terrain/meshes sit in front of the sky.
-    if (m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+        m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
         CF_PROFILE_SCOPE("SceneViewport::composite");
         drawList->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin, viewportMax,
                            ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE);
     }
+    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        const Mat4 elementVp = computeVP3D(viewportSize, ctx);
+        drawMeshElements(drawList, world, ctx, origin, viewportSize, elementVp);
+    }
 #endif
 
-    if (m_config.grid) {
-        char modeStr[16];
-        switch (ctx.gizmoMode) {
-            case EditorContext::GizmoMode::Translate: strcpy(modeStr, "Translate"); break;
-            case EditorContext::GizmoMode::Rotate:    strcpy(modeStr, "Rotate"); break;
-            case EditorContext::GizmoMode::Scale:     strcpy(modeStr, "Scale"); break;
-            default: strcpy(modeStr, "Select"); break;
-        }
-        char buf[80];
-        snprintf(buf, sizeof(buf), "%sGizmo: %s [T/E/R]  Grid: %s  1 u = 1 m",
-                 ctx.isPlayMode ? "PLAY  " : "",
-                 modeStr, m_config.grid ? "ON" : "OFF");
-        drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(200, 200, 200, 200), buf);
+    if (ctx.isPlayMode) {
+        drawList->AddText(ImVec2(origin.x + 8, origin.y + 8), IM_COL32(220, 80, 80, 230), "PLAY");
     }
 
-    {
-        ImVec2 btnPos(origin.x + 8, origin.y + 28);
-        ImGui::SetCursorScreenPos(btnPos);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
-        if (ctx.physicsDebugVisible) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.3f, 0.85f));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
-        }
-        if (ImGui::Button("Physics")) {
-            ctx.physicsDebugVisible = !ctx.physicsDebugVisible;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle physics collider debug overlay");
-        ImGui::PopStyleColor();
-
-        ImGui::SameLine();
-        if (ctx.snapToGrid) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.5f, 0.1f, 0.85f));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
-        }
-        if (ImGui::Button("Snap")) {
-            ctx.snapToGrid = !ctx.snapToGrid;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle snap to grid (%.1f units)", ctx.snapGridSize);
-        ImGui::PopStyleColor();
-
-        ImGui::SameLine();
-        const bool texturedPreview = (m_meshPreviewMode == MeshPreviewMode::Textured);
-        if (texturedPreview) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.75f, 0.78f, 0.92f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.05f, 0.05f, 0.05f, 1.0f));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
-        }
-        if (ImGui::Button(texturedPreview ? "Textured" : "Wireframe")) {
-            m_meshPreviewMode = texturedPreview ? MeshPreviewMode::Wireframe : MeshPreviewMode::Textured;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(texturedPreview
-                                  ? "GPU-lit meshes (fast with many objects)"
-                                  : "GPU wireframe with depth (fast with many objects)");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle 3D preview style (white/gray textured vs wireframe)");
-        if (texturedPreview) {
-            ImGui::PopStyleColor(2);
-        } else {
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::SameLine();
-        const char* densityLabels[] = {"Low", "Medium", "High"};
-        int wireDensity = static_cast<int>(m_wireframeDensity);
-        ImGui::BeginDisabled(texturedPreview);
-        ImGui::SetNextItemWidth(88.0f);
-        if (ImGui::SliderInt("##wire_density", &wireDensity, 0, 2, densityLabels[wireDensity])) {
-            m_wireframeDensity = static_cast<WireframeDensity>(wireDensity);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wireframe polygon density");
-        ImGui::EndDisabled();
-
-        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-            ImGui::SameLine();
-            if (ctx.skyboxEnabled) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.45f, 0.75f, 0.85f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
-            }
-            if (ImGui::Button("Sky")) {
-                ctx.skyboxEnabled = !ctx.skyboxEnabled;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Toggle 3D skybox background");
-            }
-            ImGui::PopStyleColor();
-
-            if (!Scene::hasSceneSkybox(world)) {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(88.0f);
-                int skyIdx = std::clamp(ctx.skyboxIndex, 0, ECS::kSkyboxPresetCount - 1);
-                if (ImGui::Combo("##skybox", &skyIdx, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount)) {
-                    ctx.skyboxIndex = skyIdx;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Fallback skybox preset (create a Skybox entity to save in scene)");
-                }
-            } else {
-                ImGui::SameLine();
-                ImGui::BeginDisabled();
-                ImGui::Button("Scene Sky");
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Skybox is controlled by a Skybox entity in the scene");
-                }
-            }
-        }
-
-        ImGui::PopStyleVar();
-    }
-
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
-        ctx.selectedEntity.isValid() &&
-        world.has<ECS::TerrainComponent>(ctx.selectedEntity)) {
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + 8, origin.y + 52));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 2));
-
-        auto terrainToolButton = [&](const char* label, bool active) -> bool {
-            if (active) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.65f, 0.35f, 0.9f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.35f, 0.35f, 0.75f));
-            }
-            const bool pressed = ImGui::Button(label);
-            ImGui::PopStyleColor();
-            return pressed;
-        };
-
-        if (terrainToolButton("Sculpt",
-                              ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt)) {
-            ctx.terrainEditMode = (ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt)
-                ? EditorContext::TerrainEditMode::None
-                : EditorContext::TerrainEditMode::Sculpt;
-            if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
-                ctx.gizmoMode = EditorContext::GizmoMode::None;
-            }
-        }
-        ImGui::SameLine();
-        if (terrainToolButton("Splat",
-                              ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat)) {
-            ctx.terrainEditMode = (ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat)
-                ? EditorContext::TerrainEditMode::None
-                : EditorContext::TerrainEditMode::Splat;
-            if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
-                ctx.gizmoMode = EditorContext::GizmoMode::None;
-            }
-        }
-        ImGui::SameLine();
-
-        if (ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt) {
-            if (terrainToolButton("Raise",
-                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Raise)) {
-                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Raise;
-            }
-            ImGui::SameLine();
-            if (terrainToolButton("Lower",
-                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Lower)) {
-                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Lower;
-            }
-            ImGui::SameLine();
-            if (terrainToolButton("Smooth",
-                                  ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Smooth)) {
-                ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Smooth;
-            }
-            ImGui::SameLine();
-        } else if (ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat) {
-            const char* layerNames[] = {"Grass", "Rock", "Sand", "Dirt"};
-            for (u32 layer = 0; layer < ECS::kTerrainSplatLayerCount; ++layer) {
-                if (layer > 0) ImGui::SameLine();
-                if (terrainToolButton(layerNames[layer], ctx.terrainSplatLayer == layer)) {
-                    ctx.terrainSplatLayer = layer;
-                }
-            }
-            ImGui::SameLine();
-        }
-
-        if (ctx.terrainEditMode != EditorContext::TerrainEditMode::None) {
-            ImGui::SetNextItemWidth(72.0f);
-            ImGui::SliderFloat("##brush_radius", &ctx.terrainBrushRadius, 0.5f, 64.0f, "R %.0f");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(72.0f);
-            ImGui::SliderFloat("##brush_strength", &ctx.terrainBrushStrength, 0.01f, 1.0f, "S %.2f");
-            ImGui::SameLine();
-        }
-
-        if (ImGui::Button("Chunks")) {
-            ctx.terrainShowChunkDebug = !ctx.terrainShowChunkDebug;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle chunk bounds debug overlay");
-
-        ImGui::SameLine();
-        if (ImGui::Button("Flatten")) {
-            if (auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(ctx.selectedEntity)) {
-                if (auto* terrain = world.get<ECS::TerrainComponent>(ctx.selectedEntity)) {
-                    ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
-                    heightmap->fill(0.0f);
-                    terrain->dataRevision++;
-                    ctx.isDirty = true;
-                    ctx.endUndo(world);
-                }
-            }
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset terrain height to flat");
-
-        ImGui::PopStyleVar();
-    }
-
-    {
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
-        f32 btnW   = 32.0f;
-        f32 margin = 8.0f;
-        ImVec2 btnPos(origin.x + viewportSize.x - margin - btnW * 3.0f - 4.0f, origin.y + 8.0f);
-
-        auto viewBtn = [&](const char* label, EditorContext::ViewMode mode) {
-            bool active = (ctx.viewMode == mode);
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 0.9f));
-            else        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.75f));
-            ImGui::SetCursorScreenPos(btnPos);
-            if (ImGui::Button(label, ImVec2(btnW, 22.0f))) ctx.viewMode = mode;
-            ImGui::PopStyleColor();
-            btnPos.x += btnW + 2.0f;
-        };
-
-        viewBtn("2D",  EditorContext::ViewMode::Mode2D);
-        viewBtn("3D",  EditorContext::ViewMode::Mode3D);
-        viewBtn("Iso", EditorContext::ViewMode::Isometric);
-        ImGui::PopStyleVar();
-    }
 
     if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {
         drawGrid(drawList, origin, viewportSize, ctx);
@@ -1425,6 +1408,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     drawPhysicsDebug(world, ctx, origin, viewportSize);
     drawCameraFrustums(world, ctx, origin, viewportSize);
     drawLightGizmos(world, ctx, origin, viewportSize);
+    drawSkeletons(world, ctx, origin, viewportSize);
 
     if (ctx.selectedEntity.isValid() && !terrainEditActive && !ctx.isPlayMode) {
         drawGizmo(world, ctx, origin, viewportSize);
@@ -1860,10 +1844,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float r = 7.0f;
 
-    std::string projectRoot;
-    if (!ctx.currentScenePath.empty()) {
-        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
-    }
+    const std::string projectRoot = resolveEditorProjectRoot(ctx);
     const bool wireMode = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
     const bool gpuTextured3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && !wireMode &&
                                 m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
@@ -2102,10 +2083,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
             }
             case ECS::MeshPrimitive::Custom: {
                 if (!mesh->customMeshPath.empty() || world.has<ECS::TerrainComponent>(entity)) {
-                    std::string projectRoot;
-                    if (!ctx.currentScenePath.empty()) {
-                        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
-                    }
+                    const std::string projectRoot = resolveEditorProjectRoot(ctx);
 
                     auto& meshCache = Assets::MeshCache::getInstance();
                     Assets::Mesh3D* loadedMesh = Terrain::TerrainCache::instance().meshFor(entity);
@@ -2113,6 +2091,34 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         loadedMesh = meshCache.getMesh(mesh->customMeshPath, projectRoot);
                     }
                     const std::string& loadError = meshCache.getLastError();
+
+                    if (loadedMesh && !loadedMesh->vertices.empty() &&
+                        ctx.viewMode != EditorContext::ViewMode::Mode3D) {
+                        Vec3 bMin = loadedMesh->bounds.min;
+                        Vec3 bMax = loadedMesh->bounds.max;
+                        if (!(bMin.x <= bMax.x && bMin.y <= bMax.y && bMin.z <= bMax.z)) {
+                            bMin = Vec3(-0.5f, -0.5f, -0.5f);
+                            bMax = Vec3(0.5f, 0.5f, 0.5f);
+                        }
+                        const Vec3 bbCorners[8] = {
+                            {bMin.x, bMin.y, bMin.z}, {bMax.x, bMin.y, bMin.z},
+                            {bMin.x, bMax.y, bMin.z}, {bMax.x, bMax.y, bMin.z},
+                            {bMin.x, bMin.y, bMax.z}, {bMax.x, bMin.y, bMax.z},
+                            {bMin.x, bMax.y, bMax.z}, {bMax.x, bMax.y, bMax.z}
+                        };
+                        const int bbEdges[][2] = {
+                            {0, 1}, {1, 3}, {3, 2}, {2, 0},
+                            {4, 5}, {5, 7}, {7, 6}, {6, 4},
+                            {0, 4}, {1, 5}, {3, 7}, {2, 6}
+                        };
+                        const ImU32 boxCol = selected ? IM_COL32(110, 210, 255, 255)
+                                                      : IM_COL32(170, 190, 230, 180);
+                        for (const auto& edge : bbEdges) {
+                            drawSegment(worldMatrix.transformPoint(bbCorners[edge[0]]),
+                                        worldMatrix.transformPoint(bbCorners[edge[1]]), boxCol, thickness);
+                        }
+                        break;
+                    }
 
                     if (!loadedMesh || loadedMesh->vertices.empty() || loadedMesh->indices.empty()) {
                         const std::array<Vec3, 8> corners = {{
@@ -2454,6 +2460,39 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     }
 }
 
+void SceneViewport::drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    if (ctx.viewMode != EditorContext::ViewMode::Mode3D &&
+        ctx.viewMode != EditorContext::ViewMode::Isometric) {
+        return;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!dl) return;
+
+    ECS::ComponentQuery query;
+    query.with<Animation::SkinnedPose>();
+    world.forEach<Animation::SkinnedPose>(query, [&](ECS::Entity entity, Animation::SkinnedPose&) {
+        const std::vector<Vec3>* joints = Animation::jointPositionsFor(entity.id());
+        const std::vector<i32>* parents = Animation::jointParentsFor(entity.id());
+        if (!joints || !parents || joints->size() != parents->size()) return;
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const bool selected = ctx.selectedEntity == entity;
+        const ImU32 color = selected ? IM_COL32(255, 196, 64, 230) : IM_COL32(120, 190, 255, 160);
+        const int count = std::min(static_cast<int>(joints->size()), 256);
+        for (int i = 0; i < count; ++i) {
+            const i32 parent = (*parents)[static_cast<size_t>(i)];
+            const Vec3 joint = worldMatrix.transformPoint((*joints)[static_cast<size_t>(i)]);
+            const ImVec2 screen = projectToScreen(joint, origin, viewportSize, ctx);
+            if (screen.x < -5000.0f) continue;
+            dl->AddCircleFilled(screen, selected ? 3.0f : 2.0f, color, 8);
+            if (parent < 0 || parent >= count) continue;
+            const Vec3 parentJoint = worldMatrix.transformPoint((*joints)[static_cast<size_t>(parent)]);
+            const ImVec2 parentScreen = projectToScreen(parentJoint, origin, viewportSize, ctx);
+            if (parentScreen.x < -5000.0f) continue;
+            dl->AddLine(parentScreen, screen, color, selected ? 1.8f : 1.2f);
+        }
+    });
+}
+
 void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
@@ -2463,6 +2502,9 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
         return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
             ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
             : projectToScreen(p, origin, viewportSize, ctx);
+    };
+    auto onScreen = [](ImVec2 p) {
+        return p.x > -4000.0f && p.y > -4000.0f && p.x < 20000.0f && p.y < 20000.0f;
     };
 
     {
@@ -2505,8 +2547,10 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                                ImVec2(screenPos.x + x2, screenPos.y + y2), color, 2.0f);
                 }
 
-                dl->AddLine(screenPos, tipPos, color, selected ? 2.5f : 1.5f);
-                dl->AddCircleFilled(tipPos, 3.0f, color, 10);
+                if (onScreen(screenPos) && onScreen(tipPos)) {
+                    dl->AddLine(screenPos, tipPos, color, selected ? 2.5f : 1.5f);
+                    dl->AddCircleFilled(tipPos, 3.0f, color, 10);
+                }
 
                 dl->AddText(ImVec2(screenPos.x + 12, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Dir");
             });
@@ -2570,14 +2614,21 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
                 Vec3 baseUp    = coneEnd + up * coneRadius;
                 Vec3 baseDown  = coneEnd - up * coneRadius;
 
-                dl->AddLine(screenPos, proj3D(baseRight), color, selected ? 2.5f : 1.5f);
-                dl->AddLine(screenPos, proj3D(baseLeft),  color, selected ? 2.5f : 1.5f);
-                dl->AddLine(screenPos, proj3D(baseUp),    color, selected ? 2.0f : 1.25f);
-                dl->AddLine(screenPos, proj3D(baseDown),  color, selected ? 2.0f : 1.25f);
-                dl->AddLine(proj3D(baseRight), proj3D(baseUp),    color, 1.25f);
-                dl->AddLine(proj3D(baseUp),    proj3D(baseLeft),  color, 1.25f);
-                dl->AddLine(proj3D(baseLeft),  proj3D(baseDown),  color, 1.25f);
-                dl->AddLine(proj3D(baseDown),  proj3D(baseRight), color, 1.25f);
+                const ImVec2 sRight = proj3D(baseRight);
+                const ImVec2 sLeft = proj3D(baseLeft);
+                const ImVec2 sUp = proj3D(baseUp);
+                const ImVec2 sDown = proj3D(baseDown);
+                if (onScreen(screenPos) && onScreen(sRight) && onScreen(sLeft) &&
+                    onScreen(sUp) && onScreen(sDown)) {
+                    dl->AddLine(screenPos, sRight, color, selected ? 2.5f : 1.5f);
+                    dl->AddLine(screenPos, sLeft,  color, selected ? 2.5f : 1.5f);
+                    dl->AddLine(screenPos, sUp,    color, selected ? 2.0f : 1.25f);
+                    dl->AddLine(screenPos, sDown,  color, selected ? 2.0f : 1.25f);
+                    dl->AddLine(sRight, sUp,   color, 1.25f);
+                    dl->AddLine(sUp,    sLeft, color, 1.25f);
+                    dl->AddLine(sLeft,  sDown, color, 1.25f);
+                    dl->AddLine(sDown,  sRight, color, 1.25f);
+                }
                 dl->AddCircleFilled(screenPos, 5.0f, color, 12);
                 dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 8), IM_COL32(220, 220, 230, 230), "Sp");
             });
@@ -2598,10 +2649,12 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     Vec3 worldPos;
     if (!tryGetEntityPosition(world, ctx.selectedEntity, worldPos)) return;
     ImVec2 screenPos = projectToScreen(worldPos, origin, viewportSize, ctx);
-    ImDrawList* dl   = ImGui::GetWindowDrawList();
-    const float HL   = 30.0f * ctx.viewportZoom;
-    const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D);
+    ImDrawList* dl   = ImGui::GetForegroundDrawList();
+    dl->PushClipRect(origin, ImVec2(origin.x + viewportSize.x, origin.y + viewportSize.y), true);
+    const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                        ctx.viewMode == EditorContext::ViewMode::Isometric);
     const bool  zDimmed = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
+    const float HL   = is3D ? 72.0f : std::max(64.0f, 30.0f * ctx.viewportZoom);
 
     float sinY = 0, cosY = 1, sinP = 0, cosP = 1;
     if (is3D) { sinY=std::sin(ctx.camYaw); cosY=std::cos(ctx.camYaw); sinP=std::sin(ctx.camPitch); cosP=std::cos(ctx.camPitch); }
@@ -2708,46 +2761,26 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
             if (cdist < 9.f) {
                 m_hoveredAxis = 4;
             } else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
-                auto screenScaleForAxis = [&](const Vec3& axis) -> float {
-                    Vec3 dir = axis;
-                    const float len = dir.length();
-                    if (len < 1e-6f) return 0.f;
-                    dir = dir / len;
-                    ImVec2 s0 = projectToScreen(worldPos, origin, viewportSize, ctx);
-                    ImVec2 s1 = projectToScreen(worldPos + dir, origin, viewportSize, ctx);
-                    const float dx = s1.x - s0.x;
-                    const float dy = s1.y - s0.y;
-                    return std::sqrt(dx * dx + dy * dy);
-                };
-                auto worldRadiusForRing = [&](const Vec3& axisA, const Vec3& axisB) -> float {
-                    const float scaleA = screenScaleForAxis(axisA);
-                    const float scaleB = screenScaleForAxis(axisB);
-                    const float pxPerUnit = std::max(0.01f, 0.5f * (scaleA + scaleB));
-                    return HL / pxPerUnit;
-                };
-                auto ringHit = [&](const Vec3& axisA, const Vec3& axisB) -> bool {
-                    Vec3 a = axisA;
-                    Vec3 b = axisB;
-                    const float aLen = a.length();
-                    const float bLen = b.length();
-                    if (aLen < 1e-6f || bLen < 1e-6f) return false;
-                    a = a / aLen;
-                    b = b / bLen;
-                    const float worldRadius = worldRadiusForRing(a, b);
-                    const int N = 48;
+                auto ringHit = [&](ImVec2 a, ImVec2 b) -> bool {
+                    const float la = std::sqrt(a.x * a.x + a.y * a.y);
+                    const float lb = std::sqrt(b.x * b.x + b.y * b.y);
+                    const float major = std::max(la, lb);
+                    if (major < 1.0f) return false;
+                    const float s = HL / major;
+                    constexpr int N = 40;
                     for (int i = 0; i < N; ++i) {
                         const float ang = 6.28318f * static_cast<float>(i) / static_cast<float>(N);
-                        const Vec3 wp = worldPos + (a * std::cos(ang) + b * std::sin(ang)) * worldRadius;
-                        const ImVec2 sp = projectToScreen(wp, origin, viewportSize, ctx);
-                        const float dx = mouse.x - sp.x;
-                        const float dy = mouse.y - sp.y;
-                        if (dx * dx + dy * dy < 64.f) return true;
+                        const float px = screenPos.x + (a.x * std::cos(ang) + b.x * std::sin(ang)) * s;
+                        const float py = screenPos.y + (a.y * std::cos(ang) + b.y * std::sin(ang)) * s;
+                        const float dx = mouse.x - px;
+                        const float dy = mouse.y - py;
+                        if (dx * dx + dy * dy < 100.0f) return true;
                     }
                     return false;
                 };
-                if      (ringHit(worldAxisY, worldAxisZ)) m_hoveredAxis = 1;
-                else if (ringHit(worldAxisX, worldAxisZ)) m_hoveredAxis = 2;
-                else if (ringHit(worldAxisX, worldAxisY)) m_hoveredAxis = 3;
+                if      (ringHit(rawY, rawZ)) m_hoveredAxis = 1;
+                else if (ringHit(rawX, rawZ)) m_hoveredAxis = 2;
+                else if (ringHit(rawX, rawY)) m_hoveredAxis = 3;
             } else {
                 auto ptLineDist = [&](ImVec2 b, ImVec2 e) -> float {
                     float dx=e.x-b.x, dy=e.y-b.y, l2=dx*dx+dy*dy;
@@ -2775,7 +2808,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
 
     auto drawArrow = [&](ImVec2 from, ImVec2 to, u32 col) {
         float dx=to.x-from.x, dy=to.y-from.y, d=std::sqrt(dx*dx+dy*dy);
-        dl->AddLine(from, to, col, 3.f);
+        dl->AddLine(from, to, col, 4.f);
         if (d < 1.f) { dl->AddCircleFilled(from, 4.f, col, 12); return; }
         float ux=dx/d, uy=dy/d;
         ImVec2 tip(to.x+ux*8.f, to.y+uy*8.f);
@@ -2785,40 +2818,20 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         dl->AddLine(from, to, col, 2.f);
         dl->AddRectFilled(ImVec2(to.x-5.f,to.y-5.f), ImVec2(to.x+5.f,to.y+5.f), col);
     };
-    auto screenScaleForAxis = [&](const Vec3& axis) -> float {
-        Vec3 dir = axis;
-        const float len = dir.length();
-        if (len < 1e-6f) return 0.f;
-        dir = dir / len;
-        ImVec2 s0 = projectToScreen(worldPos, origin, viewportSize, ctx);
-        ImVec2 s1 = projectToScreen(worldPos + dir, origin, viewportSize, ctx);
-        const float dx = s1.x - s0.x;
-        const float dy = s1.y - s0.y;
-        return std::sqrt(dx * dx + dy * dy);
-    };
-    auto worldRadiusForRing = [&](const Vec3& axisA, const Vec3& axisB) -> float {
-        const float scaleA = screenScaleForAxis(axisA);
-        const float scaleB = screenScaleForAxis(axisB);
-        const float pxPerUnit = std::max(0.01f, 0.5f * (scaleA + scaleB));
-        return HL / pxPerUnit;
-    };
-    auto drawRing = [&](const Vec3& axisA, const Vec3& axisB, u32 col) {
-        Vec3 a = axisA;
-        Vec3 b = axisB;
-        const float aLen = a.length();
-        const float bLen = b.length();
-        if (aLen < 1e-6f || bLen < 1e-6f) return;
-        a = a / aLen;
-        b = b / bLen;
-        const float worldRadius = worldRadiusForRing(a, b);
-        const int N = 64;
+    auto drawRing = [&](ImVec2 a, ImVec2 b, u32 col) {
+        const float la = std::sqrt(a.x * a.x + a.y * a.y);
+        const float lb = std::sqrt(b.x * b.x + b.y * b.y);
+        const float major = std::max(la, lb);
+        if (major < 1.0f) return;
+        const float s = HL / major;
+        constexpr int N = 48;
         ImVec2 prev;
         bool hasPrev = false;
         for (int i = 0; i <= N; ++i) {
             const float ang = 6.28318f * static_cast<float>(i) / static_cast<float>(N);
-            const Vec3 wp = worldPos + (a * std::cos(ang) + b * std::sin(ang)) * worldRadius;
-            const ImVec2 sp = projectToScreen(wp, origin, viewportSize, ctx);
-            if (hasPrev) dl->AddLine(prev, sp, col, 2.f);
+            const ImVec2 sp(screenPos.x + (a.x * std::cos(ang) + b.x * std::sin(ang)) * s,
+                            screenPos.y + (a.y * std::cos(ang) + b.y * std::sin(ang)) * s);
+            if (hasPrev) dl->AddLine(prev, sp, col, 2.5f);
             prev = sp;
             hasPrev = true;
         }
@@ -2833,14 +2846,15 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
         if      (ctx.gizmoMode == EditorContext::GizmoMode::Translate) drawArrow(screenPos, end, col);
         else if (ctx.gizmoMode == EditorContext::GizmoMode::Scale)     drawScaleBox(screenPos, end, col);
         else if (ctx.gizmoMode == EditorContext::GizmoMode::Rotate) {
-            const Vec3& ringA = (axId == 1) ? worldAxisY : worldAxisX;
-            const Vec3& ringB = (axId == 3) ? worldAxisY : worldAxisZ;
+            const ImVec2 ringA = (axId == 1) ? rawY : rawX;
+            const ImVec2 ringB = (axId == 3) ? rawY : rawZ;
             drawRing(ringA, ringB, axisColor(axId, 1.f));
         }
     }
 
+    dl->AddCircleFilled(screenPos, 5.f, IM_COL32(255, 255, 255, 230), 12);
     if (ctx.gizmoMode == EditorContext::GizmoMode::None)
-        dl->AddCircle(screenPos, 6.f, IM_COL32(255,255,255,180), 12, 2.f);
+        dl->AddCircle(screenPos, 8.f, IM_COL32(255,255,255,180), 16, 2.f);
 
     if (world.has<Audio::AudioEmitter>(ctx.selectedEntity)) {
         auto* emitter = world.get<Audio::AudioEmitter>(ctx.selectedEntity);
@@ -2857,6 +2871,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
             dl->AddText(ImVec2(screenPos.x + 8, screenPos.y - 20), IM_COL32(180, 180, 255, 220), "S");
         }
     }
+    dl->PopClipRect();
 }
 
 void SceneViewport::drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
@@ -2900,21 +2915,14 @@ bool SceneViewport::drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec
                                       Render::SkyboxRenderer* renderer,
                                       int skyboxMaxRasterDim) {
     if (!drawList) return false;
-    if (respectEditorToggle && !ctx.skyboxEnabled) return false;
 
-    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
-
-    int presetIndex = ctx.skyboxIndex;
-    std::filesystem::path texturePath;
-
+    const std::string projectRoot = resolveEditorProjectRoot(ctx);
     const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
-    if (active.component) {
-        presetIndex = active.component->presetIndex;
-        texturePath = Scene::resolveSkyboxTexturePath(*active.component, projectRoot);
-    } else {
-        texturePath = Scene::resolveBuiltinSkyboxPath(presetIndex);
-    }
+    if (!active.component) return false;
+    if (respectEditorToggle && !active.component->enabled) return false;
 
+    const std::filesystem::path texturePath =
+        Scene::resolveSkyboxTexturePath(*active.component, projectRoot);
     if (texturePath.empty()) return false;
 
     const std::string textureKey = texturePath.string();
@@ -3082,64 +3090,123 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
 }
 
 void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    (void)world;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float padding = 12.0f;
-    const float buttonWidth = 62.0f;
-    const float widgetSize = 84.0f;
+    const bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+                       ctx.viewMode == EditorContext::ViewMode::Isometric);
+    const float axisLen = 32.0f;
+    const ImVec2 center(origin.x + viewportSize.x - 58.0f, origin.y + 52.0f);
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const float halfPi = 1.5707963f;
 
-    ImVec2 widgetMin(
-        origin.x + viewportSize.x - padding - buttonWidth - 6.0f - widgetSize,
-        origin.y + viewportSize.y - padding - widgetSize
-    );
-    ImVec2 widgetMax(widgetMin.x + widgetSize, widgetMin.y + widgetSize);
+    struct Handle {
+        Vec3 dir;
+        int r, g, b;
+        const char* label;
+        float yaw;
+        float pitch;
+        float depth;
+        ImVec2 tip;
+        float screenLen;
+    };
 
-    dl->AddRectFilled(widgetMin, widgetMax, IM_COL32(18, 20, 26, 190), 6.0f);
-    dl->AddRect(widgetMin, widgetMax, IM_COL32(90, 100, 130, 180), 6.0f, 0, 1.0f);
-
-    bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
-                 ctx.viewMode == EditorContext::ViewMode::Isometric);
-
-    ImVec2 center(widgetMin.x + widgetSize * 0.5f, widgetMin.y + widgetSize * 0.5f);
-    const float axisLen = 22.0f;
-
-    {
-        float sinY = std::sin(ctx.camYaw),  cosY = std::cos(ctx.camYaw);
-        float sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-
-        auto axisScreenDir = [&](float wx, float wy, float wz) -> ImVec2 {
-            float sx  =  cosY * wx + sinY * wz;
-            float sy  =  wy;
-            float sz  = -sinY * wx + cosY * wz;
-            float sy2 =  cosP * sy + sinP * sz;
-            float len = std::sqrt(sx * sx + sy2 * sy2);
-            if (len < 0.001f) return ImVec2(0.f, 0.f);
-            return ImVec2(sx / len * axisLen, -sy2 / len * axisLen);
+    Handle handles[6];
+    int handleCount = 0;
+    if (is3D) {
+        const Vec3 eye = editorOrbitOffset(ctx.camYaw, ctx.camPitch, 1.0f);
+        const Mat4 view = Mat4::lookAt(eye, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f));
+        const Vec3 right(view(0, 0), view(0, 1), view(0, 2));
+        const Vec3 up(view(1, 0), view(1, 1), view(1, 2));
+        const Vec3 forward(-view(2, 0), -view(2, 1), -view(2, 2));
+        const Handle seeds[] = {
+            {{ 1.0f, 0.0f, 0.0f}, 230, 60, 60, "x", halfPi, 0.0f, 0, {}, 0},
+            {{-1.0f, 0.0f, 0.0f}, 140, 40, 40, nullptr, -halfPi, 0.0f, 0, {}, 0},
+            {{ 0.0f, 1.0f, 0.0f}, 70, 210, 80, "y", ctx.camYaw, halfPi * 0.98f, 0, {}, 0},
+            {{ 0.0f,-1.0f, 0.0f}, 40, 120, 50, nullptr, ctx.camYaw, -halfPi * 0.98f, 0, {}, 0},
+            {{ 0.0f, 0.0f, 1.0f}, 70, 130, 240, "z", 3.1415926f, 0.0f, 0, {}, 0},
+            {{ 0.0f, 0.0f,-1.0f}, 40, 70, 150, nullptr, 0.0f, 0.0f, 0, {}, 0},
         };
+        handleCount = 6;
+        for (int i = 0; i < handleCount; ++i) {
+            handles[i] = seeds[i];
+            const float sx = handles[i].dir.dot(right);
+            const float sy = handles[i].dir.dot(up);
+            handles[i].depth = handles[i].dir.dot(forward);
+            handles[i].tip = ImVec2(center.x + sx * axisLen, center.y - sy * axisLen);
+            handles[i].screenLen = std::sqrt(sx * sx + sy * sy) * axisLen;
+        }
+        std::sort(handles, handles + handleCount,
+                  [](const Handle& a, const Handle& b) { return a.depth > b.depth; });
+    } else {
+        handles[0] = {{1, 0, 0}, 230, 60, 60, "x", 0, 0, -1, ImVec2(center.x + axisLen, center.y), axisLen};
+        handles[1] = {{0, 1, 0}, 70, 210, 80, "y", 0, 0, -1, ImVec2(center.x, center.y - axisLen), axisLen};
+        handleCount = 2;
+    }
 
-        ImVec2 xDir = axisScreenDir(1.f, 0.f, 0.f);
-        ImVec2 yDir = axisScreenDir(0.f, 1.f, 0.f);
-        ImVec2 zDir = axisScreenDir(0.f, 0.f, 1.f);
-
-        dl->AddLine(center, ImVec2(center.x + xDir.x, center.y + xDir.y), IM_COL32(255, 70, 70, 255), 2.0f);
-        dl->AddText(ImVec2(center.x + xDir.x + 3.f, center.y + xDir.y - 8.f), IM_COL32(255, 90, 90, 255), "X");
-
-        dl->AddLine(center, ImVec2(center.x + yDir.x, center.y + yDir.y), IM_COL32(70, 255, 90, 255), 2.0f);
-        dl->AddText(ImVec2(center.x + yDir.x - 4.f, center.y + yDir.y - 14.f), IM_COL32(90, 255, 110, 255), "Y");
-
-        if (is3D) {
-            dl->AddLine(center, ImVec2(center.x + zDir.x, center.y + zDir.y), IM_COL32(90, 140, 255, 255), 2.0f);
-            dl->AddText(ImVec2(center.x + zDir.x - 12.f, center.y + zDir.y - 6.f), IM_COL32(120, 165, 255, 255), "Z");
+    int hovered = -1;
+    if (is3D) {
+        float bestDepth = 1.0e9f;
+        for (int i = 0; i < handleCount; ++i) {
+            const ImVec2 hit = handles[i].screenLen < 8.0f ? center : handles[i].tip;
+            const float dx = mouse.x - hit.x;
+            const float dy = mouse.y - hit.y;
+            if (dx * dx + dy * dy < 12.0f * 12.0f && handles[i].depth < bestDepth) {
+                bestDepth = handles[i].depth;
+                hovered = i;
+            }
+        }
+        if (hovered >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered()) {
+            ctx.camYaw = handles[hovered].yaw;
+            ctx.camPitch = std::clamp(handles[hovered].pitch, EditorContext::kCamPitchMin,
+                                      EditorContext::kCamPitchMax);
         }
     }
 
-    dl->AddCircleFilled(center, 2.8f, IM_COL32(240, 240, 240, 255));
-    dl->AddText(ImVec2(widgetMin.x + 6.0f, widgetMin.y + widgetSize - 18.0f), IM_COL32(220, 220, 230, 220), is3D ? "3D" : "2D");
+    dl->AddCircleFilled(center, 2.5f, IM_COL32(240, 240, 240, 255));
+    for (int i = 0; i < handleCount; ++i) {
+        const Handle& axis = handles[i];
+        const bool hot = i == hovered;
+        const bool facing = axis.depth < 0.15f;
+        const int alpha = hot ? 255 : (facing ? 255 : 150);
+        const ImU32 color = hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(axis.r, axis.g, axis.b, alpha);
+        if (axis.screenLen < 8.0f) {
+            if (!facing && !hot) continue;
+            const float radius = axis.label ? 8.0f : 5.0f;
+            dl->AddCircleFilled(center, radius, color, 16);
+            if (axis.label) {
+                const ImVec2 text = ImGui::CalcTextSize(axis.label);
+                dl->AddText(ImVec2(center.x - text.x * 0.5f, center.y - text.y * 0.5f),
+                            IM_COL32(16, 16, 16, 255), axis.label);
+            }
+            continue;
+        }
+        dl->AddLine(center, axis.tip, color, hot ? 2.6f : (facing ? 2.0f : 1.4f));
+        if (axis.label) {
+            const float ux = (axis.tip.x - center.x) / axis.screenLen;
+            const float uy = (axis.tip.y - center.y) / axis.screenLen;
+            const float head = facing ? 7.0f : 5.0f;
+            const ImVec2 a(axis.tip.x - uy * head * 0.55f - ux * head, axis.tip.y + ux * head * 0.55f - uy * head);
+            const ImVec2 b(axis.tip.x + uy * head * 0.55f - ux * head, axis.tip.y - ux * head * 0.55f - uy * head);
+            dl->AddTriangleFilled(axis.tip, a, b, color);
+            dl->AddText(ImVec2(axis.tip.x + ux * 8.0f - 3.0f, axis.tip.y + uy * 8.0f - 6.0f), color, axis.label);
+        } else {
+            dl->AddCircleFilled(axis.tip, facing ? 4.5f : 3.0f, color, 12);
+        }
+    }
 
-    ImVec2 btnPos(widgetMax.x + 6.0f, widgetMin.y + widgetSize - 24.0f);
-    ImGui::SetCursorScreenPos(btnPos);
-    if (ImGui::Button(m_projectionMode == ProjectionMode::Perspective ? "Persp" : "Ortho", ImVec2(buttonWidth, 24.0f))) {
+    const char* projLabel = m_projectionMode == ProjectionMode::Perspective ? "Persp" : "Ortho";
+    const ImVec2 textSize = ImGui::CalcTextSize(projLabel);
+    const ImVec2 textPos(center.x - textSize.x * 0.5f, center.y + axisLen + 10.0f);
+    ImGui::SetCursorScreenPos(textPos);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.12f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 0));
+    if (ImGui::Button(projLabel, ImVec2(textSize.x + 8.0f, textSize.y + 2.0f))) {
         toggleProjectionMode();
     }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
 }
 
 f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
@@ -3308,12 +3375,12 @@ ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3
             return;
         }
 
-        Assets::Mesh3D* mesh = nullptr;
-        if (filter.primitive == ECS::MeshPrimitive::Custom) {
+        Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
+        if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
             if (!filter.customMeshPath.empty()) {
                 mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
             }
-        } else {
+        } else if (!mesh) {
             mesh = Render::GpuProceduralMeshes::get(filter.primitive);
         }
         if (mesh && (mesh->bounds.max - mesh->bounds.min).lengthSquared() > 1.0e-6f) {
@@ -3415,6 +3482,20 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
 
     switch (ctx.gizmoMode) {
         case EditorContext::GizmoMode::Translate:
+            if (ctx.meshElementMode != EditorContext::MeshElementMode::Object) {
+                Vec3 worldDelta{};
+                if (axis == 1) worldDelta.x = projectDelta(1);
+                else if (axis == 2) worldDelta.y = projectDelta(2);
+                else if (axis == 3) worldDelta.z = projectDelta(3);
+                else {
+                    worldDelta.x = delta.x / scale;
+                    worldDelta.y = -delta.y / scale;
+                }
+                if (moveMeshSelection(world, ctx, worldDelta)) {
+                    ctx.isDirty = true;
+                    return;
+                }
+            }
             if (axis == 1)                           pos->position.x += projectDelta(1);
             else if (axis == 2)                      pos->position.y += projectDelta(2);
             else if (axis == 3)                      pos->position.z += projectDelta(3);
@@ -3626,7 +3707,7 @@ void SceneViewport::drawCustomMeshGeometry(
     if (!meshFilter) return;
     if (meshFilter->customMeshPath.empty() && !world.has<ECS::TerrainComponent>(entity)) return;
 
-    const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+    const std::string projectRoot = resolveEditorProjectRoot(ctx);
 
     auto& meshCache = Assets::MeshCache::getInstance();
     Assets::Mesh3D* loadedMesh = meshOverride;
@@ -3761,10 +3842,7 @@ void SceneViewport::drawSceneMeshesForCamera(
         Scene::syncTerrainMeshes(world);
     }
 
-    std::string projectRoot;
-    if (!ctx.currentScenePath.empty()) {
-        projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
-    }
+    const std::string projectRoot = resolveEditorProjectRoot(ctx);
     Scene::SceneLighting sceneLighting;
     Scene::collectSceneLights(world, sceneLighting.lights);
 
@@ -3786,6 +3864,12 @@ void SceneViewport::drawSceneMeshesForCamera(
         [&](ECS::Entity entity, ECS::MeshFilterComponent& meshFilter) {
             if (entity == skipEntity) return;
             if (Scene::isEffectivelyDisabled(world, entity)) return;
+            if (const Effects::EffectComponent* volume = world.get<Effects::EffectComponent>(entity)) {
+                if (volume->enabled &&
+                    volume->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+                    return;
+                }
+            }
 
             const Mat4 worldMatrix = entityMatrix(world, entity);
             const bool isTerrain = world.has<ECS::TerrainComponent>(entity);
@@ -3794,6 +3878,13 @@ void SceneViewport::drawSceneMeshesForCamera(
             if (isTerrain) {
                 // Camera Preview must not CPU-rasterize terrain chunks. A 257²
                 // heightfield is hundreds of thousands of triangles per frame.
+                return;
+            }
+
+            if (Assets::Mesh3D* edited = ECS::editedMesh(world, entity)) {
+                drawCustomMeshGeometry(world, ctx, entity, &meshFilter, worldMatrix, dl, vp, camPos,
+                                       origin, panelSize, lightColorAt, true, false, receiveShadows,
+                                       &meshRaster, edited);
                 return;
             }
 
@@ -3828,13 +3919,9 @@ std::string SceneViewport::resolveSpritePath(const std::string& spriteName, cons
         }
     }
 
-    // 2. Derive project root from current scene path (if available)
-    std::filesystem::path projectRoot;
-    if (!ctx.currentScenePath.empty()) {
-        projectRoot = std::filesystem::path(ctx.currentScenePath).parent_path();
-    } else {
-        projectRoot = std::filesystem::current_path();
-    }
+    const std::filesystem::path projectRoot = !ctx.projectRootPath.empty()
+                                                   ? ctx.projectRootPath
+                                                   : std::filesystem::current_path();
 
     // Only the filename (without directory)
     std::string filename = std::filesystem::path(spriteName).filename().string();
@@ -3896,8 +3983,9 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
 
     world.forEach<ECS::Camera2DComponent, ECS::Transform>(q2d,
         [&](ECS::Entity, ECS::Camera2DComponent& cam, ECS::Transform& pos) {
-        const f32 halfW = 8.0f / cam.zoom;
-        const f32 halfH = 4.5f / cam.zoom;
+        const f32 zoom = std::max(cam.zoom, 0.05f);
+        const f32 halfW = 8.0f / zoom;
+        const f32 halfH = 4.5f / zoom;
 
         ImVec2 tl = w2s(pos.position.x - halfW, pos.position.y + halfH);
         ImVec2 tr = w2s(pos.position.x + halfW, pos.position.y + halfH);

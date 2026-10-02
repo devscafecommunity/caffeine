@@ -18,6 +18,8 @@ public:
 
     bool serialize(const std::string& filepath);
     bool deserialize(const std::string& filepath);
+    bool serializeToMemory(std::vector<u8>& out, const std::string& scenePath = {});
+    bool deserializeFromMemory(const std::vector<u8>& data, const std::string& scenePath = {});
 
 private:
     ECS::World& m_world;
@@ -72,7 +74,8 @@ private:
     static constexpr u32 kTypeSkinnedPose    = 50;
     static constexpr u32 kTypeSpriteSheet    = 51;
     static constexpr u32 kTypeEffect         = 52;
-    static constexpr u32 kTypeCount          = 53;
+    static constexpr u32 kTypeMeshGeometry   = 53;
+    static constexpr u32 kTypeCount          = 54;
 
     static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
@@ -98,6 +101,8 @@ private:
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
     void collectMeshFilterComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectMeshGeometryComponents(
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
     void collectMeshRendererComponents(
@@ -127,6 +132,7 @@ private:
     bool applyNameComponent(ECS::Entity e, const u8* data, u32 size);
     bool applySpriteComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshGeometryComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyScriptComponent(ECS::Entity e, const u8* data, u32 size);

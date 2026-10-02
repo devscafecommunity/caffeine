@@ -1,4 +1,5 @@
 #include "editor/ProjectManager.hpp"
+#include "scene/EnvironmentSystem.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -169,6 +170,8 @@ static bool loadProjectConfigFromFile(const std::filesystem::path& path, Project
         cfg.ScriptsPath = val;
     if (readJsonString(json, "last_scene", val))
         cfg.LastScene = val;
+    if (readJsonString(json, "template_type", val))
+        cfg.TemplateType = val;
 
     out = cfg;
     return true;
@@ -185,6 +188,7 @@ static std::string serializeConfig(const ProjectConfig& cfg) {
     json << "    \"assets_processed\": \"" << cfg.AssetProcessedPath.generic_string() << "\",\n";
     json << "    \"scripts\": \""        << cfg.ScriptsPath.generic_string() << "\"\n";
     json << "  },\n";
+    json << "  \"template_type\": \""    << cfg.TemplateType << "\",\n";
     json << "  \"last_scene\": \""       << cfg.LastScene << "\"\n";
     json << "}\n";
     return json.str();
@@ -323,6 +327,7 @@ bool ProjectManager::CreateNewProject(const ProjectConfig& config) {
     std::filesystem::create_directories(config.RootPath / "build", ec);
     if (ec) return false;
     if (!SaveProjectFile(config)) return false;
+    Scene::importDefaultSkyboxes(config.RootPath);
 
     m_CurrentConfig = config;
     UpdateRecentProjects(config.RootPath / "project.caffeine");
@@ -339,6 +344,7 @@ bool ProjectManager::OpenProject(const std::filesystem::path& projectFilePath) {
     if (IsPackagedBuildRoot(cfg.RootPath, cfg)) return false;
 
     m_CurrentConfig = cfg;
+    Scene::importDefaultSkyboxes(cfg.RootPath);
     UpdateRecentProjects(resolved);
 
     std::filesystem::path capPath = cfg.RootPath / "game.cap";

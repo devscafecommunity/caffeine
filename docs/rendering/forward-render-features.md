@@ -16,7 +16,7 @@ Sub-blocos:
 | Bloco | Função |
 |-------|--------|
 | Instancing | `drawIndexedInstanced`, até 256 por batch (ligado por defeito) |
-| IBL | Difuso e especular a partir do céu da cena (`diffuse` 1.0, `specular` 1.0 por defeito). Com IBL ligado, substitui o ambiente plano |
+| IBL | Difuso a partir do céu (**desligado por defeito** — a skybox não ilumina). Especulares (metais) continuam a refletir o céu. |
 | Occlusion | Oclusão coarse na CPU (off por defeito) |
 | Reflections | Planar, screen-space, probe |
 | Volumetrics | Nevoeiro analítico no forward shader |
@@ -26,7 +26,7 @@ Sem componente na cena, `budgetSafeForwardDefaults()` devolve `RenderFeatureSett
 | Capacidade | Default |
 |------------|---------|
 | Instancing | ligado (256/batch) |
-| IBL | ligado (diffuse/specular 1.0) |
+| IBL difuso | desligado (skybox = fundo + reflexões; ligar para o céu iluminar) |
 | Occlusion | desligado |
 | Reflections | **Probe** + screen-space trace |
 | Volumetrics | desligado |

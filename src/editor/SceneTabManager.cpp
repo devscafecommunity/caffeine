@@ -1,4 +1,5 @@
 #include "editor/SceneTabManager.hpp"
+#include "editor/DefaultScene.hpp"
 
 namespace Caffeine::Editor {
 
@@ -6,6 +7,7 @@ int SceneTabManager::newScene(const char* name) {
     auto tab = std::make_unique<SceneTab>();
     tab->name  = name ? name : "Untitled";
     tab->world = std::make_unique<ECS::World>();
+    populateDefaultScene(*tab->world);
     m_tabs.push_back(std::move(tab));
     int idx = static_cast<int>(m_tabs.size() - 1);
     if (m_activeTabIndex < 0) m_activeTabIndex = idx;

@@ -59,6 +59,7 @@ void AnimationTimelinePanel::play() {
 void AnimationTimelinePanel::stop() {
     m_isPlaying = false;
     m_currentTime = 0.0f;
+    m_applyTime = true;
 }
 
 void AnimationTimelinePanel::pause() {
@@ -206,17 +207,23 @@ void AnimationTimelinePanel::render(f32 deltaTime) {
 
     f32 drivenDuration = m_clip ? m_clip->duration() : 0.0f;
     bool drivenLoop = m_looping;
+    m_driveName.clear();
     if (m_scene) {
         ECS::Entity selected(m_selectedEntity, m_scene);
-        if (const Animation::SkinnedPose* pose = m_scene->get<Animation::SkinnedPose>(selected)) {
+        if (Animation::SkinnedPose* pose = m_scene->get<Animation::SkinnedPose>(selected)) {
             if (const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath)) {
                 if (pose->clipIndex >= 0 && pose->clipIndex < static_cast<i32>(skin->clips.size())) {
-                    drivenDuration = std::max(drivenDuration, skin->clips[static_cast<size_t>(pose->clipIndex)].duration);
+                    const Animation::SkeletalClip& boneClip = skin->clips[static_cast<size_t>(pose->clipIndex)];
+                    drivenDuration = std::max(drivenDuration, boneClip.duration);
+                    if (pose->clipIndex < static_cast<i32>(skin->clipNames.size())) {
+                        m_driveName = skin->clipNames[static_cast<size_t>(pose->clipIndex)];
+                    }
                 }
             }
             drivenLoop = drivenLoop || pose->loop;
         }
     }
+    m_timelineDuration = drivenDuration;
     if (m_isPlaying && drivenDuration > 0.0f) {
         m_currentTime += deltaTime;
         if (m_currentTime >= drivenDuration) {
@@ -224,6 +231,19 @@ void AnimationTimelinePanel::render(f32 deltaTime) {
             else            m_isPlaying = false;
         }
     }
+    if (m_scene) {
+        ECS::Entity selected(m_selectedEntity, m_scene);
+        if (Animation::SkinnedPose* pose = m_scene->get<Animation::SkinnedPose>(selected)) {
+            if (m_isPlaying || m_applyTime) {
+                pose->playing = false;
+                pose->time = m_currentTime;
+                pose->loop = drivenLoop;
+            } else {
+                m_currentTime = pose->time;
+            }
+        }
+    }
+    m_applyTime = false;
 
     ImGui::SetNextWindowSizeConstraints(ImVec2(400, 200), ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::Begin("Animation Timeline", &m_open)) {
@@ -245,11 +265,6 @@ void AnimationTimelinePanel::render(f32 deltaTime) {
                             }
                         }
                         ImGui::EndCombo();
-                    }
-                    if (m_isPlaying) {
-                        pose->playing = false;
-                        pose->time = m_currentTime;
-                        pose->loop = drivenLoop;
                     }
                 }
                 if (skin) {
@@ -292,6 +307,10 @@ void AnimationTimelinePanel::renderHeader() {
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", m_clip->name.cStr());
         ImGui::SameLine();
         ImGui::TextDisabled("%.2fs  %u fps", m_clip->duration(), m_clip->fps);
+    } else if (!m_driveName.empty()) {
+        ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s", m_driveName.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("%.2fs  bones", m_timelineDuration);
     } else {
         ImGui::TextDisabled("No clip");
     }
@@ -321,23 +340,23 @@ void AnimationTimelinePanel::renderHeader() {
         ImGui::TextDisabled("pos keys %zu", m_motion.positions.size());
     }
 
-    if (m_clip) {
+    if (m_timelineDuration > 0.0f) {
         ImGui::SameLine(0, 16.0f);
-        ImGui::TextDisabled("Time: %.3f / %.2f", m_currentTime, m_clip->duration());
+        ImGui::TextDisabled("Time: %.3f / %.2f", m_currentTime, m_timelineDuration);
     }
 }
 
 void AnimationTimelinePanel::renderTimeline() {
-    if (!m_clip) {
+    f32 duration = m_timelineDuration;
+    if (duration <= 0.0f && m_clip) duration = m_clip->duration();
+    if (duration <= 0.0f && !m_clip) {
         ImGui::Spacing();
         ImGui::TextDisabled("  No animation clip selected.");
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,0.7f), "  Tracks");
-        ImGui::TextDisabled("  No tracks. Add a clip to create tracks.");
+        ImGui::TextDisabled("  Select a skinned mesh, or add a clip.");
         return;
     }
-
-    f32 duration = m_clip->duration();
     if (duration <= 0.0f) duration = 1.0f;
 
     ImDrawList* dl  = ImGui::GetWindowDrawList();
@@ -396,6 +415,7 @@ void AnimationTimelinePanel::renderTimeline() {
         f32 clickX = ImGui::GetIO().MousePos.x;
         f32 t = xToTime(clickX);
         m_currentTime = std::max(0.0f, std::min(t, duration));
+        m_applyTime = true;
     }
     ImGui::SetCursorScreenPos(ImVec2(cursor.x, cursor.y + k_RulerHeight + 2.0f));
 

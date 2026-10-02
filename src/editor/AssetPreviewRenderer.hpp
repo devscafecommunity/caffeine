@@ -81,9 +81,10 @@ private:
 
     bool ensureImageLoaded(const std::filesystem::path& path);
     bool ensureWaveformLoaded(const std::filesystem::path& path);
-    bool ensureMaterialLoaded(const std::filesystem::path& path);
+    bool ensureMaterialLoaded(const std::filesystem::path& path, const std::string& projectRoot);
 
 #ifdef CF_HAS_SDL3
+    void invalidateStaleMaterialThumbs();
     Render::MaterialPreviewSettings previewSettings(u32 pixelSize) const;
     bool drawGpuTexture(RHI::Texture* texture, ImVec2 size);
     void pumpThumbnail(const std::string& projectRoot);
@@ -93,6 +94,7 @@ private:
         RHI::Texture* texture = nullptr;
         bool ready = false;
         bool failed = false;
+        bool stale = false;
     };
     struct ImageThumb {
         std::unique_ptr<ImTextureData> texture;
@@ -108,6 +110,7 @@ private:
     Render::MaterialPreviewRenderer m_thumbs;
     std::string m_envPath;
     f32 m_envExposure = 1.0f;
+    u64 m_materialCacheRevision = 0;
     std::unordered_map<std::string, GpuThumb> m_gpuThumbs;
     std::unordered_map<std::string, ImageThumb> m_imageThumbs;
     std::vector<std::pair<std::filesystem::path, AssetType>> m_thumbItems;

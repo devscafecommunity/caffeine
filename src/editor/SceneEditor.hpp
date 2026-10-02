@@ -26,6 +26,7 @@
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
+#include "editor/ToolboxPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -167,6 +168,7 @@ private:
     GameplayPreviewPanel m_gameplayPreview;
     TerrainEditorPanel  m_terrainEditor;
     EntityPresetsPanel  m_entityPresets;
+    ToolboxPanel        m_toolbox;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;

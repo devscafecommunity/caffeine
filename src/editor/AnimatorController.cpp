@@ -1,4 +1,5 @@
 #include "editor/AnimatorController.hpp"
+#include "animation/SkinLibrary.hpp"
 #include <cstring>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,16 @@ static const ImU32 k_ColStateBorder  = IM_COL32(100,120, 180,  255);
 static const ImU32 k_ColStateText    = IM_COL32(220,230,255,  255);
 static const ImU32 k_ColArrow        = IM_COL32(160,180,210,  255);
 static const ImU32 k_ColArrowActive  = IM_COL32(80, 220, 120,  255);
+
+void AnimatorControllerWindow::bindSelection(ECS::World* world, ECS::Entity entity) {
+    m_world = world;
+    m_entity = entity;
+    Animator* animator = nullptr;
+    if (world && entity.isValid()) animator = world->get<Animator>(entity);
+    if (animator == m_bound) return;
+    m_bound = animator;
+    setAnimator(animator);
+}
 
 void AnimatorControllerWindow::setAnimator(Animator* animator) {
     m_animator = animator ? animator : &m_internalAnimator;
@@ -51,6 +62,40 @@ void AnimatorControllerWindow::render() {
     if (!ImGui::Begin("Animator Controller", &m_open)) {
         ImGui::End();
         return;
+    }
+
+    if (!m_bound) {
+        ImGui::TextDisabled("Add an Animator on the selected entity to keep this graph.");
+    }
+    if (m_world && m_entity.isValid()) {
+        if (const Animation::SkinnedPose* pose = m_world->get<Animation::SkinnedPose>(m_entity)) {
+            if (const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath)) {
+                if (ImGui::Button("States from bone clips") && m_animator && !skin->clipNames.empty()) {
+                    float column = 0.0f;
+                    float row = 0.0f;
+                    for (const std::string& clipName : skin->clipNames) {
+                        FixedString<32> name(clipName.c_str());
+                        if (name.empty()) continue;
+                        if (!m_animator->states.get(name)) {
+                            AnimationState state;
+                            state.name = name;
+                            m_animator->states.set(name, state);
+                        }
+                        if (m_nodePositions.find(name.cStr()) == m_nodePositions.end()) {
+                            m_nodePositions[name.cStr()] = StateNodePos{column * 180.0f + 20.0f, row * 70.0f + 20.0f};
+                            column += 1.0f;
+                            if (column >= 4.0f) {
+                                column = 0.0f;
+                                row += 1.0f;
+                            }
+                        }
+                        if (m_animator->currentState.empty()) m_animator->currentState = name;
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%d bone clips", static_cast<int>(skin->clipNames.size()));
+            }
+        }
     }
 
     float inspectorWidth = 230.0f;
@@ -184,6 +229,8 @@ void AnimatorControllerWindow::renderCanvas() {
 
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             m_selectedState = name.cStr();
+            m_animator->currentState = name;
+            m_animator->timeInState = 0.0f;
         }
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f)) {
             ImVec2 delta = ImGui::GetIO().MouseDelta;

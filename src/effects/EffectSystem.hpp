@@ -2,6 +2,7 @@
 
 #include "assets/MeshTypes.hpp"
 #include "effects/EffectTypes.hpp"
+#include "ecs/MeshComponents.hpp"
 #include "ecs/World.hpp"
 #include "math/Vec3.hpp"
 #include "math/Vec4.hpp"
@@ -36,8 +37,22 @@ const std::vector<SimParticle>* particlesFor(u32 entityId);
 void collectOverlayEffects(ECS::World& world, bool onlyTwoD, std::vector<EffectSprite>& out);
 
 /// Camera-facing quads. Colour is stored in the vertex tangent.
+/// Volumetric lights are the entity mesh: scale, rotation and the primitive size the volume.
 void buildEffectMesh(ECS::World& world, const Vec3& cameraPos, const Vec3& cameraRight,
                      const Vec3& cameraUp, Assets::Mesh3D& mesh);
+
+ECS::MeshPrimitive volumetricMeshPrimitive(VolumetricShape shape);
+bool volumetricShapeForMesh(ECS::MeshPrimitive primitive, VolumetricShape& shape);
+Vec3 volumetricScaleForEffect(const EffectComponent& effect);
+
+/// Writes Length / Radius / Width onto the entity scale.
+void pushVolumetricSizeToMesh(ECS::World& world, ECS::Entity entity, const EffectComponent& effect);
+/// Reads the entity scale back into the effect fields so the inspector matches the gizmo.
+void pullVolumetricSizeFromMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect);
+/// Creates the mesh the first time. Later frames keep whatever primitive the user picked.
+void ensureVolumetricMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect);
+/// Format changes: switch the primitive and resize the mesh from the effect.
+void adoptVolumetricMesh(ECS::World& world, ECS::Entity entity, EffectComponent& effect);
 
 void applyMaterialReflection(f32 reflection, u8 budget, SurfaceShade& shade);
 void applyEffectShade(const EffectComponent& effect, SurfaceShade& shade);

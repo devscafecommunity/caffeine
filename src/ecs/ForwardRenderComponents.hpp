@@ -13,8 +13,10 @@ struct ForwardInstancingProfile {
 };
 
 struct ForwardIblProfile {
-    bool enabled = true;
-    f32  diffuse = 1.0f;
+    /// Diffuse IBL: sky as fill light. Off by default so lights illuminate the scene.
+    /// Specular IBL (metals reflecting the sky) stays on via `specular` even when this is false.
+    bool enabled = false;
+    f32  diffuse = 0.0f;
     f32  specular = 1.0f;
 };
 

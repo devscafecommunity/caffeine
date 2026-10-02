@@ -109,6 +109,11 @@ inline ImGuiID detachedPanelClassId() {
     return id;
 }
 
+inline int& detachedPanelPlaceFrame() {
+    static int frame = -1;
+    return frame;
+}
+
 inline void editorPanelApplyDetach(bool detached, ImVec2 detachedSize = ImVec2(0, 0)) {
     if (!detached) return;
 
@@ -116,16 +121,20 @@ inline void editorPanelApplyDetach(bool detached, ImVec2 detachedSize = ImVec2(0
     windowClass.ClassId = detachedPanelClassId();
     windowClass.DockingAllowUnclassed = true;
     windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+    windowClass.ViewportFlagsOverrideClear =
+        ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_NoTaskBarIcon;
     ImGui::SetNextWindowClass(&windowClass);
     ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
 
-    if (detachedSize.x > 0.0f && detachedSize.y > 0.0f) {
-        ImGui::SetNextWindowSize(detachedSize, ImGuiCond_FirstUseEver);
+    if (detachedSize.x > 0.0f && detachedSize.y > 0.0f &&
+        ImGui::GetFrameCount() == detachedPanelPlaceFrame()) {
+        ImGui::SetNextWindowSize(detachedSize, ImGuiCond_Always);
         const ImGuiViewport* mainVp = ImGui::GetMainViewport();
         if (mainVp) {
-            ImGui::SetNextWindowPos(
-                ImVec2(mainVp->Pos.x + 48.0f, mainVp->Pos.y + 48.0f),
-                ImGuiCond_FirstUseEver);
+            // Keep the new window on the current monitor. Wayland drops a toplevel
+            // whose first position is past the last output.
+            ImGui::SetNextWindowPos(ImVec2(mainVp->Pos.x + 72.0f, mainVp->Pos.y + 72.0f),
+                                    ImGuiCond_Always);
         }
     }
 }
@@ -152,11 +161,12 @@ inline void editorPanelDetachTabButton(bool& detached) {
     const char* label = detached ? "Dock" : "Pop";
     if (ImGui::Button(label, ImVec2(btnW, btnH))) {
         detached = !detached;
+        if (detached) detachedPanelPlaceFrame() = ImGui::GetFrameCount() + 1;
     }
     ImGui::PopStyleVar();
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(detached ? "Dock back into main window"
-                                   : "Pop out to separate window (drag to another monitor)");
+        ImGui::SetTooltip(detached ? "Dock back into the main window"
+                                   : "Open a system window you can drag to another monitor");
     }
     ImGui::PopID();
 }

@@ -14,8 +14,10 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "animation/AnimationPlayer.hpp"
 #include "animation/SkinLibrary.hpp"
+#include "effects/EffectSystem.hpp"
 #include "effects/EffectTypes.hpp"
 #include "navigation/NavVolume.hpp"
 #include "assets/MeshCache.hpp"
@@ -477,10 +479,12 @@ void InspectorPanel::drawAudioSource(ECS::World& world, ECS::Entity e, EditorCon
     auto* emitter = world.get<Audio::AudioEmitter>(e);
 
     std::string clipStr(emitter->clipPath.cStr());
+    ImGui::PushID("audio-clip");
     if (Widgets::AssetField(ctx, "Clip", clipStr, ".wav;.ogg;.mp3")) {
         emitter->clipPath = clipStr.c_str();
         ctx.isDirty = true;
     }
+    ImGui::PopID();
 
     ImGui::SliderFloat("Volume", &emitter->volume, 0.0f, 1.0f, "%.2f");
     if (ImGui::IsItemDeactivatedAfterEdit()) ctx.isDirty = true;
@@ -699,6 +703,15 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
     Widgets::setWidthForLabel("Primitive");
     if (ImGui::Combo("Primitive", &current, primitiveNames, IM_ARRAYSIZE(primitiveNames))) {
         mf->primitive = static_cast<ECS::MeshPrimitive>(current);
+        if (world.has<ECS::MeshGeometryComponent>(e)) world.remove<ECS::MeshGeometryComponent>(e);
+        ctx.meshElementSelection.clear();
+        if (Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(e)) {
+            Effects::VolumetricShape shape = Effects::VolumetricShape::Sphere;
+            if (effect->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight) &&
+                Effects::volumetricShapeForMesh(mf->primitive, shape)) {
+                effect->pad1 = static_cast<u8>(shape);
+            }
+        }
         ctx.isDirty = true;
     }
     if (mf->primitive != ECS::MeshPrimitive::Custom) {
@@ -711,6 +724,7 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
                 ctx.isDirty = true;
             }
             ImGui::TextDisabled("Non-uniform scale stretches the primitive.");
+            ImGui::TextDisabled("Viewport: Vertex, Edge and Face edit the geometry.");
         }
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
@@ -1049,35 +1063,29 @@ void InspectorPanel::drawSkybox(ECS::World& world, ECS::Entity e, EditorContext&
         ctx.isDirty = true;
     }
 
-    const bool hasCustomTexture = sky->customTexturePath[0] != '\0';
-    int preset = std::clamp(sky->presetIndex, 0, ECS::kSkyboxPresetCount - 1);
-    if (!hasCustomTexture) {
-        if (ImGui::Combo("Preset", &preset, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount)) {
-            sky->presetIndex = preset;
-            ctx.isDirty = true;
-        }
-    } else {
-        ImGui::BeginDisabled();
-        ImGui::Combo("Preset", &preset, ECS::kSkyboxPresetLabels, ECS::kSkyboxPresetCount);
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Clear Custom Texture to use a preset");
-        }
+    if (sky->customTexturePath[0] == '\0' &&
+        sky->presetIndex >= 0 && sky->presetIndex < ECS::kSkyboxPresetCount) {
+        const char* file = ECS::kSkyboxPresetFiles[sky->presetIndex];
+        const char* slash = std::strrchr(file, '/');
+        const char* name = slash ? slash + 1 : file;
+        const std::string relative = std::string("assets/raw/sky/") + name;
+        std::strncpy(sky->customTexturePath, relative.c_str(), sizeof(sky->customTexturePath) - 1);
+        ctx.isDirty = true;
     }
+
+    std::string texture = sky->customTexturePath;
+    ImGui::PushID("skybox");
+    if (Widgets::AssetField(ctx, "Texture", texture, ".png;.jpg;.jpeg;.hdr")) {
+        std::memset(sky->customTexturePath, 0, sizeof(sky->customTexturePath));
+        std::strncpy(sky->customTexturePath, texture.c_str(), sizeof(sky->customTexturePath) - 1);
+        sky->customTexturePath[sizeof(sky->customTexturePath) - 1] = '\0';
+        if (sky->customTexturePath[0] == '\0') sky->presetIndex = -1;
+        ctx.isDirty = true;
+    }
+    ImGui::PopID();
+    ImGui::TextDisabled("Empty texture uses the clear sky.");
 
     if (ImGui::DragFloat("Exposure", &sky->exposure, 0.01f, 0.0f, 8.0f, "%.2f")) {
-        ctx.isDirty = true;
-    }
-
-    if (ImGui::InputText("Custom Texture", sky->customTexturePath, sizeof(sky->customTexturePath))) {
-        ctx.isDirty = true;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Optional HDR/PNG path relative to project or absolute. Overrides preset.");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) {
-        sky->customTexturePath[0] = '\0';
         ctx.isDirty = true;
     }
 }
@@ -1341,7 +1349,8 @@ void InspectorPanel::drawForwardRenderFeatures(ECS::World& world, ECS::Entity e,
         }
     }
     if (ImGui::CollapsingHeader("IBL", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (ImGui::Checkbox("Enabled", &fx->ibl.enabled)) ctx.isDirty = true;
+        if (ImGui::Checkbox("Diffuse IBL", &fx->ibl.enabled)) ctx.isDirty = true;
+        ImGui::TextDisabled("Sky as fill light. Metals still reflect the sky via Specular.");
         if (ImGui::SliderFloat("Diffuse", &fx->ibl.diffuse, 0.0f, 2.0f)) ctx.isDirty = true;
         if (ImGui::SliderFloat("Specular", &fx->ibl.specular, 0.0f, 2.0f)) ctx.isDirty = true;
     }
@@ -1597,43 +1606,50 @@ void InspectorPanel::drawEffect(ECS::World& world, ECS::Entity e, EditorContext&
         if (ImGui::DragFloat("End Size", &effect->endSize, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
         if (ImGui::DragFloat("Gravity Y", &effect->gravity.y, 0.05f, -20.0f, 20.0f)) ctx.isDirty = true;
     } else if (effect->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+        Effects::ensureVolumetricMesh(world, e, *effect);
+        Effects::pullVolumetricSizeFromMesh(world, e, *effect);
+        auto pushSize = [&]() { Effects::pushVolumetricSizeToMesh(world, e, *effect); };
         const char* volumeShapes[] = {"Sphere", "Cone", "Box", "Cylinder", "Window"};
         int shape = static_cast<int>(Effects::volumetricShapeOf(*effect));
         if (ImGui::Combo("Format", &shape, volumeShapes, 5)) {
             const Vec3 color = effect->lightColor;
             Effects::configureVolumetricLight(*effect, static_cast<Effects::VolumetricShape>(shape));
             effect->lightColor = color;
+            Effects::adoptVolumetricMesh(world, e, *effect);
             ctx.isDirty = true;
         }
+        ImGui::TextDisabled("The volume is the mesh. Move, rotate and scale it.");
         const Effects::VolumetricShape volume = Effects::volumetricShapeOf(*effect);
         if (volume == Effects::VolumetricShape::Sphere) {
-            if (ImGui::DragFloat("Radius", &effect->radius, 0.05f, 0.1f, 40.0f)) ctx.isDirty = true;
+            if (ImGui::DragFloat("Radius", &effect->radius, 0.05f, 0.1f, 40.0f)) {
+                pushSize();
+                ctx.isDirty = true;
+            }
         } else {
-            if (ImGui::DragFloat("Length", &effect->radius, 0.05f, 0.2f, 40.0f)) ctx.isDirty = true;
+            if (ImGui::DragFloat("Length", &effect->radius, 0.05f, 0.2f, 40.0f)) {
+                pushSize();
+                ctx.isDirty = true;
+            }
             if (volume == Effects::VolumetricShape::Cone) {
-                if (ImGui::DragFloat("Near", &effect->startSize, 0.01f, 0.05f, 8.0f)) ctx.isDirty = true;
-                if (ImGui::DragFloat("Far", &effect->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
+                f32 baseRadius = effect->endSize * 0.5f;
+                if (ImGui::DragFloat("Radius", &baseRadius, 0.01f, 0.05f, 12.0f)) {
+                    effect->endSize = baseRadius * 2.0f;
+                    pushSize();
+                    ctx.isDirty = true;
+                }
             } else if (volume == Effects::VolumetricShape::Cylinder) {
                 if (ImGui::DragFloat("Diameter", &effect->startSize, 0.01f, 0.05f, 8.0f)) {
                     effect->endSize = effect->startSize;
+                    pushSize();
                     ctx.isDirty = true;
                 }
             } else {
-                if (ImGui::DragFloat("Width", &effect->startSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
-                if (ImGui::DragFloat("Height", &effect->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
-            }
-            if (volume == Effects::VolumetricShape::Window) {
-                u32 columns = 1;
-                u32 rows = 1;
-                Effects::volumetricGridOf(*effect, columns, rows);
-                int columnCount = static_cast<int>(columns);
-                int rowCount = static_cast<int>(rows);
-                if (ImGui::SliderInt("Columns", &columnCount, 1, 8)) {
-                    Effects::setVolumetricGrid(*effect, static_cast<u32>(columnCount), rows);
+                if (ImGui::DragFloat("Width", &effect->startSize, 0.01f, 0.05f, 12.0f)) {
+                    pushSize();
                     ctx.isDirty = true;
                 }
-                if (ImGui::SliderInt("Rows", &rowCount, 1, 8)) {
-                    Effects::setVolumetricGrid(*effect, static_cast<u32>(columnCount), static_cast<u32>(rowCount));
+                if (ImGui::DragFloat("Height", &effect->endSize, 0.01f, 0.05f, 12.0f)) {
+                    pushSize();
                     ctx.isDirty = true;
                 }
             }
@@ -1712,13 +1728,38 @@ void InspectorPanel::drawSkinnedPose(ECS::World& world, ECS::Entity e, EditorCon
         ctx.isDirty = true;
         return;
     }
-    char path[260] = {};
-    std::strncpy(path, pose->meshPath, sizeof(path) - 1);
-    if (ImGui::InputText("Mesh", path, sizeof(path))) {
+    std::string meshPath = pose->meshPath;
+    ImGui::PushID("skinned-mesh");
+    if (Widgets::AssetField(ctx, "Mesh", meshPath, ".gltf;.glb;.fbx;.obj")) {
         std::memset(pose->meshPath, 0, sizeof(pose->meshPath));
-        std::strncpy(pose->meshPath, path, sizeof(pose->meshPath) - 1);
+        std::strncpy(pose->meshPath, meshPath.c_str(), sizeof(pose->meshPath) - 1);
+        pose->meshPath[sizeof(pose->meshPath) - 1] = '\0';
         pose->loaded = false;
+        pose->clipIndex = 0;
+        pose->time = 0.0f;
+        ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(e);
+        if (!filter) {
+            world.add<ECS::MeshFilterComponent>(e);
+            filter = world.get<ECS::MeshFilterComponent>(e);
+        }
+        if (filter) {
+            filter->primitive = ECS::MeshPrimitive::Custom;
+            filter->customMeshPath = pose->meshPath;
+        }
+        Assets::MeshCache::getInstance().getMesh(pose->meshPath, ctx.projectRootPath.string());
         ctx.isDirty = true;
+    }
+    ImGui::PopID();
+    if (pose->meshPath[0] != '\0') {
+        ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(e);
+        if (!filter) {
+            world.add<ECS::MeshFilterComponent>(e);
+            filter = world.get<ECS::MeshFilterComponent>(e);
+        }
+        if (filter && filter->customMeshPath.empty()) {
+            filter->primitive = ECS::MeshPrimitive::Custom;
+            filter->customMeshPath = pose->meshPath;
+        }
     }
     const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath);
     if (!skin || skin->clipNames.empty()) {

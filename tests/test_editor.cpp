@@ -17,6 +17,9 @@
 #include "../src/editor/SceneSerializer.hpp"
 #include "../src/editor/DragDropSystem.hpp"
 #include "../src/editor/ProjectManager.hpp"
+#include "../src/editor/DefaultScene.hpp"
+#include "../src/scene/EnvironmentSystem.hpp"
+#include "../src/render/ForwardRenderFeatures.hpp"
 #include "../src/audio/AudioComponents.hpp"
 #include <fstream>
 
@@ -1102,4 +1105,59 @@ TEST_CASE("SceneTabManager - captureContext and applyContext sync state", "[edit
     ctx.isDirty = false;
     mgr.applyContext(ctx);
     REQUIRE(ctx.isDirty == true);
+}
+
+TEST_CASE("populateDefaultScene - skybox, sun, camera 3D", "[editor][scene]") {
+    ECS::World world;
+    populateDefaultScene(world);
+
+    REQUIRE(Scene::hasSceneSkybox(world));
+    const Scene::ActiveSkybox sky = Scene::findActiveSkybox(world);
+    REQUIRE(sky.component != nullptr);
+    REQUIRE(sky.component->enabled);
+    REQUIRE(sky.component->presetIndex == 0);
+    REQUIRE(std::string(sky.component->customTexturePath) == ECS::kDefaultProjectSkyPath);
+
+    bool sun = false;
+    ECS::ComponentQuery lights;
+    lights.with<ECS::DirectionalLightComponent>();
+    world.forEach<ECS::DirectionalLightComponent>(lights, [&](ECS::Entity, ECS::DirectionalLightComponent&) {
+        sun = true;
+    });
+    REQUIRE(sun);
+
+    bool cam3d = false;
+    ECS::ComponentQuery cams;
+    cams.with<ECS::Camera3DComponent>();
+    world.forEach<ECS::Camera3DComponent>(cams, [&](ECS::Entity e, ECS::Camera3DComponent&) {
+        cam3d = true;
+        REQUIRE(world.has<ECS::CameraActiveComponent>(e));
+        REQUIRE_FALSE(world.get<ECS::CameraActiveComponent>(e)->is2D);
+    });
+    REQUIRE(cam3d);
+
+    const auto features = Render::resolveForwardRenderFeatures(world);
+    REQUIRE_FALSE(features.iblEnabled);
+    REQUIRE(features.iblSpecular == Approx(1.0f));
+}
+
+TEST_CASE("Undo restores names and default scene entities", "[editor][undo]") {
+    ECS::World world;
+    populateDefaultScene(world);
+    EditorContext ctx;
+    ctx.beginUndo(EditorCommand::SetField, 0, world);
+    setEntityName(world, Scene::findActiveSkybox(world).entity, "RenamedSky");
+    ctx.endUndo(world);
+    REQUIRE(ctx.undoStack.canUndo());
+    REQUIRE(ctx.undoStack.undo(world));
+    const Scene::ActiveSkybox sky = Scene::findActiveSkybox(world);
+    REQUIRE(sky.component != nullptr);
+    REQUIRE(std::string(getEntityName(world, sky.entity)) == "Skybox");
+    bool hasSun = false;
+    ECS::ComponentQuery lights;
+    lights.with<ECS::DirectionalLightComponent>();
+    world.forEach<ECS::DirectionalLightComponent>(lights, [&](ECS::Entity, ECS::DirectionalLightComponent&) {
+        hasSun = true;
+    });
+    REQUIRE(hasSun);
 }

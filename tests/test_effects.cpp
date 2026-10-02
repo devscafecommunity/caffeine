@@ -2,6 +2,9 @@
 #include "caffeine/effects/EffectApi.hpp"
 #include "effects/EffectSystem.hpp"
 #include "ecs/Components.hpp"
+#include "ecs/Components3D.hpp"
+#include "ecs/MeshComponents.hpp"
+#include "ecs/MeshGeometry.hpp"
 #include "ecs/World.hpp"
 
 #include <algorithm>
@@ -115,36 +118,68 @@ TEST_CASE("Fog fills 3D shells and dust stays on the 2D overlay", "[effects]") {
     REQUIRE(mesh.vertices.size() == volumeVerts);
 }
 
-TEST_CASE("Window and cone volumetric lights build shafts along forward", "[effects]") {
+TEST_CASE("Edited mesh geometry replaces the shared primitive", "[effects]") {
     World world;
-    Entity window = world.create();
-    world.add<Transform>(window);
-    EffectComponent panes;
-    configureVolumetricLight(panes, VolumetricShape::Window);
-    world.add<EffectComponent>(window, panes);
+    Entity box = world.create();
+    MeshFilterComponent filter;
+    filter.primitive = MeshPrimitive::Cube;
+    world.add<MeshFilterComponent>(box, filter);
+    REQUIRE(bakeMeshGeometry(world, box));
+    MeshGeometryComponent* geometry = world.get<MeshGeometryComponent>(box);
+    REQUIRE(geometry != nullptr);
+    REQUIRE(geometry->positions.size() >= 8u);
+    const f32 y0 = geometry->positions[0].y;
+    geometry->positions[0].y = y0 + 1.5f;
+    geometry->revision++;
+    Assets::Mesh3D* mesh = editedMesh(world, box);
+    REQUIRE(mesh != nullptr);
+    REQUIRE(mesh->vertices[0].position.y == Approx(y0 + 1.5f).margin(0.001f));
+    const std::vector<u32> face = faceVertexIndices(*geometry, 0);
+    REQUIRE(face.size() >= 3u);
+}
 
-    Assets::Mesh3D mesh;
-    buildEffectMesh(world, Vec3(0.0f, 2.0f, 6.0f), Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), mesh);
-    REQUIRE(mesh.vertices.size() > 64u);
-    f32 minZ = 0.0f;
-    for (const Assets::Vertex3D& vertex : mesh.vertices) minZ = std::min(minZ, vertex.position.z);
-    REQUIRE(minZ < -4.0f);
-
+TEST_CASE("Volumetric lights are the entity mesh", "[effects]") {
+    World world;
     Entity cone = world.create();
-    world.add<Transform>(cone);
+    world.add<Position3D>(cone);
+    world.add<Rotation3D>(cone);
+    world.add<Scale3D>(cone);
     EffectComponent shaft;
     configureVolumetricLight(shaft, VolumetricShape::Cone);
     world.add<EffectComponent>(cone, shaft);
-    mesh.vertices.clear();
+
+    Assets::Mesh3D mesh;
     buildEffectMesh(world, Vec3(0.0f, 2.0f, 6.0f), Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), mesh);
-    f32 nearRadius = 0.0f;
-    f32 farRadius = 0.0f;
+    const MeshFilterComponent* filter = world.get<MeshFilterComponent>(cone);
+    REQUIRE(filter != nullptr);
+    REQUIRE(filter->primitive == MeshPrimitive::Cone);
+    const Scale3D* scale = world.get<Scale3D>(cone);
+    REQUIRE(scale != nullptr);
+    REQUIRE(scale->scale.y == Approx(8.0f).margin(0.01f));
+
+    f32 minZ = 1.0e9f;
+    f32 maxZ = -1.0e9f;
+    f32 baseRadius = 0.0f;
     for (const Assets::Vertex3D& vertex : mesh.vertices) {
-        const f32 radial = std::sqrt(vertex.position.x * vertex.position.x + vertex.position.y * vertex.position.y);
-        if (vertex.position.z > -0.4f) nearRadius = std::max(nearRadius, radial);
-        if (vertex.position.z < -shaft.radius + 0.6f) farRadius = std::max(farRadius, radial);
+        minZ = std::min(minZ, vertex.position.z);
+        maxZ = std::max(maxZ, vertex.position.z);
+        baseRadius = std::max(baseRadius, std::abs(vertex.position.x));
     }
-    REQUIRE(farRadius > nearRadius);
+    REQUIRE(maxZ - minZ == Approx(8.0f).margin(0.05f));
+    REQUIRE(baseRadius == Approx(0.8f).margin(0.05f));
+
+    world.get<Scale3D>(cone)->scale.y = 3.0f;
+    mesh.vertices.clear();
+    mesh.indices.clear();
+    buildEffectMesh(world, Vec3(0.0f, 2.0f, 6.0f), Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), mesh);
+    minZ = 1.0e9f;
+    maxZ = -1.0e9f;
+    for (const Assets::Vertex3D& vertex : mesh.vertices) {
+        minZ = std::min(minZ, vertex.position.z);
+        maxZ = std::max(maxZ, vertex.position.z);
+    }
+    REQUIRE(maxZ - minZ == Approx(3.0f).margin(0.05f));
+    REQUIRE(filter->primitive == MeshPrimitive::Cone);
 }
 
 TEST_CASE("Particle params can be set without wiping a 2D emitter", "[effects]") {

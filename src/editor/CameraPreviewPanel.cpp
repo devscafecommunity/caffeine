@@ -166,6 +166,7 @@ void drawLine3D(ImDrawList* dl, const Mat4& vp, ImVec2 origin, ImVec2 panelSize,
 }
 
 std::string resolveProjectRoot(const EditorContext& ctx) {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath.string();
     if (ctx.currentScenePath.empty()) return {};
     const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
     std::string projectRoot = sceneDir.parent_path().string();

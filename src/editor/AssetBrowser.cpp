@@ -1696,7 +1696,7 @@ void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx
 
 #ifdef CF_HAS_SDL3
     m_previewRenderer.setFrameCommandBuffer(m_frameCmd);
-    std::string environment = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+    std::string environment;
     f32 exposure = 1.0f;
     if (ctx.activeWorld) {
         const Scene::ActiveSkybox sky = Scene::findActiveSkybox(*ctx.activeWorld);

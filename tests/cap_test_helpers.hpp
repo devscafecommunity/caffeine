@@ -21,7 +21,7 @@ struct CapHeader {
     uint64_t tableOffset = 64;
     uint64_t tableSize = 0;
     uint64_t dataOffset = 0;
-    uint32_t totalSize = 0;
+    uint64_t totalSize = 0;
     uint64_t crc64 = 0;
     uint32_t reserved2 = 0;
     uint32_t reserved3 = 0;

@@ -307,6 +307,9 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     options.features.maxReflectionProbes = 1;
     options.features.occlusion = OcclusionMode::Off;
     options.features.volumetrics = VolumetricQuality::Off;
+    options.features.iblEnabled = false;
+    options.features.iblDiffuse = 0.0f;
+    options.features.iblSpecular = 1.0f;
 
     m_renderer.renderWithCamera(cmd, m_world, camera, m_color, m_depth, pixelSize, pixelSize,
                                 projectRoot, options);

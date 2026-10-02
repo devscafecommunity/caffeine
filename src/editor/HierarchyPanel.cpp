@@ -7,6 +7,7 @@
 #include "scene/HierarchySystem.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "ecs/LightComponents.hpp"
+#include "ecs/SkyboxComponents.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/Components3D.hpp"
 #include "scene/LightingSystem.hpp"
@@ -466,6 +467,7 @@ void HierarchyPanel::createEntityWithType(ECS::World& world, const char* name, c
         ECS::SkyboxComponent sky;
         sky.presetIndex = 0;
         sky.enabled = true;
+        std::strncpy(sky.customTexturePath, ECS::kDefaultProjectSkyPath, sizeof(sky.customTexturePath) - 1);
         world.add<ECS::SkyboxComponent>(e, sky);
         world.add<ECS::PersistentComponent>(e);
     }

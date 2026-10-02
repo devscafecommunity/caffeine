@@ -72,7 +72,9 @@ struct SkeletalClip {
     /// Amostra o clipe no tempo `time` (segundos) e preenche `boneTransforms`
     /// com as matrizes ósseas finais (world * inverseBindPose).
     /// `boneTransforms` deve ter tamanho >= skeleton.boneCount().
-    void sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms) const;
+    /// When `jointPositions` is set, it receives each joint in skeleton space.
+    void sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
+                  std::vector<Vec3>* jointPositions = nullptr) const;
 };
 
 // ============================================================================
@@ -161,7 +163,8 @@ inline Mat4 buildTRS(const Vec3& pos, const Quat& rot, const Vec3& scale) {
 
 } // namespace Detail
 
-inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms) const {
+inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
+                                  std::vector<Vec3>* jointPositions) const {
     u32 boneCount = skeleton.boneCount();
     if (boneTransforms.size() < boneCount) {
         boneTransforms.resize(boneCount);
@@ -242,6 +245,13 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
     for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
         boneTransforms[boneIdx] =
             skeleton.skinSpace * worldMatrices[boneIdx] * skeleton.bones[boneIdx].bindPoseInverse;
+    }
+    if (jointPositions) {
+        jointPositions->resize(boneCount);
+        for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
+            const Mat4& world = worldMatrices[boneIdx];
+            (*jointPositions)[boneIdx] = Vec3(world(0, 3), world(1, 3), world(2, 3));
+        }
     }
 }
 

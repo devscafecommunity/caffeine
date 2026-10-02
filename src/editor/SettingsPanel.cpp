@@ -70,6 +70,9 @@ void SettingsPanel::applyPreferencesToContext(EditorContext& ctx) {
     ctx.textureQualityFalloff = m_preferences.textureQualityFalloff;
     ctx.textureQualityMinScale = m_preferences.textureQualityMinScale;
     ctx.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
+    const int aa = std::clamp(m_preferences.viewportAntiAlias, 0, 2);
+    m_preferences.viewportAntiAlias = aa;
+    ctx.viewportAntiAlias = static_cast<EditorContext::ViewportAntiAlias>(aa);
 }
 
 void SettingsPanel::render() {
@@ -338,6 +341,16 @@ void SettingsPanel::renderViewportSettings() {
         "(HDR + TAA + post stack). Use 1.0 for native resolution, 1.5–2.0 for sharper edges.");
     if (ImGui::SliderFloat("Render scale", &m_preferences.renderScale, 0.25f, 2.0f, "%.2fx")) {
         m_preferences.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
+        savePreferences();
+        if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+    }
+    ImGui::TextWrapped(
+        "Anti-aliasing for the scene viewport only. The game keeps the anti-aliasing "
+        "set on each camera's post-processing.");
+    const char* aaLabels[] = {"Off", "FXAA", "TAA"};
+    int aa = std::clamp(m_preferences.viewportAntiAlias, 0, 2);
+    if (ImGui::Combo("Viewport anti-aliasing", &aa, aaLabels, 3)) {
+        m_preferences.viewportAntiAlias = aa;
         savePreferences();
         if (m_editorContext) applyPreferencesToContext(*m_editorContext);
     }

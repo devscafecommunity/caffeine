@@ -54,6 +54,7 @@ bool findGameplayCamera(ECS::World& world, ECS::Entity& outEntity, ECS::Camera3D
 }
 
 std::string projectRootFromContext(const EditorContext& ctx) {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath.string();
     if (ctx.currentScenePath.empty()) return {};
     const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
     const std::string root = sceneDir.parent_path().string();
@@ -68,8 +69,6 @@ void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& wor
     const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
     if (active.component) {
         texturePath = Scene::resolveSkyboxTexturePath(*active.component, projectRoot);
-    } else {
-        texturePath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex);
     }
     if (texturePath.empty()) return;
     renderer.draw(dl, origin, size, camera, texturePath.string(), maxRasterDim);
@@ -253,7 +252,7 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         Render::GpuSceneRenderOptions previewOpts;
         previewOpts.enableShadows = false;
         previewOpts.wireframeMeshes = false;
-        previewOpts.environmentPath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+        previewOpts.environmentPath.clear();
         previewOpts.postProcessCamera = cameraEntity;
         previewOpts.renderScale = ctx.renderScale;
         previewOpts.deltaTime = ImGui::GetIO().DeltaTime;

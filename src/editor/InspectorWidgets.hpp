@@ -149,6 +149,16 @@ inline void setWidthForLabel(const char* label) {
 
 inline bool AssetField(EditorContext& ctx, const char* label, std::string& path, const char* filter) {
     bool changed = false;
+    ImGui::PushID(label);
+    const u32 fieldId = static_cast<u32>(ImGui::GetID("##asset-browse"));
+    if (ctx.browse.kind == EditorContext::BrowseSession::Kind::None &&
+        ctx.browse.fieldId == fieldId && fieldId != 0 && !ctx.browse.pickedText.empty()) {
+        path = ctx.browse.pickedText;
+        changed = true;
+        ctx.browse.clear();
+    }
+    ImGui::PopID();
+
     const std::string display = path.empty() ? "(none)" : std::filesystem::path(path).filename().string();
     char dispBuf[256];
     strncpy(dispBuf, display.c_str(), sizeof(dispBuf));
@@ -177,7 +187,7 @@ inline bool AssetField(EditorContext& ctx, const char* label, std::string& path,
     }
     ImGui::SameLine(0.0f, spacing);
     if (ImGui::Button("Browse", ImVec2(browseW, 0.0f))) {
-        ctx.browse.requestProjectAsset(&path, filter, label);
+        ctx.browse.requestProjectAsset(nullptr, filter, label, fieldId);
     }
     if (!path.empty()) {
         ImGui::SameLine(0.0f, spacing);

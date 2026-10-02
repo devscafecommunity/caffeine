@@ -65,8 +65,8 @@ struct GpuSceneRenderOptions {
     bool clipBelowEnabled = false;
     f32  clipBelowY = 0.0f;
     u32  colorLayer = 0;
-    /// Sky used for IBL and as the reflection fallback. An enabled SkyboxComponent in the
-    /// world wins when `resolveEnvironmentFromScene` is set.
+    /// Sky background / reflection fallback. An enabled SkyboxComponent in the world wins
+    /// when `resolveEnvironmentFromScene` is set. The sky does not light the scene unless IBL is on.
     std::string environmentPath;
     f32  environmentExposure = 1.0f;
     bool resolveEnvironmentFromScene = true;
@@ -78,6 +78,10 @@ struct GpuSceneRenderOptions {
     bool resolvePostProcessFromScene = true;
     ECS::Entity postProcessCamera = ECS::Entity::INVALID;
     ECS::PostProcessComponent postProcess = PostProcessStack::defaults();
+    /// When set, replaces anti-aliasing after the camera post stack is resolved.
+    /// Used by the editor viewport so it does not follow the game camera.
+    bool overrideAntiAliasing = false;
+    ECS::PostProcessAntiAliasing antiAliasingOverride{};
     /// Internal resolution multiplier (0.5 = faster, 2 = supersampled).
     f32  renderScale = 1.0f;
     /// Keeps temporal history (TAA, eye adaptation, SSR) apart per viewport. 0 = derive from

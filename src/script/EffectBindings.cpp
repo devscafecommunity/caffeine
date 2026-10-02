@@ -1,4 +1,5 @@
 #include "caffeine/effects/EffectApi.hpp"
+#include "effects/EffectSystem.hpp"
 
 #include <algorithm>
 #include <sol/sol.hpp>
@@ -27,12 +28,24 @@ void registerEffectScriptBindings(sol::state& lua, ECS::World** worldPtr) {
     };
     effects["volumetric"] = [worldPtr](u32 entityId) {
         if (!worldPtr || !*worldPtr) return false;
-        return Effects::setVolumetricLight(**worldPtr, ECS::Entity(entityId, *worldPtr));
+        ECS::World& world = **worldPtr;
+        const ECS::Entity entity(entityId, &world);
+        if (!Effects::setVolumetricLight(world, entity)) return false;
+        if (Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
+            Effects::ensureVolumetricMesh(world, entity, *effect);
+        }
+        return true;
     };
     effects["volumetricShape"] = [worldPtr](u32 entityId, u32 shape, u32 columns, u32 rows) {
         if (!worldPtr || !*worldPtr) return false;
+        ECS::World& world = **worldPtr;
+        const ECS::Entity entity(entityId, &world);
         const auto volumeShape = static_cast<Effects::VolumetricShape>(std::min(shape, 4u));
-        return Effects::setVolumetricShape(**worldPtr, ECS::Entity(entityId, *worldPtr), volumeShape, columns, rows);
+        if (!Effects::setVolumetricShape(world, entity, volumeShape, columns, rows)) return false;
+        if (Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
+            Effects::adoptVolumetricMesh(world, entity, *effect);
+        }
+        return true;
     };
     effects["fog"] = [worldPtr](u32 entityId, u32 domain, u32 style) {
         if (!worldPtr || !*worldPtr) return false;

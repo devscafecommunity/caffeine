@@ -24,8 +24,15 @@ void serviceBrowseSession(EditorContext& ctx, AssetBrowser& browser) {
             if (session.stringTarget) {
                 *session.stringTarget = picked;
                 ctx.isDirty = true;
+                session.clear();
+            } else {
+                const u32 field = session.fieldId;
+                session.pickedText = std::move(picked);
+                session.kind = EditorContext::BrowseSession::Kind::None;
+                session.started = false;
+                session.stringTarget = nullptr;
+                session.fieldId = field;
             }
-            session.clear();
         } else if (poll == AssetBrowser::AssetPickerPoll::Cancelled) {
             session.clear();
         }

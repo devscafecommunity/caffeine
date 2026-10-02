@@ -48,4 +48,7 @@ std::filesystem::path resolveBuiltinSkyboxPath(int presetIndex);
 std::filesystem::path resolveSkyboxTexturePath(const ECS::SkyboxComponent& sky,
                                                const std::string& projectRoot = "");
 
+/// Copies the engine's default sky images into assets/raw/sky. Missing files only.
+void importDefaultSkyboxes(const std::filesystem::path& projectRoot);
+
 }  // namespace Caffeine::Scene

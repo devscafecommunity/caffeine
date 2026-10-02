@@ -114,15 +114,21 @@ public:
         std::string filter;
         std::filesystem::path startPath;
         std::filesystem::path result;
+        /// Stable storage only. A pointer into a widget-local string is dangling by the
+        /// time the picker closes, so those fields use fieldId + pickedText instead.
         std::string* stringTarget = nullptr;
+        u32 fieldId = 0;
+        std::string pickedText;
         u32 tag = 0;
 
         void clear() { *this = {}; }
 
-        void requestProjectAsset(std::string* target, const char* extensionFilter, const char* fieldLabel) {
+        void requestProjectAsset(std::string* target, const char* extensionFilter, const char* fieldLabel,
+                                 u32 ownerFieldId = 0) {
             clear();
             kind = Kind::ProjectAsset;
             stringTarget = target;
+            fieldId = ownerFieldId;
             filter = extensionFilter ? extensionFilter : "";
             title = fieldLabel ? fieldLabel : "asset";
         }
@@ -144,6 +150,11 @@ public:
 
     GizmoMode  gizmoMode  = GizmoMode::Translate;
     GizmoSpace gizmoSpace = GizmoSpace::World;
+
+    /// Object moves the entity. Vertex, edge and face edit the mesh itself.
+    enum class MeshElementMode : u8 { Object, Vertex, Edge, Face };
+    MeshElementMode meshElementMode = MeshElementMode::Object;
+    std::vector<u32> meshElementSelection;
 
     // ── Snap ───────────────────────────────────────────────────────────
     bool snapToGrid   = false;
@@ -189,6 +200,9 @@ public:
 
     /// Internal resolution of GPU viewports relative to their pixel size (0.5 – 2.0).
     f32 renderScale = 1.0f;
+    /// Editor scene viewport only. Game cameras keep their own post-process anti-aliasing.
+    enum class ViewportAntiAlias : u8 { Off = 0, Fxaa = 1, Taa = 2 };
+    ViewportAntiAlias viewportAntiAlias = ViewportAntiAlias::Taa;
 
     // ── Texture quality (distance-based LOD around viewers) ─────────────
     bool textureQualityEnabled = true;

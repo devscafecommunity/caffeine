@@ -1,6 +1,7 @@
 #include "editor/AssetPreviewRenderer.hpp"
 #include "editor/EditorIcons.hpp"
 #include "editor/ImGuiGpuTexture.hpp"
+#include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
 #include "assets/MeshCache.hpp"
 #include "assets/MeshImportValidator.hpp"
@@ -255,8 +256,28 @@ bool AssetPreviewRenderer::thumbnailReady(const std::string& key) const {
     return gpu != m_gpuThumbs.end() && gpu->second.ready;
 }
 
+void AssetPreviewRenderer::invalidateStaleMaterialThumbs() {
+    const u64 revision = Assets::MaterialCache::instance().revision();
+    if (revision == m_materialCacheRevision) return;
+    m_materialCacheRevision = revision;
+    for (auto& [key, thumb] : m_gpuThumbs) {
+        if (!isMaterialPath(key)) continue;
+        thumb.failed = false;
+        thumb.stale = true;
+        if (!thumb.texture) thumb.ready = false;
+    }
+    if (m_material.loaded || m_material.failed) {
+        m_cachedKey.clear();
+        m_material = {};
+    }
+    if (!m_activeThumbKey.empty() && isMaterialPath(m_activeThumbKey)) {
+        m_activeThumbKey.clear();
+    }
+}
+
 void AssetPreviewRenderer::prepareThumbnails(
     const std::vector<std::pair<std::filesystem::path, AssetType>>& items, const std::string& projectRoot) {
+    invalidateStaleMaterialThumbs();
     m_thumbItems = items;
     if (!m_activeThumbKey.empty()) {
         bool stillVisible = false;
@@ -284,7 +305,10 @@ void AssetPreviewRenderer::pumpThumbnail(const std::string& projectRoot) {
                 if (it != m_imageThumbs.end() && (it->second.ready || it->second.failed)) continue;
             } else {
                 const auto it = m_gpuThumbs.find(key);
-                if (it != m_gpuThumbs.end() && (it->second.ready || it->second.failed)) continue;
+                if (it != m_gpuThumbs.end() && (it->second.ready || it->second.failed) &&
+                    !it->second.stale) {
+                    continue;
+                }
             }
             m_activeThumbKey = key;
             m_activeThumbIsImage = image;
@@ -336,8 +360,9 @@ void AssetPreviewRenderer::pumpThumbnail(const std::string& projectRoot) {
     if (m_activeThumbIsMesh) {
         rendered = m_thumbs.renderMesh(m_frameCmd, m_activeThumbKey, kThumbnailPixels, settings, projectRoot);
     } else {
-        Assets::MaterialSurface surface;
-        if (Assets::loadMaterialFile(m_activeThumbKey, surface)) {
+        Assets::MaterialSurface surface =
+            Assets::MaterialCache::instance().resolve(m_activeThumbKey, projectRoot);
+        if (surface.valid) {
             rendered = m_thumbs.render(m_frameCmd, surface, kThumbnailPixels, settings, projectRoot);
         }
     }
@@ -362,6 +387,7 @@ void AssetPreviewRenderer::pumpThumbnail(const std::string& projectRoot) {
         if (thumb.texture && thumb.texture->handle) {
             m_frameCmd->copyTexture(source, thumb.texture, kThumbnailPixels, kThumbnailPixels);
             thumb.ready = true;
+            thumb.stale = false;
         }
     }
     if (!m_thumbs.wantsMoreFrames()) m_activeThumbKey.clear();
@@ -739,17 +765,22 @@ void AssetPreviewRenderer::renderScenePreview(const std::filesystem::path& path,
     ImGui::Dummy(size);
 }
 
-bool AssetPreviewRenderer::ensureMaterialLoaded(const std::filesystem::path& path) {
+bool AssetPreviewRenderer::ensureMaterialLoaded(const std::filesystem::path& path,
+                                                const std::string& projectRoot) {
     std::error_code ec;
     const auto canonical = std::filesystem::weakly_canonical(path, ec);
     const std::string key = ec ? path.string() : canonical.string();
-    if (m_cachedKey == key && (m_material.loaded || m_material.failed)) {
+    const u64 revision = Assets::MaterialCache::instance().revision();
+    if (m_cachedKey == key && m_materialCacheRevision == revision &&
+        (m_material.loaded || m_material.failed)) {
         return m_material.loaded;
     }
 
-    invalidate();
+    if (!m_cachedKey.empty() && m_cachedKey != key) invalidate();
     m_cachedKey = key;
-    m_material.loaded = Assets::loadMaterialFile(path, m_material.surface);
+    m_materialCacheRevision = revision;
+    m_material.surface = Assets::MaterialCache::instance().resolve(path.string(), projectRoot);
+    m_material.loaded = m_material.surface.valid;
     m_material.failed = !m_material.loaded;
     return m_material.loaded;
 }
@@ -765,7 +796,7 @@ std::filesystem::path resolveProjectRelative(const std::string& projectRoot,
 
 void AssetPreviewRenderer::renderMaterialPreview(const std::filesystem::path& path,
                                                  const std::string& projectRoot, ImVec2 size) {
-    if (!ensureMaterialLoaded(path)) {
+    if (!ensureMaterialLoaded(path, projectRoot)) {
         renderFallbackIcon(AssetType::Unknown, path, size);
         return;
     }

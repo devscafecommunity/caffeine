@@ -1,5 +1,5 @@
 #include "editor/EditorContext.hpp"
-#include "scene/SceneSerializer.hpp"
+#include "editor/SceneSerializer.hpp"
 #include "core/Assertions.hpp"
 #include <cstring>
 
@@ -72,11 +72,11 @@ void UndoStack::clear() {
 }
 
 void UndoStack::applySnapshot(ECS::World& world, const std::vector<u8>& snapshot) {
-    CF_ASSERT(!snapshot.empty(), "UndoStack::applySnapshot — empty snapshot");
-
-    world.destroyAll();
-
-    Scene::SceneSerializer serializer(world);
+    if (snapshot.empty()) {
+        world.destroyAll();
+        return;
+    }
+    Editor::SceneSerializer serializer(world);
     serializer.deserializeFromMemory(snapshot);
 }
 
@@ -91,7 +91,7 @@ void EditorContext::beginUndo(EditorCommand::Type type, u32 entityId, ECS::World
     m_pendingCmd.type          = type;
     m_pendingCmd.targetEntity  = entityId;
 
-    Scene::SceneSerializer serializer(world);
+    Editor::SceneSerializer serializer(world);
     serializer.serializeToMemory(m_pendingCmd.beforeState);
 
     m_undoPending = true;
@@ -100,7 +100,7 @@ void EditorContext::beginUndo(EditorCommand::Type type, u32 entityId, ECS::World
 void EditorContext::endUndo(ECS::World& world) {
     CF_ASSERT(m_undoPending, "EditorContext::endUndo — called without matching beginUndo");
 
-    Scene::SceneSerializer serializer(world);
+    Editor::SceneSerializer serializer(world);
     serializer.serializeToMemory(m_pendingCmd.afterState);
 
     undoStack.push(m_pendingCmd);
