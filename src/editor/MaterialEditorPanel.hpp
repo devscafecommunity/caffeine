@@ -19,6 +19,8 @@ public:
 
     void onImGuiRender(EditorContext& ctx);
     bool openFromPath(const std::filesystem::path& path);
+    bool wasFocusedLastFrame() const { return m_wasFocusedLastFrame; }
+    void handleSaveShortcut();
     void setProjectRoot(const std::string& projectRoot) { m_projectRoot = projectRoot; }
 
     void open()  { m_open = true; }
@@ -36,10 +38,16 @@ private:
     void renderPresetPicker();
     void renderPreview(const EditorContext& ctx, float width, float height);
     bool saveCurrent();
+    bool saveToPath(const std::filesystem::path& path);
+    bool createInAssetBrowser(EditorContext& ctx);
+    void applyToSelection(EditorContext& ctx);
     void publishLive();
     std::filesystem::path resolvedPath(const std::filesystem::path& path) const;
 
     bool m_open = true;
+    bool m_wasFocusedLastFrame = false;
+    bool m_pendingSaveAs = false;
+    bool m_refreshAssets = false;
     float m_previewRotation = 0.0f;
     float m_previewPitch = 12.0f;
     bool m_previewFloor = true;

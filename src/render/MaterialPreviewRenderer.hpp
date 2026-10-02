@@ -37,9 +37,17 @@ public:
     void shutdown();
     bool isReady() const { return m_ready; }
 
+    /// Distinct cache keys so two previews can render in the same frame.
+    void setMaterialKeys(const char* previewKey, const char* floorKey);
+    bool wantsMoreFrames() const { return m_renderer.needsAnotherFrame(); }
+
     /// Renders when the material, settings or size changed; otherwise keeps the last image.
     bool render(RHI::CommandBuffer* cmd, const Assets::MaterialSurface& surface, u32 pixelSize,
                 const MaterialPreviewSettings& settings, const std::string& projectRoot = "");
+
+    /// Renders a mesh framed on the preview floor, using the mesh's own materials.
+    bool renderMesh(RHI::CommandBuffer* cmd, const std::string& meshPath, u32 pixelSize,
+                    const MaterialPreviewSettings& settings, const std::string& projectRoot = "");
 
     RHI::Texture* colorTexture() const { return m_hasImage ? m_color : nullptr; }
     u32 pixelSize() const { return m_pixelSize; }
@@ -48,6 +56,11 @@ private:
     void buildScene();
     bool ensureTargets(u32 pixelSize);
     void applySettings(const MaterialPreviewSettings& settings);
+    void placeSphere();
+    void placeMesh(const std::string& meshPath, const std::string& projectRoot);
+    bool renderPlaced(RHI::CommandBuffer* cmd, const Assets::MaterialSurface* surface, u32 pixelSize,
+                      const MaterialPreviewSettings& settings, const std::string& projectRoot,
+                      bool bindPreviewMaterial);
 
     RHI::RenderDevice* m_device = nullptr;
     GpuSceneRenderer m_renderer;
@@ -60,6 +73,10 @@ private:
     u64 m_lastHash = 0;
     bool m_hasImage = false;
     bool m_ready = false;
+    std::string m_previewKey = kPreviewMaterialKey;
+    std::string m_floorKey = kFloorMaterialKey;
+    std::string m_subjectPath;
+    f32 m_focusY = 0.0f;
 };
 
 }  // namespace Caffeine::Render

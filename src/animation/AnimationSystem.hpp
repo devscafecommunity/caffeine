@@ -1,6 +1,8 @@
 #pragma once
 
 #include "animation/AnimationComponents.hpp"
+#include "animation/AnimationPlayer.hpp"
+#include "animation/SkinLibrary.hpp"
 #include "ecs/World.hpp"
 #include "ecs/Entity.hpp"
 #include "ecs/ISystem.hpp"
@@ -16,6 +18,9 @@ using namespace Caffeine;
 class AnimationSystem : public ECS::ISystem {
 public:
     void onUpdate(ECS::World& world, f32 dt) override {
+        tickAnimationPlayers(world, dt);
+        tickSkinnedPoses(world, dt);
+
         ECS::ComponentQuery q;
         q.with<Animator>();
         q.with<ECS::Sprite>();

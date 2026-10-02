@@ -1,4 +1,6 @@
 #include "render/GpuSceneRenderer.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
 #include "render/InstanceBatch.hpp"
@@ -85,6 +87,9 @@ struct LightingUBO {
     float prevView[16];
     float screen[4];
     float viewProj[16];
+    float reflectPerf[4];
+    float reflectQuality[4];
+    float reflectExtra[4];
 };
 
 static_assert(offsetof(LightingUBO, iblColor) == 608, "LightingUBO.iblColor must match GLSL std140");
@@ -92,6 +97,7 @@ static_assert(offsetof(LightingUBO, reflectVP) == 688, "LightingUBO.reflectVP mu
 static_assert(offsetof(LightingUBO, emission) == 752, "LightingUBO.emission must match GLSL std140");
 static_assert(offsetof(LightingUBO, prevViewProj) == 896, "LightingUBO.prevViewProj must match GLSL std140");
 static_assert(offsetof(LightingUBO, viewProj) == 1040, "LightingUBO.viewProj must match GLSL std140");
+static_assert(offsetof(LightingUBO, reflectPerf) == 1104, "LightingUBO.reflectPerf must match GLSL std140");
 
 struct SkyUBO {
     float invViewProj[16];
@@ -470,7 +476,30 @@ Assets::Mesh3D* GpuSceneRenderer::selectMeshLod(const Assets::Mesh3D* source, EC
     return chosen;
 }
 
+RHI::Buffer* GpuSceneRenderer::vertexBufferFor(const MeshDraw& draw) {
+    if (!draw.mesh) return nullptr;
+    if (!draw.skinnedVertices || draw.skinnedVertices->empty() || !m_device) {
+        return draw.mesh->vertexBuffer;
+    }
+    const u64 bytes = static_cast<u64>(draw.skinnedVertices->size() * sizeof(Assets::Vertex3D));
+    RHI::Buffer*& slot = m_skinBuffers[draw.entity.id()];
+    if (!slot || slot->size != bytes) {
+        if (slot) m_device->destroyBuffer(slot);
+        RHI::BufferDesc desc;
+        desc.size = bytes;
+        slot = m_device->createBuffer(desc, RHI::BufferUsage::Vertex);
+    }
+    if (slot) m_device->uploadBuffer(slot, draw.skinnedVertices->data(), bytes);
+    return slot ? slot : draw.mesh->vertexBuffer;
+}
+
 void GpuSceneRenderer::shutdown() {
+    if (m_device) {
+        for (auto& entry : m_skinBuffers) {
+            if (entry.second) m_device->destroyBuffer(entry.second);
+        }
+    }
+    m_skinBuffers.clear();
     for (auto& [_, cache] : m_meshLods) {
         destroyMeshGpu(cache.medium);
         destroyMeshGpu(cache.far);
@@ -497,6 +526,10 @@ void GpuSceneRenderer::shutdown() {
         if (m_blendPipeline) m_device->destroyPipeline(m_blendPipeline);
         if (m_skyPipeline) m_device->destroyPipeline(m_skyPipeline);
         if (m_gridPipeline) m_device->destroyPipeline(m_gridPipeline);
+        if (m_effectPipeline) m_device->destroyPipeline(m_effectPipeline);
+        if (m_effectVert) m_device->destroyShader(m_effectVert);
+        if (m_effectFrag) m_device->destroyShader(m_effectFrag);
+        destroyMeshGpu(m_effectMesh);
         if (m_instancedVert) m_device->destroyShader(m_instancedVert);
         if (m_instanceBuffer) m_device->destroyBuffer(m_instanceBuffer);
         if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
@@ -517,6 +550,9 @@ void GpuSceneRenderer::shutdown() {
     m_fullscreenVert = nullptr;
     m_skyFrag = nullptr;
     m_gridFrag = nullptr;
+    m_effectVert = nullptr;
+    m_effectFrag = nullptr;
+    m_effectPipeline = nullptr;
     m_scenePipeline = nullptr;
     m_wireframePipeline = nullptr;
     m_terrainPipeline = nullptr;
@@ -614,6 +650,17 @@ bool GpuSceneRenderer::createPipelines() {
         gridDesc.blendMode = RHI::BlendMode::Alpha;
         m_gridPipeline = m_device->createGraphicsPipeline(m_fullscreenVert, m_gridFrag, gridDesc);
     }
+    m_effectVert = createBuiltinShader(m_device, BuiltinShader::EffectBillboardVertex,
+                                       RHI::ShaderStage::Vertex, 1);
+    m_effectFrag = createBuiltinShader(m_device, BuiltinShader::EffectBillboardFragment,
+                                       RHI::ShaderStage::Fragment, 0);
+    if (m_effectVert && m_effectFrag) {
+        RHI::GraphicsPipelineDesc effectDesc{};
+        fillMeshPipelineDesc(effectDesc, layout, attrs, kHdrFormat, true, true);
+        effectDesc.depthWrite = false;
+        effectDesc.blendMode = RHI::BlendMode::Premultiplied;
+        m_effectPipeline = m_device->createGraphicsPipeline(m_effectVert, m_effectFrag, effectDesc);
+    }
 
     // Color-only shadow pass (no depth attachment) for cubemap / 2D shadow maps.
     RHI::GraphicsPipelineDesc shadowDesc{};
@@ -667,7 +714,7 @@ void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& d
 
     cmd->bindPipeline(m_shadowPipeline);
     cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &ubo, sizeof(ubo));
-    cmd->bindVertexBuffer(draw.mesh->vertexBuffer);
+    cmd->bindVertexBuffer(vertexBufferFor(draw));
     cmd->bindIndexBuffer(draw.mesh->indexBuffer);
     cmd->drawIndexed(indexCount, firstIndex, 0);
 }
@@ -1017,7 +1064,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                                                                           : 0.0f;
     const bool planarOn = m_reflectionValid && m_reflectionColor && !m_inReflectionPass &&
                           !options.clipBelowEnabled &&
-                          features.reflections == ReflectionMode::Planar;
+                          (features.reflections == ReflectionMode::Planar || m_materialPlanar);
     base.reflectParams[0] = planarOn ? features.reflectionIntensity : 0.0f;
     base.reflectParams[1] = options.clipBelowEnabled ? options.clipBelowY : features.reflectionPlaneY;
     base.reflectParams[2] = options.clipBelowEnabled ? 1.0f : 0.0f;
@@ -1101,6 +1148,17 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             setVec4(lights.materialFlags, static_cast<f32>(draw.alphaMode),
                     draw.emissionMapPath.empty() ? 0.0f : 1.0f, pass.opaqueCopyBound ? 1.0f : 0.0f,
                     ssrOn ? 1.0f : 0.0f);
+            if (draw.ssrStepsOverride >= 0) {
+                lights.ssrParams[1] = draw.ssrRoughnessGate > 0.0f ? draw.ssrRoughnessGate : lights.ssrParams[1];
+                lights.ssrParams[2] = static_cast<f32>(draw.ssrStepsOverride);
+                if (draw.ssrStepsOverride == 0) lights.materialFlags[3] = 0.0f;
+            }
+            setVec4(lights.reflectPerf, draw.reflectPerformance ? 1.0f : 0.0f, draw.ssrResolution,
+                    draw.ssrMaxSteps, draw.ssrTemporalFrames);
+            setVec4(lights.reflectQuality, draw.reflectQuality ? 1.0f : 0.0f, draw.ssrSamples,
+                    draw.ssrDenoise, draw.ssrDistance);
+            setVec4(lights.reflectExtra, draw.planarReceiver ? 1.0f : 0.0f, draw.ssrProbeBlend,
+                    draw.ssrBounces, 0.0f);
         }
 
         if (!wireframe && draw.isTerrain) {
@@ -1175,7 +1233,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
         std::memcpy(vubo.model, draw.worldMatrix.data(), sizeof(vubo.model));
         cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &vubo, sizeof(vubo));
-        cmd->bindVertexBuffer(draw.mesh->vertexBuffer);
+        cmd->bindVertexBuffer(vertexBufferFor(draw));
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
         if (draw.isTerrain) {
@@ -1414,6 +1472,26 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
         pass.opaqueCopyBound = false;
     }
 
+    if (!wireframe && m_effectPipeline && m_effectMesh.vertexBuffer && m_effectMesh.indexBuffer &&
+        !m_effectMesh.indices.empty()) {
+        RHI::RenderPassDesc effectPass = rp;
+        effectPass.loadColor = true;
+        effectPass.clearDepth = false;
+        effectPass.cycle = false;
+        cmd->beginRenderPass(effectPass);
+        cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
+        cmd->bindPipeline(m_effectPipeline);
+        VertexUBO effectUbo{};
+        std::memcpy(effectUbo.mvp, pass.viewProj.data(), sizeof(effectUbo.mvp));
+        const Mat4 identity = Mat4::identity();
+        std::memcpy(effectUbo.model, identity.data(), sizeof(effectUbo.model));
+        cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &effectUbo, sizeof(effectUbo));
+        cmd->bindVertexBuffer(m_effectMesh.vertexBuffer);
+        cmd->bindIndexBuffer(m_effectMesh.indexBuffer);
+        cmd->drawIndexed(static_cast<u32>(m_effectMesh.indices.size()));
+        cmd->endRenderPass();
+    }
+
     return static_cast<u32>(opaque.size() + translucent.size());
 }
 
@@ -1510,6 +1588,12 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         MeshDraw draw;
         draw.entity = entity;
         draw.mesh = selectMeshLod(mesh, entity, lodDistance);
+        if (const std::vector<Assets::Vertex3D>* posed = Animation::skinnedVerticesFor(entity.id())) {
+            if (posed->size() == mesh->vertices.size()) {
+                draw.mesh = mesh;
+                draw.skinnedVertices = posed;
+            }
+        }
         draw.worldMatrix = worldMatrix;
         draw.castShadows = Scene::meshCastsShadows(world, entity);
         draw.receiveShadows = Scene::meshReceivesShadows(world, entity);
@@ -1551,6 +1635,32 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.iridescenceThickness = surface.iridescenceThickness;
                 draw.iridescenceIor = surface.iridescenceIor;
                 if (draw.alphaMode == 0 && draw.albedo.w < 1.0f) draw.albedo.w = 1.0f;
+                Effects::SurfaceShade shade;
+                shade.albedo = draw.albedo;
+                shade.emission = draw.emission;
+                shade.metallic = draw.metallic;
+                shade.roughness = draw.roughness;
+                shade.reflectance = draw.reflectance;
+                Effects::applyMaterialReflection(surface.reflection, surface.reflectionBudget, shade);
+                draw.albedo = shade.albedo;
+                draw.emission = shade.emission;
+                draw.metallic = shade.metallic;
+                draw.roughness = shade.roughness;
+                draw.reflectance = shade.reflectance;
+                draw.reflection = shade.reflection;
+                draw.ssrStepsOverride = shade.ssrSteps;
+                draw.ssrRoughnessGate = shade.ssrRoughness;
+                draw.reflectPerformance = surface.reflectionPerformance != 0;
+                draw.reflectQuality = surface.reflectionQuality != 0;
+                draw.ssrResolution = surface.ssrResolution;
+                draw.ssrMaxSteps = surface.ssrMaxSteps;
+                draw.ssrTemporalFrames = surface.ssrTemporalFrames;
+                draw.ssrDistance = surface.ssrDistance;
+                draw.ssrSamples = surface.ssrSamples;
+                draw.ssrDenoise = surface.ssrDenoise;
+                draw.ssrProbeBlend = surface.ssrProbeBlend;
+                draw.ssrBounces = surface.ssrBounces;
+                if (draw.reflectQuality && surface.reflectionPlanar) draw.planarReceiver = true;
             }
         }
         if (filter.primitive == ECS::MeshPrimitive::Custom) {
@@ -1563,11 +1673,34 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.aabbMin = aabb.min;
             draw.aabbMax = aabb.max;
         }
+        if (const Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
+            Effects::SurfaceShade shade;
+            shade.albedo = draw.albedo;
+            shade.emission = draw.emission;
+            shade.metallic = draw.metallic;
+            shade.roughness = draw.roughness;
+            shade.reflectance = draw.reflectance;
+            shade.reflection = draw.reflection;
+            shade.ssrSteps = draw.ssrStepsOverride;
+            shade.ssrRoughness = draw.ssrRoughnessGate;
+            Effects::applyEffectShade(*effect, shade);
+            draw.albedo = shade.albedo;
+            draw.emission = shade.emission;
+            draw.metallic = shade.metallic;
+            draw.roughness = std::clamp(shade.roughness, 0.02f, 1.0f);
+            draw.reflectance = shade.reflectance;
+            draw.reflection = shade.reflection;
+            draw.ssrStepsOverride = shade.ssrSteps;
+            draw.ssrRoughnessGate = shade.ssrRoughness;
+            if (shade.planar) draw.planarReceiver = true;
+        }
         const bool flat = (mesh->bounds.max.y - mesh->bounds.min.y) < 0.08f;
         const f32 midY = (mesh->bounds.min.y + mesh->bounds.max.y) * 0.5f;
         const f32 worldY = worldMatrix.transformPoint(Vec3(0.0f, midY, 0.0f)).y;
-        draw.planarReceiver = flat && options.features.reflections == ReflectionMode::Planar &&
-                              std::abs(worldY - options.features.reflectionPlaneY) < 0.4f;
+        const bool effectPlanar = draw.planarReceiver;
+        draw.planarReceiver = effectPlanar ||
+                              (flat && options.features.reflections == ReflectionMode::Planar &&
+                               std::abs(worldY - options.features.reflectionPlaneY) < 0.4f);
         draws.push_back(draw);
     });
 
@@ -2026,11 +2159,16 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                 draws.end());
     applyCoarseOcclusion(draws, camera, opts);
 
-    if (pass.view) {
+        if (pass.view) {
+        m_materialPlanar = false;
+        for (const MeshDraw& draw : draws) {
+            if (draw.planarReceiver && draw.reflectQuality) m_materialPlanar = true;
+        }
         pass.sceneHash = hashProbeScene(draws, m_environment.path());
         const bool allowExpensive =
             !opts.features.expensiveEffectsOnlyWhenSettled || opts.cameraSettled;
-        if (opts.features.reflections == ReflectionMode::Planar && !opts.wireframeMeshes) {
+        if ((opts.features.reflections == ReflectionMode::Planar || m_materialPlanar) &&
+            !opts.wireframeMeshes) {
             if (allowExpensive && !opts.clipBelowEnabled) {
                 renderPlanarReflection(cmd, world, camera, width, height, projectRoot, opts);
             }
@@ -2058,6 +2196,34 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
+    }
+
+    {
+        const Vec3 right(camera.view(0, 0), camera.view(0, 1), camera.view(0, 2));
+        const Vec3 up(camera.view(1, 0), camera.view(1, 1), camera.view(1, 2));
+        Effects::buildEffectMesh(world, camera.position, right, up, m_effectMesh);
+        if (!m_device || m_effectMesh.vertices.empty() || m_effectMesh.indices.empty()) {
+            destroyMeshGpu(m_effectMesh);
+        } else {
+            const u64 vertexBytes = m_effectMesh.vertices.size() * sizeof(Assets::Vertex3D);
+            const u64 indexBytes = m_effectMesh.indices.size() * sizeof(u32);
+            if (!m_effectMesh.vertexBuffer || m_effectMesh.vertexBuffer->size != vertexBytes ||
+                !m_effectMesh.indexBuffer || m_effectMesh.indexBuffer->size != indexBytes) {
+                destroyMeshGpu(m_effectMesh);
+                RHI::BufferDesc vertices;
+                vertices.size = vertexBytes;
+                m_effectMesh.vertexBuffer = m_device->createBuffer(vertices, RHI::BufferUsage::Vertex);
+                RHI::BufferDesc indices;
+                indices.size = indexBytes;
+                m_effectMesh.indexBuffer = m_device->createBuffer(indices, RHI::BufferUsage::Index);
+            }
+            if (m_effectMesh.vertexBuffer) {
+                m_device->uploadBuffer(m_effectMesh.vertexBuffer, m_effectMesh.vertices.data(), vertexBytes);
+            }
+            if (m_effectMesh.indexBuffer) {
+                m_device->uploadBuffer(m_effectMesh.indexBuffer, m_effectMesh.indices.data(), indexBytes);
+            }
+        }
     }
 
     CF_PROFILE_SCOPE("GpuSceneRenderer::draw");

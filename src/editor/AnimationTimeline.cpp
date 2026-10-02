@@ -1,4 +1,6 @@
 #include "editor/AnimationTimeline.hpp"
+#include "animation/ClipAsset.hpp"
+#include "animation/SkinLibrary.hpp"
 #include "debug/LogSystem.hpp"
 #include <algorithm>
 #include <cmath>
@@ -117,9 +119,62 @@ void AnimationTimelinePanel::moveSelectedKeyframe(f32 newTime) {
     }
 }
 
+void AnimationTimelinePanel::adoptMotion() {
+    m_ownedClip = {};
+    m_ownedClip.name = m_motion.name.c_str();
+    m_ownedClip.fps = m_motion.fps == 0 ? 12 : m_motion.fps;
+    m_ownedClip.loop = m_motion.loop;
+    m_ownedClip.frames.clear();
+    for (const Animation::SpriteFrameKey& key : m_motion.spriteFrames) {
+        Animation::FrameRect rect;
+        rect.x = key.x;
+        rect.y = key.y;
+        rect.w = key.w;
+        rect.h = key.h;
+        m_ownedClip.frames.push_back(rect);
+    }
+    if (m_ownedClip.frames.empty()) m_ownedClip.frames.push_back({});
+    setClip(&m_ownedClip);
+}
+
+void AnimationTimelinePanel::newClip() {
+    m_motion = {};
+    m_motion.name = "Clip";
+    m_motion.fps = 12;
+    m_motion.loop = true;
+    m_motion.duration = 1.0f;
+    m_motion.spriteFrames.push_back({0.0f, 0, 0, 0, 32, 32});
+    m_motion.spriteFrames.push_back({0.5f, 1, 32, 0, 32, 32});
+    adoptMotion();
+}
+
+void AnimationTimelinePanel::loadClipFile(const std::filesystem::path& path) {
+    if (!Animation::loadMotionClip(path, m_motion)) return;
+    adoptMotion();
+}
+
+void AnimationTimelinePanel::saveClipFile(const std::filesystem::path& path) {
+    m_motion.name = m_ownedClip.name.cStr();
+    m_motion.loop = m_ownedClip.loop;
+    m_motion.fps = m_ownedClip.fps;
+    m_motion.duration = m_ownedClip.duration();
+    if (m_motion.spriteFrames.size() != m_ownedClip.frames.size()) {
+        m_motion.spriteFrames.clear();
+        const f32 step = m_ownedClip.fps > 0 ? 1.0f / static_cast<f32>(m_ownedClip.fps) : 0.1f;
+        for (size_t i = 0; i < m_ownedClip.frames.size(); ++i) {
+            const Animation::FrameRect& rect = m_ownedClip.frames[i];
+            m_motion.spriteFrames.push_back(
+                {step * static_cast<f32>(i), static_cast<u32>(i), rect.x, rect.y, rect.w, rect.h});
+        }
+    }
+    Animation::saveMotionClip(path, m_motion);
+}
+
 }
 
 #ifdef CF_HAS_IMGUI
+
+#include "editor/FilePicker.hpp"
 
 namespace Caffeine::Editor {
 
@@ -141,14 +196,32 @@ static const ImU32 k_ColKeyframeSel   = IM_COL32(255,255, 130,  255);
 static const ImU32 k_ColKeyframeHover = IM_COL32(255,240, 120,  255);
 static const ImU32 k_ColProgress      = IM_COL32(60, 100, 220,  180);
 
+void AnimationTimelinePanel::setScene(ECS::World* world, u32 selectedEntity) {
+    m_scene = world;
+    m_selectedEntity = selectedEntity;
+}
+
 void AnimationTimelinePanel::render(f32 deltaTime) {
     if (!m_open) return;
 
-    if (m_isPlaying && m_clip) {
+    f32 drivenDuration = m_clip ? m_clip->duration() : 0.0f;
+    bool drivenLoop = m_looping;
+    if (m_scene) {
+        ECS::Entity selected(m_selectedEntity, m_scene);
+        if (const Animation::SkinnedPose* pose = m_scene->get<Animation::SkinnedPose>(selected)) {
+            if (const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath)) {
+                if (pose->clipIndex >= 0 && pose->clipIndex < static_cast<i32>(skin->clips.size())) {
+                    drivenDuration = std::max(drivenDuration, skin->clips[static_cast<size_t>(pose->clipIndex)].duration);
+                }
+            }
+            drivenLoop = drivenLoop || pose->loop;
+        }
+    }
+    if (m_isPlaying && drivenDuration > 0.0f) {
         m_currentTime += deltaTime;
-        if (m_currentTime >= m_clip->duration()) {
-            if (m_looping) m_currentTime = 0.0f;
-            else           m_isPlaying = false;
+        if (m_currentTime >= drivenDuration) {
+            if (drivenLoop) m_currentTime = 0.0f;
+            else            m_isPlaying = false;
         }
     }
 
@@ -156,7 +229,58 @@ void AnimationTimelinePanel::render(f32 deltaTime) {
     if (ImGui::Begin("Animation Timeline", &m_open)) {
         renderHeader();
         ImGui::Separator();
+        if (m_scene) {
+            ECS::Entity selected(m_selectedEntity, m_scene);
+            if (Animation::SkinnedPose* pose = m_scene->get<Animation::SkinnedPose>(selected)) {
+                const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath);
+                ImGui::TextUnformatted(pose->humanoid.matched ? "3D humanoide" : "3D skeletal");
+                if (skin && !skin->clipNames.empty()) {
+                    const int index = std::clamp(pose->clipIndex, 0, static_cast<i32>(skin->clipNames.size()) - 1);
+                    if (ImGui::BeginCombo("Bone Clip", skin->clipNames[static_cast<size_t>(index)].c_str())) {
+                        for (int i = 0; i < static_cast<int>(skin->clipNames.size()); ++i) {
+                            if (ImGui::Selectable(skin->clipNames[static_cast<size_t>(i)].c_str(), i == index)) {
+                                pose->clipIndex = i;
+                                pose->time = 0.0f;
+                                pose->playing = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (m_isPlaying) {
+                        pose->playing = false;
+                        pose->time = m_currentTime;
+                        pose->loop = drivenLoop;
+                    }
+                }
+                if (skin) {
+                    const int shown = std::min(static_cast<int>(skin->boneNames.size()), 12);
+                    for (int i = 0; i < shown; ++i) {
+                        ImGui::BulletText("%s", skin->boneNames[static_cast<size_t>(i)].c_str());
+                    }
+                    if (static_cast<int>(skin->boneNames.size()) > shown) {
+                        ImGui::TextDisabled("%d ossos", static_cast<int>(skin->boneNames.size()));
+                    }
+                }
+                ImGui::Separator();
+            }
+        }
         renderTimeline();
+        if (m_pendingLoad) {
+            if (auto selected = FilePicker::pickPath(FilePicker::Mode::PickFile, "Load Animation", {})) {
+                loadClipFile(*selected);
+                m_pendingLoad = false;
+            } else if (FilePicker::consumeCloseEvent("Load Animation")) {
+                m_pendingLoad = false;
+            }
+        }
+        if (m_pendingSave) {
+            if (auto selected = FilePicker::pickPath(FilePicker::Mode::SaveFile, "Save Animation", {})) {
+                saveClipFile(*selected);
+                m_pendingSave = false;
+            } else if (FilePicker::consumeCloseEvent("Save Animation")) {
+                m_pendingSave = false;
+            }
+        }
     }
     ImGui::End();
 }
@@ -186,6 +310,16 @@ void AnimationTimelinePanel::renderHeader() {
     if (m_clip) m_clip->loop = m_looping;
     ImGui::SameLine();
     ImGui::Checkbox("Onion Skin", &m_onionSkinningEnabled);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("New Clip")) newClip();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Load .anim")) m_pendingLoad = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Save .anim")) m_pendingSave = true;
+    if (!m_motion.positions.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("pos keys %zu", m_motion.positions.size());
+    }
 
     if (m_clip) {
         ImGui::SameLine(0, 16.0f);

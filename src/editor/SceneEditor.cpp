@@ -15,6 +15,9 @@
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
+#include "navigation/NavigationSystem.hpp"
+#include "effects/EffectSystem.hpp"
+#include "editor/EditorCameraMath.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
 #include "script/ScriptTypes.hpp"
 #include "events/Events.hpp"
@@ -42,6 +45,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_gameplayPreview.init(device);
     m_materialEditor.initGpu(device);
     m_assetBrowser.init(projectConfig);
+    m_assetBrowser.initGpu(device);
     m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
         m_scriptEditor.open();
         m_scriptEditor.openFile(path);
@@ -100,6 +104,18 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      });
      m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Panels", [this]() {
          m_materialEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_image_manager", "Image Manager", "Panels", [this]() {
+         m_imageManager.open();
+     });
+     m_commandPalette.registerCommand("panel_hud_editor", "HUD Editor", "Panels", [this]() {
+         m_hudEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_particles", "Particles", "Panels", [this]() {
+         m_particleEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_effects", "Effects", "Panels", [this]() {
+         m_effectEditor.open();
      });
      m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Panels", [this]() {
          m_terrainEditor.open();
@@ -542,6 +558,8 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     m_input.endFrame();
 
     m_animationSystem.onUpdate(world, dt);
+    Effects::tickEffects(world, dt, editorCameraPosition(m_ctx.camYaw, m_ctx.camPitch, m_ctx.camDistance, m_ctx.camFocus));
+    Navigation::updateNavigation(world, dt);
     m_physicsSystem.onUpdate(world, dt);
     m_physics3D.onUpdate(world, dt);
 #ifdef CF_HAS_SCRIPTING
@@ -614,6 +632,7 @@ void SceneEditor::render(f32 deltaTime) {
     ECS::World* activeWorld = m_tabManager.activeWorld();
     m_ctx.activeWorld = activeWorld;
     m_ctx.projectRootPath = m_currentProjectConfig.RootPath;
+    m_ctx.assetRootPath = m_assetBrowser.assetRoot();
     if (!activeWorld) {
         renderUnsavedChangesPopup(nullptr);
         return;
@@ -748,6 +767,7 @@ void SceneEditor::render(f32 deltaTime) {
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
     m_materialEditor.setFrameCommandBuffer(m_frameCmd);
+    m_assetBrowser.setFrameCommandBuffer(m_frameCmd);
 #endif
     {
         CF_PROFILE_SCOPE("SceneEditor::viewport");
@@ -788,6 +808,22 @@ void SceneEditor::render(f32 deltaTime) {
         m_materialEditor.onImGuiRender(m_ctx);
     }
     {
+        CF_PROFILE_SCOPE("SceneEditor::imageManager");
+        m_imageManager.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::hudEditor");
+        m_hudEditor.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::particles");
+        m_particleEditor.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::effects");
+        m_effectEditor.onImGuiRender(m_ctx);
+    }
+    {
         CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
         m_terrainEditor.render(*activeWorld, m_ctx);
     }
@@ -812,7 +848,9 @@ void SceneEditor::render(f32 deltaTime) {
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
     m_materialEditor.setFrameCommandBuffer(nullptr);
+    m_assetBrowser.setFrameCommandBuffer(nullptr);
 #endif
+    m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id());
     m_animationTimeline.render(deltaTime);
     m_animatorController.render();
     m_tilemapEditor.render();
@@ -968,6 +1006,22 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool assetsOpen = m_assetBrowser.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Assets, "Assets", nullptr, &assetsOpen)) {
                 assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
+            }
+            bool imageManagerOpen = m_imageManager.isOpen();
+            if (ImGui::MenuItem("Image Manager", nullptr, imageManagerOpen)) {
+                imageManagerOpen ? m_imageManager.close() : m_imageManager.open();
+            }
+            bool hudEditorOpen = m_hudEditor.isOpen();
+            if (ImGui::MenuItem("HUD Editor", nullptr, hudEditorOpen)) {
+                hudEditorOpen ? m_hudEditor.close() : m_hudEditor.open();
+            }
+            bool particlesOpen = m_particleEditor.isOpen();
+            if (ImGui::MenuItem("Particles", nullptr, particlesOpen)) {
+                particlesOpen ? m_particleEditor.close() : m_particleEditor.open();
+            }
+            bool effectsOpen = m_effectEditor.isOpen();
+            if (ImGui::MenuItem("Effects", nullptr, effectsOpen)) {
+                effectsOpen ? m_effectEditor.close() : m_effectEditor.open();
             }
             bool consoleOpen = m_console.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Console, "Console", nullptr, &consoleOpen)) {
@@ -1138,7 +1192,9 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
     }
 
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
-        if (m_ctx.currentScenePath.empty()) {
+        if (m_materialEditor.isOpen() && m_materialEditor.wasFocusedLastFrame()) {
+            m_materialEditor.handleSaveShortcut();
+        } else if (m_ctx.currentScenePath.empty()) {
             saveSceneAs(world);
         } else {
             saveScene(m_ctx.currentScenePath.c_str(), world);

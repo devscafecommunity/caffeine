@@ -119,6 +119,7 @@ private:
     struct MeshDraw {
         ECS::Entity entity;
         Assets::Mesh3D* mesh = nullptr;
+        const std::vector<Assets::Vertex3D>* skinnedVertices = nullptr;
         const ECS::TerrainComponent* terrainSettings = nullptr;
         Mat4 worldMatrix = Mat4::identity();
         Vec4 albedo{1, 1, 1, 1};
@@ -148,6 +149,19 @@ private:
         f32  iridescence = 0.0f;
         f32  iridescenceThickness = 400.0f;
         f32  iridescenceIor = 1.3f;
+        f32  reflection = 0.0f;
+        i32  ssrStepsOverride = -1;
+        f32  ssrRoughnessGate = -1.0f;
+        bool reflectPerformance = false;
+        bool reflectQuality = false;
+        f32  ssrResolution = 0.5f;
+        f32  ssrMaxSteps = 32.0f;
+        f32  ssrTemporalFrames = 4.0f;
+        f32  ssrDistance = 15.0f;
+        f32  ssrSamples = 64.0f;
+        f32  ssrDenoise = 0.7f;
+        f32  ssrProbeBlend = 8.0f;
+        f32  ssrBounces = 1.0f;
         i32  probeIndex = -1;
         bool castShadows = true;
         bool receiveShadows = true;
@@ -163,8 +177,8 @@ private:
 
         bool isTranslucent() const { return transmission > 0.0f || alphaMode == 2; }
         bool isGlossy() const {
-            return !isTerrain && (metallic >= 0.5f || roughness <= 0.35f || transmission > 0.0f ||
-                                  clearcoat > 0.0f);
+            return !isTerrain && (reflection >= 0.2f || metallic >= 0.5f || roughness <= 0.35f ||
+                                  transmission > 0.0f || clearcoat > 0.0f);
         }
     };
 
@@ -288,10 +302,16 @@ private:
     RHI::Shader* m_instancedVert = nullptr;
     RHI::Pipeline* m_instancedPipeline = nullptr;
     RHI::Buffer* m_instanceBuffer = nullptr;
+    std::unordered_map<u32, RHI::Buffer*> m_skinBuffers;
+    RHI::Buffer* vertexBufferFor(const MeshDraw& draw);
     RHI::Pipeline* m_blendPipeline = nullptr;
     RHI::Shader* m_fullscreenVert = nullptr;
     RHI::Shader* m_skyFrag = nullptr;
     RHI::Shader* m_gridFrag = nullptr;
+    RHI::Shader* m_effectVert = nullptr;
+    RHI::Shader* m_effectFrag = nullptr;
+    RHI::Pipeline* m_effectPipeline = nullptr;
+    Assets::Mesh3D m_effectMesh;
     RHI::Pipeline* m_skyPipeline = nullptr;
     RHI::Pipeline* m_gridPipeline = nullptr;
     /// Bound to cube sampler slots that have nothing to sample (a 2D texture there is invalid).
@@ -302,6 +322,7 @@ private:
     u32 m_reflectionHeight = 0;
     Mat4 m_reflectionVP = Mat4::identity();
     bool m_reflectionValid = false;
+    bool m_materialPlanar = false;
     std::vector<ReflectionProbe> m_probes;
     bool m_probesPending = false;
     std::vector<ViewTargets> m_views;

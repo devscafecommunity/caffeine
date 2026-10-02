@@ -31,6 +31,8 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::FullscreenVertex:    return {Shaders::fullscreen_vert_spirv, Shaders::fullscreen_vert_spirvSize};
         case BuiltinShader::SkyFragment:         return {Shaders::sky_frag_spirv, Shaders::sky_frag_spirvSize};
         case BuiltinShader::GridFragment:        return {Shaders::grid_frag_spirv, Shaders::grid_frag_spirvSize};
+        case BuiltinShader::EffectBillboardVertex: return {Shaders::effect_billboard_vert_spirv, Shaders::effect_billboard_vert_spirvSize};
+        case BuiltinShader::EffectBillboardFragment: return {Shaders::effect_billboard_frag_spirv, Shaders::effect_billboard_frag_spirvSize};
         case BuiltinShader::PostLuminanceFragment: return {Shaders::post_luminance_frag_spirv, Shaders::post_luminance_frag_spirvSize};
         case BuiltinShader::PostAdaptFragment:   return {Shaders::post_adapt_frag_spirv, Shaders::post_adapt_frag_spirvSize};
         case BuiltinShader::PostBloomPrefilterFragment: return {Shaders::post_bloom_prefilter_frag_spirv, Shaders::post_bloom_prefilter_frag_spirvSize};

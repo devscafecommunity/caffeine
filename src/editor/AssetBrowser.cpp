@@ -8,6 +8,8 @@
 #include "core/io/CafTypes.hpp"
 #include "assets/TextureCompiler.hpp"
 #include "assets/MeshImportValidator.hpp"
+#include "assets/MaterialFile.hpp"
+#include "scene/EnvironmentSystem.hpp"
 #ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
 #include "caf-pack/HeaderGenerator.hpp"
@@ -15,6 +17,8 @@
 #include "stb/stb_image.h"
 
 #include <fstream>
+#include <cstdio>
+#include <algorithm>
 #include <system_error>
 #include <cctype>
 
@@ -100,6 +104,25 @@ void AssetBrowser::shutdownGpu() {
     m_previewRenderer.shutdownGpu();
 #endif
 }
+
+#ifdef CF_HAS_SDL3
+void AssetBrowser::initGpu(RHI::RenderDevice* device) {
+#ifdef CF_HAS_IMGUI
+    m_previewRenderer.initGpu(device);
+#else
+    (void)device;
+#endif
+}
+
+void AssetBrowser::setFrameCommandBuffer(RHI::CommandBuffer* cmd) {
+#ifdef CF_HAS_IMGUI
+    m_frameCmd = cmd;
+    m_previewRenderer.setFrameCommandBuffer(cmd);
+#else
+    (void)cmd;
+#endif
+}
+#endif
 
 void AssetBrowser::refresh() {
     if (m_browseMode == BrowseMode::CapFile) {
@@ -521,6 +544,12 @@ std::string lowerExtension(const std::filesystem::path& path) {
     return ext;
 }
 
+bool isBrowserImage(const std::filesystem::path& path) {
+    const std::string ext = lowerExtension(path);
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+           ext == ".gif" || ext == ".webp";
+}
+
 }  // namespace
 
 const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
@@ -821,6 +850,8 @@ void AssetBrowser::renderGridView() {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
+                } else if (isBrowserImage(entry.path) && m_editorContext) {
+                    m_editorContext->imageToOpen = entry.path.string();
                 }
             }
         }
@@ -855,8 +886,16 @@ void AssetBrowser::renderGridView() {
 
         ImGui::SetCursorPos(cursorPos);
         ImGui::BeginGroup();
-        drawTypeIcon(entry.type, entry.path, entry.isDirectory,
-                     static_cast<f32>(std::max(20, static_cast<int>(m_thumbnailSize * 0.45f))));
+        const float side = static_cast<f32>(std::max(24, static_cast<int>(m_thumbnailSize)));
+        bool drewThumbnail = false;
+#ifdef CF_HAS_SDL3
+        if (!entry.isDirectory) {
+            drewThumbnail = m_previewRenderer.drawThumbnail(entry.path, entry.type, side);
+        }
+#endif
+        if (!drewThumbnail) {
+            drawTypeIcon(entry.type, entry.path, entry.isDirectory, side * 0.72f);
+        }
         ImGui::TextWrapped("%s", entry.name.c_str());
         if (entry.meshImportIncomplete) {
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "[incompleto]");
@@ -900,6 +939,8 @@ void AssetBrowser::renderListView() {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
+                } else if (isBrowserImage(entry.path) && m_editorContext) {
+                    m_editorContext->imageToOpen = entry.path.string();
                 }
             }
         }
@@ -1610,14 +1651,13 @@ void AssetBrowser::renderNamingPopup() {
                     std::ofstream f(m_currentDir / (nameStr + ".prefab"));
                     f << "{}";
                 } else if (m_pendingCreateType == 9) {
-                    std::ofstream f(m_currentDir / (nameStr + ".mat"));
-                    f << "CAFMAT2\n"
-                         "name " << nameStr << "\n"
-                         "albedo 1 1 1 1\n"
-                         "metallic 0\n"
-                         "roughness 0.5\n"
-                         "emission 0 0 0\n"
-                         "emission_strength 0\n";
+                    const std::filesystem::path matPath = m_currentDir / (nameStr + ".mat");
+                    Assets::MaterialSurface surface;
+                    surface.valid = true;
+                    surface.name = nameStr;
+                    if (Assets::saveMaterialFile(matPath, surface) && m_onMaterialOpen) {
+                        m_onMaterialOpen(matPath);
+                    }
                 } else if (m_pendingCreateType == 10) {
                     std::error_code ec;
                     std::filesystem::path newPath = m_currentDir / nameStr;
@@ -1642,6 +1682,37 @@ void AssetBrowser::renderNamingPopup() {
 void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx) {
     if (!m_open) return;
     m_world = &world;
+    m_editorContext = &ctx;
+
+    if (!ctx.assetBrowserNavigateTo.empty()) {
+        const std::filesystem::path dir = ctx.assetBrowserNavigateTo;
+        ctx.assetBrowserNavigateTo.clear();
+        ctx.assetBrowserDirty = false;
+        navigateTo(dir);
+    } else if (ctx.assetBrowserDirty) {
+        ctx.assetBrowserDirty = false;
+        refresh();
+    }
+
+#ifdef CF_HAS_SDL3
+    m_previewRenderer.setFrameCommandBuffer(m_frameCmd);
+    std::string environment = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex).string();
+    f32 exposure = 1.0f;
+    if (ctx.activeWorld) {
+        const Scene::ActiveSkybox sky = Scene::findActiveSkybox(*ctx.activeWorld);
+        if (sky.component) {
+            environment = Scene::resolveSkyboxTexturePath(*sky.component, m_projectRoot.string()).string();
+            exposure = sky.component->exposure;
+        }
+    }
+    m_previewRenderer.setEnvironment(std::move(environment), exposure);
+    std::vector<std::pair<std::filesystem::path, AssetType>> thumbnails;
+    thumbnails.reserve(m_filteredEntries.size());
+    for (const Entry& entry : m_filteredEntries) {
+        if (!entry.isDirectory) thumbnails.emplace_back(entry.path, entry.type);
+    }
+    m_previewRenderer.prepareThumbnails(thumbnails, m_projectRoot.string());
+#endif
 
     if (ImGui::Begin("Asset Browser", &m_open)) {
 

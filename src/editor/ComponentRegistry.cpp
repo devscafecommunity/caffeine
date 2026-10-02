@@ -1,4 +1,6 @@
 #include "editor/ComponentRegistry.hpp"
+
+#include <cstring>
 #include "ecs/Components.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
@@ -13,6 +15,10 @@
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "animation/AnimationPlayer.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectTypes.hpp"
+#include "navigation/NavVolume.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
@@ -141,6 +147,57 @@ void registerAllComponents(ComponentRegistry& reg) {
                 w.add<ECS::Sprite>(e);
             }
         }
+    });
+    reg.registerComponent({
+        "Effects", "Effect",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Effects::EffectComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Effects::EffectComponent effect;
+            effect.kind = static_cast<u8>(Effects::EffectKind::Particles);
+            w.add<Effects::EffectComponent>(e, effect);
+        }
+    });
+    reg.registerComponent({
+        "Animation", "Sprite Sheet",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::SpriteSheet>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Animation::SpriteSheet sheet;
+            sheet.columns = 4;
+            sheet.rows = 1;
+            sheet.frameCount = 4;
+            w.add<Animation::SpriteSheet>(e, sheet);
+            if (!w.has<ECS::Sprite>(e)) w.add<ECS::Sprite>(e);
+        }
+    });
+    reg.registerComponent({
+        "Animation", "Skinned Mesh",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::SkinnedPose>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Animation::SkinnedPose pose;
+            if (const ECS::MeshFilterComponent* filter = w.get<ECS::MeshFilterComponent>(e)) {
+                std::strncpy(pose.meshPath, filter->customMeshPath.c_str(), sizeof(pose.meshPath) - 1);
+            }
+            w.add<Animation::SkinnedPose>(e, std::move(pose));
+        }
+    });
+    reg.registerComponent({
+        "Animation", "Animation Player",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::AnimationPlayer>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<Animation::AnimationPlayer>(e); }
+    });
+    reg.registerComponent({
+        "AI", "Nav Volume",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavVolume>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Navigation::NavVolume volume;
+            volume.resize(32, 32);
+            w.add<Navigation::NavVolume>(e, std::move(volume));
+        }
+    });
+    reg.registerComponent({
+        "AI", "Nav Agent",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavAgent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<Navigation::NavAgent>(e); }
     });
     reg.registerComponent({
         "Camera", "Camera Active",

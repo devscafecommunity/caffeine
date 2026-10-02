@@ -45,6 +45,9 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     mat4 uPrevView;
     vec4 uScreen;       // xy 1 / target size, z frame index
     mat4 uViewProj;
+    vec4 uReflectPerf;    // x enabled, y resolution scale, z max steps, w temporal frames
+    vec4 uReflectQuality; // x enabled, y samples, z denoise, w distance fade
+    vec4 uReflectExtra;   // x planar, y probe blend, z bounces
 } lights;
 
 layout(set = 3, binding = 1) uniform ShadowUBO {
@@ -316,12 +319,43 @@ bool prevScreenUv(vec3 p, out vec2 uv, out float rayDist) {
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
+int reflectionStepCount(float roughness) {
+    float steps = lights.uSsrParams.z;
+    if (lights.uReflectPerf.x > 0.5) {
+        float scale = clamp(lights.uReflectPerf.y, 0.25, 1.0);
+        float cap = clamp(lights.uReflectPerf.z, 4.0, 64.0);
+        float roughScale = mix(1.0, 0.35, clamp(roughness, 0.0, 1.0));
+        steps = min(steps, cap) * scale * roughScale;
+    }
+    if (lights.uReflectQuality.x > 0.5) {
+        steps = max(steps, clamp(lights.uReflectQuality.y, 4.0, 64.0));
+    }
+    return int(clamp(steps, 4.0, 64.0));
+}
+
+vec3 denoiseReflection(vec2 uv, vec3 hit) {
+    float amount = lights.uReflectQuality.x > 0.5 ? lights.uReflectQuality.z : 0.0;
+    if (amount <= 0.001) return hit;
+    vec2 texel = max(lights.uScreen.xy, vec2(1.0 / 1920.0)) * 2.0;
+    vec3 sum = hit * 2.0;
+    sum += textureLod(uPrevColor, uv + vec2(texel.x, 0.0), 0.0).rgb;
+    sum += textureLod(uPrevColor, uv - vec2(texel.x, 0.0), 0.0).rgb;
+    sum += textureLod(uPrevColor, uv + vec2(0.0, texel.y), 0.0).rgb;
+    sum += textureLod(uPrevColor, uv - vec2(0.0, texel.y), 0.0).rgb;
+    return mix(hit, sum / 6.0, clamp(amount, 0.0, 1.0));
+}
+
 // Screen-space reflection: marches the reflected ray in world space against last frame's depth
 // and returns last frame's colour at the hit (rgb) with a confidence (a).
 vec4 traceScreenSpace(vec3 origin, vec3 dir, float roughness) {
     if (lights.uMaterialFlags.w < 0.5 || roughness > lights.uSsrParams.y) return vec4(0.0);
-    int steps = int(clamp(lights.uSsrParams.z, 4.0, 64.0));
+    int steps = reflectionStepCount(roughness);
     float maxDist = max(lights.uSsrParams.w, 1.0);
+    if (lights.uReflectPerf.x > 0.5) {
+        maxDist = min(maxDist, max(lights.uReflectQuality.w, 1.0));
+        float stride = max(lights.uReflectPerf.w, 1.0);
+        if (stride > 1.5 && mod(lights.uScreen.z, stride) >= 0.5) steps = min(steps, 4);
+    }
     float jitter = interleavedGradientNoise(gl_FragCoord.xy + lights.uScreen.z * 5.588238);
     float prevT = 0.0;
     for (int i = 1; i <= 64; ++i) {
@@ -337,7 +371,9 @@ vec4 traceScreenSpace(vec3 origin, vec3 dir, float roughness) {
         if (diff > 0.0 && diff < thickness) {
             float lo = prevT;
             float hi = t;
-            for (int k = 0; k < 5; ++k) {
+            int refine = lights.uReflectQuality.x > 0.5 ? 8 : 5;
+            for (int k = 0; k < 8; ++k) {
+                if (k >= refine) break;
                 float mid = 0.5 * (lo + hi);
                 vec2 muv;
                 float mDist;
@@ -348,12 +384,16 @@ vec4 traceScreenSpace(vec3 origin, vec3 dir, float roughness) {
             vec2 hitUv;
             float hitDist;
             if (!prevScreenUv(origin + dir * hi, hitUv, hitDist)) break;
-            vec3 hit = textureLod(uPrevColor, hitUv, 0.0).rgb;
+            vec3 hit = denoiseReflection(hitUv, textureLod(uPrevColor, hitUv, 0.0).rgb);
             vec2 edge = min(hitUv, 1.0 - hitUv);
             float fade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
             fade *= 1.0 - smoothstep(0.7, 1.0, hi / maxDist);
             float maxRough = max(lights.uSsrParams.y, 0.01);
             fade *= 1.0 - smoothstep(maxRough * 0.6, maxRough, roughness);
+            if (lights.uReflectPerf.x > 0.5) {
+                float dither = interleavedGradientNoise(gl_FragCoord.xy + vec2(17.0, 3.0));
+                fade = clamp(fade + (dither - 0.5) * 0.12, 0.0, 1.0);
+            }
             return vec4(hit, clamp(fade * lights.uSsrParams.x, 0.0, 1.0));
         }
         prevT = t;
@@ -364,7 +404,13 @@ vec4 traceScreenSpace(vec3 origin, vec3 dir, float roughness) {
 vec3 sampleProbeOrSky(vec3 dir, float roughness) {
     float blur = sqrt(clamp(roughness, 0.0, 1.0));
     if (lights.uIblParams.z > 0.5) {
-        return textureLod(uProbe, dir, blur * lights.uProjParams.z).rgb;
+        float lod = blur * lights.uProjParams.z;
+        vec3 probe = textureLod(uProbe, dir, lod).rgb;
+        if (lights.uReflectQuality.x > 0.5 && lights.uReflectExtra.y > 1.0) {
+            float lod2 = min(lod + lights.uReflectExtra.y * 0.15, lights.uProjParams.z);
+            probe = mix(probe, textureLod(uProbe, dir, lod2).rgb, 0.35);
+        }
+        return probe;
     }
     return sampleEnvironment(dir, blur);
 }
@@ -372,7 +418,13 @@ vec3 sampleProbeOrSky(vec3 dir, float roughness) {
 vec3 specularRadiance(vec3 R, float roughness) {
     vec3 radiance = sampleProbeOrSky(R, roughness);
     vec4 ssr = traceScreenSpace(v_worldPos + normalize(v_normal) * 0.02, R, roughness);
-    return mix(radiance, ssr.rgb, ssr.a);
+    radiance = mix(radiance, ssr.rgb, ssr.a);
+    if (lights.uReflectQuality.x > 0.5 && lights.uReflectExtra.z >= 0.5) {
+        vec3 bounceDir = normalize(reflect(R, vec3(0.0, 1.0, 0.0)));
+        float weight = 0.1 * min(lights.uReflectExtra.z, 2.0) * (1.0 - clamp(roughness, 0.0, 1.0));
+        radiance += sampleProbeOrSky(bounceDir, max(roughness, 0.25)) * weight;
+    }
+    return radiance;
 }
 
 void applyIbl(Surface s, inout vec3 diffuseOut, inout vec3 specularOut) {

@@ -18,6 +18,8 @@ enum class BuiltinShader : u8 {
     FullscreenVertex,
     SkyFragment,
     GridFragment,
+    EffectBillboardVertex,
+    EffectBillboardFragment,
     PostLuminanceFragment,
     PostAdaptFragment,
     PostBloomPrefilterFragment,

@@ -2,8 +2,13 @@
 #include "../src/Caffeine.hpp"
 #include "../src/animation/AnimationComponents.hpp"
 #include "../src/animation/AnimationSystem.hpp"
+#include "../src/animation/ClipAsset.hpp"
+#include "../src/animation/AnimationPlayer.hpp"
+#include "caffeine/animation/AnimationApi.hpp"
+#include "../src/ecs/Components3D.hpp"
 
 #include <cmath>
+#include <filesystem>
 
 using namespace Caffeine;
 using namespace Caffeine::ECS;
@@ -413,4 +418,38 @@ TEST_CASE("AnimationSystem - play() stores previousState", "[animation]") {
     const Animator* a = world.get<Animator>(e);
     REQUIRE(a->previousState == FixedString<32>("idle"));
     REQUIRE(a->currentState  == FixedString<32>("walk"));
+}
+
+TEST_CASE("Motion clip roundtrip and player samples position", "[animation]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-anim-test";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "walk.anim";
+
+    MotionClip written;
+    written.name = "Walk";
+    written.loop = false;
+    written.fps = 8;
+    written.duration = 1.0f;
+    written.spriteFrames.push_back({0.0f, 1, 0, 0, 16, 16});
+    written.spriteFrames.push_back({1.0f, 3, 16, 0, 16, 16});
+    written.positions.push_back({0.0f, Vec3(0, 0, 0)});
+    written.positions.push_back({1.0f, Vec3(4, 0, 0)});
+    REQUIRE(saveMotionClip(path, written));
+
+    MotionClip loaded;
+    REQUIRE(loadMotionClip(path, loaded));
+    REQUIRE(loaded.name == "Walk");
+    REQUIRE(sampleSpriteFrame(loaded, 0.0f) == 1u);
+    REQUIRE(sampleSpriteFrame(loaded, 1.0f) == 3u);
+    REQUIRE(samplePosition(loaded, 0.5f).x == Approx(2.0f));
+
+    World world;
+    AnimationSystem sys;
+    Entity e = world.create();
+    world.add<Position3D>(e, Position3D{Vec3(0, 0, 0)});
+    REQUIRE(playClip(world, e, path.string()));
+    sys.onUpdate(world, 0.5f);
+    const Position3D* position = world.get<Position3D>(e);
+    REQUIRE(position != nullptr);
+    REQUIRE(position->position.x == Approx(2.0f).margin(0.05f));
 }

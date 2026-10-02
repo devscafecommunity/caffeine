@@ -8,6 +8,11 @@
 #include "ecs/TerrainComponents.hpp"
 #include "audio/AudioComponents.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "animation/AnimationPlayer.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectTypes.hpp"
+#include "navigation/NavVolume.hpp"
+#include "ecs/PostProcessComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
@@ -17,6 +22,7 @@
 #include "editor/TerrainGenerationBlobLegacy.hpp"
 #include "terrain/TerrainCache.hpp"
 #include <vector>
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <fstream>
@@ -981,6 +987,106 @@ bool SceneSerializer::serialize(const std::string& filepath) {
 
     emitPodComponents<ECS::SkyboxComponent>(kTypeSkybox, entityMap);
     emitPodComponents<ECS::ForwardRenderFeaturesComponent>(kTypeForwardRenderFeatures, entityMap);
+    emitPodComponents<ECS::PostProcessComponent>(kTypePostProcess, entityMap);
+
+    {
+        ECS::ComponentQuery query;
+        query.with<Animation::AnimationPlayer>();
+        m_world.forEach<Animation::AnimationPlayer>(query, [&](ECS::Entity entity, Animation::AnimationPlayer& player) {
+            const u32 pathLen = static_cast<u32>(std::strlen(player.clipPath));
+            std::vector<u8> data(4 + pathLen + sizeof(f32) * 2 + 2);
+            u32 offset = 0;
+            std::memcpy(data.data() + offset, &pathLen, 4);
+            offset += 4;
+            if (pathLen > 0) {
+                std::memcpy(data.data() + offset, player.clipPath, pathLen);
+                offset += pathLen;
+            }
+            std::memcpy(data.data() + offset, &player.time, sizeof(f32));
+            offset += sizeof(f32);
+            std::memcpy(data.data() + offset, &player.speed, sizeof(f32));
+            offset += sizeof(f32);
+            data[offset++] = player.playing ? 1 : 0;
+            data[offset++] = player.loop ? 1 : 0;
+            entityMap[entity.id()].emplace_back(kTypeAnimationPlayer, std::move(data));
+        });
+    }
+    {
+        ECS::ComponentQuery query;
+        query.with<Animation::SkinnedPose>();
+        m_world.forEach<Animation::SkinnedPose>(query, [&](ECS::Entity entity, Animation::SkinnedPose& pose) {
+            const u32 pathLen = static_cast<u32>(std::strlen(pose.meshPath));
+            std::vector<u8> data(4 + pathLen + sizeof(i32) + sizeof(f32) * 2 + 2);
+            u32 offset = 0;
+            std::memcpy(data.data() + offset, &pathLen, 4);
+            offset += 4;
+            if (pathLen > 0) std::memcpy(data.data() + offset, pose.meshPath, pathLen);
+            offset += pathLen;
+            std::memcpy(data.data() + offset, &pose.clipIndex, sizeof(i32));
+            offset += sizeof(i32);
+            std::memcpy(data.data() + offset, &pose.time, sizeof(f32));
+            offset += sizeof(f32);
+            std::memcpy(data.data() + offset, &pose.speed, sizeof(f32));
+            offset += sizeof(f32);
+            data[offset++] = pose.playing ? 1 : 0;
+            data[offset++] = pose.loop ? 1 : 0;
+            entityMap[entity.id()].emplace_back(kTypeSkinnedPose, std::move(data));
+        });
+    }
+    emitPodComponents<Animation::SpriteSheet>(kTypeSpriteSheet, entityMap);
+    emitPodComponents<Effects::EffectComponent>(kTypeEffect, entityMap);
+    {
+        ECS::ComponentQuery query;
+        query.with<Navigation::NavVolume>();
+        m_world.forEach<Navigation::NavVolume>(query, [&](ECS::Entity entity, Navigation::NavVolume& volume) {
+            const u32 blockedCount = static_cast<u32>(volume.blocked.size());
+            std::vector<u8> data(4 * 2 + sizeof(f32) + sizeof(f32) * 3 + 4 + blockedCount);
+            u32 offset = 0;
+            std::memcpy(data.data() + offset, &volume.width, 4);
+            offset += 4;
+            std::memcpy(data.data() + offset, &volume.height, 4);
+            offset += 4;
+            std::memcpy(data.data() + offset, &volume.cellSize, sizeof(f32));
+            offset += sizeof(f32);
+            std::memcpy(data.data() + offset, &volume.origin.x, sizeof(f32) * 3);
+            offset += sizeof(f32) * 3;
+            std::memcpy(data.data() + offset, &blockedCount, 4);
+            offset += 4;
+            if (blockedCount > 0) {
+                std::memcpy(data.data() + offset, volume.blocked.data(), blockedCount);
+            }
+            entityMap[entity.id()].emplace_back(kTypeNavVolume, std::move(data));
+        });
+    }
+    {
+        ECS::ComponentQuery query;
+        query.with<Navigation::NavAgent>();
+        m_world.forEach<Navigation::NavAgent>(query, [&](ECS::Entity entity, Navigation::NavAgent& agent) {
+            const u32 patrolCount = std::min(agent.patrolCount, static_cast<u32>(Navigation::kMaxPatrolPoints));
+            std::vector<u8> data(sizeof(f32) * 3 + sizeof(f32) * 2 + 1 + 4 + 4 + patrolCount * sizeof(f32) * 3 + 256 + 1);
+            u32 offset = 0;
+            std::memcpy(data.data() + offset, &agent.destination.x, sizeof(f32) * 3);
+            offset += sizeof(f32) * 3;
+            std::memcpy(data.data() + offset, &agent.speed, sizeof(f32));
+            offset += sizeof(f32);
+            std::memcpy(data.data() + offset, &agent.arriveRadius, sizeof(f32));
+            offset += sizeof(f32);
+            data[offset++] = static_cast<u8>(agent.mode);
+            std::memcpy(data.data() + offset, &agent.followEntity, 4);
+            offset += 4;
+            std::memcpy(data.data() + offset, &patrolCount, 4);
+            offset += 4;
+            if (patrolCount > 0) {
+                std::memcpy(data.data() + offset, agent.patrol, patrolCount * sizeof(f32) * 3);
+                offset += patrolCount * sizeof(f32) * 3;
+            }
+            std::memcpy(data.data() + offset, agent.behaviorScript, 256);
+            offset += 256;
+            data[offset++] = agent.hasDestination ? 1 : 0;
+            data.resize(offset);
+            entityMap[entity.id()].emplace_back(kTypeNavAgent, std::move(data));
+        });
+    }
 
     {
         std::vector<std::pair<u32, std::vector<u8>>> entries;
@@ -1231,6 +1337,117 @@ bool SceneSerializer::deserialize(const std::string& filepath) {
                 applyPODComponent<ECS::ForwardRenderFeaturesComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypePostProcess:
+                applyPODComponent<ECS::PostProcessComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeAnimationPlayer: {
+                if (entry.data.size() < 6) break;
+                u32 offset = 0;
+                u32 pathLen = 0;
+                std::memcpy(&pathLen, entry.data.data(), 4);
+                offset += 4;
+                if (offset + pathLen + sizeof(f32) * 2 + 2 > entry.data.size()) break;
+                Animation::AnimationPlayer player;
+                if (pathLen > 0 && pathLen < sizeof(player.clipPath)) {
+                    std::memcpy(player.clipPath, entry.data.data() + offset, pathLen);
+                }
+                offset += pathLen;
+                std::memcpy(&player.time, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                std::memcpy(&player.speed, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                player.playing = entry.data[offset++] != 0;
+                player.loop = entry.data[offset] != 0;
+                player.loaded = false;
+                m_world.add<Animation::AnimationPlayer>(e, std::move(player));
+                break;
+            }
+            case kTypeSkinnedPose: {
+                if (entry.data.size() < 6) break;
+                u32 offset = 0;
+                u32 pathLen = 0;
+                std::memcpy(&pathLen, entry.data.data(), 4);
+                offset += 4;
+                if (offset + pathLen + sizeof(i32) + sizeof(f32) * 2 + 2 > entry.data.size()) break;
+                Animation::SkinnedPose pose;
+                if (pathLen > 0 && pathLen < sizeof(pose.meshPath)) {
+                    std::memcpy(pose.meshPath, entry.data.data() + offset, pathLen);
+                }
+                offset += pathLen;
+                std::memcpy(&pose.clipIndex, entry.data.data() + offset, sizeof(i32));
+                offset += sizeof(i32);
+                std::memcpy(&pose.time, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                std::memcpy(&pose.speed, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                pose.playing = entry.data[offset++] != 0;
+                pose.loop = entry.data[offset] != 0;
+                pose.loaded = false;
+                m_world.add<Animation::SkinnedPose>(e, std::move(pose));
+                break;
+            }
+            case kTypeSpriteSheet:
+                applyPODComponent<Animation::SpriteSheet>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeEffect:
+                applyPODComponent<Effects::EffectComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeNavVolume: {
+                if (entry.data.size() < 24) break;
+                Navigation::NavVolume volume;
+                u32 offset = 0;
+                std::memcpy(&volume.width, entry.data.data() + offset, 4);
+                offset += 4;
+                std::memcpy(&volume.height, entry.data.data() + offset, 4);
+                offset += 4;
+                std::memcpy(&volume.cellSize, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                std::memcpy(&volume.origin.x, entry.data.data() + offset, sizeof(f32) * 3);
+                offset += sizeof(f32) * 3;
+                u32 blockedCount = 0;
+                if (offset + 4 > entry.data.size()) break;
+                std::memcpy(&blockedCount, entry.data.data() + offset, 4);
+                offset += 4;
+                if (offset + blockedCount <= entry.data.size()) {
+                    volume.blocked.assign(entry.data.data() + offset, entry.data.data() + offset + blockedCount);
+                }
+                m_world.add<Navigation::NavVolume>(e, std::move(volume));
+                break;
+            }
+            case kTypeNavAgent: {
+                if (entry.data.size() < 20) break;
+                Navigation::NavAgent agent;
+                u32 offset = 0;
+                std::memcpy(&agent.destination.x, entry.data.data() + offset, sizeof(f32) * 3);
+                offset += sizeof(f32) * 3;
+                std::memcpy(&agent.speed, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                std::memcpy(&agent.arriveRadius, entry.data.data() + offset, sizeof(f32));
+                offset += sizeof(f32);
+                agent.mode = static_cast<Navigation::NavMode>(entry.data[offset++]);
+                std::memcpy(&agent.followEntity, entry.data.data() + offset, 4);
+                offset += 4;
+                u32 patrolCount = 0;
+                std::memcpy(&patrolCount, entry.data.data() + offset, 4);
+                offset += 4;
+                agent.patrolCount = std::min(patrolCount, static_cast<u32>(Navigation::kMaxPatrolPoints));
+                const u32 patrolBytes = agent.patrolCount * static_cast<u32>(sizeof(f32) * 3);
+                if (offset + patrolBytes + 256 <= entry.data.size()) {
+                    if (patrolBytes > 0) {
+                        std::memcpy(agent.patrol, entry.data.data() + offset, patrolBytes);
+                        offset += patrolBytes;
+                    }
+                    std::memcpy(agent.behaviorScript, entry.data.data() + offset, 256);
+                    offset += 256;
+                    if (offset < entry.data.size()) agent.hasDestination = entry.data[offset] != 0;
+                }
+                agent.planDirty = true;
+                m_world.add<Navigation::NavAgent>(e, std::move(agent));
+                break;
+            }
             case kTypeTerrain:
                 applyTerrainComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()), filepath);
                 break;

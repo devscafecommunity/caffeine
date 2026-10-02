@@ -1,6 +1,7 @@
 #include "render/MaterialPreviewRenderer.hpp"
 
 #include "assets/MaterialCache.hpp"
+#include "assets/MeshCache.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
@@ -126,7 +127,7 @@ void MaterialPreviewRenderer::buildScene() {
     m_world.add<ECS::Scale3D>(m_sphere);
     ECS::MeshFilterComponent sphereFilter;
     sphereFilter.primitive = ECS::MeshPrimitive::Sphere;
-    sphereFilter.customMaterialPath = kPreviewMaterialKey;
+    sphereFilter.customMaterialPath = m_previewKey;
     m_world.add<ECS::MeshFilterComponent>(m_sphere, sphereFilter);
     m_world.add<ECS::MeshRendererComponent>(m_sphere);
 
@@ -140,7 +141,7 @@ void MaterialPreviewRenderer::buildScene() {
     m_world.add<ECS::Scale3D>(m_floor, floorScale);
     ECS::MeshFilterComponent floorFilter;
     floorFilter.primitive = ECS::MeshPrimitive::Plane;
-    floorFilter.customMaterialPath = kFloorMaterialKey;
+    floorFilter.customMaterialPath = m_floorKey;
     m_world.add<ECS::MeshFilterComponent>(m_floor, floorFilter);
     m_world.add<ECS::MeshRendererComponent>(m_floor);
 
@@ -191,35 +192,102 @@ void MaterialPreviewRenderer::applySettings(const MaterialPreviewSettings& setti
     }
 }
 
+void MaterialPreviewRenderer::setMaterialKeys(const char* previewKey, const char* floorKey) {
+    if (previewKey && previewKey[0]) m_previewKey = previewKey;
+    if (floorKey && floorKey[0]) m_floorKey = floorKey;
+    m_lastHash = 0;
+}
+
+void MaterialPreviewRenderer::placeSphere() {
+    auto* filter = m_world.get<ECS::MeshFilterComponent>(m_sphere);
+    auto* pos = m_world.get<ECS::Position3D>(m_sphere);
+    auto* scale = m_world.get<ECS::Scale3D>(m_sphere);
+    if (!filter || !pos || !scale) return;
+    filter->primitive = ECS::MeshPrimitive::Sphere;
+    filter->customMeshPath.clear();
+    filter->customMaterialPath = m_previewKey;
+    pos->position = Vec3(0.0f, 0.0f, 0.0f);
+    scale->scale = Vec3(1.0f, 1.0f, 1.0f);
+    m_subjectPath.clear();
+    m_focusY = 0.0f;
+}
+
+void MaterialPreviewRenderer::placeMesh(const std::string& meshPath, const std::string& projectRoot) {
+    auto* filter = m_world.get<ECS::MeshFilterComponent>(m_sphere);
+    auto* pos = m_world.get<ECS::Position3D>(m_sphere);
+    auto* scale = m_world.get<ECS::Scale3D>(m_sphere);
+    if (!filter || !pos || !scale) return;
+    filter->primitive = ECS::MeshPrimitive::Custom;
+    filter->customMeshPath = meshPath;
+    filter->customMaterialPath.clear();
+    m_subjectPath = meshPath;
+
+    Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(meshPath, projectRoot);
+    if (!mesh || mesh->vertices.empty()) return;
+    const Vec3 ext = mesh->bounds.extents();
+    const f32 radius = std::max({ext.x, ext.y, ext.z, 0.001f});
+    const f32 fit = 0.5f / radius;
+    scale->scale = Vec3(fit, fit, fit);
+    const Vec3 center = mesh->bounds.center();
+    pos->position = Vec3(-center.x * fit, kFloorY - mesh->bounds.min.y * fit, -center.z * fit);
+    m_focusY = pos->position.y + center.y * fit;
+}
+
 bool MaterialPreviewRenderer::render(RHI::CommandBuffer* cmd, const Assets::MaterialSurface& surface,
                                      u32 pixelSize, const MaterialPreviewSettings& settings,
                                      const std::string& projectRoot) {
+    placeSphere();
+    return renderPlaced(cmd, &surface, pixelSize, settings, projectRoot, true);
+}
+
+bool MaterialPreviewRenderer::renderMesh(RHI::CommandBuffer* cmd, const std::string& meshPath,
+                                         u32 pixelSize, const MaterialPreviewSettings& settings,
+                                         const std::string& projectRoot) {
+    if (meshPath.empty()) return false;
+    Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(meshPath, projectRoot);
+    if (!mesh || mesh->vertices.empty()) return false;
+    placeMesh(meshPath, projectRoot);
+    return renderPlaced(cmd, nullptr, pixelSize, settings, projectRoot, false);
+}
+
+bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets::MaterialSurface* surface,
+                                           u32 pixelSize, const MaterialPreviewSettings& settings,
+                                           const std::string& projectRoot, bool bindPreviewMaterial) {
     if (!m_ready || !cmd || pixelSize < 16) return false;
     if (!ensureTargets(pixelSize)) return false;
 
-    const u64 hash = hashWithRoot(hashPreviewInputs(surface, pixelSize, settings), projectRoot);
+    Assets::MaterialSurface hashed;
+    if (surface) hashed = *surface;
+    hashed.name = m_subjectPath.empty() ? hashed.name : m_subjectPath;
+    u64 hash = hashWithRoot(hashPreviewInputs(hashed, pixelSize, settings), projectRoot);
+    Fnv subject;
+    subject.h = hash;
+    subject.text(m_subjectPath);
+    subject.value(bindPreviewMaterial);
+    hash = subject.h;
     // Probes, SSR and TAA converge over a few frames; keep drawing until they settle.
     if (m_hasImage && hash == m_lastHash && !m_renderer.needsAnotherFrame()) return true;
 
-    // Keys are resolved against the same project root the renderer receives.
-    Assets::MaterialSurface published = surface;
-    published.valid = true;
-    Assets::MaterialCache::instance().publish(kPreviewMaterialKey, projectRoot, published);
+    if (bindPreviewMaterial && surface) {
+        Assets::MaterialSurface published = *surface;
+        published.valid = true;
+        Assets::MaterialCache::instance().publish(m_previewKey, projectRoot, published);
+    }
     Assets::MaterialSurface floor;
     floor.valid = true;
     floor.name = "Preview Floor";
     floor.albedo = Vec4(0.42f, 0.42f, 0.44f, 1.0f);
     floor.roughness = 0.85f;
-    Assets::MaterialCache::instance().publish(kFloorMaterialKey, projectRoot, floor);
+    Assets::MaterialCache::instance().publish(m_floorKey, projectRoot, floor);
     applySettings(settings);
 
     const f32 yaw = settings.yawDegrees * kDegToRad;
     const f32 pitch = std::clamp(settings.pitchDegrees, -80.0f, 80.0f) * kDegToRad;
     GpuSceneCamera camera;
-    camera.focus = Vec3(0.0f, 0.0f, 0.0f);
-    camera.position = Vec3(std::sin(yaw) * std::cos(pitch), std::sin(pitch),
-                           std::cos(yaw) * std::cos(pitch)) *
-                      kCameraDistance;
+    camera.focus = Vec3(0.0f, m_focusY, 0.0f);
+    camera.position = camera.focus + Vec3(std::sin(yaw) * std::cos(pitch), std::sin(pitch),
+                                          std::cos(yaw) * std::cos(pitch)) *
+                                         kCameraDistance;
     camera.fovRad = kFovDegrees * kDegToRad;
     camera.nearClip = 0.05f;
     camera.farClip = 200.0f;

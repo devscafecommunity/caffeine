@@ -1,4 +1,6 @@
 #include "animation/AnimationSystem.hpp"
+#include "effects/EffectSystem.hpp"
+#include "navigation/NavigationSystem.hpp"
 #include "debug/LogSystem.hpp"
 #include "events/EventBus.hpp"
 #include "events/Events.hpp"
@@ -15,6 +17,7 @@
 #include "ecs/World.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/Components3D.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
@@ -506,6 +509,19 @@ int main(int argc, char** argv) {
         pumpRuntimeInput(input);
         if (sceneLoaded) {
             animation.onUpdate(world, dt);
+            Caffeine::Vec3 effectCamera{};
+            {
+                Caffeine::ECS::ComponentQuery cameraQuery;
+                cameraQuery.with<Caffeine::ECS::Camera3DComponent>();
+                cameraQuery.with<Caffeine::ECS::Position3D>();
+                world.forEach<Caffeine::ECS::Camera3DComponent, Caffeine::ECS::Position3D>(
+                    cameraQuery, [&](Caffeine::ECS::Entity, Caffeine::ECS::Camera3DComponent&,
+                                     Caffeine::ECS::Position3D& position) {
+                        effectCamera = position.position;
+                    });
+            }
+            Caffeine::Effects::tickEffects(world, dt, effectCamera);
+            Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
             if (scriptsReady) {
                 scriptEngine.setWorld(&world);

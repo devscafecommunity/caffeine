@@ -17,6 +17,10 @@
 
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
+#include "editor/ImageManagerPanel.hpp"
+#include "editor/HudEditorPanel.hpp"
+#include "editor/ParticleEditorPanel.hpp"
+#include "editor/EffectEditorPanel.hpp"
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
@@ -154,6 +158,10 @@ private:
 
 #ifdef CF_HAS_IMGUI
     MaterialEditorPanel m_materialEditor;
+    ImageManagerPanel   m_imageManager;
+    HudEditorPanel      m_hudEditor;
+    ParticleEditorPanel m_particleEditor;
+    EffectEditorPanel   m_effectEditor;
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     GameplayPreviewPanel m_gameplayPreview;

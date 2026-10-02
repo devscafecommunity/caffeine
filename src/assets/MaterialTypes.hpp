@@ -53,6 +53,22 @@ struct MaterialSurface {
     f32  iridescenceThickness = 400.0f;
     f32  iridescenceIor = 1.3f;
 
+    /// How strongly this surface asks for reflections. 0 leaves the base roughness in charge.
+    f32  reflection = 0.0f;
+    /// 0 inherit, 1 performance, 2 both, 3 quality. Kept so older .mat files still select a module.
+    u8   reflectionBudget = 0;
+    u8   reflectionPerformance = 0;
+    u8   reflectionQuality = 0;
+    u8   reflectionPlanar = 0;
+    f32  ssrResolution = 0.5f;
+    f32  ssrMaxSteps = 32.0f;
+    f32  ssrTemporalFrames = 4.0f;
+    f32  ssrDistance = 15.0f;
+    f32  ssrSamples = 64.0f;
+    f32  ssrDenoise = 0.7f;
+    f32  ssrProbeBlend = 8.0f;
+    f32  ssrBounces = 1.0f;
+
     bool valid = false;
 };
 

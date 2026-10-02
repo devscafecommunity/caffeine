@@ -21,6 +21,9 @@ namespace Caffeine::Script {
 void registerProceduralScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerPostProcessScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerForwardRenderScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerAnimationScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerEffectScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerNavigationScriptBindings(sol::state& lua, ECS::World** worldPtr);
 sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
@@ -624,6 +627,9 @@ bool ScriptEngine::init(const InitParams& params) {
     registerProceduralScriptBindings(lua, &m_impl->m_world);
     registerPostProcessScriptBindings(lua, &m_impl->m_world);
     registerForwardRenderScriptBindings(lua, &m_impl->m_world);
+    registerAnimationScriptBindings(lua, &m_impl->m_world);
+    registerEffectScriptBindings(lua, &m_impl->m_world);
+    registerNavigationScriptBindings(lua, &m_impl->m_world);
 
     {
         sol::table pt = lua["caffeine"]["particles"];

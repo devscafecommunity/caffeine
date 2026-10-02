@@ -22,6 +22,8 @@
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectSystem.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/LightingSystem.hpp"
@@ -953,64 +955,29 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                                     ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat;
     const bool terrainEditActive = terrainSculptMode || terrainSplatMode;
 
-    // Handle entity selection via raycasting (only in 3D mode, not during gizmo drag)
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging && !terrainEditActive &&
+    // Click in the 3D view selects the nearest object. The gizmo keeps the click when an axis is hot.
+    const bool gizmoClaimsClick = ctx.selectedEntity.isValid() &&
+                                  ctx.gizmoMode != EditorContext::GizmoMode::None &&
+                                  m_hoveredAxis != 0;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging &&
+        !terrainEditActive && !gizmoClaimsClick &&
         ctx.viewMode == EditorContext::ViewMode::Mode3D) {
-        
-        ImVec2 mousePos = ImGui::GetMousePos();
-        ImVec2 vpMin = ImGui::GetItemRectMin();
-        ImVec2 vpMax = ImGui::GetItemRectMax();
-        
-        bool mouseInViewport = (mousePos.x >= vpMin.x && mousePos.x <= vpMax.x &&
-                                mousePos.y >= vpMin.y && mousePos.y <= vpMax.y);
-        
-        if (mouseInViewport) {
-            ImVec2 vpSize = ImGui::GetContentRegionAvail();
-            Vec2 screenClick(mousePos.x - vpMin.x, mousePos.y - vpMin.y);
-            
-            f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
-            f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
-            Vec3 camPos =
-                editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
-            Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
-            f32 aspect = vpSize.x / std::max(vpSize.y, 1.0f);
-            Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
-            Mat4 vp = proj * view;
-            Mat4 vpInverse = vp.inverted();
-            
-            f32 ndcX = (2.0f * screenClick.x) / vpSize.x - 1.0f;
-            f32 ndcY = 1.0f - (2.0f * screenClick.y) / vpSize.y;
-            Vec4 ndcNear(ndcX, ndcY, -1.0f, 1.0f);
-            Vec4 worldNear = vpInverse.transformVec4(ndcNear);
-            
-            if (std::abs(worldNear.w) > 0.0001f) {
-                worldNear.x /= worldNear.w;
-                worldNear.y /= worldNear.w;
-                worldNear.z /= worldNear.w;
-            }
-            
-            Vec3 rayOrigin = camPos;
-            Vec3 rayDirection = (Vec3(worldNear.x, worldNear.y, worldNear.z) - camPos).normalized();
-            
-            std::string projectRoot;
-            if (!ctx.currentScenePath.empty()) {
-                projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
-            }
-            ECS::Entity selectedEntity = raycastSelectEntity(rayOrigin, rayDirection, world, projectRoot);
-            
-            bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
-            
-            if (selectedEntity.isValid()) {
-                if (shiftPressed) {
-                    ctx.toggleSelection(selectedEntity);
-                } else {
-                    ctx.selectEntity(selectedEntity);
-                }
+        const ImVec2 mousePos = ImGui::GetMousePos();
+        const ImVec2 vpMin = ImGui::GetItemRectMin();
+        const ImVec2 vpMax = ImGui::GetItemRectMax();
+        const ImVec2 vpSize(vpMax.x - vpMin.x, vpMax.y - vpMin.y);
+        if (vpSize.x >= 1.0f && vpSize.y >= 1.0f) {
+            const ViewportRay ray = computeViewportRay(ctx, vpMin, vpSize, mousePos);
+            const std::string projectRoot = resolveProjectRootFromScenePath(ctx.currentScenePath);
+            const ECS::Entity picked = raycastSelectEntity(ray.origin, ray.direction, world, projectRoot);
+            const bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) ||
+                                      ImGui::IsKeyDown(ImGuiKey_RightShift);
+            if (picked.isValid()) {
+                if (shiftPressed) ctx.toggleSelection(picked);
+                else ctx.selectEntity(picked);
                 TestInstrumentation::onEntitiesSelected(ctx.selectedEntities);
-            } else {
-                if (!shiftPressed) {
-                    ctx.clearSelection();
-                }
+            } else if (!shiftPressed) {
+                ctx.clearSelection();
             }
         }
     }
@@ -1436,6 +1403,22 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         drawSprites(world, ctx, origin, viewportSize);
     }
     {
+        std::vector<Effects::EffectSprite> effects;
+        const bool onlyTwoD = ctx.viewMode == EditorContext::ViewMode::Mode3D;
+        Effects::collectOverlayEffects(world, onlyTwoD, effects);
+        const f32 worldToScreen = ctx.viewportZoom * 50.0f;
+        ImDrawList* effectDraw = ImGui::GetWindowDrawList();
+        for (const Effects::EffectSprite& sprite : effects) {
+            const ImVec2 screen = projectToScreen(sprite.position, origin, viewportSize, ctx);
+            const f32 radius = std::max(3.0f, 0.5f * worldToScreen * std::max(sprite.size, 0.02f));
+            const ImU32 color = IM_COL32(static_cast<int>(std::clamp(sprite.color.x, 0.0f, 1.0f) * 255.0f),
+                                         static_cast<int>(std::clamp(sprite.color.y, 0.0f, 1.0f) * 255.0f),
+                                         static_cast<int>(std::clamp(sprite.color.z, 0.0f, 1.0f) * 255.0f),
+                                         static_cast<int>(std::clamp(sprite.color.w, 0.0f, 1.0f) * 255.0f));
+            effectDraw->AddCircleFilled(screen, radius, color, 16);
+        }
+    }
+    {
         CF_PROFILE_SCOPE("SceneViewport::entities");
         drawEmptyEntities(world, ctx, origin, viewportSize);
     }
@@ -1810,6 +1793,20 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
                         uv0y = frame.y * invH;
                         uv1x = (frame.x + frame.w) * invW;
                         uv1y = (frame.y + frame.h) * invH;
+                        resolved = true;
+                    }
+                }
+            }
+            if (!resolved) {
+                if (const Animation::SpriteSheet* sheet = world.get<Animation::SpriteSheet>(entity)) {
+                    const Animation::SpriteSheetRect cell =
+                        Animation::spriteSheetFrame(*sheet, sprite.frameIndex,
+                                                    static_cast<f32>(texWidth), static_cast<f32>(texHeight));
+                    if (cell.w > 0.0f && cell.h > 0.0f) {
+                        uv0x = cell.x * invW;
+                        uv0y = cell.y * invH;
+                        uv1x = (cell.x + cell.w) * invW;
+                        uv1y = (cell.y + cell.h) * invH;
                         resolved = true;
                     }
                 }
@@ -3189,8 +3186,8 @@ f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
         }
     }
     
-    if (t_enter <= t_exit && t_enter >= 0.0f) {
-        return t_enter;
+    if (t_enter <= t_exit && t_exit >= 0.0f) {
+        return t_enter >= 0.0f ? t_enter : 0.0f;
     }
     
     return -1.0f;
@@ -3247,62 +3244,134 @@ ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3
                                                const std::string& projectRoot) {
     ECS::Entity closestEntity = ECS::Entity::INVALID;
     f32 closestT = 1e10f;
-    
-    ECS::ComponentQuery query;
-    query.with<ECS::Transform>();
-    
-    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& transform) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
-        
-        Vec3 aabbMin = transform.position;
-        Vec3 aabbMax = transform.position;
-        
-        if (auto* meshFilter = world.get<ECS::MeshFilterComponent>(entity)) {
-            if (!meshFilter->customMeshPath.empty()) {
-                auto* mesh = Assets::MeshCache::getInstance().getMesh(
-                    meshFilter->customMeshPath, projectRoot);
-                
-                if (mesh && !mesh->vertices.empty()) {
-                    Vec3 meshMin = mesh->bounds.min;
-                    Vec3 meshMax = mesh->bounds.max;
-                    
-                    aabbMin = transform.position + Vec3(meshMin.x * transform.scale.x, 
-                                                         meshMin.y * transform.scale.y, 
-                                                         meshMin.z * transform.scale.z);
-                    aabbMax = transform.position + Vec3(meshMax.x * transform.scale.x, 
-                                                         meshMax.y * transform.scale.y, 
-                                                         meshMax.z * transform.scale.z);
-                    
-                    if (aabbMin.x > aabbMax.x) std::swap(aabbMin.x, aabbMax.x);
-                    if (aabbMin.y > aabbMax.y) std::swap(aabbMin.y, aabbMax.y);
-                    if (aabbMin.z > aabbMax.z) std::swap(aabbMin.z, aabbMax.z);
-                } else {
-                    if (aabbMin.x >= aabbMax.x || aabbMin.y >= aabbMax.y || aabbMin.z >= aabbMax.z) {
-                        Vec3 toEntity = transform.position - rayOrigin;
-                        Vec3 proj = rayDir * toEntity.dot(rayDir);
-                        f32 distToRay = (toEntity - proj).length();
-                        
-                        if (distToRay < 0.1f) {
-                            f32 t = proj.length();
-                            if (t >= 0.0f && t < closestT) {
-                                closestT = t;
-                                closestEntity = entity;
-                            }
-                        }
-                        return;
-                    }
-                }
-            }
-        }
-        
-        f32 t = rayIntersectsAABB(rayOrigin, rayDir, aabbMin, aabbMax);
-        
+
+    auto accept = [&](ECS::Entity entity, f32 t) {
         if (t >= 0.0f && t < closestT) {
             closestT = t;
             closestEntity = entity;
         }
+    };
+
+    auto padThin = [](Vec3& mn, Vec3& mx) {
+        const f32 pad = 0.05f;
+        if (mx.x - mn.x < pad) { const f32 c = (mn.x + mx.x) * 0.5f; mn.x = c - pad; mx.x = c + pad; }
+        if (mx.y - mn.y < pad) { const f32 c = (mn.y + mx.y) * 0.5f; mn.y = c - pad; mx.y = c + pad; }
+        if (mx.z - mn.z < pad) { const f32 c = (mn.z + mx.z) * 0.5f; mn.z = c - pad; mx.z = c + pad; }
+    };
+
+    auto testWorldAabb = [&](ECS::Entity entity, Vec3 mn, Vec3 mx) {
+        padThin(mn, mx);
+        accept(entity, rayIntersectsAABB(rayOrigin, rayDir, mn, mx));
+    };
+
+    auto testLocalAabb = [&](ECS::Entity entity, const Mat4& worldMatrix, Vec3 localMin, Vec3 localMax) {
+        Vec3 mn(1e30f, 1e30f, 1e30f);
+        Vec3 mx(-1e30f, -1e30f, -1e30f);
+        const Vec3 corners[2] = {localMin, localMax};
+        for (int ix = 0; ix < 2; ++ix) {
+            for (int iy = 0; iy < 2; ++iy) {
+                for (int iz = 0; iz < 2; ++iz) {
+                    const Vec3 p = worldMatrix.transformPoint(Vec3(corners[ix].x, corners[iy].y, corners[iz].z));
+                    mn.x = std::min(mn.x, p.x); mn.y = std::min(mn.y, p.y); mn.z = std::min(mn.z, p.z);
+                    mx.x = std::max(mx.x, p.x); mx.y = std::max(mx.y, p.y); mx.z = std::max(mx.z, p.z);
+                }
+            }
+        }
+        testWorldAabb(entity, mn, mx);
+    };
+
+    auto testPoint = [&](ECS::Entity entity, const Vec3& point) {
+        const f32 t = (point - rayOrigin).dot(rayDir);
+        if (t < 0.0f) return;
+        const f32 dist = ((rayOrigin + rayDir * t) - point).length();
+        const f32 reach = std::max(0.25f, t * 0.03f);
+        if (dist <= reach) accept(entity, t);
+    };
+
+    ECS::ComponentQuery meshes;
+    meshes.with<ECS::MeshFilterComponent>();
+    world.forEach<ECS::MeshFilterComponent>(meshes, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        if (const ECS::TerrainComponent* terrain = world.get<ECS::TerrainComponent>(entity)) {
+            if (const Terrain::TerrainHeightmap* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+                heightmap && !heightmap->empty()) {
+                Vec3 hit;
+                if (Terrain::TerrainSculptor::raycast(worldMatrix, *heightmap, *terrain, rayOrigin, rayDir, hit)) {
+                    accept(entity, (hit - rayOrigin).dot(rayDir));
+                }
+                return;
+            }
+            const f32 halfX = terrain->worldSizeX * 0.5f;
+            const f32 halfZ = terrain->worldSizeZ * 0.5f;
+            testLocalAabb(entity, worldMatrix, Vec3(-halfX, -0.25f, -halfZ), Vec3(halfX, 1.0f, halfZ));
+            return;
+        }
+
+        Assets::Mesh3D* mesh = nullptr;
+        if (filter.primitive == ECS::MeshPrimitive::Custom) {
+            if (!filter.customMeshPath.empty()) {
+                mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
+            }
+        } else {
+            mesh = Render::GpuProceduralMeshes::get(filter.primitive);
+        }
+        if (mesh && (mesh->bounds.max - mesh->bounds.min).lengthSquared() > 1.0e-6f) {
+            testLocalAabb(entity, worldMatrix, mesh->bounds.min, mesh->bounds.max);
+        } else {
+            testLocalAabb(entity, worldMatrix, Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
+        }
     });
-    
+
+    auto testMarker = [&](ECS::Entity entity) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        if (world.has<ECS::MeshFilterComponent>(entity)) return;
+        Vec3 point;
+        if (!tryGetEntityPosition(world, entity, point)) return;
+        if (const Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
+            const auto kind = static_cast<Effects::EffectKind>(effect->kind);
+            if (kind == Effects::EffectKind::VolumetricLight || kind == Effects::EffectKind::Fog) {
+                const f32 radius = std::max(effect->radius, 0.25f);
+                if (kind == Effects::EffectKind::VolumetricLight &&
+                    Effects::volumetricShapeOf(*effect) != Effects::VolumetricShape::Sphere) {
+                    const Mat4 matrix = entityMatrix(world, entity);
+                    Vec3 forward = matrix.transformVector(Vec3(0.0f, 0.0f, -1.0f));
+                    if (forward.lengthSquared() < 1.0e-8f) forward = Vec3(0.0f, 0.0f, -1.0f);
+                    else forward = forward.normalized();
+                    const Vec3 end = point + forward * radius;
+                    const f32 pad = std::max(effect->startSize, effect->endSize) * 0.5f;
+                    const Vec3 padVec(pad, pad, pad);
+                    testWorldAabb(entity, Vec3(std::min(point.x, end.x), std::min(point.y, end.y), std::min(point.z, end.z)) - padVec,
+                                  Vec3(std::max(point.x, end.x), std::max(point.y, end.y), std::max(point.z, end.z)) + padVec);
+                } else {
+                    testWorldAabb(entity, point - Vec3(radius, radius, radius), point + Vec3(radius, radius, radius));
+                }
+                return;
+            }
+        }
+        if (const ECS::Transform* transform = world.get<ECS::Transform>(entity)) {
+            if (world.has<ECS::Sprite>(entity)) {
+                const f32 halfW = std::max(0.5f, std::abs(transform->scale.x) * 0.5f);
+                const f32 halfH = std::max(0.5f, std::abs(transform->scale.y) * 0.5f);
+                testWorldAabb(entity, point - Vec3(halfW, halfH, 0.05f), point + Vec3(halfW, halfH, 0.05f));
+                return;
+            }
+        }
+        testPoint(entity, point);
+    };
+
+    ECS::ComponentQuery positioned;
+    positioned.with<ECS::Position3D>();
+    world.forEach<ECS::Position3D>(positioned, [&](ECS::Entity entity, ECS::Position3D&) {
+        testMarker(entity);
+    });
+    ECS::ComponentQuery transforms;
+    transforms.with<ECS::Transform>();
+    transforms.without<ECS::Position3D>();
+    world.forEach<ECS::Transform>(transforms, [&](ECS::Entity entity, ECS::Transform&) {
+        testMarker(entity);
+    });
+
     return closestEntity;
 }
 

@@ -6,6 +6,11 @@
 #include "ecs/World.hpp"
 #include "editor/ProjectManager.hpp"
 
+#ifdef CF_HAS_SDL3
+#include "rhi/CommandBuffer.hpp"
+#include "rhi/RenderDevice.hpp"
+#endif
+
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -86,6 +91,10 @@ public:
     void init(const ProjectConfig& projectConfig);
     void refresh();
     void shutdownGpu();
+#ifdef CF_HAS_SDL3
+    void initGpu(RHI::RenderDevice* device);
+    void setFrameCommandBuffer(RHI::CommandBuffer* cmd);
+#endif
 
     // Search
     void setSearchFilter(const char* filter);
@@ -99,6 +108,7 @@ public:
     void navigateToAssets();
     void navigateToScenes();
     void navigateToScripts();
+    const std::filesystem::path& assetRoot() const { return m_rawRoot; }
     bool canGoBack() const;
     const std::filesystem::path& currentPath() const;
 
@@ -160,6 +170,7 @@ public:
     std::filesystem::path m_clipboardPath;
     bool m_clipboardIsCut = false;
     ECS::World* m_world = nullptr;
+    EditorContext* m_editorContext = nullptr;
     int  m_renamingEntry = -1;
     char m_renameBuf[256] = {};
     void renderAssetCreatorModal();
@@ -169,6 +180,9 @@ public:
     bool m_statusIsError = false;
     AssetPreviewRenderer m_previewRenderer;
     std::string m_previewSourceKey;
+#ifdef CF_HAS_SDL3
+    RHI::CommandBuffer* m_frameCmd = nullptr;
+#endif
     #endif
 
 private:

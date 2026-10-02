@@ -2,6 +2,7 @@
 
 #include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
+#include "render/ReflectionBudget.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -88,4 +89,99 @@ TEST_CASE("Published material without a file still resolves", "[material]") {
     REQUIRE(resolved.metallic == Approx(1.0f));
     REQUIRE(resolved.reflectance == Approx(0.9f));
     MaterialCache::instance().invalidate();
+}
+
+TEST_CASE("saveMaterialFile creates missing parent directories", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-nested" / "materials";
+    std::filesystem::remove_all(dir.parent_path());
+    const auto path = dir / "new.mat";
+    MaterialSurface surface;
+    surface.name = "New";
+    surface.valid = true;
+    REQUIRE(saveMaterialFile(path, surface));
+    REQUIRE(std::filesystem::exists(path));
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.name == "New");
+}
+
+TEST_CASE("reflection modules roundtrip and stay off by default", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-test";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "reflect.mat";
+
+    MaterialSurface written;
+    written.name = "Mirror";
+    written.reflection = 0.8f;
+    written.reflectionPerformance = 1;
+    written.reflectionQuality = 1;
+    written.reflectionPlanar = 1;
+    written.ssrResolution = 0.5f;
+    written.ssrMaxSteps = 32.0f;
+    written.ssrTemporalFrames = 4.0f;
+    written.ssrDistance = 15.0f;
+    written.ssrSamples = 64.0f;
+    written.ssrDenoise = 0.7f;
+    written.ssrProbeBlend = 8.0f;
+    written.ssrBounces = 1.0f;
+    REQUIRE(saveMaterialFile(path, written));
+
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.reflectionPerformance == 1);
+    REQUIRE(loaded.reflectionQuality == 1);
+    REQUIRE(loaded.reflectionPlanar == 1);
+    REQUIRE(loaded.ssrResolution == Approx(0.5f));
+    REQUIRE(loaded.ssrMaxSteps == Approx(32.0f));
+    REQUIRE(loaded.ssrSamples == Approx(64.0f));
+    REQUIRE(loaded.ssrDenoise == Approx(0.7f));
+    REQUIRE(loaded.ssrBounces == Approx(1.0f));
+
+    MaterialSurface plain;
+    REQUIRE(plain.reflectionPerformance == 0);
+    REQUIRE(plain.reflectionQuality == 0);
+}
+
+TEST_CASE("legacy reflection budget maps onto optional modules", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-test";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "legacy-budget.mat";
+    {
+        std::ofstream out(path);
+        out << "CAFMAT3\n"
+            << "name Legacy\n"
+            << "reflection 0.4\n"
+            << "reflection_budget 1\n";
+    }
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.reflectionPerformance == 1);
+    REQUIRE(loaded.reflectionQuality == 0);
+}
+
+TEST_CASE("reflection march steps follow the optional modules", "[material]") {
+    using Caffeine::Render::ReflectionModules;
+    using Caffeine::Render::reflectionMarchSteps;
+
+    ReflectionModules off;
+    REQUIRE(reflectionMarchSteps(24.0f, 0.2f, off) == 24);
+
+    ReflectionModules performance;
+    performance.performance = true;
+    performance.resolution = 0.5f;
+    performance.maxSteps = 32.0f;
+    const i32 smooth = reflectionMarchSteps(48.0f, 0.0f, performance);
+    const i32 rough = reflectionMarchSteps(48.0f, 1.0f, performance);
+    REQUIRE(smooth < 32);
+    REQUIRE(rough < smooth);
+
+    ReflectionModules quality;
+    quality.quality = true;
+    quality.samples = 64.0f;
+    REQUIRE(reflectionMarchSteps(16.0f, 0.4f, quality) == 64);
+
+    ReflectionModules both = performance;
+    both.quality = true;
+    both.samples = 64.0f;
+    REQUIRE(reflectionMarchSteps(48.0f, 1.0f, both) == 64);
 }

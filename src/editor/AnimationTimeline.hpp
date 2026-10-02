@@ -1,10 +1,13 @@
 #pragma once
+#include "animation/ClipAsset.hpp"
+#include "ecs/World.hpp"
 #include "core/Types.hpp"
 #include "math/Vec3.hpp"
 #include "animation/AnimationComponents.hpp"
 #include "containers/FixedString.hpp"
 #include <vector>
 #include <string>
+#include <filesystem>
 #include <variant>
 #include <optional>
 #include <memory>
@@ -97,7 +100,13 @@ public:
     void close() { m_open = false; }
     void open() { m_open = true; }
 
+    void setScene(ECS::World* world, u32 selectedEntity);
+    void newClip();
+    void loadClipFile(const std::filesystem::path& path);
+    void saveClipFile(const std::filesystem::path& path);
+
 private:
+    void adoptMotion();
     void addKeyframeToSelectedTrack(f32 time, const std::variant<i32, Vec3, FixedString<32>>& value);
     void deleteSelectedKeyframe();
     void moveSelectedKeyframe(f32 newTime);
@@ -105,7 +114,13 @@ private:
     std::variant<i32, Vec3, FixedString<32>> interpolateValue(AnimationTrack* track, f32 time) const;
     f32 applyEasing(f32 t, EasingType easing) const;
 
+    ECS::World* m_scene = nullptr;
+    u32 m_selectedEntity = 0xFFFFFFFFu;
     Animation::AnimationClip* m_clip = nullptr;
+    Animation::MotionClip m_motion;
+    Animation::AnimationClip m_ownedClip;
+    bool m_pendingLoad = false;
+    bool m_pendingSave = false;
     std::vector<std::unique_ptr<AnimationTrack>> m_tracks;
 
     f32 m_currentTime = 0.0f;

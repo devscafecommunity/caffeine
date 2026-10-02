@@ -25,6 +25,8 @@ set(CAFFEINE_TEST_SOURCES
     test_material.cpp
     test_ui.cpp
     test_animation.cpp
+    test_navigation.cpp
+    test_effects.cpp
     test_mesh.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
@@ -65,6 +67,10 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/InspectorPanel.cpp
     ../src/editor/ComponentRegistry.cpp
     ../src/editor/SceneEditor.cpp
+    ../src/editor/ImageManagerPanel.cpp
+    ../src/editor/HudEditorPanel.cpp
+    ../src/editor/ParticleEditorPanel.cpp
+    ../src/editor/EffectEditorPanel.cpp
     ../src/editor/TransformGizmo.cpp
     ../src/editor/PrefabSystem.cpp
     ../src/editor/MaterialSerializer.cpp
@@ -175,6 +181,10 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/CapLoader.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ImageManagerPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/HudEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EffectEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp
@@ -191,6 +201,33 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/BuildSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/BuildDialog.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AssetCooker.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/BuildLog.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/FilePicker.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorIcons.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorPaths.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/ComponentRegistry.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PluginSystem.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PluginSymbolExports.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PluginServiceRegistry.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetTypes.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetRegistry.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetPackages.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetFactories.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PrefabSystem.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TransformGizmo.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AssetPreviewRenderer.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/AnimatorController.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorPreferences.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorTheme.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EditorSpinner.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetsPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TerrainEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/EntityDebugger.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TestUIMapper.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TestRequestHandler.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/CameraPreviewPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/GameplayPreviewPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/MaterialSerializer.cpp
           ${IMGUI_TEST_ENGINE_SRCS}
       )
     
@@ -206,6 +243,9 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1
     )
     target_compile_features(DoppioTest PRIVATE cxx_std_20)
+    if(DEFINED nanosvg_SOURCE_DIR)
+        target_include_directories(DoppioTest PRIVATE ${nanosvg_SOURCE_DIR}/src)
+    endif()
     
     add_test(NAME DoppioTest COMMAND DoppioTest)
 endif()

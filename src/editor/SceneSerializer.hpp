@@ -65,7 +65,14 @@ private:
     static constexpr u32 kTypeRigidBody3D    = 43;
     static constexpr u32 kTypeCollider3D     = 44;
     static constexpr u32 kTypeForwardRenderFeatures = 45;
-    static constexpr u32 kTypeCount          = 46;
+    static constexpr u32 kTypePostProcess    = 46;
+    static constexpr u32 kTypeAnimationPlayer = 47;
+    static constexpr u32 kTypeNavVolume      = 48;
+    static constexpr u32 kTypeNavAgent       = 49;
+    static constexpr u32 kTypeSkinnedPose    = 50;
+    static constexpr u32 kTypeSpriteSheet    = 51;
+    static constexpr u32 kTypeEffect         = 52;
+    static constexpr u32 kTypeCount          = 53;
 
     static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian

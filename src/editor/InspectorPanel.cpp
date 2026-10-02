@@ -1,4 +1,7 @@
 #include "editor/InspectorPanel.hpp"
+
+#include <algorithm>
+#include <cstring>
 #include "editor/EntitySnapshotExport.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "editor/DragDropSystem.hpp"
@@ -11,7 +14,12 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "ecs/MeshComponents.hpp"
+#include "animation/AnimationPlayer.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectTypes.hpp"
+#include "navigation/NavVolume.hpp"
 #include "assets/MeshCache.hpp"
+#include "assets/MeshMaterialExport.hpp"
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
@@ -143,6 +151,11 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawTerrain(world, e, ctx);
         drawPostProcess(world, e, ctx);
         drawForwardRenderFeatures(world, e, ctx);
+        drawAnimationPlayer(world, e, ctx);
+        drawSpriteSheet(world, e, ctx);
+        drawSkinnedPose(world, e, ctx);
+        drawEffect(world, e, ctx);
+        drawNavAgent(world, e, ctx);
 
         ImGui::Separator();
 
@@ -670,6 +683,16 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         return;
     }
 
+    auto syncMaterial = [&](const std::string& path) {
+        mf->customMaterialPath = path;
+        if (!world.has<ECS::MeshRendererComponent>(e)) world.add<ECS::MeshRendererComponent>(e);
+        if (auto* renderer = world.get<ECS::MeshRendererComponent>(e)) {
+            renderer->materialPath = path;
+        }
+        ctx.isDirty = true;
+        ctx.assetBrowserDirty = true;
+    };
+
     static const char* primitiveNames[] = {
         "Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Cone", "Pyramid", "Torus"};
     int current = static_cast<int>(mf->primitive);
@@ -691,8 +714,20 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
         }
     }
     if (mf->primitive == ECS::MeshPrimitive::Custom) {
-        if (Widgets::AssetField(ctx, "Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb"))
+        if (Widgets::AssetField(ctx, "Mesh", mf->customMeshPath, ".obj;.fbx;.gltf;.glb")) {
             ctx.isDirty = true;
+            if (mf->customMaterialPath.empty()) {
+                const std::string projectRoot = resolveProjectRoot(ctx).string();
+                if (Assets::Mesh3D* mesh =
+                        Assets::MeshCache::getInstance().getMesh(mf->customMeshPath, projectRoot)) {
+                    std::filesystem::path meshFile(mf->customMeshPath);
+                    const auto root = resolveProjectRoot(ctx);
+                    if (!meshFile.is_absolute() && !root.empty()) meshFile = root / meshFile;
+                    const auto materials = Assets::exportMeshMaterials(*mesh, meshFile, root, false);
+                    if (!materials.empty()) syncMaterial(materials.front());
+                }
+            }
+        }
         if (world.has<ECS::TerrainComponent>(e)) {
             ImGui::TextDisabled("Texture managed by Terrain component");
         } else if (Widgets::AssetField(ctx, "Albedo Texture", mf->customTexturePath, ".png;.jpg;.jpeg")) {
@@ -729,6 +764,17 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
                                    "Textura nao encontrada: %s", mf->customTexturePath.c_str());
             }
         }
+        if (!mf->customMeshPath.empty() && ImGui::Button("Extract Materials")) {
+            const std::string projectRoot = resolveProjectRoot(ctx).string();
+            if (Assets::Mesh3D* mesh =
+                    Assets::MeshCache::getInstance().getMesh(mf->customMeshPath, projectRoot)) {
+                std::filesystem::path meshFile(mf->customMeshPath);
+                const auto root = resolveProjectRoot(ctx);
+                if (!meshFile.is_absolute() && !root.empty()) meshFile = root / meshFile;
+                const auto materials = Assets::exportMeshMaterials(*mesh, meshFile, root, true);
+                if (!materials.empty()) syncMaterial(materials.front());
+            }
+        }
         if (!mf->customMeshPath.empty()) {
             const std::string ext = std::filesystem::path(mf->customMeshPath).extension().string();
             if (ext == ".fbx" || ext == ".FBX") {
@@ -750,8 +796,9 @@ void InspectorPanel::drawMeshFilter(ECS::World& world, ECS::Entity e, EditorCont
     }
 
     if (!world.has<ECS::TerrainComponent>(e)) {
-        if (Widgets::AssetField(ctx, "Material", mf->customMaterialPath, ".mat"))
-            ctx.isDirty = true;
+        if (Widgets::AssetField(ctx, "Material", mf->customMaterialPath, ".mat")) {
+            syncMaterial(mf->customMaterialPath);
+        }
         if (!mf->customMaterialPath.empty() && ImGui::Button("Edit Material")) {
             ctx.materialToOpen = mf->customMaterialPath;
         }
@@ -1482,6 +1529,286 @@ void InspectorPanel::savePrefab(ECS::World& world, ECS::Entity e, const std::fil
     } else {
         std::cerr << "Error: Failed to save prefab to " << path.string() << "\n";
     }
+}
+
+void InspectorPanel::drawEffect(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(e);
+    if (!effect) return;
+    bool enabled = effect->enabled != 0;
+    bool removeRequested = false;
+    const bool open = Widgets::ComponentHeader("Effect", enabled, removeRequested, "beer");
+    if (enabled != (effect->enabled != 0)) {
+        effect->enabled = enabled ? 1 : 0;
+        ctx.isDirty = true;
+    }
+    if (removeRequested) {
+        world.remove<Effects::EffectComponent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    if (!open) return;
+    const char* kinds[] = {"Particles", "Volumetric Light", "Reflective Surface", "Material Shade", "Fog"};
+    int kind = static_cast<int>(effect->kind);
+    if (ImGui::Combo("Kind", &kind, kinds, 5)) {
+        effect->kind = static_cast<u8>(kind);
+        if (effect->kind == static_cast<u8>(Effects::EffectKind::ReflectiveSurface) && effect->reflection <= 0.0f) {
+            effect->reflection = 0.85f;
+        }
+        if (effect->kind == static_cast<u8>(Effects::EffectKind::Fog)) {
+            Effects::configureFog(*effect, static_cast<Effects::EffectDomain>(effect->domain),
+                                  static_cast<Effects::EffectFogStyle>(effect->pad0 > 3 ? 0 : effect->pad0));
+        }
+        ctx.isDirty = true;
+    }
+    const char* spaces[] = {"World", "Camera"};
+    int space = static_cast<int>(effect->space);
+    if (ImGui::Combo("Space", &space, spaces, 2)) {
+        effect->space = static_cast<u8>(space);
+        ctx.isDirty = true;
+    }
+    const char* domains[] = {"2D and 3D", "2D", "3D"};
+    int domain = static_cast<int>(effect->domain);
+    if (ImGui::Combo("Domain", &domain, domains, 3)) {
+        effect->domain = static_cast<u8>(domain);
+        ctx.isDirty = true;
+    }
+    const char* qualities[] = {"Performance", "Balanced", "Quality"};
+    int quality = static_cast<int>(effect->quality);
+    if (ImGui::Combo("Quality", &quality, qualities, 3)) {
+        effect->quality = static_cast<u8>(quality);
+        ctx.isDirty = true;
+    }
+    char path[260] = {};
+    std::strncpy(path, effect->materialPath, sizeof(path) - 1);
+    if (ImGui::InputText("Material", path, sizeof(path))) {
+        std::memset(effect->materialPath, 0, sizeof(effect->materialPath));
+        std::strncpy(effect->materialPath, path, sizeof(effect->materialPath) - 1);
+        ctx.isDirty = true;
+    }
+    if (effect->kind == static_cast<u8>(Effects::EffectKind::Particles)) {
+        if (ImGui::DragFloat("Rate", &effect->rate, 0.5f, 0.0f, 400.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Lifetime", &effect->lifetime, 0.02f, 0.05f, 20.0f)) ctx.isDirty = true;
+        int cap = effect->maxParticles;
+        if (ImGui::DragInt("Max", &cap, 1, 1, 2048)) {
+            effect->maxParticles = cap;
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Start Size", &effect->startSize, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("End Size", &effect->endSize, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Gravity Y", &effect->gravity.y, 0.05f, -20.0f, 20.0f)) ctx.isDirty = true;
+    } else if (effect->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+        const char* volumeShapes[] = {"Sphere", "Cone", "Box", "Cylinder", "Window"};
+        int shape = static_cast<int>(Effects::volumetricShapeOf(*effect));
+        if (ImGui::Combo("Format", &shape, volumeShapes, 5)) {
+            const Vec3 color = effect->lightColor;
+            Effects::configureVolumetricLight(*effect, static_cast<Effects::VolumetricShape>(shape));
+            effect->lightColor = color;
+            ctx.isDirty = true;
+        }
+        const Effects::VolumetricShape volume = Effects::volumetricShapeOf(*effect);
+        if (volume == Effects::VolumetricShape::Sphere) {
+            if (ImGui::DragFloat("Radius", &effect->radius, 0.05f, 0.1f, 40.0f)) ctx.isDirty = true;
+        } else {
+            if (ImGui::DragFloat("Length", &effect->radius, 0.05f, 0.2f, 40.0f)) ctx.isDirty = true;
+            if (volume == Effects::VolumetricShape::Cone) {
+                if (ImGui::DragFloat("Near", &effect->startSize, 0.01f, 0.05f, 8.0f)) ctx.isDirty = true;
+                if (ImGui::DragFloat("Far", &effect->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
+            } else if (volume == Effects::VolumetricShape::Cylinder) {
+                if (ImGui::DragFloat("Diameter", &effect->startSize, 0.01f, 0.05f, 8.0f)) {
+                    effect->endSize = effect->startSize;
+                    ctx.isDirty = true;
+                }
+            } else {
+                if (ImGui::DragFloat("Width", &effect->startSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
+                if (ImGui::DragFloat("Height", &effect->endSize, 0.01f, 0.05f, 12.0f)) ctx.isDirty = true;
+            }
+            if (volume == Effects::VolumetricShape::Window) {
+                u32 columns = 1;
+                u32 rows = 1;
+                Effects::volumetricGridOf(*effect, columns, rows);
+                int columnCount = static_cast<int>(columns);
+                int rowCount = static_cast<int>(rows);
+                if (ImGui::SliderInt("Columns", &columnCount, 1, 8)) {
+                    Effects::setVolumetricGrid(*effect, static_cast<u32>(columnCount), rows);
+                    ctx.isDirty = true;
+                }
+                if (ImGui::SliderInt("Rows", &rowCount, 1, 8)) {
+                    Effects::setVolumetricGrid(*effect, static_cast<u32>(columnCount), static_cast<u32>(rowCount));
+                    ctx.isDirty = true;
+                }
+            }
+        }
+        if (ImGui::DragFloat("Density", &effect->density, 0.005f, 0.0f, 2.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Anisotropy", &effect->anisotropy, 0.0f, 0.9f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Intensity", &effect->intensity, 0.05f, 0.0f, 16.0f)) ctx.isDirty = true;
+        if (ImGui::ColorEdit3("Light", &effect->lightColor.x)) ctx.isDirty = true;
+    } else if (effect->kind == static_cast<u8>(Effects::EffectKind::Fog)) {
+        const char* looks[] = {"Fog", "Dust", "Mist", "Smoke"};
+        int style = static_cast<int>(effect->pad0 > 3 ? 0 : effect->pad0);
+        if (ImGui::Combo("Look", &style, looks, 4)) {
+            Effects::configureFog(*effect, static_cast<Effects::EffectDomain>(effect->domain),
+                                  static_cast<Effects::EffectFogStyle>(style));
+            ctx.isDirty = true;
+        }
+        if (ImGui::DragFloat("Radius", &effect->radius, 0.05f, 0.1f, 40.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Density", &effect->density, 0.005f, 0.0f, 2.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Intensity", &effect->intensity, 0.02f, 0.0f, 4.0f)) ctx.isDirty = true;
+        if (ImGui::ColorEdit3("Color", &effect->lightColor.x)) ctx.isDirty = true;
+    } else if (effect->kind == static_cast<u8>(Effects::EffectKind::ReflectiveSurface)) {
+        if (ImGui::SliderFloat("Reflection", &effect->reflection, 0.0f, 1.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Roughness", &effect->roughness, 0.02f, 1.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Metallic", &effect->metallic, 0.0f, 1.0f)) ctx.isDirty = true;
+        const char* modes[] = {"Inherit", "Probe", "Planar", "Screen"};
+        int mode = static_cast<int>(effect->reflectMode);
+        if (ImGui::Combo("Reflect Mode", &mode, modes, 4)) {
+            effect->reflectMode = static_cast<u8>(mode);
+            ctx.isDirty = true;
+        }
+        ImGui::TextDisabled("Performance 8 steps, balanced 24, quality 48. The scene reflection mode still chooses the technique.");
+    } else {
+        if (ImGui::ColorEdit3("Tint", &effect->tint.x)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Emission", &effect->emissionBoost, 0.05f, 0.0f, 8.0f)) ctx.isDirty = true;
+        if (ImGui::DragFloat("Roughness Bias", &effect->roughnessBias, 0.01f, -1.0f, 1.0f)) ctx.isDirty = true;
+    }
+}
+
+void InspectorPanel::drawSpriteSheet(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    Animation::SpriteSheet* sheet = world.get<Animation::SpriteSheet>(e);
+    if (!sheet) return;
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Sprite Sheet", enabled, removeRequested, "beer")) return;
+    if (removeRequested) {
+        world.remove<Animation::SpriteSheet>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    int columns = static_cast<int>(sheet->columns);
+    int rows = static_cast<int>(sheet->rows);
+    int frames = static_cast<int>(sheet->frameCount);
+    if (ImGui::DragInt("Columns", &columns, 1, 1, 64)) {
+        sheet->columns = static_cast<u32>(columns);
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragInt("Rows", &rows, 1, 1, 64)) {
+        sheet->rows = static_cast<u32>(rows);
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragInt("Frame Count", &frames, 1, 1, 4096)) {
+        sheet->frameCount = static_cast<u32>(frames);
+        ctx.isDirty = true;
+    }
+    ImGui::TextDisabled("O frame do sprite escolhe a celula. Clipes e o animator avancam esse indice.");
+}
+
+void InspectorPanel::drawSkinnedPose(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    Animation::SkinnedPose* pose = world.get<Animation::SkinnedPose>(e);
+    if (!pose) return;
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Skinned Mesh", enabled, removeRequested, "arrows-diagonal")) return;
+    if (removeRequested) {
+        world.remove<Animation::SkinnedPose>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    char path[260] = {};
+    std::strncpy(path, pose->meshPath, sizeof(path) - 1);
+    if (ImGui::InputText("Mesh", path, sizeof(path))) {
+        std::memset(pose->meshPath, 0, sizeof(pose->meshPath));
+        std::strncpy(pose->meshPath, path, sizeof(pose->meshPath) - 1);
+        pose->loaded = false;
+        ctx.isDirty = true;
+    }
+    const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath);
+    if (!skin || skin->clipNames.empty()) {
+        ImGui::TextDisabled("Sem clipes esqueleticos. Usa um glTF/GLB com pele.");
+    } else {
+        const char* preview = skin->clipNames[static_cast<size_t>(
+            std::clamp(pose->clipIndex, 0, static_cast<i32>(skin->clipNames.size()) - 1))].c_str();
+        if (ImGui::BeginCombo("Clip", preview)) {
+            for (int i = 0; i < static_cast<int>(skin->clipNames.size()); ++i) {
+                if (ImGui::Selectable(skin->clipNames[static_cast<size_t>(i)].c_str(), pose->clipIndex == i)) {
+                    pose->clipIndex = i;
+                    pose->time = 0.0f;
+                    pose->playing = true;
+                    ctx.isDirty = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    if (ImGui::DragFloat("Time", &pose->time, 0.01f, 0.0f, 1000.0f)) ctx.isDirty = true;
+    if (ImGui::DragFloat("Speed", &pose->speed, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
+    if (ImGui::Checkbox("Playing", &pose->playing)) ctx.isDirty = true;
+    if (ImGui::Checkbox("Loop", &pose->loop)) ctx.isDirty = true;
+    if (pose->humanoid.matched) {
+        ImGui::TextDisabled("Humanoide");
+        for (int i = 0; i < static_cast<int>(Animation::HumanoidBone::Count); ++i) {
+            const i32 bone = pose->humanoid.bones[i];
+            if (bone < 0 || !skin || bone >= static_cast<i32>(skin->boneNames.size())) continue;
+            ImGui::BulletText("%s: %s", Animation::humanoidBoneName(static_cast<Animation::HumanoidBone>(i)),
+                              skin->boneNames[static_cast<size_t>(bone)].c_str());
+        }
+    } else if (skin && !skin->boneNames.empty()) {
+        ImGui::TextDisabled("Modelo geral, %d ossos", static_cast<int>(skin->boneNames.size()));
+    }
+}
+
+void InspectorPanel::drawAnimationPlayer(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Animation::AnimationPlayer>(e)) return;
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Animation Player", enabled, removeRequested, "arrows-horizontal")) return;
+    if (removeRequested) {
+        world.remove<Animation::AnimationPlayer>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    auto* player = world.get<Animation::AnimationPlayer>(e);
+    if (!player) return;
+    ImGui::PushID("anim_player");
+    char path[260] = {};
+    std::strncpy(path, player->clipPath, sizeof(path) - 1);
+    if (ImGui::InputText("Clip", path, sizeof(path))) {
+        Animation::setPlayerPath(*player, path);
+        player->loaded = false;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("Speed", &player->speed, 0.05f, 0.0f, 8.0f)) ctx.isDirty = true;
+    if (ImGui::Checkbox("Playing", &player->playing)) ctx.isDirty = true;
+    if (ImGui::Checkbox("Loop", &player->loop)) ctx.isDirty = true;
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawNavAgent(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<Navigation::NavAgent>(e)) return;
+    bool enabled = true;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Nav Agent", enabled, removeRequested)) return;
+    if (removeRequested) {
+        world.remove<Navigation::NavAgent>(e);
+        ctx.isDirty = true;
+        return;
+    }
+    auto* agent = world.get<Navigation::NavAgent>(e);
+    if (!agent) return;
+    ImGui::PushID("nav_agent");
+    int mode = static_cast<int>(agent->mode);
+    const char* modes[] = {"Idle", "Patrol", "Follow", "Scripted"};
+    if (ImGui::Combo("Behaviour", &mode, modes, 4)) {
+        agent->mode = static_cast<Navigation::NavMode>(mode);
+        agent->planDirty = true;
+        ctx.isDirty = true;
+    }
+    if (ImGui::DragFloat("Speed", &agent->speed, 0.05f, 0.0f, 40.0f)) ctx.isDirty = true;
+    if (ImGui::DragFloat3("Destination", &agent->destination.x, 0.1f)) {
+        agent->hasDestination = true;
+        agent->planDirty = true;
+        ctx.isDirty = true;
+    }
+    ImGui::TextDisabled("Patrol points %u", agent->patrolCount);
+    ImGui::PopID();
 }
 
 } // namespace Caffeine::Editor

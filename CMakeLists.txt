@@ -68,6 +68,10 @@ add_library(caffeine-core
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
     src/assets/MeshLoader.cpp
+    src/animation/SkinLibrary.cpp
+    src/effects/EffectSystem.cpp
+    src/ecs/ParticleSystem.cpp
+    src/ecs/ParticleSystem.cpp
     src/assets/MeshCache.cpp
     src/assets/MeshImportValidator.cpp
     src/assets/MeshLOD.cpp
@@ -124,7 +128,8 @@ target_compile_definitions(caffeine-core PUBLIC
     CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_sources(caffeine-core PRIVATE
     src/assets/MaterialCache.cpp
-    src/assets/MaterialFile.cpp)
+    src/assets/MaterialFile.cpp
+    src/assets/MeshMaterialExport.cpp)
 
 if(CAFFEINE_ENABLE_BULLET3)
     set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
@@ -187,6 +192,8 @@ else()
                 "fullscreen_vert|vertex|fullscreen.vert"
                 "sky_frag|fragment|sky.frag"
                 "grid_frag|fragment|grid.frag"
+                "effect_billboard_vert|vertex|effect_billboard.vert"
+                "effect_billboard_frag|fragment|effect_billboard.frag"
                 "post_luminance_frag|fragment|post_luminance.frag"
                 "post_adapt_frag|fragment|post_adapt.frag"
                 "post_bloom_prefilter_frag|fragment|post_bloom_prefilter.frag"
@@ -382,6 +389,9 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/ScriptSystem.cpp
         src/script/ScriptWatcher.cpp
         src/script/CppScriptRegistry.cpp
+        src/script/AnimationBindings.cpp
+        src/script/EffectBindings.cpp
+        src/script/NavigationBindings.cpp
     )
 endif()
 
@@ -507,6 +517,10 @@ with open(sys.argv[1], 'w') as f:
           src/editor/ShaderGraph.cpp
           src/editor/MaterialSerializer.cpp
           src/editor/MaterialEditorPanel.cpp
+          src/editor/ImageManagerPanel.cpp
+          src/editor/HudEditorPanel.cpp
+          src/editor/ParticleEditorPanel.cpp
+          src/editor/EffectEditorPanel.cpp
           src/editor/TerrainEditorPanel.cpp
           src/editor/EntityPresetTypes.cpp
           src/editor/EntityPresetRegistry.cpp
@@ -637,6 +651,23 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(post_processing_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
+
+      add_library(ai_development_plugin SHARED
+          apps/plugins/ai_development_plugin/main.cpp
+      )
+      target_include_directories(ai_development_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+          ${imgui_SOURCE_DIR})
+      target_compile_definitions(ai_development_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
+      target_compile_features(ai_development_plugin PRIVATE cxx_std_20)
+      set_target_properties(ai_development_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "ai_development_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(ai_development_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
       add_library(terrain_plugin SHARED
           apps/plugins/terrain_plugin/main.cpp
           apps/plugins/terrain_plugin/TerrainBridge.cpp
@@ -714,6 +745,9 @@ with open(sys.argv[1], 'w') as f:
               COMMAND ${CMAKE_COMMAND} -E copy_if_different
                   $<TARGET_FILE:post_processing_plugin>
                   $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:post_processing_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:ai_development_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:ai_development_plugin>
               COMMAND ${CMAKE_COMMAND} -E copy_if_different
                   $<TARGET_FILE:terrain_plugin>
                   $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:terrain_plugin>

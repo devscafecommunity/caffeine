@@ -1,6 +1,7 @@
 #include "assets/MaterialFile.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -42,6 +43,7 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
     if (header != "CAFMAT3" && header != "CAFMAT2" && header != "CAFMAT1") return false;
 
     MaterialSurface surface;
+    bool sawReflectionModules = false;
     std::string line;
     while (std::getline(in, line)) {
         if (line.empty()) continue;
@@ -102,6 +104,52 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
             ss >> surface.iridescenceThickness;
         } else if (tag == "iridescence_ior") {
             ss >> surface.iridescenceIor;
+        } else if (tag == "reflection") {
+            ss >> surface.reflection;
+        } else if (tag == "reflection_budget") {
+            u32 budget = 0;
+            ss >> budget;
+            surface.reflectionBudget = static_cast<u8>(budget);
+        } else if (tag == "reflection_performance") {
+            u32 flag = 0;
+            ss >> flag;
+            surface.reflectionPerformance = static_cast<u8>(flag);
+            sawReflectionModules = true;
+        } else if (tag == "reflection_quality") {
+            u32 flag = 0;
+            ss >> flag;
+            surface.reflectionQuality = static_cast<u8>(flag);
+            sawReflectionModules = true;
+        } else if (tag == "reflection_planar") {
+            u32 flag = 0;
+            ss >> flag;
+            surface.reflectionPlanar = static_cast<u8>(flag);
+        } else if (tag == "ssr_resolution") {
+            ss >> surface.ssrResolution;
+        } else if (tag == "ssr_max_steps") {
+            ss >> surface.ssrMaxSteps;
+        } else if (tag == "ssr_temporal") {
+            ss >> surface.ssrTemporalFrames;
+        } else if (tag == "ssr_distance") {
+            ss >> surface.ssrDistance;
+        } else if (tag == "ssr_samples") {
+            ss >> surface.ssrSamples;
+        } else if (tag == "ssr_denoise") {
+            ss >> surface.ssrDenoise;
+        } else if (tag == "ssr_probe_blend") {
+            ss >> surface.ssrProbeBlend;
+        } else if (tag == "ssr_bounces") {
+            ss >> surface.ssrBounces;
+        }
+    }
+
+    if (!sawReflectionModules) {
+        if (surface.reflectionBudget == 1) surface.reflectionPerformance = 1;
+        else if (surface.reflectionBudget == 2) {
+            surface.reflectionPerformance = 1;
+            surface.reflectionQuality = 1;
+        } else if (surface.reflectionBudget >= 3) {
+            surface.reflectionQuality = 1;
         }
     }
 
@@ -130,9 +178,24 @@ void sanitizeMaterialSurface(MaterialSurface& surface) {
     surface.iridescence = clamp01(surface.iridescence);
     surface.iridescenceThickness = std::clamp(surface.iridescenceThickness, 50.0f, 1500.0f);
     surface.iridescenceIor = std::clamp(surface.iridescenceIor, 1.0f, 2.5f);
+    surface.reflection = clamp01(surface.reflection);
+    surface.reflectionBudget = static_cast<u8>(std::min<u32>(surface.reflectionBudget, 3u));
+    surface.reflectionPerformance = surface.reflectionPerformance ? 1 : 0;
+    surface.reflectionQuality = surface.reflectionQuality ? 1 : 0;
+    surface.reflectionPlanar = surface.reflectionPlanar ? 1 : 0;
+    surface.ssrResolution = std::clamp(surface.ssrResolution, 0.25f, 1.0f);
+    surface.ssrMaxSteps = std::clamp(surface.ssrMaxSteps, 4.0f, 64.0f);
+    surface.ssrTemporalFrames = std::clamp(surface.ssrTemporalFrames, 1.0f, 8.0f);
+    surface.ssrDistance = std::clamp(surface.ssrDistance, 1.0f, 80.0f);
+    surface.ssrSamples = std::clamp(surface.ssrSamples, 4.0f, 64.0f);
+    surface.ssrDenoise = clamp01(surface.ssrDenoise);
+    surface.ssrProbeBlend = std::clamp(surface.ssrProbeBlend, 1.0f, 8.0f);
+    surface.ssrBounces = std::clamp(surface.ssrBounces, 0.0f, 2.0f);
 }
 
 bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& material) {
+    std::error_code ec;
+    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream out(path);
     if (!out.is_open()) return false;
     out << "CAFMAT3\n";
@@ -164,6 +227,19 @@ bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& 
     out << "iridescence " << material.iridescence << '\n';
     out << "iridescence_thickness " << material.iridescenceThickness << '\n';
     out << "iridescence_ior " << material.iridescenceIor << '\n';
+    out << "reflection " << material.reflection << '\n';
+    out << "reflection_budget " << static_cast<u32>(material.reflectionBudget) << '\n';
+    out << "reflection_performance " << static_cast<u32>(material.reflectionPerformance) << '\n';
+    out << "reflection_quality " << static_cast<u32>(material.reflectionQuality) << '\n';
+    out << "reflection_planar " << static_cast<u32>(material.reflectionPlanar) << '\n';
+    out << "ssr_resolution " << material.ssrResolution << '\n';
+    out << "ssr_max_steps " << material.ssrMaxSteps << '\n';
+    out << "ssr_temporal " << material.ssrTemporalFrames << '\n';
+    out << "ssr_distance " << material.ssrDistance << '\n';
+    out << "ssr_samples " << material.ssrSamples << '\n';
+    out << "ssr_denoise " << material.ssrDenoise << '\n';
+    out << "ssr_probe_blend " << material.ssrProbeBlend << '\n';
+    out << "ssr_bounces " << material.ssrBounces << '\n';
     return static_cast<bool>(out);
 }
 

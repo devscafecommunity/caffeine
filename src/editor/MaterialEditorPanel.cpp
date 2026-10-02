@@ -3,12 +3,15 @@
 #include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
 #include "assets/MaterialPresets.hpp"
+#include "ecs/MeshComponents.hpp"
+#include "editor/FilePicker.hpp"
 #include "editor/InspectorWidgets.hpp"
 #include "scene/EnvironmentSystem.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <string_view>
 
@@ -42,20 +45,87 @@ void MaterialEditorPanel::publishLive() {
     Assets::MaterialCache::instance().publish(m_materialPath.string(), m_projectRoot, m_surface);
 }
 
-bool MaterialEditorPanel::saveCurrent() {
-    if (m_materialPath.empty()) {
-        m_status = "Create the .mat from the asset browser, then open it.";
-        return false;
+bool MaterialEditorPanel::saveToPath(const std::filesystem::path& path) {
+    std::filesystem::path target = path;
+    if (target.extension() != ".mat") {
+        target += ".mat";
     }
-    const std::filesystem::path path = resolvedPath(m_materialPath);
-    if (!Assets::saveMaterialFile(path, m_surface)) {
+    if (!Assets::saveMaterialFile(target, m_surface)) {
         m_status = "Save failed.";
         return false;
     }
-    m_materialPath = path;
+    if (!m_projectRoot.empty()) {
+        std::error_code ec;
+        const auto relative = std::filesystem::relative(target, m_projectRoot, ec);
+        if (!ec && !relative.empty() && relative.generic_string().rfind("..") != 0) {
+            m_materialPath = relative;
+        } else {
+            m_materialPath = target;
+        }
+    } else {
+        m_materialPath = target;
+    }
     publishLive();
     m_status.clear();
+    m_refreshAssets = true;
     return true;
+}
+
+bool MaterialEditorPanel::saveCurrent() {
+    if (m_materialPath.empty()) {
+        m_pendingSaveAs = true;
+        return false;
+    }
+    return saveToPath(resolvedPath(m_materialPath));
+}
+
+void MaterialEditorPanel::handleSaveShortcut() {
+    if (m_materialPath.empty()) {
+        m_pendingSaveAs = true;
+        return;
+    }
+    saveCurrent();
+}
+
+bool MaterialEditorPanel::createInAssetBrowser(EditorContext& ctx) {
+    const std::filesystem::path root = !ctx.assetRootPath.empty()
+                                           ? ctx.assetRootPath
+                                           : (m_projectRoot.empty() ? std::filesystem::path("assets")
+                                                                    : std::filesystem::path(m_projectRoot) / "assets");
+    const std::filesystem::path dir = root / "materials";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    std::string stem = m_surface.name.empty() ? "Material" : m_surface.name;
+    for (char& c : stem) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (!std::isalnum(uc) && c != '_' && c != '-') c = '_';
+    }
+    std::filesystem::path target = dir / (stem + ".mat");
+    int suffix = 1;
+    while (std::filesystem::exists(target, ec)) {
+        target = dir / (stem + "_" + std::to_string(suffix++) + ".mat");
+    }
+    if (!saveToPath(target)) return false;
+    ctx.assetBrowserNavigateTo = dir;
+    applyToSelection(ctx);
+    m_status = "Created " + target.filename().string();
+    return true;
+}
+
+void MaterialEditorPanel::applyToSelection(EditorContext& ctx) {
+    if (!ctx.activeWorld || !ctx.selectedEntity.isValid() || m_materialPath.empty()) return;
+    ECS::World& world = *ctx.activeWorld;
+    ECS::Entity entity = ctx.selectedEntity;
+    if (!world.has<ECS::MeshFilterComponent>(entity)) return;
+    ECS::MeshFilterComponent* filter = world.get<ECS::MeshFilterComponent>(entity);
+    if (!filter) return;
+    filter->customMaterialPath = m_materialPath.generic_string();
+    if (!world.has<ECS::MeshRendererComponent>(entity)) world.add<ECS::MeshRendererComponent>(entity);
+    if (ECS::MeshRendererComponent* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
+        renderer->materialPath = filter->customMaterialPath;
+    }
+    ctx.isDirty = true;
 }
 
 bool MaterialEditorPanel::openFromPath(const std::filesystem::path& path) {
@@ -74,22 +144,27 @@ bool MaterialEditorPanel::openFromPath(const std::filesystem::path& path) {
 
 void MaterialEditorPanel::renderPresetPicker() {
     Widgets::setWidthForLabel("Preset");
-    if (!ImGui::BeginCombo("Preset", "Apply a preset...")) return;
+    if (!ImGui::BeginCombo("##mat_preset", "Apply a preset...")) return;
     std::string_view category;
+    int index = 0;
     for (const Assets::MaterialPreset& preset : Assets::materialPresets()) {
         if (preset.category != category) {
             category = preset.category;
             ImGui::SeparatorText(std::string(category).c_str());
         }
-        if (ImGui::Selectable(std::string(preset.name).c_str())) {
+        ImGui::PushID(index++);
+        const std::string label(preset.name);
+        if (ImGui::Selectable(label.c_str())) {
             Assets::applyMaterialPreset(preset.surface, m_surface);
             publishLive();
         }
+        ImGui::PopID();
     }
     ImGui::EndCombo();
 }
 
 void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
+    ImGui::PushID("MatProps");
     bool changed = false;
     auto slider = [&](const char* label, float& value, float lo, float hi, const char* fmt = "%.2f") {
         Widgets::setWidthForLabel(label);
@@ -108,14 +183,17 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
     const std::string& currentName = m_surface.name;
     const size_t copy = currentName.size() < sizeof(name) - 1 ? currentName.size() : sizeof(name) - 1;
     currentName.copy(name, copy);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Name");
+    ImGui::SameLine();
     Widgets::setWidthForLabel("Name");
-    if (ImGui::InputText("Name", name, sizeof(name))) {
+    if (ImGui::InputText("##mat_name", name, sizeof(name))) {
         m_surface.name = name;
         changed = true;
     }
     renderPresetPicker();
 
-    if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Surface##mat_surface", ImGuiTreeNodeFlags_DefaultOpen)) {
         float albedo[4] = {m_surface.albedo.x, m_surface.albedo.y, m_surface.albedo.z, m_surface.albedo.w};
         Widgets::setWidthForLabel("Albedo");
         if (ImGui::ColorEdit4("Albedo", albedo)) {
@@ -128,7 +206,7 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
         ImGui::TextDisabled("Metallic 1 + roughness 0 is a perfect mirror.");
     }
 
-    if (ImGui::CollapsingHeader("Maps & UV", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Maps & UV##mat_maps", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (Widgets::AssetField(ctx, "Albedo Map", m_surface.albedoMap, ".png;.jpg;.jpeg")) changed = true;
         if (Widgets::AssetField(ctx, "Normal Map", m_surface.normalMap, ".png;.jpg;.jpeg")) changed = true;
         slider("Normal Strength", m_surface.normalStrength, 0.0f, 4.0f);
@@ -139,7 +217,7 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
         if (Widgets::DragVec2("UV Offset", m_surface.uvOffset, 0.01f)) changed = true;
     }
 
-    if (ImGui::CollapsingHeader("Transparency")) {
+    if (ImGui::CollapsingHeader("Transparency##mat_alpha")) {
         int mode = static_cast<int>(m_surface.alphaMode);
         const char* modes[] = {"Opaque", "Cutout", "Blend"};
         Widgets::setWidthForLabel("Alpha Mode");
@@ -156,23 +234,59 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
         ImGui::TextDisabled("Water 1.33, ice 1.31, glass 1.5, diamond 2.42.");
     }
 
-    if (ImGui::CollapsingHeader("Clear Coat")) {
+    if (ImGui::CollapsingHeader("Clear Coat##mat_coat")) {
         slider("Clear Coat", m_surface.clearcoat, 0.0f, 1.0f);
         slider("Coat Roughness", m_surface.clearcoatRoughness, 0.0f, 1.0f, "%.3f");
     }
 
-    if (ImGui::CollapsingHeader("Sheen")) {
+    if (ImGui::CollapsingHeader("Sheen##mat_sheen")) {
         color3("Sheen Color", m_surface.sheenColor);
         slider("Sheen Roughness", m_surface.sheenRoughness, 0.0f, 1.0f);
     }
 
-    if (ImGui::CollapsingHeader("Iridescence")) {
+    if (ImGui::CollapsingHeader("Reflection##mat_reflect")) {
+        slider("Reflection", m_surface.reflection, 0.0f, 1.0f);
+        ImGui::TextDisabled("Both modules are optional. Together, quality raises the march and performance still caps it.");
+
+        bool performance = m_surface.reflectionPerformance != 0;
+        if (ImGui::Checkbox("Performance##mat_ssr_perf", &performance)) {
+            m_surface.reflectionPerformance = performance ? 1 : 0;
+            changed = true;
+        }
+        if (performance) {
+            slider("SSR Resolution", m_surface.ssrResolution, 0.25f, 1.0f, "%.2f");
+            slider("Max Ray Steps", m_surface.ssrMaxSteps, 4.0f, 64.0f, "%.0f");
+            slider("Temporal Reuse", m_surface.ssrTemporalFrames, 1.0f, 8.0f, "%.0f frames");
+            slider("Distance Fade", m_surface.ssrDistance, 1.0f, 80.0f, "%.0f m");
+            ImGui::TextDisabled("Half resolution, fewer steps on rough surfaces, and a dithered march.");
+        }
+
+        bool quality = m_surface.reflectionQuality != 0;
+        if (ImGui::Checkbox("Quality##mat_ssr_quality", &quality)) {
+            m_surface.reflectionQuality = quality ? 1 : 0;
+            changed = true;
+        }
+        if (quality) {
+            slider("SSR Samples", m_surface.ssrSamples, 4.0f, 64.0f, "%.0f");
+            slider("Denoise Strength", m_surface.ssrDenoise, 0.0f, 1.0f);
+            bool planar = m_surface.reflectionPlanar != 0;
+            if (ImGui::Checkbox("Planar##mat_ssr_planar", &planar)) {
+                m_surface.reflectionPlanar = planar ? 1 : 0;
+                changed = true;
+            }
+            slider("Probe Blend", m_surface.ssrProbeBlend, 1.0f, 8.0f, "%.0f");
+            slider("Bounce Count", m_surface.ssrBounces, 0.0f, 2.0f, "%.0f");
+            ImGui::TextDisabled("Denoise uses the previous frame. Planar is only this surface. Probes stay cached.");
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Iridescence##mat_iri")) {
         slider("Iridescence", m_surface.iridescence, 0.0f, 1.0f);
         slider("Film Thickness", m_surface.iridescenceThickness, 100.0f, 1200.0f, "%.0f nm");
         slider("Film IOR", m_surface.iridescenceIor, 1.0f, 2.5f, "%.2f");
     }
 
-    if (ImGui::CollapsingHeader("Emission")) {
+    if (ImGui::CollapsingHeader("Emission##mat_emit")) {
         color3("Emission", m_surface.emission);
         slider("Emission Strength", m_surface.emissionStrength, 0.0f, 50.0f);
         if (Widgets::AssetField(ctx, "Emission Map", m_surface.emissionMap, ".png;.jpg;.jpeg")) changed = true;
@@ -189,9 +303,11 @@ void MaterialEditorPanel::renderProperties(EditorContext& ctx) {
     if (!m_status.empty()) {
         ImGui::TextWrapped("%s", m_status.c_str());
     }
+    ImGui::PopID();
 }
 
 void MaterialEditorPanel::renderPreview(const EditorContext& ctx, float width, float height) {
+    ImGui::PushID("MatPreview");
     const float side = std::max(1.0f, std::min(width, height));
     const ImVec2 start = ImGui::GetCursorPos();
     bool drewImage = false;
@@ -235,18 +351,22 @@ void MaterialEditorPanel::renderPreview(const EditorContext& ctx, float width, f
     }
 
     Widgets::setWidthForLabel("Orbit");
-    ImGui::SliderFloat("Orbit", &m_previewRotation, 0.0f, 360.0f, "%.0f deg");
+    ImGui::SliderFloat("##preview_orbit", &m_previewRotation, 0.0f, 360.0f, "Orbit %.0f deg");
     Widgets::setWidthForLabel("Height");
-    ImGui::SliderFloat("Height", &m_previewPitch, -30.0f, 70.0f, "%.0f deg");
+    ImGui::SliderFloat("##preview_pitch", &m_previewPitch, -30.0f, 70.0f, "Height %.0f deg");
     ImGui::Checkbox("Floor", &m_previewFloor);
+    ImGui::PopID();
 }
 
 void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
 
     ImGui::Begin("Material Editor", &m_open, ImGuiWindowFlags_MenuBar);
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteFocused)) {
+        handleSaveShortcut();
+    }
     if (ImGui::BeginMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
+        if (ImGui::BeginMenu("File##MaterialEditor")) {
             if (ImGui::MenuItem("New")) {
                 m_surface = Assets::MaterialSurface{};
                 m_surface.valid = true;
@@ -254,7 +374,10 @@ void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
                 m_materialPath.clear();
                 m_status.clear();
             }
-            if (ImGui::MenuItem("Save", "Ctrl+S")) saveCurrent();
+            if (ImGui::MenuItem("Create in Asset Browser")) createInAssetBrowser(ctx);
+            if (ImGui::MenuItem("Save", "Ctrl+S")) handleSaveShortcut();
+            if (ImGui::MenuItem("Save As...")) m_pendingSaveAs = true;
+            if (ImGui::MenuItem("Apply to Selected")) applyToSelection(ctx);
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -274,6 +397,34 @@ void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
         renderPreview(ctx, previewAvail.x, previewAvail.y - controlsH);
     }
     ImGui::EndChild();
+
+    m_wasFocusedLastFrame =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+    if (m_pendingSaveAs) {
+        const std::filesystem::path start =
+            m_materialPath.empty()
+                ? (m_projectRoot.empty() ? std::filesystem::path(".")
+                                         : std::filesystem::path(m_projectRoot) / "materials")
+                : m_materialPath.parent_path();
+        if (auto selected =
+                FilePicker::pickPath(FilePicker::Mode::SaveFile, "Save Material", start)) {
+            if (saveToPath(*selected)) {
+                ctx.assetBrowserNavigateTo = selected->parent_path();
+                applyToSelection(ctx);
+            }
+            m_pendingSaveAs = false;
+        } else if (FilePicker::consumeCloseEvent("Save Material")) {
+            m_pendingSaveAs = false;
+        }
+    }
+
+    if (m_refreshAssets) {
+        ctx.assetBrowserDirty = true;
+        applyToSelection(ctx);
+        m_refreshAssets = false;
+    }
+
     ImGui::End();
 }
 

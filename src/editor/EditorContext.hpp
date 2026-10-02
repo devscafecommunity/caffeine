@@ -96,7 +96,11 @@ public:
     std::string currentScenePath;
     bool        isDirty          = false;
     std::string materialToOpen;
+    std::string imageToOpen;
     std::filesystem::path projectRootPath;
+    std::filesystem::path assetRootPath;
+    bool assetBrowserDirty = false;
+    std::filesystem::path assetBrowserNavigateTo;
 
     /// One browse dialog for the whole IDE. Panels only queue it; SceneEditor
     /// pumps it every frame until the user picks a path or closes the dialog.
