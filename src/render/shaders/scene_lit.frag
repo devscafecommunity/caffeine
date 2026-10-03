@@ -494,30 +494,66 @@ vec3 transmittedLight(Surface s) {
     return sampleProbeOrSky(T, s.roughness);
 }
 
+float henyeyGreenstein(float cosTheta, float g) {
+    float g2 = g * g;
+    float denom = max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4);
+    return (1.0 - g2) / (12.5663706144 * pow(denom, 1.5));
+}
+
 vec3 applyVolumetrics(vec3 color) {
     if (lights.uVolParams.x < 0.5 || lights.uVolParams.y <= 0.0001) return color;
     vec3 ray = v_worldPos - lights.uCameraPos.xyz;
     float rayLen = length(ray);
     if (rayLen < 0.05) return color;
     vec3 rd = ray / rayLen;
-    float steps = clamp(lights.uVolParams.w, 1.0, 12.0);
+    float steps = clamp(lights.uVolParams.w, 1.0, 24.0);
     float stepLen = rayLen / steps;
     vec3 lightDir = vec3(0.0, 1.0, 0.0);
     if (lights.uDirCount > 0) lightDir = normalize(-lights.uDirData[0].xyz);
-    float phase = clamp(1.0 + lights.uIblParams.w * dot(rd, lightDir), 0.15, 2.0);
+    float g = clamp(lights.uIblParams.w, 0.0, 0.92);
+    float hg = henyeyGreenstein(dot(rd, lightDir), g);
+    float phase = 0.28 + hg * 2.4;
+    bool shadowMaps = lights.uExtra.x > 0.5 && shadows.uDirShadowValid.x > 0.5;
     vec3 accum = vec3(0.0);
     float transmittance = 1.0;
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 24; ++i) {
         if (float(i) >= steps) break;
         vec3 p = lights.uCameraPos.xyz + rd * (stepLen * (float(i) + 0.5));
-        float heightFog = exp(-max(p.y, 0.0) / max(lights.uVolParams.z, 0.5));
-        float density = lights.uVolParams.y * heightFog;
-        float shadow = 1.0;
-        if (lights.uExtra.x > 0.5 && shadows.uDirShadowValid.x > 0.5) {
-            shadow = sampleDirShadow(uShadowMap0, 0, p, vec3(0.0));
+        float heightFog = exp(-max(p.y, 0.0) / max(lights.uVolParams.z, 8.0));
+        float density = lights.uVolParams.y * mix(1.0, heightFog, 0.22);
+        float shaft = 0.22;
+        if (shadowMaps) {
+            shaft = pow(sampleDirShadow(uShadowMap0, 0, p, vec3(0.0)), 1.25);
         }
         float absorb = density * stepLen;
-        vec3 fogColor = lights.uIblColor.rgb * phase * shadow;
+        vec3 fogColor = lights.uAmbient.rgb * 0.10;
+        if (lights.uDirCount > 0) {
+            fogColor += lights.uDirColor[0].rgb * lights.uDirData[0].w * phase * shaft;
+        }
+        for (int L = 0; L < 4; ++L) {
+            if (L >= lights.uPointCount) break;
+            vec3 toL = lights.uPointData[L].xyz - p;
+            float dist = length(toL);
+            float radius = max(lights.uPointData[L].w, 0.05);
+            if (dist > radius) continue;
+            float att = 1.0 - dist / radius;
+            att *= att;
+            float pntHg = henyeyGreenstein(dot(rd, toL / max(dist, 0.001)), g * 0.85);
+            fogColor += lights.uPointColor[L].rgb * lights.uPointColor[L].a * att * (0.35 + pntHg * 2.0);
+        }
+        for (int L = 0; L < 4; ++L) {
+            if (L >= lights.uSpotCount) break;
+            vec3 toL = lights.uSpotData[L].xyz - p;
+            float dist = length(toL);
+            float radius = max(lights.uSpotData[L].w, 0.05);
+            if (dist > radius) continue;
+            vec3 ldir = toL / max(dist, 0.001);
+            float cone = dot(-ldir, normalize(lights.uSpotDir[L].xyz));
+            if (cone < lights.uSpotAngle[L].x) continue;
+            float att = 1.0 - dist / radius;
+            float spotHg = henyeyGreenstein(dot(rd, ldir), g);
+            fogColor += lights.uSpotColor[L].rgb * lights.uSpotDir[L].w * att * att * (0.40 + spotHg * 2.2);
+        }
         accum += transmittance * fogColor * absorb;
         transmittance *= exp(-absorb);
     }

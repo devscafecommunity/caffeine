@@ -147,7 +147,7 @@ void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
             parentWidget(*world, entity, parent);
         }
         ctx.selectEntity(entity);
-        ctx.isDirty = true;
+        ctx.markDirty();
         ctx.endUndo(*world);
         layout.layout(*world);
     };
@@ -231,8 +231,8 @@ void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
         finishCreate(box, parent);
     }
 
-    ImGui::TextDisabled("Arrasta para mover. O canto inferior direito redimensiona. Cores e texto ficam no inspector.");
-    ImGui::TextDisabled("Cliques e valores continuam em Lua (caffeine.ui) ou em C++ (UISystem).");
+    ImGui::TextDisabled("Drag to move. The bottom-right corner resizes. Colors and text live in the inspector.");
+    ImGui::TextDisabled("Clicks and values stay in Lua (caffeine.ui) or C++ (UISystem).");
 
     const float listWidth = 200.0f;
     ImGui::BeginChild("hud_list", ImVec2(listWidth, 0.0f), true);
@@ -312,7 +312,7 @@ void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
             const Vec2 canvasDelta{delta.x / scaleX, delta.y / scaleY};
             if (m_resizing) resizeWidget(*widget, canvasDelta);
             else moveWidget(*widget, canvasDelta);
-            ctx.isDirty = true;
+            ctx.markDirty();
             layout.layout(*world);
         }
     }
@@ -359,7 +359,7 @@ void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
         ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), *world);
         world->destroy(ctx.selectedEntity);
         ctx.selectEntity(ECS::Entity::INVALID);
-        ctx.isDirty = true;
+        ctx.markDirty();
         ctx.endUndo(*world);
     }
 

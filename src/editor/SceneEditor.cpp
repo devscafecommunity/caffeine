@@ -6,6 +6,7 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "editor/ComponentRegistry.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
@@ -14,6 +15,7 @@
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "scene/PlayMode2D.hpp"
 #include "navigation/NavigationSystem.hpp"
 #include "effects/EffectSystem.hpp"
@@ -69,67 +71,80 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_hierarchy.setOpenPresetsCallback([this]() { m_entityPresets.open(); });
     m_tabManager.newScene("Untitled");
 
-    m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Scene", [this]() {
         m_hierarchy.open();
     });
-    m_commandPalette.registerCommand("panel_inspector", "Inspector Panel", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_inspector", "Inspector Panel", "Scene", [this]() {
         m_inspector.open();
     });
-    m_commandPalette.registerCommand("panel_console", "Console", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_console", "Console", "Debug", [this]() {
         m_console.open();
     });
-    m_commandPalette.registerCommand("panel_profiler", "Profiler", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_profiler", "Profiler", "Debug", [this]() {
         m_profiler.open();
     });
-    m_commandPalette.registerCommand("panel_entity_debugger", "Entity Debugger", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_entity_debugger", "Entity Debugger", "Debug", [this]() {
         m_entityDebugger.open();
     });
-    m_commandPalette.registerCommand("panel_plugin_manager", "Plugin Manager", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_plugin_manager", "Plugin Manager", "Plugins", [this]() {
         PluginManager::instance().openManager();
     });
-    m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Content", [this]() {
         m_assetBrowser.open();
     });
-    m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Animation", [this]() {
         m_animationTimeline.open();
     });
-    m_commandPalette.registerCommand("panel_animator_controller", "Animator Controller", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_animator_controller", "Animator Controller", "Animation", [this]() {
         m_animatorController.open();
     });
-    m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Content", [this]() {
         m_tilemapEditor.open();
     });
-     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Tools", [this]() {
          m_scriptEditor.open();
      });
-     m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Content", [this]() {
          m_materialEditor.open();
      });
-     m_commandPalette.registerCommand("panel_image_manager", "Image Manager", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_image_manager", "Image Manager", "Content", [this]() {
          m_imageManager.open();
      });
-     m_commandPalette.registerCommand("panel_hud_editor", "HUD Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_hud_editor", "HUD Editor", "Tools", [this]() {
          m_hudEditor.open();
      });
-     m_commandPalette.registerCommand("panel_particles", "Particles", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_particles", "Particles", "Tools", [this]() {
          m_particleEditor.open();
      });
-     m_commandPalette.registerCommand("panel_effects", "Effects", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_effects", "Effects", "Tools", [this]() {
          m_effectEditor.open();
      });
-     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Tools", [this]() {
          m_terrainEditor.open();
      });
-     m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Scene", [this]() {
          m_entityPresets.open();
      });
-     m_commandPalette.registerCommand("panel_gameplay_preview", "Gameplay Preview", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_gameplay_preview", "Gameplay Preview", "Scene", [this]() {
          m_gameplayPreview.open();
      });
-     m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_settings", "Settings", "Tools", [this]() {
          m_settingsPanel.open();
      });
-    m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Scene", [this]() {
+        m_viewport.open();
+    });
+    m_commandPalette.registerCommand("panel_toolbox", "Toolbox", "Scene", [this]() {
+        m_toolbox.open();
+    });
+    m_commandPalette.registerCommand("panel_audio_preview", "Audio Preview", "Content", [this]() {
+        m_audioPreview.open();
+    });
+    m_commandPalette.registerCommand("panel_camera_preview", "Camera Preview", "Scene", [this]() {
+        m_cameraPreview.open();
+    });
+    m_commandPalette.registerCommand("action_build", "Build and Run", "Actions", [this]() {
+        m_buildDialog.open();
     });
 
     m_commandPalette.registerCommand("action_new_scene", "New Scene", "Actions", [this]() {
@@ -209,6 +224,26 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 #endif
 
     registerAllComponents(ComponentRegistry::instance());
+    {
+        int index = 0;
+        for (const auto& entry : ComponentRegistry::instance().entries()) {
+            const std::string id = "add_component_" + std::to_string(index++);
+            const std::string label = std::string("Add ") + entry.name;
+            m_commandPalette.registerCommand(
+                Caffeine::FixedString<64>(id.c_str()), Caffeine::FixedString<128>(label.c_str()),
+                Caffeine::FixedString<128>("Components"),
+                [this, entry]() {
+                    ECS::World* world = m_tabManager.activeWorld();
+                    if (!world || !m_ctx.selectedEntity.isValid()) return;
+                    if (entry.has(*world, m_ctx.selectedEntity)) return;
+                    m_ctx.beginUndo(EditorCommand::AddComponent, m_ctx.selectedEntity.id(), *world);
+                    entry.add(*world, m_ctx.selectedEntity);
+                    m_ctx.endUndo(*world);
+                },
+                true, entry.plugin.empty() ? nullptr : entry.plugin.c_str(),
+                entry.keywords.empty() ? nullptr : entry.keywords.c_str());
+        }
+    }
     registerPlayModeEventListeners();
 
     Debug::LogSystem::instance().addSink([this](Debug::LogLevel level, const char* category, const char* message) {
@@ -446,8 +481,12 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     Animation::setSkinProjectRoot(m_ctx.projectRootPath.string());
+    const Vec3 editorCam =
+        editorCameraPosition(m_ctx.camYaw, m_ctx.camPitch, m_ctx.camDistance, m_ctx.camFocus);
+    Scene::tickEnvironmentEffects(world, (m_isPlaying && !m_isPaused) ? dt : 0.0f,
+                                  Scene::firstCamera3DPosition(world, editorCam));
     if (!m_isPlaying || m_isPaused) {
-        Animation::tickSkinnedPoses(world, m_isPlaying ? 0.0f : dt);
+        Scene::propagateTransforms(world);
         return;
     }
 
@@ -924,6 +963,39 @@ void SceneEditor::render(f32 deltaTime) {
         m_inspector.render(*activeWorld, m_ctx);
     }
     renderPlaybar(*activeWorld);
+    if (m_ctx.selectedEntity.isValid()) {
+        Animation::ensurePoseForMesh(*activeWorld, m_ctx.selectedEntity,
+                                     m_ctx.projectRootPath.string());
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::animationEditors");
+        i32 posedBone = -1;
+        if (m_ctx.skeletonEntityId == m_ctx.selectedEntity.id()) posedBone = m_ctx.skeletonBone;
+        m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id(), posedBone);
+        m_animationTimeline.setProjectRoot(m_ctx.projectRootPath.string());
+        m_animationTimeline.render(deltaTime);
+        if (m_animationTimeline.consumePickedBone(posedBone)) {
+            m_ctx.skeletonEntityId = m_ctx.selectedEntity.id();
+            m_ctx.skeletonBone = posedBone;
+        }
+        m_animatorController.bindSelection(activeWorld, m_ctx.selectedEntity,
+                                           m_ctx.projectRootPath.string());
+        m_animatorController.render();
+        if (!m_isPlaying || m_isPaused) {
+            f32 skinDt = 0.0f;
+            if (m_animationTimeline.isPlaying()) {
+                skinDt = deltaTime;
+            } else {
+                ECS::ComponentQuery playing;
+                playing.with<Animation::SkinnedPose>();
+                activeWorld->forEach<Animation::SkinnedPose>(
+                    playing, [&](ECS::Entity, Animation::SkinnedPose& pose) {
+                        if (pose.playing && !pose.timelineHold) skinDt = deltaTime;
+                    });
+            }
+            Animation::tickSkinnedPoses(*activeWorld, skinDt);
+        }
+    }
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
@@ -1011,10 +1083,6 @@ void SceneEditor::render(f32 deltaTime) {
     m_materialEditor.setFrameCommandBuffer(nullptr);
     m_assetBrowser.setFrameCommandBuffer(nullptr);
 #endif
-    m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id());
-    m_animationTimeline.render(deltaTime);
-    m_animatorController.bindSelection(activeWorld, m_ctx.selectedEntity);
-    m_animatorController.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
@@ -1114,29 +1182,29 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit")) {
-            if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
+            if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", EditorShortcuts::instance().chord(Shortcut::Undo), false, m_ctx.undoStack.canUndo())) {
                 m_ctx.undoStack.undo(world);
                 if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
-            if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
+            if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", EditorShortcuts::instance().chord(Shortcut::Redo), false, m_ctx.undoStack.canRedo())) {
                 m_ctx.undoStack.redo(world);
                 if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
             ImGui::Separator();
-            if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", EditorShortcuts::instance().chord(Shortcut::Copy), false, m_ctx.selectedEntity.isValid())) {
                 m_ctx.clipboardEntity = m_ctx.selectedEntity;
             }
-            if (EditorIcons::menuItem(EditorIcon::Paste, "Paste", "Ctrl+V", false, m_ctx.clipboardEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Paste, "Paste", EditorShortcuts::instance().chord(Shortcut::Paste), false, m_ctx.clipboardEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
             }
-            if (EditorIcons::menuItem(EditorIcon::Duplicate, "Duplicate", "Ctrl+D", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Duplicate, "Duplicate", EditorShortcuts::instance().chord(Shortcut::Duplicate), false, m_ctx.selectedEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
             }
             PluginManager::instance().renderMenuItems("Edit");
             ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("Help")) {
+        if (PluginManager::instance().hasMenuItems("Help") && ImGui::BeginMenu("Help")) {
             PluginManager::instance().renderMenuItems("Help");
             ImGui::EndMenu();
         }
@@ -1349,20 +1417,13 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 // ── Shortcuts ───────────────────────────────────────────────────
 
 void SceneEditor::handleShortcuts(ECS::World& world) {
-    bool ctrl = ImGui::GetIO().KeyCtrl;
-    bool shift = ImGui::GetIO().KeyShift;
-
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_L)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::CommandPalette) ||
+        EditorShortcuts::instance().pressed(Shortcut::CommandPaletteAlt)) {
         m_commandPalette.toggle();
         return;
     }
 
-    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_P)) {
-        m_commandPalette.toggle();
-        return;
-    }
-
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Save)) {
         const bool saveMaterial = m_materialEditor.isOpen() &&
                                   (m_materialEditor.wasFocusedLastFrame() || m_materialEditor.isDirty());
         if (saveMaterial) m_materialEditor.handleSaveShortcut();
@@ -1374,7 +1435,7 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
             }
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::NewScene)) {
         if (m_ctx.isDirty) {
             m_pendingAction = PendingAction::NewScene;
             ImGui::OpenPopup("Unsaved Changes?");
@@ -1382,30 +1443,26 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
             doNewScene();
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        if (ImGui::GetIO().KeyShift) {
-            if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
-        } else {
-            if (m_ctx.undoStack.canUndo()) m_ctx.undoStack.undo(world);
-        }
+    if (EditorShortcuts::instance().pressed(Shortcut::Undo)) {
+        if (m_ctx.undoStack.canUndo()) m_ctx.undoStack.undo(world);
         if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Redo)) {
         if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
         if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
 
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Copy)) {
         if (m_ctx.selectedEntity.isValid()) {
             m_ctx.clipboardEntity = m_ctx.selectedEntity;
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Paste)) {
         if (m_ctx.clipboardEntity.isValid()) {
             m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Duplicate)) {
         if (m_ctx.selectedEntity.isValid()) {
             m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
         }

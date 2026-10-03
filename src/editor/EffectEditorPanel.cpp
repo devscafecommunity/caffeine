@@ -159,19 +159,19 @@ void EffectEditorPanel::onImGuiRender(EditorContext& ctx) {
     bool enabled = selected->enabled != 0;
     if (ImGui::Checkbox("Enabled", &enabled)) {
         selected->enabled = enabled ? 1 : 0;
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     const char* spaces[] = {"World", "Camera"};
     int space = static_cast<int>(selected->space);
     if (ImGui::Combo("Space", &space, spaces, 2)) {
         selected->space = static_cast<u8>(space);
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     const char* qualities[] = {"Performance", "Balanced", "Quality"};
     int quality = static_cast<int>(selected->quality);
     if (ImGui::Combo("Quality", &quality, qualities, 3)) {
         selected->quality = static_cast<u8>(quality);
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
 
     const Effects::EffectKind kind = static_cast<Effects::EffectKind>(selected->kind);
@@ -185,79 +185,79 @@ void EffectEditorPanel::onImGuiRender(EditorContext& ctx) {
             Effects::configureVolumetricLight(*selected, static_cast<Effects::VolumetricShape>(shape));
             selected->lightColor = color;
             Effects::adoptVolumetricMesh(*world, selectedEntity, *selected);
-            ctx.isDirty = true;
+            ctx.markDirty();
         }
         ImGui::TextDisabled("The volume is the mesh. Move, rotate and scale it.");
         const Effects::VolumetricShape volume = Effects::volumetricShapeOf(*selected);
         if (volume == Effects::VolumetricShape::Sphere) {
             if (dragFloat("Radius", selected->radius, 0.05f, 0.1f, 40.0f)) {
                 pushSize();
-                ctx.isDirty = true;
+                ctx.markDirty();
             }
         } else {
             if (dragFloat("Length", selected->radius, 0.05f, 0.2f, 40.0f)) {
                 pushSize();
-                ctx.isDirty = true;
+                ctx.markDirty();
             }
             if (volume == Effects::VolumetricShape::Cone) {
                 f32 baseRadius = selected->endSize * 0.5f;
                 if (dragFloat("Radius", baseRadius, 0.01f, 0.05f, 12.0f)) {
                     selected->endSize = baseRadius * 2.0f;
                     pushSize();
-                    ctx.isDirty = true;
+                    ctx.markDirty();
                 }
             } else if (volume == Effects::VolumetricShape::Cylinder) {
                 if (dragFloat("Diameter", selected->startSize, 0.01f, 0.05f, 8.0f)) {
                     selected->endSize = selected->startSize;
                     pushSize();
-                    ctx.isDirty = true;
+                    ctx.markDirty();
                 }
             } else {
                 if (dragFloat("Width", selected->startSize, 0.01f, 0.05f, 12.0f)) {
                     pushSize();
-                    ctx.isDirty = true;
+                    ctx.markDirty();
                 }
                 if (dragFloat("Height", selected->endSize, 0.01f, 0.05f, 12.0f)) {
                     pushSize();
-                    ctx.isDirty = true;
+                    ctx.markDirty();
                 }
             }
         }
-        if (dragFloat("Density", selected->density, 0.005f, 0.0f, 2.0f)) ctx.isDirty = true;
-        if (ImGui::SliderFloat("Anisotropy", &selected->anisotropy, 0.0f, 0.9f)) ctx.isDirty = true;
-        if (dragFloat("Intensity", selected->intensity, 0.05f, 0.0f, 16.0f)) ctx.isDirty = true;
-        if (ImGui::ColorEdit3("Light", &selected->lightColor.x)) ctx.isDirty = true;
+        if (dragFloat("Density", selected->density, 0.005f, 0.0f, 2.0f)) ctx.markDirty();
+        if (ImGui::SliderFloat("Anisotropy", &selected->anisotropy, 0.0f, 0.9f)) ctx.markDirty();
+        if (dragFloat("Intensity", selected->intensity, 0.05f, 0.0f, 16.0f)) ctx.markDirty();
+        if (ImGui::ColorEdit3("Light", &selected->lightColor.x)) ctx.markDirty();
     } else if (kind == Effects::EffectKind::Fog) {
         int style = static_cast<int>(selected->pad0 > 3 ? 0 : selected->pad0);
         if (ImGui::Combo("Look", &style, styles, 4)) {
             const auto domain = static_cast<Effects::EffectDomain>(selected->domain);
             Effects::configureFog(*selected, domain, static_cast<Effects::EffectFogStyle>(style));
-            ctx.isDirty = true;
+            ctx.markDirty();
         }
         int domain = static_cast<int>(selected->domain);
         const char* domains[] = {"2D and 3D", "2D", "3D"};
         if (ImGui::Combo("Domain", &domain, domains, 3)) {
             selected->domain = static_cast<u8>(domain);
-            ctx.isDirty = true;
+            ctx.markDirty();
         }
-        if (dragFloat("Radius", selected->radius, 0.05f, 0.1f, 40.0f)) ctx.isDirty = true;
-        if (dragFloat("Density", selected->density, 0.005f, 0.0f, 2.0f)) ctx.isDirty = true;
-        if (dragFloat("Intensity", selected->intensity, 0.02f, 0.0f, 4.0f)) ctx.isDirty = true;
-        if (ImGui::ColorEdit3("Color", &selected->lightColor.x)) ctx.isDirty = true;
+        if (dragFloat("Radius", selected->radius, 0.05f, 0.1f, 40.0f)) ctx.markDirty();
+        if (dragFloat("Density", selected->density, 0.005f, 0.0f, 2.0f)) ctx.markDirty();
+        if (dragFloat("Intensity", selected->intensity, 0.02f, 0.0f, 4.0f)) ctx.markDirty();
+        if (ImGui::ColorEdit3("Color", &selected->lightColor.x)) ctx.markDirty();
     } else if (kind == Effects::EffectKind::ReflectiveSurface) {
-        if (ImGui::SliderFloat("Reflection", &selected->reflection, 0.0f, 1.0f)) ctx.isDirty = true;
-        if (ImGui::SliderFloat("Roughness", &selected->roughness, 0.02f, 1.0f)) ctx.isDirty = true;
-        if (ImGui::SliderFloat("Metallic", &selected->metallic, 0.0f, 1.0f)) ctx.isDirty = true;
+        if (ImGui::SliderFloat("Reflection", &selected->reflection, 0.0f, 1.0f)) ctx.markDirty();
+        if (ImGui::SliderFloat("Roughness", &selected->roughness, 0.02f, 1.0f)) ctx.markDirty();
+        if (ImGui::SliderFloat("Metallic", &selected->metallic, 0.0f, 1.0f)) ctx.markDirty();
     } else if (kind == Effects::EffectKind::MaterialShade) {
-        if (ImGui::ColorEdit3("Tint", &selected->tint.x)) ctx.isDirty = true;
-        if (dragFloat("Emission", selected->emissionBoost, 0.05f, 0.0f, 8.0f)) ctx.isDirty = true;
-        if (dragFloat("Roughness Bias", selected->roughnessBias, 0.01f, -1.0f, 1.0f)) ctx.isDirty = true;
+        if (ImGui::ColorEdit3("Tint", &selected->tint.x)) ctx.markDirty();
+        if (dragFloat("Emission", selected->emissionBoost, 0.05f, 0.0f, 8.0f)) ctx.markDirty();
+        if (dragFloat("Roughness Bias", selected->roughnessBias, 0.01f, -1.0f, 1.0f)) ctx.markDirty();
     }
 
     if (ImGui::Button("Delete Effect")) {
         ctx.beginUndo(EditorCommand::RemoveEntity, selectedEntity.id(), *world);
         world->destroy(selectedEntity);
-        ctx.isDirty = true;
+        ctx.markDirty();
         ctx.endUndo(*world);
     }
     ImGui::End();

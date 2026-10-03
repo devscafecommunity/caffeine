@@ -43,6 +43,9 @@ private:
     RHI::Texture* m_depthTarget = nullptr;
     u32 m_width = 0;
     u32 m_height = 0;
+    u32 m_pendingW = 0;
+    u32 m_pendingH = 0;
+    u32 m_stable = 0;
     Render::GpuSceneRenderer m_renderer;
     bool m_ready = false;
     Vec3 m_lastCamPos{};

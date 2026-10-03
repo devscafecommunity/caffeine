@@ -59,6 +59,7 @@ private:
     void renderEditorSettings();
     void renderViewportSettings();
     void renderPanelSettings();
+    void renderShortcutSettings();
 };
 
 } // namespace Caffeine::Editor

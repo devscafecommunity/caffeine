@@ -23,7 +23,7 @@ void serviceBrowseSession(EditorContext& ctx, AssetBrowser& browser) {
         if (poll == AssetBrowser::AssetPickerPoll::Selected) {
             if (session.stringTarget) {
                 *session.stringTarget = picked;
-                ctx.isDirty = true;
+                ctx.markDirty();
                 session.clear();
             } else {
                 const u32 field = session.fieldId;
@@ -49,7 +49,7 @@ void serviceBrowseSession(EditorContext& ctx, AssetBrowser& browser) {
     if (auto chosen = FilePicker::pickPath(mode, session.title, session.startPath)) {
         if (session.stringTarget) {
             *session.stringTarget = chosen->string();
-            ctx.isDirty = true;
+            ctx.markDirty();
             session.clear();
             return;
         }

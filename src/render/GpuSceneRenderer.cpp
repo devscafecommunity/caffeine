@@ -483,14 +483,19 @@ RHI::Buffer* GpuSceneRenderer::vertexBufferFor(const MeshDraw& draw) {
         return draw.mesh->vertexBuffer;
     }
     const u64 bytes = static_cast<u64>(draw.skinnedVertices->size() * sizeof(Assets::Vertex3D));
+    const u64 generation = Animation::skinnedGenerationFor(draw.entity.id());
     RHI::Buffer*& slot = m_skinBuffers[draw.entity.id()];
+    u64& uploaded = m_skinUploadGen[draw.entity.id()];
     if (!slot || slot->size != bytes) {
         if (slot) m_device->destroyBuffer(slot);
         RHI::BufferDesc desc;
         desc.size = bytes;
         slot = m_device->createBuffer(desc, RHI::BufferUsage::Vertex);
+        uploaded = 0;
     }
+    if (slot && generation != 0 && uploaded == generation) return slot;
     if (slot) m_device->uploadBuffer(slot, draw.skinnedVertices->data(), bytes);
+    if (slot) uploaded = generation;
     return slot ? slot : draw.mesh->vertexBuffer;
 }
 
@@ -501,6 +506,7 @@ void GpuSceneRenderer::shutdown() {
         }
     }
     m_skinBuffers.clear();
+    m_skinUploadGen.clear();
     for (auto& [_, cache] : m_meshLods) {
         destroyMeshGpu(cache.medium);
         destroyMeshGpu(cache.far);
@@ -1018,7 +1024,11 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     // Everything that is the same for every draw of the pass.
     LightingUBO base{};
     setVec4(base.cameraPos, camera.position.x, camera.position.y, camera.position.z, 0.0f);
-    setVec4(base.ambient, kFallbackAmbient.x, kFallbackAmbient.y, kFallbackAmbient.z, 0.0f);
+    if (options.overrideAmbient) {
+        setVec4(base.ambient, options.ambientColor.x, options.ambientColor.y, options.ambientColor.z, 0.0f);
+    } else {
+        setVec4(base.ambient, kFallbackAmbient.x, kFallbackAmbient.y, kFallbackAmbient.z, 0.0f);
+    }
     base.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
     for (int i = 0; i < base.dirCount; ++i) {
         const auto& d = lighting.lights.directionals[i];
@@ -1060,7 +1070,8 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     base.volParams[0] = features.volumetrics == VolumetricQuality::Off ? 0.0f : 1.0f;
     base.volParams[1] = features.volumetricDensity;
     base.volParams[2] = features.volumetricHeight;
-    base.volParams[3] = features.volumetrics == VolumetricQuality::Medium ? 12.0f
+    base.volParams[3] = features.volumetrics == VolumetricQuality::High   ? 24.0f
+                        : features.volumetrics == VolumetricQuality::Medium ? 12.0f
                         : features.volumetrics == VolumetricQuality::Low  ? 6.0f
                                                                           : 0.0f;
     const bool planarOn = m_reflectionValid && m_reflectionColor && !m_inReflectionPass &&
@@ -2279,7 +2290,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     GpuSceneCamera camera = cameraIn;
     const Mat4 unjitteredViewProj = cameraIn.proj * cameraIn.view;
-    const bool taa = PostProcessStack::usesTaa(post) && !opts.wireframeMeshes;
+    const bool taa = PostProcessStack::usesTaa(post) && !opts.wireframeMeshes && !opts.skipTemporalSettle;
     Vec2 jitter(0.0f, 0.0f);
     if (taa) {
         jitter = PostProcessStack::taaJitter(view->frameIndex);
@@ -2325,7 +2336,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.deltaTime = std::clamp(opts.deltaTime, 1e-4f, 0.25f);
         in.time = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
         in.frameIndex = view->frameIndex;
-        in.historyValid = view->hasPrevious;
+        in.historyValid = view->hasPrevious && !opts.skipTemporalSettle;
         in.jitterPixels = jitter;
         in.viewId = viewId;
         m_post.execute(cmd, post, in);
@@ -2338,7 +2349,9 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         std::memcpy(&bits, unjitteredViewProj.data() + i, sizeof(bits));
         changeHash = (changeHash ^ bits) * 1099511628211ull;
     }
-    if (changeHash != view->prevSceneHash) {
+    if (opts.skipTemporalSettle) {
+        view->settleFrames = 0;
+    } else if (changeHash != view->prevSceneHash) {
         u32 settle = 2;
         if (taa) settle = 16;
         view->settleFrames = std::max(view->settleFrames, settle);

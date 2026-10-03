@@ -27,7 +27,7 @@ inline ECS::Entity spawnEffectObject(ECS::World& world, EditorContext& ctx, cons
         }
     }
     ctx.selectEntity(entity);
-    ctx.isDirty = true;
+    ctx.markDirty();
     ctx.endUndo(world);
     return entity;
 }

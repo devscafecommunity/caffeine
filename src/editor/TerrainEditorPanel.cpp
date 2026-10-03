@@ -92,7 +92,7 @@ void TerrainEditorPanel::drawEditTools(ECS::World& world, ECS::Entity entity, Ed
         Terrain::TerrainGpuTextureCache::instance().invalidateEntity(entity, nullptr);
 #endif
         terrain->splatRevision++;
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
 
     ImGui::Separator();
@@ -180,7 +180,7 @@ void TerrainEditorPanel::drawDataFile(ECS::World& world, ECS::Entity entity, Edi
     if (!terrain) return;
 
     if (ImGui::InputText("Terrain Path", terrain->terrainDataPath, sizeof(terrain->terrainDataPath))) {
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Project-relative path to the .cterrain height/splat data file");
@@ -205,7 +205,7 @@ void TerrainEditorPanel::drawDataFile(ECS::World& world, ECS::Entity entity, Edi
             }
             Terrain::TerrainCache::instance().saveTerrainFile(
                 entity, projectRoot / terrain->terrainDataPath, terrain->useSplatmap);
-            ctx.isDirty = true;
+            ctx.markDirty();
         }
     }
 }

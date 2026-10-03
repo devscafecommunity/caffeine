@@ -57,6 +57,7 @@ private:
     void drawUISlider(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawLight(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawSkybox(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+     void drawEnvironmentEffects(ECS::World& world, ECS::Entity e, EditorContext& ctx);
      void drawTerrain(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawPostProcess(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawForwardRenderFeatures(ECS::World& world, ECS::Entity e, EditorContext& ctx);

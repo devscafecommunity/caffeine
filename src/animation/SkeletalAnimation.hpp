@@ -250,7 +250,8 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
         jointPositions->resize(boneCount);
         for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
             const Mat4& world = worldMatrices[boneIdx];
-            (*jointPositions)[boneIdx] = Vec3(world(0, 3), world(1, 3), world(2, 3));
+            (*jointPositions)[boneIdx] = skeleton.skinSpace.transformPoint(
+                Vec3(world(0, 3), world(1, 3), world(2, 3)));
         }
     }
 }

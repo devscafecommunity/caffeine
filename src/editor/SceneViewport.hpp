@@ -277,6 +277,15 @@ private:
     int  m_hoveredAxis   = 0;
     int  m_gizmoDragAxis = 0;
     ImVec2 m_axisRawDirs[3] = {};
+    /// Screen pixels per world unit along each drawn axis, so a drag follows the cursor.
+    ImVec2 m_axisScreenPerUnit[3] = {};
+    Vec3 m_axisWorldDirs[3] = {Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f)};
+    /// +1 or -1: screen turn direction of a positive rotation about the axis. 0 when the ring is edge-on.
+    f32 m_axisRotSign[3] = {};
+    bool m_gizmoIs3D = false;
+    /// Position before grid snapping, so slow drags still accumulate between snap steps.
+    Vec3 m_gizmoUnsnapped;
+    bool m_gizmoUnsnappedValid = false;
     ImVec2 m_gizmoScreenOrigin = {};
     ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
     ProjectionMode m_projectionMode = ProjectionMode::Perspective;
@@ -293,6 +302,12 @@ private:
     u32 m_lastCanvasHeight = 0;
     u32 m_previewCanvasWidth = 0;
     u32 m_previewCanvasHeight = 0;
+    u32 m_canvasPendingW = 0;
+    u32 m_canvasPendingH = 0;
+    u32 m_canvasStable = 0;
+    u32 m_previewPendingW = 0;
+    u32 m_previewPendingH = 0;
+    u32 m_previewStable = 0;
     f32 m_lastEditorCamYaw = 0.0f;
     f32 m_lastEditorCamPitch = 0.0f;
     f32 m_lastEditorCamDistance = 0.0f;
@@ -303,6 +318,7 @@ private:
     u32 m_gpuCacheWidth = 0;
     u32 m_gpuCacheHeight = 0;
     u64 m_lastSceneStamp = 0;
+    u64 m_lastSkinRevision = 0;
     bool m_hasValidGpuFrame = false;
     bool m_lastGpuFrameSettled = false;
     f32 m_lastRenderScale = 1.0f;

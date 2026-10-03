@@ -106,7 +106,7 @@ void EditorContext::endUndo(ECS::World& world) {
     undoStack.push(m_pendingCmd);
 
     m_undoPending = false;
-    isDirty       = true;
+    markDirty();
 }
 
 } // namespace Caffeine::Editor

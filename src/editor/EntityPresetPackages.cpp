@@ -237,6 +237,12 @@ void scanEntityPresetPackages(const std::filesystem::path& rootDirectory,
 
         for (auto& preset : loaded.presets) {
             if (preset.source.empty()) preset.source = sourceLabel;
+            if (sourceLabel == "plugin" && preset.plugin.empty()) {
+                const auto relative = std::filesystem::relative(entry.path(), rootDirectory, ec);
+                if (!relative.empty() && relative.begin() != relative.end()) {
+                    preset.plugin = relative.begin()->string();
+                }
+            }
             registry.registerPreset(std::move(preset));
         }
     }

@@ -96,45 +96,45 @@ void ParticleEditorPanel::onImGuiRender(EditorContext& ctx) {
     bool enabled = selected->enabled != 0;
     if (ImGui::Checkbox("Enabled", &enabled)) {
         selected->enabled = enabled ? 1 : 0;
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     int domain = static_cast<int>(selected->domain);
     const char* domains[] = {"2D and 3D", "2D", "3D"};
     if (ImGui::Combo("Domain", &domain, domains, 3)) {
         selected->domain = static_cast<u8>(domain);
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     const char* spaces[] = {"World", "Camera"};
     int space = static_cast<int>(selected->space);
     if (ImGui::Combo("Space", &space, spaces, 2)) {
         selected->space = static_cast<u8>(space);
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
-    if (dragFloat("Rate", selected->rate, 0.5f, 0.0f, 400.0f)) ctx.isDirty = true;
-    if (dragFloat("Lifetime", selected->lifetime, 0.02f, 0.05f, 20.0f)) ctx.isDirty = true;
+    if (dragFloat("Rate", selected->rate, 0.5f, 0.0f, 400.0f)) ctx.markDirty();
+    if (dragFloat("Lifetime", selected->lifetime, 0.02f, 0.05f, 20.0f)) ctx.markDirty();
     int cap = selected->maxParticles;
     if (ImGui::DragInt("Max", &cap, 1.0f, 1, 2048)) {
         selected->maxParticles = cap;
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
-    if (dragFloat("Start Size", selected->startSize, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
-    if (dragFloat("End Size", selected->endSize, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
-    if (ImGui::ColorEdit4("Start Color", &selected->startColor.x)) ctx.isDirty = true;
-    if (ImGui::ColorEdit4("End Color", &selected->endColor.x)) ctx.isDirty = true;
-    if (ImGui::DragFloat3("Velocity Min", &selected->velocityMin.x, 0.02f)) ctx.isDirty = true;
-    if (ImGui::DragFloat3("Velocity Max", &selected->velocityMax.x, 0.02f)) ctx.isDirty = true;
-    if (ImGui::DragFloat3("Gravity", &selected->gravity.x, 0.05f)) ctx.isDirty = true;
-    if (dragFloat("Drag", selected->drag, 0.01f, 0.0f, 8.0f)) ctx.isDirty = true;
+    if (dragFloat("Start Size", selected->startSize, 0.01f, 0.0f, 8.0f)) ctx.markDirty();
+    if (dragFloat("End Size", selected->endSize, 0.01f, 0.0f, 8.0f)) ctx.markDirty();
+    if (ImGui::ColorEdit4("Start Color", &selected->startColor.x)) ctx.markDirty();
+    if (ImGui::ColorEdit4("End Color", &selected->endColor.x)) ctx.markDirty();
+    if (ImGui::DragFloat3("Velocity Min", &selected->velocityMin.x, 0.02f)) ctx.markDirty();
+    if (ImGui::DragFloat3("Velocity Max", &selected->velocityMax.x, 0.02f)) ctx.markDirty();
+    if (ImGui::DragFloat3("Gravity", &selected->gravity.x, 0.05f)) ctx.markDirty();
+    if (dragFloat("Drag", selected->drag, 0.01f, 0.0f, 8.0f)) ctx.markDirty();
     char path[260] = {};
     std::snprintf(path, sizeof(path), "%s", selected->materialPath);
     if (ImGui::InputText("Material", path, sizeof(path))) {
         std::snprintf(selected->materialPath, sizeof(selected->materialPath), "%s", path);
-        ctx.isDirty = true;
+        ctx.markDirty();
     }
     if (ImGui::Button("Delete Particle")) {
         ctx.beginUndo(EditorCommand::RemoveEntity, selectedEntity.id(), *world);
         world->destroy(selectedEntity);
-        ctx.isDirty = true;
+        ctx.markDirty();
         ctx.endUndo(*world);
     }
     ImGui::End();

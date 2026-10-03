@@ -1,4 +1,5 @@
 #include "editor/EditorPreferences.hpp"
+#include "editor/EditorShortcuts.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -102,6 +103,8 @@ EditorPreferences EditorPreferences::load() {
     readBoolField(json, "show_fps_status_bar", prefs.showFPSInStatusBar);
     readBoolField(json, "confirm_scene_close", prefs.confirmOnSceneClose);
     readBoolField(json, "reopen_last_scene", prefs.reopenLastSceneOnStartup);
+    readStringField(json, "keymap", prefs.keymap);
+    EditorShortcuts::instance().deserialize(prefs.keymap);
     return prefs;
 }
 
@@ -134,7 +137,8 @@ bool EditorPreferences::save() const {
     file << "  \"viewport_anti_alias\": " << viewportAntiAlias << ",\n";
     file << "  \"show_fps_status_bar\": " << (showFPSInStatusBar ? "true" : "false") << ",\n";
     file << "  \"confirm_scene_close\": " << (confirmOnSceneClose ? "true" : "false") << ",\n";
-    file << "  \"reopen_last_scene\": " << (reopenLastSceneOnStartup ? "true" : "false") << "\n";
+    file << "  \"reopen_last_scene\": " << (reopenLastSceneOnStartup ? "true" : "false") << ",\n";
+    file << "  \"keymap\": \"" << EditorShortcuts::instance().serialize() << "\"\n";
     file << "}\n";
     return file.good();
 }

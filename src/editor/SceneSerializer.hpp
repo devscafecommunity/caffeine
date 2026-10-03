@@ -75,7 +75,12 @@ private:
     static constexpr u32 kTypeSpriteSheet    = 51;
     static constexpr u32 kTypeEffect         = 52;
     static constexpr u32 kTypeMeshGeometry   = 53;
-    static constexpr u32 kTypeCount          = 54;
+    static constexpr u32 kTypeEnvironmentEffects = 54;
+    static constexpr u32 kTypeCount          = 55;
+    static constexpr u32 kPoseCurveMarker    = 0x56525543u;
+    static constexpr u32 kPoseStripMarker    = 0x50525453u;
+    static constexpr u32 kAnimatorEditorMarker = 0x524F5441u;
+    static constexpr u32 kAnimatorGraphMarker  = 0x48505247u;
 
     static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian

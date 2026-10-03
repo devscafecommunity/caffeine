@@ -130,8 +130,8 @@ MeshImportReport MeshImportValidator::analyze(const std::filesystem::path& meshP
     MeshImportReport report;
     report.meshFileExists = std::filesystem::exists(meshPath);
     if (!report.meshFileExists) {
-        report.errorSummary = "Ficheiro nao encontrado";
-        report.suggestion = "Verifique o caminho do mesh no Inspector.";
+        report.errorSummary = "File not found";
+        report.suggestion = "Check the mesh path in the Inspector.";
         return report;
     }
 
@@ -149,13 +149,13 @@ MeshImportReport MeshImportValidator::analyze(const std::filesystem::path& meshP
         classifyDependencies(meshDir, listGltfExternalUris(meshPath), report);
         report.readyToLoad = report.missingDependencies.empty();
         if (!report.readyToLoad) {
-            report.errorSummary = "Ficheiros em falta: ";
+            report.errorSummary = "Missing files: ";
             for (size_t i = 0; i < report.missingDependencies.size(); ++i) {
                 if (i > 0) report.errorSummary += ", ";
                 report.errorSummary += report.missingDependencies[i];
             }
             report.suggestion =
-                "Copie o .bin e as texturas para assets/raw, ou exporte como .glb (tudo num ficheiro).";
+                "Copy the .bin and textures into assets/raw, or export as .glb (everything in one file).";
         }
         return report;
     }
@@ -165,12 +165,12 @@ MeshImportReport MeshImportValidator::analyze(const std::filesystem::path& meshP
         classifyDependencies(meshDir, listObjExternalFiles(meshPath), report);
         report.readyToLoad = report.missingDependencies.empty();
         if (!report.readyToLoad) {
-            report.errorSummary = "Ficheiros em falta: ";
+            report.errorSummary = "Missing files: ";
             for (size_t i = 0; i < report.missingDependencies.size(); ++i) {
                 if (i > 0) report.errorSummary += ", ";
                 report.errorSummary += report.missingDependencies[i];
             }
-            report.suggestion = "Importe o .obj com o .mtl e texturas na mesma pasta.";
+            report.suggestion = "Import the .obj with the .mtl and textures in the same folder.";
         } else {
             report.readyToLoad = true;
         }
@@ -184,15 +184,15 @@ MeshImportReport MeshImportValidator::analyze(const std::filesystem::path& meshP
             return analyze(objPath);
         }
         report.readyToLoad = false;
-        report.errorSummary = "FBX nao suportado diretamente";
-        report.suggestion = "Exporte como OBJ ou glTF (.glb recomendado).";
+        report.errorSummary = "FBX is not supported directly";
+        report.suggestion = "Export as OBJ or glTF (.glb recommended).";
         return report;
     }
 
     report.format = ext.empty() ? "unknown" : ext.substr(1);
     report.readyToLoad = false;
-    report.errorSummary = "Formato de mesh nao suportado";
-    report.suggestion = "Use OBJ, glTF ou GLB.";
+    report.errorSummary = "Unsupported mesh format";
+    report.suggestion = "Use OBJ, glTF, or GLB.";
     return report;
 }
 

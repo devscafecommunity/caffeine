@@ -206,7 +206,8 @@ inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove,
     ImGui::PushID(label);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 4.0f));
-    bool open = ImGui::CollapsingHeader("##hdr", ImGuiTreeNodeFlags_DefaultOpen);
+    const bool open = ImGui::CollapsingHeader("##hdr", ImGuiTreeNodeFlags_DefaultOpen |
+                                                          ImGuiTreeNodeFlags_AllowOverlap);
     ImGui::PopStyleVar();
 
     ImGui::SameLine();
@@ -219,10 +220,14 @@ inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove,
     }
 
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 24.0f);
-    if (ImGui::SmallButton("...")) {
-        ImGui::OpenPopup("##cmenu");
-    }
+    ImGui::SameLine();
+    const float rest = ImGui::GetContentRegionAvail().x;
+    const float buttons = 52.0f;
+    if (rest > buttons) ImGui::Dummy(ImVec2(rest - buttons, 1.0f));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("...")) ImGui::OpenPopup("##cmenu");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("X")) outRemove = true;
     if (ImGui::BeginPopup("##cmenu")) {
         if (ImGui::MenuItem("Remove Component")) {
             outRemove = true;
@@ -231,7 +236,7 @@ inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove,
         ImGui::EndPopup();
     }
     ImGui::PopID();
-    return open;
+    return outRemove ? true : open;
 }
 
 } // namespace Caffeine::Editor::Widgets

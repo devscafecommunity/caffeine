@@ -95,6 +95,8 @@ public:
     // ── Scene state ────────────────────────────────────────────────────
     std::string currentScenePath;
     bool        isDirty          = false;
+    /// Bumps when the editor changes something the cached GPU view must show.
+    u64         visualRevision   = 1;
     std::string materialToOpen;
     std::string imageToOpen;
     std::filesystem::path projectRootPath;
@@ -155,6 +157,13 @@ public:
     enum class MeshElementMode : u8 { Object, Vertex, Edge, Face };
     MeshElementMode meshElementMode = MeshElementMode::Object;
     std::vector<u32> meshElementSelection;
+    /// Bone picked on the character currently being configured. Ignored for other entities.
+    u32 skeletonEntityId = 0xFFFFFFFFu;
+    i32 skeletonBone = -1;
+    bool showBones = true;
+    /// Inspector Remap Bones: next viewport/list click assigns this humanoid slot.
+    bool remapBones = false;
+    i32 remapHumanoidSlot = 0;
 
     // ── Snap ───────────────────────────────────────────────────────────
     bool snapToGrid   = false;
@@ -269,7 +278,13 @@ public:
 
     bool hasMultiSelection() const { return selectedEntities.size() > 1; }
 
-    void markDirty() { isDirty = true; }
+    void markDirty() {
+        isDirty = true;
+        ++visualRevision;
+    }
+
+    /// Scene file is unsaved, but the GPU view already tracks the change (gizmo / pose).
+    void markModified() { isDirty = true; }
 
     // ── Transient status (viewport / import feedback) ────────────────
     std::string transientStatus;

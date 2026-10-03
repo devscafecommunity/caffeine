@@ -68,7 +68,7 @@ void registerForwardRenderBindings(sol::state& lua, ECS::World** worldPtr) {
             fx->volumetrics.enabled = enabled;
             if (quality) {
                 fx->volumetrics.quality =
-                    static_cast<Render::VolumetricQuality>(std::clamp(*quality, 0, 2));
+                    static_cast<Render::VolumetricQuality>(std::clamp(*quality, 0, 3));
             }
         }
     };

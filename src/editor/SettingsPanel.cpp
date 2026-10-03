@@ -1,8 +1,11 @@
 #include "editor/SettingsPanel.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "editor/EditorTheme.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -90,6 +93,7 @@ void SettingsPanel::render() {
             {"Viewport", "arrows-vertical"},
             {"Panels", "arrow-down-square"},
             {"Layout Profiles", "backup-restore"},
+            {"Shortcuts", "arrows-diagonal"},
         };
 
         if (ImGui::BeginChild("settings_nav", ImVec2(220.0f, -40.0f), true)) {
@@ -103,15 +107,20 @@ void SettingsPanel::render() {
             for (int i = 0; i < IM_ARRAYSIZE(navItems); ++i) {
                 ImGui::PushID(i);
                 const bool selected = (m_settingsSection == i);
-                if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_None, ImVec2(-1.0f, rowH))) {
-                    m_settingsSection = i;
+                const float rowW = ImGui::GetContentRegionAvail().x;
+                const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##row", ImVec2(rowW, rowH));
+                if (ImGui::IsItemClicked()) m_settingsSection = i;
+                const bool hovered = ImGui::IsItemHovered();
+                if (selected || hovered) {
+                    navDraw->AddRectFilled(rowPos, ImVec2(rowPos.x + rowW, rowPos.y + rowH),
+                                           selected ? IM_COL32(58, 78, 108, 255) : IM_COL32(48, 52, 60, 255), 4.0f);
                 }
 
-                const ImVec2 rMin = ImGui::GetItemRectMin();
-                const ImVec2 rMax = ImGui::GetItemRectMax();
+                const ImVec2 rMin = rowPos;
                 const float labelX =
                     rMin.x + style.FramePadding.x + iconSize + style.ItemInnerSpacing.x;
-                const float labelY = rMin.y + style.FramePadding.y;
+                const float labelY = rMin.y + (rowH - iconSize) * 0.5f;
                 if (EditorIcons::hasIcon(navItems[i].icon)) {
                     const ImTextureRef iconTex = EditorIcons::get(navItems[i].icon);
                     if (iconTex._TexData != nullptr || iconTex._TexID != ImTextureID_Invalid) {
@@ -137,6 +146,7 @@ void SettingsPanel::render() {
                 case 2: renderViewportSettings(); break;
                 case 3: renderPanelSettings(); break;
                 case 4: renderLayoutProfiles(); break;
+                case 5: renderShortcutSettings(); break;
                 default: break;
             }
             ImGui::EndChild();
@@ -150,6 +160,93 @@ void SettingsPanel::render() {
         ImGui::TextDisabled("Stored in %s", EditorPreferences::preferencesPath().string().c_str());
     }
     ImGui::End();
+#endif
+}
+
+void SettingsPanel::renderShortcutSettings() {
+#ifdef CF_HAS_IMGUI
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "IDE Shortcuts");
+    ImGui::Separator();
+    ImGui::TextWrapped("Click Assign and press the new key. Ctrl and Shift are stored if they are held. Esc cancels.");
+    if (EditorShortcuts::instance().pollCapture()) savePreferences();
+    if (ImGui::Button("Reset Shortcuts")) {
+        EditorShortcuts::instance().resetDefaults();
+        savePreferences();
+    }
+    ImGui::Spacing();
+    static char search[96] = {};
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##shortcut_search", "Search shortcuts...", search, sizeof(search));
+    ImGui::Spacing();
+
+    struct ShortcutGroup {
+        const char* name;
+        Shortcut ids[8];
+        int count;
+    };
+    const ShortcutGroup groups[] = {
+        {"Transform", {Shortcut::GizmoTranslate, Shortcut::GizmoRotate, Shortcut::GizmoScale}, 3},
+        {"Camera", {Shortcut::CameraForward, Shortcut::CameraBack, Shortcut::CameraLeft, Shortcut::CameraRight}, 4},
+        {"Edit",
+         {Shortcut::NewScene, Shortcut::Save, Shortcut::Undo, Shortcut::Redo, Shortcut::Copy, Shortcut::Paste,
+          Shortcut::Duplicate, Shortcut::DeleteSelection},
+         8},
+        {"Windows", {Shortcut::CommandPalette, Shortcut::CommandPaletteAlt}, 2},
+    };
+    auto contains = [](const char* haystack, const char* needle) {
+        if (!needle || needle[0] == '\0') return true;
+        if (!haystack) return false;
+        for (const char* start = haystack; *start; ++start) {
+            const char* left = start;
+            const char* right = needle;
+            while (*left && *right &&
+                   std::tolower(static_cast<unsigned char>(*left)) == std::tolower(static_cast<unsigned char>(*right))) {
+                ++left;
+                ++right;
+            }
+            if (*right == '\0') return true;
+        }
+        return false;
+    };
+
+    bool any = false;
+    for (const ShortcutGroup& group : groups) {
+        Shortcut shown[8] = {};
+        int shownCount = 0;
+        const bool groupMatch = search[0] != '\0' && contains(group.name, search);
+        for (int i = 0; i < group.count; ++i) {
+            const Shortcut id = group.ids[i];
+            if (groupMatch || contains(EditorShortcuts::label(id), search) ||
+                contains(EditorShortcuts::instance().chord(id), search)) {
+                shown[shownCount++] = id;
+            }
+        }
+        if (shownCount == 0) continue;
+        any = true;
+        if (search[0] != '\0') ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        if (!ImGui::TreeNodeEx(group.name, ImGuiTreeNodeFlags_DefaultOpen)) continue;
+        if (ImGui::BeginTable(group.name, 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            for (int i = 0; i < shownCount; ++i) {
+                const Shortcut id = shown[i];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(EditorShortcuts::label(id));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(EditorShortcuts::instance().chord(id));
+                ImGui::TableSetColumnIndex(2);
+                ImGui::PushID(static_cast<int>(id));
+                const char* caption = EditorShortcuts::instance().capturing(id) ? "..." : "Assign";
+                if (ImGui::SmallButton(caption)) EditorShortcuts::instance().beginCapture(id);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TreePop();
+    }
+    if (!any) ImGui::TextDisabled("No shortcuts match.");
 #endif
 }
 

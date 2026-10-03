@@ -184,6 +184,7 @@ public:
     
     static Mesh3D* parseGLTF(const u8* data, usize dataLen, const char* filename,
                              std::string* outError = nullptr);
+    static void ensureGltfSkin(const std::string& path, Mesh3D* mesh);
     
     static bool loadTextureFromFile(Mesh3D* mesh, const char* imagePath);
     static void loadPNGTexture(Mesh3D* mesh, const char* pngPath);

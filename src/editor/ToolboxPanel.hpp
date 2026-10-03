@@ -91,6 +91,7 @@ public:
         if (ImGui::Checkbox("Snap to grid", &ctx.snapToGrid)) {}
         ImGui::SliderFloat("Grid size", &ctx.snapGridSize, 0.1f, 10.0f, "%.2f");
         if (ImGui::Checkbox("Physics shapes", &ctx.physicsDebugVisible)) {}
+        if (ImGui::Checkbox("Bones", &ctx.showBones)) {}
         const bool textured = viewport.meshPreviewMode() == SceneViewport::MeshPreviewMode::Textured;
         if (ImGui::Button(textured ? "Textured" : "Wireframe", ImVec2(-1.0f, 0.0f))) {
             viewport.setMeshPreviewMode(textured ? SceneViewport::MeshPreviewMode::Wireframe

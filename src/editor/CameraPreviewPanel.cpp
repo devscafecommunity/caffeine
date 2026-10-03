@@ -195,7 +195,7 @@ bool renderCameraPreviewGpuOnly(SceneViewport& viewport, ECS::World& world, Edit
     const u32 probeW = static_cast<u32>(std::max(fbSizeProbe.x, 8.0f));
     const u32 probeH = static_cast<u32>(std::max(fbSizeProbe.y, 8.0f));
     const bool sizeChanged = probeW != cache.lastW || probeH != cache.lastH;
-    const u64 sceneStamp = editorSceneContentStamp(world);
+    const u64 sceneStamp = editorSceneContentStamp(world) ^ (ctx.visualRevision * 0xD1B54A32D192ED03ull);
     const bool sceneChanged = sceneStamp != cache.lastSceneStamp;
     const u32 gpuInterval = (camChanged || sceneChanged) ? 1u : 2u;
     const bool rerunGpu = (camChanged || sizeChanged || sceneChanged || !cache.hasFrame ||

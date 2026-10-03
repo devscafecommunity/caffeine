@@ -67,6 +67,7 @@ void collectSceneLights(ECS::World& world, LightingData& out);
 /// (local -Z). Identity sun lights the horizon, not the floor.
 Vec3 defaultSunDirection();
 bool directionalLightHasExplicitAim(ECS::World& world, ECS::Entity entity);
+void applySunDirection(ECS::World& world, ECS::Entity entity, const Vec3& direction);
 void applyDefaultSunOrientation(ECS::World& world, ECS::Entity entity);
 
 void buildSceneShadowMaps(ECS::World& world, const LightingData& lights, const Vec3& focus,

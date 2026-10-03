@@ -282,6 +282,10 @@ private:
     static constexpr u32 MAX_FRAMES_IN_FLIGHT = 3;
 
     void releasePendingTransfers(u32 slot);
+    void retireGpuTexture(SDL_GPUTexture* handle);
+    void releaseRetiredTextures(u32 slot);
+
+    std::vector<SDL_GPUTexture*> m_retiredTextures[MAX_FRAMES_IN_FLIGHT];
 };
 
 }  // namespace Caffeine::RHI

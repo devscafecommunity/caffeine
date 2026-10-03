@@ -9,7 +9,9 @@
 #include "ecs/Components.hpp"
 #include "ecs/ComponentQuery.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace Caffeine::Animation {
 
@@ -65,6 +67,107 @@ public:
                     checkFrameEvents(anim, frame);
                 }
             });
+
+        ECS::ComponentQuery skeletal;
+        skeletal.with<Animator>();
+        world.forEach<Animator>(skeletal, [&world, dt](ECS::Entity entity, Animator& anim) {
+            if (world.has<ECS::Sprite>(entity) || anim.paused) return;
+            const SkinnedPose* pose = world.get<SkinnedPose>(entity);
+            const ImportedSkin* skin = pose ? findImportedSkin(pose->meshPath) : nullptr;
+            stepStateMachine(anim, dt, [skin](const AnimatorStateMachine& sm, const FixedString<32>& name) {
+                return skeletalStateDuration(skin, sm, name);
+            });
+        });
+    }
+
+    using StateDurationFn = std::function<f32(const AnimatorStateMachine&, const FixedString<32>&)>;
+
+    /// Advances the base graph and every layer. Skeletal poses read the result in tickSkinnedPoses.
+    static void stepStateMachine(Animator& anim, f32 dt, const StateDurationFn& durationOf) {
+        bool fired = stepLayer(anim, anim, dt, durationOf);
+        for (AnimatorLayer& layer : anim.layers) {
+            if (layer.isGroup) continue;
+            fired = stepLayer(anim, layer, dt, durationOf) || fired;
+        }
+        if (fired) consumeTriggers(anim);
+    }
+
+    /// Single-duration form: every state of the base graph lasts `stateDuration`.
+    static void stepStateMachine(Animator& anim, f32 dt, f32 stateDuration) {
+        stepStateMachine(anim, dt, [stateDuration](const AnimatorStateMachine&, const FixedString<32>&) {
+            return stateDuration;
+        });
+    }
+
+    static f32 skeletalStateDuration(const ImportedSkin* skin, const AnimatorStateMachine& sm,
+                                     const FixedString<32>& name) {
+        if (!skin || name.empty()) return 0.0f;
+        const AnimationState* state = sm.states.get(name);
+        const i32 clip = clipForAnimatorState(*skin, name.cStr(), state ? state->motion.cStr() : nullptr);
+        if (clip < 0 || clip >= static_cast<i32>(skin->clips.size())) return 0.0f;
+        return skin->clips[static_cast<size_t>(clip)].duration;
+    }
+
+    /// Moves a graph to `target` with a crossfade. Exit sends it back through Entry to the default state.
+    static void enterState(AnimatorStateMachine& sm, const AnimationTransition& transition,
+                           const StateDurationFn& durationOf) {
+        FixedString<32> target = transition.toState;
+        if (target == FixedString<32>(kAnimatorExitState)) target = sm.defaultState;
+        if (target.empty() || !sm.states.contains(target)) return;
+        if (transition.blendTime > 0.0f && !sm.currentState.empty()) {
+            sm.fadeFromState = sm.currentState;
+            sm.fadeFromTime = sm.timeInState;
+            sm.fadeElapsed = 0.0f;
+            sm.fadeDuration = transition.blendTime;
+            sm.fadeCurve = transition.blendCurve;
+        } else {
+            sm.fadeFromState = FixedString<32>();
+            sm.fadeDuration = 0.0f;
+        }
+        sm.previousState = sm.currentState;
+        sm.currentState = target;
+        const f32 duration = durationOf ? durationOf(sm, target) : 0.0f;
+        sm.timeInState = duration > 0.0f ? std::clamp(transition.offset, 0.0f, 1.0f) * duration : 0.0f;
+    }
+
+    static bool stepLayer(Animator& anim, AnimatorStateMachine& sm, f32 dt, const StateDurationFn& durationOf) {
+        if (sm.currentState.empty()) {
+            if (sm.defaultState.empty()) return false;
+            sm.currentState = sm.defaultState;
+            sm.timeInState = 0.0f;
+            sm.fadeDuration = 0.0f;
+        }
+        const AnimationState* state = sm.states.get(sm.currentState);
+        const f32 speed = state ? state->speed : 1.0f;
+        const f32 step = dt * anim.playbackScale;
+        sm.timeInState += step * speed;
+        if (sm.fadeDuration > 0.0f) {
+            const AnimationState* from = sm.states.get(sm.fadeFromState);
+            sm.fadeFromTime += step * (from ? from->speed : 1.0f);
+            sm.fadeElapsed += step;
+            if (sm.fadeElapsed >= sm.fadeDuration) {
+                sm.fadeDuration = 0.0f;
+                sm.fadeElapsed = 0.0f;
+                sm.fadeFromState = FixedString<32>();
+            }
+        }
+        const f32 duration = durationOf ? durationOf(sm, sm.currentState) : -1.0f;
+        for (const AnimationTransition& transition : sm.anyStateTransitions) {
+            if (transition.toState == sm.currentState) continue;
+            if (transitionReady(transition, anim, sm.timeInState, duration)) {
+                enterState(sm, transition, durationOf);
+                return true;
+            }
+        }
+        if (!state) return false;
+        for (const AnimationTransition& transition : state->transitions) {
+            if (transitionReady(transition, anim, sm.timeInState, duration)) {
+                const AnimationTransition chosen = transition;
+                enterState(sm, chosen, durationOf);
+                return true;
+            }
+        }
+        return false;
     }
 
     void play(ECS::World& world, ECS::Entity e, const char* stateName) {
@@ -184,32 +287,30 @@ private:
         }
     }
 
-    static void evaluateTransitions(Animator& anim) {
+    /// Exit time is normalized: 1 waits for the clip's end. With no conditions the exit time alone fires it.
+    static bool transitionReady(const AnimationTransition& t, const Animator& anim, f32 timeInState, f32 duration) {
+        if (t.hasExitTime && duration > 0.0f) {
+            if (timeInState < std::max(t.exitTime, 0.0f) * duration) return false;
+        }
+        if (t.conditions.empty() && !t.legacyCondition) return t.hasExitTime;
+        if (!t.conditions.empty()) {
+            for (const auto& cond : t.conditions) {
+                if (!evaluateCondition(cond, anim)) return false;
+            }
+            return true;
+        }
+        return t.legacyCondition();
+    }
+
+    static void evaluateTransitions(Animator& anim, f32 stateDuration = -1.0f) {
         const AnimationState* state = anim.states.get(anim.currentState);
         if (!state) return;
 
+        const f32 duration = stateDuration >= 0.0f ? stateDuration : (state->clip ? state->clip->duration() : 0.0f);
         for (const auto& t : state->transitions) {
-            if (t.hasExitTime && state->clip) {
-                if (anim.timeInState < state->clip->duration()) continue;
-            }
-
-            bool conditionsMet = false;
-
-            if (!t.conditions.empty()) {
-                conditionsMet = true;
-                for (const auto& cond : t.conditions) {
-                    if (!evaluateCondition(cond, anim)) {
-                        conditionsMet = false;
-                        break;
-                    }
-                }
-            } else if (t.legacyCondition) {
-                conditionsMet = t.legacyCondition();
-            }
-
-            if (conditionsMet) {
+            if (transitionReady(t, anim, anim.timeInState, duration)) {
                 anim.previousState = anim.currentState;
-                anim.currentState  = t.toState;
+                anim.currentState  = t.toState == FixedString<32>(kAnimatorExitState) ? anim.defaultState : t.toState;
                 anim.timeInState   = 0.0f;
                 consumeTriggers(anim);
                 return;

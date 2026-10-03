@@ -1,5 +1,6 @@
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/EntityPresetRegistry.hpp"
+#include "editor/PluginSystem.hpp"
 #include "editor/EditorPanelUtils.hpp"
 
 #ifdef CF_HAS_IMGUI
@@ -19,6 +20,11 @@ void EntityPresetsPanel::createSelectedPreset(ECS::World& world, EditorContext& 
     const auto* preset = EntityPresetRegistry::instance().findPreset(m_selectedPresetId);
     if (!preset || !preset->spawn) {
         m_statusMessage = "No preset selected.";
+        m_statusIsError = true;
+        return;
+    }
+    if (!PluginManager::instance().isContributionEnabled(preset->plugin)) {
+        m_statusMessage = "That preset belongs to a disabled plugin.";
         m_statusIsError = true;
         return;
     }
@@ -76,6 +82,7 @@ void EntityPresetsPanel::renderPresetList() {
     }
 
     for (const auto* preset : presets) {
+        if (!PluginManager::instance().isContributionEnabled(preset->plugin)) continue;
         const bool selected = (m_selectedPresetId == preset->id);
         if (ImGui::Selectable(preset->displayName.c_str(), selected)) {
             selectPreset(preset->id);

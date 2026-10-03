@@ -15,6 +15,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace Caffeine::Assets {
 using namespace Caffeine;
@@ -144,7 +148,17 @@ Mat4 gltfNodeLocal(const tinygltf::Node& node) {
 
 void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3D* mesh) {
     if (!mesh || model.skins.empty() || model.nodes.empty()) return;
-    const tinygltf::Skin& skin = model.skins[0];
+    size_t skinIndex = 0;
+    bool foundSkin = false;
+    for (size_t i = 0; i < model.skins.size(); ++i) {
+        if (!model.skins[i].joints.empty()) {
+            skinIndex = i;
+            foundSkin = true;
+            break;
+        }
+    }
+    if (!foundSkin) return;
+    const tinygltf::Skin& skin = model.skins[skinIndex];
     if (skin.joints.empty()) return;
 
     std::vector<int> parent(model.nodes.size(), -1);
@@ -180,6 +194,57 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
         imported.skeleton.bones[joint].parentIndex = parentBone;
     }
 
+    std::vector<int> extraNodes;
+    extraNodes.reserve(model.nodes.size());
+    for (size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex) {
+        if (boneOfNode[nodeIndex] >= 0) continue;
+        int cursor = parent[nodeIndex];
+        bool underJoint = false;
+        for (int guard = 0; cursor >= 0 && guard < 64; ++guard) {
+            if (boneOfNode[static_cast<size_t>(cursor)] >= 0) {
+                underJoint = true;
+                break;
+            }
+            cursor = parent[static_cast<size_t>(cursor)];
+        }
+        if (underJoint) extraNodes.push_back(static_cast<int>(nodeIndex));
+    }
+    std::sort(extraNodes.begin(), extraNodes.end(), [&](int a, int b) {
+        auto depthOf = [&](int node) {
+            int depth = 0;
+            for (int cursor = parent[static_cast<size_t>(node)]; cursor >= 0 && depth < 64;
+                 cursor = parent[static_cast<size_t>(cursor)]) {
+                ++depth;
+            }
+            return depth;
+        };
+        return depthOf(a) < depthOf(b);
+    });
+    for (int nodeIndex : extraNodes) {
+        if (imported.skeleton.bones.size() >= 256) break;
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size())) continue;
+        if (boneOfNode[static_cast<size_t>(nodeIndex)] >= 0) continue;
+        const tinygltf::Node& node = model.nodes[static_cast<size_t>(nodeIndex)];
+        const int bone = static_cast<int>(imported.skeleton.bones.size());
+        boneOfNode[static_cast<size_t>(nodeIndex)] = bone;
+        imported.boneNames.push_back(node.name.empty() ? ("bone_" + std::to_string(bone)) : node.name);
+        Animation::Bone added;
+        added.name = imported.boneNames.back().c_str();
+        added.localTransform = gltfNodeLocal(node);
+        added.bindPoseInverse = Mat4::identity();
+        int cursor = parent[static_cast<size_t>(nodeIndex)];
+        int parentBone = -1;
+        while (cursor >= 0) {
+            if (boneOfNode[static_cast<size_t>(cursor)] >= 0) {
+                parentBone = boneOfNode[static_cast<size_t>(cursor)];
+                break;
+            }
+            cursor = parent[static_cast<size_t>(cursor)];
+        }
+        added.parentIndex = parentBone;
+        imported.skeleton.bones.push_back(added);
+    }
+
     std::vector<Mat4> nodeWorld(model.nodes.size(), Mat4::identity());
     std::vector<u8> visited(model.nodes.size(), 0);
     const auto walkNode = [&](auto&& self, int index, const Mat4& parentWorld) -> void {
@@ -206,6 +271,15 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
             Mat4 inverse;
             std::memcpy(inverse.data(), bytes + joint * stride, sizeof(f32) * 16);
             imported.skeleton.bones[joint].bindPoseInverse = inverse;
+        }
+    }
+    const size_t authoredJoints = skin.joints.size();
+    for (size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex) {
+        const int bone = boneOfNode[nodeIndex];
+        if (bone < static_cast<int>(authoredJoints)) continue;
+        Mat4 inverse;
+        if (invertMat4(nodeWorld[nodeIndex], inverse)) {
+            imported.skeleton.bones[static_cast<size_t>(bone)].bindPoseInverse = inverse;
         }
     }
 
@@ -258,6 +332,20 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
         clip.name = animation.name.empty() ? "Clip" : animation.name.c_str();
         clip.loop = true;
         f32 duration = 0.0f;
+        // Translation, rotation and scale arrive as separate tracks with their own key times.
+        // Each bone is resampled on the union of its track times so the merged keys stay in order.
+        struct Track {
+            std::vector<f32> times;
+            std::vector<Vec3> vectors;
+            std::vector<Quat> rotations;
+            bool step = false;
+        };
+        struct BoneTracks {
+            Track translation;
+            Track rotation;
+            Track scale;
+        };
+        std::unordered_map<int, BoneTracks> boneTracks;
         for (const tinygltf::AnimationChannel& channel : animation.channels) {
             if (channel.target_node < 0 || channel.target_node >= static_cast<int>(boneOfNode.size())) continue;
             const int bone = boneOfNode[static_cast<size_t>(channel.target_node)];
@@ -280,44 +368,82 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
                 continue;
             }
             const int components = channel.target_path == "rotation" ? 4 : 3;
+            BoneTracks& tracks = boneTracks[bone];
+            Track& track = channel.target_path == "translation" ? tracks.translation
+                         : channel.target_path == "scale"       ? tracks.scale
+                                                                : tracks.rotation;
+            track = Track{};
+            track.step = sampler.interpolation == "STEP";
+            for (size_t key = 0; key < timeCount; ++key) {
+                f32 time = 0.0f;
+                std::memcpy(&time, times + key * timeStride, sizeof(f32));
+                duration = std::max(duration, time);
+                const u8* value = values + (key * static_cast<size_t>(valuesPerKey) + (cubic ? 1 : 0)) * valueStride;
+                f32 raw[4] = {0, 0, 0, 1};
+                std::memcpy(raw, value, sizeof(f32) * static_cast<size_t>(components));
+                track.times.push_back(time);
+                if (components == 4) track.rotations.push_back(Quat(raw[0], raw[1], raw[2], raw[3]).normalized());
+                else track.vectors.push_back(Vec3(raw[0], raw[1], raw[2]));
+            }
+        }
+        auto trackSegment = [](const Track& track, f32 time, size_t& index, f32& alpha) {
+            const auto upper = std::upper_bound(track.times.begin(), track.times.end(), time);
+            if (upper == track.times.begin()) {
+                index = 0;
+                alpha = 0.0f;
+                return;
+            }
+            index = static_cast<size_t>(upper - track.times.begin()) - 1;
+            if (index + 1 >= track.times.size()) {
+                alpha = 0.0f;
+                return;
+            }
+            const f32 span = track.times[index + 1] - track.times[index];
+            alpha = (track.step || span <= 0.0f) ? 0.0f : (time - track.times[index]) / span;
+        };
+        auto sampleVector = [&](const Track& track, f32 time, const Vec3& fallback) {
+            if (track.times.empty() || track.vectors.empty()) return fallback;
+            size_t index = 0;
+            f32 alpha = 0.0f;
+            trackSegment(track, time, index, alpha);
+            const Vec3& a = track.vectors[std::min(index, track.vectors.size() - 1)];
+            if (alpha <= 0.0f || index + 1 >= track.vectors.size()) return a;
+            return a + (track.vectors[index + 1] - a) * alpha;
+        };
+        auto sampleRotation = [&](const Track& track, f32 time, const Quat& fallback) {
+            if (track.times.empty() || track.rotations.empty()) return fallback;
+            size_t index = 0;
+            f32 alpha = 0.0f;
+            trackSegment(track, time, index, alpha);
+            const Quat& a = track.rotations[std::min(index, track.rotations.size() - 1)];
+            if (alpha <= 0.0f || index + 1 >= track.rotations.size()) return a;
+            return Quat::slerp(a, track.rotations[index + 1], alpha).normalized();
+        };
+        for (auto& [bone, tracks] : boneTracks) {
             const Mat4& rest = imported.skeleton.bones[static_cast<size_t>(bone)].localTransform;
             const Vec3 restPosition(rest(0, 3), rest(1, 3), rest(2, 3));
             const Vec3 restScale(Vec3(rest(0, 0), rest(1, 0), rest(2, 0)).length(),
                                  Vec3(rest(0, 1), rest(1, 1), rest(2, 1)).length(),
                                  Vec3(rest(0, 2), rest(1, 2), rest(2, 2)).length());
             const Quat restRotation = Quat::fromMatrix(rest);
-            std::vector<Animation::SkeletalKeyframe> keys(timeCount);
-            for (size_t key = 0; key < timeCount; ++key) {
-                f32 time = 0.0f;
-                std::memcpy(&time, times + key * timeStride, sizeof(f32));
+            std::vector<f32> keyTimes;
+            for (const Track* track : {&tracks.translation, &tracks.rotation, &tracks.scale}) {
+                keyTimes.insert(keyTimes.end(), track->times.begin(), track->times.end());
+            }
+            std::sort(keyTimes.begin(), keyTimes.end());
+            keyTimes.erase(std::unique(keyTimes.begin(), keyTimes.end(),
+                                       [](f32 a, f32 b) { return std::fabs(a - b) < 1.0e-5f; }),
+                           keyTimes.end());
+            if (keyTimes.empty()) continue;
+            std::vector<Animation::SkeletalKeyframe> keys(keyTimes.size());
+            for (size_t key = 0; key < keyTimes.size(); ++key) {
+                const f32 time = keyTimes[key];
                 keys[key].time = time;
-                keys[key].position = restPosition;
-                keys[key].rotation = restRotation;
-                keys[key].scale = restScale;
-                duration = std::max(duration, time);
-                const u8* value = values + (key * static_cast<size_t>(valuesPerKey) + (cubic ? 1 : 0)) * valueStride;
-                f32 raw[4] = {0, 0, 0, 1};
-                std::memcpy(raw, value, sizeof(f32) * static_cast<size_t>(components));
-                if (channel.target_path == "translation") keys[key].position = Vec3(raw[0], raw[1], raw[2]);
-                else if (channel.target_path == "scale") keys[key].scale = Vec3(raw[0], raw[1], raw[2]);
-                else keys[key].rotation = Quat(raw[0], raw[1], raw[2], raw[3]);
+                keys[key].position = sampleVector(tracks.translation, time, restPosition);
+                keys[key].rotation = sampleRotation(tracks.rotation, time, restRotation);
+                keys[key].scale = sampleVector(tracks.scale, time, restScale);
             }
-            const std::vector<Animation::SkeletalKeyframe>* existing = clip.channels.get(static_cast<u32>(bone));
-            std::vector<Animation::SkeletalKeyframe> merged = existing ? *existing : std::vector<Animation::SkeletalKeyframe>{};
-            if (merged.empty()) {
-                merged = keys;
-            } else {
-                for (size_t key = 0; key < keys.size() && key < merged.size(); ++key) {
-                    if (channel.target_path == "translation") merged[key].position = keys[key].position;
-                    else if (channel.target_path == "scale") merged[key].scale = keys[key].scale;
-                    else if (channel.target_path == "rotation") merged[key].rotation = keys[key].rotation;
-                }
-                if (keys.size() > merged.size()) {
-                    for (size_t key = merged.size(); key < keys.size(); ++key) merged.push_back(keys[key]);
-                }
-            }
-            (void)rest;
-            clip.channels.set(static_cast<u32>(bone), merged);
+            clip.channels.set(static_cast<u32>(bone), std::move(keys));
         }
         if (clip.channels.size() == 0) continue;
         clip.duration = duration;
@@ -326,6 +452,71 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
     }
 
     imported.mesh = mesh;
+    // Bind pose must land on the raw vertices. Some exporters leave the armature
+    // at 0.01 while the inverse-bind stays in centimeters, and the inverse mesh
+    // transform then throws the character thousands of units away.
+    if (mesh->skin.size() == mesh->vertices.size() && !imported.skeleton.bones.empty()) {
+        const u32 boneCount = imported.skeleton.boneCount();
+        std::vector<Mat4> world(boneCount, Mat4::identity());
+        std::vector<u8> resolved(boneCount, 0);
+        for (u32 pass = 0; pass < boneCount; ++pass) {
+            bool progressed = false;
+            for (u32 bone = 0; bone < boneCount; ++bone) {
+                if (resolved[bone]) continue;
+                const i32 parent = imported.skeleton.bones[bone].parentIndex;
+                if (parent >= 0 && (parent >= static_cast<i32>(boneCount) || !resolved[static_cast<u32>(parent)])) {
+                    continue;
+                }
+                world[bone] = parent >= 0
+                    ? world[static_cast<u32>(parent)] * imported.skeleton.bones[bone].localTransform
+                    : imported.skeleton.bones[bone].localTransform;
+                resolved[bone] = 1;
+                progressed = true;
+            }
+            if (!progressed) break;
+        }
+        const auto bindError = [&](const Mat4& space) -> f32 {
+            f32 error = 0.0f;
+            int samples = 0;
+            const size_t step = std::max<size_t>(1, mesh->vertices.size() / 24);
+            for (size_t i = 0; i < mesh->vertices.size() && samples < 24; i += step) {
+                const Vec3& vertex = mesh->vertices[i].position;
+                const VertexSkin& influence = mesh->skin[i];
+                Vec3 posed{};
+                f32 weightSum = 0.0f;
+                for (int channel = 0; channel < 4; ++channel) {
+                    const f32 weight = influence.weights[channel];
+                    if (weight <= 0.0f) continue;
+                    const u32 joint = influence.joints[channel];
+                    if (joint >= boneCount) continue;
+                    const Mat4 skinMatrix =
+                        space * world[joint] * imported.skeleton.bones[joint].bindPoseInverse;
+                    posed = posed + skinMatrix.transformPoint(vertex) * weight;
+                    weightSum += weight;
+                }
+                if (weightSum <= 0.0f) continue;
+                error += (posed - vertex).length();
+                ++samples;
+            }
+            return samples > 0 ? error / static_cast<f32>(samples) : 1.0e9f;
+        };
+        const f32 currentError = bindError(imported.skeleton.skinSpace);
+        if (currentError > 0.01f) {
+            Mat4 meshWorld;
+            f32 bestError = currentError;
+            Mat4 chosen = imported.skeleton.skinSpace;
+            if (invertMat4(imported.skeleton.skinSpace, meshWorld)) {
+                const f32 scaledError = bindError(meshWorld);
+                if (scaledError < bestError) {
+                    bestError = scaledError;
+                    chosen = meshWorld;
+                }
+            }
+            const f32 identityError = bindError(Mat4::identity());
+            if (identityError < bestError) chosen = Mat4::identity();
+            imported.skeleton.skinSpace = chosen;
+        }
+    }
     Animation::registerImportedSkin(path, std::move(imported));
 }
 
@@ -334,14 +525,14 @@ void importGltfSkin(const tinygltf::Model& model, const std::string& path, Mesh3
 Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filename,
                               std::string* outError) {
     if (!filename) {
-        if (outError) *outError = "Dados glTF invalidos";
+        if (outError) *outError = "Invalid glTF data";
         return nullptr;
     }
 
     const std::string filenameStr(filename);
     const bool isGlb = filenameStr.ends_with(".glb");
     if (isGlb && (!data || dataLen == 0)) {
-        if (outError) *outError = "Dados glTF invalidos";
+        if (outError) *outError = "Invalid glTF data";
         return nullptr;
     }
     
@@ -372,13 +563,13 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
 
     if (!success) {
         if (outError) {
-            *outError = err.empty() ? "Falha ao carregar glTF" : err;
+            *outError = err.empty() ? "Failed to load glTF" : err;
         }
         return nullptr;
     }
 
     if (model.meshes.empty()) {
-        if (outError) *outError = "glTF nao contem meshes";
+        if (outError) *outError = "glTF contains no meshes";
         return nullptr;
     }
 
@@ -531,7 +722,7 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
     
     if (vertices.empty()) {
         delete mesh;
-        if (outError) *outError = "glTF sem vertices validos";
+        if (outError) *outError = "glTF has no valid vertices";
         return nullptr;
     }
     
@@ -588,6 +779,48 @@ bool MeshLoader::loadTextureFromFile(Mesh3D* mesh, const char* imagePath) {
 
 void MeshLoader::loadPNGTexture(Mesh3D* mesh, const char* pngPath) {
     loadTextureFromFile(mesh, pngPath);
+}
+
+void MeshLoader::ensureGltfSkin(const std::string& path, Mesh3D* mesh) {
+    if (path.empty() || !mesh || Animation::findImportedSkin(path)) return;
+    static std::unordered_set<std::string> attempted;
+    if (!attempted.insert(path).second) return;
+
+    const auto skipImages = [](tinygltf::Image* image, const int, std::string*, std::string*, int, int,
+                               const unsigned char*, int, void*) -> bool {
+        if (image) {
+            image->image.clear();
+            image->width = 0;
+            image->height = 0;
+            image->component = 0;
+        }
+        return true;
+    };
+
+    const bool isGlb = path.size() >= 4 &&
+                       (path.ends_with(".glb") || path.ends_with(".GLB"));
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    loader.SetImageLoader(skipImages, nullptr);
+    std::string err, warn;
+    std::string basePath;
+    const size_t lastSlash = path.find_last_of("/\\");
+    if (lastSlash != std::string::npos) basePath = path.substr(0, lastSlash + 1);
+    bool success = false;
+    if (isGlb) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) return;
+        std::vector<u8> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (buffer.empty()) return;
+        success = loader.LoadBinaryFromMemory(&model, &err, &warn, buffer.data(),
+                                              static_cast<unsigned int>(buffer.size()), basePath);
+    } else {
+        success = loader.LoadASCIIFromFile(&model, &err, &warn, path);
+    }
+    if (success) importGltfSkin(model, path, mesh);
+    if (!Animation::findImportedSkin(path)) {
+        Animation::synthesizeHumanoidSkin(path, *mesh);
+    }
 }
 
 }

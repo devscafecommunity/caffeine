@@ -67,6 +67,8 @@ struct EntityPresetDescriptor {
     std::string category;
     std::string defaultEntityName = "New Entity";
     std::string source = "builtin";
+    /// Plugin library stem when the preset came from plugins/. Empty = always visible.
+    std::string plugin;
     bool builtIn = true;
 
     std::filesystem::path packageRoot;

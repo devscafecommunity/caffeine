@@ -69,6 +69,9 @@ public:
     // Canonical editor project root (never a nested build/ output folder).
     static std::filesystem::path ResolveEditorProjectRoot(std::filesystem::path root);
 
+    /// Creates the default project folders (Animations, Models, Materials, ...) if they are missing.
+    static void EnsureDefaultFolders(const std::filesystem::path& root);
+
     // Override the recent projects file path (used for testing).
     // Reloads from the new path immediately.
     void SetRecentProjectsPath(std::filesystem::path path) {

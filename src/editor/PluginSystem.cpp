@@ -170,6 +170,7 @@ bool PluginManager::hostRegisterEntityPresetManifest(void* ctx, const char* plug
     if (!loaded.presets.empty()) {
         for (auto& preset : loaded.presets) {
             preset.source = id;
+            preset.plugin = id;
             EntityPresetRegistry::instance().registerPreset(std::move(preset));
         }
         return true;
@@ -197,7 +198,7 @@ CaffeinePluginU32 PluginManager::hostGetSelectedEntityId(void* editorContext) {
 
 void PluginManager::hostMarkSceneDirty(void* editorContext) {
     auto* ctx = static_cast<EditorContext*>(editorContext);
-    if (ctx) ctx->isDirty = true;
+    if (ctx) ctx->markDirty();
 }
 
 bool PluginManager::hostInvokeService(void* ctx, const char* serviceName, const void* request,
@@ -253,7 +254,7 @@ bool PluginManager::registerPanel(const std::string& pluginName, const std::stri
         FixedString<64> id(panel.commandId.c_str());
         m_commandPalette->registerCommand(
             id, FixedString<128>(title.c_str()), FixedString<128>("Plugins"),
-            [this, title]() { openPanel(title); });
+            [this, title]() { openPanel(title); }, true, pluginName.c_str());
     }
     return true;
 }
@@ -451,6 +452,26 @@ bool PluginManager::loadPluginInternal(const std::string& path, bool fromHotRelo
     return true;
 }
 
+bool PluginManager::isContributionEnabled(const std::string& pluginName) const {
+    if (pluginName.empty()) return true;
+    if (const PluginHandle* handle = findLoadedPluginByStem(pluginName)) return handle->enabled;
+    const std::filesystem::path asPath(pluginName);
+    if (const PluginHandle* handle = findLoadedPluginByStem(asPath.stem().string())) {
+        return handle->enabled;
+    }
+    return false;
+}
+
+bool PluginManager::isComponentDrawerEnabled(u32 componentTypeId) const {
+    bool found = false;
+    for (const auto& drawer : m_componentDrawers) {
+        if (drawer.componentTypeId != componentTypeId) continue;
+        found = true;
+        if (isContributionEnabled(drawer.pluginName)) return true;
+    }
+    return !found;
+}
+
 const PluginHandle* PluginManager::findLoadedPluginByStem(
     const std::string& stem) const {
     for (const auto& [path, handle] : m_loadedPlugins) {
@@ -565,7 +586,7 @@ void PluginManager::refreshPlugins(float dt) {
     }
 
     for (auto& [name, handle] : m_loadedPlugins) {
-        if (handle.status != PluginStatus::Active || !handle.instance) continue;
+        if (!handle.enabled || handle.status != PluginStatus::Active || !handle.instance) continue;
         try {
             handle.instance->OnUpdate(0.5f);
         } catch (...) {
@@ -594,10 +615,22 @@ void PluginManager::renderPanels() {
     }
 }
 
+bool PluginManager::hasMenuItems(const char* topLevelMenu) const {
+    if (!topLevelMenu) return false;
+    for (const auto& action : m_menuActions) {
+        if (!isContributionEnabled(action.pluginName)) continue;
+        const auto slash = action.menuPath.find('/');
+        if (slash == std::string::npos) continue;
+        if (action.menuPath.compare(0, slash, topLevelMenu) == 0) return true;
+    }
+    return false;
+}
+
 void PluginManager::renderMenuItems(const char* topLevelMenu) {
     if (!topLevelMenu) return;
 
     for (const auto& action : m_menuActions) {
+        if (!isContributionEnabled(action.pluginName)) continue;
         const auto slash = action.menuPath.find('/');
         if (slash == std::string::npos) continue;
 
@@ -612,8 +645,17 @@ void PluginManager::renderMenuItems(const char* topLevelMenu) {
 }
 
 void PluginManager::renderMenuExtensions() {
-    if (!m_panels.empty() && ImGui::BeginMenu("Window")) {
+    bool any = false;
+    for (const auto& panel : m_panels) {
+        if (isContributionEnabled(panel.pluginName)) {
+            any = true;
+            break;
+        }
+    }
+    if (!any) return;
+    if (ImGui::BeginMenu("Window")) {
         for (auto& panel : m_panels) {
+            if (!isContributionEnabled(panel.pluginName)) continue;
             ImGui::MenuItem(panel.title.c_str(), nullptr, &panel.open);
         }
         ImGui::EndMenu();
@@ -656,7 +698,13 @@ void PluginManager::renderManagerUI() {
             for (auto& [path, handle] : m_loadedPlugins) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
+                const bool wasEnabled = handle.enabled;
                 ImGui::Checkbox(("##en" + handle.name).c_str(), &handle.enabled);
+                if (wasEnabled && !handle.enabled) {
+                    for (auto& panel : m_panels) {
+                        if (panel.pluginName == handle.name) panel.open = false;
+                    }
+                }
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(handle.name.c_str());

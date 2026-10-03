@@ -13,6 +13,7 @@
 #include "editor/EditorContext.hpp"
 #include "math/Mat4.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
 #include "render/SkyboxRenderer.hpp"
@@ -109,6 +110,16 @@ void GameplayPreviewPanel::shutdown() {
 }
 
 void GameplayPreviewPanel::resizeCanvas(u32 width, u32 height) {
+    GpuCanvasLatch latch{m_width, m_height, m_pendingW, m_pendingH, m_stable};
+    if (!latch.commit(width, height)) {
+        m_pendingW = latch.pendingW;
+        m_pendingH = latch.pendingH;
+        m_stable = latch.stable;
+        return;
+    }
+    m_pendingW = m_pendingH = m_stable = 0;
+    width = latch.width;
+    height = latch.height;
     if (!m_device || width < 1 || height < 1) return;
     if (m_width == width && m_height == height && m_colorTarget && m_depthTarget) return;
 
@@ -250,23 +261,28 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         camera.proj = Mat4::perspective(camera.fovRad, aspect, camera.nearClip, camera.farClip);
 
         Render::GpuSceneRenderOptions previewOpts;
-        previewOpts.enableShadows = false;
+        previewOpts.enableShadows = Scene::environmentWantsShadows(world);
         previewOpts.wireframeMeshes = false;
         previewOpts.environmentPath.clear();
         previewOpts.postProcessCamera = cameraEntity;
         previewOpts.renderScale = ctx.renderScale;
         previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
+        previewOpts.viewId = 3;
+        if (Scene::environmentHasOverride(world)) {
+            previewOpts.overrideAmbient = true;
+            previewOpts.ambientColor = Scene::environmentAmbientAt(world, position);
+        }
 
-        const bool camChanged = (position - m_lastCamPos).length() > 0.001f
-            || (forward - m_lastCamForward).length() > 0.001f
-            || std::abs(camera.fovRad - m_lastFovRad) > 0.001f;
-        const bool sizeChanged = targetW != m_lastTargetW || targetH != m_lastTargetH;
-        const u64 sceneStamp = editorSceneContentStamp(world);
+        const bool camChanged = (position - m_lastCamPos).length() > 0.0005f
+            || (forward - m_lastCamForward).length() > 0.0005f
+            || std::abs(camera.fovRad - m_lastFovRad) > 0.0005f;
+        const bool sizeChanged = m_width != m_lastTargetW || m_height != m_lastTargetH;
+        const u64 sceneStamp = editorSceneContentStamp(world) ^ (ctx.visualRevision * 0xD1B54A32D192ED03ull);
         const bool sceneChanged = sceneStamp != m_lastSceneStamp;
-        const u32 gpuInterval = (camChanged || sceneChanged) ? 1u : 2u;
+        // TAA needs every frame. Skipping left the jittered projection on screen.
         const bool rerunGpu = (camChanged || sizeChanged || sceneChanged || !m_hasGpuFrame ||
                                ctx.isPlayMode || m_renderer.needsAnotherFrame())
-            && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
+            && editorPanelWorthGpuRender(origin, panelSize, 1u);
 
         if (rerunGpu) {
             m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget,
@@ -274,8 +290,8 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
             m_lastCamPos = position;
             m_lastCamForward = forward;
             m_lastFovRad = camera.fovRad;
-            m_lastTargetW = targetW;
-            m_lastTargetH = targetH;
+            m_lastTargetW = m_width;
+            m_lastTargetH = m_height;
             m_lastSceneStamp = sceneStamp;
             m_hasGpuFrame = true;
         }

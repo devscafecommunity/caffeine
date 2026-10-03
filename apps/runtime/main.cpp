@@ -24,6 +24,7 @@
 #include "ui/UISystem.hpp"
 #include "ui/UIRenderer.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
 #include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
@@ -521,6 +522,7 @@ int main(int argc, char** argv) {
                     });
             }
             Caffeine::Effects::tickEffects(world, dt, effectCamera);
+            Caffeine::Scene::tickEnvironmentEffects(world, dt, effectCamera);
             Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
             if (scriptsReady) {

@@ -16,7 +16,7 @@ enum class ReflectionMode : u8 { Off = 0, Planar = 1, ScreenSpace = 2, Probe = 3
 
 /// Analytical height fog in the forward shader. It does not redraw the scene.
 /// Low is 6 steps, Medium is 12. Shadow samples along the ray are optional.
-enum class VolumetricQuality : u8 { Off = 0, Low = 1, Medium = 2 };
+enum class VolumetricQuality : u8 { Off = 0, Low = 1, Medium = 2, High = 3 };
 
 struct RenderFeatureSettings {
     bool instancingEnabled = true;

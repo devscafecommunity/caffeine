@@ -17,6 +17,8 @@ struct CommandPaletteItem {
     FixedString<128> category;
     std::function<void()> callback;
     bool enabled = true;
+    std::string plugin;
+    std::string keywords;
 };
 
 class CommandPalette {
@@ -29,7 +31,9 @@ public:
                          const FixedString<128>& label,
                          const FixedString<128>& category,
                          std::function<void()> callback,
-                         bool enabled = true);
+                         bool enabled = true,
+                         const char* plugin = nullptr,
+                         const char* keywords = nullptr);
 
     void unregisterCommand(const FixedString<64>& id);
 
@@ -65,6 +69,7 @@ private:
     std::vector<Item> m_commands;
     std::vector<const Item*> m_filteredResults;
     usize m_selectedIndex = 0;
+    bool m_focusSearch = false;
 };
 
 }

@@ -3,9 +3,11 @@
 #include "debug/CrashHandler.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "assets/MaterialCache.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "editor/EditorCameraMath.hpp"
 #include "editor/ImGuiGpuTexture.hpp"
 #include "editor/TestInstrumentation.hpp"
@@ -767,8 +769,19 @@ bool SceneViewport::init(RHI::RenderDevice* device, Config cfg) {
 }
 
 void SceneViewport::resizeCanvasIfNeeded(u32 newWidth, u32 newHeight) {
+    GpuCanvasLatch latch{m_lastCanvasWidth, m_lastCanvasHeight, m_canvasPendingW, m_canvasPendingH,
+                         m_canvasStable};
+    if (!latch.commit(newWidth, newHeight)) {
+        m_canvasPendingW = latch.pendingW;
+        m_canvasPendingH = latch.pendingH;
+        m_canvasStable = latch.stable;
+        return;
+    }
+    m_canvasPendingW = m_canvasPendingH = m_canvasStable = 0;
+    newWidth = latch.width;
+    newHeight = latch.height;
     if (!m_device || newWidth < 1 || newHeight < 1) return;
-    if (m_lastCanvasWidth == newWidth && m_lastCanvasHeight == newHeight) return;
+    if (m_lastCanvasWidth == newWidth && m_lastCanvasHeight == newHeight && m_colorTarget) return;
     
     if (m_colorTarget) m_device->destroyTexture(m_colorTarget);
     if (m_depthTarget) m_device->destroyTexture(m_depthTarget);
@@ -792,8 +805,19 @@ void SceneViewport::resizeCanvasIfNeeded(u32 newWidth, u32 newHeight) {
 }
 
 void SceneViewport::resizePreviewCanvasIfNeeded(u32 newWidth, u32 newHeight) {
+    GpuCanvasLatch latch{m_previewCanvasWidth, m_previewCanvasHeight, m_previewPendingW, m_previewPendingH,
+                         m_previewStable};
+    if (!latch.commit(newWidth, newHeight)) {
+        m_previewPendingW = latch.pendingW;
+        m_previewPendingH = latch.pendingH;
+        m_previewStable = latch.stable;
+        return;
+    }
+    m_previewPendingW = m_previewPendingH = m_previewStable = 0;
+    newWidth = latch.width;
+    newHeight = latch.height;
     if (!m_device || newWidth < 1 || newHeight < 1) return;
-    if (m_previewCanvasWidth == newWidth && m_previewCanvasHeight == newHeight) return;
+    if (m_previewCanvasWidth == newWidth && m_previewCanvasHeight == newHeight && m_previewColorTarget) return;
 
     if (m_previewColorTarget) m_device->destroyTexture(m_previewColorTarget);
     if (m_previewDepthTarget) m_device->destroyTexture(m_previewDepthTarget);
@@ -837,7 +861,9 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     camera.farClip = farClip;
 
     Render::GpuSceneRenderOptions previewOpts;
-    previewOpts.enableShadows = false;
+    previewOpts.enableShadows = Scene::environmentWantsShadows(world);
+    previewOpts.directionalCascadeCount = 1;
+    previewOpts.cameraSettled = true;
     previewOpts.textureQuality.enabled = ctx.textureQualityEnabled;
     previewOpts.textureQuality.fullRadius = ctx.textureQualityRadius;
     previewOpts.textureQuality.falloffDistance = ctx.textureQualityFalloff;
@@ -847,6 +873,10 @@ bool SceneViewport::renderCameraPreviewGpu(RHI::CommandBuffer* cmd, ECS::World& 
     previewOpts.renderScale = ctx.renderScale;
     previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
     previewOpts.viewId = 2;
+    if (Scene::environmentHasOverride(world)) {
+        previewOpts.overrideAmbient = true;
+        previewOpts.ambientColor = Scene::environmentAmbientAt(world, cameraPos);
+    }
     m_gpuSceneRenderer.renderWithCamera(
         cmd, world, camera, m_previewColorTarget, m_previewDepthTarget, width, height, projectRoot,
         previewOpts);
@@ -932,8 +962,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     const ImVec2 framebufferSize = imguiFramebufferSize(viewportSize, 3840);
     const u32 targetCanvasW = static_cast<u32>(framebufferSize.x);
     const u32 targetCanvasH = static_cast<u32>(framebufferSize.y);
-    const bool canvasResized = m_gpuCacheWidth != targetCanvasW || m_gpuCacheHeight != targetCanvasH;
     resizeCanvasIfNeeded(targetCanvasW, targetCanvasH);
+    const bool canvasResized = m_gpuCacheWidth != m_lastCanvasWidth || m_gpuCacheHeight != m_lastCanvasHeight;
 
     if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
         Scene::syncTerrainMeshes(world);
@@ -956,12 +986,14 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         const bool editorCameraMoved = camMotion > 0.0001f;
         const bool previewModeChanged = m_meshPreviewMode != m_lastMeshPreviewMode;
         const u64 sceneStamp = editorSceneContentStamp(world) ^
-                               (static_cast<u64>(ctx.skyboxIndex + 1) * 0x9E3779B97F4A7C15ull);
+                               (static_cast<u64>(ctx.skyboxIndex + 1) * 0x9E3779B97F4A7C15ull) ^
+                               (ctx.visualRevision * 0xD1B54A32D192ED03ull);
         const bool sceneChanged = sceneStamp != m_lastSceneStamp;
+        const bool poseChanged = m_lastSkinRevision != Animation::skinRevision();
         // Shadows and reflection probes only run on a settled frame; draw one when the camera stops.
-        const bool settledFramePending = !m_lastGpuFrameSettled && camMotion < 0.002f;
+        const bool settledFramePending = !m_lastGpuFrameSettled && camMotion < 0.002f && !poseChanged;
         const bool gpuNeedsRedraw = editorCameraMoved || canvasResized || previewModeChanged
-            || sceneChanged || settledFramePending || !m_hasValidGpuFrame || ctx.isPlayMode
+            || sceneChanged || poseChanged || settledFramePending || !m_hasValidGpuFrame || ctx.isPlayMode
             || m_viewportNeedsAnotherFrame
             || std::abs(ctx.renderScale - m_lastRenderScale) > 1e-4f
             || m_config.grid != m_lastGridVisible;
@@ -974,11 +1006,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             // previews keep their own lighting; shadows belong in play mode / runtime, not edit mode.
             // One cascade, and only after the camera settles. Four cascades while
             // orbiting redraw the whole scene and blow the 16 ms budget.
-            gpuOpts.enableShadows = m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
+            gpuOpts.enableShadows = Scene::environmentWantsShadows(world) ||
+                                    (!poseChanged && m_editorCamMotion < 0.002f && m_hasValidGpuFrame);
             gpuOpts.directionalCascadeCount = 1;
             gpuOpts.terrainLodDistanceScale = 2.0f;
             gpuOpts.textureQuality.enabled = false;
-            gpuOpts.cameraSettled = m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
+            gpuOpts.cameraSettled = !poseChanged && m_editorCamMotion < 0.002f && m_hasValidGpuFrame;
+            gpuOpts.skipTemporalSettle = poseChanged && !editorCameraMoved && !canvasResized;
             gpuOpts.environmentPath.clear();
             gpuOpts.renderScale = ctx.renderScale;
             gpuOpts.overrideAntiAliasing = true;
@@ -989,6 +1023,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             gpuOpts.antiAliasingOverride.sharpness = 0.5f;
             gpuOpts.deltaTime = ImGui::GetIO().DeltaTime;
             gpuOpts.viewId = 1;
+            if (Scene::environmentHasOverride(world)) {
+                gpuOpts.overrideAmbient = true;
+                gpuOpts.ambientColor = Scene::environmentAmbientAt(world, camPos);
+            }
             if (ctx.selectedEntity.isValid() && world.has<ECS::Camera3DComponent>(ctx.selectedEntity)) {
                 gpuOpts.postProcessCamera = ctx.selectedEntity;
             }
@@ -1019,6 +1057,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             m_gpuCacheWidth = m_lastCanvasWidth;
             m_gpuCacheHeight = m_lastCanvasHeight;
             m_lastSceneStamp = sceneStamp;
+            m_lastSkinRevision = Animation::skinRevision();
             m_lastGpuFrameSettled = gpuOpts.cameraSettled;
             m_lastRenderScale = ctx.renderScale;
             m_lastGridVisible = m_config.grid;
@@ -1172,6 +1211,50 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                 pickedElement = pickMeshElement(world, ctx, mousePos, vpMin, vpSize, elementVp);
             }
             if (!pickedElement) {
+            int pickedBone = -1;
+            if (ctx.selectedEntity.isValid() && world.has<Animation::SkinnedPose>(ctx.selectedEntity)) {
+                const std::vector<Vec3>* joints = Animation::jointPositionsFor(ctx.selectedEntity.id());
+                if (joints && !joints->empty()) {
+                    const Mat4 boneWorld = entityMatrix(world, ctx.selectedEntity);
+                    f32 best = 14.0f * 14.0f;
+                    const int count = std::min(static_cast<int>(joints->size()), 256);
+                    const Animation::SkinnedPose* pose = world.get<Animation::SkinnedPose>(ctx.selectedEntity);
+                    for (int bone = 0; bone < count; ++bone) {
+                        if (pose && Animation::poseOmitsBone(*pose, bone)) continue;
+                        const Vec3 joint = boneWorld.transformPoint((*joints)[static_cast<size_t>(bone)]);
+                        const ImVec2 screen = projectToScreen(joint, vpMin, vpSize, ctx);
+                        if (screen.x < -5000.0f) continue;
+                        const f32 dx = screen.x - mousePos.x;
+                        const f32 dy = screen.y - mousePos.y;
+                        const f32 dist = dx * dx + dy * dy;
+                        if (dist < best) {
+                            best = dist;
+                            pickedBone = bone;
+                        }
+                    }
+                }
+            }
+            if (pickedBone >= 0) {
+                ctx.skeletonEntityId = ctx.selectedEntity.id();
+                ctx.skeletonBone = pickedBone;
+                if (ctx.remapBones && ctx.remapHumanoidSlot >= 0) {
+                    if (Animation::SkinnedPose* pose = world.get<Animation::SkinnedPose>(ctx.selectedEntity)) {
+                        Animation::assignHumanoidBone(
+                            pose->humanoid,
+                            static_cast<Animation::HumanoidBone>(ctx.remapHumanoidSlot),
+                            pickedBone);
+                        pose->loaded = true;
+                        ctx.markDirty();
+                        for (int slot = ctx.remapHumanoidSlot + 1; slot < Animation::kHumanoidBodyCount;
+                             ++slot) {
+                            if (pose->humanoid.bones[slot] < 0) {
+                                ctx.remapHumanoidSlot = slot;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
             const ECS::Entity picked = raycastSelectEntity(ray.origin, ray.direction, world, projectRoot);
             const bool shiftPressed = ImGui::IsKeyDown(ImGuiKey_LeftShift) ||
                                       ImGui::IsKeyDown(ImGuiKey_RightShift);
@@ -1183,6 +1266,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             } else if (!shiftPressed) {
                 ctx.clearSelection();
                 ctx.meshElementSelection.clear();
+            }
             }
             }
         }
@@ -1218,12 +1302,11 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
 
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        if (ImGui::IsKeyPressed(ImGuiKey_T)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
-        if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
-        if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
-        if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
-        
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) && ctx.selectedEntity.isValid()) {
+        if (EditorShortcuts::instance().pressed(Shortcut::GizmoTranslate)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
+        if (EditorShortcuts::instance().pressed(Shortcut::GizmoRotate)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
+        if (EditorShortcuts::instance().pressed(Shortcut::GizmoScale)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
+
+        if (EditorShortcuts::instance().pressed(Shortcut::DeleteSelection) && ctx.selectedEntity.isValid()) {
             ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), world);
             world.destroy(ctx.selectedEntity);
             ctx.selectedEntity = ECS::Entity::INVALID;
@@ -1246,6 +1329,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (leftDragging && !m_gizmoDragging) {
             ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
             m_gizmoDragging = true;
+            m_gizmoUnsnappedValid = false;
         }
         if (leftDragging) {
             handleGizmoInput(world, ctx, viewportSize);
@@ -1311,7 +1395,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                             } else {
                                 terrain->dataRevision++;
                             }
-                            ctx.isDirty = true;
+                            ctx.markDirty();
                         } else if (terrainSplatMode) {
                             auto* splatmap = Terrain::TerrainCache::instance().splatmapFor(ctx.selectedEntity);
                             if (splatmap) {
@@ -1324,7 +1408,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                                                                          hitWorld, brush,
                                                                          ImGui::GetIO().DeltaTime);
                                 terrain->splatRevision++;
-                                ctx.isDirty = true;
+                                ctx.markDirty();
                             }
                         }
                     }
@@ -1486,12 +1570,10 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
              else right = right.normalized();
 
              Vec3 camPos = ctx.camFocus - lookDir * ctx.camDistance;
-             if (ImGui::IsKeyDown(ImGuiKey_W)) camPos += lookDir * speed;
-             if (ImGui::IsKeyDown(ImGuiKey_S)) camPos -= lookDir * speed;
-             if (ImGui::IsKeyDown(ImGuiKey_A)) camPos -= right * speed;
-             if (ImGui::IsKeyDown(ImGuiKey_D)) camPos += right * speed;
-             if (ImGui::IsKeyDown(ImGuiKey_Q)) camPos -= worldUp * speed;
-             if (ImGui::IsKeyDown(ImGuiKey_E)) camPos += worldUp * speed;
+             if (EditorShortcuts::instance().down(Shortcut::CameraForward)) camPos += lookDir * speed;
+             if (EditorShortcuts::instance().down(Shortcut::CameraBack)) camPos -= lookDir * speed;
+             if (EditorShortcuts::instance().down(Shortcut::CameraLeft)) camPos -= right * speed;
+             if (EditorShortcuts::instance().down(Shortcut::CameraRight)) camPos += right * speed;
              ctx.camFocus = camPos + lookDir * ctx.camDistance;
          }
      }
@@ -1807,13 +1889,16 @@ void SceneViewport::drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 or
         }
 
         const bool selected = (ctx.selectedEntity == entity);
+        const f32 env2D = Scene::environmentAmbient2D(world);
+        const int tint = static_cast<int>(std::clamp(env2D, 0.0f, 1.5f) * 255.0f);
         const ImU32 fill = selected ? IM_COL32(100, 170, 255, 80) : IM_COL32(180, 180, 200, 45);
         const ImU32 border = selected ? IM_COL32(110, 210, 255, 255) : IM_COL32(190, 190, 220, 200);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         if (hasTexture) {
+            const ImU32 tinted = IM_COL32(std::min(tint, 255), std::min(tint, 255), std::min(tint, 255), 255);
             dl->AddImageQuad(texRef, p1, p2, p3, p4, ImVec2(uv0x, uv0y), ImVec2(uv1x, uv0y),
-                             ImVec2(uv1x, uv1y), ImVec2(uv0x, uv1y));
+                             ImVec2(uv1x, uv1y), ImVec2(uv0x, uv1y), tinted);
         } else {
             // Draw checkerboard pattern for missing texture
             dl->AddQuadFilled(p1, p2, p3, p4, IM_COL32(64, 64, 64, 200));
@@ -2140,7 +2225,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                         Vec3 labelPos = worldMatrix.transformPoint(Vec3(0.0f, 0.7f, 0.0f));
                         ImVec2 sp = projectCached(labelPos);
                         if (sp.x > -5000.0f) {
-                            const char* msg = loadError.empty() ? "Mesh nao carregado" : loadError.c_str();
+                            const char* msg = loadError.empty() ? "Mesh failed to load" : loadError.c_str();
                             dl->AddText(sp, errCol, msg);
                         }
                         break;
@@ -2461,6 +2546,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 }
 
 void SceneViewport::drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
+    if (!ctx.showBones) return;
     if (ctx.viewMode != EditorContext::ViewMode::Mode3D &&
         ctx.viewMode != EditorContext::ViewMode::Isometric) {
         return;
@@ -2470,26 +2556,121 @@ void SceneViewport::drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 
 
     ECS::ComponentQuery query;
     query.with<Animation::SkinnedPose>();
-    world.forEach<Animation::SkinnedPose>(query, [&](ECS::Entity entity, Animation::SkinnedPose&) {
+    world.forEach<Animation::SkinnedPose>(query, [&](ECS::Entity entity, Animation::SkinnedPose& pose) {
         const std::vector<Vec3>* joints = Animation::jointPositionsFor(entity.id());
         const std::vector<i32>* parents = Animation::jointParentsFor(entity.id());
         if (!joints || !parents || joints->size() != parents->size()) return;
         const Mat4 worldMatrix = entityMatrix(world, entity);
         const bool selected = ctx.selectedEntity == entity;
-        const ImU32 color = selected ? IM_COL32(255, 196, 64, 230) : IM_COL32(120, 190, 255, 160);
         const int count = std::min(static_cast<int>(joints->size()), 256);
+        const int markedBone = (selected && ctx.skeletonEntityId == entity.id() && ctx.skeletonBone >= 0 &&
+                                ctx.skeletonBone < count) ? ctx.skeletonBone : -1;
+        const Animation::ImportedSkin* skin = selected ? Animation::findImportedSkin(pose.meshPath) : nullptr;
+
+        ImVec2 screens[256];
+        bool visible[256];
+        i32 shownParent[256];
         for (int i = 0; i < count; ++i) {
-            const i32 parent = (*parents)[static_cast<size_t>(i)];
-            const Vec3 joint = worldMatrix.transformPoint((*joints)[static_cast<size_t>(i)]);
-            const ImVec2 screen = projectToScreen(joint, origin, viewportSize, ctx);
-            if (screen.x < -5000.0f) continue;
-            dl->AddCircleFilled(screen, selected ? 3.0f : 2.0f, color, 8);
-            if (parent < 0 || parent >= count) continue;
-            const Vec3 parentJoint = worldMatrix.transformPoint((*joints)[static_cast<size_t>(parent)]);
-            const ImVec2 parentScreen = projectToScreen(parentJoint, origin, viewportSize, ctx);
-            if (parentScreen.x < -5000.0f) continue;
-            dl->AddLine(parentScreen, screen, color, selected ? 1.8f : 1.2f);
+            visible[i] = false;
+            shownParent[i] = -1;
+            if (Animation::poseOmitsBone(pose, i)) continue;
+            i32 parent = (*parents)[static_cast<size_t>(i)];
+            while (parent >= 0 && parent < count && Animation::poseOmitsBone(pose, parent)) {
+                parent = (*parents)[static_cast<size_t>(parent)];
+            }
+            shownParent[i] = (parent >= 0 && parent < count) ? parent : -1;
+            screens[i] = projectToScreen(worldMatrix.transformPoint((*joints)[static_cast<size_t>(i)]),
+                                         origin, viewportSize, ctx);
+            visible[i] = screens[i].x > -5000.0f;
         }
+
+        // The selected bone and everything under it follow its pose, so they share the highlight.
+        auto underMarked = [&](int bone) {
+            for (int b = bone, guard = 0; b >= 0 && b < count && guard < 256; ++guard) {
+                if (b == markedBone) return true;
+                b = (*parents)[static_cast<size_t>(b)];
+            }
+            return false;
+        };
+
+        int hoveredBone = -1;
+        if (selected && !m_gizmoDragging && m_hoveredAxis == 0 && ImGui::IsWindowHovered()) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            if (mouse.x >= origin.x && mouse.y >= origin.y && mouse.x <= origin.x + viewportSize.x &&
+                mouse.y <= origin.y + viewportSize.y) {
+                f32 best = 14.0f * 14.0f;
+                for (int i = 0; i < count; ++i) {
+                    if (!visible[i]) continue;
+                    const f32 dx = screens[i].x - mouse.x, dy = screens[i].y - mouse.y;
+                    if (dx * dx + dy * dy < best) {
+                        best = dx * dx + dy * dy;
+                        hoveredBone = i;
+                    }
+                }
+            }
+        }
+
+        const ImU32 idleColor = IM_COL32(120, 190, 255, 150);
+        const ImU32 boneFill = IM_COL32(255, 196, 64, 70);
+        const ImU32 boneEdge = IM_COL32(255, 196, 64, 220);
+        const ImU32 chainFill = IM_COL32(255, 96, 176, 110);
+        const ImU32 chainEdge = IM_COL32(255, 120, 190, 255);
+        const ImU32 shadow = IM_COL32(10, 12, 16, 170);
+
+        for (int i = 0; i < count; ++i) {
+            const int parent = shownParent[i];
+            if (!visible[i] || parent < 0 || !visible[parent]) continue;
+            const ImVec2 a = screens[parent], b = screens[i];
+            if (!selected) {
+                dl->AddLine(a, b, idleColor, 1.2f);
+                continue;
+            }
+            const f32 dx = b.x - a.x, dy = b.y - a.y;
+            const f32 len = std::sqrt(dx * dx + dy * dy);
+            const bool chain = markedBone >= 0 && underMarked(i);
+            if (len < 6.0f) {
+                dl->AddLine(a, b, chain ? chainEdge : boneEdge, 1.5f);
+                continue;
+            }
+            // Tapered octahedral silhouette from the parent joint to the child joint.
+            const f32 nx = -dy / len, ny = dx / len;
+            const f32 w = std::clamp(len * 0.11f, 2.5f, 8.0f);
+            const ImVec2 waist(a.x + dx * 0.18f, a.y + dy * 0.18f);
+            const ImVec2 pts[4] = {a, ImVec2(waist.x + nx * w, waist.y + ny * w), b,
+                                   ImVec2(waist.x - nx * w, waist.y - ny * w)};
+            dl->AddConvexPolyFilled(pts, 4, chain ? chainFill : boneFill);
+            dl->AddPolyline(pts, 4, shadow, ImDrawFlags_Closed, 3.0f);
+            dl->AddPolyline(pts, 4, chain ? chainEdge : boneEdge, ImDrawFlags_Closed, 1.4f);
+        }
+
+        for (int i = 0; i < count; ++i) {
+            if (!visible[i]) continue;
+            if (!selected) {
+                dl->AddCircleFilled(screens[i], 2.0f, idleColor, 8);
+                continue;
+            }
+            const bool marked = i == markedBone;
+            const bool hot = i == hoveredBone;
+            const f32 radius = marked ? 6.5f : hot ? 5.5f : 3.5f;
+            const ImU32 fill = marked ? IM_COL32(255, 64, 160, 255)
+                             : hot    ? IM_COL32(255, 236, 120, 255)
+                             : (markedBone >= 0 && underMarked(i)) ? chainEdge : boneEdge;
+            dl->AddCircleFilled(screens[i], radius + 1.5f, shadow, 14);
+            dl->AddCircleFilled(screens[i], radius, fill, 14);
+            if (marked || hot) dl->AddCircle(screens[i], radius + 4.0f, fill, 18, 1.5f);
+        }
+
+        auto label = [&](int bone, ImU32 textColor) {
+            if (bone < 0 || !visible[bone] || !skin || bone >= static_cast<int>(skin->boneNames.size())) return;
+            const char* name = skin->boneNames[static_cast<size_t>(bone)].c_str();
+            const ImVec2 size = ImGui::CalcTextSize(name);
+            const ImVec2 at(screens[bone].x + 10.0f, screens[bone].y - size.y - 6.0f);
+            dl->AddRectFilled(ImVec2(at.x - 4.0f, at.y - 2.0f), ImVec2(at.x + size.x + 4.0f, at.y + size.y + 2.0f),
+                              IM_COL32(16, 18, 24, 215), 4.0f);
+            dl->AddText(at, textColor, name);
+        };
+        label(markedBone, IM_COL32(255, 220, 235, 255));
+        if (hoveredBone != markedBone) label(hoveredBone, IM_COL32(255, 244, 190, 255));
     });
 }
 
@@ -2648,6 +2829,14 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
 
     Vec3 worldPos;
     if (!tryGetEntityPosition(world, ctx.selectedEntity, worldPos)) return;
+    if (ctx.skeletonEntityId == ctx.selectedEntity.id() && ctx.skeletonBone >= 0) {
+        if (const std::vector<Vec3>* joints = Animation::jointPositionsFor(ctx.selectedEntity.id())) {
+            if (ctx.skeletonBone < static_cast<i32>(joints->size())) {
+                worldPos = entityMatrix(world, ctx.selectedEntity)
+                               .transformPoint((*joints)[static_cast<size_t>(ctx.skeletonBone)]);
+            }
+        }
+    }
     ImVec2 screenPos = projectToScreen(worldPos, origin, viewportSize, ctx);
     ImDrawList* dl   = ImGui::GetForegroundDrawList();
     dl->PushClipRect(origin, ImVec2(origin.x + viewportSize.x, origin.y + viewportSize.y), true);
@@ -2718,6 +2907,42 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     m_axisRawDirs[1] = nY;
     m_axisRawDirs[2] = nZ;
     m_gizmoScreenOrigin = screenPos;
+    m_gizmoIs3D = is3D;
+    {
+        const Vec3 axes[3] = {worldAxisX, worldAxisY, worldAxisZ};
+        const ImVec2 raws[3] = {rawX, rawY, rawZ};
+        const float axisWorldStep = is3D ? std::max(0.25f, ctx.camDistance * 0.02f) : 1.0f;
+        const float scale2D = std::max(0.0001f, ctx.viewportZoom * 50.0f);
+        const float worldPerHandle = std::max(1.0f, ctx.camDistance * 0.1f);
+        for (int i = 0; i < 3; ++i) {
+            const float len = axes[i].length();
+            m_axisWorldDirs[i] = len > 1e-6f ? axes[i] / len : axes[i];
+            if (is3D) {
+                const ImVec2 handle(m_axisRawDirs[i].x * HL, m_axisRawDirs[i].y * HL);
+                m_axisScreenPerUnit[i] = ImVec2(handle.x / worldPerHandle, handle.y / worldPerHandle);
+            } else {
+                m_axisScreenPerUnit[i] = ImVec2(raws[i].x * scale2D, raws[i].y * scale2D);
+            }
+            m_axisRotSign[i] = 0.0f;
+            if (!is3D) {
+                m_axisRotSign[i] = i == 2 ? -1.0f : 0.0f;
+                continue;
+            }
+            const Vec3 a = m_axisWorldDirs[i];
+            const Vec3 helper = std::fabs(a.y) < 0.9f ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+            const Vec3 b = (helper - a * a.dot(helper)).normalized();
+            const Vec3 c = a.cross(b);
+            const float step = 0.2f;
+            const ImVec2 s0 = projectToScreen(worldPos + b * axisWorldStep, origin, viewportSize, ctx);
+            const ImVec2 s1 = projectToScreen(worldPos + (b * std::cos(step) + c * std::sin(step)) * axisWorldStep,
+                                              origin, viewportSize, ctx);
+            const ImVec2 v0(s0.x - screenPos.x, s0.y - screenPos.y);
+            const ImVec2 v1(s1.x - screenPos.x, s1.y - screenPos.y);
+            const float crossZ = v0.x * v1.y - v0.y * v1.x;
+            const float norm = std::sqrt((v0.x * v0.x + v0.y * v0.y) * (v1.x * v1.x + v1.y * v1.y));
+            if (norm > 1e-3f && std::fabs(crossZ) / norm > 0.02f) m_axisRotSign[i] = crossZ > 0.0f ? 1.0f : -1.0f;
+        }
+    }
 
     const float fsX = axisForeshorten(worldAxisX);
     const float fsY = axisForeshorten(worldAxisY);
@@ -3456,6 +3681,98 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
 
     int axis = keyAxis ? keyAxis : m_hoveredAxis;
     m_gizmoDragAxis = axis;
+    const bool axisDrag = axis >= 1 && axis <= 3;
+
+    // World units along a drawn axis for this mouse delta; one axis length on screen equals one unit moved.
+    auto axisAmount = [&](int axIdx) -> f32 {
+        const ImVec2 s = m_axisScreenPerUnit[axIdx - 1];
+        const f32 len2 = s.x * s.x + s.y * s.y;
+        if (len2 < 1e-4f) return 0.0f;
+        return (delta.x * s.x + delta.y * s.y) / len2;
+    };
+    // Free move: solve the mouse delta in the two axes that are most face-on to the camera.
+    auto freeMove = [&]() -> Vec3 {
+        if (!m_gizmoIs3D) {
+            const f32 s = std::max(0.0001f, ctx.viewportZoom * 50.0f);
+            return Vec3(delta.x / s, -delta.y / s, 0.0f);
+        }
+        int bi = 0, bj = 1;
+        f32 bestDet = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            for (int j = i + 1; j < 3; ++j) {
+                const ImVec2 a = m_axisScreenPerUnit[i], b = m_axisScreenPerUnit[j];
+                const f32 det = std::fabs(a.x * b.y - a.y * b.x);
+                if (det > bestDet) { bestDet = det; bi = i; bj = j; }
+            }
+        }
+        if (bestDet < 1e-4f) return Vec3();
+        const ImVec2 a = m_axisScreenPerUnit[bi], b = m_axisScreenPerUnit[bj];
+        const f32 det = a.x * b.y - a.y * b.x;
+        const f32 u = (delta.x * b.y - delta.y * b.x) / det;
+        const f32 v = (a.x * delta.y - a.y * delta.x) / det;
+        return m_axisWorldDirs[bi] * u + m_axisWorldDirs[bj] * v;
+    };
+    auto moveDelta = [&]() -> Vec3 {
+        return axisDrag ? m_axisWorldDirs[axis - 1] * axisAmount(axis) : freeMove();
+    };
+    // Rotation follows the angle the cursor sweeps around the gizmo centre.
+    auto rotateAxis = [&]() -> int { return axisDrag ? axis : (m_gizmoIs3D ? 2 : 3); };
+    auto rotateAngle = [&]() -> f32 {
+        const int ax = rotateAxis();
+        const f32 sign = m_axisRotSign[ax - 1];
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const ImVec2 c = m_gizmoScreenOrigin;
+        const ImVec2 cur(mouse.x - c.x, mouse.y - c.y);
+        const ImVec2 prev(cur.x - delta.x, cur.y - delta.y);
+        const f32 minRadius2 = 10.0f * 10.0f;
+        if (sign == 0.0f || cur.x * cur.x + cur.y * cur.y < minRadius2 ||
+            prev.x * prev.x + prev.y * prev.y < minRadius2) {
+            return (delta.x - delta.y) * 0.01f;
+        }
+        const f32 swept = std::atan2(prev.x * cur.y - prev.y * cur.x, prev.x * cur.x + prev.y * cur.y);
+        return swept * sign;
+    };
+
+    if (ctx.skeletonEntityId == ctx.selectedEntity.id() && ctx.skeletonBone >= 0) {
+        if (Animation::SkinnedPose* pose = world.get<Animation::SkinnedPose>(ctx.selectedEntity)) {
+            if (const Animation::ImportedSkin* skin = Animation::findImportedSkin(pose->meshPath)) {
+                const u32 boneCount = skin->skeleton.boneCount();
+                if (ctx.skeletonBone < static_cast<i32>(boneCount)) {
+                    if (pose->offsets.size() < boneCount) pose->offsets.resize(boneCount);
+                    Animation::BonePose& bone = pose->offsets[static_cast<size_t>(ctx.skeletonBone)];
+                    pose->sampleKeys = false;
+                    // Bone offsets live in the parent-relative bone frame; convert world deltas through it.
+                    const Mat4 entityWorld = entityMatrix(world, ctx.selectedEntity);
+                    Mat4 boneFrame;
+                    const bool hasFrame = Animation::boneEditFrame(*skin, *pose, ctx.skeletonBone, boneFrame,
+                                                                     ctx.selectedEntity.id());
+                    const Mat4 worldToBone = (entityWorld * boneFrame).inverted();
+                    switch (ctx.gizmoMode) {
+                        case EditorContext::GizmoMode::Translate: {
+                            const Vec3 worldDelta = moveDelta();
+                            bone.translation += hasFrame ? worldToBone.transformVector(worldDelta) : worldDelta;
+                            break;
+                        }
+                        case EditorContext::GizmoMode::Rotate: {
+                            const Vec3 worldAxis = m_axisWorldDirs[rotateAxis() - 1];
+                            Vec3 localAxis = hasFrame ? worldToBone.transformVector(worldAxis) : worldAxis;
+                            if (localAxis.lengthSquared() < 1e-12f) break;
+                            localAxis = localAxis.normalized();
+                            const Quat current = Quat::fromEuler(bone.rotation.x, bone.rotation.y, bone.rotation.z);
+                            const Quat next = (Quat::fromAxisAngle(localAxis, rotateAngle()) * current).normalized();
+                            bone.rotation = next.toEuler();
+                            break;
+                        }
+                        case EditorContext::GizmoMode::Scale:
+                        case EditorContext::GizmoMode::None:
+                            break;
+                    }
+                    ctx.markModified();
+                    return;
+                }
+            }
+        }
+    }
 
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
     if (!pos) {
@@ -3471,52 +3788,61 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
         pos = &world.add<ECS::Transform>(ctx.selectedEntity, initial);
     }
 
-    const float scale = ctx.viewportZoom * 50.0f;
-
-    auto projectDelta = [&](int axIdx) -> float {
-        ImVec2 raw = m_axisRawDirs[axIdx - 1];
-        float mag2 = raw.x*raw.x + raw.y*raw.y;
-        if (mag2 < 0.0001f) return 0.f;
-        return (delta.x*raw.x + delta.y*raw.y) / mag2 / scale;
+    // Transform values are parent-relative; child entities need world deltas mapped into the parent space.
+    Mat4 worldToParent = Mat4::identity();
+    bool hasParentSpace = false;
+    if (auto* wt = world.get<Scene::WorldTransform>(ctx.selectedEntity)) {
+        worldToParent = (wt->matrix * buildLocalMatrix(*pos).inverted()).inverted();
+        hasParentSpace = true;
+    }
+    auto toParent = [&](const Vec3& v) -> Vec3 {
+        return hasParentSpace ? worldToParent.transformVector(v) : v;
     };
 
     switch (ctx.gizmoMode) {
-        case EditorContext::GizmoMode::Translate:
+        case EditorContext::GizmoMode::Translate: {
+            const Vec3 worldDelta = toParent(moveDelta());
             if (ctx.meshElementMode != EditorContext::MeshElementMode::Object) {
-                Vec3 worldDelta{};
-                if (axis == 1) worldDelta.x = projectDelta(1);
-                else if (axis == 2) worldDelta.y = projectDelta(2);
-                else if (axis == 3) worldDelta.z = projectDelta(3);
-                else {
-                    worldDelta.x = delta.x / scale;
-                    worldDelta.y = -delta.y / scale;
-                }
                 if (moveMeshSelection(world, ctx, worldDelta)) {
-                    ctx.isDirty = true;
+                    ctx.markModified();
                     return;
                 }
             }
-            if (axis == 1)                           pos->position.x += projectDelta(1);
-            else if (axis == 2)                      pos->position.y += projectDelta(2);
-            else if (axis == 3)                      pos->position.z += projectDelta(3);
-            else {
-                pos->position.x += delta.x / scale;
-                pos->position.y -= delta.y / scale;
+            if (!m_gizmoUnsnappedValid) {
+                m_gizmoUnsnapped = pos->position;
+                m_gizmoUnsnappedValid = true;
             }
+            m_gizmoUnsnapped += worldDelta;
+            pos->position = m_gizmoUnsnapped;
             if (ctx.snapToGrid && ctx.snapGridSize > 0.f) {
-                pos->position.x = roundf(pos->position.x / ctx.snapGridSize) * ctx.snapGridSize;
-                pos->position.y = roundf(pos->position.y / ctx.snapGridSize) * ctx.snapGridSize;
+                const f32 g = ctx.snapGridSize;
+                pos->position.x = roundf(pos->position.x / g) * g;
+                pos->position.y = roundf(pos->position.y / g) * g;
+                if (m_gizmoIs3D) pos->position.z = roundf(pos->position.z / g) * g;
             }
             break;
-        case EditorContext::GizmoMode::Rotate:
-            if      (axis == 1) pos->rotation.x += delta.y * 0.01f;
-            else if (axis == 2) pos->rotation.y += delta.x * 0.01f;
-            else                pos->rotation.z += delta.x * 0.01f;
+        }
+        case EditorContext::GizmoMode::Rotate: {
+            const f32 angle = rotateAngle();
+            if (!m_gizmoIs3D) {
+                pos->rotation.z += angle * kRadToDeg;
+                break;
+            }
+            const Quat current = Quat::fromEuler(pos->rotation.x * kDegToRad, pos->rotation.y * kDegToRad,
+                                                 pos->rotation.z * kDegToRad);
+            const Vec3 parentAxis = toParent(m_axisWorldDirs[rotateAxis() - 1]);
+            if (parentAxis.lengthSquared() < 1e-12f) break;
+            const Quat next = (Quat::fromAxisAngle(parentAxis.normalized(), angle) * current).normalized();
+            const Vec3 euler = next.toEuler();
+            pos->rotation = Vec3(euler.x * kRadToDeg, euler.y * kRadToDeg, euler.z * kRadToDeg);
             break;
+        }
         case EditorContext::GizmoMode::Scale:
-            if (axis == 1) { pos->scale.x = std::max(0.01f, pos->scale.x * (1.f + projectDelta(1) * 0.5f)); }
-            else if (axis == 2) { pos->scale.y = std::max(0.01f, pos->scale.y * (1.f + projectDelta(2) * 0.5f)); }
-            else if (axis == 3) { pos->scale.z = std::max(0.01f, pos->scale.z * (1.f + projectDelta(3) * 0.5f)); }
+            if (axisDrag) {
+                const f32 factor = 1.f + axisAmount(axis) * 0.5f;
+                f32& component = axis == 1 ? pos->scale.x : axis == 2 ? pos->scale.y : pos->scale.z;
+                component = std::max(0.01f, component * factor);
+            }
             else {
                 pos->scale.x = std::max(0.01f, pos->scale.x * (1.f + delta.x * 0.005f));
                 pos->scale.y = std::max(0.01f, pos->scale.y * (1.f + delta.y * 0.005f));
@@ -3538,7 +3864,7 @@ void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVe
         r3->quaternion = Vec4(q.x, q.y, q.z, q.w);
     }
 
-    ctx.isDirty = true;
+    ctx.markModified();
 }
 
 MeshDrawTexture SceneViewport::resolveTextureFromPath(const std::string& path,

@@ -14,6 +14,7 @@
 #include "effects/EffectTypes.hpp"
 #include "navigation/NavVolume.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "ecs/EnvironmentEffectsComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
@@ -465,6 +466,77 @@ void SceneSerializer::collectAnimatorComponents(
         for (const auto& [frame, evt] : anim.frameEvents) {
             IO::appendU32(data, frame);
             IO::appendString(data, evt.cStr());
+        }
+
+        IO::appendU32(data, kAnimatorEditorMarker);
+        IO::appendString(data, anim.defaultState.cStr());
+        IO::appendU32(data, static_cast<u32>(anim.states.size()));
+        for (auto& [stateName, state] : anim.states) {
+            IO::appendString(data, stateName.cStr());
+            IO::appendString(data, state.motion.cStr());
+            IO::appendU8(data, state.hasEditorPosition ? 1 : 0);
+            IO::appendF32(data, state.editorX);
+            IO::appendF32(data, state.editorY);
+        }
+
+        auto writeCurve = [&](const Animation::KeyCurve& curve) {
+            IO::appendU8(data, static_cast<u8>(curve.mode));
+            IO::appendF32(data, curve.x1);
+            IO::appendF32(data, curve.y1);
+            IO::appendF32(data, curve.x2);
+            IO::appendF32(data, curve.y2);
+        };
+        auto writeTransition = [&](const Animation::AnimationTransition& tr) {
+            IO::appendString(data, tr.toState.cStr());
+            IO::appendF32(data, tr.blendTime);
+            IO::appendU8(data, tr.hasExitTime ? 1 : 0);
+            IO::appendF32(data, tr.exitTime);
+            IO::appendF32(data, tr.offset);
+            writeCurve(tr.blendCurve);
+            IO::appendU32(data, static_cast<u32>(tr.conditions.size()));
+            for (const auto& cond : tr.conditions) {
+                IO::appendString(data, cond.parameterName.cStr());
+                IO::appendU8(data, static_cast<u8>(cond.op));
+                IO::appendU8(data, cond.boolValue ? 1 : 0);
+                IO::appendF32(data, cond.floatValue);
+                IO::appendI32(data, cond.intValue);
+            }
+        };
+        auto writeMachine = [&](const Animation::AnimatorStateMachine& sm) {
+            IO::appendString(data, sm.defaultState.cStr());
+            IO::appendF32(data, sm.entryX);
+            IO::appendF32(data, sm.entryY);
+            IO::appendF32(data, sm.anyX);
+            IO::appendF32(data, sm.anyY);
+            IO::appendF32(data, sm.exitX);
+            IO::appendF32(data, sm.exitY);
+            IO::appendU32(data, static_cast<u32>(sm.anyStateTransitions.size()));
+            for (const auto& tr : sm.anyStateTransitions) writeTransition(tr);
+            IO::appendU32(data, static_cast<u32>(sm.states.size()));
+            for (auto& [stateName, state] : sm.states) {
+                IO::appendString(data, stateName.cStr());
+                IO::appendString(data, state.motion.cStr());
+                IO::appendF32(data, state.speed);
+                IO::appendU8(data, state.hasEditorPosition ? 1 : 0);
+                IO::appendF32(data, state.editorX);
+                IO::appendF32(data, state.editorY);
+                IO::appendU32(data, static_cast<u32>(state.transitions.size()));
+                for (const auto& tr : state.transitions) writeTransition(tr);
+            }
+        };
+        IO::appendU32(data, kAnimatorGraphMarker);
+        writeMachine(anim);
+        IO::appendU32(data, static_cast<u32>(anim.layers.size()));
+        for (const Animation::AnimatorLayer& layer : anim.layers) {
+            IO::appendString(data, layer.name.cStr());
+            IO::appendString(data, layer.parentGroup.cStr());
+            IO::appendU8(data, layer.isGroup ? 1 : 0);
+            IO::appendU8(data, layer.muted ? 1 : 0);
+            IO::appendU8(data, layer.expanded ? 1 : 0);
+            IO::appendF32(data, layer.weight);
+            IO::appendU8(data, static_cast<u8>(layer.blend));
+            IO::appendU32(data, layer.mask);
+            if (!layer.isGroup) writeMachine(layer);
         }
 
         entries.push_back({e.id(), std::move(data)});
@@ -1049,7 +1121,8 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
         query.with<Animation::SkinnedPose>();
         m_world.forEach<Animation::SkinnedPose>(query, [&](ECS::Entity entity, Animation::SkinnedPose& pose) {
             const u32 pathLen = static_cast<u32>(std::strlen(pose.meshPath));
-            std::vector<u8> data(4 + pathLen + sizeof(i32) + sizeof(f32) * 2 + 2);
+            constexpr u32 kHumanoidBytes = static_cast<u32>(sizeof(i32) * static_cast<int>(Animation::HumanoidBone::Count));
+            std::vector<u8> data(4 + pathLen + sizeof(i32) + sizeof(f32) * 2 + 2 + 2 + kHumanoidBytes);
             u32 offset = 0;
             std::memcpy(data.data() + offset, &pathLen, 4);
             offset += 4;
@@ -1063,11 +1136,79 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
             offset += sizeof(f32);
             data[offset++] = pose.playing ? 1 : 0;
             data[offset++] = pose.loop ? 1 : 0;
+            data[offset++] = 1;
+            data[offset++] = static_cast<u8>((pose.humanoid.matched ? 1 : 0) | (pose.humanoid.manual ? 2 : 0) | (1u << 2));
+            std::memcpy(data.data() + offset, pose.humanoid.bones, kHumanoidBytes);
+            offset += kHumanoidBytes;
+            auto appendBytes = [&](const void* bytes, u32 size) {
+                data.resize(offset + size);
+                if (size > 0) std::memcpy(data.data() + offset, bytes, size);
+                offset += size;
+            };
+            auto appendVec3 = [&](const Vec3& value) { appendBytes(&value.x, sizeof(f32) * 3); };
+            const u32 offsetCount = static_cast<u32>(pose.offsets.size());
+            const u32 keyCount = static_cast<u32>(pose.keys.size());
+            const u32 objectCount = static_cast<u32>(pose.objectKeys.size());
+            appendBytes(&offsetCount, 4);
+            for (const Animation::BonePose& bone : pose.offsets) {
+                appendVec3(bone.rotation);
+                appendVec3(bone.translation);
+            }
+            appendBytes(&keyCount, 4);
+            for (const Animation::BoneKeyframe& key : pose.keys) {
+                appendBytes(&key.time, sizeof(f32));
+                appendBytes(&key.bone, sizeof(i32));
+                appendVec3(key.rotation);
+                appendVec3(key.translation);
+            }
+            appendBytes(&objectCount, 4);
+            for (const Animation::ObjectKeyframe& key : pose.objectKeys) {
+                appendBytes(&key.time, sizeof(f32));
+                appendVec3(key.position);
+            }
+            const u32 removedCount = static_cast<u32>(pose.removedBones.size());
+            appendBytes(&removedCount, 4);
+            for (i32 bone : pose.removedBones) appendBytes(&bone, sizeof(i32));
+            const u32 curveMarker = kPoseCurveMarker;
+            appendBytes(&curveMarker, 4);
+            auto appendCurve = [&](const Animation::KeyCurve& curve) {
+                const u8 mode = static_cast<u8>(curve.mode);
+                appendBytes(&mode, 1);
+                appendBytes(&curve.x1, sizeof(f32));
+                appendBytes(&curve.y1, sizeof(f32));
+                appendBytes(&curve.x2, sizeof(f32));
+                appendBytes(&curve.y2, sizeof(f32));
+            };
+            for (const Animation::BoneKeyframe& key : pose.keys) appendCurve(key.curve);
+            for (const Animation::ObjectKeyframe& key : pose.objectKeys) appendCurve(key.curve);
+            const u32 stripMarker = kPoseStripMarker;
+            appendBytes(&stripMarker, 4);
+            const u32 stripCount = static_cast<u32>(pose.strips.size());
+            appendBytes(&stripCount, 4);
+            for (const Animation::ClipStrip& strip : pose.strips) {
+                appendBytes(&strip.clip, sizeof(i32));
+                appendBytes(&strip.track, sizeof(i32));
+                appendBytes(&strip.start, sizeof(f32));
+                appendBytes(&strip.clipIn, sizeof(f32));
+                appendBytes(&strip.clipOut, sizeof(f32));
+                appendBytes(&strip.speed, sizeof(f32));
+                appendBytes(&strip.repeat, sizeof(i32));
+                appendBytes(&strip.fadeIn, sizeof(f32));
+                appendBytes(&strip.fadeOut, sizeof(f32));
+                appendCurve(strip.fadeInCurve);
+                appendCurve(strip.fadeOutCurve);
+                appendBytes(&strip.weight, sizeof(f32));
+                const u8 flags = static_cast<u8>((strip.muted ? 1 : 0) | (strip.reverse ? 2 : 0));
+                appendBytes(&flags, 1);
+                appendBytes(&strip.loopBlend, sizeof(f32));
+                appendBytes(strip.state, 32);
+            }
             entityMap[entity.id()].emplace_back(kTypeSkinnedPose, std::move(data));
         });
     }
     emitPodComponents<Animation::SpriteSheet>(kTypeSpriteSheet, entityMap);
     emitPodComponents<Effects::EffectComponent>(kTypeEffect, entityMap);
+    emitPodComponents<ECS::EnvironmentEffectsComponent>(kTypeEnvironmentEffects, entityMap);
     {
         ECS::ComponentQuery query;
         query.with<Navigation::NavVolume>();
@@ -1419,8 +1560,121 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 std::memcpy(&pose.speed, entry.data.data() + offset, sizeof(f32));
                 offset += sizeof(f32);
                 pose.playing = entry.data[offset++] != 0;
-                pose.loop = entry.data[offset] != 0;
-                pose.loaded = false;
+                pose.loop = entry.data[offset++] != 0;
+                constexpr u32 kHumanoidBytes = static_cast<u32>(sizeof(i32) * static_cast<int>(Animation::HumanoidBone::Count));
+                constexpr u32 kLegacyHumanoidBytes = static_cast<u32>(sizeof(i32) * Animation::kHumanoidLegacyCount);
+                if (offset + 2 + kLegacyHumanoidBytes <= entry.data.size() && entry.data[offset] == 1) {
+                    ++offset;
+                    const u8 flags = entry.data[offset++];
+                    const u32 storedBytes = ((flags >> 2) & 0x7u) >= 1u ? kHumanoidBytes : kLegacyHumanoidBytes;
+                    if (offset + storedBytes > entry.data.size()) break;
+                    std::memcpy(pose.humanoid.bones, entry.data.data() + offset,
+                                std::min(storedBytes, kHumanoidBytes));
+                    pose.humanoid.matched = (flags & 1) != 0;
+                    pose.humanoid.manual = (flags & 2) != 0;
+                    if (pose.humanoid.manual) pose.loaded = true;
+                    offset += storedBytes;
+                    auto readBytes = [&](void* bytes, u32 size) -> bool {
+                        if (offset + size > entry.data.size()) return false;
+                        if (size > 0) std::memcpy(bytes, entry.data.data() + offset, size);
+                        offset += size;
+                        return true;
+                    };
+                    auto readVec3 = [&](Vec3& value) -> bool { return readBytes(&value.x, sizeof(f32) * 3); };
+                    u32 offsetCount = 0;
+                    u32 keyCount = 0;
+                    u32 objectCount = 0;
+                    if (readBytes(&offsetCount, 4) && offsetCount < 10000) {
+                        pose.offsets.resize(offsetCount);
+                        bool ok = true;
+                        for (Animation::BonePose& bone : pose.offsets) {
+                            ok = ok && readVec3(bone.rotation) && readVec3(bone.translation);
+                        }
+                        ok = ok && readBytes(&keyCount, 4) && keyCount < 100000;
+                        if (ok) {
+                            pose.keys.resize(keyCount);
+                            for (Animation::BoneKeyframe& key : pose.keys) {
+                                ok = ok && readBytes(&key.time, sizeof(f32)) && readBytes(&key.bone, sizeof(i32));
+                                ok = ok && readVec3(key.rotation) && readVec3(key.translation);
+                            }
+                        }
+                        ok = ok && readBytes(&objectCount, 4) && objectCount < 100000;
+                        if (ok) {
+                            pose.objectKeys.resize(objectCount);
+                            for (Animation::ObjectKeyframe& key : pose.objectKeys) {
+                                ok = ok && readBytes(&key.time, sizeof(f32)) && readVec3(key.position);
+                            }
+                        }
+                        if (!ok) {
+                            pose.offsets.clear();
+                            pose.keys.clear();
+                            pose.objectKeys.clear();
+                        } else {
+                            u32 removedCount = 0;
+                            if (readBytes(&removedCount, 4) && removedCount < 10000) {
+                                pose.removedBones.resize(removedCount);
+                                for (i32& bone : pose.removedBones) {
+                                    if (!readBytes(&bone, sizeof(i32))) {
+                                        pose.removedBones.clear();
+                                        break;
+                                    }
+                                }
+                            }
+                            u32 curveMarker = 0;
+                            if (readBytes(&curveMarker, 4) && curveMarker == kPoseCurveMarker) {
+                                auto readCurve = [&](Animation::KeyCurve& curve) -> bool {
+                                    u8 mode = 0;
+                                    if (!readBytes(&mode, 1)) return false;
+                                    if (mode > static_cast<u8>(Animation::KeyInterp::Custom)) mode = 0;
+                                    curve.mode = static_cast<Animation::KeyInterp>(mode);
+                                    return readBytes(&curve.x1, sizeof(f32)) && readBytes(&curve.y1, sizeof(f32)) &&
+                                           readBytes(&curve.x2, sizeof(f32)) && readBytes(&curve.y2, sizeof(f32));
+                                };
+                                for (Animation::BoneKeyframe& key : pose.keys) {
+                                    if (!readCurve(key.curve)) break;
+                                }
+                                for (Animation::ObjectKeyframe& key : pose.objectKeys) {
+                                    if (!readCurve(key.curve)) break;
+                                }
+                            }
+                            u32 stripMarker = 0;
+                            u32 stripCount = 0;
+                            if (readBytes(&stripMarker, 4) && stripMarker == kPoseStripMarker &&
+                                readBytes(&stripCount, 4) && stripCount < 10000) {
+                                pose.strips.resize(stripCount);
+                                pose.stripsInitialized = true;
+                                for (Animation::ClipStrip& strip : pose.strips) {
+                                    u8 flags = 0;
+                                    if (!readBytes(&strip.clip, sizeof(i32)) || !readBytes(&strip.track, sizeof(i32)) ||
+                                        !readBytes(&strip.start, sizeof(f32)) || !readBytes(&strip.clipIn, sizeof(f32)) ||
+                                        !readBytes(&strip.clipOut, sizeof(f32)) || !readBytes(&strip.speed, sizeof(f32)) ||
+                                        !readBytes(&strip.repeat, sizeof(i32)) || !readBytes(&strip.fadeIn, sizeof(f32)) ||
+                                        !readBytes(&strip.fadeOut, sizeof(f32))) {
+                                        pose.strips.clear();
+                                        break;
+                                    }
+                                    auto readCurve = [&](Animation::KeyCurve& curve) -> bool {
+                                        u8 mode = 0;
+                                        if (!readBytes(&mode, 1)) return false;
+                                        if (mode > static_cast<u8>(Animation::KeyInterp::Custom)) mode = 0;
+                                        curve.mode = static_cast<Animation::KeyInterp>(mode);
+                                        return readBytes(&curve.x1, sizeof(f32)) && readBytes(&curve.y1, sizeof(f32)) &&
+                                               readBytes(&curve.x2, sizeof(f32)) && readBytes(&curve.y2, sizeof(f32));
+                                    };
+                                    if (!readCurve(strip.fadeInCurve) || !readCurve(strip.fadeOutCurve) ||
+                                        !readBytes(&strip.weight, sizeof(f32)) || !readBytes(&flags, 1) ||
+                                        !readBytes(&strip.loopBlend, sizeof(f32)) || !readBytes(strip.state, 32)) {
+                                        pose.strips.clear();
+                                        break;
+                                    }
+                                    strip.muted = (flags & 1) != 0;
+                                    strip.reverse = (flags & 2) != 0;
+                                    strip.state[31] = 0;
+                                }
+                            }
+                        }
+                    }
+                }
                 m_world.add<Animation::SkinnedPose>(e, std::move(pose));
                 break;
             }
@@ -1432,6 +1686,13 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 applyPODComponent<Effects::EffectComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeEnvironmentEffects: {
+                auto& fx = m_world.add<ECS::EnvironmentEffectsComponent>(e);
+                const u32 n = std::min(static_cast<u32>(sizeof(fx)),
+                                       static_cast<u32>(entry.data.size()));
+                if (n > 0) std::memcpy(&fx, entry.data.data(), n);
+                break;
+            }
             case kTypeNavVolume: {
                 if (entry.data.size() < 24) break;
                 Navigation::NavVolume volume;
@@ -1911,6 +2172,148 @@ bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 
         if (!IO::readU32(cursor, end, frame)) return false;
         if (!IO::readString(cursor, end, evt)) return false;
         anim.frameEvents[i] = {frame, evt.c_str()};
+    }
+
+    u32 editorMarker = 0;
+    if (IO::readU32(cursor, end, editorMarker) && editorMarker == kAnimatorEditorMarker) {
+        std::string defaultState;
+        u32 count = 0;
+        if (IO::readString(cursor, end, defaultState) && IO::readU32(cursor, end, count)) {
+            anim.defaultState = defaultState.c_str();
+            for (u32 i = 0; i < count; ++i) {
+                std::string stateName;
+                std::string motion;
+                u8 hasPosition = 0;
+                f32 x = 0.0f;
+                f32 y = 0.0f;
+                if (!IO::readString(cursor, end, stateName) || !IO::readString(cursor, end, motion) ||
+                    !IO::readU8(cursor, end, hasPosition) || !IO::readF32(cursor, end, x) ||
+                    !IO::readF32(cursor, end, y)) {
+                    break;
+                }
+                if (Animation::AnimationState* state = anim.states.get(FixedString<32>(stateName.c_str()))) {
+                    state->motion = motion.c_str();
+                    state->hasEditorPosition = hasPosition != 0;
+                    state->editorX = x;
+                    state->editorY = y;
+                }
+            }
+        }
+    }
+
+    u32 graphMarker = 0;
+    if (IO::readU32(cursor, end, graphMarker) && graphMarker == kAnimatorGraphMarker) {
+        auto readCurve = [&](Animation::KeyCurve& curve) -> bool {
+            u8 mode = 0;
+            if (!IO::readU8(cursor, end, mode) || !IO::readF32(cursor, end, curve.x1) ||
+                !IO::readF32(cursor, end, curve.y1) || !IO::readF32(cursor, end, curve.x2) ||
+                !IO::readF32(cursor, end, curve.y2)) {
+                return false;
+            }
+            if (mode > static_cast<u8>(Animation::KeyInterp::Custom)) mode = 0;
+            curve.mode = static_cast<Animation::KeyInterp>(mode);
+            return true;
+        };
+        auto readTransition = [&](Animation::AnimationTransition& tr) -> bool {
+            std::string to;
+            u8 hasExit = 0;
+            u32 condCount = 0;
+            if (!IO::readString(cursor, end, to) || !IO::readF32(cursor, end, tr.blendTime) ||
+                !IO::readU8(cursor, end, hasExit) || !IO::readF32(cursor, end, tr.exitTime) ||
+                !IO::readF32(cursor, end, tr.offset) || !readCurve(tr.blendCurve) ||
+                !IO::readU32(cursor, end, condCount)) {
+                return false;
+            }
+            tr.toState = to.c_str();
+            tr.hasExitTime = hasExit != 0;
+            if (condCount > 256) return false;
+            tr.conditions.resize(condCount);
+            for (auto& cond : tr.conditions) {
+                std::string param;
+                u8 op = 0;
+                u8 boolValue = 0;
+                if (!IO::readString(cursor, end, param) || !IO::readU8(cursor, end, op) ||
+                    !IO::readU8(cursor, end, boolValue) || !IO::readF32(cursor, end, cond.floatValue) ||
+                    !IO::readI32(cursor, end, cond.intValue)) {
+                    return false;
+                }
+                cond.parameterName = param.c_str();
+                cond.op = static_cast<Animation::ConditionOperator>(op);
+                cond.boolValue = boolValue != 0;
+            }
+            return true;
+        };
+        auto readMachine = [&](Animation::AnimatorStateMachine& sm) -> bool {
+            std::string defaultState;
+            u32 anyCount = 0;
+            u32 stateCount = 0;
+            if (!IO::readString(cursor, end, defaultState) || !IO::readF32(cursor, end, sm.entryX) ||
+                !IO::readF32(cursor, end, sm.entryY) || !IO::readF32(cursor, end, sm.anyX) ||
+                !IO::readF32(cursor, end, sm.anyY) || !IO::readF32(cursor, end, sm.exitX) ||
+                !IO::readF32(cursor, end, sm.exitY) || !IO::readU32(cursor, end, anyCount)) {
+                return false;
+            }
+            sm.defaultState = defaultState.c_str();
+            if (anyCount > 256) return false;
+            sm.anyStateTransitions.resize(anyCount);
+            for (auto& tr : sm.anyStateTransitions) {
+                if (!readTransition(tr)) return false;
+            }
+            if (!IO::readU32(cursor, end, stateCount) || stateCount > 512) return false;
+            sm.states.clear();
+            for (u32 i = 0; i < stateCount; ++i) {
+                std::string name;
+                std::string motion;
+                u8 hasPos = 0;
+                u32 trCount = 0;
+                Animation::AnimationState state;
+                if (!IO::readString(cursor, end, name) || !IO::readString(cursor, end, motion) ||
+                    !IO::readF32(cursor, end, state.speed) || !IO::readU8(cursor, end, hasPos) ||
+                    !IO::readF32(cursor, end, state.editorX) || !IO::readF32(cursor, end, state.editorY) ||
+                    !IO::readU32(cursor, end, trCount)) {
+                    return false;
+                }
+                state.name = name.c_str();
+                state.motion = motion.c_str();
+                state.hasEditorPosition = hasPos != 0;
+                if (trCount > 256) return false;
+                state.transitions.resize(trCount);
+                for (auto& tr : state.transitions) {
+                    if (!readTransition(tr)) return false;
+                }
+                sm.states.set(state.name, state);
+            }
+            if (sm.currentState.empty()) sm.currentState = sm.defaultState;
+            return true;
+        };
+        if (readMachine(anim)) {
+            u32 layerCount = 0;
+            if (IO::readU32(cursor, end, layerCount) && layerCount < 64) {
+                anim.layers.resize(layerCount);
+                for (Animation::AnimatorLayer& layer : anim.layers) {
+                    std::string name;
+                    std::string parent;
+                    u8 isGroup = 0, muted = 0, expanded = 1, blend = 0;
+                    if (!IO::readString(cursor, end, name) || !IO::readString(cursor, end, parent) ||
+                        !IO::readU8(cursor, end, isGroup) || !IO::readU8(cursor, end, muted) ||
+                        !IO::readU8(cursor, end, expanded) || !IO::readF32(cursor, end, layer.weight) ||
+                        !IO::readU8(cursor, end, blend) || !IO::readU32(cursor, end, layer.mask)) {
+                        anim.layers.clear();
+                        break;
+                    }
+                    layer.name = name.c_str();
+                    layer.parentGroup = parent.c_str();
+                    layer.isGroup = isGroup != 0;
+                    layer.muted = muted != 0;
+                    layer.expanded = expanded != 0;
+                    layer.blend = blend != 0 ? Animation::LayerBlendMode::Additive : Animation::LayerBlendMode::Override;
+                    if (!layer.isGroup && !readMachine(layer)) {
+                        anim.layers.clear();
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     anim.onFrameEvent = nullptr;

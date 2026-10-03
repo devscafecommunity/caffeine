@@ -65,6 +65,7 @@ void RenderDevice::shutdown() {
     SDL_WaitForGPUIdle(m_device);
     for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         releasePendingTransfers(i);
+        releaseRetiredTextures(i);
     }
     m_activeFrameCmd = nullptr;
 
@@ -211,6 +212,7 @@ void RenderDevice::endFrame(CommandBuffer* cmd) {
     // Release transfer buffers from the frame that just retired (3 frames ago).
     m_frameIndex = (m_frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
     releasePendingTransfers(m_frameIndex);
+    releaseRetiredTextures(m_frameIndex);
 }
 
 Texture* RenderDevice::createTexture(const TextureDesc& desc) {
@@ -314,10 +316,25 @@ Buffer* RenderDevice::createBuffer(const BufferDesc& desc, BufferUsage usage) {
     return buf;
 }
 
+void RenderDevice::retireGpuTexture(SDL_GPUTexture* handle) {
+    if (!handle) return;
+    if (!m_device) return;
+    m_retiredTextures[m_frameIndex].push_back(handle);
+}
+
+void RenderDevice::releaseRetiredTextures(u32 slot) {
+    if (slot >= MAX_FRAMES_IN_FLIGHT) return;
+    for (SDL_GPUTexture* handle : m_retiredTextures[slot]) {
+        if (m_device && handle) SDL_ReleaseGPUTexture(m_device, handle);
+    }
+    m_retiredTextures[slot].clear();
+}
+
 void RenderDevice::destroyTexture(Texture* tex) {
     if (!tex) return;
-    if (m_device && tex->handle) {
-        SDL_ReleaseGPUTexture(m_device, tex->handle);
+    if (tex->handle) {
+        retireGpuTexture(tex->handle);
+        tex->handle = nullptr;
     }
     delete tex;
 }

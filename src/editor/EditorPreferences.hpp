@@ -33,6 +33,7 @@ struct EditorPreferences {
     bool showFPSInStatusBar = true;
     bool confirmOnSceneClose = true;
     bool reopenLastSceneOnStartup = true;
+    std::string keymap;
 
     static std::filesystem::path preferencesPath();
     static EditorPreferences load();

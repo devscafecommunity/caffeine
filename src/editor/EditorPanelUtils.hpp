@@ -6,7 +6,10 @@
 #include "ecs/MeshComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "ecs/LightComponents.hpp"
 #include "ecs/SkyboxComponents.hpp"
+#include "ecs/EnvironmentEffectsComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "ecs/World.hpp"
 #include "scene/SceneComponents.hpp"
@@ -31,6 +34,7 @@ inline u64 editorSceneContentStamp(ECS::World& world) {
 
     mix(world.entityCount());
     mix(Assets::MaterialCache::instance().revision());
+    mix(Animation::skinRevision());
 
     ECS::ComponentQuery meshQuery;
     meshQuery.with<ECS::MeshFilterComponent>();
@@ -89,6 +93,39 @@ inline u64 editorSceneContentStamp(ECS::World& world) {
         std::memcpy(&exposureBits, &sky.exposure, sizeof(exposureBits));
         mix(exposureBits);
         for (const char* c = sky.customTexturePath; *c; ++c) mix(static_cast<unsigned char>(*c));
+    });
+
+    ECS::ComponentQuery envQuery;
+    envQuery.with<ECS::EnvironmentEffectsComponent>();
+    world.forEach<ECS::EnvironmentEffectsComponent>(
+        envQuery, [&](ECS::Entity entity, ECS::EnvironmentEffectsComponent& fx) {
+            mix(entity.id());
+            mix(fx.enabled);
+            mix(fx.mode);
+            u32 bits = 0;
+            std::memcpy(&bits, &fx.timeOfDay, sizeof(bits));
+            mix(bits);
+            std::memcpy(&bits, &fx.drivenAmbient.x, sizeof(bits));
+            mix(bits);
+            std::memcpy(&bits, &fx.drivenAmbient2D, sizeof(bits));
+            mix(bits);
+        });
+
+    ECS::ComponentQuery lightQuery;
+    lightQuery.with<ECS::LightComponent>();
+    world.forEach<ECS::LightComponent>(lightQuery, [&](ECS::Entity entity, ECS::LightComponent& light) {
+        mix(entity.id());
+        u32 bits = 0;
+        std::memcpy(&bits, &light.intensity, sizeof(bits));
+        mix(bits);
+        std::memcpy(&bits, &light.color.x, sizeof(bits));
+        mix(bits);
+        std::memcpy(&bits, &light.color.y, sizeof(bits));
+        mix(bits);
+        std::memcpy(&bits, &light.color.z, sizeof(bits));
+        mix(bits);
+        std::memcpy(&bits, &light.color.w, sizeof(bits));
+        mix(bits);
     });
 
     ECS::ComponentQuery postQuery;

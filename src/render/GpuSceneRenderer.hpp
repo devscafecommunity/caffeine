@@ -89,6 +89,10 @@ struct GpuSceneRenderOptions {
     u64  viewId = 0;
     f32  deltaTime = 1.0f / 60.0f;
     bool drawSky = true;
+    /// Pose-only editor redraw: skip TAA/probe settle so Play does not leave the viewport looping.
+    bool skipTemporalSettle = false;
+    bool overrideAmbient = false;
+    Vec3 ambientColor{0.03f, 0.03f, 0.035f};
     GpuGridOverlay grid{};
 };
 
@@ -307,6 +311,7 @@ private:
     RHI::Pipeline* m_instancedPipeline = nullptr;
     RHI::Buffer* m_instanceBuffer = nullptr;
     std::unordered_map<u32, RHI::Buffer*> m_skinBuffers;
+    std::unordered_map<u32, u64> m_skinUploadGen;
     RHI::Buffer* vertexBufferFor(const MeshDraw& draw);
     RHI::Pipeline* m_blendPipeline = nullptr;
     RHI::Shader* m_fullscreenVert = nullptr;

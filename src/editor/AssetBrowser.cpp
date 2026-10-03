@@ -5,6 +5,8 @@
 #include "editor/DragDropSystem.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/AnimationEditorLink.hpp"
+#include "editor/ProjectManager.hpp"
 #include "core/io/CafTypes.hpp"
 #include "assets/TextureCompiler.hpp"
 #include "assets/MeshImportValidator.hpp"
@@ -96,6 +98,7 @@ void AssetBrowser::init(const ProjectConfig& projectConfig) {
     m_pathHistory.clear();
     std::filesystem::create_directories(m_rawRoot);
     std::filesystem::create_directories(m_processedRoot);
+    ProjectManager::EnsureDefaultFolders(m_projectRoot);
     refresh();
 }
 
@@ -852,6 +855,8 @@ void AssetBrowser::renderGridView() {
                     m_onMaterialOpen(entry.path);
                 } else if (isBrowserImage(entry.path) && m_editorContext) {
                     m_editorContext->imageToOpen = entry.path.string();
+                } else if (entry.path.extension() == ".anim") {
+                    AnimationEditorLink::get().openAnimRequest = entry.path.string();
                 }
             }
         }
@@ -941,6 +946,8 @@ void AssetBrowser::renderListView() {
                     m_onMaterialOpen(entry.path);
                 } else if (isBrowserImage(entry.path) && m_editorContext) {
                     m_editorContext->imageToOpen = entry.path.string();
+                } else if (entry.path.extension() == ".anim") {
+                    AnimationEditorLink::get().openAnimRequest = entry.path.string();
                 }
             }
         }
@@ -1420,7 +1427,7 @@ bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool auto
             if (!relEc) rel = computed;
 
             if (!importSingleFile(file, m_rawRoot / rel)) {
-                setStatusMessage("Falha ao importar ficheiros do mesh", true);
+                setStatusMessage("Failed to import mesh files", true);
                 refresh();
                 return false;
             }
@@ -1432,7 +1439,7 @@ bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool auto
         }
 
         const auto report = Assets::MeshImportValidator::analyze(m_rawRoot / sourcePath.filename());
-        std::string message = "Mesh importado (" + std::to_string(copiedCount) + " ficheiro(s))";
+        std::string message = "Mesh imported (" + std::to_string(copiedCount) + " file(s))";
         if (!report.readyToLoad) {
             message = "Importado mas incompleto: " + report.errorSummary;
             if (!report.suggestion.empty()) {
@@ -1536,7 +1543,7 @@ void AssetBrowser::renderAssetCreatorModal() {
 
         ImGui::BeginChild("AssetOptions", ImVec2(0.0f, 320.0f), true);
         if (m_assetCreatorCategory == 1) {
-            ImGui::TextWrapped("Prefira .glb (um ficheiro). glTF separado precisa do .bin e texturas.");
+            ImGui::TextWrapped("Prefer .glb (one file). A separate glTF needs the .bin and textures.");
             ImGui::Spacing();
         }
 

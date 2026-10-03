@@ -151,7 +151,7 @@ void MaterialEditorPanel::assignToSelection(EditorContext& ctx, bool force) {
         }
         ++applied;
     }
-    if (applied > 0) ctx.isDirty = true;
+    if (applied > 0) ctx.markDirty();
 }
 
 bool MaterialEditorPanel::createInAssetBrowser(EditorContext& ctx) {

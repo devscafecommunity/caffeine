@@ -71,11 +71,37 @@ struct TransitionCondition {
     };
 };
 
+enum class KeyInterp : u8 {
+    Linear,
+    Constant,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    Custom
+};
+
+/// Shape of a segment or a fade. Custom uses a cubic Bezier with x in [0, 1].
+struct KeyCurve {
+    KeyInterp mode = KeyInterp::Linear;
+    f32 x1 = 0.33f;
+    f32 y1 = 0.33f;
+    f32 x2 = 0.67f;
+    f32 y2 = 0.67f;
+};
+
+/// Reserved transition target: the layer leaves through Exit and re-enters at its default state.
+inline constexpr const char* kAnimatorExitState = "Exit";
+
 struct AnimationTransition {
     FixedString<32>                   toState;
     std::vector<TransitionCondition>  conditions;  // all must be satisfied
     f32                               blendTime   = 0.1f;
     bool                              hasExitTime = false;
+    /// Normalized source time the transition may fire at, when hasExitTime is set.
+    f32                               exitTime    = 1.0f;
+    /// Normalized time the target state starts at.
+    f32                               offset      = 0.0f;
+    KeyCurve                          blendCurve;
 
     std::function<bool()> legacyCondition;
 };
@@ -85,15 +111,73 @@ struct AnimationState {
     const AnimationClip*             clip  = nullptr;
     f32                              speed = 1.0f;
     std::vector<AnimationTransition> transitions;
+    /// Imported skeletal clip this state plays. Empty means a clip with the state's own name.
+    FixedString<32>                  motion;
+    f32                              editorX = 0.0f;
+    f32                              editorY = 0.0f;
+    bool                             hasEditorPosition = false;
 };
 
-struct Animator {
-    // Clip storage for deserialized scenes (state.clip may point here).
-    std::vector<AnimationClip>                   embeddedClips;
+/// One state graph. The Animator is the base layer; extra layers carry their own graph.
+struct AnimatorStateMachine {
     HashMap<FixedString<32>, AnimationState>     states;
     FixedString<32>                              currentState;
     FixedString<32>                              previousState;
+    /// Entry points here. Play mode starts in this state.
+    FixedString<32>                              defaultState;
     f32                                          timeInState   = 0.0f;
+    /// Checked before the current state's own transitions, from any state.
+    std::vector<AnimationTransition>             anyStateTransitions;
+
+    /// Crossfade from the previous state. The pose blends while fadeElapsed < fadeDuration.
+    FixedString<32>                              fadeFromState;
+    f32                                          fadeFromTime  = 0.0f;
+    f32                                          fadeElapsed   = 0.0f;
+    f32                                          fadeDuration  = 0.0f;
+    KeyCurve                                     fadeCurve;
+
+    f32 entryX = 40.0f, entryY = 120.0f;
+    f32 anyX = 40.0f, anyY = 40.0f;
+    f32 exitX = 40.0f, exitY = 220.0f;
+
+    bool fading() const { return fadeDuration > 0.0f && fadeElapsed < fadeDuration && !fadeFromState.empty(); }
+};
+
+enum class LayerBlendMode : u8 {
+    Override,
+    Additive
+};
+
+/// Body regions a layer mask can include. Bits of AnimatorLayer::mask.
+enum class BodyMask : u32 {
+    Root = 1u << 0,
+    Body = 1u << 1,
+    Head = 1u << 2,
+    LeftArm = 1u << 3,
+    RightArm = 1u << 4,
+    LeftLeg = 1u << 5,
+    RightLeg = 1u << 6,
+    All = 0x7Fu
+};
+
+struct AnimatorLayer : AnimatorStateMachine {
+    FixedString<32> name;
+    /// Group this layer sits under in the layer tree. Empty is the top level.
+    FixedString<32> parentGroup;
+    /// Groups hold other layers and scale their weight. They have no graph of their own.
+    bool            isGroup  = false;
+    bool            muted    = false;
+    bool            expanded = true;
+    f32             weight   = 1.0f;
+    LayerBlendMode  blend    = LayerBlendMode::Override;
+    u32             mask     = static_cast<u32>(BodyMask::All);
+};
+
+struct Animator : AnimatorStateMachine {
+    // Clip storage for deserialized scenes (state.clip may point here).
+    std::vector<AnimationClip>                   embeddedClips;
+    /// Layers above the base graph, in evaluation order.
+    std::vector<AnimatorLayer>                   layers;
     f32                                          blendWeight   = 1.0f;
     f32                                          playbackScale = 1.0f;
     bool                                         paused        = false;
