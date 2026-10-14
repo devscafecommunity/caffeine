@@ -212,6 +212,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     scriptParams.world  = nullptr;
     scriptParams.events = &m_eventBus;
     scriptParams.input  = &m_input;
+    scriptParams.ui     = &m_uiSystem;
     if (!m_scriptEngineReady) {
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
@@ -219,7 +220,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_scriptEngine.setSearchRoot(m_currentProjectConfig.RootPath.string());
      m_scriptEditor.setScriptEngine(&m_scriptEngine);
      if (m_scriptEngineReady) {
-         m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+         m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
      }
 #endif
 
@@ -422,9 +423,10 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
         p.world  = &world;
         p.events = &m_eventBus;
         p.input  = &m_input;
+        p.ui     = &m_uiSystem;
         m_scriptEngineReady = m_scriptEngine.init(p);
     }
-    m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+    m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
     m_scriptSystem.resetPlayState();
     Procedural::ProceduralWorldSystem::reset();
     ECS::ComponentQuery cppQ;

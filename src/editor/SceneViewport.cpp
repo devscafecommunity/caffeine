@@ -43,6 +43,10 @@
 #include "editor/EditorPaths.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "ui/UIRenderer.hpp"
+#include "render/Overlay2D.hpp"
+#include "scene/Camera2DPlay.hpp"
+#include "scene/PickQuery.hpp"
+#include "scene/PlayMode2D.hpp"
 #include "spatial/Octree.hpp"
 #include <filesystem>
 #include <algorithm>
@@ -1638,6 +1642,15 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
      }
 
     if (ctx.isPlayMode) {
+        Render::Rect2D vp{{origin.x, origin.y}, {viewportSize.x, viewportSize.y}};
+        Render::Camera2D cam =
+            (ctx.viewMode == EditorContext::ViewMode::Mode2D)
+                ? Scene::buildCamera2DFromEditorViewport(ctx, vp)
+                : Render::Camera2D();
+        if (ctx.viewMode == EditorContext::ViewMode::Mode2D) {
+            Scene::PlayRenderContext::instance().set2D(vp, cam);
+        }
+        Render::Overlay2D::draw(drawList, cam, origin, viewportSize);
         UI::drawWidgets(world, drawList, origin, viewportSize);
     }
 
@@ -3436,235 +3449,17 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
 
 f32 SceneViewport::rayIntersectsAABB(const Vec3& rayOrigin, const Vec3& rayDir,
                                      const Vec3& aabbMin, const Vec3& aabbMax) {
-    f32 t_enter = 0.0f;
-    f32 t_exit = 1e10f;
-    
-    // Test X slab
-    if (std::abs(rayDir.x) > 1e-6f) {
-        f32 t0 = (aabbMin.x - rayOrigin.x) / rayDir.x;
-        f32 t1 = (aabbMax.x - rayOrigin.x) / rayDir.x;
-        if (t0 > t1) std::swap(t0, t1);
-        t_enter = std::max(t_enter, t0);
-        t_exit = std::min(t_exit, t1);
-    } else {
-        if (rayOrigin.x < aabbMin.x || rayOrigin.x > aabbMax.x) {
-            return -1.0f;
-        }
-    }
-    
-    // Test Y slab
-    if (std::abs(rayDir.y) > 1e-6f) {
-        f32 t0 = (aabbMin.y - rayOrigin.y) / rayDir.y;
-        f32 t1 = (aabbMax.y - rayOrigin.y) / rayDir.y;
-        if (t0 > t1) std::swap(t0, t1);
-        t_enter = std::max(t_enter, t0);
-        t_exit = std::min(t_exit, t1);
-    } else {
-        if (rayOrigin.y < aabbMin.y || rayOrigin.y > aabbMax.y) {
-            return -1.0f;
-        }
-    }
-    
-    // Test Z slab
-    if (std::abs(rayDir.z) > 1e-6f) {
-        f32 t0 = (aabbMin.z - rayOrigin.z) / rayDir.z;
-        f32 t1 = (aabbMax.z - rayOrigin.z) / rayDir.z;
-        if (t0 > t1) std::swap(t0, t1);
-        t_enter = std::max(t_enter, t0);
-        t_exit = std::min(t_exit, t1);
-    } else {
-        if (rayOrigin.z < aabbMin.z || rayOrigin.z > aabbMax.z) {
-            return -1.0f;
-        }
-    }
-    
-    if (t_enter <= t_exit && t_exit >= 0.0f) {
-        return t_enter >= 0.0f ? t_enter : 0.0f;
-    }
-    
-    return -1.0f;
+    return Scene::rayIntersectsAABB(rayOrigin, rayDir, aabbMin, aabbMax);
 }
 
 ECS::Entity SceneViewport::pickEntity2D(const Vec2& worldPos, ECS::World& world) const {
-    ECS::Entity best = ECS::Entity::INVALID;
-    f32 bestDistSq = 1e10f;
-
-    ECS::ComponentQuery query;
-    query.with<ECS::Transform>();
-
-    world.forEach<ECS::Transform>(query, [&](ECS::Entity entity, ECS::Transform& pos) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
-
-        Vec3 worldPosition = pos.position;
-        f32 scaleX = std::max(0.1f, pos.scale.x);
-        f32 scaleY = std::max(0.1f, pos.scale.y);
-
-        if (auto* wt = world.get<Scene::WorldTransform>(entity)) {
-            worldPosition = Vec3(wt->matrix(0, 3), wt->matrix(1, 3), wt->matrix(2, 3));
-            scaleX = std::max(0.1f, sqrtf(wt->matrix(0, 0) * wt->matrix(0, 0) +
-                                           wt->matrix(1, 0) * wt->matrix(1, 0)));
-            scaleY = std::max(0.1f, sqrtf(wt->matrix(0, 1) * wt->matrix(0, 1) +
-                                           wt->matrix(1, 1) * wt->matrix(1, 1)));
-        }
-
-        f32 halfW = std::max(0.25f, 0.5f * scaleX);
-        f32 halfH = std::max(0.25f, 0.5f * scaleY);
-        if (world.has<ECS::Sprite>(entity)) {
-            halfW = std::max(0.5f, halfW);
-            halfH = std::max(0.5f, halfH);
-        }
-
-        if (worldPos.x < worldPosition.x - halfW || worldPos.x > worldPosition.x + halfW ||
-            worldPos.y < worldPosition.y - halfH || worldPos.y > worldPosition.y + halfH) {
-            return;
-        }
-
-        const f32 dx = worldPos.x - worldPosition.x;
-        const f32 dy = worldPos.y - worldPosition.y;
-        const f32 distSq = dx * dx + dy * dy;
-        if (distSq < bestDistSq) {
-            bestDistSq = distSq;
-            best = entity;
-        }
-    });
-
-    return best;
+    return Scene::pickEntityAtWorld(world, worldPos);
 }
 
 ECS::Entity SceneViewport::raycastSelectEntity(const Vec3& rayOrigin, const Vec3& rayDir,
                                                ECS::World& world,
                                                const std::string& projectRoot) {
-    ECS::Entity closestEntity = ECS::Entity::INVALID;
-    f32 closestT = 1e10f;
-
-    auto accept = [&](ECS::Entity entity, f32 t) {
-        if (t >= 0.0f && t < closestT) {
-            closestT = t;
-            closestEntity = entity;
-        }
-    };
-
-    auto padThin = [](Vec3& mn, Vec3& mx) {
-        const f32 pad = 0.05f;
-        if (mx.x - mn.x < pad) { const f32 c = (mn.x + mx.x) * 0.5f; mn.x = c - pad; mx.x = c + pad; }
-        if (mx.y - mn.y < pad) { const f32 c = (mn.y + mx.y) * 0.5f; mn.y = c - pad; mx.y = c + pad; }
-        if (mx.z - mn.z < pad) { const f32 c = (mn.z + mx.z) * 0.5f; mn.z = c - pad; mx.z = c + pad; }
-    };
-
-    auto testWorldAabb = [&](ECS::Entity entity, Vec3 mn, Vec3 mx) {
-        padThin(mn, mx);
-        accept(entity, rayIntersectsAABB(rayOrigin, rayDir, mn, mx));
-    };
-
-    auto testLocalAabb = [&](ECS::Entity entity, const Mat4& worldMatrix, Vec3 localMin, Vec3 localMax) {
-        Vec3 mn(1e30f, 1e30f, 1e30f);
-        Vec3 mx(-1e30f, -1e30f, -1e30f);
-        const Vec3 corners[2] = {localMin, localMax};
-        for (int ix = 0; ix < 2; ++ix) {
-            for (int iy = 0; iy < 2; ++iy) {
-                for (int iz = 0; iz < 2; ++iz) {
-                    const Vec3 p = worldMatrix.transformPoint(Vec3(corners[ix].x, corners[iy].y, corners[iz].z));
-                    mn.x = std::min(mn.x, p.x); mn.y = std::min(mn.y, p.y); mn.z = std::min(mn.z, p.z);
-                    mx.x = std::max(mx.x, p.x); mx.y = std::max(mx.y, p.y); mx.z = std::max(mx.z, p.z);
-                }
-            }
-        }
-        testWorldAabb(entity, mn, mx);
-    };
-
-    auto testPoint = [&](ECS::Entity entity, const Vec3& point) {
-        const f32 t = (point - rayOrigin).dot(rayDir);
-        if (t < 0.0f) return;
-        const f32 dist = ((rayOrigin + rayDir * t) - point).length();
-        const f32 reach = std::max(0.25f, t * 0.03f);
-        if (dist <= reach) accept(entity, t);
-    };
-
-    ECS::ComponentQuery meshes;
-    meshes.with<ECS::MeshFilterComponent>();
-    world.forEach<ECS::MeshFilterComponent>(meshes, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
-        const Mat4 worldMatrix = entityMatrix(world, entity);
-        if (const ECS::TerrainComponent* terrain = world.get<ECS::TerrainComponent>(entity)) {
-            if (const Terrain::TerrainHeightmap* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
-                heightmap && !heightmap->empty()) {
-                Vec3 hit;
-                if (Terrain::TerrainSculptor::raycast(worldMatrix, *heightmap, *terrain, rayOrigin, rayDir, hit)) {
-                    accept(entity, (hit - rayOrigin).dot(rayDir));
-                }
-                return;
-            }
-            const f32 halfX = terrain->worldSizeX * 0.5f;
-            const f32 halfZ = terrain->worldSizeZ * 0.5f;
-            testLocalAabb(entity, worldMatrix, Vec3(-halfX, -0.25f, -halfZ), Vec3(halfX, 1.0f, halfZ));
-            return;
-        }
-
-        Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
-        if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
-            if (!filter.customMeshPath.empty()) {
-                mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
-            }
-        } else if (!mesh) {
-            mesh = Render::GpuProceduralMeshes::get(filter.primitive);
-        }
-        if (mesh && (mesh->bounds.max - mesh->bounds.min).lengthSquared() > 1.0e-6f) {
-            testLocalAabb(entity, worldMatrix, mesh->bounds.min, mesh->bounds.max);
-        } else {
-            testLocalAabb(entity, worldMatrix, Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
-        }
-    });
-
-    auto testMarker = [&](ECS::Entity entity) {
-        if (Scene::isEffectivelyDisabled(world, entity)) return;
-        if (world.has<ECS::MeshFilterComponent>(entity)) return;
-        Vec3 point;
-        if (!tryGetEntityPosition(world, entity, point)) return;
-        if (const Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
-            const auto kind = static_cast<Effects::EffectKind>(effect->kind);
-            if (kind == Effects::EffectKind::VolumetricLight || kind == Effects::EffectKind::Fog) {
-                const f32 radius = std::max(effect->radius, 0.25f);
-                if (kind == Effects::EffectKind::VolumetricLight &&
-                    Effects::volumetricShapeOf(*effect) != Effects::VolumetricShape::Sphere) {
-                    const Mat4 matrix = entityMatrix(world, entity);
-                    Vec3 forward = matrix.transformVector(Vec3(0.0f, 0.0f, -1.0f));
-                    if (forward.lengthSquared() < 1.0e-8f) forward = Vec3(0.0f, 0.0f, -1.0f);
-                    else forward = forward.normalized();
-                    const Vec3 end = point + forward * radius;
-                    const f32 pad = std::max(effect->startSize, effect->endSize) * 0.5f;
-                    const Vec3 padVec(pad, pad, pad);
-                    testWorldAabb(entity, Vec3(std::min(point.x, end.x), std::min(point.y, end.y), std::min(point.z, end.z)) - padVec,
-                                  Vec3(std::max(point.x, end.x), std::max(point.y, end.y), std::max(point.z, end.z)) + padVec);
-                } else {
-                    testWorldAabb(entity, point - Vec3(radius, radius, radius), point + Vec3(radius, radius, radius));
-                }
-                return;
-            }
-        }
-        if (const ECS::Transform* transform = world.get<ECS::Transform>(entity)) {
-            if (world.has<ECS::Sprite>(entity)) {
-                const f32 halfW = std::max(0.5f, std::abs(transform->scale.x) * 0.5f);
-                const f32 halfH = std::max(0.5f, std::abs(transform->scale.y) * 0.5f);
-                testWorldAabb(entity, point - Vec3(halfW, halfH, 0.05f), point + Vec3(halfW, halfH, 0.05f));
-                return;
-            }
-        }
-        testPoint(entity, point);
-    };
-
-    ECS::ComponentQuery positioned;
-    positioned.with<ECS::Position3D>();
-    world.forEach<ECS::Position3D>(positioned, [&](ECS::Entity entity, ECS::Position3D&) {
-        testMarker(entity);
-    });
-    ECS::ComponentQuery transforms;
-    transforms.with<ECS::Transform>();
-    transforms.without<ECS::Position3D>();
-    world.forEach<ECS::Transform>(transforms, [&](ECS::Entity entity, ECS::Transform&) {
-        testMarker(entity);
-    });
-
-    return closestEntity;
+    return Scene::raycastSelectEntity(rayOrigin, rayDir, world, projectRoot);
 }
 
 void SceneViewport::handleGizmoInput(ECS::World& world, EditorContext& ctx, ImVec2 viewportSize) {

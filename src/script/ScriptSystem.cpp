@@ -5,21 +5,41 @@
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "debug/LogSystem.hpp"
+#include "render/Overlay2D.hpp"
+#include "runtime/GameStateStack.hpp"
+#include "runtime/PlayClock.hpp"
+#include "scene/MapSurfaceSystem.hpp"
+#include "scene/PickQuery.hpp"
+#include "scene/PlayMode2D.hpp"
+#include "scene/SpriteLod2DSystem.hpp"
+#include "events/EventBus.hpp"
 
 namespace Caffeine::Script {
 
-ScriptSystem::ScriptSystem(ScriptEngine* engine)
-    : m_engine(engine) {}
+ScriptSystem::ScriptSystem(ScriptEngine* engine, Events::EventBus* eventBus)
+    : m_engine(engine), m_events(eventBus) {}
 
 void ScriptSystem::resetPlayState() {
     m_initializedLua.clear();
     m_initializedNative.clear();
     m_initializedPostProcess.clear();
     m_warnedNoLua = false;
+    Scene::PickQueryRegistry::instance().clear();
+    Scene::resetMapSurfaceChunkRequestCache();
+    Runtime::PlayClock::instance().reset();
+    Runtime::GameStateStack::instance().clear();
+    Render::Overlay2D::beginFrame();
 }
 
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
+    Runtime::PlayClock::instance().advance(dt);
+    Render::Overlay2D::beginFrame();
+    if (m_events && Scene::PlayRenderContext::instance().has2D()) {
+        const auto& cam = Scene::PlayRenderContext::instance().camera2D();
+        Scene::applySpriteLod2D(world, cam.zoom());
+        Scene::tickMapSurfaceChunkRequests(world, *m_events, &cam, true);
+    }
     processLuaScripts(world, dt);
     processNativeScripts(world, dt);
     processCppScripts(world, dt);
@@ -78,7 +98,13 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
             m_initializedLua.pushBack(entity);
         }
 
-        m_engine->callOnUpdate(path, entity, dt);
+        m_engine->callOnUpdate(path, entity, Runtime::PlayClock::instance().deltaTime());
+
+        const f32 fixedDt = Runtime::PlayClock::instance().fixedDeltaTime();
+        const int fixedSteps = Runtime::PlayClock::instance().consumeFixedSteps();
+        for (int step = 0; step < fixedSteps; ++step) {
+            m_engine->callOnFixedUpdate(path, entity, fixedDt);
+        }
     }
 }
 

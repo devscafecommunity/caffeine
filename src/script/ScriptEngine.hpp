@@ -9,6 +9,7 @@
 
 namespace Caffeine { namespace Input { class InputManager; } }
 namespace Caffeine { namespace Events { class EventBus; } }
+namespace Caffeine { namespace UI { class UISystem; } }
 
 namespace Caffeine::Script {
 
@@ -24,6 +25,7 @@ public:
         ECS::World* world = nullptr;
         Input::InputManager* input = nullptr;
         Events::EventBus* events = nullptr;
+        UI::UISystem* ui = nullptr;
     };
 
     bool init(const InitParams& params);
@@ -55,6 +57,7 @@ public:
     // Lifecycle calls
     bool callOnCreate(const std::string& path, ECS::Entity entity);
     bool callOnUpdate(const std::string& path, ECS::Entity entity, f32 dt);
+    bool callOnFixedUpdate(const std::string& path, ECS::Entity entity, f32 fixedDt);
     bool callOnDestroy(const std::string& path, ECS::Entity entity);
     bool callOnCollision(const std::string& path, ECS::Entity entity,
                          ECS::Entity other);

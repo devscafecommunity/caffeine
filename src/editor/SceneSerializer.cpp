@@ -15,6 +15,8 @@
 #include "navigation/NavVolume.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
+#include "ecs/MapComponents.hpp"
+#include "ecs/LodComponents.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
@@ -1209,6 +1211,8 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     emitPodComponents<Animation::SpriteSheet>(kTypeSpriteSheet, entityMap);
     emitPodComponents<Effects::EffectComponent>(kTypeEffect, entityMap);
     emitPodComponents<ECS::EnvironmentEffectsComponent>(kTypeEnvironmentEffects, entityMap);
+    emitPodComponents<ECS::MapSurface2DComponent>(kTypeMapSurface2D, entityMap);
+    emitPodComponents<ECS::SpriteLod2DComponent>(kTypeSpriteLod2D, entityMap);
     {
         ECS::ComponentQuery query;
         query.with<Navigation::NavVolume>();
@@ -1693,6 +1697,14 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 if (n > 0) std::memcpy(&fx, entry.data.data(), n);
                 break;
             }
+            case kTypeMapSurface2D:
+                applyPODComponent<ECS::MapSurface2DComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeSpriteLod2D:
+                applyPODComponent<ECS::SpriteLod2DComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
             case kTypeNavVolume: {
                 if (entry.data.size() < 24) break;
                 Navigation::NavVolume volume;

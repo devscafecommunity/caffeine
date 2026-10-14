@@ -5,6 +5,8 @@
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/MapComponents.hpp"
+#include "ecs/LodComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "ecs/ProceduralComponents.hpp"
@@ -242,6 +244,26 @@ void registerAllComponents(ComponentRegistry& reg) {
             active.is2D = true;
             w.add<ECS::CameraActiveComponent>(e, active);
         }
+    });
+    reg.registerComponent({
+        "World", "Map Surface 2D",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::MapSurface2DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::MapSurface2DComponent>(e); },
+        "map",
+        "chunk surface bounds"
+    });
+    reg.registerComponent({
+        "Rendering", "Sprite LOD 2D",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::SpriteLod2DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            ECS::SpriteLod2DComponent lod;
+            if (auto* t = w.get<ECS::Transform>(e)) {
+                lod.baseScale = {t->scale.x, t->scale.y};
+            }
+            w.add<ECS::SpriteLod2DComponent>(e, lod);
+        },
+        "lod",
+        "zoom based sprite scale"
     });
     reg.registerComponent({
         "Camera", "Camera2D",

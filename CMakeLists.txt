@@ -79,6 +79,13 @@ add_library(caffeine-core
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
     src/scene/PlayMode2D.cpp
+    src/scene/PickQuery.cpp
+    src/scene/PickRaycast.cpp
+    src/scene/MapSurfaceSystem.cpp
+    src/scene/SpriteLod2DSystem.cpp
+    src/render/Overlay2D.cpp
+    src/runtime/PlayClock.cpp
+    src/runtime/GameStateStack.cpp
     src/scene/EnvironmentSystem.cpp
     src/scene/CpuDirectionalShadowMap.cpp
     src/scene/LightingSystem.cpp
@@ -393,6 +400,9 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/AnimationBindings.cpp
         src/script/EffectBindings.cpp
         src/script/NavigationBindings.cpp
+        src/script/RuntimeScriptBindings.cpp
+        src/script/AssetTextLoader.cpp
+        src/script/NativeModuleHost.cpp
     )
 endif()
 

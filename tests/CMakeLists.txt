@@ -24,6 +24,7 @@ set(CAFFEINE_TEST_SOURCES
     test_forward_render_features.cpp
     test_material.cpp
     test_ui.cpp
+    test_pick_query.cpp
     test_animation.cpp
     test_navigation.cpp
     test_effects.cpp
