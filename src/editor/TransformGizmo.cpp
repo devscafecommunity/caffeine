@@ -1,4 +1,5 @@
 #include "editor/TransformGizmo.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "editor/EditorCameraMath.hpp"
 #include "editor/SceneViewport.hpp"
 #include "ecs/Components.hpp"
@@ -292,7 +293,7 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
                     default: break;
                 }
 
-                ctx.isDirty = true;
+                ctx.markModified();
             } else if (m_isDragging && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 m_isDragging = false;
                 m_dragAxis = GizmoAxis::None;
@@ -304,10 +305,9 @@ void TransformGizmo::onImGuiRender(ECS::World& world, ECS::Entity entity, Editor
 
 void TransformGizmo::handleInput(EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
-    if (ImGui::IsKeyPressed(ImGuiKey_W)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
-    if (ImGui::IsKeyPressed(ImGuiKey_E)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
-    if (ImGui::IsKeyPressed(ImGuiKey_R)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
-    if (ImGui::IsKeyPressed(ImGuiKey_Q)) ctx.gizmoMode = EditorContext::GizmoMode::None;
+    if (EditorShortcuts::instance().pressed(Shortcut::GizmoTranslate)) ctx.gizmoMode = EditorContext::GizmoMode::Translate;
+    if (EditorShortcuts::instance().pressed(Shortcut::GizmoRotate)) ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
+    if (EditorShortcuts::instance().pressed(Shortcut::GizmoScale)) ctx.gizmoMode = EditorContext::GizmoMode::Scale;
 #endif
 }
 

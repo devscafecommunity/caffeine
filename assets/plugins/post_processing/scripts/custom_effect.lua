@@ -1,15 +1,26 @@
 -- Custom post-process driver (template).
--- Attach path on PostProcessComponent.customEffectScript, or set via:
+-- Set PostProcessComponent.customEffectScript on a camera to this file, or from any script:
 --   caffeine.postprocess.setCustomScript(cameraId, "scripts/postprocessing/custom_effect.lua")
+--
+-- The engine calls onCreate(entityId) once and onPostProcess(entityId, dt, api) every play-mode
+-- frame. `api` is bound to the camera entity:
+--   api.get("bloom.intensity")            -> value of any "effect.field"
+--   api.set("bloom.intensity", 0.3)       -> clamped write
+--   api.enable("dof", true)               -> toggle an effect (aliases: ao, aa, fog, dof, ssr, chromatic)
+--   api.snapshot() / api.apply(table)     -> whole stack as a nested table
+--   api.preset("cinematic")               -> cinematic | horror | arcade | reset
+-- caffeine.postprocess.effects() and caffeine.postprocess.fields(effect) list everything available.
 
-local state = { cameraId = 0, pulse = 0.0 }
+local time = 0.0
 
 function onCreate(entityId)
-    state.cameraId = entityId
+    time = 0.0
 end
 
-function onUpdate(entityId, dt)
-    state.pulse = state.pulse + dt
-    local bloom = 0.1 + math.sin(state.pulse * 0.5) * 0.05
-    caffeine.postprocess.setBloom(state.cameraId, bloom)
+function onPostProcess(entityId, dt, api)
+    time = time + dt
+    api.enable("bloom", true)
+    api.set("bloom.intensity", 0.15 + math.sin(time * 0.5) * 0.05)
+    api.set("vignette.intensity", 0.25 + math.sin(time * 2.0) * 0.03)
+    api.enable("vignette", true)
 end

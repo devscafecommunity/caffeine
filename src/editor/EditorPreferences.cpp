@@ -1,5 +1,7 @@
 #include "editor/EditorPreferences.hpp"
+#include "editor/EditorShortcuts.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -96,9 +98,13 @@ EditorPreferences EditorPreferences::load() {
     readFloatField(json, "texture_quality_radius", prefs.textureQualityRadius);
     readFloatField(json, "texture_quality_falloff", prefs.textureQualityFalloff);
     readFloatField(json, "texture_quality_min_scale", prefs.textureQualityMinScale);
+    readFloatField(json, "render_scale", prefs.renderScale);
+    readIntField(json, "viewport_anti_alias", prefs.viewportAntiAlias);
     readBoolField(json, "show_fps_status_bar", prefs.showFPSInStatusBar);
     readBoolField(json, "confirm_scene_close", prefs.confirmOnSceneClose);
     readBoolField(json, "reopen_last_scene", prefs.reopenLastSceneOnStartup);
+    readStringField(json, "keymap", prefs.keymap);
+    EditorShortcuts::instance().deserialize(prefs.keymap);
     return prefs;
 }
 
@@ -127,9 +133,12 @@ bool EditorPreferences::save() const {
     file << "  \"texture_quality_radius\": " << textureQualityRadius << ",\n";
     file << "  \"texture_quality_falloff\": " << textureQualityFalloff << ",\n";
     file << "  \"texture_quality_min_scale\": " << textureQualityMinScale << ",\n";
+    file << "  \"render_scale\": " << renderScale << ",\n";
+    file << "  \"viewport_anti_alias\": " << viewportAntiAlias << ",\n";
     file << "  \"show_fps_status_bar\": " << (showFPSInStatusBar ? "true" : "false") << ",\n";
     file << "  \"confirm_scene_close\": " << (confirmOnSceneClose ? "true" : "false") << ",\n";
-    file << "  \"reopen_last_scene\": " << (reopenLastSceneOnStartup ? "true" : "false") << "\n";
+    file << "  \"reopen_last_scene\": " << (reopenLastSceneOnStartup ? "true" : "false") << ",\n";
+    file << "  \"keymap\": \"" << EditorShortcuts::instance().serialize() << "\"\n";
     file << "}\n";
     return file.good();
 }

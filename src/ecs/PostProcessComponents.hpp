@@ -6,7 +6,8 @@
 namespace Caffeine::ECS {
 
 /// Modular post-processing stack — each effect can be toggled and tuned independently.
-/// GPU passes are planned; editor preview uses ImGui overlays until the render graph is wired.
+/// Executed on the GPU by Render::PostProcessStack (see docs/rendering/post-processing.md).
+/// Attach to a camera entity; a scene without one uses PostProcessStack::defaults().
 
 struct PostProcessAmbientOcclusion {
     bool enabled = false;
@@ -16,9 +17,9 @@ struct PostProcessAmbientOcclusion {
 };
 
 struct PostProcessAntiAliasing {
-    bool enabled = false;
-    /// 0 = FXAA, 1 = TAA (placeholder indices for future GPU path)
-    u32 mode = 0;
+    bool enabled = true;
+    /// 0 = FXAA, 1 = TAA (temporal, jittered projection + history reprojection)
+    u32 mode = 1;
     f32 sharpness = 0.5f;
 };
 

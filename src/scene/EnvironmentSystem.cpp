@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <cstring>
 
 #ifdef __linux__
 #include <limits.h>
@@ -81,21 +82,47 @@ std::filesystem::path resolveBuiltinSkyboxPath(int presetIndex) {
     return {};
 }
 
+bool existingFile(const std::filesystem::path& path) {
+    std::error_code ec;
+    return !path.empty() && std::filesystem::exists(path, ec) && !ec;
+}
+
 std::filesystem::path resolveSkyboxTexturePath(const ECS::SkyboxComponent& sky,
                                                const std::string& projectRoot) {
     if (sky.customTexturePath[0] != '\0') {
         const std::filesystem::path custom(sky.customTexturePath);
-        std::error_code ec;
-        if (custom.is_absolute() && std::filesystem::exists(custom, ec)) {
-            return custom;
-        }
+        if (custom.is_absolute() && existingFile(custom)) return custom;
         if (!projectRoot.empty()) {
             const auto rooted = std::filesystem::path(projectRoot) / custom;
-            if (std::filesystem::exists(rooted, ec)) return rooted;
+            if (existingFile(rooted)) return rooted;
         }
-        if (std::filesystem::exists(custom, ec)) return custom;
+        if (existingFile(custom)) return custom;
+        return {};
     }
-    return resolveBuiltinSkyboxPath(sky.presetIndex);
+    if (!projectRoot.empty() && sky.presetIndex >= 0 && sky.presetIndex < ECS::kSkyboxPresetCount) {
+        const auto fileName = std::filesystem::path(ECS::kSkyboxPresetFiles[sky.presetIndex]).filename();
+        const auto imported = std::filesystem::path(projectRoot) / "assets" / "raw" / "sky" / fileName;
+        if (existingFile(imported)) return imported;
+    }
+    return {};
+}
+
+void importDefaultSkyboxes(const std::filesystem::path& projectRoot) {
+    if (projectRoot.empty()) return;
+    const std::filesystem::path assetsRoot = findEngineAssetsRoot();
+    if (assetsRoot.empty()) return;
+    const std::filesystem::path destination = projectRoot / "assets" / "raw" / "sky";
+    std::error_code ec;
+    std::filesystem::create_directories(destination, ec);
+    if (ec) return;
+    for (const char* relative : ECS::kSkyboxPresetFiles) {
+        if (!relative || std::strstr(relative, "kenney_skyboxes/") != relative) continue;
+        const std::filesystem::path source = assetsRoot / relative;
+        if (!existingFile(source)) continue;
+        const std::filesystem::path target = destination / std::filesystem::path(relative).filename();
+        if (existingFile(target)) continue;
+        std::filesystem::copy_file(source, target, std::filesystem::copy_options::skip_existing, ec);
+    }
 }
 
 }  // namespace Caffeine::Scene

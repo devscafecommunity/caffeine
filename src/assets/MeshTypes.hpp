@@ -40,6 +40,12 @@ struct Vertex3D {
     Vec4 tangent;
 };
 
+/// Up to four influences. Parallel to Mesh3D::vertices when the mesh is skinned.
+struct VertexSkin {
+    u16 joints[4] = {0, 0, 0, 0};
+    f32 weights[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+};
+
 struct SubMesh {
     u32 indexOffset = 0;
     u32 indexCount = 0;
@@ -62,6 +68,7 @@ struct MeshSurfaceMaterial {
 
 struct Mesh3D {
     std::vector<Vertex3D> vertices;
+    std::vector<VertexSkin> skin;
     std::vector<u32> indices;
     std::vector<SubMesh> subMeshes;
     std::vector<MeshSurfaceMaterial> materials;

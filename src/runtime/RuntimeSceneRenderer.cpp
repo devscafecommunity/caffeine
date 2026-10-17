@@ -15,6 +15,7 @@
 #include "scene/LightingSystem.hpp"
 #include "scene/TerrainSystem.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #ifdef CF_HAS_SDL3
 #include <imgui_impl_sdlgpu3.h>
 #endif
@@ -432,9 +433,14 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
         const u32 w = static_cast<u32>(std::max(panelSize.x, 8.0f));
         const u32 h = static_cast<u32>(std::max(panelSize.y, 8.0f));
         resizeCanvas(w, h);
+        Render::GpuSceneRenderOptions gpuOpts;
+        if (Scene::environmentHasOverride(world)) {
+            gpuOpts.overrideAmbient = true;
+            gpuOpts.ambientColor = Scene::environmentAmbientAt(world, gpuCamera->position);
+        }
         const u32 drawn =
             m_gpuRenderer.renderWithCamera(m_frameCmd, world, *gpuCamera, m_colorTarget,
-                                           m_depthTarget, w, h, projectRoot);
+                                           m_depthTarget, w, h, projectRoot, gpuOpts);
         if (drawn > 0 && m_colorTarget && m_colorTarget->handle) {
             dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,
                          ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),

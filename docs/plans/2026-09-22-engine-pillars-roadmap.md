@@ -2,7 +2,7 @@
 
 > **Objetivo:** definir de forma **sólida e verificável** os subsistemas que a Caffeine Engine deve ter como base de produção — independentemente de features de editor ou plugins.  
 > **Critério de “completo”:** cada pilar tem requisitos, critérios de aceitação e estado atual documentados.  
-> **Última atualização:** 2026-09-22
+> **Última atualização:** 2026-10-01
 
 Este documento complementa:
 - [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md) — detalhe técnico de rendering 3D
@@ -55,7 +55,7 @@ flowchart LR
 
 ### 1. Rendering 3D Phong (sombras dinâmicas, bump mapping, câmaras)
 
-**Estado:** 🟡 Parcial — Phong GPU + CSM (4 cascatas) + sombras point/spot GPU; normal maps mesh+terreno; runtime GPU-first; `GpuTextureCache` com mips e **LOD de texturas por distância**; viewport HiDPI (cap 1920px), wireframe GPU (`FillMode::Line`), skip shadows em movimento rápido; CPU shadows off no viewport GPU. Falta: mesh geometry LOD/batching, 60 FPS gate.
+**Estado:** 🟡 Parcial — Phong GPU + CSM + sombras point/spot no runtime; normal maps; `GpuTextureCache`. Editor (2026-09-23 / 10-01): **~10 → ~100 FPS**, shadow passes desligados no viewport (samplers sempre ligados), cache de frame GPU invalidado por câmera **e** conteúdo da cena (transforms/terreno), skybox com raster adaptativo ao movimento, profiler hierárquico (`self` / `total`). Cap offscreen do editor: 1280 px. Falta: mesh geometry LOD/batching, sombras GPU de volta no editor sem quebrar o budget de 16 ms, gate formal de 60 FPS.
 
 **Deve ter de forma sólida:**
 
@@ -71,7 +71,7 @@ flowchart LR
 
 **Relação com PBR:** Phong é o **degrau imediato** (P0 rendering). O deferred PBR (P1) evolui sobre a mesma infraestrutura de G-buffer, shadow maps e materiais — não substitui o trabalho de câmaras, sombras e normal mapping.
 
-**Docs:** [`rendering/materials-phong.md`](../rendering/materials-phong.md), [`rendering/shadow-mapping.md`](../rendering/shadow-mapping.md), [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md), [`editor/scene-viewport.md`](../editor/scene-viewport.md), [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md), [`2026-09-22-phong-gpu-handles-session.md`](2026-09-22-phong-gpu-handles-session.md), [`2026-09-22-viewport-rendering-quality-session.md`](2026-09-22-viewport-rendering-quality-session.md)
+**Docs:** [`rendering/materials-phong.md`](../rendering/materials-phong.md), [`rendering/shadow-mapping.md`](../rendering/shadow-mapping.md), [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md), [`editor/scene-viewport.md`](../editor/scene-viewport.md), [`performance/editor-viewport-performance.md`](../performance/editor-viewport-performance.md), [`2026-09-21-rendering-roadmap.md`](2026-09-21-rendering-roadmap.md), [`2026-09-22-phong-gpu-handles-session.md`](2026-09-22-phong-gpu-handles-session.md), [`2026-09-22-viewport-rendering-quality-session.md`](2026-09-22-viewport-rendering-quality-session.md)
 
 ---
 
@@ -97,7 +97,7 @@ flowchart LR
 
 ### 3. Física rigid body (Bullet3)
 
-**Estado:** 🔴 Não iniciado (3D) — Physics 2D custom existe; menções a Jolt/Bullet em planning apenas.
+**Estado:** 🟡 Em curso (2026-10-01) — `btDiscreteDynamicsWorld` com box, sphere e capsule; `RigidBody3D` + `Collider3D` (POD, serializados); sync no play mode do Doppio; gravidade e fixed step 1/60. Falta: heightfield/mesh de terreno, convex mesh, debug draw, joints, teste cross-platform de determinismo.
 
 **Deve ter de forma sólida:**
 
@@ -110,6 +110,8 @@ flowchart LR
 | Determinismo razoável | Fixed step; documentar limitações cross-platform |
 
 **Dependências:** ECS, math, terreno collision mesh (`TerrainCollisionMeshBuilder`).
+
+**Docs:** [`physics/physics-3d.md`](../physics/physics-3d.md), [`physics/physics-2d.md`](../physics/physics-2d.md)
 
 **Nota:** Bullet3 escolhido explicitamente como backend; abstração `IPhysicsWorld3D` para não acoplar ECS ao Bullet em todo o código.
 
@@ -297,9 +299,9 @@ flowchart LR
 
 | # | Pilar | Tier | Estado | Backend / notas |
 |---|-------|------|--------|-----------------|
-| 1 | Phong 3D + sombras + bump + câmaras | P0 | 🟡 Parcial | CSM + point/spot GPU; `GpuTextureCache`; `Camera3DControllerComponent` |
+| 1 | Phong 3D + sombras + bump + câmaras | P0 | 🟡 Parcial | Editor ~100 FPS; cache GPU por conteúdo; sombras off no editor |
 | 2 | Eventos + timers + tipos custom | P0 | 🟡 Parcial | `EventBus` + `TimerScheduler` |
-| 3 | Rigid body 3D | P0 | 🔴 Não iniciado | **Bullet3** |
+| 3 | Rigid body 3D | P0 | 🟡 Em curso | **Bullet3** box/sphere/capsule + play mode |
 | 4 | Áudio 3D | P0 | 🟡 Parcial | **OpenAL** |
 | 5 | ECS próprio + editor/runtime | P0 | 🟢 Avançado | Core da engine |
 | 6 | Handles + refcount | P0 | 🟡 Parcial | Generation + RAII + LRU + `GpuTextureCache` |
@@ -509,3 +511,17 @@ Esta branch isola o **Plugin SDK** do core do Doppio:
 - Ver [`docs/editor/plugin-sdk.md`](../editor/plugin-sdk.md)
 
 **Impacto nos pilares:** o pilar 10 (Scene + tipos user) e o pilar 5 (ECS reflection) beneficiam diretamente desta arquitetura — plugins registam drawers e serializers sem recompilar o editor.
+
+---
+
+## Próximo corte (a partir de 2026-10-01)
+
+Ordem ainda válida. O corte activo é o **pilar 3**:
+
+1. ~~World Bullet + box/sphere/capsule + sync play mode~~
+2. Heightfield a partir de `TerrainComponent` / `TerrainCollisionMeshBuilder`
+3. Debug draw de colliders no viewport (toggle já previsto)
+4. Convex mesh a partir de `MeshFilter`
+5. Voltar sombras GPU ao editor só quando o frame couber em 16 ms (pilar 1)
+
+OpenAL (pilar 4) fica a seguir, depois de o terreno colidir.

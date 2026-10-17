@@ -90,8 +90,8 @@ bool directionalLightHasExplicitAim(ECS::World& world, ECS::Entity entity) {
     return false;
 }
 
-void applyDefaultSunOrientation(ECS::World& world, ECS::Entity entity) {
-    const Vec3 sun = defaultSunDirection();
+void applySunDirection(ECS::World& world, ECS::Entity entity, const Vec3& direction) {
+    const Vec3 sun = direction.lengthSquared() > 1.0e-8f ? direction.normalized() : defaultSunDirection();
     const Quat q = Quat::lookAt(-1.0f * sun, Vec3(0.0f, 1.0f, 0.0f));
     ECS::Rotation3D* rotation = world.get<ECS::Rotation3D>(entity);
     if (!rotation) rotation = &world.add<ECS::Rotation3D>(entity);
@@ -102,6 +102,10 @@ void applyDefaultSunOrientation(ECS::World& world, ECS::Entity entity) {
         constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
         t->rotation = Vec3(euler.x * kRadToDeg, euler.y * kRadToDeg, euler.z * kRadToDeg);
     }
+}
+
+void applyDefaultSunOrientation(ECS::World& world, ECS::Entity entity) {
+    applySunDirection(world, entity, defaultSunDirection());
 }
 
 void LightingData::clear() {

@@ -245,10 +245,39 @@ public:
         return result;
     }
 
+    /// Right-handed view basis. If `up` is parallel to the look direction
+    /// (camera pitched to the sky or the ground), a fallback axis is used so
+    /// the basis does not collapse and pin geometry to the viewport border.
+    static void viewBasis(const Vec3& forwardIn, const Vec3& up, Vec3& forward, Vec3& right,
+                          Vec3& newUp) {
+        forward = forwardIn;
+        const f32 forwardLenSq = forward.lengthSquared();
+        if (forwardLenSq < 1e-12f) {
+            forward = Vec3(0.0f, 0.0f, -1.0f);
+        } else {
+            forward = forward / sqrtf(forwardLenSq);
+        }
+
+        right = forward.cross(up);
+        if (right.lengthSquared() < 1e-6f) {
+            const Vec3 axis = (fabsf(forward.y) > 0.9f) ? Vec3(0.0f, 0.0f, 1.0f)
+                                                        : Vec3(0.0f, 1.0f, 0.0f);
+            right = forward.cross(axis);
+        }
+        const f32 rightLenSq = right.lengthSquared();
+        if (rightLenSq < 1e-12f) {
+            right = Vec3(1.0f, 0.0f, 0.0f);
+        } else {
+            right = right / sqrtf(rightLenSq);
+        }
+        newUp = right.cross(forward);
+    }
+
     static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
-        Vec3 forward = (target - eye).normalized();
-        Vec3 right = forward.cross(up).normalized();
-        Vec3 newUp = right.cross(forward);
+        Vec3 forward;
+        Vec3 right;
+        Vec3 newUp;
+        viewBasis(target - eye, up, forward, right, newUp);
 
         Mat4 result = identity();
         result(0, 0) = right.x;

@@ -1,4 +1,6 @@
 #include "animation/AnimationSystem.hpp"
+#include "effects/EffectSystem.hpp"
+#include "navigation/NavigationSystem.hpp"
 #include "debug/LogSystem.hpp"
 #include "events/EventBus.hpp"
 #include "events/Events.hpp"
@@ -15,12 +17,19 @@
 #include "ecs/World.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/Components3D.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "ui/UISystem.hpp"
 #include "ui/UIRenderer.hpp"
+#include "render/Overlay2D.hpp"
+#include "render/Camera2D.hpp"
+#include "scene/PickQuery.hpp"
+#include "scene/PlayMode2D.hpp"
+#include "runtime/PlayClock.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
 #include "render/SkyboxRenderer.hpp"
 #include "math/Mat4.hpp"
@@ -330,6 +339,18 @@ void renderGameView(Caffeine::ECS::World& world, Caffeine::Editor::EditorContext
     renderer.render(world, ctx, dl, vp, camPos, origin, panelSize, cameraEntity, projectRoot,
                     &gpuCam);
 
+    Caffeine::Render::Rect2D vpRect{{origin.x, origin.y}, {panelSize.x, panelSize.y}};
+    Caffeine::Render::Camera2D cam2d;
+    cam2d.setViewport(vpRect);
+    cam2d.setPosition({camPos.x, camPos.y});
+    cam2d.setZoom(1.0f);
+    const Caffeine::ECS::Entity cam2dEntity = Caffeine::Scene::findActiveCamera2DEntity(world);
+    if (cam2dEntity.isValid()) {
+        cam2d = Caffeine::Scene::buildCamera2DFromEntity(world, cam2dEntity, vpRect);
+    }
+    Caffeine::Scene::PlayRenderContext::instance().set2D(vpRect, cam2d);
+    Caffeine::Render::Overlay2D::draw(dl, cam2d, origin, panelSize);
+
     Caffeine::UI::drawWidgets(world, dl, origin, panelSize);
 
     ImGui::End();
@@ -439,15 +460,16 @@ int main(int argc, char** argv) {
     Caffeine::Events::EventBus eventBus;
     Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
     Caffeine::Animation::AnimationSystem animation;
+    Caffeine::UI::UISystem uiSystem(&eventBus);
     Caffeine::Script::ScriptEngine scriptEngine;
     Caffeine::Script::ScriptEngine::InitParams scriptParams;
     scriptParams.world = &world;
     scriptParams.input = &input;
     scriptParams.events = &eventBus;
+    scriptParams.ui = &uiSystem;
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
-    Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr);
-    Caffeine::UI::UISystem uiSystem(&eventBus);
+    Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
     if (scriptsReady) {
         scriptSystem.resetPlayState();
         eventBus.subscribe<Caffeine::Events::OnCollision2D>(
@@ -506,6 +528,20 @@ int main(int argc, char** argv) {
         pumpRuntimeInput(input);
         if (sceneLoaded) {
             animation.onUpdate(world, dt);
+            Caffeine::Vec3 effectCamera{};
+            {
+                Caffeine::ECS::ComponentQuery cameraQuery;
+                cameraQuery.with<Caffeine::ECS::Camera3DComponent>();
+                cameraQuery.with<Caffeine::ECS::Position3D>();
+                world.forEach<Caffeine::ECS::Camera3DComponent, Caffeine::ECS::Position3D>(
+                    cameraQuery, [&](Caffeine::ECS::Entity, Caffeine::ECS::Camera3DComponent&,
+                                     Caffeine::ECS::Position3D& position) {
+                        effectCamera = position.position;
+                    });
+            }
+            Caffeine::Effects::tickEffects(world, dt, effectCamera);
+            Caffeine::Scene::tickEnvironmentEffects(world, dt, effectCamera);
+            Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
             if (scriptsReady) {
                 scriptEngine.setWorld(&world);

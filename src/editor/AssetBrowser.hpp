@@ -6,6 +6,11 @@
 #include "ecs/World.hpp"
 #include "editor/ProjectManager.hpp"
 
+#ifdef CF_HAS_SDL3
+#include "rhi/CommandBuffer.hpp"
+#include "rhi/RenderDevice.hpp"
+#endif
+
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -73,11 +78,23 @@ public:
         m_onMaterialOpen = std::move(cb);
     }
 
+    enum class AssetPickerPoll : u8 { Idle, Selected, Cancelled };
+    void beginAssetPicker(const char* extensionFilter, const char* fieldLabel);
+    void cancelAssetPicker();
+    bool isAssetPickerActive() const { return m_assetPickerActive; }
+    AssetPickerPoll pollAssetPicker(std::string& outRelativePath);
+    /// Modal list. Call every frame while a project-asset browse is active.
+    void presentPickerModal();
+
     // ── Data layer ─────────────────────────────────────────────────────
     void init(const char* rootPath);
     void init(const ProjectConfig& projectConfig);
     void refresh();
     void shutdownGpu();
+#ifdef CF_HAS_SDL3
+    void initGpu(RHI::RenderDevice* device);
+    void setFrameCommandBuffer(RHI::CommandBuffer* cmd);
+#endif
 
     // Search
     void setSearchFilter(const char* filter);
@@ -91,6 +108,7 @@ public:
     void navigateToAssets();
     void navigateToScenes();
     void navigateToScripts();
+    const std::filesystem::path& assetRoot() const { return m_rawRoot; }
     bool canGoBack() const;
     const std::filesystem::path& currentPath() const;
 
@@ -120,7 +138,11 @@ public:
     private:
     // UI helpers
     void renderToolbar();
+    void renderAssetPickerBar();
     void renderBreadcrumbs();
+    bool pickerAcceptsPath(const std::filesystem::path& path) const;
+    void commitAssetPicker(const std::filesystem::path& absolutePath);
+    std::string pathRelativeToProject(const std::filesystem::path& absolute) const;
     void renderGridView();
     void renderListView();
     void renderPreviewPane();
@@ -148,6 +170,7 @@ public:
     std::filesystem::path m_clipboardPath;
     bool m_clipboardIsCut = false;
     ECS::World* m_world = nullptr;
+    EditorContext* m_editorContext = nullptr;
     int  m_renamingEntry = -1;
     char m_renameBuf[256] = {};
     void renderAssetCreatorModal();
@@ -157,6 +180,9 @@ public:
     bool m_statusIsError = false;
     AssetPreviewRenderer m_previewRenderer;
     std::string m_previewSourceKey;
+#ifdef CF_HAS_SDL3
+    RHI::CommandBuffer* m_frameCmd = nullptr;
+#endif
     #endif
 
 private:
@@ -184,6 +210,11 @@ private:
 
     std::function<void(const std::filesystem::path&)> m_onScriptOpen;
     std::function<void(const std::filesystem::path&)> m_onMaterialOpen;
+    bool m_assetPickerActive = false;
+    std::string m_pickerFilter;
+    std::string m_pickerLabel;
+    std::optional<std::string> m_pickerResult;
+    bool m_pickerCancelled = false;
 };
 
 } // namespace Caffeine::Editor

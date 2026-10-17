@@ -35,7 +35,7 @@ public:
     void endRenderPass();
 
     void bindPipeline(Pipeline* pipeline);
-    void bindVertexBuffer(Buffer* buf, u32 slot = 0);
+    void bindVertexBuffer(Buffer* buf, u32 slot = 0, u32 offset = 0);
     void bindIndexBuffer(Buffer* buf);
     void bindTexture(Texture* tex, u32 slot = 0, Sampler* sampler = nullptr);
     void setViewport(f32 x, f32 y, f32 w, f32 h);
@@ -43,10 +43,18 @@ public:
 
     void draw(u32 vertexCount, u32 firstVertex = 0);
     void drawIndexed(u32 indexCount, u32 firstIndex = 0, i32 vertexOffset = 0);
+    void drawIndexedInstanced(u32 indexCount, u32 instanceCount, u32 firstIndex = 0,
+                              i32 vertexOffset = 0, u32 firstInstance = 0);
     void drawInstanced(u32 vertexCount, u32 instanceCount,
                        u32 firstVertex = 0, u32 firstInstance = 0);
 
     void pushUniformData(ShaderStage stage, u32 slot, const void* data, u32 size);
+
+    /// GPU-side copy of mip 0 / layer 0. Must be called outside a render pass; formats must match.
+    void copyTexture(Texture* src, Texture* dst, u32 width, u32 height);
+
+    /// Fills mips 1..N from mip 0. Outside a render pass; texture needs Sampler | ColorTarget.
+    void generateMipmaps(Texture* texture);
 
     bool isInRenderPass() const { return m_inRenderPass; }
 

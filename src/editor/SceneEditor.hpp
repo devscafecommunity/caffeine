@@ -17,11 +17,16 @@
 
 #ifdef CF_HAS_IMGUI
 #include "editor/MaterialEditorPanel.hpp"
+#include "editor/ImageManagerPanel.hpp"
+#include "editor/HudEditorPanel.hpp"
+#include "editor/ParticleEditorPanel.hpp"
+#include "editor/EffectEditorPanel.hpp"
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
+#include "editor/ToolboxPanel.hpp"
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -34,6 +39,7 @@
 #include "core/io/FileWatcher.hpp"
 
 #include "physics/PhysicsSystem2D.hpp"
+#include "physics/PhysicsSystem3D.hpp"
 #include "ui/UISystem.hpp"
 #include "events/EventBus.hpp"
 #include "animation/AnimationSystem.hpp"
@@ -153,11 +159,16 @@ private:
 
 #ifdef CF_HAS_IMGUI
     MaterialEditorPanel m_materialEditor;
+    ImageManagerPanel   m_imageManager;
+    HudEditorPanel      m_hudEditor;
+    ParticleEditorPanel m_particleEditor;
+    EffectEditorPanel   m_effectEditor;
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     GameplayPreviewPanel m_gameplayPreview;
     TerrainEditorPanel  m_terrainEditor;
     EntityPresetsPanel  m_entityPresets;
+    ToolboxPanel        m_toolbox;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;
@@ -191,6 +202,7 @@ private:
 
     Events::EventBus m_eventBus;
     Physics2D::PhysicsSystem2D m_physicsSystem{&m_eventBus};
+    Physics3D::PhysicsSystem3D m_physics3D;
     UI::UISystem m_uiSystem{&m_eventBus};
     Animation::AnimationSystem m_animationSystem;
     Render::Camera2D m_playCamera2D;

@@ -29,6 +29,9 @@ public:
         processInput(world);
     }
 
+    /// Resolves anchor offsets into computedRect without consuming input.
+    void layout(ECS::World& world) { layoutWidgets(world); }
+
     ECS::Entity createCanvas(ECS::World& world, Vec2 size = {1280.0f, 720.0f}) {
         ECS::Entity e = world.create();
         UIWidget w;

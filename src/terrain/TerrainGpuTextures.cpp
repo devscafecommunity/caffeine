@@ -87,7 +87,7 @@ void TerrainGpuTextureCache::sync(RHI::RenderDevice* device, ECS::Entity entity,
             }
             if (!gpu.layers[i] || gpu.layers[i] == fallback) {
                 if (gpu.layers[i] == fallback) gpu.layers[i] = nullptr;
-                gpu.layers[i] = loadTexture(device, path, projectRoot);
+                gpu.layers[i] = Render::GpuTextureCache::instance().acquire(device, path, projectRoot, 0, true);
             }
         }
 
@@ -129,7 +129,7 @@ void TerrainGpuTextureCache::sync(RHI::RenderDevice* device, ECS::Entity entity,
         }
         if (!gpu.albedo || gpu.albedo == fallback) {
             if (gpu.albedo == fallback) gpu.albedo = nullptr;
-            gpu.albedo = loadTexture(device, albedoPath, projectRoot);
+            gpu.albedo = Render::GpuTextureCache::instance().acquire(device, albedoPath, projectRoot, 0, true);
         }
     }
 

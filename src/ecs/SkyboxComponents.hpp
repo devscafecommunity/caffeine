@@ -41,6 +41,9 @@ inline constexpr const char* kSkyboxPresetLabels[] = {
     "HDR Night 014",
 };
 
+/// Copied into a new project. The clear sky is used when this file is missing.
+inline constexpr const char* kDefaultProjectSkyPath = "assets/raw/sky/skybox-day.png";
+
 struct SkyboxComponent {
     bool enabled = true;
     int  presetIndex = 0;

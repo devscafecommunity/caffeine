@@ -11,8 +11,8 @@ class GpuDirectionalShadowMap {
 public:
     static constexpr u32 kMaxDirectionalShadowLights = 2;
     static constexpr u32 kMaxCascades = 4;
-    static constexpr u32 kCascadeResolution = 512;
-    static constexpr u32 kAtlasResolution = 1024;
+    static constexpr u32 kCascadeResolution = 2048;
+    static constexpr u32 kAtlasResolution = 4096;
 
     bool init(RHI::RenderDevice* device);
     void shutdown();

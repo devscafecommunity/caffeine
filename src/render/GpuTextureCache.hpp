@@ -18,15 +18,17 @@ class GpuTextureCache {
 public:
     static GpuTextureCache& instance();
 
-    /// Returns a cached 2D texture (RGBA8). Increments refcount.
+    /// Returns a cached, fully mip-mapped 2D texture. Increments refcount.
     /// qualityTier: 0=full, 1=half, 2=quarter, 3=eighth resolution.
+    /// `srgb` = colour data (albedo, emission) decoded to linear by the sampler; leave it off
+    /// for normals, ORM and splat weights.
     RHI::Texture* acquire(RHI::RenderDevice* device, const std::string& path,
-                          const std::string& projectRoot, u32 qualityTier = 0);
+                          const std::string& projectRoot, u32 qualityTier = 0, bool srgb = false);
 
     /// Uploads pixel data under a stable cache key (embedded glTF images, etc.).
     RHI::Texture* acquireFromPixels(RHI::RenderDevice* device, const std::string& cacheKey,
                                     const u8* pixels, u32 width, u32 height, int channels,
-                                    u32 qualityTier = 0);
+                                    u32 qualityTier = 0, bool srgb = false);
 
     /// Decrement refcount for a resolved filesystem path.
     void release(RHI::RenderDevice* device, const std::string& resolvedPath);
@@ -50,14 +52,13 @@ private:
         u64           fileStamp   = 0;
         u32           width       = 0;
         u32           height      = 0;
-        u32           mipLevels   = 1;
     };
 
     std::string resolvePath(const std::string& path, const std::string& projectRoot) const;
     u64         fileTimestamp(const std::string& path) const;
     Entry*      findByTexture(RHI::Texture* texture);
     RHI::Texture* loadTexture(RHI::RenderDevice* device, const std::string& resolved,
-                              u32 qualityTier);
+                              u32 qualityTier, bool srgb);
     static void downscaleRgba(std::vector<u8>& rgba, u32& width, u32& height, u32 qualityTier);
     void        destroyEntry(RHI::RenderDevice* device, Entry& entry);
 

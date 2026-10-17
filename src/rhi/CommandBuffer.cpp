@@ -72,8 +72,9 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
     colorTarget.texture       = colorTexture;
     colorTarget.mip_level     = desc.colorMipLevel;
     colorTarget.layer_or_depth_plane = desc.colorLayer;
-    colorTarget.cycle         = desc.cycle;
-    colorTarget.load_op       = SDL_GPU_LOADOP_CLEAR;
+    // Cycling hands back a fresh backing texture, so it can't be combined with LOAD.
+    colorTarget.cycle         = desc.cycle && !desc.loadColor;
+    colorTarget.load_op       = desc.loadColor ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
     colorTarget.store_op      = SDL_GPU_STOREOP_STORE;
     colorTarget.clear_color.r = desc.clearColor[0];
     colorTarget.clear_color.g = desc.clearColor[1];
@@ -84,7 +85,7 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
     SDL_GPUDepthStencilTargetInfo* depthPtr = nullptr;
     if (desc.depthTarget && desc.depthTarget->handle) {
         depthTarget.texture = desc.depthTarget->handle;
-        depthTarget.cycle = desc.cycle;
+        depthTarget.cycle = desc.cycle && desc.clearDepth;
         depthTarget.load_op = desc.clearDepth ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
         depthTarget.store_op = SDL_GPU_STOREOP_STORE;
         depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
@@ -118,13 +119,13 @@ void CommandBuffer::bindPipeline(Pipeline* pipeline) {
     SDL_BindGPUGraphicsPipeline(m_renderPass, pipeline->handle);
 }
 
-void CommandBuffer::bindVertexBuffer(Buffer* buf, u32 slot) {
+void CommandBuffer::bindVertexBuffer(Buffer* buf, u32 slot, u32 offset) {
     if (!m_renderPass || !buf || !buf->handle) {
         return;
     }
     SDL_GPUBufferBinding binding{};
     binding.buffer = buf->handle;
-    binding.offset = 0;
+    binding.offset = offset;
     SDL_BindGPUVertexBuffers(m_renderPass, slot, &binding, 1);
 }
 
@@ -188,6 +189,15 @@ void CommandBuffer::drawIndexed(u32 indexCount, u32 firstIndex, i32 vertexOffset
     SDL_DrawGPUIndexedPrimitives(m_renderPass, indexCount, 1, firstIndex, vertexOffset, 0);
 }
 
+void CommandBuffer::drawIndexedInstanced(u32 indexCount, u32 instanceCount, u32 firstIndex,
+                                         i32 vertexOffset, u32 firstInstance) {
+    if (!m_renderPass || indexCount == 0 || instanceCount == 0) {
+        return;
+    }
+    SDL_DrawGPUIndexedPrimitives(m_renderPass, indexCount, instanceCount, firstIndex, vertexOffset,
+                                 firstInstance);
+}
+
 void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
                                    u32 firstVertex, u32 firstInstance) {
     if (!m_renderPass) {
@@ -195,6 +205,26 @@ void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
     }
     SDL_DrawGPUPrimitives(m_renderPass, vertexCount, instanceCount,
                           firstVertex, firstInstance);
+}
+
+void CommandBuffer::copyTexture(Texture* src, Texture* dst, u32 width, u32 height) {
+    if (!m_cmdBuffer || m_inRenderPass || !src || !dst || !src->handle || !dst->handle ||
+        width == 0 || height == 0) {
+        return;
+    }
+    SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(m_cmdBuffer);
+    if (!copyPass) return;
+    SDL_GPUTextureLocation from{};
+    from.texture = src->handle;
+    SDL_GPUTextureLocation to{};
+    to.texture = dst->handle;
+    SDL_CopyGPUTextureToTexture(copyPass, &from, &to, width, height, 1, false);
+    SDL_EndGPUCopyPass(copyPass);
+}
+
+void CommandBuffer::generateMipmaps(Texture* texture) {
+    if (!m_cmdBuffer || m_inRenderPass || !texture || !texture->handle) return;
+    SDL_GenerateMipmapsForGPUTexture(m_cmdBuffer, texture->handle);
 }
 
 void CommandBuffer::pushUniformData(ShaderStage stage, u32 slot,

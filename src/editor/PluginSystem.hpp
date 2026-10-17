@@ -89,6 +89,11 @@ public:
 
     const std::unordered_map<std::string, PluginHandle>& plugins() const { return m_loadedPlugins; }
     const std::vector<PluginPanel>& panels() const { return m_panels; }
+    /// Empty name is always on. Missing or disabled plugins return false.
+    bool isContributionEnabled(const std::string& pluginName) const;
+    /// True when no plugin owns the drawer, or the owning plugin is enabled.
+    bool isComponentDrawerEnabled(u32 componentTypeId) const;
+    bool hasMenuItems(const char* topLevelMenu) const;
 
     // Editor-side registration (also used by host API callbacks)
     bool registerPanel(const std::string& pluginName, const std::string& title,

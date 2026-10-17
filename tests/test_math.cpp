@@ -490,6 +490,22 @@ TEST_CASE("Mat4::transformVector - Combined Rotation and Scale", "[math][mat4][C
     REQUIRE(result.z == Approx(0.0f).margin(0.001f));
 }
 
+TEST_CASE("Mat4::lookAt looking straight up keeps the target centered", "[math][mat4]") {
+    const Vec3 eye(0.0f, 0.0f, 0.0f);
+    const Vec3 target(0.0f, 10.0f, 0.0f);
+    const Mat4 view = Mat4::lookAt(eye, target, Vec3(0.0f, 1.0f, 0.0f));
+    const Vec4 viewPos = view.transformVec4(Vec4(target.x, target.y, target.z, 1.0f));
+    REQUIRE(viewPos.x == Approx(0.0f).margin(0.05f));
+    REQUIRE(viewPos.y == Approx(0.0f).margin(0.05f));
+    REQUIRE(viewPos.z == Approx(-10.0f).margin(0.05f));
+
+    const Mat4 proj = Mat4::perspective(60.0f * 3.14159265f / 180.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+    const Vec4 clip = (proj * view).transformVec4(Vec4(target.x, target.y, target.z, 1.0f));
+    REQUIRE(clip.w > 0.1f);
+    REQUIRE(clip.x / clip.w == Approx(0.0f).margin(0.05f));
+    REQUIRE(clip.y / clip.w == Approx(0.0f).margin(0.05f));
+}
+
 TEST_CASE("Mat4::transformVector - Ignores Translation", "[math][mat4][CRITICAL]") {
     Mat4 trans = Mat4::translation(10, 20, 30);
     Vec3 vector(1, 0, 0);

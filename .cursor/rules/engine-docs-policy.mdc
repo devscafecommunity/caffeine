@@ -1,0 +1,10 @@
+---
+description: Engine repo has no Markdown docs; use caffeine-website submodule and MCP
+alwaysApply: true
+---
+
+# Documentation
+
+- Do not add `docs/` or `planning/` Markdown to the Caffeine engine repo.
+- Read `AGENTS.md` for layout and implementation rules.
+- User-facing docs: `caffeine-website` submodule (Svelte/HTML + TeX). Agents use `caffeine-docs` MCP from that repo.

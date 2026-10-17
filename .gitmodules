@@ -7,3 +7,6 @@
 [submodule "WaveShaper"]
 	path = WaveShaper
 	url = git@github.com:devscafecommunity/waveshaper.git
+[submodule "caffeine-website"]
+	path = caffeine-website
+	url = git@github.com:devscafecommunity/caffeine-website.git

@@ -18,6 +18,8 @@ public:
 
     bool serialize(const std::string& filepath);
     bool deserialize(const std::string& filepath);
+    bool serializeToMemory(std::vector<u8>& out, const std::string& scenePath = {});
+    bool deserializeFromMemory(const std::vector<u8>& data, const std::string& scenePath = {});
 
 private:
     ECS::World& m_world;
@@ -62,7 +64,25 @@ private:
     static constexpr u32 kTypeAnimator       = 40;
     static constexpr u32 kTypeSkybox         = 41;
     static constexpr u32 kTypeTerrain        = 42;
-    static constexpr u32 kTypeCount          = 43;
+    static constexpr u32 kTypeRigidBody3D    = 43;
+    static constexpr u32 kTypeCollider3D     = 44;
+    static constexpr u32 kTypeForwardRenderFeatures = 45;
+    static constexpr u32 kTypePostProcess    = 46;
+    static constexpr u32 kTypeAnimationPlayer = 47;
+    static constexpr u32 kTypeNavVolume      = 48;
+    static constexpr u32 kTypeNavAgent       = 49;
+    static constexpr u32 kTypeSkinnedPose    = 50;
+    static constexpr u32 kTypeSpriteSheet    = 51;
+    static constexpr u32 kTypeEffect         = 52;
+    static constexpr u32 kTypeMeshGeometry   = 53;
+    static constexpr u32 kTypeEnvironmentEffects = 54;
+    static constexpr u32 kTypeMapSurface2D       = 55;
+    static constexpr u32 kTypeSpriteLod2D        = 56;
+    static constexpr u32 kTypeCount              = 57;
+    static constexpr u32 kPoseCurveMarker    = 0x56525543u;
+    static constexpr u32 kPoseStripMarker    = 0x50525453u;
+    static constexpr u32 kAnimatorEditorMarker = 0x524F5441u;
+    static constexpr u32 kAnimatorGraphMarker  = 0x48505247u;
 
     static constexpr u32 kFormatVersion    = 7;
     static constexpr u32 kSignature        = 0x46464143; // "CAFF" little-endian
@@ -88,6 +108,8 @@ private:
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
     void collectMeshFilterComponents(
+        std::vector<std::pair<u32, std::vector<u8>>>& entries);
+    void collectMeshGeometryComponents(
         std::vector<std::pair<u32, std::vector<u8>>>& entries);
 
     void collectMeshRendererComponents(
@@ -117,6 +139,7 @@ private:
     bool applyNameComponent(ECS::Entity e, const u8* data, u32 size);
     bool applySpriteComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshFilterComponent(ECS::Entity e, const u8* data, u32 size);
+    bool applyMeshGeometryComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyMeshRendererComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyPrefabInstanceComponent(ECS::Entity e, const u8* data, u32 size);
     bool applyScriptComponent(ECS::Entity e, const u8* data, u32 size);

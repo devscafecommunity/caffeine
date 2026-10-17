@@ -457,8 +457,10 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(980.0f, 620.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowFocus();
 
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoSavedSettings;
     if (!ImGui::Begin(title.c_str(), &state.isOpen, windowFlags)) {
         ImGui::End();
         return result;

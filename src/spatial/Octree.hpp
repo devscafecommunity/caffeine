@@ -117,9 +117,10 @@ struct Frustum {
                                f32 fovY, f32 aspect, f32 nearZ, f32 farZ) {
         Frustum f;
 
-        Vec3 forward = (target - eye).normalized();
-        Vec3 right   = forward.cross(up).normalized();
-        Vec3 upDir   = right.cross(forward);
+        Vec3 forward;
+        Vec3 right;
+        Vec3 upDir;
+        Mat4::viewBasis(target - eye, up, forward, right, upDir);
 
         f32 tanHalf = tanf(fovY * 0.5f);
         f32 tanH    = tanHalf * aspect; // horizontal half-tan

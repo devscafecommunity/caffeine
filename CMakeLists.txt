@@ -17,6 +17,11 @@ option(CAFFEINE_BUILD_HEADLESS "Build caffeine-core without SDL3/RHI" OFF)
 
 # ── Scripting (Lua + sol2) ──────────────────────────────────────
 option(CAFFEINE_ENABLE_SCRIPTING "Enable Lua scripting support" ON)
+option(CAFFEINE_ENABLE_BULLET3 "Enable Bullet3 rigid-body physics" ON)
+
+# ── Caffeine Suite (Convoy, WaveShaper) ─────────────────────────
+option(CAFFEINE_BUILD_CONVOY "Build Convoy art station submodule" ON)
+option(CAFFEINE_BUILD_WAVESHAPER "Build WaveShaper audio DAW submodule (requires VST3 SDK)" OFF)
 
 # ── glTF Support (tinygltf for mesh encoding) ──────────────────────
 include(FetchContent)
@@ -63,12 +68,24 @@ add_library(caffeine-core
     src/assets/AssetPipeline.cpp
     src/assets/TextureCompiler.cpp
     src/assets/MeshLoader.cpp
+    src/animation/SkinLibrary.cpp
+    src/effects/EffectSystem.cpp
+    src/ecs/ParticleSystem.cpp
+    src/ecs/ParticleSystem.cpp
+    src/ecs/MeshGeometry.cpp
     src/assets/MeshCache.cpp
     src/assets/MeshImportValidator.cpp
     src/assets/MeshLOD.cpp
     src/assets/PrefabSerializer.cpp
     src/assets/HotReloader.cpp
     src/scene/PlayMode2D.cpp
+    src/scene/PickQuery.cpp
+    src/scene/PickRaycast.cpp
+    src/scene/MapSurfaceSystem.cpp
+    src/scene/SpriteLod2DSystem.cpp
+    src/render/Overlay2D.cpp
+    src/runtime/PlayClock.cpp
+    src/runtime/GameStateStack.cpp
     src/scene/EnvironmentSystem.cpp
     src/scene/CpuDirectionalShadowMap.cpp
     src/scene/LightingSystem.cpp
@@ -92,6 +109,8 @@ add_library(caffeine-core
     src/procedural/ProceduralWorldSystem.cpp
     src/procedural/ProceduralBindings.cpp
     src/script/PostProcessBindings.cpp
+    src/script/ForwardRenderBindings.cpp
+    src/render/ForwardRenderFeatures.cpp
     src/render/SkyboxRenderer.cpp
     src/engine/AssetLoader.cpp
     src/editor/TransformGizmo.cpp
@@ -115,6 +134,38 @@ target_compile_features(caffeine-core PUBLIC cxx_std_20)
 set_target_properties(caffeine-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(caffeine-core PUBLIC
     CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_sources(caffeine-core PRIVATE
+    src/assets/MaterialCache.cpp
+    src/assets/MaterialFile.cpp
+    src/assets/MeshMaterialExport.cpp)
+
+if(CAFFEINE_ENABLE_BULLET3)
+    set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
+    set(BUILD_CPU_DEMOS OFF CACHE BOOL "" FORCE)
+    set(BUILD_OPENGL3_DEMOS OFF CACHE BOOL "" FORCE)
+    set(BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+    set(BUILD_ENET OFF CACHE BOOL "" FORCE)
+    set(BUILD_CLSOCKET OFF CACHE BOOL "" FORCE)
+    set(USE_GRAPHICAL_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(USE_GLUT OFF CACHE BOOL "" FORCE)
+    set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        bullet3
+        GIT_REPOSITORY https://github.com/bulletphysics/bullet3.git
+        GIT_TAG        3.25
+        GIT_SHALLOW    TRUE
+    )
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    FetchContent_MakeAvailable(bullet3)
+    target_sources(caffeine-core PRIVATE src/physics/PhysicsWorld3D.cpp)
+    target_include_directories(caffeine-core PUBLIC ${bullet3_SOURCE_DIR}/src)
+    target_link_libraries(caffeine-core PUBLIC BulletDynamics BulletCollision LinearMath)
+    target_compile_definitions(caffeine-core PUBLIC CF_HAS_BULLET3)
+else()
+    target_sources(caffeine-core PRIVATE src/physics/PhysicsWorld3D.cpp)
+endif()
 
 if(CAFFEINE_BUILD_HEADLESS)
     target_compile_definitions(caffeine-core PUBLIC CF_HEADLESS=1)
@@ -135,36 +186,53 @@ else()
                 list(APPEND _shader_formats MSL)
             endif()
 
-            caffeine_compile_shader(NAME sphere_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/sphere_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME sphere_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/sphere_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME mesh_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/mesh_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME scene_lit_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/scene_lit.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME scene_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/scene_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME terrain_lit_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/terrain_lit.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME shadow_depth_vert STAGE vertex SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/shadow_depth.vert" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
-            caffeine_compile_shader(NAME shadow_depth_frag STAGE fragment SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/shadow_depth.frag" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+            # name|stage|file — every entry ends up in BuiltinShaders_spirv.hpp.
+            set(_caffeine_builtin_shaders
+                "sphere_lit_vert|vertex|sphere_lit.vert"
+                "sphere_lit_frag|fragment|sphere_lit.frag"
+                "mesh_lit_vert|vertex|mesh_lit.vert"
+                "scene_lit_vert|vertex|scene_lit.vert"
+                "scene_instanced_vert|vertex|scene_instanced.vert"
+                "scene_lit_frag|fragment|scene_lit.frag"
+                "terrain_lit_frag|fragment|terrain_lit.frag"
+                "shadow_depth_vert|vertex|shadow_depth.vert"
+                "shadow_depth_frag|fragment|shadow_depth.frag"
+                "fullscreen_vert|vertex|fullscreen.vert"
+                "sky_frag|fragment|sky.frag"
+                "grid_frag|fragment|grid.frag"
+                "effect_billboard_vert|vertex|effect_billboard.vert"
+                "effect_billboard_frag|fragment|effect_billboard.frag"
+                "post_luminance_frag|fragment|post_luminance.frag"
+                "post_adapt_frag|fragment|post_adapt.frag"
+                "post_bloom_prefilter_frag|fragment|post_bloom_prefilter.frag"
+                "post_bloom_down_frag|fragment|post_bloom_down.frag"
+                "post_bloom_up_frag|fragment|post_bloom_up.frag"
+                "post_ssao_frag|fragment|post_ssao.frag"
+                "post_ssao_blur_frag|fragment|post_ssao_blur.frag"
+                "post_dof_frag|fragment|post_dof.frag"
+                "post_motion_blur_frag|fragment|post_motion_blur.frag"
+                "post_composite_frag|fragment|post_composite.frag"
+                "post_fxaa_frag|fragment|post_fxaa.frag"
+                "post_taa_frag|fragment|post_taa.frag"
+            )
+            set(_caffeine_shader_headers)
+            set(_caffeine_shader_cat_commands)
+            foreach(_entry_raw IN LISTS _caffeine_builtin_shaders)
+                string(REPLACE "|" ";" _entry "${_entry_raw}")
+                list(GET _entry 0 _name)
+                list(GET _entry 1 _stage)
+                list(GET _entry 2 _file)
+                caffeine_compile_shader(NAME ${_name} STAGE ${_stage} SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/${_file}" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+                list(APPEND _caffeine_shader_headers "${CAFFEINE_GENERATED_SHADER_DIR}/${_name}_spirv.hpp")
+                list(APPEND _caffeine_shader_cat_commands COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/${_name}_spirv.hpp" >> "${CAFFEINE_GENERATED_SHADER_DIR}/BuiltinShaders_spirv.hpp")
+            endforeach()
 
             set(BUILTIN_SHADERS_SPIRV_HPP "${CAFFEINE_GENERATED_SHADER_DIR}/BuiltinShaders_spirv.hpp")
             add_custom_command(
                 OUTPUT "${BUILTIN_SHADERS_SPIRV_HPP}"
                 COMMAND ${CMAKE_COMMAND} -E echo "// Auto-generated SPIR-V shader bundle" > "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/mesh_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/terrain_lit_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_vert_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_frag_spirv.hpp" >> "${BUILTIN_SHADERS_SPIRV_HPP}"
-                DEPENDS
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_vert_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/sphere_lit_frag_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/mesh_lit_vert_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_vert_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/scene_lit_frag_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/terrain_lit_frag_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_vert_spirv.hpp"
-                    "${CAFFEINE_GENERATED_SHADER_DIR}/shadow_depth_frag_spirv.hpp"
+                ${_caffeine_shader_cat_commands}
+                DEPENDS ${_caffeine_shader_headers}
             )
             add_custom_target(caffeine_generated_shaders DEPENDS "${BUILTIN_SHADERS_SPIRV_HPP}")
         else()
@@ -178,6 +246,9 @@ else()
             src/render/ShaderCompiler.cpp
             src/render/GpuTextureCache.cpp
             src/render/GpuSceneRenderer.cpp
+            src/render/PostProcessStack.cpp
+            src/render/GpuEnvironmentMap.cpp
+            src/render/MaterialPreviewRenderer.cpp
             src/render/GpuPointShadowMap.cpp
             src/render/GpuDirectionalShadowMap.cpp
             src/render/GpuSpotShadowMap.cpp
@@ -326,6 +397,12 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/ScriptSystem.cpp
         src/script/ScriptWatcher.cpp
         src/script/CppScriptRegistry.cpp
+        src/script/AnimationBindings.cpp
+        src/script/EffectBindings.cpp
+        src/script/NavigationBindings.cpp
+        src/script/RuntimeScriptBindings.cpp
+        src/script/AssetTextLoader.cpp
+        src/script/NativeModuleHost.cpp
     )
 endif()
 
@@ -431,6 +508,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/HierarchyPanel.cpp
           src/editor/SceneViewport.cpp
           src/editor/AssetBrowser.cpp
+          src/editor/BrowseSession.cpp
           src/editor/AssetPreviewRenderer.cpp
           src/editor/EditorPreferences.cpp
           src/editor/InspectorPanel.cpp
@@ -449,15 +527,17 @@ with open(sys.argv[1], 'w') as f:
           src/editor/ShaderNode.cpp
           src/editor/ShaderGraph.cpp
           src/editor/MaterialSerializer.cpp
-          src/assets/MaterialCache.cpp
           src/editor/MaterialEditorPanel.cpp
+          src/editor/ImageManagerPanel.cpp
+          src/editor/HudEditorPanel.cpp
+          src/editor/ParticleEditorPanel.cpp
+          src/editor/EffectEditorPanel.cpp
           src/editor/TerrainEditorPanel.cpp
           src/editor/EntityPresetTypes.cpp
           src/editor/EntityPresetRegistry.cpp
           src/editor/EntityPresetPackages.cpp
           src/editor/EntityPresetFactories.cpp
           src/editor/EntityPresetsPanel.cpp
-          src/editor/PreviewRenderer.cpp
            src/editor/AudioPreviewPanel.cpp
            src/editor/CameraPreviewPanel.cpp
            src/editor/GameplayPreviewPanel.cpp
@@ -502,6 +582,7 @@ with open(sys.argv[1], 'w') as f:
           ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts
+          ${CMAKE_CURRENT_SOURCE_DIR}/caf-pack/include
           ${imgui_test_engine_SOURCE_DIR}
           ${nanosvg_SOURCE_DIR}/src)
       add_executable(caffeine-runtime
@@ -582,6 +663,23 @@ with open(sys.argv[1], 'w') as f:
       if(NOT MSVC)
           target_compile_options(post_processing_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
       endif()
+
+      add_library(ai_development_plugin SHARED
+          apps/plugins/ai_development_plugin/main.cpp
+      )
+      target_include_directories(ai_development_plugin PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/include
+          ${imgui_SOURCE_DIR})
+      target_compile_definitions(ai_development_plugin PRIVATE CF_HAS_IMGUI=1 CAFFEINE_PLUGIN_EXPORTS=1)
+      target_compile_features(ai_development_plugin PRIVATE cxx_std_20)
+      set_target_properties(ai_development_plugin PROPERTIES
+          PREFIX ""
+          OUTPUT_NAME "ai_development_plugin"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+      if(NOT MSVC)
+          target_compile_options(ai_development_plugin PRIVATE -Wno-macro-redefined -Wno-cpp)
+      endif()
       add_library(terrain_plugin SHARED
           apps/plugins/terrain_plugin/main.cpp
           apps/plugins/terrain_plugin/TerrainBridge.cpp
@@ -660,6 +758,9 @@ with open(sys.argv[1], 'w') as f:
                   $<TARGET_FILE:post_processing_plugin>
                   $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:post_processing_plugin>
               COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  $<TARGET_FILE:ai_development_plugin>
+                  $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:ai_development_plugin>
+              COMMAND ${CMAKE_COMMAND} -E copy_if_different
                   $<TARGET_FILE:terrain_plugin>
                   $<TARGET_FILE_DIR:doppio>/plugins/$<TARGET_FILE_NAME:terrain_plugin>
               COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -700,11 +801,37 @@ with open(sys.argv[1], 'w') as f:
     message(STATUS "Doppio (IDE) enabled – ImGui v1.91.9 fetched")
 endif()
 
-# ── caf-encode CLI tool ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  CAFFEINE SUITE — Convoy + WaveShaper (optional submodules)
+# ═══════════════════════════════════════════════════════════════════
+if(CAFFEINE_BUILD_WAVESHAPER AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/WaveShaper/CMakeLists.txt")
+    add_subdirectory(WaveShaper)
+    message(STATUS "WaveShaper (audio DAW) enabled")
+elseif(CAFFEINE_BUILD_WAVESHAPER)
+    message(STATUS "WaveShaper submodule not initialized — skipping")
+endif()
+
+if(CAFFEINE_BUILD_CONVOY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Convoy/CMakeLists.txt")
+    add_subdirectory(Convoy)
+    message(STATUS "Convoy (art station) enabled")
+elseif(CAFFEINE_BUILD_CONVOY)
+    message(STATUS "Convoy submodule not initialized — skipping")
+endif()
+
+# ── caf-encode CLI tool (legacy — prefer caf-pack CLI) ─────────
 add_executable(caf-encode tools/caf-encode/main.cpp)
 target_link_libraries(caf-encode PRIVATE caffeine-core)
 target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(caf-encode PRIVATE cxx_std_20)
+
+# ── Render snapshot (reference scene → PNG through the GPU renderer) ──
+if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
+    add_executable(caffeine-render-snapshot tools/render-snapshot/main.cpp)
+    target_link_libraries(caffeine-render-snapshot PRIVATE caffeine-core)
+    target_include_directories(caffeine-render-snapshot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb)
+    target_compile_features(caffeine-render-snapshot PRIVATE cxx_std_20)
+endif()
 
 # ── Tests ────────────────────────────────────────────────────────
 add_subdirectory(tests)

@@ -1,4 +1,6 @@
 #include "script/ScriptEngine.hpp"
+#include "script/NativeModuleHost.hpp"
+#include "events/Events.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ecs/World.hpp"
 #include "ecs/ComponentQuery.hpp"
@@ -10,6 +12,8 @@
 #include "math/Quat.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "ui/UIComponents.hpp"
+#include "script/AssetTextLoader.hpp"
+#include "script/RuntimeScriptBindings.hpp"
 #include "containers/HashMap.hpp"
 #include "containers/Vector.hpp"
 
@@ -20,6 +24,11 @@ namespace Caffeine::Script {
 
 void registerProceduralScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerPostProcessScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerForwardRenderScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerAnimationScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerEffectScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerNavigationScriptBindings(sol::state& lua, ECS::World** worldPtr);
+sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
 // Internal implementation (Pimpl) — all sol2 types are here
@@ -31,9 +40,11 @@ struct ScriptEngine::Impl {
     ECS::World* m_world = nullptr;
     Input::InputManager* m_input = nullptr;
     Events::EventBus* m_events = nullptr;
+    UI::UISystem* m_ui = nullptr;
 
     HashMap<std::string, sol::environment> m_envs;
     std::string m_searchRoot;
+    AssetTextLoader m_assetText;
 
     struct LuaEventEntry {
         std::string eventName;
@@ -537,6 +548,7 @@ bool ScriptEngine::init(const InitParams& params) {
     m_impl->m_world = params.world;
     m_impl->m_input = params.input;
     m_impl->m_events = params.events;
+    m_impl->m_ui = params.ui;
 
     auto& lua = m_impl->m_lua;
 
@@ -621,6 +633,37 @@ bool ScriptEngine::init(const InitParams& params) {
     registerMathBindings(lua);
     registerProceduralScriptBindings(lua, &m_impl->m_world);
     registerPostProcessScriptBindings(lua, &m_impl->m_world);
+    registerForwardRenderScriptBindings(lua, &m_impl->m_world);
+    registerAnimationScriptBindings(lua, &m_impl->m_world);
+    registerEffectScriptBindings(lua, &m_impl->m_world);
+    registerNavigationScriptBindings(lua, &m_impl->m_world);
+
+    registerRuntimeScriptBindings(
+        lua, &m_impl->m_world, &m_impl->m_input, &m_impl->m_ui, &m_impl->m_assetText,
+        &m_impl->m_searchRoot,
+        [this](const std::string& path, std::string* err) { return loadScriptAs(path, path, err); });
+
+    if (m_impl->m_events) {
+        m_impl->m_events->subscribe<Events::OnMapSurfaceChunkRequest>(
+            [impl = m_impl.get()](const Events::OnMapSurfaceChunkRequest& e) {
+                sol::table payload = impl->m_lua.create_table();
+                payload["surfaceEntityId"] = e.surfaceEntityId;
+                payload["chunkX"] = e.chunkX;
+                payload["chunkY"] = e.chunkY;
+                payload["worldMinX"] = e.worldMinX;
+                payload["worldMinY"] = e.worldMinY;
+                payload["chunkSize"] = e.chunkSize;
+                for (usize i = 0; i < impl->m_luaEvents.size(); ++i) {
+                    auto& entry = impl->m_luaEvents[i];
+                    if (entry.eventName != "mapChunkRequest") continue;
+                    auto result = entry.callback(payload);
+                    if (!result.valid()) {
+                        sol::error err = result;
+                        CF_ERROR("Lua", "mapChunkRequest handler error: %s", err.what());
+                    }
+                }
+            });
+    }
 
     {
         sol::table pt = lua["caffeine"]["particles"];
@@ -682,6 +725,8 @@ void ScriptEngine::setInput(Input::InputManager* input) {
 
 void ScriptEngine::setSearchRoot(const std::string& root) {
     m_impl->m_searchRoot = root;
+    m_impl->m_assetText.setSearchRoot(root);
+    Script::NativeModuleHost::instance().setSearchRoot(root);
 }
 
 std::vector<ScriptEngine::ExposedVar> ScriptEngine::listExposedVars(const std::string& path) {
@@ -738,6 +783,10 @@ bool ScriptEngine::setExposedVar(const std::string& path, const ExposedVar& var)
 }
 
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
+    return loadScriptAs(path, path, outError);
+}
+
+bool ScriptEngine::loadScriptAs(const std::string& key, const std::string& path, std::string* outError) {
     auto& lua = m_impl->m_lua;
 
     std::string file = path;
@@ -788,7 +837,7 @@ bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {
         return false;
     }
 
-    m_impl->m_envs.set(path, std::move(env));
+    m_impl->m_envs.set(key, std::move(env));
     CF_INFO("Script", "Loaded script: %s", file.c_str());
     return true;
 }
@@ -830,6 +879,21 @@ bool ScriptEngine::callOnCreate(const std::string& path, ECS::Entity entity) {
     if (!result.valid()) {
         sol::error err = result;
         CF_ERROR("Lua", "onCreate error: %s", err.what());
+        return false;
+    }
+    return true;
+}
+
+bool ScriptEngine::callOnFixedUpdate(const std::string& path, ECS::Entity entity, f32 fixedDt) {
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    sol::protected_function fn = (*envPtr)["onFixedUpdate"];
+    if (!fn.valid()) return false;
+
+    auto result = fn(static_cast<u32>(entity.id()), fixedDt);
+    if (!result.valid()) {
+        sol::error err = result;
+        CF_ERROR("Lua", "onFixedUpdate error: %s", err.what());
         return false;
     }
     return true;
@@ -878,6 +942,27 @@ bool ScriptEngine::callOnCollision(const std::string& path, ECS::Entity entity,
     if (!result.valid()) {
         sol::error err = result;
         CF_ERROR("Lua", "onCollision error: %s", err.what());
+        return false;
+    }
+    return true;
+}
+
+bool ScriptEngine::callOnPostProcess(const std::string& path, ECS::Entity entity, f32 dt) {
+    auto* envPtr = m_impl->m_envs.get(path);
+    if (!envPtr) return false;
+    const u32 id = static_cast<u32>(entity.id());
+    sol::protected_function fn = (*envPtr)["onPostProcess"];
+    sol::protected_function_result result;
+    if (fn.valid()) {
+        result = fn(id, dt, makePostProcessScriptHandle(m_impl->m_lua, &m_impl->m_world, id));
+    } else {
+        fn = (*envPtr)["onUpdate"];
+        if (!fn.valid()) return false;
+        result = fn(id, dt);
+    }
+    if (!result.valid()) {
+        sol::error err = result;
+        CF_ERROR("Lua", "onPostProcess error: %s", err.what());
         return false;
     }
     return true;

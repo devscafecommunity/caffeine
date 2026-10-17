@@ -67,14 +67,14 @@ std::filesystem::path findEngineAssetsRoot() {
 Mesh3D* loadMeshFromBuffer(const std::string& path, const std::vector<u8>& buffer,
                            std::string& outError) {
     if (buffer.empty()) {
-        outError = "Ficheiro vazio";
+        outError = "Empty file";
         return nullptr;
     }
 
     const std::string ext = extensionLower(path);
     if (ext == ".obj") {
         Mesh3D* mesh = MeshLoader::parseOBJ(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-        if (!mesh) outError = "Falha ao interpretar OBJ";
+        if (!mesh) outError = "Failed to parse OBJ";
         return mesh;
     }
     if (ext == ".gltf" || ext == ".glb") {
@@ -90,7 +90,7 @@ Mesh3D* loadMeshFromBuffer(const std::string& path, const std::vector<u8>& buffe
         std::string parseError;
         Mesh3D* mesh = MeshLoader::parseGLTF(buffer.data(), buffer.size(), path.c_str(), &parseError);
         if (!mesh) {
-            outError = parseError.empty() ? "Falha ao interpretar glTF" : parseError;
+            outError = parseError.empty() ? "Failed to parse glTF" : parseError;
         }
         return mesh;
     }
@@ -100,11 +100,11 @@ Mesh3D* loadMeshFromBuffer(const std::string& path, const std::vector<u8>& buffe
         if (objPath.string() != path && std::filesystem::exists(objPath)) {
             return MeshCache::getInstance().getMesh(objPath.string());
         }
-        outError = "FBX nao suportado — exporte como OBJ ou glTF";
+        outError = "FBX is not supported — export as OBJ or glTF";
         return nullptr;
     }
 
-    outError = "Formato de mesh nao suportado";
+    outError = "Unsupported mesh format";
     return nullptr;
 }
 
@@ -244,7 +244,7 @@ Mesh3D* MeshCache::getMesh(const std::string& path, const std::string& projectRo
     m_lastResolvedPath.clear();
 
     if (path.empty()) {
-        m_lastError = "Caminho do mesh vazio";
+        m_lastError = "Empty mesh path";
         return nullptr;
     }
 
@@ -275,7 +275,7 @@ Mesh3D* MeshCache::getMesh(const std::string& path, const std::string& projectRo
     }
 
     if (m_lastError.empty()) {
-        m_lastError = "Ficheiro nao encontrado: " + path;
+        m_lastError = "File not found: " + path;
     }
     return nullptr;
 }

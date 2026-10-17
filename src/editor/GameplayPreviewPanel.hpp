@@ -43,6 +43,9 @@ private:
     RHI::Texture* m_depthTarget = nullptr;
     u32 m_width = 0;
     u32 m_height = 0;
+    u32 m_pendingW = 0;
+    u32 m_pendingH = 0;
+    u32 m_stable = 0;
     Render::GpuSceneRenderer m_renderer;
     bool m_ready = false;
     Vec3 m_lastCamPos{};
@@ -51,6 +54,7 @@ private:
     u32 m_lastTargetW = 0;
     u32 m_lastTargetH = 0;
     bool m_hasGpuFrame = false;
+    u64 m_lastSceneStamp = 0;
 #endif
 #ifdef CF_HAS_IMGUI
     Render::SkyboxRenderer m_skyboxRenderer;

@@ -65,4 +65,14 @@ struct OnActionReleased {
     u32 playerId;
 };
 
+/// Fired when a MapSurface2DComponent needs content for a logical chunk (game supplies data).
+struct OnMapSurfaceChunkRequest {
+    u32 surfaceEntityId = 0;
+    i32 chunkX = 0;
+    i32 chunkY = 0;
+    f32 worldMinX = 0.0f;
+    f32 worldMinY = 0.0f;
+    f32 chunkSize = 0.0f;
+};
+
 } // namespace Caffeine::Events

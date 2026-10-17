@@ -4,7 +4,7 @@
 #include <filesystem>
 
 #ifdef CF_HAS_CAF_PACK
-#include "../caf-pack/include/caffeine/CafTypes.hpp"
+#include "caffeine/CafTypes.hpp"
 #endif
 
 namespace Caffeine::Editor {

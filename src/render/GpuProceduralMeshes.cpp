@@ -430,7 +430,7 @@ void GpuProceduralMeshes::ensureBuilt() {
 
     buildCube(g_cube);
     buildPlane(g_plane);
-    buildSphere(g_sphere);
+    buildSphere(g_sphere, 48);
     buildCylinder(g_cylinder);
     buildCapsule(g_capsule);
     buildCone(g_cone);

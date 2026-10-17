@@ -13,6 +13,10 @@ struct ComponentEntry {
     std::string name;
     std::function<bool(ECS::World&, ECS::Entity)> has;
     std::function<void(ECS::World&, ECS::Entity)> add;
+    /// When set, Add Component / Quick Search hide this entry if that plugin is off.
+    std::string plugin;
+    /// Extra search tokens (space separated), e.g. "skeleton skinned bones".
+    std::string keywords;
 };
 
 class ComponentRegistry {

@@ -25,6 +25,7 @@ struct CameraPreviewGpuCache {
     f32 lastFov = 0.0f;
     u32 lastW = 0;
     u32 lastH = 0;
+    u64 lastSceneStamp = 0;
     bool hasFrame = false;
 };
 

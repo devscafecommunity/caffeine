@@ -1,18 +1,31 @@
 #include "editor/ComponentRegistry.hpp"
+
+#include <cstring>
 #include "ecs/Components.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/PrefabComponents.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "ecs/MapComponents.hpp"
+#include "ecs/LodComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "ecs/ProceduralComponents.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "physics/PhysicsComponents2D.hpp"
+#include "physics/PhysicsComponents3D.hpp"
 #include "audio/AudioComponents.hpp"
 #include "script/ScriptTypes.hpp"
 #include "ui/UIComponents.hpp"
 #include "animation/AnimationComponents.hpp"
+#include "animation/AnimationPlayer.hpp"
+#include "animation/SkinLibrary.hpp"
+#include "effects/EffectTypes.hpp"
+#include "navigation/NavVolume.hpp"
 #include "ecs/PostProcessComponents.hpp"
+#include "ecs/ForwardRenderComponents.hpp"
+#include "ecs/EnvironmentEffectsComponents.hpp"
+#include "ecs/PostProcessComponents.hpp"
+#include "render/RenderFeatures.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
 #include "ecs/Components3D.hpp"
 #include "scene/LightingSystem.hpp"
@@ -35,6 +48,16 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){
             w.add<Physics2D::RigidBody2D>(e);
         }
+    });
+    reg.registerComponent({
+        "Physics 3D", "RigidBody3D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<Physics3D::RigidBody3D>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<Physics3D::RigidBody3D>(e); }
+    });
+    reg.registerComponent({
+        "Physics 3D", "Collider3D",
+        [](ECS::World& w, ECS::Entity e){ return w.has<Physics3D::Collider3D>(e); },
+        [](ECS::World& w, ECS::Entity e){ w.add<Physics3D::Collider3D>(e); }
     });
     reg.registerComponent({
         "Physics 2D", "Collider2D",
@@ -66,6 +89,32 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Environment", "Skybox",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::SkyboxComponent>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::SkyboxComponent>(e); }
+    });
+    reg.registerComponent({
+        "Environment", "Environment Effects",
+        [](ECS::World& w, ECS::Entity e){ return w.has<ECS::EnvironmentEffectsComponent>(e); },
+        [](ECS::World& w, ECS::Entity e){
+            w.add<ECS::EnvironmentEffectsComponent>(e);
+            if (!w.has<ECS::Position3D>(e) && !w.has<ECS::Transform>(e)) w.add<ECS::Position3D>(e);
+            if (!w.has<ECS::ForwardRenderFeaturesComponent>(e)) {
+                auto& features = w.add<ECS::ForwardRenderFeaturesComponent>(e);
+                features.ibl.enabled = false;
+                features.occlusion.enabled = true;
+                features.volumetrics.enabled = true;
+                features.volumetrics.quality = Render::VolumetricQuality::High;
+                features.volumetrics.sampleShadows = true;
+                features.volumetrics.density = 0.045f;
+                features.volumetrics.height = 80.0f;
+                features.volumetrics.anisotropy = 0.62f;
+            }
+            if (!w.has<ECS::PostProcessComponent>(e)) {
+                auto& post = w.add<ECS::PostProcessComponent>(e);
+                post.ambientOcclusion.enabled = true;
+                post.ambientOcclusion.intensity = 1.1f;
+            }
+        },
+        {},
+        "world light day night zone ambient environment"
     });
     reg.registerComponent({
         "Environment", "Terrain",
@@ -131,6 +180,63 @@ void registerAllComponents(ComponentRegistry& reg) {
         }
     });
     reg.registerComponent({
+        "Effects", "Effect",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Effects::EffectComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Effects::EffectComponent effect;
+            effect.kind = static_cast<u8>(Effects::EffectKind::Particles);
+            w.add<Effects::EffectComponent>(e, effect);
+        }
+    });
+    reg.registerComponent({
+        "Animation", "Sprite Sheet",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::SpriteSheet>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Animation::SpriteSheet sheet;
+            sheet.columns = 4;
+            sheet.rows = 1;
+            sheet.frameCount = 4;
+            w.add<Animation::SpriteSheet>(e, sheet);
+            if (!w.has<ECS::Sprite>(e)) w.add<ECS::Sprite>(e);
+        }
+    });
+    reg.registerComponent({
+        "Animation", "Skeleton",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::SkinnedPose>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Animation::SkinnedPose pose;
+            if (const ECS::MeshFilterComponent* filter = w.get<ECS::MeshFilterComponent>(e)) {
+                std::strncpy(pose.meshPath, filter->customMeshPath.c_str(), sizeof(pose.meshPath) - 1);
+            }
+            w.add<Animation::SkinnedPose>(e, std::move(pose));
+        },
+        {},
+        "skinned mesh pose bones skeleton skel"
+    });
+    reg.registerComponent({
+        "Animation", "Animation Player",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Animation::AnimationPlayer>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<Animation::AnimationPlayer>(e); }
+    });
+    reg.registerComponent({
+        "AI", "Nav Volume",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavVolume>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            Navigation::NavVolume volume;
+            volume.resize(32, 32);
+            w.add<Navigation::NavVolume>(e, std::move(volume));
+        },
+        "ai_development_plugin",
+        "navigation navmesh ai"
+    });
+    reg.registerComponent({
+        "AI", "Nav Agent",
+        [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavAgent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<Navigation::NavAgent>(e); },
+        "ai_development_plugin",
+        "navigation pathfinding ai"
+    });
+    reg.registerComponent({
         "Camera", "Camera Active",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::CameraActiveComponent>(e); },
         [](ECS::World& w, ECS::Entity e) {
@@ -138,6 +244,26 @@ void registerAllComponents(ComponentRegistry& reg) {
             active.is2D = true;
             w.add<ECS::CameraActiveComponent>(e, active);
         }
+    });
+    reg.registerComponent({
+        "World", "Map Surface 2D",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::MapSurface2DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::MapSurface2DComponent>(e); },
+        "map",
+        "chunk surface bounds"
+    });
+    reg.registerComponent({
+        "Rendering", "Sprite LOD 2D",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::SpriteLod2DComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            ECS::SpriteLod2DComponent lod;
+            if (auto* t = w.get<ECS::Transform>(e)) {
+                lod.baseScale = {t->scale.x, t->scale.y};
+            }
+            w.add<ECS::SpriteLod2DComponent>(e, lod);
+        },
+        "lod",
+        "zoom based sprite scale"
     });
     reg.registerComponent({
         "Camera", "Camera2D",
@@ -198,12 +324,23 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
     });
     reg.registerComponent({
+        "Rendering", "Forward Render Features",
+        [](ECS::World& w, ECS::Entity e) {
+            return w.has<ECS::ForwardRenderFeaturesComponent>(e);
+        },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ForwardRenderFeaturesComponent>(e); }
+    });
+    reg.registerComponent({
         "Procedural", "Procedural World",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
-        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); }
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); },
+        "procedural_tools_plugin",
+        "terrain generate world"
     });
 
     ComponentTypeRegistry::instance().registerType<ECS::PostProcessComponent>("PostProcess");
+    ComponentTypeRegistry::instance().registerType<ECS::ForwardRenderFeaturesComponent>(
+        "ForwardRenderFeatures");
     ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
         "ProceduralWorld");
 }

@@ -6,6 +6,7 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "editor/ComponentRegistry.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
@@ -14,7 +15,11 @@
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "scene/PlayMode2D.hpp"
+#include "navigation/NavigationSystem.hpp"
+#include "effects/EffectSystem.hpp"
+#include "editor/EditorCameraMath.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
 #include "script/ScriptTypes.hpp"
 #include "events/Events.hpp"
@@ -42,6 +47,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_gameplayPreview.init(device);
     m_materialEditor.initGpu(device);
     m_assetBrowser.init(projectConfig);
+    m_assetBrowser.initGpu(device);
     m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
         m_scriptEditor.open();
         m_scriptEditor.openFile(path);
@@ -65,55 +71,80 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_hierarchy.setOpenPresetsCallback([this]() { m_entityPresets.open(); });
     m_tabManager.newScene("Untitled");
 
-    m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Scene", [this]() {
         m_hierarchy.open();
     });
-    m_commandPalette.registerCommand("panel_inspector", "Inspector Panel", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_inspector", "Inspector Panel", "Scene", [this]() {
         m_inspector.open();
     });
-    m_commandPalette.registerCommand("panel_console", "Console", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_console", "Console", "Debug", [this]() {
         m_console.open();
     });
-    m_commandPalette.registerCommand("panel_profiler", "Profiler", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_profiler", "Profiler", "Debug", [this]() {
         m_profiler.open();
     });
-    m_commandPalette.registerCommand("panel_entity_debugger", "Entity Debugger", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_entity_debugger", "Entity Debugger", "Debug", [this]() {
         m_entityDebugger.open();
     });
-    m_commandPalette.registerCommand("panel_plugin_manager", "Plugin Manager", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_plugin_manager", "Plugin Manager", "Plugins", [this]() {
         PluginManager::instance().openManager();
     });
-    m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_asset_browser", "Asset Browser", "Content", [this]() {
         m_assetBrowser.open();
     });
-    m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_animation_timeline", "Animation Timeline", "Animation", [this]() {
         m_animationTimeline.open();
     });
-    m_commandPalette.registerCommand("panel_animator_controller", "Animator Controller", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_animator_controller", "Animator Controller", "Animation", [this]() {
         m_animatorController.open();
     });
-    m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_tilemap", "Tilemap Editor", "Content", [this]() {
         m_tilemapEditor.open();
     });
-     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Tools", [this]() {
          m_scriptEditor.open();
      });
-     m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Content", [this]() {
          m_materialEditor.open();
      });
-     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_image_manager", "Image Manager", "Content", [this]() {
+         m_imageManager.open();
+     });
+     m_commandPalette.registerCommand("panel_hud_editor", "HUD Editor", "Tools", [this]() {
+         m_hudEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_particles", "Particles", "Tools", [this]() {
+         m_particleEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_effects", "Effects", "Tools", [this]() {
+         m_effectEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Tools", [this]() {
          m_terrainEditor.open();
      });
-     m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Scene", [this]() {
          m_entityPresets.open();
      });
-     m_commandPalette.registerCommand("panel_gameplay_preview", "Gameplay Preview", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_gameplay_preview", "Gameplay Preview", "Scene", [this]() {
          m_gameplayPreview.open();
      });
-     m_commandPalette.registerCommand("panel_settings", "Settings", "Panels", [this]() {
+     m_commandPalette.registerCommand("panel_settings", "Settings", "Tools", [this]() {
          m_settingsPanel.open();
      });
-    m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Panels", [this]() {
+    m_commandPalette.registerCommand("panel_viewport", "Scene Viewport", "Scene", [this]() {
+        m_viewport.open();
+    });
+    m_commandPalette.registerCommand("panel_toolbox", "Toolbox", "Scene", [this]() {
+        m_toolbox.open();
+    });
+    m_commandPalette.registerCommand("panel_audio_preview", "Audio Preview", "Content", [this]() {
+        m_audioPreview.open();
+    });
+    m_commandPalette.registerCommand("panel_camera_preview", "Camera Preview", "Scene", [this]() {
+        m_cameraPreview.open();
+    });
+    m_commandPalette.registerCommand("action_build", "Build and Run", "Actions", [this]() {
+        m_buildDialog.open();
     });
 
     m_commandPalette.registerCommand("action_new_scene", "New Scene", "Actions", [this]() {
@@ -153,9 +184,15 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_settingsPanel.setEditorContext(&m_ctx);
      m_settingsPanel.applyPreferencesToContext(m_ctx);
 
-    // Auto-load last scene if project config has one
-    if (m_settingsPanel.preferences().reopenLastSceneOnStartup && !projectConfig.LastScene.empty()) {
-        std::string lastScene = projectConfig.LastScene;
+    // Always open the project's scene in the viewport, in that project's 2D or 3D mode.
+    if (projectConfig.TemplateType == "2D") {
+        m_ctx.viewMode = EditorContext::ViewMode::Mode2D;
+    } else if (projectConfig.TemplateType == "3D") {
+        m_ctx.viewMode = EditorContext::ViewMode::Mode3D;
+    }
+    {
+        std::string lastScene = projectConfig.LastScene.empty() ? std::string("scenes/main.caf")
+                                                                : projectConfig.LastScene;
         if (lastScene.find("/build/") != std::string::npos ||
             lastScene.find("\\build\\") != std::string::npos ||
             lastScene.rfind("build/", 0) == 0) {
@@ -175,6 +212,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     scriptParams.world  = nullptr;
     scriptParams.events = &m_eventBus;
     scriptParams.input  = &m_input;
+    scriptParams.ui     = &m_uiSystem;
     if (!m_scriptEngineReady) {
         m_scriptEngineReady = m_scriptEngine.init(scriptParams);
     }
@@ -182,11 +220,31 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_scriptEngine.setSearchRoot(m_currentProjectConfig.RootPath.string());
      m_scriptEditor.setScriptEngine(&m_scriptEngine);
      if (m_scriptEngineReady) {
-         m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+         m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
      }
 #endif
 
     registerAllComponents(ComponentRegistry::instance());
+    {
+        int index = 0;
+        for (const auto& entry : ComponentRegistry::instance().entries()) {
+            const std::string id = "add_component_" + std::to_string(index++);
+            const std::string label = std::string("Add ") + entry.name;
+            m_commandPalette.registerCommand(
+                Caffeine::FixedString<64>(id.c_str()), Caffeine::FixedString<128>(label.c_str()),
+                Caffeine::FixedString<128>("Components"),
+                [this, entry]() {
+                    ECS::World* world = m_tabManager.activeWorld();
+                    if (!world || !m_ctx.selectedEntity.isValid()) return;
+                    if (entry.has(*world, m_ctx.selectedEntity)) return;
+                    m_ctx.beginUndo(EditorCommand::AddComponent, m_ctx.selectedEntity.id(), *world);
+                    entry.add(*world, m_ctx.selectedEntity);
+                    m_ctx.endUndo(*world);
+                },
+                true, entry.plugin.empty() ? nullptr : entry.plugin.c_str(),
+                entry.keywords.empty() ? nullptr : entry.keywords.c_str());
+        }
+    }
     registerPlayModeEventListeners();
 
     Debug::LogSystem::instance().addSink([this](Debug::LogLevel level, const char* category, const char* message) {
@@ -365,9 +423,10 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
         p.world  = &world;
         p.events = &m_eventBus;
         p.input  = &m_input;
+        p.ui     = &m_uiSystem;
         m_scriptEngineReady = m_scriptEngine.init(p);
     }
-    m_scriptSystem = Script::ScriptSystem(&m_scriptEngine);
+    m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
     m_scriptSystem.resetPlayState();
     Procedural::ProceduralWorldSystem::reset();
     ECS::ComponentQuery cppQ;
@@ -380,6 +439,7 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
 }
 
 void SceneEditor::exitPlayMode(ECS::World& world) {
+    m_physics3D.reset();
     m_isPlaying = false;
     m_isPaused  = false;
     m_ctx.isPlayMode = false;
@@ -422,7 +482,15 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
-    if (!m_isPlaying || m_isPaused) return;
+    Animation::setSkinProjectRoot(m_ctx.projectRootPath.string());
+    const Vec3 editorCam =
+        editorCameraPosition(m_ctx.camYaw, m_ctx.camPitch, m_ctx.camDistance, m_ctx.camFocus);
+    Scene::tickEnvironmentEffects(world, (m_isPlaying && !m_isPaused) ? dt : 0.0f,
+                                  Scene::firstCamera3DPosition(world, editorCam));
+    if (!m_isPlaying || m_isPaused) {
+        Scene::propagateTransforms(world);
+        return;
+    }
 
     {
         auto& io = ImGui::GetIO();
@@ -541,7 +609,10 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
     m_input.endFrame();
 
     m_animationSystem.onUpdate(world, dt);
+    Effects::tickEffects(world, dt, editorCameraPosition(m_ctx.camYaw, m_ctx.camPitch, m_ctx.camDistance, m_ctx.camFocus));
+    Navigation::updateNavigation(world, dt);
     m_physicsSystem.onUpdate(world, dt);
+    m_physics3D.onUpdate(world, dt);
 #ifdef CF_HAS_SCRIPTING
     if (m_scriptEngineReady) {
         m_scriptEngine.setWorld(&world);
@@ -601,6 +672,126 @@ void SceneEditor::renderPlaybar(ECS::World& world) {
     }
     ImGui::End();
 }
+
+namespace {
+
+ImGuiID g_windowChromeArmed = 0;
+
+void drawWindowChromeGlyph(ImDrawList* drawList, const ImRect& hit, bool dockBack) {
+    const ImU32 col = IM_COL32(230, 230, 230, 235);
+    const float inset = ImMax(2.0f, hit.GetWidth() * 0.22f);
+    const ImVec2 a = hit.Min + ImVec2(inset, inset + 1.0f);
+    const ImVec2 b = hit.Max - ImVec2(inset + 1.0f, inset);
+    drawList->AddRect(a, b, col, 1.0f, 0, 1.0f);
+    const ImVec2 tip = dockBack
+        ? ImVec2(a.x + 1.0f, b.y - 1.0f)
+        : ImVec2(hit.Max.x - inset, hit.Min.y + inset);
+    const ImVec2 tail = dockBack
+        ? tip + ImVec2(4.0f, -4.0f)
+        : tip + ImVec2(-4.0f, 4.0f);
+    drawList->AddLine(tail, tip, col, 1.0f);
+    if (dockBack) {
+        drawList->AddLine(tip, tip + ImVec2(3.0f, 0.0f), col, 1.0f);
+        drawList->AddLine(tip, tip + ImVec2(0.0f, -3.0f), col, 1.0f);
+    } else {
+        drawList->AddLine(tip, tip + ImVec2(-3.0f, 0.0f), col, 1.0f);
+        drawList->AddLine(tip, tip + ImVec2(0.0f, 3.0f), col, 1.0f);
+    }
+}
+
+bool windowChromeButton(ImGuiID id, const ImRect& hit, bool dockBack, const char* tip,
+                        ImGuiViewport* viewport) {
+    ImGuiContext& g = *GImGui;
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(viewport);
+    const bool hovered = hit.Contains(g.IO.MousePos);
+    if (hovered)
+        drawList->AddRectFilled(hit.Min, hit.Max, IM_COL32(255, 255, 255, 36), 2.0f);
+    drawWindowChromeGlyph(drawList, hit, dockBack);
+    if (hovered)
+        ImGui::SetTooltip("%s", tip);
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        g_windowChromeArmed = id;
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left) || g_windowChromeArmed != id)
+        return false;
+    g_windowChromeArmed = 0;
+    const ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    return hovered && std::fabs(drag.x) < 4.0f && std::fabs(drag.y) < 4.0f;
+}
+
+bool windowIsOwnOsWindow(const ImGuiWindow* window) {
+    if (!window || !window->Viewport || window->DockIsActive) return false;
+    return window->ViewportOwned && window->Viewport->ID != ImGui::GetMainViewport()->ID;
+}
+
+void popWindowToMonitor(ImGuiWindow* window) {
+    if (!window) return;
+    window->WindowClass.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
+    if (window->DockIsActive)
+        ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), window);
+}
+
+void dockWindowBack(ImGuiWindow* window, ImGuiID dockspaceId) {
+    if (!window || dockspaceId == 0) return;
+    window->WindowClass.ViewportFlagsOverrideSet &= ~ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetWindowDock(window, dockspaceId, ImGuiCond_Always);
+}
+
+void renderIndependentWindowButtons(ImGuiID dockspaceId) {
+    ImGuiContext& g = *GImGui;
+    const float buttonSz = g.FontSize;
+    const ImVec2 framePad = g.Style.FramePadding;
+
+    for (int n = 0; n < g.DockContext.Nodes.Data.Size; ++n) {
+        ImGuiDockNode* node = static_cast<ImGuiDockNode*>(g.DockContext.Nodes.Data[n].val_p);
+        if (!node || !node->IsVisible || !node->IsLeafNode() || node->LastFrameActive < g.FrameCount)
+            continue;
+        ImGuiWindow* window = node->VisibleWindow;
+        if (!window || window->Flags & ImGuiWindowFlags_NoDocking)
+            continue;
+
+        ImRect hit;
+        if (node->TabBar && !node->IsHiddenTabBar()) {
+            const ImRect tab = window->DC.DockTabItemRect;
+            if (tab.GetWidth() < buttonSz || tab.GetHeight() < 4.0f)
+                continue;
+            const float closeX = ImMax(tab.Min.x, tab.Max.x - framePad.x - buttonSz);
+            hit = ImRect(ImVec2(closeX - buttonSz - 1.0f, tab.Min.y + framePad.y),
+                         ImVec2(closeX - 1.0f, tab.Min.y + framePad.y + buttonSz));
+            if (!node->TabBar->BarRect.Contains(hit.GetCenter()))
+                continue;
+        } else {
+            hit = ImRect(ImVec2(node->Pos.x + node->Size.x - buttonSz - 8.0f, node->Pos.y + 4.0f),
+                         ImVec2(node->Pos.x + node->Size.x - 8.0f, node->Pos.y + 4.0f + buttonSz));
+        }
+
+        ImGuiViewport* viewport = node->HostWindow ? node->HostWindow->Viewport
+                                                   : ImGui::GetMainViewport();
+        if (windowChromeButton(window->ID ^ 0x510u, hit, false,
+                "Abre esta janela noutro monitor. Continua ligada a mesma cena.", viewport))
+            popWindowToMonitor(window);
+    }
+
+    for (ImGuiWindow* window : g.Windows) {
+        if (!window->WasActive || window->Hidden || !windowIsOwnOsWindow(window))
+            continue;
+        if (window->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Tooltip |
+                             ImGuiWindowFlags_Popup | ImGuiWindowFlags_NoDocking))
+            continue;
+        const ImRect title = window->TitleBarRect();
+        if (title.GetHeight() < 4.0f)
+            continue;
+        const float closeX = title.Max.x - framePad.x - buttonSz;
+        const ImRect hit(ImVec2(closeX - g.Style.ItemInnerSpacing.x - buttonSz, title.Min.y + framePad.y),
+                         ImVec2(closeX - g.Style.ItemInnerSpacing.x, title.Min.y + framePad.y + buttonSz));
+        if (windowChromeButton(window->ID ^ 0xA11u, hit, true,
+                "Encaixa outra vez na janela principal.", window->Viewport))
+            dockWindowBack(window, dockspaceId);
+    }
+}
+
+}  // namespace
+
 #endif
 
 // ── Main render ─────────────────────────────────────────────────
@@ -611,6 +802,8 @@ void SceneEditor::render(f32 deltaTime) {
 
     ECS::World* activeWorld = m_tabManager.activeWorld();
     m_ctx.activeWorld = activeWorld;
+    m_ctx.projectRootPath = m_currentProjectConfig.RootPath;
+    m_ctx.assetRootPath = m_assetBrowser.assetRoot();
     if (!activeWorld) {
         renderUnsavedChangesPopup(nullptr);
         return;
@@ -623,6 +816,29 @@ void SceneEditor::render(f32 deltaTime) {
             m_tabManager.activeTab().name = std::filesystem::path(scenePath).stem().string();
             m_tabManager.activeTab().path = scenePath;
         }
+        if (m_currentProjectConfig.TemplateType != "2D" &&
+            m_currentProjectConfig.TemplateType != "3D") {
+            bool has3D = false;
+            bool has2D = false;
+            ECS::ComponentQuery cameras3D;
+            cameras3D.with<ECS::Camera3DComponent>();
+            activeWorld->forEach<ECS::Camera3DComponent>(
+                cameras3D, [&](ECS::Entity, ECS::Camera3DComponent&) { has3D = true; });
+            ECS::ComponentQuery meshes;
+            meshes.with<ECS::MeshFilterComponent>();
+            activeWorld->forEach<ECS::MeshFilterComponent>(
+                meshes, [&](ECS::Entity, ECS::MeshFilterComponent&) { has3D = true; });
+            ECS::ComponentQuery cameras2D;
+            cameras2D.with<ECS::Camera2DComponent>();
+            activeWorld->forEach<ECS::Camera2DComponent>(
+                cameras2D, [&](ECS::Entity, ECS::Camera2DComponent&) { has2D = true; });
+            ECS::ComponentQuery sprites;
+            sprites.with<ECS::Sprite>();
+            activeWorld->forEach<ECS::Sprite>(sprites, [&](ECS::Entity, ECS::Sprite&) { has2D = true; });
+            m_ctx.viewMode = (has2D && !has3D) ? EditorContext::ViewMode::Mode2D
+                                               : EditorContext::ViewMode::Mode3D;
+        }
+        ImGui::SetWindowFocus("Scene Viewport");
     }
 
     if (m_tabManager.activeTabIndex() >= 0) {
@@ -737,13 +953,56 @@ void SceneEditor::render(f32 deltaTime) {
         m_hierarchy.render(*activeWorld, m_ctx);
     }
     {
+        CF_PROFILE_SCOPE("SceneEditor::toolbox");
+        if (ImGuiWindow* hierarchy = ImGui::FindWindowByName("Hierarchy")) {
+            if (hierarchy->DockId != 0)
+                ImGui::SetNextWindowDockID(hierarchy->DockId, ImGuiCond_FirstUseEver);
+        }
+        m_toolbox.render(*activeWorld, m_ctx, m_viewport);
+    }
+    {
         CF_PROFILE_SCOPE("SceneEditor::inspector");
         m_inspector.render(*activeWorld, m_ctx);
     }
     renderPlaybar(*activeWorld);
+    if (m_ctx.selectedEntity.isValid()) {
+        Animation::ensurePoseForMesh(*activeWorld, m_ctx.selectedEntity,
+                                     m_ctx.projectRootPath.string());
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::animationEditors");
+        i32 posedBone = -1;
+        if (m_ctx.skeletonEntityId == m_ctx.selectedEntity.id()) posedBone = m_ctx.skeletonBone;
+        m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id(), posedBone);
+        m_animationTimeline.setProjectRoot(m_ctx.projectRootPath.string());
+        m_animationTimeline.render(deltaTime);
+        if (m_animationTimeline.consumePickedBone(posedBone)) {
+            m_ctx.skeletonEntityId = m_ctx.selectedEntity.id();
+            m_ctx.skeletonBone = posedBone;
+        }
+        m_animatorController.bindSelection(activeWorld, m_ctx.selectedEntity,
+                                           m_ctx.projectRootPath.string());
+        m_animatorController.render();
+        if (!m_isPlaying || m_isPaused) {
+            f32 skinDt = 0.0f;
+            if (m_animationTimeline.isPlaying()) {
+                skinDt = deltaTime;
+            } else {
+                ECS::ComponentQuery playing;
+                playing.with<Animation::SkinnedPose>();
+                activeWorld->forEach<Animation::SkinnedPose>(
+                    playing, [&](ECS::Entity, Animation::SkinnedPose& pose) {
+                        if (pose.playing && !pose.timelineHold) skinDt = deltaTime;
+                    });
+            }
+            Animation::tickSkinnedPoses(*activeWorld, skinDt);
+        }
+    }
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
+    m_materialEditor.setFrameCommandBuffer(m_frameCmd);
+    m_assetBrowser.setFrameCommandBuffer(m_frameCmd);
 #endif
     {
         CF_PROFILE_SCOPE("SceneEditor::viewport");
@@ -775,7 +1034,29 @@ void SceneEditor::render(f32 deltaTime) {
     }
     {
         CF_PROFILE_SCOPE("SceneEditor::materialEditor");
-        m_materialEditor.onImGuiRender();
+        m_materialEditor.setProjectRoot(m_currentProjectConfig.RootPath.string());
+        if (!m_ctx.materialToOpen.empty()) {
+            m_materialEditor.open();
+            m_materialEditor.openFromPath(std::filesystem::path(m_ctx.materialToOpen));
+            m_ctx.materialToOpen.clear();
+        }
+        m_materialEditor.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::imageManager");
+        m_imageManager.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::hudEditor");
+        m_hudEditor.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::particles");
+        m_particleEditor.onImGuiRender(m_ctx);
+    }
+    {
+        CF_PROFILE_SCOPE("SceneEditor::effects");
+        m_effectEditor.onImGuiRender(m_ctx);
     }
     {
         CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
@@ -801,9 +1082,9 @@ void SceneEditor::render(f32 deltaTime) {
     m_viewport.setFrameCommandBuffer(nullptr);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
+    m_materialEditor.setFrameCommandBuffer(nullptr);
+    m_assetBrowser.setFrameCommandBuffer(nullptr);
 #endif
-    m_animationTimeline.render(deltaTime);
-    m_animatorController.render();
     m_tilemapEditor.render();
     m_commandPalette.render();
     m_buildDialog.render();
@@ -812,6 +1093,10 @@ void SceneEditor::render(f32 deltaTime) {
         PluginManager::instance().renderPanels();
         PluginManager::instance().renderManagerUI();
     }
+
+    serviceBrowseSession(m_ctx, m_assetBrowser);
+
+    renderIndependentWindowButtons(m_dockspaceId);
 
     ImGui::End(); // DockSpace
 
@@ -833,6 +1118,7 @@ void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
     ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottom, &dockCenter);
 
      ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+     ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
      ImGui::DockBuilderDockWindow("Inspector", dockRight);
      ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
      ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
@@ -898,27 +1184,29 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit")) {
-            if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", "Ctrl+Z", false, m_ctx.undoStack.canUndo())) {
+            if (EditorIcons::menuItem(EditorIcon::Undo, "Undo", EditorShortcuts::instance().chord(Shortcut::Undo), false, m_ctx.undoStack.canUndo())) {
                 m_ctx.undoStack.undo(world);
+                if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
-            if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", "Ctrl+Y", false, m_ctx.undoStack.canRedo())) {
+            if (EditorIcons::menuItem(EditorIcon::Redo, "Redo", EditorShortcuts::instance().chord(Shortcut::Redo), false, m_ctx.undoStack.canRedo())) {
                 m_ctx.undoStack.redo(world);
+                if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
             }
             ImGui::Separator();
-            if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", "Ctrl+C", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Copy, "Copy", EditorShortcuts::instance().chord(Shortcut::Copy), false, m_ctx.selectedEntity.isValid())) {
                 m_ctx.clipboardEntity = m_ctx.selectedEntity;
             }
-            if (EditorIcons::menuItem(EditorIcon::Paste, "Paste", "Ctrl+V", false, m_ctx.clipboardEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Paste, "Paste", EditorShortcuts::instance().chord(Shortcut::Paste), false, m_ctx.clipboardEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
             }
-            if (EditorIcons::menuItem(EditorIcon::Duplicate, "Duplicate", "Ctrl+D", false, m_ctx.selectedEntity.isValid())) {
+            if (EditorIcons::menuItem(EditorIcon::Duplicate, "Duplicate", EditorShortcuts::instance().chord(Shortcut::Duplicate), false, m_ctx.selectedEntity.isValid())) {
                 m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
             }
             PluginManager::instance().renderMenuItems("Edit");
             ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("Help")) {
+        if (PluginManager::instance().hasMenuItems("Help") && ImGui::BeginMenu("Help")) {
             PluginManager::instance().renderMenuItems("Help");
             ImGui::EndMenu();
         }
@@ -940,6 +1228,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (EditorIcons::menuItem(EditorIcon::Hierarchy, "Hierarchy", nullptr, &hierarchyOpen)) {
                 hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
             }
+            bool toolboxOpen = m_toolbox.isOpen();
+            if (ImGui::MenuItem("Toolbox", nullptr, &toolboxOpen)) {
+                toolboxOpen ? m_toolbox.open() : m_toolbox.close();
+            }
             bool inspectorOpen = m_inspector.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Inspector, "Inspector", nullptr, &inspectorOpen)) {
                 inspectorOpen ? m_inspector.open() : m_inspector.close();
@@ -955,6 +1247,22 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             bool assetsOpen = m_assetBrowser.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Assets, "Assets", nullptr, &assetsOpen)) {
                 assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
+            }
+            bool imageManagerOpen = m_imageManager.isOpen();
+            if (ImGui::MenuItem("Image Manager", nullptr, imageManagerOpen)) {
+                imageManagerOpen ? m_imageManager.close() : m_imageManager.open();
+            }
+            bool hudEditorOpen = m_hudEditor.isOpen();
+            if (ImGui::MenuItem("HUD Editor", nullptr, hudEditorOpen)) {
+                hudEditorOpen ? m_hudEditor.close() : m_hudEditor.open();
+            }
+            bool particlesOpen = m_particleEditor.isOpen();
+            if (ImGui::MenuItem("Particles", nullptr, particlesOpen)) {
+                particlesOpen ? m_particleEditor.close() : m_particleEditor.open();
+            }
+            bool effectsOpen = m_effectEditor.isOpen();
+            if (ImGui::MenuItem("Effects", nullptr, effectsOpen)) {
+                effectsOpen ? m_effectEditor.close() : m_effectEditor.open();
             }
             bool consoleOpen = m_console.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Console, "Console", nullptr, &consoleOpen)) {
@@ -1111,27 +1419,25 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 // ── Shortcuts ───────────────────────────────────────────────────
 
 void SceneEditor::handleShortcuts(ECS::World& world) {
-    bool ctrl = ImGui::GetIO().KeyCtrl;
-    bool shift = ImGui::GetIO().KeyShift;
-
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_L)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::CommandPalette) ||
+        EditorShortcuts::instance().pressed(Shortcut::CommandPaletteAlt)) {
         m_commandPalette.toggle();
         return;
     }
 
-    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_P)) {
-        m_commandPalette.toggle();
-        return;
-    }
-
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
-        if (m_ctx.currentScenePath.empty()) {
-            saveSceneAs(world);
-        } else {
-            saveScene(m_ctx.currentScenePath.c_str(), world);
+    if (EditorShortcuts::instance().pressed(Shortcut::Save)) {
+        const bool saveMaterial = m_materialEditor.isOpen() &&
+                                  (m_materialEditor.wasFocusedLastFrame() || m_materialEditor.isDirty());
+        if (saveMaterial) m_materialEditor.handleSaveShortcut();
+        if (!m_materialEditor.wasFocusedLastFrame()) {
+            if (m_ctx.currentScenePath.empty()) {
+                saveSceneAs(world);
+            } else {
+                saveScene(m_ctx.currentScenePath.c_str(), world);
+            }
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::NewScene)) {
         if (m_ctx.isDirty) {
             m_pendingAction = PendingAction::NewScene;
             ImGui::OpenPopup("Unsaved Changes?");
@@ -1139,28 +1445,26 @@ void SceneEditor::handleShortcuts(ECS::World& world) {
             doNewScene();
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        if (ImGui::GetIO().KeyShift) {
-            if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
-        } else {
-            if (m_ctx.undoStack.canUndo()) m_ctx.undoStack.undo(world);
-        }
+    if (EditorShortcuts::instance().pressed(Shortcut::Undo)) {
+        if (m_ctx.undoStack.canUndo()) m_ctx.undoStack.undo(world);
+        if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Redo)) {
         if (m_ctx.undoStack.canRedo()) m_ctx.undoStack.redo(world);
+        if (!world.isEntityAlive(m_ctx.selectedEntity)) m_ctx.selectedEntity = ECS::Entity::INVALID;
     }
 
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Copy)) {
         if (m_ctx.selectedEntity.isValid()) {
             m_ctx.clipboardEntity = m_ctx.selectedEntity;
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Paste)) {
         if (m_ctx.clipboardEntity.isValid()) {
             m_hierarchy.duplicateEntity(world, m_ctx.clipboardEntity);
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
+    if (EditorShortcuts::instance().pressed(Shortcut::Duplicate)) {
         if (m_ctx.selectedEntity.isValid()) {
             m_hierarchy.duplicateEntity(world, m_ctx.selectedEntity);
         }
@@ -1460,6 +1764,7 @@ void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& p
     if (profile.hierarchyOpen) {
         ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, profile.hierarchyWidth, &dockLeft, &dockCenter);
         ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+        ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
     }
 
     // Right panel (Inspector) - if enabled

@@ -13,6 +13,7 @@
 #include "editor/EditorContext.hpp"
 #include "math/Mat4.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/EnvironmentEffectsSystem.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/PlayMode2D.hpp"
 #include "render/SkyboxRenderer.hpp"
@@ -54,6 +55,7 @@ bool findGameplayCamera(ECS::World& world, ECS::Entity& outEntity, ECS::Camera3D
 }
 
 std::string projectRootFromContext(const EditorContext& ctx) {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath.string();
     if (ctx.currentScenePath.empty()) return {};
     const auto sceneDir = std::filesystem::path(ctx.currentScenePath).parent_path();
     const std::string root = sceneDir.parent_path().string();
@@ -68,8 +70,6 @@ void drawSceneSkybox(ImDrawList* dl, ImVec2 origin, ImVec2 size, ECS::World& wor
     const Scene::ActiveSkybox active = Scene::findActiveSkybox(world);
     if (active.component) {
         texturePath = Scene::resolveSkyboxTexturePath(*active.component, projectRoot);
-    } else {
-        texturePath = Scene::resolveBuiltinSkyboxPath(ctx.skyboxIndex);
     }
     if (texturePath.empty()) return;
     renderer.draw(dl, origin, size, camera, texturePath.string(), maxRasterDim);
@@ -110,6 +110,16 @@ void GameplayPreviewPanel::shutdown() {
 }
 
 void GameplayPreviewPanel::resizeCanvas(u32 width, u32 height) {
+    GpuCanvasLatch latch{m_width, m_height, m_pendingW, m_pendingH, m_stable};
+    if (!latch.commit(width, height)) {
+        m_pendingW = latch.pendingW;
+        m_pendingH = latch.pendingH;
+        m_stable = latch.stable;
+        return;
+    }
+    m_pendingW = m_pendingH = m_stable = 0;
+    width = latch.width;
+    height = latch.height;
     if (!m_device || width < 1 || height < 1) return;
     if (m_width == width && m_height == height && m_colorTarget && m_depthTarget) return;
 
@@ -210,9 +220,9 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     } else
 #ifdef CF_HAS_SDL3
     if (found3D && cam && m_ready && m_frameCmd && m_renderer.isReady()) {
-        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 960);
-        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 1280u);
-        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 720u);
+        const ImVec2 fbSize = imguiFramebufferSize(panelSize, 2560);
+        u32 targetW = std::clamp(static_cast<u32>(fbSize.x), 8u, 2560u);
+        u32 targetH = std::clamp(static_cast<u32>(fbSize.y), 8u, 1600u);
         if (!m_colorTarget || !m_depthTarget || m_width != targetW || m_height != targetH) {
             resizeCanvas(targetW, targetH);
         }
@@ -251,28 +261,28 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         camera.proj = Mat4::perspective(camera.fovRad, aspect, camera.nearClip, camera.farClip);
 
         Render::GpuSceneRenderOptions previewOpts;
-        previewOpts.enableShadows = false;
+        previewOpts.enableShadows = Scene::environmentWantsShadows(world);
         previewOpts.wireframeMeshes = false;
-
-        const bool camChanged = (position - m_lastCamPos).length() > 0.001f
-            || (forward - m_lastCamForward).length() > 0.001f
-            || std::abs(camera.fovRad - m_lastFovRad) > 0.001f;
-        const bool sizeChanged = targetW != m_lastTargetW || targetH != m_lastTargetH;
-        const u32 gpuInterval = camChanged ? 1u : 2u;
-        const bool rerunGpu = (camChanged || sizeChanged || !m_hasGpuFrame)
-            && editorPanelWorthGpuRender(origin, panelSize, gpuInterval);
-
-        {
-            Render::SkyboxCamera skyCamera;
-            skyCamera.forward = forward;
-            skyCamera.right = right;
-            skyCamera.up = up;
-            skyCamera.fovY = camera.fovRad;
-            skyCamera.aspect = aspect;
-            const int longest = static_cast<int>(std::max(panelSize.x, panelSize.y));
-            const int skyCap = std::clamp(longest, 256, 512);
-            drawSceneSkybox(dl, origin, panelSize, world, ctx, skyCamera, m_skyboxRenderer, skyCap);
+        previewOpts.environmentPath.clear();
+        previewOpts.postProcessCamera = cameraEntity;
+        previewOpts.renderScale = ctx.renderScale;
+        previewOpts.deltaTime = ImGui::GetIO().DeltaTime;
+        previewOpts.viewId = 3;
+        if (Scene::environmentHasOverride(world)) {
+            previewOpts.overrideAmbient = true;
+            previewOpts.ambientColor = Scene::environmentAmbientAt(world, position);
         }
+
+        const bool camChanged = (position - m_lastCamPos).length() > 0.0005f
+            || (forward - m_lastCamForward).length() > 0.0005f
+            || std::abs(camera.fovRad - m_lastFovRad) > 0.0005f;
+        const bool sizeChanged = m_width != m_lastTargetW || m_height != m_lastTargetH;
+        const u64 sceneStamp = editorSceneContentStamp(world) ^ (ctx.visualRevision * 0xD1B54A32D192ED03ull);
+        const bool sceneChanged = sceneStamp != m_lastSceneStamp;
+        // TAA needs every frame. Skipping left the jittered projection on screen.
+        const bool rerunGpu = (camChanged || sizeChanged || sceneChanged || !m_hasGpuFrame ||
+                               ctx.isPlayMode || m_renderer.needsAnotherFrame())
+            && editorPanelWorthGpuRender(origin, panelSize, 1u);
 
         if (rerunGpu) {
             m_renderer.renderWithCamera(m_frameCmd, world, camera, m_colorTarget, m_depthTarget,
@@ -280,8 +290,9 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
             m_lastCamPos = position;
             m_lastCamForward = forward;
             m_lastFovRad = camera.fovRad;
-            m_lastTargetW = targetW;
-            m_lastTargetH = targetH;
+            m_lastTargetW = m_width;
+            m_lastTargetH = m_height;
+            m_lastSceneStamp = sceneStamp;
             m_hasGpuFrame = true;
         }
 
@@ -314,9 +325,6 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
 
     if (ctx.isPlayMode) {
         UI::drawWidgets(world, dl, origin, panelSize);
-    }
-    if (const ECS::PostProcessComponent* fx = Render::findPostProcessForCamera(world, cameraEntity)) {
-        Render::applyPostProcessOverlay(dl, origin, panelSize, *fx);
     }
 
     ImGui::End();

@@ -1,5 +1,7 @@
 #include "catch.hpp"
 #include "../src/animation/SkeletalAnimation.hpp"
+#include "../src/animation/SkinLibrary.hpp"
+#include "../src/assets/MeshTypes.hpp"
 #include "Caffeine.hpp"
 
 using namespace Caffeine;
@@ -332,4 +334,45 @@ TEST_CASE("SkeletalClip rotation interpolation via slerp", "[skeletal]") {
     clip.sampleAt(1.0f, skeleton, boneMatrices);
     Vec3 fwd1 = Quat::fromMatrix(boneMatrices[0]).rotate({0, 0, 1});
     REQUIRE(fwd1.x == Approx(1.0f).margin(0.1f));
+}
+
+TEST_CASE("Humanoid names map mixamo bones", "[skeletal]") {
+    ImportedSkin skin;
+    skin.boneNames = {"mixamorig:Hips", "mixamorig:Spine", "mixamorig:Head",
+                      "mixamorig:LeftArm", "mixamorig:LeftUpLeg"};
+    const HumanoidRig rig = matchHumanoid(skin);
+    REQUIRE(rig.matched);
+    REQUIRE(rig.bones[static_cast<int>(HumanoidBone::Hips)] == 0);
+    REQUIRE(rig.bones[static_cast<int>(HumanoidBone::Head)] == 2);
+    REQUIRE(rig.bones[static_cast<int>(HumanoidBone::LeftUpperArm)] == 3);
+    REQUIRE(rig.bones[static_cast<int>(HumanoidBone::LeftUpperLeg)] == 4);
+}
+
+TEST_CASE("CPU skin moves a weighted vertex", "[skeletal]") {
+    Assets::Mesh3D mesh;
+    Assets::Vertex3D vertex{};
+    vertex.position = {0.0f, 1.0f, 0.0f};
+    mesh.vertices.push_back(vertex);
+    Assets::VertexSkin weight{};
+    weight.joints[0] = 0;
+    weight.weights[0] = 1.0f;
+    mesh.skin.push_back(weight);
+
+    std::vector<Mat4> bones(1, Mat4::translation(2.0f, 0.0f, 0.0f));
+    std::vector<Assets::Vertex3D> posed;
+    skinVertices(mesh, bones, posed);
+    REQUIRE(posed.size() == 1);
+    REQUIRE(posed[0].position.x == Approx(2.0f).margin(0.001f));
+    REQUIRE(posed[0].position.y == Approx(1.0f).margin(0.001f));
+}
+
+TEST_CASE("Sprite sheet frame picks a cell", "[animation]") {
+    SpriteSheet sheet;
+    sheet.columns = 4;
+    sheet.rows = 1;
+    sheet.frameCount = 4;
+    const SpriteSheetRect cell = spriteSheetFrame(sheet, 1, 128.0f, 32.0f);
+    REQUIRE(cell.x == Approx(32.0f).margin(0.001f));
+    REQUIRE(cell.w == Approx(32.0f).margin(0.001f));
+    REQUIRE(cell.h == Approx(32.0f).margin(0.001f));
 }

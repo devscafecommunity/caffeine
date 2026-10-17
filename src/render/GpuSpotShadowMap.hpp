@@ -10,7 +10,7 @@ namespace Caffeine::Render {
 class GpuSpotShadowMap {
 public:
     static constexpr u32 kMaxSpotShadowLights = 2;
-    static constexpr u32 kResolution = 512;
+    static constexpr u32 kResolution = 1024;
 
     bool init(RHI::RenderDevice* device);
     void shutdown();

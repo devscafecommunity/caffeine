@@ -1,6 +1,11 @@
 #include "editor/SettingsPanel.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorShortcuts.hpp"
 #include "editor/EditorTheme.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
@@ -67,6 +72,10 @@ void SettingsPanel::applyPreferencesToContext(EditorContext& ctx) {
     ctx.textureQualityRadius = m_preferences.textureQualityRadius;
     ctx.textureQualityFalloff = m_preferences.textureQualityFalloff;
     ctx.textureQualityMinScale = m_preferences.textureQualityMinScale;
+    ctx.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
+    const int aa = std::clamp(m_preferences.viewportAntiAlias, 0, 2);
+    m_preferences.viewportAntiAlias = aa;
+    ctx.viewportAntiAlias = static_cast<EditorContext::ViewportAntiAlias>(aa);
 }
 
 void SettingsPanel::render() {
@@ -84,27 +93,45 @@ void SettingsPanel::render() {
             {"Viewport", "arrows-vertical"},
             {"Panels", "arrow-down-square"},
             {"Layout Profiles", "backup-restore"},
+            {"Shortcuts", "arrows-diagonal"},
         };
 
-        if (ImGui::BeginChild("settings_nav", ImVec2(190.0f, -40.0f), true)) {
+        if (ImGui::BeginChild("settings_nav", ImVec2(220.0f, -40.0f), true)) {
             ImGui::TextDisabled("Settings");
             ImGui::Separator();
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const float iconSize = ImGui::GetFontSize();
+            const float rowH = style.FramePadding.y * 2.0f + iconSize;
+            ImDrawList* navDraw = ImGui::GetWindowDrawList();
+
             for (int i = 0; i < IM_ARRAYSIZE(navItems); ++i) {
                 ImGui::PushID(i);
                 const bool selected = (m_settingsSection == i);
-                if (selected) {
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+                const float rowW = ImGui::GetContentRegionAvail().x;
+                const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##row", ImVec2(rowW, rowH));
+                if (ImGui::IsItemClicked()) m_settingsSection = i;
+                const bool hovered = ImGui::IsItemHovered();
+                if (selected || hovered) {
+                    navDraw->AddRectFilled(rowPos, ImVec2(rowPos.x + rowW, rowPos.y + rowH),
+                                           selected ? IM_COL32(58, 78, 108, 255) : IM_COL32(48, 52, 60, 255), 4.0f);
                 }
+
+                const ImVec2 rMin = rowPos;
+                const float labelX =
+                    rMin.x + style.FramePadding.x + iconSize + style.ItemInnerSpacing.x;
+                const float labelY = rMin.y + (rowH - iconSize) * 0.5f;
                 if (EditorIcons::hasIcon(navItems[i].icon)) {
-                    EditorIcons::image(navItems[i].icon, ImGui::GetFontSize());
-                    ImGui::SameLine();
+                    const ImTextureRef iconTex = EditorIcons::get(navItems[i].icon);
+                    if (iconTex._TexData != nullptr || iconTex._TexID != ImTextureID_Invalid) {
+                        const ImVec2 iconPos(rMin.x + style.FramePadding.x, labelY);
+                        navDraw->AddImage(iconTex, iconPos,
+                                          ImVec2(iconPos.x + iconSize, iconPos.y + iconSize));
+                    }
                 }
-                if (ImGui::Selectable(navItems[i].label, selected, 0, ImVec2(-1, 0))) {
-                    m_settingsSection = i;
-                }
-                if (selected) {
-                    ImGui::PopStyleColor();
-                }
+                const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+                navDraw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(labelX, labelY),
+                                 textCol, navItems[i].label);
                 ImGui::PopID();
             }
             ImGui::EndChild();
@@ -119,6 +146,7 @@ void SettingsPanel::render() {
                 case 2: renderViewportSettings(); break;
                 case 3: renderPanelSettings(); break;
                 case 4: renderLayoutProfiles(); break;
+                case 5: renderShortcutSettings(); break;
                 default: break;
             }
             ImGui::EndChild();
@@ -132,6 +160,93 @@ void SettingsPanel::render() {
         ImGui::TextDisabled("Stored in %s", EditorPreferences::preferencesPath().string().c_str());
     }
     ImGui::End();
+#endif
+}
+
+void SettingsPanel::renderShortcutSettings() {
+#ifdef CF_HAS_IMGUI
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "IDE Shortcuts");
+    ImGui::Separator();
+    ImGui::TextWrapped("Click Assign and press the new key. Ctrl and Shift are stored if they are held. Esc cancels.");
+    if (EditorShortcuts::instance().pollCapture()) savePreferences();
+    if (ImGui::Button("Reset Shortcuts")) {
+        EditorShortcuts::instance().resetDefaults();
+        savePreferences();
+    }
+    ImGui::Spacing();
+    static char search[96] = {};
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##shortcut_search", "Search shortcuts...", search, sizeof(search));
+    ImGui::Spacing();
+
+    struct ShortcutGroup {
+        const char* name;
+        Shortcut ids[8];
+        int count;
+    };
+    const ShortcutGroup groups[] = {
+        {"Transform", {Shortcut::GizmoTranslate, Shortcut::GizmoRotate, Shortcut::GizmoScale}, 3},
+        {"Camera", {Shortcut::CameraForward, Shortcut::CameraBack, Shortcut::CameraLeft, Shortcut::CameraRight}, 4},
+        {"Edit",
+         {Shortcut::NewScene, Shortcut::Save, Shortcut::Undo, Shortcut::Redo, Shortcut::Copy, Shortcut::Paste,
+          Shortcut::Duplicate, Shortcut::DeleteSelection},
+         8},
+        {"Windows", {Shortcut::CommandPalette, Shortcut::CommandPaletteAlt}, 2},
+    };
+    auto contains = [](const char* haystack, const char* needle) {
+        if (!needle || needle[0] == '\0') return true;
+        if (!haystack) return false;
+        for (const char* start = haystack; *start; ++start) {
+            const char* left = start;
+            const char* right = needle;
+            while (*left && *right &&
+                   std::tolower(static_cast<unsigned char>(*left)) == std::tolower(static_cast<unsigned char>(*right))) {
+                ++left;
+                ++right;
+            }
+            if (*right == '\0') return true;
+        }
+        return false;
+    };
+
+    bool any = false;
+    for (const ShortcutGroup& group : groups) {
+        Shortcut shown[8] = {};
+        int shownCount = 0;
+        const bool groupMatch = search[0] != '\0' && contains(group.name, search);
+        for (int i = 0; i < group.count; ++i) {
+            const Shortcut id = group.ids[i];
+            if (groupMatch || contains(EditorShortcuts::label(id), search) ||
+                contains(EditorShortcuts::instance().chord(id), search)) {
+                shown[shownCount++] = id;
+            }
+        }
+        if (shownCount == 0) continue;
+        any = true;
+        if (search[0] != '\0') ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        if (!ImGui::TreeNodeEx(group.name, ImGuiTreeNodeFlags_DefaultOpen)) continue;
+        if (ImGui::BeginTable(group.name, 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            for (int i = 0; i < shownCount; ++i) {
+                const Shortcut id = shown[i];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(EditorShortcuts::label(id));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(EditorShortcuts::instance().chord(id));
+                ImGui::TableSetColumnIndex(2);
+                ImGui::PushID(static_cast<int>(id));
+                const char* caption = EditorShortcuts::instance().capturing(id) ? "..." : "Assign";
+                if (ImGui::SmallButton(caption)) EditorShortcuts::instance().beginCapture(id);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TreePop();
+    }
+    if (!any) ImGui::TextDisabled("No shortcuts match.");
 #endif
 }
 
@@ -316,6 +431,28 @@ void SettingsPanel::renderViewportSettings() {
     }
 
     ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Rendering");
+    ImGui::Separator();
+    ImGui::TextWrapped(
+        "Scene viewport and play-mode previews render at viewport size times this scale "
+        "(HDR + TAA + post stack). Use 1.0 for native resolution, 1.5–2.0 for sharper edges.");
+    if (ImGui::SliderFloat("Render scale", &m_preferences.renderScale, 0.25f, 2.0f, "%.2fx")) {
+        m_preferences.renderScale = std::clamp(m_preferences.renderScale, 0.25f, 2.0f);
+        savePreferences();
+        if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+    }
+    ImGui::TextWrapped(
+        "Anti-aliasing for the scene viewport only. The game keeps the anti-aliasing "
+        "set on each camera's post-processing.");
+    const char* aaLabels[] = {"Off", "FXAA", "TAA"};
+    int aa = std::clamp(m_preferences.viewportAntiAlias, 0, 2);
+    if (ImGui::Combo("Viewport anti-aliasing", &aa, aaLabels, 3)) {
+        m_preferences.viewportAntiAlias = aa;
+        savePreferences();
+        if (m_editorContext) applyPreferencesToContext(*m_editorContext);
+    }
+
+    ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Texture quality");
     ImGui::Separator();
     ImGui::TextWrapped(
@@ -342,6 +479,7 @@ void SettingsPanel::renderViewportSettings() {
             if (m_editorContext) applyPreferencesToContext(*m_editorContext);
         }
     }
+
 #endif
 }
 

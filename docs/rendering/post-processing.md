@@ -1,15 +1,17 @@
 # 🎨 Post-Processing Stack
 
 > **Component:** `PostProcessComponent` on camera entities  
-> **Plugin:** `post_processing_plugin.so`  
+> **Plugin:** `post_processing_plugin.so` (UI + presets; execution is in the engine)  
 > **Lua API:** `caffeine.postprocess.*`  
-> **Preview:** ImGui overlay (editor); full GPU stack planned in rendering roadmap P3+
+> **GPU:** `Render::PostProcessStack` (HDR scene → bloom/SSAO/DoF/TAA/tonemap → RGBA8)
 
 ---
 
 ## Filosofia
 
 O stack é **modular** — cada efeito é um módulo independente com toggle e parâmetros. Presets (Cinematic, Horror, Arcade) são **benchmark looks** opcionais, não tipos de jogo.
+
+Câmaras sem `PostProcessComponent` usam `PostProcessStack::defaults()` (TAA + color grading + SSAO suave).
 
 ---
 
@@ -19,17 +21,19 @@ O stack é **modular** — cada efeito é um módulo independente com toggle e p
 |--------|-----------|----------------------|
 | **Anti-aliasing** | Pre-processing | FXAA / TAA, sharpness |
 | **Ambient occlusion** | Pre-processing | intensity, radius, bias |
-| **Auto exposure** | Color | min/max, adaptation speed |
+| **Auto exposure** | Color | min/max, adaptation speed, compensation |
 | **Color grading** | Color | exposure, contrast, saturation, temperature, tint |
 | **Bloom** | Image | intensity, threshold, scatter |
-| **Depth of field** | Image | focus distance, aperture, max blur |
+| **Depth of field** | Image | focus distance, aperture, focal length, max blur |
 | **Motion blur** | Image | intensity, max velocity |
 | **Chromatic aberration** | Image | intensity |
 | **Lens distortion** | Image | intensity |
 | **Grain** | Image | intensity, size |
 | **Vignette** | Image | intensity, smoothness |
-| **Screen space reflections** | Screen space | intensity, max roughness |
+| **Screen space reflections** | Screen space | intensity, max roughness, max steps |
 | **Deferred fog** | Atmosphere | density, start/end, color |
+
+Todos os campos são expostos em Lua como `"efeito.campo"` (ver `src/ecs/PostProcessFields.hpp`).
 
 ---
 
@@ -49,23 +53,30 @@ UI partilhada: `include/caffeine/postprocess/PostProcessEditorUI.hpp`
 ### Controlar efeitos em runtime
 
 ```lua
+caffeine.postprocess.add(cameraId)
 caffeine.postprocess.setEnabled(cameraId, true)
-caffeine.postprocess.setExposure(cameraId, 1.2)
-caffeine.postprocess.setBloom(cameraId, 0.3)
-caffeine.postprocess.setVignette(cameraId, 0.4)
-caffeine.postprocess.enableEffect(cameraId, "motionBlur", true)
-caffeine.postprocess.enableEffect(cameraId, "ssr", true)
+caffeine.postprocess.setValue(cameraId, "bloom.intensity", 0.35)
+caffeine.postprocess.enableEffect(cameraId, "dof", true)
+caffeine.postprocess.applyPreset(cameraId, "cinematic")
+local fx = caffeine.postprocess.get(cameraId)          -- tabela aninhada por efeito
+local api = caffeine.postprocess.handle(cameraId)      -- handle para scripts custom
 caffeine.postprocess.setCustomScript(cameraId, "scripts/postprocessing/custom_effect.lua")
-local snapshot = caffeine.postprocess.get(cameraId)
 ```
+
+Conveniência: `setExposure`, `setBloom`, `setVignette`, `setFog`, `setAmbientOcclusion`, `setAntiAliasing("taa"|"fxaa"|"off")`, etc.
+
+Descoberta: `caffeine.postprocess.effects()` e `caffeine.postprocess.fields("bloom")`.
 
 ### Efeitos custom (Lua)
 
-Definir `customEffectScript` no componente e implementar `onCreate` / `onUpdate` para animar ou combinar módulos.
+Definir `customEffectScript` no componente. Em play mode o engine chama:
+
+- `onCreate(entityId)` uma vez
+- `onPostProcess(entityId, dt, api)` cada frame (`api` = `caffeine.postprocess.handle(entityId)`)
+
+Fallback: se não existir `onPostProcess`, usa `onUpdate(entityId, dt)`.
 
 Template: `assets/plugins/post_processing/scripts/custom_effect.lua`
-
-Escrita de **efeitos GPU custom** (shaders HLSL/GLSL no stack) está planeado para quando o render graph GPU unificar passes de pós-processamento — ver [`plans/2026-09-21-rendering-roadmap.md`](../plans/2026-09-21-rendering-roadmap.md) fase P3+.
 
 ---
 
@@ -74,8 +85,10 @@ Escrita de **efeitos GPU custom** (shaders HLSL/GLSL no stack) está planeado pa
 | Ficheiro | Função |
 |----------|--------|
 | `src/ecs/PostProcessComponents.hpp` | Structs por efeito |
+| `src/ecs/PostProcessFields.hpp` | Tabela de reflexão effect.field |
 | `include/caffeine/postprocess/PostProcessEditorUI.hpp` | UI ImGui partilhada |
 | `include/caffeine/postprocess/PostProcessPresets.hpp` | Benchmark looks |
-| `src/render/PostProcessRenderer.hpp` | Preview overlay (editor) |
+| `src/render/PostProcessStack.cpp` | Passes GPU |
+| `src/render/PostProcessRenderer.hpp` | Resolve componente na câmara |
 | `src/script/PostProcessBindings.cpp` | Lua API |
-| `apps/plugins/post_processing_plugin/` | Painel do plugin |
+| `src/script/ScriptSystem.cpp` | Executa `customEffectScript` em play mode |

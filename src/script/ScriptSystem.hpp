@@ -6,11 +6,13 @@
 #include "containers/Vector.hpp"
 #include "script/ScriptEngine.hpp"
 
+namespace Caffeine { namespace Events { class EventBus; } }
+
 namespace Caffeine::Script {
 
 class ScriptSystem : public ECS::ISystem {
 public:
-    explicit ScriptSystem(ScriptEngine* engine);
+    explicit ScriptSystem(ScriptEngine* engine, Events::EventBus* eventBus = nullptr);
 
     void onUpdate(ECS::World& world, f32 dt) override;
     void resetPlayState();
@@ -19,10 +21,13 @@ private:
     void processLuaScripts(ECS::World& world, f32 dt);
     void processNativeScripts(ECS::World& world, f32 dt);
     void processCppScripts(ECS::World& world, f32 dt);
+    void processPostProcessScripts(ECS::World& world, f32 dt);
 
-    ScriptEngine* m_engine;
+    ScriptEngine* m_engine = nullptr;
+    Events::EventBus* m_events = nullptr;
     Vector<ECS::Entity> m_initializedLua;
     Vector<ECS::Entity> m_initializedNative;
+    Vector<ECS::Entity> m_initializedPostProcess;
     bool m_warnedNoLua = false;
 };
 

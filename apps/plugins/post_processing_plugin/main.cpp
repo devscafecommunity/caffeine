@@ -81,8 +81,8 @@ private:
         if (!fx) return;
 
         ImGui::TextWrapped(
-            "Modular effect stack — enable and tune each module independently. GPU passes are "
-            "planned; editor preview uses approximate overlays.");
+            "The same stack the viewport and gameplay preview run on the GPU. Enable each module "
+            "on its own; cinematic, horror and arcade are optional looks, not game types.");
 
         if (ImGui::CollapsingHeader("Benchmark looks (optional)", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (Caffeine::PostProcess::EditorUI::drawBenchmarkPresets(*fx)) ctx->isDirty = true;

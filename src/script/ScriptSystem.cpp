@@ -2,25 +2,48 @@
 #include "script/ScriptTypes.hpp"
 #include "script/CppScript.hpp"
 #include "ecs/World.hpp"
+#include "ecs/PostProcessComponents.hpp"
 #include "ecs/ComponentQuery.hpp"
 #include "debug/LogSystem.hpp"
+#include "render/Overlay2D.hpp"
+#include "runtime/GameStateStack.hpp"
+#include "runtime/PlayClock.hpp"
+#include "scene/MapSurfaceSystem.hpp"
+#include "scene/PickQuery.hpp"
+#include "scene/PlayMode2D.hpp"
+#include "scene/SpriteLod2DSystem.hpp"
+#include "events/EventBus.hpp"
 
 namespace Caffeine::Script {
 
-ScriptSystem::ScriptSystem(ScriptEngine* engine)
-    : m_engine(engine) {}
+ScriptSystem::ScriptSystem(ScriptEngine* engine, Events::EventBus* eventBus)
+    : m_engine(engine), m_events(eventBus) {}
 
 void ScriptSystem::resetPlayState() {
     m_initializedLua.clear();
     m_initializedNative.clear();
+    m_initializedPostProcess.clear();
     m_warnedNoLua = false;
+    Scene::PickQueryRegistry::instance().clear();
+    Scene::resetMapSurfaceChunkRequestCache();
+    Runtime::PlayClock::instance().reset();
+    Runtime::GameStateStack::instance().clear();
+    Render::Overlay2D::beginFrame();
 }
 
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
+    Runtime::PlayClock::instance().advance(dt);
+    Render::Overlay2D::beginFrame();
+    if (m_events && Scene::PlayRenderContext::instance().has2D()) {
+        const auto& cam = Scene::PlayRenderContext::instance().camera2D();
+        Scene::applySpriteLod2D(world, cam.zoom());
+        Scene::tickMapSurfaceChunkRequests(world, *m_events, &cam, true);
+    }
     processLuaScripts(world, dt);
     processNativeScripts(world, dt);
     processCppScripts(world, dt);
+    processPostProcessScripts(world, dt);
 }
 
 void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
@@ -75,7 +98,13 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
             m_initializedLua.pushBack(entity);
         }
 
-        m_engine->callOnUpdate(path, entity, dt);
+        m_engine->callOnUpdate(path, entity, Runtime::PlayClock::instance().deltaTime());
+
+        const f32 fixedDt = Runtime::PlayClock::instance().fixedDeltaTime();
+        const int fixedSteps = Runtime::PlayClock::instance().consumeFixedSteps();
+        for (int step = 0; step < fixedSteps; ++step) {
+            m_engine->callOnFixedUpdate(path, entity, fixedDt);
+        }
     }
 }
 
@@ -158,6 +187,50 @@ void ScriptSystem::processCppScripts(ECS::World& world, f32 dt) {
         }
 
         csc->instance->onUpdate(entity, world, dt);
+    }
+}
+
+void ScriptSystem::processPostProcessScripts(ECS::World& world, f32 dt) {
+    ECS::ComponentQuery q;
+    q.with<ECS::PostProcessComponent>();
+
+    struct Entry {
+        u32 entityId;
+        std::string scriptPath;
+    };
+    Vector<Entry> entries;
+    world.forEach<ECS::PostProcessComponent>(q, [&entries](ECS::Entity entity, ECS::PostProcessComponent& fx) {
+        if (fx.customEffectScript[0] != '\0') entries.pushBack({entity.id(), fx.customEffectScript});
+    });
+
+    for (auto& entry : entries) {
+        ECS::Entity entity(entry.entityId, &world);
+        if (!entity.isValid()) continue;
+
+        const std::string key = "postprocess:" + entry.scriptPath;
+        if (!m_engine->isLoaded(key)) {
+            std::string err;
+            if (!m_engine->loadScriptAs(key, entry.scriptPath, &err)) {
+                CF_ERROR("Script", "Failed to load post-process script %s: %s", entry.scriptPath.c_str(),
+                         err.c_str());
+                ECS::PostProcessComponent* fx = entity.get<ECS::PostProcessComponent>();
+                if (fx) fx->customEffectScript[0] = '\0';
+                continue;
+            }
+        }
+
+        bool isNew = true;
+        for (usize i = 0; i < m_initializedPostProcess.size(); ++i) {
+            if (m_initializedPostProcess[i].id() == entity.id()) {
+                isNew = false;
+                break;
+            }
+        }
+        if (isNew) {
+            m_engine->callOnCreate(key, entity);
+            m_initializedPostProcess.pushBack(entity);
+        }
+        m_engine->callOnPostProcess(key, entity, dt);
     }
 }
 

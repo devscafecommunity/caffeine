@@ -34,6 +34,8 @@ struct Bone {
 // ============================================================================
 struct Skeleton {
     std::vector<Bone> bones;
+    /// Inverse of the skinned mesh node. Puts joint matrices back in mesh space.
+    Mat4 skinSpace;
 
     u32 boneCount() const { return static_cast<u32>(bones.size()); }
 
@@ -70,7 +72,9 @@ struct SkeletalClip {
     /// Amostra o clipe no tempo `time` (segundos) e preenche `boneTransforms`
     /// com as matrizes ósseas finais (world * inverseBindPose).
     /// `boneTransforms` deve ter tamanho >= skeleton.boneCount().
-    void sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms) const;
+    /// When `jointPositions` is set, it receives each joint in skeleton space.
+    void sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
+                  std::vector<Vec3>* jointPositions = nullptr) const;
 };
 
 // ============================================================================
@@ -159,7 +163,8 @@ inline Mat4 buildTRS(const Vec3& pos, const Quat& rot, const Vec3& scale) {
 
 } // namespace Detail
 
-inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms) const {
+inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
+                                  std::vector<Vec3>* jointPositions) const {
     u32 boneCount = skeleton.boneCount();
     if (boneTransforms.size() < boneCount) {
         boneTransforms.resize(boneCount);
@@ -176,10 +181,11 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
         }
     }
 
-    // ── Passo 1: amostrar keyframes e montar matrizes locais ──
+    // Bones without keys keep the bind-pose local transform.
     std::vector<Mat4> localMatrices(boneCount, Mat4::identity());
 
     for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
+        localMatrices[boneIdx] = skeleton.bones[boneIdx].localTransform;
         const std::vector<SkeletalKeyframe>* keys = channels.get(boneIdx);
         if (!keys || keys->empty()) continue;
 
@@ -215,21 +221,38 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
         localMatrices[boneIdx] = Detail::buildTRS(pos, rot, s);
     }
 
-    // ── Passo 2: calcular matrizes mundo ──
-    // Os bones são armazenados em ordem topológica (pais antes dos filhos).
-    std::vector<Mat4> worldMatrices(boneCount);
-    for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
-        const Bone& bone = skeleton.bones[boneIdx];
-        if (bone.parentIndex >= 0) {
-            worldMatrices[boneIdx] = worldMatrices[static_cast<u32>(bone.parentIndex)] * localMatrices[boneIdx];
-        } else {
-            worldMatrices[boneIdx] = localMatrices[boneIdx];
+    // Parents may appear after children in imported joint lists.
+    std::vector<Mat4> worldMatrices(boneCount, Mat4::identity());
+    std::vector<u8> resolved(boneCount, 0);
+    for (u32 pass = 0; pass < boneCount; ++pass) {
+        bool progressed = false;
+        for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
+            if (resolved[boneIdx]) continue;
+            const Bone& bone = skeleton.bones[boneIdx];
+            if (bone.parentIndex >= 0 &&
+                (bone.parentIndex >= static_cast<i32>(boneCount) || !resolved[static_cast<u32>(bone.parentIndex)])) {
+                continue;
+            }
+            worldMatrices[boneIdx] = bone.parentIndex >= 0
+                ? worldMatrices[static_cast<u32>(bone.parentIndex)] * localMatrices[boneIdx]
+                : localMatrices[boneIdx];
+            resolved[boneIdx] = 1;
+            progressed = true;
         }
+        if (!progressed) break;
     }
 
-    // ── Passo 3: multiplicar por inverseBindPose para skinning ──
     for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
-        boneTransforms[boneIdx] = worldMatrices[boneIdx] * skeleton.bones[boneIdx].bindPoseInverse;
+        boneTransforms[boneIdx] =
+            skeleton.skinSpace * worldMatrices[boneIdx] * skeleton.bones[boneIdx].bindPoseInverse;
+    }
+    if (jointPositions) {
+        jointPositions->resize(boneCount);
+        for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
+            const Mat4& world = worldMatrices[boneIdx];
+            (*jointPositions)[boneIdx] = skeleton.skinSpace.transformPoint(
+                Vec3(world(0, 3), world(1, 3), world(2, 3)));
+        }
     }
 }
 

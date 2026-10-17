@@ -3,6 +3,7 @@
 #include "ecs/Entity.hpp"
 #include "ecs/World.hpp"
 #include "math/Vec3.hpp"
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -94,6 +95,56 @@ public:
     // ── Scene state ────────────────────────────────────────────────────
     std::string currentScenePath;
     bool        isDirty          = false;
+    /// Bumps when the editor changes something the cached GPU view must show.
+    u64         visualRevision   = 1;
+    std::string materialToOpen;
+    std::string imageToOpen;
+    std::filesystem::path projectRootPath;
+    std::filesystem::path assetRootPath;
+    bool assetBrowserDirty = false;
+    std::filesystem::path assetBrowserNavigateTo;
+
+    /// One browse dialog for the whole IDE. Panels only queue it; SceneEditor
+    /// pumps it every frame until the user picks a path or closes the dialog.
+    struct BrowseSession {
+        enum class Kind : u8 { None, ProjectAsset, PickFile, PickFolder, SaveFile };
+
+        Kind kind = Kind::None;
+        bool started = false;
+        bool resultReady = false;
+        std::string title;
+        std::string filter;
+        std::filesystem::path startPath;
+        std::filesystem::path result;
+        /// Stable storage only. A pointer into a widget-local string is dangling by the
+        /// time the picker closes, so those fields use fieldId + pickedText instead.
+        std::string* stringTarget = nullptr;
+        u32 fieldId = 0;
+        std::string pickedText;
+        u32 tag = 0;
+
+        void clear() { *this = {}; }
+
+        void requestProjectAsset(std::string* target, const char* extensionFilter, const char* fieldLabel,
+                                 u32 ownerFieldId = 0) {
+            clear();
+            kind = Kind::ProjectAsset;
+            stringTarget = target;
+            fieldId = ownerFieldId;
+            filter = extensionFilter ? extensionFilter : "";
+            title = fieldLabel ? fieldLabel : "asset";
+        }
+
+        void requestFilesystem(Kind filesystemKind, const char* dialogTitle,
+                               const std::filesystem::path& start, u32 userTag = 0) {
+            clear();
+            kind = filesystemKind;
+            title = dialogTitle ? dialogTitle : "Browse";
+            startPath = start;
+            tag = userTag;
+        }
+    };
+    BrowseSession browse;
 
     // ── Gizmo ──────────────────────────────────────────────────────────
     enum class GizmoMode : u8 { None, Translate, Rotate, Scale };
@@ -101,6 +152,18 @@ public:
 
     GizmoMode  gizmoMode  = GizmoMode::Translate;
     GizmoSpace gizmoSpace = GizmoSpace::World;
+
+    /// Object moves the entity. Vertex, edge and face edit the mesh itself.
+    enum class MeshElementMode : u8 { Object, Vertex, Edge, Face };
+    MeshElementMode meshElementMode = MeshElementMode::Object;
+    std::vector<u32> meshElementSelection;
+    /// Bone picked on the character currently being configured. Ignored for other entities.
+    u32 skeletonEntityId = 0xFFFFFFFFu;
+    i32 skeletonBone = -1;
+    bool showBones = true;
+    /// Inspector Remap Bones: next viewport/list click assigns this humanoid slot.
+    bool remapBones = false;
+    i32 remapHumanoidSlot = 0;
 
     // ── Snap ───────────────────────────────────────────────────────────
     bool snapToGrid   = false;
@@ -141,8 +204,14 @@ public:
         const f32 orbit = std::abs(camDistance);
         const f32 reach = std::max({orbit, std::abs(camFocus.x), std::abs(camFocus.y),
                                     std::abs(camFocus.z)});
-        return std::clamp(reach * 6.0f + 400.0f, 400.0f, 4000.0f);
+        return std::clamp(reach * 8.0f + 1000.0f, 1000.0f, 20000.0f);
     }
+
+    /// Internal resolution of GPU viewports relative to their pixel size (0.5 – 2.0).
+    f32 renderScale = 1.0f;
+    /// Editor scene viewport only. Game cameras keep their own post-process anti-aliasing.
+    enum class ViewportAntiAlias : u8 { Off = 0, Fxaa = 1, Taa = 2 };
+    ViewportAntiAlias viewportAntiAlias = ViewportAntiAlias::Taa;
 
     // ── Texture quality (distance-based LOD around viewers) ─────────────
     bool textureQualityEnabled = true;
@@ -209,7 +278,13 @@ public:
 
     bool hasMultiSelection() const { return selectedEntities.size() > 1; }
 
-    void markDirty() { isDirty = true; }
+    void markDirty() {
+        isDirty = true;
+        ++visualRevision;
+    }
+
+    /// Scene file is unsaved, but the GPU view already tracks the change (gizmo / pose).
+    void markModified() { isDirty = true; }
 
     // ── Transient status (viewport / import feedback) ────────────────
     std::string transientStatus;
@@ -243,5 +318,8 @@ private:
     bool            m_undoPending = false;
     EditorCommand   m_pendingCmd;
 };
+
+class AssetBrowser;
+void serviceBrowseSession(EditorContext& ctx, AssetBrowser& browser);
 
 } // namespace Caffeine::Editor

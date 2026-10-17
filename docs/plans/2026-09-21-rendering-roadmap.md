@@ -2,7 +2,7 @@
 
 > **Objetivo:** renderizar ambientes 3D com alto volume de polígonos e texturas de forma **otimizada, consistente e estável** (sem spikes de FPS).  
 > **Critério de “completo”:** cena densa (terreno + centenas de meshes texturizados + iluminação dinâmica + sombras) a 60 FPS estáveis no editor e no runtime.  
-> **Estado atual (2026-09-22):** viewport 3D GPU com Phong + CSM + sombras point/spot; runtime GPU-first; `GpuTextureCache` com mips, refcount e **LOD de texturas por distância**; wireframe GPU (`FillMode::Line`); HiDPI com cap 1920px; mesh geometry LOD é stub; batching pendente.
+> **Estado atual (2026-10-02):** viewport GPU; cap editor 1280 px; mesh LOD; GGX + ACES; sombras no editor só com a câmara parada e **1 cascata**. Instancing e IBL estão no passe principal (ligados por defeito). Oclusão coarse, reflexos (planar / screen-space / probe) e volumétricos são opcionais e ficam desligados — reflexos e probes só correm com a câmara parada. Cena `assets/benchmarks/dense_outdoor.caf`. O gate p95 < 16.6 ms ainda não foi medido no editor.
 
 ---
 
@@ -50,7 +50,7 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 | P0.2 | Remover fallback CPU exceto wireframe/debug | `SceneViewport.cpp` | ✅ (GPU texturizado + wireframe `FillMode::Line`) |
 | P0.3 | Upload de buffers **antes** do render pass (já parcial) | `GpuSceneRenderer.cpp` |
 | P0.4 | Runtime play mode usar `GpuSceneRenderer` (hoje CPU-only) | `RuntimeSceneRenderer.cpp` | ✅ |
-| P0.5 | Profiler markers por pass (shadow, opaque, terrain, composite) | `Profiler.hpp`, viewport |
+| P0.5 | Profiler markers por pass (shadow, opaque, terrain, composite) | `Profiler.hpp`, viewport | ✅ |
 
 **Métrica de sucesso:** viewport 3D sem `MeshCpuRasterizer` em modo shaded; FPS estável ±5% ao orbitar câmara.
 
@@ -66,14 +66,14 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 |--------|-----------|-----------|
 | P1.1 | `GpuTextureCache` central (path → `GPUTexture`, refcount) | `src/render/GpuTextureCache.*` | ✅ |
 | P1.2 | Geração de mipmaps no upload | `GpuTextureCache.cpp`, `RenderDevice.cpp` | ✅ |
-| P1.3 | Bind albedo + normal + ORM no `scene_lit` | `scene_lit.frag`, `MeshComponents.hpp` | ✅ albedo + normal + shininess |
+| P1.3 | Bind albedo + normal + ORM no `scene_lit` | `scene_lit.frag`, `MaterialFile`, Material Editor | ✅ albedo, normal, ORM, emissão; o `.mat` alimenta o passe |
 | P1.4 | Async decode (job system) + upload no frame N+1 | `JobSystem`, `AssetManager` |
 | P1.5 | Atlas opcional para props repetidos (instancing) | `TextureAtlas.hpp` (estender) |
 | P1.6 | LOD de texturas por distância aos visualizadores (tiers em cache) | `TextureQuality.hpp`, `GpuTextureCache.*` | ✅ |
 
 **Métrica:** 0 `stbi_load` durante render loop; memória GPU estável após warm-up.
 
-**Doc:** [`assets/asset-manager.md`](../assets/asset-manager.md), [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md), nova `docs/rendering/materials-pbr.md`
+**Doc:** [`assets/asset-manager.md`](../assets/asset-manager.md), [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md), [`rendering/materials-pbr.md`](../rendering/materials-pbr.md)
 
 ---
 
@@ -83,15 +83,15 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 
 | Tarefa | Descrição | Ficheiros |
 |--------|-----------|-----------|
-| P2.1 | Mesh LOD real (simplificação ou LOD chains no import) | `MeshLOD.cpp`, pipeline `.caf` |
-| P2.2 | Seleção LOD por distância + hysteresis (como terreno) | `GpuSceneRenderer.cpp` |
-| P2.3 | Frustum + occlusion coarse (octree já existe) | `GpuSceneRenderer.cpp` |
-| P2.4 | Instancing para meshes repetidos (árvores, props) | novo pass instanced |
+| P2.1 | Mesh LOD real (simplificação ou LOD chains no import) | `MeshLOD.cpp`, pipeline `.caf` | ✅ clustering; import chains ainda não |
+| P2.2 | Seleção LOD por distância + hysteresis (como terreno) | `GpuSceneRenderer.cpp` | ✅ |
+| P2.3 | Frustum + occlusion coarse (octree já existe) | `CoarseOcclusion.hpp` | ✅ off por defeito; modo Coarse |
+| P2.4 | Instancing para meshes repetidos (árvores, props) | `drawIndexedInstanced` | ✅ até 256 por batch |
 | P2.5 | Terreno: collision mesh separado (feito); GPU chunks estáveis | `TerrainLodSystem.*` |
 
 **Métrica:** draw calls < 200 para cena de referência; triângulos visíveis escalam com LOD.
 
-**Doc:** nova `docs/rendering/mesh-lod.md`
+**Doc:** [`rendering/mesh-lod.md`](../rendering/mesh-lod.md)
 
 ---
 
@@ -102,9 +102,9 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 | Tarefa | Descrição | Ficheiros |
 |--------|-----------|-----------|
 | P3.1 | UBO de luzes unificado (dir/point/spot, até N luzes) | `LightingSystem.*`, shaders |
-| P3.2 | PBR: metallic/roughness, Fresnel, GGX | `scene_lit.frag` |
-| P3.3 | IBL básico (cubemap skybox como ambiente) | `SkyboxRenderer`, shader |
-| P3.4 | Tone mapping (ACES) + exposure | shader + `PostProcess` GPU futuro |
+| P3.2 | PBR: metallic/roughness, Fresnel, GGX | `scene_lit.frag` | ✅ specular GGX; diffuse Lambert |
+| P3.4 | Tone mapping (ACES) + exposure | shader + `PostProcess` GPU futuro | ✅ ACES no `scene_lit` |
+| P3.3 | IBL básico (irradiance + probe opcional) | `scene_lit.frag` | ✅ cor de ambiente; probe se o modo estiver ativo |
 | P3.5 | Spot lights no GPU (hoje só CPU) | `scene_lit.frag` | ✅ |
 
 **Métrica:** esfera de referência + terreno com resposta física plausível; sem banding em gradientes.
@@ -124,7 +124,7 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 | P4.3 | PCF / PCSS no `scene_lit.frag` | shaders | ✅ PCF 3×3 |
 | P4.4 | Terreno `castShadows` no gather GPU | `GpuSceneRenderer.cpp` | ✅ |
 | P4.5 | Spot shadow maps (1–2 luzes) | `GpuSpotShadowMap.*` | ✅ |
-| P4.6 | Desligar CPU shadow path no editor quando GPU OK | `SceneViewport.cpp` | ✅ |
+| P4.6 | Desligar CPU shadow path no editor quando GPU OK | `SceneViewport.cpp` | ✅ editor: 1 cascata só com câmara parada |
 | P4.7 | Point light cubemap shadows (até 2) | `GpuPointShadowMap.*` | ✅ |
 
 **Infra ligada:** `GpuDirectionalShadowMap`, `GpuPointShadowMap`, `shadow_depth.*` — ver [`rendering/shadow-mapping.md`](../rendering/shadow-mapping.md)
@@ -148,9 +148,9 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 
 | Tarefa | Descrição |
 |--------|-----------|
-| P5.1 | Pass de reflexão planar + clip plane |
-| P5.2 | SSR com depth + normal buffer (exige G-buffer parcial) |
-| P5.3 | Probes automáticos em interiores |
+| P5.1 | Pass de reflexão planar + clip plane | ✅ meia resolução, só com câmara parada |
+| P5.2 | SSR sobre o alvo planar (passos configuráveis, sem G-buffer) | ✅ |
+| P5.3 | Probe cubemap local, 16–128 px, recaptura quando a câmara assenta | ✅ |
 
 **Pré-requisito:** P4 + depth prepass ou G-buffer mínimo.
 
@@ -164,9 +164,9 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 
 | Tarefa | Descrição |
 |--------|-----------|
-| P6.1 | Ray marching fullscreen (luz dir + depth) |
-| P6.2 | Froxel grid ou 3D texture para fog local |
-| P6.3 | Integração com sombras (sample shadow map no march) |
+| P6.1 | Ray march no shader forward (6 ou 12 passos) | ✅ não redesenha a cena |
+| P6.2 | Nevoeiro por altura (sem textura 3D) | ✅ |
+| P6.3 | Amostra opcional do shadow map no march | ✅ |
 
 **Nota:** `PostProcessRenderer` atual é overlay ImGui — não conta como volumétrico GPU.
 
@@ -176,12 +176,13 @@ Cada fase tem entregável testável. **Não avançar** para reflexos/volumétric
 
 ## Cena de referência (benchmark interno)
 
-Criar `assets/benchmarks/dense_outdoor.caf`:
+`assets/benchmarks/dense_outdoor.caf` (constantes em `DenseOutdoorBenchmark.hpp`):
 
-- Terreno 512² com splat (plugin)
-- 200–500 meshes instanciados (árvores/rochas)
+- Terreno 129² (sobe para 512 em `kDenseOutdoorTerrainResolution` quando o orçamento aguentar)
+- 240 esferas + 40 cubos, o mesmo mesh para instancing
 - 1 direcional + 2 point + 1 spot
-- Câmara orbit com medição de frame time (p50, p95, p99)
+- Plano de água em Y = 0 para o modo planar
+- Frame time no profiler do editor (p50 / p95 / p99 ainda manuais)
 
 **Gate de qualidade:** p95 frame time < 16.6 ms @ 1080p antes de marcar fase como done.
 
@@ -209,3 +210,6 @@ Criar `assets/benchmarks/dense_outdoor.caf`:
 | [`plans/2026-09-22-viewport-rendering-quality-session.md`](2026-09-22-viewport-rendering-quality-session.md) | Sessão viewport: HiDPI, wireframe GPU, LOD texturas |
 | [`rendering/texture-quality-lod.md`](../rendering/texture-quality-lod.md) | LOD de texturas por distância |
 | [`editor/scene-viewport.md`](../editor/scene-viewport.md) | Pipeline do Scene Viewport 3D |
+| [`rendering/mesh-lod.md`](../rendering/mesh-lod.md) | LOD de meshes por clustering |
+| [`rendering/reflections.md`](../rendering/reflections.md) | Planar, screen-space e probe |
+| [`rendering/volumetric-lighting.md`](../rendering/volumetric-lighting.md) | Nevoeiro analítico |

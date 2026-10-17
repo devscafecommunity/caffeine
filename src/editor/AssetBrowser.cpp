@@ -5,9 +5,13 @@
 #include "editor/DragDropSystem.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/EditorContext.hpp"
+#include "editor/AnimationEditorLink.hpp"
+#include "editor/ProjectManager.hpp"
 #include "core/io/CafTypes.hpp"
 #include "assets/TextureCompiler.hpp"
 #include "assets/MeshImportValidator.hpp"
+#include "assets/MaterialFile.hpp"
+#include "scene/EnvironmentSystem.hpp"
 #ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
 #include "caf-pack/HeaderGenerator.hpp"
@@ -15,7 +19,10 @@
 #include "stb/stb_image.h"
 
 #include <fstream>
+#include <cstdio>
+#include <algorithm>
 #include <system_error>
+#include <cctype>
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Data layer — always compiled (no ImGui dependency)
@@ -32,6 +39,30 @@ AssetType readCafAssetType(const std::filesystem::path& path) {
     in.read(reinterpret_cast<char*>(&header), sizeof(header));
     if (!in || header.magic != CafHeader::kMagic) return AssetType::Unknown;
     return header.type;
+}
+
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool extensionMatchesFilter(const std::filesystem::path& path, const std::string& filter) {
+    if (filter.empty()) return true;
+    const std::string ext = toLower(path.extension().string());
+    size_t start = 0;
+    while (start < filter.size()) {
+        const size_t sep = filter.find(';', start);
+        std::string token = filter.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+        token = toLower(token);
+        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+        while (!token.empty() && token.back() == ' ') token.pop_back();
+        if (!token.empty() && token.front() != '.') token.insert(token.begin(), '.');
+        if (!token.empty() && ext == token) return true;
+        if (sep == std::string::npos) break;
+        start = sep + 1;
+    }
+    return false;
 }
 
 bool needsMeshBundleImport(const std::filesystem::path& path) {
@@ -67,6 +98,7 @@ void AssetBrowser::init(const ProjectConfig& projectConfig) {
     m_pathHistory.clear();
     std::filesystem::create_directories(m_rawRoot);
     std::filesystem::create_directories(m_processedRoot);
+    ProjectManager::EnsureDefaultFolders(m_projectRoot);
     refresh();
 }
 
@@ -75,6 +107,25 @@ void AssetBrowser::shutdownGpu() {
     m_previewRenderer.shutdownGpu();
 #endif
 }
+
+#ifdef CF_HAS_SDL3
+void AssetBrowser::initGpu(RHI::RenderDevice* device) {
+#ifdef CF_HAS_IMGUI
+    m_previewRenderer.initGpu(device);
+#else
+    (void)device;
+#endif
+}
+
+void AssetBrowser::setFrameCommandBuffer(RHI::CommandBuffer* cmd) {
+#ifdef CF_HAS_IMGUI
+    m_frameCmd = cmd;
+    m_previewRenderer.setFrameCommandBuffer(cmd);
+#else
+    (void)cmd;
+#endif
+}
+#endif
 
 void AssetBrowser::refresh() {
     if (m_browseMode == BrowseMode::CapFile) {
@@ -170,6 +221,142 @@ void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
 #endif
     
     applySearchFilter();
+}
+
+void AssetBrowser::beginAssetPicker(const char* extensionFilter, const char* fieldLabel) {
+    m_assetPickerActive = true;
+    m_pickerFilter = extensionFilter ? extensionFilter : "";
+    m_pickerLabel = fieldLabel ? fieldLabel : "asset";
+    m_pickerResult.reset();
+    m_pickerCancelled = false;
+    setAssetScope(AssetScope::Raw);
+    if (!m_rawRoot.empty()) {
+        navigateToAssets();
+    } else if (!m_projectRoot.empty()) {
+        navigateToProjectRoot();
+    }
+}
+
+void AssetBrowser::cancelAssetPicker() {
+    m_assetPickerActive = false;
+    m_pickerCancelled = false;
+    m_pickerResult.reset();
+}
+
+AssetBrowser::AssetPickerPoll AssetBrowser::pollAssetPicker(std::string& outRelativePath) {
+    if (m_pickerCancelled) {
+        m_pickerCancelled = false;
+        m_assetPickerActive = false;
+        m_pickerResult.reset();
+        return AssetPickerPoll::Cancelled;
+    }
+    if (m_pickerResult.has_value()) {
+        outRelativePath = *m_pickerResult;
+        m_pickerResult.reset();
+        m_assetPickerActive = false;
+        return AssetPickerPoll::Selected;
+    }
+    return AssetPickerPoll::Idle;
+}
+
+bool AssetBrowser::pickerAcceptsPath(const std::filesystem::path& path) const {
+    return !path.empty() && extensionMatchesFilter(path, m_pickerFilter);
+}
+
+std::string AssetBrowser::pathRelativeToProject(const std::filesystem::path& absolute) const {
+    if (!m_projectRoot.empty()) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(absolute, m_projectRoot, ec);
+        if (!ec && !rel.empty() && rel.generic_string().rfind("..") != 0) {
+            return rel.generic_string();
+        }
+    }
+    return absolute.string();
+}
+
+void AssetBrowser::commitAssetPicker(const std::filesystem::path& absolutePath) {
+    if (!m_assetPickerActive || !pickerAcceptsPath(absolutePath)) return;
+    m_pickerResult = pathRelativeToProject(absolutePath);
+}
+
+void AssetBrowser::presentPickerModal() {
+#ifdef CF_HAS_IMGUI
+    if (!m_assetPickerActive) return;
+
+    ImGui::OpenPopup("Select Asset");
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 420.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowFocus();
+
+    bool open = true;
+    if (!ImGui::BeginPopupModal("Select Asset", &open,
+                                ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    if (!open) {
+        m_pickerCancelled = true;
+        m_assetPickerActive = false;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
+    ImGui::Text("Choose %s", m_pickerLabel.c_str());
+    ImGui::TextDisabled("%s", m_currentDir.string().c_str());
+    if (!m_pickerFilter.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", m_pickerFilter.c_str());
+    }
+
+    if (ImGui::Button("Up") && m_currentDir.has_parent_path()) {
+        navigateUp();
+    }
+
+    ImGui::BeginChild("asset_pick_list", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - 8.0f), true);
+    for (usize i = 0; i < m_filteredEntries.size(); ++i) {
+        const Entry& entry = m_filteredEntries[i];
+        if (!entry.isDirectory && !pickerAcceptsPath(entry.path)) continue;
+
+        ImGui::PushID(static_cast<int>(i));
+        const bool selected = m_selectedEntry == static_cast<int>(i);
+        const std::string row = entry.isDirectory ? (entry.name + "/") : entry.name;
+        if (ImGui::Selectable(row.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+            m_selectedEntry = static_cast<int>(i);
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (entry.isDirectory) {
+                    navigateTo(entry.path);
+                    ImGui::PopID();
+                    break;
+                }
+                commitAssetPicker(entry.path);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    bool canSelect = false;
+    if (m_selectedEntry >= 0 && static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        canSelect = !entry.isDirectory && pickerAcceptsPath(entry.path);
+    }
+    ImGui::BeginDisabled(!canSelect);
+    if (ImGui::Button("Select", ImVec2(120.0f, 0.0f)) && canSelect) {
+        commitAssetPicker(m_filteredEntries[static_cast<usize>(m_selectedEntry)].path);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+        m_pickerCancelled = true;
+        m_assetPickerActive = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+#else
+#endif
 }
 
 void AssetBrowser::setAssetScope(AssetScope scope) {
@@ -360,6 +547,12 @@ std::string lowerExtension(const std::filesystem::path& path) {
     return ext;
 }
 
+bool isBrowserImage(const std::filesystem::path& path) {
+    const std::string ext = lowerExtension(path);
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+           ext == ".gif" || ext == ".webp";
+}
+
 }  // namespace
 
 const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
@@ -455,6 +648,36 @@ void AssetBrowser::drawTypeIcon(AssetType type, const std::filesystem::path& pat
 }
 
 // ── Toolbar ─────────────────────────────────────────────────────────────────
+
+void AssetBrowser::renderAssetPickerBar() {
+    if (!m_assetPickerActive) return;
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.22f, 0.38f, 0.55f));
+    ImGui::BeginChild("asset_picker_bar", ImVec2(0, ImGui::GetFrameHeightWithSpacing() * 2.4f), true);
+    ImGui::TextUnformatted("Choosing asset for inspector field:");
+    ImGui::SameLine();
+    ImGui::Text("%s", m_pickerLabel.c_str());
+    ImGui::TextDisabled("Filter: %s", m_pickerFilter.c_str());
+
+    bool canSelect = false;
+    if (m_selectedEntry >= 0 && static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        canSelect = !entry.isDirectory && pickerAcceptsPath(entry.path);
+    }
+
+    ImGui::BeginDisabled(!canSelect);
+    if (ImGui::Button("Use Selected")) {
+        commitAssetPicker(m_filteredEntries[static_cast<usize>(m_selectedEntry)].path);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+        m_pickerCancelled = true;
+        m_assetPickerActive = false;
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 
 void AssetBrowser::renderToolbar() {
     if (ImGui::Button("+ Create")) {
@@ -623,10 +846,17 @@ void AssetBrowser::renderGridView() {
                     navigateTo(entry.path);
                     ImGui::PopID();
                     break;
+                } else if (m_assetPickerActive && !entry.isDirectory &&
+                           pickerAcceptsPath(entry.path)) {
+                    commitAssetPicker(entry.path);
                 } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
+                } else if (isBrowserImage(entry.path) && m_editorContext) {
+                    m_editorContext->imageToOpen = entry.path.string();
+                } else if (entry.path.extension() == ".anim") {
+                    AnimationEditorLink::get().openAnimRequest = entry.path.string();
                 }
             }
         }
@@ -661,8 +891,16 @@ void AssetBrowser::renderGridView() {
 
         ImGui::SetCursorPos(cursorPos);
         ImGui::BeginGroup();
-        drawTypeIcon(entry.type, entry.path, entry.isDirectory,
-                     static_cast<f32>(std::max(20, static_cast<int>(m_thumbnailSize * 0.45f))));
+        const float side = static_cast<f32>(std::max(24, static_cast<int>(m_thumbnailSize)));
+        bool drewThumbnail = false;
+#ifdef CF_HAS_SDL3
+        if (!entry.isDirectory) {
+            drewThumbnail = m_previewRenderer.drawThumbnail(entry.path, entry.type, side);
+        }
+#endif
+        if (!drewThumbnail) {
+            drawTypeIcon(entry.type, entry.path, entry.isDirectory, side * 0.72f);
+        }
         ImGui::TextWrapped("%s", entry.name.c_str());
         if (entry.meshImportIncomplete) {
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "[incompleto]");
@@ -699,10 +937,17 @@ void AssetBrowser::renderListView() {
                     navigateTo(entry.path);
                     ImGui::PopID();
                     break;
+                } else if (m_assetPickerActive && !entry.isDirectory &&
+                           pickerAcceptsPath(entry.path)) {
+                    commitAssetPicker(entry.path);
                 } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
+                } else if (isBrowserImage(entry.path) && m_editorContext) {
+                    m_editorContext->imageToOpen = entry.path.string();
+                } else if (entry.path.extension() == ".anim") {
+                    AnimationEditorLink::get().openAnimRequest = entry.path.string();
                 }
             }
         }
@@ -1182,7 +1427,7 @@ bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool auto
             if (!relEc) rel = computed;
 
             if (!importSingleFile(file, m_rawRoot / rel)) {
-                setStatusMessage("Falha ao importar ficheiros do mesh", true);
+                setStatusMessage("Failed to import mesh files", true);
                 refresh();
                 return false;
             }
@@ -1194,7 +1439,7 @@ bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool auto
         }
 
         const auto report = Assets::MeshImportValidator::analyze(m_rawRoot / sourcePath.filename());
-        std::string message = "Mesh importado (" + std::to_string(copiedCount) + " ficheiro(s))";
+        std::string message = "Mesh imported (" + std::to_string(copiedCount) + " file(s))";
         if (!report.readyToLoad) {
             message = "Importado mas incompleto: " + report.errorSummary;
             if (!report.suggestion.empty()) {
@@ -1298,7 +1543,7 @@ void AssetBrowser::renderAssetCreatorModal() {
 
         ImGui::BeginChild("AssetOptions", ImVec2(0.0f, 320.0f), true);
         if (m_assetCreatorCategory == 1) {
-            ImGui::TextWrapped("Prefira .glb (um ficheiro). glTF separado precisa do .bin e texturas.");
+            ImGui::TextWrapped("Prefer .glb (one file). A separate glTF needs the .bin and textures.");
             ImGui::Spacing();
         }
 
@@ -1413,17 +1658,13 @@ void AssetBrowser::renderNamingPopup() {
                     std::ofstream f(m_currentDir / (nameStr + ".prefab"));
                     f << "{}";
                 } else if (m_pendingCreateType == 9) {
-                    std::ofstream f(m_currentDir / (nameStr + ".mat"));
-                    f << "CAFMAT1\n"
-                         "name " << nameStr << "\n"
-                         "albedo 1 1 1 1\n"
-                         "roughness 0.5\n"
-                         "metallic 0\n"
-                         "node_count 2\n"
-                         "node 1 Color 1 1 1 1\n"
-                         "node 2 OutputPBR\n"
-                         "link_count 1\n"
-                         "link 1 0 2 0\n";
+                    const std::filesystem::path matPath = m_currentDir / (nameStr + ".mat");
+                    Assets::MaterialSurface surface;
+                    surface.valid = true;
+                    surface.name = nameStr;
+                    if (Assets::saveMaterialFile(matPath, surface) && m_onMaterialOpen) {
+                        m_onMaterialOpen(matPath);
+                    }
                 } else if (m_pendingCreateType == 10) {
                     std::error_code ec;
                     std::filesystem::path newPath = m_currentDir / nameStr;
@@ -1448,9 +1689,41 @@ void AssetBrowser::renderNamingPopup() {
 void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx) {
     if (!m_open) return;
     m_world = &world;
+    m_editorContext = &ctx;
+
+    if (!ctx.assetBrowserNavigateTo.empty()) {
+        const std::filesystem::path dir = ctx.assetBrowserNavigateTo;
+        ctx.assetBrowserNavigateTo.clear();
+        ctx.assetBrowserDirty = false;
+        navigateTo(dir);
+    } else if (ctx.assetBrowserDirty) {
+        ctx.assetBrowserDirty = false;
+        refresh();
+    }
+
+#ifdef CF_HAS_SDL3
+    m_previewRenderer.setFrameCommandBuffer(m_frameCmd);
+    std::string environment;
+    f32 exposure = 1.0f;
+    if (ctx.activeWorld) {
+        const Scene::ActiveSkybox sky = Scene::findActiveSkybox(*ctx.activeWorld);
+        if (sky.component) {
+            environment = Scene::resolveSkyboxTexturePath(*sky.component, m_projectRoot.string()).string();
+            exposure = sky.component->exposure;
+        }
+    }
+    m_previewRenderer.setEnvironment(std::move(environment), exposure);
+    std::vector<std::pair<std::filesystem::path, AssetType>> thumbnails;
+    thumbnails.reserve(m_filteredEntries.size());
+    for (const Entry& entry : m_filteredEntries) {
+        if (!entry.isDirectory) thumbnails.emplace_back(entry.path, entry.type);
+    }
+    m_previewRenderer.prepareThumbnails(thumbnails, m_projectRoot.string());
+#endif
 
     if (ImGui::Begin("Asset Browser", &m_open)) {
 
+        renderAssetPickerBar();
         renderToolbar();
         renderAssetCreatorModal();
         renderNamingPopup();

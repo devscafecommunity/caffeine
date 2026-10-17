@@ -1,6 +1,7 @@
 #include "../Catch2/catch.hpp"
 #include "../../src/editor/AssetBrowser.hpp"
 #include "../../src/editor/EditorContext.hpp"
+#include "../../src/ecs/World.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -15,8 +16,9 @@ extern bool g_gpuAvailable;
 
 using namespace Caffeine;
 using namespace Caffeine::Editor;
+using namespace Caffeine::ECS;
 
-void PumpPanelFrame(AssetBrowser& panel, EditorContext& ctx) {
+void PumpPanelFrame(AssetBrowser& panel, World& world, EditorContext& ctx) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         ImGui_ImplSDL3_ProcessEvent(&event);
@@ -26,7 +28,7 @@ void PumpPanelFrame(AssetBrowser& panel, EditorContext& ctx) {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     
-    panel.render(ctx);
+    panel.render(world, ctx);
     
     ImGui::Render();
 }
@@ -69,11 +71,12 @@ TEST_CASE("AssetBrowser - init and render without crashing", "[editor][ui][asset
     fixture.createTestFile("test.png");
     fixture.createTestFile("test.wav");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     ImGuiWindow* win = ImGui::FindWindowByName("Asset Browser");
     REQUIRE(win != nullptr);
@@ -92,11 +95,12 @@ TEST_CASE("AssetBrowser - displays files in directory", "[editor][ui][assetbrows
     fixture.createTestFile("model.obj", "fake obj data");
     fixture.createTestDirectory("subdir");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     const auto& entries = browser.entries();
     REQUIRE(entries.size() == 4);
@@ -116,6 +120,7 @@ TEST_CASE("AssetBrowser - grid view renders entries", "[editor][ui][assetbrowser
     fixture.createTestFile("image2.jpg");
     fixture.createTestFile("audio.ogg");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
@@ -124,7 +129,7 @@ TEST_CASE("AssetBrowser - grid view renders entries", "[editor][ui][assetbrowser
     REQUIRE(browser.viewMode() == AssetBrowser::ViewMode::Grid);
     
     for (int i = 0; i < 3; ++i) {
-        PumpPanelFrame(browser, ctx);
+        PumpPanelFrame(browser, world, ctx);
     }
     
     const auto& entries = browser.entries();
@@ -145,6 +150,7 @@ TEST_CASE("AssetBrowser - list view renders entries", "[editor][ui][assetbrowser
     fixture.createTestFile("document.txt");
     fixture.createTestFile("script.lua");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
@@ -153,7 +159,7 @@ TEST_CASE("AssetBrowser - list view renders entries", "[editor][ui][assetbrowser
     REQUIRE(browser.viewMode() == AssetBrowser::ViewMode::List);
     
     for (int i = 0; i < 3; ++i) {
-        PumpPanelFrame(browser, ctx);
+        PumpPanelFrame(browser, world, ctx);
     }
     
     const auto& entries = browser.entries();
@@ -175,13 +181,14 @@ TEST_CASE("AssetBrowser - search filter works", "[editor][ui][assetbrowser]") {
     fixture.createTestFile("background.jpg");
     fixture.createTestFile("music.wav");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
     
     browser.setSearchFilter("sprite");
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     const auto& filteredEntries = browser.entries();
     REQUIRE(filteredEntries.size() == 2);
@@ -205,13 +212,14 @@ TEST_CASE("AssetBrowser - search filter case insensitive", "[editor][ui][assetbr
     fixture.createTestFile("lowercase.png");
     fixture.createTestFile("MixedCase.PNG");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
     
     browser.setSearchFilter("png");
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     const auto& filteredEntries = browser.entries();
     REQUIRE(filteredEntries.size() == 3);
@@ -229,6 +237,7 @@ TEST_CASE("AssetBrowser - thumbnail size can be adjusted", "[editor][ui][assetbr
     AssetBrowserTestFixture fixture;
     fixture.createTestFile("test.png");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
@@ -239,7 +248,7 @@ TEST_CASE("AssetBrowser - thumbnail size can be adjusted", "[editor][ui][assetbr
     
     REQUIRE(browser.thumbnailSize() == 128);
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     ImGuiWindow* win = ImGui::FindWindowByName("Asset Browser");
     REQUIRE(win != nullptr);
@@ -255,6 +264,7 @@ TEST_CASE("AssetBrowser - navigation to subdirectory", "[editor][ui][assetbrowse
     fixture.createTestDirectory("textures");
     fixture.createTestFile("textures/sprite.png");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
@@ -265,7 +275,7 @@ TEST_CASE("AssetBrowser - navigation to subdirectory", "[editor][ui][assetbrowse
     REQUIRE(browser.currentPath() == subdir);
     REQUIRE(browser.canGoBack());
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     const auto& entries = browser.entries();
     REQUIRE(entries.size() == 1);
@@ -283,6 +293,7 @@ TEST_CASE("AssetBrowser - navigate back works", "[editor][ui][assetbrowser]") {
     AssetBrowserTestFixture fixture;
     fixture.createTestDirectory("subdir");
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
@@ -298,7 +309,7 @@ TEST_CASE("AssetBrowser - navigate back works", "[editor][ui][assetbrowser]") {
     REQUIRE(browser.currentPath() == originalPath);
     REQUIRE(!browser.canGoBack());
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     ImGuiWindow* win = ImGui::FindWindowByName("Asset Browser");
     REQUIRE(win != nullptr);
@@ -312,11 +323,12 @@ TEST_CASE("AssetBrowser - empty directory renders", "[editor][ui][assetbrowser]"
     
     AssetBrowserTestFixture fixture;
     
+    World world;
     EditorContext ctx;
     AssetBrowser browser;
     browser.init(fixture.testDir.string().c_str());
     
-    PumpPanelFrame(browser, ctx);
+    PumpPanelFrame(browser, world, ctx);
     
     const auto& entries = browser.entries();
     REQUIRE(entries.size() == 0);

@@ -62,3 +62,12 @@ CTestTestfile.cmake
 
 # Git worktrees
 .worktrees/
+
+# Dependencies and local tooling
+**/node_modules/
+.doppio-plugins/
+
+# Documentation lives in caffeine-website submodule
+docs/
+planning/
+.planning/

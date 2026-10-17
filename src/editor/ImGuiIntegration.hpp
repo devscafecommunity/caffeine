@@ -26,6 +26,10 @@ public:
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+        // Secondary viewports are real OS windows (title bar, task bar, other monitors).
+        io.ConfigViewportsNoDecoration = false;
+        io.ConfigViewportsNoDefaultParent = true;
+        io.ConfigViewportsNoTaskBarIcon = false;
 
         ImGui_ImplSDL3_InitForSDLGPU(window);
 

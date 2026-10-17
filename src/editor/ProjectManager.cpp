@@ -1,4 +1,5 @@
 #include "editor/ProjectManager.hpp"
+#include "scene/EnvironmentSystem.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -169,6 +170,8 @@ static bool loadProjectConfigFromFile(const std::filesystem::path& path, Project
         cfg.ScriptsPath = val;
     if (readJsonString(json, "last_scene", val))
         cfg.LastScene = val;
+    if (readJsonString(json, "template_type", val))
+        cfg.TemplateType = val;
 
     out = cfg;
     return true;
@@ -185,6 +188,7 @@ static std::string serializeConfig(const ProjectConfig& cfg) {
     json << "    \"assets_processed\": \"" << cfg.AssetProcessedPath.generic_string() << "\",\n";
     json << "    \"scripts\": \""        << cfg.ScriptsPath.generic_string() << "\"\n";
     json << "  },\n";
+    json << "  \"template_type\": \""    << cfg.TemplateType << "\",\n";
     json << "  \"last_scene\": \""       << cfg.LastScene << "\"\n";
     json << "}\n";
     return json.str();
@@ -213,13 +217,29 @@ std::filesystem::path ProjectManager::DefaultRecentPath() {
 #endif
 }
 
+void ProjectManager::EnsureDefaultFolders(const std::filesystem::path& root) {
+    if (root.empty()) return;
+    std::error_code ec;
+    const char* folders[] = {
+        "assets/raw",
+        "assets/raw/Animations",
+        "assets/raw/Models",
+        "assets/raw/Materials",
+        "assets/raw/Textures",
+        "assets/raw/Audio",
+        "assets/raw/Prefabs",
+        "assets/raw/Sky",
+        "assets/processed",
+        "scripts",
+        "scenes",
+        "build",
+    };
+    for (const char* folder : folders) std::filesystem::create_directories(root / folder, ec);
+}
+
 void ProjectManager::CreateDirectoryStructure(const std::filesystem::path& root) {
     std::filesystem::create_directories(root);
-    std::filesystem::create_directories(root / "assets" / "raw");
-    std::filesystem::create_directories(root / "assets" / "processed");
-    std::filesystem::create_directories(root / "scripts");
-    std::filesystem::create_directories(root / "scenes");
-    std::filesystem::create_directories(root / "build");
+    EnsureDefaultFolders(root);
 }
 
 bool ProjectManager::SaveProjectFile(const ProjectConfig& config) {
@@ -312,17 +332,9 @@ bool ProjectManager::CreateNewProject(const ProjectConfig& config) {
     std::error_code ec;
     std::filesystem::create_directories(config.RootPath, ec);
     if (ec) return false;
-    std::filesystem::create_directories(config.RootPath / "assets" / "raw", ec);
-    if (ec) return false;
-    std::filesystem::create_directories(config.RootPath / "assets" / "processed", ec);
-    if (ec) return false;
-    std::filesystem::create_directories(config.RootPath / "scripts", ec);
-    if (ec) return false;
-    std::filesystem::create_directories(config.RootPath / "scenes", ec);
-    if (ec) return false;
-    std::filesystem::create_directories(config.RootPath / "build", ec);
-    if (ec) return false;
+    EnsureDefaultFolders(config.RootPath);
     if (!SaveProjectFile(config)) return false;
+    Scene::importDefaultSkyboxes(config.RootPath);
 
     m_CurrentConfig = config;
     UpdateRecentProjects(config.RootPath / "project.caffeine");
@@ -339,6 +351,8 @@ bool ProjectManager::OpenProject(const std::filesystem::path& projectFilePath) {
     if (IsPackagedBuildRoot(cfg.RootPath, cfg)) return false;
 
     m_CurrentConfig = cfg;
+    EnsureDefaultFolders(cfg.RootPath);
+    Scene::importDefaultSkyboxes(cfg.RootPath);
     UpdateRecentProjects(resolved);
 
     std::filesystem::path capPath = cfg.RootPath / "game.cap";
