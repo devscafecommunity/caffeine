@@ -65,7 +65,11 @@ CTestTestfile.cmake
 
 # Dependencies and local tooling
 **/node_modules/
+.pnpm-store/
 .doppio-plugins/
+
+# Local mistakes / scratch clones (nested .git breaks `git add .`)
+caffeine-website.wrong/
 
 # Documentation lives in caffeine-website submodule
 docs/

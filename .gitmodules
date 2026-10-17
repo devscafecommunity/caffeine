@@ -10,3 +10,6 @@
 [submodule "caffeine-website"]
 	path = caffeine-website
 	url = git@github.com:devscafecommunity/caffeine-website.git
+[submodule "caffeine-launcher"]
+	path = caffeine-launcher
+	url = git@github.com:devscafecommunity/caffeine-launcher.git
