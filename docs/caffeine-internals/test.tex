@@ -1,0 +1,187 @@
+% ============================================================================
+% Caffeine Engine — Internal Technical Reference
+%
+% Purpose: Formal academic-style document covering the mathematical,
+%          theoretical, and architectural foundations of every core system
+%          in the Caffeine Engine. Intended for contributors who wish to
+%          understand the engine at a deep level, and as a specification
+%          reference that governs all future core implementations.
+%
+% Language: English
+% Compiler: pdfLaTeX or LuaLaTeX
+%
+% Structure:
+%   main.tex          — preamble, page setup, document root
+%   front/cover.tex   — title page
+%   front/abstract.tex — abstract + ToC
+%   chapters/NN-*.tex — one file per chapter
+% ============================================================================
+
+\documentclass[12pt, a4paper]{report}
+
+% ── Geometry ─────────────────────────────────────────────────────────────────
+\usepackage[left=3cm, right=2cm, top=3cm, bottom=2cm]{geometry}
+\setlength{\headheight}{14pt}
+\addtolength{\topmargin}{-2pt}
+
+% ── Typography ────────────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{microtype}
+
+% ── Colour ────────────────────────────────────────────────────────────────────
+\usepackage{xcolor}
+\definecolor{darkblue}{RGB}{0,32,96}
+\definecolor{codebg}{RGB}{245,245,248}
+\definecolor{rulegray}{RGB}{180,180,195}
+\definecolor{accentblue}{RGB}{60,100,200}
+
+% ── Section styling ───────────────────────────────────────────────────────────
+\usepackage{titlesec}
+% \needspace{N} is injected before each heading: if less than N lines remain
+% on the current page, LaTeX inserts a page break before the heading.
+\titleformat{\chapter}[display]
+  {\color{darkblue}\sffamily\huge\bfseries}
+  {\color{darkblue}\chaptertitlename\ \thechapter}{12pt}{}
+\titleformat{\section}
+  {\needspace{6\baselineskip}\color{darkblue}\sffamily\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\needspace{5\baselineskip}\color{darkblue}\sffamily\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\needspace{4\baselineskip}\sffamily\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+% ── Mathematics ───────────────────────────────────────────────────────────────
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{gensymb}
+\usepackage{mathtools}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}[section]
+\newtheorem{invariant}{Invariant}[section]
+
+% ── Code listings ─────────────────────────────────────────────────────────────
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{rulegray},
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  tabsize=4,
+  captionpos=b,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  keywordstyle=\color{accentblue}\bfseries,
+  commentstyle=\color{gray}\itshape,
+  stringstyle=\color{darkblue},
+  language=C++
+}
+\lstdefinestyle{code}{}
+
+% ── Hyperlinks & PDF metadata ─────────────────────────────────────────────────
+\usepackage[hidelinks, bookmarks=true]{hyperref}
+\hypersetup{
+  pdftitle={Caffeine Engine -- Internal Technical Reference},
+  pdfauthor={Caffeine Engine Contributors},
+  pdfsubject={Game Engine Architecture, Mathematics, Systems Programming}
+}
+
+% ── Tables & figures ──────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\captionsetup{font=small, labelfont=bf}
+
+% ── Header / footer ───────────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{rulegray}\leftmark}
+\fancyhead[R]{\small\color{rulegray}Caffeine Engine — Internal Reference}
+\fancyfoot[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\color{rulegray}\hrule width\headwidth height\headrulewidth}
+
+% ── Page numbering ────────────────────────────────────────────────────────────
+\usepackage{etoolbox}
+
+% ── Page-break quality ────────────────────────────────────────────────────────
+\usepackage{needspace}
+% Prevent orphan lines (single line left at bottom / top of page)
+\widowpenalty=10000
+\clubpenalty=10000
+% Discourage page breaks inside paragraphs
+\interlinepenalty=500
+
+% ── Utility ───────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{tcolorbox}
+\tcbuselibrary{breakable}
+\usepackage{tikz}
+
+% ── Custom environments ───────────────────────────────────────────────────────
+\newtcolorbox{specbox}[1]{
+  colback=codebg, colframe=darkblue!40,
+  fonttitle=\sffamily\bfseries,
+  title=#1, breakable
+}
+
+% =============================================================================
+\begin{document}
+
+% ── Pre-textual pages (Roman numerals) ───────────────────────────────────────
+\pagenumbering{roman}
+\pagestyle{empty}
+
+\input{front/cover}
+\input{front/abstract}
+
+% ── Body (Arabic numerals) ────────────────────────────────────────────────────
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{fancy}
+
+\input{chapters/01-introduction}
+\input{chapters/02-type-system}
+\input{chapters/03-mathematics}
+\input{chapters/04-memory}
+\input{chapters/05-containers}
+\input{chapters/06-ecs}
+\input{chapters/07-job-system}
+\input{chapters/08-physics}
+\input{chapters/09-audio}
+\input{chapters/10-asset-pipeline}
+\input{chapters/11-game-loop}
+\input{chapters/12-viewport}
+\input{chapters/13-editor}
+\input{chapters/14-implementation-rules}
+\input{chapters/15-rhi}
+\input{chapters/16-rendering-2d}
+\input{chapters/17-rendering-3d}
+\input{chapters/18-events}
+\input{chapters/19-input}
+\input{chapters/20-debug}
+\input{chapters/21-scene}
+\input{chapters/22-animation}
+\input{chapters/23-scripting}
+\input{chapters/24-ui}
+\input{chapters/25-asset-manager}
+\input{chapters/bibliography}
+
+\end{document}
+
+\end{document}

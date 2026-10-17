@@ -1,0 +1,127 @@
+% ============================================================================
+\chapter{Memory Management}
+% ============================================================================
+
+\section{The Allocator Interface (\texttt{IAllocator})}
+
+All allocators implement the pure-virtual interface:
+
+\begin{lstlisting}[caption={IAllocator interface}]
+class IAllocator {
+public:
+    virtual void*  alloc(usize size, usize alignment = 8) = 0;
+    virtual void   free(void* ptr) = 0;
+    virtual void   reset() = 0;
+    virtual usize  usedMemory()      const = 0;
+    virtual usize  totalSize()       const = 0;
+    virtual usize  peakMemory()      const = 0;
+    virtual usize  allocationCount() const = 0;
+    virtual const char* name()       const = 0;
+};
+\end{lstlisting}
+
+The alignment helper computes the number of padding bytes required to
+bring a pointer to the next alignment boundary:
+
+\begin{equation}
+\text{padding}(p, a) =
+\begin{cases}
+  0 & \text{if } p \bmod a = 0 \\
+  a - (p \bmod a) & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $a$ must be a power of two. The fast bitwise form is
+$(a - (p \mathbin{\&} (a-1))) \mathbin{\&} (a-1)$.
+
+
+\paragraph{Invariant 4.1 --- Alignment}
+
+  Every allocation returned by any \texttt{IAllocator} must satisfy:
+  $(\text{address} \bmod \text{alignment}) = 0$.
+  The engine assumes 8-byte minimum alignment by default.
+
+
+
+\section{Linear Allocator}
+
+\begin{definition}[Linear Allocator]
+A linear (or ``bump-pointer'') allocator maintains a single cursor
+$c$ into a contiguous buffer $[s, s+N)$. Allocation advances the cursor:
+$c' = c + \text{padding}(c, a) + \text{size}$.
+The only valid ``free'' operation is a full reset: $c \gets s$.
+\end{definition}
+
+\textbf{Complexity}: $O(1)$ allocation, $O(1)$ reset. No per-allocation
+overhead beyond alignment padding.
+
+\textbf{Use cases}: per-frame scratch memory, loading screens, temporary
+computation buffers. The pattern is: \emph{allocate everything, process,
+reset at frame end}. No individual deallocations are ever needed.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[scale=0.9]
+  \draw[thick] (0,0) rectangle (8,0.6);
+  \fill[darkblue!20] (0,0) rectangle (4.5,0.6);
+  \draw[darkblue, thick, ->] (4.5,0.8) -- (4.5,0.6) node[above, yshift=4pt]{\small cursor};
+  \node at (2.25,0.3) {\small used};
+  \node at (6.25,0.3) {\small free};
+\end{tikzpicture}
+\caption{Linear allocator state: the cursor divides the buffer into used and free regions.}
+\end{figure}
+
+\section{Pool Allocator}
+
+\begin{definition}[Pool Allocator]
+A pool allocator divides a buffer into $N$ fixed-size \emph{slots} of
+size $s$. Free slots are linked in a \emph{free-list}: each free slot
+stores a pointer to the next free slot. Allocation pops the head of the
+list; deallocation pushes back onto the head.
+\end{definition}
+
+\textbf{Complexity}: $O(1)$ allocation, $O(1)$ deallocation.
+The list is embedded in-place: no separate bookkeeping array.
+
+The free-list is initialised in reverse order so that the first
+allocation returns the slot at the lowest address:
+
+\begin{lstlisting}[caption={Free-list initialisation (reversed)}]
+for (usize i = 0; i < m_maxSlots; ++i) {
+    u8* slot = m_poolStart + i * m_slotSize;
+    *reinterpret_cast<u8**>(slot) = m_freeList;
+    m_freeList = slot;
+}
+\end{lstlisting}
+
+\textbf{Use cases}: ECS component pools, audio source instances,
+particle systems --- any subsystem that creates and destroys many
+identically-sized objects at high frequency.
+
+
+\paragraph{Invariant 4.2 --- Slot size}
+
+  No allocation request may exceed \texttt{m\_slotSize}.
+  The pool does not track individual allocation sizes; a larger
+  request would corrupt adjacent slots.
+
+
+
+\section{Stack Allocator}
+
+The stack allocator is structurally identical to the linear allocator
+but adds the concept of a \emph{Marker}:
+
+\begin{lstlisting}[caption={Marker-based rollback}]
+Marker m = stack.setMarker();    // snapshot cursor
+// ... temporaries ...
+stack.freeToMarker(m);           // roll back to m
+\end{lstlisting}
+
+A marker is simply a byte offset from the buffer start (\texttt{usize}).
+\texttt{freeToMarker} moves the cursor back to the saved offset,
+effectively deallocating everything allocated since the marker was set.
+This supports LIFO (last-in, first-out) deallocation at $O(1)$ cost.
+
+\textbf{Use cases}: recursive descent parsing, multi-phase asset loading
+where each phase's scratch memory must be freed before the next phase.

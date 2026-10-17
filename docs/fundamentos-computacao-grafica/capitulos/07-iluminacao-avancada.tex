@@ -1,0 +1,326 @@
+\chapter{Iluminação Avançada}
+
+A transição da renderização básica para o fotorrealismo exige que transcendamos os modelos de iluminação local, como Lambert e Blinn-Phong. Embora eficientes e fundamentais para o aprendizado inicial, esses modelos tratam cada ponto de uma superfície como se existisse no vácuo, interagindo exclusivamente com fontes de luz analíticas (pontuais, direcionais ou spots). Na realidade física, a aparência de um objeto é definida pela complexa e incessante dança de fótons que rebatem entre todas as superfícies da cena, um fenômeno conhecido como \textbf{Iluminação Global (GI)}. 
+
+A base teórica para o transporte de luz na computação gráfica moderna é a \textbf{Equação de Renderização}, formulada por James Kajiya em 1986. Ela descreve o equilíbrio de energia em um ponto de superfície de forma recursiva:
+
+\begin{equation}
+    L_o(p, \omega_o) = L_e(p, \omega_o) + \int_{\Omega} f_r(p, \omega_i, \omega_o) L_i(p, \omega_i) (\hat{n} \cdot \omega_i) d\omega_i
+\end{equation}
+
+Nesta equação, a radiância de saída $L_o$ em um ponto $p$ na direção $\omega_o$ é a soma da radiância emitida pelo próprio ponto ($L_e$) com a integral da radiância incidente $L_i$ de todas as direções do hemisfério superior $\Omega$, modulada pela função de distribuição de refletância bidirecional (BRDF), denotada por $f_r$, e pelo cosseno do ângulo de incidência.
+
+Como aponta \textcite{akenine2018realtime}, a iluminação avançada em tempo real é a arte de aproximar partes fundamentais desta integral de forma que caibam no rigoroso orçamento de milissegundos de uma GPU. O objetivo deste capítulo é explorar as técnicas que simulam esses fenômenos complexos — sombras suaves, oclusão mútua, reflexões ambientais e efeitos atmosféricos — sem o custo proibitivo de um traçado de caminhos (\textit{Path Tracing}) completo.
+
+\section{Fundamentos da Iluminação Global}
+
+Antes de mergulharmos nas técnicas específicas de sombreamento avançado, é imperativo estabelecer uma distinção clara entre os dois pilares da luz em computação gráfica. A \textbf{Iluminação Direta} é a energia radiante que viaja sem obstruções de uma fonte emissora (como uma lâmpada pontual, o sol ou um refletor) até atingir uma superfície. O cálculo desse componente é local e direto, dependendo apenas da posição da luz, da normal da superfície e das propriedades do material. Modelos como Blinn-Phong e Lambert são excelentes para descrever esse fenômeno de forma computacionalmente barata.
+
+No entanto, o mundo real é predominantemente iluminado pela \textbf{Iluminação Indireta} (ou Global). Este termo descreve os fótons que, após atingirem uma superfície, são refletidos ou refratados para outras superfícies, criando um efeito de preenchimento de luz que elimina as sombras "pretas absolutas" e introduz o realismo visual. Fenômenos como o \textit{color bleeding} — onde a luz refletida por uma superfície colorida transporta parte dessa cor para os objetos vizinhos — são fundamentais para a percepção de profundidade e materialidade. Em tempo real, a simulação completa de GI é o "Santo Graal", e recorremos a simplificações como oclusão ambiente e mapas de irradiância para aproximar esses resultados.
+
+\section{Mapeamento de Sombras (Shadow Mapping)}
+
+O mapeamento de sombras é a técnica onipresente na indústria de jogos e visualização para a geração de sombras dinâmicas. Diferente de técnicas baseadas em geometria explícita, como os \textit{Shadow Volumes} (que requerem a extrusão de arestas da malha), o Shadow Mapping opera inteiramente no espaço de imagem (texturas). Isso o torna extremamente eficiente para cenas com milhões de polígonos, pois o custo de geração da sombra escala com o número de pixels e não diretamente com a complexidade geométrica. Sua premissa é puramente geométrica e elegante: uma área no espaço está em sombra se, e somente se, ela não for visível a partir do ponto de vista da fonte de luz.
+
+\subsection{O Algoritmo de Dois Passos}
+
+O processo de Shadow Mapping é executado em duas fases distintas e sequenciais durante o pipeline de renderização de um quadro único:
+
+\begin{enumerate}
+    \item \textbf{Fase de Geração (Shadow Pass):} 
+    Renderizamos a cena posicionando a câmera virtual no local da fonte de luz. Para luzes direcionais (como o sol), utilizamos uma projeção ortográfica, pois os raios são paralelos. Para luzes pontuais ou \textit{spotlights}, utilizamos uma projeção perspectiva para capturar a dispersão radial. Neste estágio, o \textit{color buffer} é desativado e registramos apenas a profundidade $z$ de cada fragmento em uma textura especial de alta precisão (geralmente 32-bit float) chamada \textbf{Shadow Map}. O resultado é um "mapa de profundidade" que contém a distância do oclusor mais próximo da luz para cada direção do frustum luminoso.
+    
+    \item \textbf{Fase de Iluminação (Lighting Pass):} 
+    Durante a renderização final (do ponto de vista do jogador), para cada fragmento gerado na tela, transformamos sua posição do mundo para o espaço de clipagem da luz através da matriz $M_{shadow}$. Dividimos as coordenadas resultantes pelo componente $w$ para obter as coordenadas no espaço de projeção $[0, 1]$. Em seguida, comparamos a profundidade calculada do fragmento atual ($z_{atual}$) com o valor de profundidade armazenado no Shadow Map na mesma coordenada UV ($z_{mapa}$).
+\end{enumerate}
+
+Se a profundidade do fragmento for maior do que a profundidade registrada no mapa ($z_{atual} > z_{mapa} + \text{bias}$), significa que existe um objeto mais próximo da luz que está bloqueando os raios para aquele ponto, logo, ele está em sombra.
+
+\subsection{Implementação: O Primeiro Passo (Shadow Pass)}
+
+Para gerar o mapa de profundidade, renderizamos a cena a partir da luz. É uma prática comum desativar o \textit{color output} e o \textit{blending} para maximizar a performance da GPU, já que apenas o \textit{z-buffer} nos interessa.
+
+\begin{lstlisting}[language=GLSL, caption={Vertex Shader simplificado para geração de Shadow Map}]
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+uniform mat4 lightSpaceMatrix;
+uniform mat4 model;
+
+void main() {
+    // Transformamos o objeto para o espaco de recorte da luz
+    gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
+}
+\end{lstlisting}
+
+No fragment shader deste passo, não precisamos realizar nenhuma operação (pode ser um shader vazio), pois o hardware da GPU preenche automaticamente o mapa de profundidade após o teste de profundidade.
+
+\subsection{Matriz de Sombra e Transformações}
+
+Para realizar o teste de visibilidade, o fragmento deve ser projetado exatamente como foi no primeiro passo. A matriz de sombra completa é composta pela visão da luz, projeção da luz e uma matriz de ajuste de intervalo (bias matrix):
+
+\begin{formula}{Matriz de Transformação da Luz}
+    V_{light} = \text{LookAt}(\text{pos}_{light}, \text{target}, \text{up}) \\
+    P_{light} = \text{Ortho}(l, r, b, t, n, f) \\
+    M_{bias} = \begin{bmatrix} 0.5 & 0 & 0 & 0.5 \\ 0 & 0.5 & 0 & 0.5 \\ 0 & 0 & 0.5 & 0.5 \\ 0 & 0 & 0 & 1 \end{bmatrix} \\
+    M_{shadow} = M_{bias} \cdot P_{light} \cdot V_{light}
+\end{formula}
+
+\subsection{Desafios Técnicos: Acne e Peter Panning}
+
+A discretização do Shadow Map em uma grade finita de texels introduz problemas de precisão numérica. O \textbf{Shadow Acne} manifesta-se como um padrão ruidoso de listras sobre superfícies que deveriam estar iluminadas. Isso ocorre porque múltiplos pixels da tela mapeiam para o mesmo texel do Shadow Map e, devido à imprecisão de ponto flutuante, alguns fragmentos acabam sendo considerados "atrás" de si mesmos.
+
+A solução clássica é a introdução de um pequeno deslocamento (\textbf{Bias}). No entanto, um bias fixo excessivo pode causar o efeito \textbf{Peter Panning}, onde a sombra parece se desconectar da base do objeto, fazendo-o parecer flutuar. Para resolver ambos, utilizamos o \textbf{Slope-Scaled Bias}, que adapta o deslocamento com base na inclinação da face:
+
+\begin{formula}{Slope-Scaled Depth Bias}
+    \text{bias} = \max(0.05 \cdot (1.0 - \hat{n} \cdot \hat{l}), 0.005)
+\end{formula}
+
+\subsection{Percentage Closer Filtering (PCF)}
+
+Shadow maps padrão produzem bordas "serrilhadas" (\textit{aliasing}) devido à resolução limitada. O \textbf{Percentage Closer Filtering (PCF)} suaviza essas bordas realizando múltiplas amostras ao redor da coordenada UV e tirando a média da visibilidade.
+
+\begin{lstlisting}[language=GLSL, caption={Implementação de PCF 3x3 no Fragment Shader}]
+float calculateShadow(vec4 fragPosLightSpace, vec3 n, vec3 l) {
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    
+    float currentDepth = projCoords.z;
+    if(currentDepth > 1.0) return 0.0;
+    
+    float bias = max(0.05 * (1.0 - dot(n, l)), 0.005);
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;        
+        }    
+    }
+    return shadow / 9.0;
+}
+\end{lstlisting}
+
+\subsection{Sombras Suaves Variáveis: PCSS}
+
+Enquanto o PCF fornece uma suavidade uniforme nas bordas, a física real demonstra que a sombra torna-se mais difusa (penumbra maior) conforme a distância entre o oclusor e o receptor de sombra aumenta. O algoritmo \textbf{PCSS (Percentage Closer Soft Shadows)} simula este comportamento físico de forma dinâmica, adaptando o raio de filtragem para cada fragmento da cena. O processo é computacionalmente mais intensivo que o PCF básico e segue três etapas fundamentais:
+
+\begin{enumerate}
+    \item \textbf{Blocker Search (Busca de Oclusores):} 
+    Nesta fase, definimos uma região circular ao redor da coordenada UV do fragmento no Shadow Map. Realizamos múltiplas amostras para identificar quais texels possuem profundidade menor que a profundidade do fragmento atual. Calculamos a profundidade média apenas desses texels bloqueadores ($d_{avg}$). O tamanho do raio de busca nesta etapa depende da distância do fragmento até a luz e do tamanho da fonte de luz.
+    
+    \item \textbf{Penumbra Estimation (Estimativa de Penumbra):} 
+    Utilizando a geometria clássica e a semelhança de triângulos, podemos calcular a largura teórica da penumbra ($w_p$). A fórmula leva em conta a distância do receptor ($d_{receiver}$), a profundidade média do oclusor ($d_{avg}$) e a largura física da fonte de luz ($w_{light}$):
+    \begin{equation}
+        w_p = \frac{(d_{receiver} - d_{avg}) \cdot w_{light}}{d_{avg}}
+    \end{equation}
+    Observe que se $d_{receiver} \approx d_{avg}$ (objeto encostado na superfície), a penumbra $w_p$ tende a zero, resultando em uma sombra nítida (\textit{hard shadow}).
+    
+    \item \textbf{Filtered Sample (Filtragem Adaptativa):} 
+    Com o valor de $w_p$ em mãos, executamos um filtro PCF onde o raio de amostragem não é fixo, mas sim igual a $w_p$. Isso resulta em sombras que se tornam progressivamente mais borradas à medida que se afastam da base do objeto que as projeta.
+\end{enumerate}
+
+\subsection{Cascaded Shadow Maps (CSM)}
+
+Para grandes mundos abertos (como em jogos de aventura em primeira pessoa), um único mapa de sombras não possui resolução suficiente para cobrir simultaneamente a área imediata aos pés do jogador e os objetos no horizonte. O resultado de um Shadow Map único seria um aliasing massivo em objetos próximos. O \textbf{Cascaded Shadow Maps (CSM)} resolve esse problema dividindo o frustum de visualização da câmera principal em várias seções, chamadas de "cascatas" (\textit{cascades}), geralmente distribuídas de forma logarítmica ao longo do eixo $z$.
+
+Cada cascata possui seu próprio Shadow Map dedicado:
+\begin{itemize}
+    \item A primeira cascata cobre uma área pequena próxima à câmera com alta densidade de texels por metro quadrado.
+    \item As cascatas subsequentes cobrem volumes progressivamente maiores, aceitando uma resolução menor em troca de um alcance muito superior.
+\end{itemize}
+
+O shader de iluminação seleciona automaticamente o mapa correto comparando a profundidade do fragmento com os limites de cada cascata. Um desafio técnico crítico é a "cintilação" das bordas das sombras quando a câmera se move. Para resolver isso, devemos "travar" (\textit{snap}) a posição do frustum da luz em incrementos iguais ao tamanho de um texel no espaço do mundo:
+\begin{formula}{Estabilização de Texels no CSM}
+    \text{worldTexelSize} = \frac{2.0 \cdot \text{orthoSize}}{\text{shadowMapRes}} \\
+    \text{pos}_{light}.x = \text{floor}(\text{pos}_{light}.x / \text{worldTexelSize}) \cdot \text{worldTexelSize} \\
+    \text{pos}_{light}.y = \text{floor}(\text{pos}_{light}.y / \text{worldTexelSize}) \cdot \text{worldTexelSize}
+\end{formula}
+
+Além disso, para evitar uma linha de corte visível entre as cascatas, aplicamos um \textit{blend} suave na zona de transição entre dois mapas de sombra adjacentes.
+
+\subsection{Técnicas de Filtragem Exponencial: VSM e ESM}
+
+Além do PCF e PCSS, existem técnicas que tentam tratar o mapa de sombras como uma distribuição de probabilidade. O \textbf{Variance Shadow Mapping (VSM)} armazena não apenas a profundidade $z$, mas também $z^2$. Isso permite calcular a variância local e aplicar a Desigualdade de Chebyshev para estimar a probabilidade de um ponto estar em sombra. A grande vantagem é que o VSM permite o uso de filtros lineares e mipmapping diretamente no mapa de sombras, o que é proibido no Shadow Mapping tradicional devido à natureza não-linear do teste de profundidade.
+
+Já o \textbf{Exponential Shadow Mapping (ESM)} utiliza uma função exponencial $e^{k(z_{map} - z_{frag})}$ para aproximar o teste de visibilidade. Ambas as técnicas visam produzir sombras extremamente suaves com baixo custo de amostragem, embora sofram de artefatos de "vazamento de luz" (\textit{light bleeding}) em certas configurações geométricas.
+
+\section{Reflexões em Espaço de Tela (SSR)}
+
+Enquanto o IBL fornece reflexões globais de longa distância, ele falha em capturar reflexões locais entre objetos próximos (como o reflexo de um personagem em um chão molhado). O \textbf{Screen-Space Reflections (SSR)} resolve isso realizando um \textit{ray-marching} no buffer de cores e profundidade da tela. O algoritmo é executado inteiramente no fragment shader e segue quatro etapas lógicas:
+
+\begin{enumerate}
+    \item \textbf{Cálculo do Vetor de Reflexão:} Para cada fragmento, calculamos o vetor de visão $\mathbf{v}$ (da câmera ao ponto) e o refletimos em torno da normal $\mathbf{n}$ para obter $\mathbf{r} = \text{reflect}(\mathbf{v}, \mathbf{n})$.
+    \item \textbf{Ray Marching:} Traçamos um raio na direção de $\mathbf{r}$ através do frustum da câmera. Como não temos a geometria real (apenas o G-Buffer), avançamos em passos discretos no espaço de visão ou de tela. A cada passo, projetamos a posição atual do raio para coordenadas UV e comparamos sua profundidade com a profundidade armazenada no \textit{Depth Buffer}.
+    \item \textbf{Refinamento de Interseção (Binary Search):} Ao detectar que a profundidade do raio ultrapassou a profundidade do buffer, realizamos uma busca binária entre o último ponto "vazio" e o ponto "colidido" para localizar a interseção com precisão sub-pixel.
+    \item \textbf{Recuperação de Cor:} Se houver uma interseção válida, recuperamos a cor daquele pixel do quadro anterior (ou do frame atual em processamento).
+\end{enumerate}
+
+O SSR é limitado apenas ao que é visível na tela (o que está atrás da câmera ou oculto por outros objetos não pode ser refletido), mas é essencial para o realismo de superfícies horizontais largas como pisos, poças d'água e metais polidos. Para mitigar o artefato de bordas cortadas, aplicamos um \textit{fading} suave conforme o raio se aproxima das bordas da tela ou excede uma distância máxima.
+
+\begin{formula}{Refinamento por Busca Binária no SSR}
+    \text{Para } n \text{ iterações:} \\
+    \mathbf{P}_{mid} = (\mathbf{P}_{start} + \mathbf{P}_{end}) \cdot 0.5 \\
+    \text{Se } z_{ray}(\mathbf{P}_{mid}) > z_{buffer}(\mathbf{P}_{mid}): \mathbf{P}_{end} = \mathbf{P}_{mid} \\
+    \text{Caso contrário: } \mathbf{P}_{start} = \mathbf{P}_{mid}
+\end{formula}
+
+\section{Oclusão Ambiente em Espaço de Tela (SSAO)}
+
+O SSAO simula a falta de rebotes de luz em áreas confinadas, como cantos e fendas. O algoritmo baseia-se na criação de um hemisfério de amostras ao redor de cada fragmento no espaço de visão.
+
+\subsection{Implementação do Shader SSAO}
+
+A implementação do SSAO requer a reconstrução da posição em View Space e a comparação sistemática com o buffer de profundidade. O shader abaixo ilustra o loop principal de oclusão, onde cada amostra é transformada do espaço tangente para o espaço de visão e depois projetada para coordenadas de textura.
+
+\begin{lstlisting}[language=GLSL, caption={Fragment Shader para Cálculo de Oclusão Ambiente}]
+#version 330 core
+out float FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D gPosition; // Buffer de posicoes no View Space
+uniform sampler2D gNormal;   // Buffer de normais no View Space
+uniform sampler2D texNoise;  // Textura de ruido 4x4
+uniform vec3 samples[64];    // Kernel de amostras no hemisferio
+uniform mat4 projection;     // Matriz de projecao da camera
+
+void main() {
+    // 1. Recuperar dados do G-Buffer
+    vec3 fragPos = texture(gPosition, TexCoords).xyz;
+    vec3 normal = texture(gNormal, TexCoords).rgb;
+    vec3 randomVec = texture(texNoise, TexCoords * noiseScale).xyz;
+
+    // 2. Criar base TBN para orientar o hemisferio pela normal
+    vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+    vec3 bitangent = cross(normal, tangent);
+    mat3 TBN = mat3(tangent, bitangent, normal);
+
+    // 3. Loop de amostragem
+    float occlusion = 0.0;
+    for(int i = 0; i < 64; ++i) {
+        // Transformar amostra para View Space
+        vec3 samplePos = TBN * samples[i];
+        samplePos = fragPos + samplePos * radius; 
+        
+        // Projetar amostra para coordenadas UV de tela
+        vec4 offset = vec4(samplePos, 1.0);
+        offset = projection * offset;
+        offset.xyz /= offset.w;
+        offset.xyz = offset.xyz * 0.5 + 0.5;
+        
+        // Comparar profundidade da amostra com a profundidade real
+        float sampleDepth = texture(gPosition, offset.xy).z;
+        
+        // Range Check para evitar oclusao de objetos distantes
+        float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+        occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;           
+    }
+    
+    // Inverter o resultado para obter o fator de visibilidade
+    FragColor = 1.0 - (occlusion / 64.0);
+}
+\end{lstlisting}
+
+\section{Image-Based Lighting (IBL)}
+
+O IBL trata o mapa de ambiente (cubemap HDR) como uma fonte de luz infinitamente distante que envolve toda a cena. Diferente de luzes analíticas que iluminam de pontos específicos, o IBL permite que cada fragmento receba luz de todas as direções possíveis do ambiente. Segundo \textcite{shirley2021fundamentals}, esta técnica é o pilar fundamental da renderização PBR (Physically Based Rendering), pois permite que objetos sintéticos "absorvam" a iluminação e as cores de uma cena real fotografada.
+
+A integral de refletância para iluminação ambiente especular é matematicamente complexa, pois depende da direção de saída (visão) e das microfacetas da superfície. Para viabilizar o cálculo em tempo real, utilizamos a \textbf{Aproximação Split-Sum} proposta pela Epic Games:
+
+\begin{itemize}
+    \item \textbf{Prefiltered Environment Map:} É um cubemap onde cada nível de mipmap armazena o ambiente convoluído com um kernel especular (GGX) para um valor específico de rugosidade (\textit{roughness}). O mipmap 0 armazena o reflexo nítido (espelho), enquanto níveis superiores armazenam reflexos progressivamente mais borrados.
+    \item \textbf{BRDF Integration LUT:} Uma textura 2D pré-calculada que armazena os resultados da integral da BRDF simplificada. Ela é indexada pelo cosseno do ângulo entre a normal e a visão ($\hat{n} \cdot \hat{v}$) e pela rugosidade. A LUT fornece dois valores (escala e bias) que são usados para reconstruir o termo de Fresnel final.
+\end{itemize}
+
+Para o componente difuso, utilizamos um \textbf{Irradiance Map}, que é uma versão de resolução muito baixa do ambiente, convoluída com o cosseno da normal. Isso simula o rebote de luz difusa vindo de todas as direções do hemisfério superior.
+
+\section{Iluminação Volumétrica e Atmosférica}
+
+Em ambientes com neblina, fumaça ou alta umidade, a luz interage com partículas suspensas no ar, resultando na dispersão de fótons antes que eles atinjam as superfícies sólidas. Esse fenômeno cria os feixes de luz visíveis conhecidos como "God Rays" ou "Light Shafts". A simulação física correta desse efeito exige o cálculo do transporte de luz em meios participativos.
+
+A técnica mais comum para simular isso em tempo real é o \textbf{Ray Marching} no espaço da luz ou no espaço de tela:
+\begin{itemize}
+    \item Para cada fragmento, traçamos um raio da câmera até o ponto na superfície.
+    \item Dividimos esse raio em múltiplos passos discretos (\textit{steps}).
+    \item Para cada amostra ao longo do raio, testamos se o ponto está iluminado (consultando o Shadow Map).
+    \item Se o ponto estiver iluminado, calculamos a quantidade de luz dispersada em direção à câmera usando a \textbf{Função de Fase de Henyey-Greenstein}.
+\end{itemize}
+
+\begin{formula}{Função de Fase de Henyey-Greenstein}
+    F(\theta, g) = \frac{1}{4\pi} \frac{1 - g^2}{(1 + g^2 - 2g \cos \theta)^{3/2}}
+\end{formula}
+
+Onde $g \in (-1, 1)$ é o parâmetro de assimetria: $g > 0$ favorece a dispersão frontal (luz vindo de trás do objeto em direção à câmera), enquanto $g < 0$ favorece a dispersão traseira.
+
+\section{Pipeline de Pós-Processamento e HDR}
+
+A renderização moderna ocorre inteiramente em \textit{High Dynamic Range} (HDR), utilizando buffers de ponto flutuante (FP16 ou FP32). Isso permite que fontes de luz tenham intensidades reais que excedem o branco do monitor (1.0).
+
+\subsection{Bloom: O Fenômeno de Transbordamento}
+
+O Bloom simula o espalhamento de luz em lentes de câmeras reais ou no olho humano quando expostos a luzes de altíssima intensidade. O algoritmo isola os pixels que excedem um determinado limiar de brilho (\textit{thresholding}) e aplica um desfoque amplo. O método \textbf{Dual Kawase Blur} é o padrão moderno, pois realiza o desfoque através de sucessivas passagens de redução (\textit{downsample}) e ampliação (\textit{upsample}), permitindo cobrir grandes áreas da tela com um custo fixo por pixel extremamente baixo.
+
+A matemática do Dual Kawase baseia-se em amostras deslocadas em relação ao centro do pixel. No \textit{Downsample}, pegamos 5 amostras em um padrão de cruz, enquanto no \textit{Upsample}, utilizamos 8 amostras ao redor do pixel central para reconstruir a alta frequência com suavidade.
+
+\begin{formula}{Amostragem Dual Kawase (Upsample)}
+    \text{UVs de amostragem para um pixel } P(x, y) \text{ com offset } d: \\
+    (x-d, y-d), (x-d, y+d), (x+d, y-d), (x+d, y+d) \text{ [Pesos: 1/6]} \\
+    (x-2d, 0), (x+2d, 0), (0, y-2d), (0, y+2d) \text{ [Pesos: 1/12]}
+\end{formula}
+
+Diferente do Gaussian Blur tradicional, que exige kernels grandes e separáveis ($1 \times N$ e $N \times 1$), o Dual Kawase atinge raios de centenas de pixels com apenas 5 a 7 passagens de baixa resolução, mantendo a largura de banda da memória sob controle. O resultado final é somado ao buffer de cor original (\textit{Additive Blending}) para criar o efeito de brilho etéreo.
+
+\subsection{Tone Mapping e Correção Gamma}
+
+Como os monitores de vídeo operam em \textit{Standard Dynamic Range} (SDR), devemos mapear os valores HDR de volta para o intervalo $[0, 1]$. Existem diversos operadores para este fim, cada um com uma estética distinta:
+
+\begin{itemize}
+    \item \textbf{Operador de Reinhard:} Simples e eficiente, evita o estouro do branco mas pode resultar em cores lavadas.
+    \begin{equation}
+        L_{out} = \frac{L_{in}}{1 + L_{in}}
+    \end{equation}
+    \item \textbf{Operador ACES:} O padrão da indústria cinematográfica, utiliza uma aproximação polinomial para simular a resposta de filmes tradicionais.
+    \begin{formula}{Aproximação Polinomial ACES}
+        x = L_{in} \\
+        L_{out} = \frac{x(2.51x + 0.03)}{x(2.43x + 0.59) + 0.14}
+    \end{formula}
+\end{itemize}
+
+Finalmente, aplicamos a \textbf{Correção Gamma} ($1/2.2$) para compensar a resposta não-linear dos displays e da visão humana. Sem este passo, as sombras pareceriam excessivamente escuras e as cores lavadas. É crucial que a correção gamma seja a última operação do fragment shader, após todos os cálculos de iluminação e composição de pós-processamento.
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Explique a diferença teórica entre Iluminação Direta e Indireta. Como cada uma contribui para o realismo visual de uma cena 3D e por que a iluminação indireta é tão cara computacionalmente?
+    \item Por que o Shadow Mapping requer uma projeção ortográfica para fontes de luz direcionais, enquanto usa perspectiva para luzes pontuais? Justifique com base na convergência ou paralelismo dos raios de luz.
+    \item Como o fenômeno de \textit{Shadow Acne} é gerado matematicamente em superfícies perfeitamente planas? Discuta o papel da discretização do Shadow Map e a imprecisão de ponto flutuante.
+    \item Deduza o \textit{Slope-Scaled Bias} para uma face inclinada a 45 graus em relação à direção da luz incidente. Como esse valor mudaria se a face estivesse a 80 graus?
+    \item Explique detalhadamente o funcionamento do \textit{Normal Offset Bias}. Por que essa técnica consegue remover o acne em superfícies curvas sem introduzir o Peter Panning severo que o bias constante causaria?
+    \item Por que o filtro PCF 3x3 requer exatamente 9 amostras de textura e como o tamanho do texel do mapa de sombras afeta a largura visual da suavização das bordas?
+    \item Qual a complexidade computacional de um passo de \textit{Blocker Search} no PCSS e como o tamanho do kernel de busca é definido com base na distância da fonte de luz?
+    \item Como a distância entre o oclusor e o receptor afeta matematicamente o tamanho da penumbra no algoritmo PCSS? Use a semelhança de triângulos na sua explicação.
+    \item Discuta as vantagens de utilizar divisões logarítmicas ou exponenciais para definir os limites das cascatas no CSM. Como isso se relaciona com a distribuição de precisão do \textit{Z-Buffer}?
+    \item O que é a técnica de "texel snapping" e por que ela é fundamental para estabilizar as sombras durante o movimento da câmera? Descreva o cálculo matemático de alinhamento.
+    \item Como é possível reconstruir a posição 3D de um fragmento (em \textit{View Space}) utilizando apenas o \textit{Depth Buffer} e a matriz de projeção inversa? Apresente as equações necessárias.
+    \item Por que o algoritmo SSAO utiliza uma textura de ruído para rotacionar o kernel de amostragem em vez de um kernel fixo para todos os pixels? Discuta o impacto visual do ruído vs. bandeamento.
+    \item Explique por que um \textit{Bilateral Blur} é preferível a um \textit{Gaussian Blur} para suavizar o mapa de oclusão ambiente. Como as normais e profundidades são usadas para preservar bordas?
+    \item O que diferencia fundamentalmente o HBAO do SSAO tradicional em termos de precisão geométrica e tratamento de superfícies tangentes?
+    \item Defina formalmente a Integral de Irradiância Difusa e explique como ela é simplificada e pré-calculada para ser armazenada em um cubemap de baixa resolução.
+    \item Por que a \textit{Split-Sum Approximation} é considerada uma premissa válida para cálculos de iluminação especular em tempo real? Quais termos da integral são separados?
+    \item Como a propriedade de rugosidade (\textit{roughness}) de um material dita matematicamente qual nível de mipmap do \textit{Prefiltered Map} deve ser acessado durante o sombreamento de microfacetas?
+    \item O que representam os canais R e G na \textit{BRDF Integration LUT} e como eles se relacionam com os termos de escala e bias da aproximação de Fresnel de Schlick?
+    \item Descreva o algoritmo de \textit{Ray Marching} para luz volumétrica, detalhando a integração da contribuição luminosa ao longo do raio de visão e o uso do Shadow Map.
+    \item Como o parâmetro de anisotropia $g$ na fase de Henyey-Greenstein altera a percepção visual de meios participativos como neblina ou fumaça em situações de \textit{back-lighting}?
+    \item Por que o efeito de Bloom necessita de um \textit{threshold} de luminância antes de aplicar o desfoque? Discuta a importância de trabalhar em espaço HDR para este efeito.
+    \item Explique as fases de \textit{Downsample} e \textit{Upsample} no algoritmo Dual Kawase. Por que essa abordagem é superior ao desfoque gaussiano em termos de performance para grandes raios?
+    \item Qual a vantagem visual do operador de Tone Mapping ACES em comparação com o operador linear? Discuta a preservação de detalhes em áreas de alta luminosidade.
+    \item Por que a correção Gamma deve ser o último passo absoluto do pipeline? Descreva o erro visual que ocorre se a iluminação for somada em espaço gama (não-linear).
+    \item Calcule o overhead total de memória de vídeo para um sistema de CSM com 4 cascatas, cada uma usando uma textura de $2048 \times 2048$ pixels com precisão de 32-bit (float).
+    \item No Specular IBL, o que aconteceria se ignorássemos a BRDF Integration LUT e usássemos apenas o Prefiltered Map? Como isso afetaria a aparência de metais?
+    \item Explique o conceito de "Stable Cascades". Como garantir que o frustum da luz não mude de tamanho ou orientação quando a câmera do jogador apenas rotaciona?
+    \item Como o fenômeno de \textit{Self-Shadowing} ocorre no SSAO? Proponha uma modificação no teste de profundidade para mitigar oclusão errônea em superfícies planas.
+    \item Descreva o uso de \textit{Blue Noise} em algoritmos de amostragem estocástica como SSAO e Ray Marching. Qual a vantagem sobre o ruído branco tradicional?
+    \item Explique a Lei de Beer-Lambert e como ela pode ser integrada no cálculo de iluminação volumétrica para simular a atenuação da luz ao atravessar um meio denso.
+\end{enumerate}
+

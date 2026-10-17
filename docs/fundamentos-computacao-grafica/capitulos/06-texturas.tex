@@ -1,0 +1,413 @@
+\chapter{Texturas}
+
+No domínio da computação gráfica, a geometria define a forma bruta e a silhueta dos objetos, mas são as texturas que conferem alma, detalhe microscópico e realismo ao mundo digital. 
+Como afirma \textcite{shirley2021fundamentals}, as texturas são essencialmente uma forma de mapeamento de dados sobre superfícies, permitindo que objetos matematicamente simples — como planos, esferas ou cubos — exibam uma complexidade visual impressionante sem o custo computacional proibitivo de milhões de polígonos adicionais.
+
+A técnica de mapeamento de textura (\textit{texture mapping}) evoluiu drasticamente desde sua introdução por Edwin Catmull em sua tese de doutorado em 1974. 
+Originalmente concebida para mapear cores simples sobre superfícies, hoje ela é utilizada como um repositório genérico de dados espaciais de alta performance. 
+Podemos armazenar virtualmente qualquer tipo de informação em uma textura: rugosidade, vetores normais, deslocamento de vértices, altura, ou até propriedades complexas como emissão de luz, oclusão ambiental e dados de simulação física. 
+
+Entender o funcionamento das texturas é compreender como a GPU manipula a relação entre o espaço contínuo da cena 3D e o espaço discreto das imagens digitais. 
+Este é um processo que envolve transformações de coordenadas, filtragem estatística complexa e otimização agressiva de memória através de hierarquias de cache L1 e L2 dedicadas.
+
+\section{Coordenadas UV e o Espaço da Textura}
+
+Para que uma imagem bidimensional (textura) seja projetada corretamente sobre uma superfície tridimensional, é necessário estabelecer uma relação matemática biunívoca entre o espaço da geometria e o espaço da imagem. 
+Este mapeamento é realizado através de um sistema de coordenadas locais denominado \textbf{UV}.
+
+\begin{tcolorbox}[colback=devcafe-light, colframe=devcafe-blue, title={\faBook\ Definição: Coordenadas UV}, fonttitle=\bfseries]
+    As coordenadas UV representam um sistema de coordenadas normalizado $(u,v) \in [0,1]^2$ utilizado para indexar \textbf{texels} (pixels de textura) em uma imagem digital. 
+    Diferente das coordenadas cartesianas da tela ou do espaço do mundo, as coordenadas UV são independentes da resolução real da imagem (seja ela $256^2$ ou $8192^2$) e da escala absoluta do objeto 3D na cena.
+\end{tcolorbox}
+
+O uso de um intervalo normalizado permite que a mesma geometria utilize texturas de diferentes níveis de detalhe (LOD) sem a necessidade de recomputar os dados de mapeamento nos vértices. 
+Por convenção histórica e técnica entre as APIs gráficas, a origem $(0,0)$ varia significativamente:
+
+\begin{itemize}
+    \item \textbf{OpenGL:} A origem $(0,0)$ localiza-se no canto inferior esquerdo. O eixo V cresce para cima. 
+    Isso é coerente com o sistema de coordenadas cartesianas padrão da matemática.
+    \item \textbf{DirectX / Metal / Vulkan / WebGPU:} A origem situ-se no canto superior esquerdo. 
+    O eixo V cresce para baixo, seguindo a convenção de varredura de sistemas de vídeo e matrizes de imagem.
+\end{itemize}
+
+Esta discrepância é uma fonte clássica de erros em motores de jogo multi-plataforma. 
+Se não houver um tratamento adequado (como a inversão da coordenada V no shader), as texturas aparecerão espelhadas verticalmente. 
+A conversão de uma coordenada UV contínua (amostrada via interpolação de vértices) para um índice discreto de texel $(i, j)$ em uma textura de dimensões $W \times H$ é dada por:
+
+\begin{formula}{Conversão de UV para Índice de Texel}
+    i = \text{clamp}( \lfloor u \cdot (W-1) + 0.5 \rfloor, 0, W-1 ) \\
+    j = \text{clamp}( \lfloor v \cdot (H-1) + 0.5 \rfloor, 0, H-1 )
+\end{formula}
+
+\subsection{UV Unwrapping, Seams e Distorção de Malha}
+
+O processo de \textbf{UV Unwrapping} (ou desdobramento) é análogo a abrir uma caixa de papelão para que ela fique plana ou a criar uma projeção cartográfica (como a de Mercator) de um globo terrestre. 
+Como a maioria das superfícies 3D possui curvatura gaussiana não nula, elas são intrinsecamente "não planificáveis" sem algum nível de distorção métrica nas distâncias ou ângulos.
+
+Para gerenciar isso, os artistas e algoritmos de geometria computacional devem realizar "cortes" estratégicos na malha. 
+Esses cortes, conhecidos como \textbf{seams} (costuras), são descontinuidades no mapeamento UV. 
+Uma malha UV de alta qualidade busca equilibrar três pilares conflitantes:
+
+\begin{enumerate}
+    \item \textbf{Minimização de Stretching (Alongamento):} Ocorre quando a área relativa na textura é menor que a área correspondente na malha 3D, fazendo com que o detalhe pareça "esticado" e embaçado.
+    \item \textbf{Preservação Angular:} Evitar que ângulos retos na geometria se tornem agudos no plano UV, o que distorce padrões visuais repetitivos como tijolos ou grades.
+    \item \textbf{Eficiência de Packing (Empacotamento):} Maximizar o uso do espaço útil no quadrado $[0, 1]$ para evitar o desperdício de memória de vídeo com pixels vazios.
+\end{enumerate}
+
+Algoritmos modernos como LSCM (\textit{Least Squares Conformal Maps}) e ABF++ utilizam otimização numérica para encontrar o mapeamento que minimiza a energia de distorção global. 
+Em ativos complexos, é comum o uso de \textit{UDIMs} ou múltiplos canais de UV. 
+Por exemplo, um canal pode ser otimizado para a textura de cor (albedo) enquanto outro canal é configurado para evitar sobreposições em mapas de iluminação (\textit{lightmaps}).
+
+\section{Amostragem e Filtragem de Texturas}
+
+Um problema central em computação gráfica surge do fato de que um pixel na tela raramente coincide perfeitamente com o centro de um texel na textura. 
+A GPU deve decidir como reconstruir a cor a partir dos dados discretos da imagem. 
+Este processo é realizado pela \textbf{Texture Mapping Unit (TMU)} do hardware.
+
+\subsection{Magnificação: O Efeito de Pixelização}
+
+A magnificação ocorre quando o objeto está tão próximo da câmera que um único texel cobre múltiplos pixels na tela (o "zoom in"). 
+Sem uma filtragem adequada, o resultado é uma imagem composta por blocos quadrados de cores sólidas, revelando a grade de pixels original.
+
+O método mais simples é o \textbf{Nearest Neighbor} (Vizinho Próximo). 
+Para cada coordenada UV, a GPU escolhe o texel cujo centro está geometricamente mais próximo:
+\[ \text{texel}(u, v) = T[\text{round}(u \cdot W), \text{round}(v \cdot H)] \]
+Embora extremamente eficiente, este método preserva a aparência de pixels, sendo reservado para estilos como \textit{pixel art} ou situações onde a nitidez absoluta do pixel é desejada por questões estéticas.
+
+\subsection{Filtragem Bilinear: Interpolação Linear Dupla}
+
+Para suavizar a transição entre texels, a \textbf{Filtragem Bilinear} realiza uma média ponderada entre os quatro texels vizinhos. 
+Se definirmos $(s, t)$ como a parte fracionária da posição do texel ($s, t \in [0, 1]$), o cálculo segue uma lógica de interpolação linear dupla. 
+
+Primeiro, interpolamos horizontalmente na linha superior e inferior:
+\begin{align}
+    C_{bottom} &= (1-s)T_{i,j} + sT_{i+1,j} \\
+    C_{top} &= (1-s)T_{i,j+1} + sT_{i+1,j+1}
+\end{align}
+Em seguida, interpolamos verticalmente entre os dois resultados temporários para obter a cor final:
+
+\begin{formula}{Equação Consolidada da Filtragem Bilinear}
+    C = (1-s)(1-t)T_{00} + s(1-t)T_{10} + (1-s)tT_{01} + stT_{11}
+\end{formula}
+
+Este método gera gradientes suaves e elimina o visual pixelado, mas introduz um embaçamento (\textit{blurring}) inerente quando a magnificação é excessiva. 
+A filtragem bilinear é o padrão da indústria para a maioria das superfícies em tempo real.
+
+\section{Mipmapping e o Controle de Aliasing}
+
+O problema inverso — a minificação — ocorre quando o objeto está distante e múltiplos texels são comprimidos em um único pixel da tela. 
+Amostrar apenas um ponto dessa área ignora a maior parte da informação, violando o teorema de amostragem de Nyquist-Shannon. 
+O resultado é o \textbf{Aliasing Espacial}, manifestado como cintilação ruidosa (\textit{shimmering}) ou padrões de Moiré.
+
+\begin{tcolorbox}[colback=white, colframe=devcafe-green, title={\faCode\ A Solução: Mipmaps}, fonttitle=\bfseries]
+    Introduzida por Lance Williams em 1983, a técnica de \textbf{Mipmaps} consiste em pré-calcular versões filtradas da textura em resoluções decrescentes: $1024^2, 512^2, 256^2, \dots, 1 \times 1$. 
+\end{tcolorbox}
+
+A geração de mipmaps é uma forma de pré-filtragem passa-baixa. 
+O custo de memória para armazenar toda a cadeia é de exatamente 33,33\% adicional. 
+Podemos provar isso usando a soma de uma progressão geométrica infinita para uma textura quadrada:
+\[ \text{Overhead} = \frac{1}{4} + \frac{1}{16} + \frac{1}{64} + \dots = \sum_{n=1}^{\infty} \left(\frac{1}{4}\right)^n = \frac{1/4}{1 - 1/4} = \frac{1}{3} \]
+
+No shader, a GPU seleciona o nível de mipmap $d$ (LOD) calculando a taxa de variação das coordenadas UV entre pixels vizinhos no espaço da tela através de derivadas parciais:
+
+\begin{formula}{Cálculo do Nível de Mipmap}
+    \rho = \max\left( \sqrt{\left(\frac{\partial u}{\partial x}\right)^2 + \left(\frac{\partial v}{\partial x}\right)^2}, \sqrt{\left(\frac{\partial u}{\partial y}\right)^2 + \left(\frac{\partial v}{\partial y}\right)^2} \right) \\
+    d = \log_2(\rho)
+\end{formula}
+
+\subsection{Filtragem Trilinear}
+
+A troca abrupta entre níveis de mipmap cria "linhas de corte" visíveis na cena onde a nitidez muda subitamente. 
+A \textbf{Filtragem Trilinear} resolve isso realizando uma amostragem bilinear nos dois níveis de mipmap mais próximos e interpolando linearmente entre eles. 
+
+\section{Filtragem Anisotrópica (AF)}
+
+A filtragem trilinear padrão assume que a área de projeção de um pixel na textura é sempre simétrica. 
+No entanto, superfícies vistas em ângulos rasos (como o chão estendendo-se para o horizonte) possuem projeções elípticas e altamente alongadas.
+
+A \textbf{Filtragem Anisotrópica} permite que a GPU tome múltiplas amostras ao longo da direção de inclinação da textura. 
+Diferente da trilinear que usa 8 amostras (4 em cada nível), a AF pode usar até 16 ou 32 amostras, preservando a nitidez extrema em superfícies oblíquas sem introduzir aliasing.
+
+\section{Modos de Envolvimento (Texture Wrapping)}
+
+Os modos de \textit{wrapping} definem o que o amostrador deve fazer quando as coordenadas UV caem fora do intervalo padrão $[0, 1]$.
+
+\begin{itemize}
+    \item \textbf{Repeat (GL\_REPEAT):} A textura se repete indefinidamente ($u \pmod 1$). Ideal para tijolos e asfalto.
+    \item \textbf{Clamp to Edge (GL\_CLAMP\_TO\_EDGE):} Clampa os valores entre 0 e 1. Evita que cores da borda oposta vazem devido à interpolação.
+    \item \textbf{Mirrored Repeat:} A textura se repete, mas é espelhada a cada iteração, suavizando transições.
+    \item \textbf{Clamp to Border:} Retorna uma cor sólida específica para coordenadas fora do intervalo.
+\end{itemize}
+
+\section{Workflow PBR: Mapas de Dados e Propriedades Físicas}
+
+Na renderização baseada em física (PBR), a aparência de um material é o resultado da composição de múltiplos mapas:
+
+\begin{enumerate}
+    \item \textbf{Albedo / Base Color:} Define a cor de reflexão difusa pura. Deve ser tratada em espaço linear.
+    \item \textbf{Normal Map:} Codifica o vetor normal unitário em cada ponto para simular micro-relevo. Armazenado no \textbf{Espaço Tangente}.
+    \item \textbf{Roughness / Metalness:} Definem a rugosidade microscópica e se o material é condutor ou isolante.
+    \item \textbf{Ambient Occlusion (AO):} Descreve áreas onde a luz ambiente tem dificuldade de chegar.
+    \item \textbf{Emissive Map:} Áreas que emitem luz própria.
+\end{enumerate}
+
+\section{Técnicas Avançadas: Parallax e Virtual Texturing}
+
+Para detalhes que exigem profundidade sem o custo de milhões de polígonos, utilizamos o \textbf{Parallax Mapping}. Esta técnica desloca as coordenadas UV com base no vetor de visão e em um mapa de altura (\textit{height map}), criando a ilusão de oclusão e profundidade 3D em superfícies planas.
+
+\begin{itemize}
+    \item \textbf{Parallax Occlusion Mapping (POM):} Uma versão avançada que realiza uma busca de raios (\textit{ray marching}) dentro do fragment shader para encontrar a intersecção exata com o mapa de altura. 
+    Permite sombras internas e silhuetas auto-ocultantes.
+    \item \textbf{Virtual Texturing (Sparse Textures):} Permite o uso de texturas massivas (ex: $128k \times 128k$) dividindo-as em blocos que são carregados dinamicamente na memória conforme a necessidade, técnica similar à memória virtual de sistemas operacionais.
+\end{itemize}
+
+\section{Otimização: Compressão e Texture Atlas}
+
+Texturas sem compressão ocupam muita VRAM. Para mitigar isso, utilizamos:
+\begin{itemize}
+    \item \textbf{Compressão de Bloco (BC/DXT):} Formatos que permitem à GPU ler dados compactados diretamente da memória.
+    \item \textbf{Texture Atlas:} Agrupar várias texturas menores em uma única imagem grande para reduzir trocas de estado na GPU.
+    \item \textbf{Texture Arrays:} Uma alternativa moderna ao atlas que evita o problema de \textit{bleeding} permitindo que múltiplas camadas de textura tenham as mesmas dimensões e sejam acessadas por um índice de camada.
+\end{itemize}
+
+\section{Exemplo GLSL: Fragment Shader PBR}
+
+\begin{lstlisting}[language=GLSL, caption={Fragment Shader PBR com Normal Mapping}]
+#version 330 core
+out vec4 FragColor;
+
+in vec2 TexCoords;
+in vec3 FragPos;
+in vec3 Normal;
+in vec3 Tangent;
+
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D metallicRoughnessMap;
+
+void main() {
+    // 1. Amostragem e conversao de sRGB para Linear
+    vec3 albedo = pow(texture(albedoMap, TexCoords).rgb, vec3(2.2));
+    
+    // 2. Recuperacao da Normal no Espaco do Mundo (Matriz TBN)
+    vec3 n_tangent = texture(normalMap, TexCoords).rgb * 2.0 - 1.0;
+    vec3 N = normalize(Normal);
+    vec3 T = normalize(Tangent);
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+    vec3 worldNormal = normalize(TBN * n_tangent);
+    
+    // 3. Propriedades de Rugosidade e Metalicidade
+    vec3 mr = texture(metallicRoughnessMap, TexCoords).rgb;
+    float metallic = mr.r;
+    float roughness = mr.g;
+    
+    // ... Calculos de iluminacao baseados em PBR seguem aqui ...
+    
+    FragColor = vec4(albedo, 1.0);
+}
+\end{lstlisting}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Uma textura de $4096 \times 4096$ utiliza 32 bits por pixel. Calcule o consumo total de memória VRAM em MB ao incluir uma cadeia completa de mipmaps.
+    \item Explique matematicamente por que a soma de todos os níveis de mipmap de uma textura quadrada converge para exatamente $1/3$ de overhead de pixels.
+    \item No contexto do \textit{Texture Atlas}, descreva o problema do \textit{bleeding} de cores e como o uso de \textit{padding} ajuda a resolvê-lo.
+    \item Qual a diferença entre \texttt{textureLod} e \texttt{texture} no GLSL? Em que situação o uso de \texttt{textureLod} é obrigatório?
+    \item Dada uma cor RGB de um Normal Map $(128, 128, 255)$, qual o vetor normal unitário resultante? Mostre o cálculo de mapeamento.
+    \item Deduza a matriz TBN a partir dos vetores Normal e Tangente. Por que é necessário re-normalizar os vetores após a interpolação?
+    \item Um objeto está sendo visto sob um ângulo de 85 graus. Explique por que a filtragem trilinear tornará a textura borrada e como a anisotrópica corrige isso.
+    \item Explique o fenômeno de \textit{Moire patterns}. Como o Mipmapping atua como um filtro passa-baixa para mitigar esse problema?
+    \item Descreva a diferença entre \textit{Tangent Space Normal Mapping} e \textit{Object Space Normal Mapping}. Qual permite reutilização de texturas em malhas diferentes?
+    \item Calcule o overhead de armazenamento de uma textura de cubemap de $1024 \times 1024$ por face em relação a uma única textura 2D de mesma resolução.
+    \item Explique como o \textit{Parallax Occlusion Mapping} consegue simular oclusão entre diferentes partes de uma mesma face plana.
+    \item Por que a correção gama ($\gamma = 2.2$) deve ser aplicada apenas nas texturas de Albedo e Emissive, mas não nos mapas de Normal ou Metallic?
+    \item Descreva o impacto de performance de aumentar a Filtragem Anisotrópica de 2x para 16x em termos de banda de memória.
+    \item Um artista cria uma textura de $2048 \times 2048$ mas esquece de marcar a opção "Generate Mipmaps". Quais artefatos visuais serão visíveis quando o objeto estiver longe?
+    \item Deduza a fórmula de interpolação bilinear passo a passo, partindo de quatro texels $T_{00}, T_{10}, T_{01}, T_{11}$ e coordenadas fracionárias $(s, t)$.
+    \item Descreva o workflow de UDIM e como ele difere do mapeamento UV tradicional em termos de coordenadas e organização de arquivos.
+    \item Como as \textit{Sparse Textures} (Virtual Texturing) lidam com o limite físico de VRAM ao exibir terrenos de centenas de quilômetros quadrados?
+    \item Explique a importância do vetor Bitangente no cálculo da matriz TBN e como ele pode ser derivado se apenas a Normal e a Tangente estiverem disponíveis.
+    \item Discuta as vantagens do formato de compressão BC7 em relação ao DXT1 para mapas de normais de alta qualidade.
+    \item O que é um \textit{MIP bias} e em que situações um desenvolvedor de jogos desejaria alterar esse valor manualmente?
+\end{enumerate}
+
+
+Algoritmos modernos como LSCM (\textit{Least Squares Conformal Maps}) e ABF++ utilizam otimização numérica para encontrar o mapeamento que minimiza a energia de distorção global. 
+Em ativos complexos, é comum o uso de \textit{UDIMs} ou múltiplos canais de UV. 
+Por exemplo, um canal pode ser otimizado para a textura de cor (albedo) enquanto outro canal é configurado para evitar sobreposições em mapas de iluminação (\textit{lightmaps}).
+
+\section{Amostragem e Filtragem de Texturas}
+
+Um problema central em computação gráfica surge do fato de que um pixel na tela raramente coincide perfeitamente com o centro de um texel na textura. 
+A GPU deve decidir como reconstruir a cor a partir dos dados discretos da imagem. 
+Este processo é realizado pela \textbf{Texture Mapping Unit (TMU)} do hardware.
+
+\subsection{Magnificação: O Efeito de Pixelização}
+
+A magnificação ocorre quando o objeto está tão próximo da câmera que um único texel cobre múltiplos pixels na tela (o "zoom in"). 
+Sem uma filtragem adequada, o resultado é uma imagem composta por blocos quadrados de cores sólidas, revelando a grade de pixels original.
+
+O método mais simples é o \textbf{Nearest Neighbor} (Vizinho Próximo). 
+Para cada coordenada UV, a GPU escolhe o texel cujo centro está geometricamente mais próximo:
+\[ \text{texel}(u, v) = T[\text{round}(u \cdot W), \text{round}(v \cdot H)] \]
+Embora extremamente eficiente, este método preserva a aparência de pixels, sendo reservado para estilos como \textit{retro-gaming} ou situações onde a nitidez absoluta do pixel é desejada.
+
+\subsection{Filtragem Bilinear: Interpolação Linear Dupla}
+
+Para suavizar a transição entre texels, a \textbf{Filtragem Bilinear} realiza uma média ponderada entre os quatro texels vizinhos. 
+Se definirmos $(s, t)$ como a parte fracionária da posição do texel ($s, t \in [0, 1]$), o cálculo segue uma interpolação linear dupla. 
+
+Primeiro, interpolamos horizontalmente na linha superior e inferior:
+\begin{align}
+    C_{bottom} &= (1-s)T_{i,j} + sT_{i+1,j} \\
+    C_{top} &= (1-s)T_{i,j+1} + sT_{i+1,j+1}
+\end{align}
+Em seguida, interpolamos verticalmente entre os dois resultados temporários para obter a cor final:
+
+\begin{formula}{Equação Consolidada da Filtragem Bilinear}
+    C = (1-s)(1-t)T_{00} + s(1-t)T_{10} + (1-s)tT_{01} + stT_{11}
+\end{formula}
+
+Este método gera gradientes suaves e elimina o visual pixelado, mas introduz um embaçamento (\textit{blurring}) inerente quando a magnificação é excessiva. 
+A filtragem bilinear é o padrão da indústria para a maioria das superfícies em tempo real.
+
+\section{Mipmapping e o Controle de Aliasing}
+
+O problema inverso — a minificação — ocorre quando o objeto está distante e múltiplos texels são comprimidos em um único pixel da tela. 
+Amostrar apenas um ponto dessa área ignora a maior parte da informação, violando o teorema de amostragem de Nyquist-Shannon. 
+O resultado é o \textbf{Aliasing Espacial}, manifestado como cintilação ruidosa (\textit{shimmering}) ou padrões de Moiré.
+
+\begin{tcolorbox}[colback=white, colframe=devcafe-green, title={\faCode\ A Solução: Mipmaps}, fonttitle=\bfseries]
+    Introduzida por Lance Williams em 1983, a técnica de \textbf{Mipmaps} consiste em pré-calcular versões filtradas da textura em resoluções decrescentes: $1024^2, 512^2, 256^2, \dots, 1 \times 1$. 
+    O nome vem da expressão latina \textit{multum in parvo}, que significa "muito em pouco".
+\end{tcolorbox}
+
+A geração de mipmaps é uma forma de pré-filtragem passa-baixa. 
+O custo de memória para armazenar toda a cadeia é de exatamente 33,33\% adicional. 
+Podemos provar isso usando a soma de uma progressão geométrica infinita para uma textura quadrada:
+\[ \text{Overhead} = \frac{1}{4} + \frac{1}{16} + \frac{1}{64} + \dots = \sum_{n=1}^{\infty} \left(\frac{1}{4}\right)^n = \frac{1/4}{1 - 1/4} = \frac{1}{3} \]
+
+No shader, a GPU seleciona o nível de mipmap $d$ (LOD) calculando a taxa de variação das coordenadas UV entre pixels vizinhos no espaço da tela:
+
+\begin{formula}{Cálculo do Nível de Mipmap}
+    \rho = \max\left( \sqrt{\left(\frac{\partial u}{\partial x}\right)^2 + \left(\frac{\partial v}{\partial x}\right)^2}, \sqrt{\left(\frac{\partial u}{\partial y}\right)^2 + \left(\frac{\partial v}{\partial y}\right)^2} \right) \\
+    d = \log_2(\rho)
+\end{formula}
+
+Se o valor de $d$ for negativo, indica magnificação e a GPU usa o nível 0 (resolução máxima). 
+Se for positivo, a GPU escolhe o nível correspondente à taxa de compressão dos texels na tela.
+
+\subsection{Filtragem Trilinear}
+
+A troca abrupta entre níveis de mipmap cria "linhas de corte" visíveis na cena onde a nitidez muda subitamente. 
+A \textbf{Filtragem Trilinear} resolve isso realizando uma amostragem bilinear nos dois níveis de mipmap mais próximos e interpolando linearmente entre eles. 
+Isso garante uma transição de detalhe perfeitamente suave através da distância, eliminando artefatos de transição de LOD.
+
+\section{Filtragem Anisotrópica (AF)}
+
+A filtragem trilinear padrão assume que a área de projeção de um pixel na textura é sempre simétrica (circular ou quadrada). 
+No entanto, superfícies vistas em ângulos rasos (como o chão estendendo-se para o horizonte) possuem projeções elípticas e altamente alongadas.
+
+Ao usar mipmapping trilinear nesses casos, a GPU seleciona o nível de mipmap com base no eixo maior da elipse para evitar aliasing, o que torna o eixo menor (e a imagem como um todo) excessivamente embaçado. 
+A \textbf{Filtragem Anisotrópica} permite que a GPU tome múltiplas amostras ao longo da direção de inclinação da textura. 
+Um hardware moderno suporta até 16 amostras (16x AF), preservando a nitidez extrema em superfícies oblíquas sem introduzir aliasing.
+
+\section{Modos de Envolvimento (Texture Wrapping)}
+
+Os modos de \textit{wrapping} definem o que o amostrador deve fazer quando as coordenadas UV caem fora do intervalo padrão $[0, 1]$.
+
+\begin{itemize}
+    \item \textbf{Repeat (GL\_REPEAT):} A textura se repete indefinidamente ($u \pmod 1$). Ideal para tijolos, asfalto e superfícies ladrilháveis.
+    \item \textbf{Clamp to Edge (GL\_CLAMP\_TO\_EDGE):} Clampa os valores entre 0 e 1. Evita que cores da borda oposta vazem para o lado atual devido à interpolação bilinear.
+    \item \textbf{Mirrored Repeat:} A textura se repete, mas é espelhada a cada iteração, ajudando a esconder emendas em imagens que não foram projetadas para repetição perfeita.
+    \item \textbf{Clamp to Border:} Retorna uma cor sólida específica para coordenadas fora do intervalo.
+\end{itemize}
+
+\section{Workflow PBR: Mapas de Dados e Propriedades Físicas}
+
+Na renderização baseada em física (PBR), a aparência de um material é o resultado da composição de múltiplos mapas que descrevem propriedades físicas reais:
+
+\begin{enumerate}
+    \item \textbf{Albedo / Base Color:} Define a cor de reflexão difusa pura. Deve ser tratada em espaço linear. Se a textura for sRGB, o shader deve converter: $\text{color}_{linear} = \text{color}_{sRGB}^{2.2}$.
+    \item \textbf{Normal Map:} Codifica o vetor normal unitário em cada ponto para simular micro-relevo. As normais são armazenadas no \textbf{Espaço Tangente}. A conversão de RGB para vetor normal é:
+    \[ \mathbf{n} = 2.0 \cdot \text{sample}(normalMap, uv).rgb - 1.0 \]
+    O canal azul é dominante porque a normal "em repouso" aponta para o eixo Z positivo do espaço tangente.
+    \item \textbf{Roughness / Metalness:} Definem a rugosidade microscópica e se o material é condutor ou isolante. Estes mapas controlam a forma do brilho especular.
+    \item \textbf{Ambient Occlusion (AO):} Descreve áreas onde a luz ambiente tem dificuldade de chegar, como fendas e poros.
+    \item \textbf{Emissive Map:} Áreas que emitem luz própria, independente da iluminação externa.
+    \item \textbf{Displacement Map:} Altera a posição real dos vértices do modelo, afetando a silhueta, mas exige hardware com suporte a \textit{Tessellation}.
+\end{enumerate}
+
+\section{Otimização: Compressão e Texture Atlas}
+
+Texturas sem compressão ocupam uma quantidade proibitiva de VRAM. Uma única textura $4K$ em formato RGBA descompactado utiliza cerca de 64 MB de memória de vídeo. 
+Para mitigar isso, utilizamos:
+
+\begin{itemize}
+    \item \textbf{Compressão de Bloco (BC/DXT):} Formatos de compressão por hardware que permitem à GPU ler dados compactados diretamente da memória, economizando banda e espaço.
+    \item \textbf{Texture Atlas:} Técnica de agrupar várias texturas menores em uma única imagem grande para reduzir trocas de estado na GPU e permitir o \textit{batching} de múltiplos objetos.
+\end{itemize}
+
+\section{Cubemaps e Environment Mapping}
+
+Um \textbf{Cubemap} consiste em 6 faces quadradas organizadas como um cubo. 
+Diferente das texturas 2D acessadas por UV, os cubemaps são indexados por um vetor de direção 3D no espaço. 
+São fundamentais para implementar \textbf{Skyboxes} e simular reflexos realistas através do \textbf{Environment Mapping}, onde o vetor de reflexão da visão é usado para amostrar o cenário ao redor do objeto.
+
+\section{Exemplo GLSL: Fragment Shader PBR}
+
+Abaixo, uma implementação de um fragment shader que utiliza os conceitos discutidos para renderizar uma superfície com normal mapping:
+
+\begin{lstlisting}[language=GLSL, caption={Fragment Shader PBR com Normal Mapping e Espaço Tangente}]
+#version 330 core
+out vec4 FragColor;
+
+in vec2 TexCoords;
+in vec3 FragPos;
+in vec3 Normal;
+in vec3 Tangent;
+
+uniform sampler2D albedoMap;
+uniform sampler2D normalMap;
+uniform sampler2D metallicRoughnessMap;
+uniform vec3 viewPos;
+
+void main() {
+    // 1. Amostragem e conversao de espaco sRGB para Linear
+    vec3 albedo = pow(texture(albedoMap, TexCoords).rgb, vec3(2.2));
+    
+    // 2. Recuperacao da Normal no Espaco do Mundo (Matriz TBN)
+    vec3 n_tangent = texture(normalMap, TexCoords).rgb * 2.0 - 1.0;
+    vec3 N = normalize(Normal);
+    vec3 T = normalize(Tangent);
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+    vec3 worldNormal = normalize(TBN * n_tangent);
+    
+    // 3. Propriedades de Rugosidade e Metalicidade
+    vec3 mr = texture(metallicRoughnessMap, TexCoords).rgb;
+    float metallic = mr.r;
+    float roughness = mr.g;
+    
+    // ... Calculos de iluminacao baseados em PBR seguem aqui ...
+    
+    FragColor = vec4(albedo, 1.0);
+}
+\end{lstlisting}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Uma textura de $4096 \times 4096$ utiliza 32 bits por pixel. Calcule o consumo total de memória VRAM em MB ao incluir uma cadeia completa de mipmaps.
+    \item Explique matematicamente por que a soma de todos os níveis de mipmap de uma textura quadrada sempre resulta em exatamente $1/3$ de overhead de pixels.
+    \item No contexto do \textit{Texture Atlas}, descreva o problema do \textit{bleeding} de cores e como o uso de \textit{padding} ajuda a resolvê-lo.
+    \item Qual a diferença entre \texttt{textureLod} e \texttt{texture} no GLSL? Em que situação o uso de \texttt{textureLod} é obrigatório?
+    \item Dada uma cor RGB de um Normal Map $(128, 128, 255)$, qual o vetor normal unitário resultante? Mostre o cálculo de mapeamento.
+    \item Deduza a matriz TBN a partir dos vetores Normal e Tangente. Por que é necessário re-normalizar os vetores após a interpolação no fragment shader?
+    \item Um objeto está sendo visto sob um ângulo de 85 graus. Explique por que a filtragem trilinear tornará a textura borrada e como a anisotrópica corrige isso.
+    \item Explique o fenômeno de \textit{Moire patterns}. Como o Mipmapping atua como um filtro passa-baixa para mitigar esse problema?
+    \item Descreva a diferença entre \textit{Tangent Space Normal Mapping} e \textit{Object Space Normal Mapping}. Qual permite reutilização de texturas em malhas diferentes?
+    \item Calcule o overhead de armazenamento de uma textura de cubemap de $1024 \times 1024$ por face em relação a uma única textura 2D de mesma resolução.
+\end{enumerate}

@@ -1,0 +1,62 @@
+% ============================================================
+%  LIVRO: Fundamentos de Computação Gráfica (Vol. 1)
+%  AUTOR: Pedro Jesus
+% ============================================================
+\documentclass[12pt, a4paper, oneside]{book}
+
+\input{preambulo}
+\input{metadata}
+
+\begin{document}
+
+% === Página de Rosto Customizada ===
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+    \node[inner sep=0pt] at (current page.center) {%
+        \includegraphics[width=\paperwidth, height=\paperheight, keepaspectratio=false]{assets/cover.png}%
+    };
+\end{tikzpicture}
+\newpage
+
+% === Página de Créditos ===
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{center}
+  \small
+  \textbf{Fundamentos de Computação Gráfica (Vol. 1)} \\
+  Versão 0.1.0 (Maio de 2026) \\[1.5em]
+  \textcite{shirley2021fundamentals} e \textcite{akenine2018realtime} são referências centrais \\
+  usadas na elaboração deste material. \\[1.5em]
+  \textcopyright\ 2026 Pedro Jesus \\
+  Este obra está licenciada sob a \href{https://opensource.org/licenses/MIT}{MIT License}. \\
+  Publicado por Dev's Café Biblioteca Didática. \\[1em]
+  \url{https://devscafe.org}
+\end{center}
+\vspace*{\fill}
+\newpage
+
+% === Índice ===
+\tableofcontents
+\newpage
+
+% === Capítulos ===
+\input{capitulos/00-introducao}
+\input{capitulos/01-matematica-essencial}
+\input{capitulos/02-pipeline-de-renderizacao}
+\input{capitulos/03-rasterizacao}
+\input{capitulos/04-modelos-de-iluminacao}
+\input{capitulos/05-shaders-e-glsl}
+\input{capitulos/06-texturas}
+\input{capitulos/07-iluminacao-avancada}
+\input{capitulos/08-ray-tracing}
+\input{capitulos/09-tecnicas-modernas}
+\input{capitulos/10-cor-e-espaco-de-cor}
+
+% === Apêndices ===
+\appendix
+\input{capitulos/A-solucoes}
+
+% === Bibliografia ===
+\printbibliography[heading=bibintoc, title={Referências Bibliográficas}]
+
+\end{document}

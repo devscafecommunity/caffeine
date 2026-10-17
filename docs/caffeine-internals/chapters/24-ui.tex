@@ -1,0 +1,170 @@
+\chapter{User Interface System}
+
+The User Interface (UI) subsystem in the Caffeine Engine provides a flexible, component based framework for creating and managing graphical overlays. It operates within the Entity Component System (ECS) architecture, treating every UI element as an entity with specific visual and functional components. This design allows for seamless integration with the engine's core systems while maintaining a high degree of performance through data oriented layout and input processing.
+
+\needspace{6\baselineskip}
+\section{Component Architecture}
+
+The UI system is built on top of a set of core structures defined in the \texttt{UI} namespace. These structures define the identity, appearance, and layout of widgets.
+
+\needspace{5\baselineskip}
+\subsection{UIWidgetType}
+
+The \texttt{UIWidgetType} enumeration acts as a discriminator that identifies the functional role of a widget. The engine uses this type to determine how to render the widget and how to handle specific user interactions.
+
+\begin{lstlisting}[language=C++]
+enum class UIWidgetType : u8 {
+    Canvas,
+    Panel,
+    Button,
+    Label,
+    ProgressBar,
+    Checkbox,
+    Slider
+};
+\end{lstlisting}
+
+Each type serves a unique semantic purpose within the interface hierarchy:
+\begin{itemize}
+    \item \textbf{Canvas}: The root element of any UI tree. It defines the reference resolution and screen space for its descendants.
+    \item \textbf{Panel}: A container widget used for grouping other elements. It often serves as a background or a clipping area.
+    \item \textbf{Button}: An interactive element that responds to clicks and hovers, typically used to trigger actions.
+    \item \textbf{Label}: A non interactive widget used for displaying text information.
+    \item \textbf{ProgressBar}: A visual indicator of a scalar value relative to a range, such as health or loading progress.
+    \item \textbf{Checkbox}: A toggleable widget that represents a boolean state.
+    \item \textbf{Slider}: An interactive control for selecting a value from a continuous range.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Visual Styling}
+
+Visual properties are encapsulated in the \texttt{UIStyle} structure. This separation ensures that the visual appearance remains independent of the layout logic.
+
+\begin{lstlisting}[language=C++]
+struct UIStyle {
+    UIColor backgroundColor = {0.1f, 0.1f, 0.1f, 0.9f};
+    UIColor textColor       = {1.0f, 1.0f, 1.0f, 1.0f};
+    UIColor borderColor     = {0.3f, 0.3f, 0.3f, 1.0f};
+    f32     borderWidth     = 1.0f;
+    f32     borderRadius    = 4.0f;
+    f32     fontSize        = 16.0f;
+    Vec2    textAlignment   = {0.5f, 0.5f};
+};
+\end{lstlisting}
+
+The \texttt{backgroundColor}, \texttt{textColor}, and \texttt{borderColor} fields use a normalized RGBA format. The \texttt{borderWidth} and \texttt{borderRadius} control the edge rendering, allowing for rounded corners. Text properties like \texttt{fontSize} and \texttt{textAlignment} guide the font renderer when processing labels or button captions.
+
+\needspace{6\baselineskip}
+\section{The Layout Engine}
+
+Caffeine uses a hybrid layout system based on anchors and offsets. This system, represented by the \texttt{RectTransform} component, allows widgets to respond dynamically to parent resizing while maintaining precise pixel control where needed.
+
+\needspace{5\baselineskip}
+\subsection{RectTransform Logic}
+
+Layout calculations depend on four vectors: \texttt{anchorMin}, \texttt{anchorMax}, \texttt{offsetMin}, and \texttt{offsetMax}. Anchors are defined as normalized coordinates (from 0 to 1) relative to the parent's bounding box. Offsets are defined in absolute pixels relative to those anchors.
+
+\begin{lstlisting}[language=C++]
+struct RectTransform {
+    Vec2 anchorMin = {0.0f, 0.0f};
+    Vec2 anchorMax = {0.0f, 0.0f};
+    Vec2 offsetMin = {0.0f, 0.0f};
+    Vec2 offsetMax = {0.0f, 0.0f};
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Layout Math Derivation}
+
+The core algorithm for computing a widget's screen space rectangle follows a unified formula. Let $P_{min}$ and $P_{max}$ be the minimum and maximum corners of the parent rectangle, and $S_P = P_{max} - P_{min}$ be the parent's size. The computed corners $C_{min}$ and $C_{max}$ are derived as:
+
+\begin{equation}
+C_{min} = P_{min} + (A_{min} \circ S_P) + O_{min}
+\end{equation}
+\begin{equation}
+C_{max} = P_{min} + (A_{max} \circ S_P) + O_{max}
+\end{equation}
+
+Where $\circ$ denotes the Hadamard product (component wise multiplication). This math unifies relative and absolute positioning:
+
+\begin{itemize}
+    \item \textbf{Full Stretch}: By setting $A_{min} = (0,0)$ and $A_{max} = (1,1)$ with zero offsets, the widget perfectly matches its parent's size.
+    \item \textbf{Fixed Size, Top Left}: Setting $A_{min} = A_{max} = (0,0)$ makes the corners relative to the top left. The size becomes $O_{max} - O_{min}$.
+    \item \textbf{Fixed Size, Centered}: Setting $A_{min} = A_{max} = (0.5, 0.5)$ anchors the widget to the center of the parent.
+\end{itemize}
+
+
+\paragraph{Design Rationale: Anchor/Offset Duality}
+
+The choice of an anchor/offset system eliminates the need for separate "pixel perfect" and "responsive" layout modes. By treating absolute offsets as deltas from normalized anchors, the engine can handle complex UI resizing, such as sidebars that stay fixed in width while the main content area expands to fill the remaining space.
+
+
+
+\needspace{6\baselineskip}
+\section{System Logic}
+
+The \texttt{UISystem} manages the lifecycle of all UI components. It performs three primary tasks every frame: updating data bindings, recalculating layouts, and processing user input.
+
+\needspace{5\baselineskip}
+\subsection{Layout Traversal}
+
+The \texttt{layoutWidgets} function is responsible for filling the \texttt{computedRect} field of every \texttt{UIWidget}. Since UI elements exist in a hierarchy, children must wait for their parents to be computed.
+
+\begin{lstlisting}[language=C++]
+void layoutWidgets(ECS::World& world) {
+    std::unordered_map<u32, UIRect> computed;
+    // ... initial Canvas setup ...
+    for (int pass = 0; pass < 8; ++pass) {
+        world.forEach<UIWidget>(q, [&](ECS::Entity e, UIWidget& w) {
+            if (w.type == UIWidgetType::Canvas) return;
+            auto it = computed.find(w.parentId);
+            if (it == computed.end()) return;
+            UIRect rect = computeRect(w.transform, it->second);
+            w.computedRect = rect;
+            computed[e.id()] = rect;
+        });
+    }
+}
+\end{lstlisting}
+
+The system uses an iterative multi pass approach rather than a recursive tree traversal. In each pass, it attempts to compute widgets whose parents are already known. An 8 pass limit is enforced, supporting hierarchies up to 8 levels deep. This avoids complex tree reconstruction in the ECS and keeps the layout logic linear.
+
+\needspace{5\baselineskip}
+\subsection{Input Processing and Hit Testing}
+
+Input handling involves mapping screen space coordinates (from mouse or touch) to specific widgets. The process uses a hit testing algorithm that respects widget visibility and stacking order.
+
+\begin{lstlisting}[language=C++]
+ECS::Entity hitTest(ECS::World& world, Vec2 screenPos) {
+    ECS::Entity result = ECS::Entity::INVALID;
+    i32 bestOrder = INT_MIN;
+    world.forEach<UIWidget>(q, [&](ECS::Entity e, UIWidget& w) {
+        if (!w.visible || !w.interactable) return;
+        if (w.computedRect.contains(screenPos)) {
+            if (w.siblingOrder > bestOrder) {
+                bestOrder = w.siblingOrder;
+                result = e;
+            }
+        }
+    });
+    return result;
+}
+\end{lstlisting}
+
+When a click occurs, the system identifies the topmost widget under the cursor. Events then propagate to that widget's \texttt{onClick} callback. The \texttt{processInput} function also manages the hover state, triggering \texttt{onHoverEnter} and \texttt{onHoverExit} as the mouse moves across the interface.
+
+\needspace{5\baselineskip}
+\subsection{Data Binding Mechanism}
+
+To keep the UI in sync with game logic without manual updates, the engine implements a simple data binding system. Widgets can be linked to external data sources using lambdas.
+
+\begin{lstlisting}[language=C++]
+void bindValue(ECS::Entity widget, std::function<f32(ECS::World&)> getter) {
+    ValueBinding b;
+    b.widgetId = widget.id();
+    b.getter   = std::move(getter);
+    m_bindings.push_back(std::move(b));
+}
+\end{lstlisting}
+
+The \texttt{updateBindings} function iterates through all registered bindings once per frame. It executes the getter to retrieve the current value and applies it to the corresponding component, such as \texttt{UIProgressBar::currentValue} or \texttt{UISlider::currentValue}. If the value has changed, the \texttt{onValueChanged} callback is triggered, allowing for reactive UI updates.

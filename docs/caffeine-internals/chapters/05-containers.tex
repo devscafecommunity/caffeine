@@ -1,0 +1,63 @@
+% ============================================================================
+\chapter{Container Library}
+% ============================================================================
+
+\section{Dynamic Array (\texttt{Vector<T>})}
+
+\texttt{Vector<T>} is a heap-growing array equivalent to \texttt{std::vector},
+but with \texttt{IAllocator} injection. When no allocator is provided,
+\texttt{operator new} / \texttt{operator delete} are used directly.
+
+\subsubsection{Growth Strategy}
+
+\begin{equation}
+\text{newCapacity} =
+\begin{cases}
+  8 & \text{if current capacity} = 0 \\
+  2 \times \text{current capacity} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+Doubling maintains amortised $O(1)$ push-back: a sequence of $n$
+push-backs performs at most $2n$ element moves total.
+
+\subsubsection{Construction and Destruction}
+
+Elements are constructed in-place via placement-\texttt{new}:
+\texttt{new (\&m\_data[m\_size]) T(value)}.
+They are explicitly destroyed before deallocation:
+\texttt{m\_data[i].\textasciitilde T()}.
+This ensures correct behaviour for non-trivial types while remaining
+compatible with the custom allocator interface.
+
+\subsubsection{Move Semantics}
+
+The move constructor and move assignment transfer ownership of the
+underlying buffer in $O(1)$ by pointer swap, leaving the source in
+a valid empty state.
+
+\section{Hash Map (\texttt{HashMap<K,V>})}
+
+The current \texttt{HashMap} is a \emph{linear-scan} map backed by a
+\texttt{Vector<Pair>}. All operations are $O(n)$ in the number of entries.
+
+\begin{remark}
+The current implementation is intentionally simple: the expected
+use-cases (editor panel registries, asset name$\to$ID tables) have at
+most a few hundred entries where cache-friendly linear scan outperforms
+hash table overhead. A true hash table (open addressing, Robin-Hood
+probing) is planned for \texttt{v2.0} when scene complexity requires it.
+\end{remark}
+
+\section{String View (\texttt{StringView})}
+
+\texttt{StringView} is a non-owning, read-only view into a null-terminated
+string: a pointer + length pair. It performs no heap allocation. Comparison
+is lexicographic and runs in $O(\min(|a|, |b|))$.
+
+\section{Fixed String (\texttt{FixedString<N>})}
+
+\texttt{FixedString<N>} stores at most $N-1$ characters in an inline
+\texttt{char[N]} array plus a length field. There is no heap involvement.
+It is used for entity names, asset paths, and any string that must be
+embeddable inside a struct without pointer indirection.

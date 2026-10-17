@@ -1,0 +1,328 @@
+\chapter{O Pipeline de Renderização}
+
+O pipeline de renderização é o modelo conceitual e prático que descreve os passos necessários para transformar uma cena tridimensional em uma imagem bidimensional. Este processo é uma linha de montagem altamente otimizada onde dados de geometria entram em uma ponta e cores de pixels saem na outra. Como detalhado por \textcite{akenine2018realtime}, o pipeline moderno é dividido em estágios funcionais, alguns fixos e outros totalmente programáveis através de \textit{shaders}. A evolução das GPUs permitiu que partes que antes eram fixas agora sejam controladas pelo desenvolvedor, oferecendo uma flexibilidade sem precedentes para a criação de efeitos visuais complexos. O entendimento deste fluxo é vital para qualquer programador gráfico, pois permite identificar gargalos de performance e implementar técnicas avançadas de renderização.
+
+Transformar números em imagens exige uma série de transformações matemáticas rigorosas. Cada estágio do pipeline resolve um problema específico: como posicionar objetos, como simular a visão de uma câmera, como cortar o que não é visível e como colorir cada ponto de forma realista. Ao longo deste capítulo, exploraremos cada um desses passos em detalhes técnicos, fornecendo a base para a compreensão de como os motores de jogos modernos operam. A arquitetura de hardware das GPUs foi desenhada especificamente para acelerar estes estágios, permitindo o processamento de milhões de polígonos por quadro.
+
+\section{Visão Geral do Pipeline}
+
+Podemos visualizar o pipeline como uma sequência de quatro macro-estágios principais, cada um com responsabilidades específicas e formas distintas de processamento. A eficiência do sistema depende de quão bem esses estágios são balanceados, evitando que um estágio se torne um gargalo para os outros. Cada estágio pode ser visto como uma camada de abstração que aproxima os dados geométricos puros da representação final em pixels.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{l|X}
+\toprule
+\textbf{Estágio} & \textbf{Descrição Principal} \\
+\midrule
+Aplicação & Lógica de CPU, detecção de colisão, culling grosseiro, animação de sistemas e submissão de dados de geometria para a GPU através de comandos da API. \\
+Geometria & Transformações de espaços (Model, View, Projection), clipping, montagem de primitivas, iluminação por vértice e mapeamento de viewport. \\
+Rasterização & Conversão de primitivas geométricas (triângulos) em fragmentos discretos, determinando a cobertura de pixels e interpolando atributos. \\
+Fragmento & Execução de \textit{pixel shaders}, aplicação de texturas, cálculos de iluminação por fragmento e testes finais de visibilidade e mistura de cores. \\
+\bottomrule
+\end{tabularx}
+\caption{Os macro-estágios do pipeline de renderização.}
+\end{table}
+
+\section{Estágio de Aplicação}
+
+Este estágio ocorre inteiramente na CPU e é o ponto de partida de qualquer aplicação gráfica. Sua principal função é preparar a cena de tal forma que a GPU receba apenas o necessário para renderizar o quadro atual. Como a CPU lida bem com lógica complexa, ramificações imprevisíveis e acesso aleatório à memória, ela é ideal para gerenciar o estado global da aplicação e a interação com o usuário.
+
+As tarefas típicas incluem:
+
+\begin{itemize}
+    \item \textbf{Culling de Frustum:} Este processo identifica quais objetos estão total ou parcialmente dentro do volume de visão da câmera. Objetos que estão completamente fora não são enviados para a GPU, economizando largura de banda e ciclos de processamento preciosos. É uma otimização de nível superior que evita sobrecarregar o restante do pipeline.
+    \item \textbf{Hierarquia de Cena:} Gerenciar o posicionamento relativo de objetos através de grafos de cena. Por exemplo, se um carro se move, todas as suas partes internas e o motorista devem se mover proporcionalmente sem que cada vértice precise ser atualizado manualmente pelo programador. A CPU calcula as matrizes de mundo acumuladas.
+    \item \textbf{Sistemas de Partículas e Física:} Embora algumas simulações possam rodar na GPU via \textit{compute shaders}, muitas vezes a lógica de jogo, detecção de colisão entre objetos e interações físicas simples são resolvidas aqui.
+    \item \textbf{Draw Calls:} A submissão de comandos para a API gráfica (como OpenGL, Vulkan ou DirectX). Cada \textit{draw call} possui um custo de processamento significativo no driver da placa de vídeo, portanto, organizar a geometria em blocos eficientes ou usar \textit{texture atlases} é uma técnica de otimização crucial.
+\end{itemize}
+
+O gargalo neste estágio costuma ser a comunicação entre CPU e GPU, conhecida como "overhead de driver". Por isso, técnicas modernas como o \textit{instancing} permitem desenhar milhares de cópias do mesmo objeto com uma única chamada de comando, reduzindo drasticamente a carga na CPU. Além disso, a CPU é responsável por gerenciar a memória de vídeo, decidindo quando descartar texturas ou carregar novos modelos.
+
+\section{Estágio de Geometria}
+
+Este estágio é onde a fundamentação matemática é aplicada em larga escala para transformar coordenadas abstratas em posições na tela. Ele opera principalmente sobre vértices e primitivas, sendo altamente paralelizável nas GPUs modernas através do \textit{Vertex Shader} e, opcionalmente, \textit{Geometry} e \textit{Tessellation Shaders}.
+
+\subsection{Transformação de Modelo (Model Transform)}
+
+O primeiro passo é levar os vértices do \textbf{Object Space}, onde cada modelo é definido em seu próprio sistema de coordenadas local, para o \textbf{World Space}. Isso é feito multiplicando cada vértice pela matriz de modelo $M$. Esta matriz contém as informações de translação, rotação e escala do objeto na cena global. Sem essa etapa, todos os objetos da cena estariam amontoados na origem do mundo, compartilhando o mesmo espaço físico. A matriz $M$ é tipicamente o produto de várias matrizes de transformação elementares.
+
+\subsection{Transformação de Visualização (View Transform)}
+
+A transformação de visualização move o mundo inteiro para que a câmera se torne o centro do universo. No \textbf{View Space} (ou \textit{Camera Space}), a câmera está na origem $(0,0,0)$ e olha para uma direção padrão, geralmente o eixo $-Z$ em sistemas \textit{right-handed}. Isso simplifica imensamente os cálculos de projeção subsequentes, pois a profundidade passa a ser simplesmente a coordenada $z$.
+
+Para derivar a matriz de visualização $V$, usamos a função \textit{LookAt}. Dados a posição da câmera $\mathbf{e}$, o ponto alvo $\mathbf{t}$ e um vetor de referência para cima $\mathbf{up}_{world}$, construímos um sistema de coordenadas ortonormal que define a orientação da câmera:
+
+\begin{enumerate}
+    \item $\mathbf{f} = \text{normalize}(\mathbf{t} - \mathbf{e})$ (vetor para frente)
+    \item $\mathbf{r} = \text{normalize}(\mathbf{f} \times \mathbf{up}_{world})$ (vetor para a direita)
+    \item $\mathbf{u} = \mathbf{r} \times \mathbf{f}$ (vetor para cima corrigido)
+\end{enumerate}
+
+\begin{formula}{Matriz LookAt}
+    A matriz de visualização completa combina a translação da câmera para a origem com a rotação para alinhar os eixos do mundo com os da câmera. Ela é dada por:
+    \[ V = \begin{bmatrix} r_x & r_y & r_z & -\mathbf{r}\cdot\mathbf{e} \\ u_x & u_y & u_z & -\mathbf{u}\cdot\mathbf{e} \\ -f_x & -f_y & -f_z & \mathbf{f}\cdot\mathbf{e} \\ 0 & 0 & 0 & 1 \end{bmatrix} \]
+    Onde $\mathbf{r}, \mathbf{u}$ e $\mathbf{f}$ são os eixos unitários da câmera e $\mathbf{e}$ é sua posição no mundo. Esta matriz é efetivamente a inversa da matriz que posicionaria uma "câmera objeto" na cena. O uso do produto escalar nos termos da quarta coluna é uma forma computacionalmente eficiente de representar a translação inversa no espaço rotacionado.
+\end{formula}
+
+\subsection{Projeção Perspectiva}
+
+A projeção mapeia o volume de visualização da câmera (o \textit{frustum}) para um cubo unitário. Na projeção perspectiva, o efeito de encurtamento faz com que objetos distantes pareçam menores, imitando o comportamento das lentes ópticas e do olho humano. Esta transformação não é linear no espaço 3D, mas torna-se linear no espaço projetivo 4D.
+
+A derivação começa com a semelhança de triângulos no espaço de visualização. Para um ponto $P(x, y, z)$, sua projeção em um plano a uma distância $n$ (near) é dada por:
+\[ x_{proj} = \frac{n \cdot x}{-z}, \quad y_{proj} = \frac{n \cdot y}{-z} \]
+
+Para formalizar isso em uma matriz 4x4 que mapeia o volume definido por $l$ (left), $r$ (right), $b$ (bottom), $t$ (top), $n$ (near) e $f$ (far), chegamos à matriz de projeção perspectiva padrão. O uso de coordenadas homogêneas permite que a divisão pelo $z$ seja adiada para uma etapa posterior de hardware, garantindo que as operações de interpolação ocorram corretamente.
+
+\begin{formula}{Matriz de Projeção Perspectiva}
+    A matriz que mapeia o frustum para o Clip Space, preservando a profundidade de forma não-linear para otimizar a precisão do z-buffer, é:
+    \[ P = \begin{bmatrix} \frac{2n}{r-l} & 0 & \frac{r+l}{r-l} & 0 \\ 0 & \frac{2n}{t-b} & \frac{t+b}{t-b} & 0 \\ 0 & 0 & -\frac{f+n}{f-n} & -\frac{2fn}{f-n} \\ 0 & 0 & -1 & 0 \end{bmatrix} \]
+    Se usarmos o Campo de Visão Vertical ($fov_y$) e a Razão de Aspecto ($a = w/h$), assumindo simetria:
+    \[ P = \begin{bmatrix} \frac{1}{a \cdot \tan(fov_y/2)} & 0 & 0 & 0 \\ 0 & \frac{1}{\tan(fov_y/2)} & 0 & 0 \\ 0 & 0 & -\frac{f+n}{f-n} & -\frac{2fn}{f-n} \\ 0 & 0 & -1 & 0 \end{bmatrix} \]
+\end{formula}
+
+\subsection{Projeção Ortográfica}
+
+Na projeção ortográfica, o volume de visualização é uma caixa retangular. As linhas de projeção são paralelas, o que significa que o tamanho de um objeto não muda com a distância. É a base para desenhos técnicos, interfaces de usuário (UI) e jogos isométricos. Ela é útil quando a preservação de medidas e proporções paralelas é mais importante do que o realismo da profundidade.
+
+\begin{formula}{Matriz de Projeção Ortográfica}
+    Diferente da perspectiva, esta matriz é uma transformação linear pura de escala e translação, mapeando o volume da caixa para o cubo unitário:
+    \[ P_{ortho} = \begin{bmatrix} \frac{2}{r-l} & 0 & 0 & -\frac{r+l}{r-l} \\ 0 & \frac{2}{t-b} & 0 & -\frac{t+b}{t-b} \\ 0 & 0 & -\frac{2}{f-n} & -\frac{f+n}{f-n} \\ 0 & 0 & 0 & 1 \end{bmatrix} \]
+\end{formula}
+
+\subsection{Clip Space e Divisão Perspectiva}
+
+Após a aplicação da matriz de projeção, os vértices estão no \textbf{Clip Space}. Neste espaço, a coordenada $w$ armazena o valor de $-z$ original (no caso da perspectiva). Antes da divisão, a GPU realiza o clipping para garantir que apenas a geometria visível continue no pipeline. Vértices que estão fora do volume definido por $-w \le x,y,z \le w$ são descartados ou cortados. Este espaço é chamado de "projetivo" porque a quarta dimensão é essencial para as operações de corte e interpolação.
+
+A \textbf{Divisão Perspectiva} converte o vetor homogêneo $(x, y, z, w)$ para coordenadas 3D reais dividindo tudo pela componente $w$:
+\[ (x', y', z') = (x/w, y/w, z/w) \]
+O resultado são as \textbf{Normalized Device Coordinates (NDC)}, onde o volume visível está contido em um cubo unitário que vai de $-1$ a $1$ em todos os eixos. Esta etapa é realizada de forma fixa pelo hardware, ocorrendo entre o processamento de geometria e a rasterização.
+
+\subsection{Clipping de Sutherland-Hodgman}
+
+O clipping é essencial para evitar o processamento de polígonos que estão fora da tela ou que cruzam os planos de corte, especialmente o plano próximo (\textit{near plane}), que poderia causar erros de divisão por zero ou artefatos visuais graves. O algoritmo de Sutherland-Hodgman funciona processando cada polígono contra cada plano do volume de visão sequencialmente, tratando o polígono como uma lista encadeada de vértices.
+
+\begin{lstlisting}[language=C, caption=Pseudocódigo simplificado do Clipping de Sutherland-Hodgman]
+// Processa um polígono contra um único plano de clipping
+Polygon Clip(Polygon poly, Plane plane) {
+    Polygon result;
+    Vertex S = poly.last();
+    for (Vertex E : poly) {
+        if (E.isInside(plane)) {
+            if (!S.isInside(plane)) {
+                // Caso: Saida -> Entrada. Adiciona interseccao
+                result.add(Intersect(S, E, plane));
+            }
+            result.add(E);
+        } else if (S.isInside(plane)) {
+            // Caso: Entrada -> Saida. Adiciona interseccao
+            result.add(Intersect(S, E, plane));
+        }
+        // Caso: Saida -> Saida. Nao adiciona nada
+        S = E;
+    }
+    return result;
+}
+\end{lstlisting}
+
+O processo se repete para os seis planos (esquerda, direita, topo, fundo, perto e longe). A função \textit{Intersect} calcula o ponto onde o segmento de reta corta o plano, interpolando linearmente todos os atributos do vértice (cor, UV, normal) para o novo ponto gerado, garantindo que a transição visual no limite da tela seja suave.
+
+\subsection{Viewport Transform}
+
+A última etapa da geometria mapeia o intervalo NDC $[-1, 1]$ para as coordenadas de pixels da janela atual. Se a janela tem dimensões $W \times H$, um ponto $(x, y)$ em NDC é mapeado para coordenadas reais da tela, prontas para a rasterização.
+
+\begin{formula}{Matriz de Viewport}
+    A transformação de viewport pode ser representada por uma matriz que desloca e escala o cubo unitário para a região da tela:
+    \[ M_{viewport} = \begin{bmatrix} W/2 & 0 & 0 & x+W/2 \\ 0 & H/2 & 0 & y+H/2 \\ 0 & 0 & 0.5 & 0.5 \\ 0 & 0 & 0 & 1 \end{bmatrix} \]
+    Onde $x$ e $y$ representam o canto inferior esquerdo da área de exibição na janela.
+\end{formula}
+
+\section{Estágio de Rasterização e Fragmento}
+
+A rasterização é o processo de discretização, transformando triângulos matemáticos contínuos em uma grade de fragmentos discretos que correspondem aos pixels do monitor.
+
+\subsection{O Algoritmo de Rasterização}
+
+A GPU utiliza algoritmos de alta performance para determinar quais pixels são cobertos por um triângulo. O método mais comum hoje é o de \textbf{Funções de Borda} (\textit{Edge Functions}). Para cada pixel dentro da caixa envolvente (\textit{bounding box}) do triângulo, testa-se se o centro do pixel está do lado "positivo" de cada uma das três arestas. Se estiver, o fragmento é gerado. As funções de borda são derivadas do produto vetorial 2D entre o vetor da aresta e o vetor que vai do vértice inicial da aresta ao centro do pixel. Este método é altamente paralelizável, pois cada pixel pode ser testado independentemente.
+
+\subsection{Coordenadas Baricêntricas}
+
+Para determinar os atributos de um fragmento (como a cor ou coordenada UV em um ponto interno do triângulo), usamos as coordenadas baricêntricas $(\lambda_1, \lambda_2, \lambda_3)$. Elas representam a influência relativa de cada vértice sobre um ponto interno $P$. Qualquer ponto $P$ dentro do triângulo definido pelos vértices $V_1V_2V_3$ pode ser expresso como:
+\[ P = \lambda_1 V_1 + \lambda_2 V_2 + \lambda_3 V_3 \]
+Onde $\lambda_1 + \lambda_2 + \lambda_3 = 1$ e cada $\lambda_i \ge 0$. Os atributos $A$ no ponto $P$ são calculados da mesma forma: $A_P = \lambda_1 A_1 + \lambda_2 A_2 + \lambda_3 A_3$. As coordenadas baricêntricas também são usadas para determinar se o ponto está dentro do triângulo (se todas forem positivas).
+
+\subsection{Interpolação Corrigida pela Perspectiva}
+
+Um detalhe técnico crucial é que a interpolação linear simples no espaço de tela produz resultados visualmente incorretos, como texturas que parecem "nadar" ou dobrar de forma estranha ao longo da superfície. Isso ocorre porque o mapeamento de perspectiva não preserva distâncias lineares. Para corrigir isso, a GPU realiza a interpolação baricêntrica sobre os valores divididos pela profundidade $w$ (que armazena a distância da câmera).
+
+\begin{formula}{Correção de Perspectiva}
+    Para um atributo $I$ qualquer, o valor interpolado corretamente $I_P$ em um fragmento é dado por:
+    \[ I_P = \frac{\text{Interp}(I/w)}{\text{Interp}(1/w)} \]
+    Onde $\text{Interp}$ representa a interpolação linear baricêntrica calculada no espaço de tela (2D). A GPU mantém os valores de $1/w$ para cada vértice e realiza esta divisão para cada pixel de forma transparente.
+\end{formula}
+
+\subsection{Fragment Shader}
+
+O \textit{fragment shader} (ou \textit{pixel shader}) é um programa executado para cada fragmento gerado pela rasterização. Ele é o estágio mais intensivo em termos de computação nas aplicações modernas. O shader pode ler texturas (através de \textit{sampling}), realizar cálculos de iluminação complexos e aplicar efeitos de transparência. O objetivo final é produzir uma cor RGBA e, às vezes, modificar o valor de profundidade. Com a ascensão do PBR (\textit{Physically Based Rendering}), os shaders de fragmento simulam propriedades físicas como rugosidade, metallicidade e o índice de refração dos materiais, permitindo um alto grau de fotorrealismo.
+
+\subsection{Operações de Per-Sample e Output Merger}
+
+Antes do fragmento ser escrito no \textit{framebuffer}, ele deve passar por uma série de verificações e testes finais que determinam sua contribuição para a imagem:
+
+\begin{itemize}
+    \item \textbf{Early-Z Culling:} Uma otimização de hardware fundamental. O teste de profundidade é realizado ANTES da execução do fragment shader. Se o fragmento já está coberto por um objeto mais próximo, o shader é descartado imediatamente, o que economiza tempo de processamento em cenas com alta sobreposição (\textit{overdraw}).
+    \item \textbf{Stencil Test:} Compara o valor do fragmento com um buffer de máscara (stencil buffer). É vital para efeitos como portais, sombras volumétricas, reflexos e silhuetas de objetos.
+    \item \textbf{Depth Test (Z-buffer):} Compara a profundidade $z$ do fragmento com a profundidade já armazenada naquele pixel. Se o novo fragmento estiver mais próximo da câmera, ele "ganha" o teste e sobrescreve o valor anterior no buffer de cor e de profundidade.
+    \item \textbf{Alpha Blending:} Se o fragmento possuir transparência, sua cor é misturada com a cor atual do buffer de destino. A fórmula de mistura depende do modo configurado, sendo a mais comum: $C_{final} = \alpha C_{src} + (1-\alpha) C_{dst}$.
+\end{itemize}
+
+\section{Reconstrução da Posição a partir do Depth Buffer}
+
+Em técnicas de pós-processamento modernas, como o \textit{Deferred Rendering}, SSAO ou efeitos de neblina volumétrica, muitas vezes não temos acesso aos vértices originais, apenas à imagem final e ao buffer de profundidade. A reconstrução da posição 3D original é feita revertendo as transformações do pipeline, partindo do espaço de tela de volta para o espaço de visualização.
+
+O processo lógico detalhado é:
+\begin{enumerate}
+    \item Converter as coordenadas de tela $(u, v)$ (em pixels) e o valor de profundidade $d$ (em $[0, 1]$) para coordenadas NDC:
+    \[ x = \frac{2u}{W} - 1, \quad y = \frac{2v}{H} - 1, \quad z = 2d - 1 \]
+    \item Construir o vetor homogêneo no Clip Space: $P_{clip} = (x, y, z, 1)$.
+    \item Multiplicar pela inversa da matriz de projeção $P^{-1}$ para obter a posição no View Space (ainda em coordenadas homogêneas): $P_{view\_homog} = P^{-1} \cdot P_{clip}$.
+    \item Realizar a divisão perspectiva inversa para recuperar as coordenadas 3D reais: $P_{view} = P_{view\_homog}.xyz / P_{view\_homog}.w$.
+\end{enumerate}
+
+\begin{formula}{Posição a partir da Profundidade}
+    A posição no espaço de visualização pode ser recuperada de forma eficiente em um shader usando a inversa da matriz de projeção:
+    \[ \mathbf{P}_{view} = \text{Unproject}(x_{ndc}, y_{ndc}, \text{depth}) \]
+    Esta técnica economiza largura de banda de memória, pois evita o armazenamento de vetores de posição completos (12-16 bytes por pixel) em favor de um único valor de profundidade (4 bytes).
+\end{formula}
+
+\section{Resumo de Espaços de Coordenadas}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Espaço} & \textbf{Transformação} & \textbf{Referência} \\
+\midrule
+Object Space & Matriz de Modelo & Centro local definido no modelador 3D \\
+World Space & Matriz de View & Origem global da cena (0,0,0) \\
+View Space & Matriz de Projeção & Posição da Câmera (Foco) \\
+Clip Space & Divisão Perspectiva ($1/w$) & Volume de visão (Frustum de corte) \\
+NDC & Viewport Transform & Cubo unitário normalizado $[-1, 1]$ \\
+Screen Space & --- & Coordenadas de pixels reais da tela \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Back-face Culling}
+
+Uma otimização vital é não renderizar triângulos que estão "de costas" para a câmera. Fazemos isso calculando o produto escalar entre a normal do triângulo $\hat{\mathbf{n}}$ e a direção de visão $\hat{\mathbf{v}}$. Se $\hat{\mathbf{n}} \cdot \hat{\mathbf{v}} > 0$, o triângulo está virado para o lado oposto e é descartado antes da rasterização. Em modelos fechados e opacos, isso reduz a carga de fragmentos pela metade sem qualquer impacto visual na imagem final.
+
+\begin{aviso}
+    O \textit{Back-face Culling} deve ser desativado para objetos bidimensionais ou transparentes onde o interior deve ser visível (ex: janelas de vidro, tecidos finos, folhagens).
+\end{aviso}
+
+\section*{Exercícios}
+
+\begin{exercicio}{Derivação de Perspectiva}
+    Deduza matematicamente por que $x' = n \cdot x / (-z)$ usando um diagrama de semelhança de triângulos no plano $XZ$. Por que usamos $-z$ em vez de $z$ na maioria das APIs gráficas modernas? Explique o papel da distância $n$ (near plane) no resultado da projeção e como ela afeta a forma do frustum.
+\end{exercicio}
+
+\begin{exercicio}{A Matriz LookAt}
+    Explique por que a matriz de visualização (\textit{View Matrix}) pode ser vista como a inversa da matriz que posicionaria a câmera como um objeto no mundo. Demonstre matematicamente que a transposta de uma matriz de rotação pura é igual à sua matriz inversa e por que isso é útil para a eficiência computacional do pipeline.
+\end{exercicio}
+
+\begin{exercicio}{O Papel da Coordenada W}
+    Qual a função da quarta componente $w$ após a aplicação da matriz de projeção perspectiva? O que aconteceria se não realizássemos a divisão por $w$? Explique como esta coordenada permite representar pontos no infinito e como ela influencia a interpolação de atributos durante a rasterização.
+\end{exercicio}
+
+\begin{exercicio}{Estratégias de Culling}
+    Diferencie detalhadamente \textit{Back-face Culling} de \textit{Frustum Culling}. Qual deles economiza mais recursos de largura de banda e qual economiza mais processamento de fragmentos? Em que estágio do pipeline (CPU ou GPU) cada um desses processos é tipicamente executado e por quê?
+\end{exercicio}
+
+\begin{exercicio}{Projeções e Aplicações}
+    Monte uma tabela comparativa detalhada entre Projeção Perspectiva e Projeção Ortográfica, citando pelo menos três diferenças técnicas e três situações de uso prático para cada uma. Por que a projeção ortográfica é a escolha padrão para editores de nível e softwares de CAD, enquanto a perspectiva domina os jogos de ação?
+\end{exercicio}
+
+\begin{exercicio}{Clipping de Sutherland-Hodgman}
+    Simule o algoritmo de Sutherland-Hodgman para um triângulo cujos vértices são $V_1(-2, 0)$, $V_2(0, 2)$ e $V_3(2, 0)$ no espaço NDC, realizando o corte contra o plano $x = -1$. Quais são os novos vértices gerados pela intersecção? Desenhe o polígono resultante antes e depois do clipping.
+\end{exercicio}
+
+\begin{exercicio}{Precisão e Z-Buffer}
+    A matriz de projeção mapeia o intervalo de profundidade $[n, f]$ para $[-1, 1]$. Explique matematicamente por que a precisão do $z$-buffer é muito maior perto do plano próximo do que perto do plano distante. Quais os problemas visuais causados pela falta de precisão (fenômeno de \textit{z-fighting}) e como resolvê-los?
+\end{exercicio}
+
+\begin{exercicio}{Cálculo de Espaços e NDC}
+    Um objeto está posicionado no mundo em $(10, 5, 50)$. Uma câmera está localizada em $(10, 5, 0)$ olhando diretamente para o eixo $+Z$. Calcule a posição deste objeto no View Space. Se a projeção for ortográfica com parâmetros $n=1, f=100$, qual será a coordenada $z$ final do objeto em NDC?
+\end{exercicio}
+
+\begin{exercicio}{Recuperação de Posição 3D}
+    Dada a matriz de projeção $P$ e um valor de profundidade $d$ lido do buffer em uma posição de tela $(u, v)$, escreva os passos matemáticos detalhados para encontrar a coordenada $X$ do ponto no espaço do mundo, assumindo que você possui também a matriz de visualização $V$ e sua inversa $V^{-1}$.
+\end{exercicio}
+
+\begin{exercicio}{Coordenadas Baricêntricas e Interpolação}
+    Considere um triângulo com vértices $A(0,0), B(10,0)$ e $C(0,10)$ no espaço de tela. Calcule as coordenadas baricêntricas de um ponto interno $P(2,2)$. Se a cor no vértice $A$ é azul $(0,0,1)$ e nos vértices $B, C$ é vermelho $(1,0,0)$, qual será a cor interpolada no ponto $P$? Mostre os cálculos.
+\end{exercicio}
+
+\begin{exercicio}{Matriz de Viewport}
+    Se temos uma tela com resolução de $1920 \times 1080$ pixels, qual será a posição exata de pixel correspondente a um ponto que possui coordenadas NDC $(0.5, -0.5, 0.2)$? Mostre o cálculo completo utilizando a matriz de viewport 4x4 e explique o significado físico do resultado.
+\end{exercicio}
+
+\begin{exercicio}{Interpolação Corrigida pela Perspectiva}
+    Explique detalhadamente por que a interpolação linear simples no espaço de tela (2D) falha ao mapear texturas em polígonos sob perspectiva forte. Como a manutenção do valor $1/w$ para cada vértice permite que a GPU resolva este problema de forma matematicamente precisa durante a rasterização?
+\end{exercicio}
+
+\begin{exercicio}{Algoritmo de Rasterização}
+    Descreva como as \textit{Edge Functions} (Funções de Borda) são utilizadas pelas GPUs modernas para decidir quais fragmentos devem ser gerados para um triângulo. Mostre a relação matemática entre a função de borda e o sinal do produto vetorial 2D entre vetores de aresta e vetores de teste de pixel.
+\end{exercicio}
+
+\begin{exercicio}{Otimização Early-Z}
+    O que é a técnica de \textit{Early-Z Culling} e quais são os ganhos de performance esperados ao utilizá-la? Cite duas situações ou comandos de shader (como o \textit{discard} ou modificações manuais de profundidade) que forçam a GPU a desativar esta otimização.
+\end{exercicio}
+
+\begin{exercicio}{Blending de Cores}
+    Dada a cor de um fragmento de origem $C_{src} = (1.0, 0.0, 0.0, 0.5)$ (vermelho semi-transparente) e a cor atual presente no framebuffer de destino $C_{dst} = (0.0, 1.0, 0.0, 1.0)$ (verde opaco), calcule a cor final resultante no pixel utilizando a função de mistura (\textit{alpha blending}) padrão.
+\end{exercicio}
+
+
+\begin{exercicio}{A Matriz LookAt}
+    Explique por que a matriz de visualização pode ser vista como a inversa da matriz que posiciona a câmera no mundo.
+\end{exercicio}
+
+\begin{exercicio}{Coordenada W}
+    Qual a função da componente $w$ após a projeção? O que acontece sem a divisão por $w$?
+\end{exercicio}
+
+\begin{exercicio}{Culling}
+    Diferencie \textit{Back-face Culling} de \textit{Frustum Culling}. Qual deles economiza mais recursos e em que estágio?
+\end{exercicio}
+
+\begin{exercicio}{Projeções}
+    Compare Projeção Perspectiva e Ortográfica. Cite três diferenças técnicas e de aplicação.
+\end{exercicio}
+
+\begin{exercicio}{Sutherland-Hodgman}
+    Simule o algoritmo para um triângulo cujos vértices são $V_1(-2, 0)$, $V_2(0, 2)$ e $V_3(2, 0)$ contra o quadrado $[-1, 1]$.
+\end{exercicio}
+
+\begin{exercicio}{Precisão do Z-Buffer}
+    Por que a precisão do $z$-buffer é maior perto do plano $n$? O que é \textit{z-fighting}?
+\end{exercicio}
+
+\begin{exercicio}{Cálculo de NDC}
+    Um objeto está em $(10, 0, 50)$ no mundo. Câmera em $(10, 0, 0)$ olhando para $+Z$. Calcule a posição no View Space. Qual o $z$ em NDC se $n=1, f=100$?
+\end{exercicio}
+
+\begin{exercicio}{Recuperação de Posição}
+    Escreva os passos matemáticos para encontrar a coordenada $X$ no mundo a partir do depth buffer e da posição da tela.
+\end{exercicio}
+
+\begin{exercicio}{Coordenadas Baricêntricas}
+    Dado um triângulo com vértices $A(0,0), B(10,0), C(0,10)$, quais são as coordenadas baricêntricas de um ponto $P(2,2)$? Se a cor em $A$ é azul e em $B, C$ é vermelho, qual a cor resultante em $P$?
+\end{exercicio}
+
+\begin{exercicio}{Matriz de Viewport}
+    Se temos uma tela de $1920 \times 1080$, qual a posição de pixel correspondente a um ponto NDC $(0.5, -0.5, 0)$? Mostre o cálculo usando a matriz de viewport.
+\end{exercicio}
+
+\begin{exercicio}{Interpolação Corrigida}
+    Explique por que a interpolação linear simples no espaço de tela falha para texturas em perspectiva. Como a coordenada $w$ ajuda a resolver esse problema?
+\end{exercicio}

@@ -1,0 +1,33 @@
+% ============================================================================
+% ABSTRACT + TABLE OF CONTENTS
+% ============================================================================
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+The Caffeine Engine is a custom C++20 game engine built over SDL3, designed
+with explicit control over hardware, memory, and concurrency as primary
+objectives. This document provides the complete internal specification of its
+core systems: the primitive type layer, mathematical library
+(vectors, matrices, quaternions), custom memory allocators, generic
+container implementations, the Entity-Component-System (ECS) architecture,
+a work-stealing job system, a 2D rigid-body physics engine, a spatial audio
+system, a binary asset pipeline, and the software-rasterised 3D/Isometric
+scene viewport with its projection mathematics and transform gizmo framework.
+
+Each system is described at the level required to understand its design
+decisions, prove its correctness, and extend it safely. Formulas are
+presented in their complete mathematical form; implementation details follow
+directly from the theory. This document is both a teaching resource and a
+binding specification: any proposed change to a described system must be
+reconciled with the invariants stated here before implementation begins.
+
+\bigskip
+\textbf{Keywords:} game engine, ECS, memory allocators, quaternions,
+work-stealing scheduler, impulse-based physics, software projection,
+asset pipeline, C++20.
+
+% ── Table of contents / figures / tables ─────────────────────────────────────
+\pagestyle{plain}
+\tableofcontents
+\listoffigures
+\listoftables

@@ -1,0 +1,217 @@
+\chapter{Matemática Essencial}
+
+A computação gráfica é, em sua essência, matemática aplicada e visualizada. Para posicionar objetos em uma cena virtual, simular o comportamento da luz e projetar um mundo tridimensional em uma tela bidimensional, precisamos de um conjunto de ferramentas robustas da álgebra linear e geometria analítica. Neste capítulo, construiremos os alicerces necessários para entender como os pixels ganham vida através de equações.
+
+\section{Vetores}
+
+Um vetor é uma entidade matemática que possui tanto magnitude quanto direção. Geometricamente, podemos visualizá-lo como uma seta no espaço. Algebricamente, em $\mathbb{R}^3$, representamos um vetor $\mathbf{v}$ como uma tripla de números reais:
+
+\begin{equation}
+    \mathbf{v} = \begin{bmatrix} v_x \\ v_y \\ v_z \end{bmatrix}
+\end{equation}
+
+\subsection{Operações Básicas}
+
+Dadas dois vetores $\mathbf{u} = (u_x, u_y, u_z)$ e $\mathbf{v} = (v_x, v_y, v_z)$, e um escalar $s$:
+
+\begin{itemize}
+    \item \textbf{Soma e Diferença:} $\mathbf{u} \pm \mathbf{v} = (u_x \pm v_x, u_y \pm v_y, u_z \pm v_z)$. Geometricamente, a soma segue a regra do paralelogramo.
+    \item \textbf{Multiplicação por Escalar:} $s\mathbf{v} = (sv_x, sv_y, sv_z)$. Altera a magnitude do vetor e inverte sua direção se $s < 0$.
+    \item \textbf{Magnitude (Norma):} A distância euclidiana da origem à extremidade do vetor:
+    \begin{formula}{Magnitude}
+        \|\mathbf{v}\| = \sqrt{v_x^2 + v_y^2 + v_z^2}
+    \end{formula}
+    \item \textbf{Normalização:} Transformar um vetor em um \textbf{vetor unitário} ($\|\mathbf{v}\| = 1$) mantendo sua direção:
+    \begin{equation}
+        \hat{\mathbf{v}} = \frac{\mathbf{v}}{\|\mathbf{v}\|}
+    \end{equation}
+\end{itemize}
+
+\section{Produto Escalar (Dot Product)}
+
+O produto escalar entre dois vetores $\mathbf{a}$ e $\mathbf{b}$ resulta em um escalar e é definido como:
+
+\begin{formula}{Produto Escalar}
+    \mathbf{a} \cdot \mathbf{b} = a_x b_x + a_y b_y + a_z b_z = \|\mathbf{a}\| \|\mathbf{b}\| \cos\theta
+\end{formula}
+
+Onde $\theta$ é o ângulo entre os vetores.
+
+\subsection{Propriedades e Uso}
+
+\begin{itemize}
+    \item Se $\mathbf{a} \cdot \mathbf{b} > 0$, o ângulo entre eles é agudo.
+    \item Se $\mathbf{a} \cdot \mathbf{b} = 0$, os vetores são \textbf{ortogonais}.
+    \item Se $\mathbf{a} \cdot \mathbf{b} < 0$, o ângulo é obtuso.
+\end{itemize}
+
+Na computação gráfica, o produto escalar é o coração dos cálculos de iluminação. Por exemplo, no modelo de reflexão difusa de Lambert, a intensidade da luz em um ponto da superfície é proporcional ao produto escalar entre a normal da superfície $\hat{\mathbf{n}}$ e a direção da luz $\hat{\mathbf{l}}$, ambos unitários. Isso nos dá o cosseno do ângulo de incidência.
+
+\section{Produto Vetorial (Cross Product)}
+
+O produto vetorial $\mathbf{a} \times \mathbf{b}$ só é definido em $\mathbb{R}^3$ e resulta em um vetor perpendicular a ambos.
+
+\begin{formula}{Produto Vetorial}
+    \mathbf{a} \times \mathbf{b} = \begin{vmatrix}
+    \mathbf{i} & \mathbf{j} & \mathbf{k} \\
+    a_x & a_y & a_z \\
+    b_x & b_y & b_z
+    \end{vmatrix} = \begin{bmatrix} a_y b_z - a_z b_y \\ a_z b_x - a_x b_z \\ a_x b_y - a_y b_x \end{bmatrix}
+\end{formula}
+
+\subsection{Propriedades}
+
+\begin{itemize}
+    \item \textbf{Anti-comutatividade:} $\mathbf{a} \times \mathbf{b} = -(\mathbf{b} \times \mathbf{a})$.
+    \item \textbf{Magnitude:} $\|\mathbf{a} \times \mathbf{b}\| = \|\mathbf{a}\| \|\mathbf{b}\| \sin\theta$, que corresponde à área do paralelogramo formado pelos dois vetores.
+    \item \textbf{Normais de Superfície:} Se temos dois vetores tangentes a um triângulo, seu produto vetorial nos dá a normal da face.
+\end{itemize}
+
+\section{Matrizes}
+
+Uma matriz $m \times n$ organiza dados em $m$ linhas e $n$ colunas. Em CG, usamos principalmente matrizes $3 \times 3$ e $4 \times 4$.
+
+\subsection{Operações e Propriedades}
+
+\begin{itemize}
+    \item \textbf{Multiplicação de Matrizes:} O elemento $c_{ij}$ da matriz resultante $C = AB$ é o produto escalar da linha $i$ de $A$ pela coluna $j$ de $B$.
+    \item \textbf{Não-comutatividade:} Em geral, $AB \neq BA$. A ordem das transformações importa!
+    \item \textbf{Transposta:} $A^T$ é obtida trocando linhas por colunas.
+    \item \textbf{Identidade ($I$):} Matriz quadrada com 1 na diagonal principal e 0 no restante. $AI = IA = A$.
+\end{itemize}
+
+\subsection{Determinante e Inversa}
+
+O determinante de uma matriz $3 \times 3$ pode ser calculado pela regra de Sarrus. Geometricamente, o determinante representa o fator de escala de volume da transformação. Se $\det(A) = 0$, a matriz é \textbf{singular} e não possui inversa.
+
+A inversa $A^{-1}$ desfaz a transformação de $A$: $AA^{-1} = I$. Para matrizes ortogonais (como matrizes de rotação pura), a inversa é simplesmente a transposta ($A^{-1} = A^T$), o que é uma otimização comum em motores de jogo.
+
+\section{Transformações Geométricas}
+
+Transformar um objeto significa alterar a posição de seus vértices.
+
+\subsection{Coordenadas Homogêneas}
+
+Uma matriz $3 \times 3$ pode representar escala e rotação, mas não pode representar translação de forma linear. Para unificar todas as transformações (incluindo projeção perspectiva), adicionamos uma quarta componente $w$ ao vetor $[x, y, z, w]^T$.
+
+\begin{itemize}
+    \item \textbf{Ponto:} Usamos $w=1$. Quando multiplicado por uma matriz de translação, a posição muda.
+    \item \textbf{Vetor (Direção):} Usamos $w=0$. Vetores de direção não têm posição, logo são imunes à translação.
+\end{itemize}
+
+Ao final do pipeline, realizamos a \textbf{divisão perspectiva}: dividimos $x, y, z$ por $w$ para retornar ao espaço 3D real.
+
+\subsection{Translação}
+
+Dada uma translação $\mathbf{t} = (t_x, t_y, t_z)$:
+
+\begin{equation}
+    T(\mathbf{t}) = \begin{bmatrix}
+    1 & 0 & 0 & t_x \\
+    0 & 1 & 0 & t_y \\
+    0 & 0 & 1 & t_z \\
+    0 & 0 & 0 & 1
+    \end{bmatrix}
+\end{equation}
+
+\subsection{Escala}
+
+A escala por fatores $s_x, s_y, s_z$ é dada por:
+
+\begin{equation}
+    S(s_x, s_y, s_z) = \begin{bmatrix}
+    s_x & 0 & 0 & 0 \\
+    0 & s_y & 0 & 0 \\
+    0 & 0 & s_z & 0 \\
+    0 & 0 & 0 & 1
+    \end{bmatrix}
+\end{equation}
+
+Se $s_x = s_y = s_z$, temos uma escala uniforme.
+
+\subsection{Rotação}
+
+As matrizes de rotação em torno dos eixos principais são derivadas da trigonometria básica no plano 2D. Por exemplo, em torno de $Z$, as coordenadas $x$ e $y$ mudam enquanto $z$ permanece constante:
+
+\begin{equation}
+    R_z(\theta) = \begin{bmatrix}
+    \cos\theta & -\sin\theta & 0 & 0 \\
+    \sin\theta & \cos\theta & 0 & 0 \\
+    0 & 0 & 1 & 0 \\
+    0 & 0 & 0 & 1
+    \end{bmatrix}
+\end{equation}
+
+Para os outros eixos:
+
+\begin{equation}
+    R_x(\theta) = \begin{bmatrix}
+    1 & 0 & 0 & 0 \\
+    0 & \cos\theta & -\sin\theta & 0 \\
+    0 & \sin\theta & \cos\theta & 0 \\
+    0 & 0 & 0 & 1
+    \end{bmatrix}, \quad
+    R_y(\theta) = \begin{bmatrix}
+    \cos\theta & 0 & \sin\theta & 0 \\
+    0 & 1 & 0 & 0 \\
+    -\sin\theta & 0 & \cos\theta & 0 \\
+    0 & 0 & 0 & 1
+    \end{bmatrix}
+\end{equation}
+
+Para rotação em torno de um eixo arbitrário $\hat{\mathbf{u}}$, usamos a \textbf{Fórmula de Rodrigues}:
+\begin{formula}{Fórmula de Rodrigues}
+    \mathbf{v}_{rot} = \mathbf{v}\cos\theta + (\hat{\mathbf{u}} \times \mathbf{v})\sin\theta + \hat{\mathbf{u}}(\hat{\mathbf{u}} \cdot \mathbf{v})(1 - \cos\theta)
+\end{formula}
+
+\section{Composição de Transformações}
+
+Para aplicar várias transformações a um objeto, multiplicamos as matrizes. A ordem é crucial. Usando vetores coluna, a aplicação ocorre da direita para a esquerda. Para transladar, rotacionar e escalar um objeto (nesta ordem lógica de "espaço local"):
+
+\begin{equation}
+    M_{final} = T \cdot R \cdot S
+\end{equation}
+
+Isso significa que o vértice $\mathbf{v}$ será processado como $\mathbf{v}' = T(R(S\mathbf{v}))$. Se trocarmos a ordem de $T$ e $R$, o objeto rotacionará em torno da origem do mundo, não em torno do seu próprio centro.
+
+\section{Mudança de Base e Normais}
+
+Uma matriz de mudança de base transforma coordenadas de um sistema de eixos para outro. Se tivermos eixos ortonormais $\mathbf{u}, \mathbf{v}, \mathbf{w}$, a matriz que transforma do espaço local para o global é:
+
+\begin{equation}
+    M = \begin{bmatrix} u_x & v_x & w_x & 0 \\ u_y & v_y & w_y & 0 \\ u_z & v_z & w_z & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}
+\end{equation}
+
+\begin{aviso}
+    Normais de superfície não podem ser transformadas pela mesma matriz $M$ que transforma os pontos, especialmente se houver escala não-uniforme. Para manter a normal perpendicular à superfície, devemos usar a \textbf{transposta da inversa} de $M$: $N = (M^{-1})^T$.
+\end{aviso}
+
+\section{Quaternions}
+
+Embora matrizes de rotação sejam eficientes, elas sofrem de dois problemas: \textbf{Gimbal Lock} (perda de um grau de liberdade ao alinhar dois eixos de rotação) e dificuldade em interpolar entre duas orientações.
+
+Os quaternions resolvem isso. Um quaternion unitário representa uma rotação no espaço 4D:
+\begin{equation}
+    \mathbf{q} = w + xi + yj + zk = (\cos\frac{\theta}{2}, \hat{\mathbf{u}}\sin\frac{\theta}{2})
+\end{equation}
+
+Onde $\hat{\mathbf{u}}$ é o eixo e $\theta$ o ângulo.
+
+\subsection{Operações e Vantagens}
+
+\begin{itemize}
+    \item \textbf{Multiplicação:} Representa a combinação de duas rotações. É mais barata que a multiplicação de matrizes 4x4.
+    \item \textbf{Conjugado:} $\mathbf{q}^* = w - xi - yj - zk$. Representa a rotação inversa.
+    \item \textbf{SLERP (Spherical Linear Interpolation):} Permite interpolar suavemente entre duas rotações $\mathbf{q}_0$ e $\mathbf{q}_1$ com velocidade angular constante.
+\end{itemize}
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Dados os vetores $\mathbf{a} = (1, 2, 3)$ e $\mathbf{b} = (4, -5, 6)$, calcule $\mathbf{a} \cdot \mathbf{b}$ e $\mathbf{a} \times \mathbf{b}$.
+    \item Demonstre que para qualquer vetor unitário $\hat{\mathbf{v}}$, o produto escalar $\hat{\mathbf{v}} \cdot \hat{\mathbf{v}} = 1$.
+    \item Construa a matriz de transformação 4x4 que primeiro escala um objeto por 2 em todos os eixos e depois o translada para a posição $(10, 5, 0)$.
+    \item Explique, com um diagrama descrito, por que a ordem $T \cdot R$ é diferente de $R \cdot T$.
+    \item Deduza a matriz de rotação $R_y(\theta)$ a partir de um círculo unitário no plano $XZ$.
+    \item Dada a matriz de modelo $M$ que inclui uma escala de $(1, 2, 1)$, calcule a matriz necessária para transformar as normais corretamente.
+\end{enumerate}

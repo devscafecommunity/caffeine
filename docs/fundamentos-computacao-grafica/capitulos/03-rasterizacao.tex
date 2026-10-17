@@ -1,0 +1,312 @@
+\chapter{Rasterização}
+
+A rasterização é o processo fundamental de conversão de descrições geométricas contínuas em uma grade discreta de pixels, permitindo a exibição de cenas 3D em monitores digitais. Após as etapas de transformações de visualização e projeção, os vértices que compõem os objetos são mapeados para o \textit{viewport} em coordenadas de tela. Contudo, como o hardware de exibição moderno é composto por uma matriz finita de elementos de cor, denominados pixels, é necessário realizar uma amostragem sistemática das primitivas geométricas. Como destaca \textcite{shirley2021fundamentals}, a rasterização deve equilibrar a fidelidade visual com uma eficiência computacional extrema, processando bilhões de fragmentos por segundo em arquiteturas de GPU altamente paralelizadas.
+
+\section{O Problema da Discretização}
+
+O hardware gráfico opera em um espaço de coordenadas de tela, onde cada pixel é uma amostra pontual em uma grade regular. O problema central da rasterização é determinar quais pixels são "cobertos" por uma primitiva geométrica. Este processo envolve não apenas a geometria, mas também a interpolação de atributos (como cores e texturas) e a resolução da visibilidade (quais objetos estão na frente).
+
+\section{Rasterização de Pontos e Linhas}
+
+Embora triângulos sejam as primitivas dominantes, a rasterização de pontos e linhas é a base para ferramentas de CAD e debug visual.
+
+\subsection{Rasterização de Pontos}
+
+Um ponto matemático não possui área. No entanto, para ser visível, ele deve ser mapeado para pelo menos um pixel. A regra de rasterização de pontos geralmente ativa o pixel $(x, y)$ tal que $x = \lfloor x_p \rfloor$ e $y = \lfloor y_p \rfloor$. Em aplicações onde pontos representam partículas, pode-se utilizar um \textit{Point Size} maior que 1.0, o que resulta na ativação de um bloco de pixels ao redor da coordenada central.
+
+\subsection{O Algoritmo de Bresenham para Linhas}
+
+O traçado de linhas em uma grade discreta apresenta o desafio de escolher os pixels que melhor aproximam uma trajetória contínua. O algoritmo de Bresenham, desenvolvido em 1962, é a solução clássica que evita operações de ponto flutuante e divisões, utilizando apenas incrementos inteiros.
+
+\subsubsection{Derivação Matemática e a Variável de Decisão}
+
+Consideremos uma linha no primeiro octante, onde a inclinação $m = \Delta y / \Delta x$ satisfaz $0 \le m \le 1$. Ao avançar uma unidade no eixo $X$, devemos decidir se o pixel no eixo $Y$ permanece o mesmo ou incrementa para $y+1$.
+
+Definimos o erro acumulado $e$ como a distância vertical entre a posição real da linha e a posição discreta do pixel. Para otimização, trabalhamos com uma variável de decisão $d$ que elimina frações. Ao analisar o ponto médio entre os pixels candidatos, derivamos:
+\begin{itemize}
+    \item Se $P_i \le 0$: Escolhemos o pixel inferior (mesmo $Y$). $P_{i+1} = P_i + 2\Delta y$.
+    \item Se $P_i > 0$: Escolhemos o pixel superior ($Y+1$). $P_{i+1} = P_i + 2(\Delta y - \Delta x)$.
+\end{itemize}
+
+O valor inicial é $P_0 = 2\Delta y - \Delta x$. Esta abordagem garante que a linha rasterizada seja a representação mais fiel possível dentro da grade, minimizando o erro de aproximação visual (\textit{aliasing} geométrico).
+
+\subsubsection{Generalização para Todos os Octantes}
+
+Para suportar todas as orientações possíveis, aplicamos transformações de simetria:
+1. Se $|\Delta y| > |\Delta x|$, trocamos os eixos $X$ e $Y$ (linha predominantemente vertical).
+2. Se $x_0 > x_1$, invertemos a ordem dos pontos de controle.
+3. Se $y_0 > y_1$, o incremento em $Y$ torna-se negativo ($step_y = -1$).
+
+\begin{lstlisting}[language=C++, caption=Algoritmo de Bresenham Robusto]
+void drawLine(int x0, int y0, int x1, int y1) {
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    while (true) {
+        setPixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+\end{lstlisting}
+
+\section{Rasterização de Triângulos}
+
+Triângulos são as primitivas fundamentais das GPUs modernas por serem garantidamente planos e convexos.
+
+\subsection{Bounding Box e Teste de Inclusão}
+
+O pipeline moderno de rasterização utiliza uma abordagem de força bruta inteligente. Para cada triângulo:
+1. Calcula-se a \textbf{Axis-Aligned Bounding Box (AABB)} no espaço de tela.
+2. Clampa-se a caixa contra os limites do \textit{viewport}.
+3. Para cada pixel $(x, y)$ na caixa, aplica-se a \textbf{Função de Aresta} ($E$):
+\begin{equation}
+    E(P) = (x - x_i)(y_j - y_i) - (y - y_i)(x_j - x_i)
+\end{equation}
+Se $E(P) > 0$ para as três arestas, o pixel é coberto pelo triângulo.
+
+\subsection{A Regra de Preenchimento Top-Left}
+
+Para evitar a rasterização dupla de pixels sobre arestas compartilhadas (o que causaria problemas em transparências), as GPUs utilizam a regra \textit{Top-Left}. Um pixel na aresta só pertence ao triângulo se a aresta for uma "aresta de topo" (horizontal e acima) ou uma "aresta esquerda" (situada à esquerda).
+
+\section{Coordenadas Baricêntricas}
+
+Coordenadas baricêntricas $(\lambda_0, \lambda_1, \lambda_2)$ fornecem uma forma natural de descrever a posição de um ponto $P$ em relação aos vértices $V_0, V_1, V_2$.
+
+\subsection{Definição via Áreas com Sinal}
+
+Cada $\lambda_i$ é a razão entre a área do sub-triângulo oposto ao vértice $V_i$ e a área total $A_{ABC}$:
+\begin{formula}{Áreas Baricêntricas}
+    \lambda_0 = \frac{\text{Area}(P, B, C)}{\text{Area}(A, B, C)}, \quad \lambda_1 = \frac{\text{Area}(A, P, C)}{\text{Area}(A, B, C)}, \quad \lambda_2 = \frac{\text{Area}(A, B, P)}{\text{Area}(A, B, C)}
+\end{formula}
+
+Propriedades fundamentais:
+\begin{itemize}
+    \item $\lambda_0 + \lambda_1 + \lambda_2 = 1$.
+    \item $P$ está dentro se $\lambda_i \ge 0$ para todo $i$.
+    \item Se um $\lambda_i = 0$, $P$ está sobre a aresta oposta a $V_i$.
+\end{itemize}
+
+\subsection{Interpolação de Atributos}
+
+As coordenadas baricêntricas são usadas para interpolar atributos de vértice (cor, normal, UV) de forma suave:
+\begin{equation}
+    \Phi_P = \lambda_0 \Phi_0 + \lambda_1 \Phi_1 + \lambda_2 \Phi_2
+\end{equation}
+
+\section{Visibilidade e o Z-Buffer}
+
+O problema de quais triângulos são visíveis em cada pixel é resolvido pelo \textbf{Z-Buffer} (ou \textit{Depth Buffer}).
+
+\subsection{O Algoritmo do Depth Buffer}
+
+Diferente do Algoritmo do Pintor (que exige ordenação $O(N \log N)$), o Z-Buffer opera por fragmento:
+1. Inicializar buffer com $1.0$ (máxima profundidade).
+2. Para cada fragmento gerado com profundidade $z \in [0, 1]$:
+   - Se $z < Z\_Buffer[x, y]$:
+     - $Z\_Buffer[x, y] = z$.
+     - Atualizar cor do pixel.
+
+\subsection{Não-Linearidade de Z e Z-Fighting}
+
+A projeção perspectiva mapeia $Z$ de forma não-linear ($1/z$). Isso concentra a precisão perto do plano \textit{near}. O \textbf{Z-fighting} ocorre quando a precisão finita do buffer (ex: 24 bits) impede a distinção entre dois fragmentos muito próximos. Afastar o plano \textit{near} da câmera é a solução primária.
+
+\subsection{Interpolação Perspectiva-Correta}
+
+Interpolar atributos linearmente na tela produz distorções (ex: texturas "balançando"). A solução matemática é interpolar $1/w$ e os atributos divididos por $w$:
+\begin{formula}{Correção Perspectiva}
+    \Phi_{fragmento} = \frac{\text{linear}(\Phi/w)}{\text{linear}(1/w)}
+\end{formula}
+
+\section{Antialiasing}
+
+O \textit{aliasing} (serrilhado) ocorre devido à amostragem insuficiente de sinais de alta frequência (bordas).
+
+\begin{itemize}
+    \item \textbf{SSAA (Super-Sampling):} Renderiza em $4\times$ resolução e reduz. Qualidade máxima, custo altíssimo.
+    \item \textbf{MSAA (Multi-Sampling):} Otimiza o SSAA executando o fragment shader apenas uma vez por pixel, mas testando cobertura em sub-pixels.
+    \item \textbf{FXAA (Fast Approximate):} Filtro de pós-processamento baseado em detecção de bordas por contraste.
+    \item \textbf{TAA (Temporal):} Acumula amostras de frames anteriores usando reprojeção com vetores de movimento.
+\end{itemize}
+
+\section{Alpha Blending}
+
+A transparência é simulada via composição \textit{Over}:
+\begin{formula}{Equação de Blending}
+    C_{out} = \alpha_s C_s + (1 - \alpha_s) C_d
+\end{formula}
+Objetos transparentes devem ser renderizados de trás para frente (\textit{back-to-front}) após todos os opacos. O uso de \textit{Pre-multiplied Alpha} evita artefatos de cor em filtros de textura.
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Execute o algoritmo de Bresenham manualmente para a linha $(0, 0)$ a $(5, 3)$.
+    \item Deduza a variável de decisão inicial $P_0$ para Bresenham.
+    \item Prove que as coordenadas baricêntricas somam 1 para qualquer ponto no plano.
+    \item Por que a interpolação linear de atributos na tela falha em projeções perspectivas?
+    \item Explique como o Z-Buffer lida com a sobreposição de objetos sem necessidade de ordenação prévia.
+    \item O que define a precisão do Z-Buffer e como o Z-fighting se manifesta?
+    \item Explique o funcionamento do MSAA e por que ele é preferível ao SSAA.
+    \item Como o \textit{Pre-multiplied Alpha} altera a matemática do Alpha Blending?
+    \item Discuta o impacto do \textit{Early-Z} no desempenho de fragment shaders complexos.
+    \item Dada uma aresta compartilhada, como a regra Top-Left garante que cada pixel pertença a apenas um triângulo?
+\end{enumerate}
+
+
+\begin{lstlisting}[language=C++, caption=Implementação Generalizada de Bresenham]
+void rasterizeLine(int x0, int y0, int x1, int y1) {
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    while (true) {
+        setPixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { // Erro em X
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) { // Erro em Y
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Rasterização de Triângulos}
+
+Triângulos são as primitivas de eleição em computação gráfica por serem inerentemente planos, convexos e bem definidos por apenas três pontos. A rasterização moderna abandonou o método de \textit{scanline} horizontal em favor de algoritmos baseados em funções de aresta, que são mais amigáveis ao processamento paralelo massivo das GPUs.
+
+\subsection{O Algoritmo de Bounding Box}
+
+O processo inicia-se com o cálculo da \textit{Axis-Aligned Bounding Box} (AABB) do triângulo no espaço de tela. Esta caixa delimita a área máxima que o triângulo pode ocupar:
+\begin{align}
+    x_{min} = \lfloor \min(x_0, x_1, x_2) \rfloor, \quad x_{max} = \lceil \max(x_0, x_1, x_2) \rceil \\
+    y_{min} = \lfloor \min(y_0, y_1, y_2) \rfloor, \quad y_{max} = \lceil \max(y_0, y_1, y_2) \rceil
+\end{align}
+
+Para cada pixel contido nesta região, executamos uma \textbf{função de aresta} $E(x, y)$. Se o valor da função for positivo para as três arestas do triângulo (considerando uma ordem de enrolamento consistente, como sentido anti-horário), o pixel está dentro da primitiva.
+
+\subsection{Regras de Desempate (Top-Left Rule)}
+
+Um problema comum ocorre em pixels localizados exatamente sobre a aresta compartilhada entre dois triângulos adjacentes. Se ambos os triângulos rasterizarem o pixel, haverá sobreposição desnecessária e artefatos em transparências. Para evitar isso, as GPUs aplicam a "Regra de Topo-Esquerda": um pixel na aresta só é desenhado se a aresta for uma "aresta de topo" (horizontal e acima) ou uma "aresta esquerda" (não horizontal e situada à esquerda do corpo do triângulo).
+
+\section{Coordenadas Baricêntricas}
+
+As coordenadas baricêntricas fornecem um sistema de coordenadas local para o triângulo, permitindo expressar qualquer ponto $P$ como uma combinação linear dos vértices $V_0, V_1$ e $V_2$.
+
+\subsection{Definição Matemática e Áreas}
+
+Um ponto $P$ dentro do triângulo satisfaz a equação:
+\begin{formula}{Representação Baricêntrica}
+    P = \lambda_0 V_0 + \lambda_1 V_1 + \lambda_2 V_2 \\
+    \lambda_0 + \lambda_1 + \lambda_2 = 1, \quad \lambda_i \in [0, 1]
+\end{formula}
+
+Cada coordenada $\lambda_i$ pode ser interpretada como a razão entre a área do sub-triângulo oposto ao vértice $i$ e a área total do triângulo original. Utilizando o produto vetorial 2D (determinante), calculamos as áreas com sinal:
+\begin{equation}
+    \text{Area}(A, B, C) = \frac{1}{2} \det \begin{bmatrix} x_B - x_A & x_C - x_A \\ y_B - y_A & y_C - y_A \end{bmatrix}
+\end{equation}
+
+A linearidade dessas funções de área permite que as GPUs calculem as coordenadas baricêntricas de forma incremental conforme percorrem os pixels, otimizando drasticamente o teste de inclusão e a interpolação.
+
+\subsection{Interpolação de Atributos e Sombreamento}
+
+Qualquer atributo associado aos vértices (cor, normal, coordenada de textura) é interpolado para o fragmento $P$ usando as mesmas coordenadas baricêntricas:
+\begin{equation}
+    \Phi_P = \lambda_0 \Phi_0 + \lambda_1 \Phi_1 + \lambda_2 \Phi_2
+\end{equation}
+
+\begin{lstlisting}[language=GLSL, caption=Exemplo de Atributos Interpolados]
+// No Fragment Shader, os 'in' sao interpolados baricentricamente
+in vec3 vNormal; // Normal interpolada
+in vec2 vUV;     // Coordenada de textura interpolada
+
+void main() {
+    vec3 n = normalize(vNormal);
+    vec4 texColor = texture(uTexture, vUV);
+    // ... calculo de iluminacao ...
+}
+\end{lstlisting}
+
+\section{Visibilidade e o Z-Buffer}
+
+A determinação de quais superfícies são visíveis e quais estão ocultas é resolvida pelo algoritmo de \textit{Z-Buffer} (ou \textit{Depth Buffer}), que superou historicamente o Algoritmo do Pintor.
+
+\subsection{Falhas do Algoritmo do Pintor}
+
+Ordenar triângulos do fundo para a frente (\textit{back-to-front}) é ineficiente e falha em casos de:
+\begin{itemize}
+    \item Interseções cíclicas (A cobre B, B cobre C, C cobre A).
+    \item Triângulos que se trespassam mutuamente.
+    \item Custo computacional de ordenação $O(N \log N)$ para milhões de polígonos.
+\end{itemize}
+
+\subsection{O Algoritmo Depth-Buffer}
+
+O Z-Buffer mantém um buffer de memória auxiliar com a mesma resolução do buffer de cor. Cada entrada armazena a menor profundidade $z$ encontrada até o momento para aquele pixel.
+
+Procedimento:
+\begin{enumerate}
+    \item Inicializar o Z-Buffer com o valor máximo ($1.0$ em NDC).
+    \item Para cada fragmento gerado na posição $(x, y)$ com profundidade $z$:
+    \item Se $z < Z\_Buffer[x, y]$:
+        \item $Z\_Buffer[x, y] = z$.
+        \item Atualizar o pixel no Color Buffer com a cor do fragmento.
+    \item Caso contrário, descartar o fragmento.
+\end{enumerate}
+
+\subsection{Interpolação Perspectiva-Correta}
+
+Um detalhe matemático fundamental é que a projeção perspectiva não preserva a linearidade da profundidade. Interpolar atributos linearmente no espaço de tela (espaço 2D após a divisão por $W$) causa distorções graves em texturas, conhecidas como "afunilamento".
+
+A correção exige a interpolação linear do inverso da profundidade $1/w$ e dos atributos modificados $\Phi/w$. O valor final no fragmento é recuperado por:
+\begin{formula}{Fórmula da Interpolação Perspectiva}
+    \Phi_{fragmento} = \frac{\text{interp}(\Phi/w)}{\text{interp}(1/w)}
+\end{formula}
+
+\subsection{Z-Fighting e Early-Z}
+
+O \textbf{Z-fighting} manifesta-se como cintilações em superfícies muito próximas, onde a imprecisão numérica do buffer impede a decisão correta de visibilidade. Como a precisão do Z-Buffer é maior perto do plano \textit{near}, uma solução comum é aumentar o valor do \textit{near plane}.
+
+O \textbf{Early-Z} é uma técnica onde o hardware realiza o teste de profundidade \textbf{antes} de executar o Fragment Shader. Se o teste falhar, o shader nem sequer é iniciado, economizando ciclos preciosos de GPU.
+
+\section{Antialiasing}
+
+Devido à natureza discreta dos pixels, bordas de alta frequência geométrica geram serrilhados (\textit{aliasing}). O Teorema de Nyquist afirma que precisamos de uma taxa de amostragem pelo menos duas vezes superior à frequência máxima do sinal.
+
+\subsection{Técnicas de Suavização}
+
+\begin{itemize}
+    \item \textbf{SSAA (Super-Sampling):} Renderiza em alta resolução interna e reduz para o tamanho final. Qualidade perfeita, mas custo de memória e processamento proibitivo ($4\times$ ou mais).
+    \item \textbf{MSAA (Multi-Sampling):} Otimização onde o shader de fragmento roda apenas uma vez por pixel, mas os testes de cobertura e profundidade ocorrem em múltiplas sub-amostras. Oferece excelente custo-benefício para bordas.
+    \item \textbf{FXAA (Fast Approximate):} Algoritmo de pós-processamento que suaviza bordas baseado em contraste. Muito rápido, mas pode "borrar" texturas finas.
+    \item \textbf{TAA (Temporal):} Combina informações de múltiplos quadros no tempo, aplicando um pequeno \textit{jitter} na projeção a cada frame. Atualmente é o padrão na indústria por lidar bem com aliasing de movimento e especularidade.
+\end{itemize}
+
+\section{Alpha Blending e Transparência}
+
+Para objetos translúcidos, a cor final é uma composição entre a fonte (\textit{source}) e o que já está no buffer (\textit{destination}). A equação "Over" é a mais comum:
+\begin{formula}{Composição Alpha}
+    C_{out} = \alpha_s C_s + (1 - \alpha_s) C_d
+\end{formula}
+
+Diferente de objetos opacos, a ordem de renderização é vital: objetos transparentes devem ser desenhados \textbf{após} os opacos e ordenados de trás para frente. Uma técnica para evitar artefatos de cor em filtragens é o \textbf{Pre-multiplied Alpha}, onde os canais RGB já são armazenados multiplicados pelo alpha ($C' = \alpha C$).
+
+\section*{Exercícios}
+
+\begin{enumerate}
+    \item Execute o algoritmo de Bresenham manualmente para a linha entre $(0, 0)$ e $(5, 3)$. Liste os valores da variável de decisão e os pixels escolhidos.
+    \item Em um triângulo com vértices $P_0(0,0)$, $P_1(10,0)$ e $P_2(0,10)$, determine as coordenadas baricêntricas do ponto $P(2, 2)$. Ele está dentro do triângulo?
+    \item Deduza a expressão da variável de decisão inicial $d_0$ para o algoritmo de Bresenham.
+    \item Por que a interpolação perspectiva-correta é necessária? Explique a diferença entre interpolar no espaço 3D e no espaço de tela.
+    \item O que é o \textit{Z-fighting} e como a distribuição não-linear de valores no Z-Buffer contribui para este fenômeno?
+    \item Explique o funcionamento do MSAA e por que ele é mais eficiente que o SSAA em termos de execução de fragment shaders.
+    \item Como o \textit{Pre-multiplied Alpha} simplifica a equação de composição e por que ele é preferido em pipelines de composição profissional?
+    \item Discuta o impacto do \textit{Early-Z} na performance de uma cena com alta \textit{overdraw} (muitos objetos sobrepostos).
+\end{enumerate}

@@ -1,0 +1,147 @@
+% ============================================================================
+% Chapter 10 — Native C++ Scripting
+% ============================================================================
+\chapter{Native C++ Scripting}
+
+\textbf{Header:} \texttt{script/CppScript.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Script}
+
+CppScript is the engine's native scripting interface. You write a C++ class
+that inherits from \texttt{CppScript}, override the callbacks you need, and
+register it with a macro. The engine's \texttt{ScriptSystem} attaches script
+instances to entities and calls the lifecycle methods every frame.
+
+\section{CppScript Base Class}
+
+\begin{lstlisting}
+class CppScript {
+public:
+    virtual ~CppScript() = default;
+
+    virtual void onCreate(ECS::Entity entity, ECS::World& world);
+    virtual void onUpdate(ECS::Entity entity, ECS::World& world, f32 dt);
+    virtual void onDestroy(ECS::Entity entity, ECS::World& world);
+    virtual void onCollision(ECS::Entity entity, ECS::Entity other,
+                             ECS::World& world);
+};
+\end{lstlisting}
+
+All callbacks have default empty implementations; override only what you
+need.
+
+\begin{longtable}{lp{9.5cm}}
+\toprule
+\textbf{Callback} & \textbf{When called} \\
+\midrule
+\texttt{onCreate}    & Once, when the script is attached to an entity. Use to initialise state. \\
+\texttt{onUpdate}    & Every frame. \texttt{dt} is the elapsed time in seconds. \\
+\texttt{onDestroy}   & Once, when the entity is destroyed or the script is removed. \\
+\texttt{onCollision} & When the entity's collider touches another entity's collider. \texttt{other} is the other entity. \\
+\bottomrule
+\end{longtable}
+
+\section{Writing a Script}
+
+\begin{lstlisting}
+#include "script/CppScript.hpp"
+#include "ecs/World.hpp"
+#include "ecs/Components.hpp"
+#include "physics/PhysicsComponents2D.hpp"
+
+class PlayerController : public Caffeine::Script::CppScript {
+public:
+    void onCreate(ECS::Entity entity, ECS::World& world) override {
+        // Nothing to initialise yet
+    }
+
+    void onUpdate(ECS::Entity entity, ECS::World& world, f32 dt) override {
+        auto* vel = world.get<Velocity2D>(entity);
+        if (!vel) return;
+
+        // Move horizontally based on input
+        // (see Chapter 9 for InputManager usage)
+        vel->x = m_moveDir * m_speed;
+
+        // Simple gravity
+        vel->y += 980.0f * dt;  // pixels/s^2
+    }
+
+    void onCollision(ECS::Entity entity, ECS::Entity other,
+                     ECS::World& world) override {
+        // Reduce health if colliding with an enemy
+        if (world.has<EnemyTag>(other)) {
+            if (auto* hp = world.get<Health>(entity)) {
+                hp->current = (hp->current > 10) ? hp->current - 10 : 0;
+            }
+        }
+    }
+
+private:
+    f32 m_speed   = 200.0f;
+    f32 m_moveDir = 0.0f;
+};
+
+// Register the script — place this in the .cpp file, outside any function
+REGISTER_CPP_SCRIPT(PlayerController)
+\end{lstlisting}
+
+\section{The REGISTER\_CPP\_SCRIPT Macro}
+
+\begin{lstlisting}
+REGISTER_CPP_SCRIPT(ClassName)
+\end{lstlisting}
+
+This macro registers a factory function in \texttt{CppScriptRegistry} at
+static-initialisation time. The editor and scene loader use the registry to
+instantiate scripts by name, which is how scripts attached in the editor are
+recreated when the game starts.
+
+Place the macro in the \texttt{.cpp} file, at namespace scope, after the
+class definition. Do not put it inside a function or header file.
+
+\section{CppScriptRegistry}
+
+\begin{lstlisting}
+CppScriptRegistry& reg = CppScriptRegistry::instance();
+
+// Create a script by name (used by the scene loader)
+auto script = reg.create("PlayerController");
+
+// List all registered script names (used by the editor)
+for (const std::string& name : reg.names()) {
+    // display in inspector dropdown
+}
+\end{lstlisting}
+
+You rarely need to call the registry directly in game code; the
+\texttt{ScriptSystem} handles instantiation automatically.
+
+\section{Multiple Scripts on One Entity}
+
+The \texttt{ScriptSystem} supports multiple script instances per entity. To
+attach two scripts to the same entity, use the entity inspector in the editor
+or add them programmatically:
+
+\begin{lstlisting}
+// The ScriptComponent holds a list of CppScript instances.
+// Typically the editor handles this, but it can be done in code:
+auto& sc = world.add<ScriptComponent>(e);
+sc.scripts.push_back(CppScriptRegistry::instance().create("PlayerController"));
+sc.scripts.push_back(CppScriptRegistry::instance().create("HealthRegen"));
+\end{lstlisting}
+
+\section{Best Practices}
+
+\begin{itemize}[noitemsep]
+  \item Keep \texttt{onUpdate} fast. It runs every frame for every entity
+        that has this script attached. Expensive work belongs in a background
+        job, not in a script callback.
+  \item Cache component pointers only within a single callback invocation.
+        Component memory can be relocated when other components are added or
+        removed from any entity in the world.
+  \item Do not destroy the entity inside \texttt{onUpdate}. Schedule the
+        destruction for the end of the frame using a deferred command or a
+        flag checked by a cleanup system.
+  \item Use \texttt{onCreate} for resource setup (loading sounds, caching
+        entity references) and \texttt{onDestroy} for cleanup.
+\end{itemize}

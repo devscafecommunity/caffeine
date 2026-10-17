@@ -1,0 +1,33 @@
+% ============================================================================
+\chapter{Editor Architecture and Undo System}
+% ============================================================================
+
+\section{EditorContext}
+
+\texttt{EditorContext} is the singleton shared state passed to every
+panel. It holds selection state, gizmo mode, snap settings, the camera
+parameters described in Chapter~12, and the
+\texttt{UndoStack}.
+
+\section{UndoStack}
+
+The undo system uses \textbf{full world snapshots}: each
+\texttt{EditorCommand} stores a \texttt{beforeState} and \texttt{afterState}
+as \texttt{std::vector<u8>} binary blobs. Undo restores the before state;
+redo restores the after state.
+
+The ring buffer holds up to 256 commands. A new push after an undo
+truncates the redo history (linear undo). This is the simplest correct
+implementation; a command-specific delta approach (e.g.\ storing only
+the modified component fields) would be more memory-efficient but
+requires serialisation round-trips for every component type.
+
+\section{Panel System}
+
+Each editor panel is an autonomous class with an
+\texttt{onImGuiRender(World\&, EditorContext\&)} method:
+\texttt{HierarchyPanel}, \texttt{InspectorPanel}, \texttt{AssetBrowser},
+\texttt{AnimationTimeline}, \texttt{AudioPreviewPanel},
+\texttt{BuildDialog}, etc.
+Panels communicate solely through \texttt{EditorContext}; no panel holds
+a pointer to another panel.

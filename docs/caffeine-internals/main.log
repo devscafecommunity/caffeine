@@ -1,0 +1,1929 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.5.21)  23 MAY 2026 14:56
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+**main.tex
+(./main.tex
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
+(/usr/share/texmf-dist/tex/latex/base/report.cls
+Document Class: report 2025/01/22 v1.4n Standard LaTeX document class
+(/usr/share/texmf-dist/tex/latex/base/size12.clo
+File: size12.clo 2025/01/22 v1.4n Standard LaTeX file (size option)
+)
+\c@part=\count275
+\c@chapter=\count276
+\c@section=\count277
+\c@subsection=\count278
+\c@subsubsection=\count279
+\c@paragraph=\count280
+\c@subparagraph=\count281
+\c@figure=\count282
+\c@table=\count283
+\abovecaptionskip=\skip49
+\belowcaptionskip=\skip50
+\bibindent=\dimen148
+)
+(/usr/share/texmf-dist/tex/latex/geometry/geometry.sty
+Package: geometry 2020/01/02 v5.9 Page Geometry
+
+(/usr/share/texmf-dist/tex/latex/graphics/keyval.sty
+Package: keyval 2022/05/29 v1.15 key=value parser (DPC)
+\KV@toks@=\toks17
+)
+(/usr/share/texmf-dist/tex/generic/iftex/ifvtex.sty
+Package: ifvtex 2019/10/25 v1.7 ifvtex legacy package. Use iftex instead.
+
+(/usr/share/texmf-dist/tex/generic/iftex/iftex.sty
+Package: iftex 2024/12/12 v1.0g TeX engine tests
+))
+\Gm@cnth=\count284
+\Gm@cntv=\count285
+\c@Gm@tempcnt=\count286
+\Gm@bindingoffset=\dimen149
+\Gm@wd@mp=\dimen150
+\Gm@odd@mp=\dimen151
+\Gm@even@mp=\dimen152
+\Gm@layoutwidth=\dimen153
+\Gm@layoutheight=\dimen154
+\Gm@layouthoffset=\dimen155
+\Gm@layoutvoffset=\dimen156
+\Gm@dimlist=\toks18
+)
+(/usr/share/texmf-dist/tex/latex/base/fontenc.sty
+Package: fontenc 2025/07/18 v2.1d Standard LaTeX package
+)
+(/usr/share/texmf-dist/tex/latex/base/inputenc.sty
+Package: inputenc 2024/02/08 v1.3d Input encoding file
+\inpenc@prehook=\toks19
+\inpenc@posthook=\toks20
+)
+(/usr/share/texmf-dist/tex/latex/psnfss/helvet.sty
+Package: helvet 2020/03/25 PSNFSS-v9.3 (WaS) 
+)
+(/usr/share/texmf-dist/tex/latex/setspace/setspace.sty
+Package: setspace 2022/12/04 v6.7b set line spacing
+)
+(/usr/share/texmf-dist/tex/latex/microtype/microtype.sty
+Package: microtype 2026/03/01 v3.2d Micro-typographical refinements (RS)
+
+(/usr/share/texmf-dist/tex/latex/etoolbox/etoolbox.sty
+Package: etoolbox 2025/10/02 v2.5m e-TeX tools for LaTeX (JAW)
+\etb@tempcnta=\count287
+)
+\MT@toks=\toks21
+\MT@tempbox=\box53
+\MT@count=\count288
+LaTeX Info: Redefining \noprotrusionifhmode on input line 1084.
+LaTeX Info: Redefining \leftprotrusion on input line 1085.
+\MT@prot@toks=\toks22
+LaTeX Info: Redefining \rightprotrusion on input line 1104.
+LaTeX Info: Redefining \textls on input line 1449.
+\MT@outer@kern=\dimen157
+LaTeX Info: Redefining \microtypecontext on input line 2053.
+LaTeX Info: Redefining \textmicrotypecontext on input line 2070.
+\MT@listname@count=\count289
+
+(/usr/share/texmf-dist/tex/latex/microtype/microtype-pdftex.def
+File: microtype-pdftex.def 2026/03/01 v3.2d Definitions specific to pdftex (RS)
+
+LaTeX Info: Redefining \lsstyle on input line 944.
+LaTeX Info: Redefining \lslig on input line 944.
+\MT@outer@space=\skip51
+)
+Package microtype Info: Loading configuration file microtype.cfg.
+
+(/usr/share/texmf-dist/tex/latex/microtype/microtype.cfg
+File: microtype.cfg 2026/03/01 v3.2d microtype main configuration file (RS)
+)
+LaTeX Info: Redefining \microtypesetup on input line 3065.
+)
+(/usr/share/texmf-dist/tex/latex/xcolor/xcolor.sty
+Package: xcolor 2024/09/29 v3.02 LaTeX color extensions (UK)
+
+(/usr/share/texmf-dist/tex/latex/graphics-cfg/color.cfg
+File: color.cfg 2016/01/02 v1.6 sample color configuration
+)
+Package xcolor Info: Driver file: pdftex.def on input line 274.
+
+(/usr/share/texmf-dist/tex/latex/graphics-def/pdftex.def
+File: pdftex.def 2025/09/29 v1.2d Graphics/color driver for pdftex
+)
+(/usr/share/texmf-dist/tex/latex/graphics/mathcolor.ltx)
+Package xcolor Info: Model `cmy' substituted by `cmy0' on input line 1349.
+Package xcolor Info: Model `hsb' substituted by `rgb' on input line 1353.
+Package xcolor Info: Model `RGB' extended on input line 1365.
+Package xcolor Info: Model `HTML' substituted by `rgb' on input line 1367.
+Package xcolor Info: Model `Hsb' substituted by `hsb' on input line 1368.
+Package xcolor Info: Model `tHsb' substituted by `hsb' on input line 1369.
+Package xcolor Info: Model `HSB' substituted by `hsb' on input line 1370.
+Package xcolor Info: Model `Gray' substituted by `gray' on input line 1371.
+Package xcolor Info: Model `wave' substituted by `hsb' on input line 1372.
+)
+(/usr/share/texmf-dist/tex/latex/titlesec/titlesec.sty
+Package: titlesec 2025/01/04 v2.17 Sectioning titles
+\ttl@box=\box54
+\beforetitleunit=\skip52
+\aftertitleunit=\skip53
+\ttl@plus=\dimen158
+\ttl@minus=\dimen159
+\ttl@toksa=\toks23
+\titlewidth=\dimen160
+\titlewidthlast=\dimen161
+\titlewidthfirst=\dimen162
+)
+(/usr/share/texmf-dist/tex/latex/amsmath/amsmath.sty
+Package: amsmath 2025/07/09 v2.17z AMS math features
+\@mathmargin=\skip54
+
+For additional information on amsmath, use the `?' option.
+(/usr/share/texmf-dist/tex/latex/amsmath/amstext.sty
+Package: amstext 2024/11/17 v2.01 AMS text
+
+(/usr/share/texmf-dist/tex/latex/amsmath/amsgen.sty
+File: amsgen.sty 1999/11/30 v2.0 generic functions
+\@emptytoks=\toks24
+\ex@=\dimen163
+))
+(/usr/share/texmf-dist/tex/latex/amsmath/amsbsy.sty
+Package: amsbsy 1999/11/29 v1.2d Bold Symbols
+\pmbraise@=\dimen164
+)
+(/usr/share/texmf-dist/tex/latex/amsmath/amsopn.sty
+Package: amsopn 2022/04/08 v2.04 operator names
+)
+\inf@bad=\count290
+LaTeX Info: Redefining \frac on input line 233.
+\uproot@=\count291
+\leftroot@=\count292
+LaTeX Info: Redefining \overline on input line 398.
+LaTeX Info: Redefining \colon on input line 409.
+\classnum@=\count293
+\DOTSCASE@=\count294
+LaTeX Info: Redefining \ldots on input line 495.
+LaTeX Info: Redefining \dots on input line 498.
+LaTeX Info: Redefining \cdots on input line 619.
+\Mathstrutbox@=\box55
+\strutbox@=\box56
+LaTeX Info: Redefining \big on input line 721.
+LaTeX Info: Redefining \Big on input line 722.
+LaTeX Info: Redefining \bigg on input line 723.
+LaTeX Info: Redefining \Bigg on input line 724.
+\big@size=\dimen165
+LaTeX Font Info:    Redeclaring font encoding OML on input line 742.
+LaTeX Font Info:    Redeclaring font encoding OMS on input line 743.
+\macc@depth=\count295
+LaTeX Info: Redefining \bmod on input line 904.
+LaTeX Info: Redefining \pmod on input line 909.
+LaTeX Info: Redefining \smash on input line 939.
+LaTeX Info: Redefining \relbar on input line 969.
+LaTeX Info: Redefining \Relbar on input line 970.
+\c@MaxMatrixCols=\count296
+\dotsspace@=\muskip17
+\c@parentequation=\count297
+\dspbrk@lvl=\count298
+\tag@help=\toks25
+\row@=\count299
+\column@=\count300
+\maxfields@=\count301
+\andhelp@=\toks26
+\eqnshift@=\dimen166
+\alignsep@=\dimen167
+\tagshift@=\dimen168
+\tagwidth@=\dimen169
+\totwidth@=\dimen170
+\lineht@=\dimen171
+\@envbody=\toks27
+\multlinegap=\skip55
+\multlinetaggap=\skip56
+\mathdisplay@stack=\toks28
+LaTeX Info: Redefining \[ on input line 2950.
+LaTeX Info: Redefining \] on input line 2951.
+)
+(/usr/share/texmf-dist/tex/latex/amsfonts/amssymb.sty
+Package: amssymb 2013/01/14 v3.01 AMS font symbols
+
+(/usr/share/texmf-dist/tex/latex/amsfonts/amsfonts.sty
+Package: amsfonts 2013/01/14 v3.01 Basic AMSFonts support
+\symAMSa=\mathgroup4
+\symAMSb=\mathgroup5
+LaTeX Font Info:    Redeclaring math symbol \hbar on input line 98.
+LaTeX Font Info:    Overwriting math alphabet `\mathfrak' in version `bold'
+(Font)                  U/euf/m/n --> U/euf/b/n on input line 106.
+))
+(/usr/share/texmf-dist/tex/latex/amscls/amsthm.sty
+Package: amsthm 2020/05/29 v2.20.6
+\thm@style=\toks29
+\thm@bodyfont=\toks30
+\thm@headfont=\toks31
+\thm@notefont=\toks32
+\thm@headpunct=\toks33
+\thm@preskip=\skip57
+\thm@postskip=\skip58
+\thm@headsep=\skip59
+\dth@everypar=\toks34
+)
+(/usr/share/texmf-dist/tex/latex/gensymb/gensymb.sty
+Package: gensymb 2022/10/17 v1.0.2 (KJH)
+)
+(/usr/share/texmf-dist/tex/latex/mathtools/mathtools.sty
+Package: mathtools 2024/10/04 v1.31 mathematical typesetting tools
+
+(/usr/share/texmf-dist/tex/latex/tools/calc.sty
+Package: calc 2025/03/01 v4.3b Infix arithmetic (KKT,FJ)
+\calc@Acount=\count302
+\calc@Bcount=\count303
+\calc@Adimen=\dimen172
+\calc@Bdimen=\dimen173
+\calc@Askip=\skip60
+\calc@Bskip=\skip61
+LaTeX Info: Redefining \setlength on input line 86.
+LaTeX Info: Redefining \addtolength on input line 87.
+\calc@Ccount=\count304
+\calc@Cskip=\skip62
+)
+(/usr/share/texmf-dist/tex/latex/mathtools/mhsetup.sty
+Package: mhsetup 2021/03/18 v1.4 programming setup (MH)
+)
+\g_MT_multlinerow_int=\count305
+\l_MT_multwidth_dim=\dimen174
+\origjot=\skip63
+\l_MT_shortvdotswithinadjustabove_dim=\dimen175
+\l_MT_shortvdotswithinadjustbelow_dim=\dimen176
+\l_MT_above_intertext_sep=\dimen177
+\l_MT_below_intertext_sep=\dimen178
+\l_MT_above_shortintertext_sep=\dimen179
+\l_MT_below_shortintertext_sep=\dimen180
+\xmathstrut@box=\box57
+\xmathstrut@dim=\dimen181
+)
+\c@definition=\count306
+\c@remark=\count307
+\c@invariant=\count308
+
+(/usr/share/texmf-dist/tex/latex/listings/listings.sty
+\lst@mode=\count309
+\lst@gtempboxa=\box58
+\lst@token=\toks35
+\lst@length=\count310
+\lst@currlwidth=\dimen182
+\lst@column=\count311
+\lst@pos=\count312
+\lst@lostspace=\dimen183
+\lst@width=\dimen184
+\lst@newlines=\count313
+\lst@lineno=\count314
+\lst@maxwidth=\dimen185
+
+(/usr/share/texmf-dist/tex/latex/listings/lstpatch.sty
+File: lstpatch.sty 2025/11/14 1.11b (Carsten Heinz)
+)
+(/usr/share/texmf-dist/tex/latex/listings/lstmisc.sty
+File: lstmisc.sty 2025/11/14 1.11b (Carsten Heinz)
+\c@lstnumber=\count315
+\lst@skipnumbers=\count316
+\lst@framebox=\box59
+)
+(/usr/share/texmf-dist/tex/latex/listings/listings.cfg
+File: listings.cfg 2025/11/14 1.11b listings configuration
+))
+Package: listings 2025/11/14 1.11b (Carsten Heinz)
+
+==> First Aid for listings.sty no longer applied!
+    Expected:
+        2024/09/23 1.10c (Carsten Heinz)
+    but found:
+        2025/11/14 1.11b (Carsten Heinz)
+    so I'm assuming it got fixed.
+(/usr/share/texmf-dist/tex/latex/listings/lstlang1.sty
+File: lstlang1.sty 2025/11/14 1.11b listings language file
+)
+(/usr/share/texmf-dist/tex/latex/listings/lstlang1.sty
+File: lstlang1.sty 2025/11/14 1.11b listings language file
+)
+(/usr/share/texmf-dist/tex/latex/listings/lstmisc.sty
+File: lstmisc.sty 2025/11/14 1.11b (Carsten Heinz)
+)
+(/usr/share/texmf-dist/tex/latex/hyperref/hyperref.sty
+Package: hyperref 2026-01-29 v7.01p Hypertext links for LaTeX
+
+(/usr/share/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty
+Package: kvsetkeys 2022-10-05 v1.19 Key value parser (HO)
+)
+(/usr/share/texmf-dist/tex/generic/kvdefinekeys/kvdefinekeys.sty
+Package: kvdefinekeys 2019-12-19 v1.6 Define keys (HO)
+)
+(/usr/share/texmf-dist/tex/generic/pdfescape/pdfescape.sty
+Package: pdfescape 2019/12/09 v1.15 Implements pdfTeX's escape features (HO)
+
+(/usr/share/texmf-dist/tex/generic/ltxcmds/ltxcmds.sty
+Package: ltxcmds 2023-12-04 v1.26 LaTeX kernel commands for general use (HO)
+)
+(/usr/share/texmf-dist/tex/generic/pdftexcmds/pdftexcmds.sty
+Package: pdftexcmds 2020-06-27 v0.33 Utility functions of pdfTeX for LuaTeX (HO
+)
+
+(/usr/share/texmf-dist/tex/generic/infwarerr/infwarerr.sty
+Package: infwarerr 2019/12/03 v1.5 Providing info/warning/error messages (HO)
+)
+Package pdftexcmds Info: \pdf@primitive is available.
+Package pdftexcmds Info: \pdf@ifprimitive is available.
+Package pdftexcmds Info: \pdfdraftmode found.
+))
+(/usr/share/texmf-dist/tex/latex/hycolor/hycolor.sty
+Package: hycolor 2020-01-27 v1.10 Color options for hyperref/bookmark (HO)
+)
+(/usr/share/texmf-dist/tex/latex/hyperref/nameref.sty
+Package: nameref 2026-01-29 v2.58 Cross-referencing by name of section
+
+(/usr/share/texmf-dist/tex/latex/refcount/refcount.sty
+Package: refcount 2019/12/15 v3.6 Data extraction from label references (HO)
+)
+(/usr/share/texmf-dist/tex/generic/gettitlestring/gettitlestring.sty
+Package: gettitlestring 2019/12/15 v1.6 Cleanup title references (HO)
+
+(/usr/share/texmf-dist/tex/latex/kvoptions/kvoptions.sty
+Package: kvoptions 2022-06-15 v3.15 Key value format for package options (HO)
+))
+\c@section@level=\count317
+)
+(/usr/share/texmf-dist/tex/generic/stringenc/stringenc.sty
+Package: stringenc 2019/11/29 v1.12 Convert strings between diff. encodings (HO
+)
+)
+\@linkdim=\dimen186
+\Hy@linkcounter=\count318
+\Hy@pagecounter=\count319
+
+(/usr/share/texmf-dist/tex/latex/hyperref/pd1enc.def
+File: pd1enc.def 2026-01-29 v7.01p Hyperref: PDFDocEncoding definition (HO)
+Now handling font encoding PD1 ...
+... no UTF-8 mapping file for font encoding PD1
+)
+(/usr/share/texmf-dist/tex/generic/intcalc/intcalc.sty
+Package: intcalc 2019/12/15 v1.3 Expandable calculations with integers (HO)
+)
+\Hy@SavedSpaceFactor=\count320
+
+(/usr/share/texmf-dist/tex/latex/hyperref/puenc.def
+File: puenc.def 2026-01-29 v7.01p Hyperref: PDF Unicode definition (HO)
+Now handling font encoding PU ...
+... no UTF-8 mapping file for font encoding PU
+)
+Package hyperref Info: Option `bookmarks' set `true' on input line 4072.
+Package hyperref Info: Hyper figures OFF on input line 4201.
+Package hyperref Info: Link nesting OFF on input line 4206.
+Package hyperref Info: Hyper index ON on input line 4209.
+Package hyperref Info: Plain pages OFF on input line 4216.
+Package hyperref Info: Backreferencing OFF on input line 4221.
+Package hyperref Info: Implicit mode ON; LaTeX internals redefined.
+Package hyperref Info: Bookmarks ON on input line 4468.
+\c@Hy@tempcnt=\count321
+
+(/usr/share/texmf-dist/tex/latex/url/url.sty
+\Urlmuskip=\muskip18
+Package: url 2013/09/16  ver 3.4  Verb mode for urls, etc.
+)
+LaTeX Info: Redefining \url on input line 4807.
+\XeTeXLinkMargin=\dimen187
+
+(/usr/share/texmf-dist/tex/generic/bitset/bitset.sty
+Package: bitset 2019/12/09 v1.3 Handle bit-vector datatype (HO)
+
+(/usr/share/texmf-dist/tex/generic/bigintcalc/bigintcalc.sty
+Package: bigintcalc 2019/12/15 v1.5 Expandable calculations on big integers (HO
+)
+))
+\Fld@menulength=\count322
+\Field@Width=\dimen188
+\Fld@charsize=\dimen189
+Package hyperref Info: Hyper figures OFF on input line 6084.
+Package hyperref Info: Link nesting OFF on input line 6089.
+Package hyperref Info: Hyper index ON on input line 6092.
+Package hyperref Info: backreferencing OFF on input line 6099.
+Package hyperref Info: Link coloring OFF on input line 6104.
+Package hyperref Info: Link coloring with OCG OFF on input line 6109.
+Package hyperref Info: PDF/A mode OFF on input line 6114.
+\Hy@abspage=\count323
+\c@Item=\count324
+\c@Hfootnote=\count325
+)
+Package hyperref Info: Driver (autodetected): hpdftex.
+
+(/usr/share/texmf-dist/tex/latex/hyperref/hpdftex.def
+File: hpdftex.def 2026-01-29 v7.01p Hyperref driver for pdfTeX
+\Fld@listcount=\count326
+\c@bookmark@seq@number=\count327
+
+(/usr/share/texmf-dist/tex/latex/rerunfilecheck/rerunfilecheck.sty
+Package: rerunfilecheck 2025-06-21 v1.11 Rerun checks for auxiliary files (HO)
+
+(/usr/share/texmf-dist/tex/generic/uniquecounter/uniquecounter.sty
+Package: uniquecounter 2019/12/15 v1.4 Provide unlimited unique counter (HO)
+)
+Package uniquecounter Info: New unique counter `rerunfilecheck' on input line 2
+84.
+)
+\Hy@SectionHShift=\skip64
+)
+(/usr/share/texmf-dist/tex/latex/booktabs/booktabs.sty
+Package: booktabs 2020/01/12 v1.61803398 Publication quality tables
+\heavyrulewidth=\dimen190
+\lightrulewidth=\dimen191
+\cmidrulewidth=\dimen192
+\belowrulesep=\dimen193
+\belowbottomsep=\dimen194
+\aboverulesep=\dimen195
+\abovetopsep=\dimen196
+\cmidrulesep=\dimen197
+\cmidrulekern=\dimen198
+\defaultaddspace=\dimen199
+\@cmidla=\count328
+\@cmidlb=\count329
+\@aboverulesep=\dimen256
+\@belowrulesep=\dimen257
+\@thisruleclass=\count330
+\@lastruleclass=\count331
+\@thisrulewidth=\dimen258
+)
+(/usr/share/texmf-dist/tex/latex/tools/longtable.sty
+Package: longtable 2025-10-13 v4.24 Multi-page Table package (DPC)
+\LTleft=\skip65
+\LTright=\skip66
+\LTpre=\skip67
+\LTpost=\skip68
+\LTchunksize=\count332
+\LTcapwidth=\dimen259
+\LT@head=\box60
+\LT@firsthead=\box61
+\LT@foot=\box62
+\LT@lastfoot=\box63
+\LT@gbox=\box64
+\LT@cols=\count333
+\LT@rows=\count334
+\c@LT@tables=\count335
+\c@LT@chunks=\count336
+\LT@p@ftn=\toks36
+)
+(/usr/share/texmf-dist/tex/latex/tools/array.sty
+Package: array 2025/09/25 v2.6n Tabular extension package (FMi)
+\col@sep=\dimen260
+\ar@mcellbox=\box65
+\extrarowheight=\dimen261
+\NC@list=\toks37
+\extratabsurround=\skip69
+\backup@length=\skip70
+\ar@cellbox=\box66
+)
+(/usr/share/texmf-dist/tex/latex/multirow/multirow.sty
+Package: multirow 2024/11/12 v2.9 Span multiple rows of a table
+\multirow@colwidth=\skip71
+\multirow@cntb=\count337
+\multirow@dima=\skip72
+\bigstrutjot=\dimen262
+)
+(/usr/share/texmf-dist/tex/latex/graphics/graphicx.sty
+Package: graphicx 2024/12/31 v1.2e Enhanced LaTeX Graphics (DPC,SPQR)
+
+(/usr/share/texmf-dist/tex/latex/graphics/graphics.sty
+Package: graphics 2024/08/06 v1.4g Standard LaTeX Graphics (DPC,SPQR)
+
+(/usr/share/texmf-dist/tex/latex/graphics/trig.sty
+Package: trig 2023/12/02 v1.11 sin cos tan (DPC)
+)
+(/usr/share/texmf-dist/tex/latex/graphics-cfg/graphics.cfg
+File: graphics.cfg 2016/06/04 v1.11 sample graphics configuration
+)
+Package graphics Info: Driver file: pdftex.def on input line 106.
+)
+\Gin@req@height=\dimen263
+\Gin@req@width=\dimen264
+)
+(/usr/share/texmf-dist/tex/latex/float/float.sty
+Package: float 2001/11/08 v1.3d Float enhancements (AL)
+\c@float@type=\count338
+\float@exts=\toks38
+\float@box=\box67
+\@float@everytoks=\toks39
+\@floatcapt=\box68
+)
+(/usr/share/texmf-dist/tex/latex/caption/caption.sty
+Package: caption 2023/08/05 v3.6o Customizing captions (AR)
+
+(/usr/share/texmf-dist/tex/latex/caption/caption3.sty
+Package: caption3 2023/07/31 v2.4d caption3 kernel (AR)
+\caption@tempdima=\dimen265
+\captionmargin=\dimen266
+\caption@leftmargin=\dimen267
+\caption@rightmargin=\dimen268
+\caption@width=\dimen269
+\caption@indent=\dimen270
+\caption@parindent=\dimen271
+\caption@hangindent=\dimen272
+Package caption Info: Standard document class detected.
+)
+\c@caption@flags=\count339
+\c@continuedfloat=\count340
+Package caption Info: float package is loaded.
+Package caption Info: hyperref package is loaded.
+Package caption Info: listings package is loaded.
+Package caption Info: longtable package is loaded.
+
+(/usr/share/texmf-dist/tex/latex/caption/ltcaption.sty
+Package: ltcaption 2021/01/08 v1.4c longtable captions (AR)
+))
+(/usr/share/texmf-dist/tex/latex/fancyhdr/fancyhdr.sty
+Package: fancyhdr 2025/02/07 v5.2 Extensive control of page headers and footers
+
+\f@nch@headwidth=\skip73
+\f@nch@offset@elh=\skip74
+\f@nch@offset@erh=\skip75
+\f@nch@offset@olh=\skip76
+\f@nch@offset@orh=\skip77
+\f@nch@offset@elf=\skip78
+\f@nch@offset@erf=\skip79
+\f@nch@offset@olf=\skip80
+\f@nch@offset@orf=\skip81
+\f@nch@height=\skip82
+\f@nch@footalignment=\skip83
+\f@nch@widthL=\skip84
+\f@nch@widthC=\skip85
+\f@nch@widthR=\skip86
+\@temptokenb=\toks40
+)
+(/usr/share/texmf-dist/tex/latex/needspace/needspace.sty
+Package: needspace 2025/03/13 v1.3e reserve vertical space
+)
+(/usr/share/texmf-dist/tex/latex/enumitem/enumitem.sty
+Package: enumitem 2025/02/06 v3.11 Customized lists
+\labelindent=\skip87
+\enit@outerparindent=\dimen273
+\enit@toks=\toks41
+\enit@inbox=\box69
+\enit@count@id=\count341
+\enitdp@description=\count342
+)
+LaTeX Font Info:    Trying to load font information for T1+phv on input line 13
+3.
+
+(/usr/share/texmf-dist/tex/latex/psnfss/t1phv.fd
+File: t1phv.fd 2020/03/25 scalable font definitions for T1/phv.
+)
+(/usr/share/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
+File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
+\l__color_backend_stack_int=\count343
+) (./main.aux)
+\openout1 = `main.aux'.
+
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 133.
+LaTeX Font Info:    ... okay on input line 133.
+
+*geometry* driver: auto-detecting
+*geometry* detected driver: pdftex
+*geometry* verbose mode - [ preamble ] result:
+* driver: pdftex
+* paper: a4paper
+* layout: <same size as paper>
+* layoutoffset:(h,v)=(0.0pt,0.0pt)
+* modes: 
+* h-part:(L,W,R)=(85.35826pt, 455.24411pt, 56.9055pt)
+* v-part:(T,H,B)=(85.35826pt, 702.78308pt, 56.9055pt)
+* \paperwidth=597.50787pt
+* \paperheight=845.04684pt
+* \textwidth=455.24411pt
+* \textheight=702.78308pt
+* \oddsidemargin=13.08827pt
+* \evensidemargin=13.08827pt
+* \topmargin=-25.91173pt
+* \headheight=14.0pt
+* \headsep=25.0pt
+* \topskip=12.0pt
+* \footskip=30.0pt
+* \marginparwidth=35.0pt
+* \marginparsep=10.0pt
+* \columnsep=10.0pt
+* \skip\footins=10.8pt plus 4.0pt minus 2.0pt
+* \hoffset=0.0pt
+* \voffset=0.0pt
+* \mag=1000
+* \@twocolumnfalse
+* \@twosidefalse
+* \@mparswitchfalse
+* \@reversemarginfalse
+* (1in=72.27pt=25.4mm, 1cm=28.453pt)
+
+LaTeX Info: Redefining \microtypecontext on input line 133.
+Package microtype Info: Applying patch `item' on input line 133.
+Package microtype Info: Applying patch `toc' on input line 133.
+Package microtype Info: Applying patch `eqnum' on input line 133.
+Package microtype Info: Applying patch `footnote' on input line 133.
+Package microtype Info: Applying patch `verbatim' on input line 133.
+LaTeX Info: Redefining \microtypesetup on input line 133.
+Package microtype Info: Generating PDF output.
+Package microtype Info: Character protrusion enabled (level 2).
+Package microtype Info: Using default protrusion set `alltext'.
+Package microtype Info: Automatic font expansion enabled (level 2),
+(microtype)             stretch: 20, shrink: 20, step: 1, non-selected.
+Package microtype Info: Using default expansion set `alltext-nott'.
+Package microtype Info: Patching command `\showhyphens'.
+Package microtype Info: No adjustment of tracking.
+Package microtype Info: No adjustment of interword spacing.
+Package microtype Info: No adjustment of character kerning.
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `phv' (encoding: T1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+(/usr/share/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
+[Loading MPS to PDF converter (version 2006.09.02).]
+\scratchcounter=\count344
+\scratchdimen=\dimen274
+\scratchbox=\box70
+\nofMPsegments=\count345
+\nofMParguments=\count346
+\everyMPshowfont=\toks42
+\MPscratchCnt=\count347
+\MPscratchDim=\dimen275
+\MPnumerator=\count348
+\makeMPintoPDFobject=\count349
+\everyMPtoPDFconversion=\toks43
+) (/usr/share/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
+Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
+Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
+85.
+
+(/usr/share/texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg
+File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
+e
+))
+LaTeX Info: Redefining \celsius on input line 133.
+Package gensymb Info: Faking symbols for \degree and \celsius on input line 133
+.
+
+
+Package gensymb Warning: Not defining \perthousand.
+
+LaTeX Info: Redefining \ohm on input line 133.
+Package gensymb Info: Using \Omega for \ohm on input line 133.
+
+Package gensymb Warning: Not defining \micro.
+
+\c@lstlisting=\count350
+Package hyperref Info: Link coloring OFF on input line 133.
+(./main.out) (./main.out)
+\@outlinefile=\write3
+\openout3 = `main.out'.
+
+Package caption Info: Begin \AtBeginDocument code.
+Package caption Info: End \AtBeginDocument code.
+ (./front/cover.tex
+<logo.png, id=1193, 1505.625pt x 1505.625pt>
+File: logo.png Graphic file (type png)
+<use logo.png>
+Package pdftex.def Info: logo.png  used on input line 13.
+(pdftex.def)             Requested size: 159.33821pt x 159.32439pt.
+
+(/usr/share/texmf-dist/tex/latex/microtype/mt-cmr.cfg
+File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
+(RS)
+)
+LaTeX Font Info:    Trying to load font information for U+msa on input line 26.
+
+
+(/usr/share/texmf-dist/tex/latex/amsfonts/umsa.fd
+File: umsa.fd 2013/01/14 v3.01 AMS symbols A
+)
+(/usr/share/texmf-dist/tex/latex/microtype/mt-msa.cfg
+File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
+)
+LaTeX Font Info:    Trying to load font information for U+msb on input line 26.
+
+
+(/usr/share/texmf-dist/tex/latex/amsfonts/umsb.fd
+File: umsb.fd 2013/01/14 v3.01 AMS symbols B
+)
+(/usr/share/texmf-dist/tex/latex/microtype/mt-msb.cfg
+File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
+)
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `cmtt' (encoding: T1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+ [1
+
+{/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texmf-dist/fonts
+/enc/dvips/base/8r.enc}{/usr/share/texmf-dist/fonts/enc/dvips/cm-super/cm-super
+-t1.enc} <./logo.png (PNG copy)>]) (./front/abstract.tex
+pdfTeX warning (ext4): destination with the same identifier (name{page.i}) has 
+been already used, duplicate ignored
+<to be read again> 
+                   \relax 
+l.31 \tableofcontents
+                      [1
+
+] (./main.toc [2
+
+] [3] [4] [5] [6] [7]
+Overfull \hbox (1.41573pt too wide) detected at line 300
+ []\T1/phv/m/n/12 100
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 301
+ []\T1/phv/m/n/12 100
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 302
+ []\T1/phv/m/n/12 101
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 303
+ []\T1/phv/m/n/12 101
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 304
+ []\T1/phv/m/n/12 102
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 305
+ []\T1/phv/m/n/12 102
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 306
+ []\T1/phv/m/n/12 102
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 307
+ []\T1/phv/m/n/12 103
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 308
+ []\T1/phv/m/n/12 103
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 309
+ []\T1/phv/m/n/12 103
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 310
+ []\T1/phv/m/n/12 103
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 313
+ []\T1/phv/m/n/12 105
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 314
+ []\T1/phv/m/n/12 105
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 315
+ []\T1/phv/m/n/12 106
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 317
+ []\T1/phv/m/n/12 107
+ []
+
+[8]
+Overfull \hbox (1.41573pt too wide) detected at line 318
+ []\T1/phv/m/n/12 108
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 319
+ []\T1/phv/m/n/12 108
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 320
+ []\T1/phv/m/n/12 108
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 321
+ []\T1/phv/m/n/12 109
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 322
+ []\T1/phv/m/n/12 109
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 324
+ []\T1/phv/m/n/12 110
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 326
+ []\T1/phv/m/n/12 111
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 328
+ []\T1/phv/m/n/12 112
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 329
+ []\T1/phv/m/n/12 112
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 330
+ []\T1/phv/m/n/12 112
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 331
+ []\T1/phv/m/n/12 113
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 332
+ []\T1/phv/m/n/12 113
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 333
+ []\T1/phv/m/n/12 114
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 334
+ []\T1/phv/m/n/12 114
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 335
+ []\T1/phv/m/n/12 114
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 336
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 337
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 338
+ []\T1/phv/m/n/12 115
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 339
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 340
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 341
+ []\T1/phv/m/n/12 116
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 343
+ []\T1/phv/m/n/12 118
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 344
+ []\T1/phv/m/n/12 118
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 345
+ []\T1/phv/m/n/12 119
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 346
+ []\T1/phv/m/n/12 119
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 347
+ []\T1/phv/m/n/12 120
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 348
+ []\T1/phv/m/n/12 120
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 350
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 351
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 352
+ []\T1/phv/m/n/12 121
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 353
+ []\T1/phv/m/n/12 122
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 355
+ []\T1/phv/m/n/12 123
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 356
+ []\T1/phv/m/n/12 123
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 357
+ []\T1/phv/m/n/12 124
+ []
+
+[9]
+Overfull \hbox (1.41573pt too wide) detected at line 359
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 360
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 361
+ []\T1/phv/m/n/12 125
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 362
+ []\T1/phv/m/n/12 126
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 363
+ []\T1/phv/m/n/12 126
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 364
+ []\T1/phv/m/n/12 127
+ []
+
+
+Overfull \hbox (1.41573pt too wide) detected at line 365
+ []\T1/phv/m/n/12 127
+ []
+
+)
+\tf@toc=\write4
+\openout4 = `main.toc'.
+
+ [10] (./main.lof)
+\tf@lof=\write5
+\openout5 = `main.lof'.
+
+ [11
+
+] (./main.lot)
+\tf@lot=\write6
+\openout6 = `main.lot'.
+
+) [12
+
+] (./chapters/01-introduction.tex
+Chapter 1.
+LaTeX Font Info:    Font shape `T1/phv/m/it' in size <12> not available
+(Font)              Font shape `T1/phv/m/sl' tried instead on input line 7.
+LaTeX Font Info:    Trying to load font information for TS1+phv on input line 1
+2.
+(/usr/share/texmf-dist/tex/latex/psnfss/ts1phv.fd
+File: ts1phv.fd 2020/03/25 scalable font definitions for TS1/phv.
+)
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `phv' (encoding: TS1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+ [1
+
+
+])
+(./chapters/02-type-system.tex [2]
+Chapter 2.
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <17.28> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 5.
+
+Overfull \hbox (11.45918pt too wide) in paragraph at lines 7--11
+\T1/phv/m/n/12 (-20) All nu-meric types in the en-gine are de-fined as explicit
+-width aliases in \T1/cmtt/m/n/12 src/core/Types.hpp\T1/phv/m/n/12 (-20) .
+ []
+
+
+Overfull \hbox (29.36714pt too wide) in paragraph at lines 38--44
+\T1/phv/m/n/12 (-20) (\T1/cmtt/m/n/12 __forceinline \T1/phv/m/n/12 (-20) on MSV
+C; \T1/cmtt/m/n/12 __attribute__((always_inline)) \T1/phv/m/n/12 (-20) on GCC/C
+lang), \T1/cmtt/m/n/12 CF_NORETURN\T1/phv/m/n/12 (-20) ,
+ []
+
+[3
+
+]
+Overfull \hbox (12.03357pt too wide) in paragraph at lines 47--53
+\T1/phv/m/n/12 (-20) piles to a no-op in re-lease builds. When an as-ser-tion f
+ires it calls \T1/cmtt/m/n/12 Caffeine::assertFailed\T1/phv/m/n/12 (-20) ,
+ []
+
+
+Overfull \hbox (10.29459pt too wide) in paragraph at lines 65--69
+\T1/phv/m/n/12 (-20) The \T1/cmtt/m/n/12 Timer \T1/phv/m/n/12 (-20) class wraps
+ \T1/cmtt/m/n/12 std::chrono::high_resolution_clock \T1/phv/m/n/12 (-20) and ex
+-poses nanosecond-
+ []
+
+) (./chapters/03-mathematics.tex [4]
+Chapter 3.
+
+Overfull \hbox (12.18596pt too wide) in paragraph at lines 31--34
+[]\T1/phv/m/n/12 (-20) The im-ple-men-ta-tion guards against di-vi-sion by zero
+ in both \T1/cmtt/m/n/12 length() \T1/phv/m/n/12 (-20) and \T1/cmtt/m/n/12 norm
+alized()
+ []
+
+[5
+
+]
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 66.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\times' on input line 66.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `math shift' on input line 66.
+
+[6] [7] [8] [9]
+Overfull \hbox (61.5131pt too wide) detected at line 289
+\OML/cmm/m/it/12 s \OT1/cmr/m/n/12 = 2[]\OML/cmm/m/it/12 ;  x \OT1/cmr/m/n/12 =
+ \OML/cmm/m/it/12 s=\OT1/cmr/m/n/12 4\OML/cmm/m/it/12 ;  y \OT1/cmr/m/n/12 = (\
+OML/cmm/m/it/12 R[] \OT1/cmr/m/n/12 + \OML/cmm/m/it/12 R[]\OT1/cmr/m/n/12 )\OML
+/cmm/m/it/12 =s;  z \OT1/cmr/m/n/12 = (\OML/cmm/m/it/12 R[] \OT1/cmr/m/n/12 + \
+OML/cmm/m/it/12 R[]\OT1/cmr/m/n/12 )\OML/cmm/m/it/12 =s;  w \OT1/cmr/m/n/12 = (
+\OML/cmm/m/it/12 R[] \OMS/cmsy/m/n/12 ^^@ \OML/cmm/m/it/12 R[]\OT1/cmr/m/n/12 )
+\OML/cmm/m/it/12 =s
+ []
+
+[10]
+Package hyperref Info: bookmark level for unknown lstlisting defaults to 0 on i
+nput line 367.
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <10.95> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 373.
+ [11]) (./chapters/04-memory.tex [12]
+Chapter 4.
+[13
+
+]
+
+! LaTeX Error: Environment tikzpicture undefined.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.64 \begin{tikzpicture}
+                        [scale=0.9]
+Your command was ignored.
+Type  I <command> <return>  to replace it with another command,
+or  <return>  to continue without it.
+
+! Undefined control sequence.
+l.65   \draw
+            [thick] (0,0) rectangle (8,0.6);
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Missing number, treated as zero.
+<to be read again> 
+                   [
+l.66   \fill[
+             darkblue!20] (0,0) rectangle (4.5,0.6);
+A number should have been here; I inserted `0'.
+(If you can't figure out why I needed to see a number,
+look up `weird error' in the index to The TeXbook.)
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   [
+l.66   \fill[
+             darkblue!20] (0,0) rectangle (4.5,0.6);
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+! Undefined control sequence.
+l.67   \draw
+            [darkblue, thick, ->] (4.5,0.8) -- (4.5,0.6) node[above, yshift=...
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.68   \node
+             at (2.25,0.3) {\small used};
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.69   \node
+             at (6.25,0.3) {\small free};
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+
+! LaTeX Error: \begin{figure} on input line 62 ended by \end{tikzpicture}.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.70 \end{tikzpicture}
+                      
+Your command was ignored.
+Type  I <command> <return>  to replace it with another command,
+or  <return>  to continue without it.
+
+[14]) (./chapters/05-containers.tex [15]
+Chapter 5.
+
+Overfull \hbox (10.47086pt too wide) in paragraph at lines 26--32
+\T1/phv/m/n/12 (-20) Elements are con-structed in-place via placement-\T1/cmtt/
+m/n/12 new\T1/phv/m/n/12 (-20) : \T1/cmtt/m/n/12 new (&m_data[m_size]) T(value)
+\T1/phv/m/n/12 (-20) .
+ []
+
+[16
+
+]) (./chapters/06-ecs.tex [17]
+Chapter 6.
+
+Overfull \hbox (69.37909pt too wide) in paragraph at lines 34--36
+\T1/phv/m/n/12 (-20) Each com-po-nent type re-ceives a unique 32-bit ID at pro-
+gram ini-tial-i-sa-tion via \T1/cmtt/m/n/12 ComponentID::get<T>()\T1/phv/m/n/12
+ (-20) : 
+ []
+
+[18
+
+] [19]
+Overfull \hbox (15.26526pt too wide) in paragraph at lines 100--104
+\T1/phv/m/n/12 (-20) ation/destruction, com-po-nent add/remove) dur-ing it-er-a
+-tion \T1/phv/b/n/12 (-20) must \T1/phv/m/n/12 (-20) go through \T1/cmtt/m/n/12
+ CommandBuffer\T1/phv/m/n/12 (-20) .
+ []
+
+[20]) (./chapters/07-job-system.tex [21]
+Chapter 7.
+
+! LaTeX Error: Environment tikzpicture undefined.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.14 \begin{tikzpicture}
+                        [scale=0.85, every node/.style={font=\small}]
+Your command was ignored.
+Type  I <command> <return>  to replace it with another command,
+or  <return>  to continue without it.
+
+! Undefined control sequence.
+l.15   \foreach
+                \i in {0,1,2} {
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.16     \draw
+              [thick] (3.5*\i, 0) rectangle (3.5*\i+2.5, 1.2);
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.17     \node
+               at (3.5*\i+1.25, 0.6) {Worker \i};
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.18     \draw
+              [thick, darkblue] (3.5*\i, -0.3) rectangle (3.5*\i+2.5, -1.5);
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.19     \node
+              [darkblue] at (3.5*\i+1.25, -0.9) {Local deque};
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.21   \draw
+            [thick, accentblue] (0, -2.2) rectangle (9.5, -3.2);
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.22   \node
+            [accentblue] at (4.75, -2.7) {Global queues (Critical / Normal /...
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.23   \foreach
+                \i in {0,1,2} {
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.24     \draw
+              [->] (3.5*\i+1.25,-1.5) -- (3.5*\i+1.25,-2.2);
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Undefined control sequence.
+l.25     \draw
+              [->, dashed] (3.5*\i+2.5,-0.9) to[bend right=15] (3.5*\i+3.5+1...
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+
+! LaTeX Error: \begin{figure} on input line 12 ended by \end{tikzpicture}.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.27 \end{tikzpicture}
+                      
+Your command was ignored.
+Type  I <command> <return>  to replace it with another command,
+or  <return>  to continue without it.
+
+[22
+
+]
+Overfull \hbox (29.83582pt too wide) in paragraph at lines 49--54
+\T1/phv/m/n/12 (-20) dle is con-sid-ered com-plete when \T1/cmtt/m/n/12 m_slots
+[index].flag == 1 AND m_slots[index].version
+ []
+
+) (./chapters/08-physics.tex [23]
+Chapter 8.
+[24
+
+] [25] [26]) (./chapters/09-audio.tex [27]
+Chapter 9.
+
+Overfull \hbox (7.89609pt too wide) in paragraph at lines 7--11
+\T1/phv/m/n/12 (-20) The au-dio sys-tem wraps SDL3's \T1/cmtt/m/n/12 SDL_AudioS
+tream \T1/phv/m/n/12 (-20) API. It main-tains a pool of \T1/cmtt/m/n/12 AudioSo
+urce
+ []
+
+[28
+
+]) (./chapters/10-asset-pipeline.tex [29]
+Chapter 10.
+
+Overfull \hbox (4.53745pt too wide) detected at line 20
+[] [] [] []
+ []
+
+[30
+
+] [31]) (./chapters/11-game-loop.tex [32]
+Chapter 11.
+[33
+
+]) (./chapters/12-viewport.tex [34]
+Chapter 12.
+[35
+
+] [36]
+Overfull \hbox (5.06642pt too wide) in paragraph at lines 146--148
+[]\T1/phv/m/n/12 (-20) where $\OML/cmm/m/it/12 i \OMS/cmsy/m/n/12 2 f^^@\OML/cm
+m/m/it/12 H[]; [] ; H[]\OMS/cmsy/m/n/12 g$ \T1/phv/m/n/12 (-20) and $\OML/cmm/m
+/it/12 H[]$ \T1/phv/m/n/12 (-20) is cho-sen dy-nam-i-cally based on \T1/cmtt/m/
+n/12 camDistance\T1/phv/m/n/12 (-20) . 
+ []
+
+[37]
+Overfull \hbox (18.04602pt too wide) in paragraph at lines 159--164
+\T1/phv/m/n/12 (-20) The \T1/cmtt/m/n/12 TransformGizmo \T1/phv/m/n/12 (-20) re
+n-ders trans-late, ro-tate, and scale han-dles di-rectly on the \T1/cmtt/m/n/12
+ ImDrawList\T1/phv/m/n/12 (-20) .
+ []
+
+[38]) (./chapters/13-editor.tex [39]
+Chapter 13.
+
+Overfull \hbox (5.1163pt too wide) in paragraph at lines 14--18
+\T1/phv/m/n/12 (-20) The undo sys-tem uses \T1/phv/b/n/12 (-20) full world snap
+-shots\T1/phv/m/n/12 (-20) : each \T1/cmtt/m/n/12 EditorCommand \T1/phv/m/n/12 
+(-20) stores a \T1/cmtt/m/n/12 beforeState
+ []
+
+) (./chapters/14-implementation-rules.tex
+Overfull \hbox (26.8704pt too wide) in paragraph at lines 27--2
+\T1/phv/m/n/12 (-20) Each ed-i-tor panel is an au-tonomous class with an \T1/cm
+tt/m/n/12 onImGuiRender(World&, EditorContext&)
+ []
+
+
+Overfull \hbox (73.30179pt too wide) in paragraph at lines 27--2
+\T1/phv/m/n/12 (-20) method: \T1/cmtt/m/n/12 HierarchyPanel\T1/phv/m/n/12 (-20)
+ , \T1/cmtt/m/n/12 InspectorPanel\T1/phv/m/n/12 (-20) , \T1/cmtt/m/n/12 AssetBr
+owser\T1/phv/m/n/12 (-20) , \T1/cmtt/m/n/12 AnimationTimeline\T1/phv/m/n/12 (-2
+0) , \T1/cmtt/m/n/12 AudioPreviewPanel\T1/phv/m/n/12 (-20) ,
+ []
+
+[40
+
+]
+Chapter 14.
+[41
+
+]) (./chapters/15-rhi.tex [42]
+Chapter 15.
+[43
+
+]
+Overfull \hbox (81.48993pt too wide) in paragraph at lines 47--48
+[]\T1/phv/b/n/12 (-20) vsync\T1/phv/m/n/12 (-20) : En-ables or dis-ables Ver-ti
+-cal Syn-chro-niza-tion, map-ping to the \T1/cmtt/m/n/12 SDL_GPU_PRESENTMODE_VS
+YNC
+ []
+
+[44]
+Overfull \hbox (12.02577pt too wide) in paragraph at lines 86--87
+[]\T1/cmtt/m/n/12 B8G8R8A8_UNORM\T1/phv/m/n/12 (-20) : Blue-Green-Red-Alpha var
+i-ant, of-ten the na-tive for-mat for Windows-
+ []
+
+[45] [46] [47] [48] [49]) (./chapters/16-rendering-2d.tex [50]
+Chapter 16.
+[51
+
+] [52] [53] [54] [55] [56] [57] [58] [59]) (./chapters/17-rendering-3d.tex
+[60] [61]
+Chapter 17.
+[62
+
+] [63] [64] [65] [66] [67] [68])
+(./chapters/26-polygons-and-3d-representations.tex [69]
+Chapter 18.
+[70
+
+]
+
+! LaTeX Error: Invalid UTF-8 byte sequence (Ã\lst@FillFixed@).
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.21 ...tangent;          // Bitangent (normal Ã— 
+                                                  tangent)
+The document does not appear to be in UTF-8 encoding.
+Try adding \UseRawInputEncoding as the first line of the file
+or specify an encoding such as \usepackage [latin1]{inputenc}
+in the document preamble.
+Alternatively, save the file in UTF-8 using your editor or another tool
+
+
+! LaTeX Error: Invalid UTF-8 byte "97.
+
+See the LaTeX manual or LaTeX Companion for explanation.
+Type  H <return>  for immediate help.
+ ...                                              
+                                                  
+l.21 ...tangent;          // Bitangent (normal Ã— 
+                                                  tangent)
+The document does not appear to be in UTF-8 encoding.
+Try adding \UseRawInputEncoding as the first line of the file
+or specify an encoding such as \usepackage [latin1]{inputenc}
+in the document preamble.
+Alternatively, save the file in UTF-8 using your editor or another tool
+
+[71] [72] [73] [74] [75] [76] [77] [78]
+! Undefined control sequence.
+<argument> 5\baselineship 
+                          
+l.343 \needspace{5\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.343 \needspace{5\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+[79]
+! Undefined control sequence.
+<argument> 6\baselineship 
+                          
+l.360 \needspace{6\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.360 \needspace{6\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+! Undefined control sequence.
+<argument> 5\baselineship 
+                          
+l.365 \needspace{5\baselineship}
+                                
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+! Illegal unit of measure (pt inserted).
+<to be read again> 
+                   !
+l.365 \needspace{5\baselineship}
+                                
+Dimensions can be in units of em, ex, in, pt, pc,
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
+I'll assume that you meant to say pt, for printer's points.
+To recover gracefully from this error, it's best to
+delete the erroneous units; e.g., type `2' to delete
+two letters. (See Chapter 27 of The TeXbook.)
+
+[80] [81]) (./chapters/18-events.tex [82]
+Chapter 19.
+[83
+
+] [84] [85] [86]
+Overfull \hbox (41.9971pt too wide) in paragraph at lines 131--132
+[]\T1/phv/b/n/12 (-20) Prefer De-ferred for Heavy Logic\T1/phv/m/n/12 (-20) : I
+f an event trig-gers com-plex logic, use \T1/cmtt/m/n/12 publishDeferred
+ []
+
+) (./chapters/19-input.tex [87]
+Chapter 20.
+[88
+
+] [89] [90]
+! Undefined control sequence.
+l.117 \specbox
+              {Gamepad Deadzones}{
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+[91]
+Overfull \hbox (76.82828pt too wide) in paragraph at lines 197--198
+[]\T1/phv/m/n/12 (-20) This dou-ble buffer-ing en-sures that logic run-ning dur
+-ing the frame can query \T1/cmtt/m/n/12 isActionJustPressed()
+ []
+
+
+Overfull \hbox (76.82828pt too wide) in paragraph at lines 199--200
+[]\T1/phv/m/n/12 (-20) This dou-ble buffer-ing en-sures that logic run-ning dur
+-ing the frame can query \T1/cmtt/m/n/12 isActionJustPressed()
+ []
+
+[92]
+Overfull \hbox (3.41818pt too wide) in paragraph at lines 204--205
+\T1/phv/m/n/12 (-20) To keep the in-put sys-tem de-cou-pled from the win-dow-in
+g li-brary (SDL3), the \T1/cmtt/m/n/12 InputManager
+ []
+
+) (./chapters/20-debug.tex [93]
+Chapter 21.
+[94
+
+] [95] [96] [97] [98]) (./chapters/21-scene.tex [99]
+Chapter 22.
+[100
+
+]
+! Undefined control sequence.
+l.58 \specbox
+             {Design Rationale: Stack vs Single Scene}{
+The control sequence at the end of the top line
+of your error message was never \def'ed. If you have
+misspelled it (e.g., `\hobx'), type `I' and the correct
+spelling (e.g., `I\hbox'). Otherwise just continue,
+and I'll forget about whatever was undefined.
+
+[101] [102] [103]
+Overfull \hbox (60.71135pt too wide) in paragraph at lines 141--142
+[]\T1/phv/m/n/12 (-20) For each en-tity, it com-putes: $\OML/cmm/m/it/12 WorldM
+atrix \OT1/cmr/m/n/12 (-20) = \OML/cmm/m/it/12 ParentWorldMatrix \OMS/cmsy/m/n/
+12 ^^B \OML/cmm/m/it/12 LocalTransformMatrix$\T1/phv/m/n/12 (-20) . 
+ []
+
+
+Overfull \hbox (28.68709pt too wide) in paragraph at lines 150--151
+\T1/cmtt/m/n/12 SceneSerializer::parsePayload \T1/phv/m/n/12 (-20) func-tion ma
+in-tains an \T1/cmtt/m/n/12 unordered_map<u32, ECS::Entity>
+ []
+
+) (./chapters/22-animation.tex [104]
+Chapter 23.
+[105
+
+] [106] [107] [108] [109]) (./chapters/23-scripting.tex [110]
+Chapter 24.
+[111
+
+] [112] [113] [114] [115] [116]) (./chapters/24-ui.tex [117]
+Chapter 25.
+[118
+
+] [119] [120] [121]) (./chapters/25-asset-manager.tex [122]
+Chapter 26.
+
+Overfull \hbox (14.84703pt too wide) in paragraph at lines 12--13
+\T1/cmtt/m/n/12 AssetHandle<T> \T1/phv/m/n/12 (-20) man-ages the life-time of a
+n as-set by com-mu-ni-cat-ing with the \T1/cmtt/m/n/12 AssetManager\T1/phv/m/n/
+12 (-20) .
+ []
+
+[123
+
+]
+Overfull \hbox (14.15472pt too wide) in paragraph at lines 48--49
+\T1/phv/m/n/12 (-20) trans-fer own-er-ship with-out trig-ger-ing atomic in-cre-
+ments or decre-ments in the \T1/cmtt/m/n/12 AssetManager\T1/phv/m/n/12 (-20) .
+ []
+
+[124]
+! Missing $ inserted.
+<inserted text> 
+                $
+l.73 ... \texttt{std::unique_ptr<LinearAllocator>}
+                                                   that owns the memory slab...
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+
+! Extra }, or forgotten $.
+<recently read> \egroup 
+                        
+l.73 ... \texttt{std::unique_ptr<LinearAllocator>}
+                                                   that owns the memory slab...
+I've deleted a group-closing symbol because it seems to be
+spurious, as in `$x}$'. But perhaps the } is legitimate and
+you forgot something else, as in `\hbox{$x}'. In such cases
+the way to recover is to insert both the forgotten and the
+deleted material, e.g., by typing `I$}'.
+
+! Missing $ inserted.
+<inserted text> 
+                $
+l.74 
+     
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+
+
+Overfull \hbox (16.58244pt too wide) in paragraph at lines 79--80
+[]\T1/cmtt/m/n/12 Where $\OML/cmm/m/it/12 M[]$ \T1/cmtt/m/n/12 is the total mem
+ory footprint, $\OML/cmm/m/it/12 S[]$ \T1/cmtt/m/n/12 is the size of the alloca
+tor
+ []
+
+
+Overfull \hbox (33.96729pt too wide) in paragraph at lines 79--80
+\T1/cmtt/m/n/12 slab for asset $\OML/cmm/m/it/12 j$\T1/cmtt/m/n/12 , and $\OT1/
+cmr/m/n/12 (-20) 
+$ \T1/cmtt/m/n/12 represents the fixed overhead of the manager's tracking
+ []
+
+
+Overfull \hbox (13.04565pt too wide) in paragraph at lines 81--82
+[]\T1/cmtt/m/n/12 When an asset is loaded, the engine maps its structures direc
+tly onto the
+ []
+
+
+Overfull \hbox (13.63264pt too wide) in paragraph at lines 81--82
+\T1/cmtt/m/n/12 memory-mapped buffer. For example, a Texture object does not co
+ntain a copy
+ []
+
+
+Overfull \hbox (7.76782pt too wide) in paragraph at lines 81--82
+\T1/cmtt/m/n/12 of the pixel data; instead, it contains a pointer that points d
+irectly into
+ []
+
+[125]
+Overfull \hbox (38.32661pt too wide) in paragraph at lines 99--100
+\T1/cmtt/m/n/12 The collectGarbage() function is responsible for pruning the ca
+che. It iterates
+ []
+
+
+Overfull \hbox (15.79337pt too wide) in paragraph at lines 99--100
+\T1/cmtt/m/n/12 through the asset registry and identifies entries where the ref
+Count is zero.
+ []
+
+
+Overfull \hbox (35.23987pt too wide) in paragraph at lines 99--100
+\T1/cmtt/m/n/12 These entries are evicted, and their associated LinearAllocator
+ slabs are freed,
+ []
+
+
+Overfull \hbox (34.65288pt too wide) in paragraph at lines 101--102
+[]\T1/cmtt/m/n/12 The manager also tracks performance metrics through the Cache
+Stats structure: 
+ []
+
+
+Overfull \hbox (6.46388pt too wide) in paragraph at lines 117--119
+\T1/cmtt/m/n/12 where $\OML/cmm/m/it/12 C[]$ \T1/cmtt/m/n/12 is the number of t
+imes an already-loaded asset was requested via
+ []
+
+
+Overfull \hbox (26.2883pt too wide) in paragraph at lines 123--124
+\T1/cmtt/m/n/12 Caffeine utilizes a specialized .caf format for its assets. At 
+runtime, these
+ []
+
+[126]
+Overfull \hbox (24.74493pt too wide) in paragraph at lines 127--128
+\T1/cmtt/m/n/12 To support a generic template-based API, the engine uses the As
+setTypeTrait<T>
+ []
+
+
+Overfull \hbox (13.94131pt too wide) in paragraph at lines 127--128
+\T1/cmtt/m/n/12 mechanism. This allows the AssetManager to determine the intern
+al AssetType
+ []
+
+
+Overfull \hbox (10.5459pt too wide) in paragraph at lines 138--139
+\T1/cmtt/m/n/12 The three primary asset types currently supported by the engine
+ are Texture,
+ []
+
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <12> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 141.
+
+Overfull \hbox (20.16542pt too wide) in paragraph at lines 141--142
+[]\T1/cmtt/m/n/12 Texture: Contains dimensions, format, and a pointer to the pi
+xel buffer. 
+ []
+
+[127]
+Overfull \hbox (36.09784pt too wide) in paragraph at lines 178--179
+[] []\T1/phv/b/n/12 (-20) Op-ti-miza-tion: Align-ment and Padding[] \T1/cmtt/m/
+n/12 When resolving these views, the AssetManager
+ []
+
+
+Overfull \hbox (44.80878pt too wide) in paragraph at lines 178--179
+\T1/cmtt/m/n/12 ensures that pointers (pixels, pcmData, bytecode) are aligned t
+o the requirements
+ []
+
+
+Overfull \hbox (7.76782pt too wide) in paragraph at lines 178--179
+\T1/cmtt/m/n/12 of the underlying hardware (e.g., SIMD alignment for audio or G
+PU alignment
+ []
+
+) (./chapters/bibliography.tex [128] [129
+
+]
+Underfull \hbox (badness 10000) in paragraph at lines 9--11
+[]\T1/cmtt/m/n/12 SDL3 GPU Category, official documentation. []$https : / / wik
+i . libsdl . org /
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 13--14
+[]\T1/cmtt/m/n/12 J. Jylänki, ``A Thousand Ways to Pack the Bin, A Practical Ap
+proach
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 16--18
+[]\T1/cmtt/m/n/12 G. Fiedler, ``Fix Your Timestep!,'' \T1/cmtt/m/it/12 Gaffer o
+n Games\T1/cmtt/m/n/12 , 2004. []$https :
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 20--21
+[]\T1/cmtt/m/n/12 K. Shoemake, ``Animating Rotation with Quaternion Curves,'' \
+T1/cmtt/m/it/12 SIGGRAPH
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 23--24
+[]\T1/cmtt/m/n/12 D. Chase and Y. Lev, ``Dynamic Circular Work-Stealing Deque,'
+' \T1/cmtt/m/it/12 SPAA
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 26--27
+[]\T1/cmtt/m/n/12 J. Baumgarte, ``Stabilization of Constraints and Integrals of
+ Motion
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 26--27
+\T1/cmtt/m/n/12 in Dynamical Systems,'' \T1/cmtt/m/it/12 Computer Methods in Ap
+plied Mechanics and
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 29--30
+[]\T1/cmtt/m/n/12 CRC-32 IEEE 802.3 Standard (Ethernet), CRC-32 Polynomial defi
+nition.
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 32--34
+[]\T1/cmtt/m/n/12 Khronos Group, ``OpenGL Specification,'' column-major matrix
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 39--40
+[]\T1/cmtt/m/n/12 B. Mirtich, ``Impulse-Based Dynamic Simulation of Rigid Body 
+Systems,''
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 42--43
+[]\T1/cmtt/m/n/12 M. Dickheiser (ed.), \T1/cmtt/m/it/12 Game Programming Gems 6
+\T1/cmtt/m/n/12 , Charles River Media,
+ []
+
+) [130
+
+] (./main.aux)
+ ***********
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
+ ***********
+Package rerunfilecheck Info: File `main.out' has not changed.
+(rerunfilecheck)             Checksum: E4934797F29C3659ABC17635C5979835;51756.
+ )
+(\end occurred inside a group at level 1)
+
+### simple group (level 1) entered at line 73 ({)
+### bottom level 
+Here is how much of TeX's memory you used:
+ 22163 strings out of 469515
+ 340397 string characters out of 5470807
+ 854407 words of memory out of 5000000
+ 48471 multiletter control sequences out of 15000+600000
+ 688948 words of font info for 354 fonts, out of 8000000 for 9000
+ 14 hyphenation exceptions out of 8191
+ 75i,16n,89p,1001b,2110s stack positions out of 10000i,1000n,20000p,200000b,200000s
+</usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pf
+b></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/
+texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></usr/share/texmf-dist/fon
+ts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texmf-dist/fonts/type1/public
+/amsfonts/cm/cmr12.pfb></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cm
+r8.pfb></usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/s
+hare/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/share/texmf-dist
+/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/share/texmf-dist/fonts/ty
+pe1/public/cm-super/sfit1095.pfb></usr/share/texmf-dist/fonts/type1/public/cm-s
+uper/sfit1200.pfb></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt1095.p
+fb></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt1200.pfb></usr/share/
+texmf-dist/fonts/type1/public/cm-super/sftt1728.pfb></usr/share/texmf-dist/font
+s/type1/urw/helvetic/uhvb8a.pfb></usr/share/texmf-dist/fonts/type1/urw/helvetic
+/uhvr8a.pfb></usr/share/texmf-dist/fonts/type1/urw/helvetic/uhvro8a.pfb>
+Output written on main.pdf (143 pages, 787477 bytes).
+PDF statistics:
+ 3686 PDF objects out of 4296 (max. 8388607)
+ 3471 compressed objects within 35 object streams
+ 1581 named destinations out of 1728 (max. 500000)
+ 77638 words of extra memory for PDF output out of 89155 (max. 10000000)
+

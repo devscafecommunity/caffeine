@@ -1,0 +1,242 @@
+\chapter{Three-Dimensional Rendering}
+
+The three-dimensional rendering subsystem of the Caffeine Engine provides a robust framework for managing spatial complexity and visual fidelity. This chapter covers the architectural components responsible for view management, visibility determination, spatial partitioning, and light representation.
+
+\needspace{6\baselineskip}
+\section{The Camera3D Subsystem}
+
+The \texttt{Camera3D} class serves as the primary interface between the virtual world and the rendering viewport. It encapsulates the mathematical transformations necessary to project three-dimensional world coordinates into two-dimensional screen space while supporting multiple interaction paradigms.
+
+\needspace{5\baselineskip}
+\subsection{Operational Modes}
+
+Caffeine supports three distinct camera behaviors, each tailored for specific gameplay or tool-based scenarios. These modes dictate how the camera responds to input and its relationship with other entities in the world.
+
+\subsubsection{First-Person Perspective (FPS)}
+The FPS mode implements traditional mouse-look and keyboard-based navigation. It maintains internal pitch and yaw angles, where pitch is clamped to $\pm 89$ degrees to avoid gimbal lock and orientation inversion. Movement is calculated by projecting input vectors onto the camera's local horizontal plane, ensuring that vertical tilt does not affect movement speed when the player looks up or down.
+
+\subsubsection{Orbital Navigation}
+Designed for editors and strategy games, this mode rotates around a fixed \texttt{orbitTarget}. It uses azimuth and elevation parameters combined with an \texttt{orbitDistance} to position the camera on a spherical shell. The position in Cartesian coordinates is calculated as:
+\begin{equation}
+    x = r \cdot \cos(\phi) \cdot \sin(\theta), \quad y = r \cdot \sin(\phi), \quad z = r \cdot \cos(\phi) \cdot \cos(\theta)
+\end{equation}
+where $r$ is the distance, $\phi$ is the elevation, and $\theta$ is the azimuth.
+
+\subsubsection{Entity Following}
+The Follow mode attaches the camera to a target \texttt{ECS::Entity}. It employs linear interpolation (lerp) for smooth movement, allowing the camera to lag slightly behind the target for a more fluid feel. The \texttt{followSmoothing} factor determines the responsiveness of the camera to the target's position changes.
+
+\needspace{5\baselineskip}
+\subsection{Mathematical Derivation of the Basis Vectors}
+
+The orientation of the camera is represented internally by a unit quaternion $q$. To calculate the local basis vectors (Forward, Right, and Up) in world space, the engine rotates the standard axis vectors:
+
+\begin{equation}
+    \vec{f} = q \cdot \begin{pmatrix} 0 \\ 0 \\ 1 \end{pmatrix} \cdot q^{-1}, \quad \vec{r} = q \cdot \begin{pmatrix} 1 \\ 0 \\ 0 \end{pmatrix} \cdot q^{-1}, \quad \vec{u} = q \cdot \begin{pmatrix} 0 \\ 1 \\ 0 \end{pmatrix} \cdot q^{-1}
+\end{equation}
+
+These vectors form an orthonormal basis. The \texttt{forward()} vector points into the screen, \texttt{right()} points to the right side of the viewport, and \texttt{up()} aligns with the vertical axis relative to the camera's tilt.
+
+\needspace{5\baselineskip}
+\subsection{Perspective Projection Matrix}
+
+The engine uses a standard right-handed perspective projection matrix. Given a vertical field of view $\theta$ (fovY) in radians, an aspect ratio $a$, and distances to the near ($n$) and far ($f$) clipping planes, the matrix $P$ is constructed as follows.
+
+First, the focal length $g$ is defined:
+\begin{equation}
+    g = \frac{1}{\tan(\theta/2)}
+\end{equation}
+
+The projection matrix $P$ is then:
+\begin{equation}
+    P = \begin{pmatrix}
+        g/a & 0 & 0 & 0 \\
+        0 & g & 0 & 0 \\
+        0 & 0 & -(f+n)/(f-n) & -2fn/(f-n) \\
+        0 & 0 & -1 & 0
+    \end{pmatrix}
+\end{equation}
+
+This matrix maps the viewing frustum to a normalized device coordinate (NDC) cube ranging from $-1$ to $1$ on all axes.
+
+
+\paragraph{Design Rationale: Matrix Convention}
+
+Caffeine employs column-major matrices to maintain compatibility with OpenGL-style APIs. However, the internal math library provides helper functions to abstract away the memory layout, ensuring that developers can focus on the geometric logic rather than memory offsets.
+
+
+
+\needspace{6\baselineskip}
+\section{Frustum Culling and Visibility}
+
+To maintain high performance in complex scenes, the engine must quickly discard objects that are not visible to the camera. This is achieved through frustum culling.
+
+\needspace{5\baselineskip}
+\subsection{Frustum Construction}
+
+The \texttt{Frustum} struct represents the viewing volume as six planes. Each plane is defined by the equation $n \cdot x + d = 0$, where $n$ is the normal vector pointing towards the outside of the frustum.
+
+The \texttt{fromCamera} method builds these planes using the camera's position, forward vector, and projection parameters. For example, the near plane is defined at distance $nearZ$ from the eye position $E$:
+\begin{equation}
+    n_{near} = -\vec{f}, \quad d_{near} = -n_{near} \cdot (E + \vec{f} \cdot nearZ)
+\end{equation}
+
+Side planes are derived by rotating the view-space normals into world space. If $tanH = \tan(\theta/2) \cdot a$, the left plane normal in view space is $(1, 0, -tanH)$. This normal is transformed using the camera's rotation matrix.
+
+\needspace{5\baselineskip}
+\subsection{Plane-AABB Intersection}
+
+To test if an Axis-Aligned Bounding Box (AABB) is inside the frustum, the engine performs a plane-box intersection test. For each of the six planes, it finds the "p-vertex" (the corner of the AABB furthest in the direction of the plane's normal).
+
+If $p$ is the p-vertex of the AABB for plane $P_i$, and $dist(p, P_i) > 0$, the box is entirely outside the frustum and can be culled. The signed distance for a point $(x, y, z)$ to a plane $(A, B, C, D)$ is:
+\begin{equation}
+    d = A \cdot x + B \cdot y + C \cdot z + D
+\end{equation}
+
+\subsubsection{Sphere and Point Visibility}
+In addition to AABB tests, the engine supports sphere and point visibility checks. A point is visible if it lies on the "inside" side of all six frustum planes. For a sphere with center $C$ and radius $R$, the test checks if the distance from $C$ to any plane exceeds $R$ on the "outside" side:
+\begin{equation}
+    isVisible = \forall i \in \{1..6\}: (n_i \cdot C + d_i) \leq R
+\end{equation}
+This allows for fast culling of particle systems or simplified trigger volumes.
+
+\needspace{6\baselineskip}
+\section{Octree Spatial Partitioning}
+
+The \texttt{Octree} class provides a hierarchical organization of 3D space. It allows for efficient spatial queries, such as finding all entities within a frustum or intersecting a ray.
+
+\needspace{5\baselineskip}
+\subsection{Recursive Subdivision}
+
+An Octree begins as a single root node covering the entire scene boundaries. When the number of entities in a leaf node exceeds \texttt{maxEntitiesPerNode}, the node is subdivided into eight children.
+
+The split point is always the center of the current node's AABB. Each child represents one octant of the parent's volume. The subdivision continues until the \texttt{maxDepth} is reached.
+
+\begin{lstlisting}[language=C++, caption=Octree Node Subdivision]
+void subdivide() {
+    Vec3 c = bounds.center();
+    for (int i = 0; i < 8; ++i) {
+        auto ch = std::make_unique<Node>();
+        ch->bounds.min = {
+            (i & 1) ? c.x : bounds.min.x,
+            (i & 2) ? c.y : bounds.min.y,
+            (i & 4) ? c.z : bounds.min.z
+        };
+        ch->bounds.max = {
+            (i & 1) ? bounds.max.x : c.x,
+            (i & 2) ? bounds.max.y : c.y,
+            (i & 4) ? bounds.max.z : c.z
+        };
+        ch->depth  = depth + 1;
+        ch->isLeaf = true;
+        children[i] = std::move(ch);
+    }
+    isLeaf = false;
+}
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Ray-AABB Intersection (Slab Method)}
+
+Raycasting through the Octree uses the slab method for efficient AABB intersection. For a ray with origin $O$ and direction $D$, and a box defined by $[min, max]$, the intersection intervals for each axis $i$ are:
+\begin{equation}
+    t_{1,i} = \frac{min_i - O_i}{D_i}, \quad t_{2,i} = \frac{max_i - O_i}{D_i}
+\end{equation}
+
+The entry and exit times are:
+\begin{equation}
+    t_{min} = \max(\min(t_{1,x}, t_{2,x}), \min(t_{1,y}, t_{2,y}), \min(t_{1,z}, t_{2,z}))
+\end{equation}
+\begin{equation}
+    t_{max} = \min(\max(t_{1,x}, t_{2,x}), \max(t_{1,y}, t_{2,y}), \max(t_{1,z}, t_{2,z}))
+\end{equation}
+
+An intersection occurs if $t_{max} \geq t_{min}$ and $t_{max} \geq 0$.
+
+\needspace{5\baselineskip}
+\subsection{Query Architectures}
+
+The Octree supports multiple query types to help different engine subsystems, such as physics, AI, and rendering.
+
+\subsubsection{Frustum Query Traversal}
+Querying the Octree with a frustum is a recursive process. At each node, the engine tests the node's AABB against the frustum. If the AABB is completely outside, the entire branch is discarded. If the node is a leaf, every entity's AABB is tested against the frustum. Visible entities are added to the result buffer.
+
+\subsubsection{Radius and Sphere Queries}
+For proximity-based logic, such as explosion damage or local light influence, the Octree provides radius queries. This search identifies all entities whose AABB center lies within a specified distance from a point. The engine optimizes this by first checking if the query sphere intersects the node's AABB using a clamped distance squared check:
+\begin{equation}
+    distSq = \sum_{i \in \{x,y,z\}} (\max(0, min_i - C_i) + \max(0, C_i - max_i))^2
+\end{equation}
+If $distSq \leq R^2$, the traversal continues into the node.
+
+\needspace{6\baselineskip}
+\section{Lighting Components}
+
+Caffeine represents light sources as ECS components. The rendering engine traverses these components to build the lighting data sent to the GPU.
+
+\needspace{5\baselineskip}
+\subsection{Base Light Properties}
+
+Every light source shares a common \texttt{LightComponent} which defines the color and intensity. The color is stored as a \texttt{Vec4} (RGBA), while intensity is a scalar multiplier applied during the lighting calculation.
+
+\begin{lstlisting}[language=C++]
+struct LightComponent {
+    Vec4 color = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    f32 intensity = 1.0f;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Specific Light Types}
+
+The engine supports three primary light types, each with unique geometric properties and rendering requirements.
+
+\subsubsection{Directional Lighting}
+Directional lights simulate distant sources like the sun. The rays are parallel, so the light position is ignored. The direction vector $\vec{L}$ is the only geometric parameter. The lighting shader uses this vector directly in the Lambertian diffuse calculation:
+\begin{equation}
+    I = \max(0, \vec{n} \cdot -\vec{L})
+\end{equation}
+This component includes a \texttt{shadowDistance} property to limit the range of shadow mapping, optimizing depth buffer usage.
+
+\subsubsection{Point Lighting}
+Point lights emit light omnidirectionally from a position $P$. The intensity diminishes over distance $d$. Caffeine uses a radius-based attenuation model where the light contribution drops to zero at distance $R$. The attenuation factor $A$ is typically calculated as:
+\begin{equation}
+    A = \max(0, 1 - (d/R)^2)
+\end{equation}
+This ensures a smooth transition at the edge of the light's influence.
+
+\subsubsection{Spot Lighting}
+Spot lights emit light in a cone defined by a direction $\vec{L}$ and an \texttt{angle} $\phi$. The angular attenuation $S$ is determined by the cosine of the angle between the light direction and the vector to the fragment $\vec{V}$:
+\begin{equation}
+    S = \text{smoothstep}(\cos(\phi_{outer}), \cos(\phi_{inner}), \vec{L} \cdot \vec{V})
+\end{equation}
+This creates a soft falloff at the edges of the cone, preventing harsh geometric artifacts.
+
+\needspace{6\baselineskip}
+\section{Mesh and Rendering State}
+
+Entities that appear in the 3D world must possess components that describe their geometry and material properties.
+
+\needspace{5\baselineskip}
+\subsection{MeshRendererComponent}
+
+This component links an entity to a static mesh asset. It contains the paths to the mesh data and the material file. It also holds flags for shadow behavior.
+
+\begin{lstlisting}[language=C++]
+struct MeshRendererComponent {
+    std::string meshPath;
+    std::string materialPath;
+    bool castShadows = true;
+    bool receiveShadows = true;
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{MeshFilterComponent}
+
+For procedural or primitive-based geometry, the \texttt{MeshFilterComponent} specifies the type of primitive to generate (Cube, Sphere, Capsule, etc.) or a path to a custom mesh. This allows for rapid prototyping without requiring external asset files for basic shapes.
+
+
+\paragraph{Implementation Detail: Skinned Meshes}
+
+The \texttt{SkinnedMeshRendererComponent} extends the basic mesh concept by adding a \texttt{skeletonPath}. This triggers a different rendering path that uses vertex skinning on the GPU, allowing for character animations where the mesh deforms based on an underlying bone hierarchy.
+
+

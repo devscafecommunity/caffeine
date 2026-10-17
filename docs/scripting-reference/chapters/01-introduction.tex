@@ -1,0 +1,93 @@
+% ============================================================================
+% Chapter 1 — Introduction
+% ============================================================================
+\chapter{Introduction}
+
+The Caffeine Engine is a C++20 game engine built on top of SDL3. It is
+designed around three principles: explicit control over memory, data-oriented
+processing via an archetype-based ECS, and zero external runtime dependencies
+beyond SDL3, ImGui, and ImNodes.
+
+\section{How to Use This Document}
+
+Each chapter in this reference targets one subsystem. Within each chapter
+you will find:
+\begin{itemize}[noitemsep]
+  \item a short description of what the system does and when to use it;
+  \item the relevant types, structs, and enums with their fields;
+  \item the public API with parameter descriptions;
+  \item complete, compilable code examples.
+\end{itemize}
+
+\section{Header Organisation}
+
+All public headers live under \texttt{src/}. The main convenience header is:
+
+\begin{lstlisting}
+#include "Caffeine.hpp"   // includes everything
+\end{lstlisting}
+
+Or include individual modules:
+
+\begin{lstlisting}
+#include "core/Types.hpp"
+#include "math/Vec2.hpp"
+#include "ecs/World.hpp"
+#include "ecs/Components.hpp"
+#include "physics/PhysicsComponents2D.hpp"
+#include "audio/AudioComponents.hpp"
+#include "input/InputManager.hpp"
+#include "scene/SceneComponents.hpp"
+#include "script/CppScript.hpp"
+\end{lstlisting}
+
+\section{Namespaces}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Namespace} & \textbf{Contents} \\
+\midrule
+\texttt{Caffeine}              & Types, math types \\
+\texttt{Caffeine::ECS}         & World, Entity, all components \\
+\texttt{Caffeine::Physics2D}   & Physics components and shapes \\
+\texttt{Caffeine::Scene}       & Scene hierarchy components \\
+\texttt{Caffeine::Audio}       & Audio components \\
+\texttt{Caffeine::Input}       & InputManager, Key, Action, Axis \\
+\texttt{Caffeine::Script}      & CppScript base class, registry \\
+\bottomrule
+\end{longtable}
+
+\section{A Minimal Game Loop Sketch}
+
+The following snippet illustrates the typical lifecycle of a game object:
+
+\begin{lstlisting}
+#include "ecs/World.hpp"
+#include "ecs/Components.hpp"
+
+using namespace Caffeine::ECS;
+
+World world;
+
+// create an entity
+Entity player = world.create("Player");
+
+// attach components
+world.add<Transform>(player, Transform{
+    .position = {100.0f, 200.0f, 0.0f},
+    .rotation = {0.0f, 0.0f, 0.0f},
+    .scale    = {1.0f, 1.0f, 1.0f}
+});
+world.add<Velocity2D>(player, Velocity2D{0.0f, 0.0f});
+
+// per-frame update
+ComponentQuery q;
+q.require<Transform>().require<Velocity2D>();
+
+world.forEach<Transform, Velocity2D>(q, [&](Entity e, Transform& t, Velocity2D& v) {
+    t.position.x += v.x * dt;
+    t.position.y += v.y * dt;
+});
+\end{lstlisting}
+
+The chapters that follow explain every piece shown here in full detail.

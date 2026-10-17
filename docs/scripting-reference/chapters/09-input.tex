@@ -1,0 +1,170 @@
+% ============================================================================
+% Chapter 9 — Input
+% ============================================================================
+\chapter{Input}
+
+\textbf{Header:} \texttt{input/InputManager.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Input}
+
+The input system is action-based. Instead of querying raw key codes directly,
+you query named \emph{actions} (digital) and \emph{axes} (analogue). Physical
+inputs (keys, mouse buttons, gamepad) are bound to actions through
+\texttt{bind()} calls. Bindings are remappable at runtime.
+
+\section{Actions and Axes}
+
+\begin{lstlisting}
+enum class Action : u8 {
+    MoveUp, MoveDown, MoveLeft, MoveRight,
+    Jump, Attack, Interact, Pause
+};
+
+enum class Axis : u8 {
+    MoveX, MoveY,
+    LookX, LookY
+};
+\end{lstlisting}
+
+\section{Key Codes}
+
+\begin{lstlisting}
+enum class Key : u16 {
+    A..Z,             // letter keys
+    Num0..Num9,       // digit row
+    Return, Escape, Backspace, Tab, Space,
+    Up, Down, Left, Right,
+    LShift, RShift, LCtrl, RCtrl, LAlt, RAlt,
+    ...
+};
+\end{lstlisting}
+
+\section{Mouse and Gamepad Codes}
+
+\begin{lstlisting}
+enum class MouseButton : u8  { Left, Middle, Right, X1, X2 };
+enum class GamepadButton : u8 { A, B, X, Y, LeftBumper, RightBumper,
+                                 Back, Start, DPadUp, DPadDown, DPadLeft, DPadRight };
+enum class GamepadAxis : u8   { LeftX, LeftY, RightX, RightY,
+                                 TriggerLeft, TriggerRight };
+\end{lstlisting}
+
+\section{Creating and Configuring the InputManager}
+
+\begin{lstlisting}
+#include "input/InputManager.hpp"
+using namespace Caffeine::Input;
+
+InputManager input;
+
+// Override the default WASD + arrow key bindings
+input.clearAllBindings();
+
+input.bind(Action::MoveLeft,  Binding::fromKey(Key::A));
+input.bind(Action::MoveRight, Binding::fromKey(Key::D));
+input.bind(Action::MoveUp,    Binding::fromKey(Key::W));
+input.bind(Action::MoveDown,  Binding::fromKey(Key::S));
+input.bind(Action::Jump,      Binding::fromKey(Key::Space));
+
+// Add a second binding for the same action
+input.bind(Action::Jump, Binding::fromGamepadButton(GamepadButton::A));
+
+// Analogue axis from gamepad stick
+input.bindAxis(Axis::MoveX,
+    Binding::fromGamepadAxis(GamepadAxis::LeftX),   // negative: left
+    Binding::fromGamepadAxis(GamepadAxis::LeftX));  // positive: right
+\end{lstlisting}
+
+\section{Frame Lifecycle}
+
+Call these every frame in your game loop, wrapping your event poll:
+
+\begin{lstlisting}
+input.beginFrame();
+
+// SDL event loop
+SDL_Event ev;
+while (SDL_PollEvent(&ev)) {
+    if (ev.type == SDL_EVENT_KEY_DOWN)
+        input.injectKeyDown(static_cast<Key>(ev.key.scancode));
+    if (ev.type == SDL_EVENT_KEY_UP)
+        input.injectKeyUp(static_cast<Key>(ev.key.scancode));
+    if (ev.type == SDL_EVENT_MOUSE_MOTION)
+        input.injectMouseMove(ev.motion.x, ev.motion.y);
+    // ... mouse buttons, gamepad events
+}
+
+input.endFrame();
+\end{lstlisting}
+
+\section{Querying Input State}
+
+\subsection{Actions (digital)}
+
+\begin{lstlisting}
+ActionState js = input.actionState(Action::Jump);
+
+if (js.justPressed)  { /* button went down this frame */ }
+if (js.pressed)      { /* button is held */ }
+if (js.justReleased) { /* button went up this frame */ }
+\end{lstlisting}
+
+\subsection{Axes (analogue)}
+
+\begin{lstlisting}
+AxisState mx = input.axisState(Axis::MoveX);
+f32 horizontal = mx.value;  // [-1, 1]
+f32 mouseDeltaX = mx.delta; // change since last frame
+\end{lstlisting}
+
+\subsection{Raw queries}
+
+\begin{lstlisting}
+if (input.isKeyDown(Key::LShift)) {
+    // sprint
+}
+
+Vec2 mousePos   = input.mousePosition();
+Vec2 mouseDelta = input.mouseDelta();
+
+if (input.isMouseButtonDown(MouseButton::Left)) {
+    // fire weapon
+}
+\end{lstlisting}
+
+\section{Callbacks}
+
+\begin{lstlisting}
+// Lambda callback
+input.onActionPressed = [](Action a) {
+    if (a == Action::Pause) openPauseMenu();
+};
+
+// Virtual interface
+class MyHandler : public InputManager::IInputCallbacks {
+    void onActionPressed(Action a) override { ... }
+    void onActionReleased(Action a) override { ... }
+};
+MyHandler handler;
+input.setCallbackHandler(&handler);
+\end{lstlisting}
+
+\section{Complete Example}
+
+\begin{lstlisting}
+void playerInputSystem(Entity player, World& world,
+                       InputManager& input, f32 dt)
+{
+    auto* vel = world.get<Velocity2D>(player);
+    if (!vel) return;
+
+    f32 speed = 200.0f;
+    vel->x = 0.0f;
+
+    if (input.actionState(Action::MoveLeft).pressed)  vel->x = -speed;
+    if (input.actionState(Action::MoveRight).pressed) vel->x =  speed;
+
+    if (input.actionState(Action::Jump).justPressed) {
+        vel->y = -500.0f;   // upward impulse
+    }
+}
+\end{lstlisting}

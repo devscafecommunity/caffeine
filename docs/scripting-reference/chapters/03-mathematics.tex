@@ -1,0 +1,234 @@
+% ============================================================================
+% Chapter 3 — Mathematics
+% ============================================================================
+\chapter{Mathematics}
+
+The engine provides four math types in \texttt{src/math/}: \texttt{Vec2},
+\texttt{Vec3}, \texttt{Vec4}, and \texttt{Mat4}. All are in namespace
+\texttt{Caffeine} and use \texttt{f32} components.
+
+% ----------------------------------------------------------------------------
+\section{Vec2}
+\label{sec:vec2}
+
+\textbf{Header:} \texttt{math/Vec2.hpp}
+
+A two-component float vector for 2D positions, velocities, and directions.
+
+\subsection{Fields}
+
+\begin{lstlisting}
+struct Vec2 {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+};
+\end{lstlisting}
+
+\subsection{Constructors}
+
+\begin{lstlisting}
+Vec2()                  // (0, 0)
+Vec2(f32 x, f32 y)      // explicit components
+Vec2(f32 val)           // (val, val)
+\end{lstlisting}
+
+\subsection{Operators}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Expression} & \textbf{Result} \\
+\midrule
+\texttt{a + b}   & component-wise addition \\
+\texttt{a - b}   & component-wise subtraction \\
+\texttt{a * s}   & scale by scalar \texttt{f32} \\
+\texttt{a / s}   & divide by scalar \texttt{f32} \\
+\texttt{a += b}  & in-place add \\
+\texttt{a -= b}  & in-place subtract \\
+\texttt{a == b}  & exact equality \\
+\texttt{a != b}  & inequality \\
+\bottomrule
+\end{longtable}
+
+\subsection{Methods}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Method} & \textbf{Returns} \\
+\midrule
+\texttt{dot(Vec2 v)}       & \texttt{f32} dot product \\
+\texttt{lengthSquared()}   & \texttt{f32} squared length \\
+\texttt{length()}          & \texttt{f32} Euclidean length \\
+\texttt{normalized()}      & \texttt{Vec2} unit vector \\
+\bottomrule
+\end{longtable}
+
+\subsection{Static constants}
+
+\begin{lstlisting}
+Vec2::zero()   // (0, 0)
+Vec2::one()    // (1, 1)
+\end{lstlisting}
+
+\subsection{Example}
+
+\begin{lstlisting}
+Vec2 pos  = {100.0f, 200.0f};
+Vec2 vel  = {-3.0f, 0.0f};
+
+pos += vel * dt;
+
+Vec2 dir  = (target - pos).normalized();
+f32  dist = (target - pos).length();
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{Vec3}
+\label{sec:vec3}
+
+\textbf{Header:} \texttt{math/Vec3.hpp}
+
+A three-component float vector for 3D positions and directions.
+
+\subsection{Fields}
+
+\begin{lstlisting}
+struct Vec3 {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 z = 0.0f;
+};
+\end{lstlisting}
+
+\subsection{Methods}
+
+All of Vec2's methods plus:
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Method} & \textbf{Returns} \\
+\midrule
+\texttt{cross(Vec3 v)} & \texttt{Vec3} cross product \\
+\bottomrule
+\end{longtable}
+
+\subsection{Static constants}
+
+\begin{lstlisting}
+Vec3::zero()     // (0, 0, 0)
+Vec3::one()      // (1, 1, 1)
+Vec3::forward()  // (0, 0, 1)
+Vec3::up()       // (0, 1, 0)
+Vec3::right()    // (1, 0, 0)
+\end{lstlisting}
+
+\subsection{Example}
+
+\begin{lstlisting}
+Vec3 a = {1.0f, 0.0f, 0.0f};
+Vec3 b = {0.0f, 1.0f, 0.0f};
+Vec3 n = a.cross(b);   // n = (0, 0, 1) — normal to the XY plane
+\end{lstlisting}
+
+% ----------------------------------------------------------------------------
+\section{Vec4}
+\label{sec:vec4}
+
+\textbf{Header:} \texttt{math/Vec4.hpp}
+
+A four-component float vector. Used for quaternions (in 3D rotation
+components), homogeneous coordinates, and RGBA colours.
+
+\subsection{Fields}
+
+\begin{lstlisting}
+struct Vec4 {
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    f32 z = 0.0f;
+    f32 w = 0.0f;
+};
+\end{lstlisting}
+
+Vec4 supports the same operators and methods as Vec2/Vec3 (no cross product).
+
+\subsection{Static constants}
+
+\begin{lstlisting}
+Vec4::zero()   // (0, 0, 0, 0)
+Vec4::one()    // (1, 1, 1, 1)
+\end{lstlisting}
+
+\subsection{Quaternion convention}
+
+When used as a quaternion the components are \texttt{(x, y, z, w)} where
+\texttt{w} is the scalar part. An identity rotation is \texttt{(0, 0, 0, 1)}.
+
+% ----------------------------------------------------------------------------
+\section{Mat4}
+\label{sec:mat4}
+
+\textbf{Header:} \texttt{math/Mat4.hpp}
+
+A column-major 4$\times$4 float matrix. Used for transforms, projection, and
+view matrices. Access element at row $r$, column $c$ with
+\texttt{mat(r, c)}.
+
+\subsection{Constructors \& statics}
+
+\begin{lstlisting}
+Mat4()              // identity (default constructor)
+Mat4::identity()    // identity
+Mat4::zero()        // all zeros
+\end{lstlisting}
+
+\subsection{Transform factories}
+
+\begin{lstlisting}
+Mat4::translation(f32 x, f32 y, f32 z)
+Mat4::translation(Vec3 v)
+Mat4::scale(f32 s)                   // uniform scale
+Mat4::scale(f32 x, f32 y, f32 z)
+Mat4::rotationX(f32 radians)
+Mat4::rotationY(f32 radians)
+Mat4::rotationZ(f32 radians)
+\end{lstlisting}
+
+\subsection{Projection factories}
+
+\begin{lstlisting}
+Mat4::ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far)
+Mat4::perspective(f32 fovY, f32 aspect, f32 near, f32 far)
+Mat4::lookAt(Vec3 eye, Vec3 target, Vec3 up)
+\end{lstlisting}
+
+\subsection{Operations}
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Expression / Method} & \textbf{Result} \\
+\midrule
+\texttt{a * b}                   & matrix multiplication \\
+\texttt{mat.transposed()}        & transposed copy \\
+\texttt{mat.inverted()}          & inverse; identity if singular \\
+\texttt{mat.transformPoint(Vec3 p)}  & apply full transform (w division) \\
+\texttt{mat.transformVector(Vec3 v)} & apply linear part only (no translate) \\
+\texttt{mat.data()}              & \texttt{f32*} raw column-major array \\
+\bottomrule
+\end{longtable}
+
+\subsection{Example}
+
+\begin{lstlisting}
+// Build a model matrix: translate then rotate
+Mat4 model = Mat4::translation(player.x, player.y, 0.0f)
+           * Mat4::rotationZ(player.angle);
+
+// Orthographic projection for a 2D game
+Mat4 proj = Mat4::ortho(0.0f, 1280.0f, 720.0f, 0.0f, -1.0f, 1.0f);
+
+// Combined MVP
+Mat4 mvp = proj * Mat4::identity() * model;
+
+// Pass to the RHI
+const f32* data = mvp.data();   // 16 floats, column-major
+\end{lstlisting}

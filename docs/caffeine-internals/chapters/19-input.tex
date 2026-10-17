@@ -1,0 +1,228 @@
+\chapter{Input Management}
+
+The Caffeine Engine implements an action-based input system designed to decouple physical hardware inputs from logical game logic. This abstraction allows developers to define semantic actions such as "Jump" or "Interact" without hardcoding specific keys or buttons. By providing a layer of indirection, the system helps with rebindable controls, multi-device support, and simplified input handling across different platforms.
+
+\needspace{6\baselineskip}
+\section{Logical Abstractions}
+
+At the core of the input subsystem are two primary abstractions: Actions and Axes. Actions represent discrete events, while Axes represent continuous ranges of motion or values.
+
+\needspace{5\baselineskip}
+\subsection{Action Enumeration}
+
+The \texttt{Action} enum defines the semantic operations available within the engine. Each action corresponds to a specific gameplay intent rather than a physical key.
+
+\begin{lstlisting}[language=C++]
+enum class Action : u8 {
+    MoveUp = 0,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    Jump,
+    Attack,
+    Interact,
+    Pause,
+    Count
+};
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{MoveUp, MoveDown, MoveLeft, MoveRight}: Standard directional movements often mapped to WASD or D-pad.
+    \item \textbf{Jump}: Triggers a character jump or vertical traversal.
+    \item \textbf{Attack}: Primary offensive action.
+    \item \textbf{Interact}: Contextual interaction with objects in the world.
+    \item \textbf{Pause}: Accesses the game menu or halts simulation.
+\end{itemize}
+
+\needspace{5\baselineskip}
+\subsection{Axis Enumeration}
+
+Axes handle directional input that requires a scalar value, such as analog stick movement or mouse motion.
+
+\begin{lstlisting}[language=C++]
+enum class Axis : u8 {
+    MoveX = 0,
+    MoveY,
+    LookX,
+    LookY,
+    Count
+};
+\end{lstlisting}
+
+The \texttt{MoveX} and \texttt{MoveY} axes typically handle player movement, while \texttt{LookX} and \texttt{LookY} are dedicated to camera control.
+
+\needspace{6\baselineskip}
+\section{Hardware Mappings}
+
+The engine translates raw hardware signals into the logical abstractions mentioned above. To maintain portability, the system uses constants compatible with SDL3 scan codes but remains independent of the SDL3 headers during compilation.
+
+\needspace{5\baselineskip}
+\subsection{Keyboard and Mouse Codes}
+
+The \texttt{Key} enum provides a comprehensive list of keyboard scan codes. These values follow the SDL3 scan code specification, ensuring consistent behavior across different keyboard layouts.
+
+\begin{lstlisting}[language=C++]
+enum class Key : u16 {
+    Unknown = 0,
+    A = 4, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num1 = 30, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0,
+    Return = 40, Escape, Backspace, Tab, Space,
+    Up = 82, Down, Left = 80, Right,
+    LShift = 225, RShift, LCtrl = 224, RCtrl,
+    LAlt = 226, RAlt,
+    KeyCount = 512
+};
+\end{lstlisting}
+
+Mouse input is handled through the \texttt{MouseButton} enum, supporting standard left, middle, and right clicks, along with two additional auxiliary buttons.
+
+\begin{lstlisting}[language=C++]
+enum class MouseButton : u8 {
+    Left = 1,
+    Middle,
+    Right,
+    X1,
+    X2,
+    Count
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Gamepad Support}
+
+Caffeine provides native support for modern gamepads via the \texttt{GamepadButton} and \texttt{GamepadAxis} enumerations. The button layout follows the standard Xbox/PlayStation controller configurations.
+
+\begin{lstlisting}[language=C++]
+enum class GamepadButton : u8 {
+    A = 0, B, X, Y,
+    LeftBumper, RightBumper,
+    Back, Start, Guide,
+    LeftStick, RightStick,
+    DPadUp, DPadDown, DPadLeft, DPadRight,
+    Count
+};
+
+enum class GamepadAxis : u8 {
+    LeftX = 0,
+    LeftY,
+    RightX,
+    RightY,
+    TriggerLeft,
+    TriggerRight,
+    Count
+};
+\end{lstlisting}
+
+\specbox{Gamepad Deadzones}{
+While the \texttt{InputManager} tracks raw axis values, it's common practice to apply deadzone filtering at the gameplay logic level. The \texttt{GamepadAxis} values are stored as floating point numbers ranging from -1.0 to 1.0, or 0.0 to 1.0 for triggers.
+}
+
+\needspace{6\baselineskip}
+\section{Binding Mechanism}
+
+The binding system connects physical inputs to logical actions. A single action can be bound to multiple physical inputs (up to 4 by default), allowing for "primary" and "secondary" controls, such as mapping \texttt{Jump} to both the Space bar and the Gamepad A button.
+
+\needspace{5\baselineskip}
+\subsection{The Binding Structure}
+
+The \texttt{Binding} struct uses a tagged union to store the type of input and the corresponding code. This compact representation makes it easy to pass bindings as parameters and store them in arrays.
+
+\begin{lstlisting}[language=C++]
+struct Binding {
+    BindingType type;
+    union {
+        Key             key;
+        MouseButton     mouseButton;
+        GamepadButton   gamepadButton;
+        GamepadAxis     gamepadAxis;
+    };
+    // Helper static methods: fromKey, fromMouseButton, etc.
+};
+\end{lstlisting}
+
+\needspace{5\baselineskip}
+\subsection{Registering Bindings}
+
+To bind a key to an action, the \texttt{bind} method is used. For axes, the \texttt{bindAxis} method allows mapping two separate inputs to represent the negative and positive directions of a single logical axis.
+
+\begin{lstlisting}[language=C++]
+// Example: Binding MoveLeft to 'A' and MoveRight to 'D' for a logical X axis
+inputManager.bindAxis(Axis::MoveX, 
+                      Binding::fromKey(Key::A), 
+                      Binding::fromKey(Key::D));
+\end{lstlisting}
+
+The engine also provides methods to clear bindings for specific actions or reset the entire system to its default configuration via \texttt{resetToDefaults()}.
+
+\needspace{6\baselineskip}
+\section{State Management and Polling}
+
+The \texttt{InputManager} maintains the current and previous state of all inputs to provide accurate frame based queries. This allows the system to distinguish between a key that's currently held down and a key that was pressed exactly during the current frame.
+
+\needspace{5\baselineskip}
+\subsection{Action and Axis States}
+
+Queries for logical actions return an \texttt{ActionState} object, which contains three boolean flags.
+
+\begin{lstlisting}[language=C++]
+struct ActionState {
+    bool pressed      = false;
+    bool justPressed  = false;
+    bool justReleased = false;
+};
+\end{lstlisting}
+
+\begin{itemize}
+    \item \textbf{pressed}: True if the action is currently active.
+    \item \textbf{justPressed}: True only during the first frame the action becomes active.
+    \item \textbf{justReleased}: True only during the frame the action stops being active.
+\end{itemize}
+
+Continuous inputs return an \texttt{AxisState}, providing the current scalar value and the delta since the last frame.
+
+\needspace{5\baselineskip}
+\subsection{The Frame Lifecycle}
+
+Proper state tracking requires consistent updates at the start and end of every frame. The \texttt{beginFrame()} method caches the current state into the "previous state" buffer, while \texttt{endFrame()} prepares the manager for the next cycle.
+
+During the \texttt{beginFrame()} method, the following operations occur:
+\begin{enumerate}
+    \item Copy key state to previous key state.
+    \item Copy mouse state to previous mouse state.
+    \item Store current mouse position as previous mouse position.
+    \item Clear temporary injection buffers.
+\end{enumerate}
+
+This double buffering ensures that logic running during the frame can query \texttt{isActionJustPressed()} reliably, regardless of when the actual hardware event was received.
+
+This double buffering ensures that logic running during the frame can query \texttt{isActionJustPressed()} reliably, regardless of when the actual hardware event was received.
+
+\needspace{6\baselineskip}
+\section{Event Injection and Callbacks}
+
+To keep the input system decoupled from the windowing library (SDL3), the \texttt{InputManager} doesn't poll hardware directly. Instead, it exposes an injection API. The platform layer or windowing system captures raw events and "injects" them into the manager.
+
+\begin{lstlisting}[language=C++]
+void injectKeyDown(Key key);
+void injectMouseButtonDown(MouseButton button);
+void injectMouseMove(f32 x, f32 y);
+\end{lstlisting}
+
+This architecture makes the engine highly testable, as inputs can be simulated in unit tests without a physical keyboard or mouse.
+
+\needspace{5\baselineskip}
+\subsection{The Callback Interface}
+
+While polling is the preferred method for most gameplay logic, some systems require event driven notifications. The engine provides two ways to listen for input events: a functional interface using \texttt{std::function} and a virtual interface through the \texttt{IInputCallbacks} class.
+
+\begin{lstlisting}[language=C++]
+class IInputCallbacks {
+public:
+    virtual ~IInputCallbacks() = default;
+    virtual void onActionPressed(Action action) = 0;
+    virtual void onActionReleased(Action action) = 0;
+};
+\end{lstlisting}
+
+By implementing this interface and registering it with \texttt{setCallbackHandler()}, a system can receive immediate notifications when an action state changes, which is useful for UI systems or event based triggers.

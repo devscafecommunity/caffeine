@@ -1,0 +1,176 @@
+% ============================================================
+%  PREÂMBULO — Dev's Café Biblioteca Didática
+% ============================================================
+
+% === CODIFICAÇÃO E LÍNGUA ===
+\usepackage[utf8]{inputenc}     % Codificação UTF-8 (pdfLaTeX)
+\usepackage[T1]{fontenc}        % Codificação de saída T1
+\usepackage[brazilian]{babel}   % Idioma: Português do Brasil
+
+% === TIPOGRAFIA ===
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% === LAYOUT ===
+\usepackage[
+  a4paper,
+  top=3cm, bottom=3cm,
+  left=3cm, right=2.5cm
+]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+% === MATEMÁTICA ===
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{bm}                 % Para negrito em matemática (vetores)
+
+% === CÓDIGO-FONTE ===
+\usepackage{listings}
+\usepackage{xcolor}
+
+% === GRÁFICOS E FIGURAS ===
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{pagecolor}
+\usepackage{tikz}               % Para diagramas técnicos
+
+% === TABELAS ===
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+% === CAIXAS DIDÁTICAS ===
+\usepackage{tcolorbox}
+\tcbuselibrary{most}
+
+% === ÍCONES ===
+\usepackage{fontawesome5}
+
+% === CABEÇALHOS E RODAPÉS ===
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\nouppercase{\leftmark}}
+\fancyhead[R]{\small Dev's Café}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% === PALETA DE CORES (Dev's Café) ===
+\definecolor{devcafe-blue}{HTML}{2563EB}
+\definecolor{devcafe-green}{HTML}{16A34A}
+\definecolor{devcafe-red}{HTML}{DC2626}
+\definecolor{devcafe-yellow}{HTML}{CA8A04}
+\definecolor{devcafe-gray}{HTML}{64748B}
+\definecolor{devcafe-light}{HTML}{F1F5F9}
+\definecolor{devcafe-dark}{HTML}{1E293B}
+
+% === HIPERLINKS ===
+\usepackage[
+  colorlinks=true,
+  linkcolor=devcafe-blue,
+  urlcolor=devcafe-blue,
+  citecolor=devcafe-gray
+]{hyperref}
+
+% === BIBLIOGRAFIA (biblatex + biber) ===
+\usepackage[
+  backend=biber,
+  style=authoryear,
+  sorting=nyt,
+  maxbibnames=3,
+  minbibnames=1,
+  maxcitenames=2,
+  mincitenames=1,
+  giveninits=true,
+  uniquename=init,
+  dashed=false,
+  doi=true,
+  isbn=false,
+  url=true,
+  urldate=comp,
+  language=portuguese,
+]{biblatex}
+\addbibresource{bibliografia.bib}
+
+% === AMBIENTES MATEMÁTICOS ===
+\newtheorem{teorema}{Teorema}[chapter]
+\newtheorem{lema}[teorema]{Lema}
+\newtheorem{proposicao}[teorema]{Proposição}
+\newtheorem{corolario}[teorema]{Corolário}
+\newtheorem{definicao}{Definição}[chapter]
+
+% === CAIXAS DIDÁTICAS PADRONIZADAS ===
+
+% Dica
+\newtcolorbox{dica}{
+  colback=devcafe-green!5, colframe=devcafe-green,
+  fonttitle=\bfseries,
+  title={\faLightbulb\ Dica}
+}
+
+% Aviso
+\newtcolorbox{aviso}{
+  colback=devcafe-yellow!10, colframe=devcafe-yellow,
+  fonttitle=\bfseries,
+  title={\faExclamationTriangle\ Aviso}
+}
+
+% Exemplo
+\newtcolorbox{exemplo}[1][Exemplo]{
+  colback=white, colframe=devcafe-green,
+  fonttitle=\bfseries,
+  title={\faCode\ #1}
+}
+
+% Exercício
+\newtcolorbox{exercicio}[1]{
+  colback=devcafe-light, colframe=devcafe-gray,
+  fonttitle=\bfseries,
+  title={\faEdit\ Exercício: #1}
+}
+
+% Fórmula (Nova)
+\newtcolorbox{formula}[1]{
+  colback=devcafe-blue!5, colframe=devcafe-blue,
+  fonttitle=\bfseries,
+  title={\faCalculator\ Fórmula: #1}
+}
+
+% === CONFIGURAÇÃO DE LISTINGS (GLSL e Pseudocódigo) ===
+
+\lstdefinelanguage{GLSL}{
+  morekeywords={attribute, uniform, varying, layout, in, out, inout, float, int, void, bool, mat2, mat3, mat4, vec2, vec3, vec4, ivec2, ivec3, ivec4, bvec2, bvec3, bvec4, sampler1D, sampler2D, sampler3D, samplerCube, struct, for, while, do, if, else, break, continue, return, discard, true, false, precision, highp, mediump, lowp, invariant, smooth, flat, noperspective, texture, texture2D, pow, max, dot, normalize, reflect, refract, clamp},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{devcafe-blue}\bfseries,
+  stringstyle=\color{devcafe-green},
+  commentstyle=\color{devcafe-gray}\itshape,
+  numberstyle=\tiny\color{devcafe-gray},
+  numbers=left,
+  stepnumber=1,
+  frame=single,
+  backgroundcolor=\color{devcafe-light},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=2,
+  showstringspaces=false,
+  captionpos=b,
+  rulecolor=\color{devcafe-gray},
+}
+
+\lstdefinelanguage{pseudocode}{
+  morekeywords={if, then, else, for, each, in, while, return, function, algorithm, end, and, or, not},
+  sensitive=false,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}

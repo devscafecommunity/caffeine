@@ -1,0 +1,48 @@
+% ============================================================================
+\chapter{Introduction}
+% ============================================================================
+
+\section{Philosophy}
+
+Caffeine Engine is built under a single principle: \emph{transparency}.
+Every byte that passes through the CPU must be accountable to the
+programmer. This philosophy manifests in three concrete decisions.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Zero-dependency standard library.} The engine replaces
+        \texttt{std} containers with its own implementations tuned for
+        game-loop access patterns (cache-friendly sequential iteration,
+        allocator-aware growth, no hidden heap traffic).
+
+  \item \textbf{Data-oriented design.} Entities are not objects; they are
+        integer identifiers. Components are plain-old-data structs stored in
+        contiguous typed pools. This layout maximises SIMD and cache line
+        utilisation during system updates.
+
+  \item \textbf{Explicit concurrency.} No implicit background threads.
+        The job system is the single scheduling primitive; callers declare
+        dependencies explicitly through barriers and handles.
+\end{itemize}
+
+\section{Document Structure}
+
+Each subsequent chapter covers one major subsystem. The ordering follows
+the dependency graph: fundamental types and mathematics are presented first,
+followed by memory, containers, ECS, threading, domain systems (physics,
+audio), the asset pipeline, and finally the editor viewport. Each chapter
+concludes with a table of invariants that any future implementation must
+preserve.
+
+\section{Notation Conventions}
+
+Throughout this document, the following notation is used consistently.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Scalars: italic Latin letters --- $a, b, t, \theta$.
+  \item Vectors: bold lower-case --- $\mathbf{v}, \mathbf{u}, \mathbf{n}$.
+  \item Matrices: bold upper-case --- $\mathbf{M}, \mathbf{R}$.
+  \item Quaternions: calligraphic --- $\mathcal{q}$.
+  \item Unit vectors: hat notation --- $\hat{\mathbf{v}}$.
+  \item Column-major storage is assumed unless stated otherwise.
+  \item Code identifiers appear in \texttt{monospace}.
+\end{itemize}

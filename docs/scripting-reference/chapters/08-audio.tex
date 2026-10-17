@@ -1,0 +1,113 @@
+% ============================================================================
+% Chapter 8 — Audio
+% ============================================================================
+\chapter{Audio}
+
+\textbf{Header:} \texttt{audio/AudioComponents.hpp}\\
+\textbf{Namespace:} \texttt{Caffeine::Audio}
+
+The audio system uses ECS components to drive sound playback. Attach an
+\texttt{AudioEmitter} to any entity; the \texttt{AudioSystem} picks it up
+and plays the referenced clip through SDL3's audio pipeline.
+
+\section{AudioClip}
+
+An \texttt{AudioClip} is a data-only struct that describes loaded PCM audio.
+You do not construct these manually — the asset manager fills them when you
+load a sound asset. They are referenced by path inside \texttt{AudioEmitter}.
+
+\begin{lstlisting}
+struct AudioClip {
+    const u8* data          = nullptr;  // raw PCM samples
+    u64       size          = 0;        // byte count
+    u32       sampleRate    = 44100;
+    u16       channels      = 2;        // 1 = mono, 2 = stereo
+    u16       bitsPerSample = 16;
+    f32       duration      = 0.0f;     // seconds
+};
+\end{lstlisting}
+
+\section{AudioEmitter}
+
+\begin{lstlisting}
+struct AudioEmitter {
+    FixedString<128> clipPath;           // path to the .caf audio asset
+    f32              volume      = 1.0f; // [0, 1]
+    f32              maxDistance = 500.0f;
+    bool             loop        = false;
+    bool             playOnSpawn = true; // play when entity is created
+    bool             spatial     = true; // use positional audio
+};
+\end{lstlisting}
+
+\begin{longtable}{lp{9cm}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{clipPath}    & Path to the audio asset, relative to the asset root. \\
+\texttt{volume}      & Master volume for this emitter. \\
+\texttt{maxDistance} & Beyond this distance from the listener, volume is 0. Applies only when \texttt{spatial = true}. \\
+\texttt{loop}        & If true, restarts automatically when the clip ends. \\
+\texttt{playOnSpawn} & If true, playback starts the moment the component is added. \\
+\texttt{spatial}     & If true, volume and panning are attenuated by distance to the listener entity. \\
+\bottomrule
+\end{longtable}
+
+\section{Examples}
+
+\subsection{One-shot sound effect}
+
+\begin{lstlisting}
+Entity boom = world.create("Explosion");
+world.add<Transform>(boom, Transform{hitPosition});
+
+AudioEmitter sfx;
+sfx.clipPath    = "audio/explosion.caf";
+sfx.volume      = 0.9f;
+sfx.loop        = false;
+sfx.playOnSpawn = true;
+sfx.spatial     = true;
+sfx.maxDistance = 800.0f;
+world.add<AudioEmitter>(boom, sfx);
+// Destroy after the clip's duration if you want a fire-and-forget entity
+\end{lstlisting}
+
+\subsection{Looping background music}
+
+\begin{lstlisting}
+Entity music = world.create("BGMusic");
+// No transform needed for non-spatial audio
+AudioEmitter bgm;
+bgm.clipPath    = "audio/soundtrack_01.caf";
+bgm.volume      = 0.7f;
+bgm.loop        = true;
+bgm.spatial     = false;  // 2D: same volume everywhere
+bgm.playOnSpawn = true;
+world.add<AudioEmitter>(music, bgm);
+
+// Mark as persistent so it survives scene transitions
+world.add<PersistentComponent>(music, PersistentComponent{true});
+\end{lstlisting}
+
+\subsection{Footstep sounds triggered from a script}
+
+\begin{lstlisting}
+// Inside a CppScript (see Chapter 10)
+void onUpdate(Entity entity, World& world, f32 dt) override {
+    if (!world.has<AudioEmitter>(entity)) {
+        AudioEmitter step;
+        step.clipPath    = "audio/footstep.caf";
+        step.volume      = 0.5f;
+        step.loop        = false;
+        step.playOnSpawn = false;
+        world.add<AudioEmitter>(entity, step);
+    }
+
+    if (m_stepCooldown <= 0.0f && isMoving()) {
+        auto* emitter = world.get<AudioEmitter>(entity);
+        emitter->playOnSpawn = true;   // retrigger
+        m_stepCooldown = 0.35f;
+    }
+    m_stepCooldown -= dt;
+}
+\end{lstlisting}

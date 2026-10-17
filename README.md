@@ -1,23 +1,97 @@
-# Caffeine Engine
+# ☕ Caffeine Engine
 
-High-performance C++ game engine (SDL3) for Codex Studio.
+**A high-performance, custom-built game engine for the Codex Studio.**
 
-**Documentation, roadmaps, and PDF books** live in the [`caffeine-website`](./caffeine-website) submodule (Svelte site + TeX). Agents should use the docs MCP defined there — see [`AGENTS.md`](./AGENTS.md).
+Caffeine é uma engine de jogos desenvolvida em **C++** sobre a camada do **SDL3**. O foco do projeto é o controle total sobre o hardware, priorizando concorrência multithread, gerenciamento de memória customizado e otimização gráfica de baixo nível.
 
-## Build
+---
+
+## 📚 Documentação
+
+### Documentos Principais
+
+| Documento | Descrição | Link |
+|-----------|-----------|------|
+| **CHANGELOG.md** | Histórico de alterações e commits | [`CHANGELOG.md`](CHANGELOG.md) |
+| **MASTER.md** | Documentação unificada completa | [`docs/MASTER.md`](docs/MASTER.md) |
+| **ROADMAP.md** | Roadmap das 6 fases de desenvolvimento | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| **SPECS.md** | Regras e padrões de desenvolvimento | [`docs/SPECS.md`](docs/SPECS.md) |
+| **memory_model.md** | Especificações de memória | [`docs/memory_model.md`](docs/memory_model.md) |
+| **architecture_specs.md** | Especificações técnicas | [`docs/architecture_specs.md`](docs/architecture_specs.md) |
+
+### Arquitetura & Módulos
+
+| Módulo | Arquitetura | API Reference |
+|--------|-------------|---------------|
+| **Core** | [`docs/architecture/core.md`](docs/architecture/core.md) | [`docs/api/README.md`](docs/api/README.md) |
+| **Memory** | [`docs/architecture/memory.md`](docs/architecture/memory.md) | [`docs/api/README.md`](docs/api/README.md) |
+| **Containers** | [`docs/containers/vector.md`](docs/containers/vector.md) | [`docs/api/README.md`](docs/api/README.md) |
+| **Math** | [`docs/math/vectors.md`](docs/math/vectors.md) | [`docs/api/README.md`](docs/api/README.md) |
+
+---
+
+## 🏛️ Filosofia de Desenvolvimento
+Ao contrário de engines "bloated", a Caffeine é construída sob o princípio da **transparência**.
+* **Zero Dependency:** Reduzir ao máximo a dependência da `std` padrão, criando uma `stdlib` própria focada em jogos.
+* **Data-Oriented:** Foco em performance de cache e processamento paralelo.
+* **Caffeine-Powered:** Feita por desenvolvedores que preferem entender cada byte que passa pela CPU.
+---
+
+## 🚀 Como Compilar
+
+*Compilação via CMake com testes GTest.*
+
+**Requisitos:**
+- Compilador C++20 ou superior
+- CMake 3.20+
+- SDL3 (Latest Build)
 
 ```bash
-git submodule update --init --recursive
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-cd build && ctest --output-on-failure
+git clone https://github.com/codex-studio/caffeine
+cd caffeine
+mkdir build && cd build
+cmake ..
+make
 ```
 
-More detail: `scripts/build.sh` (Linux/macOS) or `scripts/build.bat` (Windows).
+### Executar Testes
 
-## Layout
+```bash
+# Na pasta build
+ctest --output-on-failure
+```
 
-- `src/` — engine source
-- `apps/` — runtime and editor applications
-- `tests/` — unit tests
-- `caffeine-website/` — documentation submodule
+---
+
+## 📂 Estrutura do Código
+
+```
+src/
+├── Caffeine.hpp              # Header principal de inclusão
+├── core/                     # Tipos fundamentais, platform, assertions
+│   ├── Types.hpp            # u32, f64, etc.
+│   ├── Platform.hpp         # Macros de plataforma
+│   ├── Compiler.hpp         # Macros de compilador
+│   └── Assertions.hpp       # CF_ASSERT
+├── memory/                   # Allocators customizados
+│   ├── Allocator.hpp       # Interface IAllocator
+│   ├── LinearAllocator.hpp # O(1) reset
+│   ├── PoolAllocator.hpp  # Slots fixos
+│   └── StackAllocator.hpp  # Marcadores
+├── containers/               # Estruturas de dados
+│   ├── Vector.hpp          # Array dinâmico
+│   ├── HashMap.hpp         # Tabela hash O(1)
+│   ├── StringView.hpp      # String sem ownership
+│   └── FixedString.hpp     # Buffer inline
+└── math/                     # Tipos matemáticos
+    ├── Vec2.hpp, Vec3.hpp, Vec4.hpp
+    ├── Mat4.hpp            # Matriz 4×4 column-major
+    └── Math.hpp            # Utility functions
+```
+
+> Para documentação completa, consulte [`docs/MASTER.md`](docs/MASTER.md)
+
+---
+
+> *“Caffeine: Because great games are built on strong code and a lot of coffee.”*
+

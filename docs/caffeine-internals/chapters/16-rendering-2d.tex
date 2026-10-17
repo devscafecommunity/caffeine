@@ -1,0 +1,333 @@
+\chapter{Two-Dimensional Rendering}
+
+The Two-Dimensional (2D) Rendering subsystem of the Caffeine Engine is architected to provide high-performance sprite and primitive rendering through an efficient batching and sorting pipeline. Designed to handle upwards of 30,000 sprites per frame while maintaining a low CPU footprint, the system leverages data-oriented design principles and modern graphics API features. This chapter explores the internal mechanisms of the batch renderer, the texture atlas management system, and the mathematical foundations of the orthographic camera.
+
+\needspace{6\baselineskip}
+\section{Subsystem Architecture}
+
+The 2D rendering pipeline operates on the fundamental principle of minimizing GPU state changes, which are the primary bottleneck in modern graphics performance. In conventional rendering, each sprite might require a separate draw call, leading to significant overhead from driver-level context switching and uniform updates. Caffeine mitigates this through a deferred batching strategy.
+
+The architecture is divided into three interconnected modules:
+\begin{itemize}
+    \item \textbf{The Batch Renderer}: Responsible for collecting sprite primitives, sorting them by state and depth, and flushing them as large, indexed vertex buffers.
+    \item \textbf{The Texture Atlas}: A spatial management system that packs multiple individual textures into a single hardware texture to reduce binding overhead.
+    \item \textbf{The 2D Camera}: Provides the orthographic view-projection transformations and facilitates coordinate mapping between world-space and screen-space.
+\end{itemize}
+
+\needspace{6\baselineskip}
+\section{The BatchRenderer Pipeline}
+
+The \texttt{BatchRenderer} is the primary interface for 2D graphics submission. It abstracts the underlying Render Hardware Interface (RHI) and provides a high-level API for submitting transformed sprites.
+
+\subsection{Technical Specifications and Constraints}
+
+To maintain deterministic performance and prevent runtime memory fragmentation, the \texttt{BatchRenderer} defines strict upper bounds for its internal buffers. These constants are tuned for modern desktop hardware, balancing batch size with vertex data locality.
+
+\begin{lstlisting}[style=code, language=C++, caption={BatchRenderer Hardware Constraints}]
+static constexpr u32 MAX_SPRITES_PER_BATCH = 32768;
+static constexpr u32 MAX_VERTICES          = MAX_SPRITES_PER_BATCH * 4;
+static constexpr u32 MAX_INDICES           = MAX_SPRITES_PER_BATCH * 6;
+\end{lstlisting}
+
+Each sprite is treated as a quad consisting of two triangles. For a batch of 32,768 sprites, the engine processes 131,072 vertices and 196,608 indices per draw call. This scale allows for complex 2D scenes with high particle counts or dense environments to be rendered in a single pass.
+
+\subsection{Vertex Format and Memory Layout}
+
+Efficiency in the vertex shader is directly linked to the memory layout of the vertex data. The \texttt{SpriteVertex} structure is optimized for 24-byte alignment, ensuring high throughput during GPU vertex fetching.
+
+\begin{lstlisting}[style=code, language=C++, caption={SpriteVertex Memory Definition}]
+struct SpriteVertex {
+    Vec3 position; // 12 bytes: x, y, z
+    Vec2 texcoord; // 8 bytes: u, v
+    u32  tint;     // 4 bytes: RGBA8 packed
+};
+\end{lstlisting}
+
+
+\paragraph{Design Rationale: Packed Color Tints}
+
+The tint field uses a single u32 to represent four 8-bit color channels. This choice reduces the vertex size from 36 bytes (using Vec4 floats for color) to 24 bytes, effectively reducing the memory bandwidth requirement by 33\% without significant loss in color precision for 2D applications.
+
+
+
+\subsection{Submission and Primitives}
+
+During the application's update loop, sprites are submitted via the \texttt{submitSprite} method. Instead of immediate execution, the engine creates a \texttt{SpritePrimitive} which acts as a lightweight proxy for the final vertex data.
+
+\begin{lstlisting}[style=code, language=C++, caption={Internal SpritePrimitive Representation}]
+struct SpritePrimitive {
+    Mat4 transform;
+    Vec4 uv;
+    u32  tint;
+    u32  sortKey;
+};
+\end{lstlisting}
+
+\subsection{State Sorting and Depth Encoding}
+
+Sorting is the most computationally expensive phase of the 2D pipeline but is essential for both correct transparency blending and performance. Caffeine uses a multi-faceted sort key to group similar rendering states together.
+
+\subsubsection{Sort Key Construction}
+
+The \texttt{sortKey} is a bit-packed 32-bit integer that encodes hierarchical sorting priorities. The construction logic ensures that coarse layers are prioritized, followed by texture binding, and finally fine-grained depth.
+
+\begin{equation}
+\text{Key} = ((\text{Layer} + 128) \& 0xFF) \ll 24 \mid (\text{TextureID} \& 0xFFF) \ll 12 \mid (\text{Depth}_{norm} \& 0xFFF)
+\end{equation}
+
+The bit allocation is as follows:
+\begin{itemize}
+    \item \textbf{Layer (8 bits)}: Supports 256 logical rendering layers. This allows for clear separation of background, midground, and UI elements.
+    \item \textbf{Texture ID (12 bits)}: Groups up to 4,096 unique textures or atlas pages together.
+    \item \textbf{Depth (12 bits)}: Provides 4,096 levels of Z-depth resolution within a single layer, enabling fine-grained interleaving of sprites.
+\end{itemize}
+
+\subsubsection{Radix Sort Implementation}
+
+Because the sort key is an integer and the number of elements is large, the engine employs a Least Significant Digit (LSD) Radix Sort. Unlike comparison-based sorts like \texttt{std::sort} ($O(n \log n)$), Radix Sort operates in $O(n)$ time relative to the number of sprites.
+
+The algorithm performs four passes, each processing 8 bits of the sort key. This approach is highly cache-friendly and avoids the branching overhead of traditional sorting algorithms.
+
+
+\paragraph{Performance Advantage of Radix Sort}
+
+For a typical load of 10,000 sprites, Radix Sort outperforms Quicksort by a factor of 3--5x. In the Caffeine Engine, the sorting pass is often the fastest part of the rendering frame, typically taking less than 0.2ms on a single thread.
+
+
+
+\subsection{Flushing and RHI Integration}
+
+The final stage of the rendering cycle is the \texttt{endFrame} call, where the sorted primitives are converted into hardware-ready buffers.
+
+\subsubsection{Quad Construction and Transformation}
+
+The engine iterates through the sorted \texttt{SpritePrimitive} list and generates four vertices per primitive. Each vertex is transformed from model-space (a unit quad centered at the origin) to world-space using the stored \texttt{Mat4} transform.
+
+The UV coordinates are mapped according to the corners:
+\begin{itemize}
+    \item Top-Left: \texttt{(uv.x, uv.w)}
+    \item Top-Right: \texttt{(uv.z, uv.w)}
+    \item Bottom-Right: \texttt{(uv.z, uv.y)}
+    \item Bottom-Left: \texttt{(uv.x, uv.y)}
+\end{itemize}
+
+\subsubsection{Transient Buffer Management}
+
+The generated vertex and index data are uploaded to the GPU. Caffeine utilizes transient buffers created via the \texttt{RenderDevice}. These buffers are often mapped directly into CPU memory space (using \texttt{MTLBuffer} on Metal or \texttt{vkMapMemory} on Vulkan) to minimize copying.
+
+\begin{lstlisting}[style=code, language=C++, caption={RHI Buffer Submission}]
+RHI::Buffer* vertexBuf = m_device->createBuffer(
+    { static_cast<u64>(verts.size() * sizeof(SpriteVertex)), "BatchVertices" },
+    RHI::BufferUsage::Vertex
+);
+cmd->bindVertexBuffer(vertexBuf);
+cmd->drawIndexed(static_cast<u32>(indices.size()));
+\end{lstlisting}
+
+\needspace{6\baselineskip}
+\section{Texture Atlas Management}
+
+Texture switches are one of the costliest operations in the graphics pipeline. The \texttt{TextureAtlas} class provides a mechanism to aggregate many small assets into a single large texture, thereby maximizing the efficiency of the \texttt{BatchRenderer}.
+
+\subsection{Shelf-Bin Packing Algorithm}
+
+The engine utilizes a Shelf-Bin Packing heuristic to organize sprites within the atlas. This algorithm is selected for its balance between packing density and computational speed.
+
+\subsubsection{Algorithm Formalization}
+
+The packing process involves three distinct phases: sorting, shelf allocation, and UV normalization.
+
+\begin{enumerate}
+    \item \textbf{Sorting}: All sprites to be packed are sorted by their height in descending order. This ensures that the tallest sprite in any given "shelf" defines the shelf's vertical boundary, minimizing vertical gap wastage.
+    \item \textbf{Shelf Placement}: Primitives are placed horizontally along the current shelf. When the next sprite exceeds the atlas width, a new shelf is created at $Y_{current} + H_{shelf\_max}$.
+    \item \textbf{UV Generation}: Once placement is finalized, pixel coordinates are converted to normalized floating-point values $[0.0, 1.0]$.
+\end{enumerate}
+
+\subsubsection{Pseudocode and Logic}
+
+\begin{lstlisting}[style=code, language=C++, caption={Shelf-Packing Logic}]
+void TextureAtlas::pack() {
+    std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
+        return a.srcH > b.srcH; // Descending height
+    });
+
+    u32 shelfX = 0, shelfY = 0, shelfH = 0;
+    for (auto& e : m_entries) {
+        if (shelfX + e.srcW > m_width) {
+            shelfY += shelfH;
+            shelfX = 0;
+            shelfH = 0;
+        }
+        e.px = shelfX;
+        e.py = shelfY;
+        shelfX += e.srcW;
+        shelfH = max(shelfH, e.srcH);
+        // ... calculate normalized UVs ...
+    }
+}
+\end{lstlisting}
+
+\subsection{Atlas Export and Runtime Generation}
+
+While the engine supports pre-baked atlases, the \texttt{TextureAtlas} class is fully capable of runtime generation. This is particularly useful for systems that generate textures procedurally or for loading assets from external sources at runtime.
+
+The \texttt{exportImage()} method allows the engine to retrieve the raw pixel data from the packed atlas. This data can then be uploaded to a GPU texture object or saved to disk for debugging purposes.
+
+\begin{lstlisting}[style=code, language=C++, caption={Atlas Pixel Export}]
+struct PixelData {
+    const u8* pixels   = nullptr;
+    u32       width    = 0;
+    u32       height   = 0;
+    u32       byteSize = 0;
+};
+\end{lstlisting}
+
+\paragraph{Design Rationale: Atomic Packing}
+The packing process is atomic. When new entries are added via the \texttt{add()} method, the packed flag is cleared. The atlas remains unpacked until the explicit \texttt{pack()} call is made. This prevents redundant re-packing operations when adding multiple sprites in sequence, ensuring that the heavy $O(n \log n)$ sort only occurs when necessary.
+
+\subsection{Utilization and Performance}
+
+The efficiency $E$ of the atlas packing can be quantified as the ratio of used pixels to the total area of the atlas:
+
+\begin{equation}
+E = \frac{\sum_{i=1}^{n} (w_i \times h_i)}{W_{atlas} \times H_{atlas}}
+\end{equation}
+
+For typical game assets, the Caffeine Engine's shelf-packer achieves an efficiency of 85--92\%. While more complex algorithms like MaxRects provide higher density, the shelf-packer's $O(n \log n)$ complexity makes it suitable for runtime atlas generation during level loading.
+
+\needspace{6\baselineskip}
+\section{The 2D Camera System}
+
+The \texttt{Camera2D} class provides the mathematical glue between the game world and the user's screen. It manages orthographic projection, view transformations, and procedural effects like screen shake.
+
+\subsection{Coordinate System and Viewport Mapping}
+
+Caffeine's 2D coordinate system uses a right-handed orientation where the positive X-axis points to the right and the positive Y-axis points upwards in world-space. However, standard screen coordinates (pixels) typically define the origin $(0,0)$ at the top-left, with the positive Y-axis pointing downwards.
+
+The \texttt{Camera2D} handles this discrepancy through its internal transformation pipeline. The viewport defined by the \texttt{Rect2D} structure determines the sub-region of the screen where the scene is rendered.
+
+\begin{lstlisting}[style=code, language=C++, caption={Viewport Definition}]
+struct Rect2D {
+    Vec2 position { 0.0f, 0.0f };
+    Vec2 size     { 1280.0f, 720.0f };
+};
+\end{lstlisting}
+
+\subsection{Orthographic Projection Matrix}
+
+The projection matrix $P$ maps the visible region of the world into Normalized Device Coordinates (NDC). In 2D, this is a linear mapping of the viewport dimensions, adjusted for the camera's zoom level.
+
+Given a viewport with width $W$ and height $H$, and a zoom factor $z$, the visible horizontal range is $[- \frac{W}{2z}, \frac{W}{2z}]$ and the vertical range is $[- \frac{H}{2z}, \frac{H}{2z}]$. The resulting matrix is:
+
+\begin{equation}
+P = \begin{bmatrix}
+\frac{2z}{W} & 0 & 0 & 0 \\
+0 & \frac{2z}{H} & 0 & 0 \\
+0 & 0 & \frac{-2}{f-n} & -\frac{f+n}{f-n} \\
+0 & 0 & 0 & 1
+\end{bmatrix}
+\end{equation}
+
+Where $f$ and $n$ represent the far and near planes, typically set to $1000$ and $-1000$ to accommodate depth sorting.
+
+\subsection{View Transformation}
+
+The view matrix $V$ represents the inverse of the camera's world-space transform. If the camera is at position $\mathbf{c} = (c_x, c_y)$ with a rotation $\theta$, the view matrix is:
+
+\begin{equation}
+V = R_z(-\theta) \times T(-c_x, -c_y, 0)
+\end{equation}
+
+This transformation ensures that world-space objects are shifted and rotated such that the camera's center appears at the origin of the screen.
+
+\subsection{Space Conversions}
+
+A critical requirement for gameplay systems (such as UI interaction and world-space targeting) is the ability to map coordinates between screen pixels and world units.
+
+\subsubsection{World-to-Screen Transformation}
+
+To convert a world position $\mathbf{p}_w$ to screen pixels $\mathbf{p}_s$:
+
+\begin{enumerate}
+    \item Calculate NDC position: $\mathbf{p}_{ndc} = (P \times V) \times \mathbf{p}_w$
+    \item Scale and shift to screen space:
+    \begin{align}
+    x_s &= (x_{ndc} + 1) \cdot 0.5 \cdot W_{viewport} + x_{viewport} \\
+    y_s &= (1 - y_{ndc}) \cdot 0.5 \cdot H_{viewport} + y_{viewport}
+    \end{align}
+\end{enumerate}
+
+The inversion of the $y$ component ($1 - y_{ndc}$) is necessary because screen coordinates usually define the origin $(0,0)$ at the top-left, whereas NDC space defines it at the center with positive $y$ pointing up.
+
+\subsubsection{Screen-to-World Transformation}
+
+The inverse process maps a pixel coordinate $(x_s, y_s)$ back to the world. The engine performs this by first converting the screen coordinates to Normalized Device Coordinates (NDC), and then manually applying the inverse camera transformation.
+
+Given a screen point $\mathbf{p}_s$, the NDC coordinates are:
+\begin{align}
+x_{ndc} &= \frac{x_s - x_{viewport}}{W_{viewport}} \cdot 2.0 - 1.0 \\
+y_{ndc} &= 1.0 - \frac{y_s - y_{viewport}}{H_{viewport}} \cdot 2.0
+\end{align}
+
+The final world position $\mathbf{p}_w$ is then derived by considering the camera's zoom, rotation, and translation:
+\begin{align}
+x_{cam} &= x_{ndc} \cdot \frac{W_{viewport}}{2 \cdot zoom} \\
+y_{cam} &= y_{ndc} \cdot \frac{H_{viewport}}{2 \cdot zoom}
+\end{align}
+
+Applying the inverse rotation $R_z(\theta)$ and translation $T(c_x, c_y, 0)$:
+\begin{align}
+x_w &= x_{cam} \cos \theta - y_{cam} \sin \theta + c_x \\
+y_w &= x_{cam} \sin \theta + y_{cam} \cos \theta + c_y
+\end{align}
+
+
+\paragraph{Design Rationale: Manual Inverse vs Matrix Inverse}
+
+While using Mat4::invert() on the View-Projection matrix is mathematically sound, the engine provides a manual implementation for screenToWorld. This avoids the numerical stability issues and computational cost associated with 4x4 matrix inversion for simple 2D transformations, resulting in cleaner and faster code for common gameplay tasks like mouse picking.
+
+
+
+
+\paragraph{Dirty Flag Matrix Caching}
+
+Matrix multiplication and inversion are computationally expensive. The Camera2D implements a "dirty flag" optimization. The View-Projection matrix is only recalculated when a camera property (position, rotation, zoom, or viewport) is modified. This reduces the per-frame overhead for static cameras to near zero.
+
+
+
+\subsection{Procedural Effects: Camera Shake}
+
+The camera system includes a integrated shake mechanism. When triggered, the effective position of the camera is perturbed by a random vector $\mathbf{s}$, which decays linearly over the duration of the shake.
+
+\begin{equation}
+\mathbf{c}_{effective} = \mathbf{c}_{base} + \mathbf{s}_{intensity} \cdot \left(\frac{t_{remaining}}{t_{duration}}\right) \cdot \text{rand}(-1, 1)
+\end{equation}
+
+This effect is added before the view matrix construction, ensuring that the shake is correctly reflected in all rendered batches.
+
+\subsection{Performance Monitoring and Frame Statistics}
+
+To assist developers in optimizing their 2D scenes, the \texttt{BatchRenderer} maintains a set of high-level telemetry data. This information is updated at the end of each frame and can be retrieved via the \texttt{lastFrameStats()} method.
+
+\begin{lstlisting}[style=code, language=C++, caption={FrameStats telemetry structure}]
+struct FrameStats {
+    u32 totalSprites     = 0;
+    u32 totalBatches     = 0;
+    u32 drawCalls        = 0;
+    u32 verticesUploaded = 0;
+};
+\end{lstlisting}
+
+These metrics provide critical insight into the efficiency of the batching process. For instance, a high ratio of \texttt{drawCalls} to \texttt{totalSprites} indicates that the texture atlas is not being utilized effectively, or that state changes (such as layer switches) are forcing premature flushes.
+
+
+\paragraph{Interpreting Telemetry}
+
+In a perfectly optimized scene where all sprites share a single atlas and reside on the same layer, the drawCalls and totalBatches count should both be 1, regardless of the number of sprites (up to the hardware limit). Any deviation from this suggests an opportunity for better asset organization.
+
+
+
+\needspace{6\baselineskip}
+\section{Summary}
+
+The Two-Dimensional Rendering subsystem of the Caffeine Engine represents a sophisticated blend of algorithmic efficiency and architectural clarity. By centralizing sprite submission into the \texttt{BatchRenderer}, the engine maximizes GPU utilization through state-sorting and batching. The addition of the \texttt{TextureAtlas} system and the mathematically rigorous \texttt{Camera2D} provides developers with a powerful toolset for creating high-performance, visually rich 2D experiences. In subsequent chapters, we will examine how this system integrates with the global lighting and post-processing pipelines.
