@@ -22,6 +22,9 @@
 #include "editor/EditorCameraMath.hpp"
 #include "procedural/ProceduralWorldSystem.hpp"
 #include "script/ScriptTypes.hpp"
+#if defined(CF_HAS_DRYAD)
+#include "script/DryadHost.hpp"
+#endif
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
 #include "ecs/Components3D.hpp"
@@ -49,6 +52,13 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_assetBrowser.init(projectConfig);
     m_assetBrowser.initGpu(device);
     m_assetBrowser.setOnScriptOpen([this](const std::filesystem::path& path) {
+#if defined(CF_HAS_DRYAD)
+        if (Script::isDryadScriptPath(path.string())) {
+            m_dryadNodeScript.open();
+            m_dryadNodeScript.openFromScript(path);
+            return;
+        }
+#endif
         m_scriptEditor.open();
         m_scriptEditor.openFile(path);
     });
@@ -104,6 +114,11 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_commandPalette.registerCommand("panel_script_editor", "Script Editor", "Tools", [this]() {
          m_scriptEditor.open();
      });
+#if defined(CF_HAS_DRYAD)
+     m_commandPalette.registerCommand("panel_dryad_nodes", "Dryad Node Script", "Tools", [this]() {
+         m_dryadNodeScript.open();
+     });
+#endif
      m_commandPalette.registerCommand("panel_material_editor", "Material Editor", "Content", [this]() {
          m_materialEditor.open();
      });
@@ -1058,6 +1073,12 @@ void SceneEditor::render(f32 deltaTime) {
         CF_PROFILE_SCOPE("SceneEditor::effects");
         m_effectEditor.onImGuiRender(m_ctx);
     }
+#if defined(CF_HAS_DRYAD)
+    {
+        CF_PROFILE_SCOPE("SceneEditor::dryadNodeScript");
+        m_dryadNodeScript.onImGuiRender(m_ctx);
+    }
+#endif
     {
         CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
         m_terrainEditor.render(*activeWorld, m_ctx);
@@ -1264,6 +1285,12 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (ImGui::MenuItem("Effects", nullptr, effectsOpen)) {
                 effectsOpen ? m_effectEditor.close() : m_effectEditor.open();
             }
+#if defined(CF_HAS_DRYAD)
+            bool dryadNodesOpen = m_dryadNodeScript.isOpen();
+            if (ImGui::MenuItem("Dryad Node Script", nullptr, dryadNodesOpen)) {
+                dryadNodesOpen ? m_dryadNodeScript.close() : m_dryadNodeScript.open();
+            }
+#endif
             bool consoleOpen = m_console.isOpen();
             if (EditorIcons::menuItem(EditorIcon::Console, "Console", nullptr, &consoleOpen)) {
                 consoleOpen ? m_console.open() : m_console.close();

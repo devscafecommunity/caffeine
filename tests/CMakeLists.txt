@@ -72,6 +72,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/HudEditorPanel.cpp
     ../src/editor/ParticleEditorPanel.cpp
     ../src/editor/EffectEditorPanel.cpp
+    ../src/editor/DryadNodeScriptPanel.cpp
     ../src/editor/TransformGizmo.cpp
     ../src/editor/PrefabSystem.cpp
     ../src/editor/MaterialSerializer.cpp
@@ -118,6 +119,10 @@ if(SDL3_FOUND)
      if(NOT MSVC)
          target_compile_options(ImGuiTestEngine PRIVATE -Wno-macro-redefined -Wno-cpp)
      endif()
+endif()
+
+if(DRYAD_AVAILABLE)
+    list(APPEND CAFFEINE_TEST_SOURCES test_dryad_host.cpp test_node_emitter.cpp)
 endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
@@ -186,6 +191,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/HudEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EffectEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/DryadNodeScriptPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp

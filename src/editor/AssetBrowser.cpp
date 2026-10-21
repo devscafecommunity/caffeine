@@ -12,6 +12,11 @@
 #include "assets/MeshImportValidator.hpp"
 #include "assets/MaterialFile.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#ifdef CF_HAS_DRYAD
+#include "script/DryadHost.hpp"
+#include "script/nodes/NodeEmitter.hpp"
+#include "script/nodes/NodeGraphIO.hpp"
+#endif
 #ifdef CF_HAS_CAF_PACK
 #include "caf-pack/Packer.hpp"
 #include "caf-pack/HeaderGenerator.hpp"
@@ -45,6 +50,15 @@ std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+bool isOpenableScriptAsset(const std::filesystem::path& path) {
+    const std::string ext = path.extension().string();
+    if (ext == ".lua") return true;
+#ifdef CF_HAS_DRYAD
+    if (Script::isDryadScriptPath(path.string())) return true;
+#endif
+    return false;
 }
 
 bool extensionMatchesFilter(const std::filesystem::path& path, const std::string& filter) {
@@ -160,7 +174,8 @@ void AssetBrowser::refresh() {
                      ext == ".aac") e.type = AssetType::Audio;
             else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb"  || ext == ".fbx"  ||
                      ext == ".dae" || ext == ".bin") e.type = AssetType::Mesh;
-            else if (ext == ".lua"  || ext == ".cpp"  || ext == ".hpp"  || ext == ".h") e.type = AssetType::Unknown;
+            else if (ext == ".lua"  || ext == ".dyd" || ext == ".cpp"  || ext == ".hpp"  || ext == ".h")
+                e.type = AssetType::Unknown;
             else if (ext == ".mat"  || ext == ".shader" || ext == ".glsl") e.type = AssetType::Unknown;
             else if (ext == ".mp4"  || ext == ".avi"  || ext == ".mov"  || ext == ".webm") e.type = AssetType::Unknown;
             else                                     e.type = AssetType::Unknown;
@@ -558,6 +573,7 @@ bool isBrowserImage(const std::filesystem::path& path) {
 const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
     const std::string ext = lowerExtension(path);
     if (ext == ".lua") return "[L]";
+    if (ext == ".dyd") return "[D]";
     if (ext == ".cpp" || ext == ".hpp" || ext == ".h") return "[C]";
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") return "[T]";
     if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "[A]";
@@ -579,6 +595,7 @@ const char* AssetBrowser::iconNameForType(AssetType type, const std::filesystem:
 
     const std::string ext = lowerExtension(path);
     if (ext == ".lua" || ext == ".luac") return "at";
+    if (ext == ".dyd") return "align-left";
     if (ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".cxx") return "align-left";
     if (ext == ".cs" || ext == ".ts" || ext == ".js") return "at";
 
@@ -849,7 +866,7 @@ void AssetBrowser::renderGridView() {
                 } else if (m_assetPickerActive && !entry.isDirectory &&
                            pickerAcceptsPath(entry.path)) {
                     commitAssetPicker(entry.path);
-                } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                } else if (m_onScriptOpen && isOpenableScriptAsset(entry.path)) {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
@@ -940,7 +957,7 @@ void AssetBrowser::renderListView() {
                 } else if (m_assetPickerActive && !entry.isDirectory &&
                            pickerAcceptsPath(entry.path)) {
                     commitAssetPicker(entry.path);
-                } else if (entry.path.extension() == ".lua" && m_onScriptOpen) {
+                } else if (m_onScriptOpen && isOpenableScriptAsset(entry.path)) {
                     m_onScriptOpen(entry.path);
                 } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
                     m_onMaterialOpen(entry.path);
@@ -1002,6 +1019,8 @@ void AssetBrowser::renderListView() {
         } else {
             if (entry.path.extension() == ".lua") {
                 ImGui::Text("Script");
+            } else if (entry.path.extension() == ".dyd") {
+                ImGui::Text("Dryad Script");
             } else {
                 switch (entry.type) {
                     case AssetType::Texture: ImGui::Text("Texture");  break;
@@ -1555,7 +1574,7 @@ void AssetBrowser::renderAssetCreatorModal() {
             bool isImport;
         };
 
-        CreatorOption options[8];
+        CreatorOption options[10];
         int optionCount = 0;
 
         if (m_assetCreatorCategory == 0) {
@@ -1569,6 +1588,9 @@ void AssetBrowser::renderAssetCreatorModal() {
             options[optionCount++] = {"arrows-diagonal", "glTF Model", ".gltf + sidecars", 4, true};
         } else if (m_assetCreatorCategory == 2) {
             options[optionCount++] = {"at", "Lua Script", ".lua", 6, false};
+#ifdef CF_HAS_DRYAD
+            options[optionCount++] = {"align-left", "Dryad Script", ".dyd + .node.json", 11, false};
+#endif
             options[optionCount++] = {"align-left", "C++ Script", ".cpp/.hpp", 7, false};
         } else if (m_assetCreatorCategory == 3) {
             options[optionCount++] = {"account-small", "Prefab", ".prefab", 8, false};
@@ -1649,6 +1671,17 @@ void AssetBrowser::renderNamingPopup() {
                 if (m_pendingCreateType == 6) {
                     std::ofstream f(m_currentDir / (nameStr + ".lua"));
                     f << "function onCreate(entity)\nend\n\nfunction onUpdate(entity, dt)\nend\n\nfunction onDestroy(entity)\nend\n";
+                } else if (m_pendingCreateType == 11) {
+#ifdef CF_HAS_DRYAD
+                    const std::filesystem::path scriptPath = m_currentDir / (nameStr + ".dyd");
+                    Script::Nodes::NodeGraph graph = Script::Nodes::defaultGraphForScript(scriptPath);
+                    std::string writeErr;
+                    if (Script::Nodes::NodeEmitter::writeSiblingFiles(scriptPath, graph, &writeErr)) {
+                        if (m_onScriptOpen) m_onScriptOpen(scriptPath);
+                    } else {
+                        setStatusMessage(writeErr.empty() ? "Failed to create Dryad script" : writeErr, true);
+                    }
+#endif
                 } else if (m_pendingCreateType == 7) {
                     std::ofstream hpp(m_currentDir / (nameStr + ".hpp"));
                     hpp << "#pragma once\n#include \"ecs/CppScript.hpp\"\n\nstruct " << nameStr << " : Caffeine::ECS::CppScript {\n    void onCreate() override {}\n    void onUpdate(float dt) override {}\n    void onDestroy() override {}\n};\n";

@@ -315,6 +315,18 @@ add_executable(caffeine-combined
 target_link_libraries(caffeine-combined PRIVATE caffeine-core caffeine-ui)
 target_compile_features(caffeine-combined PRIVATE cxx_std_20)
 
+# ── Dryad interpreter (sibling repo, optional) ───────────────────
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/source/dryad-cpp/CMakeLists.txt")
+    set(DRYAD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(DRYAD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(DRYAD_ENABLE_TLS OFF CACHE BOOL "" FORCE)
+    set(DRYAD_ENABLE_SANITIZERS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(source/dryad-cpp)
+    set(DRYAD_AVAILABLE TRUE)
+else()
+    set(DRYAD_AVAILABLE FALSE)
+endif()
+
 # ── Scripting ────────────────────────────────────────────────────
 if(CAFFEINE_ENABLE_SCRIPTING)
     include(FetchContent)
@@ -404,6 +416,20 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/script/AssetTextLoader.cpp
         src/script/NativeModuleHost.cpp
     )
+    if(DRYAD_AVAILABLE)
+        target_sources(caffeine-core PRIVATE
+            src/script/DryadHost.cpp
+            src/script/nodes/NodeGraph.cpp
+            src/script/nodes/NodeEmitter.cpp
+            src/script/nodes/NodeGraphIO.cpp
+            src/script/nodes/NodeRoundTrip.cpp
+        )
+        target_link_libraries(caffeine-core PUBLIC dryad_compiler)
+        target_compile_definitions(caffeine-core PUBLIC
+            CF_HAS_DRYAD=1
+            DRYAD_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/source/dryad-cpp/stdlib"
+        )
+    endif()
 endif()
 
 # ═══════════════════════════════════════════════════════════════════
@@ -520,6 +546,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/DragDropSystem.cpp
           src/editor/SceneTabManager.cpp
           src/editor/ScriptEditorWindow.cpp
+          src/editor/DryadNodeScriptPanel.cpp
           src/editor/AnimationTimeline.cpp
           src/editor/AnimatorController.cpp
           src/editor/TilemapEditor.cpp

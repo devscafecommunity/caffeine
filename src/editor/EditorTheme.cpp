@@ -75,9 +75,15 @@ void EditorTheme::applyPalette(bool dark) {
         colors[ImGuiCol_ResizeGripActive]      = ImVec4(0.92f, 0.42f, 0.64f, 0.95f);
         colors[ImGuiCol_Tab]                   = ImVec4(0.14f, 0.12f, 0.11f, 1.00f);
         colors[ImGuiCol_TabHovered]            = ImVec4(0.30f, 0.24f, 0.21f, 1.00f);
+#if IMGUI_VERSION_NUM >= 19000
+        colors[ImGuiCol_TabSelected]           = ImVec4(0.20f, 0.17f, 0.15f, 1.00f);
+        colors[ImGuiCol_TabDimmed]             = ImVec4(0.11f, 0.10f, 0.09f, 1.00f);
+        colors[ImGuiCol_TabDimmedSelected]     = ImVec4(0.16f, 0.14f, 0.13f, 1.00f);
+#else
         colors[ImGuiCol_TabActive]             = ImVec4(0.20f, 0.17f, 0.15f, 1.00f);
         colors[ImGuiCol_TabUnfocused]          = ImVec4(0.11f, 0.10f, 0.09f, 1.00f);
         colors[ImGuiCol_TabUnfocusedActive]    = ImVec4(0.16f, 0.14f, 0.13f, 1.00f);
+#endif
         colors[ImGuiCol_DockingPreview]        = ImVec4(0.82f, 0.33f, 0.55f, 0.30f);
         colors[ImGuiCol_DockingEmptyBg]        = ImVec4(0.09f, 0.08f, 0.07f, 1.00f);
         colors[ImGuiCol_PlotLines]             = ImVec4(0.90f, 0.55f, 0.70f, 1.00f);

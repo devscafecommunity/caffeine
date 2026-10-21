@@ -27,6 +27,9 @@
 #include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
+#if defined(CF_HAS_DRYAD)
+#include "editor/DryadNodeScriptPanel.hpp"
+#endif
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -163,6 +166,9 @@ private:
     HudEditorPanel      m_hudEditor;
     ParticleEditorPanel m_particleEditor;
     EffectEditorPanel   m_effectEditor;
+#if defined(CF_HAS_DRYAD)
+    DryadNodeScriptPanel m_dryadNodeScript;
+#endif
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     GameplayPreviewPanel m_gameplayPreview;
