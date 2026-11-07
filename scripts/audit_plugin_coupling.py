@@ -100,7 +100,12 @@ def plugin_owned_components(root: Path) -> set[str]:
     names: set[str] = set()
     declaration = re.compile(r"\b(?:struct|class)\s+([A-Za-z_]\w*)\s*(?::[^{;]+)?\{")
     for path in iter_sources(root, PLUGIN_SOURCE_DIR):
-        for match in declaration.finditer(path.read_text(errors="replace")):
+        text = path.read_text(errors="replace")
+        # Only types declared in the ECS namespace are scene components. Plugin
+        # helper structs (Settings, Tri, BVH nodes) are not engine data.
+        if "namespace Caffeine::ECS" not in text:
+            continue
+        for match in declaration.finditer(text):
             names.add(match.group(1))
     return names
 
