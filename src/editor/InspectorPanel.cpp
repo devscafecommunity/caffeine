@@ -1558,17 +1558,35 @@ void InspectorPanel::drawVolumetricClouds(ECS::World& world, ECS::Entity e, Edit
         }
     }
 
-    if (ImGui::Checkbox("Enabled", &clouds->enabled)) ctx.markDirty();
-    if (ImGui::SliderFloat("Coverage", &clouds->coverage, 0.0f, 1.0f)) ctx.markDirty();
-    if (ImGui::DragFloat("Density", &clouds->density, 0.01f, 0.0f, 8.0f)) ctx.markDirty();
-    if (ImGui::DragFloat("Base altitude", &clouds->baseAltitude, 10.0f, 0.0f, 20000.0f)) {
-        ctx.markDirty();
+    bool changed = false;
+    if (UIKit::BeginPropertyGrid("volumetric_clouds_fallback")) {
+        int quality = static_cast<int>(clouds->quality);
+        if (UIKit::SliderIntProperty("Quality", &quality, 0, 3)) {
+            clouds->quality = static_cast<u8>(quality);
+            changed = true;
+        }
+        changed |= UIKit::SliderFloatProperty("Coverage", &clouds->coverage, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Density", &clouds->density, 0.01f, 0.0f, 8.0f);
+        changed |= UIKit::DragFloatProperty("Base altitude", &clouds->baseAltitude, 10.0f,
+                                            0.0f, 20000.0f);
+        changed |= UIKit::DragFloatProperty("Top altitude", &clouds->topAltitude, 10.0f,
+                                            1.0f, 30000.0f);
+        changed |= UIKit::SliderFloatProperty("Detail", &clouds->detail, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Wind speed", &clouds->windSpeed, 0.2f, 0.0f,
+                                            120.0f);
+        changed |= UIKit::DragFloatProperty("Wind direction", &clouds->windDirection, 1.0f,
+                                            0.0f, 360.0f);
+        changed |= UIKit::DragFloatProperty("Seed", &clouds->seed, 0.1f, -10000.0f, 10000.0f);
+        changed |= UIKit::SliderFloatProperty("Sun scatter", &clouds->sunScatter, 0.0f, 3.0f);
+        changed |= UIKit::SliderFloatProperty("Mist density", &clouds->mistDensity, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Mist height", &clouds->mistHeight, 1.0f, 1.0f,
+                                            500.0f);
+        changed |= UIKit::DragFloatProperty("Mist falloff", &clouds->mistFalloff, 0.01f, 0.0f,
+                                            2.0f);
+        UIKit::EndPropertyGrid();
     }
-    if (ImGui::DragFloat("Top altitude", &clouds->topAltitude, 10.0f, 1.0f, 30000.0f)) {
-        ctx.markDirty();
-    }
-    if (ImGui::SliderFloat("Mist density", &clouds->mistDensity, 0.0f, 1.0f)) ctx.markDirty();
-    ImGui::TextDisabled("Enable the VC&M plugin for the full weather editor.");
+    if (changed) ctx.markDirty();
+    ImGui::TextDisabled("Enable VC&M for weather presets and one-click generation.");
     ImGui::PopID();
 }
 

@@ -13,11 +13,11 @@ Rules for humans and coding agents working in **this repository** (the C++ engin
 | `cmake/` | CMake modules |
 | `assets/` | Sample content (no `node_modules` in git) |
 | `caf-pack/` | Asset packer CLI + `.caf` / `.cap` pipeline (submodule) |
-| `doppio-plugins/` | Official/community Doppio editor plugins (submodule, built separately) |
+| `doppio-plugins/` | Official/community Doppio editor plugins (submodule, built by the engine by default) |
 | `caffeine-website/` | Docs site (Svelte/HTML), TeX/PDF, docs MCP |
 | `caffeine-launcher/` | Desktop hub — launch apps, plugins, updates (Rust/Iced) |
 | `scripts/submodules.sh` | `git submodule update --init` for all paths below |
-| `scripts/build-plugins.sh` | Build `doppio-plugins` and copy the libraries to `build/plugins` |
+| `scripts/build-plugins.sh` | Build `doppio-plugins` standalone (the engine build already does it by default) |
 
 Do not add `docs/`, `planning/`, or `.planning/` back to this repo.
 
@@ -31,7 +31,7 @@ All sibling repos live under [devscafecommunity](https://github.com/devscafecomm
 | `caf-pack/` | [caf-pack](https://github.com/devscafecommunity/caf-pack) | Raw assets → `.caf`, pack `.cap`; shared `CafTypes` with engine | linked into `doppio` when submodule present | — |
 | `caffeine-website/` | [caffeine-website](https://github.com/devscafecommunity/caffeine-website) | Public docs, i18n site, PDFs, **caffeine-docs** MCP | no (Node/npm) | — |
 | `caffeine-launcher/` | [caffeine-launcher](https://github.com/devscafecommunity/caffeine-launcher) | Hub UI; discovers `build/doppio`, `~/.local/share/caffeine/apps/` | `cargo build` / `scripts/build-launcher.sh` | hosts all apps |
-| `doppio-plugins/` | [doppio-plugins](https://github.com/devscafecommunity/doppio-plugins) | Official/community Doppio plugins (terrain, procedural, git, post-processing, AI) | no — built from its own CMake against the public plugin SDK; Doppio loads them only when enabled | — |
+| `doppio-plugins/` | [doppio-plugins](https://github.com/devscafecommunity/doppio-plugins) | Official/community Doppio plugins (terrain, procedural, git, post-processing, AI, VC&M) | yes, by default (`CAFFEINE_BUILD_DOPPIO_PLUGINS=ON`) into `build/plugins`; loading is opt-in | — |
 
 **Clone / refresh submodules:**
 

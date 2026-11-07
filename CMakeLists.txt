@@ -654,6 +654,28 @@ with open(sys.argv[1], 'w') as f:
       endif()
       add_dependencies(doppio caffeine-runtime)
 
+      # Editor plugins are owned by the doppio-plugins submodule, but they are
+      # part of the normal build: every plugin is compiled and its library is
+      # written to build/plugins. Loading remains an explicit Plugin Manager
+      # choice; nothing is silently omitted from the build.
+      option(CAFFEINE_BUILD_DOPPIO_PLUGINS
+          "Build editor plugins from the doppio-plugins submodule" ON)
+      if(CAFFEINE_BUILD_DOPPIO_PLUGINS)
+          if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/doppio-plugins/CMakeLists.txt")
+              if(NOT CAFFEINE_ROOT)
+                  set(CAFFEINE_ROOT "${CMAKE_SOURCE_DIR}")
+              endif()
+              if(NOT IMGUI_DIR)
+                  set(IMGUI_DIR "${imgui_SOURCE_DIR}")
+              endif()
+              add_subdirectory(doppio-plugins "${CMAKE_BINARY_DIR}/doppio-plugins")
+          else()
+              message(FATAL_ERROR
+                  "doppio-plugins submodule is missing. Run ./scripts/submodules.sh, "
+                  "or configure explicitly with -DCAFFEINE_BUILD_DOPPIO_PLUGINS=OFF.")
+          endif()
+      endif()
+
       add_executable(build-smoke
           apps/build_smoke/main.cpp
           src/editor/BuildSystem.cpp

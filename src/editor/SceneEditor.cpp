@@ -184,6 +184,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
             : (projectConfig.RootPath / "plugins");
     const std::filesystem::path bundledPluginsDir = EditorPaths::bundledPluginsDirectory();
     anchorPluginHostSymbols();
+    // Component types must exist before plugins load: plugins resolve them by
+    // name to register Inspector drawers.
+    registerAllComponents(ComponentRegistry::instance());
     registerPanels();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
                                          bundledPluginsDir);
@@ -263,7 +266,6 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      }
 #endif
 
-    registerAllComponents(ComponentRegistry::instance());
     {
         int index = 0;
         for (const auto& entry : ComponentRegistry::instance().entries()) {

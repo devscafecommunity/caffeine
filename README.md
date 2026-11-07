@@ -36,35 +36,20 @@ Helpers: `scripts/build.sh`, `scripts/build.fish`, `scripts/build.bat`.
 
 ## Editor plugins
 
-Doppio does **not** build or preload feature plugins. Build them from the
-`doppio-plugins` submodule against the public plugin SDK, install the libraries in a
-`plugins/` directory, and enable only the ones you need in **Plugins → Plugin
-Manager** (persisted in `~/.config/caffeine/plugins.cfg`).
+The engine build compiles **every** plugin from the `doppio-plugins` submodule and
+writes the libraries to `build/plugins/`. There is no separate plugin build step:
 
 ```bash
-# Build every plugin and copy the libraries to build/plugins/
-./scripts/build-plugins.sh
-
-# Or one plugin
-./scripts/build-plugins.sh --target volumetric_clouds_plugin
+./scripts/submodules.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
-Manual equivalent:
+`CAFFEINE_BUILD_DOPPIO_PLUGINS=OFF` is the only way to skip them, and it is intended
+for minimal/headless environments — not for normal editor builds.
 
-```bash
-cmake -S doppio-plugins -B doppio-plugins/build \
-  -DCAFFEINE_ROOT="$PWD" \
-  -DIMGUI_DIR="$PWD/build/_deps/imgui-src"
-cmake --build doppio-plugins/build -j
-cp doppio-plugins/build/plugins/*.so build/plugins/
-```
-
-## Launcher
-
-```bash
-./scripts/build-launcher.sh
-./caffeine-launcher/target/release/caffeine-launcher
-```
+Start Doppio and enable the plugins you need in **Plugins → Plugin Manager**
+(persisted in `~/.config/caffeine/plugins.cfg`).
 
 ## Docs
 
