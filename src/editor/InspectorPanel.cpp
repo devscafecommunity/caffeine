@@ -28,6 +28,7 @@
 #include "assets/MeshMaterialExport.hpp"
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
@@ -155,6 +156,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawLight(world, e, ctx);
         drawSkybox(world, e, ctx);
         drawEnvironmentEffects(world, e, ctx);
+        drawVolumetricClouds(world, e, ctx);
         drawTerrain(world, e, ctx);
         drawPostProcess(world, e, ctx);
         drawForwardRenderFeatures(world, e, ctx);
@@ -1524,6 +1526,49 @@ void InspectorPanel::drawForwardRenderFeatures(ECS::World& world, ECS::Entity e,
         if (ImGui::Checkbox("Sample shadows", &fx->volumetrics.sampleShadows)) ctx.markDirty();
         ImGui::TextDisabled("High + Sample shadows uses the sun cascade along the view ray.");
     }
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawVolumetricClouds(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::VolumetricCloudsComponent>(e)) return;
+
+    auto* clouds = world.get<ECS::VolumetricCloudsComponent>(e);
+    if (!clouds) return;
+
+    bool enabled = clouds->enabled;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Volumetric Clouds", enabled, removeRequested, "bluesky")) return;
+    if (removeRequested) {
+        world.remove<ECS::VolumetricCloudsComponent>(e);
+        ctx.markDirty();
+        return;
+    }
+    if (enabled != clouds->enabled) {
+        clouds->enabled = enabled;
+        ctx.markDirty();
+    }
+
+    ImGui::PushID("volumetric_clouds");
+    const u32 typeId = ComponentTypeRegistry::instance().lookup("VolumetricClouds");
+    if (PluginManager::instance().isComponentDrawerEnabled(typeId)) {
+        if (const ComponentDrawer* drawer = m_drawers.get(typeId)) {
+            (*drawer)(clouds);
+            ImGui::PopID();
+            return;
+        }
+    }
+
+    if (ImGui::Checkbox("Enabled", &clouds->enabled)) ctx.markDirty();
+    if (ImGui::SliderFloat("Coverage", &clouds->coverage, 0.0f, 1.0f)) ctx.markDirty();
+    if (ImGui::DragFloat("Density", &clouds->density, 0.01f, 0.0f, 8.0f)) ctx.markDirty();
+    if (ImGui::DragFloat("Base altitude", &clouds->baseAltitude, 10.0f, 0.0f, 20000.0f)) {
+        ctx.markDirty();
+    }
+    if (ImGui::DragFloat("Top altitude", &clouds->topAltitude, 10.0f, 1.0f, 30000.0f)) {
+        ctx.markDirty();
+    }
+    if (ImGui::SliderFloat("Mist density", &clouds->mistDensity, 0.0f, 1.0f)) ctx.markDirty();
+    ImGui::TextDisabled("Enable the VC&M plugin for the full weather editor.");
     ImGui::PopID();
 }
 
