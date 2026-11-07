@@ -185,8 +185,10 @@ public:
 
     // ── Viewport camera ────────────────────────────────────────────────
     enum class ViewMode : u8 { Mode2D, Mode3D, Isometric };
+    enum class ViewProjection : u8 { Perspective, Orthographic };
 
     ViewMode        viewMode    = ViewMode::Mode2D;
+    ViewProjection  projection  = ViewProjection::Perspective;
     f32             camYaw      = 0.0f;
     f32             camPitch    = 0.3f;
     Vec3            camFocus    = {0.0f, 0.0f, 0.0f};

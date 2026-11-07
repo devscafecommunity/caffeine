@@ -1,4 +1,5 @@
 #pragma once
+#include "caffeine/ui/Widgets.hpp"
 #include "core/Types.hpp"
 #include "debug/Profiler.hpp"
 #include "debug/SystemMetrics.hpp"
@@ -43,24 +44,25 @@ public:
 #ifdef CF_HAS_IMGUI
     void render(const Debug::Profiler& profiler) {
         if (!m_open) return;
-        if (ImGui::Begin("Profiler", &m_open)) {
+        if (UIKit::BeginPanel("Profiler", &m_open)) {
             const f32 lastMs = lastFrameTime();
             const f32 fps = lastMs > 0.0f ? 1000.0f / lastMs : 0.0f;
 
-            if (ImGui::Button(m_paused ? "Resume" : "Pause")) {
+            if (UIKit::ToolbarButton(m_paused ? "Resume" : "Pause",
+                                     "Pause or resume frame sampling")) {
                 m_paused = !m_paused;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Reset Stats")) {
+            if (UIKit::ToolbarButton("Reset Stats", "Clear profiler counters")) {
                 Debug::Profiler::instance().reset();
                 m_forceScopeRefresh = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button(m_expandAll ? "Collapse All" : "Expand All")) {
+            if (UIKit::ToolbarButton(m_expandAll ? "Collapse All" : "Expand All")) {
                 m_expandAll = !m_expandAll;
             }
 
-            ImGui::Text("Frame: %.2f ms   FPS: %.1f", lastMs, fps);
+            UIKit::TextMutedF("Frame: %.2f ms   FPS: %.1f", lastMs, fps);
 
             const Debug::SystemMetrics sys = Debug::sampleSystemMetrics();
             ImGui::SeparatorText("Hardware");
@@ -68,7 +70,7 @@ public:
             if (sys.gpuAvailable && sys.gpuBusyPercent >= 0.0f) {
                 ImGui::Text("GPU:            %.1f%%", sys.gpuBusyPercent);
             } else {
-                ImGui::TextDisabled("GPU:            n/a");
+                UIKit::TextMuted("GPU:            n/a");
             }
             if (sys.ramTotalMiB > 0.0f) {
                 ImGui::Text("RAM:            %.0f / %.0f MiB", sys.ramUsedMiB, sys.ramTotalMiB);
@@ -87,7 +89,7 @@ public:
 
             ImGui::PlotLines("Frame time (ms)", m_frameTimes.data(), 120, 0,
                              nullptr, 0.0f, maxVal, ImVec2(-1, 80));
-            ImGui::TextDisabled("Budget: 16.7 ms (60 FPS)");
+            UIKit::TextMuted("Budget: 16.7 ms (60 FPS)");
 
             if (m_forceScopeRefresh || (ImGui::GetFrameCount() % 15u) == 0u) {
                 profiler.report(m_cachedScopes);
@@ -103,15 +105,16 @@ public:
             }
 
             ImGui::SeparatorText("Scope tree");
-            ImGui::TextDisabled(
+            UIKit::TextMuted(
                 "Hierarchical call stack — self ms = exclusive, total ms = inclusive. "
                 "Instrument with CF_PROFILE_SCOPE.");
-            ImGui::Checkbox("Sort by self time", &m_sortBySelf);
+            UIKit::Toggle("Sort by self time", &m_sortBySelf);
             ImGui::SameLine();
-            ImGui::Checkbox("Hide empty scopes", &m_hideEmptyScopes);
+            UIKit::Toggle("Hide empty scopes", &m_hideEmptyScopes);
 
             if (sampledScopes == 0) {
-                ImGui::TextDisabled("No scope samples yet. Instrument hot paths with CF_PROFILE_SCOPE.");
+                UIKit::TextMuted(
+                    "No scope samples yet. Instrument hot paths with CF_PROFILE_SCOPE.");
             } else if (ImGui::BeginTable("scope_tree", 7,
                                           ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                               | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,

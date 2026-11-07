@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/AssetBrowser.hpp"
 #include "editor/EditorIcons.hpp"
 #include "editor/CapLoader.hpp"
@@ -697,31 +698,31 @@ void AssetBrowser::renderAssetPickerBar() {
 }
 
 void AssetBrowser::renderToolbar() {
-    if (ImGui::Button("+ Create")) {
+    if (UIKit::ToolbarButton("+ Create", "Create a new asset")) {
         m_showAssetCreator = true;
     }
     ImGui::SameLine();
 
     if (canGoBack()) {
-        if (ImGui::Button("<- Back")) {
+        if (UIKit::ToolbarButton("< Back", "Back")) {
             navigateBack();
         }
         ImGui::SameLine();
     }
 
-    if (ImGui::Button("^ Up")) {
+    if (UIKit::ToolbarButton("^ Up", "Parent folder")) {
         navigateUp();
     }
     ImGui::SameLine();
 
     if (!m_projectRoot.empty()) {
-        if (ImGui::Button("Project")) navigateToProjectRoot();
+        if (UIKit::ToolbarButton("Project")) navigateToProjectRoot();
         ImGui::SameLine();
-        if (ImGui::Button("Assets")) navigateToAssets();
+        if (UIKit::ToolbarButton("Assets")) navigateToAssets();
         ImGui::SameLine();
-        if (ImGui::Button("Scenes")) navigateToScenes();
+        if (UIKit::ToolbarButton("Scenes")) navigateToScenes();
         ImGui::SameLine();
-        if (ImGui::Button("Scripts")) navigateToScripts();
+        if (UIKit::ToolbarButton("Scripts")) navigateToScripts();
         ImGui::SameLine();
     }
 
@@ -732,16 +733,13 @@ void AssetBrowser::renderToolbar() {
     // Search
     char searchBuf[256] = {};
     std::strncpy(searchBuf, m_searchFilter.c_str(), sizeof(searchBuf) - 1);
-    ImGui::PushItemWidth(160.0f);
-    if (ImGui::InputTextWithHint("##asset_search", "Search...", searchBuf, sizeof(searchBuf))) {
+    if (UIKit::SearchField("##asset_search", searchBuf, sizeof(searchBuf), "Search...", 160.0f)) {
         setSearchFilter(searchBuf);
     }
-    ImGui::PopItemWidth();
 
-    // View mode toggle
-    ImGui::SameLine();
+    // Second toolbar row: view options and project actions.
     const char* viewLabel = (m_viewMode == ViewMode::Grid) ? "Grid" : "List";
-    if (ImGui::Button(viewLabel)) {
+    if (UIKit::ToolbarButton(viewLabel, "Toggle grid/list view")) {
         m_viewMode = (m_viewMode == ViewMode::Grid) ? ViewMode::List : ViewMode::Grid;
     }
 
@@ -755,10 +753,11 @@ void AssetBrowser::renderToolbar() {
     ImGui::PopItemWidth();
 
     ImGui::SameLine();
-    ImGui::Checkbox("Auto .caf", &m_autoConvertOnImport);
+    UIKit::Toggle("Auto .caf", &m_autoConvertOnImport,
+                  "Automatically convert imported raw assets to .caf");
 
     ImGui::SameLine();
-    if (ImGui::Button("Convert Raw -> .caf")) {
+    if (UIKit::ToolbarButton("Convert Raw -> .caf", "Convert all supported raw assets")) {
         usize converted = convertAllSupportedAssets();
         if (converted > 0) {
             setStatusMessage("Converted " + std::to_string(converted) + " asset(s) to assets/processed");
@@ -771,7 +770,7 @@ void AssetBrowser::renderToolbar() {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Pack CAP")) {
+    if (UIKit::ToolbarButton("Pack CAP", "Pack the project into game.cap")) {
         std::string error;
         if (packCurrentProjectCap(&error)) {
             setStatusMessage("Packed game.cap successfully");
@@ -781,7 +780,7 @@ void AssetBrowser::renderToolbar() {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button("Open CAP")) {
+    if (UIKit::ToolbarButton("Open CAP", "Open game.cap in the CAP view")) {
         std::string error;
         if (openCurrentProjectCap(&error)) {
             setStatusMessage("Opened game.cap in CAP view");
@@ -791,14 +790,14 @@ void AssetBrowser::renderToolbar() {
     }
 
     ImGui::SameLine();
-    bool rawSelected = (m_assetScope == AssetScope::Raw);
-    if (ImGui::Selectable("Raw", rawSelected, ImGuiSelectableFlags_None, ImVec2(42.0f, 0.0f))) {
+    if (UIKit::SegmentedButton("Raw", m_assetScope == AssetScope::Raw, ImVec2(60.0f, 0.0f),
+                               "Show raw source assets")) {
         setAssetScope(AssetScope::Raw);
     }
 
     ImGui::SameLine();
-    bool processedSelected = (m_assetScope == AssetScope::Processed);
-    if (ImGui::Selectable("Processed", processedSelected, ImGuiSelectableFlags_None, ImVec2(78.0f, 0.0f))) {
+    if (UIKit::SegmentedButton("Processed", m_assetScope == AssetScope::Processed,
+                               ImVec2(92.0f, 0.0f), "Show processed assets")) {
         setAssetScope(AssetScope::Processed);
     }
 }
@@ -843,6 +842,15 @@ void AssetBrowser::renderBreadcrumbs() {
 // ── Grid view ───────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderGridView() {
+    if (m_filteredEntries.empty()) {
+        UIKit::EmptyState(m_searchFilter.empty() ? "No assets here" : "No matching assets",
+                          m_searchFilter.empty()
+                              ? "Drop files into the browser or use + Create."
+                              : "Try a different search term.",
+                          "assets");
+        return;
+    }
+
     float thumbWithPad = static_cast<float>(m_thumbnailSize) + 16.0f;
     float lineHeight = ImGui::GetTextLineHeight();
     int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / thumbWithPad));
@@ -934,6 +942,15 @@ void AssetBrowser::renderGridView() {
 // ── List view ───────────────────────────────────────────────────────────────
 
 void AssetBrowser::renderListView() {
+    if (m_filteredEntries.empty()) {
+        UIKit::EmptyState(m_searchFilter.empty() ? "No assets here" : "No matching assets",
+                          m_searchFilter.empty()
+                              ? "Drop files into the browser or use + Create."
+                              : "Try a different search term.",
+                          "assets");
+        return;
+    }
+
     ImGui::Columns(4, "asset_list", false);
     ImGui::Text("Name");   ImGui::NextColumn();
     ImGui::Text("Type");   ImGui::NextColumn();
@@ -1754,7 +1771,7 @@ void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx
     m_previewRenderer.prepareThumbnails(thumbnails, m_projectRoot.string());
 #endif
 
-    if (ImGui::Begin("Asset Browser", &m_open)) {
+    if (UIKit::BeginPanel("Asset Browser", &m_open)) {
 
         renderAssetPickerBar();
         renderToolbar();

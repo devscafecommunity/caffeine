@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/MaterialEditorPanel.hpp"
 
 #include "assets/MaterialCache.hpp"
@@ -452,7 +453,7 @@ void MaterialEditorPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
     pollOpenedMaterial(ctx);
 
-    ImGui::Begin("Material Editor", &m_open, ImGuiWindowFlags_MenuBar);
+    UIKit::BeginPanel("Material Editor", &m_open, ImGuiWindowFlags_MenuBar);
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteFocused)) {
         handleSaveShortcut();
     }

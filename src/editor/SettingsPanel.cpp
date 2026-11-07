@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/SettingsPanel.hpp"
 #include "editor/EditorIcons.hpp"
 #include "editor/EditorShortcuts.hpp"
@@ -82,7 +83,7 @@ void SettingsPanel::render() {
 #ifdef CF_HAS_IMGUI
     if (!m_open) return;
 
-    if (ImGui::Begin("Settings", &m_open)) {
+    if (UIKit::BeginPanel("Settings", &m_open)) {
         struct SettingsNavItem {
             const char* label;
             const char* icon;
@@ -488,24 +489,23 @@ void SettingsPanel::renderPanelSettings() {
     LayoutProfile profile = m_layoutManager.currentProfile();
     bool changed = false;
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Visible Panels");
-    ImGui::Separator();
-    ImGui::TextWrapped("These options update the active layout profile. Save preferences to keep them between sessions.");
+    UIKit::SectionLabel("Visible Panels");
+    UIKit::Paragraph(
+        "These options update the active layout profile. Save preferences to keep them between "
+        "sessions.");
 
-    changed |= ImGui::Checkbox("Hierarchy", &profile.hierarchyOpen);
-    changed |= ImGui::Checkbox("Inspector", &profile.inspectorOpen);
-    changed |= ImGui::Checkbox("Scene Viewport", &profile.viewportOpen);
-    changed |= ImGui::Checkbox("Asset Browser", &profile.assetsOpen);
-    changed |= ImGui::Checkbox("Console", &profile.consoleOpen);
-    changed |= ImGui::Checkbox("Profiler", &profile.profilerOpen);
-    changed |= ImGui::Checkbox("Animation Timeline", &profile.animationTimelineOpen);
-    changed |= ImGui::Checkbox("Animator Controller", &profile.animatorControllerOpen);
-    changed |= ImGui::Checkbox("Tilemap Editor", &profile.tilemapEditorOpen);
-    changed |= ImGui::Checkbox("Script Editor", &profile.scriptEditorOpen);
+    changed |= UIKit::Toggle("Hierarchy", &profile.hierarchyOpen);
+    changed |= UIKit::Toggle("Inspector", &profile.inspectorOpen);
+    changed |= UIKit::Toggle("Scene Viewport", &profile.viewportOpen);
+    changed |= UIKit::Toggle("Asset Browser", &profile.assetsOpen);
+    changed |= UIKit::Toggle("Console", &profile.consoleOpen);
+    changed |= UIKit::Toggle("Profiler", &profile.profilerOpen);
+    changed |= UIKit::Toggle("Animation Timeline", &profile.animationTimelineOpen);
+    changed |= UIKit::Toggle("Animator Controller", &profile.animatorControllerOpen);
+    changed |= UIKit::Toggle("Tilemap Editor", &profile.tilemapEditorOpen);
+    changed |= UIKit::Toggle("Script Editor", &profile.scriptEditorOpen);
 
-    ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Panel Widths");
-    ImGui::Separator();
+    UIKit::SectionLabel("Panel Widths");
     changed |= ImGui::SliderFloat("Hierarchy width", &profile.hierarchyWidth, 0.12f, 0.4f, "%.2f");
     changed |= ImGui::SliderFloat("Inspector width", &profile.inspectorWidth, 0.12f, 0.4f, "%.2f");
 

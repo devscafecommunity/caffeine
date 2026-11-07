@@ -6,10 +6,9 @@ cd "${ROOT}"
 
 SUBMODULES=(
   caf-pack
-  Convoy
-  WaveShaper
   caffeine-website
   caffeine-launcher
+  doppio-plugins
 )
 
 echo "==> git submodule update --init --recursive (${#SUBMODULES[@]} paths)"
@@ -23,4 +22,5 @@ echo ""
 echo "Optional follow-ups:"
 echo "  Docs site:  cd caffeine-website && npm install && npm run dev"
 echo "  Launcher:   scripts/build-launcher.sh"
+echo "  Plugins:    cmake -S doppio-plugins -B doppio-plugins/build -DCAFFEINE_ROOT=\"$ROOT\" && cmake --build doppio-plugins/build"
 echo "  Engine:     scripts/build.sh"

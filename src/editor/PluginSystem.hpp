@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef CF_HAS_IMGUI
@@ -24,7 +25,12 @@ class EditorContext;
 struct PluginPanel {
     std::string pluginName;
     std::string title;
+    std::string panelId;
     std::string commandId;
+    std::string icon;
+    int dock = 2;  // Caffeine::UIKit::DockArea::Bottom
+    float size = 0.24f;
+    bool defaultOpen = true;
     std::function<void()> render;
     bool open = true;
 };
@@ -75,6 +81,10 @@ public:
     bool loadPlugin(const std::string& path);
     bool unloadPlugin(const std::string& name);
     bool reloadPlugin(const std::string& name);
+    /// Load/unload a plugin and persist the choice for the next session.
+    /// Nothing is preloaded at startup: a plugin only runs after it is enabled.
+    bool setPluginEnabled(const std::string& name, bool enabled);
+    bool isPluginEnabled(const std::string& name) const;
     void refreshPluginsDirectory();
     void refreshPlugins(float dt);
 
@@ -97,8 +107,13 @@ public:
 
     // Editor-side registration (also used by host API callbacks)
     bool registerPanel(const std::string& pluginName, const std::string& title,
-                       std::function<void()> renderFunc);
+                       std::function<void()> renderFunc,
+                       const std::string& panelId = std::string(), int dock = 2,
+                       float size = 0.24f, bool defaultOpen = true,
+                       const std::string& icon = std::string());
     bool openPanel(const std::string& title);
+    bool closePanel(const std::string& title);
+    bool isPanelOpen(const std::string& title) const;
     bool registerMenuAction(const std::string& pluginName, const std::string& menuPath,
                             std::function<void()> action);
     bool registerComponentDrawer(const std::string& pluginName, u32 componentTypeId,
@@ -115,11 +130,18 @@ private:
     void scanPluginsDirectory();
     void ensureWatcher();
     std::filesystem::path pluginsDirectory() const;
+    std::filesystem::path pluginPreferencesPath() const;
+    void loadPluginPreferences();
+    void savePluginPreferences() const;
+    void loadEnabledPlugins();
 
     static void hostLogInfo(void* ctx, const char* message);
     static void hostLogError(void* ctx, const char* message);
     static bool hostRegisterPanel(void* ctx, const char* pluginName, const char* title,
                                   void (*renderFn)(void* userData), void* userData);
+    static bool hostRegisterPanelEx(void* ctx, const char* pluginName,
+                                    const PluginPanelInfo* info,
+                                    void (*renderFn)(void* userData), void* userData);
     static bool hostOpenPanel(void* ctx, const char* title);
     static bool hostRegisterMenuAction(void* ctx, const char* pluginName, const char* menuPath,
                                        void (*actionFn)(void* userData), void* userData);
@@ -132,6 +154,11 @@ private:
     static void* hostGetActiveWorld(void* editorContext);
     static CaffeinePluginU32 hostGetSelectedEntityId(void* editorContext);
     static void hostMarkSceneDirty(void* editorContext);
+    static void hostSetSelectedEntityId(void* editorContext, CaffeinePluginU32 entityId);
+    static bool hostGetCurrentScenePath(void* editorContext, char* buffer, std::size_t bufferSize);
+    static void hostMarkAssetBrowserDirty(void* editorContext);
+    static bool hostGetTerrainBrush(void* editorContext, PluginTerrainBrush* out);
+    static bool hostSetTerrainBrush(void* editorContext, const PluginTerrainBrush* brush);
     static bool hostInvokeService(void* ctx, const char* serviceName, const void* request,
                                   std::size_t requestSize, void* response, std::size_t responseSize);
     static bool hostRegisterService(void* ctx, const char* pluginName, const char* serviceName,
@@ -142,6 +169,7 @@ private:
     std::filesystem::path m_bundledPluginsDirectory;
     std::unordered_map<std::string, PluginHandle> m_loadedPlugins;
     std::vector<std::string> m_discoveredPaths;
+    std::unordered_set<std::string> m_enabledPlugins;
 
     std::vector<PluginPanel> m_panels;
     std::vector<PluginMenuAction> m_menuActions;

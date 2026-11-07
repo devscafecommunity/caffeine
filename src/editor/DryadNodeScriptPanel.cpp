@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/DryadNodeScriptPanel.hpp"
 
 #if defined(CF_HAS_IMGUI) && defined(CF_HAS_DRYAD)
@@ -413,7 +414,7 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     ensureImNodesReady();
 
     ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Dryad Node Script", &m_open)) {
+    if (!UIKit::BeginPanel("Dryad Node Script", &m_open)) {
         ImGui::End();
         return;
     }

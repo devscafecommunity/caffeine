@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/AudioPreviewPanel.hpp"
 
 #ifdef CF_HAS_IMGUI
@@ -122,7 +123,7 @@ void AudioPreviewPanel::computeWaveformPeaks(const Assets::AudioClip* clip) {
 
 void AudioPreviewPanel::onImGuiRender() {
     if (!m_open) return;
-    ImGui::Begin("Audio Preview", &m_open);
+    UIKit::BeginPanel("Audio Preview", &m_open);
     if (m_previewSource && m_previewSource->isPlaying()) {
         m_progress = m_previewSource->currentTime();
     } else if (m_previewSource && !m_previewSource->isPlaying() && !m_previewSource->isPaused()) {

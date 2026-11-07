@@ -24,7 +24,6 @@
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
-#include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
 #if defined(CF_HAS_DRYAD)
@@ -38,6 +37,9 @@
 #include "editor/CommandPalette.hpp"
 #include "editor/BuildDialog.hpp"
 #include "editor/SettingsPanel.hpp"
+
+#include "caffeine/ui/PanelRegistry.hpp"
+#include "caffeine/ui/Workspace.hpp"
 
 #include "core/io/FileWatcher.hpp"
 
@@ -128,8 +130,8 @@ public:
 
 private:
 #ifdef CF_HAS_IMGUI
-    void setupDockspace(ImGuiID dockspaceId);
     void applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile);
+    void registerPanels();
     void syncLayoutProfileFromPanels();
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
@@ -172,7 +174,6 @@ private:
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     GameplayPreviewPanel m_gameplayPreview;
-    TerrainEditorPanel  m_terrainEditor;
     EntityPresetsPanel  m_entityPresets;
     ToolboxPanel        m_toolbox;
 #endif
@@ -199,6 +200,11 @@ private:
     bool m_dockingSetup = false;
     ImGuiID m_dockspaceId = 0;
     bool m_layoutNeedsRebuild = false;
+    UIKit::Workspace m_workspace;
+    UIKit::PanelRegistry& m_panels = UIKit::PanelRegistry::instance();
+    bool m_panelsRegistered = false;
+    u64 m_panelsRevision = 0;
+    bool m_selectDefaultTabs = false;
     PendingAction m_pendingAction = PendingAction::None;
     int m_pendingCloseTab = -1;
 

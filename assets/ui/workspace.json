@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "left": {
+    "size": 0.22,
+    "enabled": true,
+    "panels": [
+      "core.hierarchy",
+      "core.toolbox"
+    ]
+  },
+  "right": {
+    "size": 0.25,
+    "enabled": true,
+    "panels": [
+      "core.inspector"
+    ]
+  },
+  "bottom": {
+    "size": 0.27,
+    "enabled": true,
+    "panels": [
+      "core.asset_browser",
+      "core.console",
+      "core.profiler",
+      "core.entity_debugger",
+      "core.entity_presets",
+      "core.material_editor",
+      "core.script_editor",
+      "core.animation_timeline",
+      "core.animator_controller",
+      "core.tilemap_editor",
+      "core.audio_preview",
+      "core.settings"
+    ]
+  },
+  "center": {
+    "panels": [
+      "core.viewport",
+      "core.gameplay_preview",
+      "core.camera_preview",
+      "core.image_manager",
+      "core.hud_editor",
+      "core.particles",
+      "core.effects",
+      "core.dryad_node_script"
+    ]
+  },
+  "plugins": {
+    "dock": "bottom",
+    "size": 0.24
+  },
+  "assignments": {
+    "core.build_run": "bottom",
+    "core.plugin_manager": "bottom",
+    "plugin.terrain.editor": "bottom"
+  }
+}

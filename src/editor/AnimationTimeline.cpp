@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/AnimationTimeline.hpp"
 #include "animation/ClipAsset.hpp"
 #include "animation/SkinLibrary.hpp"
@@ -608,7 +609,7 @@ void AnimationTimelinePanel::render(f32 deltaTime) {
     m_applyTime = false;
 
     ImGui::SetNextWindowSizeConstraints(ImVec2(400, 200), ImVec2(FLT_MAX, FLT_MAX));
-    if (ImGui::Begin("Animation Timeline", &m_open, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar)) {
+    if (UIKit::BeginPanel("Animation Timeline", &m_open, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar)) {
         renderHeader();
         ImGui::Separator();
         renderTimeline();

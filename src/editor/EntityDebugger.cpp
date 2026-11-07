@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/EntityDebugger.hpp"
 #include "editor/EditorContext.hpp"
 #include "ecs/Components.hpp"
@@ -375,7 +376,7 @@ void EntityDebuggerPanel::renderSystemQueries(ECS::World& world) {
 void EntityDebuggerPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
-    if (ImGui::Begin("Entity Debugger", &m_open)) {
+    if (UIKit::BeginPanel("Entity Debugger", &m_open)) {
         ECS::Entity target = resolveTargetEntity(world, ctx);
 
         if (m_autoRefresh || target != m_targetEntity) {

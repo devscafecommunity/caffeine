@@ -226,14 +226,14 @@ void registerAllComponents(ComponentRegistry& reg) {
             volume.resize(32, 32);
             w.add<Navigation::NavVolume>(e, std::move(volume));
         },
-        "ai_development_plugin",
+        "",
         "navigation navmesh ai"
     });
     reg.registerComponent({
         "AI", "Nav Agent",
         [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavAgent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<Navigation::NavAgent>(e); },
-        "ai_development_plugin",
+        "",
         "navigation pathfinding ai"
     });
     reg.registerComponent({
@@ -334,7 +334,7 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Procedural", "Procedural World",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); },
-        "procedural_tools_plugin",
+        "",
         "terrain generate world"
     });
 

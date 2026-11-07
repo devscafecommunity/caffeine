@@ -1,4 +1,5 @@
 #include "editor/SceneViewport.hpp"
+#include "caffeine/ui/Widgets.hpp"
 #include "debug/Profiler.hpp"
 #include "debug/CrashHandler.hpp"
 #include "editor/DragDropSystem.hpp"
@@ -70,6 +71,15 @@ namespace {
 
 constexpr f32 kDegToRad = 3.14159265f / 180.0f;
 constexpr f32 kRadToDeg = 180.0f / 3.14159265f;
+
+inline bool is3DViewMode(EditorContext::ViewMode mode) {
+    return mode == EditorContext::ViewMode::Mode3D ||
+           mode == EditorContext::ViewMode::Isometric;
+}
+
+inline bool isOrthoView(const EditorContext& ctx) {
+    return ctx.projection == EditorContext::ViewProjection::Orthographic;
+}
 
 std::string resolveProjectRootFromScenePath(const std::string& scenePath) {
     if (scenePath.empty()) return {};
@@ -946,8 +956,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     pruneRetiredTextures();
 
     editorPanelApplyDetach(m_detached, ImVec2(1280, 720));
-    if (!ImGui::Begin("Scene Viewport", &m_open,
-            (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+    if (!UIKit::BeginPanel("Scene Viewport", &m_open,
+            (is3DViewMode(ctx.viewMode) ||
              ctx.viewMode == EditorContext::ViewMode::Isometric)
                 ? ImGuiWindowFlags_NoNavInputs
                 : ImGuiWindowFlags_None)) {
@@ -955,6 +965,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         return;
     }
     editorPanelDetachTabButton(m_detached);
+    drawViewportToolbar(ctx);
 
 #ifdef CF_HAS_SDL3
     ImVec2 viewportSize = ImGui::GetContentRegionAvail();
@@ -969,7 +980,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     resizeCanvasIfNeeded(targetCanvasW, targetCanvasH);
     const bool canvasResized = m_gpuCacheWidth != m_lastCanvasWidth || m_gpuCacheHeight != m_lastCanvasHeight;
 
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+    if (is3DViewMode(ctx.viewMode)) {
         Scene::syncTerrainMeshes(world);
     }
 
@@ -977,7 +988,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     u32 gpuMeshDrawCount = 0;
     const bool wireframePreview = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
     const bool gpuSceneActive = m_frameCmd && m_gpuSceneReady && m_useGpuScene && m_colorTarget &&
-                                m_depthTarget && ctx.viewMode == EditorContext::ViewMode::Mode3D;
+                                m_depthTarget && is3DViewMode(ctx.viewMode);
     if (gpuSceneActive) {
         const Vec3 camPos =
             editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
@@ -1027,6 +1038,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
             gpuOpts.antiAliasingOverride.sharpness = 0.5f;
             gpuOpts.deltaTime = ImGui::GetIO().DeltaTime;
             gpuOpts.viewId = 1;
+            gpuOpts.orthographic = isOrthoView(ctx);
             if (Scene::environmentHasOverride(world)) {
                 gpuOpts.overrideAmbient = true;
                 gpuOpts.ambientColor = Scene::environmentAmbientAt(world, camPos);
@@ -1099,7 +1111,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         if (canDrop) {
             ctx.beginUndo(EditorCommand::AddEntity, u32_max, world);
 
-            const bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+            const bool is3D = (is3DViewMode(ctx.viewMode) ||
                                ctx.viewMode == EditorContext::ViewMode::Isometric);
             ImVec2 mousePos   = ImGui::GetMousePos();
             ImVec2 viewportTL = ImGui::GetItemRectMin();
@@ -1186,7 +1198,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     const bool terrainSelected = ctx.selectedEntity.isValid() &&
                                  world.has<ECS::TerrainComponent>(ctx.selectedEntity) &&
-                                 ctx.viewMode == EditorContext::ViewMode::Mode3D;
+                                 is3DViewMode(ctx.viewMode);
     const bool terrainSculptMode = terrainSelected &&
                                    ctx.terrainEditMode == EditorContext::TerrainEditMode::Sculpt;
     const bool terrainSplatMode = terrainSelected &&
@@ -1199,7 +1211,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                                   m_hoveredAxis != 0;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoDragging &&
         !terrainEditActive && !gizmoClaimsClick &&
-        ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        is3DViewMode(ctx.viewMode)) {
         const ImVec2 mousePos = ImGui::GetMousePos();
         const ImVec2 vpMin = ImGui::GetItemRectMin();
         const ImVec2 vpMax = ImGui::GetItemRectMax();
@@ -1322,7 +1334,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     // Frame selected entity only on double-click inside the viewport. ImGui reports double-clicks
     // globally, so clicks on Terrain Editor (Seed, Gerar, etc.) must not reset the camera.
     if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
-        ctx.selectedEntity.isValid() && ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        ctx.selectedEntity.isValid() && is3DViewMode(ctx.viewMode)) {
         frameEntityInViewport(ctx, world, ctx.selectedEntity);
     }
 
@@ -1428,8 +1440,8 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);
     // The GPU scene draws its own sky and depth-tested grid and is fully opaque.
     const bool gpuImageCoversViewport =
-        ctx.viewMode == EditorContext::ViewMode::Mode3D && m_lastGpuSceneActive;
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D && !gpuImageCoversViewport) {
+        is3DViewMode(ctx.viewMode) && m_lastGpuSceneActive;
+    if (is3DViewMode(ctx.viewMode) && !gpuImageCoversViewport) {
         CF_PROFILE_SCOPE("SceneViewport::skybox");
         if (!drawSkybox(drawList, origin, viewportSize, world, ctx)) {
             drawList->AddRectFilledMultiColor(
@@ -1449,13 +1461,13 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 #ifdef CF_HAS_SDL3
     // GPU scene is rendered into an offscreen target with transparent clear.
     // Composite it after the skybox so terrain/meshes sit in front of the sky.
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+    if (is3DViewMode(ctx.viewMode) &&
         m_lastGpuSceneActive && m_colorTarget && m_colorTarget->handle) {
         CF_PROFILE_SCOPE("SceneViewport::composite");
         drawList->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin, viewportMax,
                            ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), IM_COL32_WHITE);
     }
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+    if (is3DViewMode(ctx.viewMode)) {
         const Mat4 elementVp = computeVP3D(viewportSize, ctx);
         drawMeshElements(drawList, world, ctx, origin, viewportSize, elementVp);
     }
@@ -1466,7 +1478,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
 
 
-    if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {
+    if (!is3DViewMode(ctx.viewMode)) {
         drawGrid(drawList, origin, viewportSize, ctx);
     }
     {
@@ -1475,7 +1487,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
     {
         std::vector<Effects::EffectSprite> effects;
-        const bool onlyTwoD = ctx.viewMode == EditorContext::ViewMode::Mode3D;
+        const bool onlyTwoD = is3DViewMode(ctx.viewMode);
         Effects::collectOverlayEffects(world, onlyTwoD, effects);
         const f32 worldToScreen = ctx.viewportZoom * 50.0f;
         ImDrawList* effectDraw = ImGui::GetWindowDrawList();
@@ -1521,7 +1533,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
     if (!ctx.isPlayMode && hovered) {
         const bool is2D = ctx.viewMode == EditorContext::ViewMode::Mode2D;
-        const bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+        const bool is3DIso = (is3DViewMode(ctx.viewMode) ||
                               ctx.viewMode == EditorContext::ViewMode::Isometric);
         const bool spaceHeld = ImGui::IsKeyDown(ImGuiKey_Space);
         const bool altHeld = ImGui::IsKeyDown(ImGuiKey_LeftAlt) ||
@@ -1560,7 +1572,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
     }
 
       if (hovered && !ImGui::GetIO().WantTextInput && !ctx.isPlayMode) {
-          bool is3DIso = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+          bool is3DIso = (is3DViewMode(ctx.viewMode) ||
                           ctx.viewMode == EditorContext::ViewMode::Isometric);
           if (is3DIso) {
              const f32 moveBoost = (ImGui::IsKeyDown(ImGuiKey_LeftShift) ||
@@ -1604,8 +1616,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
      if (!ctx.isPlayMode && hovered) {
          f32 scroll = ImGui::GetIO().MouseWheel;
          if (scroll != 0) {
-             if (ctx.viewMode == EditorContext::ViewMode::Mode3D || 
-                 ctx.viewMode == EditorContext::ViewMode::Isometric) {
+             if (is3DViewMode(ctx.viewMode)) {
                  const f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
                  const f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
                  const Vec3 lookDir = editorLookDirection(ctx.camYaw, ctx.camPitch);
@@ -1659,7 +1670,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
 
 ImVec2 SceneViewport::projectToScreen(Vec3 p, ImVec2 origin, ImVec2 viewportSize,
                                        const EditorContext& ctx) {
-    if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+    if (is3DViewMode(ctx.viewMode)) {
         Mat4 vp = computeVP3D(viewportSize, ctx);
         return projectToScreenVP(p, origin, viewportSize, vp);
     }
@@ -1691,7 +1702,18 @@ Mat4 SceneViewport::computeVP3D(ImVec2 viewportSize, const EditorContext& ctx) {
         editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     Mat4 view = Mat4::lookAt(camPos, ctx.camFocus, Vec3(0.0f, 1.0f, 0.0f));
     f32 aspect = viewportSize.x / std::max(viewportSize.y, 1.0f);
-    Mat4 proj = Mat4::perspective(1.0472f, aspect, 0.1f, ctx.cameraFarPlane());
+    constexpr f32 kFovY = 1.0472f;
+    Mat4 proj;
+    if (isOrthoView(ctx)) {
+        // Match the perspective framing at the focus plane so zoom still behaves.
+        const f32 halfHeight =
+            std::max(0.1f, std::abs(ctx.camDistance) * std::tan(kFovY * 0.5f));
+        const f32 halfWidth = halfHeight * aspect;
+        proj = Mat4::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, 0.1f,
+                           ctx.cameraFarPlane());
+    } else {
+        proj = Mat4::perspective(kFovY, aspect, 0.1f, ctx.cameraFarPlane());
+    }
     return proj * view;
 }
 
@@ -1944,9 +1966,9 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 
     const std::string projectRoot = resolveEditorProjectRoot(ctx);
     const bool wireMode = (m_meshPreviewMode == MeshPreviewMode::Wireframe);
-    const bool gpuTextured3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && !wireMode &&
+    const bool gpuTextured3D = (is3DViewMode(ctx.viewMode) && !wireMode &&
                                 m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
-    const bool gpuWireframe3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D && wireMode &&
+    const bool gpuWireframe3D = (is3DViewMode(ctx.viewMode) && wireMode &&
                                  m_gpuSceneReady && m_useGpuScene && m_lastGpuSceneActive);
     // GPU and CPU must not rasterize the same meshes in one frame.
     const bool gpuOwnsSceneMeshes = gpuTextured3D || gpuWireframe3D;
@@ -1973,10 +1995,10 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         return IM_COL32(cr, cg, cb, alpha);
     };
 
-    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+    const Mat4 vpCache3D = (is3DViewMode(ctx.viewMode))
         ? computeVP3D(viewportSize, ctx) : Mat4::identity();
     auto projectCached = [&](const Vec3& p) -> ImVec2 {
-        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        return (is3DViewMode(ctx.viewMode))
             ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
             : projectToScreen(p, origin, viewportSize, ctx);
     };
@@ -2004,7 +2026,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
     };
 
     auto drawSegment = [&](const Vec3& a, const Vec3& b, ImU32 col, float thickness) {
-        if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+        if (is3DViewMode(ctx.viewMode)) {
             drawViewportWorldLine(dl, vpCache3D, origin, viewportSize, a, b, col, thickness);
         } else {
             dl->AddLine(projectCached(a), projectCached(b), col, thickness);
@@ -2023,7 +2045,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         }
     };
 
-    const bool useMeshRaster = (ctx.viewMode == EditorContext::ViewMode::Mode3D &&
+    const bool useMeshRaster = (is3DViewMode(ctx.viewMode) &&
                                 m_meshPreviewMode == MeshPreviewMode::Textured &&
                                 !gpuTextured3D);
     MeshCpuRasterizer meshRaster;
@@ -2071,7 +2093,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
         const int sidePolySlices = (densityLevel == 0) ? 4 : (densityLevel == 1 ? 8 : 14);
 
         auto cameraDepth = [&](const Vec3& wp) -> f32 {
-            if (ctx.viewMode == EditorContext::ViewMode::Mode3D) {
+            if (is3DViewMode(ctx.viewMode)) {
                 f32 sinY = std::sin(ctx.camYaw), cosY = std::cos(ctx.camYaw);
                 f32 sinP = std::sin(ctx.camPitch), cosP = std::cos(ctx.camPitch);
                 f32 rx = wp.x - ctx.camFocus.x;
@@ -2191,7 +2213,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
                     const std::string& loadError = meshCache.getLastError();
 
                     if (loadedMesh && !loadedMesh->vertices.empty() &&
-                        ctx.viewMode != EditorContext::ViewMode::Mode3D) {
+                        !is3DViewMode(ctx.viewMode)) {
                         Vec3 bMin = loadedMesh->bounds.min;
                         Vec3 bMax = loadedMesh->bounds.max;
                         if (!(bMin.x <= bMax.x && bMin.y <= bMax.y && bMin.z <= bMax.z)) {
@@ -2560,7 +2582,7 @@ void SceneViewport::drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImV
 
 void SceneViewport::drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.showBones) return;
-    if (ctx.viewMode != EditorContext::ViewMode::Mode3D &&
+    if (!is3DViewMode(ctx.viewMode) &&
         ctx.viewMode != EditorContext::ViewMode::Isometric) {
         return;
     }
@@ -2690,10 +2712,10 @@ void SceneViewport::drawSkeletons(ECS::World& world, EditorContext& ctx, ImVec2 
 void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    const Mat4 vpCache3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+    const Mat4 vpCache3D = (is3DViewMode(ctx.viewMode))
         ? computeVP3D(viewportSize, ctx) : Mat4::identity();
     auto proj3D = [&](const Vec3& p) -> ImVec2 {
-        return (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+        return (is3DViewMode(ctx.viewMode))
             ? projectToScreenVP(p, origin, viewportSize, vpCache3D)
             : projectToScreen(p, origin, viewportSize, ctx);
     };
@@ -2832,6 +2854,257 @@ void SceneViewport::drawLightGizmos(ECS::World& world, EditorContext& ctx, ImVec
 void SceneViewport::createOrUpdateLightGizmoEntities(ECS::World& world) {
 }
 
+namespace {
+
+enum class ToolGlyph {
+    Move,
+    Rotate,
+    Scale,
+    View2D,
+    View3D,
+    Iso,
+    Perspective,
+    Ortho,
+    Snap,
+    Local,
+    World,
+};
+
+void drawToolGlyph(ImDrawList* dl, ToolGlyph glyph, ImVec2 c, float s, ImU32 col) {
+    const float h = s * 0.5f;
+    const float th = std::max(1.2f, s * 0.085f);
+    auto line = [&](ImVec2 a, ImVec2 b) { dl->AddLine(a, b, col, th); };
+    auto tri = [&](ImVec2 tip, ImVec2 a, ImVec2 b) { dl->AddTriangleFilled(tip, a, b, col); };
+
+    switch (glyph) {
+        case ToolGlyph::Move: {
+            const float a = s * 0.16f;
+            line({c.x - h, c.y}, {c.x + h, c.y});
+            line({c.x, c.y - h}, {c.x, c.y + h});
+            tri({c.x + h, c.y}, {c.x + h - a, c.y - a}, {c.x + h - a, c.y + a});
+            tri({c.x - h, c.y}, {c.x - h + a, c.y - a}, {c.x - h + a, c.y + a});
+            tri({c.x, c.y - h}, {c.x - a, c.y - h + a}, {c.x + a, c.y - h + a});
+            tri({c.x, c.y + h}, {c.x - a, c.y + h - a}, {c.x + a, c.y + h - a});
+            break;
+        }
+        case ToolGlyph::Rotate: {
+            const float r = h * 0.78f;
+            dl->PathClear();
+            dl->PathArcTo(c, r, -2.2f, 1.85f, 28);
+            dl->PathStroke(col, 0, th);
+            const float ang = 1.85f;
+            const ImVec2 tip(c.x + std::cos(ang) * (r + 2.0f),
+                             c.y + std::sin(ang) * (r + 2.0f));
+            tri(tip, {c.x + std::cos(ang - 0.42f) * r, c.y + std::sin(ang - 0.42f) * r},
+                {c.x + std::cos(ang + 0.42f) * r, c.y + std::sin(ang + 0.42f) * r});
+            break;
+        }
+        case ToolGlyph::Scale: {
+            const float d = h * 0.72f;
+            const float a = s * 0.17f;
+            line({c.x - d, c.y - d}, {c.x + d, c.y + d});
+            tri({c.x + d, c.y + d}, {c.x + d - a, c.y + d - a * 0.2f},
+                {c.x + d - a * 0.2f, c.y + d - a});
+            tri({c.x - d, c.y - d}, {c.x - d + a, c.y - d + a * 0.2f},
+                {c.x - d + a * 0.2f, c.y - d + a});
+            break;
+        }
+        case ToolGlyph::View2D:
+            dl->AddRect({c.x - h * 0.78f, c.y - h * 0.78f},
+                        {c.x + h * 0.78f, c.y + h * 0.78f}, col, 1.5f, 0, th);
+            break;
+        case ToolGlyph::View3D: {
+            const ImVec2 a(c.x - h * 0.72f, c.y - h * 0.34f);
+            const ImVec2 b(c.x + h * 0.16f, c.y + h * 0.5f);
+            const ImVec2 off(h * 0.32f, -h * 0.32f);
+            dl->AddRect(a, b, col, 1.0f, 0, th);
+            dl->AddRect({a.x + off.x, a.y + off.y}, {b.x + off.x, b.y + off.y}, col, 1.0f, 0,
+                        th);
+            line(a, {a.x + off.x, a.y + off.y});
+            line(b, {b.x + off.x, b.y + off.y});
+            line({a.x, b.y}, {a.x + off.x, b.y + off.y});
+            line({b.x, a.y}, {b.x + off.x, a.y + off.y});
+            break;
+        }
+        case ToolGlyph::Iso: {
+            const float r = h * 0.84f;
+            const float rr = r * 0.58f;
+            const ImVec2 pts[6] = {
+                {c.x, c.y - r},           {c.x + rr, c.y - r * 0.5f},
+                {c.x + rr, c.y + r * 0.5f}, {c.x, c.y + r},
+                {c.x - rr, c.y + r * 0.5f}, {c.x - rr, c.y - r * 0.5f},
+            };
+            dl->AddPolyline(pts, 6, col, ImDrawFlags_Closed, th);
+            line({c.x, c.y - r}, {c.x, c.y});
+            line({c.x, c.y}, {c.x - rr, c.y + r * 0.5f});
+            line({c.x, c.y}, {c.x + rr, c.y + r * 0.5f});
+            break;
+        }
+        case ToolGlyph::Perspective:
+            dl->AddQuad({c.x - h * 0.82f, c.y + h * 0.62f},
+                        {c.x + h * 0.82f, c.y + h * 0.62f},
+                        {c.x + h * 0.42f, c.y - h * 0.62f},
+                        {c.x - h * 0.42f, c.y - h * 0.62f}, col, th);
+            break;
+        case ToolGlyph::Ortho:
+            dl->AddRect({c.x - h * 0.68f, c.y - h * 0.6f},
+                        {c.x + h * 0.68f, c.y + h * 0.6f}, col, 1.0f, 0, th);
+            break;
+        case ToolGlyph::Snap:
+            for (int y = -1; y <= 1; ++y) {
+                for (int x = -1; x <= 1; ++x) {
+                    dl->AddCircleFilled({c.x + x * h * 0.55f, c.y + y * h * 0.55f},
+                                        th * 1.25f, col);
+                }
+            }
+            break;
+        case ToolGlyph::Local: {
+            const ImVec2 o(c.x - h * 0.42f, c.y + h * 0.42f);
+            line(o, {c.x + h * 0.6f, o.y});
+            line(o, {o.x, c.y - h * 0.6f});
+            line(o, {c.x + h * 0.34f, c.y - h * 0.34f});
+            break;
+        }
+        case ToolGlyph::World: {
+            const float r = h * 0.78f;
+            dl->AddCircle(c, r, col, 24, th);
+            line({c.x - r, c.y}, {c.x + r, c.y});
+            dl->AddBezierCubic({c.x, c.y - r}, {c.x - r * 0.7f, c.y - r * 0.35f},
+                               {c.x - r * 0.7f, c.y + r * 0.35f}, {c.x, c.y + r}, col, th);
+            dl->AddBezierCubic({c.x, c.y - r}, {c.x + r * 0.7f, c.y - r * 0.35f},
+                               {c.x + r * 0.7f, c.y + r * 0.35f}, {c.x, c.y + r}, col, th);
+            break;
+        }
+    }
+}
+
+}  // namespace
+
+void SceneViewport::drawViewportToolbar(EditorContext& ctx) {
+    const ImVec2 anchor = ImGui::GetCursorScreenPos();
+    const UIKit::ThemeTokens& t = UIKit::tokens();
+
+    const float iconSize = 18.0f * UIKit::uiScale();
+    const float hit = iconSize + 8.0f;
+    const float gap = 1.0f;
+    const float th = 2.0f;
+
+    ImGui::SetCursorScreenPos(ImVec2(anchor.x + 12.0f, anchor.y + 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    const ImGuiChildFlags childFlags =
+        ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY;
+    const ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar |
+                                         ImGuiWindowFlags_NoScrollWithMouse |
+                                         ImGuiWindowFlags_NoSavedSettings |
+                                         ImGuiWindowFlags_NoBackground;
+    if (ImGui::BeginChild("##viewport_toolbar", ImVec2(0.0f, 0.0f), childFlags, windowFlags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+
+        const ImU32 accent = ImGui::ColorConvertFloat4ToU32(t.accent);
+        const ImU32 text = ImGui::ColorConvertFloat4ToU32(t.text);
+        const ImU32 muted = ImGui::ColorConvertFloat4ToU32(t.textMuted);
+        const ImU32 border = ImGui::ColorConvertFloat4ToU32(t.border);
+        const ImU32 shadow = IM_COL32(0, 0, 0, 130);
+
+        auto tool = [&](const char* id, ToolGlyph glyph, bool selected, const char* tooltip,
+                        auto action) {
+            ImGui::SetCursorScreenPos(p);
+            ImGui::PushID(id);
+            const bool pressed = ImGui::InvisibleButton("##tool", ImVec2(hit, hit));
+            const bool hovered = ImGui::IsItemHovered();
+            const ImVec2 c(p.x + hit * 0.5f, p.y + hit * 0.5f);
+            const ImU32 color = selected ? accent : (hovered ? text : muted);
+            drawToolGlyph(dl, glyph, ImVec2(c.x + 1.0f, c.y + 1.0f), iconSize, shadow);
+            drawToolGlyph(dl, glyph, c, iconSize, color);
+            if (selected) {
+                dl->AddLine(ImVec2(c.x - iconSize * 0.3f, p.y + hit - 1.0f),
+                            ImVec2(c.x + iconSize * 0.3f, p.y + hit - 1.0f), accent, th);
+            }
+            if (tooltip && hovered) ImGui::SetTooltip("%s", tooltip);
+            ImGui::PopID();
+            p.x += hit + gap;
+            if (pressed) action();
+        };
+
+        auto divider = [&]() {
+            p.x += 4.0f;
+            dl->AddLine(ImVec2(p.x, p.y + 4.0f), ImVec2(p.x, p.y + hit - 4.0f), border, 1.0f);
+            p.x += 5.0f;
+        };
+
+        tool("move", ToolGlyph::Move, ctx.gizmoMode == EditorContext::GizmoMode::Translate,
+             "Move (T)", [&] {
+                 ctx.gizmoMode = EditorContext::GizmoMode::Translate;
+                 ctx.meshElementMode = EditorContext::MeshElementMode::Object;
+                 ctx.meshElementSelection.clear();
+             });
+        tool("rotate", ToolGlyph::Rotate, ctx.gizmoMode == EditorContext::GizmoMode::Rotate,
+             "Rotate (E)", [&] {
+                 ctx.gizmoMode = EditorContext::GizmoMode::Rotate;
+                 ctx.meshElementMode = EditorContext::MeshElementMode::Object;
+                 ctx.meshElementSelection.clear();
+             });
+        tool("scale", ToolGlyph::Scale, ctx.gizmoMode == EditorContext::GizmoMode::Scale,
+             "Scale (R)", [&] {
+                 ctx.gizmoMode = EditorContext::GizmoMode::Scale;
+                 ctx.meshElementMode = EditorContext::MeshElementMode::Object;
+                 ctx.meshElementSelection.clear();
+             });
+        const bool localAxes = ctx.gizmoSpace == EditorContext::GizmoSpace::Local;
+        tool("axes", localAxes ? ToolGlyph::Local : ToolGlyph::World, localAxes,
+             localAxes ? "Gizmo axes: Local (click for World)"
+                       : "Gizmo axes: World (click for Local)",
+             [&] {
+                 ctx.gizmoSpace = localAxes ? EditorContext::GizmoSpace::World
+                                            : EditorContext::GizmoSpace::Local;
+             });
+
+        divider();
+
+        tool("view2d", ToolGlyph::View2D, ctx.viewMode == EditorContext::ViewMode::Mode2D,
+             "2D view", [&] {
+                 ctx.viewMode = EditorContext::ViewMode::Mode2D;
+             });
+        tool("view3d", ToolGlyph::View3D, ctx.viewMode == EditorContext::ViewMode::Mode3D,
+             "3D view", [&] {
+                 ctx.viewMode = EditorContext::ViewMode::Mode3D;
+                 ctx.projection = EditorContext::ViewProjection::Perspective;
+             });
+        tool("iso", ToolGlyph::Iso, ctx.viewMode == EditorContext::ViewMode::Isometric,
+             "Isometric view", [&] {
+                 ctx.viewMode = EditorContext::ViewMode::Isometric;
+                 ctx.projection = EditorContext::ViewProjection::Orthographic;
+                 ctx.camYaw = 0.7853982f;
+                 ctx.camPitch = 0.6154797f;
+             });
+
+        divider();
+
+        const bool ortho =
+            ctx.projection == EditorContext::ViewProjection::Orthographic;
+        tool("projection", ortho ? ToolGlyph::Ortho : ToolGlyph::Perspective, ortho,
+             ortho ? "Projection: Orthographic (click for Perspective)"
+                   : "Projection: Perspective (click for Orthographic)",
+             [&] {
+                 ctx.projection = ortho ? EditorContext::ViewProjection::Perspective
+                                        : EditorContext::ViewProjection::Orthographic;
+             });
+
+        divider();
+
+        tool("snap", ToolGlyph::Snap, ctx.snapToGrid, "Snap to grid",
+             [&] { ctx.snapToGrid = !ctx.snapToGrid; });
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+    ImGui::SetCursorScreenPos(anchor);
+}
+
 void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     if (!ctx.selectedEntity.isValid()) return;
     auto* pos = world.get<ECS::Transform>(ctx.selectedEntity);
@@ -2853,7 +3126,7 @@ void SceneViewport::drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 orig
     ImVec2 screenPos = projectToScreen(worldPos, origin, viewportSize, ctx);
     ImDrawList* dl   = ImGui::GetForegroundDrawList();
     dl->PushClipRect(origin, ImVec2(origin.x + viewportSize.x, origin.y + viewportSize.y), true);
-    const bool  is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+    const bool  is3D = (is3DViewMode(ctx.viewMode) ||
                         ctx.viewMode == EditorContext::ViewMode::Isometric);
     const bool  zDimmed = (ctx.viewMode == EditorContext::ViewMode::Mode2D);
     const float HL   = is3D ? 72.0f : std::max(64.0f, 30.0f * ctx.viewportZoom);
@@ -3174,7 +3447,7 @@ bool SceneViewport::drawSkyboxForView(ImDrawList* drawList, ImVec2 origin, ImVec
 
 bool SceneViewport::drawSkybox(ImDrawList* drawList, ImVec2 origin, ImVec2 viewportSize,
                                ECS::World& world, EditorContext& ctx) {
-    if (ctx.viewMode != EditorContext::ViewMode::Mode3D) return false;
+    if (!is3DViewMode(ctx.viewMode)) return false;
 
     Render::SkyboxCamera skyCamera;
     skyCamera.forward = editorLookDirection(ctx.camYaw, ctx.camPitch).normalized();
@@ -3292,45 +3565,27 @@ void SceneViewport::drawGrid3D(ImDrawList* dl, ImVec2 origin, ImVec2 viewportSiz
 
     float lineDist = renderDist;
 
-    if (ctx.viewMode == EditorContext::ViewMode::Isometric) {
-        for (float x = startX; x <= endX; x += spacing) {
-            if (x == 0.f) continue;
-            const bool major = isMajorLine(x);
-            drawLine3D({x, camZ - lineDist, 0.f}, {x, camZ + lineDist, 0.f},
-                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
-        }
-        for (float z = startZ; z <= endZ; z += spacing) {
-            if (z == 0.f) continue;
-            const bool major = isMajorLine(z);
-            drawLine3D({camX - lineDist, z, 0.f}, {camX + lineDist, z, 0.f},
-                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
-        }
-        float axisLen = visibleRange * 100.0f;
-        drawLine3D({0.f, -axisLen, 0.f}, {0.f, axisLen, 0.f}, axisColorX, 2.5f);
-        drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorZ, 2.5f);
-    } else {
-        for (float x = startX; x <= endX; x += spacing) {
-            if (x == 0.f) continue;
-            const bool major = isMajorLine(x);
-            drawLine3D({x, 0.f, camZ - lineDist}, {x, 0.f, camZ + lineDist},
-                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
-        }
-        for (float z = startZ; z <= endZ; z += spacing) {
-            if (z == 0.f) continue;
-            const bool major = isMajorLine(z);
-            drawLine3D({camX - lineDist, 0.f, z}, {camX + lineDist, 0.f, z},
-                       major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
-        }
-        float axisLen = visibleRange * 100.0f;
-        drawLine3D({0.f, 0.f, -axisLen}, {0.f, 0.f, axisLen}, axisColorZ, 2.5f);
-        drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorX, 2.5f);
+    for (float x = startX; x <= endX; x += spacing) {
+        if (x == 0.f) continue;
+        const bool major = isMajorLine(x);
+        drawLine3D({x, 0.f, camZ - lineDist}, {x, 0.f, camZ + lineDist},
+                   major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
     }
+    for (float z = startZ; z <= endZ; z += spacing) {
+        if (z == 0.f) continue;
+        const bool major = isMajorLine(z);
+        drawLine3D({camX - lineDist, 0.f, z}, {camX + lineDist, 0.f, z},
+                   major ? majorGridColor : gridColorBase, major ? 1.0f : 0.5f, major);
+    }
+    float axisLen = visibleRange * 100.0f;
+    drawLine3D({0.f, 0.f, -axisLen}, {0.f, 0.f, axisLen}, axisColorZ, 2.5f);
+    drawLine3D({-axisLen, 0.f, 0.f}, {axisLen, 0.f, 0.f}, axisColorX, 2.5f);
 }
 
 void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize) {
     (void)world;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool is3D = (ctx.viewMode == EditorContext::ViewMode::Mode3D ||
+    const bool is3D = (is3DViewMode(ctx.viewMode) ||
                        ctx.viewMode == EditorContext::ViewMode::Isometric);
     const float axisLen = 32.0f;
     const ImVec2 center(origin.x + viewportSize.x - 58.0f, origin.y + 52.0f);
@@ -3432,7 +3687,8 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
         }
     }
 
-    const char* projLabel = m_projectionMode == ProjectionMode::Perspective ? "Persp" : "Ortho";
+    const char* projLabel =
+        ctx.projection == EditorContext::ViewProjection::Orthographic ? "Ortho" : "Persp";
     const ImVec2 textSize = ImGui::CalcTextSize(projLabel);
     const ImVec2 textPos(center.x - textSize.x * 0.5f, center.y + axisLen + 10.0f);
     ImGui::SetCursorScreenPos(textPos);
@@ -3441,7 +3697,9 @@ void SceneViewport::drawNavigationWidget(ECS::World& world, EditorContext& ctx, 
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.2f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 0));
     if (ImGui::Button(projLabel, ImVec2(textSize.x + 8.0f, textSize.y + 2.0f))) {
-        toggleProjectionMode();
+        ctx.projection = (ctx.projection == EditorContext::ViewProjection::Orthographic)
+                             ? EditorContext::ViewProjection::Perspective
+                             : EditorContext::ViewProjection::Orthographic;
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(3);
@@ -3742,7 +4000,7 @@ void SceneViewport::drawTerrainChunkDebug(ImDrawList* dl, const Mat4& worldMatri
                                           const std::vector<Terrain::TerrainDrawChunk>& chunks,
                                           ImVec2 origin, ImVec2 viewportSize,
                                           const EditorContext& ctx) {
-    const Mat4 vp = (ctx.viewMode == EditorContext::ViewMode::Mode3D)
+    const Mat4 vp = (is3DViewMode(ctx.viewMode))
         ? computeVP3D(viewportSize, ctx) : Mat4::identity();
 
     for (const Terrain::TerrainDrawChunk& chunk : chunks) {
@@ -3959,7 +4217,7 @@ void SceneViewport::drawSceneMeshesForCamera(
     // or renderCameraPreviewGpu() per frame — never both.
     // Viewport already syncs terrain in 3D mode. Avoid rebuilding meshes mid-frame
     // while GPU commands from the viewport pass may still reference chunk buffers.
-    if (ctx.viewMode != EditorContext::ViewMode::Mode3D) {
+    if (!is3DViewMode(ctx.viewMode)) {
         Scene::syncTerrainMeshes(world);
     }
 
@@ -4129,7 +4387,7 @@ void SceneViewport::drawCameraFrustums(ECS::World& world, EditorContext& ctx, Im
         dl->AddText(ImVec2(tl.x + 4.0f, tl.y - 16.0f), col, "Camera 2D");
     });
 
-    if (ctx.viewMode != EditorContext::ViewMode::Mode3D &&
+    if (!is3DViewMode(ctx.viewMode) &&
         ctx.viewMode != EditorContext::ViewMode::Isometric) {
         return;
     }

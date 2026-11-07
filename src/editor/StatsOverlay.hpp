@@ -1,4 +1,5 @@
 #pragma once
+#include "caffeine/ui/Widgets.hpp"
 #include "core/Types.hpp"
 #include "editor/EditorTypes.hpp"
 #include "assets/AssetTypes.hpp"
@@ -27,7 +28,7 @@ public:
             ImGuiWindowFlags_NoNav |
             ImGuiWindowFlags_NoMove;
         ImGui::SetNextWindowBgAlpha(0.65f);
-        if (ImGui::Begin("Stats", &m_open, flags)) {
+        if (UIKit::BeginPanel("Stats", &m_open, flags)) {
             ImGui::Text("FPS: %.1f", stats.fps);
             ImGui::Text("Frame: %.3f ms", stats.deltaTime * 1000.0);
             ImGui::Text("Frames: %llu", static_cast<unsigned long long>(stats.frameCount));

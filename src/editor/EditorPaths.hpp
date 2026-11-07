@@ -20,6 +20,9 @@ public:
     static std::filesystem::path skyboxPath(const std::string& fileName);
     static std::filesystem::path brandLogoPath();
 
+    /// Per-user configuration directory (XDG_CONFIG_HOME / ~/.config/caffeine).
+    static std::filesystem::path userConfigDirectory();
+
     /// Editor-shipped plugins (next to doppio executable or build/plugins).
     static std::filesystem::path bundledPluginsDirectory();
 

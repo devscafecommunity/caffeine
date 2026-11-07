@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/PluginSystem.hpp"
@@ -157,7 +158,7 @@ void EntityPresetsPanel::render(ECS::World& world, EditorContext& ctx) {
 
     editorPanelApplyDetach(m_detached, ImVec2(1100, 680));
     ImGui::SetNextWindowSize(ImVec2(920, 520), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Entity Presets", &m_open)) {
+    if (!UIKit::BeginPanel("Entity Presets", &m_open)) {
         ImGui::End();
         return;
     }

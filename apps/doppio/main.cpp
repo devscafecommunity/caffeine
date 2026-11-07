@@ -6,6 +6,7 @@
 #include "editor/ImGuiIntegration.hpp"
 #include "editor/EditorTheme.hpp"
 #include "editor/EditorIcons.hpp"
+#include "editor/EditorPaths.hpp"
 #include "editor/SceneEditor.hpp"
 #include "editor/ProjectStartupDialog.hpp"
 #include "editor/ProjectManager.hpp"
@@ -164,6 +165,17 @@ int main(int argc, char** argv) {
 
     Caffeine::Editor::EditorTheme::init();
     Caffeine::Editor::EditorIcons::init();
+    {
+        // Docking state belongs to the user, not to the build directory. ImGui
+        // writes this file periodically and on shutdown.
+        static std::string imguiIniPath;
+        const std::filesystem::path uiDir =
+            Caffeine::Editor::EditorPaths::userConfigDirectory() / "ui";
+        std::error_code ec;
+        std::filesystem::create_directories(uiDir, ec);
+        imguiIniPath = (uiDir / "imgui.ini").generic_string();
+        ImGui::GetIO().IniFilename = imguiIniPath.c_str();
+    }
     ImGui_ImplSDLGPU3_CreateDeviceObjects();
 
     Caffeine::Editor::ProjectConfig selectedProject;

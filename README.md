@@ -7,10 +7,9 @@ C++20 game engine and **Doppio** scene editor (SDL3). User-facing documentation 
 | Path | What it is |
 |------|------------|
 | **`caf-pack/`** | Asset packer — `.caf` / `.cap` pipeline |
-| **`Convoy/`** | 2D art station |
-| **`WaveShaper/`** | Audio DAW for game audio |
 | **`caffeine-website/`** | Docs site + MCP for agents |
 | **`caffeine-launcher/`** | Desktop launcher (Rust) — start studio apps and manage plugins |
+| **`doppio-plugins/`** | Official/community Doppio editor plugins (built separately) |
 
 Initialize everything:
 
@@ -35,7 +34,20 @@ cd build && ctest --output-on-failure
 
 Helpers: `scripts/build.sh`, `scripts/build.fish`, `scripts/build.bat`.
 
-Optional suite targets: `CAFFEINE_BUILD_CONVOY` (default ON), `CAFFEINE_BUILD_WAVESHAPER` (default OFF).
+## Editor plugins
+
+Doppio does **not** build or preload feature plugins. Build them from the
+`doppio-plugins` submodule against the public plugin SDK, install the libraries in a
+`plugins/` directory, and enable only the ones you need in **Plugins → Plugin
+Manager** (persisted in `~/.config/caffeine/plugins.cfg`).
+
+```bash
+cmake -S doppio-plugins -B doppio-plugins/build \
+  -DCAFFEINE_ROOT="$PWD" \
+  -DIMGUI_DIR="$PWD/build/_deps/imgui-src"
+cmake --build doppio-plugins/build -j
+cp doppio-plugins/build/plugins/*.so build/plugins/
+```
 
 ## Launcher
 
@@ -44,7 +56,11 @@ Optional suite targets: `CAFFEINE_BUILD_CONVOY` (default ON), `CAFFEINE_BUILD_WA
 ./caffeine-launcher/target/release/caffeine-launcher
 ```
 
-## Docs site
+## Docs
+
+All user-facing documentation, plans, screenshots and PDFs live in the
+**`caffeine-website`** submodule (`content/`, `tex/`, `captures/`). Nothing is
+duplicated in the engine tree.
 
 ```bash
 git submodule update --init caffeine-website

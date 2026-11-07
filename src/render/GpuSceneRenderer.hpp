@@ -84,6 +84,8 @@ struct GpuSceneRenderOptions {
     ECS::PostProcessAntiAliasing antiAliasingOverride{};
     /// Internal resolution multiplier (0.5 = faster, 2 = supersampled).
     f32  renderScale = 1.0f;
+    /// Editor orthographic view (Isometric or explicit projection toggle).
+    bool orthographic = false;
     /// Keeps temporal history (TAA, eye adaptation, SSR) apart per viewport. 0 = derive from
     /// the colour target.
     u64  viewId = 0;

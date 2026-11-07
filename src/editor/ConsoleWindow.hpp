@@ -1,4 +1,5 @@
 #pragma once
+#include "caffeine/ui/Widgets.hpp"
 #include "core/Types.hpp"
 #include "debug/LogSystem.hpp"
 #include "containers/FixedString.hpp"
@@ -48,16 +49,16 @@ public:
 #ifdef CF_HAS_IMGUI
     void render() {
         if (!m_open) return;
-        if (ImGui::Begin("Console", &m_open)) {
+        if (UIKit::BeginPanel("Console", &m_open)) {
             const char* levels[] = { "Trace", "Info", "Warn", "Error", "Fatal" };
             int lvl = static_cast<int>(m_filterLevel);
             if (ImGui::Combo("Filter", &lvl, levels, 5)) {
                 m_filterLevel = static_cast<Debug::LogLevel>(lvl);
             }
             ImGui::SameLine();
-            ImGui::Checkbox("Auto-scroll", &m_autoScroll);
+            UIKit::Toggle("Auto-scroll", &m_autoScroll, "Follow new log entries");
             ImGui::SameLine();
-            if (ImGui::Button("Clear")) clear();
+            if (UIKit::ToolbarButton("Clear", "Clear the console")) clear();
 
             ImGui::Separator();
             ImGui::BeginChild("scroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));

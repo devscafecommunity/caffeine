@@ -7,6 +7,7 @@
 #include "editor/ComponentRegistry.hpp"
 #include "editor/EditorIcons.hpp"
 #include "editor/EditorShortcuts.hpp"
+#include "editor/EditorTheme.hpp"
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
@@ -134,9 +135,6 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_commandPalette.registerCommand("panel_effects", "Effects", "Tools", [this]() {
          m_effectEditor.open();
      });
-     m_commandPalette.registerCommand("panel_terrain_editor", "Terrain Editor", "Tools", [this]() {
-         m_terrainEditor.open();
-     });
      m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Scene", [this]() {
          m_entityPresets.open();
      });
@@ -186,14 +184,40 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
             : (projectConfig.RootPath / "plugins");
     const std::filesystem::path bundledPluginsDir = EditorPaths::bundledPluginsDirectory();
     anchorPluginHostSymbols();
+    registerPanels();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
                                          bundledPluginsDir);
+    // Plugins contributed panels during initialize; treat that as the baseline
+    // so the first frame does not rebuild an already persisted docking layout.
+    m_panelsRevision = m_panels.revision();
+
+    {
+        // Precedence: user layout > project layout > bundled default. A first
+        // launch loads the project/bundled document but writes user changes to
+        // the per-user config file, never back into the asset tree.
+        const std::filesystem::path userWorkspace(UIKit::Workspace::userConfigPath());
+        std::filesystem::path workspacePath = userWorkspace;
+        if (!std::filesystem::exists(workspacePath)) {
+            workspacePath = m_currentProjectConfig.RootPath / "ui" / "workspace.json";
+        }
+        if (!std::filesystem::exists(workspacePath)) {
+            workspacePath = EditorPaths::resolve("ui/workspace.json");
+        }
+        std::string workspaceError;
+        if (!m_workspace.load(workspacePath.string(), &workspaceError)) {
+            std::fprintf(stderr, "[workspace] %s (using defaults)\n", workspaceError.c_str());
+        }
+    }
 
      m_inspector.open();
      m_assetBrowser.open();
 
      // Register layout change callback
      m_settingsPanel.setLayoutChangeCallback([this]() {
+         const auto& profile = m_settingsPanel.layoutManager().currentProfile();
+         m_workspace.config().leftSize = profile.hierarchyWidth;
+         m_workspace.config().rightSize = profile.inspectorWidth;
+         m_workspace.saveTo(UIKit::Workspace::userConfigPath());
          requestLayoutRebuild();
      });
      m_settingsPanel.setEditorContext(&m_ctx);
@@ -271,6 +295,8 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
 
 void SceneEditor::shutdown() {
     PluginManager::instance().shutdown();
+    m_panelsRegistered = false;
+    UIKit::PanelRegistry::instance().clear();
 #ifdef CF_HAS_SDL3
     if (m_renderDevice) {
         m_viewport.shutdown();
@@ -930,27 +956,24 @@ void SceneEditor::render(f32 deltaTime) {
     m_dockspaceId = ImGui::GetID("MyDockSpace");
     ImGui::DockSpace(m_dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-    if (!m_dockingSetup || m_layoutNeedsRebuild) {
-        ImGuiDockNode* existingNode = ImGui::DockBuilderGetNode(m_dockspaceId);
-        bool hasExistingLayout = existingNode != nullptr && existingNode->IsSplitNode();
+    if (m_workspace.poll()) m_layoutNeedsRebuild = true;
+    if (m_panels.revision() != m_panelsRevision) {
+        m_panelsRevision = m_panels.revision();
+        m_layoutNeedsRebuild = true;
+    }
 
+    if (!m_dockingSetup || m_layoutNeedsRebuild) {
         const auto& profile = m_settingsPanel.layoutManager().currentProfile();
-        if (!hasExistingLayout || m_layoutNeedsRebuild) {
+        // Respect the docking persisted in the user imgui.ini. Rebuild only when
+        // there is no split layout yet or the user asked for a reload/reset.
+        // (DockSpace() creates a bare central node even on first launch, so a
+        // non-null node alone is not enough to detect a saved layout.)
+        ImGuiDockNode* rootNode = ImGui::DockBuilderGetNode(m_dockspaceId);
+        const bool hasExistingLayout = rootNode != nullptr && rootNode->IsSplitNode();
+        if (m_layoutNeedsRebuild || !hasExistingLayout) {
             applyLayoutProfile(m_dockspaceId, profile);
+            m_selectDefaultTabs = true;
         }
-        
-         // Apply visibility from profile to panels
-         profile.hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
-         profile.inspectorOpen ? m_inspector.open() : m_inspector.close();
-         profile.viewportOpen ? m_viewport.open() : m_viewport.close();
-         profile.assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
-         profile.consoleOpen ? m_console.open() : m_console.close();
-         profile.profilerOpen ? m_profiler.open() : m_profiler.close();
-         profile.scriptEditorOpen ? m_scriptEditor.open() : m_scriptEditor.close();
-         profile.tilemapEditorOpen ? m_tilemapEditor.open() : m_tilemapEditor.close();
-         profile.animationTimelineOpen ? m_animationTimeline.open() : m_animationTimeline.close();
-         profile.animatorControllerOpen ? m_animatorController.open() : m_animatorController.close();
-        
         m_layoutNeedsRebuild = false;
         m_dockingSetup = true;
     }
@@ -962,157 +985,55 @@ void SceneEditor::render(f32 deltaTime) {
         Scene::propagateTransforms(*activeWorld);
     }
 
-    // Render panels
-    {
-        CF_PROFILE_SCOPE("SceneEditor::hierarchy");
-        m_hierarchy.render(*activeWorld, m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::toolbox");
-        if (ImGuiWindow* hierarchy = ImGui::FindWindowByName("Hierarchy")) {
-            if (hierarchy->DockId != 0)
-                ImGui::SetNextWindowDockID(hierarchy->DockId, ImGuiCond_FirstUseEver);
-        }
-        m_toolbox.render(*activeWorld, m_ctx, m_viewport);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::inspector");
-        m_inspector.render(*activeWorld, m_ctx);
-    }
     renderPlaybar(*activeWorld);
     if (m_ctx.selectedEntity.isValid()) {
         Animation::ensurePoseForMesh(*activeWorld, m_ctx.selectedEntity,
                                      m_ctx.projectRootPath.string());
     }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::animationEditors");
-        i32 posedBone = -1;
-        if (m_ctx.skeletonEntityId == m_ctx.selectedEntity.id()) posedBone = m_ctx.skeletonBone;
-        m_animationTimeline.setScene(activeWorld, m_ctx.selectedEntity.id(), posedBone);
-        m_animationTimeline.setProjectRoot(m_ctx.projectRootPath.string());
-        m_animationTimeline.render(deltaTime);
-        if (m_animationTimeline.consumePickedBone(posedBone)) {
-            m_ctx.skeletonEntityId = m_ctx.selectedEntity.id();
-            m_ctx.skeletonBone = posedBone;
+    if (!m_isPlaying || m_isPaused) {
+        f32 skinDt = 0.0f;
+        if (m_animationTimeline.isPlaying()) {
+            skinDt = deltaTime;
+        } else {
+            ECS::ComponentQuery playing;
+            playing.with<Animation::SkinnedPose>();
+            activeWorld->forEach<Animation::SkinnedPose>(
+                playing, [&](ECS::Entity, Animation::SkinnedPose& pose) {
+                    if (pose.playing && !pose.timelineHold) skinDt = deltaTime;
+                });
         }
-        m_animatorController.bindSelection(activeWorld, m_ctx.selectedEntity,
-                                           m_ctx.projectRootPath.string());
-        m_animatorController.render();
-        if (!m_isPlaying || m_isPaused) {
-            f32 skinDt = 0.0f;
-            if (m_animationTimeline.isPlaying()) {
-                skinDt = deltaTime;
-            } else {
-                ECS::ComponentQuery playing;
-                playing.with<Animation::SkinnedPose>();
-                activeWorld->forEach<Animation::SkinnedPose>(
-                    playing, [&](ECS::Entity, Animation::SkinnedPose& pose) {
-                        if (pose.playing && !pose.timelineHold) skinDt = deltaTime;
-                    });
-            }
-            Animation::tickSkinnedPoses(*activeWorld, skinDt);
-        }
+        Animation::tickSkinnedPoses(*activeWorld, skinDt);
     }
+
+    // Panels render through the registry. Dock layout and visibility belong to
+    // PanelRegistry / Workspace, so core and plugin panels share one path.
     m_viewport.setFrameCommandBuffer(m_frameCmd);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(m_frameCmd);
     m_materialEditor.setFrameCommandBuffer(m_frameCmd);
     m_assetBrowser.setFrameCommandBuffer(m_frameCmd);
 #endif
-    {
-        CF_PROFILE_SCOPE("SceneEditor::viewport");
-        m_viewport.render(*activeWorld, m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::assetBrowser");
-        m_assetBrowser.render(*activeWorld, m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::console");
-        m_console.render();
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::profiler");
-        m_profiler.render(Debug::Profiler::instance());
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::entityDebugger");
-        m_entityDebugger.render(*activeWorld, m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::scriptEditor");
-        m_scriptEditor.render();
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::settings");
-        m_settingsPanel.render();
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::materialEditor");
-        m_materialEditor.setProjectRoot(m_currentProjectConfig.RootPath.string());
-        if (!m_ctx.materialToOpen.empty()) {
-            m_materialEditor.open();
-            m_materialEditor.openFromPath(std::filesystem::path(m_ctx.materialToOpen));
-            m_ctx.materialToOpen.clear();
-        }
-        m_materialEditor.onImGuiRender(m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::imageManager");
-        m_imageManager.onImGuiRender(m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::hudEditor");
-        m_hudEditor.onImGuiRender(m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::particles");
-        m_particleEditor.onImGuiRender(m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::effects");
-        m_effectEditor.onImGuiRender(m_ctx);
-    }
-#if defined(CF_HAS_DRYAD)
-    {
-        CF_PROFILE_SCOPE("SceneEditor::dryadNodeScript");
-        m_dryadNodeScript.onImGuiRender(m_ctx);
-    }
-#endif
-    {
-        CF_PROFILE_SCOPE("SceneEditor::terrainEditor");
-        m_terrainEditor.render(*activeWorld, m_ctx);
-    }
-    m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
-    {
-        CF_PROFILE_SCOPE("SceneEditor::entityPresets");
-        m_entityPresets.render(*activeWorld, m_ctx);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::audioPreview");
-        m_audioPreview.onImGuiRender();
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::cameraPreview");
-        m_cameraPreview.onImGuiRender(*activeWorld, m_ctx, m_viewport);
-    }
-    {
-        CF_PROFILE_SCOPE("SceneEditor::gameplayPreview");
-        m_gameplayPreview.render(*activeWorld, m_ctx);
-    }
+    m_panels.renderAll();
     m_viewport.setFrameCommandBuffer(nullptr);
 #ifdef CF_HAS_SDL3
     m_gameplayPreview.setFrameCommandBuffer(nullptr);
     m_materialEditor.setFrameCommandBuffer(nullptr);
     m_assetBrowser.setFrameCommandBuffer(nullptr);
 #endif
-    m_tilemapEditor.render();
+
     m_commandPalette.render();
-    m_buildDialog.render();
     {
         CF_PROFILE_SCOPE("SceneEditor::plugins");
         PluginManager::instance().renderPanels();
-        PluginManager::instance().renderManagerUI();
+    }
+
+    if (m_selectDefaultTabs) {
+        // Fresh layouts should open on the primary panel of each dock area,
+        // not whichever window happened to be submitted last.
+        ImGui::SetWindowFocus("Hierarchy");
+        ImGui::SetWindowFocus("Scene Viewport");
+        ImGui::SetWindowFocus("Asset Browser");
+        m_selectDefaultTabs = false;
     }
 
     serviceBrowseSession(m_ctx, m_assetBrowser);
@@ -1124,36 +1045,6 @@ void SceneEditor::render(f32 deltaTime) {
     renderUnsavedChangesPopup(activeWorld);
     renderStatusBar(*activeWorld);
     m_profiler.pushFrameTime(deltaTime * 1000.0f);
-}
-
-// ── Dockspace setup ─────────────────────────────────────────────
-
-void SceneEditor::setupDockspace(ImGuiID dockspaceId) {
-    ImGui::DockBuilderRemoveNode(dockspaceId);
-    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
-
-    ImGuiID dockLeft, dockRight, dockBottom, dockCenter;
-    ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, 0.20f, &dockLeft, &dockCenter);
-    ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Right, 0.22f, &dockRight, &dockCenter);
-    ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottom, &dockCenter);
-
-     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-     ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
-     ImGui::DockBuilderDockWindow("Inspector", dockRight);
-     ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
-     ImGui::DockBuilderDockWindow("Camera Preview", dockCenter);
-     ImGui::DockBuilderDockWindow("Gameplay Preview", dockCenter);
-     ImGui::DockBuilderDockWindow("Asset Browser", dockBottom);
-     ImGui::DockBuilderDockWindow("Console", dockBottom);
-     ImGui::DockBuilderDockWindow("Profiler", dockBottom);
-     ImGui::DockBuilderDockWindow("Entity Debugger", dockBottom);
-     ImGui::DockBuilderDockWindow("Plugin Manager", dockBottom);
-     ImGui::DockBuilderDockWindow("Material Editor", dockBottom);
-     ImGui::DockBuilderDockWindow("Terrain Editor", dockBottom);
-     ImGui::DockBuilderDockWindow("Entity Presets", dockBottom);
-
-     ImGui::DockBuilderFinish(dockspaceId);
 }
 
 // ── Menu bar ────────────────────────────────────────────────────
@@ -1245,80 +1136,39 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
         }
 
         if (ImGui::BeginMenu("View")) {
-            bool hierarchyOpen = m_hierarchy.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Hierarchy, "Hierarchy", nullptr, &hierarchyOpen)) {
-                hierarchyOpen ? m_hierarchy.open() : m_hierarchy.close();
-            }
-            bool toolboxOpen = m_toolbox.isOpen();
-            if (ImGui::MenuItem("Toolbox", nullptr, &toolboxOpen)) {
-                toolboxOpen ? m_toolbox.open() : m_toolbox.close();
-            }
-            bool inspectorOpen = m_inspector.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Inspector, "Inspector", nullptr, &inspectorOpen)) {
-                inspectorOpen ? m_inspector.open() : m_inspector.close();
-            }
-            bool viewportOpen = m_viewport.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Viewport, "Viewport", nullptr, &viewportOpen)) {
-                viewportOpen ? m_viewport.open() : m_viewport.close();
-            }
-            bool gameplayPreviewOpen = m_gameplayPreview.isOpen();
-            if (ImGui::MenuItem("Gameplay Preview", nullptr, gameplayPreviewOpen)) {
-                gameplayPreviewOpen ? m_gameplayPreview.close() : m_gameplayPreview.open();
-            }
-            bool assetsOpen = m_assetBrowser.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Assets, "Assets", nullptr, &assetsOpen)) {
-                assetsOpen ? m_assetBrowser.open() : m_assetBrowser.close();
-            }
-            bool imageManagerOpen = m_imageManager.isOpen();
-            if (ImGui::MenuItem("Image Manager", nullptr, imageManagerOpen)) {
-                imageManagerOpen ? m_imageManager.close() : m_imageManager.open();
-            }
-            bool hudEditorOpen = m_hudEditor.isOpen();
-            if (ImGui::MenuItem("HUD Editor", nullptr, hudEditorOpen)) {
-                hudEditorOpen ? m_hudEditor.close() : m_hudEditor.open();
-            }
-            bool particlesOpen = m_particleEditor.isOpen();
-            if (ImGui::MenuItem("Particles", nullptr, particlesOpen)) {
-                particlesOpen ? m_particleEditor.close() : m_particleEditor.open();
-            }
-            bool effectsOpen = m_effectEditor.isOpen();
-            if (ImGui::MenuItem("Effects", nullptr, effectsOpen)) {
-                effectsOpen ? m_effectEditor.close() : m_effectEditor.open();
-            }
-#if defined(CF_HAS_DRYAD)
-            bool dryadNodesOpen = m_dryadNodeScript.isOpen();
-            if (ImGui::MenuItem("Dryad Node Script", nullptr, dryadNodesOpen)) {
-                dryadNodesOpen ? m_dryadNodeScript.close() : m_dryadNodeScript.open();
-            }
-#endif
-            bool consoleOpen = m_console.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Console, "Console", nullptr, &consoleOpen)) {
-                consoleOpen ? m_console.open() : m_console.close();
-            }
-            bool profilerOpen = m_profiler.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Profiler, "Profiler", nullptr, &profilerOpen)) {
-                profilerOpen ? m_profiler.open() : m_profiler.close();
-            }
-            bool entityDebuggerOpen = m_entityDebugger.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::EntityDebugger, "Entity Debugger", nullptr, &entityDebuggerOpen)) {
-                entityDebuggerOpen ? m_entityDebugger.open() : m_entityDebugger.close();
-            }
-            ImGui::Separator();
-            bool atOpen = m_animationTimeline.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Animation, "Animation Timeline", nullptr, &atOpen))
-                atOpen ? m_animationTimeline.open() : m_animationTimeline.close();
-            bool acOpen = m_animatorController.isOpen();
-            if (EditorIcons::menuItem(EditorIcon::Animator, "Animator Controller", nullptr, &acOpen))
-                acOpen ? m_animatorController.open() : m_animatorController.close();
-            bool terrainEditorOpen = m_terrainEditor.isOpen();
-            if (ImGui::MenuItem("Terrain Editor", nullptr, terrainEditorOpen)) {
-                terrainEditorOpen ? m_terrainEditor.close() : m_terrainEditor.open();
-            }
-            bool entityPresetsOpen = m_entityPresets.isOpen();
-            if (ImGui::MenuItem("Entity Presets", nullptr, entityPresetsOpen)) {
-                entityPresetsOpen ? m_entityPresets.close() : m_entityPresets.open();
+            if (ImGui::BeginMenu("Panels")) {
+                m_panels.drawMenu();
+                ImGui::EndMenu();
             }
             syncLayoutProfileFromPanels();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reload UI theme", "F5")) {
+                EditorTheme::apply({EditorTheme::darkMode(), EditorTheme::fontSize()});
+            }
+            if (ImGui::MenuItem("Reload UI layout")) {
+                const std::filesystem::path userWorkspace(UIKit::Workspace::userConfigPath());
+                const std::string source =
+                    std::filesystem::exists(userWorkspace) ? userWorkspace.string()
+                                                           : m_workspace.path();
+                if (!source.empty()) {
+                    std::string error;
+                    if (!m_workspace.load(source, &error)) {
+                        std::fprintf(stderr, "[workspace] %s\n", error.c_str());
+                    }
+                }
+                m_layoutNeedsRebuild = true;
+            }
+            if (ImGui::MenuItem("Save UI layout")) {
+                if (m_workspace.saveTo(UIKit::Workspace::userConfigPath())) {
+                    std::fprintf(stderr, "[workspace] saved %s\n",
+                                 UIKit::Workspace::userConfigPath().c_str());
+                }
+            }
+            if (ImGui::MenuItem("Reset UI layout")) {
+                m_workspace.reset();
+                m_workspace.saveTo(UIKit::Workspace::userConfigPath());
+                m_layoutNeedsRebuild = true;
+            }
             ImGui::EndMenu();
         }
 
@@ -1446,6 +1296,21 @@ void SceneEditor::renderStatusBar(ECS::World& world) {
 // ── Shortcuts ───────────────────────────────────────────────────
 
 void SceneEditor::handleShortcuts(ECS::World& world) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F5) && !ImGui::GetIO().WantTextInput) {
+        EditorTheme::apply({EditorTheme::darkMode(), EditorTheme::fontSize()});
+        const std::filesystem::path userWorkspace(UIKit::Workspace::userConfigPath());
+        const std::string source = std::filesystem::exists(userWorkspace)
+                                       ? userWorkspace.string()
+                                       : m_workspace.path();
+        if (!source.empty()) {
+            std::string error;
+            if (!m_workspace.load(source, &error)) {
+                std::fprintf(stderr, "[workspace] %s\n", error.c_str());
+            }
+        }
+        m_layoutNeedsRebuild = true;
+    }
+
     if (EditorShortcuts::instance().pressed(Shortcut::CommandPalette) ||
         EditorShortcuts::instance().pressed(Shortcut::CommandPaletteAlt)) {
         m_commandPalette.toggle();
@@ -1756,78 +1621,226 @@ void SceneEditor::syncLayoutProfileFromPanels() {
     m_settingsPanel.savePreferences();
 }
 
+void SceneEditor::registerPanels() {
+    if (m_panelsRegistered) return;
+    m_panelsRegistered = true;
+
+    auto& panels = UIKit::PanelRegistry::instance();
+    panels.clear();
+
+    auto add = [&panels](const char* id, const char* title, const char* icon,
+                         UIKit::DockArea dock, std::function<void()> render,
+                         std::function<void()> open, std::function<void()> close,
+                         std::function<bool()> isOpen, const char* category = "Core",
+                         int order = 0, bool defaultOpen = true) {
+        UIKit::PanelDesc desc;
+        desc.id = id;
+        desc.title = title;
+        desc.icon = icon ? icon : "";
+        desc.category = category;
+        desc.dock = dock;
+        desc.defaultOpen = defaultOpen;
+        desc.order = order;
+        desc.render = std::move(render);
+        desc.open = std::move(open);
+        desc.close = std::move(close);
+        desc.isOpen = std::move(isOpen);
+        panels.add(std::move(desc));
+    };
+
+    add("core.hierarchy", "Hierarchy", EditorIcon::Hierarchy, UIKit::DockArea::Left,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_hierarchy.render(*world, m_ctx);
+        },
+        [this] { m_hierarchy.open(); }, [this] { m_hierarchy.close(); },
+        [this] { return m_hierarchy.isOpen(); }, "Core", 10);
+
+    add("core.toolbox", "Toolbox", EditorIcon::Hierarchy, UIKit::DockArea::Left,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_toolbox.render(*world, m_ctx, m_viewport);
+        },
+        [this] { m_toolbox.open(); }, [this] { m_toolbox.close(); },
+        [this] { return m_toolbox.isOpen(); }, "Core", 20);
+
+    add("core.viewport", "Scene Viewport", EditorIcon::Viewport, UIKit::DockArea::Center,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_viewport.render(*world, m_ctx);
+        },
+        [this] { m_viewport.open(); }, [this] { m_viewport.close(); },
+        [this] { return m_viewport.isOpen(); }, "Core", 0);
+
+    add("core.inspector", "Inspector", EditorIcon::Inspector, UIKit::DockArea::Right,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_inspector.render(*world, m_ctx);
+        },
+        [this] { m_inspector.open(); }, [this] { m_inspector.close(); },
+        [this] { return m_inspector.isOpen(); }, "Core", 10);
+
+    add("core.gameplay_preview", "Gameplay Preview", EditorIcon::Viewport,
+        UIKit::DockArea::Center,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_gameplayPreview.render(*world, m_ctx);
+        },
+        [this] { m_gameplayPreview.open(); }, [this] { m_gameplayPreview.close(); },
+        [this] { return m_gameplayPreview.isOpen(); }, "Core", 10, false);
+
+    add("core.camera_preview", "Camera Preview", EditorIcon::Viewport, UIKit::DockArea::Center,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) {
+                m_cameraPreview.onImGuiRender(*world, m_ctx, m_viewport);
+            }
+        },
+        [this] { m_cameraPreview.open(); }, [this] { m_cameraPreview.close(); },
+        [this] { return m_cameraPreview.isOpen(); }, "Core", 20, false);
+
+    add("core.asset_browser", "Asset Browser", EditorIcon::Assets, UIKit::DockArea::Bottom,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_assetBrowser.render(*world, m_ctx);
+        },
+        [this] { m_assetBrowser.open(); }, [this] { m_assetBrowser.close(); },
+        [this] { return m_assetBrowser.isOpen(); }, "Core", 10);
+
+    add("core.console", "Console", EditorIcon::Console, UIKit::DockArea::Bottom,
+        [this] { m_console.render(); }, [this] { m_console.open(); }, [this] { m_console.close(); },
+        [this] { return m_console.isOpen(); }, "Debug", 20);
+
+    add("core.profiler", "Profiler", EditorIcon::Profiler, UIKit::DockArea::Bottom,
+        [this] { m_profiler.render(Debug::Profiler::instance()); },
+        [this] { m_profiler.open(); }, [this] { m_profiler.close(); },
+        [this] { return m_profiler.isOpen(); }, "Debug", 30, false);
+
+    add("core.entity_debugger", "Entity Debugger", EditorIcon::EntityDebugger,
+        UIKit::DockArea::Bottom,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_entityDebugger.render(*world, m_ctx);
+        },
+        [this] { m_entityDebugger.open(); }, [this] { m_entityDebugger.close(); },
+        [this] { return m_entityDebugger.isOpen(); }, "Debug", 40, false);
+
+    add("core.script_editor", "Script Editor", EditorIcon::NewScene, UIKit::DockArea::Bottom,
+        [this] { m_scriptEditor.render(); }, [this] { m_scriptEditor.open(); },
+        [this] { m_scriptEditor.close(); }, [this] { return m_scriptEditor.isOpen(); },
+        "Content", 10, false);
+
+    add("core.settings", "Settings", EditorIcon::Inspector, UIKit::DockArea::Bottom,
+        [this] { m_settingsPanel.render(); }, [this] { m_settingsPanel.open(); },
+        [this] { m_settingsPanel.close(); }, [this] { return m_settingsPanel.isOpen(); },
+        "Core", 90, false);
+
+    add("core.material_editor", "Material Editor", EditorIcon::Assets, UIKit::DockArea::Bottom,
+        [this] {
+            m_materialEditor.setProjectRoot(m_currentProjectConfig.RootPath.string());
+            if (!m_ctx.materialToOpen.empty()) {
+                m_materialEditor.open();
+                m_materialEditor.openFromPath(std::filesystem::path(m_ctx.materialToOpen));
+                m_ctx.materialToOpen.clear();
+            }
+            m_materialEditor.onImGuiRender(m_ctx);
+        },
+        [this] { m_materialEditor.open(); }, [this] { m_materialEditor.close(); },
+        [this] { return m_materialEditor.isOpen(); }, "Content", 20, false);
+
+    add("core.image_manager", "Image Manager", EditorIcon::Assets, UIKit::DockArea::Center,
+        [this] { m_imageManager.onImGuiRender(m_ctx); },
+        [this] { m_imageManager.open(); }, [this] { m_imageManager.close(); },
+        [this] { return m_imageManager.isOpen(); }, "Content", 30, false);
+
+    add("core.hud_editor", "HUD Editor", EditorIcon::Viewport, UIKit::DockArea::Center,
+        [this] { m_hudEditor.onImGuiRender(m_ctx); },
+        [this] { m_hudEditor.open(); }, [this] { m_hudEditor.close(); },
+        [this] { return m_hudEditor.isOpen(); }, "Tools", 40, false);
+
+    add("core.particles", "Particles", EditorIcon::Animation, UIKit::DockArea::Center,
+        [this] { m_particleEditor.onImGuiRender(m_ctx); },
+        [this] { m_particleEditor.open(); }, [this] { m_particleEditor.close(); },
+        [this] { return m_particleEditor.isOpen(); }, "Tools", 50, false);
+
+    add("core.effects", "Effects", EditorIcon::Profiler, UIKit::DockArea::Center,
+        [this] { m_effectEditor.onImGuiRender(m_ctx); },
+        [this] { m_effectEditor.open(); }, [this] { m_effectEditor.close(); },
+        [this] { return m_effectEditor.isOpen(); }, "Tools", 60, false);
+
+#if defined(CF_HAS_DRYAD)
+    add("core.dryad_node_script", "Dryad Node Script", EditorIcon::Animation,
+        UIKit::DockArea::Center, [this] { m_dryadNodeScript.onImGuiRender(m_ctx); },
+        [this] { m_dryadNodeScript.open(); }, [this] { m_dryadNodeScript.close(); },
+        [this] { return m_dryadNodeScript.isOpen(); }, "Content", 40, false);
+#endif
+
+    add("core.entity_presets", "Entity Presets", EditorIcon::Assets, UIKit::DockArea::Bottom,
+        [this] {
+            m_entityPresets.setProjectRoot(m_currentProjectConfig.RootPath);
+            if (auto* world = m_tabManager.activeWorld()) m_entityPresets.render(*world, m_ctx);
+        },
+        [this] { m_entityPresets.open(); }, [this] { m_entityPresets.close(); },
+        [this] { return m_entityPresets.isOpen(); }, "Scene", 30, false);
+
+    add("core.audio_preview", "Audio Preview", EditorIcon::Assets, UIKit::DockArea::Bottom,
+        [this] { m_audioPreview.onImGuiRender(); },
+        [this] { m_audioPreview.open(); }, [this] { m_audioPreview.close(); },
+        [this] { return m_audioPreview.isOpen(); }, "Content", 50, false);
+
+    add("core.animation_timeline", "Animation Timeline", EditorIcon::Animation,
+        UIKit::DockArea::Bottom,
+        [this] {
+            i32 posedBone = -1;
+            if (m_ctx.skeletonEntityId == m_ctx.selectedEntity.id()) posedBone = m_ctx.skeletonBone;
+            m_animationTimeline.setScene(m_tabManager.activeWorld(), m_ctx.selectedEntity.id(),
+                                         posedBone);
+            m_animationTimeline.setProjectRoot(m_ctx.projectRootPath.string());
+            m_animationTimeline.render(ImGui::GetIO().DeltaTime);
+            if (m_animationTimeline.consumePickedBone(posedBone)) {
+                m_ctx.skeletonEntityId = m_ctx.selectedEntity.id();
+                m_ctx.skeletonBone = posedBone;
+            }
+        },
+        [this] { m_animationTimeline.open(); }, [this] { m_animationTimeline.close(); },
+        [this] { return m_animationTimeline.isOpen(); }, "Animation", 10, false);
+
+    add("core.animator_controller", "Animator Controller", EditorIcon::Animator,
+        UIKit::DockArea::Bottom,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) {
+                m_animatorController.bindSelection(world, m_ctx.selectedEntity,
+                                                  m_ctx.projectRootPath.string());
+            }
+            m_animatorController.render();
+        },
+        [this] { m_animatorController.open(); }, [this] { m_animatorController.close(); },
+        [this] { return m_animatorController.isOpen(); }, "Animation", 20, false);
+
+    add("core.tilemap_editor", "Tilemap Editor", EditorIcon::Assets, UIKit::DockArea::Bottom,
+        [this] { m_tilemapEditor.render(); }, [this] { m_tilemapEditor.open(); },
+        [this] { m_tilemapEditor.close(); }, [this] { return m_tilemapEditor.isOpen(); },
+        "Scene", 20, false);
+
+    add("core.build_run", "Build & Run", EditorIcon::Build, UIKit::DockArea::Bottom,
+        [this] { m_buildDialog.render(); }, [this] { m_buildDialog.open(); },
+        [this] { m_buildDialog.close(); }, [this] { return m_buildDialog.isOpen(); },
+        "Build", 10, false);
+
+    add("core.plugin_manager", "Plugin Manager", EditorIcon::Plugins, UIKit::DockArea::Bottom,
+        [this] { PluginManager::instance().renderManagerUI(); },
+        [this] { PluginManager::instance().openManager(); },
+        [this] { PluginManager::instance().closeManager(); },
+        [this] { return PluginManager::instance().isManagerOpen(); }, "Plugins", 10, false);
+}
+
 void SceneEditor::applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile) {
-    // Remove the old dockspace layout
-    ImGui::DockBuilderRemoveNode(dockspaceId);
-    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
+    // Visibility is owned by the registry so the View menu and layout profiles
+    // stay in sync.
+    m_panels.setVisible("core.hierarchy", profile.hierarchyOpen);
+    m_panels.setVisible("core.inspector", profile.inspectorOpen);
+    m_panels.setVisible("core.viewport", profile.viewportOpen);
+    m_panels.setVisible("core.asset_browser", profile.assetsOpen);
+    m_panels.setVisible("core.console", profile.consoleOpen);
+    m_panels.setVisible("core.profiler", profile.profilerOpen);
+    m_panels.setVisible("core.script_editor", profile.scriptEditorOpen);
+    m_panels.setVisible("core.tilemap_editor", profile.tilemapEditorOpen);
+    m_panels.setVisible("core.animation_timeline", profile.animationTimelineOpen);
+    m_panels.setVisible("core.animator_controller", profile.animatorControllerOpen);
 
-    // Count visible panels to determine splits
-    int visibleCount = 0;
-    if (profile.hierarchyOpen) visibleCount++;
-    if (profile.inspectorOpen) visibleCount++;
-    if (profile.viewportOpen) visibleCount++;
-    if (profile.assetsOpen) visibleCount++;
-    if (profile.consoleOpen) visibleCount++;
-    if (profile.profilerOpen) visibleCount++;
-    if (profile.animationTimelineOpen) visibleCount++;
-    if (profile.animatorControllerOpen) visibleCount++;
-    if (profile.tilemapEditorOpen) visibleCount++;
-    if (profile.scriptEditorOpen) visibleCount++;
-
-    if (visibleCount == 0) {
-        // Ensure at least viewport is visible
-        ImGui::DockBuilderDockWindow("Scene Viewport", dockspaceId);
-        ImGui::DockBuilderFinish(dockspaceId);
-        return;
-    }
-
-    ImGuiID dockLeft = dockspaceId;
-    ImGuiID dockRight = dockspaceId;
-    ImGuiID dockBottom = dockspaceId;
-    ImGuiID dockCenter = dockspaceId;
-
-    // Left panel (Hierarchy) - if enabled
-    if (profile.hierarchyOpen) {
-        ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, profile.hierarchyWidth, &dockLeft, &dockCenter);
-        ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-        ImGui::DockBuilderDockWindow("Toolbox", dockLeft);
-    }
-
-    // Right panel (Inspector) - if enabled
-    if (profile.inspectorOpen) {
-        ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Right, profile.inspectorWidth / (1.0f - profile.hierarchyWidth), &dockRight, &dockCenter);
-        ImGui::DockBuilderDockWindow("Inspector", dockRight);
-    }
-
-    // Bottom panels (Assets, Console, Profiler, etc.) - if any enabled
-    if (profile.assetsOpen || profile.consoleOpen || profile.profilerOpen || 
-        profile.animationTimelineOpen || profile.animatorControllerOpen || profile.tilemapEditorOpen || profile.scriptEditorOpen) {
-        ImGuiID dockBottomRegion;
-        ImGui::DockBuilderSplitNode(dockCenter, ImGuiDir_Down, 0.25f, &dockBottomRegion, &dockCenter);
-        
-        if (profile.assetsOpen) ImGui::DockBuilderDockWindow("Asset Browser", dockBottomRegion);
-        if (profile.consoleOpen) ImGui::DockBuilderDockWindow("Console", dockBottomRegion);
-        if (profile.profilerOpen) ImGui::DockBuilderDockWindow("Profiler", dockBottomRegion);
-        if (profile.animationTimelineOpen) ImGui::DockBuilderDockWindow("Animation Timeline", dockBottomRegion);
-        if (profile.animatorControllerOpen) ImGui::DockBuilderDockWindow("Animator Controller", dockBottomRegion);
-        if (profile.tilemapEditorOpen) ImGui::DockBuilderDockWindow("Tilemap Editor", dockBottomRegion);
-        if (profile.scriptEditorOpen) ImGui::DockBuilderDockWindow("Script Editor", dockBottomRegion);
-        ImGui::DockBuilderDockWindow("Build & Run", dockBottomRegion);
-        ImGui::DockBuilderDockWindow("Audio Preview", dockBottomRegion);
-        ImGui::DockBuilderDockWindow("Terrain Editor", dockBottomRegion);
-        ImGui::DockBuilderDockWindow("Settings", dockBottomRegion);
-    }
-
-    // Center panel (Viewport) - always visible or fallback
-    if (profile.viewportOpen) {
-        ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
-    } else if (visibleCount > 0) {
-        // If viewport is hidden but other panels are visible, use remaining space
-        ImGui::DockBuilderDockWindow("Scene Viewport", dockCenter);
-    }
-
-    ImGui::DockBuilderFinish(dockspaceId);
+    m_workspace.apply(dockspaceId, m_panels);
 }
 
 } // namespace Caffeine::Editor

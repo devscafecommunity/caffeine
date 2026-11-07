@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "BuildDialog.hpp"
 #include "BuildSystem.hpp"
 #include "BuildLog.hpp"
@@ -99,7 +100,7 @@ void BuildDialog::setProjectContext(const ProjectConfig& project, const std::str
 void BuildDialog::render() {
     if (!m_open) return;
 
-    if (ImGui::Begin("Build & Run", &m_open)) {
+    if (UIKit::BeginPanel("Build & Run", &m_open)) {
         if (EditorIcons::hasIcon(EditorIcon::Build)) {
             EditorIcons::image(EditorIcon::Build, 18.0f);
             ImGui::SameLine();

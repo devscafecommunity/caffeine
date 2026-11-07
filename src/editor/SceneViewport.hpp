@@ -74,11 +74,6 @@ struct MeshCpuRasterizer {
 
 class SceneViewport {
 public:
-    enum class ProjectionMode : u8 {
-        Orthographic,
-        Perspective
-    };
-
     enum class MeshPreviewMode : u8 {
         Wireframe,
         Textured
@@ -122,13 +117,6 @@ public:
 
     void render(ECS::World& world, EditorContext& ctx);
 
-    ProjectionMode projectionMode() const { return m_projectionMode; }
-    void setProjectionMode(ProjectionMode mode) { m_projectionMode = mode; }
-    void toggleProjectionMode() {
-        m_projectionMode = (m_projectionMode == ProjectionMode::Perspective)
-            ? ProjectionMode::Orthographic
-            : ProjectionMode::Perspective;
-    }
     MeshPreviewMode meshPreviewMode() const { return m_meshPreviewMode; }
     void setMeshPreviewMode(MeshPreviewMode mode) { m_meshPreviewMode = mode; }
     WireframeDensity wireframeDensity() const { return m_wireframeDensity; }
@@ -173,6 +161,7 @@ public:
 private:
 #ifdef CF_HAS_IMGUI
     void drawGizmo(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
+    void drawViewportToolbar(EditorContext& ctx);
     void drawSprites(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawEmptyEntities(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
     void drawPhysicsDebug(ECS::World& world, EditorContext& ctx, ImVec2 origin, ImVec2 viewportSize);
@@ -288,7 +277,6 @@ private:
     bool m_gizmoUnsnappedValid = false;
     ImVec2 m_gizmoScreenOrigin = {};
     ImVec2 m_boxSelectStart = { 0.0f, 0.0f };
-    ProjectionMode m_projectionMode = ProjectionMode::Perspective;
     MeshPreviewMode m_meshPreviewMode = MeshPreviewMode::Textured;
     WireframeDensity m_wireframeDensity = WireframeDensity::Medium;
 #ifdef CF_HAS_SDL3

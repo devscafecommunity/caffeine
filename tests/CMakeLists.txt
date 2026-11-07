@@ -81,7 +81,6 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/EntityPresetPackages.cpp
     ../src/editor/EntityPresetFactories.cpp
     ../src/editor/EntityPresetsPanel.cpp
-    ../src/editor/TerrainEditorPanel.cpp
     ../src/editor/EntityDebugger.cpp
     ../src/editor/PluginSystem.cpp
     ../src/editor/PluginServiceRegistry.cpp
@@ -100,6 +99,7 @@ if(SDL3_FOUND)
         test_rhi.cpp 
         test_batchrenderer.cpp 
         test_audio.cpp
+        test_ui_kit.cpp
         ../src/editor/MaterialEditorPanel.cpp
         ../src/editor/AudioPreviewPanel.cpp
         ../src/editor/ShaderGraph.cpp
@@ -135,7 +135,7 @@ endif()
 
 # Link ImGui and test engine if SDL3 is available (needed for editor panels)
 if(SDL3_FOUND)
-    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine)
+    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine caffeine-ui-kit)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
     target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
     if(DEFINED nanosvg_SOURCE_DIR)
@@ -228,7 +228,6 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/EditorTheme.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EditorSpinner.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetsPanel.cpp
-          ${CMAKE_SOURCE_DIR}/src/editor/TerrainEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EntityDebugger.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/TestUIMapper.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/TestRequestHandler.cpp
@@ -238,7 +237,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${IMGUI_TEST_ENGINE_SRCS}
       )
     
-    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes)
+    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes caffeine-ui-kit)
     target_include_directories(DoppioTest PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/caf-pack/include

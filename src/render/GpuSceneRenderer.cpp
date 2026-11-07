@@ -2379,19 +2379,33 @@ u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
                               RHI::Texture* depthTarget, u32 width, u32 height,
                               const std::string& projectRoot, const GpuSceneRenderOptions& options) {
     if (!m_ready || !cmd || !colorTarget || width < 1 || height < 1) return 0;
-    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D) return 0;
+    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D &&
+        ctx.viewMode != Editor::EditorContext::ViewMode::Isometric) {
+        return 0;
+    }
 
     const Vec3 cameraPos =
         Editor::editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
     const f32 farPlane = ctx.cameraFarPlane();
+    constexpr f32 kFovY = 60.0f * kPi / 180.0f;
 
     GpuSceneCamera camera;
     camera.position = cameraPos;
     camera.focus = ctx.camFocus;
     camera.view = Mat4::lookAt(cameraPos, ctx.camFocus, Vec3(0, 1, 0));
-    camera.proj = Mat4::perspective(60.0f * kPi / 180.0f, aspect, 0.1f, farPlane);
-    camera.fovRad = 60.0f * kPi / 180.0f;
+    const bool ortho = options.orthographic ||
+                       ctx.projection == Editor::EditorContext::ViewProjection::Orthographic;
+    if (ortho) {
+        const f32 halfHeight =
+            std::max(0.1f, std::abs(ctx.camDistance) * std::tan(kFovY * 0.5f));
+        const f32 halfWidth = halfHeight * aspect;
+        camera.proj = Mat4::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, 0.1f,
+                                  farPlane);
+    } else {
+        camera.proj = Mat4::perspective(kFovY, aspect, 0.1f, farPlane);
+    }
+    camera.fovRad = kFovY;
     camera.nearClip = 0.1f;
     camera.farClip = farPlane;
 

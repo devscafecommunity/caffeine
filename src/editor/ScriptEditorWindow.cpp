@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/ScriptEditorWindow.hpp"
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptEngine.hpp"
@@ -107,7 +108,7 @@ namespace Caffeine::Editor {
 void ScriptEditorWindow::render() {
     if (!m_open) return;
     
-    if (ImGui::Begin("Script Editor", &m_open)) {
+    if (UIKit::BeginPanel("Script Editor", &m_open)) {
         // Handle drag-drop of .lua files from Asset Browser
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {

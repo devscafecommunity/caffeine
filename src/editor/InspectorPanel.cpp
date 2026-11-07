@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/PluginSystem.hpp"
 
@@ -67,19 +68,20 @@ void InspectorPanel::unregisterDrawer(u32 componentTypeId) {
 void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
     editorPanelApplyDetach(m_detached, ImVec2(420, 640));
-    if (ImGui::Begin("Inspector", &m_open)) {
+    if (UIKit::BeginPanel("Inspector", &m_open)) {
         editorPanelDetachTabButton(m_detached);
         if (!ctx.selectedEntity.isValid()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No entity selected");
-            ImGui::TextDisabled("Click an entity in the Hierarchy to inspect it.");
+            UIKit::EmptyState("No entity selected",
+                              "Click an entity in the Hierarchy to inspect it.", "hierarchy");
             ImGui::End();
             return;
         }
 
         if (ctx.hasMultiSelection()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "%zu entities selected",
-                               ctx.selectedEntities.size());
-            ImGui::TextDisabled("Select a single entity to inspect its components.");
+            UIKit::Badge((std::to_string(ctx.selectedEntities.size()) + " selected").c_str(),
+                         UIKit::tokens().accent);
+            UIKit::EmptyState("Multiple entities selected",
+                              "Select a single entity to inspect its components.", "hierarchy");
             ImGui::End();
             return;
         }
@@ -100,12 +102,12 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
          ImGui::SameLine();
          ImGui::TextDisabled("Entity %u", e.id());
 
-         if (ImGui::Button("Copy snapshot")) {
+         if (UIKit::ToolbarButton("Copy snapshot", "Copy entity state to the clipboard")) {
              const std::string snapshot = exportEntitySnapshot(world, e);
              ImGui::SetClipboardText(snapshot.c_str());
          }
          ImGui::SameLine();
-         if (ImGui::Button("Export .txt")) {
+         if (UIKit::ToolbarButton("Export .txt", "Export entity state to exports/")) {
              const std::string snapshot = exportEntitySnapshot(world, e);
              const std::filesystem::path out =
                  std::filesystem::path("exports") / ("entity_" + std::to_string(e.id()) + ".txt");
@@ -117,12 +119,10 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
                  ctx.pushTransientStatus("Exported " + out.string(), false);
              }
          }
-         if (ImGui::IsItemHovered()) {
-             ImGui::SetTooltip("Copy position, rotation, camera and mesh params to clipboard or file");
-         }
 
          ImGui::Separator();
-         if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
+         if (UIKit::ToolbarButton("Save as Prefab", "Save the selected entity as a prefab", false,
+                                  ImVec2(-1.0f, 0.0f))) {
              ctx.browse.requestFilesystem(EditorContext::BrowseSession::Kind::SaveFile,
                                           "Save Entity as Prefab", "prefabs/", e.id());
          }
@@ -167,12 +167,13 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         ImGui::Separator();
 
         // Add Component button
-        if (ImGui::Button("+ Add Component", ImVec2(-1, 0))) {
+        if (UIKit::PrimaryButton("+ Add Component", ImVec2(-1, 0))) {
             ImGui::OpenPopup("add_component_v2");
             m_addComponentSearch[0] = '\0';
         }
         if (ImGui::BeginPopup("add_component_v2")) {
-            ImGui::InputText("##search", m_addComponentSearch, sizeof(m_addComponentSearch));
+            UIKit::SearchField("##search", m_addComponentSearch, sizeof(m_addComponentSearch),
+                               "Search components...");
             ImGui::Separator();
             const char* lastCategory = nullptr;
             for (const auto& entry : ComponentRegistry::instance().entries()) {
@@ -358,9 +359,14 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
         if (removeRequested) { world.remove<ECS::Camera2DComponent>(e); ctx.markDirty(); return; }
 
         auto* cam = world.get<ECS::Camera2DComponent>(e);
-        if (ImGui::DragFloat("Zoom",      &cam->zoom,     0.01f, 0.01f, 100.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Far Clip",  &cam->farClip,  1.0f,  1.0f, 10000.0f)) ctx.markDirty();
+        bool changed = false;
+        if (UIKit::BeginPropertyGrid("inspector_camera2d", 84.0f)) {
+            changed |= UIKit::DragFloatProperty("Zoom", &cam->zoom, 0.01f, 0.01f, 100.0f);
+            changed |= UIKit::DragFloatProperty("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f);
+            changed |= UIKit::DragFloatProperty("Far Clip", &cam->farClip, 1.0f, 1.0f, 10000.0f);
+            UIKit::EndPropertyGrid();
+        }
+        if (changed) ctx.markDirty();
     }
 
     if (has3D) {
@@ -369,10 +375,15 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
         if (removeRequested) { world.remove<ECS::Camera3DComponent>(e); ctx.markDirty(); return; }
 
         auto* cam = world.get<ECS::Camera3DComponent>(e);
-        if (ImGui::DragFloat("FOV",       &cam->fov,         0.5f,  10.0f, 170.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Near Clip", &cam->nearClip,    0.01f, 0.001f, 10.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Far Clip",  &cam->farClip,     1.0f,  1.0f, 10000.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Aspect",    &cam->aspectRatio, 0.01f, 0.1f, 10.0f)) ctx.markDirty();
+        bool changed = false;
+        if (UIKit::BeginPropertyGrid("inspector_camera3d", 84.0f)) {
+            changed |= UIKit::DragFloatProperty("FOV", &cam->fov, 0.5f, 10.0f, 170.0f);
+            changed |= UIKit::DragFloatProperty("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f);
+            changed |= UIKit::DragFloatProperty("Far Clip", &cam->farClip, 1.0f, 1.0f, 10000.0f);
+            changed |= UIKit::DragFloatProperty("Aspect", &cam->aspectRatio, 0.01f, 0.1f, 10.0f);
+            UIKit::EndPropertyGrid();
+        }
+        if (changed) ctx.markDirty();
     }
 }
 void InspectorPanel::drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {

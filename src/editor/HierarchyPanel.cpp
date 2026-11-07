@@ -1,4 +1,5 @@
 #include "editor/HierarchyPanel.hpp"
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/DragDropSystem.hpp"
@@ -51,7 +52,7 @@ void HierarchyPanel::onImGuiRender() {
     if (!m_open) return;
     if (!m_context || !m_world) return;
 
-    ImGui::Begin("Hierarchy", &m_open);
+    UIKit::BeginPanel("Hierarchy", &m_open);
 
     renderSearchBar();
     renderToolbar();
@@ -118,14 +119,12 @@ void HierarchyPanel::onImGuiRender() {
 }
 
 void HierarchyPanel::renderSearchBar() {
-    ImGui::PushItemWidth(-1);
-    ImGui::InputTextWithHint("##hierarchy_search", "Search entities...",
-                             m_searchFilter, sizeof(m_searchFilter));
-    ImGui::PopItemWidth();
+    UIKit::SearchField("##hierarchy_search", m_searchFilter, sizeof(m_searchFilter),
+                       "Search entities...");
 }
 
 void HierarchyPanel::renderToolbar() {
-    if (ImGui::Button("+##hierarchy_add", ImVec2(24, 0))) {
+    if (UIKit::ToolbarButton("+", "Create entity")) {
         ImGui::OpenPopup("hierarchy_create_entity");
     }
     if (ImGui::BeginPopup("hierarchy_create_entity")) {
@@ -133,14 +132,11 @@ void HierarchyPanel::renderToolbar() {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Presets##hierarchy_presets", ImVec2(72, 0))) {
+    if (UIKit::ToolbarButton("Presets", "Open Entity Presets wizard")) {
         if (m_openPresets) m_openPresets();
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Open Entity Presets wizard");
-    }
     ImGui::SameLine();
-    if (ImGui::Button("Delete##hierarchy_delete")) {
+    if (UIKit::ToolbarButton("Delete", "Delete selected entities")) {
         if (m_context->hasMultiSelection()) {
             m_context->beginUndo(EditorCommand::RemoveEntity, u32_max, *m_world);
             for (auto& e : m_context->selectedEntities) {
