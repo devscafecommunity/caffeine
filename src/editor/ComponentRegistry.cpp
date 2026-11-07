@@ -321,8 +321,26 @@ void registerAllComponents(ComponentRegistry& reg) {
     });
     reg.registerComponent({
         "Rendering", "Volumetric Clouds",
-        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::VolumetricCloudsComponent>(e); },
-        [](ECS::World& w, ECS::Entity e) { w.add<ECS::VolumetricCloudsComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) {
+            const auto* clouds = w.get<ECS::VolumetricCloudsComponent>(e);
+            return clouds && clouds->enabled;
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            if (auto* existing = w.get<ECS::VolumetricCloudsComponent>(e)) {
+                existing->enabled = true;
+                return;
+            }
+            auto& clouds = w.add<ECS::VolumetricCloudsComponent>(e);
+            clouds.enabled = true;
+            clouds.quality = 2;
+            clouds.coverage = 0.58f;
+            clouds.density = 1.0f;
+            clouds.baseAltitude = 1250.0f;
+            clouds.topAltitude = 2880.0f;
+            clouds.detail = 0.50f;
+            clouds.mistDensity = 0.12f;
+            clouds.mistHeight = 67.0f;
+        },
         "",
         "clouds mist volumetric sky weather fog atmosphere"
     });

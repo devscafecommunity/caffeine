@@ -274,10 +274,17 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
                 Caffeine::FixedString<128>("Components"),
                 [this, entry]() {
                     ECS::World* world = m_tabManager.activeWorld();
-                    if (!world || !m_ctx.selectedEntity.isValid()) return;
-                    if (entry.has(*world, m_ctx.selectedEntity)) return;
-                    m_ctx.beginUndo(EditorCommand::AddComponent, m_ctx.selectedEntity.id(), *world);
-                    entry.add(*world, m_ctx.selectedEntity);
+                    if (!world) return;
+                    // Quick Search can add a component without a selection: create
+                    // and select a dedicated entity so the action is never a no-op.
+                    ECS::Entity target = m_ctx.selectedEntity;
+                    if (!target.isValid()) {
+                        target = world->create(entry.name.c_str());
+                        m_ctx.selectEntity(target);
+                    }
+                    if (entry.has(*world, target)) return;
+                    m_ctx.beginUndo(EditorCommand::AddComponent, target.id(), *world);
+                    entry.add(*world, target);
                     m_ctx.endUndo(*world);
                 },
                 true, entry.plugin.empty() ? nullptr : entry.plugin.c_str(),
@@ -1132,6 +1139,7 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (EditorIcons::menuItem(EditorIcon::Refresh, "Refresh Plugins")) {
                 PluginManager::instance().refreshPluginsDirectory();
             }
+            PluginManager::instance().renderMenuItems("Plugins");
             const auto& pluginPanels = PluginManager::instance().panels();
             if (!pluginPanels.empty()) {
                 ImGui::Separator();
