@@ -42,6 +42,16 @@ Doppio does **not** build or preload feature plugins. Build them from the
 Manager** (persisted in `~/.config/caffeine/plugins.cfg`).
 
 ```bash
+# Build every plugin and copy the libraries to build/plugins/
+./scripts/build-plugins.sh
+
+# Or one plugin
+./scripts/build-plugins.sh --target volumetric_clouds_plugin
+```
+
+Manual equivalent:
+
+```bash
 cmake -S doppio-plugins -B doppio-plugins/build \
   -DCAFFEINE_ROOT="$PWD" \
   -DIMGUI_DIR="$PWD/build/_deps/imgui-src"

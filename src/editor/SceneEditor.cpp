@@ -1132,6 +1132,23 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (EditorIcons::menuItem(EditorIcon::Refresh, "Refresh Plugins")) {
                 PluginManager::instance().refreshPluginsDirectory();
             }
+            const auto& pluginPanels = PluginManager::instance().panels();
+            if (!pluginPanels.empty()) {
+                ImGui::Separator();
+                for (const auto& panel : pluginPanels) {
+                    if (!PluginManager::instance().isContributionEnabled(panel.pluginName)) {
+                        continue;
+                    }
+                    bool open = panel.open;
+                    if (ImGui::MenuItem(panel.title.c_str(), nullptr, &open)) {
+                        if (open) {
+                            PluginManager::instance().openPanel(panel.title);
+                        } else {
+                            PluginManager::instance().closePanel(panel.title);
+                        }
+                    }
+                }
+            }
             ImGui::EndMenu();
         }
 
@@ -1140,6 +1157,7 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
                 m_panels.drawMenu();
                 ImGui::EndMenu();
             }
+            PluginManager::instance().renderMenuItems("View");
             syncLayoutProfileFromPanels();
             ImGui::Separator();
             if (ImGui::MenuItem("Reload UI theme", "F5")) {

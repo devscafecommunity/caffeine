@@ -17,6 +17,7 @@ Rules for humans and coding agents working in **this repository** (the C++ engin
 | `caffeine-website/` | Docs site (Svelte/HTML), TeX/PDF, docs MCP |
 | `caffeine-launcher/` | Desktop hub — launch apps, plugins, updates (Rust/Iced) |
 | `scripts/submodules.sh` | `git submodule update --init` for all paths below |
+| `scripts/build-plugins.sh` | Build `doppio-plugins` and copy the libraries to `build/plugins` |
 
 Do not add `docs/`, `planning/`, or `.planning/` back to this repo.
 
