@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "math/Mat4.hpp"
 #include "math/Vec2.hpp"
@@ -38,6 +39,7 @@ struct PostProcessInputs {
     bool historyValid = false;           ///< false after a camera cut or resize
     Vec2 jitterPixels;                   ///< TAA sub-pixel offset applied to `proj`
     u64 viewId = 0;                      ///< separates TAA / eye-adaptation history per view
+    ECS::PhotonGIComponent photon;       ///< Photon v0.1 GI settings for this view
 };
 
 /// GPU post-processing driven by ECS::PostProcessComponent: TAA, motion blur, depth of field,
@@ -121,6 +123,7 @@ private:
     RHI::Pipeline* m_dof = nullptr;
     RHI::Pipeline* m_motionBlur = nullptr;
     RHI::Pipeline* m_taa = nullptr;
+    RHI::Pipeline* m_photon = nullptr;
     RHI::Pipeline* m_composite = nullptr;
     RHI::Pipeline* m_fxaa = nullptr;
     RHI::Sampler* m_linear = nullptr;

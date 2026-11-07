@@ -45,6 +45,7 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::PostCompositeFragment: return {Shaders::post_composite_frag_spirv, Shaders::post_composite_frag_spirvSize};
         case BuiltinShader::PostFxaaFragment:    return {Shaders::post_fxaa_frag_spirv, Shaders::post_fxaa_frag_spirvSize};
         case BuiltinShader::PostTaaFragment:     return {Shaders::post_taa_frag_spirv, Shaders::post_taa_frag_spirvSize};
+        case BuiltinShader::PostPhotonFragment:  return {Shaders::post_photon_frag_spirv, Shaders::post_photon_frag_spirvSize};
     }
 #endif
     (void)shader;

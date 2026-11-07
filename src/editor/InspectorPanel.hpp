@@ -62,6 +62,7 @@ private:
     void drawPostProcess(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawForwardRenderFeatures(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawVolumetricClouds(ECS::World& world, ECS::Entity e, EditorContext& ctx);
+    void drawPhotonGI(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawAnimationPlayer(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawSpriteSheet(ECS::World& world, ECS::Entity e, EditorContext& ctx);
     void drawSkinnedPose(ECS::World& world, ECS::Entity e, EditorContext& ctx);

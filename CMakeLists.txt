@@ -210,6 +210,7 @@ else()
                 "post_composite_frag|fragment|post_composite.frag"
                 "post_fxaa_frag|fragment|post_fxaa.frag"
                 "post_taa_frag|fragment|post_taa.frag"
+                "post_photon_frag|fragment|post_photon.frag"
             )
             set(_caffeine_shader_headers)
             set(_caffeine_shader_cat_commands)

@@ -25,6 +25,7 @@
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "render/RenderFeatures.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
@@ -318,6 +319,27 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Prefabs", "Prefab Instance",
         [](ECS::World& w, ECS::Entity e){ return w.has<ECS::PrefabInstance>(e); },
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PrefabInstance>(e); }
+    });
+    reg.registerComponent({
+        "Rendering", "Photon GI",
+        [](ECS::World& w, ECS::Entity e) {
+            const auto* gi = w.get<ECS::PhotonGIComponent>(e);
+            return gi && gi->enabled;
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            if (auto* existing = w.get<ECS::PhotonGIComponent>(e)) {
+                existing->enabled = true;
+                return;
+            }
+            auto& gi = w.add<ECS::PhotonGIComponent>(e);
+            gi.enabled = true;
+            gi.quality = 2;
+            gi.cascades = 4;
+            gi.intensity = 1.0f;
+            gi.radius = 14.0f;
+        },
+        "",
+        "photon gi global illumination indirect radiance cascade lumen"
     });
     reg.registerComponent({
         "Rendering", "Volumetric Clouds",

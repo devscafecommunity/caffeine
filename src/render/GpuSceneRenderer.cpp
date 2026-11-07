@@ -1,6 +1,7 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
@@ -2342,6 +2343,15 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         opts.resolvePostProcessFromScene
             ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
             : opts.postProcess;
+
+    ECS::PhotonGIComponent photon;
+    {
+        ECS::ComponentQuery query;
+        query.with<ECS::PhotonGIComponent>();
+        world.forEach<ECS::PhotonGIComponent>(query, [&](ECS::Entity, ECS::PhotonGIComponent& c) {
+            if (c.enabled) photon = c;
+        });
+    }
     if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
 
     const f32 scale = std::clamp(opts.renderScale, 0.25f, 2.0f);
@@ -2407,6 +2417,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.historyValid = view->hasPrevious && !opts.skipTemporalSettle;
         in.jitterPixels = jitter;
         in.viewId = viewId;
+        in.photon = photon;
         m_post.execute(cmd, post, in);
     }
 

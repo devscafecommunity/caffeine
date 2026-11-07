@@ -29,6 +29,7 @@
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
@@ -157,6 +158,7 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawSkybox(world, e, ctx);
         drawEnvironmentEffects(world, e, ctx);
         drawVolumetricClouds(world, e, ctx);
+        drawPhotonGI(world, e, ctx);
         drawTerrain(world, e, ctx);
         drawPostProcess(world, e, ctx);
         drawForwardRenderFeatures(world, e, ctx);
@@ -1587,6 +1589,67 @@ void InspectorPanel::drawVolumetricClouds(ECS::World& world, ECS::Entity e, Edit
     }
     if (changed) ctx.markDirty();
     ImGui::TextDisabled("Enable VC&M for weather presets and one-click generation.");
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawPhotonGI(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::PhotonGIComponent>(e)) return;
+
+    auto* gi = world.get<ECS::PhotonGIComponent>(e);
+    if (!gi) return;
+
+    bool enabled = gi->enabled;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Photon GI", enabled, removeRequested, "bluesky")) return;
+    if (removeRequested) {
+        world.remove<ECS::PhotonGIComponent>(e);
+        ctx.markDirty();
+        return;
+    }
+    if (enabled != gi->enabled) {
+        gi->enabled = enabled;
+        ctx.markDirty();
+    }
+
+    ImGui::PushID("photon_gi");
+    const u32 typeId = ComponentTypeRegistry::instance().lookup("PhotonGI");
+    if (PluginManager::instance().isComponentDrawerEnabled(typeId)) {
+        if (const ComponentDrawer* drawer = m_drawers.get(typeId)) {
+            (*drawer)(gi);
+            ImGui::PopID();
+            return;
+        }
+    }
+
+    bool changed = false;
+    if (UIKit::BeginPropertyGrid("photon_gi_fallback")) {
+        int quality = static_cast<int>(gi->quality);
+        if (UIKit::SliderIntProperty("Quality", &quality, 0, 3)) {
+            gi->quality = static_cast<u8>(quality);
+            changed = true;
+        }
+        int cascades = static_cast<int>(gi->cascades);
+        if (UIKit::SliderIntProperty("Cascades", &cascades, 1, 6)) {
+            gi->cascades = static_cast<u8>(cascades);
+            changed = true;
+        }
+        changed |= UIKit::SliderFloatProperty("Intensity", &gi->intensity, 0.0f, 8.0f);
+        changed |= UIKit::DragFloatProperty("Radius", &gi->radius, 0.1f, 0.1f, 500.0f);
+        changed |= UIKit::SliderFloatProperty("Thickness", &gi->thickness, 0.0f, 0.5f);
+        changed |= UIKit::SliderFloatProperty("Sky fallback", &gi->skyIntensity, 0.0f, 4.0f);
+        changed |= UIKit::SliderFloatProperty("Ambient", &gi->ambientIntensity, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint R", &gi->tintR, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint G", &gi->tintG, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint B", &gi->tintB, 0.0f, 2.0f);
+        int debug = static_cast<int>(gi->debugView);
+        if (UIKit::SliderIntProperty("Debug", &debug, 0, 2)) {
+            gi->debugView = static_cast<u8>(debug);
+            changed = true;
+        }
+        UIKit::EndPropertyGrid();
+    }
+    if (changed) ctx.markDirty();
+    ImGui::TextDisabled("Photon v0.1: screen-space cascades + sky/ambient fallback.");
     ImGui::PopID();
 }
 

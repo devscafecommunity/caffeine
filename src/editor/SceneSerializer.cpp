@@ -1,5 +1,6 @@
 #include "editor/SceneSerializer.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "editor/SceneSerializerIO.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/CameraComponents.hpp"
@@ -1215,6 +1216,7 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     emitPodComponents<ECS::MapSurface2DComponent>(kTypeMapSurface2D, entityMap);
     emitPodComponents<ECS::SpriteLod2DComponent>(kTypeSpriteLod2D, entityMap);
     emitPodComponents<ECS::VolumetricCloudsComponent>(kTypeVolumetricClouds, entityMap);
+    emitPodComponents<ECS::PhotonGIComponent>(kTypePhotonGI, entityMap);
     {
         ECS::ComponentQuery query;
         query.with<Navigation::NavVolume>();
@@ -1709,6 +1711,10 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 break;
             case kTypeVolumetricClouds:
                 applyPODComponent<ECS::VolumetricCloudsComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypePhotonGI:
+                applyPODComponent<ECS::PhotonGIComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeNavVolume: {

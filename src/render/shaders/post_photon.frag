@@ -1,0 +1,151 @@
+#version 450
+
+// Photon v0.1 — screen-space radiance cascade GI.
+// Near field: K exponentially growing intervals traced against the depth buffer.
+// Far field: sky/ambient fallback when a ray leaves the screen or misses.
+layout(location = 0) in vec2 v_uv;
+layout(location = 0) out vec4 outColor;
+
+layout(set = 3, binding = 0) uniform PhotonUBO {
+    vec4 uProj;      // x P00, y P11, z P22, w P23
+    vec4 uTexel;     // xy scene texel, z frame index, w enabled
+    vec4 uParams0;   // x intensity, y radius, z thickness, w sky intensity
+    vec4 uParams1;   // x ambient intensity, y cascades, z steps per interval, w rays
+    vec4 uTint;      // rgb albedo approximation, a debug view
+} photon;
+
+layout(set = 2, binding = 0) uniform sampler2D uScene;
+layout(set = 2, binding = 1) uniform sampler2D uDepth;
+
+float linearDepth(float d) {
+    return photon.uProj.w / (d + photon.uProj.z);
+}
+
+vec3 viewPosition(vec2 uv) {
+    float d = textureLod(uDepth, uv, 0.0).r;
+    float z = linearDepth(d);
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    return vec3(ndc.x / photon.uProj.x * z, ndc.y / photon.uProj.y * z, -z);
+}
+
+vec3 reconstructNormal(vec3 center) {
+    vec2 tx = vec2(photon.uTexel.x, 0.0);
+    vec2 ty = vec2(0.0, photon.uTexel.y);
+    vec3 l = viewPosition(v_uv - tx), r = viewPosition(v_uv + tx);
+    vec3 u = viewPosition(v_uv - ty), d = viewPosition(v_uv + ty);
+    vec3 dx = abs(l.z - center.z) < abs(r.z - center.z) ? center - l : r - center;
+    vec3 dy = abs(u.z - center.z) < abs(d.z - center.z) ? center - u : d - center;
+    return normalize(cross(dy, dx));
+}
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float interleavedGradientNoise(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+vec2 projectToUv(vec3 viewPos) {
+    float z = -viewPos.z;
+    if (z <= 0.0001) return vec2(-1.0);
+    vec2 ndc = vec2(viewPos.x * photon.uProj.x / z, viewPos.y * photon.uProj.y / z);
+    return vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+}
+
+vec3 sampleSky() {
+    return vec3(0.48, 0.60, 0.82) * photon.uParams0.w;
+}
+
+void main() {
+    vec3 scene = textureLod(uScene, v_uv, 0.0).rgb;
+    float rawDepth = textureLod(uDepth, v_uv, 0.0).r;
+    if (photon.uTexel.w < 0.5 || rawDepth >= 0.99999) {
+        outColor = vec4(scene, 1.0);
+        return;
+    }
+
+    vec3 P = viewPosition(v_uv);
+    vec3 N = reconstructNormal(P);
+    if (dot(N, -P) < 0.0) N = -N;
+
+    float noise = interleavedGradientNoise(gl_FragCoord.xy + photon.uTexel.z * 5.588238);
+    float angleOffset = noise * 6.28318530;
+
+    vec3 up = abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, N));
+    vec3 B = cross(N, T);
+
+    int rays = int(clamp(photon.uParams1.w, 1.0, 16.0));
+    int cascades = int(clamp(photon.uParams1.y, 1.0, 6.0));
+    int stepsPerInterval = int(clamp(photon.uParams1.z, 1.0, 4.0));
+    float radius = max(photon.uParams0.y, 0.1);
+    float thickness = max(photon.uParams0.z, 0.005);
+    float bias = max(0.02, radius * 0.0015);
+
+    // Geometric series: l0 + 4*l0 + ... + 4^(K-1)*l0 = radius.
+    float series = (pow(4.0, float(cascades)) - 1.0) / 3.0;
+    float l0 = radius / max(series, 1.0);
+
+    vec3 gathered = vec3(0.0);
+    int misses = 0;
+
+    for (int ray = 0; ray < 16; ++ray) {
+        if (ray >= rays) break;
+        float fi = (float(ray) + 0.5) / float(rays);
+        float phi = float(ray) * 2.39996323 + angleOffset;
+        float cosTheta = sqrt(1.0 - fi);
+        float sinTheta = sqrt(fi);
+        vec3 h = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+        vec3 dir = normalize(T * h.x + B * h.y + N * h.z);
+
+        float t = bias;
+        float interval = l0;
+        bool hit = false;
+        for (int k = 0; k < 6; ++k) {
+            if (k >= cascades) break;
+            float dt = interval / float(stepsPerInterval);
+            for (int s = 0; s < 4; ++s) {
+                if (s >= stepsPerInterval) break;
+                vec3 S = P + dir * t;
+                vec2 suv = projectToUv(S);
+                if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
+                    t = radius; // force a miss and stop this interval chain
+                    break;
+                }
+                float sceneZ = linearDepth(textureLod(uDepth, suv, 0.0).r);
+                float rayZ = -S.z;
+                if (sceneZ <= rayZ && (rayZ - sceneZ) <= max(thickness * rayZ, 0.05)) {
+                    float dist = length(S - P);
+                    float atten = 1.0 / (1.0 + 2.0 * dist * dist / (radius * radius));
+                    gathered += textureLod(uScene, suv, 0.0).rgb * atten;
+                    hit = true;
+                    break;
+                }
+                t += dt;
+            }
+            if (hit || t >= radius) break;
+            interval *= 4.0;
+        }
+        if (!hit) {
+            ++misses;
+            gathered += sampleSky();
+        }
+    }
+
+    float invRays = 1.0 / float(rays);
+    float missFraction = float(misses) * invRays;
+    vec3 gi = gathered * invRays * vec3(photon.uTint.rgb) * photon.uParams0.x;
+    gi += vec3(photon.uParams1.x) * missFraction * photon.uParams0.x;
+
+    int debugView = int(photon.uTint.a + 0.5);
+    if (debugView == 1) {
+        outColor = vec4(gi, 1.0);
+    } else if (debugView == 2) {
+        outColor = vec4(vec3(float(misses) * invRays), 1.0);
+    } else {
+        outColor = vec4(scene + max(gi, vec3(0.0)), 1.0);
+    }
+}

@@ -2,6 +2,9 @@
 #include "../src/core/Types.hpp"
 #include "../src/core/IDebugHooks.hpp"
 #include "../src/ecs/World.hpp"
+#include "../src/ecs/MeshComponents.hpp"
+#include "../src/ecs/LightComponents.hpp"
+#include "../src/ecs/CameraComponents.hpp"
 #include "../src/ecs/Entity.hpp"
 #include "../src/debug/LogSystem.hpp"
 #include "../src/editor/EditorTypes.hpp"
@@ -22,6 +25,7 @@
 #include "../src/render/ForwardRenderFeatures.hpp"
 #include "../src/audio/AudioComponents.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include <fstream>
 
 using namespace Caffeine;
@@ -740,6 +744,54 @@ TEST_CASE("SceneSerializer - Sprite component serialization", "[editor][serializ
     REQUIRE(found == true);
 
     std::remove("_test_sprite.caf");
+}
+
+TEST_CASE("SceneSerializer - PhotonGI roundtrip", "[editor][serializer]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    auto& gi = world.add<ECS::PhotonGIComponent>(e);
+    gi.enabled = true;
+    gi.quality = 3;
+    gi.cascades = 5;
+    gi.intensity = 1.3f;
+    gi.radius = 24.0f;
+    gi.thickness = 0.06f;
+    gi.skyIntensity = 0.75f;
+    gi.ambientIntensity = 0.24f;
+    gi.tintR = 0.9f;
+    gi.tintG = 0.8f;
+    gi.tintB = 0.7f;
+    gi.debugView = 1;
+
+    Editor::SceneSerializer serializer(world);
+    REQUIRE(serializer.serialize("_test_photon.caf") == true);
+
+    ECS::World loaded;
+    Editor::SceneSerializer loader(loaded);
+    REQUIRE(loader.deserialize("_test_photon.caf") == true);
+
+    ECS::ComponentQuery q;
+    q.with<ECS::PhotonGIComponent>();
+    bool found = false;
+    loaded.forEach<ECS::PhotonGIComponent>(
+        q, [&](ECS::Entity, ECS::PhotonGIComponent& c) {
+            REQUIRE(c.enabled);
+            REQUIRE(c.quality == 3);
+            REQUIRE(c.cascades == 5);
+            REQUIRE(c.intensity == Approx(1.3f));
+            REQUIRE(c.radius == Approx(24.0f));
+            REQUIRE(c.thickness == Approx(0.06f));
+            REQUIRE(c.skyIntensity == Approx(0.75f));
+            REQUIRE(c.ambientIntensity == Approx(0.24f));
+            REQUIRE(c.tintR == Approx(0.9f));
+            REQUIRE(c.tintG == Approx(0.8f));
+            REQUIRE(c.tintB == Approx(0.7f));
+            REQUIRE(c.debugView == 1);
+            found = true;
+        });
+    REQUIRE(found);
+
+    std::remove("_test_photon.caf");
 }
 
 TEST_CASE("SceneSerializer - multiple entities roundtrip", "[editor][serializer]") {

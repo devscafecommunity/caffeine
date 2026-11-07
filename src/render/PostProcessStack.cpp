@@ -58,6 +58,14 @@ struct TaaUBO {
     Vec4f params;
 };
 
+struct PhotonUBO {
+    Vec4f proj;
+    Vec4f texel;
+    Vec4f params0;
+    Vec4f params1;
+    Vec4f tint;
+};
+
 struct CompositeUBO {
     float invViewProj[16];
     Vec4f camera;
@@ -164,6 +172,7 @@ bool PostProcessStack::init(RHI::RenderDevice* device) {
     m_dof = createPass(frag(BuiltinShader::PostDofFragment, 2), kHdr, false);
     m_motionBlur = createPass(frag(BuiltinShader::PostMotionBlurFragment, 2), kHdr, false);
     m_taa = createPass(frag(BuiltinShader::PostTaaFragment, 3), kHdr, false);
+    m_photon = createPass(frag(BuiltinShader::PostPhotonFragment, 2), kHdr, false);
     m_composite = createPass(frag(BuiltinShader::PostCompositeFragment, 5), kLdr, false);
     m_fxaa = createPass(frag(BuiltinShader::PostFxaaFragment, 1), kLdr, false);
 
@@ -185,7 +194,7 @@ void PostProcessStack::shutdown() {
         for (ViewResources& view : m_views) releaseView(view);
         RHI::Pipeline* pipelines[] = {m_luminance, m_adapt, m_bloomPrefilter, m_bloomDown,
                                       m_bloomUp, m_ssao, m_ssaoBlur, m_dof, m_motionBlur,
-                                      m_taa, m_composite, m_fxaa};
+                                      m_taa, m_photon, m_composite, m_fxaa};
         for (RHI::Pipeline* p : pipelines) {
             if (p) m_device->destroyPipeline(p);
         }
@@ -333,6 +342,43 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
         if (!t) t = createTarget(tw, th, format);
         return t != nullptr;
     };
+    u32 tempIndex = 0;
+    auto nextTemp = [&]() -> RHI::Texture* {
+        RHI::Texture*& t = view->temp[tempIndex];
+        tempIndex ^= 1u;
+        ensure(t, w, h, kHdr);
+        return t;
+    };
+
+    // Photon runs before TAA so its stochastic near-field samples are
+    // accumulated by the temporal resolve.
+    if (inputs.photon.enabled && m_photon) {
+        CF_PROFILE_SCOPE("Post::photon");
+        RHI::Texture* target = nextTemp();
+        if (target) {
+            PhotonUBO ubo{};
+            ubo.proj = projParams(inputs.proj);
+            ubo.texel = {1.0f / static_cast<f32>(w), 1.0f / static_cast<f32>(h),
+                         static_cast<f32>(inputs.frameIndex % 64u), 1.0f};
+            const int quality = std::clamp(static_cast<int>(inputs.photon.quality), 1, 3);
+            const int rays = quality == 1 ? 4 : quality == 2 ? 8 : 12;
+            const int steps = quality == 1 ? 2 : quality == 2 ? 2 : 3;
+            ubo.params0 = {std::clamp(inputs.photon.intensity, 0.0f, 8.0f),
+                           std::max(inputs.photon.radius, 0.1f),
+                           std::max(inputs.photon.thickness, 0.005f),
+                           std::clamp(inputs.photon.skyIntensity, 0.0f, 8.0f)};
+            ubo.params1 = {std::clamp(inputs.photon.ambientIntensity, 0.0f, 4.0f),
+                           static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.cascades), 1, 6)),
+                           static_cast<f32>(steps), static_cast<f32>(rays)};
+            ubo.tint = {std::clamp(inputs.photon.tintR, 0.0f, 2.0f),
+                        std::clamp(inputs.photon.tintG, 0.0f, 2.0f),
+                        std::clamp(inputs.photon.tintB, 0.0f, 2.0f),
+                        static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.debugView), 0, 2))};
+            const PassTexture tex[2] = {{source, false}, {inputs.sceneDepth, true}};
+            runPass(cmd, m_photon, target, w, h, tex, 2, &ubo, sizeof(ubo));
+            source = target;
+        }
+    }
 
     // Temporal AA resolves the jittered scene against last frame's history.
     if (on && usesTaa(in) && m_taa && ensure(view->history[0], w, h, kHdr) &&
@@ -353,14 +399,6 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     } else {
         view->historyValid = false;
     }
-
-    u32 tempIndex = 0;
-    auto nextTemp = [&]() -> RHI::Texture* {
-        RHI::Texture*& t = view->temp[tempIndex];
-        tempIndex ^= 1u;
-        ensure(t, w, h, kHdr);
-        return t;
-    };
 
     if (on && in.motionBlur.enabled && in.motionBlur.intensity > 0.0f && m_motionBlur &&
         inputs.historyValid) {
