@@ -78,7 +78,8 @@ private:
     static constexpr u32 kTypeEnvironmentEffects = 54;
     static constexpr u32 kTypeMapSurface2D       = 55;
     static constexpr u32 kTypeSpriteLod2D        = 56;
-    static constexpr u32 kTypeCount              = 57;
+    static constexpr u32 kTypeVolumetricClouds    = 57;
+    static constexpr u32 kTypeCount              = 58;
     static constexpr u32 kPoseCurveMarker    = 0x56525543u;
     static constexpr u32 kPoseStripMarker    = 0x50525453u;
     static constexpr u32 kAnimatorEditorMarker = 0x524F5441u;

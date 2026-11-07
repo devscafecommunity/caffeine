@@ -21,6 +21,7 @@
 #include "../src/scene/EnvironmentSystem.hpp"
 #include "../src/render/ForwardRenderFeatures.hpp"
 #include "../src/audio/AudioComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
 #include <fstream>
 
 using namespace Caffeine;
@@ -603,6 +604,56 @@ TEST_CASE("SceneSerializer - single entity with Name and Position", "[editor][se
     REQUIRE(found == true);
 
     std::remove("_test_hero.caf");
+}
+
+TEST_CASE("SceneSerializer - VolumetricClouds roundtrip", "[editor][serializer]") {
+    ECS::World world;
+    ECS::Entity e = world.create();
+    auto& clouds = world.add<ECS::VolumetricCloudsComponent>(e);
+    clouds.enabled = true;
+    clouds.quality = 3;
+    clouds.coverage = 0.42f;
+    clouds.density = 1.35f;
+    clouds.baseAltitude = 1100.0f;
+    clouds.topAltitude = 2400.0f;
+    clouds.detail = 0.61f;
+    clouds.seed = 19.0f;
+    clouds.windSpeed = 14.0f;
+    clouds.windDirection = 72.0f;
+    clouds.mistDensity = 0.23f;
+    clouds.mistHeight = 55.0f;
+    clouds.sunScatter = 1.4f;
+
+    Editor::SceneSerializer serializer(world);
+    REQUIRE(serializer.serialize("_test_clouds.caf") == true);
+
+    ECS::World loaded;
+    Editor::SceneSerializer loader(loaded);
+    REQUIRE(loader.deserialize("_test_clouds.caf") == true);
+
+    ECS::ComponentQuery q;
+    q.with<ECS::VolumetricCloudsComponent>();
+    bool found = false;
+    loaded.forEach<ECS::VolumetricCloudsComponent>(
+        q, [&](ECS::Entity, ECS::VolumetricCloudsComponent& c) {
+            REQUIRE(c.enabled);
+            REQUIRE(c.quality == 3);
+            REQUIRE(c.coverage == Approx(0.42f));
+            REQUIRE(c.density == Approx(1.35f));
+            REQUIRE(c.baseAltitude == Approx(1100.0f));
+            REQUIRE(c.topAltitude == Approx(2400.0f));
+            REQUIRE(c.detail == Approx(0.61f));
+            REQUIRE(c.seed == Approx(19.0f));
+            REQUIRE(c.windSpeed == Approx(14.0f));
+            REQUIRE(c.windDirection == Approx(72.0f));
+            REQUIRE(c.mistDensity == Approx(0.23f));
+            REQUIRE(c.mistHeight == Approx(55.0f));
+            REQUIRE(c.sunScatter == Approx(1.4f));
+            found = true;
+        });
+    REQUIRE(found);
+
+    std::remove("_test_clouds.caf");
 }
 
 TEST_CASE("SceneSerializer - entity with all component types", "[editor][serializer]") {

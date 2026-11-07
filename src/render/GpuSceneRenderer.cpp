@@ -1,5 +1,6 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
 #include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
@@ -106,6 +107,12 @@ struct SkyUBO {
     float zenith[4];
     float horizon[4];
     float ground[4];
+    float camera[4];
+    float cloudA[4];
+    float cloudB[4];
+    float cloudC[4];
+    float sunDir[4];
+    float sunColor[4];
 };
 
 struct GridUBO {
@@ -882,9 +889,9 @@ void setVec4(float* out, f32 x, f32 y, f32 z, f32 w) {
 }
 
 /// Linear-space fallback sky used when the scene has no environment map.
-const Vec3 kSkyZenith{0.53f, 0.74f, 0.95f};
-const Vec3 kSkyHorizon{0.94f, 0.96f, 0.98f};
-const Vec3 kSkyGround{0.72f, 0.80f, 0.88f};
+const Vec3 kSkyZenith{0.18f, 0.38f, 0.74f};
+const Vec3 kSkyHorizon{0.64f, 0.78f, 0.94f};
+const Vec3 kSkyGround{0.42f, 0.50f, 0.60f};
 const Vec3 kFallbackAmbient{0.03f, 0.03f, 0.035f};
 
 u32 probeMipCount(u32 resolution) {
@@ -960,6 +967,17 @@ void GpuSceneRenderer::drawSky(RHI::CommandBuffer* cmd, const GpuSceneCamera& ca
     setVec4(ubo.zenith, kSkyZenith.x, kSkyZenith.y, kSkyZenith.z, 1.0f);
     setVec4(ubo.horizon, kSkyHorizon.x, kSkyHorizon.y, kSkyHorizon.z, 1.0f);
     setVec4(ubo.ground, kSkyGround.x, kSkyGround.y, kSkyGround.z, 1.0f);
+
+    const GpuCloudSettings& clouds = m_cloudSettings;
+    setVec4(ubo.camera, camera.position.x, camera.position.y, camera.position.z, clouds.time);
+    setVec4(ubo.cloudA, clouds.coverage, clouds.density, clouds.baseAltitude,
+            clouds.topAltitude);
+    setVec4(ubo.cloudB, clouds.windSpeed, clouds.windDirection, clouds.detail, clouds.seed);
+    setVec4(ubo.cloudC, static_cast<f32>(clouds.steps), clouds.mistDensity, clouds.mistHeight,
+            clouds.mistFalloff);
+    setVec4(ubo.sunDir, clouds.sunDirection.x, clouds.sunDirection.y, clouds.sunDirection.z,
+            clouds.sunIntensity * clouds.sunScatter);
+    setVec4(ubo.sunColor, clouds.sunColor.x, clouds.sunColor.y, clouds.sunColor.z, 1.0f);
 
     RHI::Texture* bound = env ? env : GpuTextureCache::instance().whiteTexture(m_device);
     cmd->bindPipeline(m_skyPipeline);
@@ -2208,6 +2226,55 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
 
+    // Resolve the procedural cloud/mist profile for the sky pass.
+    m_cloudSettings = {};
+    {
+        ECS::ComponentQuery cloudQuery;
+        cloudQuery.with<ECS::VolumetricCloudsComponent>();
+        world.forEach<ECS::VolumetricCloudsComponent>(
+            cloudQuery, [&](ECS::Entity, ECS::VolumetricCloudsComponent& clouds) {
+                if (!clouds.enabled || clouds.quality == 0) return;
+                GpuCloudSettings settings;
+                settings.enabled = true;
+                settings.steps = clouds.quality >= 3 ? 24u : clouds.quality == 2 ? 16u : 8u;
+                settings.coverage = std::clamp(clouds.coverage, 0.0f, 1.0f);
+                settings.density = std::max(clouds.density, 0.0f);
+                settings.baseAltitude = clouds.baseAltitude;
+                settings.topAltitude =
+                    std::max(clouds.topAltitude, clouds.baseAltitude + 1.0f);
+                settings.detail = std::clamp(clouds.detail, 0.0f, 1.0f);
+                settings.seed = clouds.seed;
+                settings.windSpeed = clouds.windSpeed;
+                settings.windDirection = clouds.windDirection;
+                settings.mistDensity = std::clamp(clouds.mistDensity, 0.0f, 1.0f);
+                settings.mistHeight = std::max(clouds.mistHeight, 1.0f);
+                settings.mistFalloff = clouds.mistFalloff;
+                settings.sunScatter = std::max(clouds.sunScatter, 0.0f);
+                settings.time = m_cloudTime;
+                if (!lighting.lights.directionals.empty()) {
+                    const auto& d = lighting.lights.directionals[0];
+                    settings.sunDirection = (d.direction * -1.0f).normalized();
+                    settings.sunColor =
+                        srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
+                    settings.sunIntensity = std::max(d.intensity, 0.0f);
+                }
+                m_cloudSettings = settings;
+            });
+    }
+
+    // Let the cloud mist drive the existing scene volumetric fog so ground
+    // geometry is wrapped in the same mist as the sky.
+    GpuSceneRenderOptions renderOptions = opts;
+    if (m_cloudSettings.enabled && m_cloudSettings.mistDensity > 0.0f) {
+        if (renderOptions.features.volumetrics == VolumetricQuality::Off) {
+            renderOptions.features.volumetrics = VolumetricQuality::Low;
+        }
+        renderOptions.features.volumetricDensity = std::max(
+            renderOptions.features.volumetricDensity, m_cloudSettings.mistDensity * 0.05f);
+        renderOptions.features.volumetricHeight = std::max(
+            renderOptions.features.volumetricHeight, m_cloudSettings.mistHeight);
+    }
+
     m_activeCascadeCount = opts.directionalCascadeCount;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
@@ -2246,7 +2313,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
 
     CF_PROFILE_SCOPE("GpuSceneRenderer::draw");
     return renderMeshes(cmd, draws, camera, lighting, colorTarget, depthTarget, width, height,
-                        projectRoot, opts, pass);
+                        projectRoot, renderOptions, pass);
 }
 
 ECS::PostProcessComponent GpuSceneRenderer::resolvePostProcess(
@@ -2268,6 +2335,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     m_probesPending = false;
 
     GpuSceneRenderOptions opts = options;
+    m_cloudTime = std::fmod(m_cloudTime + std::clamp(options.deltaTime, 1e-4f, 0.25f), 3600.0f);
     if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
     resolveEnvironment(world, projectRoot, opts);
     ECS::PostProcessComponent post =

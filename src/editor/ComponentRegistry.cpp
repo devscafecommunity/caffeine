@@ -24,6 +24,7 @@
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "render/RenderFeatures.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
@@ -319,6 +320,13 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PrefabInstance>(e); }
     });
     reg.registerComponent({
+        "Rendering", "Volumetric Clouds",
+        [](ECS::World& w, ECS::Entity e) { return w.has<ECS::VolumetricCloudsComponent>(e); },
+        [](ECS::World& w, ECS::Entity e) { w.add<ECS::VolumetricCloudsComponent>(e); },
+        "",
+        "clouds mist volumetric sky weather fog atmosphere"
+    });
+    reg.registerComponent({
         "Rendering", "Post Process",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
@@ -343,6 +351,8 @@ void registerAllComponents(ComponentRegistry& reg) {
         "ForwardRenderFeatures");
     ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
         "ProceduralWorld");
+    ComponentTypeRegistry::instance().registerType<ECS::VolumetricCloudsComponent>(
+        "VolumetricClouds");
 }
 
 } // namespace Caffeine::Editor
