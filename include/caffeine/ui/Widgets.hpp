@@ -317,22 +317,36 @@ inline bool SearchField(const char* id, char* buffer, std::size_t size,
 
 // ── Property grid ──────────────────────────────────────────────────────────
 
+/// True while a BeginPropertyGrid table is active. Property helpers use this
+/// guard so a misplaced call cannot crash ImGui's table stack.
+inline bool& propertyGridActive() {
+    static bool active = false;
+    return active;
+}
+
 inline bool BeginPropertyGrid(const char* id, float labelWidth = 140.0f) {
+    if (propertyGridActive()) return false;
     if (!ImGui::BeginTable(id, 2,
                            ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg |
                                ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoBordersInBody)) {
         return false;
     }
+    propertyGridActive() = true;
     ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
                             labelWidth * uiScale());
     ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
     return true;
 }
 
-inline void EndPropertyGrid() { ImGui::EndTable(); }
+inline void EndPropertyGrid() {
+    if (!propertyGridActive()) return;
+    propertyGridActive() = false;
+    ImGui::EndTable();
+}
 
 inline bool PropertyRow(const char* label, const std::function<bool()>& draw,
                         const char* tooltip = nullptr) {
+    if (!propertyGridActive()) return false;
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::AlignTextToFramePadding();
@@ -347,6 +361,7 @@ inline bool PropertyRow(const char* label, const std::function<bool()>& draw,
 }
 
 inline bool PropertyRow(const char* label, const char* value) {
+    if (!propertyGridActive()) return false;
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::AlignTextToFramePadding();
@@ -421,6 +436,7 @@ inline bool InputTextProperty(const char* label, char* buffer, std::size_t size,
 inline bool InputTextMultilineProperty(const char* label, char* buffer, std::size_t size,
                                        const ImVec2& sizeHint = ImVec2(0, 0),
                                        ImGuiInputTextFlags flags = 0) {
+    if (!propertyGridActive()) return false;
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::AlignTextToFramePadding();
