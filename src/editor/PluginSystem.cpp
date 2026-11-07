@@ -10,6 +10,8 @@
 #include "editor/ComponentTypeRegistry.hpp"
 #include "editor/EditorPaths.hpp"
 #include "editor/PluginServiceRegistry.hpp"
+#include "render/PhotonGpuBake.hpp"
+#include "rhi/RenderDevice.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -77,7 +79,8 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
                                InspectorPanel* inspector,
                                CommandPalette* commandPalette,
                                EditorContext* editorContext,
-                               const std::filesystem::path& bundledPluginsDirectory) {
+                               const std::filesystem::path& bundledPluginsDirectory,
+                               RHI::RenderDevice* renderDevice) {
     if (m_initialized) return;
 
     m_pluginsDirectory = pluginsDirectory;
@@ -85,6 +88,7 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_inspector = inspector;
     m_commandPalette = commandPalette;
     m_editorContext = editorContext;
+    m_renderDevice = renderDevice;
 
     m_hostApi.editorContext = m_editorContext;
     m_hostApi.logInfo = &PluginManager::hostLogInfo;
@@ -107,6 +111,7 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_hostApi.invokeService = &PluginManager::hostInvokeService;
     m_hostApi.registerService = &PluginManager::hostRegisterService;
     m_hostApi.getProjectRootPath = &PluginManager::hostGetProjectRootPath;
+    m_hostApi.bakeAmbientOcclusion = &PluginManager::hostBakeAmbientOcclusion;
 
     std::error_code ec;
     std::filesystem::create_directories(m_pluginsDirectory, ec);
@@ -329,6 +334,20 @@ bool PluginManager::hostRegisterService(void* ctx, const char* pluginName, const
     const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
     if (!id || id[0] == '\0') return false;
     return PluginServiceRegistry::instance().registerService(id, serviceName, handler);
+}
+
+bool PluginManager::hostBakeAmbientOcclusion(void* ctx, const PluginAOBakeDesc* desc,
+                                             float* outAO) {
+    (void)ctx;
+    auto& manager = PluginManager::instance();
+    if (!manager.m_renderDevice || !desc || !outAO || desc->texelCount == 0) return false;
+    std::vector<f32> result;
+    if (!Render::gpuBakeAmbientOcclusion(manager.m_renderDevice, *desc, result)) {
+        return false;
+    }
+    if (result.size() < desc->texelCount) return false;
+    std::memcpy(outAO, result.data(), static_cast<size_t>(desc->texelCount) * sizeof(f32));
+    return true;
 }
 
 bool PluginManager::hostGetProjectRootPath(void* editorContext, char* buffer,

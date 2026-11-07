@@ -50,6 +50,15 @@ public:
 
     void pushUniformData(ShaderStage stage, u32 slot, const void* data, u32 size);
 
+    // Compute. `beginComputePass` accepts one read-write storage texture; read-only
+    // storage buffers are bound with bindComputeStorageBuffers.
+    void beginComputePass(Texture* storageTexture = nullptr);
+    void endComputePass();
+    void bindComputePipeline(ComputePipeline* pipeline);
+    void bindComputeStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+    void pushComputeUniformData(u32 slot, const void* data, u32 size);
+    void dispatch(u32 x, u32 y, u32 z);
+
     /// GPU-side copy of mip 0 / layer 0. Must be called outside a render pass; formats must match.
     void copyTexture(Texture* src, Texture* dst, u32 width, u32 height);
 
@@ -71,8 +80,10 @@ private:
     SDL_GPUDevice*        m_device            = nullptr;
     SDL_GPUCommandBuffer* m_cmdBuffer         = nullptr;
     SDL_GPURenderPass*    m_renderPass        = nullptr;
+    SDL_GPUComputePass*   m_computePass       = nullptr;
     SDL_GPUTexture*       m_swapchainTexture  = nullptr;
     bool                  m_inRenderPass      = false;
+    bool                  m_inComputePass     = false;
     bool                  m_acquired          = false;
 };
 

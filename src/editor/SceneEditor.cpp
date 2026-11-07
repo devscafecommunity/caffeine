@@ -189,7 +189,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     registerAllComponents(ComponentRegistry::instance());
     registerPanels();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
-                                         bundledPluginsDir);
+                                         bundledPluginsDir, device);
     // Plugins contributed panels during initialize; treat that as the baseline
     // so the first frame does not rebuild an already persisted docking layout.
     m_panelsRevision = m_panels.revision();

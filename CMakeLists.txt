@@ -211,6 +211,7 @@ else()
                 "post_fxaa_frag|fragment|post_fxaa.frag"
                 "post_taa_frag|fragment|post_taa.frag"
                 "post_photon_frag|fragment|post_photon.frag"
+                "photon_bake_ao|compute|photon_bake_ao.comp"
             )
             set(_caffeine_shader_headers)
             set(_caffeine_shader_cat_commands)
@@ -244,6 +245,7 @@ else()
             src/render/GpuTextureCache.cpp
             src/render/GpuSceneRenderer.cpp
             src/render/PostProcessStack.cpp
+            src/render/PhotonGpuBake.cpp
             src/render/GpuEnvironmentMap.cpp
             src/render/MaterialPreviewRenderer.cpp
             src/render/GpuPointShadowMap.cpp
