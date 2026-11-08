@@ -30,6 +30,14 @@ struct GraphNode {
     double numberValue = 0.0;
     bool boolValue = false;
     bool constantIsBool = false;
+
+    /// Fallback values used when a data input has no incoming edge. Vector
+    /// nodes use X/Y/Z; Branch uses the condition. This lets the canvas show
+    /// editable fields without a Constant node per input.
+    double inputX = 0.0;
+    double inputY = 0.0;
+    double inputZ = 0.0;
+    bool inputCondition = false;
 };
 
 struct GraphEdge {

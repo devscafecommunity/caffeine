@@ -164,96 +164,175 @@ int linkIdForEdge(const GraphEdge& edge) {
     return static_cast<int>(hash & 0x3fffffff) + 1;
 }
 
+constexpr float kNodeMinWidth = 168.0f;
+constexpr ImNodesPinShape kExecPin = ImNodesPinShape_TriangleFilled;
+constexpr ImNodesPinShape kDataPin = ImNodesPinShape_CircleFilled;
+
+bool hasDataEdge(const NodeGraph& graph, const std::string& nodeId, const char* pin) {
+    const std::string target = nodeId + "." + pin;
+    for (const GraphEdge& edge : graph.edges) {
+        if (edge.to == target) return true;
+    }
+    return false;
+}
+
+ImU32 lighten(ImU32 color, int amount) {
+    auto channel = [&](int shift) {
+        const int value = static_cast<int>((color >> shift) & 0xFF) + amount;
+        return value > 255 ? 255 : value;
+    };
+    return IM_COL32(channel(IM_COL32_R_SHIFT), channel(IM_COL32_G_SHIFT),
+                    channel(IM_COL32_B_SHIFT), 255);
+}
+
+ImU32 nodeHeaderColor(NodeKind kind) {
+    switch (kind) {
+    case NodeKind::OnUpdate: return IM_COL32(38, 112, 92, 255);
+    case NodeKind::SetPosition: return IM_COL32(45, 82, 138, 255);
+    case NodeKind::Translate: return IM_COL32(62, 98, 160, 255);
+    case NodeKind::Branch: return IM_COL32(148, 92, 42, 255);
+    case NodeKind::GetPosition: return IM_COL32(112, 80, 45, 255);
+    case NodeKind::DeltaTime: return IM_COL32(102, 74, 138, 255);
+    case NodeKind::Constant: return IM_COL32(88, 90, 102, 255);
+    }
+    return IM_COL32(70, 74, 84, 255);
+}
+
+const char* nodeSubtitle(NodeKind kind) {
+    switch (kind) {
+    case NodeKind::OnUpdate: return "runs every frame";
+    case NodeKind::SetPosition: return "absolute position";
+    case NodeKind::Translate: return "relative motion";
+    case NodeKind::Branch: return "if / else";
+    case NodeKind::GetPosition: return "reads position";
+    case NodeKind::DeltaTime: return "frame delta";
+    case NodeKind::Constant: return "fixed value";
+    }
+    return "";
+}
+
 void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
     const int imId = imNodeIdFromString(node.id);
+    GraphNode* mutableNode = graph.findNode(node.id);
+    const ImU32 header = nodeHeaderColor(node.kind);
+
+    ImNodes::PushColorStyle(ImNodesCol_TitleBar, header);
+    ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, lighten(header, 18));
+    ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, lighten(header, 30));
     ImNodes::BeginNode(imId);
     ImNodes::BeginNodeTitleBar();
     ImGui::TextUnformatted(nodeKindToTypeName(node.kind));
     ImNodes::EndNodeTitleBar();
 
+    // A dummy keeps every node at a usable minimum size; without it a node
+    // with only text collapses and a DragFloat expands to the whole canvas.
+    ImGui::Dummy(ImVec2(kNodeMinWidth, 1.0f));
+    ImGui::TextDisabled("%s", nodeSubtitle(node.kind));
+    ImGui::Spacing();
+
+    auto execInput = [&](PinSlot slot, const char* label) {
+        ImNodes::BeginInputAttribute(attrId(imId, slot), kExecPin);
+        ImGui::TextUnformatted(label);
+        ImNodes::EndInputAttribute();
+    };
+    auto execOutput = [&](PinSlot slot, const char* label) {
+        ImNodes::BeginOutputAttribute(attrId(imId, slot), kExecPin);
+        ImGui::TextUnformatted(label);
+        ImNodes::EndOutputAttribute();
+    };
+    auto dataOutput = [&](PinSlot slot, const char* label) {
+        ImNodes::BeginOutputAttribute(attrId(imId, slot), kDataPin);
+        ImGui::TextUnformatted(label);
+        ImNodes::EndOutputAttribute();
+    };
+    auto dataInput = [&](PinSlot slot, const char* label, const char* pin, double* value) {
+        ImNodes::BeginInputAttribute(attrId(imId, slot), kDataPin);
+        ImGui::TextUnformatted(label);
+        if (!hasDataEdge(graph, node.id, pin)) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(84.0f);
+            ImGui::PushID(pin);
+            if (ImGui::DragScalar("##value", ImGuiDataType_Double, value, 0.1f,
+                                  nullptr, nullptr, "%.3f")) {
+                graphDirty = true;
+            }
+            ImGui::PopID();
+        }
+        ImNodes::EndInputAttribute();
+    };
+
     switch (node.kind) {
     case NodeKind::OnUpdate:
-        ImNodes::BeginOutputAttribute(attrId(imId, OnUpdate_Out));
-        ImGui::TextUnformatted("then");
-        ImNodes::EndOutputAttribute();
+        execOutput(OnUpdate_Out, "then");
         break;
     case NodeKind::SetPosition:
-    case NodeKind::Translate:
-        ImNodes::BeginInputAttribute(attrId(
-            imId, node.kind == NodeKind::Translate ? Translate_In : SetPosition_In));
-        ImGui::TextUnformatted("in");
-        ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(
-            imId, node.kind == NodeKind::Translate ? Translate_X : SetPosition_X));
-        ImGui::TextUnformatted("x");
-        ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(
-            imId, node.kind == NodeKind::Translate ? Translate_Y : SetPosition_Y));
-        ImGui::TextUnformatted("y");
-        ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(
-            imId, node.kind == NodeKind::Translate ? Translate_Z : SetPosition_Z));
-        ImGui::TextUnformatted("z");
-        ImNodes::EndInputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(
-            imId, node.kind == NodeKind::Translate ? Translate_Out : SetPosition_Out));
-        ImGui::TextUnformatted("out");
-        ImNodes::EndOutputAttribute();
+    case NodeKind::Translate: {
+        const bool translate = node.kind == NodeKind::Translate;
+        execInput(translate ? Translate_In : SetPosition_In, "in");
+        dataInput(translate ? Translate_X : SetPosition_X, "x", "x",
+                  mutableNode ? &mutableNode->inputX : nullptr);
+        dataInput(translate ? Translate_Y : SetPosition_Y, "y", "y",
+                  mutableNode ? &mutableNode->inputY : nullptr);
+        dataInput(translate ? Translate_Z : SetPosition_Z, "z", "z",
+                  mutableNode ? &mutableNode->inputZ : nullptr);
+        execOutput(translate ? Translate_Out : SetPosition_Out, "out");
         break;
+    }
     case NodeKind::GetPosition:
-        ImNodes::BeginOutputAttribute(attrId(imId, GetPosition_X));
-        ImGui::TextUnformatted("x");
-        ImNodes::EndOutputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, GetPosition_Y));
-        ImGui::TextUnformatted("y");
-        ImNodes::EndOutputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, GetPosition_Z));
-        ImGui::TextUnformatted("z");
-        ImNodes::EndOutputAttribute();
+        dataOutput(GetPosition_X, "x");
+        dataOutput(GetPosition_Y, "y");
+        dataOutput(GetPosition_Z, "z");
         break;
     case NodeKind::DeltaTime:
-        ImNodes::BeginOutputAttribute(attrId(imId, DeltaTime_Value));
-        ImGui::TextUnformatted("dt");
-        ImNodes::EndOutputAttribute();
+        dataOutput(DeltaTime_Value, "dt");
         break;
     case NodeKind::Constant: {
-        GraphNode* mutableNode = graph.findNode(node.id);
         ImNodes::BeginStaticAttribute(attrId(imId, Constant_ValueUi));
-        if (mutableNode && mutableNode->constantIsBool) {
-            if (ImGui::Checkbox("value", &mutableNode->boolValue)) graphDirty = true;
-        } else if (mutableNode) {
-            float v = static_cast<float>(mutableNode->numberValue);
-            if (ImGui::DragFloat("value", &v, 0.1f)) {
-                mutableNode->numberValue = v;
+        if (mutableNode) {
+            int mode = mutableNode->constantIsBool ? 1 : 0;
+            const char* modes[] = {"Number", "Bool"};
+            ImGui::SetNextItemWidth(78.0f);
+            if (ImGui::Combo("##mode", &mode, modes, 2)) {
+                mutableNode->constantIsBool = mode == 1;
                 graphDirty = true;
+            }
+            ImGui::SameLine();
+            if (mutableNode->constantIsBool) {
+                if (ImGui::Checkbox("##bool", &mutableNode->boolValue)) graphDirty = true;
+            } else {
+                ImGui::SetNextItemWidth(78.0f);
+                if (ImGui::DragScalar("##value", ImGuiDataType_Double,
+                                      &mutableNode->numberValue, 0.1f, nullptr, nullptr,
+                                      "%.3f")) {
+                    graphDirty = true;
+                }
             }
         }
         ImNodes::EndStaticAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, Constant_ValueOut));
-        ImGui::Dummy(ImVec2(1, 1));
-        ImNodes::EndOutputAttribute();
+        dataOutput(Constant_ValueOut, "value");
         break;
     }
     case NodeKind::Branch:
-        ImNodes::BeginInputAttribute(attrId(imId, Branch_In));
-        ImGui::TextUnformatted("in");
+        execInput(Branch_In, "in");
+        ImNodes::BeginInputAttribute(attrId(imId, Branch_Condition), kDataPin);
+        ImGui::TextUnformatted("if");
+        if (!hasDataEdge(graph, node.id, "condition") && mutableNode) {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("##condition", &mutableNode->inputCondition)) {
+                graphDirty = true;
+            }
+        }
         ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(imId, Branch_Condition));
-        ImGui::TextUnformatted("condition");
-        ImNodes::EndInputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, Branch_Then));
-        ImGui::TextUnformatted("then");
-        ImNodes::EndOutputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, Branch_Else));
-        ImGui::TextUnformatted("else");
-        ImNodes::EndOutputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, Branch_Out));
-        ImGui::TextUnformatted("out");
-        ImNodes::EndOutputAttribute();
+        execOutput(Branch_Then, "then");
+        execOutput(Branch_Else, "else");
+        execOutput(Branch_Out, "next");
         break;
     }
 
     ImNodes::EndNode();
+    ImNodes::PopColorStyle();
+    ImNodes::PopColorStyle();
+    ImNodes::PopColorStyle();
 }
 
 } // namespace
@@ -281,6 +360,29 @@ void DryadNodeScriptPanel::ensureImNodesReady() {
     if (!m_nodesContext) {
         m_nodesContext = ImNodes::EditorContextCreate();
     }
+
+    ImNodesStyle& style = ImNodes::GetStyle();
+    style.NodeCornerRounding = 6.0f;
+    style.NodePadding = ImVec2(12.0f, 8.0f);
+    style.NodeBorderThickness = 1.0f;
+    style.LinkThickness = 2.0f;
+    style.LinkLineSegmentsPerLength = 0.08f;
+    style.PinCircleRadius = 4.0f;
+    style.PinHoverRadius = 9.0f;
+    style.GridSpacing = 24.0f;
+    style.Colors[ImNodesCol_GridBackground] = IM_COL32(23, 25, 30, 255);
+    style.Colors[ImNodesCol_GridLine] = IM_COL32(39, 42, 49, 255);
+    style.Colors[ImNodesCol_NodeBackground] = IM_COL32(36, 39, 47, 255);
+    style.Colors[ImNodesCol_NodeBackgroundHovered] = IM_COL32(44, 48, 58, 255);
+    style.Colors[ImNodesCol_NodeBackgroundSelected] = IM_COL32(48, 53, 64, 255);
+    style.Colors[ImNodesCol_NodeOutline] = IM_COL32(66, 72, 86, 255);
+    style.Colors[ImNodesCol_Link] = IM_COL32(120, 168, 235, 230);
+    style.Colors[ImNodesCol_LinkHovered] = IM_COL32(170, 205, 255, 255);
+    style.Colors[ImNodesCol_LinkSelected] = IM_COL32(255, 196, 96, 255);
+    style.Colors[ImNodesCol_Pin] = IM_COL32(176, 190, 210, 255);
+    style.Colors[ImNodesCol_PinHovered] = IM_COL32(255, 210, 120, 255);
+    style.Colors[ImNodesCol_BoxSelector] = IM_COL32(120, 168, 235, 40);
+    style.Colors[ImNodesCol_BoxSelectorOutline] = IM_COL32(120, 168, 235, 180);
 }
 
 static std::filesystem::path projectRootFor(const EditorContext& ctx) {
@@ -319,6 +421,24 @@ static std::string readTextFile(const std::filesystem::path& path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
+/// Compares script text while ignoring line-ending and trailing-whitespace noise.
+static bool sameScriptText(std::string a, std::string b) {
+    auto normalize = [](std::string& text) {
+        std::string out;
+        out.reserve(text.size());
+        for (char c : text) {
+            if (c != '\r') out.push_back(c);
+        }
+        while (!out.empty() && (out.back() == '\n' || out.back() == ' ' || out.back() == '\t')) {
+            out.pop_back();
+        }
+        text = std::move(out);
+    };
+    normalize(a);
+    normalize(b);
+    return a == b;
+}
+
 void DryadNodeScriptPanel::syncFromDydSource() {
     if (m_scriptPath.empty()) return;
     const std::string dyd = readTextFile(m_scriptPath);
@@ -353,6 +473,7 @@ void DryadNodeScriptPanel::openFromScript(const std::filesystem::path& scriptPat
     m_scriptPath = scriptPath;
     m_open = true;
     m_pendingGraphSync = true;
+    m_resetView = true;
     m_status.clear();
 
     const auto jsonPath = nodeJsonPathForScript(scriptPath);
@@ -372,25 +493,39 @@ void DryadNodeScriptPanel::openFromScript(const std::filesystem::path& scriptPat
     }
 
     const std::string dyd = readTextFile(scriptPath);
-    const ImportResult imported =
-        importFromDyd(dyd, scriptPath.filename().string(), hasJson ? &jsonGraph : nullptr);
-    if (imported.status == ImportStatus::Success) {
-        m_graph = imported.graph;
-        m_status = imported.message;
-    } else if (imported.status == ImportStatus::NoMarkers) {
-        if (hasJson) {
+
+    // When the sibling JSON emits exactly the current script text, it is the
+    // source of truth: reloading it keeps node positions, inline input values
+    // and orphan nodes. A hand-edited .dyd no longer matches and wins instead.
+    bool jsonInSync = false;
+    if (hasJson && !dyd.empty()) {
+        const EmitResult fromJson = NodeEmitter::emit(jsonGraph);
+        jsonInSync = fromJson.ok && sameScriptText(fromJson.dyd, dyd);
+    }
+    if (jsonInSync) {
+        m_graph = jsonGraph;
+        m_status = "Loaded canvas from .node.json.";
+    } else {
+        const ImportResult imported =
+            importFromDyd(dyd, scriptPath.filename().string(), hasJson ? &jsonGraph : nullptr);
+        if (imported.status == ImportStatus::Success) {
+            m_graph = imported.graph;
+            m_status = imported.message;
+        } else if (imported.status == ImportStatus::NoMarkers) {
+            if (hasJson) {
+                m_graph = jsonGraph;
+                m_status = "No // @node markers — canvas from .node.json (script may differ).";
+            } else {
+                m_graph = defaultGraphForScript(scriptPath);
+                m_status = "No // @node markers — started with empty OnUpdate graph.";
+            }
+        } else if (hasJson) {
             m_graph = jsonGraph;
-            m_status = "No // @node markers — canvas from .node.json (script may differ).";
+            m_status = imported.message;
         } else {
             m_graph = defaultGraphForScript(scriptPath);
-            m_status = "No // @node markers — started with empty OnUpdate graph.";
+            m_status = imported.message;
         }
-    } else if (hasJson) {
-        m_graph = jsonGraph;
-        m_status = imported.message;
-    } else {
-        m_graph = defaultGraphForScript(scriptPath);
-        m_status = imported.message;
     }
 
     int maxSerial = 1;
@@ -410,7 +545,6 @@ void DryadNodeScriptPanel::rebuildImNodesFromGraph() {
     ensureImNodesReady();
     if (!m_nodesContext) return;
     ImNodes::EditorContextSet(m_nodesContext);
-    ImNodes::EditorContextResetPanning(ImVec2(0, 0));
 
     for (const auto& node : m_graph.nodes) {
         const int imId = imNodeIdFromString(node.id);
@@ -446,6 +580,13 @@ bool DryadNodeScriptPanel::syncGraphFromEditor(bool writeFiles) {
 }
 
 void DryadNodeScriptPanel::addNode(const char* typeName) {
+    const int index = static_cast<int>(m_graph.nodes.size());
+    const f32 x = 60.0f + static_cast<f32>(index % 4) * 220.0f;
+    const f32 y = 60.0f + static_cast<f32>(index / 4) * 170.0f;
+    addNodeAt(typeName, x, y);
+}
+
+void DryadNodeScriptPanel::addNodeAt(const char* typeName, f32 canvasX, f32 canvasY) {
     NodeKind kind{};
     if (!nodeKindFromTypeName(typeName, kind)) return;
 
@@ -461,14 +602,199 @@ void DryadNodeScriptPanel::addNode(const char* typeName) {
     GraphNode node;
     node.id = "n" + std::to_string(m_nextNodeSerial++);
     node.kind = kind;
-    node.x = 80.0f + static_cast<f32>(m_graph.nodes.size()) * 24.0f;
-    node.y = 120.0f;
+    node.x = canvasX;
+    node.y = canvasY;
     if (kind == NodeKind::Constant) {
         node.numberValue = 1.0;
     }
     m_graph.nodes.push_back(node);
     m_pendingGraphSync = true;
     commitToDisk();
+    m_status = std::string("Added ") + nodeKindToTypeName(kind) + ".";
+}
+
+void DryadNodeScriptPanel::addNodePopupItems() {
+    bool hasOnUpdate = false;
+    for (const auto& node : m_graph.nodes) {
+        if (node.kind == NodeKind::OnUpdate) {
+            hasOnUpdate = true;
+            break;
+        }
+    }
+
+    auto item = [&](const char* label, const char* type, const char* description,
+                    bool enabled = true) {
+        if (!ImGui::MenuItem(label, nullptr, false, enabled)) return;
+        if (m_addNodeAtMouse) {
+            f32 canvasX = 60.0f;
+            f32 canvasY = 60.0f;
+            screenToCanvas(m_addNodeScreenX, m_addNodeScreenY, canvasX, canvasY);
+            addNodeAt(type, canvasX, canvasY);
+        } else {
+            addNode(type);
+        }
+        ImGui::CloseCurrentPopup();
+    };
+
+    ImGui::TextDisabled("EVENT");
+    item("OnUpdate", "OnUpdate", "Runs once per frame", !hasOnUpdate);
+    ImGui::Separator();
+    ImGui::TextDisabled("ACTIONS");
+    item("Set position", "SetPosition", "Move to an absolute position");
+    item("Translate", "Translate", "Move by an offset");
+    ImGui::Separator();
+    ImGui::TextDisabled("DATA");
+    item("Get position", "GetPosition", "Read the entity position");
+    item("Delta time", "DeltaTime", "Seconds since the previous frame");
+    item("Constant", "Constant", "Number or boolean value");
+    ImGui::Separator();
+    ImGui::TextDisabled("FLOW");
+    item("Branch", "Branch", "Run then/else based on a condition");
+}
+
+void DryadNodeScriptPanel::screenToCanvas(f32 screenX, f32 screenY, f32& canvasX,
+                                          f32& canvasY) const {
+    canvasX = 60.0f;
+    canvasY = 60.0f;
+    if (m_graph.nodes.empty()) return;
+
+    const int anchor = imNodeIdFromString(m_graph.nodes.front().id);
+    const ImVec2 anchorScreen = ImNodes::GetNodeScreenSpacePos(anchor);
+    const ImVec2 anchorGrid = ImNodes::GetNodeGridSpacePos(anchor);
+    const ImVec2 panning = ImNodes::EditorContextGetPanning();
+    const ImVec2 origin(anchorScreen.x - anchorGrid.x - panning.x,
+                        anchorScreen.y - anchorGrid.y - panning.y);
+    canvasX = screenX - origin.x - panning.x;
+    canvasY = screenY - origin.y - panning.y;
+}
+
+void DryadNodeScriptPanel::deleteSelection() {
+    if (!m_nodesContext) return;
+
+    const int selectedNodeCount = ImNodes::NumSelectedNodes();
+    std::vector<int> selectedNodes(selectedNodeCount);
+    if (selectedNodeCount > 0) ImNodes::GetSelectedNodes(selectedNodes.data());
+
+    const int selectedLinkCount = ImNodes::NumSelectedLinks();
+    std::vector<int> selectedLinks(selectedLinkCount);
+    if (selectedLinkCount > 0) ImNodes::GetSelectedLinks(selectedLinks.data());
+
+    if (selectedNodeCount == 0 && selectedLinkCount == 0) {
+        m_status = "Select a node or link first.";
+        return;
+    }
+
+    bool changed = false;
+    if (selectedLinkCount > 0) {
+        m_graph.edges.erase(
+            std::remove_if(m_graph.edges.begin(), m_graph.edges.end(),
+                           [&](const GraphEdge& edge) {
+                               return std::find(selectedLinks.begin(), selectedLinks.end(),
+                                                linkIdForEdge(edge)) != selectedLinks.end();
+                           }),
+            m_graph.edges.end());
+        changed = true;
+    }
+
+    int onUpdateCount = 0;
+    for (const auto& node : m_graph.nodes) {
+        if (node.kind == NodeKind::OnUpdate) ++onUpdateCount;
+    }
+
+    std::vector<std::string> removeIds;
+    for (int imId : selectedNodes) {
+        for (const auto& node : m_graph.nodes) {
+            if (imNodeIdFromString(node.id) != imId) continue;
+            if (node.kind == NodeKind::OnUpdate && onUpdateCount <= 1) {
+                m_status = "The graph needs one OnUpdate node.";
+                break;
+            }
+            removeIds.push_back(node.id);
+            break;
+        }
+    }
+
+    for (const std::string& id : removeIds) {
+        const std::string prefix = id + ".";
+        m_graph.edges.erase(
+            std::remove_if(m_graph.edges.begin(), m_graph.edges.end(),
+                           [&](const GraphEdge& edge) {
+                               return edge.from.rfind(prefix, 0) == 0 ||
+                                      edge.to.rfind(prefix, 0) == 0;
+                           }),
+            m_graph.edges.end());
+        m_graph.nodes.erase(
+            std::remove_if(m_graph.nodes.begin(), m_graph.nodes.end(),
+                           [&](const GraphNode& node) { return node.id == id; }),
+            m_graph.nodes.end());
+        changed = true;
+    }
+
+    if (!changed) return;
+    ImNodes::ClearNodeSelection();
+    ImNodes::ClearLinkSelection();
+    m_pendingGraphSync = true;
+    commitToDisk();
+    if (m_status.rfind("The graph needs", 0) != 0) {
+        m_status = "Deleted selection.";
+    }
+}
+
+void DryadNodeScriptPanel::arrangeGraph() {
+    const GraphNode* root = nullptr;
+    for (const auto& node : m_graph.nodes) {
+        if (node.kind == NodeKind::OnUpdate) {
+            root = &node;
+            break;
+        }
+    }
+    if (!root) {
+        m_status = "Add an OnUpdate node before arranging.";
+        return;
+    }
+
+    std::unordered_map<std::string, int> depth;
+    std::vector<std::string> order;
+    depth[root->id] = 0;
+    order.push_back(root->id);
+    for (size_t i = 0; i < order.size(); ++i) {
+        const std::string id = order[i];
+        const int nextDepth = depth[id] + 1;
+        for (const auto& edge : m_graph.edges) {
+            const bool execEdge = edge.from == id + ".out" ||
+                                  edge.from == id + ".then" ||
+                                  edge.from == id + ".else";
+            if (!execEdge) continue;
+            PinRef to{};
+            if (!parsePinRef(edge.to, to)) continue;
+            if (!m_graph.findNode(to.nodeId)) continue;
+            if (depth.find(to.nodeId) != depth.end()) continue;
+            depth[to.nodeId] = nextDepth;
+            order.push_back(to.nodeId);
+        }
+    }
+
+    std::unordered_map<int, int> rowsAtDepth;
+    for (const std::string& id : order) {
+        GraphNode* node = m_graph.findNode(id);
+        if (!node) continue;
+        const int d = depth[id];
+        const int row = rowsAtDepth[d]++;
+        node->x = 40.0f + static_cast<f32>(d) * 280.0f;
+        node->y = 70.0f + static_cast<f32>(row) * 150.0f;
+    }
+
+    int orphanRow = rowsAtDepth[0] + 1;
+    for (auto& node : m_graph.nodes) {
+        if (depth.find(node.id) != depth.end()) continue;
+        node.x = 40.0f;
+        node.y = 70.0f + static_cast<f32>(orphanRow++) * 130.0f;
+    }
+
+    m_pendingGraphSync = true;
+    m_resetView = true;
+    commitToDisk();
+    m_status = "Arranged the graph.";
 }
 
 void DryadNodeScriptPanel::addMotionExample() {
@@ -626,37 +952,62 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     }
 
     ImGui::Text("Script: %s", m_scriptPath.filename().string().c_str());
-    if (ImGui::Button("OnUpdate")) addNode("OnUpdate");
     ImGui::SameLine();
-    if (ImGui::Button("SetPosition")) addNode("SetPosition");
+    if (UIKit::ToolbarButton("+ Add node", "Add a node to the graph")) {
+        m_addNodeAtMouse = false;
+        ImGui::OpenPopup("##dryad_add_node");
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Translate")) addNode("Translate");
+    if (UIKit::ToolbarButton("Save", "Write the .dyd and its .node.json")) commitToDisk();
     ImGui::SameLine();
-    if (ImGui::Button("GetPosition")) addNode("GetPosition");
+    if (UIKit::ToolbarButton("Sync from .dyd", "Rebuild the canvas from the script text")) {
+        syncFromDydSource();
+    }
     ImGui::SameLine();
-    if (ImGui::Button("DeltaTime")) addNode("DeltaTime");
+    if (UIKit::ToolbarButton("Home", "Center the graph in the canvas")) m_resetView = true;
     ImGui::SameLine();
-    if (ImGui::Button("Constant")) addNode("Constant");
+    if (UIKit::ToolbarButton("Arrange", "Lay the graph out in flow order")) arrangeGraph();
     ImGui::SameLine();
-    if (ImGui::Button("Branch")) addNode("Branch");
-    ImGui::SameLine();
-    if (ImGui::Button("Save")) commitToDisk();
-    ImGui::SameLine();
-    if (ImGui::Button("Sync from .dyd")) syncFromDydSource();
+    if (UIKit::ToolbarButton("Delete", "Delete the selected nodes and links")) {
+        m_deleteRequested = true;
+    }
 
     if (!m_status.empty()) {
-        ImGui::SameLine();
-        ImGui::TextWrapped("%s", m_status.c_str());
+        UIKit::TextMuted(m_status.c_str());
     }
 
     drawRuntimeControls(ctx);
+    ImGui::TextDisabled(
+        "Middle-drag: pan  ·  Right-click: add node  ·  Del: delete  ·  drag a pin: link");
 
     ImNodes::EditorContextSet(m_nodesContext);
     ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
     ImNodes::BeginNodeEditor();
+    const ImVec2 canvasViewSize = ImGui::GetWindowSize();
 
     if (m_pendingGraphSync) {
         rebuildImNodesFromGraph();
+    }
+    if (m_resetView) {
+        if (m_graph.nodes.empty()) {
+            ImNodes::EditorContextResetPanning(ImVec2(0, 0));
+        } else {
+            f32 minX = m_graph.nodes.front().x;
+            f32 minY = m_graph.nodes.front().y;
+            f32 maxX = minX + 220.0f;
+            f32 maxY = minY + 160.0f;
+            for (const auto& node : m_graph.nodes) {
+                minX = std::min(minX, node.x);
+                minY = std::min(minY, node.y);
+                maxX = std::max(maxX, node.x + 220.0f);
+                maxY = std::max(maxY, node.y + 160.0f);
+            }
+            const ImVec2 center((minX + maxX) * 0.5f, (minY + maxY) * 0.5f);
+            ImNodes::EditorContextResetPanning(
+                ImVec2(canvasViewSize.x * 0.5f - center.x,
+                       canvasViewSize.y * 0.5f - center.y));
+        }
+        m_resetView = false;
     }
 
     bool graphDirty = false;
@@ -782,11 +1133,46 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
             continue;
         }
 
+        const bool execLink = isExecOutputPin(fromNode->kind, fromSlot);
+        const ImU32 linkColor = execLink ? IM_COL32(150, 198, 255, 235)
+                                         : IM_COL32(232, 186, 104, 235);
+        ImNodes::PushColorStyle(ImNodesCol_Link, linkColor);
+        ImNodes::PushColorStyle(ImNodesCol_LinkHovered, lighten(linkColor, 26));
+        ImNodes::PushColorStyle(ImNodesCol_LinkSelected, IM_COL32(255, 220, 140, 255));
         ImNodes::Link(linkIdForEdge(edge), attrId(fromIm, fromSlot), attrId(toIm, toSlot));
+        ImNodes::PopColorStyle();
+        ImNodes::PopColorStyle();
+        ImNodes::PopColorStyle();
     }
 
+    ImNodes::MiniMap(0.18f, ImNodesMiniMapLocation_BottomRight);
     ImNodes::EndNodeEditor();
     ImNodes::PopAttributeFlag();
+
+    if (m_deleteRequested) {
+        m_deleteRequested = false;
+        deleteSelection();
+    }
+
+    const bool editorActive =
+        ImNodes::IsEditorHovered() ||
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (editorActive && !ImGui::GetIO().WantTextInput &&
+        (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
+        deleteSelection();
+    }
+
+    if (ImNodes::IsEditorHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        m_addNodeScreenX = mouse.x;
+        m_addNodeScreenY = mouse.y;
+        m_addNodeAtMouse = true;
+        ImGui::OpenPopup("##dryad_add_node");
+    }
+    if (ImGui::BeginPopup("##dryad_add_node")) {
+        addNodePopupItems();
+        ImGui::EndPopup();
+    }
 
     bool topologyChanged = false;
 

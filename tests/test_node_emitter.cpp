@@ -4,6 +4,7 @@
 
 #include "../src/script/DryadHost.hpp"
 #include "../src/script/nodes/NodeEmitter.hpp"
+#include "../src/script/nodes/NodeGraphIO.hpp"
 #include "../src/script/nodes/NodeRoundTrip.hpp"
 #include "../src/ecs/Components.hpp"
 #include "../src/ecs/Components3D.hpp"
@@ -226,6 +227,95 @@ TEST_CASE("DeltaTime wires into Translate and round-trips", "[dryad][nodes]") {
     const EmitResult again = NodeEmitter::emit(imported.graph);
     REQUIRE(again.ok);
     REQUIRE(again.dyd == emitted.dyd);
+}
+
+
+TEST_CASE("Unconnected vector inputs use inline canvas defaults", "[dryad][nodes]") {
+    NodeGraph graph;
+    graph.scriptFileName = "inline.dyd";
+    GraphNode onUpdate{"i1", NodeKind::OnUpdate, 0, 0};
+    GraphNode setPosition{"i2", NodeKind::SetPosition, 200, 0};
+    setPosition.inputX = 1.25;
+    setPosition.inputY = -2.5;
+    setPosition.inputZ = 4.0;
+    graph.nodes = {onUpdate, setPosition};
+    graph.edges = {{"i1.out", "i2.in"}};
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("caffeine_set_position(entity, 1.25, -2.5, 4);") !=
+            std::string::npos);
+
+    const std::string path = "inline.node.json";
+    const std::string dydPath = "inline.dyd";
+    {
+        std::ofstream out(dydPath);
+        out << emitted.dyd;
+    }
+    {
+        std::ofstream out(path);
+        out << emitted.nodeJson;
+    }
+    const LoadResult loaded = loadFromJsonFile(path);
+    INFO("json load error: " << loaded.error);
+    REQUIRE(loaded.ok);
+    const GraphNode* restored = loaded.graph.findNode("i2");
+    REQUIRE(restored != nullptr);
+    REQUIRE(restored->x == Approx(200.0f));
+    REQUIRE(restored->y == Approx(0.0f));
+    REQUIRE(restored->inputX == Approx(1.25));
+    REQUIRE(restored->inputY == Approx(-2.5));
+    REQUIRE(restored->inputZ == Approx(4.0));
+
+    std::remove(path.c_str());
+    std::remove(dydPath.c_str());
+}
+
+TEST_CASE("Unconnected Branch condition uses its inline default", "[dryad][nodes]") {
+    NodeGraph graph;
+    graph.scriptFileName = "inline_branch.dyd";
+    GraphNode onUpdate{"b1", NodeKind::OnUpdate, 0, 0};
+    GraphNode branch{"b2", NodeKind::Branch, 200, 0};
+    branch.inputCondition = true;
+    GraphNode setPosition{"b3", NodeKind::SetPosition, 400, 0};
+    setPosition.inputX = 7.0;
+    graph.nodes = {onUpdate, branch, setPosition};
+    graph.edges = {{"b1.out", "b2.in"}, {"b2.then", "b3.in"}};
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("if (true)") != std::string::npos);
+    REQUIRE(emitted.dyd.find("caffeine_set_position(entity, 7, 0, 0);") != std::string::npos);
+}
+
+
+TEST_CASE("Node JSON reloads constant values and bool mode", "[dryad][nodes]") {
+    NodeGraph graph;
+    graph.scriptFileName = "constants.dyd";
+    GraphNode onUpdate{"c1", NodeKind::OnUpdate, 12, 34};
+    GraphNode number{"c2", NodeKind::Constant, 120, 220};
+    number.numberValue = 3.5;
+    GraphNode boolean{"c3", NodeKind::Constant, 240, 340};
+    boolean.constantIsBool = true;
+    boolean.boolValue = true;
+    graph.nodes = {onUpdate, number, boolean};
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    const LoadResult loaded = loadFromJsonString(emitted.nodeJson);
+    REQUIRE(loaded.ok);
+
+    const GraphNode* restoredOnUpdate = loaded.graph.findNode("c1");
+    const GraphNode* restoredNumber = loaded.graph.findNode("c2");
+    const GraphNode* restoredBool = loaded.graph.findNode("c3");
+    REQUIRE(restoredOnUpdate != nullptr);
+    REQUIRE(restoredNumber != nullptr);
+    REQUIRE(restoredBool != nullptr);
+    REQUIRE(restoredOnUpdate->x == Approx(12.0f));
+    REQUIRE(restoredOnUpdate->y == Approx(34.0f));
+    REQUIRE(restoredNumber->numberValue == Approx(3.5));
+    REQUIRE(restoredBool->constantIsBool);
+    REQUIRE(restoredBool->boolValue);
 }
 
 #endif

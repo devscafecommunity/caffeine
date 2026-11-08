@@ -57,8 +57,14 @@ void skipValue(const std::string& json, usize& pos) {
     while (pos < json.size() && json[pos] != ',' && json[pos] != '}' && json[pos] != ']') ++pos;
 }
 
+usize objectFieldStart(const std::string& object) {
+    usize pos = skipWs(object, 0);
+    if (pos < object.size() && object[pos] == '{') ++pos;
+    return pos;
+}
+
 bool readNumberField(const std::string& object, const std::string& key, double& out) {
-    usize pos = 0;
+    usize pos = objectFieldStart(object);
     while (pos < object.size()) {
         pos = skipWs(object, pos);
         if (pos >= object.size() || object[pos] == '}') break;
@@ -87,7 +93,7 @@ bool readNumberField(const std::string& object, const std::string& key, double& 
 }
 
 bool readStringField(const std::string& object, const std::string& key, std::string& out) {
-    usize pos = 0;
+    usize pos = objectFieldStart(object);
     while (pos < object.size()) {
         pos = skipWs(object, pos);
         if (pos >= object.size() || object[pos] == '}') break;
@@ -105,7 +111,7 @@ bool readStringField(const std::string& object, const std::string& key, std::str
 }
 
 bool readBoolField(const std::string& object, const std::string& key, bool& out) {
-    usize pos = 0;
+    usize pos = objectFieldStart(object);
     while (pos < object.size()) {
         pos = skipWs(object, pos);
         if (pos >= object.size() || object[pos] == '}') break;
@@ -189,7 +195,9 @@ bool splitTopLevelObjects(const std::string& arrayJson, std::vector<std::string>
 
 bool parseNodeObject(const std::string& object, GraphNode& out) {
     std::string typeName;
-    if (!readStringField(object, "id", out.id) || !readStringField(object, "type", typeName)) return false;
+    if (!readStringField(object, "id", out.id) || !readStringField(object, "type", typeName)) {
+        return false;
+    }
     if (!nodeKindFromTypeName(typeName, out.kind)) return false;
     double x = 0;
     double y = 0;
@@ -202,6 +210,10 @@ bool parseNodeObject(const std::string& object, GraphNode& out) {
     } else if (out.kind == NodeKind::Constant) {
         readNumberField(object, "value", out.numberValue);
     }
+    readNumberField(object, "inputX", out.inputX);
+    readNumberField(object, "inputY", out.inputY);
+    readNumberField(object, "inputZ", out.inputZ);
+    readBoolField(object, "condition", out.inputCondition);
     return true;
 }
 

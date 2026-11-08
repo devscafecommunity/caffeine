@@ -40,6 +40,11 @@ private:
     int m_nextNodeSerial = 2;
     int m_nextLinkId = 1;
     bool m_pendingGraphSync = true;
+    bool m_resetView = true;
+    bool m_deleteRequested = false;
+    bool m_addNodeAtMouse = false;
+    f32 m_addNodeScreenX = 0.0f;
+    f32 m_addNodeScreenY = 0.0f;
 
     ImNodesEditorContext* m_nodesContext = nullptr;
     bool m_ownsImNodesRootContext = false;
@@ -55,6 +60,11 @@ private:
     bool syncGraphFromEditor(bool writeFiles);
     bool commitToDisk();
     void addNode(const char* typeName);
+    void addNodeAt(const char* typeName, f32 canvasX, f32 canvasY);
+    void addNodePopupItems();
+    void deleteSelection();
+    void arrangeGraph();
+    void screenToCanvas(f32 screenX, f32 screenY, f32& canvasX, f32& canvasY) const;
     void syncFromDydSource();
     void drawRuntimeControls(EditorContext& ctx);
     void addMotionExample();

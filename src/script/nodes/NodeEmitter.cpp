@@ -226,6 +226,26 @@ private:
             }
             return resolveDataOutput(src.nodeId, src.pin, outExpr, err);
         }
+
+        const GraphNode* n = node(nodeId);
+        if (n) {
+            if (pin == "x") {
+                outExpr = formatNumber(n->inputX);
+                return true;
+            }
+            if (pin == "y") {
+                outExpr = formatNumber(n->inputY);
+                return true;
+            }
+            if (pin == "z") {
+                outExpr = formatNumber(n->inputZ);
+                return true;
+            }
+            if (pin == "condition") {
+                outExpr = n->inputCondition ? "true" : "false";
+                return true;
+            }
+        }
         outExpr = "0";
         return true;
     }
@@ -301,6 +321,14 @@ private:
                 } else {
                     json << ", \"valueKind\": \"number\", \"value\": " << formatNumber(n.numberValue);
                 }
+            }
+            if (n.kind == NodeKind::SetPosition || n.kind == NodeKind::Translate) {
+                json << ", \"inputX\": " << formatNumber(n.inputX)
+                     << ", \"inputY\": " << formatNumber(n.inputY)
+                     << ", \"inputZ\": " << formatNumber(n.inputZ);
+            }
+            if (n.kind == NodeKind::Branch) {
+                json << ", \"condition\": " << (n.inputCondition ? "true" : "false");
             }
             json << " }";
             if (i + 1 < sorted.nodes.size()) json << ",";
