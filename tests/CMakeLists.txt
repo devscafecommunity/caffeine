@@ -34,6 +34,7 @@ set(CAFFEINE_TEST_SOURCES
     test_pipeline.cpp
     test_editor.cpp
     test_photon_bake.cpp
+    test_vegetation_kit.cpp
     test_cap_loader.cpp
     test_phase2_3.cpp
     editor/phase1_integration_test.cpp

@@ -3,8 +3,12 @@
 #include "../src/ecs/Components3D.hpp"
 #include "../src/assets/MeshTypes.hpp"
 #include "../src/assets/MeshLoader.hpp"
+#include "../src/assets/MeshMaterialExport.hpp"
+#include "../src/assets/MaterialFile.hpp"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 
 using namespace Caffeine;
 using namespace Caffeine::ECS;
@@ -309,4 +313,76 @@ TEST_CASE("MeshSystem::onUpdate - entity with Position3D+MeshRenderer doesn't cr
     world.add<MeshRenderer>(e, MeshRenderer{});
     sys.onUpdate(world, 0.016f);
     REQUIRE(true);
+}
+
+// ============================================================================
+// glTF alpha modes
+// ============================================================================
+
+TEST_CASE("MeshLoader - glTF material carries alpha mode and cutoff", "[mesh][gltf][alpha]") {
+    static const char* kAlphaGLTF = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ {
+    "attributes": { "POSITION": 0 },
+    "indices": 1,
+    "material": 0
+  } ] } ],
+  "materials": [ {
+    "name": "leaves",
+    "alphaMode": "MASK",
+    "alphaCutoff": 0.3,
+    "doubleSided": true,
+    "pbrMetallicRoughness": {
+      "baseColorFactor": [ 1.0, 1.0, 1.0, 1.0 ],
+      "metallicFactor": 0.0,
+      "roughnessFactor": 0.8
+    }
+  } ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [ 0.0, 0.0, 0.0 ], "max": [ 1.0, 1.0, 0.0 ] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 }
+  ],
+  "buffers": [ {
+    "byteLength": 42,
+    "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAABAAIA"
+  } ]
+})";
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "caffeine_gltf_alpha_test.gltf";
+    {
+        std::ofstream out(path);
+        REQUIRE(out.is_open());
+        out << kAlphaGLTF;
+    }
+
+    std::string error;
+    Mesh3D* mesh = MeshLoader::parseGLTF(nullptr, 0, path.string().c_str(), &error);
+    INFO(error);
+    REQUIRE(mesh != nullptr);
+    REQUIRE(mesh->materials.size() == 1);
+    REQUIRE(mesh->materials[0].alphaMode == 1);
+    REQUIRE(mesh->materials[0].alphaCutoff == Approx(0.3f));
+    REQUIRE(mesh->materials[0].doubleSided);
+
+    const std::vector<std::string> exported =
+        exportMeshMaterials(*mesh, path, path.parent_path(), true);
+    REQUIRE(exported.size() == 1);
+    MaterialSurface surface;
+    const std::filesystem::path materialPath = path.parent_path() / exported[0];
+    REQUIRE(loadMaterialFile(materialPath, surface));
+    REQUIRE(surface.alphaMode == MaterialAlphaMode::Cutout);
+    REQUIRE(surface.alphaCutoff == Approx(0.3f));
+
+    delete mesh;
+    std::filesystem::remove(materialPath);
+    std::filesystem::remove(path);
 }

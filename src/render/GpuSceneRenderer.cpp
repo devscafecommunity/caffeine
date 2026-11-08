@@ -328,6 +328,8 @@ struct ResolvedMeshAlbedo {
     Vec4 factor{1.0f, 1.0f, 1.0f, 1.0f};
     f32 metallic = 0.0f;
     f32 roughness = 0.5f;
+    u8 alphaMode = 0;
+    f32 alphaCutoff = 0.5f;
 };
 
 Vec3 meshWorldCenter(const Mat4& worldMatrix, const Assets::Mesh3D* mesh) {
@@ -354,6 +356,8 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
                            mat.albedoColor.a);
         result.metallic = mat.metallic;
         result.roughness = mat.roughness;
+        result.alphaMode = mat.alphaMode;
+        result.alphaCutoff = mat.alphaCutoff;
 
         if (!mat.albedoPath.empty()) {
             result.texture = cache.acquire(device, mat.albedoPath, projectRoot, qualityTier, true);
@@ -1328,6 +1332,8 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (indexCount == 0) return;
             LightingUBO rangeLights = lights;
             RHI::Texture* albedoTex = whiteTex;
+            u8 rangeAlphaMode = draw.alphaMode;
+            f32 rangeAlphaCutoff = draw.alphaCutoff;
             if (!wireframe) {
                 const ResolvedMeshAlbedo albedo =
                     resolveMeshAlbedo(m_device, draw.mesh, draw.meshPath, projectRoot,
@@ -1340,9 +1346,15 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 if (!draw.hasAuthoredMaterial && materialIndex < draw.mesh->materials.size()) {
                     rangeLights.metallic = albedo.metallic;
                     rangeLights.roughness = albedo.roughness;
+                    rangeAlphaMode = albedo.alphaMode;
+                    rangeAlphaCutoff = albedo.alphaCutoff;
                 }
                 if (albedo.texture) albedoTex = albedo.texture;
             }
+            // Alpha mode is per glTF material, not per mesh: a trunk can be opaque while
+            // its leaf submesh is cutout. Set it on the per-range uniform copy.
+            rangeLights.materialFlags[0] = static_cast<f32>(rangeAlphaMode);
+            rangeLights.materialParams[3] = rangeAlphaCutoff;
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
@@ -1641,6 +1653,18 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
         draw.customNormalPath = filter.customNormalPath;
+        if (draw.mesh && !draw.mesh->materials.empty()) {
+            // Use the most expensive alpha mode for pass selection. The shader still
+            // receives the exact per-material mode for each submesh.
+            u8 mode = 0;
+            f32 cutoff = 0.5f;
+            for (const Assets::MeshSurfaceMaterial& material : draw.mesh->materials) {
+                if (material.alphaMode > mode) mode = material.alphaMode;
+                if (material.alphaMode != 0) cutoff = material.alphaCutoff;
+            }
+            draw.alphaMode = mode;
+            draw.alphaCutoff = cutoff;
+        }
         if (!filter.customMaterialPath.empty()) {
             const Assets::MaterialSurface surface =
                 Assets::MaterialCache::instance().resolve(filter.customMaterialPath, projectRoot);
