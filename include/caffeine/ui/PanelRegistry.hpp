@@ -54,6 +54,7 @@ private:
     PanelRegistry() = default;
 
     std::vector<PanelDesc> m_panels;
+    std::string m_pendingFocus;
     unsigned long long m_revision = 1;
 };
 

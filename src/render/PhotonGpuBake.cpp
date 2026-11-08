@@ -202,8 +202,7 @@ bool runBake(SDL_GPUDevice* device, SDL_GPUComputePipeline* pipeline,
 
 }  // namespace
 
-bool gpuBakeAmbientOcclusion(RHI::RenderDevice* device,
-                             const Editor::PluginAOBakeDesc& desc,
+bool gpuBakeAmbientOcclusion(RHI::RenderDevice* device, const AOBakeDesc& desc,
                              std::vector<f32>& outAO) {
     if (!device || !device->isInitialized() || !desc.triangles || !desc.positions ||
         !desc.normals || desc.triangleCount == 0 || desc.texelCount == 0 ||

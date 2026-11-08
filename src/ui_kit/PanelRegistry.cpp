@@ -81,6 +81,7 @@ void PanelRegistry::setVisible(const std::string& id, bool visible) {
     if (visible == panel->visible) return;
     panel->visible = visible;
     if (visible) {
+        m_pendingFocus = id;
         if (panel->open) panel->open();
     } else if (panel->close) {
         panel->close();
@@ -101,6 +102,11 @@ void PanelRegistry::renderAll() {
         if (panel.isOpen) panel.visible = panel.isOpen();
         if (!panel.visible || !panel.render) continue;
 
+        const bool focus = m_pendingFocus == panel.id;
+        if (focus) {
+            ImGui::SetNextWindowFocus();
+            m_pendingFocus.clear();
+        }
         const float minWidth = 240.0f * uiScale();
         const float minHeight = 120.0f * uiScale();
         ImGui::SetNextWindowSizeConstraints(ImVec2(minWidth, minHeight),

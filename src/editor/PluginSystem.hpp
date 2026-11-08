@@ -16,10 +16,6 @@
 struct ImGuiContext;
 #endif
 
-namespace Caffeine::RHI {
-class RenderDevice;
-}
-
 namespace Caffeine::Editor {
 
 class InspectorPanel;
@@ -79,8 +75,7 @@ public:
                     InspectorPanel* inspector,
                     CommandPalette* commandPalette,
                     EditorContext* editorContext,
-                    const std::filesystem::path& bundledPluginsDirectory = {},
-                    RHI::RenderDevice* renderDevice = nullptr);
+                    const std::filesystem::path& bundledPluginsDirectory = {});
     void shutdown();
 
     bool loadPlugin(const std::string& path);
@@ -169,8 +164,6 @@ private:
     static bool hostRegisterService(void* ctx, const char* pluginName, const char* serviceName,
                                     PluginServiceHandler handler);
     static bool hostGetProjectRootPath(void* editorContext, char* buffer, std::size_t bufferSize);
-    static bool hostBakeAmbientOcclusion(void* ctx, const PluginAOBakeDesc* desc,
-                                         float* outAO);
 
     std::filesystem::path m_pluginsDirectory;
     std::filesystem::path m_bundledPluginsDirectory;
@@ -185,7 +178,6 @@ private:
     InspectorPanel* m_inspector = nullptr;
     CommandPalette* m_commandPalette = nullptr;
     EditorContext* m_editorContext = nullptr;
-    RHI::RenderDevice* m_renderDevice = nullptr;
 
     PluginHostApi m_hostApi {};
     IO::FileWatcher m_watcher;

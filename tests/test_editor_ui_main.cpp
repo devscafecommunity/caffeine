@@ -39,6 +39,7 @@ static struct {
 } s_state;
 
 bool g_gpuAvailable = false;
+Caffeine::RHI::RenderDevice* g_testRenderDevice = nullptr;
 
 void PumpFrame() {
     SDL_Event event;
@@ -105,6 +106,7 @@ int main(int argc, char* argv[]) {
     } else {
         s_state.gpuAvailable = true;
         g_gpuAvailable = true;
+        g_testRenderDevice = s_state.device;
     }
 
     // ── Initialize ImGui with backends ──────────────────────────────────────

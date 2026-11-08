@@ -75,20 +75,6 @@ struct PluginTerrainBrush {
     int gizmoMode = 1;
 };
 
-/// GPU ambient-occlusion bake request. Triangle data is 9 floats per triangle
-/// (a.xyz, b.xyz, c.xyz). Position/normal arrays are 4 floats per AO texel.
-struct PluginAOBakeDesc {
-    const float* triangles = nullptr;
-    unsigned int triangleCount = 0;
-    const float* positions = nullptr;
-    const float* normals = nullptr;
-    unsigned int texelCount = 0;
-    unsigned int resolution = 0;
-    unsigned int rays = 16;
-    float maxDistance = 2.5f;
-    float bias = 0.02f;
-};
-
 struct PluginHostApi {
     void* editorContext = nullptr;
     /// Stable plugin id (library stem). Set by the host before OnLoad().
@@ -104,10 +90,6 @@ struct PluginHostApi {
     /// Fills buffer with open project's root path (parent of scenes/). Returns false if no project.
     bool (*getProjectRootPath)(void* editorContext, char* buffer, std::size_t bufferSize) = nullptr;
 
-    /// GPU compute AO bake. Returns false when the device/compute path is not
-    /// available; callers should fall back to their CPU baker.
-    bool (*bakeAmbientOcclusion)(void* ctx, const PluginAOBakeDesc* desc,
-                                 float* outAO) = nullptr;
 
     bool (*registerPanel)(void* ctx, const char* pluginName, const char* title,
                           void (*renderFn)(void* userData), void* userData) = nullptr;

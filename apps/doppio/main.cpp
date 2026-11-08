@@ -318,6 +318,7 @@ int main(int argc, char** argv) {
         cmd->endRenderPass();
 
         device.endFrame(cmd);
+        editor.processDeferredTasks();
     }
 
     editor.shutdown();

@@ -33,6 +33,7 @@ set(CAFFEINE_TEST_SOURCES
     test_skeletal_animation.cpp
     test_pipeline.cpp
     test_editor.cpp
+    test_photon_bake.cpp
     test_cap_loader.cpp
     test_phase2_3.cpp
     editor/phase1_integration_test.cpp
@@ -68,6 +69,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/InspectorPanel.cpp
     ../src/editor/ComponentRegistry.cpp
     ../src/editor/SceneEditor.cpp
+    ../src/editor/PhotonPanel.cpp
     ../src/editor/ImageManagerPanel.cpp
     ../src/editor/HudEditorPanel.cpp
     ../src/editor/ParticleEditorPanel.cpp
@@ -177,6 +179,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_inspector.cpp
           test_editor_ui/test_hierarchy.cpp
           test_editor_ui/test_assetbrowser.cpp
+          test_editor_ui/test_photon_bake.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
@@ -187,6 +190,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/CapLoader.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PhotonPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ImageManagerPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/HudEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp

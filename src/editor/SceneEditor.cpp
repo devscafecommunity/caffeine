@@ -47,6 +47,7 @@ namespace Caffeine::Editor {
 bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetManager,
                        const ProjectConfig& projectConfig) {
     m_renderDevice = device;
+    m_photonPanel.setRenderDevice(device);
     if (!m_viewport.init(device)) return false;
     m_gameplayPreview.init(device);
     m_materialEditor.initGpu(device);
@@ -82,6 +83,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_hierarchy.setOpenPresetsCallback([this]() { m_entityPresets.open(); });
     m_tabManager.newScene("Untitled");
 
+    m_commandPalette.registerCommand("panel_photon", "Photon GI", "Rendering", [this]() {
+        UIKit::PanelRegistry::instance().open("photon.gi");
+    });
     m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Scene", [this]() {
         m_hierarchy.open();
     });
@@ -189,7 +193,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     registerAllComponents(ComponentRegistry::instance());
     registerPanels();
     PluginManager::instance().initialize(pluginsDir, &m_inspector, &m_commandPalette, &m_ctx,
-                                         bundledPluginsDir, device);
+                                         bundledPluginsDir);
     // Plugins contributed panels during initialize; treat that as the baseline
     // so the first frame does not rebuild an already persisted docking layout.
     m_panelsRevision = m_panels.revision();
@@ -846,6 +850,12 @@ void renderIndependentWindowButtons(ImGuiID dockspaceId) {
 
 // ── Main render ─────────────────────────────────────────────────
 
+void SceneEditor::processDeferredTasks() {
+    if (auto* world = m_tabManager.activeWorld()) {
+        m_photonPanel.processPendingBake(*world, m_ctx);
+    }
+}
+
 void SceneEditor::render(f32 deltaTime) {
     CF_PROFILE_SCOPE("SceneEditor::render");
     if (!m_open) return;
@@ -1169,6 +1179,10 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             }
             PluginManager::instance().renderMenuItems("View");
             syncLayoutProfileFromPanels();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Photon Global Illumination")) {
+                UIKit::PanelRegistry::instance().open("photon.gi");
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Reload UI theme", "F5")) {
                 EditorTheme::apply({EditorTheme::darkMode(), EditorTheme::fontSize()});
@@ -1754,6 +1768,13 @@ void SceneEditor::registerPanels() {
         [this] { m_settingsPanel.render(); }, [this] { m_settingsPanel.open(); },
         [this] { m_settingsPanel.close(); }, [this] { return m_settingsPanel.isOpen(); },
         "Core", 90, false);
+
+    add("photon.gi", "Photon", EditorIcon::Viewport, UIKit::DockArea::Right,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_photonPanel.render(*world, m_ctx);
+        },
+        [this] { m_photonPanel.open(); }, [this] { m_photonPanel.close(); },
+        [this] { return m_photonPanel.isOpen(); }, "Rendering", 10, false);
 
     add("core.material_editor", "Material Editor", EditorIcon::Assets, UIKit::DockArea::Bottom,
         [this] {

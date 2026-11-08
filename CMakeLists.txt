@@ -246,6 +246,7 @@ else()
             src/render/GpuSceneRenderer.cpp
             src/render/PostProcessStack.cpp
             src/render/PhotonGpuBake.cpp
+            src/render/PhotonAOBake.cpp
             src/render/GpuEnvironmentMap.cpp
             src/render/MaterialPreviewRenderer.cpp
             src/render/GpuPointShadowMap.cpp
@@ -562,6 +563,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/SettingsPanel.cpp
           src/editor/LayoutManager.cpp
           src/editor/SceneEditor.cpp
+          src/editor/PhotonPanel.cpp
           src/editor/SceneSerializer.cpp
           src/editor/DragDropSystem.cpp
           src/editor/SceneTabManager.cpp

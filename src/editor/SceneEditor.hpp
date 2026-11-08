@@ -25,6 +25,7 @@
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
+#include "editor/PhotonPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
 #if defined(CF_HAS_DRYAD)
 #include "editor/DryadNodeScriptPanel.hpp"
@@ -90,6 +91,8 @@ public:
 #endif
 
     void render(f32 deltaTime = 0.016f);
+    /// Runs queued tasks that must not record into the in-flight frame (GPU bakes).
+    void processDeferredTasks();
 
     // ── Serialization ──
 
@@ -184,6 +187,7 @@ private:
     CommandPalette m_commandPalette;
     BuildDialog m_buildDialog;
     SettingsPanel m_settingsPanel;
+    PhotonPanel m_photonPanel;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
