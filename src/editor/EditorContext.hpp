@@ -98,6 +98,7 @@ public:
     /// Bumps when the editor changes something the cached GPU view must show.
     u64         visualRevision   = 1;
     std::string materialToOpen;
+    std::string dryadToOpen;
     std::string imageToOpen;
     std::filesystem::path projectRootPath;
     std::filesystem::path assetRootPath;

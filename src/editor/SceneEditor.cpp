@@ -271,6 +271,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      m_scriptEditor.setScriptEngine(&m_scriptEngine);
      if (m_scriptEngineReady) {
          m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
+         m_scriptSystem.setProjectRoot(m_currentProjectConfig.RootPath.string());
      }
 #endif
 
@@ -485,6 +486,7 @@ void SceneEditor::enterPlayMode(ECS::World& world) {
         m_scriptEngineReady = m_scriptEngine.init(p);
     }
     m_scriptSystem = Script::ScriptSystem(&m_scriptEngine, &m_eventBus);
+    m_scriptSystem.setProjectRoot(m_currentProjectConfig.RootPath.string());
     m_scriptSystem.resetPlayState();
     Procedural::ProceduralWorldSystem::reset();
     ECS::ComponentQuery cppQ;
@@ -1825,7 +1827,18 @@ void SceneEditor::registerPanels() {
 
 #if defined(CF_HAS_DRYAD)
     add("core.dryad_node_script", "Dryad Node Script", EditorIcon::Animation,
-        UIKit::DockArea::Center, [this] { m_dryadNodeScript.onImGuiRender(m_ctx); },
+        UIKit::DockArea::Center, [this] {
+            if (!m_ctx.dryadToOpen.empty()) {
+                std::filesystem::path path(m_ctx.dryadToOpen);
+                if (path.is_relative() && !m_currentProjectConfig.RootPath.empty()) {
+                    path = m_currentProjectConfig.RootPath / path;
+                }
+                m_dryadNodeScript.open();
+                m_dryadNodeScript.openFromScript(path);
+                m_ctx.dryadToOpen.clear();
+            }
+            m_dryadNodeScript.onImGuiRender(m_ctx);
+        },
         [this] { m_dryadNodeScript.open(); }, [this] { m_dryadNodeScript.close(); },
         [this] { return m_dryadNodeScript.isOpen(); }, "Content", 40, false);
 #endif

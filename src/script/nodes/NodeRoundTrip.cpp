@@ -83,6 +83,7 @@ private:
     NodeGraph m_graph;
     int m_constSerial = 0;
     std::string m_getPositionId;
+    std::string m_deltaTimeId;
     std::unordered_map<std::string, std::string> m_exprToConst;
 
     static bool fail(std::string& err, const char* msg) {
@@ -145,7 +146,12 @@ private:
             }
 
             if (consume("caffeine_set_position")) {
-                if (!parseSetPosition(nodeId, execOut, err)) return false;
+                if (!parseVectorCall(nodeId, NodeKind::SetPosition, execOut, err)) return false;
+                continue;
+            }
+
+            if (consume("caffeine_translate")) {
+                if (!parseVectorCall(nodeId, NodeKind::Translate, execOut, err)) return false;
                 continue;
             }
 
@@ -158,12 +164,13 @@ private:
         }
     }
 
-    bool parseSetPosition(const std::string& nodeId, std::string& execOut, std::string& err) {
-        ensureNode(m_graph, nodeId, NodeKind::SetPosition);
-        if (execOut.empty()) return fail(err, "SetPosition without exec input");
+    bool parseVectorCall(const std::string& nodeId, NodeKind kind, std::string& execOut,
+                         std::string& err) {
+        ensureNode(m_graph, nodeId, kind);
+        if (execOut.empty()) return fail(err, "vector node without exec input");
         addEdge(m_graph, execOut, endpoint(nodeId, "in"));
 
-        if (!consume("(")) return fail(err, "expected ( after caffeine_set_position");
+        if (!consume("(")) return fail(err, "expected ( after vector call");
         if (!consume("entity")) return fail(err, "expected entity");
         if (!consume(",")) return fail(err, "expected ,");
         std::string xExpr, yExpr, zExpr;
@@ -255,6 +262,15 @@ private:
         }
         if (e == "caffeine_get_position_z(entity)") {
             addEdge(m_graph, endpoint(getPositionNode(), "z"), endpoint(toNode, pin));
+            return true;
+        }
+
+        if (e == "dt") {
+            if (m_deltaTimeId.empty()) {
+                m_deltaTimeId = "import_dt" + std::to_string(m_constSerial++);
+                ensureNode(m_graph, m_deltaTimeId, NodeKind::DeltaTime);
+            }
+            addEdge(m_graph, endpoint(m_deltaTimeId, "value"), endpoint(toNode, pin));
             return true;
         }
 

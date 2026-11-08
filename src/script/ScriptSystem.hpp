@@ -7,6 +7,7 @@
 #include "script/ScriptEngine.hpp"
 
 #include <memory>
+#include <string>
 
 namespace Caffeine { namespace Events { class EventBus; } }
 
@@ -24,6 +25,9 @@ public:
     void onUpdate(ECS::World& world, f32 dt) override;
     void resetPlayState();
 
+    /// Root used to resolve project-relative `.dyd` paths.
+    void setProjectRoot(const std::string& root);
+
 private:
     void processLuaScripts(ECS::World& world, f32 dt);
     void processDryadScripts(ECS::World& world, f32 dt);
@@ -39,6 +43,7 @@ private:
     Vector<ECS::Entity> m_initializedNative;
     Vector<ECS::Entity> m_initializedPostProcess;
     bool m_warnedNoLua = false;
+    std::string m_projectRoot;
 };
 
 }

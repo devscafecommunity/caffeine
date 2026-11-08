@@ -37,6 +37,11 @@ void ScriptSystem::resetPlayState() {
     Render::Overlay2D::beginFrame();
 }
 
+void ScriptSystem::setProjectRoot(const std::string& root) {
+    m_projectRoot = root;
+    if (m_dryad && !root.empty()) m_dryad->setSearchRoot(root);
+}
+
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
     if (!m_engine) return;
     Runtime::PlayClock::instance().advance(dt);
@@ -118,6 +123,7 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
 void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
     if (!m_dryad) return;
     m_dryad->setWorld(&world);
+    if (!m_projectRoot.empty()) m_dryad->setSearchRoot(m_projectRoot);
 
     ECS::ComponentQuery q;
     q.with<ScriptComponent>();
@@ -139,27 +145,32 @@ void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
         if (!entity.isValid()) continue;
 
         const std::string& path = entry.scriptPath;
-        if (!m_dryad->isLoaded(path)) {
-            std::string err;
-            if (!m_dryad->load(path, &err)) {
-                CF_ERROR("Dryad", "Failed to load %s: %s", path.c_str(), err.c_str());
+        std::string loadError;
+        bool reloaded = m_dryad->reloadIfChanged(path, &loadError);
+        if (!loadError.empty()) {
+            CF_ERROR("Dryad", "Reload %s: %s", path.c_str(), loadError.c_str());
+        }
+        if (!reloaded && !m_dryad->isLoaded(path)) {
+            if (!m_dryad->load(path, &loadError)) {
+                CF_ERROR("Dryad", "Failed to load %s: %s", path.c_str(), loadError.c_str());
                 continue;
             }
         }
 
-        bool isNew = true;
+        bool alreadyInitialized = false;
         for (usize i = 0; i < m_initializedDryad.size(); ++i) {
             if (m_initializedDryad[i].id() == entity.id()) {
-                isNew = false;
+                alreadyInitialized = true;
                 break;
             }
         }
+        const bool isNew = reloaded || !alreadyInitialized;
         if (isNew) {
             std::string err;
             if (!m_dryad->call(path, "onCreate", entity, 0.0f, &err)) {
                 CF_ERROR("Dryad", "onCreate %s: %s", path.c_str(), err.c_str());
             }
-            m_initializedDryad.pushBack(entity);
+            if (!alreadyInitialized) m_initializedDryad.pushBack(entity);
         }
 
         const f32 frameDt = Runtime::PlayClock::instance().deltaTime();

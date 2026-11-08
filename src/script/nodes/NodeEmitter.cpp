@@ -149,6 +149,25 @@ private:
             }
             return true;
         }
+        case NodeKind::Translate: {
+            line(out, depth, "// @node " + n->id);
+            std::string xExpr, yExpr, zExpr;
+            if (!resolveDataInput(n->id, "x", xExpr, err)) return false;
+            if (!resolveDataInput(n->id, "y", yExpr, err)) return false;
+            if (!resolveDataInput(n->id, "z", zExpr, err)) return false;
+            line(out, depth,
+                 "caffeine_translate(entity, " + xExpr + ", " + yExpr + ", " + zExpr + ");");
+
+            if (const GraphEdge* next = findExecEdgeFrom(m_graph, n->id, "out")) {
+                PinRef ref{};
+                if (!parsePinRef(next->to, ref)) {
+                    err = "invalid exec edge from Translate";
+                    return false;
+                }
+                return emitExecChain(ref.nodeId, out, depth, err);
+            }
+            return true;
+        }
         case NodeKind::Branch: {
             line(out, depth, "// @node " + n->id);
             std::string cond;
@@ -187,6 +206,7 @@ private:
             err = "OnUpdate cannot appear inside exec chain";
             return false;
         case NodeKind::GetPosition:
+        case NodeKind::DeltaTime:
         case NodeKind::Constant:
             err = "data-only node in exec chain: " + nodeId;
             return false;
@@ -233,6 +253,14 @@ private:
             }
             outExpr = n->constantIsBool ? (n->boolValue ? "true" : "false")
                                         : formatNumber(n->numberValue);
+            m_dataExprCache.emplace(cacheKey, outExpr);
+            return true;
+        case NodeKind::DeltaTime:
+            if (pin != "value") {
+                err = "DeltaTime only exposes pin 'value'";
+                return false;
+            }
+            outExpr = "dt";
             m_dataExprCache.emplace(cacheKey, outExpr);
             return true;
         case NodeKind::GetPosition:

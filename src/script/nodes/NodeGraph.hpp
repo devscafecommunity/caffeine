@@ -10,7 +10,9 @@ namespace Caffeine::Script::Nodes {
 enum class NodeKind {
     OnUpdate,
     GetPosition,
+    DeltaTime,
     SetPosition,
+    Translate,
     Constant,
     Branch,
 };

@@ -6,6 +6,8 @@
 #include "../src/script/nodes/NodeEmitter.hpp"
 #include "../src/script/nodes/NodeRoundTrip.hpp"
 #include "../src/ecs/Components.hpp"
+#include "../src/ecs/Components3D.hpp"
+#include "../src/ecs/MeshComponents.hpp"
 #include "../src/ecs/World.hpp"
 
 #include <cstdio>
@@ -143,6 +145,87 @@ TEST_CASE("GetPosition constant add runs", "[dryad][nodes]") {
     REQUIRE(transform.position.z == 6.0f);
 
     std::remove(path.c_str());
+}
+
+TEST_CASE("Translate node emits and executes", "[dryad][nodes][3d]") {
+    NodeGraph graph;
+    graph.scriptFileName = "translate.dyd";
+    graph.nodes = {
+        {"t1", NodeKind::OnUpdate, 0, 0},
+        {"t2", NodeKind::Translate, 100, 0},
+        {"t3", NodeKind::Constant, 0, 60, 0.5},
+        {"t4", NodeKind::Constant, 60, 60, 1.0},
+        {"t5", NodeKind::Constant, 120, 60, 0.0},
+    };
+    graph.edges = {
+        {"t1.out", "t2.in"},
+        {"t3.value", "t2.x"},
+        {"t4.value", "t2.y"},
+        {"t5.value", "t2.z"},
+    };
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("caffeine_translate(entity, 0.5, 1, 0);") != std::string::npos);
+
+    const ImportResult imported = importFromDyd(emitted.dyd, graph.scriptFileName, &graph);
+    REQUIRE(imported.status == ImportStatus::Success);
+    const EmitResult again = NodeEmitter::emit(imported.graph);
+    REQUIRE(again.ok);
+    REQUIRE(again.dyd == emitted.dyd);
+
+    const std::string path = "translate.dyd";
+    {
+        std::ofstream out(path);
+        out << emitted.dyd;
+    }
+
+    ECS::World world;
+    ECS::Entity entity = world.create("Translate3D");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(1, 0, 0);
+    entity.getOrAdd<ECS::MeshFilterComponent>();
+
+    DryadHost host;
+    host.setWorld(&world);
+    REQUIRE(host.load(path));
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f));
+    const auto* position = entity.get<ECS::Position3D>();
+    REQUIRE(position != nullptr);
+    REQUIRE(position->position.x == 1.5f);
+    REQUIRE(position->position.y == 1.0f);
+    REQUIRE(position->position.z == 0.0f);
+
+    std::remove(path.c_str());
+}
+
+TEST_CASE("DeltaTime wires into Translate and round-trips", "[dryad][nodes]") {
+    NodeGraph graph;
+    graph.scriptFileName = "motion.dyd";
+    graph.nodes = {
+        {"m1", NodeKind::OnUpdate, 0, 0},
+        {"m2", NodeKind::Translate, 200, 0},
+        {"m3", NodeKind::DeltaTime, 40, 100},
+    };
+    graph.edges = {
+        {"m1.out", "m2.in"},
+        {"m3.value", "m2.y"},
+    };
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("caffeine_translate(entity, 0, dt, 0);") != std::string::npos);
+
+    const ImportResult imported = importFromDyd(emitted.dyd, graph.scriptFileName, &graph);
+    REQUIRE(imported.status == ImportStatus::Success);
+    int deltaTimeNodes = 0;
+    for (const auto& node : imported.graph.nodes) {
+        if (node.kind == NodeKind::DeltaTime) ++deltaTimeNodes;
+    }
+    REQUIRE(deltaTimeNodes == 1);
+
+    const EmitResult again = NodeEmitter::emit(imported.graph);
+    REQUIRE(again.ok);
+    REQUIRE(again.dyd == emitted.dyd);
 }
 
 #endif

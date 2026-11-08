@@ -231,6 +231,34 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
                 }
                 m_context->endUndo(*m_world);
             }
+
+            // Dropping a script attaches it to the entity. A .dyd also opens
+            // the node canvas so the graph is one click away.
+            const std::filesystem::path droppedPath(asset->path);
+            const std::string extension = droppedPath.extension().string();
+            if (extension == ".lua" || extension == ".dyd") {
+                std::filesystem::path stored = droppedPath;
+                if (!m_context->projectRootPath.empty() && droppedPath.is_absolute()) {
+                    const std::filesystem::path relative =
+                        droppedPath.lexically_relative(m_context->projectRootPath);
+                    if (!relative.empty() && relative.native().rfind("..", 0) != 0) {
+                        stored = relative;
+                    }
+                }
+                m_context->beginUndo(EditorCommand::SetField, entity.id(), *m_world);
+                if (auto* script = m_world->get<Script::ScriptComponent>(entity)) {
+                    script->scriptPath = stored.generic_string();
+                } else {
+                    Script::ScriptComponent component;
+                    component.scriptPath = stored.generic_string();
+                    m_world->add<Script::ScriptComponent>(entity, component);
+                }
+                m_context->markDirty();
+                m_context->endUndo(*m_world);
+                if (extension == ".dyd") {
+                    m_context->dryadToOpen = stored.generic_string();
+                }
+            }
         } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
             ECS::Entity dragged(*(u32*)payload->Data, m_world);
             if (dragged != entity) {

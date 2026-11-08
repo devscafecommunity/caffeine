@@ -42,6 +42,7 @@
 #include "terrain/TerrainGpuTextures.hpp"
 #include "math/Quat.hpp"
 #include "script/CppScript.hpp"
+#include "script/DryadHost.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
@@ -616,16 +617,34 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
             std::filesystem::path dropped(static_cast<const char*>(payload->Data));
-            if (dropped.extension() == ".lua") {
-                sc->scriptPath = dropped.string();
+            const std::string extension = dropped.extension().string();
+            if (extension == ".lua" || extension == ".dyd") {
+                std::filesystem::path stored = dropped;
+                const std::filesystem::path root = resolveProjectRoot(ctx);
+                if (!root.empty() && dropped.is_absolute()) {
+                    const std::filesystem::path relative = dropped.lexically_relative(root);
+                    if (!relative.empty() && relative.native().rfind("..", 0) != 0) {
+                        stored = relative;
+                    }
+                }
+                sc->scriptPath = stored.generic_string();
                 std::strncpy(pathBuf, sc->scriptPath.c_str(), sizeof(pathBuf) - 1);
                 pathBuf[sizeof(pathBuf) - 1] = 0;
+                ctx.markDirty();
             }
         }
         ImGui::EndDragDropTarget();
     }
+    const bool dryadScript = Script::isDryadScriptPath(sc->scriptPath);
     ImGui::SameLine();
-    if (ImGui::Button("Load")) {
+    if (dryadScript) {
+        if (ImGui::Button("Open Node Editor")) {
+            ctx.dryadToOpen = sc->scriptPath;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open this graph in the Dryad Node Script panel");
+        }
+    } else if (ImGui::Button("Load")) {
         if (ctx.scriptEngine) {
             std::string err;
             bool ok = ctx.scriptEngine->loadScript(sc->scriptPath, &err);
@@ -639,7 +658,7 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
         ImGui::TextWrapped("%s", lastError.c_str());
         ImGui::PopStyleColor();
     }
-    if (ctx.scriptEngine && !sc->scriptPath.empty()) {
+    if (!dryadScript && ctx.scriptEngine && !sc->scriptPath.empty()) {
         if (!ctx.scriptEngine->isLoaded(sc->scriptPath)) {
             std::string err;
             ctx.scriptEngine->loadScript(sc->scriptPath, &err);
@@ -671,6 +690,18 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
                 }
                 ImGui::PopID();
             }
+        }
+    }
+    if (dryadScript) {
+        UIKit::TextMuted("Dryad runs the .dyd in play mode. Press Play to execute it.");
+        const std::filesystem::path root = resolveProjectRoot(ctx);
+        const std::filesystem::path resolved =
+            std::filesystem::path(sc->scriptPath).is_absolute() || root.empty()
+                ? std::filesystem::path(sc->scriptPath)
+                : root / sc->scriptPath;
+        if (!std::filesystem::exists(resolved) &&
+            !std::filesystem::exists(sc->scriptPath)) {
+            UIKit::TextDanger("Script file not found.");
         }
     }
 #else

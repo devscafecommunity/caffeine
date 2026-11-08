@@ -6,7 +6,9 @@ const char* nodeKindToTypeName(NodeKind kind) {
     switch (kind) {
     case NodeKind::OnUpdate: return "OnUpdate";
     case NodeKind::GetPosition: return "GetPosition";
+    case NodeKind::DeltaTime: return "DeltaTime";
     case NodeKind::SetPosition: return "SetPosition";
+    case NodeKind::Translate: return "Translate";
     case NodeKind::Constant: return "Constant";
     case NodeKind::Branch: return "Branch";
     }
@@ -22,8 +24,16 @@ bool nodeKindFromTypeName(const std::string& name, NodeKind& out) {
         out = NodeKind::GetPosition;
         return true;
     }
+    if (name == "DeltaTime") {
+        out = NodeKind::DeltaTime;
+        return true;
+    }
     if (name == "SetPosition") {
         out = NodeKind::SetPosition;
+        return true;
+    }
+    if (name == "Translate") {
+        out = NodeKind::Translate;
         return true;
     }
     if (name == "Constant") {

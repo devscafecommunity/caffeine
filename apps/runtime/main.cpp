@@ -470,6 +470,9 @@ int main(int argc, char** argv) {
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
     Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
+    if (!config.RootPath.empty()) {
+        scriptSystem.setProjectRoot(config.RootPath.string());
+    }
     if (scriptsReady) {
         scriptSystem.resetPlayState();
         eventBus.subscribe<Caffeine::Events::OnCollision2D>(

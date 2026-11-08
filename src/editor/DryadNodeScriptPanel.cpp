@@ -3,11 +3,14 @@
 
 #if defined(CF_HAS_IMGUI) && defined(CF_HAS_DRYAD)
 
+#include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
+#include "script/ScriptTypes.hpp"
 #include "script/nodes/NodeEmitter.hpp"
 #include "script/nodes/NodeGraphIO.hpp"
 #include "script/nodes/NodeRoundTrip.hpp"
 
+#include <algorithm>
 #include <fstream>
 
 #include <imgui.h>
@@ -30,6 +33,14 @@ enum PinSlot : int {
     SetPosition_Y = 12,
     SetPosition_Z = 13,
     SetPosition_Out = 14,
+
+    Translate_In = 50,
+    Translate_X = 51,
+    Translate_Y = 52,
+    Translate_Z = 53,
+    Translate_Out = 54,
+
+    DeltaTime_Value = 60,
 
     GetPosition_X = 20,
     GetPosition_Y = 21,
@@ -70,6 +81,12 @@ const char* pinName(PinSlot slot) {
     case SetPosition_Y: return "y";
     case SetPosition_Z: return "z";
     case SetPosition_Out: return "out";
+    case Translate_In: return "in";
+    case Translate_X: return "x";
+    case Translate_Y: return "y";
+    case Translate_Z: return "z";
+    case Translate_Out: return "out";
+    case DeltaTime_Value: return "value";
     case GetPosition_X: return "x";
     case GetPosition_Y: return "y";
     case GetPosition_Z: return "z";
@@ -87,6 +104,7 @@ bool isExecOutputPin(NodeKind kind, PinSlot slot) {
     switch (kind) {
     case NodeKind::OnUpdate: return slot == OnUpdate_Out;
     case NodeKind::SetPosition: return slot == SetPosition_Out;
+    case NodeKind::Translate: return slot == Translate_Out;
     case NodeKind::GetPosition:
     case NodeKind::Constant: return false;
     case NodeKind::Branch:
@@ -99,6 +117,7 @@ bool isExecInputPin(NodeKind kind, PinSlot slot) {
     switch (kind) {
     case NodeKind::OnUpdate: return false;
     case NodeKind::SetPosition: return slot == SetPosition_In;
+    case NodeKind::Translate: return slot == Translate_In;
     case NodeKind::GetPosition:
     case NodeKind::Constant: return false;
     case NodeKind::Branch: return slot == Branch_In;
@@ -111,6 +130,7 @@ bool isDataOutputPin(NodeKind kind, PinSlot slot) {
     case NodeKind::GetPosition:
         return slot == GetPosition_X || slot == GetPosition_Y || slot == GetPosition_Z;
     case NodeKind::Constant: return slot == Constant_ValueOut;
+    case NodeKind::DeltaTime: return slot == DeltaTime_Value;
     default: return false;
     }
 }
@@ -119,6 +139,8 @@ bool isDataInputPin(NodeKind kind, PinSlot slot) {
     switch (kind) {
     case NodeKind::SetPosition:
         return slot == SetPosition_X || slot == SetPosition_Y || slot == SetPosition_Z;
+    case NodeKind::Translate:
+        return slot == Translate_X || slot == Translate_Y || slot == Translate_Z;
     case NodeKind::Branch: return slot == Branch_Condition;
     default: return false;
     }
@@ -156,19 +178,25 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         ImNodes::EndOutputAttribute();
         break;
     case NodeKind::SetPosition:
-        ImNodes::BeginInputAttribute(attrId(imId, SetPosition_In));
+    case NodeKind::Translate:
+        ImNodes::BeginInputAttribute(attrId(
+            imId, node.kind == NodeKind::Translate ? Translate_In : SetPosition_In));
         ImGui::TextUnformatted("in");
         ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(imId, SetPosition_X));
+        ImNodes::BeginInputAttribute(attrId(
+            imId, node.kind == NodeKind::Translate ? Translate_X : SetPosition_X));
         ImGui::TextUnformatted("x");
         ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(imId, SetPosition_Y));
+        ImNodes::BeginInputAttribute(attrId(
+            imId, node.kind == NodeKind::Translate ? Translate_Y : SetPosition_Y));
         ImGui::TextUnformatted("y");
         ImNodes::EndInputAttribute();
-        ImNodes::BeginInputAttribute(attrId(imId, SetPosition_Z));
+        ImNodes::BeginInputAttribute(attrId(
+            imId, node.kind == NodeKind::Translate ? Translate_Z : SetPosition_Z));
         ImGui::TextUnformatted("z");
         ImNodes::EndInputAttribute();
-        ImNodes::BeginOutputAttribute(attrId(imId, SetPosition_Out));
+        ImNodes::BeginOutputAttribute(attrId(
+            imId, node.kind == NodeKind::Translate ? Translate_Out : SetPosition_Out));
         ImGui::TextUnformatted("out");
         ImNodes::EndOutputAttribute();
         break;
@@ -181,6 +209,11 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         ImNodes::EndOutputAttribute();
         ImNodes::BeginOutputAttribute(attrId(imId, GetPosition_Z));
         ImGui::TextUnformatted("z");
+        ImNodes::EndOutputAttribute();
+        break;
+    case NodeKind::DeltaTime:
+        ImNodes::BeginOutputAttribute(attrId(imId, DeltaTime_Value));
+        ImGui::TextUnformatted("dt");
         ImNodes::EndOutputAttribute();
         break;
     case NodeKind::Constant: {
@@ -248,6 +281,36 @@ void DryadNodeScriptPanel::ensureImNodesReady() {
     if (!m_nodesContext) {
         m_nodesContext = ImNodes::EditorContextCreate();
     }
+}
+
+static std::filesystem::path projectRootFor(const EditorContext& ctx) {
+    if (!ctx.projectRootPath.empty()) return ctx.projectRootPath;
+    if (!ctx.currentScenePath.empty()) {
+        const std::filesystem::path sceneDir =
+            std::filesystem::path(ctx.currentScenePath).parent_path();
+        const std::filesystem::path root = sceneDir.parent_path();
+        return root.empty() ? sceneDir : root;
+    }
+    return std::filesystem::current_path();
+}
+
+std::string runtimePathFor(const std::filesystem::path& scriptPath,
+                           const EditorContext& ctx) {
+    const std::filesystem::path root = projectRootFor(ctx);
+    if (scriptPath.empty() || root.empty()) return scriptPath.generic_string();
+    std::error_code ec;
+    const std::filesystem::path absoluteScript =
+        scriptPath.is_absolute() ? scriptPath : root / scriptPath;
+    const std::filesystem::path canonicalScript =
+        std::filesystem::weakly_canonical(absoluteScript, ec);
+    if (ec) return scriptPath.generic_string();
+    const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(root, ec);
+    if (ec) return scriptPath.generic_string();
+    const std::filesystem::path relative = canonicalScript.lexically_relative(canonicalRoot);
+    if (relative.empty() || relative.native().rfind("..", 0) == 0) {
+        return canonicalScript.string();
+    }
+    return relative.generic_string();
 }
 
 static std::string readTextFile(const std::filesystem::path& path) {
@@ -408,8 +471,145 @@ void DryadNodeScriptPanel::addNode(const char* typeName) {
     commitToDisk();
 }
 
+void DryadNodeScriptPanel::addMotionExample() {
+    GraphNode* onUpdate = nullptr;
+    for (auto& node : m_graph.nodes) {
+        if (node.kind == NodeKind::OnUpdate) {
+            onUpdate = &node;
+            break;
+        }
+    }
+    if (!onUpdate) {
+        GraphNode node;
+        node.id = "n" + std::to_string(m_nextNodeSerial++);
+        node.kind = NodeKind::OnUpdate;
+        node.x = 40.0f;
+        node.y = 40.0f;
+        m_graph.nodes.push_back(node);
+        onUpdate = &m_graph.nodes.back();
+    }
+
+    const float baseX = onUpdate->x + 220.0f;
+    const float baseY = onUpdate->y;
+
+    GraphNode delta;
+    delta.id = "n" + std::to_string(m_nextNodeSerial++);
+    delta.kind = NodeKind::DeltaTime;
+    delta.x = baseX - 140.0f;
+    delta.y = baseY + 110.0f;
+
+    GraphNode translate;
+    translate.id = "n" + std::to_string(m_nextNodeSerial++);
+    translate.kind = NodeKind::Translate;
+    translate.x = baseX;
+    translate.y = baseY;
+
+    const std::string onUpdateOut = onUpdate->id + ".out";
+    m_graph.nodes.push_back(delta);
+    m_graph.nodes.push_back(translate);
+    m_graph.edges.push_back({onUpdateOut, translate.id + ".in"});
+    m_graph.edges.push_back({delta.id + ".value", translate.id + ".y"});
+    m_pendingGraphSync = true;
+    commitToDisk();
+    m_status = "Added a motion example: OnUpdate -> Translate by dt on Y.";
+}
+
+void DryadNodeScriptPanel::drawRuntimeControls(EditorContext& ctx) {
+#ifdef CF_HAS_DRYAD
+    const std::string runtimePath = runtimePathFor(m_scriptPath, ctx);
+    ECS::World* world = ctx.activeWorld;
+    const bool hasEntity = world != nullptr && ctx.selectedEntity.isValid();
+
+    bool attached = false;
+    bool runningInPlay = ctx.isPlayMode;
+    if (hasEntity) {
+        if (auto* script = world->get<Script::ScriptComponent>(ctx.selectedEntity)) {
+            attached = script->scriptPath == runtimePath ||
+                       std::filesystem::path(script->scriptPath).filename() ==
+                           m_scriptPath.filename();
+        }
+    }
+
+    if (UIKit::ToolbarButton(attached ? "Attached" : "Attach to selected",
+                             attached
+                                 ? "This script is on the selected entity"
+                                 : "Add a Script component with this .dyd to the selected entity",
+                             attached)) {
+        if (!hasEntity) {
+            m_status = "Select an entity in the Hierarchy first.";
+        } else {
+            if (auto* script = world->get<Script::ScriptComponent>(ctx.selectedEntity)) {
+                script->scriptPath = runtimePath;
+            } else {
+                Script::ScriptComponent component;
+                component.scriptPath = runtimePath;
+                world->add<Script::ScriptComponent>(ctx.selectedEntity, component);
+            }
+            ctx.markDirty();
+            m_status = "Attached " + m_scriptPath.filename().string() + " to the selected entity.";
+        }
+    }
+    ImGui::SameLine();
+    if (UIKit::ToolbarButton("Run once", "Run onCreate and one onUpdate on the selected entity")) {
+        if (!hasEntity) {
+            m_status = "Select an entity in the Hierarchy first.";
+        } else {
+            m_previewHost.setWorld(world);
+            m_previewHost.setSearchRoot(projectRootFor(ctx).string());
+            std::string err;
+            if (!m_previewHost.load(m_scriptPath.string(), &err)) {
+                m_status = "Dryad error: " + err;
+            } else {
+                m_previewLoaded = true;
+                if (!m_previewHost.call(m_scriptPath.string(), "onCreate",
+                                        ctx.selectedEntity, 0.0f, &err)) {
+                    m_status = "onCreate error: " + err;
+                } else if (!m_previewHost.call(m_scriptPath.string(), "onUpdate",
+                                               ctx.selectedEntity, 1.0f / 60.0f, &err)) {
+                    m_status = "onUpdate error: " + err;
+                } else {
+                    m_status = "Ran onUpdate once on the selected entity.";
+                }
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (attached) {
+        if (runningInPlay) {
+            UIKit::TextMuted("Play mode is running this script.");
+        } else {
+            UIKit::TextMuted("Press Play to run it every frame.");
+        }
+    } else if (hasEntity) {
+        UIKit::TextMuted("Not attached to the selected entity.");
+    } else {
+        UIKit::TextMuted("Select an entity, then Attach.");
+    }
+
+    bool hasOnUpdate = false;
+    bool onUpdateWired = false;
+    for (const auto& node : m_graph.nodes) {
+        if (node.kind != NodeKind::OnUpdate) continue;
+        hasOnUpdate = true;
+        const std::string source = node.id + ".out";
+        for (const auto& edge : m_graph.edges) {
+            if (edge.from == source) {
+                onUpdateWired = true;
+                break;
+            }
+        }
+    }
+    if (!hasOnUpdate) {
+        UIKit::TextDanger("No OnUpdate node: play mode will do nothing.");
+    } else if (!onUpdateWired) {
+        UIKit::TextMuted("OnUpdate has no outgoing exec link, so the graph does nothing yet.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Add motion example")) addMotionExample();
+    }
+#endif
+}
+
 void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
-    (void)ctx;
     if (!m_open) return;
     ensureImNodesReady();
 
@@ -430,7 +630,11 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     ImGui::SameLine();
     if (ImGui::Button("SetPosition")) addNode("SetPosition");
     ImGui::SameLine();
+    if (ImGui::Button("Translate")) addNode("Translate");
+    ImGui::SameLine();
     if (ImGui::Button("GetPosition")) addNode("GetPosition");
+    ImGui::SameLine();
+    if (ImGui::Button("DeltaTime")) addNode("DeltaTime");
     ImGui::SameLine();
     if (ImGui::Button("Constant")) addNode("Constant");
     ImGui::SameLine();
@@ -444,6 +648,8 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
         ImGui::SameLine();
         ImGui::TextWrapped("%s", m_status.c_str());
     }
+
+    drawRuntimeControls(ctx);
 
     ImNodes::EditorContextSet(m_nodesContext);
     ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
@@ -502,6 +708,28 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
                     return true;
                 }
             }
+            if (kind == NodeKind::Translate) {
+                if (pin == "in") {
+                    out = Translate_In;
+                    return true;
+                }
+                if (pin == "x") {
+                    out = Translate_X;
+                    return true;
+                }
+                if (pin == "y") {
+                    out = Translate_Y;
+                    return true;
+                }
+                if (pin == "z") {
+                    out = Translate_Z;
+                    return true;
+                }
+                if (pin == "out") {
+                    out = Translate_Out;
+                    return true;
+                }
+            }
             if (kind == NodeKind::GetPosition) {
                 if (pin == "x") {
                     out = GetPosition_X;
@@ -515,6 +743,10 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
                     out = GetPosition_Z;
                     return true;
                 }
+            }
+            if (kind == NodeKind::DeltaTime && pin == "value") {
+                out = DeltaTime_Value;
+                return true;
             }
             if (kind == NodeKind::Constant && pin == "value") {
                 out = Constant_ValueOut;
