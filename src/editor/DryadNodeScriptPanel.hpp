@@ -49,7 +49,6 @@ private:
 #ifdef CF_HAS_DRYAD
     Script::Nodes::NodeGraph m_graph;
     Script::DryadHost m_previewHost;
-    bool m_previewLoaded = false;
 #endif
 
     void rebuildImNodesFromGraph();
@@ -59,7 +58,6 @@ private:
     void syncFromDydSource();
     void drawRuntimeControls(EditorContext& ctx);
     void addMotionExample();
-    std::string runtimePathForComponent(const EditorContext& ctx) const;
 };
 
 } // namespace Caffeine::Editor

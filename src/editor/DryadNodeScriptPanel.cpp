@@ -560,7 +560,6 @@ void DryadNodeScriptPanel::drawRuntimeControls(EditorContext& ctx) {
             if (!m_previewHost.load(m_scriptPath.string(), &err)) {
                 m_status = "Dryad error: " + err;
             } else {
-                m_previewLoaded = true;
                 if (!m_previewHost.call(m_scriptPath.string(), "onCreate",
                                         ctx.selectedEntity, 0.0f, &err)) {
                     m_status = "onCreate error: " + err;
@@ -568,6 +567,7 @@ void DryadNodeScriptPanel::drawRuntimeControls(EditorContext& ctx) {
                                                ctx.selectedEntity, 1.0f / 60.0f, &err)) {
                     m_status = "onUpdate error: " + err;
                 } else {
+                    ctx.markDirty();
                     m_status = "Ran onUpdate once on the selected entity.";
                 }
             }
