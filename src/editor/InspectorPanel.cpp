@@ -1302,6 +1302,11 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
     if (ImGui::SliderFloat("Shininess", &terrain->shininess, 1.0f, 128.0f)) {
         ctx.markDirty();
     }
+    float tint[3] = {terrain->tint.x, terrain->tint.y, terrain->tint.z};
+    if (ImGui::ColorEdit3("Tint", tint)) {
+        terrain->tint = Vec3(tint[0], tint[1], tint[2]);
+        ctx.markDirty();
+    }
     if (ImGui::InputText("Albedo Texture", terrain->texturePath, sizeof(terrain->texturePath))) {
         Terrain::TerrainCache::instance().repairTexturePaths(*terrain);
         Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);

@@ -10,6 +10,7 @@
 #include "core/WorldUnits.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace Caffeine::Terrain {
@@ -21,6 +22,41 @@ void copyPath(char* dest, size_t destSize, const std::string& path) {
     dest[destSize - 1] = '\0';
 }
 
+constexpr const char* kDefaultTexture =
+    "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_Color.jpg";
+constexpr const char* kDefaultNormal =
+    "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_NormalGL.jpg";
+constexpr const char* kLegacyLayers[ECS::kTerrainSplatLayerCount] = {
+    "kenney_prototype-textures/PNG/Green/texture_07.png",
+    "kenney_prototype-textures/PNG/Dark/texture_07.png",
+    "kenney_prototype-textures/PNG/Orange/texture_07.png",
+    "kenney_prototype-textures/PNG/Light/texture_07.png",
+};
+constexpr const char* kDefaultLayers[ECS::kTerrainSplatLayerCount] = {
+    "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_Color.jpg",
+    "hdr-assets-texture/Ground108_1K-JPG-dirt-with-rocks/Ground108_1K-JPG_Color.jpg",
+    "hdr-assets-texture/Ground079L_1K-JPG-dirt/Ground079L_1K-JPG_Color.jpg",
+    "hdr-assets-texture/Ground051_1K-JPG-mud/Ground051_1K-JPG_Color.jpg",
+};
+
+bool hasLegacyKenneyLayerSet(const ECS::TerrainComponent& terrain) {
+    for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+        if (std::strcmp(terrain.splatLayerPaths[i], kLegacyLayers[i]) != 0) return false;
+    }
+    return true;
+}
+
+bool isUniformLayer3(const TerrainSplatmap& splatmap) {
+    if (splatmap.empty()) return false;
+    for (const Vec4& weights : splatmap.weights()) {
+        if (std::abs(weights.x) > 1e-4f || std::abs(weights.y) > 1e-4f ||
+            std::abs(weights.z) > 1e-4f || std::abs(weights.w - 1.0f) > 1e-4f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 void TerrainCache::repairTexturePaths(ECS::TerrainComponent& terrain) {
@@ -29,6 +65,17 @@ void TerrainCache::repairTexturePaths(ECS::TerrainComponent& terrain) {
     for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
         copyPath(terrain.splatLayerPaths[i], sizeof(terrain.splatLayerPaths[i]),
                  Assets::MeshCache::normalizeTexturePath(terrain.splatLayerPaths[i]));
+    }
+
+    if (hasLegacyKenneyLayerSet(terrain)) {
+        copyPath(terrain.texturePath, sizeof(terrain.texturePath), kDefaultTexture);
+        if (terrain.normalMapPath[0] == '\0') {
+            copyPath(terrain.normalMapPath, sizeof(terrain.normalMapPath), kDefaultNormal);
+        }
+        for (u32 i = 0; i < ECS::kTerrainSplatLayerCount; ++i) {
+            copyPath(terrain.splatLayerPaths[i], sizeof(terrain.splatLayerPaths[i]),
+                     kDefaultLayers[i]);
+        }
     }
 }
 
@@ -46,7 +93,7 @@ void TerrainCache::syncTextureToFilter(ECS::World& world, ECS::Entity entity,
     auto* filter = world.get<ECS::MeshFilterComponent>(entity);
     if (!filter) return;
     if (terrain.useSplatmap) {
-        filter->customTexturePath = terrain.splatLayerPaths[ECS::kTerrainSplatLayerCount - 1];
+        filter->customTexturePath = terrain.splatLayerPaths[0];
     } else {
         filter->customTexturePath = terrain.texturePath;
     }
@@ -70,7 +117,7 @@ void TerrainCache::initializeEntity(ECS::World& world, ECS::Entity entity) {
     entry.heightmap.resize(terrain->resolutionX, terrain->resolutionZ);
     entry.heightmap.fill(0.0f);
     entry.splatmap.resize(splatResolutionX(*terrain), splatResolutionZ(*terrain));
-    entry.splatmap.fillLayer(3, 1.0f);
+    entry.splatmap.fillLayer(0, 1.0f);
     terrain->dataRevision = 1;
     terrain->meshRevision = 0;
     terrain->splatRevision = 1;
@@ -216,7 +263,7 @@ void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
         const bool resample = !entry.splatmap.empty();
         entry.splatmap.resize(targetSplatX, targetSplatZ, resample);
         if (!resample) {
-            entry.splatmap.fillLayer(3, 1.0f);
+            entry.splatmap.fillLayer(0, 1.0f);
         }
         terrain->splatRevision++;
         resolutionChanged = true;
@@ -307,11 +354,54 @@ bool TerrainCache::saveTerrainFile(ECS::Entity entity, const std::filesystem::pa
 bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
                                    ECS::TerrainComponent& terrain,
                                    const std::filesystem::path& path) {
+    const bool legacyLayerSet = hasLegacyKenneyLayerSet(terrain);
+    repairTexturePaths(terrain);
     TerrainEntry& entry = ensureEntry(entity);
     bool hadSplat = false;
     if (!TerrainSerializer::load(path, entry.heightmap, entry.splatmap, &hadSplat)) {
         return false;
     }
+
+    terrain.resolutionX = entry.heightmap.resolutionX();
+    terrain.resolutionZ = entry.heightmap.resolutionZ();
+    terrain.splatResolutionScale =
+        inferSplatResolutionScale(terrain.resolutionX, entry.splatmap.resolutionX());
+    // Scenes authored before the grass default stored an unpainted splatmap as
+    // layer 3 (the old Light prototype texture). Migrate that uniform state so
+    // existing terrains stop rendering as white checkerboards.
+    if (legacyLayerSet && terrain.useSplatmap && isUniformLayer3(entry.splatmap)) {
+        entry.splatmap.fillLayer(0, 1.0f);
+        copyPath(terrain.texturePath, sizeof(terrain.texturePath), kDefaultTexture);
+    }
+    terrain.dataRevision++;
+    terrain.splatRevision++;
+    rebuildMesh(entity, entry, terrain);
+
+    if (!world.has<ECS::MeshFilterComponent>(entity)) {
+        ECS::MeshFilterComponent filter;
+        filter.primitive = ECS::MeshPrimitive::Custom;
+        world.add<ECS::MeshFilterComponent>(entity, filter);
+    }
+    if (!world.has<ECS::MeshRendererComponent>(entity)) {
+        ECS::MeshRendererComponent renderer;
+        renderer.castShadows = terrain.castShadows;
+        renderer.receiveShadows = terrain.receiveShadows;
+        world.add<ECS::MeshRendererComponent>(entity, renderer);
+    }
+
+    syncTextureToFilter(world, entity, terrain);
+    return true;
+}
+
+void TerrainCache::restoreSnapshot(ECS::World& world, ECS::Entity entity,
+                                    ECS::TerrainComponent& terrain,
+                                    const TerrainHeightmap& heightmap,
+                                    const TerrainSplatmap& splatmap) {
+    if (heightmap.empty()) return;
+
+    TerrainEntry& entry = ensureEntry(entity);
+    entry.heightmap = heightmap;
+    entry.splatmap = splatmap;
 
     terrain.resolutionX = entry.heightmap.resolutionX();
     terrain.resolutionZ = entry.heightmap.resolutionZ();
@@ -332,9 +422,7 @@ bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
         renderer.receiveShadows = terrain.receiveShadows;
         world.add<ECS::MeshRendererComponent>(entity, renderer);
     }
-
     syncTextureToFilter(world, entity, terrain);
-    return true;
 }
 
 void TerrainCache::gatherDrawMeshes(ECS::Entity entity,

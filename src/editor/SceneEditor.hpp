@@ -26,6 +26,7 @@
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/PhotonPanel.hpp"
+#include "editor/TerrainPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
 #if defined(CF_HAS_DRYAD)
 #include "editor/DryadNodeScriptPanel.hpp"
@@ -188,6 +189,7 @@ private:
     BuildDialog m_buildDialog;
     SettingsPanel m_settingsPanel;
     PhotonPanel m_photonPanel;
+    TerrainPanel m_terrainPanel;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;

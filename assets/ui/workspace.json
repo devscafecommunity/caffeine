@@ -52,6 +52,6 @@
   "assignments": {
     "core.build_run": "bottom",
     "core.plugin_manager": "bottom",
-    "plugin.terrain.editor": "bottom"
+    "terrain.editor": "bottom"
   }
 }

@@ -29,6 +29,7 @@ set(CAFFEINE_TEST_SOURCES
     test_navigation.cpp
     test_effects.cpp
     test_mesh.cpp
+    test_terrain.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
     test_pipeline.cpp
@@ -71,6 +72,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/ComponentRegistry.cpp
     ../src/editor/SceneEditor.cpp
     ../src/editor/PhotonPanel.cpp
+    ../src/editor/TerrainPanel.cpp
     ../src/editor/ImageManagerPanel.cpp
     ../src/editor/HudEditorPanel.cpp
     ../src/editor/ParticleEditorPanel.cpp
@@ -182,6 +184,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_assetbrowser.cpp
           test_editor_ui/test_photon_bake.cpp
           test_editor_ui/test_photon_panel.cpp
+          test_editor_ui/test_terrain_panel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
@@ -193,6 +196,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/PhotonPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TerrainPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ImageManagerPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/HudEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp

@@ -261,6 +261,9 @@ private:
     bool m_boxSelecting = false;
     Vec3 m_terrainBrushHitWorld{};
     bool m_terrainBrushHitValid = false;
+    Vec3 m_terrainPreviousHitWorld{};
+    bool m_terrainPreviousHitValid = false;
+    f32 m_terrainFlattenTarget = -1.0f;
     Terrain::TerrainCullStats m_terrainCullStats{};
     std::vector<Terrain::TerrainDrawChunk> m_terrainDrawChunks;
     int  m_hoveredAxis   = 0;

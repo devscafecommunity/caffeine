@@ -1581,6 +1581,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.castShadows = terrain->castShadows;
                 draw.receiveShadows = terrain->receiveShadows;
                 draw.shininess = terrain->shininess;
+                draw.albedo = Vec4(terrain->tint.x, terrain->tint.y, terrain->tint.z, 1.0f);
                 draw.roughness = 1.0f;
                 if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
                     draw.receiveShadows = renderer->receiveShadows;

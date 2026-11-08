@@ -87,6 +87,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
     m_commandPalette.registerCommand("panel_photon", "Photon GI", "Rendering", [this]() {
         UIKit::PanelRegistry::instance().open("photon.gi");
     });
+    m_commandPalette.registerCommand("panel_terrain", "Terrain Editor", "World", [this]() {
+        UIKit::PanelRegistry::instance().open("terrain.editor");
+    });
     m_commandPalette.registerCommand("panel_hierarchy", "Hierarchy Panel", "Scene", [this]() {
         m_hierarchy.open();
     });
@@ -1184,6 +1187,9 @@ void SceneEditor::renderMainMenuBar(ECS::World& world) {
             if (ImGui::MenuItem("Photon Global Illumination")) {
                 UIKit::PanelRegistry::instance().open("photon.gi");
             }
+            if (ImGui::MenuItem("Terrain Editor")) {
+                UIKit::PanelRegistry::instance().open("terrain.editor");
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Reload UI theme", "F5")) {
                 EditorTheme::apply({EditorTheme::darkMode(), EditorTheme::fontSize()});
@@ -1776,6 +1782,13 @@ void SceneEditor::registerPanels() {
         },
         [this] { m_photonPanel.open(); }, [this] { m_photonPanel.close(); },
         [this] { return m_photonPanel.isOpen(); }, "Rendering", 10, false);
+
+    add("terrain.editor", "Terrain", EditorIcon::Viewport, UIKit::DockArea::Bottom,
+        [this] {
+            if (auto* world = m_tabManager.activeWorld()) m_terrainPanel.render(*world, m_ctx);
+        },
+        [this] { m_terrainPanel.open(); }, [this] { m_terrainPanel.close(); },
+        [this] { return m_terrainPanel.isOpen(); }, "World", 20, true);
 
     add("core.material_editor", "Material Editor", EditorIcon::Assets, UIKit::DockArea::Bottom,
         [this] {

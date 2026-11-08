@@ -1,5 +1,6 @@
 #pragma once
 
+#include "caffeine/ui/PanelRegistry.hpp"
 #include "caffeine/ui/Widgets.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/SceneViewport.hpp"
@@ -131,6 +132,32 @@ public:
                         ImVec2(bw, 0))) {
                     ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Smooth;
                 }
+                ImGui::NewLine();
+                const float bw2 = segmentWidth(2);
+                if (UIKit::SegmentedButton(
+                        "Flatten",
+                        ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Flatten,
+                        ImVec2(bw2, 0))) {
+                    ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Flatten;
+                }
+                ImGui::SameLine();
+                if (UIKit::SegmentedButton(
+                        "Noise",
+                        ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Noise,
+                        ImVec2(bw2, 0))) {
+                    ctx.terrainBrushMode = EditorContext::TerrainBrushMode::Noise;
+                }
+            } else if (ctx.terrainEditMode == EditorContext::TerrainEditMode::Splat) {
+                static const char* kLayers[] = {"Grass", "Rock", "Sand", "Dirt"};
+                const float lw = segmentWidth(4);
+                for (int i = 0; i < 4; ++i) {
+                    if (UIKit::SegmentedButton(
+                            kLayers[i], ctx.terrainSplatLayer == static_cast<u32>(i),
+                            ImVec2(lw, 0))) {
+                        ctx.terrainSplatLayer = static_cast<u32>(i);
+                    }
+                    if (i < 3) ImGui::SameLine();
+                }
             }
 
             if (UIKit::BeginPropertyGrid("toolbox_terrain", 120.0f)) {
@@ -139,6 +166,10 @@ public:
                 UIKit::SliderFloatProperty("Strength", &ctx.terrainBrushStrength, 0.01f, 1.0f,
                                            "%.2f");
                 UIKit::EndPropertyGrid();
+            }
+            if (UIKit::ToolbarButton("Open Terrain Editor",
+                                     "Sculpt, paint, import and export terrain data")) {
+                UIKit::PanelRegistry::instance().open("terrain.editor");
             }
         }
 

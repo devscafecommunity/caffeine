@@ -27,6 +27,8 @@
 #include "scene/SceneComponents.hpp"
 #include "editor/TerrainGenerationBlobLegacy.hpp"
 #include "terrain/TerrainCache.hpp"
+#include "terrain/TerrainHeightmap.hpp"
+#include "terrain/TerrainSplatmap.hpp"
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
@@ -42,7 +44,18 @@ namespace IO = SceneSerializerIO;
 
 namespace {
 
-constexpr u32 kTerrainBlobVersion = 10;
+constexpr u32 kTerrainBlobVersion = 11;
+constexpr u32 kTerrainSnapshotMagic = 0x53465443;  // "CTFS"
+constexpr u32 kTerrainSnapshotVersion = 1;
+
+struct TerrainSnapshotData {
+    u32 heightResX = 0;
+    u32 heightResZ = 0;
+    std::vector<f32> heights;
+    u32 splatResX = 0;
+    u32 splatResZ = 0;
+    std::vector<Vec4> weights;
+};
 
 std::filesystem::path projectRootFromScenePath(const std::string& scenePath) {
     if (scenePath.empty()) return {};
@@ -610,6 +623,9 @@ std::vector<u8> SceneSerializer::serializeTerrainComponent(const ECS::TerrainCom
     appendU8(data, terrain.buildCollisionMesh ? 1 : 0);
     appendString(data, terrain.normalMapPath);
     appendF32(data, terrain.shininess);
+    appendF32(data, terrain.tint.x);
+    appendF32(data, terrain.tint.y);
+    appendF32(data, terrain.tint.z);
     return data;
 }
 
@@ -844,6 +860,11 @@ bool SceneSerializer::deserializeTerrainComponent(const u8* data, u32 size,
             return false;
         }
         if (!readF32(cursor, end, terrain.shininess)) return false;
+    }
+    if (blobVersion >= 11) {
+        if (!readF32(cursor, end, terrain.tint.x)) return false;
+        if (!readF32(cursor, end, terrain.tint.y)) return false;
+        if (!readF32(cursor, end, terrain.tint.z)) return false;
     }
 
     return cursor <= end;
@@ -1278,6 +1299,51 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
         }
     }
 
+    // In-memory snapshots (undo/redo) also need the heavy terrain data. Saved
+    // scenes keep it in .cterrain files instead, so only do this when the
+    // caller did not provide a scene path.
+    std::vector<u8> terrainTrailer;
+    if (filepath.empty()) {
+        std::vector<std::vector<u8>> snapshots;
+        auto& cache = Terrain::TerrainCache::instance();
+        ECS::ComponentQuery query;
+        query.with<ECS::TerrainComponent>();
+        m_world.forEach<ECS::TerrainComponent>(
+            query, [&](ECS::Entity entity, ECS::TerrainComponent&) {
+                Terrain::TerrainHeightmap* heightmap = cache.heightmapFor(entity);
+                if (!heightmap || heightmap->empty()) return;
+                Terrain::TerrainSplatmap* splatmap = cache.splatmapFor(entity);
+
+                std::vector<u8> blob;
+                appendU32(blob, entity.id());
+                appendU32(blob, heightmap->resolutionX());
+                appendU32(blob, heightmap->resolutionZ());
+                const auto& heights = heightmap->heights();
+                if (!heights.empty()) {
+                    const u8* bytes = reinterpret_cast<const u8*>(heights.data());
+                    blob.insert(blob.end(), bytes,
+                                bytes + heights.size() * sizeof(f32));
+                }
+                appendU32(blob, splatmap ? splatmap->resolutionX() : 0);
+                appendU32(blob, splatmap ? splatmap->resolutionZ() : 0);
+                if (splatmap && !splatmap->empty()) {
+                    const auto& weights = splatmap->weights();
+                    const u8* bytes = reinterpret_cast<const u8*>(weights.data());
+                    blob.insert(blob.end(), bytes,
+                                bytes + weights.size() * sizeof(Vec4));
+                }
+                snapshots.push_back(std::move(blob));
+            });
+        if (!snapshots.empty()) {
+            appendU32(terrainTrailer, kTerrainSnapshotMagic);
+            appendU32(terrainTrailer, kTerrainSnapshotVersion);
+            appendU32(terrainTrailer, static_cast<u32>(snapshots.size()));
+            for (const auto& snapshot : snapshots) {
+                terrainTrailer.insert(terrainTrailer.end(), snapshot.begin(), snapshot.end());
+            }
+        }
+    }
+
     auto push = [&](const void* d, u32 n) {
         const u8* p = static_cast<const u8*>(d);
         out.insert(out.end(), p, p + n);
@@ -1299,6 +1365,9 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
             push(&dataSize, 4);
             if (dataSize > 0) push(data.data(), dataSize);
         }
+    }
+    if (!terrainTrailer.empty()) {
+        out.insert(out.end(), terrainTrailer.begin(), terrainTrailer.end());
     }
     return true;
 }
@@ -1372,7 +1441,56 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
         }
     }
 
+    // Optional terrain data trailer used by in-memory undo/redo snapshots.
+    std::unordered_map<u32, TerrainSnapshotData> terrainSnapshots;
+    if (cursor + 12 <= buffer.size()) {
+        u32 magic = 0, version = 0, snapshotCount = 0;
+        memcpy(&magic, buffer.data() + cursor, 4); cursor += 4;
+        memcpy(&version, buffer.data() + cursor, 4); cursor += 4;
+        memcpy(&snapshotCount, buffer.data() + cursor, 4); cursor += 4;
+        if (magic == kTerrainSnapshotMagic && version == kTerrainSnapshotVersion) {
+            for (u32 i = 0; i < snapshotCount; ++i) {
+                if (cursor + 12 > buffer.size()) return false;
+                TerrainSnapshotData snapshot;
+                u32 eid = 0;
+                memcpy(&eid, buffer.data() + cursor, 4); cursor += 4;
+                memcpy(&snapshot.heightResX, buffer.data() + cursor, 4); cursor += 4;
+                memcpy(&snapshot.heightResZ, buffer.data() + cursor, 4); cursor += 4;
+                if (snapshot.heightResX < 2 || snapshot.heightResZ < 2) return false;
+                const usize heightCount =
+                    static_cast<usize>(snapshot.heightResX) * snapshot.heightResZ;
+                const usize heightBytes = heightCount * sizeof(f32);
+                if (cursor + heightBytes + 8 > buffer.size()) return false;
+                snapshot.heights.resize(heightCount);
+                memcpy(snapshot.heights.data(), buffer.data() + cursor, heightBytes);
+                cursor += heightBytes;
+                memcpy(&snapshot.splatResX, buffer.data() + cursor, 4); cursor += 4;
+                memcpy(&snapshot.splatResZ, buffer.data() + cursor, 4); cursor += 4;
+                if (snapshot.splatResX >= 2 && snapshot.splatResZ >= 2) {
+                    const usize splatCount =
+                        static_cast<usize>(snapshot.splatResX) * snapshot.splatResZ;
+                    const usize splatBytes = splatCount * sizeof(Vec4);
+                    if (cursor + splatBytes > buffer.size()) return false;
+                    snapshot.weights.resize(splatCount);
+                    memcpy(snapshot.weights.data(), buffer.data() + cursor, splatBytes);
+                    cursor += splatBytes;
+                }
+                terrainSnapshots[eid] = std::move(snapshot);
+            }
+        }
+    }
+
     // ── Pass 2: create entities with remap ────────────────────
+    {
+        // Drop terrain cache entries for the world being replaced so undo and
+        // scene reloads do not leak old height/splat buffers or GPU textures.
+        ECS::ComponentQuery terrainQuery;
+        terrainQuery.with<ECS::TerrainComponent>();
+        m_world.forEach<ECS::TerrainComponent>(
+            terrainQuery, [&](ECS::Entity entity, ECS::TerrainComponent&) {
+                Terrain::TerrainCache::instance().removeEntity(entity);
+            });
+    }
     m_world.destroyAll();
     std::unordered_map<u32, ECS::Entity> remap;
     remap.reserve(uniqueIds.size());
@@ -1770,9 +1888,26 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 m_world.add<Navigation::NavAgent>(e, std::move(agent));
                 break;
             }
-            case kTypeTerrain:
+            case kTypeTerrain: {
                 applyTerrainComponent(e, entry.data.data(), static_cast<u32>(entry.data.size()), filepath);
+                auto snapshotIt = terrainSnapshots.find(entry.eid);
+                if (snapshotIt != terrainSnapshots.end()) {
+                    if (auto* terrain = m_world.get<ECS::TerrainComponent>(e)) {
+                        const TerrainSnapshotData& snapshot = snapshotIt->second;
+                        Terrain::TerrainHeightmap heightmap(snapshot.heightResX, snapshot.heightResZ);
+                        std::copy(snapshot.heights.begin(), snapshot.heights.end(),
+                                  heightmap.heights().begin());
+                        Terrain::TerrainSplatmap splatmap(snapshot.splatResX, snapshot.splatResZ);
+                        if (!snapshot.weights.empty()) {
+                            std::copy(snapshot.weights.begin(), snapshot.weights.end(),
+                                      splatmap.weights().begin());
+                        }
+                        Terrain::TerrainCache::instance().restoreSnapshot(
+                            m_world, e, *terrain, heightmap, splatmap);
+                    }
+                }
                 break;
+            }
             default:
                 break;
         }
@@ -2353,7 +2488,6 @@ bool SceneSerializer::applyTerrainComponent(ECS::Entity e, const u8* data, u32 s
     auto* terrainComponent = m_world.get<ECS::TerrainComponent>(e);
     if (!terrainComponent) return false;
 
-    Terrain::TerrainCache::instance().repairTexturePaths(*terrainComponent);
     const std::filesystem::path projectRoot = projectRootFromScenePath(scenePath);
     auto& cache = Terrain::TerrainCache::instance();
     bool loaded = false;

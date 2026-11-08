@@ -19,7 +19,7 @@ Vec4 addLayerWeight(const Vec4& weights, u32 layer, f32 amount) {
     else result.w += amount;
 
     const f32 sum = result.x + result.y + result.z + result.w;
-    if (sum <= 1e-6f) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (sum <= 1e-6f) return Vec4(1.0f, 0.0f, 0.0f, 0.0f);
     return Vec4(result.x / sum, result.y / sum, result.z / sum, result.w / sum);
 }
 

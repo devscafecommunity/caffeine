@@ -564,6 +564,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/LayoutManager.cpp
           src/editor/SceneEditor.cpp
           src/editor/PhotonPanel.cpp
+          src/editor/TerrainPanel.cpp
           src/editor/SceneSerializer.cpp
           src/editor/DragDropSystem.cpp
           src/editor/SceneTabManager.cpp

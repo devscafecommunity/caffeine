@@ -2,6 +2,7 @@
 
 #include "core/Types.hpp"
 #include "core/WorldUnits.hpp"
+#include "math/Vec3.hpp"
 #include <cstring>
 
 namespace Caffeine::ECS {
@@ -21,17 +22,20 @@ struct TerrainComponent {
     bool castShadows = true;
     bool receiveShadows = true;
 
-    char texturePath[256] = "kenney_prototype-textures/PNG/Light/texture_07.png";
-    char normalMapPath[256] = {};
+    char texturePath[256] = "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_Color.jpg";
+    char normalMapPath[256] = "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_NormalGL.jpg";
     f32 textureTileSize = 8.0f;
     f32 shininess = 16.0f;
+    /// Multiplies the sampled splat/terrain albedo. White keeps the source
+    /// texture unchanged; use it to tint or darken a terrain.
+    Vec3 tint{1.0f, 1.0f, 1.0f};
 
     bool useSplatmap = true;
     char splatLayerPaths[kTerrainSplatLayerCount][256] = {
-        "kenney_prototype-textures/PNG/Green/texture_07.png",
-        "kenney_prototype-textures/PNG/Dark/texture_07.png",
-        "kenney_prototype-textures/PNG/Orange/texture_07.png",
-        "kenney_prototype-textures/PNG/Light/texture_07.png",
+        "hdr-assets-texture/Ground068_1K-JPG-dirt-rock-moss/Ground068_1K-JPG_Color.jpg",
+        "hdr-assets-texture/Ground108_1K-JPG-dirt-with-rocks/Ground108_1K-JPG_Color.jpg",
+        "hdr-assets-texture/Ground079L_1K-JPG-dirt/Ground079L_1K-JPG_Color.jpg",
+        "hdr-assets-texture/Ground051_1K-JPG-mud/Ground051_1K-JPG_Color.jpg",
     };
     f32 splatTileSize = 8.0f;
 

@@ -104,6 +104,9 @@ void PanelRegistry::renderAll() {
 
         const bool focus = m_pendingFocus == panel.id;
         if (focus) {
+            // Docked panels live in tabs. SetWindowFocus selects the tab as
+            // well as raising the window; SetNextWindowFocus alone does not.
+            ImGui::SetWindowFocus(panel.title.c_str());
             ImGui::SetNextWindowFocus();
             m_pendingFocus.clear();
         }

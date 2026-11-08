@@ -1366,6 +1366,7 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
         ImVec2 mousePos = ImGui::GetMousePos();
         const bool mouseInViewport = mousePos.x >= origin.x && mousePos.x <= origin.x + viewportSize.x &&
                                      mousePos.y >= origin.y && mousePos.y <= origin.y + viewportSize.y;
+        if (!mouseInViewport) m_terrainPreviousHitValid = false;
 
         if (mouseInViewport && (leftDown || hovered)) {
             const ViewportRay ray = computeViewportRay(ctx, origin, viewportSize, mousePos);
@@ -1383,7 +1384,32 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                         if (!m_terrainSculptDragging) {
                             ctx.beginUndo(EditorCommand::SetField, ctx.selectedEntity.id(), world);
                             m_terrainSculptDragging = true;
+                            m_terrainPreviousHitValid = false;
+                            m_terrainFlattenTarget = -1.0f;
+                            if (terrainSculptMode &&
+                                ctx.terrainBrushMode == EditorContext::TerrainBrushMode::Flatten) {
+                                const Mat4 inv = worldMatrix.inverted();
+                                const Vec3 local = inv.transformPoint(hitWorld);
+                                const f32 u = std::clamp(
+                                    (local.x + terrain->worldSizeX * 0.5f) /
+                                        std::max(terrain->worldSizeX, 0.0001f),
+                                    0.0f, 1.0f);
+                                const f32 v = std::clamp(
+                                    (local.z + terrain->worldSizeZ * 0.5f) /
+                                        std::max(terrain->worldSizeZ, 0.0001f),
+                                    0.0f, 1.0f);
+                                m_terrainFlattenTarget = heightmap->sampleBilinear(u, v);
+                            }
                         }
+
+                        const Vec3 startHit = m_terrainPreviousHitValid
+                                                  ? m_terrainPreviousHitWorld
+                                                  : hitWorld;
+                        const f32 travel = (hitWorld - startHit).length();
+                        const f32 spacing = std::max(ctx.terrainBrushRadius * 0.2f, 0.05f);
+                        const int steps = std::clamp(
+                            static_cast<int>(std::ceil(travel / spacing)), 1, 16);
+                        const f32 stepDelta = ImGui::GetIO().DeltaTime / static_cast<f32>(steps);
 
                         if (terrainSculptMode) {
                             Terrain::TerrainBrushSettings brush;
@@ -1401,13 +1427,32 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                             }
                             brush.radius = ctx.terrainBrushRadius;
                             brush.strength = ctx.terrainBrushStrength;
-                            Terrain::TerrainVertexBounds bounds;
-                            Terrain::TerrainSculptor::applyBrush(*heightmap, *terrain, worldMatrix, hitWorld,
-                                                                 brush, ImGui::GetIO().DeltaTime, &bounds);
-                            if (bounds.valid) {
+                            brush.targetHeight = m_terrainFlattenTarget;
+
+                            Terrain::TerrainVertexBounds combined;
+                            bool anyBounds = false;
+                            for (int step = 1; step <= steps; ++step) {
+                                const f32 t = static_cast<f32>(step) / static_cast<f32>(steps);
+                                const Vec3 center = startHit + (hitWorld - startHit) * t;
+                                Terrain::TerrainVertexBounds bounds;
+                                Terrain::TerrainSculptor::applyBrush(
+                                    *heightmap, *terrain, worldMatrix, center, brush, stepDelta,
+                                    &bounds);
+                                if (!bounds.valid) continue;
+                                if (!anyBounds) {
+                                    combined = bounds;
+                                    anyBounds = true;
+                                } else {
+                                    combined.minX = std::min(combined.minX, bounds.minX);
+                                    combined.minZ = std::min(combined.minZ, bounds.minZ);
+                                    combined.maxX = std::max(combined.maxX, bounds.maxX);
+                                    combined.maxZ = std::max(combined.maxZ, bounds.maxZ);
+                                }
+                            }
+                            if (anyBounds) {
                                 Terrain::TerrainCache::instance().rebuildRegion(
                                     ctx.selectedEntity, *terrain,
-                                    bounds.minX, bounds.minZ, bounds.maxX, bounds.maxZ);
+                                    combined.minX, combined.minZ, combined.maxX, combined.maxZ);
                             } else {
                                 terrain->dataRevision++;
                             }
@@ -1420,21 +1465,32 @@ void SceneViewport::render(ECS::World& world, EditorContext& ctx) {
                                                              ECS::kTerrainSplatLayerCount - 1);
                                 brush.radius = ctx.terrainBrushRadius;
                                 brush.strength = ctx.terrainBrushStrength;
-                                Terrain::TerrainSplatPainter::applyBrush(*splatmap, *terrain, worldMatrix,
-                                                                         hitWorld, brush,
-                                                                         ImGui::GetIO().DeltaTime);
+                                for (int step = 1; step <= steps; ++step) {
+                                    const f32 t = static_cast<f32>(step) / static_cast<f32>(steps);
+                                    const Vec3 center = startHit + (hitWorld - startHit) * t;
+                                    Terrain::TerrainSplatPainter::applyBrush(
+                                        *splatmap, *terrain, worldMatrix, center, brush, stepDelta);
+                                }
                                 terrain->splatRevision++;
                                 ctx.markDirty();
                             }
                         }
+                        m_terrainPreviousHitWorld = hitWorld;
+                        m_terrainPreviousHitValid = true;
                     }
+                } else {
+                    m_terrainPreviousHitValid = false;
                 }
             }
         }
     }
-    if (!leftDown && m_terrainSculptDragging) {
-        ctx.endUndo(world);
-        m_terrainSculptDragging = false;
+    if (!leftDown) {
+        m_terrainPreviousHitValid = false;
+        if (m_terrainSculptDragging) {
+            ctx.endUndo(world);
+            m_terrainSculptDragging = false;
+            m_terrainFlattenTarget = -1.0f;
+        }
     }
 
     const ImVec2 viewportMax(origin.x + viewportSize.x, origin.y + viewportSize.y);

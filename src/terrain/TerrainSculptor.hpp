@@ -21,6 +21,9 @@ struct TerrainBrushSettings {
     TerrainBrushMode mode = TerrainBrushMode::Raise;
     f32 radius = 6.0f;
     f32 strength = 0.12f;
+    /// Normalized height used by the Flatten brush. Negative samples the
+    /// height under the brush centre instead.
+    f32 targetHeight = -1.0f;
 };
 
 class TerrainSculptor {
