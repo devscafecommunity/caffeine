@@ -17,6 +17,7 @@
 #include "editor/EditorPaths.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/EnvironmentEffectsSystem.hpp"
+#include "scene/NaturalFluidSystem.hpp"
 #include "scene/PlayMode2D.hpp"
 #include "navigation/NavigationSystem.hpp"
 #include "effects/EffectSystem.hpp"
@@ -542,6 +543,7 @@ void SceneEditor::exitPlayMode(ECS::World& world) {
     m_scriptSystem.resetPlayState();
 #endif
     Procedural::ProceduralWorldSystem::reset();
+    Scene::resetNaturalFluidRuntime();
 }
 
 void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
@@ -550,6 +552,8 @@ void SceneEditor::tickSystems(ECS::World& world, f32 dt) {
         editorCameraPosition(m_ctx.camYaw, m_ctx.camPitch, m_ctx.camDistance, m_ctx.camFocus);
     Scene::tickEnvironmentEffects(world, (m_isPlaying && !m_isPaused) ? dt : 0.0f,
                                   Scene::firstCamera3DPosition(world, editorCam));
+    const f32 fluidDt = (m_isPlaying && !m_isPaused) ? dt : (m_isPlaying ? 0.0f : 1.0f / 60.0f);
+    Scene::tickNaturalFluids(world, fluidDt, !m_isPlaying);
     if (!m_isPlaying || m_isPaused) {
         Scene::propagateTransforms(world);
         return;

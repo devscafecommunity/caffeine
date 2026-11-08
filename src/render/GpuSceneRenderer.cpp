@@ -1,6 +1,7 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
@@ -755,19 +756,55 @@ void GpuSceneRenderer::pushShadowDrawsForMesh(RHI::CommandBuffer* cmd, const Mes
 
 bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
     if (!mesh || !m_device) return false;
-    if (mesh->vertexBuffer && mesh->indexBuffer) return true;
     if (mesh->vertices.empty() || mesh->indices.empty()) return false;
 
+    const u64 vertexBytes = mesh->vertices.size() * sizeof(Assets::Vertex3D);
+    const u64 indexBytes = mesh->indices.size() * sizeof(u32);
+
+    if (mesh->vertexBuffer && mesh->indexBuffer &&
+        mesh->uploadedRevision == mesh->geometryRevision) {
+        return true;
+    }
+
+    // Dynamic meshes (water, fluid voxels) change every frame. Reuse the GPU
+    // buffers when the size is unchanged and only re-upload the contents.
+    if (mesh->vertexBuffer && mesh->indexBuffer && mesh->vertexBuffer->size == vertexBytes &&
+        mesh->indexBuffer->size == indexBytes) {
+        if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vertexBytes)) {
+            return false;
+        }
+        if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
+            return false;
+        }
+        mesh->uploadedRevision = mesh->geometryRevision;
+        return true;
+    }
+
+    if (mesh->vertexBuffer) {
+        m_device->destroyBuffer(mesh->vertexBuffer);
+        mesh->vertexBuffer = nullptr;
+    }
+    if (mesh->indexBuffer) {
+        m_device->destroyBuffer(mesh->indexBuffer);
+        mesh->indexBuffer = nullptr;
+    }
+
     RHI::BufferDesc vdesc;
-    vdesc.size = mesh->vertices.size() * sizeof(Assets::Vertex3D);
+    vdesc.size = vertexBytes;
     mesh->vertexBuffer = m_device->createBuffer(vdesc, RHI::BufferUsage::Vertex);
     RHI::BufferDesc idesc;
-    idesc.size = mesh->indices.size() * sizeof(u32);
+    idesc.size = indexBytes;
     mesh->indexBuffer = m_device->createBuffer(idesc, RHI::BufferUsage::Index);
     if (!mesh->vertexBuffer || !mesh->indexBuffer) return false;
 
-    if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vdesc.size)) return false;
-    return m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), idesc.size);
+    if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vertexBytes)) {
+        return false;
+    }
+    if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
+        return false;
+    }
+    mesh->uploadedRevision = mesh->geometryRevision;
+    return true;
 }
 
 void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::World& world,
@@ -1734,6 +1771,55 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (hasAabb) {
             draw.aabbMin = aabb.min;
             draw.aabbMax = aabb.max;
+        }
+        if (const ECS::NaturalFluidComponent* fluid =
+                world.get<ECS::NaturalFluidComponent>(entity)) {
+            if (fluid->enabled) {
+                if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
+                    // Water surface: physically-based transparent liquid with a
+                    // sharp clearcoat so reflections read as water even before a
+                    // dedicated water shader exists.
+                    const Vec3 albedo =
+                        srgbToLinear(Vec3(fluid->albedoR, fluid->albedoG, fluid->albedoB));
+                    draw.albedo = Vec4(albedo.x, albedo.y, albedo.z,
+                                       std::clamp(fluid->albedoA, 0.0f, 1.0f));
+                    draw.metallic = std::clamp(fluid->metallic, 0.0f, 1.0f);
+                    draw.roughness = std::clamp(fluid->roughness, 0.02f, 1.0f);
+                    draw.reflectance = 0.65f;
+                    draw.alphaMode = 2;
+                    draw.transmission = 0.35f;
+                    draw.ior = 1.333f;
+                    draw.clearcoat = 0.9f;
+                    draw.clearcoatRoughness = 0.04f;
+                    draw.hasAuthoredMaterial = true;
+                } else {
+                    // Fluid volume voxels. The density field is real; the colour
+                    // and emission come from the selected material preset.
+                    switch (static_cast<ECS::NaturalFluidPreset>(fluid->preset)) {
+                        case ECS::NaturalFluidPreset::Fire: {
+                            const f32 strength = std::max(fluid->fluidEmission, 2.5f);
+                            draw.albedo = Vec4(1.0f, 0.36f, 0.05f, 0.55f);
+                            draw.emission = srgbToLinear(Vec3(1.0f, 0.42f, 0.08f)) * strength;
+                            break;
+                        }
+                        case ECS::NaturalFluidPreset::Fog:
+                            draw.albedo = Vec4(0.74f, 0.78f, 0.83f, 0.22f);
+                            break;
+                        case ECS::NaturalFluidPreset::Smoke:
+                            draw.albedo = Vec4(0.24f, 0.24f, 0.27f, 0.42f);
+                            break;
+                        case ECS::NaturalFluidPreset::Water:
+                        default:
+                            draw.albedo = Vec4(0.05f, 0.24f, 0.46f, 0.65f);
+                            break;
+                    }
+                    draw.metallic = 0.0f;
+                    draw.roughness = 1.0f;
+                    draw.alphaMode = 2;
+                    draw.castShadows = false;
+                    draw.hasAuthoredMaterial = true;
+                }
+            }
         }
         if (const Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
             Effects::SurfaceShade shade;

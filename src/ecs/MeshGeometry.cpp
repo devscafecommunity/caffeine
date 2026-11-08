@@ -45,11 +45,14 @@ void rebuild(MeshSlot& slot, const MeshGeometryComponent& geometry) {
     mesh.vertices.reserve(geometry.positions.size());
     Vec3 bmin(1.0e30f, 1.0e30f, 1.0e30f);
     Vec3 bmax(-1.0e30f, -1.0e30f, -1.0e30f);
-    for (const Vec3& position : geometry.positions) {
+    const bool hasNormals = geometry.normals.size() == geometry.positions.size();
+    const bool hasTexcoords = geometry.texcoords.size() == geometry.positions.size();
+    for (size_t index = 0; index < geometry.positions.size(); ++index) {
+        const Vec3& position = geometry.positions[index];
         Assets::Vertex3D vertex{};
         vertex.position = position;
-        vertex.normal = Vec3(0.0f, 1.0f, 0.0f);
-        vertex.texcoord = {0.5f, 0.5f};
+        vertex.normal = hasNormals ? geometry.normals[index] : Vec3(0.0f, 1.0f, 0.0f);
+        vertex.texcoord = hasTexcoords ? geometry.texcoords[index] : Vec2(0.5f, 0.5f);
         vertex.tangent = Vec4(1.0f, 0.0f, 0.0f, 1.0f);
         mesh.vertices.push_back(vertex);
         bmin.x = std::min(bmin.x, position.x);
@@ -59,7 +62,7 @@ void rebuild(MeshSlot& slot, const MeshGeometryComponent& geometry) {
         bmax.y = std::max(bmax.y, position.y);
         bmax.z = std::max(bmax.z, position.z);
     }
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+    for (size_t i = 0; i + 2 < mesh.indices.size() && !hasNormals; i += 3) {
         const u32 i0 = mesh.indices[i];
         const u32 i1 = mesh.indices[i + 1];
         const u32 i2 = mesh.indices[i + 2];
@@ -80,6 +83,7 @@ void rebuild(MeshSlot& slot, const MeshGeometryComponent& geometry) {
         mesh.bounds = {bmin, bmax};
     }
     slot.revision = geometry.revision;
+    mesh.geometryRevision = geometry.revision;
 }
 
 bool samePoint(const Vec3& a, const Vec3& b) {

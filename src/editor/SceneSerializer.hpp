@@ -80,7 +80,8 @@ private:
     static constexpr u32 kTypeSpriteLod2D        = 56;
     static constexpr u32 kTypeVolumetricClouds    = 57;
     static constexpr u32 kTypePhotonGI            = 58;
-    static constexpr u32 kTypeCount              = 59;
+    static constexpr u32 kTypeNaturalFluid         = 59;
+    static constexpr u32 kTypeCount                = 60;
     static constexpr u32 kPoseCurveMarker    = 0x56525543u;
     static constexpr u32 kPoseStripMarker    = 0x50525453u;
     static constexpr u32 kAnimatorEditorMarker = 0x524F5441u;

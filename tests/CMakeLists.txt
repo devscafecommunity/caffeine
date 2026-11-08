@@ -38,6 +38,7 @@ set(CAFFEINE_TEST_SOURCES
     test_vegetation_kit.cpp
     test_cap_loader.cpp
     test_phase2_3.cpp
+    test_natural_fluids.cpp
     editor/phase1_integration_test.cpp
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp

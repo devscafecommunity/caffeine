@@ -87,6 +87,12 @@ add_library(caffeine-core
     src/scene/LightingSystem.cpp
     src/scene/Camera3DSystem.cpp
     src/scene/TerrainSystem.cpp
+    src/scene/NaturalFluidSystem.cpp
+    src/fluid/WaveField.cpp
+    src/fluid/ShallowWater.cpp
+    src/fluid/EulerFluid.cpp
+    src/fluid/FluidVolume.cpp
+    src/fluid/FluidWorld.cpp
     src/terrain/TerrainHeightmap.cpp
     src/terrain/TerrainMeshBuilder.cpp
     src/terrain/TerrainCache.cpp

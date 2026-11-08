@@ -1,5 +1,6 @@
 #include "editor/SceneSerializer.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "editor/SceneSerializerIO.hpp"
 #include "ecs/Components.hpp"
@@ -172,6 +173,9 @@ void SceneSerializer::collectMeshGeometryComponents(
     ECS::ComponentQuery q;
     q.with<ECS::MeshGeometryComponent>();
     m_world.forEach<ECS::MeshGeometryComponent>(q, [&](ECS::Entity e, ECS::MeshGeometryComponent& geometry) {
+        // Fluid meshes are regenerated from the component; serializing them
+        // would store thousands of dynamic vertices per frame.
+        if (m_world.has<ECS::NaturalFluidComponent>(e)) return;
         const u32 positionCount = static_cast<u32>(geometry.positions.size());
         const u32 indexCount = static_cast<u32>(geometry.indices.size());
         std::vector<u8> data(12 + positionCount * sizeof(Vec3) + indexCount * sizeof(u32));
@@ -1237,6 +1241,7 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     emitPodComponents<ECS::MapSurface2DComponent>(kTypeMapSurface2D, entityMap);
     emitPodComponents<ECS::SpriteLod2DComponent>(kTypeSpriteLod2D, entityMap);
     emitPodComponents<ECS::VolumetricCloudsComponent>(kTypeVolumetricClouds, entityMap);
+    emitPodComponents<ECS::NaturalFluidComponent>(kTypeNaturalFluid, entityMap);
     emitPodComponents<ECS::PhotonGIComponent>(kTypePhotonGI, entityMap);
     {
         ECS::ComponentQuery query;
@@ -1833,6 +1838,10 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 break;
             case kTypePhotonGI:
                 applyPODComponent<ECS::PhotonGIComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeNaturalFluid:
+                applyPODComponent<ECS::NaturalFluidComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
             case kTypeNavVolume: {

@@ -25,6 +25,7 @@
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "render/RenderFeatures.hpp"
@@ -367,6 +368,33 @@ void registerAllComponents(ComponentRegistry& reg) {
         "clouds mist volumetric sky weather fog atmosphere"
     });
     reg.registerComponent({
+        "Environment", "Natural Fluids",
+        [](ECS::World& w, ECS::Entity e) {
+            return w.has<ECS::NaturalFluidComponent>(e);
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            auto& fluid = w.add<ECS::NaturalFluidComponent>(e);
+            fluid.mode = static_cast<u8>(ECS::NaturalFluidMode::RealisticWater);
+            fluid.preset = static_cast<u8>(ECS::NaturalFluidPreset::Water);
+            fluid.shallowPhysics = 0;
+            if (!w.has<ECS::Position3D>(e) && !w.has<ECS::Transform>(e)) {
+                w.add<ECS::Position3D>(e);
+            }
+            if (!w.has<ECS::MeshFilterComponent>(e)) {
+                auto& filter = w.add<ECS::MeshFilterComponent>(e);
+                filter.primitive = ECS::MeshPrimitive::Custom;
+            }
+            if (!w.has<ECS::MeshRendererComponent>(e)) {
+                auto& renderer = w.add<ECS::MeshRendererComponent>(e);
+                renderer.castShadows = fluid.castShadows != 0;
+                renderer.receiveShadows = fluid.receiveShadows != 0;
+            }
+        },
+        "",
+        "water ocean sea lake river waves fluid fire smoke fog liquid realistic"
+    });
+
+    reg.registerComponent({
         "Rendering", "Post Process",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
@@ -393,6 +421,8 @@ void registerAllComponents(ComponentRegistry& reg) {
         "ProceduralWorld");
     ComponentTypeRegistry::instance().registerType<ECS::VolumetricCloudsComponent>(
         "VolumetricClouds");
+    ComponentTypeRegistry::instance().registerType<ECS::NaturalFluidComponent>(
+        "NaturalFluid");
 }
 
 } // namespace Caffeine::Editor

@@ -77,6 +77,9 @@ struct Mesh3D {
     std::vector<MeshSurfaceMaterial> materials;
     Rect3D bounds;
     u32 lodCount = 1;
+    /// CPU geometry revision. The GPU uploader re-uploads when it changes.
+    u32 geometryRevision = 1;
+    u32 uploadedRevision = 0;
     
     std::vector<u8> baseColorTexture;
     u32 textureWidth = 0;
