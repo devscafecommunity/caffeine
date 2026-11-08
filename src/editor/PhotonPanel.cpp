@@ -225,14 +225,12 @@ void PhotonPanel::render(ECS::World& world, EditorContext& ctx) {
                 if (!hasSelectedMesh) {
                     m_status = "Select a mesh entity in the Hierarchy before baking.";
                 } else {
-                    m_bakeSelectedPending = true;
-                    m_status = "Bake queued for the selected mesh.";
+                    queueBakeSelected();
                 }
             }
             SameLine();
             if (ToolbarButton("Bake scene", "Queue an AO bake for every static mesh")) {
-                m_bakeScenePending = true;
-                m_status = "Scene AO bake queued.";
+                queueBakeScene();
             }
             TextMuted("Baking runs between frames; the editor remains responsive.");
             if (!m_status.empty()) TextMuted(m_status.c_str());
@@ -255,6 +253,8 @@ void PhotonPanel::processPendingBake(ECS::World& world, EditorContext& ctx) {
     settings.maxDistance = std::max(m_aoMaxDistance, 0.01f);
     settings.bias = std::max(m_aoBias, 0.0f);
     settings.useGpu = m_useGpu && m_gpuAvailable;
+    settings.outputDirectory =
+        (std::filesystem::path(m_processedDirectory) / "ao").generic_string();
 
     std::filesystem::path root = ctx.projectRootPath;
     if (root.empty() && !ctx.currentScenePath.empty()) {

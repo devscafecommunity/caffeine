@@ -195,7 +195,8 @@ struct MaterialTarget {
 };
 
 bool loadOrCreateMaterial(ECS::World& world, ECS::Entity entity, const fs::path& root,
-                          MaterialTarget& out, std::string& error) {
+                          const fs::path& outputDir, MaterialTarget& out,
+                          std::string& error) {
     auto* filter = world.get<ECS::MeshFilterComponent>(entity);
     auto* renderer = world.get<ECS::MeshRendererComponent>(entity);
     if (!filter) {
@@ -209,8 +210,7 @@ bool loadOrCreateMaterial(ECS::World& world, ECS::Entity entity, const fs::path&
     } else if (renderer && !renderer->materialPath.empty()) {
         out.path = resolve(root, renderer->materialPath);
     } else {
-        out.path = root / "assets" / "processed" / "ao" /
-                   ("ao_" + std::to_string(entity.id()) + ".mat");
+        out.path = outputDir / ("ao_" + std::to_string(entity.id()) + ".mat");
         out.useFilterPath = true;
     }
 
@@ -424,9 +424,10 @@ BakeResult bakeAmbientOcclusion(ECS::World& world, ECS::Entity entity,
         }
     }
 
+    const fs::path outputDir = resolve(root, settings.outputDirectory);
     MaterialTarget material;
     std::string error;
-    if (!loadOrCreateMaterial(world, entity, root, material, error)) {
+    if (!loadOrCreateMaterial(world, entity, root, outputDir, material, error)) {
         result.error = error;
         return result;
     }
@@ -464,8 +465,7 @@ BakeResult bakeAmbientOcclusion(ECS::World& world, ECS::Entity entity,
     }
     if (ormPixels) stbi_image_free(ormPixels);
 
-    const fs::path ormPath = root / "assets" / "processed" / "ao" /
-                             ("ao_" + std::to_string(entity.id()) + ".png");
+    const fs::path ormPath = outputDir / ("ao_" + std::to_string(entity.id()) + ".png");
     std::error_code ec;
     fs::create_directories(ormPath.parent_path(), ec);
     if (!stbi_write_png(ormPath.string().c_str(), static_cast<int>(resolution),

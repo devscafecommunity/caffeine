@@ -1,5 +1,6 @@
 #include "catch.hpp"
 
+#include "assets/MaterialFile.hpp"
 #include "caffeine/photon/PhotonBake.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/MeshComponents.hpp"
@@ -79,4 +80,63 @@ TEST_CASE("Photon bake - CPU AO writes ORM material", "[photon][bake]") {
     const auto* filter = world.get<ECS::MeshFilterComponent>(cube);
     REQUIRE(filter != nullptr);
     REQUIRE(filter->customMaterialPath == result.materialPath);
+}
+
+
+TEST_CASE("Photon bake - missing mesh reports a clear error", "[photon][bake]") {
+    ECS::World world;
+    ECS::Entity empty = world.create("Empty");
+    Photon::BakeSettings settings;
+    settings.resolution = 32;
+    settings.rays = 4;
+    settings.useGpu = false;
+
+    const Photon::BakeResult result =
+        Photon::bakeAmbientOcclusion(world, empty, settings, "/tmp/opencode/photon_bake_missing", nullptr);
+    REQUIRE_FALSE(result.ok);
+    REQUIRE(result.error.find("no mesh") != std::string::npos);
+}
+
+TEST_CASE("Photon bake - existing material keeps roughness and metallic", "[photon][bake]") {
+    ECS::World world;
+    populateBakedScene(world);
+    ECS::Entity cube = ECS::Entity::INVALID;
+    ECS::ComponentQuery query;
+    query.with<ECS::MeshFilterComponent>();
+    world.forEach<ECS::MeshFilterComponent>(query, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
+        if (filter.primitive == ECS::MeshPrimitive::Cube) cube = entity;
+    });
+    REQUIRE(cube.isValid());
+
+    const std::string root = "/tmp/opencode/photon_bake_material";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(std::filesystem::path(root) / "assets/processed");
+    Assets::MaterialSurface surface;
+    surface.name = "Existing";
+    surface.valid = true;
+    surface.roughness = 0.73f;
+    surface.metallic = 0.21f;
+    REQUIRE(Assets::saveMaterialFile(
+        std::filesystem::path(root) / "assets/processed/existing.mat", surface));
+
+    auto* filter = world.get<ECS::MeshFilterComponent>(cube);
+    REQUIRE(filter != nullptr);
+    filter->customMaterialPath = "assets/processed/existing.mat";
+
+    Photon::BakeSettings settings;
+    settings.resolution = 64;
+    settings.rays = 8;
+    settings.useGpu = false;
+    const Photon::BakeResult result =
+        Photon::bakeAmbientOcclusion(world, cube, settings, root, nullptr);
+    INFO(result.error);
+    REQUIRE(result.ok);
+
+    Assets::MaterialSurface loaded;
+    REQUIRE(Assets::loadMaterialFile(
+        std::filesystem::path(root) / "assets/processed/existing.mat", loaded));
+    REQUIRE(loaded.roughness == Approx(0.73f));
+    REQUIRE(loaded.metallic == Approx(0.21f));
+    REQUIRE(!loaded.ormMap.empty());
+    REQUIRE(loaded.aoStrength == Approx(1.0f));
 }

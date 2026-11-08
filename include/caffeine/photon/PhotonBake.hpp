@@ -15,6 +15,8 @@ struct BakeSettings {
     f32 bias = 0.02f;
     /// Use the GPU compute path when `renderDevice` is provided.
     bool useGpu = true;
+    /// Project-relative directory for the baked ORM PNG/material.
+    std::string outputDirectory = "assets/processed/ao";
 };
 
 struct BakeResult {

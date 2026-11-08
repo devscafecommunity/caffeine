@@ -48,6 +48,7 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
                        const ProjectConfig& projectConfig) {
     m_renderDevice = device;
     m_photonPanel.setRenderDevice(device);
+    m_photonPanel.setProcessedDirectory(projectConfig.AssetProcessedPath.string());
     if (!m_viewport.init(device)) return false;
     m_gameplayPreview.init(device);
     m_materialEditor.initGpu(device);

@@ -25,8 +25,12 @@ public:
         m_renderDevice = device;
         m_gpuAvailable = device != nullptr;
     }
+    void setProcessedDirectory(const std::string& dir) { m_processedDirectory = dir; }
     void open() { m_open = true; }
     void close() { m_open = false; }
+    /// Queue a bake without going through the panel buttons (menus/tests).
+    void queueBakeSelected() { m_bakeSelectedPending = true; m_status = "Bake queued for the selected mesh."; }
+    void queueBakeScene() { m_bakeScenePending = true; m_status = "Scene AO bake queued."; }
     bool isOpen() const { return m_open; }
 
 private:
@@ -44,6 +48,7 @@ private:
     bool m_bakeSelectedPending = false;
     bool m_bakeScenePending = false;
     void* m_renderDevice = nullptr;
+    std::string m_processedDirectory = "assets/processed";
     std::string m_status;
 };
 

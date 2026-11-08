@@ -180,6 +180,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_hierarchy.cpp
           test_editor_ui/test_assetbrowser.cpp
           test_editor_ui/test_photon_bake.cpp
+          test_editor_ui/test_photon_panel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
