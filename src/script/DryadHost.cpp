@@ -68,6 +68,44 @@ void writePosition(ECS::World* world, u32 entityId, const Vec3& position) {
     if (access.transform) access.transform->position = position;
 }
 
+struct ScaleAccess {
+    ECS::Scale3D* s3 = nullptr;
+    ECS::Transform* transform = nullptr;
+
+    bool valid() const { return s3 != nullptr || transform != nullptr; }
+};
+
+ScaleAccess scaleOf(ECS::World* world, u32 entityId, bool create) {
+    ScaleAccess access;
+    if (!world) return access;
+    ECS::Entity entity(entityId, world);
+    if (!entity.isValid()) return access;
+
+    access.s3 = entity.get<ECS::Scale3D>();
+    access.transform = entity.get<ECS::Transform>();
+    if (access.valid() || !create) return access;
+
+    if (entity.has<ECS::MeshFilterComponent>()) {
+        access.s3 = &entity.getOrAdd<ECS::Scale3D>();
+    } else {
+        access.transform = &entity.getOrAdd<ECS::Transform>();
+    }
+    return access;
+}
+
+Vec3 readScale(ECS::World* world, u32 entityId) {
+    const ScaleAccess access = scaleOf(world, entityId, false);
+    if (access.s3) return access.s3->scale;
+    if (access.transform) return access.transform->scale;
+    return Vec3{1.0f, 1.0f, 1.0f};
+}
+
+void writeScale(ECS::World* world, u32 entityId, const Vec3& scale) {
+    const ScaleAccess access = scaleOf(world, entityId, true);
+    if (access.s3) access.s3->scale = scale;
+    if (access.transform) access.transform->scale = scale;
+}
+
 } // namespace
 
 struct DryadHost::Impl {
@@ -117,6 +155,36 @@ struct DryadHost::Impl {
             [readAxis](const std::vector<dryad::Value>& args) -> dryad::Value { return readAxis(args, 1); });
         interp.define_native("caffeine_get_position_z",
             [readAxis](const std::vector<dryad::Value>& args) -> dryad::Value { return readAxis(args, 2); });
+        interp.define_native("caffeine_set_scale",
+            [worldPtr](const std::vector<dryad::Value>& args) -> dryad::Value {
+                if (args.size() < 4) return dryad::Value();
+                const auto id = static_cast<u32>(asNumber(args[0]));
+                writeScale(*worldPtr, id,
+                           Vec3(static_cast<f32>(asNumber(args[1])),
+                                static_cast<f32>(asNumber(args[2])),
+                                static_cast<f32>(asNumber(args[3]))));
+                return dryad::Value();
+            });
+        auto readScaleAxis = [worldPtr](const std::vector<dryad::Value>& args,
+                                        int axis) -> dryad::Value {
+            if (args.empty()) return dryad::Value(1.0);
+            const auto id = static_cast<u32>(asNumber(args[0]));
+            const Vec3 scale = readScale(*worldPtr, id);
+            const f32 v = axis == 0 ? scale.x : (axis == 1 ? scale.y : scale.z);
+            return dryad::Value(static_cast<double>(v));
+        };
+        interp.define_native("caffeine_get_scale_x",
+            [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
+                return readScaleAxis(args, 0);
+            });
+        interp.define_native("caffeine_get_scale_y",
+            [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
+                return readScaleAxis(args, 1);
+            });
+        interp.define_native("caffeine_get_scale_z",
+            [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
+                return readScaleAxis(args, 2);
+            });
         interp.define_native("caffeine_log",
             [](const std::vector<dryad::Value>& args) -> dryad::Value {
                 if (!args.empty()) {

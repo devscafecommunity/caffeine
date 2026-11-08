@@ -13,6 +13,9 @@ enum class NodeKind {
     DeltaTime,
     SetPosition,
     Translate,
+    SetScale,
+    GetScale,
+    Log,
     Constant,
     Branch,
 };
@@ -38,6 +41,10 @@ struct GraphNode {
     double inputY = 0.0;
     double inputZ = 0.0;
     bool inputCondition = false;
+
+    /// Log: message written to the console. Kept last so existing aggregate
+    /// initializers keep their field order.
+    std::string textValue = "Hello from Dryad";
 };
 
 struct GraphEdge {

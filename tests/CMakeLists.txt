@@ -78,6 +78,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/ParticleEditorPanel.cpp
     ../src/editor/EffectEditorPanel.cpp
     ../src/editor/DryadNodeScriptPanel.cpp
+    ../src/editor/DryadNodesPanel.cpp
     ../src/editor/TransformGizmo.cpp
     ../src/editor/PrefabSystem.cpp
     ../src/editor/MaterialSerializer.cpp
@@ -185,6 +186,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_photon_bake.cpp
           test_editor_ui/test_photon_panel.cpp
           test_editor_ui/test_terrain_panel.cpp
+          test_editor_ui/test_dryad_nodes.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
@@ -202,6 +204,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EffectEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/DryadNodeScriptPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/DryadNodesPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp

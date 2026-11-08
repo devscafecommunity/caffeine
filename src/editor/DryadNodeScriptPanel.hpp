@@ -10,7 +10,9 @@
 #include "script/nodes/NodeGraph.hpp"
 #endif
 
-struct ImNodesEditorContext;
+#if defined(CF_HAS_IMGUI) && defined(CF_HAS_DRYAD)
+#include "caffeine/ui/NodeCanvas.hpp"
+#endif
 
 namespace Caffeine::Editor {
 
@@ -45,15 +47,17 @@ private:
     bool m_addNodeAtMouse = false;
     f32 m_addNodeScreenX = 0.0f;
     f32 m_addNodeScreenY = 0.0f;
-
-    ImNodesEditorContext* m_nodesContext = nullptr;
-    bool m_ownsImNodesRootContext = false;
-
-    void ensureImNodesReady();
+    bool m_dropPending = false;
+    std::string m_dropNodeType;
+    f32 m_dropScreenX = 0.0f;
+    f32 m_dropScreenY = 0.0f;
 
 #ifdef CF_HAS_DRYAD
     Script::Nodes::NodeGraph m_graph;
     Script::DryadHost m_previewHost;
+#endif
+#if defined(CF_HAS_IMGUI) && defined(CF_HAS_DRYAD)
+    UIKit::NodeCanvas m_canvas;
 #endif
 
     void rebuildImNodesFromGraph();

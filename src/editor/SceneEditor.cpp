@@ -124,7 +124,10 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
          m_scriptEditor.open();
      });
 #if defined(CF_HAS_DRYAD)
-     m_commandPalette.registerCommand("panel_dryad_nodes", "Dryad Node Script", "Tools", [this]() {
+     m_commandPalette.registerCommand("panel_dryad_nodes", "Dryad Nodes", "Tools", [this]() {
+         UIKit::PanelRegistry::instance().open("core.dryad_nodes");
+     });
+     m_commandPalette.registerCommand("panel_dryad_node_script", "Dryad Node Script", "Tools", [this]() {
          m_dryadNodeScript.open();
      });
 #endif
@@ -1058,6 +1061,9 @@ void SceneEditor::render(f32 deltaTime) {
         ImGui::SetWindowFocus("Hierarchy");
         ImGui::SetWindowFocus("Scene Viewport");
         ImGui::SetWindowFocus("Asset Browser");
+#if defined(CF_HAS_DRYAD)
+        if (m_dryadNodes.isOpen()) ImGui::SetWindowFocus("Dryad Nodes");
+#endif
         m_selectDefaultTabs = false;
     }
 
@@ -1826,6 +1832,11 @@ void SceneEditor::registerPanels() {
         [this] { return m_effectEditor.isOpen(); }, "Tools", 60, false);
 
 #if defined(CF_HAS_DRYAD)
+    add("core.dryad_nodes", "Dryad Nodes", EditorIcon::Assets, UIKit::DockArea::Left,
+        [this] { m_dryadNodes.render(); },
+        [this] { m_dryadNodes.open(); }, [this] { m_dryadNodes.close(); },
+        [this] { return m_dryadNodes.isOpen(); }, "Content", 30, true);
+
     add("core.dryad_node_script", "Dryad Node Script", EditorIcon::Animation,
         UIKit::DockArea::Center, [this] {
             if (!m_ctx.dryadToOpen.empty()) {

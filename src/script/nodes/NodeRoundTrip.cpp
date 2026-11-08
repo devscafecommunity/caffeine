@@ -83,6 +83,7 @@ private:
     NodeGraph m_graph;
     int m_constSerial = 0;
     std::string m_getPositionId;
+    std::string m_getScaleId;
     std::string m_deltaTimeId;
     std::unordered_map<std::string, std::string> m_exprToConst;
 
@@ -155,6 +156,16 @@ private:
                 continue;
             }
 
+            if (consume("caffeine_set_scale")) {
+                if (!parseVectorCall(nodeId, NodeKind::SetScale, execOut, err)) return false;
+                continue;
+            }
+
+            if (consume("caffeine_log")) {
+                if (!parseLog(nodeId, execOut, err)) return false;
+                continue;
+            }
+
             if (consume("if")) {
                 if (!parseBranch(nodeId, execOut, err)) return false;
                 continue;
@@ -184,6 +195,39 @@ private:
         if (!wireDataExpr(yExpr, nodeId, "y", err)) return false;
         if (!wireDataExpr(zExpr, nodeId, "z", err)) return false;
 
+        execOut = endpoint(nodeId, "out");
+        return true;
+    }
+
+    bool parseLog(const std::string& nodeId, std::string& execOut, std::string& err) {
+        GraphNode* log = ensureNode(m_graph, nodeId, NodeKind::Log);
+        if (execOut.empty()) return fail(err, "Log without exec input");
+        addEdge(m_graph, execOut, endpoint(nodeId, "in"));
+
+        if (!consume("(")) return fail(err, "expected ( after caffeine_log");
+        skipWs();
+        if (peek() != '"') return fail(err, "expected a string argument to caffeine_log");
+        ++m_pos;
+        std::string text;
+        while (m_pos < m_src.size() && m_src[m_pos] != '"') {
+            char c = m_src[m_pos++];
+            if (c == '\\' && m_pos < m_src.size()) {
+                const char escaped = m_src[m_pos++];
+                switch (escaped) {
+                case 'n': text.push_back('\n'); break;
+                case 'r': text.push_back('\r'); break;
+                case 't': text.push_back('\t'); break;
+                default: text.push_back(escaped); break;
+                }
+            } else {
+                text.push_back(c);
+            }
+        }
+        if (m_pos >= m_src.size()) return fail(err, "unterminated caffeine_log string");
+        ++m_pos;
+        if (!consume(")")) return fail(err, "expected ) after caffeine_log");
+        if (!consume(";")) return fail(err, "expected ; after caffeine_log");
+        if (log) log->textValue = text;
         execOut = endpoint(nodeId, "out");
         return true;
     }
@@ -241,6 +285,14 @@ private:
         return !out.empty();
     }
 
+    const std::string& getScaleNode() {
+        if (m_getScaleId.empty()) {
+            m_getScaleId = "import_gs" + std::to_string(m_constSerial++);
+            ensureNode(m_graph, m_getScaleId, NodeKind::GetScale);
+        }
+        return m_getScaleId;
+    }
+
     const std::string& getPositionNode() {
         if (m_getPositionId.empty()) {
             m_getPositionId = "import_g" + std::to_string(m_constSerial++);
@@ -262,6 +314,18 @@ private:
         }
         if (e == "caffeine_get_position_z(entity)") {
             addEdge(m_graph, endpoint(getPositionNode(), "z"), endpoint(toNode, pin));
+            return true;
+        }
+        if (e == "caffeine_get_scale_x(entity)") {
+            addEdge(m_graph, endpoint(getScaleNode(), "x"), endpoint(toNode, pin));
+            return true;
+        }
+        if (e == "caffeine_get_scale_y(entity)") {
+            addEdge(m_graph, endpoint(getScaleNode(), "y"), endpoint(toNode, pin));
+            return true;
+        }
+        if (e == "caffeine_get_scale_z(entity)") {
+            addEdge(m_graph, endpoint(getScaleNode(), "z"), endpoint(toNode, pin));
             return true;
         }
 

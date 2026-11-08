@@ -214,6 +214,9 @@ bool parseNodeObject(const std::string& object, GraphNode& out) {
     readNumberField(object, "inputY", out.inputY);
     readNumberField(object, "inputZ", out.inputZ);
     readBoolField(object, "condition", out.inputCondition);
+    if (out.kind == NodeKind::Log) {
+        readStringField(object, "text", out.textValue);
+    }
     return true;
 }
 

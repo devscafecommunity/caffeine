@@ -6,6 +6,7 @@
 #include "ecs/World.hpp"
 #include "editor/EditorContext.hpp"
 #include "script/ScriptTypes.hpp"
+#include "script/nodes/NodeCatalog.hpp"
 #include "script/nodes/NodeEmitter.hpp"
 #include "script/nodes/NodeGraphIO.hpp"
 #include "script/nodes/NodeRoundTrip.hpp"
@@ -17,6 +18,7 @@
 #include <imnodes.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <unordered_map>
 #include <vector>
 
@@ -41,6 +43,20 @@ enum PinSlot : int {
     Translate_Out = 54,
 
     DeltaTime_Value = 60,
+
+    SetScale_In = 70,
+    SetScale_X = 71,
+    SetScale_Y = 72,
+    SetScale_Z = 73,
+    SetScale_Out = 74,
+
+    GetScale_X = 80,
+    GetScale_Y = 81,
+    GetScale_Z = 82,
+
+    Log_In = 90,
+    Log_Out = 91,
+    Log_Message = 92,
 
     GetPosition_X = 20,
     GetPosition_Y = 21,
@@ -87,6 +103,17 @@ const char* pinName(PinSlot slot) {
     case Translate_Z: return "z";
     case Translate_Out: return "out";
     case DeltaTime_Value: return "value";
+    case SetScale_In: return "in";
+    case SetScale_X: return "x";
+    case SetScale_Y: return "y";
+    case SetScale_Z: return "z";
+    case SetScale_Out: return "out";
+    case GetScale_X: return "x";
+    case GetScale_Y: return "y";
+    case GetScale_Z: return "z";
+    case Log_In: return "in";
+    case Log_Out: return "out";
+    case Log_Message: return "message";
     case GetPosition_X: return "x";
     case GetPosition_Y: return "y";
     case GetPosition_Z: return "z";
@@ -105,6 +132,8 @@ bool isExecOutputPin(NodeKind kind, PinSlot slot) {
     case NodeKind::OnUpdate: return slot == OnUpdate_Out;
     case NodeKind::SetPosition: return slot == SetPosition_Out;
     case NodeKind::Translate: return slot == Translate_Out;
+    case NodeKind::SetScale: return slot == SetScale_Out;
+    case NodeKind::Log: return slot == Log_Out;
     case NodeKind::GetPosition:
     case NodeKind::Constant: return false;
     case NodeKind::Branch:
@@ -118,6 +147,8 @@ bool isExecInputPin(NodeKind kind, PinSlot slot) {
     case NodeKind::OnUpdate: return false;
     case NodeKind::SetPosition: return slot == SetPosition_In;
     case NodeKind::Translate: return slot == Translate_In;
+    case NodeKind::SetScale: return slot == SetScale_In;
+    case NodeKind::Log: return slot == Log_In;
     case NodeKind::GetPosition:
     case NodeKind::Constant: return false;
     case NodeKind::Branch: return slot == Branch_In;
@@ -129,6 +160,8 @@ bool isDataOutputPin(NodeKind kind, PinSlot slot) {
     switch (kind) {
     case NodeKind::GetPosition:
         return slot == GetPosition_X || slot == GetPosition_Y || slot == GetPosition_Z;
+    case NodeKind::GetScale:
+        return slot == GetScale_X || slot == GetScale_Y || slot == GetScale_Z;
     case NodeKind::Constant: return slot == Constant_ValueOut;
     case NodeKind::DeltaTime: return slot == DeltaTime_Value;
     default: return false;
@@ -141,6 +174,8 @@ bool isDataInputPin(NodeKind kind, PinSlot slot) {
         return slot == SetPosition_X || slot == SetPosition_Y || slot == SetPosition_Z;
     case NodeKind::Translate:
         return slot == Translate_X || slot == Translate_Y || slot == Translate_Z;
+    case NodeKind::SetScale:
+        return slot == SetScale_X || slot == SetScale_Y || slot == SetScale_Z;
     case NodeKind::Branch: return slot == Branch_Condition;
     default: return false;
     }
@@ -164,7 +199,6 @@ int linkIdForEdge(const GraphEdge& edge) {
     return static_cast<int>(hash & 0x3fffffff) + 1;
 }
 
-constexpr float kNodeMinWidth = 168.0f;
 constexpr ImNodesPinShape kExecPin = ImNodesPinShape_TriangleFilled;
 constexpr ImNodesPinShape kDataPin = ImNodesPinShape_CircleFilled;
 
@@ -191,7 +225,10 @@ ImU32 nodeHeaderColor(NodeKind kind) {
     case NodeKind::SetPosition: return IM_COL32(45, 82, 138, 255);
     case NodeKind::Translate: return IM_COL32(62, 98, 160, 255);
     case NodeKind::Branch: return IM_COL32(148, 92, 42, 255);
+    case NodeKind::SetScale: return IM_COL32(52, 96, 128, 255);
     case NodeKind::GetPosition: return IM_COL32(112, 80, 45, 255);
+    case NodeKind::GetScale: return IM_COL32(122, 96, 52, 255);
+    case NodeKind::Log: return IM_COL32(76, 88, 96, 255);
     case NodeKind::DeltaTime: return IM_COL32(102, 74, 138, 255);
     case NodeKind::Constant: return IM_COL32(88, 90, 102, 255);
     }
@@ -204,31 +241,22 @@ const char* nodeSubtitle(NodeKind kind) {
     case NodeKind::SetPosition: return "absolute position";
     case NodeKind::Translate: return "relative motion";
     case NodeKind::Branch: return "if / else";
+    case NodeKind::SetScale: return "absolute scale";
     case NodeKind::GetPosition: return "reads position";
+    case NodeKind::GetScale: return "reads scale";
+    case NodeKind::Log: return "console message";
     case NodeKind::DeltaTime: return "frame delta";
     case NodeKind::Constant: return "fixed value";
     }
     return "";
 }
 
-void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
+void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty,
+                  UIKit::NodeCanvas& canvas) {
     const int imId = imNodeIdFromString(node.id);
     GraphNode* mutableNode = graph.findNode(node.id);
-    const ImU32 header = nodeHeaderColor(node.kind);
-
-    ImNodes::PushColorStyle(ImNodesCol_TitleBar, header);
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered, lighten(header, 18));
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, lighten(header, 30));
-    ImNodes::BeginNode(imId);
-    ImNodes::BeginNodeTitleBar();
-    ImGui::TextUnformatted(nodeKindToTypeName(node.kind));
-    ImNodes::EndNodeTitleBar();
-
-    // A dummy keeps every node at a usable minimum size; without it a node
-    // with only text collapses and a DragFloat expands to the whole canvas.
-    ImGui::Dummy(ImVec2(kNodeMinWidth, 1.0f));
-    ImGui::TextDisabled("%s", nodeSubtitle(node.kind));
-    ImGui::Spacing();
+    canvas.beginNode(imId, nodeKindToTypeName(node.kind), nodeSubtitle(node.kind),
+                     nodeHeaderColor(node.kind));
 
     auto execInput = [&](PinSlot slot, const char* label) {
         ImNodes::BeginInputAttribute(attrId(imId, slot), kExecPin);
@@ -250,7 +278,7 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         ImGui::TextUnformatted(label);
         if (!hasDataEdge(graph, node.id, pin)) {
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(84.0f);
+            ImGui::SetNextItemWidth(canvas.scaled(84.0f));
             ImGui::PushID(pin);
             if (ImGui::DragScalar("##value", ImGuiDataType_Double, value, 0.1f,
                                   nullptr, nullptr, "%.3f")) {
@@ -266,23 +294,57 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         execOutput(OnUpdate_Out, "then");
         break;
     case NodeKind::SetPosition:
-    case NodeKind::Translate: {
-        const bool translate = node.kind == NodeKind::Translate;
-        execInput(translate ? Translate_In : SetPosition_In, "in");
-        dataInput(translate ? Translate_X : SetPosition_X, "x", "x",
-                  mutableNode ? &mutableNode->inputX : nullptr);
-        dataInput(translate ? Translate_Y : SetPosition_Y, "y", "y",
-                  mutableNode ? &mutableNode->inputY : nullptr);
-        dataInput(translate ? Translate_Z : SetPosition_Z, "z", "z",
-                  mutableNode ? &mutableNode->inputZ : nullptr);
-        execOutput(translate ? Translate_Out : SetPosition_Out, "out");
+    case NodeKind::Translate:
+    case NodeKind::SetScale: {
+        PinSlot inSlot = SetPosition_In;
+        PinSlot xSlot = SetPosition_X;
+        PinSlot ySlot = SetPosition_Y;
+        PinSlot zSlot = SetPosition_Z;
+        PinSlot outSlot = SetPosition_Out;
+        if (node.kind == NodeKind::Translate) {
+            inSlot = Translate_In;
+            xSlot = Translate_X;
+            ySlot = Translate_Y;
+            zSlot = Translate_Z;
+            outSlot = Translate_Out;
+        } else if (node.kind == NodeKind::SetScale) {
+            inSlot = SetScale_In;
+            xSlot = SetScale_X;
+            ySlot = SetScale_Y;
+            zSlot = SetScale_Z;
+            outSlot = SetScale_Out;
+        }
+        execInput(inSlot, "in");
+        dataInput(xSlot, "x", "x", mutableNode ? &mutableNode->inputX : nullptr);
+        dataInput(ySlot, "y", "y", mutableNode ? &mutableNode->inputY : nullptr);
+        dataInput(zSlot, "z", "z", mutableNode ? &mutableNode->inputZ : nullptr);
+        execOutput(outSlot, "out");
         break;
     }
     case NodeKind::GetPosition:
-        dataOutput(GetPosition_X, "x");
-        dataOutput(GetPosition_Y, "y");
-        dataOutput(GetPosition_Z, "z");
+    case NodeKind::GetScale: {
+        const bool scale = node.kind == NodeKind::GetScale;
+        dataOutput(scale ? GetScale_X : GetPosition_X, "x");
+        dataOutput(scale ? GetScale_Y : GetPosition_Y, "y");
+        dataOutput(scale ? GetScale_Z : GetPosition_Z, "z");
         break;
+    }
+    case NodeKind::Log: {
+        execInput(Log_In, "in");
+        ImNodes::BeginStaticAttribute(attrId(imId, Log_Message));
+        if (mutableNode) {
+            char message[256] = {};
+            std::strncpy(message, mutableNode->textValue.c_str(), sizeof(message) - 1);
+            ImGui::SetNextItemWidth(canvas.scaled(140.0f));
+            if (ImGui::InputText("##message", message, sizeof(message))) {
+                mutableNode->textValue = message;
+                graphDirty = true;
+            }
+        }
+        ImNodes::EndStaticAttribute();
+        execOutput(Log_Out, "out");
+        break;
+    }
     case NodeKind::DeltaTime:
         dataOutput(DeltaTime_Value, "dt");
         break;
@@ -291,7 +353,7 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         if (mutableNode) {
             int mode = mutableNode->constantIsBool ? 1 : 0;
             const char* modes[] = {"Number", "Bool"};
-            ImGui::SetNextItemWidth(78.0f);
+            ImGui::SetNextItemWidth(canvas.scaled(78.0f));
             if (ImGui::Combo("##mode", &mode, modes, 2)) {
                 mutableNode->constantIsBool = mode == 1;
                 graphDirty = true;
@@ -300,7 +362,7 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
             if (mutableNode->constantIsBool) {
                 if (ImGui::Checkbox("##bool", &mutableNode->boolValue)) graphDirty = true;
             } else {
-                ImGui::SetNextItemWidth(78.0f);
+                ImGui::SetNextItemWidth(canvas.scaled(78.0f));
                 if (ImGui::DragScalar("##value", ImGuiDataType_Double,
                                       &mutableNode->numberValue, 0.1f, nullptr, nullptr,
                                       "%.3f")) {
@@ -329,61 +391,13 @@ void drawNodeBody(const GraphNode& node, NodeGraph& graph, bool& graphDirty) {
         break;
     }
 
-    ImNodes::EndNode();
-    ImNodes::PopColorStyle();
-    ImNodes::PopColorStyle();
-    ImNodes::PopColorStyle();
+    canvas.endNode();
 }
 
 } // namespace
 
 DryadNodeScriptPanel::DryadNodeScriptPanel() = default;
-
-DryadNodeScriptPanel::~DryadNodeScriptPanel() {
-    if (m_nodesContext && ImNodes::GetCurrentContext()) {
-        ImNodes::EditorContextFree(m_nodesContext);
-        m_nodesContext = nullptr;
-    }
-    if (m_ownsImNodesRootContext) {
-        ImNodes::DestroyContext();
-        m_ownsImNodesRootContext = false;
-    }
-}
-
-void DryadNodeScriptPanel::ensureImNodesReady() {
-    if (!ImNodes::GetCurrentContext()) {
-        ImNodes::SetImGuiContext(ImGui::GetCurrentContext());
-        ImNodes::CreateContext();
-        ImNodes::StyleColorsDark();
-        m_ownsImNodesRootContext = true;
-    }
-    if (!m_nodesContext) {
-        m_nodesContext = ImNodes::EditorContextCreate();
-    }
-
-    ImNodesStyle& style = ImNodes::GetStyle();
-    style.NodeCornerRounding = 6.0f;
-    style.NodePadding = ImVec2(12.0f, 8.0f);
-    style.NodeBorderThickness = 1.0f;
-    style.LinkThickness = 2.0f;
-    style.LinkLineSegmentsPerLength = 0.08f;
-    style.PinCircleRadius = 4.0f;
-    style.PinHoverRadius = 9.0f;
-    style.GridSpacing = 24.0f;
-    style.Colors[ImNodesCol_GridBackground] = IM_COL32(23, 25, 30, 255);
-    style.Colors[ImNodesCol_GridLine] = IM_COL32(39, 42, 49, 255);
-    style.Colors[ImNodesCol_NodeBackground] = IM_COL32(36, 39, 47, 255);
-    style.Colors[ImNodesCol_NodeBackgroundHovered] = IM_COL32(44, 48, 58, 255);
-    style.Colors[ImNodesCol_NodeBackgroundSelected] = IM_COL32(48, 53, 64, 255);
-    style.Colors[ImNodesCol_NodeOutline] = IM_COL32(66, 72, 86, 255);
-    style.Colors[ImNodesCol_Link] = IM_COL32(120, 168, 235, 230);
-    style.Colors[ImNodesCol_LinkHovered] = IM_COL32(170, 205, 255, 255);
-    style.Colors[ImNodesCol_LinkSelected] = IM_COL32(255, 196, 96, 255);
-    style.Colors[ImNodesCol_Pin] = IM_COL32(176, 190, 210, 255);
-    style.Colors[ImNodesCol_PinHovered] = IM_COL32(255, 210, 120, 255);
-    style.Colors[ImNodesCol_BoxSelector] = IM_COL32(120, 168, 235, 40);
-    style.Colors[ImNodesCol_BoxSelectorOutline] = IM_COL32(120, 168, 235, 180);
-}
+DryadNodeScriptPanel::~DryadNodeScriptPanel() = default;
 
 static std::filesystem::path projectRootFor(const EditorContext& ctx) {
     if (!ctx.projectRootPath.empty()) return ctx.projectRootPath;
@@ -542,13 +556,11 @@ void DryadNodeScriptPanel::openFromScript(const std::filesystem::path& scriptPat
 }
 
 void DryadNodeScriptPanel::rebuildImNodesFromGraph() {
-    ensureImNodesReady();
-    if (!m_nodesContext) return;
-    ImNodes::EditorContextSet(m_nodesContext);
-
+    m_canvas.activate();
     for (const auto& node : m_graph.nodes) {
         const int imId = imNodeIdFromString(node.id);
-        ImNodes::SetNodeGridSpacePos(imId, ImVec2(node.x, node.y));
+        ImNodes::SetNodeGridSpacePos(
+            imId, m_canvas.worldToCanvas(ImVec2(node.x, node.y)));
     }
     m_pendingGraphSync = false;
 }
@@ -566,13 +578,14 @@ bool DryadNodeScriptPanel::commitToDisk() {
 }
 
 bool DryadNodeScriptPanel::syncGraphFromEditor(bool writeFiles) {
-    if (!m_nodesContext) return false;
+    if (!m_canvas.context()) return false;
 
     for (auto& node : m_graph.nodes) {
         const int imId = imNodeIdFromString(node.id);
-        const ImVec2 pos = ImNodes::GetNodeGridSpacePos(imId);
-        node.x = pos.x;
-        node.y = pos.y;
+        const ImVec2 world =
+            m_canvas.canvasToWorld(ImNodes::GetNodeGridSpacePos(imId));
+        node.x = world.x;
+        node.y = world.y;
     }
 
     if (!writeFiles) return true;
@@ -622,34 +635,37 @@ void DryadNodeScriptPanel::addNodePopupItems() {
         }
     }
 
-    auto item = [&](const char* label, const char* type, const char* description,
-                    bool enabled = true) {
-        if (!ImGui::MenuItem(label, nullptr, false, enabled)) return;
+    auto item = [&](const NodeCatalogEntry& entry, bool enabled) {
+        if (!ImGui::MenuItem(entry.displayName, nullptr, false, enabled)) return;
         if (m_addNodeAtMouse) {
             f32 canvasX = 60.0f;
             f32 canvasY = 60.0f;
             screenToCanvas(m_addNodeScreenX, m_addNodeScreenY, canvasX, canvasY);
-            addNodeAt(type, canvasX, canvasY);
+            addNodeAt(entry.typeName, canvasX, canvasY);
         } else {
-            addNode(type);
+            addNode(entry.typeName);
         }
         ImGui::CloseCurrentPopup();
     };
 
-    ImGui::TextDisabled("EVENT");
-    item("OnUpdate", "OnUpdate", "Runs once per frame", !hasOnUpdate);
-    ImGui::Separator();
-    ImGui::TextDisabled("ACTIONS");
-    item("Set position", "SetPosition", "Move to an absolute position");
-    item("Translate", "Translate", "Move by an offset");
-    ImGui::Separator();
-    ImGui::TextDisabled("DATA");
-    item("Get position", "GetPosition", "Read the entity position");
-    item("Delta time", "DeltaTime", "Seconds since the previous frame");
-    item("Constant", "Constant", "Number or boolean value");
-    ImGui::Separator();
-    ImGui::TextDisabled("FLOW");
-    item("Branch", "Branch", "Run then/else based on a condition");
+    const auto& entries = nodeCatalog();
+    std::vector<std::string> categories;
+    for (const auto& entry : entries) {
+        if (std::find(categories.begin(), categories.end(), entry.category) ==
+            categories.end()) {
+            categories.emplace_back(entry.category);
+        }
+    }
+    for (size_t categoryIndex = 0; categoryIndex < categories.size(); ++categoryIndex) {
+        const std::string& category = categories[categoryIndex];
+        ImGui::TextDisabled("%s", category.c_str());
+        for (const auto& entry : entries) {
+            if (category != entry.category) continue;
+            const bool enabled = !(entry.kind == NodeKind::OnUpdate && hasOnUpdate);
+            item(entry, enabled);
+        }
+        if (categoryIndex + 1 < categories.size()) ImGui::Separator();
+    }
 }
 
 void DryadNodeScriptPanel::screenToCanvas(f32 screenX, f32 screenY, f32& canvasX,
@@ -657,19 +673,16 @@ void DryadNodeScriptPanel::screenToCanvas(f32 screenX, f32 screenY, f32& canvasX
     canvasX = 60.0f;
     canvasY = 60.0f;
     if (m_graph.nodes.empty()) return;
-
-    const int anchor = imNodeIdFromString(m_graph.nodes.front().id);
-    const ImVec2 anchorScreen = ImNodes::GetNodeScreenSpacePos(anchor);
-    const ImVec2 anchorGrid = ImNodes::GetNodeGridSpacePos(anchor);
-    const ImVec2 panning = ImNodes::EditorContextGetPanning();
-    const ImVec2 origin(anchorScreen.x - anchorGrid.x - panning.x,
-                        anchorScreen.y - anchorGrid.y - panning.y);
-    canvasX = screenX - origin.x - panning.x;
-    canvasY = screenY - origin.y - panning.y;
+    const Script::Nodes::GraphNode* anchorNode = &m_graph.nodes.front();
+    const int anchor = imNodeIdFromString(anchorNode->id);
+    const ImVec2 world = m_canvas.screenToWorld(
+        ImVec2(screenX, screenY), anchor,
+        ImVec2(anchorNode->x, anchorNode->y));
+    canvasX = world.x;
+    canvasY = world.y;
 }
 
 void DryadNodeScriptPanel::deleteSelection() {
-    if (!m_nodesContext) return;
 
     const int selectedNodeCount = ImNodes::NumSelectedNodes();
     std::vector<int> selectedNodes(selectedNodeCount);
@@ -937,7 +950,7 @@ void DryadNodeScriptPanel::drawRuntimeControls(EditorContext& ctx) {
 
 void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
-    ensureImNodesReady();
+    m_canvas.ensureReady();
 
     ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
     if (!UIKit::BeginPanel("Dryad Node Script", &m_open)) {
@@ -972,6 +985,20 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
         m_deleteRequested = true;
     }
 
+    auto applyZoom = [&](f32 zoom) {
+        m_canvas.setZoom(zoom);
+        m_pendingGraphSync = true;
+        m_resetView = true;
+    };
+    ImGui::SameLine();
+    if (UIKit::ToolbarButton("-", "Zoom out")) applyZoom(m_canvas.zoom() - 0.1f);
+    ImGui::SameLine();
+    char zoomLabel[16];
+    std::snprintf(zoomLabel, sizeof(zoomLabel), "%.0f%%", m_canvas.zoom() * 100.0f);
+    if (UIKit::ToolbarButton(zoomLabel, "Reset zoom to 100%")) applyZoom(1.0f);
+    ImGui::SameLine();
+    if (UIKit::ToolbarButton("+", "Zoom in")) applyZoom(m_canvas.zoom() + 0.1f);
+
     if (!m_status.empty()) {
         UIKit::TextMuted(m_status.c_str());
     }
@@ -980,18 +1007,14 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     ImGui::TextDisabled(
         "Middle-drag: pan  ·  Right-click: add node  ·  Del: delete  ·  drag a pin: link");
 
-    ImNodes::EditorContextSet(m_nodesContext);
     ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
-    ImNodes::BeginNodeEditor();
-    const ImVec2 canvasViewSize = ImGui::GetWindowSize();
+    m_canvas.begin();
 
     if (m_pendingGraphSync) {
         rebuildImNodesFromGraph();
     }
     if (m_resetView) {
-        if (m_graph.nodes.empty()) {
-            ImNodes::EditorContextResetPanning(ImVec2(0, 0));
-        } else {
+        if (!m_graph.nodes.empty()) {
             f32 minX = m_graph.nodes.front().x;
             f32 minY = m_graph.nodes.front().y;
             f32 maxX = minX + 220.0f;
@@ -1002,12 +1025,21 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
                 maxX = std::max(maxX, node.x + 220.0f);
                 maxY = std::max(maxY, node.y + 160.0f);
             }
-            const ImVec2 center((minX + maxX) * 0.5f, (minY + maxY) * 0.5f);
-            ImNodes::EditorContextResetPanning(
-                ImVec2(canvasViewSize.x * 0.5f - center.x,
-                       canvasViewSize.y * 0.5f - center.y));
+            if (m_canvas.centerOnWorldBounds(ImVec2(minX, minY), ImVec2(maxX, maxY))) {
+                m_resetView = false;
+            }
+        } else {
+            ImNodes::EditorContextResetPanning(ImVec2(0, 0));
+            m_resetView = false;
         }
-        m_resetView = false;
+    }
+
+    std::string droppedType;
+    if (m_canvas.acceptNodeDrop("DRYAD_NODE", droppedType)) {
+        m_dropNodeType = droppedType;
+        m_dropPending = true;
+        m_dropScreenX = ImGui::GetIO().MousePos.x;
+        m_dropScreenY = ImGui::GetIO().MousePos.y;
     }
 
     bool graphDirty = false;
@@ -1017,7 +1049,7 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     }
 
     for (const auto& node : m_graph.nodes) {
-        drawNodeBody(node, m_graph, graphDirty);
+        drawNodeBody(node, m_graph, graphDirty, m_canvas);
     }
 
     for (const auto& edge : m_graph.edges) {
@@ -1081,6 +1113,38 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
                     return true;
                 }
             }
+            if (kind == NodeKind::SetScale) {
+                if (pin == "in") {
+                    out = SetScale_In;
+                    return true;
+                }
+                if (pin == "x") {
+                    out = SetScale_X;
+                    return true;
+                }
+                if (pin == "y") {
+                    out = SetScale_Y;
+                    return true;
+                }
+                if (pin == "z") {
+                    out = SetScale_Z;
+                    return true;
+                }
+                if (pin == "out") {
+                    out = SetScale_Out;
+                    return true;
+                }
+            }
+            if (kind == NodeKind::Log) {
+                if (pin == "in") {
+                    out = Log_In;
+                    return true;
+                }
+                if (pin == "out") {
+                    out = Log_Out;
+                    return true;
+                }
+            }
             if (kind == NodeKind::GetPosition) {
                 if (pin == "x") {
                     out = GetPosition_X;
@@ -1092,6 +1156,20 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
                 }
                 if (pin == "z") {
                     out = GetPosition_Z;
+                    return true;
+                }
+            }
+            if (kind == NodeKind::GetScale) {
+                if (pin == "x") {
+                    out = GetScale_X;
+                    return true;
+                }
+                if (pin == "y") {
+                    out = GetScale_Y;
+                    return true;
+                }
+                if (pin == "z") {
+                    out = GetScale_Z;
                     return true;
                 }
             }
@@ -1145,9 +1223,21 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
         ImNodes::PopColorStyle();
     }
 
-    ImNodes::MiniMap(0.18f, ImNodesMiniMapLocation_BottomRight);
-    ImNodes::EndNodeEditor();
+    m_canvas.end();
     ImNodes::PopAttributeFlag();
+
+    if (m_canvas.consumeZoomChanged()) {
+        m_pendingGraphSync = true;
+        m_resetView = true;
+    }
+
+    if (m_dropPending) {
+        m_dropPending = false;
+        f32 canvasX = 60.0f;
+        f32 canvasY = 60.0f;
+        screenToCanvas(m_dropScreenX, m_dropScreenY, canvasX, canvasY);
+        addNodeAt(m_dropNodeType.c_str(), canvasX, canvasY);
+    }
 
     if (m_deleteRequested) {
         m_deleteRequested = false;

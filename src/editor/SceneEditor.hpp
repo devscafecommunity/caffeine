@@ -30,6 +30,7 @@
 #include "editor/ToolboxPanel.hpp"
 #if defined(CF_HAS_DRYAD)
 #include "editor/DryadNodeScriptPanel.hpp"
+#include "editor/DryadNodesPanel.hpp"
 #endif
 #endif
 
@@ -174,6 +175,7 @@ private:
     EffectEditorPanel   m_effectEditor;
 #if defined(CF_HAS_DRYAD)
     DryadNodeScriptPanel m_dryadNodeScript;
+    DryadNodesPanel m_dryadNodes;
 #endif
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;

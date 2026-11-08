@@ -420,6 +420,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         target_sources(caffeine-core PRIVATE
             src/script/DryadHost.cpp
             src/script/nodes/NodeGraph.cpp
+            src/script/nodes/NodeCatalog.cpp
             src/script/nodes/NodeEmitter.cpp
             src/script/nodes/NodeGraphIO.cpp
             src/script/nodes/NodeRoundTrip.cpp
@@ -520,12 +521,13 @@ with open(sys.argv[1], 'w') as f:
         src/ui_kit/Icons.cpp
         src/ui_kit/PanelRegistry.cpp
         src/ui_kit/Workspace.cpp
+        src/ui_kit/NodeCanvas.cpp
     )
     target_include_directories(caffeine-ui-kit PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
-    target_link_libraries(caffeine-ui-kit PUBLIC ImGui)
+    target_link_libraries(caffeine-ui-kit PUBLIC ImGui ImNodes)
     target_compile_features(caffeine-ui-kit PUBLIC cxx_std_20)
     target_compile_definitions(caffeine-ui-kit PUBLIC CF_HAS_IMGUI=1)
     if(NOT MSVC)
@@ -570,6 +572,7 @@ with open(sys.argv[1], 'w') as f:
           src/editor/SceneTabManager.cpp
           src/editor/ScriptEditorWindow.cpp
           src/editor/DryadNodeScriptPanel.cpp
+          src/editor/DryadNodesPanel.cpp
           src/editor/AnimationTimeline.cpp
           src/editor/AnimatorController.cpp
           src/editor/TilemapEditor.cpp

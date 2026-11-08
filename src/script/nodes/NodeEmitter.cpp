@@ -149,19 +149,35 @@ private:
             }
             return true;
         }
-        case NodeKind::Translate: {
+        case NodeKind::Translate:
+        case NodeKind::SetScale: {
             line(out, depth, "// @node " + n->id);
             std::string xExpr, yExpr, zExpr;
             if (!resolveDataInput(n->id, "x", xExpr, err)) return false;
             if (!resolveDataInput(n->id, "y", yExpr, err)) return false;
             if (!resolveDataInput(n->id, "z", zExpr, err)) return false;
-            line(out, depth,
-                 "caffeine_translate(entity, " + xExpr + ", " + yExpr + ", " + zExpr + ");");
+            const char* native = n->kind == NodeKind::Translate ? "caffeine_translate"
+                                                                 : "caffeine_set_scale";
+            line(out, depth, std::string(native) + "(entity, " + xExpr + ", " + yExpr + ", " +
+                                 zExpr + ");");
 
             if (const GraphEdge* next = findExecEdgeFrom(m_graph, n->id, "out")) {
                 PinRef ref{};
                 if (!parsePinRef(next->to, ref)) {
-                    err = "invalid exec edge from Translate";
+                    err = "invalid exec edge from vector action";
+                    return false;
+                }
+                return emitExecChain(ref.nodeId, out, depth, err);
+            }
+            return true;
+        }
+        case NodeKind::Log: {
+            line(out, depth, "// @node " + n->id);
+            line(out, depth, "caffeine_log(\"" + jsonEscape(n->textValue) + "\");");
+            if (const GraphEdge* next = findExecEdgeFrom(m_graph, n->id, "out")) {
+                PinRef ref{};
+                if (!parsePinRef(next->to, ref)) {
+                    err = "invalid exec edge from Log";
                     return false;
                 }
                 return emitExecChain(ref.nodeId, out, depth, err);
@@ -206,6 +222,7 @@ private:
             err = "OnUpdate cannot appear inside exec chain";
             return false;
         case NodeKind::GetPosition:
+        case NodeKind::GetScale:
         case NodeKind::DeltaTime:
         case NodeKind::Constant:
             err = "data-only node in exec chain: " + nodeId;
@@ -296,6 +313,19 @@ private:
             }
             m_dataExprCache.emplace(cacheKey, outExpr);
             return true;
+        case NodeKind::GetScale:
+            if (pin == "x") {
+                outExpr = "caffeine_get_scale_x(entity)";
+            } else if (pin == "y") {
+                outExpr = "caffeine_get_scale_y(entity)";
+            } else if (pin == "z") {
+                outExpr = "caffeine_get_scale_z(entity)";
+            } else {
+                err = "GetScale exposes x, y, z pins";
+                return false;
+            }
+            m_dataExprCache.emplace(cacheKey, outExpr);
+            return true;
         default:
             err = "node " + nodeId + " is not a data source";
             return false;
@@ -322,13 +352,17 @@ private:
                     json << ", \"valueKind\": \"number\", \"value\": " << formatNumber(n.numberValue);
                 }
             }
-            if (n.kind == NodeKind::SetPosition || n.kind == NodeKind::Translate) {
+            if (n.kind == NodeKind::SetPosition || n.kind == NodeKind::Translate ||
+                n.kind == NodeKind::SetScale) {
                 json << ", \"inputX\": " << formatNumber(n.inputX)
                      << ", \"inputY\": " << formatNumber(n.inputY)
                      << ", \"inputZ\": " << formatNumber(n.inputZ);
             }
             if (n.kind == NodeKind::Branch) {
                 json << ", \"condition\": " << (n.inputCondition ? "true" : "false");
+            }
+            if (n.kind == NodeKind::Log) {
+                json << ", \"text\": \"" << jsonEscape(n.textValue) << "\"";
             }
             json << " }";
             if (i + 1 < sorted.nodes.size()) json << ",";

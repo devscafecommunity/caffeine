@@ -4,13 +4,16 @@
 
 #include "../src/script/DryadHost.hpp"
 #include "../src/script/nodes/NodeEmitter.hpp"
+#include "../src/script/nodes/NodeCatalog.hpp"
 #include "../src/script/nodes/NodeGraphIO.hpp"
 #include "../src/script/nodes/NodeRoundTrip.hpp"
 #include "../src/ecs/Components.hpp"
 #include "../src/ecs/Components3D.hpp"
 #include "../src/ecs/MeshComponents.hpp"
 #include "../src/ecs/World.hpp"
+#include "caffeine/ui/NodeCanvas.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -318,4 +321,136 @@ TEST_CASE("Node JSON reloads constant values and bool mode", "[dryad][nodes]") {
     REQUIRE(restoredBool->boolValue);
 }
 
+
+TEST_CASE("SetScale round-trips and moves the 3D Scale3D component", "[dryad][nodes][3d]") {
+    NodeGraph graph;
+    graph.scriptFileName = "scale.dyd";
+    GraphNode onUpdate{"s1", NodeKind::OnUpdate, 0, 0};
+    GraphNode setScale{"s2", NodeKind::SetScale, 200, 0};
+    setScale.inputX = 2.0;
+    setScale.inputY = 3.0;
+    setScale.inputZ = 4.0;
+    graph.nodes = {onUpdate, setScale};
+    graph.edges = {{"s1.out", "s2.in"}};
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("caffeine_set_scale(entity, 2, 3, 4);") != std::string::npos);
+
+    const ImportResult imported = importFromDyd(emitted.dyd, graph.scriptFileName, &graph);
+    REQUIRE(imported.status == ImportStatus::Success);
+    const EmitResult again = NodeEmitter::emit(imported.graph);
+    REQUIRE(again.ok);
+    REQUIRE(again.dyd == emitted.dyd);
+
+    const std::string path = "scale.dyd";
+    {
+        std::ofstream out(path);
+        out << emitted.dyd;
+    }
+
+    ECS::World world;
+    ECS::Entity entity = world.create("Scale3DEntity");
+    entity.getOrAdd<ECS::Position3D>();
+    entity.getOrAdd<ECS::Scale3D>().scale = Vec3(1, 1, 1);
+    entity.getOrAdd<ECS::MeshFilterComponent>();
+
+    DryadHost host;
+    host.setWorld(&world);
+    REQUIRE(host.load(path));
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f));
+    const auto* scale = entity.get<ECS::Scale3D>();
+    REQUIRE(scale != nullptr);
+    REQUIRE(scale->scale.x == 2.0f);
+    REQUIRE(scale->scale.y == 3.0f);
+    REQUIRE(scale->scale.z == 4.0f);
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Log node emits, round-trips and keeps its message in JSON", "[dryad][nodes]") {
+    NodeGraph graph;
+    graph.scriptFileName = "log.dyd";
+    GraphNode onUpdate{"l1", NodeKind::OnUpdate, 0, 0};
+    GraphNode log{"l2", NodeKind::Log, 200, 0};
+    log.textValue = "hello \"dryad\"";
+    graph.nodes = {onUpdate, log};
+    graph.edges = {{"l1.out", "l2.in"}};
+
+    const EmitResult emitted = NodeEmitter::emit(graph);
+    REQUIRE(emitted.ok);
+    REQUIRE(emitted.dyd.find("caffeine_log(\"hello \\\"dryad\\\"\");") != std::string::npos);
+
+    const ImportResult imported = importFromDyd(emitted.dyd, graph.scriptFileName, &graph);
+    REQUIRE(imported.status == ImportStatus::Success);
+    const GraphNode* importedLog = imported.graph.findNode("l2");
+    REQUIRE(importedLog != nullptr);
+    REQUIRE(importedLog->textValue == "hello \"dryad\"");
+    const EmitResult again = NodeEmitter::emit(imported.graph);
+    REQUIRE(again.ok);
+    REQUIRE(again.dyd == emitted.dyd);
+
+    const LoadResult loaded = loadFromJsonString(emitted.nodeJson);
+    REQUIRE(loaded.ok);
+    const GraphNode* jsonLog = loaded.graph.findNode("l2");
+    REQUIRE(jsonLog != nullptr);
+    REQUIRE(jsonLog->textValue == "hello \"dryad\"");
+
+    const std::string path = "log.dyd";
+    {
+        std::ofstream out(path);
+        out << emitted.dyd;
+    }
+    ECS::World world;
+    ECS::Entity entity = world.create("LogEntity");
+    DryadHost host;
+    host.setWorld(&world);
+    REQUIRE(host.load(path));
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f));
+    std::remove(path.c_str());
+}
+
+
+TEST_CASE("Node catalog covers every node kind exactly once", "[dryad][nodes]") {
+    std::vector<NodeKind> seen;
+    for (const auto& entry : nodeCatalog()) {
+        REQUIRE(entry.typeName[0] != '\0');
+        REQUIRE(entry.displayName[0] != '\0');
+        REQUIRE(entry.category[0] != '\0');
+        REQUIRE(findNodeCatalogEntry(entry.typeName) == &entry);
+        NodeKind parsed{};
+        REQUIRE(nodeKindFromTypeName(entry.typeName, parsed));
+        REQUIRE(parsed == entry.kind);
+        REQUIRE(std::find(seen.begin(), seen.end(), entry.kind) == seen.end());
+        seen.push_back(entry.kind);
+    }
+    const NodeKind all[] = {NodeKind::OnUpdate, NodeKind::SetPosition, NodeKind::Translate,
+                            NodeKind::SetScale, NodeKind::GetScale, NodeKind::GetPosition,
+                            NodeKind::DeltaTime, NodeKind::Constant, NodeKind::Branch,
+                            NodeKind::Log};
+    for (NodeKind kind : all) {
+        REQUIRE(std::find(seen.begin(), seen.end(), kind) != seen.end());
+    }
+}
+
+
+TEST_CASE("NodeCanvas zoom transforms world and canvas space", "[ui][dryad]") {
+    UIKit::NodeCanvas canvas;
+    REQUIRE(canvas.zoom() == 1.0f);
+    canvas.setZoom(1.5f);
+    REQUIRE(canvas.consumeZoomChanged());
+    REQUIRE(canvas.zoom() == 1.5f);
+    const ImVec2 scaled = canvas.worldToCanvas(ImVec2(20.0f, 40.0f));
+    REQUIRE(scaled.x == 30.0f);
+    REQUIRE(scaled.y == 60.0f);
+    const ImVec2 world = canvas.canvasToWorld(scaled);
+    REQUIRE(world.x == 20.0f);
+    REQUIRE(world.y == 40.0f);
+    REQUIRE(canvas.scaled(100.0f) == 150.0f);
+    canvas.setZoom(0.01f);
+    REQUIRE(canvas.zoom() == 0.35f);
+    canvas.setZoom(10.0f);
+    REQUIRE(canvas.zoom() == 2.5f);
+    REQUIRE(canvas.consumeZoomChanged());
+    REQUIRE_FALSE(canvas.consumeZoomChanged());
+}
 #endif

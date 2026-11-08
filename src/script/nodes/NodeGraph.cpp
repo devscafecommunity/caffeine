@@ -9,6 +9,9 @@ const char* nodeKindToTypeName(NodeKind kind) {
     case NodeKind::DeltaTime: return "DeltaTime";
     case NodeKind::SetPosition: return "SetPosition";
     case NodeKind::Translate: return "Translate";
+    case NodeKind::SetScale: return "SetScale";
+    case NodeKind::GetScale: return "GetScale";
+    case NodeKind::Log: return "Log";
     case NodeKind::Constant: return "Constant";
     case NodeKind::Branch: return "Branch";
     }
@@ -34,6 +37,18 @@ bool nodeKindFromTypeName(const std::string& name, NodeKind& out) {
     }
     if (name == "Translate") {
         out = NodeKind::Translate;
+        return true;
+    }
+    if (name == "SetScale") {
+        out = NodeKind::SetScale;
+        return true;
+    }
+    if (name == "GetScale") {
+        out = NodeKind::GetScale;
+        return true;
+    }
+    if (name == "Log") {
+        out = NodeKind::Log;
         return true;
     }
     if (name == "Constant") {
