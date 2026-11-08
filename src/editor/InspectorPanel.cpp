@@ -2040,9 +2040,27 @@ void InspectorPanel::drawSkinnedPose(ECS::World& world, ECS::Entity e, EditorCon
         if (!skin) skin = Animation::findImportedSkin(pose->meshPath);
     }
     if (!skin) {
-        ImGui::TextDisabled("No skin on this mesh. The file needs glTF skins / joints.");
+        ImGui::TextDisabled("No glTF skin on this mesh.");
         if (!Assets::MeshCache::getInstance().getLastError().empty()) {
             ImGui::TextWrapped("%s", Assets::MeshCache::getInstance().getLastError().c_str());
+        }
+        if (boundMesh && (!resolved.empty() || pose->meshPath[0] != '\0')) {
+            if (ImGui::Button("Fit humanoid rig")) {
+                const std::string rigPath =
+                    !resolved.empty() ? resolved : std::string(pose->meshPath);
+                if (Animation::synthesizeHumanoidSkin(rigPath, *boundMesh, true)) {
+                    if (const Animation::ImportedSkin* fitted =
+                            Animation::findImportedSkin(rigPath)) {
+                        pose->humanoid = Animation::matchHumanoid(*fitted);
+                        pose->humanoid.manual = true;
+                        pose->loaded = true;
+                        ctx.showBones = true;
+                        ctx.markDirty();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Fits a procedural T-pose rig to this mesh.");
         }
     } else if (skin->synthesized) {
         ImGui::TextDisabled("Fitted humanoid (%d bones). This file has no authored glTF skin.",

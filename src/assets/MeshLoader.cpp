@@ -824,9 +824,10 @@ void MeshLoader::ensureGltfSkin(const std::string& path, Mesh3D* mesh) {
         success = loader.LoadASCIIFromFile(&model, &err, &warn, path);
     }
     if (success) importGltfSkin(model, path, mesh);
-    if (!Animation::findImportedSkin(path)) {
-        Animation::synthesizeHumanoidSkin(path, *mesh);
-    }
+    // Do not synthesize a humanoid rig here. Static meshes (plants, props,
+    // furniture) have no glTF skin and must not look like characters just
+    // because the animator or inspector queried them. Explicit synthesis is
+    // available from the Skeleton component in the Inspector.
 }
 
 }
