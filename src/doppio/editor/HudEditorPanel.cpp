@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/HudEditorPanel.hpp"
 
 #include "scene/SceneComponents.hpp"
@@ -129,20 +129,24 @@ ECS::Entity hitWidget(ECS::World& world, Vec2 canvasPoint) {
 
 void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
     if (!m_open) return;
-    UIKit::BeginPanel("HUD Editor", &m_open);
     ECS::World* world = ctx.activeWorld;
+    Panel root("HUD Editor", "Retained-mode HUD authoring", "align-left", &m_open);
+    UIContext ui;
     if (!world) {
-        ImGui::TextDisabled("Open a scene to edit the HUD.");
-        ImGui::End();
+        root.emplace<Label>("Open a scene to edit the HUD.", TextTone::Muted);
+        ui.draw(root);
         return;
     }
 
     UI::UISystem layout;
     layout.layout(*world);
     const Vec2 reference = canvasSizeOf(*world);
-
     UI::UISystem factory;
+
     auto finishCreate = [&](ECS::Entity entity, ECS::Entity parent) {
         if (parent.isValid() && entity.isValid() && entity.id() != parent.id()) {
             parentWidget(*world, entity, parent);
@@ -152,223 +156,234 @@ void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
         ctx.endUndo(*world);
         layout.layout(*world);
     };
+    auto ensureParent = [&]() -> ECS::Entity {
+        ECS::Entity parent = parentForNewWidget(*world, ctx);
+        if (!parent.isValid()) {
+            parent = factory.createCanvas(*world, {kRefW, kRefH});
+            setEntityName(*world, parent, "HUD");
+        }
+        return parent;
+    };
 
-    if (ImGui::Button("Canvas")) {
+    auto& createRow1 = root.emplace<Row>("hud_create_row_1");
+    createRow1.emplace<Button>("Canvas", ButtonVariant::Primary).setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
         ECS::Entity canvas = factory.createCanvas(*world, {kRefW, kRefH});
         setEntityName(*world, canvas, "HUD");
         finishCreate(canvas, ECS::Entity::INVALID);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Panel")) {
+    });
+    createRow1.emplace<Button>("Panel").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
-        ECS::Entity panel = factory.createPanel(*world, parent.id(), {{24.0f, 24.0f}, {280.0f, 120.0f}});
+        const ECS::Entity parent = ensureParent();
+        ECS::Entity panel = factory.createPanel(*world, parent.id(),
+                                                {{24.0f, 24.0f}, {280.0f, 120.0f}});
         setEntityName(*world, panel, "Panel");
         finishCreate(panel, parent);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Label")) {
+    });
+    createRow1.emplace<Button>("Label").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
+        const ECS::Entity parent = ensureParent();
         ECS::Entity label = factory.createLabel(*world, parent.id(), "Label", {32.0f, 32.0f});
         setEntityName(*world, label, "Label");
         finishCreate(label, parent);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Button")) {
+    });
+    createRow1.emplace<Button>("Button").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
+        const ECS::Entity parent = ensureParent();
         ECS::Entity button = factory.createButton(*world, parent.id(), "Button", {32.0f, 80.0f});
         setEntityName(*world, button, "Button");
         finishCreate(button, parent);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Bar")) {
+    });
+
+    auto& createRow2 = root.emplace<Row>("hud_create_row_2");
+    createRow2.emplace<Button>("Bar").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
+        const ECS::Entity parent = ensureParent();
         ECS::Entity bar = factory.createProgressBar(*world, parent.id(), {32.0f, 140.0f});
         setEntityName(*world, bar, "Health");
         finishCreate(bar, parent);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Slider")) {
+    });
+    createRow2.emplace<Button>("Slider").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
+        const ECS::Entity parent = ensureParent();
         ECS::Entity slider = factory.createSlider(*world, parent.id(), {32.0f, 180.0f});
         setEntityName(*world, slider, "Slider");
         finishCreate(slider, parent);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Check")) {
+    });
+    createRow2.emplace<Button>("Check").setOnClick([&] {
         ctx.beginUndo(EditorCommand::AddEntity, u32_max, *world);
-        ECS::Entity parent = parentForNewWidget(*world, ctx);
-        if (!parent.isValid()) {
-            parent = factory.createCanvas(*world, {kRefW, kRefH});
-            setEntityName(*world, parent, "HUD");
-        }
+        const ECS::Entity parent = ensureParent();
         ECS::Entity box = factory.createCheckbox(*world, parent.id(), {32.0f, 220.0f});
         setEntityName(*world, box, "Checkbox");
         finishCreate(box, parent);
-    }
+    });
 
-    ImGui::TextDisabled("Drag to move. The bottom-right corner resizes. Colors and text live in the inspector.");
-    ImGui::TextDisabled("Clicks and values stay in Lua (caffeine.ui) or C++ (UISystem).");
+    root.emplace<Elements::Paragraph>(
+        "Drag to move. The bottom-right corner resizes. Colors and text live in the "
+        "inspector. Clicks and values stay in Lua (caffeine.ui) or C++ (UISystem).");
 
-    const float listWidth = 200.0f;
-    ImGui::BeginChild("hud_list", ImVec2(listWidth, 0.0f), true);
+    auto& columns = root.emplace<Row>("hud_columns");
+    auto& listCard = columns.emplace<Card>("hud_list_card");
+    listCard.setWidth(200.0f);
+    listCard.emplace<Label>("Widgets", TextTone::Accent).setHeading(true);
+    auto& list = listCard.emplace<ListBox>("hud_list");
+    list.setHeight(420.0f);
     ECS::ComponentQuery query;
     query.with<UI::UIWidget>();
     world->forEach<UI::UIWidget>(query, [&](ECS::Entity entity, UI::UIWidget& widget) {
-        ImGui::PushID(static_cast<int>(entity.id()));
         const bool selected = ctx.selectedEntity.id() == entity.id();
-        char row[160];
-        std::snprintf(row, sizeof(row), "%s  %s", widgetTypeName(widget.type), getEntityName(*world, entity));
-        if (ImGui::Selectable(row, selected)) ctx.selectEntity(entity);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", widgetCaption(*world, entity, widget));
-        }
-        ImGui::PopID();
+        const std::string label = std::string(widgetTypeName(widget.type)) + "  " +
+                                  getEntityName(*world, entity);
+        auto& item = list.emplace<ListItem>(label, selected);
+        item.setId("hud_widget_" + std::to_string(entity.id()));
+        item.setTooltip(widgetCaption(*world, entity, widget));
+        item.setOnClick([&ctx, entity] { ctx.selectEntity(entity); });
     });
-    ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("hud_stage", ImVec2(0.0f, 0.0f), true);
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float aspect = reference.x / std::max(reference.y, 1.0f);
-    ImVec2 canvas(avail.x, avail.x / aspect);
-    if (canvas.y > avail.y) {
-        canvas.y = avail.y;
-        canvas.x = canvas.y * aspect;
-    }
-    canvas.x = std::max(canvas.x, 64.0f);
-    canvas.y = std::max(canvas.y, 36.0f);
+    auto& stageCard = columns.emplace<Card>("hud_stage_card");
+    stageCard.setGrow(true);
+    stageCard.emplace<Label>("Stage", TextTone::Accent).setHeading(true);
+    auto& canvas = stageCard.emplace<Canvas>("hud_canvas");
+    canvas.setHeight(420.0f);
+    canvas.setOnDraw([this, world, &ctx, &layout, reference](
+                         UIContext&, ImDrawList* drawList, const ImVec2& origin,
+                         const ImVec2& size) {
+        const float aspect = reference.x / std::max(reference.y, 1.0f);
+        ImVec2 fit(size.x, size.x / aspect);
+        if (fit.y > size.y) {
+            fit.y = size.y;
+            fit.x = fit.y * aspect;
+        }
+        fit.x = std::max(fit.x, 64.0f);
+        fit.y = std::max(fit.y, 36.0f);
+        const ImVec2 fitOrigin(origin.x + (size.x - fit.x) * 0.5f,
+                               origin.y + (size.y - fit.y) * 0.5f);
+        drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                                IM_COL32(10, 12, 16, 255));
+        drawList->AddRectFilled(fitOrigin, ImVec2(fitOrigin.x + fit.x, fitOrigin.y + fit.y),
+                                IM_COL32(16, 18, 24, 255));
 
-    const ImVec2 cursor = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("hud_surface", canvas);
-    const bool surfaceHovered = ImGui::IsItemHovered();
-    const ImVec2 origin = ImGui::GetItemRectMin();
-    const f32 scaleX = canvas.x / reference.x;
-    const f32 scaleY = canvas.y / reference.y;
-    auto toCanvas = [&](ImVec2 screen) {
-        return Vec2{(screen.x - origin.x) / scaleX, (screen.y - origin.y) / scaleY};
-    };
+        const float scaleX = fit.x / reference.x;
+        const float scaleY = fit.y / reference.y;
+        for (f32 x = 0.0f; x <= reference.x; x += 64.0f) {
+            const float sx = fitOrigin.x + x * scaleX;
+            drawList->AddLine(ImVec2(sx, fitOrigin.y), ImVec2(sx, fitOrigin.y + fit.y),
+                              IM_COL32(40, 44, 56, 255));
+        }
+        for (f32 y = 0.0f; y <= reference.y; y += 64.0f) {
+            const float sy = fitOrigin.y + y * scaleY;
+            drawList->AddLine(ImVec2(fitOrigin.x, sy), ImVec2(fitOrigin.x + fit.x, sy),
+                              IM_COL32(40, 44, 56, 255));
+        }
 
-    const Vec2 mouse = toCanvas(ImGui::GetIO().MousePos);
-    if (surfaceHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        bool resize = false;
-        if (UI::UIWidget* selected = world->get<UI::UIWidget>(ctx.selectedEntity)) {
-            if (selected->type != UI::UIWidgetType::Canvas && selected->computedRect.isValid()) {
-                const float hx = origin.x + (selected->computedRect.position.x + selected->computedRect.size.x) * scaleX;
-                const float hy = origin.y + (selected->computedRect.position.y + selected->computedRect.size.y) * scaleY;
-                const ImVec2 pointer = ImGui::GetIO().MousePos;
-                resize = pointer.x >= hx - 12.0f && pointer.x <= hx + 4.0f &&
-                         pointer.y >= hy - 12.0f && pointer.y <= hy + 4.0f;
+        auto toCanvas = [&](ImVec2 screen) {
+            return Vec2{(screen.x - fitOrigin.x) / scaleX,
+                        (screen.y - fitOrigin.y) / scaleY};
+        };
+        const ImVec2 mouseScreen = ImGui::GetIO().MousePos;
+        const Vec2 mouse = toCanvas(mouseScreen);
+        const bool inside =
+            ImGui::IsItemHovered() && mouseScreen.x >= fitOrigin.x &&
+            mouseScreen.x <= fitOrigin.x + fit.x && mouseScreen.y >= fitOrigin.y &&
+            mouseScreen.y <= fitOrigin.y + fit.y;
+
+        if (inside && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            bool resize = false;
+            if (UI::UIWidget* selected = world->get<UI::UIWidget>(ctx.selectedEntity)) {
+                if (selected->type != UI::UIWidgetType::Canvas &&
+                    selected->computedRect.isValid()) {
+                    const float hx = fitOrigin.x +
+                                     (selected->computedRect.position.x +
+                                      selected->computedRect.size.x) * scaleX;
+                    const float hy = fitOrigin.y +
+                                     (selected->computedRect.position.y +
+                                      selected->computedRect.size.y) * scaleY;
+                    const ImVec2 pointer = ImGui::GetIO().MousePos;
+                    resize = pointer.x >= hx - 12.0f && pointer.x <= hx + 4.0f &&
+                             pointer.y >= hy - 12.0f && pointer.y <= hy + 4.0f;
+                }
+            }
+            if (resize) {
+                m_resizing = true;
+                m_dragging = false;
+                m_dragEntity = ctx.selectedEntity.id();
+            } else {
+                ECS::Entity hit = hitWidget(*world, mouse);
+                if (hit.isValid()) {
+                    ctx.selectEntity(hit);
+                    m_dragging = true;
+                    m_resizing = false;
+                    m_dragEntity = hit.id();
+                }
             }
         }
-        if (resize) {
-            m_resizing = true;
+
+        if ((m_dragging || m_resizing) && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ECS::Entity entity(m_dragEntity, world);
+            if (UI::UIWidget* widget = world->get<UI::UIWidget>(entity)) {
+                if (!m_undoOpen) {
+                    ctx.beginUndo(EditorCommand::MoveEntity, m_dragEntity, *world);
+                    m_undoOpen = true;
+                }
+                const ImVec2 delta = ImGui::GetIO().MouseDelta;
+                const Vec2 canvasDelta{delta.x / scaleX, delta.y / scaleY};
+                if (m_resizing) resizeWidget(*widget, canvasDelta);
+                else moveWidget(*widget, canvasDelta);
+                ctx.markDirty();
+                layout.layout(*world);
+            }
+        }
+        if ((m_dragging || m_resizing) &&
+            ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (m_undoOpen) {
+                ctx.endUndo(*world);
+                m_undoOpen = false;
+            }
             m_dragging = false;
-            m_dragEntity = ctx.selectedEntity.id();
-        } else {
-            ECS::Entity hit = hitWidget(*world, mouse);
-            if (hit.isValid()) {
-                ctx.selectEntity(hit);
-                m_dragging = true;
-                m_resizing = false;
-                m_dragEntity = hit.id();
+            m_resizing = false;
+            m_dragEntity = UI::kUIInvalidParent;
+        }
+
+        UI::drawWidgets(*world, drawList, fitOrigin, fit);
+        drawList->AddRect(fitOrigin, ImVec2(fitOrigin.x + fit.x, fitOrigin.y + fit.y),
+                          IM_COL32(90, 98, 120, 255));
+        if (ctx.selectedEntity.isValid()) {
+            if (const UI::UIWidget* selected =
+                    world->get<UI::UIWidget>(ctx.selectedEntity)) {
+                if (selected->type != UI::UIWidgetType::Canvas &&
+                    selected->computedRect.isValid()) {
+                    const ImVec2 p0(fitOrigin.x + selected->computedRect.position.x * scaleX,
+                                    fitOrigin.y + selected->computedRect.position.y * scaleY);
+                    const ImVec2 p1(p0.x + selected->computedRect.size.x * scaleX,
+                                    p0.y + selected->computedRect.size.y * scaleY);
+                    drawList->AddRect(p0, p1, IM_COL32(120, 180, 255, 255), 0.0f, 0, 2.0f);
+                    drawList->AddRectFilled(ImVec2(p1.x - 8.0f, p1.y - 8.0f), p1,
+                                            IM_COL32(120, 180, 255, 255));
+                }
             }
         }
-    }
+    });
+    char canvasLabel[64];
+    std::snprintf(canvasLabel, sizeof(canvasLabel), "Canvas %.0f x %.0f", reference.x,
+                  reference.y);
+    stageCard.emplace<Label>(canvasLabel, TextTone::Muted);
 
-    if ((m_dragging || m_resizing) && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
-        ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        ECS::Entity entity(m_dragEntity, world);
-        if (UI::UIWidget* widget = world->get<UI::UIWidget>(entity)) {
-            if (!m_undoOpen) {
-                ctx.beginUndo(EditorCommand::MoveEntity, m_dragEntity, *world);
-                m_undoOpen = true;
-            }
-            const ImVec2 delta = ImGui::GetIO().MouseDelta;
-            const Vec2 canvasDelta{delta.x / scaleX, delta.y / scaleY};
-            if (m_resizing) resizeWidget(*widget, canvasDelta);
-            else moveWidget(*widget, canvasDelta);
+    root.setOnBegin([this, world, &ctx] {
+        if (m_dragging || m_resizing) return;
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
+        if (ImGui::GetIO().WantTextInput || !ImGui::IsKeyPressed(ImGuiKey_Delete)) return;
+        if (ctx.selectedEntity.isValid() &&
+            world->get<UI::UIWidget>(ctx.selectedEntity)) {
+            ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), *world);
+            world->destroy(ctx.selectedEntity);
+            ctx.selectEntity(ECS::Entity::INVALID);
             ctx.markDirty();
-            layout.layout(*world);
-        }
-    }
-
-    if ((m_dragging || m_resizing) && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-        if (m_undoOpen) {
             ctx.endUndo(*world);
-            m_undoOpen = false;
         }
-        m_dragging = false;
-        m_resizing = false;
-        m_dragEntity = UI::kUIInvalidParent;
-    }
+    });
 
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(origin, ImVec2(origin.x + canvas.x, origin.y + canvas.y), IM_COL32(16, 18, 24, 255));
-    for (f32 x = 0.0f; x <= reference.x; x += 64.0f) {
-        const float sx = origin.x + x * scaleX;
-        drawList->AddLine(ImVec2(sx, origin.y), ImVec2(sx, origin.y + canvas.y), IM_COL32(40, 44, 56, 255));
-    }
-    for (f32 y = 0.0f; y <= reference.y; y += 64.0f) {
-        const float sy = origin.y + y * scaleY;
-        drawList->AddLine(ImVec2(origin.x, sy), ImVec2(origin.x + canvas.x, sy), IM_COL32(40, 44, 56, 255));
-    }
-    UI::drawWidgets(*world, drawList, origin, canvas);
-    drawList->AddRect(origin, ImVec2(origin.x + canvas.x, origin.y + canvas.y), IM_COL32(90, 98, 120, 255));
-
-    if (ctx.selectedEntity.isValid()) {
-        if (const UI::UIWidget* selected = world->get<UI::UIWidget>(ctx.selectedEntity)) {
-            if (selected->type != UI::UIWidgetType::Canvas && selected->computedRect.isValid()) {
-                const ImVec2 p0(origin.x + selected->computedRect.position.x * scaleX,
-                                origin.y + selected->computedRect.position.y * scaleY);
-                const ImVec2 p1(p0.x + selected->computedRect.size.x * scaleX,
-                                p0.y + selected->computedRect.size.y * scaleY);
-                drawList->AddRect(p0, p1, IM_COL32(120, 180, 255, 255), 0.0f, 0, 2.0f);
-                drawList->AddRectFilled(ImVec2(p1.x - 8.0f, p1.y - 8.0f), p1, IM_COL32(120, 180, 255, 255));
-            }
-        }
-    }
-
-    if (!m_dragging && !m_resizing && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-        !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
-        ctx.selectedEntity.isValid() && world->get<UI::UIWidget>(ctx.selectedEntity)) {
-        ctx.beginUndo(EditorCommand::RemoveEntity, ctx.selectedEntity.id(), *world);
-        world->destroy(ctx.selectedEntity);
-        ctx.selectEntity(ECS::Entity::INVALID);
-        ctx.markDirty();
-        ctx.endUndo(*world);
-    }
-
-    ImGui::SetCursorScreenPos(ImVec2(cursor.x, origin.y + canvas.y + 6.0f));
-    ImGui::Text("Canvas %.0f x %.0f", reference.x, reference.y);
-    (void)cursor;
-    ImGui::EndChild();
-    ImGui::End();
+    ui.draw(root);
 #else
     (void)ctx;
 #endif

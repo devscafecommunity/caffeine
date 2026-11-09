@@ -36,7 +36,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Material Editor** | `MaterialEditorPanel.cpp` | 541 | 🟡 partial | `ValueEditor` can be a `PropertyGrid` + `Canvas`; preview texture |
 | **Settings** | `SettingsPanel.cpp` | 530 | ✅ done | `Panel`, nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView`, save/apply preferences |
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ✅ done | `Panel`, `Card`, `PropertyGrid`, `TreeView` components, hex dump labels, system queries |
-| **HUD Editor** | `HudEditorPanel.cpp` | 377 | ⏳ pending | `Canvas` + `PropertyGrid`, `ListBox` for widgets |
+| **HUD Editor** | `HudEditorPanel.cpp` | 377 | ✅ done | `Panel`, create `Row`s, widget `ListBox`, interactive `Canvas` with move/resize/selection |
 | **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ⏳ pending | `Canvas` palette/preview, `Grid` of tile buttons |
 | **Texture / material pickers** | `FilePicker.cpp` | 571 | ⏳ pending | `Dialog` now available; needs `ListBox`/`Grid` layout |
 | **Build dialog** | `BuildDialog.cpp` | 267 | ⏳ pending | `Dialog` + `ProgressBar` + `ListBox` are available |
@@ -129,6 +129,7 @@ Ordered by how many panels they unlock.
 | **Hierarchy** | `Panel`, `SearchField`, `Toolbar`, `TreeView`, entity drag/drop, context menus, rename/prefab dialogs |
 | **Settings** | nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView` |
 | **Entity Debugger** | `Panel`, `Card`, `PropertyGrid`, component `TreeView`, hex dump, system queries |
+| **HUD Editor** | create `Row`s, widget `ListBox`, interactive `Canvas` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
