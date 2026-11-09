@@ -39,6 +39,7 @@ set(CAFFEINE_TEST_SOURCES
     test_vegetation_kit.cpp
     test_cap_loader.cpp
     test_phase2_3.cpp
+    test_ui_elements.cpp
     test_natural_fluids.cpp
     editor/phase1_integration_test.cpp
     ../src/doppio/editor/DragDropSystem.cpp
@@ -71,6 +72,7 @@ set(CAFFEINE_TEST_SOURCES
     ../src/doppio/editor/InspectorPanel.cpp
     ../src/doppio/editor/ComponentRegistry.cpp
     ../src/doppio/editor/SceneEditor.cpp
+    ../src/doppio/editor/UiGalleryPanel.cpp
     ../src/doppio/editor/PhotonPanel.cpp
     ../src/doppio/editor/TerrainPanel.cpp
     ../src/doppio/editor/ImageManagerPanel.cpp
@@ -187,6 +189,8 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_photon_panel.cpp
           test_editor_ui/test_terrain_panel.cpp
           test_editor_ui/test_dryad_nodes.cpp
+          test_editor_ui/test_ui_elements_render.cpp
+          test_editor_ui/test_ui_gallery.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/LayoutManager.cpp
@@ -197,6 +201,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/CapLoader.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/SceneEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/doppio/editor/UiGalleryPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/PhotonPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/TerrainPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/doppio/editor/ImageManagerPanel.cpp

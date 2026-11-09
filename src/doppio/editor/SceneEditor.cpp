@@ -11,6 +11,7 @@
 #include "debug/Profiler.hpp"
 #include "debug/LogSystem.hpp"
 #include "editor/PluginSystem.hpp"
+#include "editor/UiGalleryPanel.hpp"
 #include "editor/PluginSymbolExports.hpp"
 #include "render/GpuTextureCache.hpp"
 #include "editor/EntityPresetRegistry.hpp"
@@ -146,6 +147,9 @@ bool SceneEditor::init(RHI::RenderDevice* device, Assets::AssetManager* assetMan
      });
      m_commandPalette.registerCommand("panel_effects", "Effects", "Tools", [this]() {
          m_effectEditor.open();
+     });
+     m_commandPalette.registerCommand("panel_ui_gallery", "UI Gallery", "Tools", [this]() {
+         m_uiGallery.open();
      });
      m_commandPalette.registerCommand("panel_entity_presets", "Entity Presets", "Scene", [this]() {
          m_entityPresets.open();
@@ -1834,6 +1838,11 @@ void SceneEditor::registerPanels() {
         [this] { m_effectEditor.onImGuiRender(m_ctx); },
         [this] { m_effectEditor.open(); }, [this] { m_effectEditor.close(); },
         [this] { return m_effectEditor.isOpen(); }, "Tools", 60, false);
+
+    add("core.ui_gallery", "UI Gallery", EditorIcon::Inspector, UIKit::DockArea::Center,
+        [this] { m_uiGallery.render(); },
+        [this] { m_uiGallery.open(); }, [this] { m_uiGallery.close(); },
+        [this] { return m_uiGallery.isOpen(); }, "Tools", 70, false);
 
 #if defined(CF_HAS_DRYAD)
     add("core.dryad_nodes", "Dryad Nodes", EditorIcon::Assets, UIKit::DockArea::Left,

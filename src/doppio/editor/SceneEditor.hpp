@@ -28,6 +28,7 @@
 #include "editor/PhotonPanel.hpp"
 #include "editor/TerrainPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
+#include "editor/UiGalleryPanel.hpp"
 #if defined(CF_HAS_DRYAD)
 #include "editor/DryadNodeScriptPanel.hpp"
 #include "editor/DryadNodesPanel.hpp"
@@ -182,6 +183,7 @@ private:
     GameplayPreviewPanel m_gameplayPreview;
     EntityPresetsPanel  m_entityPresets;
     ToolboxPanel        m_toolbox;
+    UiGalleryPanel      m_uiGallery;
 #endif
 
     AnimationTimelinePanel m_animationTimeline;

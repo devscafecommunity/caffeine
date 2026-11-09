@@ -38,8 +38,9 @@ cmake --build build --target doppio -j
 | `src/caffeine/project`, `src/caffeine/scene` | Core services | Project metadata, view context, scene I/O |
 | `doppio-plugins/` | Plugins | Optional tools that only call core APIs |
 
-See `docs/architecture.md` for the boundary rules, `docs/plugins.md` for the
-plugin model and `docs/roadmap.md` for the current engine/IDE status.
+See [`docs/ui-kit.md`](docs/ui-kit.md) for the composable element model
+(Objects → Cards → Panels), the element catalogue, plugin usage, debugging and
+the migration map from the older free-function widgets.
 
 General user documentation lives in the `caffeine-website` submodule; these
 pages are Doppio-specific.

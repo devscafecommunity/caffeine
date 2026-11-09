@@ -581,6 +581,7 @@ with open(sys.argv[1], 'w') as f:
           src/doppio/editor/SettingsPanel.cpp
           src/doppio/editor/LayoutManager.cpp
           src/doppio/editor/SceneEditor.cpp
+          src/doppio/editor/UiGalleryPanel.cpp
           src/doppio/editor/PhotonPanel.cpp
           src/doppio/editor/TerrainPanel.cpp
           src/doppio/editor/DragDropSystem.cpp
