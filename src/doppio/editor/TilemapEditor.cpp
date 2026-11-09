@@ -1,9 +1,12 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/TilemapEditor.hpp"
 
 #ifdef CF_HAS_SDL3
 #include <SDL3/SDL.h>
 #endif
+
+#include <cstdio>
+#include <string>
 
 namespace Caffeine::Editor {
 
@@ -197,85 +200,119 @@ bool TilemapEditorPanel::loadTileset(const std::string& path, void* renderer) {
 namespace Caffeine::Editor {
 
 void TilemapEditorPanel::render() {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
     if (!m_open) return;
 
-    if (UIKit::BeginPanel("Tilemap Editor", &m_open)) {
-        renderToolbar();
-        ImGui::Separator();
-
-        renderGrid();
-        ImGui::Separator();
-
-        renderLayers();
-        ImGui::Separator();
-        renderPalette();
-    }
-    ImGui::End();
+    Panel root("Tilemap Editor", "Paint tiles on layers", "assets", &m_open);
+    UIContext ui;
+    renderToolbar(root);
+    root.emplace<Separator>();
+    renderGrid(root);
+    root.emplace<Separator>();
+    renderLayers(root);
+    root.emplace<Separator>();
+    renderPalette(root);
+    ui.draw(root);
+#endif
 }
 
-void TilemapEditorPanel::renderGrid() {
-    if (m_currentLayer < 0 || m_currentLayer >= static_cast<i32>(m_tilemap.layerCount())) {
-        ImGui::TextDisabled("No layer selected");
+void TilemapEditorPanel::renderToolbar(
+    Caffeine::UIKit::Elements::Container& parent) {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    auto& card = parent.emplace<Card>("tile_tools");
+    card.emplace<Label>("Tools", TextTone::Accent).setHeading(true);
+    m_toolIndex = static_cast<int>(m_currentTool);
+    auto& tools = card.emplace<SegmentedControl>(
+        "tile_tool", &m_toolIndex,
+        std::vector<std::string>{"Brush", "Bucket", "Eraser", "Picker"});
+    tools.setOnChange([this](int value) {
+        m_currentTool = static_cast<ToolMode>(value);
+    });
+    auto& grid = card.emplace<PropertyGrid>("tile_tool_grid");
+    grid.typedRow<IntProperty>("Brush size", m_brushSize, 1, 8, 1.0f, "%d", true);
+    grid.typedRow<BoolProperty>("Auto-tile", m_autoTileEnabled);
+
+    auto& dimensions = card.emplace<Row>("tile_dimensions");
+    dimensions.emplace<Label>("Tilemap: " + std::to_string(m_tilemap.width()) + " x " +
+                                  std::to_string(m_tilemap.height()),
+                              TextTone::Muted);
+    dimensions.emplace<Button>("Resize").setOnClick([this] { m_tilemap.setSize(32, 32); });
+#endif
+}
+
+void TilemapEditorPanel::renderGrid(
+    Caffeine::UIKit::Elements::Container& parent) {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    auto& card = parent.emplace<Card>("tile_grid");
+    card.emplace<Label>("Map", TextTone::Accent).setHeading(true);
+    if (m_currentLayer < 0 ||
+        m_currentLayer >= static_cast<i32>(m_tilemap.layerCount())) {
+        card.emplace<Label>("No layer selected", TextTone::Muted);
         return;
     }
-
     auto& layer = m_tilemap.layer(m_currentLayer);
     if (!layer.isVisible()) {
-        ImGui::TextDisabled("Layer is hidden");
+        card.emplace<Label>("Layer is hidden", TextTone::Muted);
         return;
     }
 
-     f32 tileSize = m_tilemap.tileSize();
-     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-     f32 canvasWidth = ImGui::GetContentRegionAvail().x;
-     [[maybe_unused]] f32 gridWidth = layer.width() * tileSize;
-     f32 gridHeight = layer.height() * tileSize;
+    auto& canvas = card.emplace<Canvas>("tile_canvas");
+    canvas.setHeight(static_cast<float>(layer.height()) * m_tilemap.tileSize());
+    canvas.setOnDraw([this](UIContext&, ImDrawList* drawList, const ImVec2& origin,
+                            const ImVec2& size) {
+        if (m_currentLayer < 0 ||
+            m_currentLayer >= static_cast<i32>(m_tilemap.layerCount())) {
+            return;
+        }
+        auto& layer = m_tilemap.layer(m_currentLayer);
+        const f32 tileSize = m_tilemap.tileSize();
+        drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                                IM_COL32(30, 30, 40, 255));
 
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-    drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasWidth, canvasPos.y + gridHeight),
-                            IM_COL32(30, 30, 40, 255));
-
-    for (i32 y = 0; y < layer.height(); ++y) {
-        for (i32 x = 0; x < layer.width(); ++x) {
-            ImVec2 cellTopLeft(canvasPos.x + x * tileSize, canvasPos.y + y * tileSize);
-            ImVec2 cellBottomRight(cellTopLeft.x + tileSize, cellTopLeft.y + tileSize);
-
-            const TileCell& cell = layer.getCell(x, y);
-            u32 bgColor = (cell.tileID >= 0) ? IM_COL32(80, 120, 200, 200) : IM_COL32(40, 40, 50, 200);
-            u32 borderColor = IM_COL32(100, 100, 120, 180);
-
-            drawList->AddRectFilled(cellTopLeft, cellBottomRight, bgColor);
-            drawList->AddRect(cellTopLeft, cellBottomRight, borderColor, 0.0f, 0, 1.0f);
-
-            if (cell.tileID >= 0) {
-                char tileLabel[8];
-                snprintf(tileLabel, sizeof(tileLabel), "%d", cell.tileID);
-                ImVec2 textSize = ImGui::CalcTextSize(tileLabel);
-                ImVec2 textPos(
-                    cellTopLeft.x + (tileSize - textSize.x) * 0.5f,
-                    cellTopLeft.y + (tileSize - textSize.y) * 0.5f
-                );
-                drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), tileLabel);
+        for (i32 y = 0; y < layer.height(); ++y) {
+            for (i32 x = 0; x < layer.width(); ++x) {
+                const ImVec2 topLeft(origin.x + x * tileSize, origin.y + y * tileSize);
+                const ImVec2 bottomRight(topLeft.x + tileSize, topLeft.y + tileSize);
+                const TileCell& cell = layer.getCell(x, y);
+                const u32 bg = (cell.tileID >= 0) ? IM_COL32(80, 120, 200, 200)
+                                                  : IM_COL32(40, 40, 50, 200);
+                drawList->AddRectFilled(topLeft, bottomRight, bg);
+                drawList->AddRect(topLeft, bottomRight, IM_COL32(100, 100, 120, 180),
+                                  0.0f, 0, 1.0f);
+                if (cell.tileID >= 0) {
+                    char label[8];
+                    std::snprintf(label, sizeof(label), "%d", cell.tileID);
+                    const ImVec2 textSize = ImGui::CalcTextSize(label);
+                    drawList->AddText(
+                        ImVec2(topLeft.x + (tileSize - textSize.x) * 0.5f,
+                               topLeft.y + (tileSize - textSize.y) * 0.5f),
+                        IM_COL32(255, 255, 255, 255), label);
+                }
             }
         }
-    }
 
-    ImGui::Dummy(ImVec2(canvasWidth, gridHeight));
-
-    if (ImGui::IsItemHovered()) {
-        ImVec2 mousePos = ImGui::GetMousePos();
-        i32 gridX = static_cast<i32>((mousePos.x - canvasPos.x) / tileSize);
-        i32 gridY = static_cast<i32>((mousePos.y - canvasPos.y) / tileSize);
-
-        if (gridX >= 0 && gridX < layer.width() && gridY >= 0 && gridY < layer.height()) {
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (ImGui::IsItemHovered()) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const i32 gridX = static_cast<i32>((mouse.x - origin.x) / tileSize);
+            const i32 gridY = static_cast<i32>((mouse.y - origin.y) / tileSize);
+            if (gridX >= 0 && gridX < layer.width() && gridY >= 0 &&
+                gridY < layer.height() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 switch (m_currentTool) {
                     case ToolMode::Brush:
                         paintTile(m_currentLayer, gridX, gridY, m_selectedTileID);
                         break;
                     case ToolMode::Bucket:
-                        floodFill(m_currentLayer, gridX, gridY, layer.getCell(gridX, gridY).tileID, m_selectedTileID);
+                        floodFill(m_currentLayer, gridX, gridY,
+                                  layer.getCell(gridX, gridY).tileID, m_selectedTileID);
                         break;
                     case ToolMode::Eraser:
                         eraseTile(m_currentLayer, gridX, gridY);
@@ -286,117 +323,101 @@ void TilemapEditorPanel::renderGrid() {
                 }
             }
         }
-    }
+    });
+#endif
 }
 
-void TilemapEditorPanel::renderToolbar() {
-    ImGui::Text("Tools:");
+void TilemapEditorPanel::renderLayers(
+    Caffeine::UIKit::Elements::Container& parent) {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    const char* tools[] = { "Brush", "Bucket", "Eraser", "Picker" };
-    i32 currentTool = static_cast<i32>(m_currentTool);
-    if (ImGui::Combo("##tool", &currentTool, tools, 4)) {
-        m_currentTool = static_cast<ToolMode>(currentTool);
-    }
-
-    ImGui::SameLine();
-    ImGui::Text("Brush Size:");
-    ImGui::SameLine();
-    ImGui::SliderInt("##brushSize", &m_brushSize, 1, 8);
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Auto-tile", &m_autoTileEnabled);
-
-    ImGui::Separator();
-
-    ImGui::Text("Tilemap: %d x %d", m_tilemap.width(), m_tilemap.height());
-    ImGui::SameLine();
-    if (ImGui::Button("Resize")) {
-        m_tilemap.setSize(32, 32);
-    }
-}
-
-void TilemapEditorPanel::renderLayers() {
-    ImGui::Text("Layers");
-
+    auto& card = parent.emplace<Card>("tile_layers");
+    card.emplace<Label>("Layers", TextTone::Accent).setHeading(true);
+    auto& list = card.emplace<ListBox>("tile_layer_list");
+    list.setHeight(140.0f);
     for (usize i = 0; i < m_tilemap.layerCount(); ++i) {
         auto& layer = m_tilemap.layer(i);
-        bool isSelected = (static_cast<i32>(i) == m_currentLayer);
-
         std::string label = layer.isVisible() ? "[v] " : "[ ] ";
         label += layer.name();
-
-        if (ImGui::Selectable(label.c_str(), isSelected)) {
-            m_currentLayer = static_cast<i32>(i);
-        }
-
-        ImGui::SameLine();
-        ImGui::Checkbox(("##visible" + std::to_string(i)).c_str(), &layer.visible());
-        ImGui::SameLine();
-        ImGui::Checkbox(("##locked" + std::to_string(i)).c_str(), &layer.locked());
+        auto& item = list.emplace<ListItem>(label, static_cast<i32>(i) == m_currentLayer);
+        item.setId("layer_" + std::to_string(i));
+        item.setOnClick([this, i] { m_currentLayer = static_cast<i32>(i); });
     }
 
-    if (ImGui::Button("+ Add Layer")) {
+    if (m_currentLayer >= 0 &&
+        m_currentLayer < static_cast<i32>(m_tilemap.layerCount())) {
+        auto& layer = m_tilemap.layer(m_currentLayer);
+        auto& grid = card.emplace<PropertyGrid>("tile_layer_props");
+        grid.typedRow<BoolProperty>("Visible", layer.visible());
+        grid.typedRow<BoolProperty>("Locked", layer.locked());
+    }
+
+    auto& actions = card.emplace<Row>("tile_layer_actions");
+    actions.emplace<Button>("+ Add Layer").setOnClick([this] {
         m_tilemap.addLayer("Layer " + std::to_string(m_tilemap.layerCount() + 1));
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("- Remove Layer") && m_tilemap.layerCount() > 0) {
-        m_tilemap.removeLayer(m_currentLayer);
+    });
+    actions.emplace<Button>("- Remove Layer").setOnClick([this] {
+        if (m_tilemap.layerCount() == 0) return;
+        m_tilemap.removeLayer(static_cast<usize>(m_currentLayer));
         if (m_currentLayer >= static_cast<i32>(m_tilemap.layerCount())) {
             m_currentLayer = static_cast<i32>(m_tilemap.layerCount()) - 1;
         }
-    }
+    });
+#endif
 }
 
-void TilemapEditorPanel::renderPalette() {
-    ImGui::Text("Tile Palette");
+void TilemapEditorPanel::renderPalette(
+    Caffeine::UIKit::Elements::Container& parent) {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    float availW = ImGui::GetContentRegionAvail().x;
-    ImGui::SetNextItemWidth(availW - 55.0f);
-    ImGui::InputText("##tilesetPath", m_tilesetPathBuf, sizeof(m_tilesetPathBuf));
-    ImGui::SameLine();
-    if (ImGui::Button("Load##ts")) {
-        ImGui::OpenPopup("TilesetNote");
+    auto& card = parent.emplace<Card>("tile_palette");
+    card.emplace<Label>("Tile Palette", TextTone::Accent).setHeading(true);
+    auto& pathRow = card.emplace<Row>("tileset_path_row");
+    auto& path = pathRow.emplace<TextInput>(m_tilesetPathBuf, sizeof(m_tilesetPathBuf));
+    path.setGrow(true);
+    pathRow.emplace<Button>("Load").setOnClick([this] { m_showTilesetHelp = true; });
+    if (m_showTilesetHelp) {
+        card.emplace<Elements::Paragraph>(
+            "Call loadTileset(path, sdlRenderer) from SceneEditor.");
     }
-    if (ImGui::BeginPopup("TilesetNote")) {
-        ImGui::TextWrapped("Call loadTileset(\"%s\", sdlRenderer) from SceneEditor.", m_tilesetPathBuf);
-        ImGui::EndPopup();
-    }
-
-    ImGui::Separator();
 
     if (m_tileset.isLoaded()) {
-        ImTextureID texId = reinterpret_cast<ImTextureID>(m_tileset.textureHandle);
-        float disp = static_cast<float>(m_tileDisplaySize);
-        i32 perRow = std::max(1, static_cast<i32>(ImGui::GetContentRegionAvail().x / (disp + 4.0f)));
+        const float display = static_cast<float>(m_tileDisplaySize);
+        const int perRow = 8;
+        auto& grid = card.emplace<Grid>(perRow);
+        const ImTextureRef texture(
+            reinterpret_cast<ImTextureID>(m_tileset.textureHandle));
         for (i32 i = 0; i < m_tileset.tileCount(); ++i) {
-            if (i % perRow != 0) ImGui::SameLine();
             const TileUV& uv = m_tileset.tiles[i];
-            bool sel = (i == m_selectedTileID);
-            ImVec4 bg   = sel ? ImVec4(0.3f, 0.6f, 1.0f, 0.5f) : ImVec4(0,0,0,0);
-            ImVec4 tint = ImVec4(1,1,1,1);
-            ImGui::PushID(i);
-            if (ImGui::ImageButton("##t", texId, ImVec2(disp, disp),
-                                   ImVec2(uv.u0, uv.v0), ImVec2(uv.u1, uv.v1), bg, tint)) {
-                m_selectedTileID = i;
-            }
-            ImGui::PopID();
+            const bool selected = (i == m_selectedTileID);
+            const ImVec4 background =
+                selected ? ImVec4(0.3f, 0.6f, 1.0f, 0.5f) : ImVec4(0, 0, 0, 0);
+            auto& button = grid.emplace<ImageButton>(
+                texture, ImVec2(display, display), ImVec2(uv.u0, uv.v0),
+                ImVec2(uv.u1, uv.v1), background);
+            button.setId("tile_" + std::to_string(i));
+            button.setOnClick([this, i] { m_selectedTileID = i; });
         }
     } else {
-        static const i32 perRow = 8;
-        static const i32 total  = 64;
-        for (i32 i = 0; i < total; ++i) {
-            if (i % perRow != 0) ImGui::SameLine();
-            bool sel = (i == m_selectedTileID);
-            std::string lbl = std::to_string(i);
-            if (ImGui::Selectable(lbl.c_str(), sel, 0, ImVec2(28, 28)))
-                m_selectedTileID = i;
-            if (i % perRow == perRow - 1) ImGui::NewLine();
+        auto& grid = card.emplace<Grid>(8);
+        for (i32 i = 0; i < 64; ++i) {
+            auto& button = grid.emplace<Button>(std::to_string(i),
+                                                ButtonVariant::Segmented);
+            button.setWidth(30.0f);
+            button.setHeight(26.0f);
+            button.setSelected(i == m_selectedTileID);
+            button.setId("tile_fallback_" + std::to_string(i));
+            button.setOnClick([this, i] { m_selectedTileID = i; });
         }
     }
 
-    ImGui::Separator();
-    ImGui::Text("Selected: %d", m_selectedTileID);
+    card.emplace<Label>("Selected: " + std::to_string(m_selectedTileID),
+                        TextTone::Muted);
+#endif
 }
 
 }

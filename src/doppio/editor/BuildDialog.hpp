@@ -10,6 +10,10 @@
 #include <imgui.h>
 #endif
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 class BuildDialog {
@@ -33,10 +37,10 @@ public:
 
 private:
 #ifdef CF_HAS_IMGUI
-    void renderConfigSection();
-    void renderAdvancedSection();
-    void renderProgressSection();
-    void renderLogSection();
+    void renderConfigSection(Caffeine::UIKit::Elements::Container& parent);
+    void renderAdvancedSection(Caffeine::UIKit::Elements::Container& parent);
+    void renderProgressSection(Caffeine::UIKit::Elements::Container& parent);
+    void renderLogSection(Caffeine::UIKit::Elements::Container& parent);
     void onBuildClicked();
     void onCancelClicked();
 #endif
@@ -52,6 +56,8 @@ private:
     std::function<std::string()> m_prepareBuild;
     bool m_showBuildLog = true;
     bool m_open = true;
+    int m_platformIndex = 1;
+    float m_progressValue = 0.0f;
 };
 
 }

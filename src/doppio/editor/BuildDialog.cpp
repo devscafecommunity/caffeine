@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "BuildDialog.hpp"
 #include "BuildSystem.hpp"
 #include "BuildLog.hpp"
@@ -100,37 +100,36 @@ void BuildDialog::setProjectContext(const ProjectConfig& project, const std::str
 void BuildDialog::render() {
     if (!m_open) return;
 
-    if (UIKit::BeginPanel("Build & Run", &m_open)) {
-        if (EditorIcons::hasIcon(EditorIcon::Build)) {
-            EditorIcons::image(EditorIcon::Build, 18.0f);
-            ImGui::SameLine();
-        }
-        ImGui::TextUnformatted("Package project into a playable build");
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-        renderConfigSection();
-        renderAdvancedSection();
-        renderProgressSection();
-        renderLogSection();
+    Panel root("Build & Run", "Package project into a playable build", "beer", &m_open);
+    UIContext ui;
 
-        ImGui::Separator();
-        const bool building = BuildSystem::IsBuilding();
-        if (building) ImGui::BeginDisabled();
-        if (ImGui::Button("Build & Run", ImVec2(140, 0))) {
-            m_settings.runAfterBuild = true;
-            onBuildClicked();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Build Only", ImVec2(120, 0))) {
-            m_settings.runAfterBuild = false;
-            onBuildClicked();
-        }
-        if (building) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
-            onCancelClicked();
-        }
-    }
-    ImGui::End();
+    root.emplace<Label>("Build configuration", TextTone::Accent).setHeading(true);
+    renderConfigSection(root);
+    renderAdvancedSection(root);
+    renderProgressSection(root);
+    renderLogSection(root);
+
+    root.emplace<Separator>(true);
+    auto& actions = root.emplace<Row>("build_actions");
+    const bool building = BuildSystem::IsBuilding();
+    auto& run = actions.emplace<Button>("Build & Run", ButtonVariant::Primary);
+    run.setEnabled(!building);
+    run.setOnClick([this] {
+        m_settings.runAfterBuild = true;
+        onBuildClicked();
+    });
+    auto& only = actions.emplace<Button>("Build Only");
+    only.setEnabled(!building);
+    only.setOnClick([this] {
+        m_settings.runAfterBuild = false;
+        onBuildClicked();
+    });
+    actions.emplace<Button>("Cancel").setOnClick([this] { onCancelClicked(); });
+
+    ui.draw(root);
 }
 
 void BuildDialog::onBuildClicked() {
@@ -167,7 +166,7 @@ void BuildDialog::onBuildClicked() {
     m_settings.scenesToInclude = m_scenesToInclude;
 
     if (m_settings.startupScene.empty()) {
-        BuildLog::error("No startup scene — save your scene (Ctrl+S) before building");
+        BuildLog::error("No startup scene - save your scene (Ctrl+S) before building");
         return;
     }
 
@@ -178,49 +177,60 @@ void BuildDialog::onCancelClicked() {
     BuildSystem::CancelBuild();
 }
 
-void BuildDialog::renderConfigSection() {
-    ImGui::Separator();
-    ImGui::Text("Configuration");
+void BuildDialog::renderConfigSection(
+    Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    ImGui::InputText("Project Name", m_projectNameBuf, sizeof(m_projectNameBuf));
-    ImGui::BeginDisabled();
-    ImGui::InputText("Output Directory", m_outputPathBuf, sizeof(m_outputPathBuf));
-    ImGui::EndDisabled();
-
-    int platformIdx = static_cast<int>(m_settings.platform);
-    const char* platforms[] = {"Windows_x64", "Linux_x64"};
-    if (ImGui::Combo("Platform", &platformIdx, platforms, 2)) {
-        m_settings.platform = static_cast<BuildPlatform>(platformIdx);
-    }
-
-    ImGui::Checkbox("Debug Build", &m_settings.isDebug);
-    ImGui::Checkbox("Incremental Build", &m_settings.incrementalBuild);
-
+    auto& card = parent.emplace<Card>("build_config");
+    card.emplace<Label>("Configuration", TextTone::Accent).setHeading(true);
+    auto& grid = card.emplace<PropertyGrid>("build_config_grid");
+    grid.typedRow<BufferProperty>("Project Name", m_projectNameBuf,
+                                  sizeof(m_projectNameBuf));
+    auto& output = grid.typedRow<BufferProperty>("Output Directory", m_outputPathBuf,
+                                                 sizeof(m_outputPathBuf));
+    output.setEnabled(false);
+    m_platformIndex = static_cast<int>(m_settings.platform);
+    grid.typedRow<ChoiceProperty>(
+        "Platform", m_platformIndex,
+        std::vector<std::string>{"Windows_x64", "Linux_x64"})
+        .setOnChange([this](int value) {
+            m_settings.platform = static_cast<BuildPlatform>(value);
+        });
+    grid.typedRow<BoolProperty>("Debug Build", m_settings.isDebug);
+    grid.typedRow<BoolProperty>("Incremental Build", m_settings.incrementalBuild);
     if (!m_settings.startupScene.empty()) {
-        ImGui::TextDisabled("Startup scene: %s", m_settings.startupScene.c_str());
+        card.emplace<Label>("Startup scene: " + m_settings.startupScene, TextTone::Muted);
     }
 }
 
-void BuildDialog::renderAdvancedSection() {
-    ImGui::Separator();
-    ImGui::Text("Advanced");
+void BuildDialog::renderAdvancedSection(
+    Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    ImGui::InputText("Executable Name", m_executableNameBuf, sizeof(m_executableNameBuf));
-    ImGui::InputText("Icon Path", m_iconPathBuf, sizeof(m_iconPathBuf));
-    ImGui::InputText("Version", m_versionBuf, sizeof(m_versionBuf));
+    auto& card = parent.emplace<Card>("build_advanced");
+    card.emplace<Label>("Advanced", TextTone::Accent).setHeading(true);
+    auto& grid = card.emplace<PropertyGrid>("build_advanced_grid");
+    grid.typedRow<BufferProperty>("Executable Name", m_executableNameBuf,
+                                  sizeof(m_executableNameBuf));
+    grid.typedRow<BufferProperty>("Icon Path", m_iconPathBuf, sizeof(m_iconPathBuf));
+    grid.typedRow<BufferProperty>("Version", m_versionBuf, sizeof(m_versionBuf));
 }
 
-void BuildDialog::renderProgressSection() {
+void BuildDialog::renderProgressSection(
+    Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (!m_progress) return;
     const auto status = m_progress->status.load(std::memory_order_relaxed);
-    if (status == BuildStatus::Idle && m_progress->progress.load(std::memory_order_relaxed) <= 0.0f) {
-        return;
-    }
+    m_progressValue = m_progress->progress.load(std::memory_order_relaxed);
+    if (status == BuildStatus::Idle && m_progressValue <= 0.0f) return;
 
-    ImGui::Separator();
-    ImGui::Text("Build Progress");
-
-    const float progress = m_progress->progress.load(std::memory_order_relaxed);
-    ImGui::ProgressBar(progress, ImVec2(-1, 0));
+    auto& card = parent.emplace<Card>("build_progress");
+    card.emplace<Label>("Build Progress", TextTone::Accent).setHeading(true);
+    card.emplace<ProgressBar>(&m_progressValue, "");
 
     const char* statusText =
         status == BuildStatus::Idle ? "Idle" :
@@ -233,33 +243,37 @@ void BuildDialog::renderProgressSection() {
         status == BuildStatus::Success ? "Success" :
         status == BuildStatus::Failed ? "Failed" :
         status == BuildStatus::Cancelled ? "Cancelled" : "Unknown";
-
-    ImGui::Text("Status: %s", statusText);
-    ImGui::TextWrapped("Task: %s", BuildLog::task().c_str());
+    TextTone tone = TextTone::Normal;
+    if (status == BuildStatus::Failed || status == BuildStatus::Cancelled) {
+        tone = TextTone::Danger;
+    } else if (status == BuildStatus::Success) {
+        tone = TextTone::Success;
+    }
+    card.emplace<Label>("Status: " + std::string(statusText), tone);
+    card.emplace<Label>("Task: " + BuildLog::task(), TextTone::Muted);
 }
 
-void BuildDialog::renderLogSection() {
-    ImGui::Separator();
-    ImGui::Text("Build Log");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Copy Log")) {
-        ImGui::SetClipboardText(BuildLog::joinedText().c_str());
-    }
+void BuildDialog::renderLogSection(Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    ImGui::BeginChild("BuildLog", ImVec2(0, 180), true);
+    auto& card = parent.emplace<Card>("build_log");
+    card.emplace<Label>("Build Log", TextTone::Accent).setHeading(true);
+    auto& toolbar = card.emplace<Row>("build_log_actions");
+    toolbar.emplace<Button>("Copy Log").setOnClick([] {
+        ImGui::SetClipboardText(BuildLog::joinedText().c_str());
+    });
+
+    auto& log = card.emplace<ScrollArea>("build_log_scroll");
+    log.setHeight(180.0f);
+    log.setScrollToBottom();
     for (const auto& line : BuildLog::snapshot()) {
-        ImVec4 col(0.88f, 0.86f, 0.84f, 1.0f);
-        if (line.find("[Error]") != std::string::npos) col = ImVec4(1.0f, 0.45f, 0.35f, 1.0f);
-        else if (line.find("[Runtime]") != std::string::npos) col = ImVec4(1.0f, 0.55f, 0.75f, 1.0f);
-        else if (line.find("[Warn]") != std::string::npos) col = ImVec4(1.0f, 0.8f, 0.35f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::TextUnformatted(line.c_str());
-        ImGui::PopStyleColor();
+        TextTone tone = TextTone::Normal;
+        if (line.find("[Error]") != std::string::npos) tone = TextTone::Danger;
+        else if (line.find("[Runtime]") != std::string::npos) tone = TextTone::Accent;
+        else if (line.find("[Warn]") != std::string::npos) tone = TextTone::Warning;
+        log.emplace<Label>(line, tone);
     }
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-        ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild();
 }
 
 #endif

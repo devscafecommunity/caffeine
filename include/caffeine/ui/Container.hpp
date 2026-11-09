@@ -269,9 +269,17 @@ public:
     explicit ScrollArea(std::string id = {}) : Column(std::move(id)) {}
     const char* type() const override { return "ScrollArea"; }
 
+    ScrollArea& setScrollToBottom(bool scroll = true) {
+        m_scrollToBottom = scroll;
+        return *this;
+    }
+
 protected:
     bool beginBody(UIContext& ctx) override;
     void endBody(UIContext& ctx) override;
+
+private:
+    bool m_scrollToBottom = false;
 };
 
 /// Scrollable list container. Add ListItem children.
@@ -470,7 +478,10 @@ inline bool ScrollArea::beginBody(UIContext& ctx) {
                              ImGuiChildFlags_Borders);
 }
 
-inline void ScrollArea::endBody(UIContext&) { ImGui::EndChild(); }
+inline void ScrollArea::endBody(UIContext&) {
+    if (m_scrollToBottom) ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
+}
 
 inline bool Grid::beginBody(UIContext&) {
     const ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchSame |

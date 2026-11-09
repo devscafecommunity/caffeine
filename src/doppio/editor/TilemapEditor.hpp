@@ -9,6 +9,10 @@
 #include <imgui.h>
 #endif
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 enum class ToolMode {
@@ -87,10 +91,10 @@ public:
     TilemapEditorPanel();
 
     void render();
-    void renderPalette();
-    void renderToolbar();
-    void renderLayers();
-    void renderGrid();
+    void renderPalette(Caffeine::UIKit::Elements::Container& parent);
+    void renderToolbar(Caffeine::UIKit::Elements::Container& parent);
+    void renderLayers(Caffeine::UIKit::Elements::Container& parent);
+    void renderGrid(Caffeine::UIKit::Elements::Container& parent);
 
     void paintTile(i32 layerIdx, i32 x, i32 y, i32 tileID);
     void floodFill(i32 layerIdx, i32 x, i32 y, i32 targetID, i32 replacementID);
@@ -118,6 +122,8 @@ private:
     bool m_open = true;
 
     i32 m_brushSize = 1;
+    int m_toolIndex = 0;
+    bool m_showTilesetHelp = false;
 
     TilesetAsset m_tileset;
     char m_tilesetPathBuf[512] = {};

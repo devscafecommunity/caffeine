@@ -363,6 +363,31 @@ private:
     ImGuiInputTextFlags m_flags = ImGuiInputTextFlags_AllowTabInput;
 };
 
+class ImageButton : public Element {
+public:
+    ImageButton(ImTextureRef texture, ImVec2 size, ImVec2 uv0 = ImVec2(0, 0),
+                ImVec2 uv1 = ImVec2(1, 1), ImVec4 background = ImVec4(0, 0, 0, 0))
+        : m_texture(texture), m_logicalSize(size), m_uv0(uv0), m_uv1(uv1),
+          m_background(background) {}
+
+    const char* type() const override { return "ImageButton"; }
+
+    ImageButton& setOnClick(std::function<void()> callback) {
+        m_onClick = std::move(callback);
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    ImTextureRef m_texture;
+    ImVec2 m_logicalSize{0.0f, 0.0f};
+    ImVec2 m_uv0{0.0f, 0.0f};
+    ImVec2 m_uv1{1.0f, 1.0f};
+    ImVec4 m_background{0.0f, 0.0f, 0.0f, 0.0f};
+    std::function<void()> m_onClick;
+};
+
 class ColorPicker : public Element {
 public:
     explicit ColorPicker(std::string label, float* color,
@@ -660,6 +685,19 @@ inline void MultilineText::draw(UIContext&) {
     setChanged(changed);
     setHovered(ImGui::IsItemHovered());
     setFocused(ImGui::IsItemFocused());
+}
+
+inline void ImageButton::draw(UIContext&) {
+    const float scale = std::max(uiScale(), 0.001f);
+    ImVec2 size = controlSize(*this);
+    if (size.x <= 0.0f) size.x = m_logicalSize.x * scale;
+    if (size.y <= 0.0f) size.y = m_logicalSize.y * scale;
+    const bool pressed = ImGui::ImageButton("##image_button", m_texture, size, m_uv0,
+                                            m_uv1, m_background);
+    setPressed(pressed);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    if (pressed && m_onClick) m_onClick();
 }
 
 inline void ColorPicker::draw(UIContext&) {

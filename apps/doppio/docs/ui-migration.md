@@ -37,9 +37,9 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Settings** | `SettingsPanel.cpp` | 530 | ✅ done | `Panel`, nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView`, save/apply preferences |
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ✅ done | `Panel`, `Card`, `PropertyGrid`, `TreeView` components, hex dump labels, system queries |
 | **HUD Editor** | `HudEditorPanel.cpp` | 377 | ✅ done | `Panel`, create `Row`s, widget `ListBox`, interactive `Canvas` with move/resize/selection |
-| **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ⏳ pending | `Canvas` palette/preview, `Grid` of tile buttons |
+| **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ✅ done | toolbar, map `Canvas`, layer `ListBox`, tile palette `Grid`/`ImageButton` |
 | **Texture / material pickers** | `FilePicker.cpp` | 571 | ⏳ pending | `Dialog` now available; needs `ListBox`/`Grid` layout |
-| **Build dialog** | `BuildDialog.cpp` | 267 | ⏳ pending | `Dialog` + `ProgressBar` + `ListBox` are available |
+| **Build dialog** | `BuildDialog.cpp` | 267 | ✅ done | `Panel`, `Card`/`PropertyGrid`, `ProgressBar`, scrolling log, build actions |
 | **Project startup** | `ProjectStartupDialog.cpp` | 591 | ⏳ pending | `Dialog` available; needs template cards + recent-project list |
 
 ## Tier 2 — trees, drag-and-drop and large lists
@@ -130,6 +130,8 @@ Ordered by how many panels they unlock.
 | **Settings** | nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView` |
 | **Entity Debugger** | `Panel`, `Card`, `PropertyGrid`, component `TreeView`, hex dump, system queries |
 | **HUD Editor** | create `Row`s, widget `ListBox`, interactive `Canvas` |
+| **Tilemap Editor** | toolbar, map `Canvas`, layer `ListBox`, palette `Grid`/`ImageButton` |
+| **Build Dialog** | `Card`/`PropertyGrid`, `ProgressBar`, scrolling log |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
@@ -137,6 +139,7 @@ New kit pieces added for these migrations:
 
 - `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu, force-open, scroll, text color, open-on-arrow)
 - `Dialog` (modal body tree + close lifecycle)
+- `ImageButton` for tile/asset palettes
 - `ListItem` / `ListBox`
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`
