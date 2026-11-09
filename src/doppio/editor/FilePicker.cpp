@@ -1,5 +1,6 @@
 #include "editor/FilePicker.hpp"
 #include "editor/EditorIcons.hpp"
+#include "caffeine/ui/UI.hpp"
 
 #ifdef CF_HAS_SDL3
 #include <SDL3/SDL.h>
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -35,6 +37,7 @@ struct PickerState {
     std::string fileNameInput;
     bool isOpen = true;
     bool entriesDirty = true;
+    std::unique_ptr<Caffeine::UIKit::Elements::Dialog> dialog;
 };
 
 std::string toLower(std::string s) {
@@ -427,14 +430,13 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
 
     auto it = states.find(title);
     if (it == states.end()) {
-        std::filesystem::path start = defaultPath.empty() ? std::filesystem::current_path() : defaultPath;
+        std::filesystem::path start =
+            defaultPath.empty() ? std::filesystem::current_path() : defaultPath;
         std::error_code ec;
         if (!std::filesystem::is_directory(start, ec) && start.has_parent_path()) {
             start = start.parent_path();
         }
-        if (!std::filesystem::exists(start, ec)) {
-            start = homeDirectory();
-        }
+        if (!std::filesystem::exists(start, ec)) start = homeDirectory();
 
         PickerState created;
         created.currentPath = start;
@@ -455,84 +457,150 @@ std::optional<std::filesystem::path> FilePicker::pickPathImGui(
         return std::nullopt;
     }
 
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(980.0f, 620.0f), ImGuiCond_Appearing);
-    ImGui::SetNextWindowFocus();
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoSavedSettings;
-    if (!ImGui::Begin(title.c_str(), &state.isOpen, windowFlags)) {
-        ImGui::End();
-        return result;
+    if (!state.dialog) {
+        state.dialog = std::make_unique<Dialog>(title);
+        state.dialog->setInitialSize(ImVec2(980.0f, 620.0f));
+        state.dialog->setOnClose([&state] { state.isOpen = false; });
+        state.dialog->open();
+    }
+    if (state.entriesDirty) refreshEntries(state);
+
+    Dialog& dialog = *state.dialog;
+    dialog.clear();
+
+    auto& pathRow = dialog.emplace<Row>("fp_path_row");
+    pathRow.emplace<Button>("Home").setOnClick([&state] {
+        navigateTo(state, homeDirectory());
+    });
+    std::error_code upEc;
+    const bool canGoUp = state.currentPath.has_parent_path() &&
+                         state.currentPath != state.currentPath.root_path();
+    auto& up = pathRow.emplace<IconButton>("arrow-small-up", "Parent folder");
+    up.setEnabled(canGoUp);
+    up.setOnClick([&state] {
+        navigateTo(state, state.currentPath.parent_path());
+    });
+    if (!state.anchorPath.empty()) {
+        pathRow.emplace<Button>("Anchor").setOnClick([&state] {
+            navigateTo(state, state.anchorPath);
+        });
+    }
+    auto& path = pathRow.emplace<TextInput>(state.pathInput, 1024);
+    path.setGrow(true);
+    pathRow.emplace<Button>("Go").setOnClick([&state] {
+        const auto resolved = resolveUserPath(state.pathInput);
+        if (!navigateTo(state, resolved)) {
+            syncPathInput(state);
+        }
+    });
+
+    dialog.emplace<Label>(state.currentPath.string(), TextTone::Muted).setWrap(true);
+    dialog.emplace<Separator>();
+
+    auto& body = dialog.emplace<Row>("fp_body");
+    auto& folderCard = body.emplace<Card>("fp_folders");
+    folderCard.setWidth(240.0f);
+    folderCard.emplace<Label>("Folders", TextTone::Accent).setHeading(true);
+    auto& folderList = folderCard.emplace<ListBox>("fp_folder_list");
+    folderList.setHeight(420.0f);
+
+    if (state.currentPath.has_parent_path() &&
+        state.currentPath != state.currentPath.root_path()) {
+        auto& parentItem = folderList.emplace<ListItem>("..");
+        parentItem.setId("fp_parent");
+        parentItem.setOnClick([&state] {
+            navigateTo(state, state.currentPath.parent_path());
+        });
+    }
+    {
+        std::error_code ec;
+        std::vector<std::filesystem::path> subdirs;
+        for (const auto& entry : std::filesystem::directory_iterator(
+                 state.currentPath,
+                 std::filesystem::directory_options::skip_permission_denied, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            const std::string name = entry.path().filename().string();
+            if (name.empty() || name[0] == '.') continue;
+            subdirs.push_back(entry.path());
+        }
+        std::sort(subdirs.begin(), subdirs.end());
+        for (const auto& subdir : subdirs) {
+            auto& item = folderList.emplace<ListItem>(subdir.filename().string());
+            item.setId("fp_dir:" + subdir.string());
+            item.setOnClick([&state, subdir] { navigateTo(state, subdir); });
+        }
     }
 
-    renderPathBar(state);
-    ImGui::Spacing();
-    renderBreadcrumbs(state);
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    auto& contents = body.emplace<Card>("fp_contents");
+    contents.setGrow(true);
+    contents.emplace<Label>("Contents", TextTone::Accent).setHeading(true);
+    auto& search = contents.emplace<Elements::SearchField>(
+        state.searchFilter, "Filter files and folders...");
+    search.setGrow(true);
+    search.setOnChange([&state](const std::string&) { state.entriesDirty = true; });
+    auto& fileList = contents.emplace<ListBox>("fp_file_list");
+    fileList.setHeight(390.0f);
 
-    const float footerHeight = (mode == FilePicker::Mode::SaveFile) ? 92.0f : 52.0f;
-    if (ImGui::BeginChild("fp_body", ImVec2(0.0f, -footerHeight), false)) {
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-
-        if (ImGui::BeginChild("fp_tree", ImVec2(240.0f, 0.0f), true)) {
-            ImGui::TextDisabled("Folders");
-            ImGui::Separator();
-            drawDirectoryTree(state.treeRoot, state, 0);
-            ImGui::EndChild();
+    for (const auto& entry : state.entries) {
+        std::error_code ec;
+        const bool isDir = std::filesystem::is_directory(entry, ec);
+        std::string label = entry.filename().string();
+        if (isDir) {
+            label += "  [folder]";
+        } else {
+            label += "  [" + entry.extension().string() + "]";
         }
-
-        ImGui::SameLine();
-
-        if (ImGui::BeginChild("fp_list_panel", ImVec2(0.0f, 0.0f), true)) {
-            ImGui::TextDisabled("Contents");
-            ImGui::Separator();
-            renderFileList(mode, state, result);
-            ImGui::EndChild();
-        }
-
-        ImGui::PopStyleColor();
-        ImGui::EndChild();
-    }
-
-    ImGui::Separator();
-
-    if (mode == FilePicker::Mode::SaveFile) {
-        ImGui::TextUnformatted("File name");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1.0f);
-        char nameBuf[512] = {};
-        std::strncpy(nameBuf, state.fileNameInput.c_str(), sizeof(nameBuf) - 1);
-        if (ImGui::InputTextWithHint("##fp_filename", "example.prefab", nameBuf, sizeof(nameBuf))) {
-            state.fileNameInput = nameBuf;
-        }
-    }
-
-    if (mode == FilePicker::Mode::PickFolder) {
-        if (ImGui::Button("Select This Folder", ImVec2(170.0f, 0.0f))) {
-            result = state.currentPath;
+        auto& item = fileList.emplace<ListItem>(label, false);
+        item.setId("fp_file:" + entry.string());
+        item.setOnClick([&state, &result, mode, entry, isDir] {
+            if (isDir) {
+                navigateTo(state, entry);
+                return;
+            }
+            if (mode == FilePicker::Mode::PickFolder) return;
+            result = entry;
             state.isOpen = false;
-        }
-        ImGui::SameLine();
+            if (state.dialog) state.dialog->close();
+        });
+    }
+
+    dialog.emplace<Separator>();
+    if (mode == FilePicker::Mode::SaveFile) {
+        dialog.emplace<TextFieldProperty>("File name", state.fileNameInput, 512);
+    }
+    auto& footer = dialog.emplace<Row>("fp_footer");
+    if (mode == FilePicker::Mode::PickFolder) {
+        footer.emplace<Button>("Select This Folder", ButtonVariant::Primary)
+            .setOnClick([&state, &result] {
+                result = state.currentPath;
+                state.isOpen = false;
+                if (state.dialog) state.dialog->close();
+            });
     } else if (mode == FilePicker::Mode::SaveFile) {
-        if (ImGui::Button("Save Here", ImVec2(120.0f, 0.0f))) {
-            if (!state.fileNameInput.empty()) {
+        footer.emplace<Button>("Save Here", ButtonVariant::Primary)
+            .setOnClick([&state, &result] {
+                if (state.fileNameInput.empty()) return;
                 result = state.currentPath / state.fileNameInput;
                 state.isOpen = false;
-            }
-        }
-        ImGui::SameLine();
+                if (state.dialog) state.dialog->close();
+            });
     }
-
-    const float cancelX = ImGui::GetWindowContentRegionMax().x - 100.0f;
-    ImGui::SetCursorPosX(cancelX);
-    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f))) {
+    footer.emplace<Button>("Cancel").setOnClick([&state] {
         state.isOpen = false;
-    }
+        if (state.dialog) state.dialog->close();
+    });
 
-    ImGui::End();
+    UIContext ui;
+    ui.draw(dialog);
+
+    if (!state.isOpen) {
+        state.dialog->close();
+        states.erase(title);
+        g_filePickerCloseEvents.insert(title);
+    }
     return result;
 }
 

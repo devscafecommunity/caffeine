@@ -38,7 +38,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ✅ done | `Panel`, `Card`, `PropertyGrid`, `TreeView` components, hex dump labels, system queries |
 | **HUD Editor** | `HudEditorPanel.cpp` | 377 | ✅ done | `Panel`, create `Row`s, widget `ListBox`, interactive `Canvas` with move/resize/selection |
 | **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ✅ done | toolbar, map `Canvas`, layer `ListBox`, tile palette `Grid`/`ImageButton` |
-| **Texture / material pickers** | `FilePicker.cpp` | 571 | ⏳ pending | `Dialog` now available; needs `ListBox`/`Grid` layout |
+| **Texture / material pickers** | `FilePicker.cpp` | 571 | ✅ done | `Dialog`, path bar, folder `ListBox`, file `ListBox`, search and Save/PickFolder actions |
 | **Build dialog** | `BuildDialog.cpp` | 267 | ✅ done | `Panel`, `Card`/`PropertyGrid`, `ProgressBar`, scrolling log, build actions |
 | **Project startup** | `ProjectStartupDialog.cpp` | 591 | ⏳ pending | `Dialog` available; needs template cards + recent-project list |
 
@@ -133,6 +133,7 @@ Ordered by how many panels they unlock.
 | **Tilemap Editor** | toolbar, map `Canvas`, layer `ListBox`, palette `Grid`/`ImageButton` |
 | **Build Dialog** | `Card`/`PropertyGrid`, `ProgressBar`, scrolling log |
 | **Plugin Manager** | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload |
+| **File Picker** | `Dialog`, path bar, folder/file `ListBox`, search, Save/PickFolder actions |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
