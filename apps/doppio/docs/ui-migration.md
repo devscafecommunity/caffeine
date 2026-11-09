@@ -76,7 +76,7 @@ the drawing; graph semantics stay in the host.
 |------|------|--------|-------|
 | **UI Gallery** | `UiGalleryPanel.cpp` | ✅ done | Living catalogue and visual test |
 | **Scene Editor shell** | `SceneEditor.cpp` | 🟡 partial | menu bar/dockspace/status bar stay host-specific; panels use elements |
-| **Toolbox** | `ToolboxPanel.hpp` | ⏳ pending | `Panel`, `Section`, `SegmentedControl`, `Button` |
+| **Toolbox** | `ToolboxPanel.hpp` | 183 | ✅ done | `Panel`, `Section`, segmented tool `Row`s, viewport `PropertyGrid`, terrain brush controls |
 | **Inspector widgets** | `InspectorWidgets.hpp` | 🧱 blocked | `PropertyGrid` and `TreeView` available; still needs `AssetCard`-style drawers |
 | **Editor panel utils** | `EditorPanelUtils.hpp` | n/a | helpers, not UI |
 | **Shader node** | `ShaderNode.cpp` | 🧱 blocked | node element/`Canvas` |
@@ -137,6 +137,7 @@ Ordered by how many panels they unlock.
 | **Material Editor** | menu `Panel`, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` preview |
 | **Console** | `Panel`, `Row` toolbar, `Combo` filter, `ScrollArea` log, submit-capable input |
 | **Stats overlay** | auto-resizing `Panel`, `Label`/`KeyValue` rows |
+| **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
