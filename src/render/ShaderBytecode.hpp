@@ -33,6 +33,10 @@ enum class BuiltinShader : u8 {
     PostFxaaFragment,
     PostTaaFragment,
     PostPhotonFragment,
+    PostPhotonResolveFragment,
+    MinZDownsampleFragment,
+    PhotonCascade,
+    PhotonC0,
     PhotonBakeAO,
 };
 

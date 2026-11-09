@@ -14,8 +14,10 @@ layout(set = 0, binding = 1) readonly buffer Positions {
 layout(set = 0, binding = 2) readonly buffer Normals {
     vec4 normals[];
 };
-layout(set = 3, binding = 0, r32f) uniform image2D outAO;
-layout(set = 4, binding = 0) uniform Params {
+// SDL_GPU compute SPIR-V layout: set 0 = samplers + read-only resources,
+// set 1 = read-write storage, set 2 = uniforms.
+layout(set = 1, binding = 0, r32f) uniform image2D outAO;
+layout(set = 2, binding = 0) uniform Params {
     ivec4 counts; // x triangle count, y texel count, z resolution, w rays
     vec4 params;  // x max distance, y bias
 } p;

@@ -60,11 +60,27 @@ struct TaaUBO {
 
 struct PhotonUBO {
     Vec4f proj;
+    Vec4f projExtra;
     Vec4f texel;
     Vec4f params0;
     Vec4f params1;
     Vec4f tint;
+    float view[16];  // world→view; rotates G-buffer normals into the tracing space
 };
+
+/// Must match PhotonResolveUBO in post_photon_resolve.frag.
+struct PhotonResolveUBO {
+    Vec4f proj;    // P00, P11, P22, P23
+    Vec4f extra;   // P32, s0, grid width, grid height
+    Vec4f texel;   // 1/W, 1/H, frame, enabled
+    Vec4f params;  // intensity, sky intensity, tau_p, gamma_n
+    float view[16];  // world→view
+    Vec4f sky;       // rgb sky radiance
+};
+
+// std140 contract with post_photon_resolve.frag.
+static_assert(sizeof(PhotonResolveUBO) == 144,
+              "PhotonResolveUBO must match the GLSL std140 layout");
 
 struct CompositeUBO {
     float invViewProj[16];
@@ -172,7 +188,9 @@ bool PostProcessStack::init(RHI::RenderDevice* device) {
     m_dof = createPass(frag(BuiltinShader::PostDofFragment, 2), kHdr, false);
     m_motionBlur = createPass(frag(BuiltinShader::PostMotionBlurFragment, 2), kHdr, false);
     m_taa = createPass(frag(BuiltinShader::PostTaaFragment, 3), kHdr, false);
-    m_photon = createPass(frag(BuiltinShader::PostPhotonFragment, 2), kHdr, false);
+    m_photon = createPass(frag(BuiltinShader::PostPhotonFragment, 4), kHdr, false);
+    m_photonResolve =
+        createPass(frag(BuiltinShader::PostPhotonResolveFragment, 5), kHdr, false);
     m_composite = createPass(frag(BuiltinShader::PostCompositeFragment, 5), kLdr, false);
     m_fxaa = createPass(frag(BuiltinShader::PostFxaaFragment, 1), kLdr, false);
 
@@ -194,7 +212,7 @@ void PostProcessStack::shutdown() {
         for (ViewResources& view : m_views) releaseView(view);
         RHI::Pipeline* pipelines[] = {m_luminance, m_adapt, m_bloomPrefilter, m_bloomDown,
                                       m_bloomUp, m_ssao, m_ssaoBlur, m_dof, m_motionBlur,
-                                      m_taa, m_photon, m_composite, m_fxaa};
+                                      m_taa, m_photon, m_photonResolve, m_composite, m_fxaa};
         for (RHI::Pipeline* p : pipelines) {
             if (p) m_device->destroyPipeline(p);
         }
@@ -352,31 +370,75 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
 
     // Photon runs before TAA so its stochastic near-field samples are
     // accumulated by the temporal resolve.
-    if (inputs.photon.enabled && m_photon) {
-        CF_PROFILE_SCOPE("Post::photon");
-        RHI::Texture* target = nextTemp();
-        if (target) {
-            PhotonUBO ubo{};
-            ubo.proj = projParams(inputs.proj);
-            ubo.texel = {1.0f / static_cast<f32>(w), 1.0f / static_cast<f32>(h),
-                         static_cast<f32>(inputs.frameIndex % 64u), 1.0f};
-            const int quality = std::clamp(static_cast<int>(inputs.photon.quality), 1, 3);
-            const int rays = quality == 1 ? 4 : quality == 2 ? 8 : 12;
-            const int steps = quality == 1 ? 2 : quality == 2 ? 2 : 3;
-            ubo.params0 = {std::clamp(inputs.photon.intensity, 0.0f, 8.0f),
-                           std::max(inputs.photon.radius, 0.1f),
-                           std::max(inputs.photon.thickness, 0.005f),
-                           std::clamp(inputs.photon.skyIntensity, 0.0f, 8.0f)};
-            ubo.params1 = {std::clamp(inputs.photon.ambientIntensity, 0.0f, 4.0f),
-                           static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.cascades), 1, 6)),
-                           static_cast<f32>(steps), static_cast<f32>(rays)};
-            ubo.tint = {std::clamp(inputs.photon.tintR, 0.0f, 2.0f),
-                        std::clamp(inputs.photon.tintG, 0.0f, 2.0f),
-                        std::clamp(inputs.photon.tintB, 0.0f, 2.0f),
-                        static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.debugView), 0, 2))};
-            const PassTexture tex[2] = {{source, false}, {inputs.sceneDepth, true}};
-            runPass(cmd, m_photon, target, w, h, tex, 2, &ubo, sizeof(ubo));
-            source = target;
+    if (inputs.photon.enabled && inputs.photon.quality != ECS::PhotonQuality::Off) {
+        if (inputs.photonSH && inputs.photonGridW > 0 && inputs.photonGridH > 0 &&
+            inputs.gbufferAlbedo && inputs.gbufferNormalMaterial && m_photonResolve) {
+            // P2 compute path: diffuse resolve of the cascade-0 SH atlas.
+            CF_PROFILE_SCOPE("Post::photonResolve");
+            RHI::Texture* target = nextTemp();
+            if (target) {
+                PhotonResolveUBO ubo{};
+                ubo.proj = projParams(inputs.proj);
+                ubo.extra = {inputs.proj(3, 2), static_cast<f32>(inputs.photonS0),
+                             static_cast<f32>(inputs.photonGridW),
+                             static_cast<f32>(inputs.photonGridH)};
+                ubo.texel = {1.0f / static_cast<f32>(w), 1.0f / static_cast<f32>(h),
+                             static_cast<f32>(inputs.frameIndex % 64u), 1.0f};
+                ubo.params = {std::clamp(inputs.photon.intensity, 0.0f, 8.0f),
+                              std::clamp(inputs.photon.skyIntensity, 0.0f, 8.0f),
+                              0.5f,   // tau_p (spec §9.3 / §10)
+                              8.0f};  // gamma_n
+                std::memcpy(ubo.view, inputs.view.data(), sizeof(ubo.view));
+                const f32 sky = std::max(inputs.photon.skyIntensity, 0.0f);
+                ubo.sky = {0.48f * sky, 0.60f * sky, 0.82f * sky, 1.0f};
+
+                const PassTexture tex[5] = {
+                    {source, false},
+                    {inputs.sceneDepth, true},
+                    {inputs.gbufferAlbedo, false},
+                    {inputs.gbufferNormalMaterial, false},
+                    {inputs.photonSH, true},
+                };
+                runPass(cmd, m_photonResolve, target, w, h, tex, 5, &ubo, sizeof(ubo));
+                source = target;
+            }
+        } else if (m_photon) {
+            CF_PROFILE_SCOPE("Post::photon");
+            RHI::Texture* target = nextTemp();
+            if (target) {
+                PhotonUBO ubo{};
+                ubo.proj = projParams(inputs.proj);
+                // x: P32 (-1 perspective, 0 orthographic); y: G-buffer valid flag.
+                const bool gbufferValid = inputs.gbufferAlbedo && inputs.gbufferNormalMaterial;
+                ubo.projExtra = {inputs.proj(3, 2), gbufferValid ? 1.0f : 0.0f, 0.0f, 0.0f};
+                ubo.texel = {1.0f / static_cast<f32>(w), 1.0f / static_cast<f32>(h),
+                             static_cast<f32>(inputs.frameIndex % 64u), 1.0f};
+                std::memcpy(ubo.view, inputs.view.data(), sizeof(ubo.view));
+                // One budget table shared with the editor: Off/Eco/Low/Balanced/High.
+                const ECS::PhotonFallbackBudget budget =
+                    ECS::photonFallbackBudget(inputs.photon.quality);
+                const int rays = static_cast<int>(budget.rays);
+                const int steps = static_cast<int>(budget.steps);
+                ubo.params0 = {std::clamp(inputs.photon.intensity, 0.0f, 8.0f),
+                               std::max(inputs.photon.radius, 0.1f),
+                               std::max(inputs.photon.thickness, 0.005f),
+                               std::clamp(inputs.photon.skyIntensity, 0.0f, 8.0f)};
+                ubo.params1 = {std::clamp(inputs.photon.ambientIntensity, 0.0f, 4.0f),
+                               static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.cascades), 1, 6)),
+                               static_cast<f32>(steps), static_cast<f32>(rays)};
+                ubo.tint = {std::clamp(inputs.photon.tintR, 0.0f, 2.0f),
+                            std::clamp(inputs.photon.tintG, 0.0f, 2.0f),
+                            std::clamp(inputs.photon.tintB, 0.0f, 2.0f),
+                            static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.debugView), 0, 2))};
+                const PassTexture tex[4] = {
+                    {source, false},
+                    {inputs.sceneDepth, true},
+                    {gbufferValid ? inputs.gbufferAlbedo : source, false},
+                    {gbufferValid ? inputs.gbufferNormalMaterial : source, false},
+                };
+                runPass(cmd, m_photon, target, w, h, tex, 4, &ubo, sizeof(ubo));
+                source = target;
+            }
         }
     }
 

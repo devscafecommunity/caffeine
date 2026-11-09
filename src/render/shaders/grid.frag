@@ -3,6 +3,10 @@
 // Infinite ground grid on y = 0, anti-aliased with screen-space derivatives.
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 outColor;
+// Debug overlay: not a GI surface (albedo alpha 0).
+layout(location = 1) out vec4 gAlbedo;
+layout(location = 2) out vec4 gNormalMaterial;
+layout(location = 3) out vec4 gDirect;
 
 layout(set = 3, binding = 0) uniform GridUBO {
     mat4 uInvViewProj;
@@ -71,5 +75,8 @@ void main() {
     fade *= smoothstep(0.02, 0.15, abs(viewDir.y));
     alpha *= fade * grid.uParams.z;
     if (alpha <= 0.002) discard;
+    gAlbedo = vec4(0.0);
+    gNormalMaterial = vec4(0.5, 0.5, 0.0, 0.0);
+    gDirect = vec4(0.0);
     outColor = vec4(color, alpha);
 }

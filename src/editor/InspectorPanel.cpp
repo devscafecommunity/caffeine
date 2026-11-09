@@ -1659,14 +1659,45 @@ void InspectorPanel::drawPhotonGI(ECS::World& world, ECS::Entity e, EditorContex
 
     bool changed = false;
     if (UIKit::BeginPropertyGrid("photon_gi_fallback")) {
-        int quality = static_cast<int>(gi->quality);
-        if (UIKit::SliderIntProperty("Quality", &quality, 0, 3)) {
-            gi->quality = static_cast<u8>(quality);
+        // Tiers follow the spec order; the component's `enabled` flag is the off switch.
+        static const char* const kQualityNames[] = {"Eco", "Low", "Balanced", "High"};
+        static constexpr ECS::PhotonQuality kQualityValues[] = {
+            ECS::PhotonQuality::Eco,
+            ECS::PhotonQuality::Low,
+            ECS::PhotonQuality::Balanced,
+            ECS::PhotonQuality::High,
+        };
+        int quality = 2;  // Balanced for Off / unknown values.
+        for (int i = 0; i < 4; ++i) {
+            if (kQualityValues[i] == gi->quality) {
+                quality = i;
+                break;
+            }
+        }
+        if (UIKit::ComboProperty("Quality", &quality, kQualityNames, 4)) {
+            gi->quality = kQualityValues[std::clamp(quality, 0, 3)];
             changed = true;
         }
         int cascades = static_cast<int>(gi->cascades);
         if (UIKit::SliderIntProperty("Cascades", &cascades, 1, 6)) {
             gi->cascades = static_cast<u8>(cascades);
+            changed = true;
+        }
+        // Implementation path (P2: compute cascade 0 is opt-in until validated).
+        static const char* const kPathNames[] = {"Screen fallback", "Compute C0"};
+        int path = gi->path == ECS::PhotonPath::ComputeC0 ? 1 : 0;
+        if (UIKit::ComboProperty("Path", &path, kPathNames, 2)) {
+            gi->path = path == 1 ? ECS::PhotonPath::ComputeC0 : ECS::PhotonPath::ScreenFallback;
+            changed = true;
+        }
+        int s0 = static_cast<int>(gi->s0);
+        if (UIKit::SliderIntProperty("Probe spacing s0", &s0, 2, 32)) {
+            gi->s0 = static_cast<u8>(s0);
+            changed = true;
+        }
+        int computeSteps = static_cast<int>(gi->computeSteps);
+        if (UIKit::SliderIntProperty("Compute steps", &computeSteps, 1, 32)) {
+            gi->computeSteps = static_cast<u8>(computeSteps);
             changed = true;
         }
         changed |= UIKit::SliderFloatProperty("Intensity", &gi->intensity, 0.0f, 8.0f);

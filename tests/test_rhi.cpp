@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include <rhi/RenderDevice.hpp>
 #include <rhi/CommandBuffer.hpp>
+#include <render/MinZPyramid.hpp>
 
 using namespace Caffeine;
 using namespace Caffeine::RHI;
@@ -417,4 +418,217 @@ TEST_CASE("CommandBuffer - Move assignment transfers state", "[rhi][cmdbuffer]")
     b = std::move(a);
     REQUIRE(b.isInRenderPass() == false);
     REQUIRE(b.nativeHandle() == nullptr);
+}
+
+// ============================================================================
+// P0 / Photon: multi-render-target G-buffer
+// ============================================================================
+
+TEST_CASE("MRT - Maximum attachment count is a valid common denominator", "[rhi][mrt]") {
+    // The Photon G-buffer needs albedo + octahedral normal (+ material); four
+    // attachments is the floor guaranteed by every SDL_GPU backend.
+    REQUIRE(kMaxColorTargets == 4);
+}
+
+TEST_CASE("GraphicsPipelineDesc - MRT defaults to a single target", "[rhi][mrt][pipeline]") {
+    GraphicsPipelineDesc desc;
+    REQUIRE(desc.numColorTargets == 1);
+    REQUIRE(desc.colorFormat == TextureFormat::R8G8B8A8_UNORM);
+    for (u32 i = 0; i < kMaxColorTargets - 1; ++i) {
+        REQUIRE(desc.extraColorFormats[i] == TextureFormat::Invalid);
+    }
+}
+
+TEST_CASE("GraphicsPipelineDesc - MRT stores the G-buffer formats", "[rhi][mrt][pipeline]") {
+    GraphicsPipelineDesc desc;
+    desc.numColorTargets = 3;
+    desc.colorFormat = TextureFormat::R16G16B16A16_FLOAT;
+    desc.extraColorFormats[0] = TextureFormat::R8G8B8A8_UNORM;  // gAlbedo
+    desc.extraColorFormats[1] = TextureFormat::R8G8_UNORM;      // gNormal
+
+    REQUIRE(desc.numColorTargets == 3);
+    REQUIRE(desc.extraColorFormats[0] == TextureFormat::R8G8B8A8_UNORM);
+    REQUIRE(desc.extraColorFormats[1] == TextureFormat::R8G8_UNORM);
+}
+
+TEST_CASE("RenderPassDesc - MRT defaults to a single target", "[rhi][mrt][renderpass]") {
+    RenderPassDesc desc;
+    REQUIRE(desc.numColorTargets == 1);
+    REQUIRE(desc.usePerTargetClear == false);
+    for (u32 i = 0; i < kMaxColorTargets - 1; ++i) {
+        REQUIRE(desc.extraColorTargets[i] == nullptr);
+        for (u32 c = 0; c < 4; ++c) {
+            REQUIRE(desc.extraClearColors[i][c] == 0.0f);
+        }
+    }
+}
+
+TEST_CASE("RenderPassDesc - MRT accepts up to three extra targets", "[rhi][mrt][renderpass]") {
+    Texture albedo;
+    Texture normal;
+    RenderPassDesc desc;
+    desc.numColorTargets = 3;
+    desc.colorTarget = &albedo;
+    desc.extraColorTargets[0] = &normal;
+    desc.usePerTargetClear = true;
+    desc.extraClearColors[0][2] = 0.5f;
+
+    REQUIRE(desc.numColorTargets == 3);
+    REQUIRE(desc.extraColorTargets[0] == &normal);
+    REQUIRE(desc.extraColorTargets[1] == nullptr);
+    REQUIRE(desc.extraClearColors[0][2] == Approx(0.5f));
+}
+
+// ============================================================================
+// P0 / Photon: 3D + 2D-array textures
+// ============================================================================
+
+TEST_CASE("TextureType - 3D and array types are distinct", "[rhi][texture]") {
+    REQUIRE(static_cast<u8>(TextureType::Texture3D) != static_cast<u8>(TextureType::Texture2D));
+    REQUIRE(static_cast<u8>(TextureType::Texture2DArray) !=
+            static_cast<u8>(TextureType::Texture3D));
+    REQUIRE(static_cast<u8>(TextureType::Cube) != static_cast<u8>(TextureType::Texture3D));
+}
+
+TEST_CASE("TextureDesc - Volume defaults", "[rhi][texture]") {
+    TextureDesc desc;
+    REQUIRE(desc.type == TextureType::Texture2D);
+    REQUIRE(desc.depth == 1);
+}
+
+TEST_CASE("Texture struct - Volume defaults", "[rhi][texture]") {
+    Texture tex;
+    REQUIRE(tex.depth == 1);
+    REQUIRE(tex.type == TextureType::Texture2D);
+}
+
+TEST_CASE("TextureFormat - Photon formats map to SDL values", "[rhi][texture]") {
+    REQUIRE(static_cast<u32>(TextureFormat::R8G8_UNORM) ==
+            SDL_GPU_TEXTUREFORMAT_R8G8_UNORM);
+    REQUIRE(static_cast<u32>(TextureFormat::R16G16_FLOAT) ==
+            SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT);
+    REQUIRE(static_cast<u32>(TextureFormat::R16G16_UNORM) ==
+            SDL_GPU_TEXTUREFORMAT_R16G16_UNORM);
+    REQUIRE(static_cast<u32>(TextureFormat::R11G11B10_UFLOAT) ==
+            SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT);
+}
+
+TEST_CASE("RenderDevice - create 3D texture without init returns null", "[rhi][texture]") {
+    RenderDevice device;
+    TextureDesc desc;
+    desc.type = TextureType::Texture3D;
+    desc.width = 64;
+    desc.height = 64;
+    desc.depth = 64;
+    REQUIRE(device.createTexture(desc) == nullptr);
+}
+
+TEST_CASE("RenderDevice - uploadTexture3D without init returns false", "[rhi][device]") {
+    RenderDevice device;
+    Texture tex;
+    u8 data[8] = {0};
+    REQUIRE(device.uploadTexture3D(&tex, data, 1, 1, 1) == false);
+    REQUIRE(device.uploadTexture3D(&tex, data, 1, 1, 0) == false);
+}
+
+// ============================================================================
+// P0 / Photon: compute sampled textures
+// ============================================================================
+
+TEST_CASE("CommandBuffer - bindComputeTexture without compute pass is safe", "[rhi][compute]") {
+    CommandBuffer cmd;
+    Texture tex;
+    Sampler sampler;
+    cmd.bindComputeTexture(nullptr);
+    cmd.bindComputeTexture(&tex, 0, &sampler);
+    cmd.bindComputeTextures(nullptr, nullptr, 0, 1);
+    REQUIRE(cmd.isInComputePass() == false);
+}
+
+TEST_CASE("CommandBuffer - beginComputePass with mip/layer without acquire is no-op",
+          "[rhi][compute]") {
+    CommandBuffer cmd;
+    Texture storage;
+    cmd.beginComputePass(&storage, 3, 2);
+    REQUIRE(cmd.isInComputePass() == false);
+    cmd.endComputePass();
+    REQUIRE(cmd.isInComputePass() == false);
+}
+
+TEST_CASE("ComputePipelineDesc - sampler count defaults to zero", "[rhi][compute]") {
+    ComputePipelineDesc desc;
+    REQUIRE(desc.numSamplers == 0);
+    REQUIRE(desc.numReadonlyStorageTextures == 0);
+    REQUIRE(desc.numReadwriteStorageTextures == 0);
+}
+
+// ============================================================================
+// P0 / Photon: Min-Z pyramid
+// ============================================================================
+
+TEST_CASE("MinZParams - Defaults describe a perspective camera", "[photon][minz]") {
+    Render::MinZParams params;
+    REQUIRE(params.proj[0] == 1.0f);
+    REQUIRE(params.proj[1] == 1.0f);
+    REQUIRE(params.proj[2] == 0.0f);
+    REQUIRE(params.proj[3] == 0.0f);
+    REQUIRE(params.proj32 == -1.0f);
+    REQUIRE(params.skyDepth > 1.0e29f);
+}
+
+TEST_CASE("MinZParams - Extracts the projection elements used by the shader",
+          "[photon][minz]") {
+    const Mat4 projection = Mat4::perspective(1.0472f, 16.0f / 9.0f, 0.1f, 500.0f);
+    const Render::MinZParams params = Render::MinZParams::fromProjection(projection);
+
+    REQUIRE(params.proj[0] == Approx(projection(0, 0)));
+    REQUIRE(params.proj[1] == Approx(projection(1, 1)));
+    REQUIRE(params.proj[2] == Approx(projection(2, 2)));
+    REQUIRE(params.proj[3] == Approx(projection(2, 3)));
+    REQUIRE(params.proj32 == Approx(projection(3, 2)));
+    REQUIRE(params.proj32 == Approx(-1.0f));
+}
+
+TEST_CASE("MinZParams - Orthographic projection reports P32 = 0", "[photon][minz]") {
+    const Mat4 projection = Mat4::ortho(-10.0f, 10.0f, -6.0f, 6.0f, 0.1f, 100.0f);
+    const Render::MinZParams params = Render::MinZParams::fromProjection(projection);
+    REQUIRE(params.proj32 == Approx(0.0f));
+}
+
+TEST_CASE("MinZPyramid - Mip count covers the full chain", "[photon][minz]") {
+    REQUIRE(Render::MinZPyramid::mipCountFor(0, 1080) == 0);
+    REQUIRE(Render::MinZPyramid::mipCountFor(1920, 0) == 0);
+    REQUIRE(Render::MinZPyramid::mipCountFor(1, 1) == 1);
+    REQUIRE(Render::MinZPyramid::mipCountFor(2, 2) == 2);
+    REQUIRE(Render::MinZPyramid::mipCountFor(1920, 1080) == 11);  // 1920 -> 1
+    REQUIRE(Render::MinZPyramid::mipCountFor(256, 256) == 9);     // 256 -> 1
+}
+
+TEST_CASE("MinZPyramid - Default state is not ready", "[photon][minz]") {
+    Render::MinZPyramid pyramid;
+    REQUIRE(pyramid.isReady() == false);
+    REQUIRE(pyramid.texture() == nullptr);
+    REQUIRE(pyramid.mipCount() == 0);
+    REQUIRE(pyramid.width() == 0);
+    REQUIRE(pyramid.height() == 0);
+}
+
+TEST_CASE("MinZPyramid - init without a device fails cleanly", "[photon][minz]") {
+    Render::MinZPyramid pyramid;
+    REQUIRE(pyramid.init(nullptr, 320, 180) == false);
+    REQUIRE(pyramid.init(nullptr, 0, 0) == false);
+
+    RenderDevice device;  // not initialised
+    REQUIRE(pyramid.init(&device, 320, 180) == false);
+    REQUIRE(pyramid.isReady() == false);
+}
+
+TEST_CASE("MinZPyramid - generate and shutdown without resources are safe",
+          "[photon][minz]") {
+    Render::MinZPyramid pyramid;
+    CommandBuffer cmd;
+    pyramid.generate(nullptr, nullptr, {});
+    pyramid.generate(&cmd, nullptr, {});
+    pyramid.shutdown(nullptr);
+    REQUIRE(pyramid.isReady() == false);
 }

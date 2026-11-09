@@ -14,6 +14,7 @@
 #include "render/GpuSpotShadowMap.hpp"
 #include "render/GpuEnvironmentMap.hpp"
 #include "render/PostProcessStack.hpp"
+#include "render/PhotonCascades.hpp"
 #include "render/TextureQuality.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "render/RenderFeatures.hpp"
@@ -28,6 +29,24 @@ struct EditorContext;
 }
 
 namespace Caffeine::Render {
+
+/// Minimal deferred data written by every scene pipeline alongside the HDR
+/// colour target (spec §5.3 / §6.1). Attachment order is fixed:
+///   0 = HDR colour (kHdrFormat)
+///   1 = albedo          RGBA8, a = 1 when the surface is GI-relevant
+///   2 = normal+material RGBA8 (rg = octahedral world normal, b = roughness, a = metallic)
+///   3 = direct          RGBA16F, D_t = direct diffuse + emissive (no IBL/SSR)
+/// Packing normal and material frees the fourth attachment for D_t; four is
+/// the maximum a render pass may use (and RGBA8/RGBA16F are guaranteed colour
+/// target formats). Keeping the same four attachments on every pass lets
+/// probes and planar reflections reuse the scene pipelines.
+struct GBufferTargets {
+    RHI::Texture* albedo         = nullptr;
+    RHI::Texture* normalMaterial = nullptr;
+    RHI::Texture* direct         = nullptr;
+
+    bool valid() const { return albedo && normalMaterial && direct; }
+};
 
 struct GpuSceneCamera {
     Vec3 position{};
@@ -224,6 +243,7 @@ private:
         RHI::Texture* color[2] = {nullptr, nullptr};
         RHI::Texture* depth[2] = {nullptr, nullptr};
         RHI::Texture* opaqueCopy = nullptr;
+        GBufferTargets gbuffer;
         u32 current = 0;
         bool hasPrevious = false;
         Mat4 prevViewProj = Mat4::identity();
@@ -242,6 +262,7 @@ private:
         Vec3 origin{};
         RHI::Texture* cube = nullptr;
         RHI::Texture* depth = nullptr;
+        GBufferTargets gbuffer;
         u32 resolution = 0;
         u32 mipLevels = 1;
         u64 sceneHash = 0;
@@ -252,6 +273,9 @@ private:
     /// State shared by every draw of one scene pass.
     struct ScenePassContext {
         ViewTargets* view = nullptr;       ///< null for probe / planar passes
+        /// G-buffer written by this pass. Pipelines always declare four colour
+        /// attachments, so every scene pass must point at a valid set.
+        GBufferTargets gbuffer;
         Mat4 viewProj = Mat4::identity();
         f32 ssrIntensity = 0.0f;
         f32 ssrMaxRoughness = 0.0f;
@@ -353,6 +377,7 @@ private:
     RHI::Texture* m_fallbackCube = nullptr;
     RHI::Texture* m_reflectionColor = nullptr;
     RHI::Texture* m_reflectionDepth = nullptr;
+    GBufferTargets m_reflectionGbuffer;
     u32 m_reflectionWidth = 0;
     u32 m_reflectionHeight = 0;
     Mat4 m_reflectionVP = Mat4::identity();
@@ -364,6 +389,8 @@ private:
     u64 m_frameCounter = 0;
     bool m_needsAnotherFrame = false;
     PostProcessStack m_post;
+    /// P2 compute path (cascade 0). Optional: falls back to m_post's screen shader.
+    PhotonCascades m_photonCascades;
     /// True while rendering into the planar target or probe faces; those passes must not
     /// sample the textures they write to.
     bool m_inReflectionPass = false;

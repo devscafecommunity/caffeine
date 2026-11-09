@@ -31,6 +31,7 @@ struct PostProcessInputs {
     u32 outputHeight = 0;
     Mat4 proj;                           ///< projection used for the scene (P22/P23 linearise depth)
     Mat4 viewProj;                       ///< as rendered (jittered when TAA is on)
+    Mat4 view = Mat4::identity();        ///< world→view rotation for G-buffer normals
     Mat4 prevViewProj;                   ///< last frame of the same view, unjittered
     Vec3 cameraPos;
     f32 deltaTime = 1.0f / 60.0f;
@@ -40,6 +41,19 @@ struct PostProcessInputs {
     Vec2 jitterPixels;                   ///< TAA sub-pixel offset applied to `proj`
     u64 viewId = 0;                      ///< separates TAA / eye-adaptation history per view
     ECS::PhotonGIComponent photon;       ///< Photon v0.1 GI settings for this view
+    /// Minimal G-buffer produced by the scene pass (see GBufferTargets).
+    /// Albedo alpha is 1 on GI-relevant surfaces, 0 on sky/grid/effects.
+    RHI::Texture* gbufferAlbedo = nullptr;
+    /// RGBA8: rg = octahedral world normal, b = roughness, a = metallic.
+    RHI::Texture* gbufferNormalMaterial = nullptr;
+    /// RGBA16F: D_t = direct diffuse + emissive (no IBL/SSR).
+    RHI::Texture* gbufferDirect = nullptr;
+    /// Cascade-0 SH atlas produced by PhotonCascades (nullptr → screen fallback).
+    /// Layout: 2×2 RGBA16F texels per probe, `photonGridW × photonGridH` probes.
+    RHI::Texture* photonSH = nullptr;
+    u32 photonGridW = 0;
+    u32 photonGridH = 0;
+    u32 photonS0 = 4;
 };
 
 /// GPU post-processing driven by ECS::PostProcessComponent: TAA, motion blur, depth of field,
@@ -124,6 +138,8 @@ private:
     RHI::Pipeline* m_motionBlur = nullptr;
     RHI::Pipeline* m_taa = nullptr;
     RHI::Pipeline* m_photon = nullptr;
+    /// P2 compute path resolve (SH-L1 atlas → irradiance).
+    RHI::Pipeline* m_photonResolve = nullptr;
     RHI::Pipeline* m_composite = nullptr;
     RHI::Pipeline* m_fxaa = nullptr;
     RHI::Sampler* m_linear = nullptr;

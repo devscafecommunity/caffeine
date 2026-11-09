@@ -6,6 +6,15 @@ layout(location = 2) in vec2 v_texCoord;
 layout(location = 3) in vec3 v_tangent;
 layout(location = 4) in vec3 v_bitangent;
 
+// Photon G-buffer (attachment order is fixed in GpuSceneRenderer.hpp):
+//   1 = albedo          rgb linear, a = 1 on GI-relevant surfaces (RGBA8)
+//   2 = normal+material rg octahedral world normal, b roughness, a metallic
+//   3 = direct          D_t = direct diffuse + emissive (RGBA16F)
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 gAlbedo;
+layout(location = 2) out vec4 gNormalMaterial;
+layout(location = 3) out vec4 gDirect;
+
 layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uCameraPos;
     vec4 uAmbient;
@@ -80,8 +89,6 @@ layout(set = 2, binding = 12) uniform sampler2D uPrevColor;
 layout(set = 2, binding = 13) uniform sampler2D uPrevDepth;
 layout(set = 2, binding = 14) uniform sampler2D uEmissionMap;
 layout(set = 2, binding = 15) uniform sampler2D uOpaqueScene;
-
-layout(location = 0) out vec4 outColor;
 
 const vec2 kShadowPoisson[12] = vec2[](
     vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
@@ -591,11 +598,28 @@ vec3 applyReflection(vec3 n, vec3 viewDir, vec3 color, float roughness) {
     return mix(color, accum / wsum, clamp(amount, 0.0, 1.0));
 }
 
+// Octahedral normal packing used by the Photon G-buffer (RG8, world space).
+vec2 octEncode(vec3 n) {
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    vec2 e = n.xy;
+    if (n.z < 0.0) {
+        e = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e * 0.5 + 0.5;
+}
+
+void writePhotonGBuffer(vec3 albedo, vec3 normal, float roughness, float metallic,
+                        vec3 direct) {
+    gAlbedo = vec4(max(albedo, vec3(0.0)), 1.0);
+    gNormalMaterial = vec4(octEncode(normal), clamp(roughness, 0.0, 1.0),
+                           clamp(metallic, 0.0, 1.0));
+    gDirect = vec4(max(direct, vec3(0.0)), 1.0);
+}
+
 void main() {
     if (lights.uReflectParams.z > 0.5 && v_worldPos.y < lights.uReflectParams.y - 0.02) {
         discard;
     }
-
     vec2 uv = materialUv();
     vec4 albedoSample = texture(uAlbedoMap, uv);
     float opacity = clamp(albedoSample.a * lights.uAlbedo.a, 0.0, 1.0);
@@ -634,12 +658,15 @@ void main() {
         s.F0 = mix(s.F0, vec3(f0 * f0), s.transmission);
     }
 
-    vec3 diffuse = vec3(0.0);
+    // Ambient is tracked separately: D_t (the Photon G-buffer) is direct
+    // diffuse + emissive only, so IBL/ambient/SSR are not double counted.
+    vec3 ambient = vec3(0.0);
+    if (lights.uIblParams.y < 0.5) {
+        ambient = lights.uAmbient.rgb * s.albedo * s.ao * (1.0 - s.transmission);
+    }
+    vec3 diffuse = ambient;
     vec3 specular = vec3(0.0);
     vec3 shadowNormal = normalize(v_normal);
-    if (lights.uIblParams.y < 0.5) {
-        diffuse += lights.uAmbient.rgb * s.albedo * s.ao * (1.0 - s.transmission);
-    }
 
     for (int i = 0; i < lights.uDirCount; ++i) {
         vec3 dir = normalize(-lights.uDirData[i].xyz);
@@ -704,6 +731,11 @@ void main() {
                    diffuse, specular);
     }
 
+    // Emission and direct diffuse are captured before IBL/SSR/transmission.
+    vec3 emission = lights.uEmission.rgb;
+    if (lights.uMaterialFlags.y > 0.5) emission *= texture(uEmissionMap, uv).rgb;
+    vec3 directDiffuse = max(diffuse - ambient, vec3(0.0)) + emission;
+
     applyIbl(s, diffuse, specular);
 
     if (s.transmission > 0.0) {
@@ -712,13 +744,11 @@ void main() {
         diffuse += transmittedLight(s) * s.albedo * through * s.transmission;
     }
 
-    vec3 emission = lights.uEmission.rgb;
-    if (lights.uMaterialFlags.y > 0.5) emission *= texture(uEmissionMap, uv).rgb;
-
     if (alphaMode == 2 && s.transmission <= 0.0) {
         // Premultiplied: highlights and reflections stay visible on faint surfaces.
         vec3 color = diffuse * opacity + specular + emission;
         color = applyVolumetrics(color);
+        writePhotonGBuffer(s.albedo, s.n, s.roughness, s.metallic, directDiffuse);
         outColor = vec4(color, opacity);
         return;
     }
@@ -727,5 +757,6 @@ void main() {
     color = applyReflection(s.n, s.v, color, s.roughness);
     color += emission;
     color = applyVolumetrics(color);
+    writePhotonGBuffer(s.albedo, s.n, s.roughness, s.metallic, directDiffuse);
     outColor = vec4(color, 1.0);
 }

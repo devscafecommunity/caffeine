@@ -417,6 +417,39 @@ void fillMeshPipelineDesc(RHI::GraphicsPipelineDesc& pipe, RHI::VertexBufferLayo
     pipe.enableBlend = false;
 }
 
+/// Adds the three G-buffer attachments shared by every scene pipeline. The
+/// order must match GBufferTargets and the shader `layout(location = 1..3)`
+/// outputs: albedo, octahedral normal, material.
+void addGBufferTargets(RHI::GraphicsPipelineDesc& pipe) {
+    pipe.numColorTargets = 4;
+    pipe.extraColorFormats[0] = RHI::TextureFormat::R8G8B8A8_UNORM;       // gAlbedo
+    pipe.extraColorFormats[1] = RHI::TextureFormat::R8G8B8A8_UNORM;       // normal + material
+    pipe.extraColorFormats[2] = RHI::TextureFormat::R16G16B16A16_FLOAT;  // D_t
+}
+
+bool createGBufferTargets(RHI::RenderDevice* device, u32 width, u32 height,
+                          GBufferTargets& out) {
+    if (!device || width == 0 || height == 0) return false;
+    RHI::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.usage = RHI::TextureUsage::Sampler | RHI::TextureUsage::ColorTarget;
+    desc.format = RHI::TextureFormat::R8G8B8A8_UNORM;
+    out.albedo = device->createTexture(desc);
+    out.normalMaterial = device->createTexture(desc);
+    desc.format = RHI::TextureFormat::R16G16B16A16_FLOAT;
+    out.direct = device->createTexture(desc);
+    return out.valid();
+}
+
+void destroyGBufferTargets(RHI::RenderDevice* device, GBufferTargets& targets) {
+    if (!device) return;
+    if (targets.albedo) device->destroyTexture(targets.albedo);
+    if (targets.normalMaterial) device->destroyTexture(targets.normalMaterial);
+    if (targets.direct) device->destroyTexture(targets.direct);
+    targets = GBufferTargets{};
+}
+
 }  // namespace
 
 bool GpuSceneRenderer::init(RHI::RenderDevice* device) {
@@ -451,6 +484,7 @@ bool GpuSceneRenderer::init(RHI::RenderDevice* device) {
     m_fallbackCube = m_device->createTexture(cubeDesc);
     m_views.reserve(kMaxViewTargets);
     m_post.init(device);
+    m_photonCascades.init(device);
     m_ready = m_sampler && m_repeatSampler && m_pointSampler && m_post.ready();
     return m_ready;
 }
@@ -554,6 +588,8 @@ void GpuSceneRenderer::shutdown() {
         if (m_instanceBuffer) m_device->destroyBuffer(m_instanceBuffer);
         if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
         if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
+        destroyGBufferTargets(m_device, m_reflectionGbuffer);
+        m_photonCascades.shutdown(m_device);
         if (m_fallbackCube) m_device->destroyTexture(m_fallbackCube);
         m_environment.release(m_device);
         if (m_sampler) m_device->destroySampler(m_sampler);
@@ -643,6 +679,7 @@ bool GpuSceneRenderer::createPipelines() {
     RHI::VertexAttributeDesc attrs[4]{};
     RHI::GraphicsPipelineDesc sceneDesc{};
     fillMeshPipelineDesc(sceneDesc, layout, attrs, kHdrFormat, true, true);
+    addGBufferTargets(sceneDesc);
     m_scenePipeline = m_device->createGraphicsPipeline(m_sceneVert, m_sceneFrag, sceneDesc);
     RHI::GraphicsPipelineDesc wireDesc = sceneDesc;
     wireDesc.fillMode = RHI::FillMode::Line;
@@ -659,6 +696,7 @@ bool GpuSceneRenderer::createPipelines() {
         skyDesc.depthFormat = RHI::TextureFormat::D32_FLOAT;
         skyDesc.depthTest = true;
         skyDesc.depthWrite = false;
+        addGBufferTargets(skyDesc);
         m_skyPipeline = m_device->createGraphicsPipeline(m_fullscreenVert, m_skyFrag, skyDesc);
     }
     if (m_fullscreenVert && m_gridFrag) {
@@ -668,6 +706,7 @@ bool GpuSceneRenderer::createPipelines() {
         gridDesc.depthTest = true;
         gridDesc.depthWrite = false;
         gridDesc.blendMode = RHI::BlendMode::Alpha;
+        addGBufferTargets(gridDesc);
         m_gridPipeline = m_device->createGraphicsPipeline(m_fullscreenVert, m_gridFrag, gridDesc);
     }
     m_effectVert = createBuiltinShader(m_device, BuiltinShader::EffectBillboardVertex,
@@ -677,6 +716,7 @@ bool GpuSceneRenderer::createPipelines() {
     if (m_effectVert && m_effectFrag) {
         RHI::GraphicsPipelineDesc effectDesc{};
         fillMeshPipelineDesc(effectDesc, layout, attrs, kHdrFormat, true, true);
+        addGBufferTargets(effectDesc);
         effectDesc.depthWrite = false;
         effectDesc.blendMode = RHI::BlendMode::Premultiplied;
         m_effectPipeline = m_device->createGraphicsPipeline(m_effectVert, m_effectFrag, effectDesc);
@@ -1431,6 +1471,9 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
                                    const GpuSceneRenderOptions& options, ScenePassContext& pass) {
     Caffeine::Debug::setCrashBreadcrumb("GpuSceneRenderer::renderMeshes");
     if (!m_scenePipeline || !m_wireframePipeline || !colorTarget || !depthTarget) return 0;
+    // Every scene pipeline declares four colour attachments; a pass without a
+    // G-buffer would be an invalid framebuffer.
+    if (!pass.gbuffer.valid()) return 0;
     const bool wireframe = options.wireframeMeshes;
 
     SceneShadowUBO shadowUbo{};
@@ -1487,6 +1530,11 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
 
     RHI::RenderPassDesc rp;
     rp.colorTarget = colorTarget;
+    // Attachment order: 0 HDR, 1 albedo, 2 octahedral normal, 3 material.
+    rp.numColorTargets = 4;
+    rp.extraColorTargets[0] = pass.gbuffer.albedo;
+    rp.extraColorTargets[1] = pass.gbuffer.normalMaterial;
+    rp.extraColorTargets[2] = pass.gbuffer.direct;
     rp.depthTarget = depthTarget;
     rp.colorLayer = options.colorLayer;
     rp.clearColor[0] = 0.0f;
@@ -1956,12 +2004,13 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
 }
 
 bool GpuSceneRenderer::ensureReflectionTargets(u32 width, u32 height) {
-    if (m_reflectionColor && m_reflectionDepth && m_reflectionWidth == width &&
-        m_reflectionHeight == height) {
+    if (m_reflectionColor && m_reflectionDepth && m_reflectionGbuffer.valid() &&
+        m_reflectionWidth == width && m_reflectionHeight == height) {
         return true;
     }
     if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
     if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
+    destroyGBufferTargets(m_device, m_reflectionGbuffer);
     m_reflectionColor = nullptr;
     m_reflectionDepth = nullptr;
     RHI::TextureDesc colorDesc;
@@ -1976,10 +2025,11 @@ bool GpuSceneRenderer::ensureReflectionTargets(u32 width, u32 height) {
     depthDesc.usage = RHI::TextureUsage::DepthStencil;
     m_reflectionColor = m_device->createTexture(colorDesc);
     m_reflectionDepth = m_device->createTexture(depthDesc);
+    const bool gbufferOk = createGBufferTargets(m_device, width, height, m_reflectionGbuffer);
     m_reflectionWidth = width;
     m_reflectionHeight = height;
     m_reflectionValid = false;
-    return m_reflectionColor && m_reflectionDepth;
+    return m_reflectionColor && m_reflectionDepth && gbufferOk;
 }
 
 void GpuSceneRenderer::renderPlanarReflection(RHI::CommandBuffer* cmd, ECS::World& world,
@@ -2020,6 +2070,7 @@ void GpuSceneRenderer::renderPlanarReflection(RHI::CommandBuffer* cmd, ECS::Worl
     const bool wasInReflection = m_inReflectionPass;
     m_inReflectionPass = true;
     ScenePassContext innerPass;
+    innerPass.gbuffer = m_reflectionGbuffer;
     renderSceneHdr(cmd, world, reflected, m_reflectionColor, m_reflectionDepth, rw, rh, projectRoot,
                    inner, innerPass);
     m_inReflectionPass = wasInReflection;
@@ -2045,6 +2096,7 @@ void GpuSceneRenderer::releaseProbe(ReflectionProbe& probe) {
     if (m_device) {
         if (probe.cube) m_device->destroyTexture(probe.cube);
         if (probe.depth) m_device->destroyTexture(probe.depth);
+        destroyGBufferTargets(m_device, probe.gbuffer);
     }
     probe = ReflectionProbe{};
 }
@@ -2055,9 +2107,13 @@ bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
                                     const GpuSceneRenderOptions& options) {
     u32 resolution = 32;
     while (resolution < std::clamp(options.features.probeResolution, 32u, 512u)) resolution <<= 1;
-    if (!probe.cube || !probe.depth || probe.resolution != resolution) {
+    if (!probe.cube || !probe.depth || !probe.gbuffer.valid() ||
+        probe.resolution != resolution) {
         if (probe.cube) m_device->destroyTexture(probe.cube);
         if (probe.depth) m_device->destroyTexture(probe.depth);
+        destroyGBufferTargets(m_device, probe.gbuffer);
+        probe.cube = nullptr;
+        probe.depth = nullptr;
         RHI::TextureDesc cubeDesc;
         cubeDesc.width = resolution;
         cubeDesc.height = resolution;
@@ -2075,7 +2131,10 @@ bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
         probe.resolution = resolution;
         probe.mipLevels = cubeDesc.mipLevels;
         probe.valid = false;
-        if (!probe.cube || !probe.depth) return false;
+        if (!probe.cube || !probe.depth ||
+            !createGBufferTargets(m_device, resolution, resolution, probe.gbuffer)) {
+            return false;
+        }
     }
 
     GpuSceneRenderOptions inner = options;
@@ -2107,6 +2166,7 @@ bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
         inner.colorLayer = face;
         ScenePassContext innerPass;
         innerPass.cycleTargets = false;
+        innerPass.gbuffer = probe.gbuffer;
         renderSceneHdr(cmd, world, faceCam, probe.cube, probe.depth, resolution, resolution,
                        projectRoot, inner, innerPass);
     }
@@ -2236,7 +2296,8 @@ GpuSceneRenderer::ViewTargets* GpuSceneRenderer::acquireViewTargets(u64 viewId, 
             view.depth[i] = m_device->createTexture(depthDesc);
         }
         view.opaqueCopy = m_device->createTexture(colorDesc);
-        return view.color[0] && view.color[1] && view.depth[0] && view.depth[1] && view.opaqueCopy;
+        return view.color[0] && view.color[1] && view.depth[0] && view.depth[1] &&
+               view.opaqueCopy && createGBufferTargets(m_device, width, height, view.gbuffer);
     };
 
     for (ViewTargets& view : m_views) {
@@ -2275,6 +2336,7 @@ void GpuSceneRenderer::releaseViewTargets(ViewTargets& view) {
             if (view.depth[i]) m_device->destroyTexture(view.depth[i]);
         }
         if (view.opaqueCopy) m_device->destroyTexture(view.opaqueCopy);
+        destroyGBufferTargets(m_device, view.gbuffer);
     }
     const u64 id = view.viewId;
     view = ViewTargets{};
@@ -2464,6 +2526,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         });
     }
     if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
+    // Wireframe is a debug view: stale G-buffer data would feed Photon garbage.
+    if (opts.wireframeMeshes) photon.enabled = false;
 
     const f32 scale = std::clamp(opts.renderScale, 0.25f, 2.0f);
     const u32 sceneW = std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(width) * scale)));
@@ -2489,6 +2553,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     ScenePassContext pass;
     pass.view = view;
+    pass.gbuffer = view->gbuffer;
     const bool ssrFromPost = post.enabled && post.screenSpaceReflections.enabled;
     const bool ssrFromFeatures =
         opts.features.reflections == ReflectionMode::ScreenSpace ||
@@ -2508,6 +2573,26 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     const u32 drawn = renderSceneHdr(cmd, world, camera, hdr, depth, sceneW, sceneH, projectRoot,
                                      opts, pass);
 
+    // P2 compute path: Min-Z + cascade-0 trace into the SH atlas. Any failure
+    // leaves photonSH null and the post stack uses the screen-space fallback.
+    RHI::Texture* photonSH = nullptr;
+    u32 photonGridW = 0;
+    u32 photonGridH = 0;
+    u32 photonS0 = 0;
+    if (photon.enabled && photon.quality != ECS::PhotonQuality::Off &&
+        photon.path == ECS::PhotonPath::ComputeC0 && !opts.wireframeMeshes &&
+        view->gbuffer.valid() && m_photonCascades.ready()) {
+        if (m_photonCascades.execute(cmd, depth, view->gbuffer.albedo,
+                                     view->gbuffer.normalMaterial, view->gbuffer.direct,
+                                     camera.view, camera.proj, sceneW, sceneH, photon,
+                                     static_cast<u32>(view->frameIndex))) {
+            photonSH = m_photonCascades.shAtlas();
+            photonGridW = m_photonCascades.gridWidth();
+            photonGridH = m_photonCascades.gridHeight();
+            photonS0 = m_photonCascades.probeSpacing();
+        }
+    }
+
     {
         CF_PROFILE_SCOPE("GpuSceneRenderer::post");
         PostProcessInputs in;
@@ -2520,6 +2605,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.outputHeight = height;
         in.proj = camera.proj;
         in.viewProj = camera.proj * camera.view;
+        in.view = camera.view;
         in.prevViewProj = view->hasPrevious ? view->prevViewProj : unjitteredViewProj;
         in.cameraPos = camera.position;
         in.deltaTime = std::clamp(opts.deltaTime, 1e-4f, 0.25f);
@@ -2529,6 +2615,13 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.jitterPixels = jitter;
         in.viewId = viewId;
         in.photon = photon;
+        in.gbufferAlbedo = view->gbuffer.albedo;
+        in.gbufferNormalMaterial = view->gbuffer.normalMaterial;
+        in.gbufferDirect = view->gbuffer.direct;
+        in.photonSH = photonSH;
+        in.photonGridW = photonGridW;
+        in.photonGridH = photonGridH;
+        in.photonS0 = photonS0;
         m_post.execute(cmd, post, in);
     }
 

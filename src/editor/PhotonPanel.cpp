@@ -20,16 +20,30 @@
 namespace Caffeine::Editor {
 namespace {
 
-const char* const kPresetNames[] = {"Off", "Performance", "Balanced", "High", "Cinematic"};
-const char* const kQualityNames[] = {"Low", "Medium", "High"};
+const char* const kPresetNames[] = {"Off", "Eco", "Low", "Balanced", "High"};
+constexpr int kPresetCount = 5;
+// Tiers exposed inside "Radiance cascades"; Off is the component's `enabled` flag.
+const char* const kQualityNames[] = {"Eco", "Low", "Balanced", "High"};
+constexpr ECS::PhotonQuality kQualityValues[] = {
+    ECS::PhotonQuality::Eco,
+    ECS::PhotonQuality::Low,
+    ECS::PhotonQuality::Balanced,
+    ECS::PhotonQuality::High,
+};
+constexpr int kQualityCount = 4;
 const char* const kDebugNames[] = {"Lit scene", "GI only", "Fallback only"};
 const char* const kResolutionNames[] = {"256", "512", "1024"};
 
+int qualityIndex(ECS::PhotonQuality quality) {
+    for (int i = 0; i < kQualityCount; ++i) {
+        if (kQualityValues[i] == quality) return i;
+    }
+    return 2;  // Balanced for Off / unknown values.
+}
+
 const char* classify(const ECS::PhotonGIComponent& gi) {
-    if (!gi.enabled || gi.quality == 0) return "Off";
-    if (gi.cascades >= 5) return "High quality";
-    if (gi.cascades >= 4) return "Balanced";
-    return "Performance";
+    if (!gi.enabled || gi.quality == ECS::PhotonQuality::Off) return "Off";
+    return ECS::photonQualityName(gi.quality);
 }
 
 }  // namespace
@@ -38,46 +52,55 @@ void PhotonPanel::applyPreset(ECS::PhotonGIComponent& gi, int preset) const {
     switch (preset) {
         case 0:
             gi.enabled = false;
+            gi.quality = ECS::PhotonQuality::Off;
             break;
-        case 1:
+        case 1:  // Eco: lowest cost, target low-end / handheld.
             gi.enabled = true;
-            gi.quality = 1;
-            gi.cascades = 3;
-            gi.intensity = 0.8f;
-            gi.radius = 10.0f;
-            gi.thickness = 0.10f;
-            gi.skyIntensity = 0.55f;
-            gi.ambientIntensity = 0.18f;
-            break;
-        case 2:
-            gi.enabled = true;
-            gi.quality = 2;
+            gi.quality = ECS::PhotonQuality::Eco;
             gi.cascades = 4;
+            gi.intensity = 0.7f;
+            gi.radius = 8.0f;
+            gi.thickness = 0.12f;
+            gi.skyIntensity = 0.50f;
+            gi.ambientIntensity = 0.16f;
+            gi.s0 = 16;
+            gi.computeSteps = 8;
+            break;
+        case 2:  // Low: integrated GPUs.
+            gi.enabled = true;
+            gi.quality = ECS::PhotonQuality::Low;
+            gi.cascades = 4;
+            gi.intensity = 0.9f;
+            gi.radius = 12.0f;
+            gi.thickness = 0.10f;
+            gi.skyIntensity = 0.60f;
+            gi.ambientIntensity = 0.18f;
+            gi.s0 = 8;
+            gi.computeSteps = 12;
+            break;
+        case 3:  // Balanced: desktop / console default.
+            gi.enabled = true;
+            gi.quality = ECS::PhotonQuality::Balanced;
+            gi.cascades = 5;
             gi.intensity = 1.1f;
             gi.radius = 14.0f;
             gi.thickness = 0.08f;
             gi.skyIntensity = 0.65f;
             gi.ambientIntensity = 0.20f;
+            gi.s0 = 4;
+            gi.computeSteps = 16;
             break;
-        case 3:
+        case 4:  // High: maximum quality of the near field.
             gi.enabled = true;
-            gi.quality = 3;
-            gi.cascades = 5;
+            gi.quality = ECS::PhotonQuality::High;
+            gi.cascades = 6;
             gi.intensity = 1.25f;
             gi.radius = 22.0f;
             gi.thickness = 0.06f;
             gi.skyIntensity = 0.70f;
             gi.ambientIntensity = 0.22f;
-            break;
-        case 4:
-            gi.enabled = true;
-            gi.quality = 3;
-            gi.cascades = 6;
-            gi.intensity = 1.5f;
-            gi.radius = 32.0f;
-            gi.thickness = 0.05f;
-            gi.skyIntensity = 0.80f;
-            gi.ambientIntensity = 0.25f;
+            gi.s0 = 2;
+            gi.computeSteps = 24;
             break;
         default:
             break;
@@ -146,7 +169,7 @@ void PhotonPanel::render(ECS::World& world, EditorContext& ctx) {
 
         if (Section("Presets", true)) {
             if (BeginPropertyGrid("photon_presets")) {
-                if (ComboProperty("Quality preset", &m_preset, kPresetNames, 5)) {
+                if (ComboProperty("Quality preset", &m_preset, kPresetNames, kPresetCount)) {
                     applyPreset(*gi, m_preset);
                     ctx.markDirty();
                 }
@@ -158,18 +181,46 @@ void PhotonPanel::render(ECS::World& world, EditorContext& ctx) {
             }
             SameLine();
             if (ToolbarButton("Reset", "Reset to Balanced")) {
-                m_preset = 2;
+                m_preset = 3;
                 applyPreset(*gi, m_preset);
                 ctx.markDirty();
             }
         }
 
+        if (Section("Implementation")) {
+            bool changed = false;
+            if (BeginPropertyGrid("photon_pipeline")) {
+                static const char* const kPathNames[] = {"Screen fallback",
+                                                         "Compute C0 (experimental)"};
+                int path = gi->path == ECS::PhotonPath::ComputeC0 ? 1 : 0;
+                if (ComboProperty("Path", &path, kPathNames, 2)) {
+                    gi->path = path == 1 ? ECS::PhotonPath::ComputeC0
+                                         : ECS::PhotonPath::ScreenFallback;
+                    changed = true;
+                }
+                int s0 = static_cast<int>(gi->s0);
+                if (SliderIntProperty("Probe spacing s0 (px)", &s0, 2, 32)) {
+                    gi->s0 = static_cast<u8>(s0);
+                    changed = true;
+                }
+                int steps = static_cast<int>(gi->computeSteps);
+                if (SliderIntProperty("Compute trace steps", &steps, 1, 32)) {
+                    gi->computeSteps = static_cast<u8>(steps);
+                    changed = true;
+                }
+                EndPropertyGrid();
+            }
+            TextMuted("Compute: K cascades of 16·4^k world-aligned directions with fused "
+                      "trace+merge; C0 resolves SH-L1. Far field is sky-only until P4.");
+            if (changed) ctx.markDirty();
+        }
+
         if (Section("Radiance cascades")) {
             bool changed = false;
             if (BeginPropertyGrid("photon_cascades")) {
-                int quality = static_cast<int>(gi->quality);
-                if (ComboProperty("Quality", &quality, kQualityNames, 3)) {
-                    gi->quality = static_cast<u8>(std::clamp(quality + 1, 1, 3));
+                int quality = qualityIndex(gi->quality);
+                if (ComboProperty("Quality", &quality, kQualityNames, kQualityCount)) {
+                    gi->quality = kQualityValues[std::clamp(quality, 0, kQualityCount - 1)];
                     changed = true;
                 }
                 int cascades = static_cast<int>(gi->cascades);
@@ -200,11 +251,13 @@ void PhotonPanel::render(ECS::World& world, EditorContext& ctx) {
                 }
                 EndPropertyGrid();
             }
+            TextMuted("Tint is only used where the G-buffer has no surface data.");
             if (changed) ctx.markDirty();
         }
 
-        if (Section("Baked ambient occlusion")) {
-            TextMuted("Precomputed static AO written to the material ORM map. No RTX required.");
+        if (Section("Baked AO (material only)", true)) {
+            TextMuted("Precomputed static ambient occlusion written to the material ORM map. "
+                      "This is not transport/GI and runs without RTX.");
             if (BeginPropertyGrid("photon_ao")) {
                 ComboProperty("Resolution", &m_aoResolution, kResolutionNames, 3);
                 SliderFloatProperty("Rays", &m_aoRays, 1.0f, 64.0f, "%.0f");
@@ -237,7 +290,8 @@ void PhotonPanel::render(ECS::World& world, EditorContext& ctx) {
         }
 
         SeparatorSpaced();
-        TextMuted("Near field: screen-space cascades. Far field: sky/ambient fallback.");
+        TextMuted("Screen fallback: depth gather. Compute: K cascades + fused merge + SH-L1.");
+        TextMuted("Far field: sky/ambient only until the voxel clipmap (P4).");
         TextMutedF("Component entity: %u", target.id());
     }
     UIKit::EndPanel();

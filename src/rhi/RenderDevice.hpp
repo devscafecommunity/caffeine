@@ -31,10 +31,19 @@ enum class TextureFormat : u32 {
     R8G8B8A8_UNORM     = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
     B8G8R8A8_UNORM     = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,
     R8_UNORM           = SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+    /// 2-channel UNORM. Photon G-buffer: octahedral normal (RG16) and material
+    /// parameters (RG8) both live in this format.
+    R8G8_UNORM         = SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
     R16_FLOAT          = SDL_GPU_TEXTUREFORMAT_R16_FLOAT,
+    R16G16_UNORM       = SDL_GPU_TEXTUREFORMAT_R16G16_UNORM,
+    /// Two half floats. Used by the probe (DDGI) moments buffer.
+    R16G16_FLOAT       = SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT,
     R16G16B16A16_FLOAT = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
     R32_FLOAT          = SDL_GPU_TEXTUREFORMAT_R32_FLOAT,
     R32G32B32A32_FLOAT = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
+    /// HDR irradiance probe storage (no sign, no alpha) used by the
+    /// multi-bounce feedback buffer S(t-1).
+    R11G11B10_UFLOAT   = SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT,
     D16_UNORM          = SDL_GPU_TEXTUREFORMAT_D16_UNORM,
     D24_UNORM          = SDL_GPU_TEXTUREFORMAT_D24_UNORM,
     D32_FLOAT          = SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
@@ -114,13 +123,24 @@ enum class BlendMode : u8 {
     Additive,       // 1, 1
 };
 
+/// Maximum number of colour attachments in one render pass. All SDL_GPU
+/// backends guarantee at least four attachments; the Photon G-buffer needs two
+/// (albedo + octahedral normal) and the material packing can use a third.
+inline constexpr u32 kMaxColorTargets = 4;
+
 struct GraphicsPipelineDesc {
     /// Zero vertex buffers is valid: the vertex shader builds positions from gl_VertexIndex.
     const VertexBufferLayoutDesc* vertexBuffers = nullptr;
     u32 numVertexBuffers = 0;
     const VertexAttributeDesc* attributes = nullptr;
     u32 numAttributes = 0;
+    /// Colour format of attachment 0 (the presented / primary target).
     TextureFormat colorFormat = TextureFormat::R8G8B8A8_UNORM;
+    /// Formats of attachments 1..N-1. Only read when numColorTargets > 1.
+    TextureFormat extraColorFormats[kMaxColorTargets - 1] = {};
+    /// Number of colour attachments, clamped to [1, kMaxColorTargets].
+    /// All attachments share `blendMode`; MRT G-buffer passes use BlendMode::None.
+    u32 numColorTargets = 1;
     TextureFormat depthFormat = TextureFormat::D32_FLOAT;
     bool depthTest  = true;
     bool depthWrite = true;
@@ -137,11 +157,24 @@ struct SamplerDesc {
     f32  maxAnisotropy = 1.0f;
 };
 
+enum class TextureType : u8 {
+    Texture2D,
+    /// 2D array; `depth` is the layer count. Used as the clipmap fallback on
+    /// backends without 3D texture support.
+    Texture2DArray,
+    /// Volumetric texture; `depth` is the slice count. Used by the far-field
+    /// clipmap (material + radiance volumes).
+    Texture3D,
+    Cube,
+};
+
 struct Texture {
     SDL_GPUTexture* handle = nullptr;
     u32           width    = 0;
     u32           height   = 0;
+    u32           depth    = 1;
     TextureFormat format   = TextureFormat::Invalid;
+    TextureType   type     = TextureType::Texture2D;
 };
 
 struct Buffer {
@@ -183,14 +216,12 @@ struct Sampler {
     SDL_GPUSampler* handle = nullptr;
 };
 
-enum class TextureType : u8 {
-    Texture2D,
-    Cube,
-};
-
 struct TextureDesc {
     u32           width     = 1;
     u32           height    = 1;
+    /// 3D slice count (Texture3D) or array layer count (Texture2DArray).
+    /// Ignored for Texture2D / Cube.
+    u32           depth     = 1;
     TextureFormat format    = TextureFormat::R8G8B8A8_UNORM;
     TextureUsage  usage     = TextureUsage::Sampler;
     u32           mipLevels = 1;
@@ -228,11 +259,21 @@ struct DrawCommand {
 };
 
 struct RenderPassDesc {
-    Texture* colorTarget = nullptr;  // nullptr = swapchain
+    Texture* colorTarget = nullptr;  // nullptr = swapchain (attachment 0 only)
+    /// Additional colour attachments 1..N-1 for MRT. Ignored unless
+    /// `numColorTargets` > 1. The swapchain can only be attachment 0.
+    Texture* extraColorTargets[kMaxColorTargets - 1] = {};
+    /// Total colour attachments, clamped to [1, kMaxColorTargets].
+    u32      numColorTargets = 1;
     Texture* depthTarget = nullptr;
     u32      colorMipLevel = 0;
     u32      colorLayer    = 0;      // cubemap face / array layer
     f32  clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    /// Per-attachment clear colours for MRT (entries 1..N-1). When false every
+    /// attachment uses `clearColor`; when true, attachment 0 still uses
+    /// `clearColor` and the others use `extraClearColors`.
+    bool usePerTargetClear = false;
+    f32  extraClearColors[kMaxColorTargets - 1][4] = {};
     /// Keep the existing color contents instead of clearing them.
     bool loadColor     = false;
     bool clearDepth    = false;
@@ -280,6 +321,10 @@ public:
     bool uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 offset = 0);
     bool uploadTexture(Texture* texture, const void* pixels, u32 width, u32 height,
                        u32 bytesPerPixel = 4, u32 mipLevel = 0);
+    /// Uploads a dense 3D sub-volume (`width * height * depth` texels) into a
+    /// Texture3D. Data is laid out slice-major, rows top-to-bottom.
+    bool uploadTexture3D(Texture* texture, const void* pixels, u32 width, u32 height,
+                         u32 depth, u32 bytesPerPixel = 4, u32 mipLevel = 0);
 
     void destroyTexture(Texture* tex);
     void destroyShader(Shader* shader);
@@ -310,6 +355,8 @@ private:
     void releasePendingTransfers(u32 slot);
     void retireGpuTexture(SDL_GPUTexture* handle);
     void releaseRetiredTextures(u32 slot);
+    bool uploadTextureVolume(Texture* texture, const void* pixels, u32 width, u32 height,
+                             u32 depth, u32 bytesPerPixel, u32 mipLevel);
 
     std::vector<SDL_GPUTexture*> m_retiredTextures[MAX_FRAMES_IN_FLIGHT];
 };

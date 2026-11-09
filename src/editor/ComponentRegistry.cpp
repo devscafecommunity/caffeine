@@ -334,7 +334,7 @@ void registerAllComponents(ComponentRegistry& reg) {
             }
             auto& gi = w.add<ECS::PhotonGIComponent>(e);
             gi.enabled = true;
-            gi.quality = 2;
+            gi.quality = ECS::PhotonQuality::Balanced;
             gi.cascades = 4;
             gi.intensity = 1.0f;
             gi.radius = 14.0f;

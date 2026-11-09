@@ -1,7 +1,9 @@
 #include "catch.hpp"
 
 #include "assets/MaterialFile.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "caffeine/photon/PhotonBake.hpp"
+#include "render/PhotonCascades.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/World.hpp"
@@ -139,4 +141,93 @@ TEST_CASE("Photon bake - existing material keeps roughness and metallic", "[phot
     REQUIRE(loaded.metallic == Approx(0.21f));
     REQUIRE(!loaded.ormMap.empty());
     REQUIRE(loaded.aoStrength == Approx(1.0f));
+}
+
+// ============================================================================
+// Photon quality tiers (P1a: one enum shared by component, UI and renderer)
+// ============================================================================
+
+TEST_CASE("PhotonQuality - Legacy numeric values are preserved", "[photon][quality]") {
+    // Scenes serialise the component as raw POD, so 1/2/3 must keep meaning
+    // Low/Balanced/High and Eco is appended at 4.
+    REQUIRE(static_cast<u8>(ECS::PhotonQuality::Off) == 0);
+    REQUIRE(static_cast<u8>(ECS::PhotonQuality::Low) == 1);
+    REQUIRE(static_cast<u8>(ECS::PhotonQuality::Balanced) == 2);
+    REQUIRE(static_cast<u8>(ECS::PhotonQuality::High) == 3);
+    REQUIRE(static_cast<u8>(ECS::PhotonQuality::Eco) == 4);
+}
+
+TEST_CASE("PhotonQuality - UI order is Off, Eco, Low, Balanced, High", "[photon][quality]") {
+    REQUIRE(ECS::kPhotonQualityCount == 5);
+    REQUIRE(ECS::kPhotonQualityOrder[0] == ECS::PhotonQuality::Off);
+    REQUIRE(ECS::kPhotonQualityOrder[1] == ECS::PhotonQuality::Eco);
+    REQUIRE(ECS::kPhotonQualityOrder[2] == ECS::PhotonQuality::Low);
+    REQUIRE(ECS::kPhotonQualityOrder[3] == ECS::PhotonQuality::Balanced);
+    REQUIRE(ECS::kPhotonQualityOrder[4] == ECS::PhotonQuality::High);
+}
+
+TEST_CASE("PhotonQuality - Fallback budget grows monotonically", "[photon][quality]") {
+    const auto eco = ECS::photonFallbackBudget(ECS::PhotonQuality::Eco);
+    const auto low = ECS::photonFallbackBudget(ECS::PhotonQuality::Low);
+    const auto balanced = ECS::photonFallbackBudget(ECS::PhotonQuality::Balanced);
+    const auto high = ECS::photonFallbackBudget(ECS::PhotonQuality::High);
+    const auto off = ECS::photonFallbackBudget(ECS::PhotonQuality::Off);
+
+    REQUIRE(off.rays == 0);
+    REQUIRE(off.steps == 0);
+    REQUIRE(eco.rays < low.rays);
+    REQUIRE(low.rays < balanced.rays);
+    REQUIRE(balanced.rays < high.rays);
+    REQUIRE(eco.steps <= low.steps);
+    REQUIRE(low.steps <= balanced.steps);
+    REQUIRE(balanced.steps < high.steps);
+}
+
+TEST_CASE("PhotonQuality - Every tier has a name", "[photon][quality]") {
+    REQUIRE(std::string(ECS::photonQualityName(ECS::PhotonQuality::Off)) == "Off");
+    REQUIRE(std::string(ECS::photonQualityName(ECS::PhotonQuality::Eco)) == "Eco");
+    REQUIRE(std::string(ECS::photonQualityName(ECS::PhotonQuality::Low)) == "Low");
+    REQUIRE(std::string(ECS::photonQualityName(ECS::PhotonQuality::Balanced)) == "Balanced");
+    REQUIRE(std::string(ECS::photonQualityName(ECS::PhotonQuality::High)) == "High");
+}
+
+TEST_CASE("PhotonGIComponent - Default tier is Balanced", "[photon][quality]") {
+    ECS::PhotonGIComponent gi;
+    REQUIRE(gi.enabled == false);
+    REQUIRE(gi.quality == ECS::PhotonQuality::Balanced);
+}
+
+// ============================================================================
+// P2 — PhotonPath and cascade-0 compute resources
+// ============================================================================
+
+TEST_CASE("PhotonPath - Values are stable for POD serialisation", "[photon][cascades]") {
+    REQUIRE(static_cast<u8>(ECS::PhotonPath::ScreenFallback) == 0);
+    REQUIRE(static_cast<u8>(ECS::PhotonPath::ComputeC0) == 1);
+    REQUIRE(std::string(ECS::photonPathName(ECS::PhotonPath::ScreenFallback)) ==
+            "Screen fallback");
+    REQUIRE(std::string(ECS::photonPathName(ECS::PhotonPath::ComputeC0)) ==
+            "Compute C0 (experimental)");
+}
+
+TEST_CASE("PhotonGIComponent - P2/P3 fields have safe defaults", "[photon][cascades]") {
+    ECS::PhotonGIComponent gi;
+    REQUIRE(gi.path == ECS::PhotonPath::ScreenFallback);
+    REQUIRE(gi.cascades == 5);      // Balanced preset
+    REQUIRE(gi.s0 == 4);            // Balanced preset
+    REQUIRE(gi.computeSteps == 16); // Balanced preset
+}
+
+TEST_CASE("PhotonCascades - Default state is unavailable", "[photon][cascades]") {
+    Render::PhotonCascades cascades;
+    REQUIRE(cascades.ready() == false);
+    REQUIRE(cascades.shAtlas() == nullptr);
+    REQUIRE(cascades.gridWidth() == 0);
+    REQUIRE(cascades.gridHeight() == 0);
+    REQUIRE(cascades.probeSpacing() == 0);
+    REQUIRE(cascades.cascadeCount() == 0);
+    REQUIRE(cascades.init(nullptr) == false);
+    REQUIRE(cascades.execute(nullptr, nullptr, nullptr, nullptr, nullptr, Mat4::identity(),
+                             Mat4::identity(), 320, 180, ECS::PhotonGIComponent{}, 0) == false);
+    cascades.shutdown(nullptr);
 }

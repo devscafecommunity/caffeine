@@ -751,7 +751,7 @@ TEST_CASE("SceneSerializer - PhotonGI roundtrip", "[editor][serializer]") {
     ECS::Entity e = world.create();
     auto& gi = world.add<ECS::PhotonGIComponent>(e);
     gi.enabled = true;
-    gi.quality = 3;
+    gi.quality = ECS::PhotonQuality::High;
     gi.cascades = 5;
     gi.intensity = 1.3f;
     gi.radius = 24.0f;
@@ -776,7 +776,7 @@ TEST_CASE("SceneSerializer - PhotonGI roundtrip", "[editor][serializer]") {
     loaded.forEach<ECS::PhotonGIComponent>(
         q, [&](ECS::Entity, ECS::PhotonGIComponent& c) {
             REQUIRE(c.enabled);
-            REQUIRE(c.quality == 3);
+            REQUIRE(c.quality == ECS::PhotonQuality::High);
             REQUIRE(c.cascades == 5);
             REQUIRE(c.intensity == Approx(1.3f));
             REQUIRE(c.radius == Approx(24.0f));

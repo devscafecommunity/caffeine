@@ -73,23 +73,49 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
         return;
     }
 
-    SDL_GPUTexture* colorTexture = desc.colorTarget ? desc.colorTarget->handle : m_swapchainTexture;
-    if (!colorTexture) {
-        return;
+    const u32 targetCount = desc.numColorTargets < 1 ? 1u
+                          : (desc.numColorTargets > kMaxColorTargets ? kMaxColorTargets
+                                                                     : desc.numColorTargets);
+
+    SDL_GPUColorTargetInfo colorTargets[kMaxColorTargets]{};
+    u32 textureCount = 0;
+    for (u32 i = 0; i < targetCount; ++i) {
+        // Attachment 0 may be the swapchain; extra attachments must be real
+        // textures (swapchain images are never part of an MRT set).
+        SDL_GPUTexture* handle = (i == 0) ? desc.colorTarget ? desc.colorTarget->handle
+                                                             : m_swapchainTexture
+                                         : (desc.extraColorTargets[i - 1]
+                                                ? desc.extraColorTargets[i - 1]->handle
+                                                : nullptr);
+        if (!handle) {
+            break;
+        }
+
+        SDL_GPUColorTargetInfo& target = colorTargets[textureCount];
+        target.texture       = handle;
+        // Mip/layer selection only applies to attachment 0; MRT extras are used
+        // at mip 0 / layer 0.
+        target.mip_level     = (i == 0) ? desc.colorMipLevel : 0;
+        target.layer_or_depth_plane = (i == 0) ? desc.colorLayer : 0;
+        // Cycling hands back a fresh backing texture, so it can't be combined with LOAD.
+        target.cycle         = desc.cycle && !desc.loadColor;
+        target.load_op       = desc.loadColor ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
+        target.store_op      = SDL_GPU_STOREOP_STORE;
+
+        const f32* clear = desc.clearColor;
+        if (i > 0 && desc.usePerTargetClear) {
+            clear = desc.extraClearColors[i - 1];
+        }
+        target.clear_color.r = clear[0];
+        target.clear_color.g = clear[1];
+        target.clear_color.b = clear[2];
+        target.clear_color.a = clear[3];
+        ++textureCount;
     }
 
-    SDL_GPUColorTargetInfo colorTarget{};
-    colorTarget.texture       = colorTexture;
-    colorTarget.mip_level     = desc.colorMipLevel;
-    colorTarget.layer_or_depth_plane = desc.colorLayer;
-    // Cycling hands back a fresh backing texture, so it can't be combined with LOAD.
-    colorTarget.cycle         = desc.cycle && !desc.loadColor;
-    colorTarget.load_op       = desc.loadColor ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
-    colorTarget.store_op      = SDL_GPU_STOREOP_STORE;
-    colorTarget.clear_color.r = desc.clearColor[0];
-    colorTarget.clear_color.g = desc.clearColor[1];
-    colorTarget.clear_color.b = desc.clearColor[2];
-    colorTarget.clear_color.a = desc.clearColor[3];
+    if (textureCount == 0) {
+        return;
+    }
 
     SDL_GPUDepthStencilTargetInfo depthTarget{};
     SDL_GPUDepthStencilTargetInfo* depthPtr = nullptr;
@@ -105,7 +131,7 @@ void CommandBuffer::beginRenderPass(const RenderPassDesc& desc) {
         depthPtr = &depthTarget;
     }
 
-    m_renderPass   = SDL_BeginGPURenderPass(m_cmdBuffer, &colorTarget, 1, depthPtr);
+    m_renderPass   = SDL_BeginGPURenderPass(m_cmdBuffer, colorTargets, textureCount, depthPtr);
     m_inRenderPass = (m_renderPass != nullptr);
 }
 
@@ -217,13 +243,13 @@ void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
                           firstVertex, firstInstance);
 }
 
-void CommandBuffer::beginComputePass(Texture* storageTexture) {
+void CommandBuffer::beginComputePass(Texture* storageTexture, u32 mipLevel, u32 layer) {
     if (!m_cmdBuffer || m_inRenderPass || m_inComputePass) return;
     SDL_GPUStorageTextureReadWriteBinding binding{};
     if (storageTexture && storageTexture->handle) {
         binding.texture = storageTexture->handle;
-        binding.mip_level = 0;
-        binding.layer = 0;
+        binding.mip_level = mipLevel;
+        binding.layer = layer;
         binding.cycle = true;
     }
     m_computePass = SDL_BeginGPUComputePass(
@@ -256,6 +282,32 @@ void CommandBuffer::bindComputeStorageBuffers(Buffer* const* buffers, u32 firstS
     SDL_BindGPUComputeStorageBuffers(m_computePass, firstSlot, handles.data(), count);
 }
 
+void CommandBuffer::bindComputeTextures(Texture* const* textures, Sampler* const* samplers,
+                                        u32 firstSlot, u32 count) {
+    if (!m_computePass || !textures || !samplers || count == 0) return;
+
+    std::vector<SDL_GPUTextureSamplerBinding> bindings;
+    bindings.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        // SDL requires a texture and a sampler for every sampled slot; silently
+        // binding a hole would make the shader read undefined data.
+        if (!textures[i] || !textures[i]->handle || !samplers[i] || !samplers[i]->handle) {
+            return;
+        }
+        SDL_GPUTextureSamplerBinding binding{};
+        binding.texture = textures[i]->handle;
+        binding.sampler = samplers[i]->handle;
+        bindings.push_back(binding);
+    }
+    SDL_BindGPUComputeSamplers(m_computePass, firstSlot, bindings.data(), count);
+}
+
+void CommandBuffer::bindComputeTexture(Texture* tex, u32 slot, Sampler* sampler) {
+    Texture* textures[1] = {tex};
+    Sampler* samplers[1] = {sampler};
+    bindComputeTextures(textures, samplers, slot, 1);
+}
+
 void CommandBuffer::pushComputeUniformData(u32 slot, const void* data, u32 size) {
     if (!m_cmdBuffer || !data || size == 0) return;
     SDL_PushGPUComputeUniformData(m_cmdBuffer, slot, data, size);
@@ -267,6 +319,11 @@ void CommandBuffer::dispatch(u32 x, u32 y, u32 z) {
 }
 
 void CommandBuffer::copyTexture(Texture* src, Texture* dst, u32 width, u32 height) {
+    copyTextureRegion(src, 0, dst, 0, width, height);
+}
+
+void CommandBuffer::copyTextureRegion(Texture* src, u32 srcMip, Texture* dst, u32 dstMip,
+                                      u32 width, u32 height) {
     if (!m_cmdBuffer || m_inRenderPass || !src || !dst || !src->handle || !dst->handle ||
         width == 0 || height == 0) {
         return;
@@ -275,8 +332,10 @@ void CommandBuffer::copyTexture(Texture* src, Texture* dst, u32 width, u32 heigh
     if (!copyPass) return;
     SDL_GPUTextureLocation from{};
     from.texture = src->handle;
+    from.mip_level = srcMip;
     SDL_GPUTextureLocation to{};
     to.texture = dst->handle;
+    to.mip_level = dstMip;
     SDL_CopyGPUTextureToTexture(copyPass, &from, &to, width, height, 1, false);
     SDL_EndGPUCopyPass(copyPass);
 }

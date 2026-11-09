@@ -1,0 +1,233 @@
+#version 450
+
+// Photon P3 — fused cascade kernel (spec §9.2 / §9.3).
+//
+// One invocation per texel of the M̄k atlas. The atlas is probe-major:
+//   tile side s_k = n_k / 2 = 2^(k+1)   (parent directions of cascade k)
+//   probe p owns texels [p*s_k, (p+1)*s_k)
+// Each texel (p, b) traces the four child directions of cascade k, merges them
+// with the upper cascade (or the far field) and stores the pre-averaged result
+// (radiance, transmittance) as RGBA16F. Dispatch cascades from K-1 down to 1,
+// then C0.
+//
+// Interval: [t_k, t_{k+1}], t_k = ℓ0 (4^k − 1)/3, ℓ0 = κ·s0·u(z).
+// Misses at the interval end continue in M̄_{k+1}; misses at the top cascade or
+// after leaving the screen go to the far field (sky-only until P4).
+//
+// SDL_GPU compute layout: set 0 samplers, set 1 read-write storage, set 2 uniforms.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uDirect;          // D_t
+layout(set = 0, binding = 1) uniform sampler2D uDepth;
+layout(set = 0, binding = 2) uniform sampler2D uGBufferAlbedo;
+layout(set = 0, binding = 3) uniform sampler2D uGBufferNormalMaterial;
+layout(set = 0, binding = 4) uniform sampler2D uUpper;           // M̄_{k+1} (dummy at top)
+layout(set = 0, binding = 5) uniform sampler2D uMinZ;
+
+layout(set = 1, binding = 0, rgba16f) uniform image2D uMBar;
+
+layout(set = 2, binding = 0) uniform PhotonCascadeUBO {
+    vec4 uProj;      // x P00, y P11, z P22, w P23
+    vec4 uExtra;     // x P32, y sky depth, z K, w k (current cascade)
+    vec4 uTexel;     // xy 1 / scene size, zw scene size
+    mat4 uView;      // world -> view
+    vec4 uParams;    // x s0, y reach, z steps, w thickness_rel
+    vec4 uParams2;   // x kappa, y u_min, z sky intensity, w tile side s_k
+    vec4 uSky;       // rgb sky radiance
+    vec4 uJitter;    // xy Halton(2,3) in [-0.5, 0.5]
+    ivec4 uGrid;     // x G_k.x, y G_k.y, z atlas width, w atlas height
+} pc;
+
+const int kHit = 0;
+const int kExit = 1;
+const int kEnd = 2;
+
+bool isOrthographic() { return abs(pc.uExtra.x) < 0.5; }
+
+float linearDepth(float d) {
+    if (isOrthographic()) return (pc.uProj.w - d) / pc.uProj.z;
+    return pc.uProj.w / (d + pc.uProj.z);
+}
+
+float pixelFootprint(float z) {
+    float scale = isOrthographic() ? 1.0 : z;
+    return 2.0 * scale * pc.uTexel.y / pc.uProj.y;
+}
+
+vec3 viewPosition(vec2 uv, float z) {
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    float scale = isOrthographic() ? 1.0 : z;
+    return vec3(ndc.x / pc.uProj.x * scale, ndc.y / pc.uProj.y * scale, -z);
+}
+
+vec2 projectToUv(vec3 viewPos) {
+    float z = -viewPos.z;
+    if (z <= 0.0001) return vec2(-1.0);
+    float invZ = isOrthographic() ? 1.0 : 1.0 / z;
+    vec2 ndc = vec2(viewPos.x * pc.uProj.x * invZ, viewPos.y * pc.uProj.y * invZ);
+    return vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+}
+
+vec3 octDecode(vec2 e) {
+    e = e * 2.0 - 1.0;
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(n);
+}
+
+bool anchorInsideScreen(vec2 anchor, out vec2 uv) {
+    uv = (anchor + 0.5) / pc.uTexel.zw;
+    return anchor.x >= 0.0 && anchor.y >= 0.0 &&
+           anchor.x < pc.uTexel.z && anchor.y < pc.uTexel.w;
+}
+
+// Traces [t0, t1] against the depth buffer. Returns kHit / kExit / kEnd.
+int traceInterval(vec3 O, vec3 omega, vec3 omegaWorld, float t0, float t1, int steps,
+                  out vec2 hitUv) {
+    hitUv = vec2(0.0);
+    float dt = (t1 - t0) / float(steps);
+    for (int s = 0; s < 32; ++s) {
+        if (s >= steps) break;
+        vec3 S = O + omega * (t0 + dt * (float(s) + 1.0));
+        if (S.z > -0.05) return kExit;
+        vec2 suv = projectToUv(S);
+        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) return kExit;
+
+        float rayZ = -S.z;
+        float minZ = textureLod(uMinZ, suv, 0.0).r;
+        float minTheta = max(pc.uParams.w * minZ, 2.0 * pixelFootprint(minZ));
+        if (rayZ + minTheta < minZ) continue;  // in front of every surface
+
+        float depthSample = textureLod(uDepth, suv, 0.0).r;
+        if (depthSample >= 0.999999) continue;
+        float sceneZ = linearDepth(depthSample);
+        float theta = max(pc.uParams.w * sceneZ, 2.0 * pixelFootprint(sceneZ));
+        if (sceneZ <= rayZ && (rayZ - sceneZ) <= theta) {
+            vec3 hitNormal = octDecode(textureLod(uGBufferNormalMaterial, suv, 0.0).rg);
+            if (dot(omegaWorld, hitNormal) <= 0.0) {
+                hitUv = suv;
+                return kHit;
+            }
+        }
+    }
+    return kEnd;
+}
+
+// Spec §9.3: geometry-aware bilinear continuation from M̄_{k+1}.
+//   strideUp = s0·2^(k+1), tileUp = s_{k+1} = n_k, gridUp = G_{k+1}.
+vec4 upperLookup(vec2 probeAnchor, vec3 Pp, vec3 Np, vec2 atlasSize, float strideUp,
+                 float tileUp, vec2 gridUp, int dx, int dy, float delta) {
+    vec2 g = probeAnchor / strideUp - 0.5;
+    ivec2 base = ivec2(floor(g));
+    vec2 f = g - vec2(base);
+
+    vec3 accum = vec3(0.0);
+    float accumT = 0.0;
+    float weightSum = 0.0;
+
+    for (int oy = 0; oy < 2; ++oy) {
+        for (int ox = 0; ox < 2; ++ox) {
+            ivec2 q = clamp(base + ivec2(ox, oy), ivec2(0), ivec2(gridUp) - 1);
+            vec2 anchor = vec2(q) * strideUp + strideUp * 0.5;
+            vec2 auv;
+            if (!anchorInsideScreen(anchor, auv)) continue;
+            float dq = textureLod(uDepth, auv, 0.0).r;
+            if (dq >= 0.999999) continue;
+            if (textureLod(uGBufferAlbedo, auv, 0.0).a < 0.5) continue;
+
+            vec3 Pq = viewPosition(auv, linearDepth(dq));
+            vec3 Nq = octDecode(textureLod(uGBufferNormalMaterial, auv, 0.0).rg);
+
+            float bilinear = (ox == 0 ? 1.0 - f.x : f.x) * (oy == 0 ? 1.0 - f.y : f.y);
+            float plane = abs(dot(Pq - Pp, Np)) / max(0.5 * delta, 1e-4);
+            float wZ = exp(-plane * plane);
+            float wN = pow(max(dot(Np, Nq), 0.0), 8.0);
+            float w = bilinear * wZ * wN;
+            if (w <= 0.0) continue;
+
+            vec2 t = (vec2(q) * tileUp + vec2(float(dx), float(dy)) + 0.5) / atlasSize;
+            vec4 up = textureLod(uUpper, t, 0.0);
+            accum += w * up.rgb;
+            accumT += w * up.a;
+            weightSum += w;
+        }
+    }
+
+    if (weightSum > 1e-3) {
+        return vec4(accum / weightSum, accumT / weightSum);
+    }
+    // No valid neighbour: fall back to the far field (sky-only in P3).
+    return vec4(pc.uSky.rgb, 1.0);
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (texel.x >= pc.uGrid.z || texel.y >= pc.uGrid.w) return;
+
+    const int k = int(pc.uExtra.w);
+    const int K = int(pc.uExtra.z);
+    const int tile = int(pc.uParams2.w);   // s_k = 2^(k+1)
+    if (tile <= 0) return;
+
+    ivec2 p = texel / tile;
+    ivec2 b = texel - p * tile;
+    ivec2 gridK = pc.uGrid.xy;
+    if (p.x >= gridK.x || p.y >= gridK.y) return;
+
+    float stride = pc.uParams.x * exp2(float(k));
+    vec2 anchor = vec2(p) * stride + stride * 0.5;
+    vec2 auv;
+    if (!anchorInsideScreen(anchor, auv)) {
+        imageStore(uMBar, texel, vec4(0.0));
+        return;
+    }
+    float rawDepth = textureLod(uDepth, auv, 0.0).r;
+    if (rawDepth >= 0.999999 || textureLod(uGBufferAlbedo, auv, 0.0).a < 0.5) {
+        imageStore(uMBar, texel, vec4(0.0));
+        return;
+    }
+
+    float z = linearDepth(rawDepth);
+    vec3 P = viewPosition(auv, z);
+    vec3 worldNormal = octDecode(textureLod(uGBufferNormalMaterial, auv, 0.0).rg);
+    vec3 N = normalize(mat3(pc.uView) * worldNormal);
+    if (dot(N, -P) < 0.0) N = -N;
+
+    float u = max(pixelFootprint(z), pc.uParams2.y);
+    float l0 = pc.uParams2.x * pc.uParams.x * u;
+    float t0 = l0 * (exp2(2.0 * float(k)) - 1.0) / 3.0;
+    float t1 = l0 * (exp2(2.0 * float(k + 1)) - 1.0) / 3.0;
+    vec3 O = P + N * (1.5 * pixelFootprint(z));
+    int steps = int(clamp(pc.uParams.z, 1.0, 32.0));
+
+    float dirSide = 2.0 * float(tile);          // n_k
+    float strideUp = 2.0 * stride;              // s0·2^(k+1)
+    float tileUp = 2.0 * float(tile);           // s_{k+1} = n_k
+    vec2 atlasSize = vec2(gridK) * float(tile); // 2W'/s0
+    vec2 gridUp = atlasSize / tileUp;
+
+    vec4 sum = vec4(0.0);
+    for (int c = 0; c < 4; ++c) {
+        ivec2 d = ivec2(2 * b.x + (c & 1), 2 * b.y + (c >> 1));
+        vec2 duv = (vec2(d) + 0.5 + pc.uJitter.xy) / dirSide;
+        duv = clamp(duv, 0.0, 1.0);
+        vec3 omegaWorld = octDecode(duv * 2.0 - 1.0);
+        vec3 omega = normalize(mat3(pc.uView) * omegaWorld);
+
+        vec2 hitUv;
+        int status = traceInterval(O, omega, omegaWorld, t0, t1, steps, hitUv);
+        if (status == kHit) {
+            sum += vec4(max(textureLod(uDirect, hitUv, 0.0).rgb, vec3(0.0)), 0.0);
+        } else if (status == kExit || k >= K - 1) {
+            sum += vec4(pc.uSky.rgb, 1.0);
+        } else {
+            sum += upperLookup(anchor, P, N, atlasSize, strideUp, tileUp, gridUp, d.x, d.y,
+                               strideUp * u);
+        }
+    }
+
+    imageStore(uMBar, texel, sum * 0.25);
+}

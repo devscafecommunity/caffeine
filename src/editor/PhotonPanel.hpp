@@ -38,7 +38,7 @@ private:
     void applyPreset(ECS::PhotonGIComponent& gi, int preset) const;
 
     bool m_open = false;
-    int m_preset = 2;
+    int m_preset = 3;  // Balanced
     int m_aoResolution = 1;
     float m_aoRays = 16.0f;
     float m_aoMaxDistance = 2.5f;

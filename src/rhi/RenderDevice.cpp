@@ -220,16 +220,36 @@ Texture* RenderDevice::createTexture(const TextureDesc& desc) {
         return nullptr;
     }
 
+    SDL_GPUTextureType sdlType = SDL_GPU_TEXTURETYPE_2D;
+    u32 slices = 1;
+    switch (desc.type) {
+        case TextureType::Texture2DArray:
+            sdlType = SDL_GPU_TEXTURETYPE_2D_ARRAY;
+            slices = desc.depth < 1 ? 1 : desc.depth;
+            break;
+        case TextureType::Texture3D:
+            sdlType = SDL_GPU_TEXTURETYPE_3D;
+            slices = desc.depth < 1 ? 1 : desc.depth;
+            break;
+        case TextureType::Cube:
+            sdlType = SDL_GPU_TEXTURETYPE_CUBE;
+            slices = 6;
+            break;
+        case TextureType::Texture2D:
+        default:
+            sdlType = SDL_GPU_TEXTURETYPE_2D;
+            slices = 1;
+            break;
+    }
+
     SDL_GPUTextureCreateInfo texInfo{};
-    texInfo.type = (desc.type == TextureType::Cube)
-        ? SDL_GPU_TEXTURETYPE_CUBE
-        : SDL_GPU_TEXTURETYPE_2D;
+    texInfo.type = sdlType;
     texInfo.format = static_cast<SDL_GPUTextureFormat>(desc.format);
     texInfo.usage = static_cast<SDL_GPUTextureUsageFlags>(desc.usage);
     texInfo.width = desc.width;
     texInfo.height = desc.height;
-    texInfo.layer_count_or_depth = (desc.type == TextureType::Cube) ? 6u : 1u;
-    texInfo.num_levels = desc.mipLevels;
+    texInfo.layer_count_or_depth = slices;
+    texInfo.num_levels = desc.mipLevels < 1 ? 1 : desc.mipLevels;
     texInfo.sample_count = SDL_GPU_SAMPLECOUNT_1;
 
     SDL_GPUTexture* gpuTex = SDL_CreateGPUTexture(m_device, &texInfo);
@@ -241,7 +261,9 @@ Texture* RenderDevice::createTexture(const TextureDesc& desc) {
     tex->handle = gpuTex;
     tex->width = desc.width;
     tex->height = desc.height;
+    tex->depth = slices;
     tex->format = desc.format;
+    tex->type = desc.type;
     return tex;
 }
 
@@ -445,13 +467,22 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
                              SDL_GPU_COLORCOMPONENT_B | SDL_GPU_COLORCOMPONENT_A;
     blend.enable_color_write_mask = true;
 
-    SDL_GPUColorTargetDescription colorTarget{};
-    colorTarget.format = static_cast<SDL_GPUTextureFormat>(desc.colorFormat);
-    colorTarget.blend_state = blend;
+    SDL_GPUColorTargetDescription colorTargets[kMaxColorTargets]{};
+    const u32 targetCount = desc.numColorTargets < 1 ? 1u
+                          : (desc.numColorTargets > kMaxColorTargets ? kMaxColorTargets
+                                                                     : desc.numColorTargets);
+    colorTargets[0].format = static_cast<SDL_GPUTextureFormat>(desc.colorFormat);
+    colorTargets[0].blend_state = blend;
+    for (u32 i = 1; i < targetCount; ++i) {
+        colorTargets[i].format =
+            static_cast<SDL_GPUTextureFormat>(desc.extraColorFormats[i - 1]);
+        // All MRT attachments share the blend state of the primary target.
+        colorTargets[i].blend_state = blend;
+    }
 
     SDL_GPUGraphicsPipelineTargetInfo targetInfo{};
-    targetInfo.num_color_targets = 1;
-    targetInfo.color_target_descriptions = &colorTarget;
+    targetInfo.num_color_targets = targetCount;
+    targetInfo.color_target_descriptions = colorTargets;
     targetInfo.has_depth_stencil_target = desc.depthTest || desc.depthWrite;
     targetInfo.depth_stencil_format = static_cast<SDL_GPUTextureFormat>(desc.depthFormat);
 
@@ -621,7 +652,21 @@ bool RenderDevice::uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 
 
 bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width, u32 height,
                                  u32 bytesPerPixel, u32 mipLevel) {
-    if (!m_device || !texture || !texture->handle || !pixels || width < 1 || height < 1) {
+    return uploadTextureVolume(texture, pixels, width, height, 1, bytesPerPixel, mipLevel);
+}
+
+bool RenderDevice::uploadTexture3D(Texture* texture, const void* pixels, u32 width, u32 height,
+                                   u32 depth, u32 bytesPerPixel, u32 mipLevel) {
+    if (depth < 1) {
+        return false;
+    }
+    return uploadTextureVolume(texture, pixels, width, height, depth, bytesPerPixel, mipLevel);
+}
+
+bool RenderDevice::uploadTextureVolume(Texture* texture, const void* pixels, u32 width,
+                                       u32 height, u32 depth, u32 bytesPerPixel, u32 mipLevel) {
+    if (!m_device || !texture || !texture->handle || !pixels || width < 1 || height < 1 ||
+        depth < 1) {
         return false;
     }
     if (bytesPerPixel < 1 || bytesPerPixel > 16) {
@@ -629,7 +674,8 @@ bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width
     }
 
     const u32 rowPitch = width * bytesPerPixel;
-    const u64 transferSize = static_cast<u64>(rowPitch) * static_cast<u64>(height);
+    const u64 slicePitch = static_cast<u64>(rowPitch) * static_cast<u64>(height);
+    const u64 transferSize = slicePitch * static_cast<u64>(depth);
 
     SDL_GPUTransferBufferCreateInfo transferInfo{};
     transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
@@ -680,7 +726,7 @@ bool RenderDevice::uploadTexture(Texture* texture, const void* pixels, u32 width
     dst.z = 0;
     dst.w = width;
     dst.h = height;
-    dst.d = 1;
+    dst.d = depth;
 
     SDL_UploadToGPUTexture(copyPass, &src, &dst, false);
     SDL_EndGPUCopyPass(copyPass);

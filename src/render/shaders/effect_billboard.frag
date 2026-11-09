@@ -4,6 +4,16 @@ layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
 layout(location = 2) in vec3 v_local;
 layout(location = 0) out vec4 outColor;
+// Emissive effect billboards do not participate in GI (albedo alpha 0).
+layout(location = 1) out vec4 gAlbedo;
+layout(location = 2) out vec4 gNormalMaterial;
+layout(location = 3) out vec4 gDirect;
+
+void writeNoSurface() {
+    gAlbedo = vec4(0.0);
+    gNormalMaterial = vec4(0.5, 0.5, 0.0, 0.0);
+    gDirect = vec4(0.0);
+}
 
 void main() {
     float falloff;
@@ -25,6 +35,7 @@ void main() {
         float radial = length(surf + dir * tClosest);
         falloff = exp(-radial * radial * 3.0) * clamp(thickness * 0.65, 0.0, 1.0);
         if (falloff <= 0.02) discard;
+        writeNoSurface();
         outColor = vec4(v_color.rgb * falloff, falloff);
         return;
     } else if (v_uv.y > 1.5 && v_uv.x > 1.5) {
@@ -40,5 +51,6 @@ void main() {
     }
     if (falloff <= 0.001) discard;
     float alpha = v_color.a * falloff;
+    writeNoSurface();
     outColor = vec4(v_color.rgb * alpha, alpha);
 }

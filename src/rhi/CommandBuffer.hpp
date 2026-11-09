@@ -50,22 +50,35 @@ public:
 
     void pushUniformData(ShaderStage stage, u32 slot, const void* data, u32 size);
 
-    // Compute. `beginComputePass` accepts one read-write storage texture; read-only
-    // storage buffers are bound with bindComputeStorageBuffers.
-    void beginComputePass(Texture* storageTexture = nullptr);
+    // Compute. `beginComputePass` accepts one read-write storage texture (with
+    // an explicit mip/layer so a single texture can be reduced level by level);
+    // read-only storage buffers are bound with bindComputeStorageBuffers and
+    // sampled textures with bindComputeTexture(s).
+    void beginComputePass(Texture* storageTexture = nullptr, u32 mipLevel = 0, u32 layer = 0);
     void endComputePass();
     void bindComputePipeline(ComputePipeline* pipeline);
     void bindComputeStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+    /// Binds sampled textures for compute. Slots must stay below
+    /// ComputePipelineDesc::numSamplers. Requires a non-null sampler per entry.
+    void bindComputeTextures(Texture* const* textures, Sampler* const* samplers,
+                             u32 firstSlot, u32 count);
+    void bindComputeTexture(Texture* tex, u32 slot = 0, Sampler* sampler = nullptr);
     void pushComputeUniformData(u32 slot, const void* data, u32 size);
     void dispatch(u32 x, u32 y, u32 z);
 
     /// GPU-side copy of mip 0 / layer 0. Must be called outside a render pass; formats must match.
     void copyTexture(Texture* src, Texture* dst, u32 width, u32 height);
+    /// Copies an explicit mip of `src` into `dstMip` of `dst` (layer 0). Used by
+    /// the Min-Z pyramid, which reduces in place and stages the previous level
+    /// in a scratch texture to avoid same-texture read/write hazards.
+    void copyTextureRegion(Texture* src, u32 srcMip, Texture* dst, u32 dstMip,
+                           u32 width, u32 height);
 
     /// Fills mips 1..N from mip 0. Outside a render pass; texture needs Sampler | ColorTarget.
     void generateMipmaps(Texture* texture);
 
     bool isInRenderPass() const { return m_inRenderPass; }
+    bool isInComputePass() const { return m_inComputePass; }
 
     SDL_GPUCommandBuffer* nativeHandle() const { return m_cmdBuffer; }
     SDL_GPURenderPass*    nativeRenderPass() const { return m_renderPass; }

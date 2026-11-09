@@ -217,6 +217,10 @@ else()
                 "post_fxaa_frag|fragment|post_fxaa.frag"
                 "post_taa_frag|fragment|post_taa.frag"
                 "post_photon_frag|fragment|post_photon.frag"
+                "post_photon_resolve_frag|fragment|post_photon_resolve.frag"
+                "minz_downsample_frag|fragment|minz_downsample.frag"
+                "photon_cascade|compute|photon_cascade.comp"
+                "photon_c0|compute|photon_c0.comp"
                 "photon_bake_ao|compute|photon_bake_ao.comp"
             )
             set(_caffeine_shader_headers)
@@ -251,6 +255,8 @@ else()
             src/render/GpuTextureCache.cpp
             src/render/GpuSceneRenderer.cpp
             src/render/PostProcessStack.cpp
+            src/render/MinZPyramid.cpp
+            src/render/PhotonCascades.cpp
             src/render/PhotonGpuBake.cpp
             src/render/PhotonAOBake.cpp
             src/render/GpuEnvironmentMap.cpp

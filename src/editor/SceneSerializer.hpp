@@ -160,9 +160,14 @@ private:
     template<typename T>
     static bool applyPODComponent(ECS::Entity e, const u8* data, u32 size,
                                    ECS::World& world) {
-        if (size != sizeof(T)) return false;
+        // Components are serialised as a raw prefix of the struct. Copying the
+        // common prefix keeps old scenes loadable after fields are appended and
+        // lets new fields keep their defaults.
         auto& comp = world.add<T>(e);
-        memcpy(&comp, data, sizeof(T));
+        const u32 copySize = size < sizeof(T) ? size : static_cast<u32>(sizeof(T));
+        if (copySize > 0 && data) {
+            memcpy(&comp, data, copySize);
+        }
         return true;
     }
 };

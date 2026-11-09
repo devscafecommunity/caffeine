@@ -2,6 +2,10 @@
 
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 outColor;
+// Sky is not a GI source/surface: albedo alpha 0 makes Photon ignore it.
+layout(location = 1) out vec4 gAlbedo;
+layout(location = 2) out vec4 gNormalMaterial;
+layout(location = 3) out vec4 gDirect;
 
 layout(set = 3, binding = 0) uniform SkyUBO {
     mat4 uInvViewProj;
@@ -171,5 +175,8 @@ void main() {
         color = applyVolumetricClouds(color, dir);
         color = applyMist(color, dir);
     }
+    gAlbedo = vec4(0.0);
+    gNormalMaterial = vec4(0.5, 0.5, 0.0, 0.0);  // +Z; ignored while albedo.a == 0
+    gDirect = vec4(0.0);
     outColor = vec4(color, 1.0);
 }

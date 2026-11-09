@@ -69,6 +69,19 @@ layout(set = 2, binding = 10) uniform sampler2D uSpotShadow0;
 layout(set = 2, binding = 11) uniform sampler2D uSpotShadow1;
 
 layout(location = 0) out vec4 outColor;
+// Photon G-buffer (see GpuSceneRenderer.hpp for the fixed attachment order).
+layout(location = 1) out vec4 gAlbedo;
+layout(location = 2) out vec4 gNormalMaterial;
+layout(location = 3) out vec4 gDirect;
+
+vec2 octEncode(vec3 n) {
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    vec2 e = n.xy;
+    if (n.z < 0.0) {
+        e = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e * 0.5 + 0.5;
+}
 
 const vec2 kShadowPoisson[12] = vec2[](
     vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
@@ -281,5 +294,10 @@ void main() {
     }
 
     color += vec3(0.0) * (lights.uReflectVP[0][0] + lights.uExtra.x + lights.uEmission.x);
+    // Terrain is a rough dielectric: no metalness, use the layer-blended normal.
+    // D_t excludes the ambient/IBL term accumulated at the start.
+    gAlbedo = vec4(max(surfaceAlbedo, vec3(0.0)), 1.0);
+    gNormalMaterial = vec4(octEncode(n), 1.0, 0.0);
+    gDirect = vec4(max(color - ambient * surfaceAlbedo, vec3(0.0)), 1.0);
     outColor = vec4(max(color, vec3(0.0)), 1.0);
 }
