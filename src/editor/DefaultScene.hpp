@@ -5,6 +5,8 @@
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/LightComponents.hpp"
 #include "ecs/SkyboxComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/Components.hpp"
 #include "math/Quat.hpp"
 #include "scene/LightingSystem.hpp"
@@ -26,6 +28,9 @@ inline void populateDefaultScene(ECS::World& world) {
     features.ibl.enabled = false;
     features.ibl.diffuse = 0.0f;
     features.ibl.specular = 1.0f;
+    // Authoring target for the VC&M plugin; stays off until enabled.
+    world.add<ECS::VolumetricCloudsComponent>(environment);
+    world.add<ECS::PhotonGIComponent>(environment);
 
     ECS::Entity sky = world.create();
     setEntityName(world, sky, "Skybox");

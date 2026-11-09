@@ -1,5 +1,9 @@
 #include "editor/EditorPaths.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <filesystem>
 #include <vector>
 
 #ifdef __linux__
@@ -94,6 +98,22 @@ std::filesystem::path EditorPaths::findBundledPluginsRoot() {
 std::filesystem::path EditorPaths::bundledPluginsDirectory() {
     if (s_bundledPlugins.empty()) init();
     return s_bundledPlugins;
+}
+
+std::filesystem::path EditorPaths::userConfigDirectory() {
+#ifdef _WIN32
+    if (const char* appData = std::getenv("APPDATA")) {
+        if (appData[0] != '\0') return std::filesystem::path(appData) / "Caffeine";
+    }
+#else
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME")) {
+        if (xdg[0] != '\0') return std::filesystem::path(xdg) / "caffeine";
+    }
+    if (const char* home = std::getenv("HOME")) {
+        if (home[0] != '\0') return std::filesystem::path(home) / ".config" / "caffeine";
+    }
+#endif
+    return std::filesystem::path(".caffeine");
 }
 
 std::filesystem::path EditorPaths::resolve(const std::string& relativePath) {

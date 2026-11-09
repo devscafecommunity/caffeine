@@ -32,6 +32,8 @@ enum class BuiltinShader : u8 {
     PostCompositeFragment,
     PostFxaaFragment,
     PostTaaFragment,
+    PostPhotonFragment,
+    PhotonBakeAO,
 };
 
 struct ShaderBytecodeView {

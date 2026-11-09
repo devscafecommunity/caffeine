@@ -589,6 +589,12 @@ Mesh3D* MeshLoader::parseGLTF(const u8* data, usize dataLen, const char* filenam
         mat.metallic = static_cast<f32>(pbr.metallicFactor);
         mat.roughness = static_cast<f32>(pbr.roughnessFactor);
         mat.doubleSided = gmat.doubleSided;
+        if (gmat.alphaMode == "MASK") {
+            mat.alphaMode = 1;
+        } else if (gmat.alphaMode == "BLEND") {
+            mat.alphaMode = 2;
+        }
+        mat.alphaCutoff = static_cast<f32>(gmat.alphaCutoff);
 
         const int texIndex = pbr.baseColorTexture.index;
         if (texIndex < 0 || texIndex >= static_cast<int>(model.textures.size())) continue;
@@ -818,9 +824,10 @@ void MeshLoader::ensureGltfSkin(const std::string& path, Mesh3D* mesh) {
         success = loader.LoadASCIIFromFile(&model, &err, &warn, path);
     }
     if (success) importGltfSkin(model, path, mesh);
-    if (!Animation::findImportedSkin(path)) {
-        Animation::synthesizeHumanoidSkin(path, *mesh);
-    }
+    // Do not synthesize a humanoid rig here. Static meshes (plants, props,
+    // furniture) have no glTF skin and must not look like characters just
+    // because the animator or inspector queried them. Explicit synthesis is
+    // available from the Skeleton component in the Inspector.
 }
 
 }

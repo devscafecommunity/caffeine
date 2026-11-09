@@ -290,7 +290,12 @@ static SDL_GPUBufferUsageFlags toSDLBufferUsage(BufferUsage usage) {
     switch (usage) {
         case BufferUsage::Vertex:  return SDL_GPU_BUFFERUSAGE_VERTEX;
         case BufferUsage::Index:   return SDL_GPU_BUFFERUSAGE_INDEX;
-        case BufferUsage::Storage: return SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+        case BufferUsage::Storage:
+        case BufferUsage::StorageRead: return SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+        case BufferUsage::StorageWrite: return SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
+        case BufferUsage::StorageReadWrite:
+            return SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
+                   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
         default:                   return SDL_GPU_BUFFERUSAGE_VERTEX;
     }
 }
@@ -468,6 +473,43 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
     auto* pipeline = new Pipeline();
     pipeline->handle = gpuPipeline;
     return pipeline;
+}
+
+ComputePipeline* RenderDevice::createComputePipeline(const ComputePipelineDesc& desc) {
+    if (!m_device || !desc.code || desc.codeSize == 0) return nullptr;
+
+    SDL_GPUComputePipelineCreateInfo info{};
+    info.code = desc.code;
+    info.code_size = desc.codeSize;
+    info.entrypoint = desc.entryPoint ? desc.entryPoint : "main";
+    switch (desc.format) {
+        case ShaderBytecodeFormat::DXBC: info.format = SDL_GPU_SHADERFORMAT_DXBC; break;
+        case ShaderBytecodeFormat::MSL: info.format = SDL_GPU_SHADERFORMAT_MSL; break;
+        case ShaderBytecodeFormat::Metallib: info.format = SDL_GPU_SHADERFORMAT_METALLIB; break;
+        case ShaderBytecodeFormat::SPIRV:
+        default: info.format = SDL_GPU_SHADERFORMAT_SPIRV; break;
+    }
+    info.num_samplers = desc.numSamplers;
+    info.num_readonly_storage_textures = desc.numReadonlyStorageTextures;
+    info.num_readwrite_storage_textures = desc.numReadwriteStorageTextures;
+    info.num_readonly_storage_buffers = desc.numReadonlyStorageBuffers;
+    info.num_readwrite_storage_buffers = desc.numReadwriteStorageBuffers;
+    info.num_uniform_buffers = desc.numUniformBuffers;
+    info.threadcount_x = desc.threadCountX;
+    info.threadcount_y = desc.threadCountY;
+    info.threadcount_z = desc.threadCountZ;
+
+    SDL_GPUComputePipeline* handle = SDL_CreateGPUComputePipeline(m_device, &info);
+    if (!handle) return nullptr;
+    auto* pipeline = new ComputePipeline();
+    pipeline->handle = handle;
+    return pipeline;
+}
+
+void RenderDevice::destroyComputePipeline(ComputePipeline* pipeline) {
+    if (!pipeline) return;
+    if (m_device && pipeline->handle) SDL_ReleaseGPUComputePipeline(m_device, pipeline->handle);
+    delete pipeline;
 }
 
 Sampler* RenderDevice::createSampler(const SamplerDesc& desc) {

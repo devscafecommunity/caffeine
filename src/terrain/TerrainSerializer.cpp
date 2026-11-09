@@ -108,7 +108,7 @@ bool TerrainSerializer::load(const std::filesystem::path& path,
         if (hadSplat) *hadSplat = true;
     } else {
         splatmap.resize(resX, resZ);
-        splatmap.fillLayer(3, 1.0f);
+        splatmap.fillLayer(0, 1.0f);
     }
 
     return true;

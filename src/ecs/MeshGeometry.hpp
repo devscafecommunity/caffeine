@@ -12,6 +12,11 @@ namespace Caffeine::ECS {
 struct MeshGeometryComponent {
     std::vector<Vec3> positions;
     std::vector<u32> indices;
+    /// Optional per-vertex data. When present these override the flat face
+    /// normals / default UVs, which is required for water and other smooth
+    /// procedural surfaces.
+    std::vector<Vec3> normals;
+    std::vector<Vec2> texcoords;
     u32 revision = 1;
 };
 

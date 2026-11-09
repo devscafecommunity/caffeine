@@ -8,6 +8,7 @@
 #include "physics/PhysicsSystem2D.hpp"
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptSystem.hpp"
+#include "scene/NaturalFluidSystem.hpp"
 #include "script/ScriptTypes.hpp"
 #include "editor/ProjectManager.hpp"
 #include "editor/SceneSerializer.hpp"
@@ -436,6 +437,7 @@ int main(int argc, char** argv) {
         if (std::filesystem::exists(scenePath)) {
             Caffeine::Editor::SceneSerializer serializer(world);
             sceneLoaded = serializer.deserialize(scenePath.string());
+            Caffeine::Scene::resetNaturalFluidRuntime();
             std::printf("Loaded scene: %s (%s)\n", scenePath.string().c_str(),
                         sceneLoaded ? "ok" : "failed");
         } else {
@@ -470,6 +472,9 @@ int main(int argc, char** argv) {
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
     Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
+    if (!config.RootPath.empty()) {
+        scriptSystem.setProjectRoot(config.RootPath.string());
+    }
     if (scriptsReady) {
         scriptSystem.resetPlayState();
         eventBus.subscribe<Caffeine::Events::OnCollision2D>(
@@ -541,6 +546,7 @@ int main(int argc, char** argv) {
             }
             Caffeine::Effects::tickEffects(world, dt, effectCamera);
             Caffeine::Scene::tickEnvironmentEffects(world, dt, effectCamera);
+            Caffeine::Scene::tickNaturalFluids(world, dt, false);
             Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
             if (scriptsReady) {

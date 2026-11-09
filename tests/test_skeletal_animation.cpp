@@ -2,6 +2,11 @@
 #include "../src/animation/SkeletalAnimation.hpp"
 #include "../src/animation/SkinLibrary.hpp"
 #include "../src/assets/MeshTypes.hpp"
+#include "../src/assets/MeshCache.hpp"
+#include "../src/assets/MeshLoader.hpp"
+#include "../src/ecs/MeshComponents.hpp"
+#include "../src/ecs/World.hpp"
+#include <filesystem>
 #include "Caffeine.hpp"
 
 using namespace Caffeine;
@@ -375,4 +380,47 @@ TEST_CASE("Sprite sheet frame picks a cell", "[animation]") {
     REQUIRE(cell.x == Approx(32.0f).margin(0.001f));
     REQUIRE(cell.w == Approx(32.0f).margin(0.001f));
     REQUIRE(cell.h == Approx(32.0f).margin(0.001f));
+}
+
+
+TEST_CASE("Static glTF does not get an automatic humanoid skin", "[skeletal][skin]") {
+    const std::filesystem::path repoRoot =
+        std::filesystem::path(__FILE__).parent_path().parent_path();
+    const std::string relative = "assets/vegetation-kit/models/moss_01/moss_01.gltf";
+    const std::string absolute = (repoRoot / relative).string();
+
+    Assets::Mesh3D* mesh = Assets::MeshCache::getInstance().getMesh(absolute, repoRoot.string());
+    INFO(Assets::MeshCache::getInstance().getLastError());
+    REQUIRE(mesh != nullptr);
+    REQUIRE(Animation::findImportedSkin(absolute) == nullptr);
+
+    Assets::MeshLoader::ensureGltfSkin(absolute, mesh);
+    REQUIRE(Animation::findImportedSkin(absolute) == nullptr);
+    REQUIRE(mesh->skin.empty());
+
+    ECS::World world;
+    ECS::Entity entity = world.create();
+    auto& filter = world.add<ECS::MeshFilterComponent>(entity);
+    filter.primitive = ECS::MeshPrimitive::Custom;
+    filter.customMeshPath = relative;
+    REQUIRE(Animation::ensurePoseForMesh(world, entity, repoRoot.string()) == nullptr);
+    REQUIRE_FALSE(world.has<Animation::SkinnedPose>(entity));
+}
+
+TEST_CASE("Explicit humanoid synthesis still works", "[skeletal][skin]") {
+    static Assets::Mesh3D mesh;
+    mesh = Assets::Mesh3D{};
+    mesh.vertices.resize(2);
+    mesh.vertices[0].position = Vec3(0.0f, 0.0f, 0.0f);
+    mesh.vertices[1].position = Vec3(0.0f, 2.0f, 0.0f);
+
+    const std::string path =
+        (std::filesystem::temp_directory_path() / "caffeine_explicit_humanoid_skin").string();
+    REQUIRE(Animation::synthesizeHumanoidSkin(path, mesh, true));
+    const Animation::ImportedSkin* skin = Animation::findImportedSkin(path);
+    REQUIRE(skin != nullptr);
+    REQUIRE(skin->synthesized);
+    REQUIRE(skin->boneNames.size() == 17);
+    REQUIRE(!mesh.skin.empty());
+    REQUIRE(mesh.skin[0].weights[0] > 0.0f);
 }

@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/HudEditorPanel.hpp"
 
 #include "scene/SceneComponents.hpp"
@@ -129,7 +130,7 @@ ECS::Entity hitWidget(ECS::World& world, Vec2 canvasPoint) {
 void HudEditorPanel::onImGuiRender(EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
     if (!m_open) return;
-    ImGui::Begin("HUD Editor", &m_open);
+    UIKit::BeginPanel("HUD Editor", &m_open);
     ECS::World* world = ctx.activeWorld;
     if (!world) {
         ImGui::TextDisabled("Open a scene to edit the HUD.");

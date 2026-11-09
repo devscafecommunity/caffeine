@@ -7,10 +7,9 @@ C++20 game engine and **Doppio** scene editor (SDL3). User-facing documentation 
 | Path | What it is |
 |------|------------|
 | **`caf-pack/`** | Asset packer — `.caf` / `.cap` pipeline |
-| **`Convoy/`** | 2D art station |
-| **`WaveShaper/`** | Audio DAW for game audio |
 | **`caffeine-website/`** | Docs site + MCP for agents |
 | **`caffeine-launcher/`** | Desktop launcher (Rust) — start studio apps and manage plugins |
+| **`doppio-plugins/`** | Official/community Doppio editor plugins (built separately) |
 
 Initialize everything:
 
@@ -35,16 +34,28 @@ cd build && ctest --output-on-failure
 
 Helpers: `scripts/build.sh`, `scripts/build.fish`, `scripts/build.bat`.
 
-Optional suite targets: `CAFFEINE_BUILD_CONVOY` (default ON), `CAFFEINE_BUILD_WAVESHAPER` (default OFF).
+## Editor plugins
 
-## Launcher
+The engine build compiles **every** plugin from the `doppio-plugins` submodule and
+writes the libraries to `build/plugins/`. There is no separate plugin build step:
 
 ```bash
-./scripts/build-launcher.sh
-./caffeine-launcher/target/release/caffeine-launcher
+./scripts/submodules.sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
-## Docs site
+`CAFFEINE_BUILD_DOPPIO_PLUGINS=OFF` is the only way to skip them, and it is intended
+for minimal/headless environments — not for normal editor builds.
+
+Start Doppio and enable the plugins you need in **Plugins → Plugin Manager**
+(persisted in `~/.config/caffeine/plugins.cfg`).
+
+## Docs
+
+All user-facing documentation, plans, screenshots and PDFs live in the
+**`caffeine-website`** submodule (`content/`, `tex/`, `captures/`). Nothing is
+duplicated in the engine tree.
 
 ```bash
 git submodule update --init caffeine-website

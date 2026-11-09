@@ -48,6 +48,28 @@ struct GpuGridOverlay {
     f32  opacity = 1.0f;
 };
 
+/// Volumetric cloud/mist parameters resolved from the scene for the sky pass.
+struct GpuCloudSettings {
+    bool enabled = false;
+    u32  steps = 0;
+    f32  coverage = 0.0f;
+    f32  density = 0.0f;
+    f32  baseAltitude = 0.0f;
+    f32  topAltitude = 0.0f;
+    f32  detail = 0.0f;
+    f32  seed = 0.0f;
+    f32  windSpeed = 0.0f;
+    f32  windDirection = 0.0f;
+    f32  mistDensity = 0.0f;
+    f32  mistHeight = 0.0f;
+    f32  mistFalloff = 0.0f;
+    f32  time = 0.0f;
+    Vec3 sunDirection{0.0f, 1.0f, 0.0f};
+    Vec3 sunColor{1.0f, 1.0f, 1.0f};
+    f32  sunIntensity = 1.0f;
+    f32  sunScatter = 1.0f;
+};
+
 struct GpuSceneRenderOptions {
     bool wireframeMeshes = false;
     bool enableShadows   = true;
@@ -84,6 +106,8 @@ struct GpuSceneRenderOptions {
     ECS::PostProcessAntiAliasing antiAliasingOverride{};
     /// Internal resolution multiplier (0.5 = faster, 2 = supersampled).
     f32  renderScale = 1.0f;
+    /// Editor orthographic view (Isometric or explicit projection toggle).
+    bool orthographic = false;
     /// Keeps temporal history (TAA, eye adaptation, SSR) apart per viewport. 0 = derive from
     /// the colour target.
     u64  viewId = 0;
@@ -323,6 +347,8 @@ private:
     Assets::Mesh3D m_effectMesh;
     RHI::Pipeline* m_skyPipeline = nullptr;
     RHI::Pipeline* m_gridPipeline = nullptr;
+    GpuCloudSettings m_cloudSettings{};
+    f32 m_cloudTime = 0.0f;
     /// Bound to cube sampler slots that have nothing to sample (a 2D texture there is invalid).
     RHI::Texture* m_fallbackCube = nullptr;
     RHI::Texture* m_reflectionColor = nullptr;

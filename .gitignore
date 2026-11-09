@@ -71,6 +71,9 @@ CTestTestfile.cmake
 # Local mistakes / scratch clones (nested .git breaks `git add .`)
 caffeine-website.wrong/
 
+# External Dryad language checkout (not part of the engine tree)
+source/
+
 # Documentation lives in caffeine-website submodule
 docs/
 planning/

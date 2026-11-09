@@ -438,10 +438,11 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
             gpuOpts.overrideAmbient = true;
             gpuOpts.ambientColor = Scene::environmentAmbientAt(world, gpuCamera->position);
         }
-        const u32 drawn =
-            m_gpuRenderer.renderWithCamera(m_frameCmd, world, *gpuCamera, m_colorTarget,
-                                           m_depthTarget, w, h, projectRoot, gpuOpts);
-        if (drawn > 0 && m_colorTarget && m_colorTarget->handle) {
+        // The GPU pass also renders sky, clouds and the editor grid when the
+        // scene has no meshes. A zero mesh count is not a failed frame.
+        m_gpuRenderer.renderWithCamera(m_frameCmd, world, *gpuCamera, m_colorTarget,
+                                       m_depthTarget, w, h, projectRoot, gpuOpts);
+        if (m_colorTarget && m_colorTarget->handle) {
             dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,
                          ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),
                          ImVec2(1, 1));

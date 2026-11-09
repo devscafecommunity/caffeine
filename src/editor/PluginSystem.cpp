@@ -1,14 +1,20 @@
 #include "editor/PluginSystem.hpp"
+
+#include "caffeine/ui/PanelRegistry.hpp"
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/CommandPalette.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/EntityPresetPackages.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
+#include "editor/EditorPaths.hpp"
 #include "editor/PluginServiceRegistry.hpp"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <system_error>
 
@@ -44,6 +50,22 @@ std::filesystem::file_time_type fileTimestamp(const std::filesystem::path& path)
     return std::filesystem::last_write_time(path, ec);
 }
 
+std::string sanitizePanelId(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char c : value) {
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(std::tolower(c)));
+        } else if (c == '.' || c == '_' || c == '-') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('_');
+        }
+    }
+    while (!out.empty() && out.back() == '_') out.pop_back();
+    return out.empty() ? "plugin.panel" : out;
+}
+
 }  // namespace
 
 PluginManager& PluginManager::instance() {
@@ -68,6 +90,7 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_hostApi.logInfo = &PluginManager::hostLogInfo;
     m_hostApi.logError = &PluginManager::hostLogError;
     m_hostApi.registerPanel = &PluginManager::hostRegisterPanel;
+    m_hostApi.registerPanelEx = &PluginManager::hostRegisterPanelEx;
     m_hostApi.openPanel = &PluginManager::hostOpenPanel;
     m_hostApi.registerMenuAction = &PluginManager::hostRegisterMenuAction;
     m_hostApi.registerComponentDrawer = &PluginManager::hostRegisterComponentDrawer;
@@ -76,6 +99,11 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     m_hostApi.getActiveWorld = &PluginManager::hostGetActiveWorld;
     m_hostApi.getSelectedEntityId = &PluginManager::hostGetSelectedEntityId;
     m_hostApi.markSceneDirty = &PluginManager::hostMarkSceneDirty;
+    m_hostApi.setSelectedEntityId = &PluginManager::hostSetSelectedEntityId;
+    m_hostApi.getCurrentScenePath = &PluginManager::hostGetCurrentScenePath;
+    m_hostApi.markAssetBrowserDirty = &PluginManager::hostMarkAssetBrowserDirty;
+    m_hostApi.getTerrainBrush = &PluginManager::hostGetTerrainBrush;
+    m_hostApi.setTerrainBrush = &PluginManager::hostSetTerrainBrush;
     m_hostApi.invokeService = &PluginManager::hostInvokeService;
     m_hostApi.registerService = &PluginManager::hostRegisterService;
     m_hostApi.getProjectRootPath = &PluginManager::hostGetProjectRootPath;
@@ -86,9 +114,10 @@ void PluginManager::initialize(const std::filesystem::path& pluginsDirectory,
     scanPluginsDirectory();
     ensureWatcher();
 
-    for (const auto& path : m_discoveredPaths) {
-        loadPluginInternal(path, false);
-    }
+    // Plugins are opt-in. Discovery only populates the Plugin Manager; a
+    // library is loaded when the user enables it, and that choice is persisted.
+    loadPluginPreferences();
+    loadEnabledPlugins();
 
     m_initialized = true;
 }
@@ -123,12 +152,28 @@ void PluginManager::hostLogError(void* ctx, const char* message) {
 
 bool PluginManager::hostRegisterPanel(void* ctx, const char* pluginName, const char* title,
                                       void (*renderFn)(void* userData), void* userData) {
-    if (!title || !renderFn) return false;
+    PluginPanelInfo info;
+    info.title = title;
+    info.dock = PluginDockArea::Bottom;
+    info.size = 0.24f;
+    info.defaultOpen = true;
+    return hostRegisterPanelEx(ctx, pluginName, &info, renderFn, userData);
+}
+
+bool PluginManager::hostRegisterPanelEx(void* ctx, const char* pluginName,
+                                        const PluginPanelInfo* info,
+                                        void (*renderFn)(void* userData), void* userData) {
+    if (!info || !info->title || !renderFn) return false;
     (void)ctx;
     auto& manager = PluginManager::instance();
     const char* id = manager.m_hostApi.pluginId ? manager.m_hostApi.pluginId : pluginName;
     if (!id || id[0] == '\0') return false;
-    return manager.registerPanel(id, title, [renderFn, userData]() { renderFn(userData); });
+    const std::string panelId = info->id ? info->id : std::string();
+    const std::string icon = info->icon ? info->icon : std::string();
+    return manager.registerPanel(id, info->title,
+                                 [renderFn, userData]() { renderFn(userData); }, panelId,
+                                 static_cast<int>(info->dock), info->size, info->defaultOpen,
+                                 icon);
 }
 
 bool PluginManager::hostOpenPanel(void* ctx, const char* title) {
@@ -193,12 +238,77 @@ void* PluginManager::hostGetActiveWorld(void* editorContext) {
 
 CaffeinePluginU32 PluginManager::hostGetSelectedEntityId(void* editorContext) {
     auto* ctx = static_cast<EditorContext*>(editorContext);
-    return (ctx && ctx->selectedEntity.isValid()) ? ctx->selectedEntity.id() : 0;
+    return (ctx && ctx->selectedEntity.isValid()) ? ctx->selectedEntity.id() : u32_max;
 }
 
 void PluginManager::hostMarkSceneDirty(void* editorContext) {
     auto* ctx = static_cast<EditorContext*>(editorContext);
     if (ctx) ctx->markDirty();
+}
+
+void PluginManager::hostSetSelectedEntityId(void* editorContext, CaffeinePluginU32 entityId) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (!ctx || !ctx->activeWorld) return;
+    if (entityId == 0 || entityId == u32_max) {
+        ctx->clearSelection();
+        return;
+    }
+    ctx->selectEntity(ECS::Entity(entityId, ctx->activeWorld));
+}
+
+bool PluginManager::hostGetCurrentScenePath(void* editorContext, char* buffer,
+                                            std::size_t bufferSize) {
+    if (!buffer || bufferSize == 0) return false;
+    buffer[0] = '\0';
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (!ctx || ctx->currentScenePath.empty()) return false;
+    std::strncpy(buffer, ctx->currentScenePath.c_str(), bufferSize - 1);
+    buffer[bufferSize - 1] = '\0';
+    return true;
+}
+
+void PluginManager::hostMarkAssetBrowserDirty(void* editorContext) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (ctx) ctx->assetBrowserDirty = true;
+}
+
+bool PluginManager::hostGetTerrainBrush(void* editorContext, PluginTerrainBrush* out) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (!ctx || !out) return false;
+    out->editMode = static_cast<int>(ctx->terrainEditMode);
+    out->brushMode = static_cast<int>(ctx->terrainBrushMode);
+    out->splatLayer = ctx->terrainSplatLayer;
+    out->radius = ctx->terrainBrushRadius;
+    out->strength = ctx->terrainBrushStrength;
+    out->gizmoMode = static_cast<int>(ctx->gizmoMode);
+    return true;
+}
+
+bool PluginManager::hostSetTerrainBrush(void* editorContext, const PluginTerrainBrush* brush) {
+    auto* ctx = static_cast<EditorContext*>(editorContext);
+    if (!ctx || !brush) return false;
+    switch (brush->editMode) {
+        case 1: ctx->terrainEditMode = EditorContext::TerrainEditMode::Sculpt; break;
+        case 2: ctx->terrainEditMode = EditorContext::TerrainEditMode::Splat; break;
+        default: ctx->terrainEditMode = EditorContext::TerrainEditMode::None; break;
+    }
+    switch (brush->brushMode) {
+        case 1: ctx->terrainBrushMode = EditorContext::TerrainBrushMode::Lower; break;
+        case 2: ctx->terrainBrushMode = EditorContext::TerrainBrushMode::Smooth; break;
+        case 3: ctx->terrainBrushMode = EditorContext::TerrainBrushMode::Flatten; break;
+        case 4: ctx->terrainBrushMode = EditorContext::TerrainBrushMode::Noise; break;
+        default: ctx->terrainBrushMode = EditorContext::TerrainBrushMode::Raise; break;
+    }
+    ctx->terrainSplatLayer = brush->splatLayer;
+    ctx->terrainBrushRadius = brush->radius;
+    ctx->terrainBrushStrength = brush->strength;
+    switch (brush->gizmoMode) {
+        case 0: ctx->gizmoMode = EditorContext::GizmoMode::None; break;
+        case 2: ctx->gizmoMode = EditorContext::GizmoMode::Rotate; break;
+        case 3: ctx->gizmoMode = EditorContext::GizmoMode::Scale; break;
+        default: ctx->gizmoMode = EditorContext::GizmoMode::Translate; break;
+    }
+    return true;
 }
 
 bool PluginManager::hostInvokeService(void* ctx, const char* serviceName, const void* request,
@@ -207,7 +317,7 @@ bool PluginManager::hostInvokeService(void* ctx, const char* serviceName, const 
     (void)ctx;
     auto& manager = PluginManager::instance();
     if (!serviceName || !manager.m_editorContext) return false;
-    return PluginServiceRegistry::instance().invoke(serviceName, manager.m_editorContext, request,
+    return PluginServiceRegistry::instance().invoke(serviceName, &manager.m_hostApi, request,
                                                     requestSize, response, responseSize);
 }
 
@@ -239,16 +349,54 @@ bool PluginManager::hostGetProjectRootPath(void* editorContext, char* buffer,
 }
 
 bool PluginManager::registerPanel(const std::string& pluginName, const std::string& title,
-                                  std::function<void()> renderFunc) {
+                                  std::function<void()> renderFunc,
+                                  const std::string& panelId, int dock, float size,
+                                  bool defaultOpen, const std::string& icon) {
     if (title.empty() || !renderFunc) return false;
+
+    for (auto& existing : m_panels) {
+        if (existing.pluginName == pluginName && existing.title == title) {
+            existing.render = std::move(renderFunc);
+            // Hot reload replaces the callback but must not reopen a panel the
+            // user closed or reset its dock metadata.
+            existing.dock = dock;
+            existing.size = size;
+            existing.icon = icon;
+            return true;
+        }
+    }
 
     PluginPanel panel;
     panel.pluginName = pluginName;
     panel.title = title;
+    panel.panelId = panelId.empty()
+                        ? "plugin." + sanitizePanelId(pluginName) + "." +
+                              sanitizePanelId(title)
+                        : panelId;
     panel.commandId = std::string("plugin_panel_") + pluginName + "_" + title;
+    panel.dock = dock;
+    panel.size = size;
+    panel.icon = icon;
+    panel.defaultOpen = defaultOpen;
     panel.render = std::move(renderFunc);
-    panel.open = true;
-    m_panels.push_back(std::move(panel));
+    panel.open = defaultOpen;
+    m_panels.push_back(panel);
+
+    UIKit::PanelDesc desc;
+    desc.id = panel.panelId;
+    desc.title = title;
+    desc.icon = icon;
+    desc.category = "Plugins";
+    desc.owner = pluginName;
+    desc.dock = static_cast<UIKit::DockArea>(dock);
+    desc.size = size;
+    desc.defaultOpen = defaultOpen;
+    // Rendered by PluginManager::renderPanels, but the registry owns layout,
+    // visibility and the View > Panels menu entry.
+    desc.open = [title]() { PluginManager::instance().openPanel(title); };
+    desc.close = [title]() { PluginManager::instance().closePanel(title); };
+    desc.isOpen = [title]() { return PluginManager::instance().isPanelOpen(title); };
+    UIKit::PanelRegistry::instance().add(std::move(desc));
 
     if (m_commandPalette) {
         FixedString<64> id(panel.commandId.c_str());
@@ -265,6 +413,23 @@ bool PluginManager::openPanel(const std::string& title) {
             panel.open = true;
             return true;
         }
+    }
+    return false;
+}
+
+bool PluginManager::closePanel(const std::string& title) {
+    for (auto& panel : m_panels) {
+        if (panel.title == title) {
+            panel.open = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PluginManager::isPanelOpen(const std::string& title) const {
+    for (const auto& panel : m_panels) {
+        if (panel.title == title) return panel.open;
     }
     return false;
 }
@@ -297,6 +462,7 @@ void PluginManager::unregisterPluginResources(const std::string& pluginName) {
     m_panels.erase(std::remove_if(m_panels.begin(), m_panels.end(),
                                   [&](const PluginPanel& p) { return p.pluginName == pluginName; }),
                    m_panels.end());
+    UIKit::PanelRegistry::instance().removeOwner(pluginName);
 
     m_menuActions.erase(std::remove_if(m_menuActions.begin(), m_menuActions.end(),
                                        [&](const PluginMenuAction& a) {
@@ -320,6 +486,51 @@ void PluginManager::unregisterPluginResources(const std::string& pluginName) {
 
 std::filesystem::path PluginManager::pluginsDirectory() const {
     return m_pluginsDirectory;
+}
+
+std::filesystem::path PluginManager::pluginPreferencesPath() const {
+    return EditorPaths::userConfigDirectory() / "plugins.cfg";
+}
+
+void PluginManager::loadPluginPreferences() {
+    m_enabledPlugins.clear();
+    std::ifstream in(pluginPreferencesPath());
+    if (!in) return;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto first = line.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) continue;
+        const auto last = line.find_last_not_of(" \t\r\n");
+        line = line.substr(first, last - first + 1);
+        if (line.empty() || line[0] == '#') continue;
+        m_enabledPlugins.insert(std::filesystem::path(line).stem().string());
+    }
+}
+
+void PluginManager::savePluginPreferences() const {
+    const std::filesystem::path path = pluginPreferencesPath();
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) return;
+    out << "# Doppio plugins enabled by the user (one library stem per line).\n";
+    out << "# Edit from Plugins > Plugin Manager; nothing here is preloaded implicitly.\n";
+    std::vector<std::string> names(m_enabledPlugins.begin(), m_enabledPlugins.end());
+    std::sort(names.begin(), names.end());
+    for (const auto& name : names) {
+        out << name << '\n';
+    }
+}
+
+void PluginManager::loadEnabledPlugins() {
+    for (const auto& path : m_discoveredPaths) {
+        const std::string stem = std::filesystem::path(path).stem().string();
+        if (m_enabledPlugins.contains(stem) && !m_loadedPlugins.contains(path)) {
+            loadPluginInternal(path, false);
+        }
+    }
 }
 
 void PluginManager::scanPluginsDirectory() {
@@ -539,22 +750,58 @@ bool PluginManager::reloadPlugin(const std::string& name) {
     return false;
 }
 
-void PluginManager::refreshPluginsDirectory() {
-    scanPluginsDirectory();
-    for (const auto& path : m_discoveredPaths) {
-        const std::filesystem::path p(path);
-        const std::string stem = p.stem().string();
-        bool alreadyLoaded = false;
-        for (const auto& [name, handle] : m_loadedPlugins) {
-            if (handle.path == path) {
-                alreadyLoaded = true;
+bool PluginManager::isPluginEnabled(const std::string& name) const {
+    if (name.empty()) return false;
+    const std::string stem = std::filesystem::path(name).stem().string();
+    return m_enabledPlugins.contains(stem);
+}
+
+bool PluginManager::setPluginEnabled(const std::string& name, bool enabled) {
+    if (name.empty()) return false;
+    const std::string stem = std::filesystem::path(name).stem().string();
+
+    if (!enabled) {
+        m_enabledPlugins.erase(stem);
+        for (const auto& [path, handle] : m_loadedPlugins) {
+            if (handle.name == name || handle.name == stem || path == name) {
+                unloadPluginByPath(path);
                 break;
             }
         }
-        if (!alreadyLoaded) {
-            loadPluginInternal(path, false);
+        savePluginPreferences();
+        return true;
+    }
+
+    std::string path;
+    for (const auto& discovered : m_discoveredPaths) {
+        if (std::filesystem::path(discovered).stem().string() == stem) {
+            path = discovered;
+            break;
         }
     }
+    if (path.empty()) return false;
+
+    m_enabledPlugins.insert(stem);
+    bool loaded = false;
+    for (const auto& [loadedPath, handle] : m_loadedPlugins) {
+        if (handle.name == stem || loadedPath == path) {
+            loaded = true;
+            break;
+        }
+    }
+    if (!loaded) {
+        loaded = loadPluginInternal(path, false);
+        if (!loaded) m_enabledPlugins.erase(stem);
+    }
+    savePluginPreferences();
+    return loaded;
+}
+
+void PluginManager::refreshPluginsDirectory() {
+    scanPluginsDirectory();
+    // Re-sync only what the user enabled. New libraries stay disabled until
+    // they are explicitly loaded from the Plugin Manager.
+    loadEnabledPlugins();
 }
 
 void PluginManager::refreshPlugins(float dt) {
@@ -580,7 +827,10 @@ void PluginManager::refreshPlugins(float dt) {
         if (!pluginPath.empty()) {
             unloadPluginByPath(pluginPath);
             loadPluginInternal(pluginPath, true);
-        } else {
+        } else if (m_enabledPlugins.contains(
+                       std::filesystem::path(path).stem().string())) {
+            // A library the user enabled appeared or was replaced: load it.
+            // Everything else is deliberately left alone.
             loadPluginInternal(path.string(), true);
         }
     }
@@ -607,10 +857,10 @@ void PluginManager::renderPanels() {
         }
 
         bool open = panel.open;
-        if (ImGui::Begin(panel.title.c_str(), &open)) {
+        if (UIKit::BeginPanel(panel.title.c_str(), &open)) {
             if (panel.render) panel.render();
         }
-        ImGui::End();
+        UIKit::EndPanel();
         panel.open = open;
     }
 }
@@ -665,11 +915,12 @@ void PluginManager::renderMenuExtensions() {
 void PluginManager::renderManagerUI() {
     if (!m_managerOpen) return;
 
-    if (ImGui::Begin("Plugin Manager", &m_managerOpen)) {
+    if (UIKit::BeginPanel("Plugin Manager", &m_managerOpen)) {
         ImGui::TextDisabled("Project plugins: %s", m_pluginsDirectory.string().c_str());
         if (!m_bundledPluginsDirectory.empty()) {
             ImGui::TextDisabled("Bundled plugins: %s", m_bundledPluginsDirectory.string().c_str());
         }
+        ImGui::TextDisabled("Enable list: %s", pluginPreferencesPath().string().c_str());
 
         if (ImGui::Button("Refresh Directory")) {
             refreshPluginsDirectory();
@@ -681,13 +932,35 @@ void PluginManager::renderManagerUI() {
         }
 
         ImGui::Separator();
+        ImGui::TextDisabled(
+            "Plugins are disabled until you enable them. Enabling loads the library now and "
+            "remembers the choice for future sessions.");
 
-        if (m_loadedPlugins.empty() && m_discoveredPaths.empty()) {
+        struct PluginRow {
+            std::string stem;
+            std::string path;
+        };
+        std::vector<PluginRow> rows;
+        const auto addRow = [&rows](const std::string& path) {
+            const std::string stem = std::filesystem::path(path).stem().string();
+            for (const auto& row : rows) {
+                if (row.stem == stem) return;
+            }
+            rows.push_back({stem, path});
+        };
+        for (const auto& path : m_discoveredPaths) addRow(path);
+        for (const auto& [path, handle] : m_loadedPlugins) addRow(handle.path);
+
+        std::sort(rows.begin(), rows.end(),
+                  [](const PluginRow& a, const PluginRow& b) { return a.stem < b.stem; });
+
+        if (rows.empty()) {
             ImGui::TextDisabled("No plugins found. Place .so/.dll files in the plugins directory.");
         }
 
         if (ImGui::BeginTable("plugins", 5,
-                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_Resizable)) {
             ImGui::TableSetupColumn("Enabled");
             ImGui::TableSetupColumn("Name");
             ImGui::TableSetupColumn("Version");
@@ -695,67 +968,67 @@ void PluginManager::renderManagerUI() {
             ImGui::TableSetupColumn("Actions");
             ImGui::TableHeadersRow();
 
-            for (auto& [path, handle] : m_loadedPlugins) {
+            for (const auto& row : rows) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                const bool wasEnabled = handle.enabled;
-                ImGui::Checkbox(("##en" + handle.name).c_str(), &handle.enabled);
-                if (wasEnabled && !handle.enabled) {
-                    for (auto& panel : m_panels) {
-                        if (panel.pluginName == handle.name) panel.open = false;
+                bool enabled = m_enabledPlugins.contains(row.stem);
+                if (ImGui::Checkbox(("##en" + row.stem).c_str(), &enabled)) {
+                    setPluginEnabled(row.stem, enabled);
+                    continue;
+                }
+
+                const PluginHandle* handle = findLoadedPluginByStem(row.stem);
+                if (!handle) {
+                    for (const auto& [path, candidate] : m_loadedPlugins) {
+                        if (candidate.path == row.path) {
+                            handle = &candidate;
+                            break;
+                        }
                     }
                 }
 
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(handle.name.c_str());
-                if (!handle.description.empty()) {
-                    ImGui::TextDisabled("%s", handle.description.c_str());
+                ImGui::TextUnformatted(handle ? handle->name.c_str() : row.stem.c_str());
+                if (handle && !handle->description.empty()) {
+                    ImGui::TextDisabled("%s", handle->description.c_str());
                 }
 
                 ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(handle.version.c_str());
+                ImGui::TextUnformatted(handle ? handle->version.c_str() : "-");
 
                 ImGui::TableSetColumnIndex(3);
-                const char* statusLabel = "Unknown";
-                switch (handle.status) {
-                    case PluginStatus::Active: statusLabel = "Active"; break;
-                    case PluginStatus::Loaded: statusLabel = "Loaded"; break;
-                    case PluginStatus::Failed: statusLabel = "Failed"; break;
-                    case PluginStatus::Discovered: statusLabel = "Discovered"; break;
+                const char* statusLabel = "Disabled";
+                if (handle) {
+                    switch (handle->status) {
+                        case PluginStatus::Active: statusLabel = "Active"; break;
+                        case PluginStatus::Loaded: statusLabel = "Loaded"; break;
+                        case PluginStatus::Failed: statusLabel = "Failed"; break;
+                        case PluginStatus::Discovered: statusLabel = "Discovered"; break;
+                    }
                 }
                 ImGui::TextUnformatted(statusLabel);
-                if (!handle.lastError.empty()) {
-                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", handle.lastError.c_str());
+                if (handle && !handle->lastError.empty()) {
+                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s",
+                                       handle->lastError.c_str());
                 }
 
                 ImGui::TableSetColumnIndex(4);
-                if (ImGui::SmallButton(("Reload##" + handle.name).c_str())) {
-                    reloadPlugin(handle.name);
-                }
-                ImGui::SameLine();
-                if (ImGui::SmallButton(("Unload##" + handle.name).c_str())) {
-                    unloadPlugin(handle.name);
+                if (handle) {
+                    if (ImGui::SmallButton(("Reload##" + row.stem).c_str())) {
+                        reloadPlugin(row.stem);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(("Unload##" + row.stem).c_str())) {
+                        setPluginEnabled(row.stem, false);
+                    }
+                } else {
+                    if (ImGui::SmallButton(("Load##" + row.stem).c_str())) {
+                        setPluginEnabled(row.stem, true);
+                    }
                 }
             }
 
             ImGui::EndTable();
-        }
-
-        ImGui::Separator();
-        ImGui::Text("Discovered files:");
-        for (const auto& path : m_discoveredPaths) {
-            const auto filename = std::filesystem::path(path).filename().string();
-            bool loaded = false;
-            for (const auto& [loadedPath, handle] : m_loadedPlugins) {
-                if (handle.path == path) {
-                    loaded = true;
-                    break;
-                }
-            }
-            ImGui::BulletText("%s %s", filename.c_str(), loaded ? "(loaded)" : "");
-            if (!loaded && ImGui::SmallButton(("Load##" + filename).c_str())) {
-                loadPlugin(path);
-            }
         }
     }
     ImGui::End();

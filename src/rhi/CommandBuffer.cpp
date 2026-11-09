@@ -6,13 +6,17 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <vector>
+
 namespace Caffeine::RHI {
 
 CommandBuffer::CommandBuffer(CommandBuffer&& other) noexcept
     : m_device(other.m_device)
     , m_cmdBuffer(other.m_cmdBuffer)
     , m_renderPass(other.m_renderPass)
+    , m_computePass(other.m_computePass)
     , m_inRenderPass(other.m_inRenderPass)
+    , m_inComputePass(other.m_inComputePass)
     , m_acquired(other.m_acquired) {
     other.m_device = nullptr;
     other.m_cmdBuffer = nullptr;
@@ -26,12 +30,16 @@ CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
         m_device = other.m_device;
         m_cmdBuffer = other.m_cmdBuffer;
         m_renderPass = other.m_renderPass;
+        m_computePass = other.m_computePass;
         m_inRenderPass = other.m_inRenderPass;
+        m_inComputePass = other.m_inComputePass;
         m_acquired = other.m_acquired;
         other.m_device = nullptr;
         other.m_cmdBuffer = nullptr;
         other.m_renderPass = nullptr;
+        other.m_computePass = nullptr;
         other.m_inRenderPass = false;
+        other.m_inComputePass = false;
         other.m_acquired = false;
     }
     return *this;
@@ -54,7 +62,9 @@ void CommandBuffer::submit() {
 void CommandBuffer::reset() {
     m_cmdBuffer = nullptr;
     m_renderPass = nullptr;
+    m_computePass = nullptr;
     m_inRenderPass = false;
+    m_inComputePass = false;
     m_acquired = false;
 }
 
@@ -205,6 +215,55 @@ void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
     }
     SDL_DrawGPUPrimitives(m_renderPass, vertexCount, instanceCount,
                           firstVertex, firstInstance);
+}
+
+void CommandBuffer::beginComputePass(Texture* storageTexture) {
+    if (!m_cmdBuffer || m_inRenderPass || m_inComputePass) return;
+    SDL_GPUStorageTextureReadWriteBinding binding{};
+    if (storageTexture && storageTexture->handle) {
+        binding.texture = storageTexture->handle;
+        binding.mip_level = 0;
+        binding.layer = 0;
+        binding.cycle = true;
+    }
+    m_computePass = SDL_BeginGPUComputePass(
+        m_cmdBuffer, storageTexture && storageTexture->handle ? &binding : nullptr,
+        storageTexture && storageTexture->handle ? 1u : 0u, nullptr, 0);
+    m_inComputePass = m_computePass != nullptr;
+}
+
+void CommandBuffer::endComputePass() {
+    if (!m_inComputePass) return;
+    if (m_computePass) {
+        SDL_EndGPUComputePass(m_computePass);
+        m_computePass = nullptr;
+    }
+    m_inComputePass = false;
+}
+
+void CommandBuffer::bindComputePipeline(ComputePipeline* pipeline) {
+    if (!m_computePass || !pipeline || !pipeline->handle) return;
+    SDL_BindGPUComputePipeline(m_computePass, pipeline->handle);
+}
+
+void CommandBuffer::bindComputeStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count) {
+    if (!m_computePass || !buffers || count == 0) return;
+    std::vector<SDL_GPUBuffer*> handles;
+    handles.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        handles.push_back(buffers[i] && buffers[i]->handle ? buffers[i]->handle : nullptr);
+    }
+    SDL_BindGPUComputeStorageBuffers(m_computePass, firstSlot, handles.data(), count);
+}
+
+void CommandBuffer::pushComputeUniformData(u32 slot, const void* data, u32 size) {
+    if (!m_cmdBuffer || !data || size == 0) return;
+    SDL_PushGPUComputeUniformData(m_cmdBuffer, slot, data, size);
+}
+
+void CommandBuffer::dispatch(u32 x, u32 y, u32 z) {
+    if (!m_computePass) return;
+    SDL_DispatchGPUCompute(m_computePass, x, y, z);
 }
 
 void CommandBuffer::copyTexture(Texture* src, Texture* dst, u32 width, u32 height) {

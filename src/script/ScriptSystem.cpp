@@ -1,4 +1,5 @@
 #include "script/ScriptSystem.hpp"
+#include "script/DryadHost.hpp"
 #include "script/ScriptTypes.hpp"
 #include "script/CppScript.hpp"
 #include "ecs/World.hpp"
@@ -17,10 +18,15 @@
 namespace Caffeine::Script {
 
 ScriptSystem::ScriptSystem(ScriptEngine* engine, Events::EventBus* eventBus)
-    : m_engine(engine), m_events(eventBus) {}
+    : m_engine(engine), m_events(eventBus), m_dryad(std::make_unique<DryadHost>()) {}
+
+ScriptSystem::~ScriptSystem() = default;
+ScriptSystem::ScriptSystem(ScriptSystem&&) noexcept = default;
+ScriptSystem& ScriptSystem::operator=(ScriptSystem&&) noexcept = default;
 
 void ScriptSystem::resetPlayState() {
     m_initializedLua.clear();
+    m_initializedDryad.clear();
     m_initializedNative.clear();
     m_initializedPostProcess.clear();
     m_warnedNoLua = false;
@@ -29,6 +35,11 @@ void ScriptSystem::resetPlayState() {
     Runtime::PlayClock::instance().reset();
     Runtime::GameStateStack::instance().clear();
     Render::Overlay2D::beginFrame();
+}
+
+void ScriptSystem::setProjectRoot(const std::string& root) {
+    m_projectRoot = root;
+    if (m_dryad && !root.empty()) m_dryad->setSearchRoot(root);
 }
 
 void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
@@ -41,6 +52,7 @@ void ScriptSystem::onUpdate(ECS::World& world, f32 dt) {
         Scene::tickMapSurfaceChunkRequests(world, *m_events, &cam, true);
     }
     processLuaScripts(world, dt);
+    processDryadScripts(world, dt);
     processNativeScripts(world, dt);
     processCppScripts(world, dt);
     processPostProcessScripts(world, dt);
@@ -58,7 +70,7 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
 
     world.forEach<ScriptComponent>(q,
         [&entries](ECS::Entity entity, ScriptComponent& sc) {
-            if (sc.scriptPath.empty()) return;
+            if (sc.scriptPath.empty() || isDryadScriptPath(sc.scriptPath)) return;
             entries.pushBack({entity.id(), sc.scriptPath});
         });
 
@@ -104,6 +116,74 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
         const int fixedSteps = Runtime::PlayClock::instance().consumeFixedSteps();
         for (int step = 0; step < fixedSteps; ++step) {
             m_engine->callOnFixedUpdate(path, entity, fixedDt);
+        }
+    }
+}
+
+void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
+    if (!m_dryad) return;
+    m_dryad->setWorld(&world);
+    if (!m_projectRoot.empty()) m_dryad->setSearchRoot(m_projectRoot);
+
+    ECS::ComponentQuery q;
+    q.with<ScriptComponent>();
+
+    struct ScriptEntry {
+        u32 entityId;
+        std::string scriptPath;
+    };
+    Vector<ScriptEntry> entries;
+
+    world.forEach<ScriptComponent>(q,
+        [&entries](ECS::Entity entity, ScriptComponent& sc) {
+            if (!isDryadScriptPath(sc.scriptPath)) return;
+            entries.pushBack({entity.id(), sc.scriptPath});
+        });
+
+    for (auto& entry : entries) {
+        ECS::Entity entity(entry.entityId, &world);
+        if (!entity.isValid()) continue;
+
+        const std::string& path = entry.scriptPath;
+        std::string loadError;
+        bool reloaded = m_dryad->reloadIfChanged(path, &loadError);
+        if (!loadError.empty()) {
+            CF_ERROR("Dryad", "Reload %s: %s", path.c_str(), loadError.c_str());
+        }
+        if (!reloaded && !m_dryad->isLoaded(path)) {
+            if (!m_dryad->load(path, &loadError)) {
+                CF_ERROR("Dryad", "Failed to load %s: %s", path.c_str(), loadError.c_str());
+                continue;
+            }
+        }
+
+        bool alreadyInitialized = false;
+        for (usize i = 0; i < m_initializedDryad.size(); ++i) {
+            if (m_initializedDryad[i].id() == entity.id()) {
+                alreadyInitialized = true;
+                break;
+            }
+        }
+        const bool isNew = reloaded || !alreadyInitialized;
+        if (isNew) {
+            std::string err;
+            if (!m_dryad->call(path, "onCreate", entity, 0.0f, &err)) {
+                CF_ERROR("Dryad", "onCreate %s: %s", path.c_str(), err.c_str());
+            }
+            if (!alreadyInitialized) m_initializedDryad.pushBack(entity);
+        }
+
+        const f32 frameDt = Runtime::PlayClock::instance().deltaTime();
+        std::string err;
+        if (!m_dryad->call(path, "onUpdate", entity, frameDt, &err)) {
+            CF_ERROR("Dryad", "onUpdate %s: %s", path.c_str(), err.c_str());
+        }
+        const f32 fixedDt = Runtime::PlayClock::instance().fixedDeltaTime();
+        const int fixedSteps = Runtime::PlayClock::instance().consumeFixedSteps();
+        for (int step = 0; step < fixedSteps; ++step) {
+            if (!m_dryad->call(path, "onFixedUpdate", entity, fixedDt, &err)) {
+                CF_ERROR("Dryad", "onFixedUpdate %s: %s", path.c_str(), err.c_str());
+            }
         }
     }
 }

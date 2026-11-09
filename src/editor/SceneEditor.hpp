@@ -24,9 +24,14 @@
 #include "editor/AudioPreviewPanel.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
-#include "editor/TerrainEditorPanel.hpp"
 #include "editor/EntityPresetsPanel.hpp"
+#include "editor/PhotonPanel.hpp"
+#include "editor/TerrainPanel.hpp"
 #include "editor/ToolboxPanel.hpp"
+#if defined(CF_HAS_DRYAD)
+#include "editor/DryadNodeScriptPanel.hpp"
+#include "editor/DryadNodesPanel.hpp"
+#endif
 #endif
 
 #include "editor/AnimationTimeline.hpp"
@@ -35,6 +40,9 @@
 #include "editor/CommandPalette.hpp"
 #include "editor/BuildDialog.hpp"
 #include "editor/SettingsPanel.hpp"
+
+#include "caffeine/ui/PanelRegistry.hpp"
+#include "caffeine/ui/Workspace.hpp"
 
 #include "core/io/FileWatcher.hpp"
 
@@ -85,6 +93,8 @@ public:
 #endif
 
     void render(f32 deltaTime = 0.016f);
+    /// Runs queued tasks that must not record into the in-flight frame (GPU bakes).
+    void processDeferredTasks();
 
     // ── Serialization ──
 
@@ -125,8 +135,8 @@ public:
 
 private:
 #ifdef CF_HAS_IMGUI
-    void setupDockspace(ImGuiID dockspaceId);
     void applyLayoutProfile(ImGuiID dockspaceId, const LayoutProfile& profile);
+    void registerPanels();
     void syncLayoutProfileFromPanels();
     void renderMainMenuBar(ECS::World& world);
     void renderStatusBar(ECS::World& world);
@@ -163,10 +173,13 @@ private:
     HudEditorPanel      m_hudEditor;
     ParticleEditorPanel m_particleEditor;
     EffectEditorPanel   m_effectEditor;
+#if defined(CF_HAS_DRYAD)
+    DryadNodeScriptPanel m_dryadNodeScript;
+    DryadNodesPanel m_dryadNodes;
+#endif
     AudioPreviewPanel   m_audioPreview;
     CameraPreviewPanel  m_cameraPreview;
     GameplayPreviewPanel m_gameplayPreview;
-    TerrainEditorPanel  m_terrainEditor;
     EntityPresetsPanel  m_entityPresets;
     ToolboxPanel        m_toolbox;
 #endif
@@ -177,6 +190,8 @@ private:
     CommandPalette m_commandPalette;
     BuildDialog m_buildDialog;
     SettingsPanel m_settingsPanel;
+    PhotonPanel m_photonPanel;
+    TerrainPanel m_terrainPanel;
 
 #ifdef CF_HAS_SDL3
     Assets::AssetManager* m_assetManager = nullptr;
@@ -193,6 +208,11 @@ private:
     bool m_dockingSetup = false;
     ImGuiID m_dockspaceId = 0;
     bool m_layoutNeedsRebuild = false;
+    UIKit::Workspace m_workspace;
+    UIKit::PanelRegistry& m_panels = UIKit::PanelRegistry::instance();
+    bool m_panelsRegistered = false;
+    u64 m_panelsRevision = 0;
+    bool m_selectDefaultTabs = false;
     PendingAction m_pendingAction = PendingAction::None;
     int m_pendingCloseTab = -1;
 

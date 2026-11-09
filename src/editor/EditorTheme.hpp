@@ -21,7 +21,6 @@ public:
 private:
     static void applyPalette(bool dark);
     static void loadFonts(f32 size);
-    static void applyStyleVars();
 
     static f32 s_fontSize;
     static bool s_darkMode;

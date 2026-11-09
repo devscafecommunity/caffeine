@@ -98,6 +98,7 @@ public:
     /// Bumps when the editor changes something the cached GPU view must show.
     u64         visualRevision   = 1;
     std::string materialToOpen;
+    std::string dryadToOpen;
     std::string imageToOpen;
     std::filesystem::path projectRootPath;
     std::filesystem::path assetRootPath;
@@ -185,8 +186,10 @@ public:
 
     // ── Viewport camera ────────────────────────────────────────────────
     enum class ViewMode : u8 { Mode2D, Mode3D, Isometric };
+    enum class ViewProjection : u8 { Perspective, Orthographic };
 
     ViewMode        viewMode    = ViewMode::Mode2D;
+    ViewProjection  projection  = ViewProjection::Perspective;
     f32             camYaw      = 0.0f;
     f32             camPitch    = 0.3f;
     Vec3            camFocus    = {0.0f, 0.0f, 0.0f};

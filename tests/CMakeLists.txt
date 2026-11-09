@@ -29,12 +29,16 @@ set(CAFFEINE_TEST_SOURCES
     test_navigation.cpp
     test_effects.cpp
     test_mesh.cpp
+    test_terrain.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
     test_pipeline.cpp
     test_editor.cpp
+    test_photon_bake.cpp
+    test_vegetation_kit.cpp
     test_cap_loader.cpp
     test_phase2_3.cpp
+    test_natural_fluids.cpp
     editor/phase1_integration_test.cpp
     ../src/editor/SceneSerializer.cpp
     ../src/editor/DragDropSystem.cpp
@@ -68,10 +72,14 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/InspectorPanel.cpp
     ../src/editor/ComponentRegistry.cpp
     ../src/editor/SceneEditor.cpp
+    ../src/editor/PhotonPanel.cpp
+    ../src/editor/TerrainPanel.cpp
     ../src/editor/ImageManagerPanel.cpp
     ../src/editor/HudEditorPanel.cpp
     ../src/editor/ParticleEditorPanel.cpp
     ../src/editor/EffectEditorPanel.cpp
+    ../src/editor/DryadNodeScriptPanel.cpp
+    ../src/editor/DryadNodesPanel.cpp
     ../src/editor/TransformGizmo.cpp
     ../src/editor/PrefabSystem.cpp
     ../src/editor/MaterialSerializer.cpp
@@ -80,7 +88,6 @@ set(CAFFEINE_TEST_SOURCES
     ../src/editor/EntityPresetPackages.cpp
     ../src/editor/EntityPresetFactories.cpp
     ../src/editor/EntityPresetsPanel.cpp
-    ../src/editor/TerrainEditorPanel.cpp
     ../src/editor/EntityDebugger.cpp
     ../src/editor/PluginSystem.cpp
     ../src/editor/PluginServiceRegistry.cpp
@@ -99,6 +106,7 @@ if(SDL3_FOUND)
         test_rhi.cpp 
         test_batchrenderer.cpp 
         test_audio.cpp
+        test_ui_kit.cpp
         ../src/editor/MaterialEditorPanel.cpp
         ../src/editor/AudioPreviewPanel.cpp
         ../src/editor/ShaderGraph.cpp
@@ -120,6 +128,10 @@ if(SDL3_FOUND)
      endif()
 endif()
 
+if(DRYAD_AVAILABLE)
+    list(APPEND CAFFEINE_TEST_SOURCES test_dryad_host.cpp test_node_emitter.cpp)
+endif()
+
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
 target_link_libraries(CaffeineTest PRIVATE caffeine-core)
@@ -130,7 +142,7 @@ endif()
 
 # Link ImGui and test engine if SDL3 is available (needed for editor panels)
 if(SDL3_FOUND)
-    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine)
+    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine caffeine-ui-kit)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
     target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
     if(DEFINED nanosvg_SOURCE_DIR)
@@ -172,6 +184,10 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           test_editor_ui/test_inspector.cpp
           test_editor_ui/test_hierarchy.cpp
           test_editor_ui/test_assetbrowser.cpp
+          test_editor_ui/test_photon_bake.cpp
+          test_editor_ui/test_photon_panel.cpp
+          test_editor_ui/test_terrain_panel.cpp
+          test_editor_ui/test_dryad_nodes.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/InspectorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SettingsPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/LayoutManager.cpp
@@ -182,10 +198,14 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/CapLoader.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/AudioWaveformRenderer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneEditor.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/PhotonPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/TerrainPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ImageManagerPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/HudEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/ParticleEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EffectEditorPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/DryadNodeScriptPanel.cpp
+          ${CMAKE_SOURCE_DIR}/src/editor/DryadNodesPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneSerializer.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/DragDropSystem.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/SceneTabManager.cpp
@@ -222,7 +242,6 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${CMAKE_SOURCE_DIR}/src/editor/EditorTheme.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EditorSpinner.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EntityPresetsPanel.cpp
-          ${CMAKE_SOURCE_DIR}/src/editor/TerrainEditorPanel.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/EntityDebugger.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/TestUIMapper.cpp
           ${CMAKE_SOURCE_DIR}/src/editor/TestRequestHandler.cpp
@@ -232,7 +251,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${IMGUI_TEST_ENGINE_SRCS}
       )
     
-    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes)
+    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes caffeine-ui-kit)
     target_include_directories(DoppioTest PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/caf-pack/include

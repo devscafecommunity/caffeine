@@ -1,0 +1,40 @@
+CAFMAT3
+name nettle_plant
+albedo 1 1 1 1
+metallic 0
+roughness 0.5
+reflectance 0.04
+emission 0 0 0
+emission_strength 0
+albedo_map assets/vegetation-kit/models/nettle_plant/textures/nettle_plant_albedo_1k.png
+normal_map assets/vegetation-kit/models/nettle_plant/textures/nettle_plant_nor_gl_1k.jpg
+orm_map assets/vegetation-kit/models/nettle_plant/textures/nettle_plant_arm_1k.jpg
+emission_map 
+uv_tiling 1 1
+uv_offset 0 0
+normal_strength 1
+ao_strength 1
+alpha_mode cutout
+alpha_cutoff 0.45
+transmission 0
+ior 1.5
+clearcoat 0
+clearcoat_roughness 0.03
+sheen 0 0 0
+sheen_roughness 0.5
+iridescence 0
+iridescence_thickness 400
+iridescence_ior 1.3
+reflection 0
+reflection_budget 0
+reflection_performance 0
+reflection_quality 0
+reflection_planar 0
+ssr_resolution 0.5
+ssr_max_steps 32
+ssr_temporal 4
+ssr_distance 15
+ssr_samples 64
+ssr_denoise 0.7
+ssr_probe_blend 8
+ssr_bounces 1

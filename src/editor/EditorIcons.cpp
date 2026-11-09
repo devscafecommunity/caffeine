@@ -2,6 +2,8 @@
 #include "editor/ImGuiGpuTexture.hpp"
 #include "editor/EditorPaths.hpp"
 
+#include "caffeine/ui/Icons.hpp"
+
 #include <stb/stb_image.h>
 
 #include <algorithm>
@@ -27,10 +29,17 @@ std::unordered_map<std::string, EditorIcons::IconEntry> EditorIcons::s_cache;
 
 void EditorIcons::init() {
     EditorPaths::init();
+#ifdef CF_HAS_IMGUI
+    UIKit::setIconProvider({
+        [](const std::string& name) { return EditorIcons::hasIcon(name); },
+        [](const std::string& name) { return EditorIcons::get(name); },
+    });
+#endif
 }
 
 void EditorIcons::shutdown() {
 #ifdef CF_HAS_IMGUI
+    UIKit::clearIconProvider();
     for (auto& [_, entry] : s_cache) {
         destroyImGuiTexture(entry.texture);
     }

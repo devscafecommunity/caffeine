@@ -33,6 +33,7 @@ enum class TextureFormat : u32 {
     R8_UNORM           = SDL_GPU_TEXTUREFORMAT_R8_UNORM,
     R16_FLOAT          = SDL_GPU_TEXTUREFORMAT_R16_FLOAT,
     R16G16B16A16_FLOAT = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+    R32_FLOAT          = SDL_GPU_TEXTUREFORMAT_R32_FLOAT,
     R32G32B32A32_FLOAT = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
     D16_UNORM          = SDL_GPU_TEXTUREFORMAT_D16_UNORM,
     D24_UNORM          = SDL_GPU_TEXTUREFORMAT_D24_UNORM,
@@ -62,7 +63,10 @@ enum class BufferUsage : u8 {
     Vertex,
     Index,
     Uniform,
-    Storage,
+    Storage,       // read-only compute storage (legacy name)
+    StorageRead,
+    StorageWrite,
+    StorageReadWrite,
     TransferSrc,
     TransferDst
 };
@@ -153,6 +157,26 @@ struct Shader {
 
 struct Pipeline {
     SDL_GPUGraphicsPipeline* handle = nullptr;
+};
+
+struct ComputePipeline {
+    SDL_GPUComputePipeline* handle = nullptr;
+};
+
+struct ComputePipelineDesc {
+    const u8* code = nullptr;
+    usize codeSize = 0;
+    const char* entryPoint = "main";
+    ShaderBytecodeFormat format = ShaderBytecodeFormat::SPIRV;
+    u32 threadCountX = 8;
+    u32 threadCountY = 8;
+    u32 threadCountZ = 1;
+    u32 numSamplers = 0;
+    u32 numReadonlyStorageTextures = 0;
+    u32 numReadwriteStorageTextures = 0;
+    u32 numReadonlyStorageBuffers = 0;
+    u32 numReadwriteStorageBuffers = 0;
+    u32 numUniformBuffers = 1;
 };
 
 struct Sampler {
@@ -249,6 +273,8 @@ public:
     Buffer*  createBuffer(const BufferDesc& desc, BufferUsage usage);
     Pipeline* createGraphicsPipeline(Shader* vertexShader, Shader* fragmentShader,
                                      const GraphicsPipelineDesc& desc);
+    ComputePipeline* createComputePipeline(const ComputePipelineDesc& desc);
+    void destroyComputePipeline(ComputePipeline* pipeline);
     Sampler* createSampler(const SamplerDesc& desc = {});
 
     bool uploadBuffer(Buffer* buffer, const void* data, u64 size, u64 offset = 0);

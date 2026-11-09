@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/Camera2DPreviewRenderer.hpp"
 #include "editor/EditorPanelUtils.hpp"
@@ -278,7 +279,7 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
 
     editorPanelApplyDetach(m_detached, ImVec2(640, 480));
     ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Camera Preview", &m_open)) {
+    if (!UIKit::BeginPanel("Camera Preview", &m_open)) {
         ImGui::End();
         return;
     }

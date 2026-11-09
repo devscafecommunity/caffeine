@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/AnimatorController.hpp"
 #include "animation/AnimationSystem.hpp"
 #include "animation/SkinLibrary.hpp"
@@ -450,7 +451,7 @@ void AnimatorControllerWindow::render() {
     publishLink();
 
     ImGui::SetNextWindowSizeConstraints({560, 360}, {FLT_MAX, FLT_MAX});
-    if (!ImGui::Begin("Animator Controller", &m_open)) {
+    if (!UIKit::BeginPanel("Animator Controller", &m_open)) {
         ImGui::End();
         return;
     }

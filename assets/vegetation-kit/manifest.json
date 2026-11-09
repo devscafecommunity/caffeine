@@ -1,0 +1,416 @@
+{
+  "name": "Caffeine Vegetation Kit",
+  "version": "1.0.0",
+  "description": "Vegetation assets for testing PBR, alpha cutout/blend foliage, shadows, Photon GI, baked AO, instancing and automatic LOD in Caffeine and Doppio.",
+  "license": "CC0-1.0",
+  "licenseFile": "LICENSES/CC0-1.0.txt",
+  "attributionFile": "ATTRIBUTION.txt",
+  "source": "Poly Haven (https://polyhaven.com)",
+  "generated": "2026-11-08",
+  "units": "meters, Y-up",
+  "textureResolution": "1k",
+  "kitRootInProject": "assets/vegetation-kit",
+  "usage": {
+    "install": "Copy assets/vegetation-kit into your project's assets directory.",
+    "dragAndDrop": "Drag models/<id>/<id>.gltf into the viewport.",
+    "fullPbr": "Assign materials/<id>.mat to the MeshFilter custom material.",
+    "treeParts": "Add both fir_sapling part glTFs and assign their .mat files.",
+    "instancing": "Duplicate grass/fern entities; the renderer batches shared meshes.",
+    "lod": "fir_sapling is high-poly; the renderer builds clustered LODs automatically.",
+    "demoScene": "Open scenes/vegetation-kit.caf for a lit scene with every asset placed.",
+    "runtime": "Point project.caffeine last_scene at the demo scene for caffeine-runtime.",
+    "materialVariants": "grass, celandine and moss ship _cutout/_blend variants to compare alpha paths."
+  },
+  "featureTests": {
+    "pbrOpaque": [
+      "tree_stump_01",
+      "fir_sapling"
+    ],
+    "alphaCutout": [
+      "fern_02",
+      "shrub_03",
+      "shrub_sorrel_01",
+      "nettle_plant",
+      "grass_medium_02#cutout",
+      "moss_01#cutout"
+    ],
+    "alphaBlend": [
+      "grass_medium_02#blend",
+      "celandine_01#blend",
+      "moss_01#blend"
+    ],
+    "shadows": "all assets",
+    "photonGiAndAo": [
+      "tree_stump_01",
+      "moss_01",
+      "fern_02",
+      "shrub_03"
+    ],
+    "instancing": [
+      "grass_medium_02",
+      "fern_02",
+      "shrub_sorrel_01",
+      "celandine_01"
+    ],
+    "automaticLod": [
+      "fir_sapling"
+    ],
+    "normalMaps": "all .mat files",
+    "ormMaps": "all .mat files"
+  },
+  "assets": [
+    {
+      "id": "fir_sapling",
+      "name": "Fir Sapling",
+      "role": "tree",
+      "description": "Fir Sapling \u2014 tree",
+      "model": "models/fir_sapling/fir_sapling.gltf",
+      "parts": [
+        {
+          "name": "fir_sapling_branches",
+          "model": "models/fir_sapling/fir_sapling_branches.gltf",
+          "material": "materials/fir_sapling_branches.mat"
+        },
+        {
+          "name": "fir_sapling_twigs",
+          "model": "models/fir_sapling/fir_sapling_twigs.gltf",
+          "material": "materials/fir_sapling_twigs.mat"
+        }
+      ],
+      "material": null,
+      "materialVariants": null,
+      "triangles": 433021,
+      "materialCount": 2,
+      "alpha": "opaque",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "tree",
+        "conifer",
+        "needles",
+        "high-poly",
+        "lod",
+        "shadows"
+      ],
+      "recommendedTests": [
+        "PBR lighting",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/fir_sapling",
+        "authors": {
+          "Rob Tuytel": "photography",
+          "Rico Cilliers": "modeling"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "tree_stump_01",
+      "name": "Tree Stump 01",
+      "role": "stump",
+      "description": "Tree Stump 01 \u2014 stump",
+      "model": "models/tree_stump_01/tree_stump_01.gltf",
+      "parts": [],
+      "material": "materials/tree_stump_01.mat",
+      "materialVariants": null,
+      "triangles": 41046,
+      "materialCount": 1,
+      "alpha": "opaque",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "bark",
+        "opaque",
+        "pbr",
+        "ao",
+        "gi"
+      ],
+      "recommendedTests": [
+        "PBR lighting",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/tree_stump_01",
+        "authors": {
+          "Rob Tuytel": "All"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "shrub_03",
+      "name": "Shrub 03",
+      "role": "bush",
+      "description": "Shrub 03 \u2014 bush",
+      "model": "models/shrub_03/shrub_03.gltf",
+      "parts": [],
+      "material": "materials/shrub_03.mat",
+      "materialVariants": null,
+      "triangles": 8287,
+      "materialCount": 1,
+      "alpha": "cutout",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "bush",
+        "leaf-cards",
+        "alpha-cutout",
+        "shadows"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/shrub_03",
+        "authors": {
+          "Rico Cilliers": "All"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "shrub_sorrel_01",
+      "name": "Shrub Sorrel 01",
+      "role": "ground-shrub",
+      "description": "Shrub Sorrel 01 \u2014 ground-shrub",
+      "model": "models/shrub_sorrel_01/shrub_sorrel_01.gltf",
+      "parts": [],
+      "material": "materials/shrub_sorrel_01.mat",
+      "materialVariants": null,
+      "triangles": 3319,
+      "materialCount": 1,
+      "alpha": "cutout",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "ground-cover",
+        "leaf-cards",
+        "alpha-cutout",
+        "instancing"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/shrub_sorrel_01",
+        "authors": {
+          "Rico Cilliers": "All"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "fern_02",
+      "name": "Fern 02",
+      "role": "fern",
+      "description": "Fern 02 \u2014 fern",
+      "model": "models/fern_02/fern_02.gltf",
+      "parts": [],
+      "material": "materials/fern_02.mat",
+      "materialVariants": null,
+      "triangles": 6232,
+      "materialCount": 1,
+      "alpha": "cutout",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "fern",
+        "alpha-cutout",
+        "foliage",
+        "ao",
+        "instancing"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/fern_02",
+        "authors": {
+          "Rob Tuytel": "scanning",
+          "Rico Cilliers": "modeling"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "grass_medium_02",
+      "name": "Grass Medium 02",
+      "role": "grass",
+      "description": "Grass Medium 02 \u2014 grass",
+      "model": "models/grass_medium_02/grass_medium_02.gltf",
+      "parts": [],
+      "material": "materials/grass_medium_02.mat",
+      "materialVariants": {
+        "cutout": "materials/grass_medium_02_cutout.mat"
+      },
+      "triangles": 7842,
+      "materialCount": 1,
+      "alpha": "blend",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "grass",
+        "alpha-blend",
+        "alpha-cutout",
+        "instancing",
+        "lod"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/grass_medium_02",
+        "authors": {
+          "Rico Cilliers": "All"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "celandine_01",
+      "name": "Celandine 01",
+      "role": "flowers",
+      "description": "Celandine 01 \u2014 flowers",
+      "model": "models/celandine_01/celandine_01.gltf",
+      "parts": [],
+      "material": "materials/celandine_01.mat",
+      "materialVariants": {
+        "cutout": "materials/celandine_01_cutout.mat"
+      },
+      "triangles": 8966,
+      "materialCount": 1,
+      "alpha": "blend",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "flowers",
+        "alpha-blend",
+        "alpha-cutout",
+        "instancing"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/celandine_01",
+        "authors": {
+          "Rob Tuytel": "Photography",
+          "Rico Cilliers": "modeling"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "nettle_plant",
+      "name": "Nettle Plant",
+      "role": "tall-plant",
+      "description": "Nettle Plant \u2014 tall-plant",
+      "model": "models/nettle_plant/nettle_plant.gltf",
+      "parts": [],
+      "material": "materials/nettle_plant.mat",
+      "materialVariants": null,
+      "triangles": 31304,
+      "materialCount": 1,
+      "alpha": "cutout",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "plant",
+        "alpha-cutout",
+        "foliage",
+        "shadows"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/nettle_plant",
+        "authors": {
+          "Rob Tuytel": "Photography",
+          "Rico Cilliers": "modeling"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    },
+    {
+      "id": "moss_01",
+      "name": "Moss 01",
+      "role": "ground-cover",
+      "description": "Moss 01 \u2014 ground-cover",
+      "model": "models/moss_01/moss_01.gltf",
+      "parts": [],
+      "material": "materials/moss_01.mat",
+      "materialVariants": {
+        "blend": "materials/moss_01_blend.mat"
+      },
+      "triangles": 204,
+      "materialCount": 1,
+      "alpha": "cutout",
+      "textures": "1k albedo/normal/ARM",
+      "tags": [
+        "moss",
+        "ground-cover",
+        "alpha-cutout",
+        "ao",
+        "gi",
+        "low-poly"
+      ],
+      "recommendedTests": [
+        "Alpha cutout/blend",
+        "Shadow casting and reception",
+        "Photon GI and baked AO",
+        "Instancing and automatic LOD"
+      ],
+      "source": {
+        "provider": "Poly Haven",
+        "url": "https://polyhaven.com/a/moss_01",
+        "authors": {
+          "Rob Tuytel": "All"
+        },
+        "license": "CC0-1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      }
+    }
+  ],
+  "assetCount": 9,
+  "totalTriangles": 540221,
+  "totalBytes": 41778288,
+  "groundMaterial": "materials/ground.mat",
+  "demoScene": {
+    "scene": "scenes/vegetation-kit.caf",
+    "contents": "Ground, camera, directional sun, warm point light, Photon GI, and 29 vegetation meshes.",
+    "editor": "Copy the kit to assets/vegetation-kit in a project, then open the scene in Doppio.",
+    "runtime": "Set last_scene to assets/vegetation-kit/scenes/vegetation-kit.caf in project.caffeine."
+  }
+}

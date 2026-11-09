@@ -8,12 +8,12 @@ namespace {
 
 Vec4 normalizeWeights(Vec4 w) {
     const f32 sum = w.x + w.y + w.z + w.w;
-    if (sum <= 1e-6f) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (sum <= 1e-6f) return Vec4(1.0f, 0.0f, 0.0f, 0.0f);
     return Vec4(w.x / sum, w.y / sum, w.z / sum, w.w / sum);
 }
 
 Vec4 sampleBilinearFromGrid(const std::vector<Vec4>& weights, u32 resX, u32 resZ, f32 u, f32 v) {
-    if (weights.empty() || resX < 2 || resZ < 2) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (weights.empty() || resX < 2 || resZ < 2) return Vec4(1.0f, 0.0f, 0.0f, 0.0f);
 
     u = std::clamp(u, 0.0f, 1.0f);
     v = std::clamp(v, 0.0f, 1.0f);
@@ -73,7 +73,7 @@ void TerrainSplatmap::resize(u32 resolutionX, u32 resolutionZ, bool resampleExis
     m_resolutionX = newResX;
     m_resolutionZ = newResZ;
     m_weights.assign(static_cast<size_t>(m_resolutionX) * static_cast<size_t>(m_resolutionZ),
-                     Vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                     Vec4(1.0f, 0.0f, 0.0f, 0.0f));
 }
 
 void TerrainSplatmap::fillLayer(u32 layer, f32 weight) {
@@ -92,7 +92,7 @@ u32 TerrainSplatmap::index(u32 x, u32 z) const {
 }
 
 Vec4 TerrainSplatmap::sample(u32 x, u32 z) const {
-    if (m_weights.empty()) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (m_weights.empty()) return Vec4(1.0f, 0.0f, 0.0f, 0.0f);
     x = std::min(x, m_resolutionX - 1);
     z = std::min(z, m_resolutionZ - 1);
     return m_weights[index(x, z)];
@@ -106,7 +106,7 @@ void TerrainSplatmap::set(u32 x, u32 z, const Vec4& weights) {
 }
 
 Vec4 TerrainSplatmap::sampleBilinear(f32 u, f32 v) const {
-    if (m_weights.empty()) return Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (m_weights.empty()) return Vec4(1.0f, 0.0f, 0.0f, 0.0f);
     return sampleBilinearFromGrid(m_weights, m_resolutionX, m_resolutionZ, u, v);
 }
 

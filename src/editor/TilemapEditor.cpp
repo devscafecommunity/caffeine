@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/TilemapEditor.hpp"
 
 #ifdef CF_HAS_SDL3
@@ -198,7 +199,7 @@ namespace Caffeine::Editor {
 void TilemapEditorPanel::render() {
     if (!m_open) return;
 
-    if (ImGui::Begin("Tilemap Editor", &m_open)) {
+    if (UIKit::BeginPanel("Tilemap Editor", &m_open)) {
         renderToolbar();
         ImGui::Separator();
 

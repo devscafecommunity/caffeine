@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/ParticleEditorPanel.hpp"
 
 #include "editor/EffectObjectFactory.hpp"
@@ -37,7 +38,7 @@ bool dragFloat(const char* label, f32& value, f32 speed, f32 lo, f32 hi) {
 void ParticleEditorPanel::onImGuiRender(EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
     if (!m_open) return;
-    ImGui::Begin("Particles", &m_open);
+    UIKit::BeginPanel("Particles", &m_open);
     ECS::World* world = ctx.activeWorld;
     if (!world) {
         ImGui::TextDisabled("Open a scene to edit particles.");

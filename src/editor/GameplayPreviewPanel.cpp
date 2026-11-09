@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "editor/ImGuiGpuTexture.hpp"
@@ -150,7 +151,7 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
 
     editorPanelApplyDetach(m_detached, ImVec2(960, 540));
     ImGui::SetNextWindowSize(ImVec2(480, 320), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Gameplay Preview", &m_open, ImGuiWindowFlags_NoScrollbar)) {
+    if (!UIKit::BeginPanel("Gameplay Preview", &m_open, ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
         return;
     }

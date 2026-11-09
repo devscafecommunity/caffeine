@@ -123,6 +123,15 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
     const f32 stepZ = settings.worldSizeZ / static_cast<f32>(std::max(1u, resZ - 1));
     const f32 frameStrength = brush.strength * std::max(deltaTime, 1.0f / 120.0f) * 60.0f;
 
+    f32 flattenTarget = brush.targetHeight;
+    if (brush.mode == TerrainBrushMode::Flatten && flattenTarget < 0.0f) {
+        const f32 u = std::clamp((centerLocal.x + halfX) / std::max(settings.worldSizeX, 0.0001f),
+                                 0.0f, 1.0f);
+        const f32 v = std::clamp((centerLocal.z + halfZ) / std::max(settings.worldSizeZ, 0.0001f),
+                                 0.0f, 1.0f);
+        flattenTarget = heightmap.sampleBilinear(u, v);
+    }
+
     const f32 gridX = (centerLocal.x + halfX) / stepX;
     const f32 gridZ = (centerLocal.z + halfZ) / stepZ;
     const f32 radiusCellsX = brush.radius / stepX;
@@ -182,7 +191,7 @@ void TerrainSculptor::applyBrush(TerrainHeightmap& heightmap,
                     break;
                 }
                 case TerrainBrushMode::Flatten:
-                    height += (0.35f - height) * amount;
+                    height += (flattenTarget - height) * amount;
                     break;
                 case TerrainBrushMode::Noise: {
                     u32 n = ux * 374761393u + uz * 668265263u + 9176u;

@@ -40,6 +40,41 @@ public:
 using PluginServiceHandler = bool (*)(void* editorContext, const void* request, std::size_t requestSize,
                                       void* response, std::size_t responseSize);
 
+/// Docking hint for a plugin panel. Mirrors Caffeine::UIKit::DockArea.
+enum class PluginDockArea : int {
+    Left = 0,
+    Right = 1,
+    Bottom = 2,
+    Center = 3,
+    Floating = 4,
+};
+
+struct PluginPanelInfo {
+    /// Stable panel id. When null, the host derives one from plugin + title.
+    const char* id = nullptr;
+    const char* title = nullptr;
+    /// Semantic icon name resolved by the host, e.g. "arrow-right".
+    const char* icon = nullptr;
+    PluginDockArea dock = PluginDockArea::Bottom;
+    /// Normalized split size hint (0..1).
+    float size = 0.24f;
+    bool defaultOpen = true;
+};
+
+/// Terrain authoring state owned by the host viewport. Plugins edit it through
+/// opaque get/set callbacks instead of including EditorContext.
+struct PluginTerrainBrush {
+    /// 0 = none, 1 = sculpt, 2 = splat.
+    int editMode = 0;
+    /// 0 = raise, 1 = lower, 2 = smooth, 3 = flatten, 4 = noise.
+    int brushMode = 0;
+    unsigned int splatLayer = 0;
+    float radius = 6.0f;
+    float strength = 0.12f;
+    /// 0 = none, 1 = translate, 2 = rotate, 3 = scale.
+    int gizmoMode = 1;
+};
+
 struct PluginHostApi {
     void* editorContext = nullptr;
     /// Stable plugin id (library stem). Set by the host before OnLoad().
@@ -54,6 +89,7 @@ struct PluginHostApi {
 
     /// Fills buffer with open project's root path (parent of scenes/). Returns false if no project.
     bool (*getProjectRootPath)(void* editorContext, char* buffer, std::size_t bufferSize) = nullptr;
+
 
     bool (*registerPanel)(void* ctx, const char* pluginName, const char* title,
                           void (*renderFn)(void* userData), void* userData) = nullptr;
@@ -76,6 +112,21 @@ struct PluginHostApi {
     /// Plugins may register additional services (for aggregator / store plugins).
     bool (*registerService)(void* ctx, const char* pluginName, const char* serviceName,
                             PluginServiceHandler handler) = nullptr;
+
+    /// Register a panel with layout metadata so the Workspace can dock it.
+    /// Preferred over registerPanel for new plugins.
+    bool (*registerPanelEx)(void* ctx, const char* pluginName, const PluginPanelInfo* info,
+                            void (*renderFn)(void* userData), void* userData) = nullptr;
+
+    /// Opaque editor services. These keep plugins independent from Doppio's
+    /// internal EditorContext type.
+    void (*setSelectedEntityId)(void* ctx, CaffeinePluginU32 entityId) = nullptr;
+    bool (*getCurrentScenePath)(void* ctx, char* buffer, std::size_t bufferSize) = nullptr;
+    void (*markAssetBrowserDirty)(void* ctx) = nullptr;
+
+    /// Viewport terrain authoring state (sculpt/paint brush and gizmo mode).
+    bool (*getTerrainBrush)(void* ctx, PluginTerrainBrush* out) = nullptr;
+    bool (*setTerrainBrush)(void* ctx, const PluginTerrainBrush* brush) = nullptr;
 };
 
 using CreatePluginFn = IPlugin* (*)(const PluginHostApi* host);

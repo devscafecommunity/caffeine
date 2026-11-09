@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/PluginSystem.hpp"
 
@@ -27,6 +28,8 @@
 #include "assets/MeshMaterialExport.hpp"
 #include "editor/EditorPaths.hpp"
 #include "ecs/CameraComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
@@ -39,6 +42,7 @@
 #include "terrain/TerrainGpuTextures.hpp"
 #include "math/Quat.hpp"
 #include "script/CppScript.hpp"
+#include "script/DryadHost.hpp"
 #include <filesystem>
 #include <algorithm>
 #include <cmath>
@@ -67,19 +71,20 @@ void InspectorPanel::unregisterDrawer(u32 componentTypeId) {
 void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
     editorPanelApplyDetach(m_detached, ImVec2(420, 640));
-    if (ImGui::Begin("Inspector", &m_open)) {
+    if (UIKit::BeginPanel("Inspector", &m_open)) {
         editorPanelDetachTabButton(m_detached);
         if (!ctx.selectedEntity.isValid()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No entity selected");
-            ImGui::TextDisabled("Click an entity in the Hierarchy to inspect it.");
+            UIKit::EmptyState("No entity selected",
+                              "Click an entity in the Hierarchy to inspect it.", "hierarchy");
             ImGui::End();
             return;
         }
 
         if (ctx.hasMultiSelection()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "%zu entities selected",
-                               ctx.selectedEntities.size());
-            ImGui::TextDisabled("Select a single entity to inspect its components.");
+            UIKit::Badge((std::to_string(ctx.selectedEntities.size()) + " selected").c_str(),
+                         UIKit::tokens().accent);
+            UIKit::EmptyState("Multiple entities selected",
+                              "Select a single entity to inspect its components.", "hierarchy");
             ImGui::End();
             return;
         }
@@ -100,12 +105,12 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
          ImGui::SameLine();
          ImGui::TextDisabled("Entity %u", e.id());
 
-         if (ImGui::Button("Copy snapshot")) {
+         if (UIKit::ToolbarButton("Copy snapshot", "Copy entity state to the clipboard")) {
              const std::string snapshot = exportEntitySnapshot(world, e);
              ImGui::SetClipboardText(snapshot.c_str());
          }
          ImGui::SameLine();
-         if (ImGui::Button("Export .txt")) {
+         if (UIKit::ToolbarButton("Export .txt", "Export entity state to exports/")) {
              const std::string snapshot = exportEntitySnapshot(world, e);
              const std::filesystem::path out =
                  std::filesystem::path("exports") / ("entity_" + std::to_string(e.id()) + ".txt");
@@ -117,12 +122,10 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
                  ctx.pushTransientStatus("Exported " + out.string(), false);
              }
          }
-         if (ImGui::IsItemHovered()) {
-             ImGui::SetTooltip("Copy position, rotation, camera and mesh params to clipboard or file");
-         }
 
          ImGui::Separator();
-         if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
+         if (UIKit::ToolbarButton("Save as Prefab", "Save the selected entity as a prefab", false,
+                                  ImVec2(-1.0f, 0.0f))) {
              ctx.browse.requestFilesystem(EditorContext::BrowseSession::Kind::SaveFile,
                                           "Save Entity as Prefab", "prefabs/", e.id());
          }
@@ -155,6 +158,8 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawLight(world, e, ctx);
         drawSkybox(world, e, ctx);
         drawEnvironmentEffects(world, e, ctx);
+        drawVolumetricClouds(world, e, ctx);
+        drawPhotonGI(world, e, ctx);
         drawTerrain(world, e, ctx);
         drawPostProcess(world, e, ctx);
         drawForwardRenderFeatures(world, e, ctx);
@@ -167,12 +172,13 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         ImGui::Separator();
 
         // Add Component button
-        if (ImGui::Button("+ Add Component", ImVec2(-1, 0))) {
+        if (UIKit::PrimaryButton("+ Add Component", ImVec2(-1, 0))) {
             ImGui::OpenPopup("add_component_v2");
             m_addComponentSearch[0] = '\0';
         }
         if (ImGui::BeginPopup("add_component_v2")) {
-            ImGui::InputText("##search", m_addComponentSearch, sizeof(m_addComponentSearch));
+            UIKit::SearchField("##search", m_addComponentSearch, sizeof(m_addComponentSearch),
+                               "Search components...");
             ImGui::Separator();
             const char* lastCategory = nullptr;
             for (const auto& entry : ComponentRegistry::instance().entries()) {
@@ -358,9 +364,14 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
         if (removeRequested) { world.remove<ECS::Camera2DComponent>(e); ctx.markDirty(); return; }
 
         auto* cam = world.get<ECS::Camera2DComponent>(e);
-        if (ImGui::DragFloat("Zoom",      &cam->zoom,     0.01f, 0.01f, 100.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Far Clip",  &cam->farClip,  1.0f,  1.0f, 10000.0f)) ctx.markDirty();
+        bool changed = false;
+        if (UIKit::BeginPropertyGrid("inspector_camera2d", 84.0f)) {
+            changed |= UIKit::DragFloatProperty("Zoom", &cam->zoom, 0.01f, 0.01f, 100.0f);
+            changed |= UIKit::DragFloatProperty("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f);
+            changed |= UIKit::DragFloatProperty("Far Clip", &cam->farClip, 1.0f, 1.0f, 10000.0f);
+            UIKit::EndPropertyGrid();
+        }
+        if (changed) ctx.markDirty();
     }
 
     if (has3D) {
@@ -369,10 +380,15 @@ void InspectorPanel::drawCamera(ECS::World& world, ECS::Entity e, EditorContext&
         if (removeRequested) { world.remove<ECS::Camera3DComponent>(e); ctx.markDirty(); return; }
 
         auto* cam = world.get<ECS::Camera3DComponent>(e);
-        if (ImGui::DragFloat("FOV",       &cam->fov,         0.5f,  10.0f, 170.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Near Clip", &cam->nearClip,    0.01f, 0.001f, 10.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Far Clip",  &cam->farClip,     1.0f,  1.0f, 10000.0f)) ctx.markDirty();
-        if (ImGui::DragFloat("Aspect",    &cam->aspectRatio, 0.01f, 0.1f, 10.0f)) ctx.markDirty();
+        bool changed = false;
+        if (UIKit::BeginPropertyGrid("inspector_camera3d", 84.0f)) {
+            changed |= UIKit::DragFloatProperty("FOV", &cam->fov, 0.5f, 10.0f, 170.0f);
+            changed |= UIKit::DragFloatProperty("Near Clip", &cam->nearClip, 0.01f, 0.001f, 10.0f);
+            changed |= UIKit::DragFloatProperty("Far Clip", &cam->farClip, 1.0f, 1.0f, 10000.0f);
+            changed |= UIKit::DragFloatProperty("Aspect", &cam->aspectRatio, 0.01f, 0.1f, 10.0f);
+            UIKit::EndPropertyGrid();
+        }
+        if (changed) ctx.markDirty();
     }
 }
 void InspectorPanel::drawRigidBody2D(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
@@ -601,16 +617,34 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
             std::filesystem::path dropped(static_cast<const char*>(payload->Data));
-            if (dropped.extension() == ".lua") {
-                sc->scriptPath = dropped.string();
+            const std::string extension = dropped.extension().string();
+            if (extension == ".lua" || extension == ".dyd") {
+                std::filesystem::path stored = dropped;
+                const std::filesystem::path root = resolveProjectRoot(ctx);
+                if (!root.empty() && dropped.is_absolute()) {
+                    const std::filesystem::path relative = dropped.lexically_relative(root);
+                    if (!relative.empty() && relative.native().rfind("..", 0) != 0) {
+                        stored = relative;
+                    }
+                }
+                sc->scriptPath = stored.generic_string();
                 std::strncpy(pathBuf, sc->scriptPath.c_str(), sizeof(pathBuf) - 1);
                 pathBuf[sizeof(pathBuf) - 1] = 0;
+                ctx.markDirty();
             }
         }
         ImGui::EndDragDropTarget();
     }
+    const bool dryadScript = Script::isDryadScriptPath(sc->scriptPath);
     ImGui::SameLine();
-    if (ImGui::Button("Load")) {
+    if (dryadScript) {
+        if (ImGui::Button("Open Node Editor")) {
+            ctx.dryadToOpen = sc->scriptPath;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Open this graph in the Dryad Node Script panel");
+        }
+    } else if (ImGui::Button("Load")) {
         if (ctx.scriptEngine) {
             std::string err;
             bool ok = ctx.scriptEngine->loadScript(sc->scriptPath, &err);
@@ -624,7 +658,7 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
         ImGui::TextWrapped("%s", lastError.c_str());
         ImGui::PopStyleColor();
     }
-    if (ctx.scriptEngine && !sc->scriptPath.empty()) {
+    if (!dryadScript && ctx.scriptEngine && !sc->scriptPath.empty()) {
         if (!ctx.scriptEngine->isLoaded(sc->scriptPath)) {
             std::string err;
             ctx.scriptEngine->loadScript(sc->scriptPath, &err);
@@ -656,6 +690,18 @@ void InspectorPanel::drawScript(ECS::World& world, ECS::Entity e, EditorContext&
                 }
                 ImGui::PopID();
             }
+        }
+    }
+    if (dryadScript) {
+        UIKit::TextMuted("Dryad runs the .dyd in play mode. Press Play to execute it.");
+        const std::filesystem::path root = resolveProjectRoot(ctx);
+        const std::filesystem::path resolved =
+            std::filesystem::path(sc->scriptPath).is_absolute() || root.empty()
+                ? std::filesystem::path(sc->scriptPath)
+                : root / sc->scriptPath;
+        if (!std::filesystem::exists(resolved) &&
+            !std::filesystem::exists(sc->scriptPath)) {
+            UIKit::TextDanger("Script file not found.");
         }
     }
 #else
@@ -1287,6 +1333,11 @@ void InspectorPanel::drawTerrain(ECS::World& world, ECS::Entity e, EditorContext
     if (ImGui::SliderFloat("Shininess", &terrain->shininess, 1.0f, 128.0f)) {
         ctx.markDirty();
     }
+    float tint[3] = {terrain->tint.x, terrain->tint.y, terrain->tint.z};
+    if (ImGui::ColorEdit3("Tint", tint)) {
+        terrain->tint = Vec3(tint[0], tint[1], tint[2]);
+        ctx.markDirty();
+    }
     if (ImGui::InputText("Albedo Texture", terrain->texturePath, sizeof(terrain->texturePath))) {
         Terrain::TerrainCache::instance().repairTexturePaths(*terrain);
         Terrain::TerrainCache::instance().syncTextureToFilter(world, e, *terrain);
@@ -1513,6 +1564,128 @@ void InspectorPanel::drawForwardRenderFeatures(ECS::World& world, ECS::Entity e,
         if (ImGui::Checkbox("Sample shadows", &fx->volumetrics.sampleShadows)) ctx.markDirty();
         ImGui::TextDisabled("High + Sample shadows uses the sun cascade along the view ray.");
     }
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawVolumetricClouds(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::VolumetricCloudsComponent>(e)) return;
+
+    auto* clouds = world.get<ECS::VolumetricCloudsComponent>(e);
+    if (!clouds) return;
+
+    bool enabled = clouds->enabled;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Volumetric Clouds", enabled, removeRequested, "bluesky")) return;
+    if (removeRequested) {
+        world.remove<ECS::VolumetricCloudsComponent>(e);
+        ctx.markDirty();
+        return;
+    }
+    if (enabled != clouds->enabled) {
+        clouds->enabled = enabled;
+        ctx.markDirty();
+    }
+
+    ImGui::PushID("volumetric_clouds");
+    const u32 typeId = ComponentTypeRegistry::instance().lookup("VolumetricClouds");
+    if (PluginManager::instance().isComponentDrawerEnabled(typeId)) {
+        if (const ComponentDrawer* drawer = m_drawers.get(typeId)) {
+            (*drawer)(clouds);
+            ImGui::PopID();
+            return;
+        }
+    }
+
+    bool changed = false;
+    if (UIKit::BeginPropertyGrid("volumetric_clouds_fallback")) {
+        int quality = static_cast<int>(clouds->quality);
+        if (UIKit::SliderIntProperty("Quality", &quality, 0, 3)) {
+            clouds->quality = static_cast<u8>(quality);
+            changed = true;
+        }
+        changed |= UIKit::SliderFloatProperty("Coverage", &clouds->coverage, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Density", &clouds->density, 0.01f, 0.0f, 8.0f);
+        changed |= UIKit::DragFloatProperty("Base altitude", &clouds->baseAltitude, 10.0f,
+                                            0.0f, 20000.0f);
+        changed |= UIKit::DragFloatProperty("Top altitude", &clouds->topAltitude, 10.0f,
+                                            1.0f, 30000.0f);
+        changed |= UIKit::SliderFloatProperty("Detail", &clouds->detail, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Wind speed", &clouds->windSpeed, 0.2f, 0.0f,
+                                            120.0f);
+        changed |= UIKit::DragFloatProperty("Wind direction", &clouds->windDirection, 1.0f,
+                                            0.0f, 360.0f);
+        changed |= UIKit::DragFloatProperty("Seed", &clouds->seed, 0.1f, -10000.0f, 10000.0f);
+        changed |= UIKit::SliderFloatProperty("Sun scatter", &clouds->sunScatter, 0.0f, 3.0f);
+        changed |= UIKit::SliderFloatProperty("Mist density", &clouds->mistDensity, 0.0f, 1.0f);
+        changed |= UIKit::DragFloatProperty("Mist height", &clouds->mistHeight, 1.0f, 1.0f,
+                                            500.0f);
+        changed |= UIKit::DragFloatProperty("Mist falloff", &clouds->mistFalloff, 0.01f, 0.0f,
+                                            2.0f);
+        UIKit::EndPropertyGrid();
+    }
+    if (changed) ctx.markDirty();
+    ImGui::TextDisabled("Enable VC&M for weather presets and one-click generation.");
+    ImGui::PopID();
+}
+
+void InspectorPanel::drawPhotonGI(ECS::World& world, ECS::Entity e, EditorContext& ctx) {
+    if (!world.has<ECS::PhotonGIComponent>(e)) return;
+
+    auto* gi = world.get<ECS::PhotonGIComponent>(e);
+    if (!gi) return;
+
+    bool enabled = gi->enabled;
+    bool removeRequested = false;
+    if (!Widgets::ComponentHeader("Photon GI", enabled, removeRequested, "bluesky")) return;
+    if (removeRequested) {
+        world.remove<ECS::PhotonGIComponent>(e);
+        ctx.markDirty();
+        return;
+    }
+    if (enabled != gi->enabled) {
+        gi->enabled = enabled;
+        ctx.markDirty();
+    }
+
+    ImGui::PushID("photon_gi");
+    const u32 typeId = ComponentTypeRegistry::instance().lookup("PhotonGI");
+    if (PluginManager::instance().isComponentDrawerEnabled(typeId)) {
+        if (const ComponentDrawer* drawer = m_drawers.get(typeId)) {
+            (*drawer)(gi);
+            ImGui::PopID();
+            return;
+        }
+    }
+
+    bool changed = false;
+    if (UIKit::BeginPropertyGrid("photon_gi_fallback")) {
+        int quality = static_cast<int>(gi->quality);
+        if (UIKit::SliderIntProperty("Quality", &quality, 0, 3)) {
+            gi->quality = static_cast<u8>(quality);
+            changed = true;
+        }
+        int cascades = static_cast<int>(gi->cascades);
+        if (UIKit::SliderIntProperty("Cascades", &cascades, 1, 6)) {
+            gi->cascades = static_cast<u8>(cascades);
+            changed = true;
+        }
+        changed |= UIKit::SliderFloatProperty("Intensity", &gi->intensity, 0.0f, 8.0f);
+        changed |= UIKit::DragFloatProperty("Radius", &gi->radius, 0.1f, 0.1f, 500.0f);
+        changed |= UIKit::SliderFloatProperty("Thickness", &gi->thickness, 0.0f, 0.5f);
+        changed |= UIKit::SliderFloatProperty("Sky fallback", &gi->skyIntensity, 0.0f, 4.0f);
+        changed |= UIKit::SliderFloatProperty("Ambient", &gi->ambientIntensity, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint R", &gi->tintR, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint G", &gi->tintG, 0.0f, 2.0f);
+        changed |= UIKit::SliderFloatProperty("Tint B", &gi->tintB, 0.0f, 2.0f);
+        int debug = static_cast<int>(gi->debugView);
+        if (UIKit::SliderIntProperty("Debug", &debug, 0, 2)) {
+            gi->debugView = static_cast<u8>(debug);
+            changed = true;
+        }
+        UIKit::EndPropertyGrid();
+    }
+    if (changed) ctx.markDirty();
+    ImGui::TextDisabled("Photon v0.1: screen-space cascades + sky/ambient fallback.");
     ImGui::PopID();
 }
 
@@ -1903,9 +2076,27 @@ void InspectorPanel::drawSkinnedPose(ECS::World& world, ECS::Entity e, EditorCon
         if (!skin) skin = Animation::findImportedSkin(pose->meshPath);
     }
     if (!skin) {
-        ImGui::TextDisabled("No skin on this mesh. The file needs glTF skins / joints.");
+        ImGui::TextDisabled("No glTF skin on this mesh.");
         if (!Assets::MeshCache::getInstance().getLastError().empty()) {
             ImGui::TextWrapped("%s", Assets::MeshCache::getInstance().getLastError().c_str());
+        }
+        if (boundMesh && (!resolved.empty() || pose->meshPath[0] != '\0')) {
+            if (ImGui::Button("Fit humanoid rig")) {
+                const std::string rigPath =
+                    !resolved.empty() ? resolved : std::string(pose->meshPath);
+                if (Animation::synthesizeHumanoidSkin(rigPath, *boundMesh, true)) {
+                    if (const Animation::ImportedSkin* fitted =
+                            Animation::findImportedSkin(rigPath)) {
+                        pose->humanoid = Animation::matchHumanoid(*fitted);
+                        pose->humanoid.manual = true;
+                        pose->loaded = true;
+                        ctx.showBones = true;
+                        ctx.markDirty();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Fits a procedural T-pose rig to this mesh.");
         }
     } else if (skin->synthesized) {
         ImGui::TextDisabled("Fitted humanoid (%d bones). This file has no authored glTF skin.",

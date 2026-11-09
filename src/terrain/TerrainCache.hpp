@@ -69,6 +69,12 @@ public:
                          ECS::TerrainComponent& terrain,
                          const std::filesystem::path& path);
 
+    /// Restore height/splat data from an in-memory scene snapshot (undo/redo).
+    void restoreSnapshot(ECS::World& world, ECS::Entity entity,
+                         ECS::TerrainComponent& terrain,
+                         const TerrainHeightmap& heightmap,
+                         const TerrainSplatmap& splatmap);
+
 #ifdef CF_HAS_SDL3
     void releaseGpuResources(RHI::RenderDevice* device);
 #endif

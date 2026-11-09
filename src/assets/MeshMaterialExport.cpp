@@ -56,6 +56,8 @@ std::vector<std::string> exportMeshMaterials(const Mesh3D& mesh,
         surface.metallic = src.metallic;
         surface.roughness = src.roughness;
         surface.albedoMap = relativeTexture(projectRoot, src.albedoPath);
+        surface.alphaMode = static_cast<MaterialAlphaMode>(src.alphaMode);
+        surface.alphaCutoff = src.alphaCutoff;
 
         const std::string fileStem =
             mesh.materials.size() == 1 ? stem : stem + "_" + std::to_string(i);

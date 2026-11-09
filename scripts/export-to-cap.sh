@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Export raw assets to a .cap pack via caf-pack CLI.
-# Used by Convoy, WaveShaper, CI, and manual workflows.
+# Used by CI, asset pipelines, and manual workflows.
 set -euo pipefail
 
 INPUT_DIR="${1:-raw_assets}"

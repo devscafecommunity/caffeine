@@ -1,5 +1,8 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
@@ -106,6 +109,12 @@ struct SkyUBO {
     float zenith[4];
     float horizon[4];
     float ground[4];
+    float camera[4];
+    float cloudA[4];
+    float cloudB[4];
+    float cloudC[4];
+    float sunDir[4];
+    float sunColor[4];
 };
 
 struct GridUBO {
@@ -320,6 +329,8 @@ struct ResolvedMeshAlbedo {
     Vec4 factor{1.0f, 1.0f, 1.0f, 1.0f};
     f32 metallic = 0.0f;
     f32 roughness = 0.5f;
+    u8 alphaMode = 0;
+    f32 alphaCutoff = 0.5f;
 };
 
 Vec3 meshWorldCenter(const Mat4& worldMatrix, const Assets::Mesh3D* mesh) {
@@ -346,6 +357,8 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
                            mat.albedoColor.a);
         result.metallic = mat.metallic;
         result.roughness = mat.roughness;
+        result.alphaMode = mat.alphaMode;
+        result.alphaCutoff = mat.alphaCutoff;
 
         if (!mat.albedoPath.empty()) {
             result.texture = cache.acquire(device, mat.albedoPath, projectRoot, qualityTier, true);
@@ -743,19 +756,55 @@ void GpuSceneRenderer::pushShadowDrawsForMesh(RHI::CommandBuffer* cmd, const Mes
 
 bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
     if (!mesh || !m_device) return false;
-    if (mesh->vertexBuffer && mesh->indexBuffer) return true;
     if (mesh->vertices.empty() || mesh->indices.empty()) return false;
 
+    const u64 vertexBytes = mesh->vertices.size() * sizeof(Assets::Vertex3D);
+    const u64 indexBytes = mesh->indices.size() * sizeof(u32);
+
+    if (mesh->vertexBuffer && mesh->indexBuffer &&
+        mesh->uploadedRevision == mesh->geometryRevision) {
+        return true;
+    }
+
+    // Dynamic meshes (water, fluid voxels) change every frame. Reuse the GPU
+    // buffers when the size is unchanged and only re-upload the contents.
+    if (mesh->vertexBuffer && mesh->indexBuffer && mesh->vertexBuffer->size == vertexBytes &&
+        mesh->indexBuffer->size == indexBytes) {
+        if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vertexBytes)) {
+            return false;
+        }
+        if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
+            return false;
+        }
+        mesh->uploadedRevision = mesh->geometryRevision;
+        return true;
+    }
+
+    if (mesh->vertexBuffer) {
+        m_device->destroyBuffer(mesh->vertexBuffer);
+        mesh->vertexBuffer = nullptr;
+    }
+    if (mesh->indexBuffer) {
+        m_device->destroyBuffer(mesh->indexBuffer);
+        mesh->indexBuffer = nullptr;
+    }
+
     RHI::BufferDesc vdesc;
-    vdesc.size = mesh->vertices.size() * sizeof(Assets::Vertex3D);
+    vdesc.size = vertexBytes;
     mesh->vertexBuffer = m_device->createBuffer(vdesc, RHI::BufferUsage::Vertex);
     RHI::BufferDesc idesc;
-    idesc.size = mesh->indices.size() * sizeof(u32);
+    idesc.size = indexBytes;
     mesh->indexBuffer = m_device->createBuffer(idesc, RHI::BufferUsage::Index);
     if (!mesh->vertexBuffer || !mesh->indexBuffer) return false;
 
-    if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vdesc.size)) return false;
-    return m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), idesc.size);
+    if (!m_device->uploadBuffer(mesh->vertexBuffer, mesh->vertices.data(), vertexBytes)) {
+        return false;
+    }
+    if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
+        return false;
+    }
+    mesh->uploadedRevision = mesh->geometryRevision;
+    return true;
 }
 
 void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::World& world,
@@ -882,9 +931,9 @@ void setVec4(float* out, f32 x, f32 y, f32 z, f32 w) {
 }
 
 /// Linear-space fallback sky used when the scene has no environment map.
-const Vec3 kSkyZenith{0.53f, 0.74f, 0.95f};
-const Vec3 kSkyHorizon{0.94f, 0.96f, 0.98f};
-const Vec3 kSkyGround{0.72f, 0.80f, 0.88f};
+const Vec3 kSkyZenith{0.18f, 0.38f, 0.74f};
+const Vec3 kSkyHorizon{0.64f, 0.78f, 0.94f};
+const Vec3 kSkyGround{0.42f, 0.50f, 0.60f};
 const Vec3 kFallbackAmbient{0.03f, 0.03f, 0.035f};
 
 u32 probeMipCount(u32 resolution) {
@@ -960,6 +1009,17 @@ void GpuSceneRenderer::drawSky(RHI::CommandBuffer* cmd, const GpuSceneCamera& ca
     setVec4(ubo.zenith, kSkyZenith.x, kSkyZenith.y, kSkyZenith.z, 1.0f);
     setVec4(ubo.horizon, kSkyHorizon.x, kSkyHorizon.y, kSkyHorizon.z, 1.0f);
     setVec4(ubo.ground, kSkyGround.x, kSkyGround.y, kSkyGround.z, 1.0f);
+
+    const GpuCloudSettings& clouds = m_cloudSettings;
+    setVec4(ubo.camera, camera.position.x, camera.position.y, camera.position.z, clouds.time);
+    setVec4(ubo.cloudA, clouds.coverage, clouds.density, clouds.baseAltitude,
+            clouds.topAltitude);
+    setVec4(ubo.cloudB, clouds.windSpeed, clouds.windDirection, clouds.detail, clouds.seed);
+    setVec4(ubo.cloudC, static_cast<f32>(clouds.steps), clouds.mistDensity, clouds.mistHeight,
+            clouds.mistFalloff);
+    setVec4(ubo.sunDir, clouds.sunDirection.x, clouds.sunDirection.y, clouds.sunDirection.z,
+            clouds.sunIntensity * clouds.sunScatter);
+    setVec4(ubo.sunColor, clouds.sunColor.x, clouds.sunColor.y, clouds.sunColor.z, 1.0f);
 
     RHI::Texture* bound = env ? env : GpuTextureCache::instance().whiteTexture(m_device);
     cmd->bindPipeline(m_skyPipeline);
@@ -1309,6 +1369,8 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (indexCount == 0) return;
             LightingUBO rangeLights = lights;
             RHI::Texture* albedoTex = whiteTex;
+            u8 rangeAlphaMode = draw.alphaMode;
+            f32 rangeAlphaCutoff = draw.alphaCutoff;
             if (!wireframe) {
                 const ResolvedMeshAlbedo albedo =
                     resolveMeshAlbedo(m_device, draw.mesh, draw.meshPath, projectRoot,
@@ -1321,9 +1383,15 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 if (!draw.hasAuthoredMaterial && materialIndex < draw.mesh->materials.size()) {
                     rangeLights.metallic = albedo.metallic;
                     rangeLights.roughness = albedo.roughness;
+                    rangeAlphaMode = albedo.alphaMode;
+                    rangeAlphaCutoff = albedo.alphaCutoff;
                 }
                 if (albedo.texture) albedoTex = albedo.texture;
             }
+            // Alpha mode is per glTF material, not per mesh: a trunk can be opaque while
+            // its leaf submesh is cutout. Set it on the per-range uniform copy.
+            rangeLights.materialFlags[0] = static_cast<f32>(rangeAlphaMode);
+            rangeLights.materialParams[3] = rangeAlphaCutoff;
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
@@ -1550,6 +1618,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.castShadows = terrain->castShadows;
                 draw.receiveShadows = terrain->receiveShadows;
                 draw.shininess = terrain->shininess;
+                draw.albedo = Vec4(terrain->tint.x, terrain->tint.y, terrain->tint.z, 1.0f);
                 draw.roughness = 1.0f;
                 if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
                     draw.receiveShadows = renderer->receiveShadows;
@@ -1622,6 +1691,18 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
         draw.customNormalPath = filter.customNormalPath;
+        if (draw.mesh && !draw.mesh->materials.empty()) {
+            // Use the most expensive alpha mode for pass selection. The shader still
+            // receives the exact per-material mode for each submesh.
+            u8 mode = 0;
+            f32 cutoff = 0.5f;
+            for (const Assets::MeshSurfaceMaterial& material : draw.mesh->materials) {
+                if (material.alphaMode > mode) mode = material.alphaMode;
+                if (material.alphaMode != 0) cutoff = material.alphaCutoff;
+            }
+            draw.alphaMode = mode;
+            draw.alphaCutoff = cutoff;
+        }
         if (!filter.customMaterialPath.empty()) {
             const Assets::MaterialSurface surface =
                 Assets::MaterialCache::instance().resolve(filter.customMaterialPath, projectRoot);
@@ -1690,6 +1771,55 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (hasAabb) {
             draw.aabbMin = aabb.min;
             draw.aabbMax = aabb.max;
+        }
+        if (const ECS::NaturalFluidComponent* fluid =
+                world.get<ECS::NaturalFluidComponent>(entity)) {
+            if (fluid->enabled) {
+                if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
+                    // Water surface: physically-based transparent liquid with a
+                    // sharp clearcoat so reflections read as water even before a
+                    // dedicated water shader exists.
+                    const Vec3 albedo =
+                        srgbToLinear(Vec3(fluid->albedoR, fluid->albedoG, fluid->albedoB));
+                    draw.albedo = Vec4(albedo.x, albedo.y, albedo.z,
+                                       std::clamp(fluid->albedoA, 0.0f, 1.0f));
+                    draw.metallic = std::clamp(fluid->metallic, 0.0f, 1.0f);
+                    draw.roughness = std::clamp(fluid->roughness, 0.02f, 1.0f);
+                    draw.reflectance = 0.65f;
+                    draw.alphaMode = 2;
+                    draw.transmission = 0.35f;
+                    draw.ior = 1.333f;
+                    draw.clearcoat = 0.9f;
+                    draw.clearcoatRoughness = 0.04f;
+                    draw.hasAuthoredMaterial = true;
+                } else {
+                    // Fluid volume voxels. The density field is real; the colour
+                    // and emission come from the selected material preset.
+                    switch (static_cast<ECS::NaturalFluidPreset>(fluid->preset)) {
+                        case ECS::NaturalFluidPreset::Fire: {
+                            const f32 strength = std::max(fluid->fluidEmission, 2.5f);
+                            draw.albedo = Vec4(1.0f, 0.36f, 0.05f, 0.55f);
+                            draw.emission = srgbToLinear(Vec3(1.0f, 0.42f, 0.08f)) * strength;
+                            break;
+                        }
+                        case ECS::NaturalFluidPreset::Fog:
+                            draw.albedo = Vec4(0.74f, 0.78f, 0.83f, 0.22f);
+                            break;
+                        case ECS::NaturalFluidPreset::Smoke:
+                            draw.albedo = Vec4(0.24f, 0.24f, 0.27f, 0.42f);
+                            break;
+                        case ECS::NaturalFluidPreset::Water:
+                        default:
+                            draw.albedo = Vec4(0.05f, 0.24f, 0.46f, 0.65f);
+                            break;
+                    }
+                    draw.metallic = 0.0f;
+                    draw.roughness = 1.0f;
+                    draw.alphaMode = 2;
+                    draw.castShadows = false;
+                    draw.hasAuthoredMaterial = true;
+                }
+            }
         }
         if (const Effects::EffectComponent* effect = world.get<Effects::EffectComponent>(entity)) {
             Effects::SurfaceShade shade;
@@ -2208,6 +2338,55 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
 
+    // Resolve the procedural cloud/mist profile for the sky pass.
+    m_cloudSettings = {};
+    {
+        ECS::ComponentQuery cloudQuery;
+        cloudQuery.with<ECS::VolumetricCloudsComponent>();
+        world.forEach<ECS::VolumetricCloudsComponent>(
+            cloudQuery, [&](ECS::Entity, ECS::VolumetricCloudsComponent& clouds) {
+                if (!clouds.enabled || clouds.quality == 0) return;
+                GpuCloudSettings settings;
+                settings.enabled = true;
+                settings.steps = clouds.quality >= 3 ? 24u : clouds.quality == 2 ? 16u : 8u;
+                settings.coverage = std::clamp(clouds.coverage, 0.0f, 1.0f);
+                settings.density = std::max(clouds.density, 0.0f);
+                settings.baseAltitude = clouds.baseAltitude;
+                settings.topAltitude =
+                    std::max(clouds.topAltitude, clouds.baseAltitude + 1.0f);
+                settings.detail = std::clamp(clouds.detail, 0.0f, 1.0f);
+                settings.seed = clouds.seed;
+                settings.windSpeed = clouds.windSpeed;
+                settings.windDirection = clouds.windDirection;
+                settings.mistDensity = std::clamp(clouds.mistDensity, 0.0f, 1.0f);
+                settings.mistHeight = std::max(clouds.mistHeight, 1.0f);
+                settings.mistFalloff = clouds.mistFalloff;
+                settings.sunScatter = std::max(clouds.sunScatter, 0.0f);
+                settings.time = m_cloudTime;
+                if (!lighting.lights.directionals.empty()) {
+                    const auto& d = lighting.lights.directionals[0];
+                    settings.sunDirection = (d.direction * -1.0f).normalized();
+                    settings.sunColor =
+                        srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
+                    settings.sunIntensity = std::max(d.intensity, 0.0f);
+                }
+                m_cloudSettings = settings;
+            });
+    }
+
+    // Let the cloud mist drive the existing scene volumetric fog so ground
+    // geometry is wrapped in the same mist as the sky.
+    GpuSceneRenderOptions renderOptions = opts;
+    if (m_cloudSettings.enabled && m_cloudSettings.mistDensity > 0.0f) {
+        if (renderOptions.features.volumetrics == VolumetricQuality::Off) {
+            renderOptions.features.volumetrics = VolumetricQuality::Low;
+        }
+        renderOptions.features.volumetricDensity = std::max(
+            renderOptions.features.volumetricDensity, m_cloudSettings.mistDensity * 0.05f);
+        renderOptions.features.volumetricHeight = std::max(
+            renderOptions.features.volumetricHeight, m_cloudSettings.mistHeight);
+    }
+
     m_activeCascadeCount = opts.directionalCascadeCount;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
@@ -2246,7 +2425,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
 
     CF_PROFILE_SCOPE("GpuSceneRenderer::draw");
     return renderMeshes(cmd, draws, camera, lighting, colorTarget, depthTarget, width, height,
-                        projectRoot, opts, pass);
+                        projectRoot, renderOptions, pass);
 }
 
 ECS::PostProcessComponent GpuSceneRenderer::resolvePostProcess(
@@ -2268,12 +2447,22 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     m_probesPending = false;
 
     GpuSceneRenderOptions opts = options;
+    m_cloudTime = std::fmod(m_cloudTime + std::clamp(options.deltaTime, 1e-4f, 0.25f), 3600.0f);
     if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
     resolveEnvironment(world, projectRoot, opts);
     ECS::PostProcessComponent post =
         opts.resolvePostProcessFromScene
             ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
             : opts.postProcess;
+
+    ECS::PhotonGIComponent photon;
+    {
+        ECS::ComponentQuery query;
+        query.with<ECS::PhotonGIComponent>();
+        world.forEach<ECS::PhotonGIComponent>(query, [&](ECS::Entity, ECS::PhotonGIComponent& c) {
+            if (c.enabled) photon = c;
+        });
+    }
     if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
 
     const f32 scale = std::clamp(opts.renderScale, 0.25f, 2.0f);
@@ -2339,6 +2528,7 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.historyValid = view->hasPrevious && !opts.skipTemporalSettle;
         in.jitterPixels = jitter;
         in.viewId = viewId;
+        in.photon = photon;
         m_post.execute(cmd, post, in);
     }
 
@@ -2379,19 +2569,33 @@ u32 GpuSceneRenderer::render(RHI::CommandBuffer* cmd, ECS::World& world,
                               RHI::Texture* depthTarget, u32 width, u32 height,
                               const std::string& projectRoot, const GpuSceneRenderOptions& options) {
     if (!m_ready || !cmd || !colorTarget || width < 1 || height < 1) return 0;
-    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D) return 0;
+    if (ctx.viewMode != Editor::EditorContext::ViewMode::Mode3D &&
+        ctx.viewMode != Editor::EditorContext::ViewMode::Isometric) {
+        return 0;
+    }
 
     const Vec3 cameraPos =
         Editor::editorCameraPosition(ctx.camYaw, ctx.camPitch, ctx.camDistance, ctx.camFocus);
     const f32 aspect = static_cast<f32>(width) / static_cast<f32>(std::max(height, 1u));
     const f32 farPlane = ctx.cameraFarPlane();
+    constexpr f32 kFovY = 60.0f * kPi / 180.0f;
 
     GpuSceneCamera camera;
     camera.position = cameraPos;
     camera.focus = ctx.camFocus;
     camera.view = Mat4::lookAt(cameraPos, ctx.camFocus, Vec3(0, 1, 0));
-    camera.proj = Mat4::perspective(60.0f * kPi / 180.0f, aspect, 0.1f, farPlane);
-    camera.fovRad = 60.0f * kPi / 180.0f;
+    const bool ortho = options.orthographic ||
+                       ctx.projection == Editor::EditorContext::ViewProjection::Orthographic;
+    if (ortho) {
+        const f32 halfHeight =
+            std::max(0.1f, std::abs(ctx.camDistance) * std::tan(kFovY * 0.5f));
+        const f32 halfWidth = halfHeight * aspect;
+        camera.proj = Mat4::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, 0.1f,
+                                  farPlane);
+    } else {
+        camera.proj = Mat4::perspective(kFovY, aspect, 0.1f, farPlane);
+    }
+    camera.fovRad = kFovY;
     camera.nearClip = 0.1f;
     camera.farClip = farPlane;
 

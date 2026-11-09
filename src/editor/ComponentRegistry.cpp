@@ -24,6 +24,9 @@
 #include "ecs/PostProcessComponents.hpp"
 #include "ecs/ForwardRenderComponents.hpp"
 #include "ecs/EnvironmentEffectsComponents.hpp"
+#include "caffeine/environment/VolumetricClouds.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "ecs/PostProcessComponents.hpp"
 #include "render/RenderFeatures.hpp"
 #include "editor/ComponentTypeRegistry.hpp"
@@ -226,14 +229,14 @@ void registerAllComponents(ComponentRegistry& reg) {
             volume.resize(32, 32);
             w.add<Navigation::NavVolume>(e, std::move(volume));
         },
-        "ai_development_plugin",
+        "",
         "navigation navmesh ai"
     });
     reg.registerComponent({
         "AI", "Nav Agent",
         [](ECS::World& w, ECS::Entity e) { return w.has<Navigation::NavAgent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<Navigation::NavAgent>(e); },
-        "ai_development_plugin",
+        "",
         "navigation pathfinding ai"
     });
     reg.registerComponent({
@@ -319,6 +322,79 @@ void registerAllComponents(ComponentRegistry& reg) {
         [](ECS::World& w, ECS::Entity e){ w.add<ECS::PrefabInstance>(e); }
     });
     reg.registerComponent({
+        "Rendering", "Photon GI",
+        [](ECS::World& w, ECS::Entity e) {
+            const auto* gi = w.get<ECS::PhotonGIComponent>(e);
+            return gi && gi->enabled;
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            if (auto* existing = w.get<ECS::PhotonGIComponent>(e)) {
+                existing->enabled = true;
+                return;
+            }
+            auto& gi = w.add<ECS::PhotonGIComponent>(e);
+            gi.enabled = true;
+            gi.quality = 2;
+            gi.cascades = 4;
+            gi.intensity = 1.0f;
+            gi.radius = 14.0f;
+        },
+        "",
+        "photon gi global illumination indirect radiance cascade lumen"
+    });
+    reg.registerComponent({
+        "Rendering", "Volumetric Clouds",
+        [](ECS::World& w, ECS::Entity e) {
+            const auto* clouds = w.get<ECS::VolumetricCloudsComponent>(e);
+            return clouds && clouds->enabled;
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            if (auto* existing = w.get<ECS::VolumetricCloudsComponent>(e)) {
+                existing->enabled = true;
+                return;
+            }
+            auto& clouds = w.add<ECS::VolumetricCloudsComponent>(e);
+            clouds.enabled = true;
+            clouds.quality = 2;
+            clouds.coverage = 0.58f;
+            clouds.density = 1.0f;
+            clouds.baseAltitude = 1250.0f;
+            clouds.topAltitude = 2880.0f;
+            clouds.detail = 0.50f;
+            clouds.mistDensity = 0.12f;
+            clouds.mistHeight = 67.0f;
+        },
+        "",
+        "clouds mist volumetric sky weather fog atmosphere"
+    });
+    reg.registerComponent({
+        "Environment", "Natural Fluids",
+        [](ECS::World& w, ECS::Entity e) {
+            return w.has<ECS::NaturalFluidComponent>(e);
+        },
+        [](ECS::World& w, ECS::Entity e) {
+            auto& fluid = w.add<ECS::NaturalFluidComponent>(e);
+            fluid.mode = static_cast<u8>(ECS::NaturalFluidMode::RealisticWater);
+            fluid.preset = static_cast<u8>(ECS::NaturalFluidPreset::Water);
+            fluid.shallowPhysics = 0;
+            if (!w.has<ECS::Position3D>(e) && !w.has<ECS::Transform>(e)) {
+                w.add<ECS::Position3D>(e);
+            }
+            if (!w.has<ECS::MeshFilterComponent>(e)) {
+                auto& filter = w.add<ECS::MeshFilterComponent>(e);
+                filter.primitive = ECS::MeshPrimitive::Custom;
+            }
+            if (!w.has<ECS::MeshRendererComponent>(e)) {
+                auto& renderer = w.add<ECS::MeshRendererComponent>(e);
+                renderer.castShadows = fluid.castShadows != 0;
+                renderer.receiveShadows = fluid.receiveShadows != 0;
+            }
+        },
+        "",
+        "water ocean sea lake river waves fluid fire smoke fog liquid realistic"
+    });
+
+    reg.registerComponent({
         "Rendering", "Post Process",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::PostProcessComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::PostProcessComponent>(e); }
@@ -334,7 +410,7 @@ void registerAllComponents(ComponentRegistry& reg) {
         "Procedural", "Procedural World",
         [](ECS::World& w, ECS::Entity e) { return w.has<ECS::ProceduralWorldComponent>(e); },
         [](ECS::World& w, ECS::Entity e) { w.add<ECS::ProceduralWorldComponent>(e); },
-        "procedural_tools_plugin",
+        "",
         "terrain generate world"
     });
 
@@ -343,6 +419,10 @@ void registerAllComponents(ComponentRegistry& reg) {
         "ForwardRenderFeatures");
     ComponentTypeRegistry::instance().registerType<ECS::ProceduralWorldComponent>(
         "ProceduralWorld");
+    ComponentTypeRegistry::instance().registerType<ECS::VolumetricCloudsComponent>(
+        "VolumetricClouds");
+    ComponentTypeRegistry::instance().registerType<ECS::NaturalFluidComponent>(
+        "NaturalFluid");
 }
 
 } // namespace Caffeine::Editor

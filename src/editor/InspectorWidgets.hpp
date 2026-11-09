@@ -205,29 +205,33 @@ inline bool ComponentHeader(const char* label, bool& enabled, bool& outRemove,
     outRemove = false;
     ImGui::PushID(label);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 4.0f));
-    const bool open = ImGui::CollapsingHeader("##hdr", ImGuiTreeNodeFlags_DefaultOpen |
-                                                          ImGuiTreeNodeFlags_AllowOverlap);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 5.0f));
+    const bool open = ImGui::TreeNodeEx(
+        "##hdr", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap |
+                     ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen);
     ImGui::PopStyleVar();
 
-    ImGui::SameLine();
-    ImGui::Checkbox("##en", &enabled);
-    ImGui::SameLine();
-
+    ImGui::SameLine(0.0f, 4.0f);
     if (iconName && EditorIcons::hasIcon(iconName)) {
         EditorIcons::image(iconName, ImGui::GetFontSize());
+        ImGui::SameLine(0.0f, 6.0f);
+    }
+    ImGui::TextUnformatted(label);
+
+    // Keep the header quiet: enabled toggle + overflow menu, both right-aligned.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float controls = ImGui::GetFrameHeight() +
+                           ImGui::CalcTextSize("...").x + style.FramePadding.x * 2.0f +
+                           style.ItemSpacing.x * 2.0f;
+    ImGui::SameLine();
+    const float available = ImGui::GetContentRegionAvail().x;
+    if (available > controls) {
+        ImGui::Dummy(ImVec2(available - controls, 1.0f));
         ImGui::SameLine();
     }
-
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine();
-    const float rest = ImGui::GetContentRegionAvail().x;
-    const float buttons = 52.0f;
-    if (rest > buttons) ImGui::Dummy(ImVec2(rest - buttons, 1.0f));
-    ImGui::SameLine();
+    ImGui::Checkbox("##en", &enabled);
+    ImGui::SameLine(0.0f, 6.0f);
     if (ImGui::SmallButton("...")) ImGui::OpenPopup("##cmenu");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("X")) outRemove = true;
     if (ImGui::BeginPopup("##cmenu")) {
         if (ImGui::MenuItem("Remove Component")) {
             outRemove = true;

@@ -1,3 +1,4 @@
+#include "caffeine/ui/Widgets.hpp"
 #include "editor/ImageManagerPanel.hpp"
 
 #include <stb/stb_image.h>
@@ -130,7 +131,7 @@ void ImageManagerPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
 
     ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Image Manager", &m_open)) {
+    if (!UIKit::BeginPanel("Image Manager", &m_open)) {
         ImGui::End();
         return;
     }

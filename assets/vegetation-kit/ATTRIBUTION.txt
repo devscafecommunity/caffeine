@@ -1,0 +1,17 @@
+Caffeine Vegetation Kit — source attribution
+==============================================
+
+All models and textures are from Poly Haven and are released under CC0 1.0.
+Attribution is not required, but the original authors are listed below.
+
+Fir Sapling (fir_sapling) — Rob Tuytel (photography), Rico Cilliers (modeling) — https://polyhaven.com/a/fir_sapling — CC0-1.0
+Tree Stump 01 (tree_stump_01) — Rob Tuytel (All) — https://polyhaven.com/a/tree_stump_01 — CC0-1.0
+Shrub 03 (shrub_03) — Rico Cilliers (All) — https://polyhaven.com/a/shrub_03 — CC0-1.0
+Shrub Sorrel 01 (shrub_sorrel_01) — Rico Cilliers (All) — https://polyhaven.com/a/shrub_sorrel_01 — CC0-1.0
+Fern 02 (fern_02) — Rob Tuytel (scanning), Rico Cilliers (modeling) — https://polyhaven.com/a/fern_02 — CC0-1.0
+Grass Medium 02 (grass_medium_02) — Rico Cilliers (All) — https://polyhaven.com/a/grass_medium_02 — CC0-1.0
+Celandine 01 (celandine_01) — Rob Tuytel (Photography), Rico Cilliers (modeling) — https://polyhaven.com/a/celandine_01 — CC0-1.0
+Nettle Plant (nettle_plant) — Rob Tuytel (Photography), Rico Cilliers (modeling) — https://polyhaven.com/a/nettle_plant — CC0-1.0
+Moss 01 (moss_01) — Rob Tuytel (All) — https://polyhaven.com/a/moss_01 — CC0-1.0
+
+License: https://creativecommons.org/publicdomain/zero/1.0/

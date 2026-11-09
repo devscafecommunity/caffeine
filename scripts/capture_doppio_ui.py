@@ -11,7 +11,7 @@ On KDE Wayland this uses Spectacle. grim / ImageMagick are fallbacks.
   python3 scripts/capture_doppio_ui.py --id doppio-startup
   DOPPIO_BIN=build/doppio python3 scripts/capture_doppio_ui.py --dry-run
 
-Images: caffeine-website/packages/marketing/public/captures/{id}.png
+Images: caffeine-website/content/en/docs/images/captures/{id}.png
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "caffeine-website" / "captures" / "shots.json"
-OUT_DIR = ROOT / "caffeine-website" / "packages" / "marketing" / "public" / "captures"
+OUT_DIR = ROOT / "caffeine-website" / "content" / "en" / "docs" / "images" / "captures"
 DEFAULT_BIN = ROOT / "build" / "doppio"
 FOCUS_SCRIPT = Path(__file__).resolve().parent / "kwin_focus_doppio.js"
 

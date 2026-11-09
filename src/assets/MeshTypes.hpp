@@ -59,6 +59,9 @@ struct MeshSurfaceMaterial {
     f32 roughness = 0.5f;
     f32 metallic = 0.0f;
     bool doubleSided = false;
+    /// glTF alpha mode: 0 opaque, 1 cutout, 2 blend. Mirrors MaterialAlphaMode.
+    u8 alphaMode = 0;
+    f32 alphaCutoff = 0.5f;
     std::vector<u8> albedoPixels;
     u32 albedoWidth = 0;
     u32 albedoHeight = 0;
@@ -74,6 +77,9 @@ struct Mesh3D {
     std::vector<MeshSurfaceMaterial> materials;
     Rect3D bounds;
     u32 lodCount = 1;
+    /// CPU geometry revision. The GPU uploader re-uploads when it changes.
+    u32 geometryRevision = 1;
+    u32 uploadedRevision = 0;
     
     std::vector<u8> baseColorTexture;
     u32 textureWidth = 0;
