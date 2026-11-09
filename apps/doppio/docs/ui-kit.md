@@ -74,7 +74,7 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `Panel` | docked window with title, subtitle and icon |
 | `Toolbar` | horizontal strip with the toolbar height |
 | `Section` | collapsible section with indented children |
-| `ScrollArea` | vertical scrollable region |
+| `ScrollArea` | vertical scrollable region with optional bottom reserve and stick-to-bottom |
 | `Grid` | table-backed grid |
 | `TreeView` / `TreeItem` | scrollable tree with selection, drag payloads, drop targets and context menus |
 | `Dialog` | modal popup with a body element tree and close lifecycle |
@@ -87,7 +87,7 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `SliderFloat` / `SliderInt` | sliders with format/change callback |
 | `DragFloat` / `DragInt` | drag editors |
 | `Combo` | dropdown |
-| `TextInput` / `SearchField` | text and search fields |
+| `TextInput` / `SearchField` | text and search fields with change/submit callbacks |
 | `PathField` | read-only asset path with Browse/Clear and `ASSET_PATH` drop |
 | `MultilineText` | multiline text editor |
 | `DropZone` | button-sized asset drop target |

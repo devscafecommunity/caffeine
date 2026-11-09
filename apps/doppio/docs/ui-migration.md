@@ -51,9 +51,9 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | ✅ done | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload actions |
 | **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
-| **Console** | `ConsoleWindow.hpp` | 101 | ⏳ pending | `Panel`, `Toolbar`, `ListBox`, filters |
+| **Console** | `ConsoleWindow.hpp` | 110 | ✅ done | `Panel`, `Row` toolbar, `Combo` level filter, `ScrollArea` log, `TextInput` submit |
 | **Profiler** | `ProfilerWindow.hpp` | 264 | 🟡 partial | `Panel`, `Canvas` graph, `ListBox` |
-| **Stats overlay** | `StatsOverlay.hpp` | 51 | ⏳ pending | `Canvas` + `Label` |
+| **Stats overlay** | `StatsOverlay.hpp` | 69 | ✅ done | `Panel` overlay with `Label`/`KeyValue` rows and color-coded FPS |
 
 ## Tier 3 — custom canvases and graphs
 
@@ -135,6 +135,8 @@ Ordered by how many panels they unlock.
 | **File Picker** | `Dialog`, path bar, folder/file `ListBox`, search, Save/PickFolder actions |
 | **Project Startup** | `Panel`/`TabBar`/`TabPage`, `Card`/`PropertyGrid`, recent/browse `ListBox`, toast overlay |
 | **Material Editor** | menu `Panel`, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` preview |
+| **Console** | `Panel`, `Row` toolbar, `Combo` filter, `ScrollArea` log, submit-capable input |
+| **Stats overlay** | auto-resizing `Panel`, `Label`/`KeyValue` rows |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
@@ -146,6 +148,8 @@ New kit pieces added for these migrations:
 - `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
 - `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
 - `Color3FieldProperty` plus `ColorPicker` change callbacks
+- `ScrollArea::setReserveBottom` for footer input/action rows
+- `TextInput::setOnSubmit` for Enter-to-submit fields
 - `ListItem` / `ListBox`
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`

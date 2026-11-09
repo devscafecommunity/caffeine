@@ -347,6 +347,11 @@ public:
         m_onChange = std::move(callback);
         return *this;
     }
+    /// Called when the field is focused and Enter is pressed.
+    TextInput& setOnSubmit(std::function<void()> callback) {
+        m_onSubmit = std::move(callback);
+        return *this;
+    }
 
     void draw(UIContext& ctx) override;
 
@@ -357,6 +362,7 @@ private:
     std::string m_hint;
     bool m_focusNext = false;
     std::function<void(const std::string&)> m_onChange;
+    std::function<void()> m_onSubmit;
 };
 
 class SearchField : public TextInput {
@@ -770,6 +776,11 @@ inline void TextInput::draw(UIContext&) {
             setChanged(true);
             if (m_onChange) m_onChange(m_buffer);
         }
+    }
+
+    if (m_onSubmit && ImGui::IsItemFocused() &&
+        ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+        m_onSubmit();
     }
 
     setHovered(ImGui::IsItemHovered());

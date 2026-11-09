@@ -285,6 +285,12 @@ public:
         m_scrollToBottom = scroll;
         return *this;
     }
+    /// When no explicit height is set, leave this many logical pixels below the area
+    /// for a footer row (input bars, action buttons, ...).
+    ScrollArea& setReserveBottom(float pixels) {
+        m_reserveBottom = pixels;
+        return *this;
+    }
 
 protected:
     bool beginBody(UIContext& ctx) override;
@@ -292,6 +298,7 @@ protected:
 
 private:
     bool m_scrollToBottom = false;
+    float m_reserveBottom = 0.0f;
 };
 
 /// Scrollable list container. Add ListItem children.
@@ -489,7 +496,11 @@ inline void Toolbar::endBody(UIContext&) { ImGui::EndChild(); }
 inline bool ScrollArea::beginBody(UIContext& ctx) {
     const float scale = std::max(ctx.scale(), 0.001f);
     const float width = resolvedWidth() * scale;
-    const float height = size().height > 0.0f ? size().height * scale : 0.0f;
+    float height = size().height > 0.0f ? size().height * scale : 0.0f;
+    if (height <= 0.0f && m_reserveBottom > 0.0f) {
+        height = std::max(ImGui::GetContentRegionAvail().y - m_reserveBottom * scale,
+                          40.0f * scale);
+    }
     return ImGui::BeginChild("##scroll_body", ImVec2(width, height),
                              ImGuiChildFlags_Borders);
 }

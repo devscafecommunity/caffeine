@@ -1,5 +1,5 @@
 #pragma once
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "core/Types.hpp"
 #include "debug/LogSystem.hpp"
 #include "containers/FixedString.hpp"
@@ -49,50 +49,59 @@ public:
 #ifdef CF_HAS_IMGUI
     void render() {
         if (!m_open) return;
-        if (UIKit::BeginPanel("Console", &m_open)) {
-            const char* levels[] = { "Trace", "Info", "Warn", "Error", "Fatal" };
-            int lvl = static_cast<int>(m_filterLevel);
-            if (ImGui::Combo("Filter", &lvl, levels, 5)) {
-                m_filterLevel = static_cast<Debug::LogLevel>(lvl);
-            }
-            ImGui::SameLine();
-            UIKit::Toggle("Auto-scroll", &m_autoScroll, "Follow new log entries");
-            ImGui::SameLine();
-            if (UIKit::ToolbarButton("Clear", "Clear the console")) clear();
 
-            ImGui::Separator();
-            ImGui::BeginChild("scroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
-            for (const auto& e : m_entries) {
-                if (e.level < m_filterLevel) continue;
-                ImVec4 col = ImVec4(1, 1, 1, 1);
-                if (e.level == Debug::LogLevel::Warn)  col = ImVec4(1, 1, 0, 1);
-                if (e.level == Debug::LogLevel::Error) col = ImVec4(1, 0.4f, 0.4f, 1);
-                if (e.level == Debug::LogLevel::Fatal) col = ImVec4(1, 0, 0, 1);
-                ImGui::PushStyleColor(ImGuiCol_Text, col);
-                ImGui::Text("[%s] %s  %s",
-                    Debug::LogSystem::levelToString(e.level),
-                    e.category.cStr(),
-                    e.message.cStr());
-                ImGui::PopStyleColor();
-            }
-            if (m_autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
-            }
-            ImGui::EndChild();
+        using namespace Caffeine::UIKit;
+        using namespace Caffeine::UIKit::Elements;
 
-            ImGui::Separator();
-            if (ImGui::InputText("##input", m_inputBuf, sizeof(m_inputBuf),
-                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                m_inputBuf[0] = '\0';
+        Panel root("Console", "Runtime log", "alert-circle", &m_open);
+        UIContext ui;
+
+        auto& toolbar = root.emplace<Row>("console_toolbar");
+        m_filterIndex = static_cast<int>(m_filterLevel);
+        auto& filter = toolbar.emplace<Elements::Combo>(
+            "Filter", &m_filterIndex,
+            std::vector<std::string>{"Trace", "Info", "Warn", "Error", "Fatal"});
+        filter.setWidth(140.0f);
+        filter.setOnChange([this](int value) {
+            m_filterLevel = static_cast<Debug::LogLevel>(value);
+        });
+        toolbar.emplace<Checkbox>("Auto-scroll", &m_autoScroll)
+            .setTooltip("Follow new log entries");
+        toolbar.emplace<Button>("Clear").setOnClick([this] { clear(); });
+
+        auto& scroll = root.emplace<ScrollArea>("console_scroll");
+        scroll.setScrollToBottom(m_autoScroll);
+        scroll.setReserveBottom(44.0f);
+        for (const auto& e : m_entries) {
+            if (e.level < m_filterLevel) continue;
+            TextTone tone = TextTone::Normal;
+            if (e.level == Debug::LogLevel::Trace) tone = TextTone::Muted;
+            if (e.level == Debug::LogLevel::Warn) tone = TextTone::Warning;
+            if (e.level == Debug::LogLevel::Error ||
+                e.level == Debug::LogLevel::Fatal) {
+                tone = TextTone::Danger;
             }
+            scroll.emplace<Label>(
+                std::string("[") + Debug::LogSystem::levelToString(e.level) + "] " +
+                    e.category.cStr() + "  " + e.message.cStr(),
+                tone);
         }
-        ImGui::End();
+
+        auto& inputRow = root.emplace<Row>("console_input");
+        auto& input = inputRow.emplace<TextInput>(m_inputBuf, sizeof(m_inputBuf));
+        input.setHint("Type a command...");
+        input.setGrow(true);
+        input.setOnSubmit([this] { m_inputBuf[0] = '\0'; });
+        inputRow.emplace<Button>("Send").setOnClick([this] { m_inputBuf[0] = '\0'; });
+
+        ui.draw(root);
     }
 #endif
 
 private:
     std::vector<LogEntry> m_entries;
     char            m_inputBuf[256] = {};
+    int             m_filterIndex   = 0;
     bool            m_autoScroll    = true;
     bool            m_open          = true;
     Debug::LogLevel m_filterLevel   = Debug::LogLevel::Trace;
