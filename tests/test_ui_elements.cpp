@@ -5,7 +5,7 @@
 #include <string>
 
 using namespace Caffeine::UIKit;
-using namespace Caffeine::UIKit::UI;
+using namespace Caffeine::UIKit::Elements;
 
 TEST_CASE("UI element tree composes small elements into cards in panels",
           "[ui][elements]") {

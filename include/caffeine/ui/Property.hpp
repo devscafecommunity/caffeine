@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 class PropertyRow : public Element {
 public:
@@ -40,6 +40,11 @@ public:
     const std::string& label() const { return m_label; }
     Element* value() { return m_value.get(); }
     const Element* value() const { return m_value.get(); }
+
+    PropertyRow& setHint(std::string hint) {
+        m_tooltip = std::move(hint);
+        return *this;
+    }
 
     std::vector<Element*> children() const override {
         return m_value ? std::vector<Element*>{m_value.get()} : std::vector<Element*>{};
@@ -103,6 +108,15 @@ public:
 
     const char* type() const override { return "FloatProperty"; }
 
+    FloatProperty& setOnChange(std::function<void(float)> callback) {
+        if (auto* slider = dynamic_cast<SliderFloat*>(value())) {
+            slider->setOnChange(std::move(callback));
+        } else if (auto* drag = dynamic_cast<DragFloat*>(value())) {
+            drag->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+
 private:
     static std::unique_ptr<Element> makeControl(float& value, float min, float max,
                                                 float speed, const std::string& format,
@@ -122,6 +136,15 @@ public:
 
     const char* type() const override { return "IntProperty"; }
 
+    IntProperty& setOnChange(std::function<void(int)> callback) {
+        if (auto* slider = dynamic_cast<SliderInt*>(value())) {
+            slider->setOnChange(std::move(callback));
+        } else if (auto* drag = dynamic_cast<DragInt*>(value())) {
+            drag->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+
 private:
     static std::unique_ptr<Element> makeControl(int& value, int min, int max, float speed,
                                                 const std::string& format, bool slider) {
@@ -136,6 +159,13 @@ public:
         : PropertyRow(std::move(label), std::make_unique<Checkbox>("", &value)) {}
 
     const char* type() const override { return "BoolProperty"; }
+
+    BoolProperty& setOnChange(std::function<void(bool)> callback) {
+        if (auto* check = dynamic_cast<Checkbox*>(value())) {
+            check->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
 };
 
 class ChoiceProperty : public PropertyRow {
@@ -145,6 +175,13 @@ public:
                       std::make_unique<Combo>("", &value, std::move(items))) {}
 
     const char* type() const override { return "ChoiceProperty"; }
+
+    ChoiceProperty& setOnChange(std::function<void(int)> callback) {
+        if (auto* combo = dynamic_cast<Combo*>(value())) {
+            combo->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
 };
 
 class ColorFieldProperty : public PropertyRow {
@@ -165,6 +202,22 @@ public:
                       std::make_unique<TextInput>(value, capacity)) {}
 
     const char* type() const override { return "TextFieldProperty"; }
+
+    TextFieldProperty& setOnChange(std::function<void(const std::string&)> callback) {
+        if (auto* input = dynamic_cast<TextInput*>(value())) {
+            input->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+};
+
+class BufferProperty : public PropertyRow {
+public:
+    BufferProperty(std::string label, char* buffer, std::size_t size)
+        : PropertyRow(std::move(label),
+                      std::make_unique<TextInput>(buffer, size)) {}
+
+    const char* type() const override { return "BufferProperty"; }
 };
 
 // ── Inline implementation ──────────────────────────────────────────────────
@@ -213,4 +266,4 @@ inline void PropertyGrid::drawChildren(UIContext& ctx) {
     }
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

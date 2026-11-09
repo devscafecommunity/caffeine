@@ -78,3 +78,7 @@ source/
 docs/
 planning/
 .planning/
+
+# Exception: Doppio-specific docs are allowed by AGENTS.md
+!apps/doppio/docs/
+!apps/doppio/docs/**

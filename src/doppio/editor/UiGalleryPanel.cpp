@@ -9,7 +9,7 @@
 namespace Caffeine::Editor {
 
 using namespace Caffeine::UIKit;
-using namespace Caffeine::UIKit::UI;
+using namespace Caffeine::UIKit::Elements;
 
 UiGalleryPanel::UiGalleryPanel() = default;
 UiGalleryPanel::~UiGalleryPanel() = default;
@@ -42,12 +42,12 @@ void UiGalleryPanel::build() {
     buttonRow.emplace<Button>("Danger", ButtonVariant::Danger);
     controls.emplace<Checkbox>("Enable feature", &m_toggle);
     controls.emplace<SliderFloat>("Amount", &m_slider, 0.0f, 1.0f, "%.2f");
-    auto& modeCombo = controls.emplace<UI::Combo>(
+    auto& modeCombo = controls.emplace<Elements::Combo>(
         "Mode", &m_mode, std::vector<std::string>{"One", "Two", "Three"});
     (void)modeCombo;
     controls.emplace<SegmentedControl>("segment", &m_segment,
                                        std::vector<std::string>{"2D", "3D", "Iso"});
-    controls.emplace<UI::SearchField>(m_search, "Search elements...");
+    controls.emplace<Elements::SearchField>(m_search, "Search elements...");
     controls.emplace<ColorPicker>("Tint", m_color);
     m_statusLabel = &controls.emplace<Label>(m_status, TextTone::Muted);
 
@@ -60,14 +60,25 @@ void UiGalleryPanel::build() {
     display.emplace<Label>("Warning text", TextTone::Warning);
     display.emplace<Label>("Danger text", TextTone::Danger);
     auto& badgeRow = display.emplace<Row>("badges");
-    badgeRow.emplace<UI::Badge>("NEW", tokens().accent);
-    badgeRow.emplace<UI::Badge>("BETA", tokens().info);
+    badgeRow.emplace<Elements::Badge>("NEW", tokens().accent);
+    badgeRow.emplace<Elements::Badge>("BETA", tokens().info);
     display.emplace<ProgressBar>(&m_progress, "Progress");
-    display.emplace<UI::Paragraph>(
+    display.emplace<Elements::Paragraph>(
         "Paragraphs wrap and use the muted token. Elements compose vertically "
         "inside a card and horizontally inside a row.");
     display.emplace<KeyValue>("Selected entity", "Natural Water");
     display.emplace<KeyValue>("Elements", "36");
+
+    auto& lists = m_root->emplace<Card>("Lists");
+    lists.emplace<Label>("Lists and text", TextTone::Accent).setHeading(true);
+    auto& list = lists.emplace<ListBox>("gallery_list");
+    list.setHeight(120.0f);
+    for (int i = 0; i < 4; ++i) {
+        list.emplace<ListItem>("List item " + std::to_string(i + 1), i == 1);
+    }
+    lists.emplace<DropZone>("Drop an asset here");
+    auto& notes = lists.emplace<MultilineText>(m_notes, sizeof(m_notes));
+    notes.setHeight(70.0f);
 
     auto& properties = m_root->emplace<Card>("Properties");
     properties.emplace<Label>("Typed property grid", TextTone::Accent).setHeading(true);

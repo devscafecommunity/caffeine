@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/EntityPresetsPanel.hpp"
 #include "editor/EntityPresetRegistry.hpp"
 #include "editor/PluginSystem.hpp"
@@ -57,154 +57,139 @@ void EntityPresetsPanel::createSelectedPreset(ECS::World& world, EditorContext& 
     }
 }
 
-void EntityPresetsPanel::renderCategoryList() {
-    ImGui::TextUnformatted("Categories");
-    ImGui::Separator();
+void EntityPresetsPanel::renderCategoryList(
+    Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+    auto& list = parent.emplace<ListBox>("category_list");
+    list.setHeight(400.0f);
     for (const auto& category : EntityPresetRegistry::instance().categories()) {
         const bool selected = (m_selectedCategory == category.id);
-        if (ImGui::Selectable(category.displayName.c_str(), selected)) {
-            m_selectedCategory = category.id;
+        auto& item = list.emplace<ListItem>(category.displayName, selected);
+        item.setId("category:" + category.id);
+        item.setTooltip(category.description);
+        item.setOnClick([this, id = category.id] {
+            m_selectedCategory = id;
             m_selectedPresetId.clear();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", category.description.c_str());
-        }
+        });
     }
 }
 
-void EntityPresetsPanel::renderPresetList() {
+void EntityPresetsPanel::renderPresetList(
+    Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
     const auto presets = EntityPresetRegistry::instance().presetsInCategory(m_selectedCategory);
-    ImGui::TextUnformatted("Presets");
-    ImGui::Separator();
-
+    auto& list = parent.emplace<ListBox>("preset_list");
+    list.setHeight(400.0f);
     if (presets.empty()) {
-        ImGui::TextDisabled("No presets in this category.");
+        parent.emplace<Label>("No presets in this category.", TextTone::Muted);
         return;
     }
-
     for (const auto* preset : presets) {
         if (!PluginManager::instance().isContributionEnabled(preset->plugin)) continue;
         const bool selected = (m_selectedPresetId == preset->id);
-        if (ImGui::Selectable(preset->displayName.c_str(), selected)) {
-            selectPreset(preset->id);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s\nSource: %s", preset->description.c_str(), preset->source.c_str());
-        }
+        auto& item = list.emplace<ListItem>(preset->displayName, selected);
+        item.setId("preset:" + preset->id);
+        item.setTooltip(preset->description + "\nSource: " + preset->source);
+        item.setOnClick([this, id = preset->id] { selectPreset(id); });
     }
 }
 
-void EntityPresetsPanel::renderWizard() {
+void EntityPresetsPanel::renderWizard(Caffeine::UIKit::Elements::Container& parent,
+                                      ECS::World& world, EditorContext& ctx) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
     const auto* preset = EntityPresetRegistry::instance().findPreset(m_selectedPresetId);
     if (!preset) {
-        ImGui::TextDisabled("Select a preset to configure it.");
+        parent.emplace<Label>("Select a preset to configure it.", TextTone::Muted);
         return;
     }
 
-    ImGui::Text("%s", preset->displayName.c_str());
-    ImGui::TextWrapped("%s", preset->description.c_str());
-    ImGui::TextDisabled("Source: %s", preset->source.c_str());
-    ImGui::Separator();
+    parent.emplace<Label>(preset->displayName, TextTone::Accent).setHeading(true);
+    parent.emplace<Elements::Paragraph>(preset->description);
+    parent.emplace<Label>("Source: " + preset->source, TextTone::Disabled);
+    parent.emplace<Separator>();
 
-    char nameBuf[96];
-    std::strncpy(nameBuf, m_wizard.entityName.c_str(), sizeof(nameBuf) - 1);
-    nameBuf[sizeof(nameBuf) - 1] = '\0';
-    if (ImGui::InputText("Entity Name", nameBuf, sizeof(nameBuf))) {
-        m_wizard.entityName = nameBuf;
-    }
-
+    auto& grid = parent.emplace<PropertyGrid>("preset_wizard");
+    grid.typedRow<TextFieldProperty>("Entity Name", m_wizard.entityName, 96);
     for (auto& field : m_wizard.fields) {
         switch (field.type) {
-            case EntityPresetWizardField::Type::Bool:
-                ImGui::Checkbox(field.label.c_str(), &field.boolValue);
+            case EntityPresetWizardField::Type::Bool: {
+                auto& row = grid.typedRow<BoolProperty>(field.label, field.boolValue);
+                if (!field.hint.empty()) row.setHint(field.hint);
                 break;
-            case EntityPresetWizardField::Type::Float:
-                ImGui::SliderFloat(field.label.c_str(), &field.floatValue, field.floatMin, field.floatMax);
+            }
+            case EntityPresetWizardField::Type::Float: {
+                auto& row = grid.typedRow<FloatProperty>(
+                    field.label, field.floatValue, field.floatMin, field.floatMax, 0.01f,
+                    "%.2f", true);
+                if (!field.hint.empty()) row.setHint(field.hint);
                 break;
-            case EntityPresetWizardField::Type::Int:
-                ImGui::SliderInt(field.label.c_str(), &field.intValue, field.intMin, field.intMax);
+            }
+            case EntityPresetWizardField::Type::Int: {
+                auto& row = grid.typedRow<IntProperty>(
+                    field.label, field.intValue, field.intMin, field.intMax, 1.0f, "%d",
+                    true);
+                if (!field.hint.empty()) row.setHint(field.hint);
                 break;
-            case EntityPresetWizardField::Type::String:
-                char buf[128];
-                std::strncpy(buf, field.stringValue.c_str(), sizeof(buf) - 1);
-                buf[sizeof(buf) - 1] = '\0';
-                if (ImGui::InputText(field.label.c_str(), buf, sizeof(buf))) {
-                    field.stringValue = buf;
-                }
+            }
+            case EntityPresetWizardField::Type::String: {
+                auto& row = grid.typedRow<TextFieldProperty>(
+                    field.label, field.stringValue, 128);
+                if (!field.hint.empty()) row.setHint(field.hint);
                 break;
-            case EntityPresetWizardField::Type::Enum:
-                if (!field.enumOptions.empty()) {
-                    if (ImGui::BeginCombo(field.label.c_str(), field.enumOptions[field.enumIndex].c_str())) {
-                        for (int i = 0; i < static_cast<int>(field.enumOptions.size()); ++i) {
-                            const bool selected = (field.enumIndex == i);
-                            if (ImGui::Selectable(field.enumOptions[i].c_str(), selected)) {
-                                field.enumIndex = i;
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
-                }
+            }
+            case EntityPresetWizardField::Type::Enum: {
+                auto& row = grid.typedRow<ChoiceProperty>(
+                    field.label, field.enumIndex, field.enumOptions);
+                if (!field.hint.empty()) row.setHint(field.hint);
                 break;
-        }
-        if (!field.hint.empty() && ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", field.hint.c_str());
+            }
         }
     }
 
+    auto& create = parent.emplace<Button>("Create in Scene", ButtonVariant::Primary);
+    create.setGrow(true);
+    create.setOnClick([this, &world, &ctx] { createSelectedPreset(world, ctx); });
+
+    if (!m_statusMessage.empty()) {
+        parent.emplace<Label>(m_statusMessage,
+                              m_statusIsError ? TextTone::Danger : TextTone::Success);
+    }
+    parent.emplace<Elements::Paragraph>(
+        "Packages and plugins can add presets via entity_presets.json. Place manifests "
+        "under packages/, plugins/, or assets/presets/packages/.");
 }
 
 void EntityPresetsPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
     editorPanelApplyDetach(m_detached, ImVec2(1100, 680));
-    ImGui::SetNextWindowSize(ImVec2(920, 520), ImGuiCond_FirstUseEver);
-    if (!UIKit::BeginPanel("Entity Presets", &m_open)) {
-        ImGui::End();
-        return;
-    }
-    editorPanelDetachTabButton(m_detached);
+    Panel root("Entity Presets", "Create entities from presets", "presets", &m_open);
+    root.setInitialSize(ImVec2(920, 520));
+    root.setOnBegin([this] { editorPanelDetachTabButton(m_detached); });
+    UIContext ui;
 
-    if (ImGui::BeginTable("entity_presets_layout", 3,
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
-        ImGui::TableSetupColumn("Categories", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-        ImGui::TableSetupColumn("Presets", ImGuiTableColumnFlags_WidthFixed, 220.0f);
-        ImGui::TableSetupColumn("Wizard", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableNextRow();
+    auto& columns = root.emplace<Row>("preset_columns");
+    auto& categories = columns.emplace<Card>("categories_card");
+    categories.setWidth(170.0f);
+    categories.emplace<Label>("Categories", TextTone::Accent).setHeading(true);
+    renderCategoryList(categories);
 
-        ImGui::TableSetColumnIndex(0);
-        if (ImGui::BeginChild("preset_categories", ImVec2(0, 0), false)) {
-            renderCategoryList();
-        }
-        ImGui::EndChild();
+    auto& presets = columns.emplace<Card>("presets_card");
+    presets.setWidth(220.0f);
+    presets.emplace<Label>("Presets", TextTone::Accent).setHeading(true);
+    renderPresetList(presets);
 
-        ImGui::TableSetColumnIndex(1);
-        if (ImGui::BeginChild("preset_list", ImVec2(0, 0), false)) {
-            renderPresetList();
-        }
-        ImGui::EndChild();
+    auto& wizard = columns.emplace<Card>("wizard_card");
+    wizard.setGrow(true);
+    renderWizard(wizard, world, ctx);
 
-        ImGui::TableSetColumnIndex(2);
-        if (ImGui::BeginChild("preset_wizard", ImVec2(0, 0), false)) {
-            renderWizard();
-            ImGui::Separator();
-            if (ImGui::Button("Create in Scene", ImVec2(-1, 0))) {
-                createSelectedPreset(world, ctx);
-            }
-            if (!m_statusMessage.empty()) {
-                const ImVec4 color = m_statusIsError ? ImVec4(1, 0.45f, 0.45f, 1) : ImVec4(0.5f, 1, 0.5f, 1);
-                ImGui::TextColored(color, "%s", m_statusMessage.c_str());
-            }
-            ImGui::Separator();
-            ImGui::TextWrapped(
-                "Packages and plugins can add presets via entity_presets.json. "
-                "Place manifests under packages/, plugins/, or assets/presets/packages/.");
-        }
-        ImGui::EndChild();
-
-        ImGui::EndTable();
-    }
-
-    ImGui::End();
+    ui.draw(root);
 }
 
 }  // namespace Caffeine::Editor

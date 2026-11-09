@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 enum class ButtonVariant {
     Default,
@@ -311,6 +311,52 @@ public:
     const char* type() const override { return "SearchField"; }
 };
 
+/// Button-sized area that accepts a drag payload (default: ASSET_PATH).
+class DropZone : public Element {
+public:
+    explicit DropZone(std::string label, std::string payload = "ASSET_PATH")
+        : m_label(std::move(label)), m_payload(std::move(payload)) {}
+
+    const char* type() const override { return "DropZone"; }
+
+    DropZone& setOnDrop(std::function<void(const char*)> callback) {
+        m_onDrop = std::move(callback);
+        return *this;
+    }
+    DropZone& setPayload(std::string payload) {
+        m_payload = std::move(payload);
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    std::string m_label;
+    std::string m_payload;
+    std::function<void(const char*)> m_onDrop;
+};
+
+class MultilineText : public Element {
+public:
+    MultilineText(char* buffer, std::size_t size,
+                  ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput)
+        : m_buffer(buffer), m_capacity(size), m_flags(flags) {}
+
+    const char* type() const override { return "MultilineText"; }
+
+    MultilineText& setFlags(ImGuiInputTextFlags flags) {
+        m_flags = flags;
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    char* m_buffer = nullptr;
+    std::size_t m_capacity = 0;
+    ImGuiInputTextFlags m_flags = ImGuiInputTextFlags_AllowTabInput;
+};
+
 class ColorPicker : public Element {
 public:
     explicit ColorPicker(std::string label, float* color,
@@ -326,6 +372,49 @@ private:
     std::string m_label;
     float* m_color = nullptr;
     ImGuiColorEditFlags m_flags = ImGuiColorEditFlags_NoInputs;
+};
+
+/// Selectable row for lists and simple trees.
+class ListItem : public Element {
+public:
+    explicit ListItem(std::string label, bool selected = false)
+        : m_label(std::move(label)), m_selected(selected) {
+        if (!m_label.empty()) setId("ListItem:" + m_label);
+    }
+
+    const char* type() const override { return "ListItem"; }
+
+    ListItem& setLabel(std::string label) {
+        m_label = std::move(label);
+        return *this;
+    }
+    ListItem& setSelected(bool selected) {
+        m_selected = selected;
+        return *this;
+    }
+    ListItem& setOnClick(std::function<void()> callback) {
+        m_onClick = std::move(callback);
+        return *this;
+    }
+    ListItem& setOnDoubleClick(std::function<void()> callback) {
+        m_onDoubleClick = std::move(callback);
+        return *this;
+    }
+    /// Called inside an active ImGui drag-drop source. Use
+    /// ImGui::SetDragDropPayload() from the callback.
+    ListItem& setOnDrag(std::function<void()> callback) {
+        m_onDrag = std::move(callback);
+        return *this;
+    }
+
+    void draw(UIContext& ctx) override;
+
+private:
+    std::string m_label;
+    bool m_selected = false;
+    std::function<void()> m_onClick;
+    std::function<void()> m_onDoubleClick;
+    std::function<void()> m_onDrag;
 };
 
 class SegmentedControl : public Element {
@@ -526,6 +615,37 @@ inline void TextInput::draw(UIContext&) {
     setFocused(ImGui::IsItemFocused());
 }
 
+inline void DropZone::draw(UIContext&) {
+    const ImVec2 size = controlSize(*this);
+    const bool pressed = ImGui::Button(
+        m_label.c_str(), ImVec2(size.x > 0.0f ? size.x : -1.0f,
+                               size.y > 0.0f ? size.y : 0.0f));
+    setPressed(pressed);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(m_payload.c_str())) {
+            const char* value = static_cast<const char*>(payload->Data);
+            if (value && m_onDrop) m_onDrop(value);
+        }
+        ImGui::EndDragDropTarget();
+    }
+}
+
+inline void MultilineText::draw(UIContext&) {
+    if (!m_buffer || m_capacity == 0) return;
+    ImVec2 size = controlSize(*this);
+    if (size.x <= 0.0f) size.x = -1.0f;
+    if (size.y <= 0.0f) {
+        size.y = std::max(ImGui::GetContentRegionAvail().y, 80.0f);
+    }
+    const bool changed = ImGui::InputTextMultiline("##value", m_buffer, m_capacity, size,
+                                                   m_flags);
+    setChanged(changed);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+}
+
 inline void ColorPicker::draw(UIContext&) {
     if (!m_color) return;
     const ImVec2 size = controlSize(*this);
@@ -535,6 +655,29 @@ inline void ColorPicker::draw(UIContext&) {
     setChanged(changed);
     setHovered(ImGui::IsItemHovered());
     setFocused(ImGui::IsItemFocused());
+}
+
+inline void ListItem::draw(UIContext&) {
+    const bool pressed = ImGui::Selectable(
+        m_label.c_str(), m_selected,
+        ImGuiSelectableFlags_AllowDoubleClick);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    setPressed(ImGui::IsItemClicked());
+    if (pressed) {
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && m_onDoubleClick) {
+            m_onDoubleClick();
+        } else if (m_onClick) {
+            m_onClick();
+        }
+    }
+    if (m_onDrag && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        m_onDrag();
+        ImGui::EndDragDropSource();
+    }
+    if (!tooltip().empty() && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", tooltip().c_str());
+    }
 }
 
 inline void SegmentedControl::draw(UIContext& ctx) {
@@ -564,4 +707,4 @@ inline void SegmentedControl::draw(UIContext& ctx) {
     setFocused(ImGui::IsItemFocused());
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

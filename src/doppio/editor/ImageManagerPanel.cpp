@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/ImageManagerPanel.hpp"
 
 #include <stb/stb_image.h>
@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 namespace Caffeine::Editor {
 
@@ -124,124 +125,137 @@ bool ImageManagerPanel::savePng(const std::filesystem::path& path) const {
 
 void ImageManagerPanel::onImGuiRender(EditorContext& ctx) {
 #ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
     if (!ctx.imageToOpen.empty()) {
         openPath(ctx.imageToOpen);
         ctx.imageToOpen.clear();
     }
     if (!m_open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(860.0f, 520.0f), ImGuiCond_FirstUseEver);
-    if (!UIKit::BeginPanel("Image Manager", &m_open)) {
-        ImGui::End();
-        return;
-    }
+    Panel root("Image Manager", "Preview, flip and export textures", "assets", &m_open);
+    root.setInitialSize(ImVec2(860.0f, 520.0f));
+    UIContext ui;
 
-    const std::filesystem::path root =
+    const std::filesystem::path libraryRoot =
         !ctx.assetRootPath.empty() ? ctx.assetRootPath : ctx.projectRootPath;
-    if (ImGui::Button("Refresh library") && !root.empty()) {
-        m_library.clear();
-        std::error_code ec;
-        if (std::filesystem::exists(root, ec)) {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(root, ec)) {
-                if (ec || m_library.size() >= 400) break;
-                if (!entry.is_regular_file()) continue;
-                if (isImageExtension(entry.path())) m_library.push_back(entry.path());
+
+    auto& columns = root.emplace<Row>("image_columns");
+    auto& library = columns.emplace<Card>("image_library");
+    library.setWidth(220.0f);
+    library.emplace<Label>("Library", TextTone::Accent).setHeading(true);
+
+    auto& refreshRow = library.emplace<Row>("library_refresh");
+    refreshRow.emplace<Button>("Refresh library")
+        .setOnClick([&] {
+            m_library.clear();
+            if (libraryRoot.empty()) return;
+            std::error_code ec;
+            if (std::filesystem::exists(libraryRoot, ec)) {
+                for (const auto& entry :
+                     std::filesystem::recursive_directory_iterator(libraryRoot, ec)) {
+                    if (ec || m_library.size() >= 400) break;
+                    if (!entry.is_regular_file()) continue;
+                    if (isImageExtension(entry.path())) m_library.push_back(entry.path());
+                }
             }
-        }
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%zu images", m_library.size());
+        });
+    refreshRow.emplace<Label>(std::to_string(m_library.size()) + " images", TextTone::Muted);
 
-    const float listW = 220.0f;
-    ImGui::BeginChild("image_library", ImVec2(listW, 0), true);
-    for (size_t i = 0; i < m_library.size(); ++i) {
-        ImGui::PushID(static_cast<int>(i));
+    auto& list = library.emplace<ListBox>("image_list");
+    list.setHeight(400.0f);
+    for (std::size_t i = 0; i < m_library.size(); ++i) {
         const bool selected = m_library[i] == m_path;
-        if (ImGui::Selectable(m_library[i].filename().string().c_str(), selected)) {
-            openPath(m_library[i]);
-        }
-        ImGui::PopID();
+        auto& item = list.emplace<ListItem>(m_library[i].filename().string(), selected);
+        item.setId("image_" + std::to_string(i));
+        item.setOnClick([this, path = m_library[i]] { openPath(path); });
     }
-    ImGui::EndChild();
-    ImGui::SameLine();
 
-    ImGui::BeginChild("image_canvas_tools", ImVec2(0, 0), false);
+    auto& content = columns.emplace<Card>("image_content");
+    content.setGrow(true);
     if (m_width > 0) {
-        ImGui::Text("%s", m_path.filename().string().c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("%d x %d", m_width, m_height);
-        if (ImGui::Checkbox("R", &m_showR)) {
+        content.emplace<Label>(m_path.filename().string(), TextTone::Accent)
+            .setHeading(true);
+        auto& info = content.emplace<Row>("image_info");
+        info.emplace<Label>(std::to_string(m_width) + " x " + std::to_string(m_height),
+                            TextTone::Muted);
+        info.emplace<Checkbox>("R", &m_showR).setOnChange([this](bool) {
 #ifdef CF_HAS_SDL3
             m_gpuDirty = true;
 #endif
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("G", &m_showG)) {
+        });
+        info.emplace<Checkbox>("G", &m_showG).setOnChange([this](bool) {
 #ifdef CF_HAS_SDL3
             m_gpuDirty = true;
 #endif
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("B", &m_showB)) {
+        });
+        info.emplace<Checkbox>("B", &m_showB).setOnChange([this](bool) {
 #ifdef CF_HAS_SDL3
             m_gpuDirty = true;
 #endif
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("A", &m_showA)) {
+        });
+        info.emplace<Checkbox>("A", &m_showA).setOnChange([this](bool) {
 #ifdef CF_HAS_SDL3
             m_gpuDirty = true;
 #endif
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Flip H")) flipHorizontal();
-        ImGui::SameLine();
-        if (ImGui::Button("Flip V")) flipVertical();
-        ImGui::SameLine();
-        if (ImGui::Button("Save PNG")) {
+        });
+        info.emplace<Button>("Flip H").setOnClick([this] { flipHorizontal(); });
+        info.emplace<Button>("Flip V").setOnClick([this] { flipVertical(); });
+        info.emplace<Button>("Save PNG").setOnClick([&] {
             std::filesystem::path target = m_path;
             target.replace_extension(".png");
-            m_status = savePng(target) ? "Saved " + target.filename().string() : "Save failed.";
+            m_status = savePng(target) ? "Saved " + target.filename().string()
+                                       : "Save failed.";
             ctx.assetBrowserDirty = true;
-        }
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::SliderFloat("Zoom", &m_zoom, 0.1f, 8.0f, "%.2f");
+        });
+
+        auto& zoomRow = content.emplace<Row>("image_zoom");
+        zoomRow.emplace<Label>("Zoom", TextTone::Muted);
+        auto& zoom = zoomRow.emplace<SliderFloat>("", &m_zoom, 0.1f, 8.0f, "%.2f");
+        zoom.setGrow(true);
+
+        if (!m_status.empty()) content.emplace<Label>(m_status, TextTone::Muted);
+
+#ifdef CF_HAS_SDL3
+        rebuildGpu();
+#endif
+
+        auto& canvas = content.emplace<Canvas>("image_canvas");
+        canvas.setHeight(400.0f);
+        canvas.setOnDraw([this](UIContext&, ImDrawList* draw, const ImVec2& origin,
+                                const ImVec2& size) {
+            if (ImGui::IsItemHovered()) {
+                const float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    m_zoom = std::clamp(m_zoom + wheel * 0.1f, 0.1f, 8.0f);
+                }
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                    ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                    m_panX += ImGui::GetIO().MouseDelta.x;
+                    m_panY += ImGui::GetIO().MouseDelta.y;
+                }
+            }
+            draw->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
+#ifdef CF_HAS_SDL3
+            if (m_texture && m_texture->Status == ImTextureStatus_OK && m_width > 0) {
+                const ImTextureRef tex = m_texture->GetTexRef();
+                const float drawW = static_cast<float>(m_width) * m_zoom;
+                const float drawH = static_cast<float>(m_height) * m_zoom;
+                const ImVec2 p0(origin.x + (size.x - drawW) * 0.5f + m_panX,
+                                origin.y + (size.y - drawH) * 0.5f + m_panY);
+                draw->AddImage(tex, p0, ImVec2(p0.x + drawW, p0.y + drawH));
+            }
+#endif
+            draw->PopClipRect();
+        });
     } else {
-        ImGui::TextDisabled("Open an image from the library or double-click one in the asset browser.");
+        content.emplace<Label>(
+            "Open an image from the library or double-click one in the asset browser.",
+            TextTone::Muted);
     }
-    if (!m_status.empty()) ImGui::TextWrapped("%s", m_status.c_str());
 
-#ifdef CF_HAS_SDL3
-    rebuildGpu();
-#endif
-
-    const ImVec2 canvas = ImGui::GetContentRegionAvail();
-    ImGui::InvisibleButton("image_canvas", canvas);
-    if (ImGui::IsItemHovered()) {
-        const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) m_zoom = std::clamp(m_zoom + wheel * 0.1f, 0.1f, 8.0f);
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
-            m_panX += ImGui::GetIO().MouseDelta.x;
-            m_panY += ImGui::GetIO().MouseDelta.y;
-        }
-    }
-    const ImVec2 origin = ImGui::GetItemRectMin();
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(origin, ImVec2(origin.x + canvas.x, origin.y + canvas.y), IM_COL32(22, 24, 30, 255));
-    draw->PushClipRect(origin, ImVec2(origin.x + canvas.x, origin.y + canvas.y), true);
-#ifdef CF_HAS_SDL3
-    if (m_texture && m_texture->Status == ImTextureStatus_OK && m_width > 0) {
-        const ImTextureRef tex = m_texture->GetTexRef();
-        const float drawW = static_cast<float>(m_width) * m_zoom;
-        const float drawH = static_cast<float>(m_height) * m_zoom;
-        const ImVec2 p0(origin.x + (canvas.x - drawW) * 0.5f + m_panX,
-                        origin.y + (canvas.y - drawH) * 0.5f + m_panY);
-        draw->AddImage(tex, p0, ImVec2(p0.x + drawW, p0.y + drawH));
-    }
-#endif
-    draw->PopClipRect();
-    ImGui::EndChild();
-    ImGui::End();
+    ui.draw(root);
 #else
     (void)ctx;
 #endif

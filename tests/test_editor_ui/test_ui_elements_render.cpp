@@ -11,7 +11,7 @@
 extern bool g_gpuAvailable;
 
 using namespace Caffeine::UIKit;
-using namespace Caffeine::UIKit::UI;
+using namespace Caffeine::UIKit::Elements;
 
 TEST_CASE("UI element panel renders a full card tree", "[editor][ui][elements]") {
     if (!g_gpuAvailable) {

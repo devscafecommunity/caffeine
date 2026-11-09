@@ -8,6 +8,10 @@ namespace Caffeine::ECS {
 class World;
 }
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 class EditorContext;
@@ -23,11 +27,17 @@ public:
     bool isOpen() const { return m_open; }
 
 private:
-    void drawEditTools(ECS::World& world, EditorContext& ctx);
-    void drawDataFile(ECS::World& world, EditorContext& ctx);
+    void drawEditTools(ECS::World& world, EditorContext& ctx,
+                       Caffeine::UIKit::Elements::Container& parent);
+    void drawDataFile(ECS::World& world, EditorContext& ctx,
+                      Caffeine::UIKit::Elements::Container& parent);
 
     bool m_open = true;
     std::string m_status;
+    bool m_sculptMode = false;
+    bool m_splatMode = false;
+    int m_brushIndex = 0;
+    int m_layerIndex = 0;
 };
 
 }  // namespace Caffeine::Editor

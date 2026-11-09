@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 /// Generic container. `Box` is a friendly alias for the common case.
 class Container : public Element {
@@ -208,6 +208,15 @@ public:
         m_windowFlags = flags;
         return *this;
     }
+    Panel& setInitialSize(ImVec2 size) {
+        m_initialSize = size;
+        return *this;
+    }
+    /// Called after ImGui::Begin succeeds and before the panel header/content.
+    Panel& setOnBegin(std::function<void()> callback) {
+        m_onBegin = std::move(callback);
+        return *this;
+    }
 
 protected:
     bool beginBody(UIContext& ctx) override;
@@ -219,6 +228,8 @@ private:
     std::string m_icon;
     bool* m_open = nullptr;
     ImGuiWindowFlags m_windowFlags = ImGuiWindowFlags_None;
+    ImVec2 m_initialSize{0.0f, 0.0f};
+    std::function<void()> m_onBegin;
 };
 
 /// Collapsible section with indented children.
@@ -260,6 +271,13 @@ public:
 protected:
     bool beginBody(UIContext& ctx) override;
     void endBody(UIContext& ctx) override;
+};
+
+/// Scrollable list container. Add ListItem children.
+class ListBox : public ScrollArea {
+public:
+    explicit ListBox(std::string id = {}) : ScrollArea(std::move(id)) {}
+    const char* type() const override { return "ListBox"; }
 };
 
 /// Table-backed grid. Children fill the cells left to right.
@@ -405,8 +423,14 @@ inline bool Panel::beginBody(UIContext& ctx) {
     const float scale = std::max(ctx.scale(), 0.001f);
     ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * scale, 120.0f * scale),
                                         ImVec2(FLT_MAX, FLT_MAX));
+    if (m_initialSize.x > 0.0f && m_initialSize.y > 0.0f) {
+        ImGui::SetNextWindowSize(
+            ImVec2(m_initialSize.x * scale, m_initialSize.y * scale),
+            ImGuiCond_FirstUseEver);
+    }
     const bool open = ImGui::Begin(m_title.c_str(), m_open, m_windowFlags);
     if (open) {
+        if (m_onBegin) m_onBegin();
         UIKit::PanelHeader(m_title.c_str(),
                            m_subtitle.empty() ? nullptr : m_subtitle.c_str(),
                            m_icon.empty() ? nullptr : m_icon.c_str());
@@ -484,4 +508,4 @@ inline void TabBar::drawChildren(UIContext& ctx) {
     }
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

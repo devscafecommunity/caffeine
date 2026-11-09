@@ -9,6 +9,10 @@
 #include <functional>
 #include <string>
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 class EntityPresetsPanel {
@@ -23,9 +27,10 @@ public:
     void close() { m_open = false; }
 
 private:
-    void renderCategoryList();
-    void renderPresetList();
-    void renderWizard();
+    void renderCategoryList(Caffeine::UIKit::Elements::Container& parent);
+    void renderPresetList(Caffeine::UIKit::Elements::Container& parent);
+    void renderWizard(Caffeine::UIKit::Elements::Container& parent, ECS::World& world,
+                      EditorContext& ctx);
     void selectPreset(const std::string& presetId);
     void createSelectedPreset(ECS::World& world, EditorContext& ctx);
 

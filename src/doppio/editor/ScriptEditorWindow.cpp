@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/ScriptEditorWindow.hpp"
 #ifdef CF_HAS_SCRIPTING
 #include "script/ScriptEngine.hpp"
@@ -107,60 +107,53 @@ namespace Caffeine::Editor {
 
 void ScriptEditorWindow::render() {
     if (!m_open) return;
-    
-    if (UIKit::BeginPanel("Script Editor", &m_open)) {
-        // Handle drag-drop of .lua files from Asset Browser
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                const char* path = (const char*)payload->Data;
-                if (path) {
-                    openFile(path);
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
 
-        if (m_activeFileIndex >= 0 && m_activeFileIndex < static_cast<int>(m_openFiles.size())) {
-            auto& file = m_openFiles[m_activeFileIndex];
-            
-        if (ImGui::Button("Save") || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
-                saveFile(m_activeFileIndex);
-            }
-            ImGui::SameLine();
-            
-            if (file.isDirty) {
-                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "*");
-                ImGui::SameLine();
-            }
-            
-            std::string filename = file.path.substr(file.path.find_last_of("/\\") + 1);
-            ImGui::Text("%s", filename.c_str());
-            
-            ImGui::Separator();
-            
-            size_t bufSize = std::max(file.content.size() + 1, size_t(1));
-            if (file.editBuffer.size() < bufSize) {
-                file.editBuffer.resize(bufSize);
-            }
-            std::memcpy(file.editBuffer.data(), file.content.c_str(), bufSize);
-            
-            ImGui::InputTextMultiline(
-                "##script_content",
-                file.editBuffer.data(),
-                file.editBuffer.size(),
-                ImVec2(-1, -ImGui::GetFrameHeightWithSpacing() - 40),
-                ImGuiInputTextFlags_AllowTabInput
-            );
-            
-            if (std::strcmp(file.editBuffer.data(), file.content.c_str()) != 0) {
-                file.content = file.editBuffer.data();
-                file.isDirty = true;
-            }
-        } else {
-            ImGui::Text("No file open. Drag .lua files from Asset Browser or click below.");
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    Panel root("Script Editor", "Lua source", "code", &m_open);
+    UIContext ui;
+
+    auto& drop = root.emplace<DropZone>("Drop a .lua file here", "ASSET_PATH");
+    drop.setOnDrop([this](const char* path) {
+        if (path) openFile(path);
+    });
+
+    if (m_activeFileIndex >= 0 &&
+        m_activeFileIndex < static_cast<int>(m_openFiles.size())) {
+        auto& file = m_openFiles[m_activeFileIndex];
+
+        auto& toolbar = root.emplace<Row>("script_toolbar");
+        toolbar.emplace<Button>("Save", ButtonVariant::Primary)
+            .setOnClick([this] { saveFile(m_activeFileIndex); });
+        if (file.isDirty) toolbar.emplace<Label>("*", TextTone::Warning);
+        const std::string filename =
+            file.path.substr(file.path.find_last_of("/\\") + 1);
+        toolbar.emplace<Label>(filename, TextTone::Muted);
+
+        root.emplace<Separator>();
+
+        const std::size_t bufferSize =
+            std::max(file.content.size() + 1, static_cast<std::size_t>(1));
+        if (file.editBuffer.size() < bufferSize) {
+            file.editBuffer.resize(bufferSize);
         }
+        std::memcpy(file.editBuffer.data(), file.content.c_str(), bufferSize);
+
+        root.emplace<MultilineText>(file.editBuffer.data(), file.editBuffer.size());
+
+        ui.draw(root);
+
+        if (std::strcmp(file.editBuffer.data(), file.content.c_str()) != 0) {
+            file.content = file.editBuffer.data();
+            file.isDirty = true;
+        }
+    } else {
+        root.emplace<Label>(
+            "No file open. Drag a .lua file from the Asset Browser or drop it above.",
+            TextTone::Muted);
+        ui.draw(root);
     }
-    ImGui::End();
 }
 
 } // namespace Caffeine::Editor

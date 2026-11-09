@@ -40,7 +40,8 @@ cmake --build build --target doppio -j
 
 See [`docs/ui-kit.md`](docs/ui-kit.md) for the composable element model
 (Objects → Cards → Panels), the element catalogue, plugin usage, debugging and
-the migration map from the older free-function widgets.
+the migration map from the older free-function widgets. The live status of every
+panel is in [`docs/ui-migration.md`](docs/ui-migration.md).
 
 General user documentation lives in the `caffeine-website` submodule; these
 pages are Doppio-specific.

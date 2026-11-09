@@ -8,10 +8,10 @@
  * custom drawing and migration.
  *
  *   using namespace Caffeine::UIKit;
- *   UI::Panel panel("My Tool", "Short description");
- *   auto& card = panel.emplace<UI::Card>();
- *   card.emplace<UI::Label>("Hello");
- *   card.emplace<UI::Button>("Save", UI::ButtonVariant::Primary)
+ *   Elements::Panel panel("My Tool", "Short description");
+ *   auto& card = panel.emplace<Elements::Card>();
+ *   card.emplace<Elements::Label>("Hello");
+ *   card.emplace<Elements::Button>("Save", Elements::ButtonVariant::Primary)
  *       .setOnClick([]{ doSomething(); });
  *   UIContext ctx;
  *   ctx.draw(panel);

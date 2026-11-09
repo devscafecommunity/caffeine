@@ -9,13 +9,13 @@
  * element draws with ImGui every frame) but the tree is retained, which gives
  * stable ids, easy debugging and a simple plugin API.
  *
- * Namespace: Caffeine::UIKit::UI
- *   UI::Panel
- *     └─ UI::Card
- *          ├─ UI::Row
- *          │    ├─ UI::Button
- *          │    └─ UI::Label
- *          └─ UI::PropertyGrid
+ * Namespace: Caffeine::UIKit::Elements
+ *   Elements::Panel
+ *     └─ Elements::Card
+ *          ├─ Elements::Row
+ *          │    ├─ Elements::Button
+ *          │    └─ Elements::Label
+ *          └─ Elements::PropertyGrid
  *
  * The legacy free functions in Widgets.hpp remain available. New code should
  * compose elements; Widgets.hpp is the low-level vocabulary the elements use.
@@ -37,7 +37,7 @@ namespace Caffeine::UIKit {
 class NodeCanvas;
 }
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 class Element;
 class UIContext;
@@ -455,4 +455,4 @@ inline void UIContext::drawDebugOverlay(ImDrawList* drawList, bool previous) con
     }
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

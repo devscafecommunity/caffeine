@@ -16,7 +16,7 @@
 
 #include <string>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 class DebugPanel : public Column {
 public:
@@ -56,4 +56,4 @@ private:
     UIContext* m_context = nullptr;
 };
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

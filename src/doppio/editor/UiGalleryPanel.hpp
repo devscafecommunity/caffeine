@@ -40,11 +40,12 @@ private:
     std::string m_search = "node";
     std::string m_name = "Natural Fluids";
     std::string m_status = "Ready";
+    char m_notes[256] = "Notes support multiline editing.";
 
-    Caffeine::UIKit::UI::UIContext m_context;
-    std::unique_ptr<Caffeine::UIKit::UI::Panel> m_root;
-    Caffeine::UIKit::UI::Label* m_statusLabel = nullptr;
-    Caffeine::UIKit::UI::Label* m_tickLabel = nullptr;
+    Caffeine::UIKit::Elements::UIContext m_context;
+    std::unique_ptr<Caffeine::UIKit::Elements::Panel> m_root;
+    Caffeine::UIKit::Elements::Label* m_statusLabel = nullptr;
+    Caffeine::UIKit::Elements::Label* m_tickLabel = nullptr;
 };
 
 }  // namespace Caffeine::Editor

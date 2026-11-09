@@ -34,9 +34,6 @@ public:
 
 private:
 #ifdef CF_HAS_IMGUI
-    void renderPlaybackControls();
-    void renderWaveform();
-    void renderSettings();
     void computeWaveformPeaks(const Assets::AudioClip* clip);
 #endif
 

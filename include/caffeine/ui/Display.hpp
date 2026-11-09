@@ -16,7 +16,7 @@
 #include <string>
 #include <utility>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 enum class TextTone {
     Normal,
@@ -192,6 +192,9 @@ inline void Label::draw(UIContext& ctx) {
     } else {
         ImGui::TextUnformatted(m_text.c_str());
     }
+    if (!tooltip().empty() && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", tooltip().c_str());
+    }
     ImGui::PopStyleColor();
     if (m_heading) ImGui::Separator();
 }
@@ -243,4 +246,4 @@ inline void KeyValue::draw(UIContext& ctx) {
     ImGui::TextColored(ctx.theme().text, "%s", m_value.c_str());
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements

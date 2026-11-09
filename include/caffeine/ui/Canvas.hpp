@@ -21,7 +21,7 @@
 #include <string>
 #include <utility>
 
-namespace Caffeine::UIKit::UI {
+namespace Caffeine::UIKit::Elements {
 
 class Canvas : public Element {
 public:
@@ -42,12 +42,19 @@ public:
         m_background = background;
         return *this;
     }
+    /// When true (default) the canvas submits an invisible item so callbacks can
+    /// use ImGui::IsItemHovered()/IsMouseDragging() for zoom and pan.
+    Canvas& setInteractive(bool interactive) {
+        m_interactive = interactive;
+        return *this;
+    }
 
     void draw(UIContext& ctx) override;
 
 private:
     DrawFn m_onDraw;
     ImVec4 m_background{0.04f, 0.05f, 0.07f, 1.0f};
+    bool m_interactive = true;
 };
 
 class NodeCanvasView : public Container {
@@ -138,11 +145,15 @@ inline void Canvas::draw(UIContext& ctx) {
     if (open) {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (m_interactive) {
+            ImGui::InvisibleButton("##canvas_input", avail);
+        } else {
+            ImGui::Dummy(avail);
+        }
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         drawList->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + avail.y),
                                 ImGui::ColorConvertFloat4ToU32(m_background));
         if (m_onDraw) m_onDraw(ctx, drawList, origin, avail);
-        ImGui::Dummy(avail);
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
@@ -196,4 +207,4 @@ inline void OutputPin::draw(UIContext&) {
     ImNodes::EndOutputAttribute();
 }
 
-}  // namespace Caffeine::UIKit::UI
+}  // namespace Caffeine::UIKit::Elements
