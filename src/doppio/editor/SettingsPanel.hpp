@@ -6,6 +6,10 @@
 #include <string>
 #include <functional>
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 // ============================================================================
@@ -50,16 +54,19 @@ private:
     bool m_autoSaveEnabled = true;
     int  m_autoSaveInterval = 300;
     int  m_settingsSection = 0;
+    LayoutProfile m_panelProfile;
+    char m_shortcutSearch[96] = {};
 
     void loadPreferences();
     void syncUIFromPreferences();
     void syncPreferencesFromUI();
-    void renderLayoutProfiles();
-    void renderGeneralSettings();
-    void renderEditorSettings();
-    void renderViewportSettings();
-    void renderPanelSettings();
-    void renderShortcutSettings();
+    void renderLayoutProfiles(Caffeine::UIKit::Elements::Container& parent);
+    void renderGeneralSettings(Caffeine::UIKit::Elements::Container& parent);
+    void renderEditorSettings(Caffeine::UIKit::Elements::Container& parent);
+    void renderViewportSettings(Caffeine::UIKit::Elements::Container& parent);
+    void renderPanelSettings(Caffeine::UIKit::Elements::Container& parent);
+    void renderShortcutSettings(Caffeine::UIKit::Elements::Container& parent);
+    void commitPanelProfile();
 };
 
 } // namespace Caffeine::Editor
