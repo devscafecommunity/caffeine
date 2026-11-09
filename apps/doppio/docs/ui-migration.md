@@ -49,7 +49,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Hierarchy** | `HierarchyPanel.cpp` | 838 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, selection, entity drag/drop, context menus, rename and prefab dialogs |
 | **Asset Browser** | `AssetBrowser.cpp` | 1869 | 🧱 blocked | folder tree available via `TreeView`; still needs `AssetCard`/`Thumbnail` and grid/table |
 | **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
-| **Plugin Manager** | `PluginSystem.cpp` | 1046 | 🟡 partial | `Panel`, `ListBox`, `Card`; plugin row table |
+| **Plugin Manager** | `PluginSystem.cpp` | 1046 | ✅ done | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload actions |
 | **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
 | **Console** | `ConsoleWindow.hpp` | 101 | ⏳ pending | `Panel`, `Toolbar`, `ListBox`, filters |
 | **Profiler** | `ProfilerWindow.hpp` | 264 | 🟡 partial | `Panel`, `Canvas` graph, `ListBox` |
@@ -132,6 +132,7 @@ Ordered by how many panels they unlock.
 | **HUD Editor** | create `Row`s, widget `ListBox`, interactive `Canvas` |
 | **Tilemap Editor** | toolbar, map `Canvas`, layer `ListBox`, palette `Grid`/`ImageButton` |
 | **Build Dialog** | `Card`/`PropertyGrid`, `ProgressBar`, scrolling log |
+| **Plugin Manager** | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 

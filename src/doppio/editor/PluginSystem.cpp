@@ -1,7 +1,7 @@
 #include "editor/PluginSystem.hpp"
 
 #include "caffeine/ui/PanelRegistry.hpp"
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/CommandPalette.hpp"
 #include "scene/EditorContext.hpp"
@@ -913,125 +913,133 @@ void PluginManager::renderMenuExtensions() {
 }
 
 void PluginManager::renderManagerUI() {
+#ifdef CF_HAS_IMGUI
     if (!m_managerOpen) return;
 
-    if (UIKit::BeginPanel("Plugin Manager", &m_managerOpen)) {
-        ImGui::TextDisabled("Project plugins: %s", m_pluginsDirectory.string().c_str());
-        if (!m_bundledPluginsDirectory.empty()) {
-            ImGui::TextDisabled("Bundled plugins: %s", m_bundledPluginsDirectory.string().c_str());
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    Panel root("Plugin Manager", "Enable optional Doppio extensions", "beer",
+               &m_managerOpen);
+    UIContext ui;
+
+    auto& info = root.emplace<Card>("plugin_info");
+    info.emplace<Label>("Project plugins: " + m_pluginsDirectory.string(),
+                        TextTone::Muted)
+        .setWrap(true);
+    if (!m_bundledPluginsDirectory.empty()) {
+        info.emplace<Label>("Bundled plugins: " + m_bundledPluginsDirectory.string(),
+                            TextTone::Muted)
+            .setWrap(true);
+    }
+    info.emplace<Label>("Enable list: " + pluginPreferencesPath().string(),
+                        TextTone::Muted)
+        .setWrap(true);
+
+    auto& actions = root.emplace<Row>("plugin_actions");
+    actions.emplace<Button>("Refresh Directory").setOnClick([this] {
+        refreshPluginsDirectory();
+    });
+    actions.emplace<Button>("Open Plugins Folder").setOnClick([this] {
+        std::error_code ec;
+        std::filesystem::create_directories(m_pluginsDirectory, ec);
+    });
+
+    root.emplace<Elements::Paragraph>(
+        "Plugins are disabled until you enable them. Enabling loads the library now and "
+        "remembers the choice for future sessions.");
+
+    struct PluginRow {
+        std::string stem;
+        std::string path;
+    };
+    std::vector<PluginRow> rows;
+    const auto addRow = [&rows](const std::string& path) {
+        const std::string stem = std::filesystem::path(path).stem().string();
+        for (const auto& row : rows) {
+            if (row.stem == stem) return;
         }
-        ImGui::TextDisabled("Enable list: %s", pluginPreferencesPath().string().c_str());
+        rows.push_back({stem, path});
+    };
+    for (const auto& path : m_discoveredPaths) addRow(path);
+    for (const auto& [path, handle] : m_loadedPlugins) addRow(handle.path);
+    std::sort(rows.begin(), rows.end(),
+              [](const PluginRow& a, const PluginRow& b) { return a.stem < b.stem; });
 
-        if (ImGui::Button("Refresh Directory")) {
-            refreshPluginsDirectory();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Open Plugins Folder")) {
-            std::error_code ec;
-            std::filesystem::create_directories(m_pluginsDirectory, ec);
-        }
+    if (rows.empty()) {
+        root.emplace<Label>("No plugins found. Place .so/.dll files in the plugins directory.",
+                            TextTone::Muted);
+    }
 
-        ImGui::Separator();
-        ImGui::TextDisabled(
-            "Plugins are disabled until you enable them. Enabling loads the library now and "
-            "remembers the choice for future sessions.");
-
-        struct PluginRow {
-            std::string stem;
-            std::string path;
-        };
-        std::vector<PluginRow> rows;
-        const auto addRow = [&rows](const std::string& path) {
-            const std::string stem = std::filesystem::path(path).stem().string();
-            for (const auto& row : rows) {
-                if (row.stem == stem) return;
-            }
-            rows.push_back({stem, path});
-        };
-        for (const auto& path : m_discoveredPaths) addRow(path);
-        for (const auto& [path, handle] : m_loadedPlugins) addRow(handle.path);
-
-        std::sort(rows.begin(), rows.end(),
-                  [](const PluginRow& a, const PluginRow& b) { return a.stem < b.stem; });
-
-        if (rows.empty()) {
-            ImGui::TextDisabled("No plugins found. Place .so/.dll files in the plugins directory.");
-        }
-
-        if (ImGui::BeginTable("plugins", 5,
-                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                  ImGuiTableFlags_Resizable)) {
-            ImGui::TableSetupColumn("Enabled");
-            ImGui::TableSetupColumn("Name");
-            ImGui::TableSetupColumn("Version");
-            ImGui::TableSetupColumn("Status");
-            ImGui::TableSetupColumn("Actions");
-            ImGui::TableHeadersRow();
-
-            for (const auto& row : rows) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                bool enabled = m_enabledPlugins.contains(row.stem);
-                if (ImGui::Checkbox(("##en" + row.stem).c_str(), &enabled)) {
-                    setPluginEnabled(row.stem, enabled);
-                    continue;
-                }
-
-                const PluginHandle* handle = findLoadedPluginByStem(row.stem);
-                if (!handle) {
-                    for (const auto& [path, candidate] : m_loadedPlugins) {
-                        if (candidate.path == row.path) {
-                            handle = &candidate;
-                            break;
-                        }
-                    }
-                }
-
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(handle ? handle->name.c_str() : row.stem.c_str());
-                if (handle && !handle->description.empty()) {
-                    ImGui::TextDisabled("%s", handle->description.c_str());
-                }
-
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(handle ? handle->version.c_str() : "-");
-
-                ImGui::TableSetColumnIndex(3);
-                const char* statusLabel = "Disabled";
-                if (handle) {
-                    switch (handle->status) {
-                        case PluginStatus::Active: statusLabel = "Active"; break;
-                        case PluginStatus::Loaded: statusLabel = "Loaded"; break;
-                        case PluginStatus::Failed: statusLabel = "Failed"; break;
-                        case PluginStatus::Discovered: statusLabel = "Discovered"; break;
-                    }
-                }
-                ImGui::TextUnformatted(statusLabel);
-                if (handle && !handle->lastError.empty()) {
-                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s",
-                                       handle->lastError.c_str());
-                }
-
-                ImGui::TableSetColumnIndex(4);
-                if (handle) {
-                    if (ImGui::SmallButton(("Reload##" + row.stem).c_str())) {
-                        reloadPlugin(row.stem);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton(("Unload##" + row.stem).c_str())) {
-                        setPluginEnabled(row.stem, false);
-                    }
-                } else {
-                    if (ImGui::SmallButton(("Load##" + row.stem).c_str())) {
-                        setPluginEnabled(row.stem, true);
-                    }
+    for (const PluginRow& row : rows) {
+        const bool enabled = m_enabledPlugins.contains(row.stem);
+        const PluginHandle* handle = findLoadedPluginByStem(row.stem);
+        if (!handle) {
+            for (const auto& [path, candidate] : m_loadedPlugins) {
+                if (candidate.path == row.path) {
+                    handle = &candidate;
+                    break;
                 }
             }
+        }
 
-            ImGui::EndTable();
+        auto& card = root.emplace<Card>("plugin_" + row.stem);
+        auto& header = card.emplace<Row>("plugin_" + row.stem + "_header");
+        header.emplace<Label>(handle ? handle->name : row.stem, TextTone::Accent)
+            .setHeading(true);
+        header.emplace<Label>(handle ? handle->version : "-", TextTone::Muted);
+
+        const char* statusLabel = "Disabled";
+        TextTone statusTone = TextTone::Disabled;
+        if (handle) {
+            switch (handle->status) {
+                case PluginStatus::Active:
+                    statusLabel = "Active";
+                    statusTone = TextTone::Success;
+                    break;
+                case PluginStatus::Loaded:
+                    statusLabel = "Loaded";
+                    statusTone = TextTone::Accent;
+                    break;
+                case PluginStatus::Failed:
+                    statusLabel = "Failed";
+                    statusTone = TextTone::Danger;
+                    break;
+                case PluginStatus::Discovered:
+                    statusLabel = "Discovered";
+                    statusTone = TextTone::Muted;
+                    break;
+            }
+        }
+        header.emplace<Label>(statusLabel, statusTone);
+
+        auto& buttons = card.emplace<Row>("plugin_" + row.stem + "_actions");
+        if (enabled) {
+            auto& disable = buttons.emplace<Button>("Disable", ButtonVariant::Danger);
+            disable.setOnClick([this, stem = row.stem] { setPluginEnabled(stem, false); });
+            if (handle) {
+                auto& reload = buttons.emplace<Button>("Reload");
+                reload.setOnClick([this, stem = row.stem] { reloadPlugin(stem); });
+            }
+        } else {
+            auto& enable = buttons.emplace<Button>("Enable", ButtonVariant::Primary);
+            enable.setOnClick([this, stem = row.stem] { setPluginEnabled(stem, true); });
+            if (handle) {
+                auto& unload = buttons.emplace<Button>("Unload");
+                unload.setOnClick([this, stem = row.stem] { setPluginEnabled(stem, false); });
+            }
+        }
+
+        if (handle && !handle->description.empty()) {
+            card.emplace<Label>(handle->description, TextTone::Muted).setWrap(true);
+        }
+        if (handle && !handle->lastError.empty()) {
+            card.emplace<Label>(handle->lastError, TextTone::Danger).setWrap(true);
         }
     }
-    ImGui::End();
+
+    ui.draw(root);
+#endif
 }
 
 #else
