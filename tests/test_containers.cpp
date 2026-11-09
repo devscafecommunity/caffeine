@@ -1,8 +1,8 @@
 #include "catch.hpp"
-#include "../src/containers/Vector.hpp"
-#include "../src/containers/HashMap.hpp"
-#include "../src/containers/StringView.hpp"
-#include "../src/containers/FixedString.hpp"
+#include "../src/caffeine/containers/Vector.hpp"
+#include "../src/caffeine/containers/HashMap.hpp"
+#include "../src/caffeine/containers/StringView.hpp"
+#include "../src/caffeine/containers/FixedString.hpp"
 
 using namespace Caffeine;
 

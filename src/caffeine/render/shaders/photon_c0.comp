@@ -1,0 +1,387 @@
+#version 450
+
+// Photon P3 — cascade-0 kernel (spec §6.2, §6.3, §7, §9.4).
+//
+// One invocation per C0 probe. Each probe traces the 16 world-aligned
+// octahedral directions over the first interval [0, ℓ0]. Misses continue in
+// M̄1 through the geometry-aware upper lookup; at K == 1 they fall back to the
+// far field (sky-only until P4). The result is projected to SH-L1:
+//   4 × RGBA16F per probe = c00.rgb + visibility and c1m.rgb + visibility,
+//   stored as a 2×2 block in the SH atlas.
+//
+// SDL_GPU compute layout: set 0 samplers, set 1 read-write storage, set 2 uniforms.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uDirect;          // D_t
+layout(set = 0, binding = 1) uniform sampler2D uDepth;
+layout(set = 0, binding = 2) uniform sampler2D uGBufferAlbedo;
+layout(set = 0, binding = 3) uniform sampler2D uGBufferNormalMaterial;
+layout(set = 0, binding = 4) uniform sampler2D uUpper;           // M̄1 (dummy at K == 1)
+layout(set = 0, binding = 5) uniform sampler2D uMinZ;
+layout(set = 0, binding = 6) uniform sampler2D uProbeRadiance;  // level-0 far field
+layout(set = 0, binding = 7) uniform sampler2D uProbeMoments;
+layout(set = 0, binding = 8) uniform sampler2D uSPrev;  // S(t-1) irradiance/π
+
+layout(set = 1, binding = 0, rgba16f) uniform image2D uSHAtlas;
+
+layout(set = 2, binding = 0) uniform PhotonC0UBO {
+    vec4 uProj;      // x P00, y P11, z P22, w P23
+    vec4 uExtra;     // x P32, y sky depth, z K, w hasUpper
+    vec4 uTexel;     // xy 1 / scene size, zw scene size
+    mat4 uView;      // world -> view
+    mat4 uInvView;   // view -> world
+    vec4 uParams;    // x s0, y reach, z steps, w thickness_rel
+    vec4 uParams2;   // x kappa, y u_min, z sky intensity, w upper tile side (4)
+    vec4 uSky;       // rgb sky radiance
+    vec4 uJitter;    // xy Halton(2,3) in [-0.5, 0.5]
+    ivec4 uGrid;     // x G0.x, y G0.y, z SH atlas width, w SH atlas height
+    vec4 uFarLevels[4]; // per level: xyz probe origin, w probe spacing
+    vec4 uFarParams;    // x atlas width, y atlas height, z enabled
+    mat4 uPrevViewProj; // P5 reprojection
+    vec4 uSParams;      // x S_cap, y valid
+} pc;
+
+const float kPi = 3.14159265359;
+const float kY00 = 0.282095;
+const float kY1 = 0.488603;
+const int kHit = 0;
+const int kExit = 1;
+const int kEnd = 2;
+
+bool isOrthographic() { return abs(pc.uExtra.x) < 0.5; }
+
+float linearDepth(float d) {
+    if (isOrthographic()) return (pc.uProj.w - d) / pc.uProj.z;
+    return pc.uProj.w / (d + pc.uProj.z);
+}
+
+float pixelFootprint(float z) {
+    float scale = isOrthographic() ? 1.0 : z;
+    return 2.0 * scale * pc.uTexel.y / pc.uProj.y;
+}
+
+vec3 viewPosition(vec2 uv, float z) {
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    float scale = isOrthographic() ? 1.0 : z;
+    return vec3(ndc.x / pc.uProj.x * scale, ndc.y / pc.uProj.y * scale, -z);
+}
+
+vec2 projectToUv(vec3 viewPos) {
+    float z = -viewPos.z;
+    if (z <= 0.0001) return vec2(-1.0);
+    float invZ = isOrthographic() ? 1.0 : 1.0 / z;
+    vec2 ndc = vec2(viewPos.x * pc.uProj.x * invZ, viewPos.y * pc.uProj.y * invZ);
+    return vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+}
+
+vec3 octDecode(vec2 e) {
+    e = e * 2.0 - 1.0;
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(n);
+}
+
+vec2 octEncode(vec3 n) {
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    vec2 e = n.xy;
+    if (n.z < 0.0) {
+        e = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return e * 0.5 + 0.5;
+}
+
+/// One far-field level: trilinear probes with Chebyshev visibility.
+vec4 farQueryLevel(int level, vec3 P, vec3 omega) {
+    const int n = 16;
+    const float tile = 10.0;
+    const vec3 origin = pc.uFarLevels[level].xyz;
+    const float spacing = pc.uFarLevels[level].w;
+    const vec2 atlasSize = vec2(pc.uFarParams.x, pc.uFarParams.y);
+    const float atlasOffset = float(level) * 160.0;
+
+    vec3 rel = P - origin;
+    if (rel.x < 0.0 || rel.y < 0.0 || rel.z < 0.0 ||
+        rel.x > 16.0 * spacing || rel.y > 16.0 * spacing || rel.z > 16.0 * spacing) {
+        return vec4(pc.uSky.rgb, 1.0);
+    }
+
+    vec3 g = rel / spacing - 0.5;
+    ivec3 base = ivec3(floor(g));
+    vec3 f = g - vec3(base);
+
+    vec3 accum = vec3(0.0);
+    float accumV = 0.0;
+    float weightSum = 0.0;
+    for (int c = 0; c < 8; ++c) {
+        ivec3 off = ivec3(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+        ivec3 q = clamp(base + off, ivec3(0), ivec3(n - 1));
+        float w = (off.x != 0 ? f.x : 1.0 - f.x) *
+                  (off.y != 0 ? f.y : 1.0 - f.y) *
+                  (off.z != 0 ? f.z : 1.0 - f.z);
+        vec3 Q = origin + (vec3(q) + 0.5) * spacing;
+        vec3 toP = P - Q;
+        float dist = length(toP);
+        vec2 eRad = octEncode(omega);
+        vec2 eMom = octEncode(dist > 1e-4 ? toP / dist : omega);
+        vec2 baseUv = vec2(atlasOffset + float(q.x) * tile, float(q.y + q.z * n) * tile);
+        vec2 radUv = (baseUv + vec2(0.5 + clamp(eRad.x, 0.0, 1.0) * 8.0,
+                                    0.5 + clamp(eRad.y, 0.0, 1.0) * 8.0)) / atlasSize;
+        vec2 momUv = (baseUv + vec2(0.5 + clamp(eMom.x, 0.0, 1.0) * 8.0,
+                                    0.5 + clamp(eMom.y, 0.0, 1.0) * 8.0)) / atlasSize;
+        vec4 rad = textureLod(uProbeRadiance, radUv, 0.0);
+        vec4 mom = textureLod(uProbeMoments, momUv, 0.0);
+        if (mom.z < 0.5) continue;  // invalid probe (inside a solid)
+        float variance = max(mom.y - mom.x * mom.x, 1e-4);
+        float slack = max(dist - mom.x, 0.0);
+        float cheb = variance / (variance + slack * slack);
+        w *= cheb * cheb * cheb;
+        accum += w * rad.rgb;
+        accumV += w * rad.a;
+        weightSum += w;
+    }
+    if (weightSum < 1e-3) return vec4(pc.uSky.rgb, 1.0);
+    return vec4(accum / weightSum, accumV / weightSum);
+}
+
+/// Smallest containing level; the outer 25% blends into level+1 (§8.6).
+vec4 farQuery(vec3 P, vec3 omega) {
+    if (pc.uFarParams.z < 0.5) return vec4(pc.uSky.rgb, 1.0);
+    int chosen = -1;
+    float blend = 0.0;
+    for (int l = 0; l < 4; ++l) {
+        vec3 origin = pc.uFarLevels[l].xyz;
+        float spacing = pc.uFarLevels[l].w;
+        vec3 lo = origin + spacing * 0.5;
+        vec3 hi = origin + spacing * 14.5;
+        if (P.x < lo.x || P.y < lo.y || P.z < lo.z ||
+            P.x > hi.x || P.y > hi.y || P.z > hi.z) {
+            continue;
+        }
+        chosen = l;
+        vec3 size = max(hi - lo, vec3(1e-4));
+        vec3 local = (P - lo) / size;
+        float edge = min(min(local.x, 1.0 - local.x),
+                         min(min(local.y, 1.0 - local.y),
+                             min(local.z, 1.0 - local.z)));
+        blend = (l < 3) ? 1.0 - smoothstep(0.0, 0.25, edge) : 0.0;
+        break;
+    }
+    if (chosen < 0) return vec4(pc.uSky.rgb, 1.0);
+
+    vec4 fine = farQueryLevel(chosen, P, omega);
+    if (blend > 1e-3 && chosen < 3) {
+        vec4 coarse = farQueryLevel(chosen + 1, P, omega);
+        return mix(fine, coarse, blend);
+    }
+    return fine;
+}
+bool anchorInsideScreen(vec2 anchor, out vec2 uv) {
+    uv = (anchor + 0.5) / pc.uTexel.zw;
+    return anchor.x >= 0.0 && anchor.y >= 0.0 &&
+           anchor.x < pc.uTexel.z && anchor.y < pc.uTexel.w;
+}
+
+int traceInterval(vec3 O, vec3 omega, vec3 omegaWorld, float t0, float t1, int steps,
+                  out vec2 hitUv, out vec3 endPointView) {
+    hitUv = vec2(0.0);
+    endPointView = O + omega * t1;
+    float dt = (t1 - t0) / float(steps);
+    for (int s = 0; s < 32; ++s) {
+        if (s >= steps) break;
+        vec3 S = O + omega * (t0 + dt * (float(s) + 1.0));
+        if (S.z > -0.05) {
+            endPointView = S;
+            return kExit;
+        }
+        vec2 suv = projectToUv(S);
+        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
+            endPointView = S;
+            return kExit;
+        }
+
+        float rayZ = -S.z;
+        float minZ = textureLod(uMinZ, suv, 0.0).r;
+        float minTheta = max(pc.uParams.w * minZ, 2.0 * pixelFootprint(minZ));
+        if (rayZ + minTheta < minZ) continue;
+
+        float depthSample = textureLod(uDepth, suv, 0.0).r;
+        if (depthSample >= 0.999999) continue;
+        float sceneZ = linearDepth(depthSample);
+        float theta = max(pc.uParams.w * sceneZ, 2.0 * pixelFootprint(sceneZ));
+        if (sceneZ <= rayZ && (rayZ - sceneZ) <= theta) {
+            vec3 hitNormal = octDecode(textureLod(uGBufferNormalMaterial, suv, 0.0).rg);
+            if (dot(omegaWorld, hitNormal) <= 0.0) {
+                hitUv = suv;
+                return kHit;
+            }
+        }
+    }
+    return kEnd;
+}
+
+// C0 upper lookup: cascade 1 (stride 2·s0, tile side 4, grid G0/2).
+vec4 upperLookup(vec2 probeAnchor, vec3 Pp, vec3 Np, vec2 atlasSize, float strideUp,
+                 float tileUp, vec2 gridUp, int dx, int dy, float delta) {
+    vec2 g = probeAnchor / strideUp - 0.5;
+    ivec2 base = ivec2(floor(g));
+    vec2 f = g - vec2(base);
+
+    vec3 accum = vec3(0.0);
+    float accumT = 0.0;
+    float weightSum = 0.0;
+
+    for (int oy = 0; oy < 2; ++oy) {
+        for (int ox = 0; ox < 2; ++ox) {
+            ivec2 q = clamp(base + ivec2(ox, oy), ivec2(0), ivec2(gridUp) - 1);
+            vec2 anchor = vec2(q) * strideUp + strideUp * 0.5;
+            vec2 auv;
+            if (!anchorInsideScreen(anchor, auv)) continue;
+            float dq = textureLod(uDepth, auv, 0.0).r;
+            if (dq >= 0.999999) continue;
+            if (textureLod(uGBufferAlbedo, auv, 0.0).a < 0.5) continue;
+
+            vec3 Pq = viewPosition(auv, linearDepth(dq));
+            vec3 Nq = octDecode(textureLod(uGBufferNormalMaterial, auv, 0.0).rg);
+
+            float bilinear = (ox == 0 ? 1.0 - f.x : f.x) * (oy == 0 ? 1.0 - f.y : f.y);
+            float plane = abs(dot(Pq - Pp, Np)) / max(0.5 * delta, 1e-4);
+            float wZ = exp(-plane * plane);
+            float wN = pow(max(dot(Np, Nq), 0.0), 8.0);
+            float w = bilinear * wZ * wN;
+            if (w <= 0.0) continue;
+
+            vec2 t = (vec2(q) * tileUp + vec2(float(dx), float(dy)) + 0.5) / atlasSize;
+            vec4 up = textureLod(uUpper, t, 0.0);
+            accum += w * up.rgb;
+            accumT += w * up.a;
+            weightSum += w;
+        }
+    }
+
+    if (weightSum > 1e-3) {
+        return vec4(accum / weightSum, accumT / weightSum);
+    }
+    return vec4(pc.uSky.rgb, 1.0);
+}
+
+void writeProbe(ivec2 probe, vec3 c00, vec3 c1x, vec3 c1y, vec3 c1z,
+                float v00, vec3 v1) {
+    ivec2 base = ivec2(probe.x * 2, probe.y * 2);
+    imageStore(uSHAtlas, base + ivec2(0, 0), vec4(c00, v00));
+    imageStore(uSHAtlas, base + ivec2(1, 0), vec4(c1x, v1.x));
+    imageStore(uSHAtlas, base + ivec2(0, 1), vec4(c1y, v1.y));
+    imageStore(uSHAtlas, base + ivec2(1, 1), vec4(c1z, v1.z));
+}
+
+
+/// P5: D_t(hit) + rho_fb * min(S_prev, S_cap), reprojected into the previous
+/// frame. Disocclusion is approximated by the S validity channel; camera cuts
+/// disable feedback through uSParams.y.
+vec3 shadeHit(vec2 hitUv) {
+    vec3 dts = max(textureLod(uDirect, hitUv, 0.0).rgb, vec3(0.0));
+    if (pc.uSParams.y < 0.5) return dts;
+
+    float hd = textureLod(uDepth, hitUv, 0.0).r;
+    if (hd >= 0.999999) return dts;
+    vec3 viewPos = viewPosition(hitUv, linearDepth(hd));
+    vec3 worldPos = (pc.uInvView * vec4(viewPos, 1.0)).xyz;
+    vec4 clip = pc.uPrevViewProj * vec4(worldPos, 1.0);
+    if (clip.w <= 1e-4) return dts;
+    vec2 prevUv = clip.xy / clip.w * 0.5 + 0.5;
+    prevUv.y = 1.0 - prevUv.y;
+    if (prevUv.x < 0.0 || prevUv.x > 1.0 || prevUv.y < 0.0 || prevUv.y > 1.0) return dts;
+
+    vec4 history = textureLod(uSPrev, prevUv, 0.0);
+    if (history.a < 0.5) return dts;
+    vec3 rho = min(max(textureLod(uGBufferAlbedo, hitUv, 0.0).rgb, vec3(0.0)), vec3(0.95));
+    return dts + rho * min(history.rgb, vec3(pc.uSParams.x));
+}
+
+void main() {
+    ivec2 probe = ivec2(gl_GlobalInvocationID.xy);
+    if (probe.x >= pc.uGrid.x || probe.y >= pc.uGrid.y) return;
+
+    const float s0 = pc.uParams.x;
+    vec2 anchor = vec2(probe) * s0 + s0 * 0.5;
+    vec2 auv;
+    if (!anchorInsideScreen(anchor, auv)) {
+        writeProbe(probe, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, vec3(0.0));
+        return;
+    }
+    float rawDepth = textureLod(uDepth, auv, 0.0).r;
+    if (rawDepth >= 0.999999 || textureLod(uGBufferAlbedo, auv, 0.0).a < 0.5) {
+        writeProbe(probe, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, vec3(0.0));
+        return;
+    }
+
+    float z = linearDepth(rawDepth);
+    vec3 P = viewPosition(auv, z);
+    vec3 worldNormal = octDecode(textureLod(uGBufferNormalMaterial, auv, 0.0).rg);
+    vec3 N = normalize(mat3(pc.uView) * worldNormal);
+    if (dot(N, -P) < 0.0) N = -N;
+
+    float u = max(pixelFootprint(z), pc.uParams2.y);
+    float l0 = pc.uParams2.x * s0 * u;
+    vec3 O = P + N * (1.5 * pixelFootprint(z));
+    int steps = int(clamp(pc.uParams.z, 1.0, 32.0));
+
+    const float dOmega = 4.0 * kPi / 16.0;
+    const float side = 4.0;
+    const bool hasUpper = pc.uExtra.w > 0.5;
+
+    const vec2 atlasSize = vec2(pc.uGrid.z, pc.uGrid.w);
+    const float strideUp = 2.0 * s0;
+    const float tileUp = pc.uParams2.w;             // 4
+    const vec2 gridUp = atlasSize / tileUp;         // G1
+
+    vec3 c00 = vec3(0.0);
+    vec3 c1x = vec3(0.0);
+    vec3 c1y = vec3(0.0);
+    vec3 c1z = vec3(0.0);
+    float v00 = 0.0;
+    vec3 v1 = vec3(0.0);
+
+    for (int j = 0; j < 4; ++j) {
+        for (int i = 0; i < 4; ++i) {
+            vec2 duv = (vec2(float(i), float(j)) + 0.5 + pc.uJitter.xy) / side;
+            duv = clamp(duv, 0.0, 1.0);
+            vec3 omegaWorld = octDecode(duv * 2.0 - 1.0);
+            vec3 omega = normalize(mat3(pc.uView) * omegaWorld);
+
+            vec2 hitUv;
+            vec3 endPointView;
+            int status = traceInterval(O, omega, omegaWorld, 0.0, l0, steps, hitUv,
+                                       endPointView);
+
+            vec3 radiance;
+            float transmittance;
+            if (status == kHit) {
+                radiance = shadeHit(hitUv);
+                transmittance = 0.0;
+            } else if (status == kExit || !hasUpper) {
+                vec3 endWorld = (pc.uInvView * vec4(endPointView, 1.0)).xyz;
+                vec4 far = farQuery(endWorld, omegaWorld);
+                radiance = far.rgb;
+                transmittance = far.a;
+            } else {
+                vec4 up = upperLookup(anchor, P, N, atlasSize, strideUp, tileUp, gridUp,
+                                      i, j, strideUp * u);
+                radiance = up.rgb;
+                transmittance = up.a;
+            }
+
+            vec3 y1 = kY1 * omegaWorld;
+            c00 += radiance * kY00 * dOmega;
+            c1x += radiance * y1.x * dOmega;
+            c1y += radiance * y1.y * dOmega;
+            c1z += radiance * y1.z * dOmega;
+            v00 += transmittance * kY00 * dOmega;
+            v1 += y1 * transmittance * dOmega;
+        }
+    }
+
+    writeProbe(probe, c00, c1x, c1y, c1z, v00, v1);
+}

@@ -1,6 +1,6 @@
 #include "catch.hpp"
 #include "cap_test_helpers.hpp"
-#include "../src/editor/CapLoader.hpp"
+#include "../src/doppio/editor/CapLoader.hpp"
 #include <fstream>
 #include <filesystem>
 

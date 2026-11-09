@@ -1,7 +1,7 @@
 #include "../Catch2/catch.hpp"
-#include "../../src/editor/AssetBrowser.hpp"
-#include "../../src/editor/EditorContext.hpp"
-#include "../../src/ecs/World.hpp"
+#include "../../src/doppio/editor/AssetBrowser.hpp"
+#include "../../src/caffeine/scene/EditorContext.hpp"
+#include "../../src/caffeine/ecs/World.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>

@@ -3,7 +3,7 @@
 #include "ecs/ComponentQuery.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "ecs/World.hpp"
-#include "editor/SceneSerializer.hpp"
+#include "scene/EditorSceneSerializer.hpp"
 #include "math/Mat4.hpp"
 #include "terrain/TerrainCache.hpp"
 #include "terrain/TerrainHeightmap.hpp"

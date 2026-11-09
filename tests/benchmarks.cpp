@@ -1,10 +1,10 @@
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
-#include "../src/memory/LinearAllocator.hpp"
-#include "../src/memory/PoolAllocator.hpp"
-#include "../src/containers/Vector.hpp"
-#include "../src/math/Vec2.hpp"
-#include "../src/math/Mat4.hpp"
+#include "../src/caffeine/memory/LinearAllocator.hpp"
+#include "../src/caffeine/memory/PoolAllocator.hpp"
+#include "../src/caffeine/containers/Vector.hpp"
+#include "../src/caffeine/math/Vec2.hpp"
+#include "../src/caffeine/math/Mat4.hpp"
 
 #include <chrono>
 

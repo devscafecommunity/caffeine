@@ -1,10 +1,10 @@
 #include "../Catch2/catch.hpp"
 
-#include "../../src/editor/PhotonPanel.hpp"
-#include "../../src/editor/EditorContext.hpp"
-#include "../../src/ecs/Components3D.hpp"
-#include "../../src/ecs/MeshComponents.hpp"
-#include "../../src/ecs/World.hpp"
+#include "../../src/doppio/editor/PhotonPanel.hpp"
+#include "../../src/caffeine/scene/EditorContext.hpp"
+#include "../../src/caffeine/ecs/Components3D.hpp"
+#include "../../src/caffeine/ecs/MeshComponents.hpp"
+#include "../../src/caffeine/ecs/World.hpp"
 
 #include <filesystem>
 

@@ -1,5 +1,5 @@
 #include "catch.hpp"
-#include "../src/input/InputManager.hpp"
+#include "../src/caffeine/input/InputManager.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Input;

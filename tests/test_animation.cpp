@@ -1,11 +1,11 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
-#include "../src/animation/AnimationComponents.hpp"
-#include "../src/animation/AnimationSystem.hpp"
-#include "../src/animation/ClipAsset.hpp"
-#include "../src/animation/AnimationPlayer.hpp"
+#include "../src/caffeine/Caffeine.hpp"
+#include "../src/caffeine/animation/AnimationComponents.hpp"
+#include "../src/caffeine/animation/AnimationSystem.hpp"
+#include "../src/caffeine/animation/ClipAsset.hpp"
+#include "../src/caffeine/animation/AnimationPlayer.hpp"
 #include "caffeine/animation/AnimationApi.hpp"
-#include "../src/ecs/Components3D.hpp"
+#include "../src/caffeine/ecs/Components3D.hpp"
 
 #include <cmath>
 #include <filesystem>

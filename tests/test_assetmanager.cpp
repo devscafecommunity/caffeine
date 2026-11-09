@@ -1,8 +1,8 @@
 #include "catch.hpp"
-#include "../src/assets/AssetManager.hpp"
-#include "../src/assets/HotReloader.hpp"
-#include "../src/core/io/CafWriter.hpp"
-#include "../src/core/io/CafTypes.hpp"
+#include "../src/caffeine/assets/AssetManager.hpp"
+#include "../src/caffeine/assets/HotReloader.hpp"
+#include "../src/caffeine/core/io/CafWriter.hpp"
+#include "../src/caffeine/core/io/CafTypes.hpp"
 
 #include <cstring>
 #include <cstdio>

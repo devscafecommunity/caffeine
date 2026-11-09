@@ -1,10 +1,10 @@
 #include "catch.hpp"
-#include "../src/math/Vec2.hpp"
-#include "../src/math/Vec3.hpp"
-#include "../src/math/Vec4.hpp"
-#include "../src/math/Mat4.hpp"
-#include "../src/math/Math.hpp"
-#include "../src/math/Quat.hpp"
+#include "../src/caffeine/math/Vec2.hpp"
+#include "../src/caffeine/math/Vec3.hpp"
+#include "../src/caffeine/math/Vec4.hpp"
+#include "../src/caffeine/math/Mat4.hpp"
+#include "../src/caffeine/math/Math.hpp"
+#include "../src/caffeine/math/Quat.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Math;

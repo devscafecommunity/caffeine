@@ -1,10 +1,10 @@
 #include "../Catch2/catch.hpp"
-#include "../../src/editor/InspectorPanel.hpp"
-#include "../../src/editor/EditorContext.hpp"
-#include "../../src/ecs/World.hpp"
-#include "../../src/ecs/Entity.hpp"
-#include "../../src/ecs/Components.hpp"
-#include "../../src/audio/AudioComponents.hpp"
+#include "../../src/doppio/editor/InspectorPanel.hpp"
+#include "../../src/caffeine/scene/EditorContext.hpp"
+#include "../../src/caffeine/ecs/World.hpp"
+#include "../../src/caffeine/ecs/Entity.hpp"
+#include "../../src/caffeine/ecs/Components.hpp"
+#include "../../src/caffeine/audio/AudioComponents.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>

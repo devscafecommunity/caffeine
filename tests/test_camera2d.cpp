@@ -1,6 +1,6 @@
 #include "catch.hpp"
-#include "../src/render/Camera2D.hpp"
-#include "../src/Caffeine.hpp"
+#include "../src/caffeine/render/Camera2D.hpp"
+#include "../src/caffeine/Caffeine.hpp"
 
 #include <cmath>
 

@@ -1,6 +1,6 @@
 #include "editor/BuildSystem.hpp"
 #include "editor/BuildLog.hpp"
-#include "editor/ProjectManager.hpp"
+#include "project/ProjectManager.hpp"
 
 #include <cstdio>
 #include <filesystem>

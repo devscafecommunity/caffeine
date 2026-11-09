@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-#include "../src/threading/JobSystem.hpp"
+#include "../src/caffeine/threading/JobSystem.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Threading;

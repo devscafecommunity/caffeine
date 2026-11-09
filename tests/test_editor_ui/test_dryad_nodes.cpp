@@ -1,6 +1,6 @@
 #include "../Catch2/catch.hpp"
 
-#include "../../src/editor/DryadNodesPanel.hpp"
+#include "../../src/doppio/editor/DryadNodesPanel.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>

@@ -1,6 +1,6 @@
 #include "catch.hpp"
-#include "../src/events/EventBus.hpp"
-#include "../src/events/Events.hpp"
+#include "../src/caffeine/events/EventBus.hpp"
+#include "../src/caffeine/events/Events.hpp"
 
 #include <thread>
 #include <vector>

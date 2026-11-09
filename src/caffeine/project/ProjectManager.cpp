@@ -1,0 +1,438 @@
+#include "project/ProjectManager.hpp"
+#include "scene/EnvironmentSystem.hpp"
+
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+
+namespace Caffeine::Editor {
+
+// ── Minimal JSON helpers (project.caffeine only) ─────────────────────────
+
+// Find first non-whitespace character position in a string view.
+static usize skipWhitespace(const std::string& s, usize pos) {
+    while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t' ||
+                              s[pos] == '\n' || s[pos] == '\r'))
+        ++pos;
+    return pos;
+}
+
+// Extract a quoted string starting at pos (which must point to the opening ").
+// Returns the unquoted string and advances pos past the closing ".
+static bool readQuotedString(const std::string& s, usize& pos, std::string& out) {
+    pos = skipWhitespace(s, pos);
+    if (pos >= s.size() || s[pos] != '"') return false;
+    ++pos; // skip opening quote
+    out.clear();
+    while (pos < s.size() && s[pos] != '"') {
+        if (s[pos] == '\\' && pos + 1 < s.size()) {
+            ++pos; // skip backslash
+        }
+        out += s[pos];
+        ++pos;
+    }
+    if (pos >= s.size()) return false; // unterminated string
+    ++pos; // skip closing quote
+    return true;
+}
+
+static void skipJsonValue(const std::string& json, usize& pos) {
+    pos = skipWhitespace(json, pos);
+    if (pos >= json.size()) return;
+
+    if (json[pos] == '"') {
+        std::string ignore;
+        readQuotedString(json, pos, ignore);
+        return;
+    }
+    if (json[pos] == '{') {
+        int depth = 1;
+        ++pos;
+        while (pos < json.size() && depth > 0) {
+            if (json[pos] == '{') ++depth;
+            else if (json[pos] == '}') --depth;
+            ++pos;
+        }
+        return;
+    }
+    if (json[pos] == '[') {
+        int depth = 1;
+        ++pos;
+        while (pos < json.size() && depth > 0) {
+            if (json[pos] == '"') {
+                std::string ignore;
+                readQuotedString(json, pos, ignore);
+                continue;
+            }
+            if (json[pos] == '[') ++depth;
+            else if (json[pos] == ']') --depth;
+            ++pos;
+        }
+        return;
+    }
+
+    while (pos < json.size() && json[pos] != ',' && json[pos] != '}' && json[pos] != '\n') {
+        ++pos;
+    }
+}
+
+// Find a named key at the top level of a JSON object and read its string value.
+// Also handles "key": { "nested": "value" } — extracts nested values prefixed
+// with "paths." (e.g. "paths.assets_raw").
+static bool readJsonString(const std::string& json, const std::string& key, std::string& out) {
+    usize pos = skipWhitespace(json, 0);
+    if (pos >= json.size() || json[pos] != '{') return false;
+    ++pos; // skip opening brace
+
+    while (pos < json.size()) {
+        pos = skipWhitespace(json, pos);
+        if (pos >= json.size()) break;
+        if (json[pos] == '}') break; // end of object
+
+        std::string foundKey;
+        if (!readQuotedString(json, pos, foundKey)) break;
+        pos = skipWhitespace(json, pos);
+        if (pos >= json.size() || json[pos] != ':') break;
+        ++pos; // skip colon
+
+        // If this key is "paths", handle nested keys like "paths.assets_raw"
+        bool isPaths = (foundKey == "paths");
+        if (isPaths) {
+            pos = skipWhitespace(json, pos);
+            if (pos >= json.size() || json[pos] != '{') break;
+            ++pos; // skip opening brace of paths object
+
+            while (pos < json.size()) {
+                pos = skipWhitespace(json, pos);
+                if (pos >= json.size()) break;
+                if (json[pos] == '}') { ++pos; break; }
+
+                std::string subKey;
+                if (!readQuotedString(json, pos, subKey)) break;
+                pos = skipWhitespace(json, pos);
+                if (pos >= json.size() || json[pos] != ':') break;
+                ++pos;
+
+                std::string subVal;
+                if (!readQuotedString(json, pos, subVal)) break;
+
+                // Check if this nested subKey matches "paths.{remainder}"
+                if (key == "paths." + subKey) {
+                    out = subVal;
+                    return true;
+                }
+
+                pos = skipWhitespace(json, pos);
+                if (pos < json.size() && json[pos] == ',') ++pos;
+            }
+            // Continue searching top-level keys after paths block
+            pos = skipWhitespace(json, pos);
+            if (pos < json.size() && json[pos] == ',') ++pos;
+            continue;
+        }
+
+        // Direct match at top level
+        if (foundKey == key) {
+            return readQuotedString(json, pos, out);
+        }
+
+        skipJsonValue(json, pos);
+
+        pos = skipWhitespace(json, pos);
+        if (pos < json.size() && json[pos] == ',') ++pos;
+    }
+    return false;
+}
+
+static bool loadProjectConfigFromFile(const std::filesystem::path& path, ProjectConfig& out) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    const std::string& json = buffer.str();
+
+    ProjectConfig cfg;
+    cfg.RootPath = std::filesystem::absolute(path.parent_path());
+
+    std::string val;
+
+    if (readJsonString(json, "project_name", val))
+        cfg.Name = val;
+    if (readJsonString(json, "engine_version", val))
+        cfg.Version = val;
+    if (readJsonString(json, "paths.assets_raw", val))
+        cfg.AssetRawPath = val;
+    if (readJsonString(json, "paths.assets_processed", val))
+        cfg.AssetProcessedPath = val;
+    if (readJsonString(json, "paths.scripts", val))
+        cfg.ScriptsPath = val;
+    if (readJsonString(json, "last_scene", val))
+        cfg.LastScene = val;
+    if (readJsonString(json, "template_type", val))
+        cfg.TemplateType = val;
+
+    out = cfg;
+    return true;
+}
+
+// Serialize a ProjectConfig to JSON string.
+static std::string serializeConfig(const ProjectConfig& cfg) {
+    std::ostringstream json;
+    json << "{\n";
+    json << "  \"project_name\": \""     << cfg.Name << "\",\n";
+    json << "  \"engine_version\": \""   << cfg.Version << "\",\n";
+    json << "  \"paths\": {\n";
+    json << "    \"assets_raw\": \""     << cfg.AssetRawPath.generic_string() << "\",\n";
+    json << "    \"assets_processed\": \"" << cfg.AssetProcessedPath.generic_string() << "\",\n";
+    json << "    \"scripts\": \""        << cfg.ScriptsPath.generic_string() << "\"\n";
+    json << "  },\n";
+    json << "  \"template_type\": \""    << cfg.TemplateType << "\",\n";
+    json << "  \"last_scene\": \""       << cfg.LastScene << "\"\n";
+    json << "}\n";
+    return json.str();
+}
+
+// ── ProjectManager implementation ─────────────────────────────────────────
+
+ProjectManager::ProjectManager() {
+    m_RecentProjectsFile = DefaultRecentPath();
+    LoadRecentProjects();
+}
+
+std::filesystem::path ProjectManager::DefaultRecentPath() {
+#ifdef _WIN32
+    const char* appData = std::getenv("APPDATA");
+    if (appData) {
+        return std::filesystem::path(appData) / "Caffeine" / "recent.txt";
+    }
+    return std::filesystem::path("Caffeine") / "recent.txt";
+#else
+    const char* home = std::getenv("HOME");
+    if (home) {
+        return std::filesystem::path(home) / ".config" / "caffeine" / "recent.txt";
+    }
+    return std::filesystem::path(".caffeine") / "recent.txt";
+#endif
+}
+
+void ProjectManager::EnsureDefaultFolders(const std::filesystem::path& root) {
+    if (root.empty()) return;
+    std::error_code ec;
+    const char* folders[] = {
+        "assets/raw",
+        "assets/raw/Animations",
+        "assets/raw/Models",
+        "assets/raw/Materials",
+        "assets/raw/Textures",
+        "assets/raw/Audio",
+        "assets/raw/Prefabs",
+        "assets/raw/Sky",
+        "assets/processed",
+        "scripts",
+        "scenes",
+        "build",
+    };
+    for (const char* folder : folders) std::filesystem::create_directories(root / folder, ec);
+}
+
+void ProjectManager::CreateDirectoryStructure(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root);
+    EnsureDefaultFolders(root);
+}
+
+bool ProjectManager::SaveProjectFile(const ProjectConfig& config) {
+    auto filePath = config.RootPath / "project.caffeine";
+    std::ofstream file(filePath);
+    if (!file.is_open()) return false;
+    file << serializeConfig(config);
+    return file.good();
+}
+
+bool ProjectManager::IsPackagedBuildRoot(const std::filesystem::path& root, const ProjectConfig& cfg) {
+    const std::string raw = cfg.AssetRawPath.generic_string();
+    if (raw.rfind("data/", 0) == 0 || raw.rfind("data\\", 0) == 0) {
+        return true;
+    }
+    std::error_code ec;
+    return std::filesystem::exists(root / "data" / "scenes", ec);
+}
+
+std::filesystem::path ProjectManager::ResolveEditorProjectFile(std::filesystem::path projectFile) {
+    if (projectFile.empty()) return {};
+
+    if (projectFile.filename() != "project.caffeine") {
+        projectFile /= "project.caffeine";
+    }
+
+    std::error_code ec;
+    projectFile = std::filesystem::weakly_canonical(std::filesystem::absolute(projectFile), ec);
+    if (ec) projectFile = std::filesystem::absolute(projectFile);
+
+    std::filesystem::path dir = projectFile.parent_path();
+    for (int depth = 0; depth < 16; ++depth) {
+        const std::filesystem::path candidate = dir / "project.caffeine";
+        if (std::filesystem::exists(candidate)) {
+            ProjectConfig cfg;
+            if (loadProjectConfigFromFile(candidate, cfg) && !IsPackagedBuildRoot(dir, cfg)) {
+                return candidate;
+            }
+        }
+        if (dir.filename() != "build" || !dir.has_parent_path()) {
+            break;
+        }
+        dir = dir.parent_path();
+    }
+
+    if (std::filesystem::exists(projectFile)) {
+        return projectFile;
+    }
+    return {};
+}
+
+std::filesystem::path ProjectManager::ResolveEditorProjectRoot(std::filesystem::path root) {
+    if (root.empty()) return root;
+
+    std::error_code ec;
+    root = std::filesystem::weakly_canonical(std::filesystem::absolute(root), ec);
+    if (ec) root = std::filesystem::absolute(root);
+
+    const std::filesystem::path projectFile = ResolveEditorProjectFile(root / "project.caffeine");
+    if (!projectFile.empty()) {
+        return projectFile.parent_path();
+    }
+    return root;
+}
+
+bool ProjectManager::TryLoadProject(const std::filesystem::path& projectFilePath,
+                                    ProjectConfig& out) const {
+    const auto resolved = ResolveEditorProjectFile(projectFilePath);
+    if (resolved.empty()) return false;
+    if (!LoadProjectFile(resolved, out)) return false;
+    out.RootPath = std::filesystem::absolute(resolved.parent_path());
+    return true;
+}
+
+bool ProjectManager::LoadProjectFile(const std::filesystem::path& path, ProjectConfig& out) const {
+    return loadProjectConfigFromFile(path, out);
+}
+
+bool ProjectManager::LoadProjectFromFile(const std::filesystem::path& projectFilePath,
+                                         ProjectConfig& out) const {
+    if (!LoadProjectFile(projectFilePath, out)) return false;
+    out.RootPath = std::filesystem::absolute(projectFilePath.parent_path());
+    return true;
+}
+
+bool ProjectManager::CreateNewProject(const ProjectConfig& config) {
+    if (config.Name.empty()) return false;
+    if (config.RootPath.empty()) return false;
+
+    std::error_code ec;
+    std::filesystem::create_directories(config.RootPath, ec);
+    if (ec) return false;
+    EnsureDefaultFolders(config.RootPath);
+    if (!SaveProjectFile(config)) return false;
+    Scene::importDefaultSkyboxes(config.RootPath);
+
+    m_CurrentConfig = config;
+    UpdateRecentProjects(config.RootPath / "project.caffeine");
+    return true;
+}
+
+bool ProjectManager::OpenProject(const std::filesystem::path& projectFilePath) {
+    const auto resolved = ResolveEditorProjectFile(projectFilePath);
+    if (resolved.empty()) return false;
+
+    ProjectConfig cfg;
+    if (!LoadProjectFile(resolved, cfg)) return false;
+    cfg.RootPath = std::filesystem::absolute(resolved.parent_path());
+    if (IsPackagedBuildRoot(cfg.RootPath, cfg)) return false;
+
+    m_CurrentConfig = cfg;
+    EnsureDefaultFolders(cfg.RootPath);
+    Scene::importDefaultSkyboxes(cfg.RootPath);
+    UpdateRecentProjects(resolved);
+
+    std::filesystem::path capPath = cfg.RootPath / "game.cap";
+    if (std::filesystem::exists(capPath)) {
+        // TODO: Get AssetBrowser instance from EditorContext and call loadCapFile
+        // For now, this is a placeholder for future integration
+    }
+    
+    return true;
+}
+
+void ProjectManager::PruneRecentProjectsList() {
+    std::vector<std::filesystem::path> cleaned;
+    cleaned.reserve(m_RecentProjects.size());
+
+    for (const auto& entry : m_RecentProjects) {
+        const auto resolved = ResolveEditorProjectFile(entry);
+        if (resolved.empty()) continue;
+
+        ProjectConfig cfg;
+        if (!LoadProjectFile(resolved, cfg)) continue;
+        if (IsPackagedBuildRoot(resolved.parent_path(), cfg)) continue;
+
+        const auto absPath = std::filesystem::absolute(resolved);
+        if (std::find(cleaned.begin(), cleaned.end(), absPath) != cleaned.end()) continue;
+        cleaned.push_back(absPath);
+    }
+
+    m_RecentProjects = std::move(cleaned);
+    if (m_RecentProjects.size() > 10) {
+        m_RecentProjects.resize(10);
+    }
+}
+
+void ProjectManager::UpdateRecentProjects(const std::filesystem::path& path) {
+    const auto resolved = ResolveEditorProjectFile(path);
+    if (resolved.empty()) return;
+
+    ProjectConfig cfg;
+    if (!LoadProjectFile(resolved, cfg)) return;
+    if (IsPackagedBuildRoot(resolved.parent_path(), cfg)) return;
+
+    const auto absPath = std::filesystem::absolute(resolved);
+    auto it = std::find(m_RecentProjects.begin(), m_RecentProjects.end(), absPath);
+    if (it != m_RecentProjects.end()) {
+        m_RecentProjects.erase(it);
+    }
+    m_RecentProjects.insert(m_RecentProjects.begin(), absPath);
+    if (m_RecentProjects.size() > 10) {
+        m_RecentProjects.resize(10);
+    }
+    SaveRecentProjects();
+}
+
+void ProjectManager::LoadRecentProjects() {
+    m_RecentProjects.clear();
+    std::ifstream file(m_RecentProjectsFile);
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            m_RecentProjects.push_back(std::filesystem::path(line));
+        }
+    }
+
+    PruneRecentProjectsList();
+    SaveRecentProjects();
+}
+
+void ProjectManager::SaveRecentProjects() {
+    std::error_code ec;
+    std::filesystem::create_directories(m_RecentProjectsFile.parent_path(), ec);
+
+    std::ofstream file(m_RecentProjectsFile);
+    if (!file.is_open()) return;
+
+    for (const auto& p : m_RecentProjects) {
+        file << p.string() << "\n";
+    }
+}
+
+} // namespace Caffeine::Editor

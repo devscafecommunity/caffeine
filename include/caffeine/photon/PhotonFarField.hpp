@@ -15,6 +15,12 @@
 //
 //  Keeping the math here (instead of duplicating it in GLSL) makes the layout
 //  testable on CI without a GPU and gives the future bake the same contract.
+//
+//  OPEN ITEMS (P4 completion, tracked in PhotonCascades.hpp as well):
+//   * conservative triangle voxelisation + dirty-slab rebuilds;
+//   * E_dir from the host lights/shadows in the injection pass;
+//   * S4/S5 scene validation on hardware (this header already provides the
+//     seam metric and the layout math).
 // ============================================================================
 #pragma once
 

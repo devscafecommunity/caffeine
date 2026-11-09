@@ -1,0 +1,73 @@
+#version 450
+
+// Photon P4d — screened voxel fill for all four levels (spec §8.2 fallback).
+//
+// The world-space visible surface is written into every clipmap level, each at
+// its own cell size (0.25 / 0.5 / 1 / 2 m). Levels are packed side by side in
+// one RGBA8 atlas: level l owns columns [l*512, (l+1)*512).
+//
+// SDL_GPU compute layout: set 0 samplers, set 1 read-write storage, set 2 uniforms.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uDepth;
+layout(set = 0, binding = 1) uniform sampler2D uAlbedo;
+
+layout(set = 1, binding = 0, rgba8) uniform image2D uVoxel;
+
+layout(set = 2, binding = 0) uniform VoxelizeUBO {
+    vec4 uProj;      // x P00, y P11, z P22, w P23
+    vec4 uProjExtra; // x P32
+    vec4 uTexel;     // xy 1 / size, zw size
+    mat4 uInvView;
+    vec4 uClip[4];   // per level: xyz origin, w cell size
+    vec4 uAtlas;     // x cells (64), y tiles per row (8), z level stride (512)
+} vx;
+
+bool isOrthographic() { return abs(vx.uProjExtra.x) < 0.5; }
+
+float linearDepth(float d) {
+    if (isOrthographic()) return (vx.uProj.w - d) / vx.uProj.z;
+    return vx.uProj.w / (d + vx.uProj.z);
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    int width = int(vx.uTexel.z);
+    int height = int(vx.uTexel.w);
+    if (idx >= uint(width * height)) return;
+
+    ivec2 pixel = ivec2(int(idx) % width, int(idx) / width);
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(float(width), float(height));
+    float d = textureLod(uDepth, uv, 0.0).r;
+    if (d >= 0.999999) return;
+
+    float z = linearDepth(d);
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    float scale = isOrthographic() ? 1.0 : z;
+    vec3 viewPos = vec3(ndc.x / vx.uProj.x * scale, ndc.y / vx.uProj.y * scale, -z);
+    vec3 worldPos = (vx.uInvView * vec4(viewPos, 1.0)).xyz;
+
+    vec4 albedoSample = textureLod(uAlbedo, uv, 0.0);
+    if (albedoSample.a < 0.5) return;  // sky / grid / effects
+    vec3 albedo = max(albedoSample.rgb, vec3(0.0));
+
+    int cells = int(vx.uAtlas.x);
+    int tiles = int(vx.uAtlas.y);
+    int stride = int(vx.uAtlas.z);
+    for (int level = 0; level < 4; ++level) {
+        vec3 origin = vx.uClip[level].xyz;
+        float cellSize = vx.uClip[level].w;
+        vec3 g = floor((worldPos - origin) / cellSize);
+        if (g.x < 0.0 || g.y < 0.0 || g.z < 0.0 ||
+            g.x >= float(cells) || g.y >= float(cells) || g.z >= float(cells)) {
+            continue;
+        }
+        int x = int(g.x);
+        int y = int(g.y);
+        int z = int(g.z);
+        int atlasX = level * stride + (z % tiles) * cells + x;
+        int atlasY = (z / tiles) * cells + y;
+        imageStore(uVoxel, ivec2(atlasX, atlasY), vec4(albedo, 1.0));
+    }
+}

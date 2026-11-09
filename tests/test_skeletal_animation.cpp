@@ -1,11 +1,11 @@
 #include "catch.hpp"
-#include "../src/animation/SkeletalAnimation.hpp"
-#include "../src/animation/SkinLibrary.hpp"
-#include "../src/assets/MeshTypes.hpp"
-#include "../src/assets/MeshCache.hpp"
-#include "../src/assets/MeshLoader.hpp"
-#include "../src/ecs/MeshComponents.hpp"
-#include "../src/ecs/World.hpp"
+#include "../src/caffeine/animation/SkeletalAnimation.hpp"
+#include "../src/caffeine/animation/SkinLibrary.hpp"
+#include "../src/caffeine/assets/MeshTypes.hpp"
+#include "../src/caffeine/assets/MeshCache.hpp"
+#include "../src/caffeine/assets/MeshLoader.hpp"
+#include "../src/caffeine/ecs/MeshComponents.hpp"
+#include "../src/caffeine/ecs/World.hpp"
 #include <filesystem>
 #include "Caffeine.hpp"
 

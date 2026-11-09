@@ -1,5 +1,5 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
+#include "../src/caffeine/Caffeine.hpp"
 
 #include <cmath>
 

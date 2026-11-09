@@ -2,14 +2,14 @@
 
 #ifdef CF_HAS_SCRIPTING
 
-#include "../src/script/ScriptEngine.hpp"
-#include "../src/script/ScriptSystem.hpp"
-#include "../src/script/ScriptTypes.hpp"
-#include "../src/ecs/World.hpp"
-#include "../src/ecs/Components.hpp"
-#include "../src/input/InputManager.hpp"
-#include "../src/events/EventBus.hpp"
-#include "../src/debug/LogSystem.hpp"
+#include "../src/caffeine/script/ScriptEngine.hpp"
+#include "../src/caffeine/script/ScriptSystem.hpp"
+#include "../src/caffeine/script/ScriptTypes.hpp"
+#include "../src/caffeine/ecs/World.hpp"
+#include "../src/caffeine/ecs/Components.hpp"
+#include "../src/caffeine/input/InputManager.hpp"
+#include "../src/caffeine/events/EventBus.hpp"
+#include "../src/caffeine/debug/LogSystem.hpp"
 
 #include <string>
 

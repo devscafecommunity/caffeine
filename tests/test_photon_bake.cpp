@@ -228,6 +228,7 @@ TEST_CASE("PhotonCascades - Default state is unavailable", "[photon][cascades]")
     REQUIRE(cascades.cascadeCount() == 0);
     REQUIRE(cascades.init(nullptr) == false);
     REQUIRE(cascades.execute(nullptr, nullptr, nullptr, nullptr, nullptr, Mat4::identity(),
-                             Mat4::identity(), 320, 180, ECS::PhotonGIComponent{}, 0) == false);
+                             Mat4::identity(), 320, 180, ECS::PhotonGIComponent{}, 0, nullptr,
+                             Mat4::identity(), false) == false);
     cascades.shutdown(nullptr);
 }

@@ -1,9 +1,9 @@
 #include "catch.hpp"
-#include "../src/core/io/CafTypes.hpp"
-#include "../src/core/io/Crc32.hpp"
-#include "../src/core/io/CafWriter.hpp"
-#include "../src/core/io/BlobLoader.hpp"
-#include "../src/memory/LinearAllocator.hpp"
+#include "../src/caffeine/core/io/CafTypes.hpp"
+#include "../src/caffeine/core/io/Crc32.hpp"
+#include "../src/caffeine/core/io/CafWriter.hpp"
+#include "../src/caffeine/core/io/BlobLoader.hpp"
+#include "../src/caffeine/memory/LinearAllocator.hpp"
 
 #include <cstring>
 

@@ -1,9 +1,9 @@
 #ifdef CF_HAS_SDL3
 
 #include "catch.hpp"
-#include "../src/render/BatchRenderer.hpp"
-#include "../src/render/TextureAtlas.hpp"
-#include "../src/math/Mat4.hpp"
+#include "../src/caffeine/render/BatchRenderer.hpp"
+#include "../src/caffeine/render/TextureAtlas.hpp"
+#include "../src/caffeine/math/Mat4.hpp"
 
 #include <cmath>
 

@@ -1,8 +1,8 @@
 #include "catch.hpp"
-#include "../src/core/Types.hpp"
-#include "../src/core/Platform.hpp"
-#include "../src/core/Compiler.hpp"
-#include "../src/core/Assertions.hpp"
+#include "../src/caffeine/core/Types.hpp"
+#include "../src/caffeine/core/Platform.hpp"
+#include "../src/caffeine/core/Compiler.hpp"
+#include "../src/caffeine/core/Assertions.hpp"
 #if defined(CF_DEBUG)
 #include <signal.h>
 #include <csetjmp>

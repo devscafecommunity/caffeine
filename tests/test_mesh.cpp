@@ -1,10 +1,10 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
-#include "../src/ecs/Components3D.hpp"
-#include "../src/assets/MeshTypes.hpp"
-#include "../src/assets/MeshLoader.hpp"
-#include "../src/assets/MeshMaterialExport.hpp"
-#include "../src/assets/MaterialFile.hpp"
+#include "../src/caffeine/Caffeine.hpp"
+#include "../src/caffeine/ecs/Components3D.hpp"
+#include "../src/caffeine/assets/MeshTypes.hpp"
+#include "../src/caffeine/assets/MeshLoader.hpp"
+#include "../src/caffeine/assets/MeshMaterialExport.hpp"
+#include "../src/caffeine/assets/MaterialFile.hpp"
 
 #include <cmath>
 #include <filesystem>

@@ -2,11 +2,11 @@
 
 #ifdef CF_HAS_DRYAD
 
-#include "../src/script/DryadHost.hpp"
-#include "../src/ecs/Components.hpp"
-#include "../src/ecs/Components3D.hpp"
-#include "../src/ecs/MeshComponents.hpp"
-#include "../src/ecs/World.hpp"
+#include "../src/caffeine/script/DryadHost.hpp"
+#include "../src/caffeine/ecs/Components.hpp"
+#include "../src/caffeine/ecs/Components3D.hpp"
+#include "../src/caffeine/ecs/MeshComponents.hpp"
+#include "../src/caffeine/ecs/World.hpp"
 
 #include <chrono>
 #include <cstdio>

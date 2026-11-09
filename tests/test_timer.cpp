@@ -1,8 +1,8 @@
 #include "catch.hpp"
 #include <thread>
 #include <chrono>
-#include "../src/core/Types.hpp"
-#include "../src/core/Timer.hpp"
+#include "../src/caffeine/core/Types.hpp"
+#include "../src/caffeine/core/Timer.hpp"
 
 using namespace Caffeine::Core;
 

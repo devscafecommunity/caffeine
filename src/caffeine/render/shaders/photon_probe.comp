@@ -1,0 +1,230 @@
+#version 450
+
+// Photon P4d — per-level probe trace (spec §8.4 / §8.5).
+//
+// Dispatched once per level. Each probe traces the 64 interior directions with
+// a 3D DDA against its level's material volume, shades hits with the
+// anisotropic face radiance, blends with the previous frame (h = 0.85), and
+// writes the radiance tile, distance moments (validity in .b) and SH-L1.
+//
+// Level l owns:
+//   material  columns [l*512, (l+1)*512)
+//   radiance  columns [l*1024, (l+1)*1024)
+//   probes    columns [l*160, (l+1)*160)
+//   SH        columns [l*32, (l+1)*32)
+//
+// SDL_GPU compute layout: set 0 samplers, set 1 read-write storage, set 2 uniforms.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uVoxel;
+layout(set = 0, binding = 1) uniform sampler2D uRadX;
+layout(set = 0, binding = 2) uniform sampler2D uRadY;
+layout(set = 0, binding = 3) uniform sampler2D uRadZ;
+layout(set = 0, binding = 4) uniform sampler2D uPrevRadiance;
+layout(set = 0, binding = 5) uniform sampler2D uPrevMoments;
+
+layout(set = 1, binding = 0, rgba16f) uniform image2D uRadiance;
+layout(set = 1, binding = 1, rgba16f) uniform image2D uMoments;
+layout(set = 1, binding = 2, rgba16f) uniform image2D uProbeSH;
+
+layout(set = 2, binding = 0) uniform ProbeUBO {
+    vec4 uClip;     // xyz clipmap origin, w cell size
+    vec4 uProbe;    // xyz probe origin, w probe spacing
+    vec4 uParams;   // x extent, y DDA steps, z frame, w cells per axis
+    vec4 uSky;      // rgb sky radiance
+    vec4 uJitter;   // xy Halton jitter
+    ivec4 uDims;    // probes per axis (16), tile stride (10)
+    ivec4 uOffsets; // material base, radiance base, probe base, SH base
+} pb;
+
+const float kPi = 3.14159265359;
+const float kY00 = 0.282095;
+const float kY1 = 0.488603;
+
+vec3 octDecode(vec2 e) {
+    e = e * 2.0 - 1.0;
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(n);
+}
+
+ivec2 voxelAtlasTexel(ivec3 v) {
+    const int cells = int(pb.uParams.w);
+    const int tiles = 8;
+    return ivec2(pb.uOffsets.x + (v.z % tiles) * cells + v.x,
+                 (v.z / tiles) * cells + v.y);
+}
+
+vec4 voxelAt(ivec3 v) {
+    return texelFetch(uVoxel, voxelAtlasTexel(v), 0);
+}
+
+vec3 voxelRadiance(ivec3 v, vec3 omega) {
+    ivec2 t = voxelAtlasTexel(v);
+    ivec2 pos = ivec2(pb.uOffsets.y + 2 * (t.x - pb.uOffsets.x), t.y);
+    vec4 xp = texelFetch(uRadX, pos + ivec2(0, 0), 0);
+    vec4 xn = texelFetch(uRadX, pos + ivec2(1, 0), 0);
+    vec4 yp = texelFetch(uRadY, pos + ivec2(0, 0), 0);
+    vec4 yn = texelFetch(uRadY, pos + ivec2(1, 0), 0);
+    vec4 zp = texelFetch(uRadZ, pos + ivec2(0, 0), 0);
+    vec4 zn = texelFetch(uRadZ, pos + ivec2(1, 0), 0);
+    vec3 bx = omega.x > 0.0 ? xn.rgb : xp.rgb;
+    vec3 by = omega.y > 0.0 ? yn.rgb : yp.rgb;
+    vec3 bz = omega.z > 0.0 ? zn.rgb : zp.rgb;
+    return bx * (omega.x * omega.x) + by * (omega.y * omega.y) +
+           bz * (omega.z * omega.z);
+}
+
+vec4 traceRay(vec3 Q, vec3 dir, out float outDistance) {
+    const int cells = int(pb.uParams.w);
+    const float cell = pb.uClip.w;
+    const float extent = pb.uParams.x;
+
+    vec3 p = Q - pb.uClip.xyz;
+    if (p.x < 0.0 || p.y < 0.0 || p.z < 0.0 ||
+        p.x >= extent || p.y >= extent || p.z >= extent) {
+        outDistance = extent;
+        return vec4(pb.uSky.rgb, 1.0);
+    }
+
+    vec3 safeDir = sign(dir) * max(abs(dir), vec3(1e-6));
+    vec3 inv = 1.0 / safeDir;
+    ivec3 stepDir = ivec3(sign(dir));
+    ivec3 map = clamp(ivec3(floor(p / cell)), ivec3(0), ivec3(cells - 1));
+
+    vec3 tMax;
+    vec3 tDelta = abs(vec3(cell) * inv);
+    for (int axis = 0; axis < 3; ++axis) {
+        if (stepDir[axis] > 0) {
+            tMax[axis] = (float(map[axis] + 1) * cell - p[axis]) * inv[axis];
+        } else if (stepDir[axis] < 0) {
+            tMax[axis] = (float(map[axis]) * cell - p[axis]) * inv[axis];
+        } else {
+            tMax[axis] = 1.0e30;
+            tDelta[axis] = 1.0e30;
+        }
+    }
+
+    float t = 0.0;
+    int steps = int(clamp(pb.uParams.y, 1.0, 256.0));
+    for (int s = 0; s < 256; ++s) {
+        if (s >= steps) break;
+        if (map.x < 0 || map.y < 0 || map.z < 0 ||
+            map.x >= cells || map.y >= cells || map.z >= cells) break;
+        vec4 voxel = voxelAt(map);
+        if (voxel.a >= 0.5) {
+            outDistance = max(t, 0.0);
+            return vec4(voxelRadiance(map, dir), 0.0);
+        }
+        int axis = 0;
+        if (tMax.y < tMax.x && tMax.y < tMax.z) {
+            axis = 1;
+        } else if (tMax.z < tMax.x) {
+            axis = 2;
+        }
+        t = tMax[axis];
+        map[axis] += stepDir[axis];
+        tMax[axis] += tDelta[axis];
+        if (t > extent) break;
+    }
+
+    outDistance = extent;
+    return vec4(pb.uSky.rgb, 1.0);
+}
+
+void writeSH(int index, vec3 c00, vec3 c1x, vec3 c1y, vec3 c1z, float v00, vec3 v1) {
+    int n = pb.uDims.x;
+    ivec2 base = ivec2(pb.uOffsets.w + (index % n) * 2, (index / n) * 2);
+    imageStore(uProbeSH, base + ivec2(0, 0), vec4(c00, v00));
+    imageStore(uProbeSH, base + ivec2(1, 0), vec4(c1x, v1.x));
+    imageStore(uProbeSH, base + ivec2(0, 1), vec4(c1y, v1.y));
+    imageStore(uProbeSH, base + ivec2(1, 1), vec4(c1z, v1.z));
+}
+
+void main() {
+    int index = int(gl_GlobalInvocationID.x);
+    int n = pb.uDims.x;
+    if (index >= n * n * n) return;
+
+    ivec3 q = ivec3(index % n, (index / n) % n, index / (n * n));
+    vec3 Q = pb.uProbe.xyz + (vec3(q) + 0.5) * pb.uProbe.w;
+
+    const int tile = pb.uDims.y;
+    const int side = tile - 2;
+    int baseX = pb.uOffsets.z + q.x * tile;
+    int baseY = (q.z * n + q.y) * tile;
+
+    // Probes inside solid voxels are invalid: zero radiance, validity 0.
+    ivec3 probeCell = clamp(ivec3(floor((Q - pb.uClip.xyz) / pb.uClip.w)),
+                            ivec3(0), ivec3(int(pb.uParams.w) - 1));
+    bool valid = voxelAt(probeCell).a < 0.5;
+    if (!valid) {
+        for (int ty = 0; ty < tile; ++ty) {
+            for (int tx = 0; tx < tile; ++tx) {
+                imageStore(uRadiance, ivec2(baseX + tx, baseY + ty), vec4(0.0));
+                imageStore(uMoments, ivec2(baseX + tx, baseY + ty), vec4(0.0));
+            }
+        }
+        writeSH(index, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, vec3(0.0));
+        return;
+    }
+
+    const float dOmega = 4.0 * kPi / float(side * side);
+    vec3 c00 = vec3(0.0);
+    vec3 c1x = vec3(0.0);
+    vec3 c1y = vec3(0.0);
+    vec3 c1z = vec3(0.0);
+    float v00 = 0.0;
+    vec3 v1 = vec3(0.0);
+
+    for (int iy = 0; iy < side; ++iy) {
+        for (int ix = 0; ix < side; ++ix) {
+            vec2 duv = (vec2(float(ix), float(iy)) + 0.5 + pb.uJitter.xy) / float(side);
+            duv = clamp(duv, 0.0, 1.0);
+            vec3 dir = octDecode(duv * 2.0 - 1.0);
+
+            float distance;
+            vec4 radiance = traceRay(Q, dir, distance);
+            float d = clamp(distance, 0.0, 1.5 * pb.uProbe.w);
+
+            ivec2 target = ivec2(baseX + 1 + ix, baseY + 1 + iy);
+            radiance = mix(radiance, texelFetch(uPrevRadiance, target, 0), 0.85);
+            vec2 moments = mix(vec2(d, d * d), texelFetch(uPrevMoments, target, 0).rg, 0.85);
+
+            imageStore(uRadiance, target, radiance);
+            imageStore(uMoments, target, vec4(moments, 1.0, 0.0));
+
+            vec3 y1 = kY1 * dir;
+            c00 += radiance.rgb * kY00 * dOmega;
+            c1x += radiance.rgb * y1.x * dOmega;
+            c1y += radiance.rgb * y1.y * dOmega;
+            c1z += radiance.rgb * y1.z * dOmega;
+            v00 += radiance.a * kY00 * dOmega;
+            v1 += y1 * radiance.a * dOmega;
+        }
+    }
+
+    for (int ty = 0; ty < tile; ++ty) {
+        for (int tx = 0; tx < tile; ++tx) {
+            if (tx != 0 && tx != tile - 1 && ty != 0 && ty != tile - 1) continue;
+            int ix = clamp(tx, 1, side) - 1;
+            int iy = clamp(ty, 1, side) - 1;
+            vec2 duv = (vec2(float(ix), float(iy)) + 0.5 + pb.uJitter.xy) / float(side);
+            duv = clamp(duv, 0.0, 1.0);
+            vec3 dir = octDecode(duv * 2.0 - 1.0);
+            float distance;
+            vec4 radiance = traceRay(Q, dir, distance);
+            float d = clamp(distance, 0.0, 1.5 * pb.uProbe.w);
+            ivec2 target = ivec2(baseX + tx, baseY + ty);
+            radiance = mix(radiance, texelFetch(uPrevRadiance, target, 0), 0.85);
+            vec2 moments = mix(vec2(d, d * d), texelFetch(uPrevMoments, target, 0).rg, 0.85);
+            imageStore(uRadiance, target, radiance);
+            imageStore(uMoments, target, vec4(moments, 1.0, 0.0));
+        }
+    }
+
+    writeSH(index, c00, c1x, c1y, c1z, v00, v1);
+}

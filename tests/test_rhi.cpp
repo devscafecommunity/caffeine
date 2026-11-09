@@ -632,3 +632,16 @@ TEST_CASE("MinZPyramid - generate and shutdown without resources are safe",
     pyramid.shutdown(nullptr);
     REQUIRE(pyramid.isReady() == false);
 }
+
+TEST_CASE("CommandBuffer - Multi-storage compute pass is safe without acquire",
+          "[rhi][compute]") {
+    CommandBuffer cmd;
+    Texture a;
+    Texture b;
+    Texture* storage[2] = {&a, &b};
+    cmd.beginComputePass(storage, 2);
+    REQUIRE(cmd.isInComputePass() == false);
+    Texture* missing[2] = {&a, nullptr};
+    cmd.beginComputePass(missing, 2);
+    REQUIRE(cmd.isInComputePass() == false);
+}

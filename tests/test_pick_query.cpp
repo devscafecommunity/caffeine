@@ -1,9 +1,9 @@
 #include "catch.hpp"
 
-#include "../src/ecs/World.hpp"
-#include "../src/ecs/Components.hpp"
-#include "../src/render/Camera2D.hpp"
-#include "../src/scene/PickQuery.hpp"
+#include "../src/caffeine/ecs/World.hpp"
+#include "../src/caffeine/ecs/Components.hpp"
+#include "../src/caffeine/render/Camera2D.hpp"
+#include "../src/caffeine/scene/PickQuery.hpp"
 
 #include <cmath>
 

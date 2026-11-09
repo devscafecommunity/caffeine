@@ -1,5 +1,5 @@
 #include "catch.hpp"
-#include "../src/render/TextureAtlas.hpp"
+#include "../src/caffeine/render/TextureAtlas.hpp"
 
 #include <cmath>
 

@@ -7,7 +7,7 @@
 #include "ecs/Components3D.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/World.hpp"
-#include "editor/SceneSerializer.hpp"
+#include "scene/EditorSceneSerializer.hpp"
 
 #include <cmath>
 #include <filesystem>

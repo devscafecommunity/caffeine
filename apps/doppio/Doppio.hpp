@@ -13,7 +13,7 @@
 
 // ── Editor panels (header-only, ImGui code is CF_HAS_IMGUI-guarded) ─
 #include "editor/EditorTypes.hpp"
-#include "editor/EditorContext.hpp"
+#include "scene/EditorContext.hpp"
 #include "editor/ConsoleWindow.hpp"
 #include "editor/ProfilerWindow.hpp"
 #include "editor/StatsOverlay.hpp"

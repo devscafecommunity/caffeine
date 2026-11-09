@@ -1,9 +1,9 @@
 #include "../Catch2/catch.hpp"
 
-#include "../../src/ecs/TerrainComponents.hpp"
-#include "../../src/ecs/World.hpp"
-#include "../../src/editor/EditorContext.hpp"
-#include "../../src/editor/TerrainPanel.hpp"
+#include "../../src/caffeine/ecs/TerrainComponents.hpp"
+#include "../../src/caffeine/ecs/World.hpp"
+#include "../../src/caffeine/scene/EditorContext.hpp"
+#include "../../src/doppio/editor/TerrainPanel.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>

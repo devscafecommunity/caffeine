@@ -1,8 +1,8 @@
 #define CATCH_CONFIG_RUNNER
 #include "catch.hpp"
-#include "../src/memory/LinearAllocator.hpp"
-#include "../src/memory/PoolAllocator.hpp"
-#include "../src/memory/StackAllocator.hpp"
+#include "../src/caffeine/memory/LinearAllocator.hpp"
+#include "../src/caffeine/memory/PoolAllocator.hpp"
+#include "../src/caffeine/memory/StackAllocator.hpp"
 
 #include <vector>
 #include <string>

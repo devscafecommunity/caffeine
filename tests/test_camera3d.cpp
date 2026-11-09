@@ -1,5 +1,5 @@
 #include "catch.hpp"
-#include "../src/render/Camera3D.hpp"
+#include "../src/caffeine/render/Camera3D.hpp"
 #include "Caffeine.hpp"
 
 using namespace Caffeine;

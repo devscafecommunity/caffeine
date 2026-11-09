@@ -45,86 +45,85 @@ endif()
 #  Can be built headless (without SDL3) for server/CI workloads.
 # ═══════════════════════════════════════════════════════════════════
 add_library(caffeine-core
-    src/core/Timer.cpp
-    src/core/TimerScheduler.cpp
-    src/core/GameLoop.cpp
-    src/core/io/BlobLoader.cpp
-    src/core/io/CafWriter.cpp
-    src/core/io/FileWatcher.cpp
-    src/input/InputManager.cpp
-    src/debug/LogSystem.cpp
-    src/debug/CrashHandler.cpp
-    src/debug/Profiler.cpp
-    src/debug/SystemMetrics.cpp
-    src/threading/JobSystem.cpp
-    src/ecs/CommandBuffer.cpp
-    src/ecs/World.cpp
-    src/events/EventBus.cpp
-    src/assets/AssetManager.cpp
-    src/assets/AssetPipeline.cpp
-    src/assets/TextureCompiler.cpp
-    src/assets/MeshLoader.cpp
-    src/animation/SkinLibrary.cpp
-    src/effects/EffectSystem.cpp
-    src/ecs/ParticleSystem.cpp
-    src/ecs/ParticleSystem.cpp
-    src/ecs/MeshGeometry.cpp
-    src/assets/MeshCache.cpp
-    src/assets/MeshImportValidator.cpp
-    src/assets/MeshLOD.cpp
-    src/assets/PrefabSerializer.cpp
-    src/assets/HotReloader.cpp
-    src/scene/PlayMode2D.cpp
-    src/scene/PickQuery.cpp
-    src/scene/PickRaycast.cpp
-    src/scene/MapSurfaceSystem.cpp
-    src/scene/SpriteLod2DSystem.cpp
-    src/render/Overlay2D.cpp
-    src/runtime/PlayClock.cpp
-    src/runtime/GameStateStack.cpp
-    src/scene/EnvironmentSystem.cpp
-    src/scene/CpuDirectionalShadowMap.cpp
-    src/scene/LightingSystem.cpp
-    src/scene/Camera3DSystem.cpp
-    src/scene/TerrainSystem.cpp
-    src/scene/NaturalFluidSystem.cpp
-    src/fluid/WaveField.cpp
-    src/fluid/ShallowWater.cpp
-    src/fluid/EulerFluid.cpp
-    src/fluid/FluidVolume.cpp
-    src/fluid/FluidWorld.cpp
-    src/terrain/TerrainHeightmap.cpp
-    src/terrain/TerrainMeshBuilder.cpp
-    src/terrain/TerrainCache.cpp
-    src/terrain/TerrainSculptor.cpp
-    src/terrain/TerrainLodSystem.cpp
-    src/terrain/TerrainSplatmap.cpp
-    src/terrain/TerrainSplatPainter.cpp
-    src/terrain/TerrainSerializer.cpp
-    src/terrain/TerrainGpuTextures.cpp
-    src/terrain/TerrainHeightmapImporter.cpp
-    src/terrain/TerrainCollisionMeshBuilder.cpp
-    src/procedural/ProceduralNoise.cpp
-    src/procedural/ProceduralProfiles.cpp
-    src/procedural/ProceduralGenerator.cpp
-    src/procedural/ProceduralStreamer.cpp
-    src/procedural/ProceduralWorldSystem.cpp
-    src/procedural/ProceduralBindings.cpp
-    src/script/PostProcessBindings.cpp
-    src/script/ForwardRenderBindings.cpp
-    src/render/ForwardRenderFeatures.cpp
-    src/render/SkyboxRenderer.cpp
-    src/engine/AssetLoader.cpp
-    src/editor/TransformGizmo.cpp
-    src/core/DebugHookRegistry.cpp
-    src/editor/EditorContext.cpp
-    src/editor/ProjectManager.cpp
-    src/editor/ProjectStartupDialog.cpp
-    src/editor/FilePicker.cpp
+    src/caffeine/core/Timer.cpp
+    src/caffeine/core/TimerScheduler.cpp
+    src/caffeine/core/GameLoop.cpp
+    src/caffeine/core/io/BlobLoader.cpp
+    src/caffeine/core/io/CafWriter.cpp
+    src/caffeine/core/io/FileWatcher.cpp
+    src/caffeine/input/InputManager.cpp
+    src/caffeine/debug/LogSystem.cpp
+    src/caffeine/debug/CrashHandler.cpp
+    src/caffeine/debug/Profiler.cpp
+    src/caffeine/debug/SystemMetrics.cpp
+    src/caffeine/threading/JobSystem.cpp
+    src/caffeine/ecs/CommandBuffer.cpp
+    src/caffeine/ecs/World.cpp
+    src/caffeine/events/EventBus.cpp
+    src/caffeine/assets/AssetManager.cpp
+    src/caffeine/assets/AssetPipeline.cpp
+    src/caffeine/assets/TextureCompiler.cpp
+    src/caffeine/assets/MeshLoader.cpp
+    src/caffeine/animation/SkinLibrary.cpp
+    src/caffeine/effects/EffectSystem.cpp
+    src/caffeine/ecs/ParticleSystem.cpp
+    src/caffeine/ecs/ParticleSystem.cpp
+    src/caffeine/ecs/MeshGeometry.cpp
+    src/caffeine/assets/MeshCache.cpp
+    src/caffeine/assets/MeshImportValidator.cpp
+    src/caffeine/assets/MeshLOD.cpp
+    src/caffeine/assets/PrefabSerializer.cpp
+    src/caffeine/assets/HotReloader.cpp
+    src/caffeine/scene/PlayMode2D.cpp
+    src/caffeine/scene/PickQuery.cpp
+    src/caffeine/scene/PickRaycast.cpp
+    src/caffeine/scene/MapSurfaceSystem.cpp
+    src/caffeine/scene/SpriteLod2DSystem.cpp
+    src/caffeine/render/Overlay2D.cpp
+    src/caffeine/runtime/PlayClock.cpp
+    src/caffeine/runtime/GameStateStack.cpp
+    src/caffeine/scene/EnvironmentSystem.cpp
+    src/caffeine/scene/CpuDirectionalShadowMap.cpp
+    src/caffeine/scene/LightingSystem.cpp
+    src/caffeine/scene/Camera3DSystem.cpp
+    src/caffeine/scene/TerrainSystem.cpp
+    src/caffeine/scene/NaturalFluidSystem.cpp
+    src/caffeine/fluid/WaveField.cpp
+    src/caffeine/fluid/ShallowWater.cpp
+    src/caffeine/fluid/EulerFluid.cpp
+    src/caffeine/fluid/FluidVolume.cpp
+    src/caffeine/fluid/FluidWorld.cpp
+    src/caffeine/terrain/TerrainHeightmap.cpp
+    src/caffeine/terrain/TerrainMeshBuilder.cpp
+    src/caffeine/terrain/TerrainCache.cpp
+    src/caffeine/terrain/TerrainSculptor.cpp
+    src/caffeine/terrain/TerrainLodSystem.cpp
+    src/caffeine/terrain/TerrainSplatmap.cpp
+    src/caffeine/terrain/TerrainSplatPainter.cpp
+    src/caffeine/terrain/TerrainSerializer.cpp
+    src/caffeine/terrain/TerrainGpuTextures.cpp
+    src/caffeine/terrain/TerrainHeightmapImporter.cpp
+    src/caffeine/terrain/TerrainCollisionMeshBuilder.cpp
+    src/caffeine/procedural/ProceduralNoise.cpp
+    src/caffeine/procedural/ProceduralProfiles.cpp
+    src/caffeine/procedural/ProceduralGenerator.cpp
+    src/caffeine/procedural/ProceduralStreamer.cpp
+    src/caffeine/procedural/ProceduralWorldSystem.cpp
+    src/caffeine/procedural/ProceduralBindings.cpp
+    src/caffeine/script/PostProcessBindings.cpp
+    src/caffeine/script/ForwardRenderBindings.cpp
+    src/caffeine/render/ForwardRenderFeatures.cpp
+    src/caffeine/render/SkyboxRenderer.cpp
+    src/caffeine/engine/AssetLoader.cpp
+    src/caffeine/core/DebugHookRegistry.cpp
+    src/caffeine/project/ProjectManager.cpp
+    src/caffeine/scene/EditorContext.cpp
+    src/caffeine/scene/EditorSceneSerializer.cpp
 )
 
 target_include_directories(caffeine-core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/caffeine>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
     $<BUILD_INTERFACE:${TINYGLTF_INCLUDE_DIR}>
@@ -137,9 +136,9 @@ set_target_properties(caffeine-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(caffeine-core PUBLIC
     CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_sources(caffeine-core PRIVATE
-    src/assets/MaterialCache.cpp
-    src/assets/MaterialFile.cpp
-    src/assets/MeshMaterialExport.cpp)
+    src/caffeine/assets/MaterialCache.cpp
+    src/caffeine/assets/MaterialFile.cpp
+    src/caffeine/assets/MeshMaterialExport.cpp)
 
 if(CAFFEINE_ENABLE_BULLET3)
     set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
@@ -161,12 +160,12 @@ if(CAFFEINE_ENABLE_BULLET3)
     )
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
     FetchContent_MakeAvailable(bullet3)
-    target_sources(caffeine-core PRIVATE src/physics/PhysicsWorld3D.cpp)
+    target_sources(caffeine-core PRIVATE src/caffeine/physics/PhysicsWorld3D.cpp)
     target_include_directories(caffeine-core PUBLIC ${bullet3_SOURCE_DIR}/src)
     target_link_libraries(caffeine-core PUBLIC BulletDynamics BulletCollision LinearMath)
     target_compile_definitions(caffeine-core PUBLIC CF_HAS_BULLET3)
 else()
-    target_sources(caffeine-core PRIVATE src/physics/PhysicsWorld3D.cpp)
+    target_sources(caffeine-core PRIVATE src/caffeine/physics/PhysicsWorld3D.cpp)
 endif()
 
 if(CAFFEINE_BUILD_HEADLESS)
@@ -221,6 +220,9 @@ else()
                 "minz_downsample_frag|fragment|minz_downsample.frag"
                 "photon_cascade|compute|photon_cascade.comp"
                 "photon_c0|compute|photon_c0.comp"
+                "photon_voxelize|compute|photon_voxelize.comp"
+                "photon_inject|compute|photon_inject.comp"
+                "photon_probe|compute|photon_probe.comp"
                 "photon_bake_ao|compute|photon_bake_ao.comp"
             )
             set(_caffeine_shader_headers)
@@ -230,7 +232,7 @@ else()
                 list(GET _entry 0 _name)
                 list(GET _entry 1 _stage)
                 list(GET _entry 2 _file)
-                caffeine_compile_shader(NAME ${_name} STAGE ${_stage} SOURCE "${CMAKE_SOURCE_DIR}/src/render/shaders/${_file}" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
+                caffeine_compile_shader(NAME ${_name} STAGE ${_stage} SOURCE "${CMAKE_SOURCE_DIR}/src/caffeine/render/shaders/${_file}" OUTPUT_DIR "${CAFFEINE_GENERATED_SHADER_DIR}" FORMATS ${_shader_formats})
                 list(APPEND _caffeine_shader_headers "${CAFFEINE_GENERATED_SHADER_DIR}/${_name}_spirv.hpp")
                 list(APPEND _caffeine_shader_cat_commands COMMAND ${CMAKE_COMMAND} -E cat "${CAFFEINE_GENERATED_SHADER_DIR}/${_name}_spirv.hpp" >> "${CAFFEINE_GENERATED_SHADER_DIR}/BuiltinShaders_spirv.hpp")
             endforeach()
@@ -248,23 +250,23 @@ else()
         endif()
 
         target_sources(caffeine-core PRIVATE
-            src/rhi/RenderDevice.cpp
-            src/rhi/CommandBuffer.cpp
-            src/render/ShaderBytecode.cpp
-            src/render/ShaderCompiler.cpp
-            src/render/GpuTextureCache.cpp
-            src/render/GpuSceneRenderer.cpp
-            src/render/PostProcessStack.cpp
-            src/render/MinZPyramid.cpp
-            src/render/PhotonCascades.cpp
-            src/render/PhotonGpuBake.cpp
-            src/render/PhotonAOBake.cpp
-            src/render/GpuEnvironmentMap.cpp
-            src/render/MaterialPreviewRenderer.cpp
-            src/render/GpuPointShadowMap.cpp
-            src/render/GpuDirectionalShadowMap.cpp
-            src/render/GpuSpotShadowMap.cpp
-            src/render/GpuProceduralMeshes.cpp
+            src/caffeine/rhi/RenderDevice.cpp
+            src/caffeine/rhi/CommandBuffer.cpp
+            src/caffeine/render/ShaderBytecode.cpp
+            src/caffeine/render/ShaderCompiler.cpp
+            src/caffeine/render/GpuTextureCache.cpp
+            src/caffeine/render/GpuSceneRenderer.cpp
+            src/caffeine/render/PostProcessStack.cpp
+            src/caffeine/render/MinZPyramid.cpp
+            src/caffeine/render/PhotonCascades.cpp
+            src/caffeine/render/PhotonGpuBake.cpp
+            src/caffeine/render/PhotonAOBake.cpp
+            src/caffeine/render/GpuEnvironmentMap.cpp
+            src/caffeine/render/MaterialPreviewRenderer.cpp
+            src/caffeine/render/GpuPointShadowMap.cpp
+            src/caffeine/render/GpuDirectionalShadowMap.cpp
+            src/caffeine/render/GpuSpotShadowMap.cpp
+            src/caffeine/render/GpuProceduralMeshes.cpp
         )
         target_link_libraries(caffeine-core PUBLIC SDL3::SDL3 ${CMAKE_DL_LIBS})
         find_library(SHADERC_LIBRARY shaderc_shared)
@@ -417,25 +419,25 @@ if(CAFFEINE_ENABLE_SCRIPTING)
     target_compile_definitions(caffeine-core PUBLIC CF_HAS_SCRIPTING=1)
 
     target_sources(caffeine-core PRIVATE
-        src/script/ScriptEngine.cpp
-        src/script/ScriptSystem.cpp
-        src/script/ScriptWatcher.cpp
-        src/script/CppScriptRegistry.cpp
-        src/script/AnimationBindings.cpp
-        src/script/EffectBindings.cpp
-        src/script/NavigationBindings.cpp
-        src/script/RuntimeScriptBindings.cpp
-        src/script/AssetTextLoader.cpp
-        src/script/NativeModuleHost.cpp
+        src/caffeine/script/ScriptEngine.cpp
+        src/caffeine/script/ScriptSystem.cpp
+        src/caffeine/script/ScriptWatcher.cpp
+        src/caffeine/script/CppScriptRegistry.cpp
+        src/caffeine/script/AnimationBindings.cpp
+        src/caffeine/script/EffectBindings.cpp
+        src/caffeine/script/NavigationBindings.cpp
+        src/caffeine/script/RuntimeScriptBindings.cpp
+        src/caffeine/script/AssetTextLoader.cpp
+        src/caffeine/script/NativeModuleHost.cpp
     )
     if(DRYAD_AVAILABLE)
         target_sources(caffeine-core PRIVATE
-            src/script/DryadHost.cpp
-            src/script/nodes/NodeGraph.cpp
-            src/script/nodes/NodeCatalog.cpp
-            src/script/nodes/NodeEmitter.cpp
-            src/script/nodes/NodeGraphIO.cpp
-            src/script/nodes/NodeRoundTrip.cpp
+            src/caffeine/script/DryadHost.cpp
+            src/caffeine/script/nodes/NodeGraph.cpp
+            src/caffeine/script/nodes/NodeCatalog.cpp
+            src/caffeine/script/nodes/NodeEmitter.cpp
+            src/caffeine/script/nodes/NodeGraphIO.cpp
+            src/caffeine/script/nodes/NodeRoundTrip.cpp
         )
         target_link_libraries(caffeine-core PUBLIC dryad_compiler)
         target_compile_definitions(caffeine-core PUBLIC
@@ -528,24 +530,25 @@ with open(sys.argv[1], 'w') as f:
     # ── Caffeine UI kit — public, reusable by Doppio and plugins ───────────────
     # Header-only widgets + a small host library for theme, panel registry and
     # workspace layout. It deliberately has no dependency on editor internals.
-    add_library(caffeine-ui-kit STATIC
-        src/ui_kit/Theme.cpp
-        src/ui_kit/Icons.cpp
-        src/ui_kit/PanelRegistry.cpp
-        src/ui_kit/Workspace.cpp
-        src/ui_kit/NodeCanvas.cpp
+    add_library(doppio-ui-kit STATIC
+        src/doppio/ui_kit/Theme.cpp
+        src/doppio/ui_kit/Icons.cpp
+        src/doppio/ui_kit/PanelRegistry.cpp
+        src/doppio/ui_kit/Workspace.cpp
+        src/doppio/ui_kit/NodeCanvas.cpp
     )
-    target_include_directories(caffeine-ui-kit PUBLIC
+    target_include_directories(doppio-ui-kit PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/doppio
     )
-    target_link_libraries(caffeine-ui-kit PUBLIC ImGui ImNodes)
-    target_compile_features(caffeine-ui-kit PUBLIC cxx_std_20)
-    target_compile_definitions(caffeine-ui-kit PUBLIC CF_HAS_IMGUI=1)
+    target_link_libraries(doppio-ui-kit PUBLIC ImGui ImNodes)
+    target_compile_features(doppio-ui-kit PUBLIC cxx_std_20)
+    target_compile_definitions(doppio-ui-kit PUBLIC CF_HAS_IMGUI=1)
     if(NOT MSVC)
-        target_compile_options(caffeine-ui-kit PRIVATE -Wno-macro-redefined -Wno-cpp)
+        target_compile_options(doppio-ui-kit PRIVATE -Wno-macro-redefined -Wno-cpp)
     endif()
-    add_library(Caffeine::UIKit ALIAS caffeine-ui-kit)
+    add_library(Doppio::UIKit ALIAS doppio-ui-kit)
 
       # ── imgui_test_engine (for editor UI tests) ────────────────────
      FetchContent_Declare(
@@ -566,64 +569,64 @@ with open(sys.argv[1], 'w') as f:
 
       add_executable(doppio
           apps/doppio/main.cpp
-          src/editor/HierarchyPanel.cpp
-          src/editor/SceneViewport.cpp
-          src/editor/AssetBrowser.cpp
-          src/editor/BrowseSession.cpp
-          src/editor/AssetPreviewRenderer.cpp
-          src/editor/EditorPreferences.cpp
-          src/editor/InspectorPanel.cpp
-          src/editor/ComponentRegistry.cpp
-          src/editor/SettingsPanel.cpp
-          src/editor/LayoutManager.cpp
-          src/editor/SceneEditor.cpp
-          src/editor/PhotonPanel.cpp
-          src/editor/TerrainPanel.cpp
-          src/editor/SceneSerializer.cpp
-          src/editor/DragDropSystem.cpp
-          src/editor/SceneTabManager.cpp
-          src/editor/ScriptEditorWindow.cpp
-          src/editor/DryadNodeScriptPanel.cpp
-          src/editor/DryadNodesPanel.cpp
-          src/editor/AnimationTimeline.cpp
-          src/editor/AnimatorController.cpp
-          src/editor/TilemapEditor.cpp
-          src/editor/CommandPalette.cpp
-          src/editor/ShaderNode.cpp
-          src/editor/ShaderGraph.cpp
-          src/editor/MaterialSerializer.cpp
-          src/editor/MaterialEditorPanel.cpp
-          src/editor/ImageManagerPanel.cpp
-          src/editor/HudEditorPanel.cpp
-          src/editor/ParticleEditorPanel.cpp
-          src/editor/EffectEditorPanel.cpp
-          src/editor/EntityPresetTypes.cpp
-          src/editor/EntityPresetRegistry.cpp
-          src/editor/EntityPresetPackages.cpp
-          src/editor/EntityPresetFactories.cpp
-          src/editor/EntityPresetsPanel.cpp
-           src/editor/AudioPreviewPanel.cpp
-           src/editor/CameraPreviewPanel.cpp
-           src/editor/GameplayPreviewPanel.cpp
-          src/editor/BuildSystem.cpp
-          src/editor/BuildDialog.cpp
-          src/editor/BuildLog.cpp
-          src/editor/PrefabSystem.cpp
-          src/editor/EntityDebugger.cpp
-          src/editor/PluginSystem.cpp
-          src/editor/PluginServiceRegistry.cpp
-          src/editor/PluginSymbolExports.cpp
-           src/editor/TestUIMapper.cpp
-           src/editor/TestRequestHandler.cpp
-           src/editor/AssetCooker.cpp
-          src/editor/CapLoader.cpp
-          src/editor/ProjectStartupDialog.cpp
-          src/editor/ProjectManager.cpp
-          src/editor/FilePicker.cpp
-          src/editor/EditorPaths.cpp
-          src/editor/EditorTheme.cpp
-          src/editor/EditorIcons.cpp
-          src/editor/EditorSpinner.cpp
+          src/doppio/editor/TransformGizmo.cpp
+          src/doppio/editor/HierarchyPanel.cpp
+          src/doppio/editor/SceneViewport.cpp
+          src/doppio/editor/AssetBrowser.cpp
+          src/doppio/editor/BrowseSession.cpp
+          src/doppio/editor/AssetPreviewRenderer.cpp
+          src/doppio/editor/EditorPreferences.cpp
+          src/doppio/editor/InspectorPanel.cpp
+          src/doppio/editor/ComponentRegistry.cpp
+          src/doppio/editor/SettingsPanel.cpp
+          src/doppio/editor/LayoutManager.cpp
+          src/doppio/editor/SceneEditor.cpp
+          src/doppio/editor/PhotonPanel.cpp
+          src/doppio/editor/TerrainPanel.cpp
+          src/doppio/editor/DragDropSystem.cpp
+          src/doppio/editor/SceneTabManager.cpp
+          src/doppio/editor/ScriptEditorWindow.cpp
+          src/doppio/editor/DryadNodeScriptPanel.cpp
+          src/doppio/editor/DryadNodesPanel.cpp
+          src/doppio/editor/AnimationTimeline.cpp
+          src/doppio/editor/AnimatorController.cpp
+          src/doppio/editor/TilemapEditor.cpp
+          src/doppio/editor/CommandPalette.cpp
+          src/doppio/editor/ShaderNode.cpp
+          src/doppio/editor/ShaderGraph.cpp
+          src/doppio/editor/MaterialSerializer.cpp
+          src/doppio/editor/MaterialEditorPanel.cpp
+          src/doppio/editor/ImageManagerPanel.cpp
+          src/doppio/editor/HudEditorPanel.cpp
+          src/doppio/editor/ParticleEditorPanel.cpp
+          src/doppio/editor/EffectEditorPanel.cpp
+          src/doppio/editor/EntityPresetTypes.cpp
+          src/doppio/editor/EntityPresetRegistry.cpp
+          src/doppio/editor/EntityPresetPackages.cpp
+          src/doppio/editor/EntityPresetFactories.cpp
+          src/doppio/editor/EntityPresetsPanel.cpp
+           src/doppio/editor/AudioPreviewPanel.cpp
+           src/doppio/editor/CameraPreviewPanel.cpp
+           src/doppio/editor/GameplayPreviewPanel.cpp
+          src/doppio/editor/BuildSystem.cpp
+          src/doppio/editor/BuildDialog.cpp
+          src/doppio/editor/BuildLog.cpp
+          src/doppio/editor/PrefabSystem.cpp
+          src/doppio/editor/EntityDebugger.cpp
+          src/doppio/editor/PluginSystem.cpp
+          src/doppio/editor/PluginServiceRegistry.cpp
+          src/doppio/editor/PluginSymbolExports.cpp
+           src/doppio/editor/TestUIMapper.cpp
+           src/doppio/editor/TestRequestHandler.cpp
+           src/doppio/editor/AssetCooker.cpp
+          src/doppio/editor/CapLoader.cpp
+          src/doppio/editor/ProjectStartupDialog.cpp
+          src/caffeine/project/ProjectManager.cpp
+          src/doppio/editor/FilePicker.cpp
+          src/doppio/editor/EditorPaths.cpp
+          src/doppio/editor/EditorTheme.cpp
+          src/doppio/editor/EditorIcons.cpp
+          src/doppio/editor/EditorSpinner.cpp
           assets/scripts/ScriptBindings.cpp
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
@@ -634,7 +637,7 @@ with open(sys.argv[1], 'w') as f:
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
      )
-     target_link_libraries(doppio PRIVATE caffeine-core caffeine-ui-kit ImGui ImNodes ${CMAKE_DL_LIBS})
+     target_link_libraries(doppio PRIVATE caffeine-core doppio-ui-kit ImGui ImNodes ${CMAKE_DL_LIBS})
      if(NOT MSVC)
          target_link_options(doppio PRIVATE "-rdynamic")
      endif()
@@ -643,6 +646,7 @@ with open(sys.argv[1], 'w') as f:
          target_compile_definitions(doppio PRIVATE CF_HAS_CAF_PACK=1)
      endif()
       target_include_directories(doppio PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/doppio
           ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${CMAKE_CURRENT_SOURCE_DIR}/include
           ${CMAKE_CURRENT_SOURCE_DIR}/assets/scripts
@@ -651,9 +655,8 @@ with open(sys.argv[1], 'w') as f:
           ${nanosvg_SOURCE_DIR}/src)
       add_executable(caffeine-runtime
           apps/runtime/main.cpp
-          src/runtime/RuntimeSceneRenderer.cpp
-          src/editor/SceneSerializer.cpp
-          src/editor/ProjectManager.cpp
+          src/caffeine/runtime/RuntimeSceneRenderer.cpp
+          src/caffeine/project/ProjectManager.cpp
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_capture_tool.cpp"
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_context.cpp"
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_coroutine.cpp"
@@ -666,6 +669,7 @@ with open(sys.argv[1], 'w') as f:
       target_link_libraries(caffeine-runtime PRIVATE caffeine-core ImGui)
       target_include_directories(caffeine-runtime PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/doppio
           ${imgui_SOURCE_DIR}
           ${imgui_SOURCE_DIR}/backends)
       target_compile_definitions(caffeine-runtime PRIVATE CF_HAS_IMGUI=1)
@@ -699,12 +703,14 @@ with open(sys.argv[1], 'w') as f:
 
       add_executable(build-smoke
           apps/build_smoke/main.cpp
-          src/editor/BuildSystem.cpp
-          src/editor/AssetCooker.cpp
-          src/editor/BuildLog.cpp
+          src/doppio/editor/BuildSystem.cpp
+          src/doppio/editor/AssetCooker.cpp
+          src/doppio/editor/BuildLog.cpp
       )
       target_link_libraries(build-smoke PRIVATE caffeine-core)
-      target_include_directories(build-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+      target_include_directories(build-smoke PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/doppio)
       target_compile_features(build-smoke PRIVATE cxx_std_20)
       add_dependencies(build-smoke caffeine-runtime)
       target_compile_definitions(build-smoke PRIVATE
@@ -776,7 +782,7 @@ if(CAFFEINE_PYTHON3)
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/audit_plugin_coupling.py
             --root ${CMAKE_CURRENT_SOURCE_DIR}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Auditing plugin coupling in src/editor"
+        COMMENT "Auditing plugin coupling in src/caffeine/editor"
         VERBATIM)
 endif()
 

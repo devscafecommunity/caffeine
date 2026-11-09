@@ -1,7 +1,7 @@
 #include "catch.hpp"
 #include <thread>
 #include <chrono>
-#include "../src/core/GameLoop.hpp"
+#include "../src/caffeine/core/GameLoop.hpp"
 
 using namespace Caffeine;
 

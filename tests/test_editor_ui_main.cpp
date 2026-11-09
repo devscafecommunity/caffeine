@@ -15,7 +15,7 @@
 #include "rhi/RenderDevice.hpp"
 #include "assets/AssetManager.hpp"
 #include "editor/SceneEditor.hpp"
-#include "editor/ProjectManager.hpp"
+#include "project/ProjectManager.hpp"
 #include "render/Camera2D.hpp"
 
 #define CATCH_CONFIG_RUNNER

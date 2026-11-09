@@ -5,7 +5,7 @@ Audit plugin coupling in the Doppio editor.
 The UI rework makes panels data-driven so plugin UI can move out of the core.
 This scanner reports the remaining coupling points:
 
-  * plugin identifiers or plugin-only components referenced by src/editor
+  * plugin identifiers or plugin-only components referenced by src/doppio/editor
   * internal Doppio headers included by plugins
   * raw ImGui usage in plugin panels (should use caffeine/ui)
 
@@ -37,12 +37,12 @@ PLUGIN_NAMES = (
 # Plugin sources live in the doppio-plugins submodule, not in the engine tree.
 PLUGIN_SOURCE_DIR = "doppio-plugins/plugins"
 
-# Components live in the engine ECS (src/ecs). A plugin *uses* them; it does not
+# Components live in the engine ECS (src/caffeine/ecs). A plugin *uses* them; it does not
 # own them. The audit only treats types declared inside doppio-plugins/plugins as
 # plugin-owned, which avoids flagging the engine's own scene data.
-ENGINE_ECS_PREFIX = "src/ecs/"
+ENGINE_ECS_PREFIX = "src/caffeine/ecs"
 
-# A plugin may use these public headers. Anything under src/editor is coupling.
+# A plugin may use these public headers. Anything under src/doppio/editor is coupling.
 PUBLIC_INCLUDES = (
     "caffeine/plugin/",
     "caffeine/ui/",
@@ -55,12 +55,12 @@ PUBLIC_INCLUDES = (
 
 # Files that legitimately describe the plugin contract.
 CORE_CONTRACT_FILES = {
-    "src/editor/PluginSystem.cpp",
-    "src/editor/PluginSystem.hpp",
-    "src/editor/PluginAPI.hpp",
-    "src/editor/PluginServiceRegistry.cpp",
-    "src/editor/PluginSymbolExports.cpp",
-    "src/editor/ComponentRegistry.cpp",
+    "src/doppio/editor/PluginSystem.cpp",
+    "src/doppio/editor/PluginSystem.hpp",
+    "src/doppio/editor/PluginAPI.hpp",
+    "src/doppio/editor/PluginServiceRegistry.cpp",
+    "src/doppio/editor/PluginSymbolExports.cpp",
+    "src/doppio/editor/ComponentRegistry.cpp",
 }
 
 
@@ -119,7 +119,7 @@ def relative(root: Path, path: Path) -> str:
 
 def scan_core(root: Path, report: Report) -> None:
     owned_components = plugin_owned_components(root)
-    for path in iter_sources(root, "src/editor"):
+    for path in iter_sources(root, "src/doppio/editor"):
         report.scanned_core += 1
         rel = relative(root, path)
         lines = path.read_text(errors="replace").splitlines()

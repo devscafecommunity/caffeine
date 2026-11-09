@@ -6,7 +6,7 @@
 #include "ecs/MeshComponents.hpp"
 #include "ecs/MeshGeometry.hpp"
 #include "ecs/World.hpp"
-#include "editor/SceneSerializer.hpp"
+#include "scene/EditorSceneSerializer.hpp"
 #include "fluid/FluidWorld.hpp"
 #include "scene/NaturalFluidSystem.hpp"
 

@@ -1,0 +1,126 @@
+#version 450
+
+// Photon P4d — radiance injection for all four levels (spec §8.3).
+//
+// One invocation per material-atlas texel (2048×512 = 4 levels side by side).
+// For every solid voxel and every exposed face:
+//     B_f = Le + rho * (E_dir + E_ind) / pi
+// E_ind comes from the probe-field SH of the same level (previous frame); the
+// probe trace runs after injection, so each bounce has one update of latency.
+//
+// Faces are stored as two texels per voxel along each axis. Level l owns the
+// radiance columns [l*1024, (l+1)*1024).
+//
+// SDL_GPU compute layout: set 0 samplers, set 1 read-write storage, set 2 uniforms.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uVoxel;     // rgba8: rgb albedo, a coverage
+layout(set = 0, binding = 1) uniform sampler2D uProbeSH;   // 128×512 RGBA16F, 2×2 per probe
+
+layout(set = 1, binding = 0, rgba16f) uniform image2D uRadX;
+layout(set = 1, binding = 1, rgba16f) uniform image2D uRadY;
+layout(set = 1, binding = 2, rgba16f) uniform image2D uRadZ;
+
+layout(set = 2, binding = 0) uniform InjectUBO {
+    vec4 uClip[4];    // per level: xyz clipmap origin, w cell size
+    vec4 uProbe[4];   // per level: xyz probe origin, w probe spacing
+    vec4 uParams;     // x cells, y material level stride, z levels
+    vec4 uAmbient;    // rgb ambient irradiance
+    vec4 uAtlas;      // x probe atlas width, y height, z SH level stride, w radiance stride
+} ij;
+
+const float kPi = 3.14159265359;
+const float kY00 = 0.282095;
+const float kY1 = 0.488603;
+
+ivec2 voxelAtlasTexel(ivec3 v, int level) {
+    int cells = int(ij.uParams.x);
+    int tiles = 8;
+    int stride = int(ij.uParams.y);
+    return ivec2(level * stride + (v.z % tiles) * cells + v.x,
+                 (v.z / tiles) * cells + v.y);
+}
+
+float coverageAt(ivec3 v, int level) {
+    int cells = int(ij.uParams.x);
+    if (v.x < 0 || v.y < 0 || v.z < 0 || v.x >= cells || v.y >= cells || v.z >= cells) {
+        return 0.0;
+    }
+    return texelFetch(uVoxel, voxelAtlasTexel(v, level), 0).a;
+}
+
+vec3 probeIrradiance(vec3 Q, vec3 N, int level) {
+    vec3 g = (Q - ij.uProbe[level].xyz) / ij.uProbe[level].w - 0.5;
+    ivec3 q = clamp(ivec3(floor(g)), ivec3(0), ivec3(15));
+    const int n = 16;
+    int idx = q.x + q.y * n + q.z * n * n;
+    ivec2 base = ivec2(level * int(ij.uAtlas.z) + (idx % n) * 2, (idx / n) * 2);
+    vec4 t00 = texelFetch(uProbeSH, base + ivec2(0, 0), 0);
+    vec4 t10 = texelFetch(uProbeSH, base + ivec2(1, 0), 0);
+    vec4 t01 = texelFetch(uProbeSH, base + ivec2(0, 1), 0);
+    vec4 t11 = texelFetch(uProbeSH, base + ivec2(1, 1), 0);
+    vec3 y1 = kY1 * N;
+    vec3 s = t00.rgb * kY00 +
+             (2.0 / 3.0) * (t10.rgb * y1.x + t01.rgb * y1.y + t11.rgb * y1.z);
+    return kPi * max(s, vec3(0.0));
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    int stride = int(ij.uParams.y);
+    int levels = int(ij.uParams.z);
+    int level = texel.x / stride;
+    if (level >= levels) return;
+    int ax = texel.x - level * stride;
+    int ay = texel.y;
+
+    vec4 material = texelFetch(uVoxel, ivec2(level * stride + ax, ay), 0);
+    int cells = int(ij.uParams.x);
+    int x = ax % cells;
+    int zTile = ax / cells;
+    int y = ay % cells;
+    int z = (ay / cells) * 8 + zTile;
+    ivec3 voxel = ivec3(x, y, z);
+
+    int radianceBase = level * int(ij.uAtlas.w);
+    if (material.a < 0.5) {
+        vec4 zero = vec4(0.0);
+        imageStore(uRadX, ivec2(radianceBase + 2 * ax + 0, ay), zero);
+        imageStore(uRadX, ivec2(radianceBase + 2 * ax + 1, ay), zero);
+        imageStore(uRadY, ivec2(radianceBase + 2 * ax + 0, ay), zero);
+        imageStore(uRadY, ivec2(radianceBase + 2 * ax + 1, ay), zero);
+        imageStore(uRadZ, ivec2(radianceBase + 2 * ax + 0, ay), zero);
+        imageStore(uRadZ, ivec2(radianceBase + 2 * ax + 1, ay), zero);
+        return;
+    }
+
+    float cellSize = ij.uClip[level].w;
+    vec3 center = ij.uClip[level].xyz + (vec3(voxel) + 0.5) * cellSize;
+    vec3 albedo = max(material.rgb, vec3(0.0));
+
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int side = 0; side < 2; ++side) {
+            ivec3 normal = ivec3(0);
+            normal[axis] = side == 0 ? 1 : -1;
+            ivec3 neighbour = voxel + normal;
+
+            vec3 radiance = vec3(0.0);
+            if (coverageAt(neighbour, level) < 0.5) {
+                vec3 N = vec3(normal);
+                vec3 Q = center + N * (0.5 * cellSize + 0.01);
+                vec3 eInd = probeIrradiance(Q, N, level);
+                radiance = albedo * (ij.uAmbient.rgb + eInd) / kPi;
+            }
+
+            ivec2 target = ivec2(radianceBase + 2 * ax + side, ay);
+            if (axis == 0) {
+                imageStore(uRadX, target, vec4(radiance, 1.0));
+            } else if (axis == 1) {
+                imageStore(uRadY, target, vec4(radiance, 1.0));
+            } else {
+                imageStore(uRadZ, target, vec4(radiance, 1.0));
+            }
+        }
+    }
+}

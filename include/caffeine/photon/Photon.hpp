@@ -87,9 +87,9 @@ inline constexpr const char* photonPathName(PhotonPath path) {
 ///
 /// `path` selects the implementation:
 ///   * ScreenFallback — the v0.1 per-pixel gather (depth-only, near field).
-///   * ComputeC0      — P3: K cascades with fused trace+merge, world-aligned
-///                      directions, pre-averaged M̄k atlases and an SH-L1 C0
-///                      resolve. The far field is still sky-only until P4.
+///   * ComputeC0      — P3/P4/P5: K cascades with fused trace+merge, an SH-L1
+///                      C0 resolve, a four-level voxel/probe far field with one
+///                      injection bounce, and S(t-1) multi-bounce feedback.
 ///
 /// The quality tiers are the single source of truth shared by the component,
 /// the editor panels, the serializer and the renderer.

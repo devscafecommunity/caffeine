@@ -1,7 +1,7 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
-#include "../src/physics/PhysicsComponents2D.hpp"
-#include "../src/physics/PhysicsSystem2D.hpp"
+#include "../src/caffeine/Caffeine.hpp"
+#include "../src/caffeine/physics/PhysicsComponents2D.hpp"
+#include "../src/caffeine/physics/PhysicsSystem2D.hpp"
 
 #include <cmath>
 

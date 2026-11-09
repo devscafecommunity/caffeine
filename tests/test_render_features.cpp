@@ -1,6 +1,6 @@
 #include "catch.hpp"
 #include "editor/DenseOutdoorBenchmark.hpp"
-#include "editor/SceneSerializer.hpp"
+#include "scene/EditorSceneSerializer.hpp"
 #include "math/Mat4.hpp"
 #include "render/CoarseOcclusion.hpp"
 #include "render/InstanceBatch.hpp"

@@ -3,8 +3,8 @@
 #include <chrono>
 #include <string>
 #include <vector>
-#include "../src/debug/LogSystem.hpp"
-#include "../src/debug/Profiler.hpp"
+#include "../src/caffeine/debug/LogSystem.hpp"
+#include "../src/caffeine/debug/Profiler.hpp"
 
 using namespace Caffeine;
 using namespace Caffeine::Debug;

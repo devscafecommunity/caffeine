@@ -1,8 +1,8 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
-#include "../src/scene/SceneComponents.hpp"
-#include "../src/scene/SceneSerializer.hpp"
-#include "../src/scene/SceneManager.hpp"
+#include "../src/caffeine/Caffeine.hpp"
+#include "../src/caffeine/scene/SceneComponents.hpp"
+#include "../src/caffeine/scene/SceneSerializer.hpp"
+#include "../src/caffeine/scene/SceneManager.hpp"
 
 #include <cmath>
 #include <cstring>

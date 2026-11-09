@@ -1,7 +1,7 @@
 #include "catch.hpp"
-#include "../src/Caffeine.hpp"
-#include "../src/ui/UIComponents.hpp"
-#include "../src/ui/UISystem.hpp"
+#include "../src/caffeine/Caffeine.hpp"
+#include "../src/caffeine/ui/UIComponents.hpp"
+#include "../src/caffeine/ui/UISystem.hpp"
 
 #include <cmath>
 
