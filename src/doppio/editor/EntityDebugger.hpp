@@ -11,6 +11,10 @@
 #include <imgui.h>
 #endif
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 class EntityDebuggerPanel {
@@ -36,11 +40,13 @@ public:
 private:
 #ifdef CF_HAS_IMGUI
     void refresh(ECS::World& world, ECS::Entity entity);
-    void renderEntityHeader(ECS::World& world, ECS::Entity entity, EditorContext& ctx);
-    void renderArchetypeInfo(ECS::World& world, ECS::Entity entity);
-    void renderComponentList();
-    void renderSystemQueries(ECS::World& world);
-    void renderMemoryHexView(const u8* data, usize size);
+    void buildHeader(Caffeine::UIKit::Elements::Container& parent, ECS::World& world,
+                     ECS::Entity entity, EditorContext& ctx);
+    void buildArchetype(Caffeine::UIKit::Elements::Container& parent, ECS::World& world,
+                        ECS::Entity entity);
+    void buildComponents(Caffeine::UIKit::Elements::Container& parent);
+    void buildSystems(Caffeine::UIKit::Elements::Container& parent, ECS::World& world);
+    std::string memoryHexDump(const u8* data, usize size) const;
     ECS::Entity resolveTargetEntity(ECS::World& world, EditorContext& ctx) const;
     std::string componentNameForId(u32 componentId) const;
 #endif
@@ -49,7 +55,7 @@ private:
     bool m_autoRefresh = true;
     bool m_useManualId = false;
     u32 m_manualEntityId = 0;
-    int m_expandedComponent = -1;
+    int m_manualEntityIdEdit = 0;
 
     ECS::Entity m_targetEntity;
     std::vector<ComponentInfo> m_cachedComponents;

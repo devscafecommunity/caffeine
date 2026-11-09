@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/EntityDebugger.hpp"
 #include "scene/EditorContext.hpp"
 #include "ecs/Components.hpp"
@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <limits>
+#include <string>
 #include <vector>
 
 #ifdef CF_HAS_IMGUI
@@ -226,132 +228,164 @@ void EntityDebuggerPanel::refresh(ECS::World& world, ECS::Entity entity) {
     }
 }
 
-void EntityDebuggerPanel::renderMemoryHexView(const u8* data, usize size) {
-    if (!data || size == 0) {
-        ImGui::TextDisabled("(empty)");
-        return;
-    }
-
+std::string EntityDebuggerPanel::memoryHexDump(const u8* data, usize size) const {
+    if (!data || size == 0) return "(empty)";
     const usize maxBytes = std::min(size, static_cast<usize>(128));
+    std::string out;
     char line[96];
     for (usize offset = 0; offset < maxBytes; offset += 16) {
         int pos = std::snprintf(line, sizeof(line), "%04zx: ", offset);
         const usize rowBytes = std::min(static_cast<usize>(16), maxBytes - offset);
         for (usize i = 0; i < rowBytes; ++i) {
-            pos += std::snprintf(line + pos, sizeof(line) - pos, "%02X ", data[offset + i]);
+            pos += std::snprintf(line + pos, sizeof(line) - pos, "%02X ",
+                                 data[offset + i]);
         }
-        ImGui::TextUnformatted(line);
+        out += line;
+        out += '\n';
     }
     if (size > maxBytes) {
-        ImGui::TextDisabled("... (%zu more bytes)", size - maxBytes);
+        char suffix[64];
+        std::snprintf(suffix, sizeof(suffix), "... (%zu more bytes)\n", size - maxBytes);
+        out += suffix;
     }
+    return out;
 }
 
-void EntityDebuggerPanel::renderEntityHeader(ECS::World& world, ECS::Entity entity, EditorContext& ctx) {
-    ImGui::Checkbox("Auto-refresh", &m_autoRefresh);
-    ImGui::SameLine();
-    ImGui::Checkbox("Manual ID", &m_useManualId);
+void EntityDebuggerPanel::buildHeader(Caffeine::UIKit::Elements::Container& parent,
+                                      ECS::World& world, ECS::Entity entity,
+                                      EditorContext& ctx) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    auto& card = parent.emplace<Card>("debug_header");
+    card.emplace<Label>("Target", TextTone::Accent).setHeading(true);
+    auto& toggles = card.emplace<Row>("debug_toggles");
+    toggles.emplace<Checkbox>("Auto-refresh", &m_autoRefresh);
+    toggles.emplace<Checkbox>("Manual ID", &m_useManualId);
 
     if (m_useManualId) {
-        ImGui::SetNextItemWidth(120);
-        ImGui::InputScalar("Entity ID", ImGuiDataType_U32, &m_manualEntityId);
+        m_manualEntityIdEdit = static_cast<int>(
+            std::min<u32>(m_manualEntityId, static_cast<u32>(std::numeric_limits<int>::max())));
+        auto& grid = card.emplace<PropertyGrid>("debug_manual_id");
+        grid.typedRow<IntProperty>("Entity ID", m_manualEntityIdEdit, 0,
+                                   std::numeric_limits<int>::max(), 1.0f, "%d")
+            .setOnChange([this](int value) {
+                m_manualEntityId = static_cast<u32>(std::max(value, 0));
+            });
     } else if (ctx.selectedEntity.isValid()) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("Using selection: %u", ctx.selectedEntity.id());
-        if (ImGui::Button("Use Selected")) {
-            m_manualEntityId = ctx.selectedEntity.id();
-        }
+        card.emplace<Label>("Using selection: " + std::to_string(ctx.selectedEntity.id()),
+                            TextTone::Muted);
+        card.emplace<Button>("Use Selected").setOnClick([this, id = ctx.selectedEntity.id()] {
+            m_manualEntityId = id;
+            m_manualEntityIdEdit = static_cast<int>(
+                std::min<u32>(id, static_cast<u32>(std::numeric_limits<int>::max())));
+        });
     }
 
     if (!entity.isValid() || !world.isEntityAlive(entity)) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No valid entity targeted");
-        ImGui::TextDisabled("Select an entity in Hierarchy/Viewport or enter a valid ID.");
+        card.emplace<Label>("No valid entity targeted", TextTone::Danger);
+        card.emplace<Label>("Select an entity in Hierarchy/Viewport or enter a valid ID.",
+                            TextTone::Muted);
         return;
     }
 
-    const char* name = getEntityName(world, entity);
-    ImGui::Text("Entity: %u (%s)", entity.id(), name);
-    ImGui::Text("World: %u entities, %u archetypes", world.entityCount(), world.archetypeCount());
+    card.emplace<Label>("Entity: " + std::to_string(entity.id()) + " (" +
+                            getEntityName(world, entity) + ")",
+                        TextTone::Normal)
+        .setHeading(false);
+    card.emplace<Label>("World: " + std::to_string(world.entityCount()) + " entities, " +
+                            std::to_string(world.archetypeCount()) + " archetypes",
+                        TextTone::Muted);
 }
 
-void EntityDebuggerPanel::renderArchetypeInfo(ECS::World& world, ECS::Entity entity) {
-    if (!entity.isValid() || !world.isEntityAlive(entity)) {
-        return;
-    }
+void EntityDebuggerPanel::buildArchetype(Caffeine::UIKit::Elements::Container& parent,
+                                         ECS::World& world, ECS::Entity entity) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+    if (!entity.isValid() || !world.isEntityAlive(entity)) return;
 
     const auto loc = world.getEntityLocation(entity);
-    ImGui::Separator();
-    ImGui::Text("Archetype");
-    ImGui::Text("  Index: %u", loc.archetypeIndex);
-    ImGui::Text("  Slot:  %u", loc.indexInArchetype);
-    ImGui::Text("  Hash:  0x%016llX", static_cast<unsigned long long>(m_archetypeHash));
+    auto& card = parent.emplace<Card>("debug_archetype");
+    card.emplace<Label>("Archetype", TextTone::Accent).setHeading(true);
+    card.emplace<KeyValue>("Index", std::to_string(loc.archetypeIndex));
+    card.emplace<KeyValue>("Slot", std::to_string(loc.indexInArchetype));
+    char hash[32];
+    std::snprintf(hash, sizeof(hash), "0x%016llX",
+                  static_cast<unsigned long long>(m_archetypeHash));
+    card.emplace<KeyValue>("Hash", hash);
+    card.emplace<KeyValue>("Memory", std::to_string(m_totalComponentBytes) + " bytes");
 
     if (const ECS::Archetype* arch = world.getArchetype(loc.archetypeIndex)) {
-        ImGui::Text("  Components in archetype:");
-        ImGui::Indent();
+        card.emplace<Label>("Components in archetype", TextTone::Muted);
         arch->getComponentSet().forEachComponentId([&](u32 componentId) {
-            ImGui::BulletText("%s (id %u)", componentNameForId(componentId).c_str(), componentId);
+            card.emplace<Label>("- " + componentNameForId(componentId) + " (id " +
+                                    std::to_string(componentId) + ")",
+                                TextTone::Muted);
         });
-        ImGui::Unindent();
     }
-
-    ImGui::Text("Memory (entity instance): %zu bytes", m_totalComponentBytes);
 }
 
-void EntityDebuggerPanel::renderComponentList() {
-    ImGui::Separator();
-    ImGui::Text("Components (%zu)", m_cachedComponents.size());
+void EntityDebuggerPanel::buildComponents(Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
+    auto& card = parent.emplace<Card>("debug_components");
+    card.emplace<Label>("Components (" + std::to_string(m_cachedComponents.size()) + ")",
+                        TextTone::Accent)
+        .setHeading(true);
     if (m_cachedComponents.empty()) {
-        ImGui::TextDisabled("No registered components on this entity.");
+        card.emplace<Label>("No registered components on this entity.", TextTone::Muted);
         return;
     }
 
     for (int i = 0; i < static_cast<int>(m_cachedComponents.size()); ++i) {
         const auto& comp = m_cachedComponents[i];
-        ImGui::PushID(i);
+        auto& item = card.emplace<TreeItem>(comp.name, i == 0);
+        item.setId("component:" + comp.name);
+        item.emplace<Label>("Component ID: " + std::to_string(comp.componentId),
+                            TextTone::Muted);
+        item.emplace<Label>("Size: " + std::to_string(comp.sizeBytes) + " bytes",
+                            TextTone::Muted);
 
-        if (ImGui::TreeNodeEx(comp.name.c_str(),
-                              ImGuiTreeNodeFlags_DefaultOpen * (i == 0 ? 1 : 0))) {
-            ImGui::Text("Component ID: %u", comp.componentId);
-            ImGui::Text("Size: %zu bytes", comp.sizeBytes);
-
-            if (comp.name == "Transform" && comp.rawData) {
-                const auto* t = static_cast<const ECS::Transform*>(comp.rawData);
-                ImGui::Text("pos: [%.2f, %.2f, %.2f]", t->position.x, t->position.y, t->position.z);
-            } else if (comp.name == "Position3D" && comp.rawData) {
-                const auto* p = static_cast<const ECS::Position3D*>(comp.rawData);
-                ImGui::Text("pos: [%.2f, %.2f, %.2f]", p->position.x, p->position.y, p->position.z);
-            } else if (comp.name == "Sprite" && comp.rawData) {
-                const auto* s = static_cast<const ECS::Sprite*>(comp.rawData);
-                ImGui::Text("texture: %s", s->name.c_str());
-            }
-
-            ImGui::TextUnformatted("Hex dump:");
-            renderMemoryHexView(static_cast<const u8*>(comp.rawData), comp.sizeBytes);
-
-            if (!comp.matchingSystems.empty()) {
-                ImGui::TextUnformatted("Matching systems:");
-                for (const auto& sys : comp.matchingSystems) {
-                    ImGui::BulletText("%s", sys.c_str());
-                }
-            }
-
-            ImGui::TreePop();
+        if (comp.name == "Transform" && comp.rawData) {
+            const auto* t = static_cast<const ECS::Transform*>(comp.rawData);
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "pos: [%.2f, %.2f, %.2f]", t->position.x,
+                          t->position.y, t->position.z);
+            item.emplace<Label>(buffer, TextTone::Normal);
+        } else if (comp.name == "Position3D" && comp.rawData) {
+            const auto* p = static_cast<const ECS::Position3D*>(comp.rawData);
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "pos: [%.2f, %.2f, %.2f]", p->position.x,
+                          p->position.y, p->position.z);
+            item.emplace<Label>(buffer, TextTone::Normal);
+        } else if (comp.name == "Sprite" && comp.rawData) {
+            const auto* s = static_cast<const ECS::Sprite*>(comp.rawData);
+            item.emplace<Label>("texture: " + s->name, TextTone::Normal);
         }
 
-        ImGui::PopID();
+        item.emplace<Label>("Hex dump:", TextTone::Muted);
+        item.emplace<Label>(memoryHexDump(static_cast<const u8*>(comp.rawData),
+                                          comp.sizeBytes),
+                            TextTone::Disabled);
+
+        if (!comp.matchingSystems.empty()) {
+            item.emplace<Label>("Matching systems:", TextTone::Muted);
+            for (const auto& system : comp.matchingSystems) {
+                item.emplace<Label>("- " + system, TextTone::Muted);
+            }
+        }
     }
 }
 
-void EntityDebuggerPanel::renderSystemQueries(ECS::World& world) {
-    if (m_cachedComponents.empty()) {
-        return;
-    }
+void EntityDebuggerPanel::buildSystems(Caffeine::UIKit::Elements::Container& parent,
+                                       ECS::World& world) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+    if (m_cachedComponents.empty()) return;
 
-    ImGui::Separator();
-    ImGui::Text("Active Systems (query match)");
-
+    auto& card = parent.emplace<Card>("debug_systems");
+    card.emplace<Label>("Active Systems (query match)", TextTone::Accent).setHeading(true);
     bool any = false;
     for (const auto& system : systemQueries()) {
         bool matches = true;
@@ -363,38 +397,43 @@ void EntityDebuggerPanel::renderSystemQueries(ECS::World& world) {
             }
         }
         if (!matches) continue;
-
         any = true;
-        ImGui::BulletText("%s (priority %d)", system.name, system.priority);
+        card.emplace<Label>("- " + std::string(system.name) + " (priority " +
+                                std::to_string(system.priority) + ")",
+                            TextTone::Normal);
     }
-
     if (!any) {
-        ImGui::TextDisabled("No registered systems match this entity.");
+        card.emplace<Label>("No registered systems match this entity.", TextTone::Muted);
     }
 }
 
 void EntityDebuggerPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
-    if (UIKit::BeginPanel("Entity Debugger", &m_open)) {
-        ECS::Entity target = resolveTargetEntity(world, ctx);
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-        if (m_autoRefresh || target != m_targetEntity) {
-            m_targetEntity = target;
-            refresh(world, m_targetEntity);
-        }
+    Panel root("Entity Debugger", "Inspect ECS entity internals", "account", &m_open);
+    UIContext ui;
 
-        renderEntityHeader(world, m_targetEntity, ctx);
-        renderArchetypeInfo(world, m_targetEntity);
-        renderComponentList();
-        renderSystemQueries(world);
+    ECS::Entity target = resolveTargetEntity(world, ctx);
+    if (m_autoRefresh || target != m_targetEntity) {
+        m_targetEntity = target;
+        refresh(world, m_targetEntity);
+    }
 
-        if (!m_autoRefresh && ImGui::Button("Refresh")) {
+    buildHeader(root, world, m_targetEntity, ctx);
+    buildArchetype(root, world, m_targetEntity);
+    buildComponents(root);
+    buildSystems(root, world);
+    if (!m_autoRefresh) {
+        root.emplace<Button>("Refresh").setOnClick([this, &world, &ctx] {
             m_targetEntity = resolveTargetEntity(world, ctx);
             refresh(world, m_targetEntity);
-        }
+        });
     }
-    ImGui::End();
+
+    ui.draw(root);
 }
 
 }  // namespace Caffeine::Editor
