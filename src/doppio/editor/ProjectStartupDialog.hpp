@@ -8,6 +8,10 @@
 #include <vector>
 #include <cstdint>
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 // ============================================================================
@@ -110,15 +114,20 @@ private:
 
     // ── UI helpers ────────────────────────────────────────────────────
     #ifdef CF_HAS_IMGUI
-    std::optional<ProjectConfig> renderCreateTab();
-    std::optional<ProjectConfig> renderRecentTab();
-    std::optional<ProjectConfig> renderBrowseTab();
-    void renderErrorPopup();
+    void buildCreateTab(Caffeine::UIKit::Elements::Container& page);
+    void buildRecentTab(Caffeine::UIKit::Elements::Container& page);
+    void buildBrowseTab(Caffeine::UIKit::Elements::Container& page);
+    void buildErrorBanner(Caffeine::UIKit::Elements::Container& parent);
+    void openRecentProject(int index);
+    void openBrowseProject(int index);
+    void requestCloseWith(const ProjectConfig& config) { m_pendingResult = config; }
     void showToast(const std::string& message, ToastType type);
     void updateToasts();
     void renderToasts();
     void scanBrowseDirectory(const std::filesystem::path& root);
     #endif
+
+    std::optional<ProjectConfig> m_pendingResult;
 };
 
 } // namespace Caffeine::Editor

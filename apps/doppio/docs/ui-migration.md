@@ -40,7 +40,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ✅ done | toolbar, map `Canvas`, layer `ListBox`, tile palette `Grid`/`ImageButton` |
 | **Texture / material pickers** | `FilePicker.cpp` | 571 | ✅ done | `Dialog`, path bar, folder `ListBox`, file `ListBox`, search and Save/PickFolder actions |
 | **Build dialog** | `BuildDialog.cpp` | 267 | ✅ done | `Panel`, `Card`/`PropertyGrid`, `ProgressBar`, scrolling log, build actions |
-| **Project startup** | `ProjectStartupDialog.cpp` | 591 | ⏳ pending | `Dialog` available; needs template cards + recent-project list |
+| **Project startup** | `ProjectStartupDialog.cpp` | 506 | ✅ done | `Panel`/`TabBar`, `Card`/`PropertyGrid`, template selector, recent/browse `ListBox`, inline errors, toast overlay |
 
 ## Tier 2 — trees, drag-and-drop and large lists
 
@@ -134,6 +134,7 @@ Ordered by how many panels they unlock.
 | **Build Dialog** | `Card`/`PropertyGrid`, `ProgressBar`, scrolling log |
 | **Plugin Manager** | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload |
 | **File Picker** | `Dialog`, path bar, folder/file `ListBox`, search, Save/PickFolder actions |
+| **Project Startup** | `Panel`/`TabBar`/`TabPage`, `Card`/`PropertyGrid`, recent/browse `ListBox`, toast overlay |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
@@ -146,7 +147,7 @@ New kit pieces added for these migrations:
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`
 - `DropZone`
-- `Panel::setOnBegin` / `Panel::setInitialSize`
+- `Panel::setOnBegin` / `Panel::setInitialSize` / `Panel::setInitialPosition` (with pivot)
 - `Canvas::setInteractive` (invisible input item for zoom/pan)
 - `PropertyRow::setHint`, `Label`/`ListItem` tooltips, `BoolProperty::setOnChange`
 

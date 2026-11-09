@@ -213,6 +213,14 @@ public:
         m_initialSize = size;
         return *this;
     }
+    Panel& setInitialPosition(ImVec2 position, ImGuiCond condition = ImGuiCond_Appearing,
+                              ImVec2 pivot = ImVec2(0.0f, 0.0f)) {
+        m_initialPosition = position;
+        m_initialPositionCondition = condition;
+        m_initialPositionPivot = pivot;
+        m_hasInitialPosition = true;
+        return *this;
+    }
     /// Called after ImGui::Begin succeeds and before the panel header/content.
     Panel& setOnBegin(std::function<void()> callback) {
         m_onBegin = std::move(callback);
@@ -230,6 +238,10 @@ private:
     bool* m_open = nullptr;
     ImGuiWindowFlags m_windowFlags = ImGuiWindowFlags_None;
     ImVec2 m_initialSize{0.0f, 0.0f};
+    ImVec2 m_initialPosition{0.0f, 0.0f};
+    ImGuiCond m_initialPositionCondition = ImGuiCond_Appearing;
+    ImVec2 m_initialPositionPivot{0.0f, 0.0f};
+    bool m_hasInitialPosition = false;
     std::function<void()> m_onBegin;
 };
 
@@ -436,6 +448,10 @@ inline bool Panel::beginBody(UIContext& ctx) {
         ImGui::SetNextWindowSize(
             ImVec2(m_initialSize.x * scale, m_initialSize.y * scale),
             ImGuiCond_FirstUseEver);
+    }
+    if (m_hasInitialPosition) {
+        ImGui::SetNextWindowPos(m_initialPosition, m_initialPositionCondition,
+                                m_initialPositionPivot);
     }
     const bool open = ImGui::Begin(m_title.c_str(), m_open, m_windowFlags);
     if (open) {
