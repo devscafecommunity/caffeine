@@ -283,6 +283,11 @@ public:
         m_hint = std::move(hint);
         return *this;
     }
+    /// Request keyboard focus for the next draw (used by search dialogs).
+    TextInput& focusNextFrame() {
+        m_focusNext = true;
+        return *this;
+    }
     TextInput& setOnChange(std::function<void(const std::string&)> callback) {
         m_onChange = std::move(callback);
         return *this;
@@ -295,6 +300,7 @@ private:
     char* m_buffer = nullptr;
     std::size_t m_capacity = 512;
     std::string m_hint;
+    bool m_focusNext = false;
     std::function<void(const std::string&)> m_onChange;
 };
 
@@ -406,6 +412,11 @@ public:
         m_onDrag = std::move(callback);
         return *this;
     }
+    /// Scroll the list so this row is visible (used by keyboard navigation).
+    ListItem& setScrollHere(bool scroll = true) {
+        m_scrollHere = scroll;
+        return *this;
+    }
 
     void draw(UIContext& ctx) override;
 
@@ -415,6 +426,7 @@ private:
     std::function<void()> m_onClick;
     std::function<void()> m_onDoubleClick;
     std::function<void()> m_onDrag;
+    bool m_scrollHere = false;
 };
 
 class SegmentedControl : public Element {
@@ -581,6 +593,10 @@ inline void Combo::draw(UIContext&) {
 inline void TextInput::draw(UIContext&) {
     const ImVec2 size = controlSize(*this);
     if (size.x > 0.0f) ImGui::SetNextItemWidth(size.x);
+    if (m_focusNext) {
+        ImGui::SetKeyboardFocusHere();
+        m_focusNext = false;
+    }
 
     if (m_string) {
         std::vector<char> buffer(std::max<std::size_t>(m_capacity, 2u), '\0');
@@ -671,6 +687,7 @@ inline void ListItem::draw(UIContext&) {
             m_onClick();
         }
     }
+    if (m_scrollHere) ImGui::SetScrollHereY(0.5f);
     if (m_onDrag && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         m_onDrag();
         ImGui::EndDragDropSource();

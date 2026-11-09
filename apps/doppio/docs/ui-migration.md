@@ -38,19 +38,19 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ⏳ pending | `SearchField`, `ListBox`, `PropertyGrid`, `Canvas` for stats |
 | **HUD Editor** | `HudEditorPanel.cpp` | 377 | ⏳ pending | `Canvas` + `PropertyGrid`, `ListBox` for widgets |
 | **Tilemap Editor** | `TilemapEditor.cpp` | 403 | ⏳ pending | `Canvas` palette/preview, `Grid` of tile buttons |
-| **Texture / material pickers** | `FilePicker.cpp` | 571 | 🧱 blocked | needs `Dialog`/`Modal` + `ListBox`/`Grid` |
-| **Build dialog** | `BuildDialog.cpp` | 267 | 🧱 blocked | needs `Dialog` + `ProgressBar` + `ListBox` |
-| **Project startup** | `ProjectStartupDialog.cpp` | 591 | 🧱 blocked | needs `Dialog`, template cards, recent-project list |
+| **Texture / material pickers** | `FilePicker.cpp` | 571 | ⏳ pending | `Dialog` now available; needs `ListBox`/`Grid` layout |
+| **Build dialog** | `BuildDialog.cpp` | 267 | ⏳ pending | `Dialog` + `ProgressBar` + `ListBox` are available |
+| **Project startup** | `ProjectStartupDialog.cpp` | 591 | ⏳ pending | `Dialog` available; needs template cards + recent-project list |
 
 ## Tier 2 — trees, drag-and-drop and large lists
 
 | Panel | File | Size | Status | Notes / next element |
 |-------|------|------|--------|----------------------|
-| **Hierarchy** | `HierarchyPanel.cpp` | 838 | 🧱 blocked | `TreeView`/`TreeItem`, selection, drag/drop, context menu |
-| **Asset Browser** | `AssetBrowser.cpp` | 1869 | 🧱 blocked | `AssetCard`/`Thumbnail`, `Grid`/`Table`, folder tree, drag/drop |
-| **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | 🧱 blocked | `SearchField` + `TreeView`/`TreeItem` with drag source |
+| **Hierarchy** | `HierarchyPanel.cpp` | 838 | ⏳ pending | `TreeView`/`TreeItem` now available; wire selection, drag/drop and context menu |
+| **Asset Browser** | `AssetBrowser.cpp` | 1869 | 🧱 blocked | folder tree available via `TreeView`; still needs `AssetCard`/`Thumbnail` and grid/table |
+| **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | 🟡 partial | `Panel`, `ListBox`, `Card`; plugin row table |
-| **Command Palette** | `CommandPalette.cpp` | 266 | 🧱 blocked | `Dialog` + `SearchField` + `ListBox`/`ListItem` |
+| **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
 | **Console** | `ConsoleWindow.hpp` | 101 | ⏳ pending | `Panel`, `Toolbar`, `ListBox`, filters |
 | **Profiler** | `ProfilerWindow.hpp` | 264 | 🟡 partial | `Panel`, `Canvas` graph, `ListBox` |
 | **Stats overlay** | `StatsOverlay.hpp` | 51 | ⏳ pending | `Canvas` + `Label` |
@@ -63,7 +63,7 @@ the drawing; graph semantics stay in the host.
 | Panel | File | Size | Status | Notes / next element |
 |-------|------|------|--------|----------------------|
 | **Scene Viewport** | `SceneViewport.cpp` | 4515 | 🧱 blocked | viewport texture/`Canvas` element, toolbar, overlay host |
-| **Animation Timeline** | `AnimationTimeline.cpp` | 2217 | 🧱 blocked | `Canvas` timeline + `CurveEditor` + `TreeView` tracks |
+| **Animation Timeline** | `AnimationTimeline.cpp` | 2217 | 🧱 blocked | `TreeView` tracks available; still needs `Canvas` timeline + `CurveEditor` |
 | **Animator Controller** | `AnimatorController.cpp` | 1832 | 🧱 blocked | `Canvas` graph + node/transition elements |
 | **Dryad Node Script** | `DryadNodeScriptPanel.cpp` | 1332 | 🟡 partial | already uses `NodeCanvas`; migrate chrome to `Panel`/`Toolbar`/`PropertyGrid` |
 | **Shader Graph** | `ShaderGraph.cpp` | 333 | 🧱 blocked | `Canvas` graph, node elements |
@@ -77,7 +77,7 @@ the drawing; graph semantics stay in the host.
 | **UI Gallery** | `UiGalleryPanel.cpp` | ✅ done | Living catalogue and visual test |
 | **Scene Editor shell** | `SceneEditor.cpp` | 🟡 partial | menu bar/dockspace/status bar stay host-specific; panels use elements |
 | **Toolbox** | `ToolboxPanel.hpp` | ⏳ pending | `Panel`, `Section`, `SegmentedControl`, `Button` |
-| **Inspector widgets** | `InspectorWidgets.hpp` | 🧱 blocked | `PropertyGrid`/`TreeView`/`AssetCard`; keep low-level helpers |
+| **Inspector widgets** | `InspectorWidgets.hpp` | 🧱 blocked | `PropertyGrid` and `TreeView` available; still needs `AssetCard`-style drawers |
 | **Editor panel utils** | `EditorPanelUtils.hpp` | n/a | helpers, not UI |
 | **Shader node** | `ShaderNode.cpp` | 🧱 blocked | node element/`Canvas` |
 | **Editor spinner** | `EditorSpinner.cpp` | n/a | custom draw; can become `Spinner` element |
@@ -102,12 +102,10 @@ Ordered by how many panels they unlock.
 
 | Element | Unlocks | Notes |
 |---------|---------|-------|
-| `TreeView` / `TreeItem` | Hierarchy, Asset Browser, Dryad Nodes, Entity Presets, Timeline tracks | open/closed state, icon, selection, drag source, drop target, context menu callback |
-| `Dialog` / `Modal` / `ConfirmDialog` | File Picker, Build Dialog, Project Startup, Command Palette, Settings reset | title, body element, footer buttons, escape/close |
 | `DataTable` / `TableRow` | Settings, Entity Debugger, Plugin Manager, Asset Browser details | columns, header, sort, selection |
 | `AssetCard` / `Thumbnail` | Asset Browser, Material/Audio preview | preview texture/`Canvas`, label, selection, drag source |
-| `DragSource` / `DropTarget` mixins | Hierarchy, Asset Browser, Dryad Nodes, Tilemap | reusable payload helper on `ListItem`/`TreeItem`/`Card` |
-| `ContextMenu` / `Popup` element | Hierarchy, Asset Browser, Dryad Nodes | callback-driven menu items |
+| `DragSource` / `DropTarget` mixins | Asset Browser, Tilemap, generic Cards | `TreeItem`/`ListItem` already support payloads and drops; a generic mixin for `Card`/custom elements is still missing |
+| `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
 | `MediaView` / `ViewportTexture` | Scene Viewport, Gameplay/Camera Preview | texture display + input forwarding |
 | `Vec3Property` / `Vec2Property` | Inspector, Particles, Effect Editor, Transform rows | compact vector row instead of three float rows |
@@ -126,11 +124,15 @@ Ordered by how many panels they unlock.
 | **Entity Presets** | three-column `Row` of `Card`s, `ListBox`, wizard `PropertyGrid` |
 | **Effect Editor** | create `Card`, effect list, kind-specific `PropertyGrid` |
 | **Image Manager** | library `ListBox`, toolbar `Row`, interactive zoom/pan `Canvas` |
+| **Dryad Nodes** | `Panel`, `SearchField`, `TreeView`/`TreeItem`, drag payload |
+| **Command Palette** | `Dialog`, `SearchField`, `ListBox`, keyboard navigation |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
 New kit pieces added for these migrations:
 
+- `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu)
+- `Dialog` (modal body tree + close lifecycle)
 - `ListItem` / `ListBox`
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`

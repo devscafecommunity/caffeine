@@ -1,6 +1,7 @@
 #include "../Catch2/catch.hpp"
 
 #include "caffeine/ui/UI.hpp"
+#include "editor/CommandPalette.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -64,4 +65,53 @@ TEST_CASE("UI element panel renders a full card tree", "[editor][ui][elements]")
     REQUIRE(dump.find("Button #primary") != std::string::npos);
     REQUIRE(dump.find("PropertyGrid #Properties") != std::string::npos);
     REQUIRE(dump.find("Canvas #Preview") != std::string::npos);
+}
+
+TEST_CASE("UI Dialog opens and renders a modal body", "[editor][ui][elements]") {
+    if (!g_gpuAvailable) {
+        WARN("Skipping test - GPU not available");
+        return;
+    }
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) ImGui_ImplSDL3_ProcessEvent(&event);
+    ImGui_ImplSDLGPU3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+
+    using namespace Caffeine::UIKit::Elements;
+
+    Dialog dialog("Test Dialog");
+    dialog.setInitialSize(ImVec2(320.0f, 200.0f));
+    dialog.emplace<Label>("Dialog body");
+    dialog.open();
+
+    UIContext ctx;
+    ctx.draw(dialog);
+    ImGui::Render();
+
+    ImGuiWindow* window = ImGui::FindWindowByName("Test Dialog");
+    REQUIRE(window != nullptr);
+}
+
+
+TEST_CASE("Command Palette opens a dialog window", "[editor][ui][elements]") {
+    if (!g_gpuAvailable) {
+        WARN("Skipping test - GPU not available");
+        return;
+    }
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) ImGui_ImplSDL3_ProcessEvent(&event);
+    ImGui_ImplSDLGPU3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+
+    Caffeine::Editor::CommandPalette palette;
+    palette.registerCommand("test.command", "Test Command", "Tools", [] {}, true);
+    palette.open();
+    palette.render();
+    ImGui::Render();
+
+    REQUIRE(ImGui::FindWindowByName("Quick Search") != nullptr);
 }

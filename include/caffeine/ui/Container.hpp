@@ -54,6 +54,7 @@ public:
     /// Adds a child. Empty ids are auto-assigned as "<Type>#<index>".
     Element& add(std::unique_ptr<Element> child);
     Element& add(Element& child) = delete;  // ownership is explicit
+    void clear() { m_children.clear(); }
 
     template <typename T, typename... Args>
     T& emplace(Args&&... args) {

@@ -80,6 +80,26 @@ void UiGalleryPanel::build() {
     auto& notes = lists.emplace<MultilineText>(m_notes, sizeof(m_notes));
     notes.setHeight(70.0f);
 
+    auto& treeCard = m_root->emplace<Card>("Tree");
+    treeCard.emplace<Label>("TreeView", TextTone::Accent).setHeading(true);
+    auto& tree = treeCard.emplace<TreeView>("gallery_tree");
+    tree.setHeight(150.0f);
+    auto& sceneTree = tree.emplace<TreeItem>("Scene", true);
+    sceneTree.emplace<TreeItem>("Camera");
+    sceneTree.emplace<TreeItem>("Light");
+    auto& contentTree = tree.emplace<TreeItem>("Content", true);
+    contentTree.emplace<TreeItem>("Materials");
+    contentTree.emplace<TreeItem>("Textures");
+
+    auto& dialogCard = m_root->emplace<Card>("Dialogs");
+    dialogCard.emplace<Label>("Dialog", TextTone::Accent).setHeading(true);
+    auto& dialog = dialogCard.emplace<Dialog>("Gallery Dialog");
+    dialog.setInitialSize(ImVec2(360.0f, 210.0f));
+    dialog.emplace<Label>("A modal dialog built from elements.");
+    dialog.emplace<Button>("Close").setOnClick([&dialog] { dialog.close(); });
+    dialogCard.emplace<Button>("Open dialog", ButtonVariant::Primary)
+        .setOnClick([&dialog] { dialog.open(); });
+
     auto& properties = m_root->emplace<Card>("Properties");
     properties.emplace<Label>("Typed property grid", TextTone::Accent).setHeading(true);
     auto& grid = properties.emplace<PropertyGrid>("gallery_properties");

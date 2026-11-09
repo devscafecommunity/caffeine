@@ -2,12 +2,17 @@
 #include "core/Types.hpp"
 #include "containers/FixedString.hpp"
 #include <functional>
+#include <memory>
 #include <vector>
 #include <string>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #endif
+
+namespace Caffeine::UIKit::Elements {
+class Dialog;
+}
 
 namespace Caffeine::Editor {
 
@@ -26,6 +31,7 @@ public:
     using Item = CommandPaletteItem;
 
     CommandPalette() = default;
+    ~CommandPalette();
 
     void registerCommand(const FixedString<64>& id,
                          const FixedString<128>& label,
@@ -70,6 +76,7 @@ private:
     std::vector<const Item*> m_filteredResults;
     usize m_selectedIndex = 0;
     bool m_focusSearch = false;
+    std::unique_ptr<Caffeine::UIKit::Elements::Dialog> m_dialog;
 };
 
 }

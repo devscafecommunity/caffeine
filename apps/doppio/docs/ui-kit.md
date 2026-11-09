@@ -76,6 +76,8 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `Section` | collapsible section with indented children |
 | `ScrollArea` | vertical scrollable region |
 | `Grid` | table-backed grid |
+| `TreeView` / `TreeItem` | scrollable tree with selection, drag payloads, drop targets and context menus |
+| `Dialog` | modal popup with a body element tree and close lifecycle |
 | `TabBar` / `TabPage` | tabbed pages |
 | `Label` / `Text` | normal, muted, disabled, accent and semantic text |
 | `Paragraph` | word-wrapped muted copy |
