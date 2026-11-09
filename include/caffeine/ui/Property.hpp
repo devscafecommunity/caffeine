@@ -128,6 +128,42 @@ private:
     }
 };
 
+class Vec2Property : public PropertyRow {
+public:
+    Vec2Property(std::string label, Vec2& value, float speed = 0.01f, float min = 0.0f,
+                 float max = 0.0f, std::string format = "%.2f")
+        : PropertyRow(std::move(label),
+                      std::make_unique<DragVec2>("", &value, speed, min, max,
+                                                 std::move(format))) {}
+
+    const char* type() const override { return "Vec2Property"; }
+
+    Vec2Property& setOnChange(std::function<void()> callback) {
+        if (auto* drag = dynamic_cast<DragVec2*>(value())) {
+            drag->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+};
+
+class Vec3Property : public PropertyRow {
+public:
+    Vec3Property(std::string label, Vec3& value, float speed = 0.01f, float min = 0.0f,
+                 float max = 0.0f, std::string format = "%.2f")
+        : PropertyRow(std::move(label),
+                      std::make_unique<DragVec3>("", &value, speed, min, max,
+                                                 std::move(format))) {}
+
+    const char* type() const override { return "Vec3Property"; }
+
+    Vec3Property& setOnChange(std::function<void()> callback) {
+        if (auto* drag = dynamic_cast<DragVec3*>(value())) {
+            drag->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+};
+
 class IntProperty : public PropertyRow {
 public:
     IntProperty(std::string label, int& value, int min, int max, float speed = 1.0f,
@@ -192,6 +228,30 @@ public:
                       std::make_unique<ColorPicker>("", color, flags)) {}
 
     const char* type() const override { return "ColorFieldProperty"; }
+
+    ColorFieldProperty& setOnChange(std::function<void()> callback) {
+        if (auto* picker = dynamic_cast<ColorPicker*>(value())) {
+            picker->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
+};
+
+class Color3FieldProperty : public PropertyRow {
+public:
+    Color3FieldProperty(std::string label, float* color,
+                        ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoInputs)
+        : PropertyRow(std::move(label),
+                      std::make_unique<ColorPicker>("", color, flags, 3)) {}
+
+    const char* type() const override { return "Color3FieldProperty"; }
+
+    Color3FieldProperty& setOnChange(std::function<void()> callback) {
+        if (auto* picker = dynamic_cast<ColorPicker*>(value())) {
+            picker->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
 };
 
 class TextFieldProperty : public PropertyRow {
@@ -218,6 +278,33 @@ public:
                       std::make_unique<TextInput>(buffer, size)) {}
 
     const char* type() const override { return "BufferProperty"; }
+};
+
+class PathProperty : public PropertyRow {
+public:
+    PathProperty(std::string label, std::string& value)
+        : PropertyRow(std::move(label), std::make_unique<PathField>(value)) {}
+
+    const char* type() const override { return "PathProperty"; }
+
+    PathProperty& setOnBrowse(std::function<void()> callback) {
+        if (auto* field = dynamic_cast<PathField*>(value())) {
+            field->setOnBrowse(std::move(callback));
+        }
+        return *this;
+    }
+    PathProperty& setOnDrop(std::function<void(const char*)> callback) {
+        if (auto* field = dynamic_cast<PathField*>(value())) {
+            field->setOnDrop(std::move(callback));
+        }
+        return *this;
+    }
+    PathProperty& setOnChange(std::function<void()> callback) {
+        if (auto* field = dynamic_cast<PathField*>(value())) {
+            field->setOnChange(std::move(callback));
+        }
+        return *this;
+    }
 };
 
 // ── Inline implementation ──────────────────────────────────────────────────

@@ -10,6 +10,10 @@
 #include "rhi/RenderDevice.hpp"
 #endif
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+}
+
 namespace Caffeine::Editor {
 
 class MaterialEditorPanel {
@@ -35,9 +39,9 @@ public:
 #endif
 
 private:
-    void renderProperties(EditorContext& ctx);
-    void renderPresetPicker();
-    void renderPreview(const EditorContext& ctx, float width, float height);
+    void renderProperties(Caffeine::UIKit::Elements::Container& parent, EditorContext& ctx,
+                          bool& changed);
+    void renderPreview(Caffeine::UIKit::Elements::Container& parent, EditorContext& ctx);
     bool saveCurrent();
     bool saveToPath(const std::filesystem::path& path);
     bool ensureFile(EditorContext& ctx);
@@ -62,6 +66,11 @@ private:
     float m_previewRotation = 0.0f;
     float m_previewPitch = 12.0f;
     bool m_previewFloor = true;
+    int m_presetIndex = 0;
+    int m_alphaModeIndex = 0;
+    bool m_reflectionPerformanceEdit = false;
+    bool m_reflectionQualityEdit = false;
+    bool m_reflectionPlanarEdit = false;
     Assets::MaterialSurface m_surface;
     std::filesystem::path m_materialPath;
     std::string m_projectRoot;

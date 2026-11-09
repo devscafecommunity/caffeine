@@ -11,11 +11,14 @@
 
 #include "caffeine/ui/Element.hpp"
 #include "caffeine/ui/Widgets.hpp"
+#include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <utility>
@@ -244,6 +247,58 @@ private:
     std::function<void(int)> m_onChange;
 };
 
+class DragVec2 : public Element {
+public:
+    DragVec2(std::string label, Vec2* value, float speed = 0.01f, float min = 0.0f,
+             float max = 0.0f, std::string format = "%.2f")
+        : m_label(std::move(label)), m_value(value), m_speed(speed), m_min(min), m_max(max),
+          m_format(std::move(format)) {}
+
+    const char* type() const override { return "DragVec2"; }
+
+    DragVec2& setOnChange(std::function<void()> callback) {
+        m_onChange = std::move(callback);
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    std::string m_label;
+    Vec2* m_value = nullptr;
+    float m_speed = 0.01f;
+    float m_min = 0.0f;
+    float m_max = 0.0f;
+    std::string m_format{"%.2f"};
+    std::function<void()> m_onChange;
+};
+
+class DragVec3 : public Element {
+public:
+    DragVec3(std::string label, Vec3* value, float speed = 0.01f, float min = 0.0f,
+             float max = 0.0f, std::string format = "%.2f")
+        : m_label(std::move(label)), m_value(value), m_speed(speed), m_min(min), m_max(max),
+          m_format(std::move(format)) {}
+
+    const char* type() const override { return "DragVec3"; }
+
+    DragVec3& setOnChange(std::function<void()> callback) {
+        m_onChange = std::move(callback);
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    std::string m_label;
+    Vec3* m_value = nullptr;
+    float m_speed = 0.01f;
+    float m_min = 0.0f;
+    float m_max = 0.0f;
+    std::string m_format{"%.2f"};
+    std::function<void()> m_onChange;
+};
+
 class Combo : public Element {
 public:
     Combo(std::string label, int* value, std::vector<std::string> items)
@@ -315,6 +370,37 @@ public:
         setHint(std::move(hint));
     }
     const char* type() const override { return "SearchField"; }
+};
+
+/// Read-only asset path with Browse/Clear buttons and a drag-drop target.
+class PathField : public Element {
+public:
+    explicit PathField(std::string& path, std::string payload = "ASSET_PATH")
+        : m_path(&path), m_payload(std::move(payload)) {}
+
+    const char* type() const override { return "PathField"; }
+
+    PathField& setOnBrowse(std::function<void()> callback) {
+        m_onBrowse = std::move(callback);
+        return *this;
+    }
+    PathField& setOnDrop(std::function<void(const char*)> callback) {
+        m_onDrop = std::move(callback);
+        return *this;
+    }
+    PathField& setOnChange(std::function<void()> callback) {
+        m_onChange = std::move(callback);
+        return *this;
+    }
+
+    void draw(UIContext&) override;
+
+private:
+    std::string* m_path = nullptr;
+    std::string m_payload;
+    std::function<void()> m_onBrowse;
+    std::function<void(const char*)> m_onDrop;
+    std::function<void()> m_onChange;
 };
 
 /// Button-sized area that accepts a drag payload (default: ASSET_PATH).
@@ -391,18 +477,26 @@ private:
 class ColorPicker : public Element {
 public:
     explicit ColorPicker(std::string label, float* color,
-                         ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoInputs)
-        : m_label(std::move(label)), m_color(color), m_flags(flags) {
+                         ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoInputs,
+                         int components = 4)
+        : m_label(std::move(label)), m_color(color), m_flags(flags),
+          m_components(components) {
         if (!m_label.empty()) setId("ColorPicker:" + m_label);
     }
 
     const char* type() const override { return "ColorPicker"; }
+    ColorPicker& setOnChange(std::function<void()> callback) {
+        m_onChange = std::move(callback);
+        return *this;
+    }
     void draw(UIContext& ctx) override;
 
 private:
     std::string m_label;
     float* m_color = nullptr;
     ImGuiColorEditFlags m_flags = ImGuiColorEditFlags_NoInputs;
+    int m_components = 4;
+    std::function<void()> m_onChange;
 };
 
 /// Selectable row for lists and simple trees.
@@ -598,6 +692,32 @@ inline void DragInt::draw(UIContext&) {
     if (changed && m_onChange) m_onChange(*m_value);
 }
 
+inline void DragVec2::draw(UIContext&) {
+    if (!m_value) return;
+    const ImVec2 size = controlSize(*this);
+    if (size.x > 0.0f) ImGui::SetNextItemWidth(size.x);
+    const char* label = m_label.empty() ? "##value" : m_label.c_str();
+    const bool changed = ImGui::DragFloat2(label, &m_value->x, m_speed, m_min, m_max,
+                                           m_format.c_str());
+    setChanged(changed);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    if (changed && m_onChange) m_onChange();
+}
+
+inline void DragVec3::draw(UIContext&) {
+    if (!m_value) return;
+    const ImVec2 size = controlSize(*this);
+    if (size.x > 0.0f) ImGui::SetNextItemWidth(size.x);
+    const char* label = m_label.empty() ? "##value" : m_label.c_str();
+    const bool changed = ImGui::DragFloat3(label, &m_value->x, m_speed, m_min, m_max,
+                                           m_format.c_str());
+    setChanged(changed);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    if (changed && m_onChange) m_onChange();
+}
+
 inline void Combo::draw(UIContext&) {
     if (!m_value || m_items.empty()) return;
     std::vector<const char*> items;
@@ -656,6 +776,50 @@ inline void TextInput::draw(UIContext&) {
     setFocused(ImGui::IsItemFocused());
 }
 
+inline void PathField::draw(UIContext&) {
+    if (!m_path) return;
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float browseW = ImGui::CalcTextSize("Browse").x +
+                          ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
+    const float clearW = m_path->empty() ? 0.0f : 22.0f;
+    const float buttons = browseW + (clearW > 0.0f ? spacing + clearW : 0.0f);
+
+    char display[256];
+    const std::string name =
+        m_path->empty() ? std::string("(none)")
+                        : std::filesystem::path(*m_path).filename().string();
+    std::snprintf(display, sizeof(display), "%s", name.c_str());
+
+    ImGui::SetNextItemWidth(std::max(48.0f, ImGui::GetContentRegionAvail().x - buttons - spacing));
+    ImGui::InputText("##pathfield", display, sizeof(display), ImGuiInputTextFlags_ReadOnly);
+    setHovered(ImGui::IsItemHovered());
+    setFocused(ImGui::IsItemFocused());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(m_payload.c_str())) {
+            const char* value = static_cast<const char*>(payload->Data);
+            if (value && value[0] != '\0') {
+                if (m_onDrop) {
+                    m_onDrop(value);
+                } else {
+                    *m_path = value;
+                    if (m_onChange) m_onChange();
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::Button("Browse", ImVec2(browseW, 0.0f)) && m_onBrowse) m_onBrowse();
+    if (!m_path->empty()) {
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("X", ImVec2(clearW, 0.0f))) {
+            m_path->clear();
+            if (m_onChange) m_onChange();
+        }
+    }
+}
+
 inline void DropZone::draw(UIContext&) {
     const ImVec2 size = controlSize(*this);
     const bool pressed = ImGui::Button(
@@ -705,10 +869,13 @@ inline void ColorPicker::draw(UIContext&) {
     const ImVec2 size = controlSize(*this);
     if (size.x > 0.0f) ImGui::SetNextItemWidth(size.x);
     const char* label = m_label.empty() ? "##value" : m_label.c_str();
-    const bool changed = ImGui::ColorEdit4(label, m_color, m_flags);
+    const bool changed = m_components == 3
+                             ? ImGui::ColorEdit3(label, m_color, m_flags)
+                             : ImGui::ColorEdit4(label, m_color, m_flags);
     setChanged(changed);
     setHovered(ImGui::IsItemHovered());
     setFocused(ImGui::IsItemFocused());
+    if (changed && m_onChange) m_onChange();
 }
 
 inline void ListItem::draw(UIContext&) {

@@ -33,7 +33,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Image Manager** | `ImageManagerPanel.cpp` | 250 | ✅ done | library `ListBox`, toolbar `Row`, interactive zoom/pan `Canvas` |
 | **Gameplay Preview** | `GameplayPreviewPanel.cpp` | 336 | 🧱 blocked | needs `Canvas` texture view / viewport element |
 | **Camera Preview** | `CameraPreviewPanel.cpp` | 652 | 🧱 blocked | same viewport/texture element + `PropertyGrid` |
-| **Material Editor** | `MaterialEditorPanel.cpp` | 541 | 🟡 partial | `ValueEditor` can be a `PropertyGrid` + `Canvas`; preview texture |
+| **Material Editor** | `MaterialEditorPanel.cpp` | 593 | ✅ done | `Panel`/menu, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` GPU preview |
 | **Settings** | `SettingsPanel.cpp` | 530 | ✅ done | `Panel`, nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView`, save/apply preferences |
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ✅ done | `Panel`, `Card`, `PropertyGrid`, `TreeView` components, hex dump labels, system queries |
 | **HUD Editor** | `HudEditorPanel.cpp` | 377 | ✅ done | `Panel`, create `Row`s, widget `ListBox`, interactive `Canvas` with move/resize/selection |
@@ -108,7 +108,6 @@ Ordered by how many panels they unlock.
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
 | `MediaView` / `ViewportTexture` | Scene Viewport, Gameplay/Camera Preview | texture display + input forwarding |
-| `Vec3Property` / `Vec2Property` | Inspector, Particles, Effect Editor, Transform rows | compact vector row instead of three float rows |
 | `Spinner` | Editor Spinner, loading states | custom draw element |
 | `StatusBar` | Scene Editor shell | host-specific but reusable |
 | `Toast` / `Notification` | optional | transient feedback |
@@ -135,6 +134,7 @@ Ordered by how many panels they unlock.
 | **Plugin Manager** | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload |
 | **File Picker** | `Dialog`, path bar, folder/file `ListBox`, search, Save/PickFolder actions |
 | **Project Startup** | `Panel`/`TabBar`/`TabPage`, `Card`/`PropertyGrid`, recent/browse `ListBox`, toast overlay |
+| **Material Editor** | menu `Panel`, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` preview |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
@@ -143,6 +143,9 @@ New kit pieces added for these migrations:
 - `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu, force-open, scroll, text color, open-on-arrow)
 - `Dialog` (modal body tree + close lifecycle)
 - `ImageButton` for tile/asset palettes
+- `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
+- `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
+- `Color3FieldProperty` plus `ColorPicker` change callbacks
 - `ListItem` / `ListBox`
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`

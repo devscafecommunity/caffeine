@@ -88,16 +88,17 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `DragFloat` / `DragInt` | drag editors |
 | `Combo` | dropdown |
 | `TextInput` / `SearchField` | text and search fields |
+| `PathField` | read-only asset path with Browse/Clear and `ASSET_PATH` drop |
 | `MultilineText` | multiline text editor |
 | `DropZone` | button-sized asset drop target |
 | `ListItem` / `ListBox` | selectable rows and scrollable lists |
-| `ColorPicker` | RGBA color editor |
+| `ColorPicker` | RGB/RGBA color editor with change callback |
 | `SegmentedControl` | mutually exclusive button strip |
 | `Badge` / `StatusDot` / `ProgressBar` | feedback |
 | `Separator` / `Spacer` / `Image` | layout and media |
 | `EmptyState` / `KeyValue` | empty views and label/value rows |
 | `PropertyGrid` / `PropertyRow` | two-column property editor |
-| `FloatProperty`, `IntProperty`, `BoolProperty`, `ChoiceProperty`, `ColorFieldProperty`, `TextFieldProperty` | typed property sugar |
+| `FloatProperty`, `IntProperty`, `BoolProperty`, `ChoiceProperty`, `ColorFieldProperty`, `Color3FieldProperty`, `TextFieldProperty`, `PathProperty`, `Vec2Property`, `Vec3Property` | typed property sugar |
 | `Canvas` | custom 2D drawing surface (optional interactive input) |
 | `NodeCanvasView` | embedded `NodeCanvas` with element children |
 | `NodeElement` | node title/body; add `InputPin` / `OutputPin` and controls |
