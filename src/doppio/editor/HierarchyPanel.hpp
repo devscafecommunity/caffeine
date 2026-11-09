@@ -9,17 +9,24 @@
 #include "physics/PhysicsComponents2D.hpp"
 
 #include <functional>
+#include <string>
 
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #include <cstring>
 #endif
 
+namespace Caffeine::UIKit::Elements {
+class Container;
+class Dialog;
+}
+
 namespace Caffeine::Editor {
 
 class HierarchyPanel {
 public:
     explicit HierarchyPanel(EditorContext* context) : m_context(context) {}
+    ~HierarchyPanel();
 
     void render(ECS::World& world, EditorContext& ctx);
     void onImGuiRender();
@@ -34,19 +41,27 @@ public:
 
     void duplicateEntity(ECS::World& world, ECS::Entity src);
 
-    void setOpenPresetsCallback(std::function<void()> callback) { m_openPresets = std::move(callback); }
+    void setOpenPresetsCallback(std::function<void()> callback) {
+        m_openPresets = std::move(callback);
+    }
 
 private:
-    void renderSearchBar();
-    void renderToolbar();
-    void renderEntityNode(ECS::Entity entity);
-    void renderEmptyContextMenu();
+    void renderToolbar(Caffeine::UIKit::Elements::Container& parent);
+    void addEntityItem(Caffeine::UIKit::Elements::Container& parent, ECS::Entity entity,
+                       bool recurse);
+    void handleEntityDrop(ECS::Entity entity);
+    void renderEntityContextMenu(ECS::Entity entity);
+    void openRename(ECS::Entity entity);
+    void openPlacePrefab();
+    void renderDialogs();
+    void applyRename();
+    void loadPrefab();
+    void deleteSelected();
     void renderCreateEntityMenuItems();
     void handleDeleteKey();
     void createEntityWithType(ECS::World& world, const char* name, const char* componentType);
 
     bool hasChildren(ECS::Entity entity) const;
-    void renderChildren(ECS::Entity parent);
 
     EditorContext* m_context = nullptr;
     ECS::World*    m_world   = nullptr;
@@ -54,13 +69,19 @@ private:
     bool m_open = true;
     char m_searchFilter[256] = "";
 
-    static constexpr u32 MAX_VISIBLE = 4096;
-    ECS::Entity m_entities[MAX_VISIBLE];
-    u32 m_entityCount = 0;
     ECS::Entity m_renaming = ECS::Entity::INVALID;
     ECS::Entity m_lastScrollTarget = ECS::Entity::INVALID;
     ECS::Entity m_expandEntity = ECS::Entity::INVALID;
     std::function<void()> m_openPresets;
+
+    Caffeine::UIKit::Elements::Dialog* m_renameDialog = nullptr;
+    Caffeine::UIKit::Elements::Dialog* m_placePrefabDialog = nullptr;
+    char m_renameBuffer[64] = {};
+    char m_prefabPath[256] = {};
+    bool m_renameFocus = false;
+    bool m_prefabFocus = false;
+    bool m_openCreateMenu = false;
+    std::string m_prefabError;
 };
 
 } // namespace Caffeine::Editor

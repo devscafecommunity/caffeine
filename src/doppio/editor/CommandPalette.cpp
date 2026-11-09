@@ -147,54 +147,59 @@ void CommandPalette::previousItem() {
 namespace Caffeine::Editor {
 
 void CommandPalette::render() {
-    if (!m_open || !m_dialog) return;
+    if (!m_dialog) return;
 
     using namespace Caffeine::UIKit;
     using namespace Caffeine::UIKit::Elements;
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        close();
-        return;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nextItem();
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) previousItem();
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
-        executeSelected();
-        close();
-        return;
-    }
-
-    filterResults(m_searchBuffer);
-    m_dialog->clear();
-
-    auto& search = m_dialog->emplace<Elements::SearchField>(
-        m_searchBuffer, sizeof(m_searchBuffer), "Panels, actions, plugins...");
-    search.setGrow(true);
-    if (m_focusSearch) {
-        search.focusNextFrame();
-        m_focusSearch = false;
-    }
-
-    auto& results = m_dialog->emplace<ListBox>("command_results");
-    results.setHeight(320.0f);
-    for (usize i = 0; i < m_filteredResults.size(); ++i) {
-        const Item* item = m_filteredResults[i];
-        if (!item) continue;
-        const std::string label =
-            std::string("[") + item->category.cStr() + "] " + item->label.cStr();
-        auto& row = results.emplace<ListItem>(label, i == m_selectedIndex);
-        row.setId("command:" + std::string(item->id.cStr()));
-        row.setScrollHere(i == m_selectedIndex);
-        row.setOnClick([this, i] {
-            setSelected(i);
-            executeSelected();
+    if (m_open) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             close();
-        });
+        } else {
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nextItem();
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) previousItem();
+            if (ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+                ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+                executeSelected();
+                close();
+            }
+        }
+
+        if (m_open) {
+            filterResults(m_searchBuffer);
+            m_dialog->clear();
+
+            auto& search = m_dialog->emplace<Elements::SearchField>(
+                m_searchBuffer, sizeof(m_searchBuffer), "Panels, actions, plugins...");
+            search.setGrow(true);
+            if (m_focusSearch) {
+                search.focusNextFrame();
+                m_focusSearch = false;
+            }
+
+            auto& results = m_dialog->emplace<ListBox>("command_results");
+            results.setHeight(320.0f);
+            for (usize i = 0; i < m_filteredResults.size(); ++i) {
+                const Item* item = m_filteredResults[i];
+                if (!item) continue;
+                const std::string label =
+                    std::string("[") + item->category.cStr() + "] " + item->label.cStr();
+                auto& row = results.emplace<ListItem>(label, i == m_selectedIndex);
+                row.setId("command:" + std::string(item->id.cStr()));
+                row.setScrollHere(i == m_selectedIndex);
+                row.setOnClick([this, i] {
+                    setSelected(i);
+                    executeSelected();
+                    close();
+                });
+            }
+            if (m_filteredResults.empty()) {
+                results.emplace<Label>("Nothing found.", TextTone::Muted);
+            }
+            m_dialog->emplace<Label>("Enter runs · ↑↓ navigate · Esc closes",
+                                     TextTone::Muted);
+        }
     }
-    if (m_filteredResults.empty()) {
-        results.emplace<Label>("Nothing found.", TextTone::Muted);
-    }
-    m_dialog->emplace<Label>("Enter runs · ↑↓ navigate · Esc closes", TextTone::Muted);
 
     UIContext ui;
     ui.draw(*m_dialog);

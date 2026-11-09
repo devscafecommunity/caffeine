@@ -49,10 +49,7 @@ public:
         m_open = true;
         m_requestOpen = true;
     }
-    void close() {
-        m_open = false;
-        m_requestClose = true;
-    }
+    void close() { m_requestClose = true; }
     bool isOpen() const { return m_open; }
 
     void draw(UIContext& ctx) override;
@@ -88,19 +85,20 @@ inline void Dialog::draw(UIContext& ctx) {
     }
 
     bool open = m_open;
+    bool closed = false;
     if (ImGui::BeginPopupModal(m_title.c_str(), &open,
                                ImGuiWindowFlags_NoSavedSettings)) {
+        drawChildren(ctx);
         if (m_requestClose) {
             ImGui::CloseCurrentPopup();
             m_requestClose = false;
+            closed = true;
         }
-        drawChildren(ctx);
         ImGui::EndPopup();
     }
-    if (!open) {
-        const bool wasOpen = m_open;
+    if (!open || closed) {
         m_open = false;
-        if (wasOpen && m_onClose) m_onClose();
+        if (m_onClose) m_onClose();
     }
 }
 

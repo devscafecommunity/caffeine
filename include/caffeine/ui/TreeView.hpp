@@ -15,6 +15,7 @@
 #include <imgui.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -25,12 +26,27 @@ public:
     explicit TreeView(std::string id = {}) : ScrollArea(std::move(id)) {}
     const char* type() const override { return "TreeView"; }
 
+    /// Called from BeginPopupContextWindow when the empty tree area is
+    /// right-clicked. Add ImGui::MenuItem here.
+    TreeView& setOnEmptyContextMenu(std::function<void()> callback) {
+        m_onEmptyContextMenu = std::move(callback);
+        return *this;
+    }
+
 protected:
     void drawChildren(UIContext& ctx) override {
         for (auto& child : m_children) {
             if (child && child->visible()) ctx.drawElement(*child);
         }
+        if (m_onEmptyContextMenu &&
+            ImGui::BeginPopupContextWindow("##tree_empty_context")) {
+            m_onEmptyContextMenu();
+            ImGui::EndPopup();
+        }
     }
+
+private:
+    std::function<void()> m_onEmptyContextMenu;
 };
 
 class TreeItem : public Container {
@@ -52,6 +68,28 @@ public:
     }
     TreeItem& setDefaultOpen(bool open) {
         m_defaultOpen = open;
+        return *this;
+    }
+    /// Force the branch open for one frame (used after create/drop actions).
+    TreeItem& setForceOpen(bool open = true) {
+        m_forceOpen = open;
+        return *this;
+    }
+    TreeItem& setOpenOnArrow(bool openOnArrow = true) {
+        m_openOnArrow = openOnArrow;
+        return *this;
+    }
+    TreeItem& setTextColor(std::optional<ImVec4> color) {
+        m_textColor = color;
+        return *this;
+    }
+    TreeItem& setScrollHere(bool scroll = true) {
+        m_scrollHere = scroll;
+        return *this;
+    }
+    /// Generic drop callback; call ImGui::AcceptDragDropPayload() inside it.
+    TreeItem& setOnDrop(std::function<void()> callback) {
+        m_onDropCallback = std::move(callback);
         return *this;
     }
     /// Treat an item without children as a branch (e.g. an empty category).
@@ -101,7 +139,11 @@ private:
     std::string m_label;
     bool m_selected = false;
     bool m_defaultOpen = false;
+    bool m_forceOpen = false;
+    bool m_openOnArrow = false;
     bool m_forceBranch = false;
+    bool m_scrollHere = false;
+    std::optional<ImVec4> m_textColor;
     std::function<void()> m_onClick;
     std::function<void()> m_onDoubleClick;
     std::function<void()> m_onContextMenu;
@@ -111,6 +153,7 @@ private:
     std::string m_dragPreview;
     std::string m_dropPayload;
     std::function<void(const char*)> m_onDrop;
+    std::function<void()> m_onDropCallback;
 };
 
 inline void TreeItem::drawDragDrop() {
@@ -126,12 +169,15 @@ inline void TreeItem::drawDragDrop() {
         ImGui::EndDragDropSource();
     }
 
-    if (!m_dropPayload.empty() && ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload =
-                ImGui::AcceptDragDropPayload(m_dropPayload.c_str())) {
-            const char* value = static_cast<const char*>(payload->Data);
-            if (value && m_onDrop) m_onDrop(value);
+    if ((!m_dropPayload.empty() || m_onDropCallback) && ImGui::BeginDragDropTarget()) {
+        if (!m_dropPayload.empty()) {
+            if (const ImGuiPayload* payload =
+                    ImGui::AcceptDragDropPayload(m_dropPayload.c_str())) {
+                const char* value = static_cast<const char*>(payload->Data);
+                if (value && m_onDrop) m_onDrop(value);
+            }
         }
+        if (m_onDropCallback) m_onDropCallback();
         ImGui::EndDragDropTarget();
     }
 }
@@ -149,11 +195,16 @@ inline void TreeItem::drawItemBehaviour() {
 
 inline void TreeItem::draw(UIContext& ctx) {
     const bool branch = m_forceBranch || !m_children.empty();
+    if (m_textColor) ImGui::PushStyleColor(ImGuiCol_Text, *m_textColor);
     if (branch) {
-        if (m_defaultOpen) ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+        if (m_forceOpen) {
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        } else if (m_defaultOpen) {
+            ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+        }
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
         if (m_selected) flags |= ImGuiTreeNodeFlags_Selected;
-        if (m_forceBranch) flags |= ImGuiTreeNodeFlags_OpenOnArrow;
+        if (m_forceBranch || m_openOnArrow) flags |= ImGuiTreeNodeFlags_OpenOnArrow;
         const bool open = ImGui::TreeNodeEx("##tree_node", flags, "%s", m_label.c_str());
         setHovered(ImGui::IsItemHovered());
         setFocused(ImGui::IsItemFocused());
@@ -161,6 +212,7 @@ inline void TreeItem::draw(UIContext& ctx) {
             setPressed(true);
             if (m_onClick) m_onClick();
         }
+        if (m_scrollHere) ImGui::SetScrollHereY(0.5f);
         drawItemBehaviour();
         if (open) {
             for (auto& child : m_children) {
@@ -168,6 +220,7 @@ inline void TreeItem::draw(UIContext& ctx) {
             }
             ImGui::TreePop();
         }
+        if (m_textColor) ImGui::PopStyleColor();
         return;
     }
 
@@ -184,7 +237,9 @@ inline void TreeItem::draw(UIContext& ctx) {
             m_onClick();
         }
     }
+    if (m_scrollHere) ImGui::SetScrollHereY(0.5f);
     drawItemBehaviour();
+    if (m_textColor) ImGui::PopStyleColor();
 }
 
 }  // namespace Caffeine::UIKit::Elements

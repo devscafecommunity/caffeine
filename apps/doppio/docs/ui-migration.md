@@ -46,7 +46,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 
 | Panel | File | Size | Status | Notes / next element |
 |-------|------|------|--------|----------------------|
-| **Hierarchy** | `HierarchyPanel.cpp` | 838 | ⏳ pending | `TreeView`/`TreeItem` now available; wire selection, drag/drop and context menu |
+| **Hierarchy** | `HierarchyPanel.cpp` | 838 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, selection, entity drag/drop, context menus, rename and prefab dialogs |
 | **Asset Browser** | `AssetBrowser.cpp` | 1869 | 🧱 blocked | folder tree available via `TreeView`; still needs `AssetCard`/`Thumbnail` and grid/table |
 | **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | 🟡 partial | `Panel`, `ListBox`, `Card`; plugin row table |
@@ -126,12 +126,13 @@ Ordered by how many panels they unlock.
 | **Image Manager** | library `ListBox`, toolbar `Row`, interactive zoom/pan `Canvas` |
 | **Dryad Nodes** | `Panel`, `SearchField`, `TreeView`/`TreeItem`, drag payload |
 | **Command Palette** | `Dialog`, `SearchField`, `ListBox`, keyboard navigation |
+| **Hierarchy** | `Panel`, `SearchField`, `Toolbar`, `TreeView`, entity drag/drop, context menus, rename/prefab dialogs |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
 
 New kit pieces added for these migrations:
 
-- `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu)
+- `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu, force-open, scroll, text color, open-on-arrow)
 - `Dialog` (modal body tree + close lifecycle)
 - `ListItem` / `ListBox`
 - `BufferProperty` and typed-row `setOnChange`

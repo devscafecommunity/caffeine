@@ -1,5 +1,5 @@
 #include "editor/HierarchyPanel.hpp"
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/DragDropSystem.hpp"
 #include "editor/PrefabSystem.hpp"
 #include "editor/DragDropSystem.hpp"
@@ -36,11 +36,37 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #ifdef CF_HAS_IMGUI
 
 namespace Caffeine::Editor {
+
+HierarchyPanel::~HierarchyPanel() {
+    delete m_renameDialog;
+    delete m_placePrefabDialog;
+}
+
+namespace {
+
+bool matchesFilter(const char* name, const char* filter) {
+    if (!name || !filter || filter[0] == '\0') return true;
+    for (const char* n = name; *n; ++n) {
+        const char* nn = n;
+        const char* fn = filter;
+        while (*nn && *fn &&
+               std::tolower(static_cast<unsigned char>(*nn)) ==
+                   std::tolower(static_cast<unsigned char>(*fn))) {
+            ++nn;
+            ++fn;
+        }
+        if (*fn == '\0') return true;
+    }
+    return false;
+}
+
+}  // namespace
 
 void HierarchyPanel::render(ECS::World& world, EditorContext& ctx) {
     m_world   = &world;
@@ -52,116 +78,104 @@ void HierarchyPanel::onImGuiRender() {
     if (!m_open) return;
     if (!m_context || !m_world) return;
 
-    UIKit::BeginPanel("Hierarchy", &m_open);
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    renderSearchBar();
-    renderToolbar();
-
-    ImGui::Separator();
-
-    if (ImGui::BeginChild("entity_list")) {
-        handleDeleteKey();
-
-        m_entityCount = 0;
-
-        ECS::ComponentQuery allQ;
-        bool hasFilter = (m_searchFilter[0] != '\0');
-
-        m_world->forEach<NameComponent>(allQ, [&](ECS::Entity e, NameComponent&) {
-            if (m_entityCount >= MAX_VISIBLE) return;
-
-            bool isRoot = true;
-            if (auto* parent = m_world->get<Scene::Parent>(e)) {
-                if (parent->parent.isValid()) isRoot = false;
-            }
-
-            if (!hasFilter) {
-                if (isRoot) m_entities[m_entityCount++] = e;
-            } else {
-                const char* name = getEntityName(*m_world, e);
-                bool match = false;
-                for (const char* n = name; *n; ++n) {
-                    const char* fn = m_searchFilter;
-                    const char* nn = n;
-                    while (*nn && *fn && std::tolower((unsigned char)*nn) == std::tolower((unsigned char)*fn)) {
-                        ++nn; ++fn;
-                    }
-                    if (!*fn) { match = true; break; }
-                }
-                if (match) m_entities[m_entityCount++] = e;
-            }
-        });
-
-        for (u32 i = 0; i < m_entityCount; ++i) {
-            renderEntityNode(m_entities[i]);
-        }
-
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
-                const auto* asset = static_cast<const AssetDropPayload*>(payload->Data);
-                if (asset->type == AssetType::Prefab) {
-                    m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-                    ECS::Entity root = PrefabSystem::Instantiate(*m_world, asset->path);
-                    if (root.isValid()) {
-                        m_context->selectEntity(root);
-                    }
-                    m_context->endUndo(*m_world);
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-
-        renderEmptyContextMenu();
+    if (!m_renameDialog) {
+        m_renameDialog = new Dialog("Rename Entity");
+        m_renameDialog->setInitialSize(ImVec2(380.0f, 190.0f));
+        m_renameDialog->setOnClose([this] { m_renaming = ECS::Entity::INVALID; });
     }
-    ImGui::EndChild();
+    if (!m_placePrefabDialog) {
+        m_placePrefabDialog = new Dialog("Place Prefab");
+        m_placePrefabDialog->setInitialSize(ImVec2(460.0f, 230.0f));
+        m_placePrefabDialog->setOnClose([this] { m_prefabError.clear(); });
+    }
 
-    ImGui::End();
-}
+    Panel root("Hierarchy", "Scene entities", "arrows-vertical", &m_open);
+    root.setOnBegin([this] { handleDeleteKey(); });
+    UIContext ui;
 
-void HierarchyPanel::renderSearchBar() {
-    UIKit::SearchField("##hierarchy_search", m_searchFilter, sizeof(m_searchFilter),
-                       "Search entities...");
-}
+    auto& search = root.emplace<Elements::SearchField>(
+        m_searchFilter, sizeof(m_searchFilter), "Search entities...");
+    search.setGrow(true);
 
-void HierarchyPanel::renderToolbar() {
-    if (UIKit::ToolbarButton("+", "Create entity")) {
+    auto& toolbar = root.emplace<Toolbar>("hierarchy_toolbar");
+    renderToolbar(toolbar);
+
+    if (m_openCreateMenu) {
         ImGui::OpenPopup("hierarchy_create_entity");
+        m_openCreateMenu = false;
     }
     if (ImGui::BeginPopup("hierarchy_create_entity")) {
         renderCreateEntityMenuItems();
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Presets", "Open Entity Presets wizard")) {
-        if (m_openPresets) m_openPresets();
-    }
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Delete", "Delete selected entities")) {
-        if (m_context->hasMultiSelection()) {
-            m_context->beginUndo(EditorCommand::RemoveEntity, u32_max, *m_world);
-            for (auto& e : m_context->selectedEntities) {
-                if (e.isValid()) m_world->destroy(e);
+
+    root.emplace<Separator>();
+    auto& tree = root.emplace<TreeView>("hierarchy_tree");
+    tree.setHeight(0.0f);
+
+    ECS::ComponentQuery allQ;
+    const bool filtering = m_searchFilter[0] != '\0';
+    m_world->forEach<NameComponent>(allQ, [&](ECS::Entity entity, NameComponent&) {
+        if (filtering) {
+            if (matchesFilter(getEntityName(*m_world, entity), m_searchFilter)) {
+                addEntityItem(tree, entity, false);
             }
-            m_context->clearSelection();
-            m_context->endUndo(*m_world);
-        } else if (m_context->selectedEntity.isValid()) {
-            m_context->beginUndo(EditorCommand::RemoveEntity,
-                                 m_context->selectedEntity.id(), *m_world);
-            m_world->destroy(m_context->selectedEntity);
-            m_context->clearSelection();
-            m_context->endUndo(*m_world);
+            return;
         }
-    }
+        bool isRoot = true;
+        if (auto* parent = m_world->get<Scene::Parent>(entity)) {
+            if (parent->parent.isValid()) isRoot = false;
+        }
+        if (isRoot) addEntityItem(tree, entity, true);
+    });
+
+    tree.setOnEmptyContextMenu([this] {
+        if (ImGui::BeginMenu("Create Entity")) {
+            renderCreateEntityMenuItems();
+            ImGui::EndMenu();
+        }
+        if (m_context->clipboardEntity.isValid() &&
+            ImGui::MenuItem("Paste\tCtrl+V")) {
+            duplicateEntity(*m_world, m_context->clipboardEntity);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Place Prefab...")) openPlacePrefab();
+    });
+
+    ui.draw(root);
+    renderDialogs();
+}
+
+void HierarchyPanel::renderToolbar(Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit::Elements;
+    auto& create = parent.emplace<Button>("+", ButtonVariant::Toolbar);
+    create.setTooltip("Create entity");
+    create.setOnClick([this] { m_openCreateMenu = true; });
+    auto& presets = parent.emplace<Button>("Presets", ButtonVariant::Toolbar);
+    presets.setTooltip("Open Entity Presets wizard");
+    presets.setOnClick([this] {
+        if (m_openPresets) m_openPresets();
+    });
+    auto& remove = parent.emplace<Button>("Delete", ButtonVariant::Toolbar);
+    remove.setTooltip("Delete selected entities");
+    remove.setOnClick([this] { deleteSelected(); });
 }
 
 void HierarchyPanel::handleDeleteKey() {
-    if (!ImGui::IsWindowFocused()) return;
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
     if (!ImGui::IsKeyPressed(ImGuiKey_Delete)) return;
+    deleteSelected();
+}
 
+void HierarchyPanel::deleteSelected() {
+    if (!m_context || !m_world) return;
     if (m_context->hasMultiSelection()) {
         m_context->beginUndo(EditorCommand::RemoveEntity, u32_max, *m_world);
-        for (auto& e : m_context->selectedEntities) {
-            if (e.isValid()) m_world->destroy(e);
+        for (auto& entity : m_context->selectedEntities) {
+            if (entity.isValid()) m_world->destroy(entity);
         }
         m_context->clearSelection();
         m_context->endUndo(*m_world);
@@ -174,39 +188,38 @@ void HierarchyPanel::handleDeleteKey() {
     }
 }
 
-void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
-    if (!entity.isValid()) return;
+void HierarchyPanel::addEntityItem(Caffeine::UIKit::Elements::Container& parent,
+                                   ECS::Entity entity, bool recurse) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+    if (!entity.isValid() || !m_context || !m_world) return;
 
     const char* name = getEntityName(*m_world, entity);
+    const bool effectivelyDisabled = Scene::isEffectivelyDisabled(*m_world, entity);
+    const bool prefabLinked = PrefabSystem::FindInstanceRoot(*m_world, entity).isValid();
+    std::string label = name;
+    if (prefabLinked) label = "[P] " + label;
+    const bool childExists = hasChildren(entity);
 
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow
-                             | ImGuiTreeNodeFlags_SpanAvailWidth;
-    if (m_context->isSelected(entity)) flags |= ImGuiTreeNodeFlags_Selected;
-
-    bool childExists = hasChildren(entity);
-    if (!childExists) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-
+    auto& item = parent.emplace<TreeItem>(label, false);
+    item.setId("entity:" + std::to_string(entity.id()));
+    item.setOpenOnArrow(true);
+    item.setSelected(m_context->isSelected(entity));
     if (entity == m_expandEntity) {
-        ImGui::SetNextItemOpen(true);
+        item.setForceOpen(true);
         m_expandEntity = ECS::Entity::INVALID;
     }
-
-    const bool effectivelyDisabled = Scene::isEffectivelyDisabled(*m_world, entity);
-    const bool isPrefabLinked = PrefabSystem::FindInstanceRoot(*m_world, entity).isValid();
-    if (effectivelyDisabled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    else if (isPrefabLinked) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.0f, 1.0f));
-
-    const char* label = isPrefabLinked ? "[P] %s" : "%s";
-    bool open = ImGui::TreeNodeEx((void*)(uintptr_t)entity.id(), flags, label, name);
-
-    if (effectivelyDisabled || isPrefabLinked) ImGui::PopStyleColor();
-
-    if (entity == m_context->selectedEntity && entity != m_lastScrollTarget) {
-        ImGui::SetScrollHereY(0.5f);
+    if (m_context->selectedEntity == entity && entity != m_lastScrollTarget) {
+        item.setScrollHere(true);
         m_lastScrollTarget = entity;
     }
+    if (effectivelyDisabled) {
+        item.setTextColor(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    } else if (prefabLinked) {
+        item.setTextColor(ImVec4(0.45f, 0.75f, 1.0f, 1.0f));
+    }
 
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+    item.setOnClick([this, entity] {
         if (ImGui::GetIO().KeyCtrl) {
             m_context->toggleSelection(entity);
         } else if (ImGui::GetIO().KeyShift) {
@@ -214,136 +227,208 @@ void HierarchyPanel::renderEntityNode(ECS::Entity entity) {
         } else {
             m_context->selectEntity(entity);
         }
+    });
+    item.setOnDrag([this, entity] {
+        u32 id = entity.id();
+        ImGui::SetDragDropPayload("ENTITY_DRAG", &id, sizeof(u32));
+        ImGui::Text("%s", getEntityName(*m_world, entity));
+    });
+    item.setOnDrop([this, entity] { handleEntityDrop(entity); });
+    item.setOnContextMenu([this, entity] { renderEntityContextMenu(entity); });
+
+    if (recurse && childExists) {
+        ECS::ComponentQuery childQ;
+        childQ.with<Scene::Parent>();
+        m_world->forEach<Scene::Parent>(childQ, [&](ECS::Entity child, Scene::Parent& link) {
+            if (link.parent == entity) addEntityItem(item, child, true);
+        });
     }
+}
 
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
-            const auto* asset = static_cast<const AssetDropPayload*>(payload->Data);
-            if (asset->type == AssetType::Prefab) {
-                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-                ECS::Entity root = PrefabSystem::Instantiate(*m_world, asset->path);
-                if (root.isValid()) {
-                    auto& parentComp = m_world->add<Scene::Parent>(root);
-                    parentComp.parent = entity;
-                    parentComp.dirty = true;
-                    m_context->selectEntity(root);
-                    m_expandEntity = entity;
-                }
-                m_context->endUndo(*m_world);
-            }
-
-            // Dropping a script attaches it to the entity. A .dyd also opens
-            // the node canvas so the graph is one click away.
-            const std::filesystem::path droppedPath(asset->path);
-            const std::string extension = droppedPath.extension().string();
-            if (extension == ".lua" || extension == ".dyd") {
-                std::filesystem::path stored = droppedPath;
-                if (!m_context->projectRootPath.empty() && droppedPath.is_absolute()) {
-                    const std::filesystem::path relative =
-                        droppedPath.lexically_relative(m_context->projectRootPath);
-                    if (!relative.empty() && relative.native().rfind("..", 0) != 0) {
-                        stored = relative;
-                    }
-                }
-                m_context->beginUndo(EditorCommand::SetField, entity.id(), *m_world);
-                if (auto* script = m_world->get<Script::ScriptComponent>(entity)) {
-                    script->scriptPath = stored.generic_string();
-                } else {
-                    Script::ScriptComponent component;
-                    component.scriptPath = stored.generic_string();
-                    m_world->add<Script::ScriptComponent>(entity, component);
-                }
-                m_context->markDirty();
-                m_context->endUndo(*m_world);
-                if (extension == ".dyd") {
-                    m_context->dryadToOpen = stored.generic_string();
-                }
-            }
-        } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
-            ECS::Entity dragged(*(u32*)payload->Data, m_world);
-            if (dragged != entity) {
-                m_context->beginUndo(EditorCommand::MoveEntity, dragged.id(), *m_world);
-                auto& parentComp = m_world->add<Scene::Parent>(dragged);
-                parentComp.parent = entity;
-                parentComp.dirty  = true;
-                m_expandEntity = entity;
-                m_context->endUndo(*m_world);
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
-
-    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        u32 eid = entity.id();
-        ImGui::SetDragDropPayload("ENTITY_DRAG", &eid, sizeof(u32));
-        ImGui::Text("%s", name);
-        ImGui::EndDragDropSource();
-    }
-
-    if (ImGui::BeginPopupContextItem()) {
-        if (ImGui::MenuItem("Rename"))        { m_renaming = entity; }
-        if (ImGui::MenuItem("Duplicate\tCtrl+D")) { duplicateEntity(*m_world, entity); }
-        if (ImGui::MenuItem("Copy\tCtrl+C"))  { m_context->clipboardEntity = entity; }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Create Child")) {
+void HierarchyPanel::handleEntityDrop(ECS::Entity entity) {
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kPayloadAssetPath)) {
+        const auto* asset = static_cast<const AssetDropPayload*>(payload->Data);
+        if (asset->type == AssetType::Prefab) {
             m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-            ECS::Entity child = m_world->create();
-            setEntityName(*m_world, child, "Child");
-            m_world->add<ECS::Transform>(child);
-            auto& parentComp = m_world->add<Scene::Parent>(child);
-            parentComp.parent = entity;
-            parentComp.dirty  = true;
-            m_expandEntity = entity;
-            m_context->selectEntity(child);
+            ECS::Entity root = PrefabSystem::Instantiate(*m_world, asset->path);
+            if (root.isValid()) {
+                auto& parentComp = m_world->add<Scene::Parent>(root);
+                parentComp.parent = entity;
+                parentComp.dirty = true;
+                m_context->selectEntity(root);
+                m_expandEntity = entity;
+            }
             m_context->endUndo(*m_world);
         }
-        if (auto* pc = m_world->get<Scene::Parent>(entity)) {
-            if (pc->parent.isValid()) {
-                if (ImGui::MenuItem("Unparent")) {
-                    m_context->beginUndo(EditorCommand::MoveEntity, entity.id(), *m_world);
-                    m_world->remove<Scene::Parent>(entity);
-                    m_context->endUndo(*m_world);
+
+        const std::filesystem::path droppedPath(asset->path);
+        const std::string extension = droppedPath.extension().string();
+        if (extension == ".lua" || extension == ".dyd") {
+            std::filesystem::path stored = droppedPath;
+            if (!m_context->projectRootPath.empty() && droppedPath.is_absolute()) {
+                const std::filesystem::path relative =
+                    droppedPath.lexically_relative(m_context->projectRootPath);
+                if (!relative.empty() && relative.native().rfind("..", 0) != 0) {
+                    stored = relative;
                 }
             }
+            m_context->beginUndo(EditorCommand::SetField, entity.id(), *m_world);
+            if (auto* script = m_world->get<Script::ScriptComponent>(entity)) {
+                script->scriptPath = stored.generic_string();
+            } else {
+                Script::ScriptComponent component;
+                component.scriptPath = stored.generic_string();
+                m_world->add<Script::ScriptComponent>(entity, component);
+            }
+            m_context->markDirty();
+            m_context->endUndo(*m_world);
+            if (extension == ".dyd") m_context->dryadToOpen = stored.generic_string();
         }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Delete")) {
-            m_context->beginUndo(EditorCommand::RemoveEntity, entity.id(), *m_world);
-            m_world->destroy(entity);
-            if (m_context->selectedEntity == entity) m_context->clearSelection();
+    } else if (const ImGuiPayload* payload =
+                   ImGui::AcceptDragDropPayload("ENTITY_DRAG")) {
+        ECS::Entity dragged(*static_cast<const u32*>(payload->Data), m_world);
+        if (dragged != entity) {
+            m_context->beginUndo(EditorCommand::MoveEntity, dragged.id(), *m_world);
+            auto& parentComp = m_world->add<Scene::Parent>(dragged);
+            parentComp.parent = entity;
+            parentComp.dirty = true;
+            m_expandEntity = entity;
             m_context->endUndo(*m_world);
         }
-        ImGui::EndPopup();
     }
+}
 
-    if (childExists && open) {
-        renderChildren(entity);
-        ImGui::TreePop();
+void HierarchyPanel::renderEntityContextMenu(ECS::Entity entity) {
+    if (ImGui::MenuItem("Rename")) openRename(entity);
+    if (ImGui::MenuItem("Duplicate\tCtrl+D")) duplicateEntity(*m_world, entity);
+    if (ImGui::MenuItem("Copy\tCtrl+C")) m_context->clipboardEntity = entity;
+    ImGui::Separator();
+    if (ImGui::MenuItem("Create Child")) {
+        m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+        ECS::Entity child = m_world->create();
+        setEntityName(*m_world, child, "Child");
+        m_world->add<ECS::Transform>(child);
+        auto& parentComp = m_world->add<Scene::Parent>(child);
+        parentComp.parent = entity;
+        parentComp.dirty = true;
+        m_expandEntity = entity;
+        m_context->selectEntity(child);
+        m_context->endUndo(*m_world);
     }
-
-    if (m_renaming == entity) {
-        ImGui::OpenPopup("##rename");
-        if (ImGui::BeginPopup("##rename")) {
-            ImGui::Text("Rename: %s", name);
-            char buf[64];
-            std::strncpy(buf, getEntityName(*m_world, entity), sizeof(buf));
-            buf[sizeof(buf) - 1] = '\0';
-            if (ImGui::InputText("##rename_input", buf, sizeof(buf),
-                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                m_context->beginUndo(EditorCommand::SetField, entity.id(), *m_world);
-                setEntityName(*m_world, entity, buf);
-                m_context->endUndo(*m_world);
-                m_renaming = ECS::Entity::INVALID;
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-                m_renaming = ECS::Entity::INVALID;
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        } else {
-            m_renaming = ECS::Entity::INVALID;
+    if (auto* pc = m_world->get<Scene::Parent>(entity)) {
+        if (pc->parent.isValid() && ImGui::MenuItem("Unparent")) {
+            m_context->beginUndo(EditorCommand::MoveEntity, entity.id(), *m_world);
+            m_world->remove<Scene::Parent>(entity);
+            m_context->endUndo(*m_world);
         }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Delete")) {
+        m_context->beginUndo(EditorCommand::RemoveEntity, entity.id(), *m_world);
+        m_world->destroy(entity);
+        if (m_context->selectedEntity == entity) m_context->clearSelection();
+        m_context->endUndo(*m_world);
+    }
+}
+
+void HierarchyPanel::openRename(ECS::Entity entity) {
+    m_renaming = entity;
+    const char* name = getEntityName(*m_world, entity);
+    std::strncpy(m_renameBuffer, name, sizeof(m_renameBuffer) - 1);
+    m_renameBuffer[sizeof(m_renameBuffer) - 1] = '\0';
+    m_renameFocus = true;
+    if (m_renameDialog) m_renameDialog->open();
+}
+
+void HierarchyPanel::applyRename() {
+    if (!m_renaming.isValid() || !m_context || !m_world) return;
+    m_context->beginUndo(EditorCommand::SetField, m_renaming.id(), *m_world);
+    setEntityName(*m_world, m_renaming, m_renameBuffer);
+    m_context->markDirty();
+    m_context->endUndo(*m_world);
+    m_renaming = ECS::Entity::INVALID;
+    if (m_renameDialog) m_renameDialog->close();
+}
+
+void HierarchyPanel::openPlacePrefab() {
+    m_prefabError.clear();
+    m_prefabFocus = true;
+    if (m_placePrefabDialog) m_placePrefabDialog->open();
+}
+
+void HierarchyPanel::loadPrefab() {
+    if (!m_context || !m_world) return;
+    if (m_prefabPath[0] == '\0') {
+        m_prefabError = "Path cannot be empty";
+        return;
+    }
+    m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
+    ECS::Entity root = PrefabSystem::Instantiate(*m_world, m_prefabPath);
+    if (!root.isValid()) {
+        m_context->endUndo(*m_world);
+        m_prefabError = "Failed to load prefab file";
+        return;
+    }
+    m_context->selectEntity(root);
+    m_context->endUndo(*m_world);
+    m_prefabPath[0] = '\0';
+    m_prefabError.clear();
+    if (m_placePrefabDialog) m_placePrefabDialog->close();
+}
+
+void HierarchyPanel::renderDialogs() {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_renameDialog) {
+        if (m_renameDialog->isOpen()) {
+            m_renameDialog->clear();
+            if (m_renaming.isValid()) {
+                char title[160];
+                std::snprintf(title, sizeof(title), "Rename %s",
+                              getEntityName(*m_world, m_renaming));
+                m_renameDialog->emplace<Label>(title, TextTone::Accent).setHeading(true);
+                auto& input = m_renameDialog->emplace<TextInput>(
+                    m_renameBuffer, sizeof(m_renameBuffer));
+                if (m_renameFocus) {
+                    input.focusNextFrame();
+                    m_renameFocus = false;
+                }
+                auto& row = m_renameDialog->emplace<Row>();
+                row.emplace<Button>("Rename", ButtonVariant::Primary)
+                    .setOnClick([this] { applyRename(); });
+                row.emplace<Button>("Cancel")
+                    .setOnClick([this] { m_renameDialog->close(); });
+            }
+        }
+        UIContext ui;
+        ui.draw(*m_renameDialog);
+    }
+
+    if (m_placePrefabDialog) {
+        if (m_placePrefabDialog->isOpen()) {
+            m_placePrefabDialog->clear();
+            m_placePrefabDialog->emplace<Label>("Place prefab", TextTone::Accent)
+                .setHeading(true);
+            m_placePrefabDialog->emplace<Label>(
+                "Enter the prefab asset path:", TextTone::Muted);
+            auto& input = m_placePrefabDialog->emplace<TextInput>(
+                m_prefabPath, sizeof(m_prefabPath));
+            if (m_prefabFocus) {
+                input.focusNextFrame();
+                m_prefabFocus = false;
+            }
+            if (!m_prefabError.empty()) {
+                m_placePrefabDialog->emplace<Label>(m_prefabError, TextTone::Danger);
+            }
+            auto& row = m_placePrefabDialog->emplace<Row>();
+            row.emplace<Button>("Load", ButtonVariant::Primary)
+                .setOnClick([this] { loadPrefab(); });
+            row.emplace<Button>("Cancel")
+                .setOnClick([this] { m_placePrefabDialog->close(); });
+        }
+        UIContext ui;
+        ui.draw(*m_placePrefabDialog);
     }
 }
 
@@ -747,74 +832,6 @@ void HierarchyPanel::renderCreateEntityMenuItems() {
     }
 }
 
-void HierarchyPanel::renderEmptyContextMenu() {
-    if (ImGui::BeginPopupContextWindow("hierarchy_empty_ctx")) {
-        if (ImGui::BeginMenu("Create Entity")) {
-            renderCreateEntityMenuItems();
-            ImGui::EndMenu();
-        }
-        if (m_context->clipboardEntity.isValid()) {
-            if (ImGui::MenuItem("Paste\tCtrl+V")) {
-                duplicateEntity(*m_world, m_context->clipboardEntity);
-            }
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Place Prefab...")) {
-            ImGui::OpenPopup("place_prefab_dialog");
-        }
-        ImGui::EndPopup();
-    }
-    
-    if (ImGui::BeginPopupModal("place_prefab_dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter prefab asset path:");
-        static char prefabPath[256] = "";
-        static char errorMsg[256] = "";
-        static bool showError = false;
-        
-        ImGui::InputText("##prefab_path", prefabPath, sizeof(prefabPath));
-        
-        if (showError && errorMsg[0] != '\0') {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error: %s", errorMsg);
-        }
-        
-        if (ImGui::Button("Load##prefab_load", ImVec2(120, 0))) {
-            if (prefabPath[0] == '\0') {
-                strcpy(errorMsg, "Path cannot be empty");
-                showError = true;
-            } else if (!m_world || !m_context) {
-                strcpy(errorMsg, "World or context is invalid");
-                showError = true;
-            } else {
-                m_context->beginUndo(EditorCommand::AddEntity, u32_max, *m_world);
-                
-                ECS::Entity rootEntity = PrefabSystem::Instantiate(*m_world, prefabPath);
-
-                if (rootEntity.isValid()) {
-                    m_context->selectEntity(rootEntity);
-                    m_context->endUndo(*m_world);
-                    
-                    memset(prefabPath, 0, sizeof(prefabPath));
-                    memset(errorMsg, 0, sizeof(errorMsg));
-                    showError = false;
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    m_context->endUndo(*m_world);
-                    strcpy(errorMsg, "Failed to load prefab file");
-                    showError = true;
-                }
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel##prefab_cancel", ImVec2(120, 0))) {
-            memset(prefabPath, 0, sizeof(prefabPath));
-            memset(errorMsg, 0, sizeof(errorMsg));
-            showError = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
-
 bool HierarchyPanel::hasChildren(ECS::Entity entity) const {
     bool found = false;
     ECS::ComponentQuery childQ;
@@ -825,13 +842,6 @@ bool HierarchyPanel::hasChildren(ECS::Entity entity) const {
     return found;
 }
 
-void HierarchyPanel::renderChildren(ECS::Entity parent) {
-    ECS::ComponentQuery childQ;
-    childQ.with<Scene::Parent>();
-    m_world->forEach<Scene::Parent>(childQ, [&](ECS::Entity child, Scene::Parent& p) {
-        if (p.parent == parent) renderEntityNode(child);
-    });
-}
 
 } // namespace Caffeine::Editor
 
