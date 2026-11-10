@@ -393,29 +393,37 @@ void AssetPreviewRenderer::pumpThumbnail(const std::string& projectRoot) {
     if (!m_thumbs.wantsMoreFrames()) m_activeThumbKey.clear();
 }
 
-bool AssetPreviewRenderer::drawThumbnail(const std::filesystem::path& path, AssetType type, float size) {
-    if (size < 1.0f) return false;
+ImTextureRef AssetPreviewRenderer::thumbnailTexture(const std::filesystem::path& path,
+                                                    AssetType type) {
     const std::string key = path.string();
     if (isImagePath(path) || type == AssetType::Texture) {
         const auto it = m_imageThumbs.find(key);
-        if (it == m_imageThumbs.end() || !it->second.texture) return false;
+        if (it == m_imageThumbs.end() || !it->second.texture) return {};
         if (it->second.texture->Status == ImTextureStatus_WantCreate) {
             ImGui_ImplSDLGPU3_UpdateTexture(it->second.texture.get());
         }
         const ImTextureRef texRef = it->second.texture->GetTexRef();
         if (it->second.texture->Status != ImTextureStatus_OK ||
             (texRef._TexData == nullptr && texRef._TexID == ImTextureID_Invalid)) {
-            return false;
+            return {};
         }
-        ImGui::Image(texRef, ImVec2(size, size));
-        return true;
+        return texRef;
     }
-    if (!isMaterialPath(path) && !isMeshPath(path, type)) return false;
+    if (!isMaterialPath(path) && !isMeshPath(path, type)) return {};
     const auto it = m_gpuThumbs.find(key);
-    if (it == m_gpuThumbs.end() || !it->second.ready || !it->second.texture || !it->second.texture->handle) {
-        return false;
+    if (it == m_gpuThumbs.end() || !it->second.ready || !it->second.texture ||
+        !it->second.texture->handle) {
+        return {};
     }
-    ImGui::Image(reinterpret_cast<ImTextureID>(it->second.texture->handle), ImVec2(size, size));
+    return ImTextureRef(reinterpret_cast<ImTextureID>(it->second.texture->handle));
+}
+
+bool AssetPreviewRenderer::drawThumbnail(const std::filesystem::path& path, AssetType type,
+                                         float size) {
+    if (size < 1.0f) return false;
+    const ImTextureRef texture = thumbnailTexture(path, type);
+    if (texture._TexData == nullptr && texture._TexID == ImTextureID_Invalid) return false;
+    ImGui::Image(texture, ImVec2(size, size));
     return true;
 }
 

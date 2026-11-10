@@ -15,6 +15,7 @@
 #include <string>
 #include <filesystem>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <algorithm>
 #include <functional>
@@ -22,6 +23,10 @@
 #ifdef CF_HAS_IMGUI
 #include <imgui.h>
 #endif
+
+namespace Caffeine::UIKit::Elements {
+class Dialog;
+}
 
 namespace Caffeine::Editor {
 
@@ -63,7 +68,8 @@ public:
         bool                  meshImportIncomplete = false;
     };
 
-    AssetBrowser() = default;
+    AssetBrowser();
+    ~AssetBrowser();
 
     // ── Open / close (always available) ────────────────────────────────
     bool isOpen() const { return m_open; }
@@ -145,6 +151,7 @@ public:
     std::string pathRelativeToProject(const std::filesystem::path& absolute) const;
     void renderGridView();
     void renderListView();
+    void activateEntry(usize index);
     void renderPreviewPane();
     void renderContextMenu();
     const char* iconForType(AssetType type, const std::filesystem::path& path = {});
@@ -180,6 +187,10 @@ public:
     bool m_statusIsError = false;
     AssetPreviewRenderer m_previewRenderer;
     std::string m_previewSourceKey;
+    std::unique_ptr<UIKit::Elements::Dialog> m_pickerDialog;
+    std::unique_ptr<UIKit::Elements::Dialog> m_creatorDialog;
+    std::unique_ptr<UIKit::Elements::Dialog> m_namingDialog;
+    std::unique_ptr<UIKit::Elements::Dialog> m_renameDialog;
 #ifdef CF_HAS_SDL3
     RHI::CommandBuffer* m_frameCmd = nullptr;
 #endif

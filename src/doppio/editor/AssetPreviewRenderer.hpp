@@ -43,6 +43,8 @@ public:
                            const std::string& projectRoot);
     /// Draws a GPU or image thumbnail. Returns false when the thumbnail is not ready.
     bool drawThumbnail(const std::filesystem::path& path, AssetType type, float size);
+    /// Texture for an AssetCard tile. Returns an invalid ImTextureRef when not ready.
+    ImTextureRef thumbnailTexture(const std::filesystem::path& path, AssetType type);
 #endif
 
 private:

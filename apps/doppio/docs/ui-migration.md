@@ -47,7 +47,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | Panel | File | Size | Status | Notes / next element |
 |-------|------|------|--------|----------------------|
 | **Hierarchy** | `HierarchyPanel.cpp` | 838 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, selection, entity drag/drop, context menus, rename and prefab dialogs |
-| **Asset Browser** | `AssetBrowser.cpp` | 1869 | 🧱 blocked | folder tree available via `TreeView`; still needs `AssetCard`/`Thumbnail` and grid/table |
+| **Asset Browser** | `AssetBrowser.cpp` | 1780 | 🟡 partial | `AssetCard` grid, `Dialog` picker/creator/naming/rename; toolbar, list view and preview pane still raw |
 | **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | ✅ done | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload actions |
 | **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
@@ -77,7 +77,7 @@ the drawing; graph semantics stay in the host.
 | **UI Gallery** | `UiGalleryPanel.cpp` | ✅ done | Living catalogue and visual test |
 | **Scene Editor shell** | `SceneEditor.cpp` | 🟡 partial | menu bar/dockspace/status bar stay host-specific; panels use elements |
 | **Toolbox** | `ToolboxPanel.hpp` | 183 | ✅ done | `Panel`, `Section`, segmented tool `Row`s, viewport `PropertyGrid`, terrain brush controls |
-| **Inspector widgets** | `InspectorWidgets.hpp` | 🧱 blocked | `PropertyGrid` and `TreeView` available; still needs `AssetCard`-style drawers |
+| **Inspector widgets** | `InspectorWidgets.hpp` | 🟡 partial | `PropertyGrid`, `PathProperty` and `AssetCard` available; component drawers still use the legacy helpers |
 | **Editor panel utils** | `EditorPanelUtils.hpp` | n/a | helpers, not UI |
 | **Shader node** | `ShaderNode.cpp` | 🧱 blocked | node element/`Canvas` |
 | **Editor spinner** | `EditorSpinner.cpp` | n/a | custom draw; can become `Spinner` element |
@@ -102,8 +102,7 @@ Ordered by how many panels they unlock.
 
 | Element | Unlocks | Notes |
 |---------|---------|-------|
-| `DataTable` / `TableRow` | Settings, Entity Debugger, Plugin Manager, Asset Browser details | columns, header, sort, selection |
-| `AssetCard` / `Thumbnail` | Asset Browser, Material/Audio preview | preview texture/`Canvas`, label, selection, drag source |
+| `DataTable` / `TreeTable` | Profiler scope tree, large asset details | sortable columns, row selection, tree rows |
 | `DragSource` / `DropTarget` mixins | Asset Browser, Tilemap, generic Cards | `TreeItem`/`ListItem` already support payloads and drops; a generic mixin for `Card`/custom elements is still missing |
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
@@ -146,6 +145,7 @@ New kit pieces added for these migrations:
 - `TreeView` / `TreeItem` (selection, drag payload, drop target, context menu, force-open, scroll, text color, open-on-arrow)
 - `Dialog` (modal body tree + close lifecycle)
 - `ImageButton` for tile/asset palettes
+- `AssetCard` thumbnail/icon tiles with selection, drag, drop and context menu
 - `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
 - `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
 - `Color3FieldProperty` plus `ColorPicker` change callbacks
