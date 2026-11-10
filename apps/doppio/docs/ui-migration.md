@@ -66,7 +66,7 @@ the drawing; graph semantics stay in the host.
 | **Animation Timeline** | `AnimationTimeline.cpp` | 2217 | 🧱 blocked | `TreeView` tracks available; still needs `Canvas` timeline + `CurveEditor` |
 | **Animator Controller** | `AnimatorController.cpp` | 1832 | 🧱 blocked | `Canvas` graph + node/transition elements |
 | **Dryad Node Script** | `DryadNodeScriptPanel.cpp` | 1351 | ✅ done | `Panel`, toolbar `Row`s, status/hint labels; ImNodes graph via `CustomElement` |
-| **Shader Graph** | `ShaderGraph.cpp` | 333 | 🧱 blocked | `Canvas` graph, node elements |
+| **Shader Graph** | `ShaderGraph.cpp` | 333 | n/a | data model only; no editor panel registered yet |
 | **Curve widget** | `CurveWidget.hpp` | 161 | ✅ done | `CurveEditor` element, mode `Combo` and preset `Row` |
 | **Transform gizmo** | `TransformGizmo.cpp` | 639 | n/a | drawing/input, not panel chrome |
 
@@ -79,7 +79,7 @@ the drawing; graph semantics stay in the host.
 | **Toolbox** | `ToolboxPanel.hpp` | 183 | ✅ done | `Panel`, `Section`, segmented tool `Row`s, viewport `PropertyGrid`, terrain brush controls |
 | **Inspector** | `InspectorPanel.cpp` | 2544 | ✅ done | `Panel`/`Card`/`Row`/`ScrollArea` chrome; all component drawers via `CustomElement` |
 | **Editor panel utils** | `EditorPanelUtils.hpp` | n/a | helpers, not UI |
-| **Shader node** | `ShaderNode.cpp` | 🧱 blocked | node element/`Canvas` |
+| **Shader node** | `ShaderNode.cpp` | n/a | graph node data model; no panel |
 | **Editor spinner** | `EditorSpinner.cpp` | n/a | custom draw; can become `Spinner` element |
 
 ## Plugins
