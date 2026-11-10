@@ -25,7 +25,9 @@
 #endif
 
 namespace Caffeine::UIKit::Elements {
+class Container;
 class Dialog;
+class Row;
 }
 
 namespace Caffeine::Editor {
@@ -143,9 +145,9 @@ public:
 
     private:
     // UI helpers
-    void renderToolbar();
-    void renderAssetPickerBar();
-    void renderBreadcrumbs();
+    void renderAssetPickerBar(Caffeine::UIKit::Elements::Container& parent);
+    void renderToolbar(Caffeine::UIKit::Elements::Container& parent);
+    void renderBreadcrumbs(Caffeine::UIKit::Elements::Row& parent);
     bool pickerAcceptsPath(const std::filesystem::path& path) const;
     void commitAssetPicker(const std::filesystem::path& absolutePath);
     std::string pathRelativeToProject(const std::filesystem::path& absolute) const;
@@ -166,6 +168,8 @@ public:
     void setStatusMessage(const std::string& message, bool isError = false);
 
     int m_selectedEntry = -1;
+    char m_searchBuf[256] = {};
+    int m_thumbnailEdit = 64;
     bool m_autoConvertOnImport = true;
     bool m_showImportFilePicker = false;
     bool m_showImportFolderPicker = false;

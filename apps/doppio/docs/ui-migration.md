@@ -47,7 +47,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | Panel | File | Size | Status | Notes / next element |
 |-------|------|------|--------|----------------------|
 | **Hierarchy** | `HierarchyPanel.cpp` | 838 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, selection, entity drag/drop, context menus, rename and prefab dialogs |
-| **Asset Browser** | `AssetBrowser.cpp` | 1780 | 🟡 partial | `AssetCard` grid, `Dialog` picker/creator/naming/rename; toolbar, list view and preview pane still raw |
+| **Asset Browser** | `AssetBrowser.cpp` | 1891 | ✅ done | `Panel`/`Section`/`Row`, `AssetCard` grid, `DataTable` list, `Dialog` modals, `CustomElement` preview renderer |
 | **Dryad Nodes** | `DryadNodesPanel.cpp` | 100 | ✅ done | `Panel`, `SearchField`, `TreeView`/`TreeItem`, `DRYAD_NODE` drag payload |
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | ✅ done | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload actions |
 | **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
@@ -102,7 +102,7 @@ Ordered by how many panels they unlock.
 
 | Element | Unlocks | Notes |
 |---------|---------|-------|
-| `DragSource` / `DropTarget` mixins | Asset Browser, Tilemap, generic Cards | `TreeItem`/`ListItem` already support payloads and drops; a generic mixin for `Card`/custom elements is still missing |
+| `DragSource` / `DropTarget` mixins | generic Cards/custom elements | `TreeItem`, `ListItem`, `AssetCard` and `DataRow` already support payloads and drops; a mixin for arbitrary elements is still missing |
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
 | `MediaView` / `ViewportTexture` | Scene Viewport, Gameplay/Camera Preview | texture display + input forwarding |
@@ -147,7 +147,7 @@ New kit pieces added for these migrations:
 - `Dialog` (modal body tree + close lifecycle)
 - `ImageButton` for tile/asset palettes
 - `AssetCard` thumbnail/icon tiles with selection, drag, drop and context menu
-- `DataTable` / `DataRow` (columns, header sort callback, selection, indent and expand arrows)
+- `DataTable` / `DataRow` (columns, header sort callback, selection, indent/expand arrows, drag/drop)
 - `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
 - `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
 - `Color3FieldProperty` plus `ColorPicker` change callbacks

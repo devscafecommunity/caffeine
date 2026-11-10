@@ -59,6 +59,18 @@ public:
         m_onToggle = std::move(callback);
         return *this;
     }
+    DataRow& setPayload(std::string payload) {
+        m_payload = std::move(payload);
+        return *this;
+    }
+    DataRow& setOnDrag(std::function<void()> callback) {
+        m_onDrag = std::move(callback);
+        return *this;
+    }
+    DataRow& setOnDrop(std::function<void(const char*)> callback) {
+        m_onDrop = std::move(callback);
+        return *this;
+    }
 
     void draw(UIContext& ctx) override {
         const float scale = std::max(ctx.scale(), 0.001f);
@@ -96,13 +108,18 @@ public:
     }
 
 private:
+    friend class DataTable;
+
     std::vector<std::string> m_cells;
     std::string m_icon;
+    std::string m_payload{"ASSET_PATH"};
     TextTone m_tone = TextTone::Normal;
     int m_indent = 0;
     bool m_expandable = false;
     bool m_expanded = false;
     std::function<void(bool)> m_onToggle;
+    std::function<void()> m_onDrag;
+    std::function<void(const char*)> m_onDrop;
 };
 
 class DataTable : public Container {
@@ -222,6 +239,21 @@ protected:
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
                 m_onRowActivated) {
                 m_onRowActivated(index);
+            }
+            if (auto* row = dynamic_cast<DataRow*>(child.get())) {
+                if (row->m_onDrag &&
+                    ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    row->m_onDrag();
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(row->m_payload.c_str())) {
+                        const char* value = static_cast<const char*>(payload->Data);
+                        if (value && row->m_onDrop) row->m_onDrop(value);
+                    }
+                    ImGui::EndDragDropTarget();
+                }
             }
             ctx.drawElement(*child);
             ImGui::PopID();
