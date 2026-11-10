@@ -67,7 +67,7 @@ the drawing; graph semantics stay in the host.
 | **Animator Controller** | `AnimatorController.cpp` | 1832 | 🧱 blocked | `Canvas` graph + node/transition elements |
 | **Dryad Node Script** | `DryadNodeScriptPanel.cpp` | 1351 | ✅ done | `Panel`, toolbar `Row`s, status/hint labels; ImNodes graph via `CustomElement` |
 | **Shader Graph** | `ShaderGraph.cpp` | 333 | 🧱 blocked | `Canvas` graph, node elements |
-| **Curve widget** | `CurveWidget.hpp` | 155 | 🧱 blocked | reusable `CurveEditor` element |
+| **Curve widget** | `CurveWidget.hpp` | 161 | ✅ done | `CurveEditor` element, mode `Combo` and preset `Row` |
 | **Transform gizmo** | `TransformGizmo.cpp` | 639 | n/a | drawing/input, not panel chrome |
 
 ## Tier 4 — host shell and shared widgets
@@ -104,7 +104,7 @@ Ordered by how many panels they unlock.
 |---------|---------|-------|
 | `DragSource` / `DropTarget` mixins | generic Cards/custom elements | `TreeItem`, `ListItem`, `AssetCard` and `DataRow` already support payloads and drops; a mixin for arbitrary elements is still missing |
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
-| `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
+| `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, nodes/transitions; use `Canvas` underneath |
 | `MediaView` / `ViewportTexture` | Scene Viewport | texture display + input forwarding |
 | `Spinner` | Editor Spinner, loading states | custom draw element |
 | `StatusBar` | Scene Editor shell | host-specific but reusable |
@@ -138,6 +138,7 @@ Ordered by how many panels they unlock.
 | **Profiler** | toolbar `Row`s, frame-time `Canvas`, hardware `KeyValue`s, sortable/expandable `DataTable` |
 | **Gameplay Preview** | `Panel` with hidden header, viewport `CustomElement` |
 | **Camera Preview** | `Panel` with hidden header, viewport `CustomElement` |
+| **Curve widget** | `CurveEditor`, mode `Combo`, preset `Row` |
 | **Dryad Node Script** | toolbar `Row`s, status labels, `CustomElement` graph host |
 | **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
@@ -150,6 +151,7 @@ New kit pieces added for these migrations:
 - `ImageButton` for tile/asset palettes
 - `AssetCard` thumbnail/icon tiles with selection, drag, drop and context menu
 - `DataTable` / `DataRow` (columns, header sort callback, selection, indent/expand arrows, drag/drop)
+- `CurveEditor` (Bezier handles, sampler callback, change callback)
 - `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
 - `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
 - `Color3FieldProperty` plus `ColorPicker` change callbacks

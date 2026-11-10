@@ -3,10 +3,13 @@
 #ifdef CF_HAS_IMGUI
 
 #include "animation/SkinLibrary.hpp"
+#include "caffeine/ui/UI.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 namespace Caffeine::Editor {
 
@@ -42,111 +45,114 @@ inline void drawCurveGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, const Animati
 
 /// Combo with the interpolation presets. Returns true when the mode changed.
 inline bool curveModeCombo(const char* label, Animation::KeyCurve& curve, f32 width = 130.0f) {
-    bool changed = false;
-    ImGui::SetNextItemWidth(width);
-    if (ImGui::BeginCombo(label, Animation::keyInterpName(curve.mode))) {
-        for (Animation::KeyInterp mode : kCurveModes) {
-            if (ImGui::Selectable(Animation::keyInterpName(mode), curve.mode == mode)) {
-                applyKeyInterp(curve, mode);
-                changed = true;
-            }
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    constexpr int kModeCount = static_cast<int>(std::size(kCurveModes));
+    int modeIndex = 0;
+    for (int i = 0; i < kModeCount; ++i) {
+        if (kCurveModes[i] == curve.mode) {
+            modeIndex = i;
+            break;
         }
-        ImGui::EndCombo();
     }
+    std::vector<std::string> names;
+    names.reserve(kModeCount);
+    for (Animation::KeyInterp mode : kCurveModes) {
+        names.emplace_back(Animation::keyInterpName(mode));
+    }
+
+    bool changed = false;
+    Column root(std::string("curve_mode_") + label);
+    auto& combo = root.emplace<Elements::Combo>(label, &modeIndex, names);
+    combo.setWidth(width);
+    combo.setOnChange([&curve, &changed](int index) {
+        if (index >= 0 && index < kModeCount) {
+            applyKeyInterp(curve, kCurveModes[index]);
+            changed = true;
+        }
+    });
+
+    UIContext ctx;
+    ctx.draw(root);
     return changed;
 }
 
 /// Bezier editor with draggable handles. Dragging a handle switches the curve to Custom.
 inline bool editKeyCurve(const char* id, Animation::KeyCurve& curve, f32 width, f32 height = 120.0f) {
-    ImGui::PushID(id);
-    const ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 size(std::max(width, 80.0f), height);
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const f32 pad = 10.0f;
-    const f32 vMin = -0.25f;
-    const f32 vMax = 1.25f;
-    auto toScreen = [&](f32 u, f32 v) {
-        return ImVec2(pos.x + pad + u * (size.x - pad * 2.0f),
-                      pos.y + size.y - pad - ((v - vMin) / (vMax - vMin)) * (size.y - pad * 2.0f));
-    };
-    ImGui::InvisibleButton("##graph", size);
-    const bool active = ImGui::IsItemActive();
-    ImGuiStorage* storage = ImGui::GetStateStorage();
-    const ImGuiID handleKey = ImGui::GetID("##handle");
-    int handle = storage->GetInt(handleKey, 0);
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(26, 28, 34, 255), 4.0f);
-    dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(60, 64, 74, 255), 4.0f);
-    dl->AddLine(toScreen(0.0f, 0.0f), toScreen(1.0f, 0.0f), IM_COL32(70, 74, 86, 255));
-    dl->AddLine(toScreen(0.0f, 1.0f), toScreen(1.0f, 1.0f), IM_COL32(70, 74, 86, 255));
-    dl->AddLine(toScreen(0.0f, 0.0f), toScreen(1.0f, 1.0f), IM_COL32(70, 74, 86, 140));
-
-    const bool hasHandles = curve.mode != Animation::KeyInterp::Constant;
-    const Animation::KeyCurve shape = curve.mode == Animation::KeyInterp::Custom   ? curve
-                                      : curve.mode == Animation::KeyInterp::Linear ? Animation::KeyCurve{}
-                                                                                   : Animation::keyCurvePreset(curve.mode);
-    const ImVec2 h1 = toScreen(shape.x1, shape.y1);
-    const ImVec2 h2 = toScreen(shape.x2, shape.y2);
-    if (hasHandles) {
-        dl->AddLine(toScreen(0.0f, 0.0f), h1, IM_COL32(120, 180, 255, 200), 1.2f);
-        dl->AddLine(toScreen(1.0f, 1.0f), h2, IM_COL32(120, 180, 255, 200), 1.2f);
-    }
-    ImVec2 points[49];
-    for (int s = 0; s < 49; ++s) {
-        const f32 u = static_cast<f32>(s) / 48.0f;
-        points[s] = toScreen(u, Animation::evaluateKeyCurve(curve, u));
-    }
-    dl->AddPolyline(points, 49, IM_COL32(255, 210, 60, 255), 0, 2.0f);
-    if (hasHandles) {
-        dl->AddCircleFilled(h1, handle == 1 ? 6.0f : 5.0f, IM_COL32(160, 205, 255, 255), 16);
-        dl->AddCircleFilled(h2, handle == 2 ? 6.0f : 5.0f, IM_COL32(160, 205, 255, 255), 16);
-    }
-    if (ImGui::IsItemClicked() && hasHandles) {
-        auto dist2 = [&](ImVec2 p) {
-            const f32 dx = io.MousePos.x - p.x;
-            const f32 dy = io.MousePos.y - p.y;
-            return dx * dx + dy * dy;
-        };
-        const f32 d1 = dist2(h1);
-        const f32 d2 = dist2(h2);
-        handle = std::min(d1, d2) < 196.0f ? (d1 <= d2 ? 1 : 2) : 0;
-    }
-    if (!active) handle = 0;
     bool changed = false;
-    if (active && handle != 0) {
-        if (curve.mode != Animation::KeyInterp::Custom) applyKeyInterp(curve, Animation::KeyInterp::Custom);
-        const f32 u = std::clamp((io.MousePos.x - pos.x - pad) / (size.x - pad * 2.0f), 0.0f, 1.0f);
-        const f32 v = std::clamp(vMin + ((pos.y + size.y - pad - io.MousePos.y) / (size.y - pad * 2.0f)) * (vMax - vMin),
-                                 vMin, vMax);
-        if (handle == 1) {
-            curve.x1 = u;
-            curve.y1 = v;
-        } else {
-            curve.x2 = u;
-            curve.y2 = v;
-        }
-        changed = true;
-    }
-    storage->SetInt(handleKey, handle);
+    Column root(std::string("curve_edit_") + id);
 
-    changed = curveModeCombo("Curve", curve, size.x - 60.0f) || changed;
-    const struct {
-        const char* label;
-        Animation::KeyInterp mode;
-    } presets[] = {{"Linear", Animation::KeyInterp::Linear},
-                   {"In", Animation::KeyInterp::EaseIn},
-                   {"Out", Animation::KeyInterp::EaseOut},
-                   {"In Out", Animation::KeyInterp::EaseInOut},
-                   {"Step", Animation::KeyInterp::Constant}};
-    for (int i = 0; i < 5; ++i) {
-        if (i > 0) ImGui::SameLine();
-        if (ImGui::SmallButton(presets[i].label)) {
-            applyKeyInterp(curve, presets[i].mode);
+    const Animation::KeyCurve shape =
+        curve.mode == Animation::KeyInterp::Custom
+            ? curve
+            : curve.mode == Animation::KeyInterp::Linear ? Animation::KeyCurve{}
+                                                         : Animation::keyCurvePreset(curve.mode);
+
+    auto& editor = root.emplace<CurveEditor>("curve_editor");
+    editor.setWidth(std::max(width, 80.0f));
+    editor.setHeight(height);
+    editor.setCurve(shape.x1, shape.y1, shape.x2, shape.y2);
+    editor.setShowHandles(curve.mode != Animation::KeyInterp::Constant);
+    editor.setSampler([&curve](float u) { return Animation::evaluateKeyCurve(curve, u); });
+    editor.setOnChange([&curve, &changed](float x1, float y1, float x2, float y2) {
+        if (curve.mode != Animation::KeyInterp::Custom) {
+            applyKeyInterp(curve, Animation::KeyInterp::Custom);
+        }
+        curve.x1 = x1;
+        curve.y1 = y1;
+        curve.x2 = x2;
+        curve.y2 = y2;
+        changed = true;
+    });
+
+    constexpr int kModeCount = static_cast<int>(std::size(kCurveModes));
+    int modeIndex = 0;
+    for (int i = 0; i < kModeCount; ++i) {
+        if (kCurveModes[i] == curve.mode) {
+            modeIndex = i;
+            break;
+        }
+    }
+    std::vector<std::string> names;
+    names.reserve(kModeCount);
+    for (Animation::KeyInterp mode : kCurveModes) {
+        names.emplace_back(Animation::keyInterpName(mode));
+    }
+    auto& mode = root.emplace<Elements::Combo>("Curve", &modeIndex, names);
+    mode.setWidth(std::max(width - 60.0f, 80.0f));
+    mode.setOnChange([&curve, &changed](int index) {
+        if (index >= 0 && index < kModeCount) {
+            applyKeyInterp(curve, kCurveModes[index]);
             changed = true;
         }
+    });
+
+    struct Preset {
+        const char* label;
+        Animation::KeyInterp mode;
+    };
+    static const Preset kPresets[] = {{"Linear", Animation::KeyInterp::Linear},
+                                      {"In", Animation::KeyInterp::EaseIn},
+                                      {"Out", Animation::KeyInterp::EaseOut},
+                                      {"In Out", Animation::KeyInterp::EaseInOut},
+                                      {"Step", Animation::KeyInterp::Constant}};
+    auto& presets = root.emplace<Row>("curve_presets");
+    for (const Preset& preset : kPresets) {
+        auto& button = presets.emplace<Button>(preset.label, ButtonVariant::Segmented);
+        button.setGrow(true);
+        button.setSelected(curve.mode == preset.mode);
+        button.setOnClick([&curve, &changed, mode = preset.mode] {
+            applyKeyInterp(curve, mode);
+            changed = true;
+        });
     }
-    ImGui::PopID();
+
+    UIContext ctx;
+    ctx.draw(root);
     return changed;
 }
 

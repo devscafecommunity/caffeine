@@ -25,6 +25,7 @@
 #include "caffeine/ui/Canvas.hpp"
 #include "caffeine/ui/AssetCard.hpp"
 #include "caffeine/ui/DataTable.hpp"
+#include "caffeine/ui/CurveEditor.hpp"
 #include "caffeine/ui/TreeView.hpp"
 #include "caffeine/ui/Dialog.hpp"
 #include "caffeine/ui/Debug.hpp"
