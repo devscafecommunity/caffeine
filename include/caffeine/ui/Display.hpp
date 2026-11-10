@@ -207,7 +207,7 @@ inline void Badge::draw(UIContext& ctx) {
 
 inline void StatusDot::draw(UIContext&) { UIKit::StatusDot(m_color); }
 
-inline void ProgressBar::draw(UIContext& ctx) {
+inline void ProgressBar::draw(UIContext&) {
     if (!m_value) return;
     const ImVec2 size = controlSize(*this);
     ImGui::ProgressBar(*m_value, size,

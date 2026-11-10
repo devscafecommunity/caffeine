@@ -89,6 +89,7 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `Combo` | dropdown |
 | `TextInput` / `SearchField` | text and search fields with change/submit callbacks |
 | `PathField` | read-only asset path with Browse/Clear and `ASSET_PATH` drop |
+| `CustomElement` | escape hatch for host/legacy widgets still drawn with raw ImGui |
 | `MultilineText` | multiline text editor |
 | `DropZone` | button-sized asset drop target |
 | `ListItem` / `ListBox` | selectable rows and scrollable lists |

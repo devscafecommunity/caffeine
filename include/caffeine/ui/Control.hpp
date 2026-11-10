@@ -409,6 +409,24 @@ private:
     std::function<void()> m_onChange;
 };
 
+/// Escape hatch for host-specific widgets that still draw with raw ImGui.
+/// Prefer real elements; use this only for legacy widgets being migrated.
+class CustomElement : public Element {
+public:
+    explicit CustomElement(std::string id, std::function<void()> draw)
+        : m_draw(std::move(draw)) {
+        if (!id.empty()) setId(std::move(id));
+    }
+
+    const char* type() const override { return "CustomElement"; }
+    void draw(UIContext&) override {
+        if (m_draw) m_draw();
+    }
+
+private:
+    std::function<void()> m_draw;
+};
+
 /// Button-sized area that accepts a drag payload (default: ASSET_PATH).
 class DropZone : public Element {
 public:

@@ -135,7 +135,6 @@ private:
 // ── Inline implementation ──────────────────────────────────────────────────
 
 inline void Canvas::draw(UIContext& ctx) {
-    const float scale = std::max(ctx.scale(), 0.001f);
     const ImVec2 size = controlSize(*this);
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, m_background);

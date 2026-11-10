@@ -87,14 +87,14 @@ the drawing; graph semantics stay in the host.
 | Plugin | File | Status | Notes |
 |--------|------|--------|-------|
 | **Natural Fluids** | `plugins/natural-fluids/src/main.cpp` | ✅ done | `Card`/`PropertyGrid`/`Canvas`; live previews in `Canvas` |
-| **Hello** | `plugins/hello-plugin/src/main.cpp` | ⏳ pending | `PanelHeader`/`Paragraph`/`Badge` → `Panel`/`Card`/`Label` |
-| **Terrain Generator** | `plugins/terrain-generator/src/main.cpp` | ⏳ pending | `Card`, `PropertyGrid`, `Button`, `ProgressBar` |
-| **Procedural Tools** | `plugins/procedural-tools/src/main.cpp` | ⏳ pending | same, plus `Canvas` for map preview |
-| **Post Processing** | `plugins/post-processing/src/main.cpp` | ⏳ pending | `PropertyGrid`, `Combo`, `Checkbox` |
-| **Git** | `plugins/git/src/main.cpp` | ⏳ pending | `ListBox`/`ListItem`, `Toolbar`, `Card` |
-| **AI Development** | `plugins/ai-development/src/main.cpp` | ⏳ pending | `PropertyGrid`, `ListBox`, `Button` |
-| **Volumetric Clouds** | `plugins/volumetric-clouds/src/main.cpp` | ⏳ pending | `PropertyGrid`, `Combo`, `Checkbox`, `Canvas` preview |
-| **Hello template** | `templates/hello-plugin/src/main.cpp` | ⏳ pending | small; use as SDK example of elements |
+| **Hello** | `plugins/hello-plugin/src/main.cpp` | ✅ done | `Column`/`Card`/`Label`/`Badge`/action `Row` |
+| **Terrain Generator** | `plugins/terrain-generator/src/main.cpp` | ✅ done | `Card`/`PropertyGrid`, busy label, import `Section` |
+| **Procedural Tools** | `plugins/procedural-tools/src/main.cpp` | ✅ done | streaming/generator `Section`s, benchmark action `Row`, API reference `Label`s |
+| **Post Processing** | `plugins/post-processing/src/main.cpp` | ✅ done | `Column`/`Card`/`Section` chrome; core effect stack via `CustomElement` |
+| **Git** | `plugins/git/src/main.cpp` | ✅ done | per-file `Row`s, commit `MultilineText`, branch combo, history `ListBox` |
+| **AI Development** | `plugins/ai-development/src/main.cpp` | ✅ done | nav volume/agent `PropertyGrid`s, `Vec3Property`, script action `Row` |
+| **Volumetric Clouds** | `plugins/volumetric-clouds/src/main.cpp` | ✅ done | weather/layer/mist `PropertyGrid`s, panel and component drawer |
+| **Hello template** | `templates/hello-plugin/src/main.cpp` | ✅ done | SDK example with `Column`/`Card`/`Label`/`Button` |
 
 ## Missing elements backlog
 
