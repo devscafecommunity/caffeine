@@ -31,8 +31,8 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Entity Presets** | `EntityPresetsPanel.cpp` | 212 | ✅ done | three-column `Row` of `Card`s, `ListBox`, wizard `PropertyGrid` |
 | **Effect Editor** | `EffectEditorPanel.cpp` | 270 | ✅ done | create `Card`, effect list, kind-specific `PropertyGrid` |
 | **Image Manager** | `ImageManagerPanel.cpp` | 250 | ✅ done | library `ListBox`, toolbar `Row`, interactive zoom/pan `Canvas` |
-| **Gameplay Preview** | `GameplayPreviewPanel.cpp` | 336 | 🧱 blocked | needs `Canvas` texture view / viewport element |
-| **Camera Preview** | `CameraPreviewPanel.cpp` | 652 | 🧱 blocked | same viewport/texture element + `PropertyGrid` |
+| **Gameplay Preview** | `GameplayPreviewPanel.cpp` | 338 | ✅ done | `Panel` with hidden header; viewport renderer via `CustomElement` |
+| **Camera Preview** | `CameraPreviewPanel.cpp` | 654 | ✅ done | `Panel` with hidden header; 2D/3D/fallback viewport via `CustomElement` |
 | **Material Editor** | `MaterialEditorPanel.cpp` | 593 | ✅ done | `Panel`/menu, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` GPU preview |
 | **Settings** | `SettingsPanel.cpp` | 530 | ✅ done | `Panel`, nav `ListBox`, `Card`/`PropertyGrid`, layout profiles, shortcut `TreeView`, save/apply preferences |
 | **Entity Debugger** | `EntityDebugger.cpp` | 402 | ✅ done | `Panel`, `Card`, `PropertyGrid`, `TreeView` components, hex dump labels, system queries |
@@ -105,7 +105,7 @@ Ordered by how many panels they unlock.
 | `DragSource` / `DropTarget` mixins | generic Cards/custom elements | `TreeItem`, `ListItem`, `AssetCard` and `DataRow` already support payloads and drops; a mixin for arbitrary elements is still missing |
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
-| `MediaView` / `ViewportTexture` | Scene Viewport, Gameplay/Camera Preview | texture display + input forwarding |
+| `MediaView` / `ViewportTexture` | Scene Viewport | texture display + input forwarding |
 | `Spinner` | Editor Spinner, loading states | custom draw element |
 | `StatusBar` | Scene Editor shell | host-specific but reusable |
 | `Toast` / `Notification` | optional | transient feedback |
@@ -136,6 +136,8 @@ Ordered by how many panels they unlock.
 | **Console** | `Panel`, `Row` toolbar, `Combo` filter, `ScrollArea` log, submit-capable input |
 | **Stats overlay** | auto-resizing `Panel`, `Label`/`KeyValue` rows |
 | **Profiler** | toolbar `Row`s, frame-time `Canvas`, hardware `KeyValue`s, sortable/expandable `DataTable` |
+| **Gameplay Preview** | `Panel` with hidden header, viewport `CustomElement` |
+| **Camera Preview** | `Panel` with hidden header, viewport `CustomElement` |
 | **Dryad Node Script** | toolbar `Row`s, status labels, `CustomElement` graph host |
 | **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
@@ -157,7 +159,7 @@ New kit pieces added for these migrations:
 - `BufferProperty` and typed-row `setOnChange`
 - `MultilineText`
 - `DropZone`
-- `Panel::setOnBegin` / `Panel::setInitialSize` / `Panel::setInitialPosition` (with pivot)
+- `Panel::setOnBegin` / `Panel::setInitialSize` / `Panel::setInitialPosition` (with pivot) / `setHeaderVisible`
 - `Canvas::setInteractive` (invisible input item for zoom/pan)
 - `PropertyRow::setHint`, `Label`/`ListItem` tooltips, `BoolProperty::setOnChange`
 

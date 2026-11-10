@@ -209,6 +209,12 @@ public:
         m_windowFlags = flags;
         return *this;
     }
+    /// Viewport-style panels can keep only the window title and skip the
+    /// in-window title/subtitle row.
+    Panel& setHeaderVisible(bool visible) {
+        m_showHeader = visible;
+        return *this;
+    }
     Panel& setInitialSize(ImVec2 size) {
         m_initialSize = size;
         return *this;
@@ -237,6 +243,7 @@ private:
     std::string m_icon;
     bool* m_open = nullptr;
     ImGuiWindowFlags m_windowFlags = ImGuiWindowFlags_None;
+    bool m_showHeader = true;
     ImVec2 m_initialSize{0.0f, 0.0f};
     ImVec2 m_initialPosition{0.0f, 0.0f};
     ImGuiCond m_initialPositionCondition = ImGuiCond_Appearing;
@@ -463,9 +470,11 @@ inline bool Panel::beginBody(UIContext& ctx) {
     const bool open = ImGui::Begin(m_title.c_str(), m_open, m_windowFlags);
     if (open) {
         if (m_onBegin) m_onBegin();
-        UIKit::PanelHeader(m_title.c_str(),
-                           m_subtitle.empty() ? nullptr : m_subtitle.c_str(),
-                           m_icon.empty() ? nullptr : m_icon.c_str());
+        if (m_showHeader) {
+            UIKit::PanelHeader(m_title.c_str(),
+                               m_subtitle.empty() ? nullptr : m_subtitle.c_str(),
+                               m_icon.empty() ? nullptr : m_icon.c_str());
+        }
     }
     return open;
 }

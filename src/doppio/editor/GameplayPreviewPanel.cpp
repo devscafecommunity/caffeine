@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/GameplayPreviewPanel.hpp"
 #include "editor/EditorPanelUtils.hpp"
 #include "editor/ImGuiGpuTexture.hpp"
@@ -150,18 +150,18 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
 
     editorPanelApplyDetach(m_detached, ImVec2(960, 540));
-    ImGui::SetNextWindowSize(ImVec2(480, 320), ImGuiCond_FirstUseEver);
-    if (!UIKit::BeginPanel("Gameplay Preview", &m_open, ImGuiWindowFlags_NoScrollbar)) {
-        ImGui::End();
-        return;
-    }
-    editorPanelDetachTabButton(m_detached);
 
-    if (ImGui::IsWindowCollapsed()) {
-        ImGui::End();
-        return;
-    }
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
+    Panel root("Gameplay Preview", "", "", &m_open);
+    root.setInitialSize(ImVec2(480.0f, 320.0f));
+    root.setWindowFlags(ImGuiWindowFlags_NoScrollbar);
+    root.setHeaderVisible(false);
+    root.setOnBegin([this] { editorPanelDetachTabButton(m_detached); });
+    UIContext ui;
+
+    root.emplace<CustomElement>("gameplay_preview_host", [this, &world, &ctx] {
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
     if (panelSize.x < 32.0f || panelSize.y < 32.0f) {
         ImGui::End();
@@ -328,7 +328,9 @@ void GameplayPreviewPanel::render(ECS::World& world, EditorContext& ctx) {
         UI::drawWidgets(world, dl, origin, panelSize);
     }
 
-    ImGui::End();
+    });
+
+    ui.draw(root);
 }
 
 }  // namespace Caffeine::Editor

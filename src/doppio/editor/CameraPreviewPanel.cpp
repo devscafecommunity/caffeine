@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/CameraPreviewPanel.hpp"
 #include "editor/Camera2DPreviewRenderer.hpp"
 #include "editor/EditorPanelUtils.hpp"
@@ -278,18 +278,18 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
     if (!m_open) return;
 
     editorPanelApplyDetach(m_detached, ImVec2(640, 480));
-    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-    if (!UIKit::BeginPanel("Camera Preview", &m_open)) {
-        ImGui::End();
-        return;
-    }
-    editorPanelDetachTabButton(m_detached);
 
-    if (ImGui::IsWindowCollapsed()) {
-        ImGui::End();
-        return;
-    }
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
+    Panel root("Camera Preview", "", "", &m_open);
+    root.setInitialSize(ImVec2(400.0f, 300.0f));
+    root.setHeaderVisible(false);
+    root.setOnBegin([this] { editorPanelDetachTabButton(m_detached); });
+    UIContext ui;
+
+    root.emplace<CustomElement>("camera_preview_host",
+                                [this, &world, &ctx, &viewport] {
     ImVec2 panelSize = ImGui::GetContentRegionAvail();
     if (panelSize.x < 32.0f || panelSize.y < 32.0f) {
         ImGui::End();
@@ -390,7 +390,9 @@ void CameraPreviewPanel::onImGuiRender(ECS::World& world, EditorContext& ctx, Sc
         }
     }
 
-    ImGui::End();
+    });
+
+    ui.draw(root);
 }
 
 void CameraPreviewPanel::renderNoCamera(ImVec2 panelSize) {
