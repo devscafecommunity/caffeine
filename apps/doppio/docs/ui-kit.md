@@ -98,6 +98,7 @@ leaf needs a different arrangement, it is usually a container in disguise.
 | `Badge` / `StatusDot` / `ProgressBar` | feedback |
 | `Separator` / `Spacer` / `Image` | layout and media |
 | `AssetCard` | thumbnail/icon tile with selection, drag, drop and context menu |
+| `DataTable` / `DataRow` | sortable columns, selection, indented/expandable rows |
 | `EmptyState` / `KeyValue` | empty views and label/value rows |
 | `PropertyGrid` / `PropertyRow` | two-column property editor |
 | `FloatProperty`, `IntProperty`, `BoolProperty`, `ChoiceProperty`, `ColorFieldProperty`, `Color3FieldProperty`, `TextFieldProperty`, `PathProperty`, `Vec2Property`, `Vec3Property` | typed property sugar |

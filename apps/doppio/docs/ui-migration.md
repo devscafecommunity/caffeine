@@ -52,7 +52,7 @@ These already have (or need only small) elements. Best place to keep momentum.
 | **Plugin Manager** | `PluginSystem.cpp` | 1046 | ✅ done | `Panel`, plugin `Card`s, status labels, Enable/Disable/Reload actions |
 | **Command Palette** | `CommandPalette.cpp` | 266 | ✅ done | `Dialog`, `SearchField`, `ListBox`/`ListItem`, keyboard navigation |
 | **Console** | `ConsoleWindow.hpp` | 110 | ✅ done | `Panel`, `Row` toolbar, `Combo` level filter, `ScrollArea` log, `TextInput` submit |
-| **Profiler** | `ProfilerWindow.hpp` | 264 | 🟡 partial | `Panel`, `Canvas` graph, `ListBox` |
+| **Profiler** | `ProfilerWindow.hpp` | 315 | ✅ done | `Panel`, toolbar `Row`s, frame-time `Canvas`, hardware `KeyValue`s, expandable `DataTable` scope tree |
 | **Stats overlay** | `StatsOverlay.hpp` | 69 | ✅ done | `Panel` overlay with `Label`/`KeyValue` rows and color-coded FPS |
 
 ## Tier 3 — custom canvases and graphs
@@ -102,7 +102,6 @@ Ordered by how many panels they unlock.
 
 | Element | Unlocks | Notes |
 |---------|---------|-------|
-| `DataTable` / `TreeTable` | Profiler scope tree, large asset details | sortable columns, row selection, tree rows |
 | `DragSource` / `DropTarget` mixins | Asset Browser, Tilemap, generic Cards | `TreeItem`/`ListItem` already support payloads and drops; a generic mixin for `Card`/custom elements is still missing |
 | `ContextMenu` / `Popup` element | Asset Browser, custom cards | `TreeItem` has a context-menu callback; a standalone popup element is still missing |
 | `CurveEditor` / `GraphCanvas` | Animation Timeline, Animator Controller, Shader Graph | axes, zoom/pan, points/keys; use `Canvas` underneath |
@@ -136,6 +135,7 @@ Ordered by how many panels they unlock.
 | **Material Editor** | menu `Panel`, two-column `ScrollArea`, `Section`/`PropertyGrid`, `PathProperty`, `Canvas` preview |
 | **Console** | `Panel`, `Row` toolbar, `Combo` filter, `ScrollArea` log, submit-capable input |
 | **Stats overlay** | auto-resizing `Panel`, `Label`/`KeyValue` rows |
+| **Profiler** | toolbar `Row`s, frame-time `Canvas`, hardware `KeyValue`s, sortable/expandable `DataTable` |
 | **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |
@@ -146,6 +146,7 @@ New kit pieces added for these migrations:
 - `Dialog` (modal body tree + close lifecycle)
 - `ImageButton` for tile/asset palettes
 - `AssetCard` thumbnail/icon tiles with selection, drag, drop and context menu
+- `DataTable` / `DataRow` (columns, header sort callback, selection, indent and expand arrows)
 - `PathField` / `PathProperty` (Browse, Clear, ASSET_PATH drop)
 - `Vec2Property` / `Vec3Property` (`DragVec2` / `DragVec3`)
 - `Color3FieldProperty` plus `ColorPicker` change callbacks
