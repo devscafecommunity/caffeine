@@ -78,6 +78,7 @@ private:
     bool m_detached = false;
     bool m_undoStarted = false;
     HashMap<u32, ComponentDrawer> m_drawers;
+    char m_nameBuf[64] = {};
     char m_addComponentSearch[128] = {};
 };
 

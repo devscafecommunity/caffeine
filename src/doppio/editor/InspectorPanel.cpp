@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/PluginSystem.hpp"
 
@@ -71,72 +71,87 @@ void InspectorPanel::unregisterDrawer(u32 componentTypeId) {
 void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
     if (!m_open) return;
     editorPanelApplyDetach(m_detached, ImVec2(420, 640));
-    if (UIKit::BeginPanel("Inspector", &m_open)) {
-        editorPanelDetachTabButton(m_detached);
-        if (!ctx.selectedEntity.isValid()) {
-            UIKit::EmptyState("No entity selected",
-                              "Click an entity in the Hierarchy to inspect it.", "hierarchy");
-            ImGui::End();
-            return;
-        }
 
-        if (ctx.hasMultiSelection()) {
-            UIKit::Badge((std::to_string(ctx.selectedEntities.size()) + " selected").c_str(),
-                         UIKit::tokens().accent);
-            UIKit::EmptyState("Multiple entities selected",
-                              "Select a single entity to inspect its components.", "hierarchy");
-            ImGui::End();
-            return;
-        }
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
 
-        ECS::Entity e(ctx.selectedEntity.id(), &world);
+    Panel root("Inspector", "", "", &m_open);
+    root.setHeaderVisible(false);
+    root.setOnBegin([this] { editorPanelDetachTabButton(m_detached); });
+    UIContext ui;
 
-        // Entity header
-        const char* name = getEntityName(world, e);
-        char nameBuf[64];
-        strncpy(nameBuf, name, sizeof(nameBuf));
-        nameBuf[sizeof(nameBuf) - 1] = '\0';
-        if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            ctx.beginUndo(EditorCommand::SetField, e.id(), world);
-            setEntityName(world, e, nameBuf);
-            ctx.endUndo(world);
-        }
-         ImGui::SameLine();
-         ImGui::TextDisabled("Entity %u", e.id());
+    if (!ctx.selectedEntity.isValid()) {
+        root.emplace<Elements::EmptyState>(
+            "No entity selected", "Click an entity in the Hierarchy to inspect it.",
+            "hierarchy");
+        ui.draw(root);
+        return;
+    }
 
-         if (UIKit::ToolbarButton("Copy snapshot", "Copy entity state to the clipboard")) {
-             const std::string snapshot = exportEntitySnapshot(world, e);
-             ImGui::SetClipboardText(snapshot.c_str());
-         }
-         ImGui::SameLine();
-         if (UIKit::ToolbarButton("Export .txt", "Export entity state to exports/")) {
-             const std::string snapshot = exportEntitySnapshot(world, e);
-             const std::filesystem::path out =
-                 std::filesystem::path("exports") / ("entity_" + std::to_string(e.id()) + ".txt");
-             std::error_code ec;
-             std::filesystem::create_directories(out.parent_path(), ec);
-             std::ofstream file(out);
-             if (file) {
-                 file << snapshot;
-                 ctx.pushTransientStatus("Exported " + out.string(), false);
-             }
-         }
+    if (ctx.hasMultiSelection()) {
+        root.emplace<Elements::Badge>(
+            std::to_string(ctx.selectedEntities.size()) + " selected", tokens().accent);
+        root.emplace<Elements::EmptyState>(
+            "Multiple entities selected",
+            "Select a single entity to inspect its components.", "hierarchy");
+        ui.draw(root);
+        return;
+    }
 
-         ImGui::Separator();
-         if (UIKit::ToolbarButton("Save as Prefab", "Save the selected entity as a prefab", false,
-                                  ImVec2(-1.0f, 0.0f))) {
-             ctx.browse.requestFilesystem(EditorContext::BrowseSession::Kind::SaveFile,
-                                          "Save Entity as Prefab", "prefabs/", e.id());
-         }
-         if (ctx.browse.resultReady && ctx.browse.tag == e.id()) {
-             savePrefab(world, e, ctx.browse.result);
-             ctx.browse.clear();
-         }
+    ECS::Entity e(ctx.selectedEntity.id(), &world);
+    const char* name = getEntityName(world, e);
+    std::strncpy(m_nameBuf, name, sizeof(m_nameBuf) - 1);
+    m_nameBuf[sizeof(m_nameBuf) - 1] = '\0';
 
-         ImGui::Separator();
-        ImGui::BeginChild("components");
+    auto& header = root.emplace<Card>("inspector_header");
+    auto& nameRow = header.emplace<Row>("inspector_name_row");
+    auto& nameInput = nameRow.emplace<TextInput>(m_nameBuf, sizeof(m_nameBuf));
+    nameInput.setHint("Entity name");
+    nameInput.setGrow(true);
+    nameInput.setOnSubmit([this, &world, &ctx, e] {
+        ctx.beginUndo(EditorCommand::SetField, e.id(), world);
+        setEntityName(world, e, m_nameBuf);
+        ctx.endUndo(world);
+    });
+    auto& entityLabel =
+        nameRow.emplace<Label>("Entity " + std::to_string(e.id()), TextTone::Muted);
+    entityLabel.setWidth(92.0f);
 
+    auto& actions = header.emplace<Row>("inspector_actions");
+    auto& copySnapshot = actions.emplace<Button>("Copy snapshot");
+    copySnapshot.setTooltip("Copy entity state to the clipboard");
+    copySnapshot.setOnClick([&world, e] {
+        ImGui::SetClipboardText(exportEntitySnapshot(world, e).c_str());
+    });
+    auto& exportTxt = actions.emplace<Button>("Export .txt");
+    exportTxt.setTooltip("Export entity state to exports/");
+    exportTxt.setOnClick([&world, &ctx, e] {
+            const std::string snapshot = exportEntitySnapshot(world, e);
+            const std::filesystem::path out =
+                std::filesystem::path("exports") /
+                ("entity_" + std::to_string(e.id()) + ".txt");
+            std::error_code ec;
+            std::filesystem::create_directories(out.parent_path(), ec);
+            std::ofstream file(out);
+            if (file) {
+                file << snapshot;
+                ctx.pushTransientStatus("Exported " + out.string(), false);
+            }
+        });
+
+    auto& prefabRow = header.emplace<Row>("inspector_prefab_row");
+    auto& savePrefabButton = prefabRow.emplace<Button>("Save as Prefab");
+    savePrefabButton.setGrow(true);
+    savePrefabButton.setTooltip("Save the selected entity as a prefab");
+    savePrefabButton.setOnClick([&ctx, e] {
+        ctx.browse.requestFilesystem(EditorContext::BrowseSession::Kind::SaveFile,
+                                     "Save Entity as Prefab", "prefabs/", e.id());
+    });
+
+    auto& components = root.emplace<ScrollArea>("components");
+    components.setGrow(true);
+    components.setReserveBottom(46.0f);
+    components.emplace<CustomElement>("inspector_drawers", [this, &world, &ctx, e] {
         drawPrefabInstance(world, e, ctx);
         drawTransform(world, e, ctx);
         drawSprite(world, e, ctx);
@@ -168,10 +183,10 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
         drawSkinnedPose(world, e, ctx);
         drawEffect(world, e, ctx);
         drawNavAgent(world, e, ctx);
+    });
 
-        ImGui::Separator();
-
-        // Add Component button
+    root.emplace<Elements::Separator>();
+    root.emplace<CustomElement>("inspector_add_component", [this, &world, &ctx, e] {
         if (UIKit::PrimaryButton("+ Add Component", ImVec2(-1, 0))) {
             ImGui::OpenPopup("add_component_v2");
             m_addComponentSearch[0] = '\0';
@@ -185,9 +200,11 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
                 if (entry.has(world, e)) continue;
                 if (!PluginManager::instance().isContributionEnabled(entry.plugin)) continue;
                 if (m_addComponentSearch[0] != '\0') {
-                    std::string haystack = entry.name + " " + entry.category + " " + entry.keywords;
+                    std::string haystack =
+                        entry.name + " " + entry.category + " " + entry.keywords;
                     std::string query = m_addComponentSearch;
-                    std::transform(haystack.begin(), haystack.end(), haystack.begin(), ::tolower);
+                    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
+                                   ::tolower);
                     std::transform(query.begin(), query.end(), query.begin(), ::tolower);
                     if (haystack.find(query) == std::string::npos) continue;
                 }
@@ -204,10 +221,14 @@ void InspectorPanel::render(ECS::World& world, EditorContext& ctx) {
             }
             ImGui::EndPopup();
         }
+    });
 
-        ImGui::EndChild();
+    ui.draw(root);
+
+    if (ctx.browse.resultReady && ctx.browse.tag == e.id()) {
+        savePrefab(world, e, ctx.browse.result);
+        ctx.browse.clear();
     }
-    ImGui::End();
 }
 
 // ── Transform drawer ─────────────────────────────────────────────

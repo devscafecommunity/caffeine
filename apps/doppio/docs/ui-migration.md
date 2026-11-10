@@ -77,7 +77,7 @@ the drawing; graph semantics stay in the host.
 | **UI Gallery** | `UiGalleryPanel.cpp` | ✅ done | Living catalogue and visual test |
 | **Scene Editor shell** | `SceneEditor.cpp` | 🟡 partial | menu bar/dockspace/status bar stay host-specific; panels use elements |
 | **Toolbox** | `ToolboxPanel.hpp` | 183 | ✅ done | `Panel`, `Section`, segmented tool `Row`s, viewport `PropertyGrid`, terrain brush controls |
-| **Inspector widgets** | `InspectorWidgets.hpp` | 🟡 partial | `PropertyGrid`, `PathProperty` and `AssetCard` available; component drawers still use the legacy helpers |
+| **Inspector** | `InspectorPanel.cpp` | 2544 | ✅ done | `Panel`/`Card`/`Row`/`ScrollArea` chrome; all component drawers via `CustomElement` |
 | **Editor panel utils** | `EditorPanelUtils.hpp` | n/a | helpers, not UI |
 | **Shader node** | `ShaderNode.cpp` | 🧱 blocked | node element/`Canvas` |
 | **Editor spinner** | `EditorSpinner.cpp` | n/a | custom draw; can become `Spinner` element |
@@ -139,6 +139,7 @@ Ordered by how many panels they unlock.
 | **Gameplay Preview** | `Panel` with hidden header, viewport `CustomElement` |
 | **Camera Preview** | `Panel` with hidden header, viewport `CustomElement` |
 | **Curve widget** | `CurveEditor`, mode `Combo`, preset `Row` |
+| **Inspector** | header `Card`, action `Row`s, scrolling drawer host |
 | **Dryad Node Script** | toolbar `Row`s, status labels, `CustomElement` graph host |
 | **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
