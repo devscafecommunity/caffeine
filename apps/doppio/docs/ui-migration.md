@@ -65,7 +65,7 @@ the drawing; graph semantics stay in the host.
 | **Scene Viewport** | `SceneViewport.cpp` | 4515 | 🧱 blocked | viewport texture/`Canvas` element, toolbar, overlay host |
 | **Animation Timeline** | `AnimationTimeline.cpp` | 2217 | 🧱 blocked | `TreeView` tracks available; still needs `Canvas` timeline + `CurveEditor` |
 | **Animator Controller** | `AnimatorController.cpp` | 1832 | 🧱 blocked | `Canvas` graph + node/transition elements |
-| **Dryad Node Script** | `DryadNodeScriptPanel.cpp` | 1332 | 🟡 partial | already uses `NodeCanvas`; migrate chrome to `Panel`/`Toolbar`/`PropertyGrid` |
+| **Dryad Node Script** | `DryadNodeScriptPanel.cpp` | 1351 | ✅ done | `Panel`, toolbar `Row`s, status/hint labels; ImNodes graph via `CustomElement` |
 | **Shader Graph** | `ShaderGraph.cpp` | 333 | 🧱 blocked | `Canvas` graph, node elements |
 | **Curve widget** | `CurveWidget.hpp` | 155 | 🧱 blocked | reusable `CurveEditor` element |
 | **Transform gizmo** | `TransformGizmo.cpp` | 639 | n/a | drawing/input, not panel chrome |
@@ -136,6 +136,7 @@ Ordered by how many panels they unlock.
 | **Console** | `Panel`, `Row` toolbar, `Combo` filter, `ScrollArea` log, submit-capable input |
 | **Stats overlay** | auto-resizing `Panel`, `Label`/`KeyValue` rows |
 | **Profiler** | toolbar `Row`s, frame-time `Canvas`, hardware `KeyValue`s, sortable/expandable `DataTable` |
+| **Dryad Node Script** | toolbar `Row`s, status labels, `CustomElement` graph host |
 | **Toolbox** | `Section`s, segmented tool rows, viewport/terrain `PropertyGrid` |
 | **UI Gallery** | living catalogue, debug tree and hit-rect overlay |
 | **Natural Fluids plugin** | full panel migrated; previews via `Canvas` |

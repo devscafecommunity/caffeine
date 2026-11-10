@@ -1,4 +1,4 @@
-#include "caffeine/ui/Widgets.hpp"
+#include "caffeine/ui/UI.hpp"
 #include "editor/DryadNodeScriptPanel.hpp"
 
 #if defined(CF_HAS_IMGUI) && defined(CF_HAS_DRYAD)
@@ -952,61 +952,79 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     if (!m_open) return;
     m_canvas.ensureReady();
 
-    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
-    if (!UIKit::BeginPanel("Dryad Node Script", &m_open)) {
-        ImGui::End();
-        return;
-    }
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    Panel root("Dryad Node Script", "Visual node scripting", "align-left", &m_open);
+    root.setInitialSize(ImVec2(720.0f, 480.0f));
+    UIContext ui;
 
     if (m_scriptPath.empty()) {
-        ImGui::TextDisabled("Open a .dyd script from the Asset Browser.");
-        ImGui::End();
+        root.emplace<Label>("Open a .dyd script from the Asset Browser.", TextTone::Muted);
+        ui.draw(root);
         return;
     }
 
-    ImGui::Text("Script: %s", m_scriptPath.filename().string().c_str());
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("+ Add node", "Add a node to the graph")) {
+    auto& tools = root.emplace<Card>("dryad_tools");
+    auto& scriptRow = tools.emplace<Row>("dryad_script_row");
+    auto& scriptLabel = scriptRow.emplace<Label>(
+        "Script: " + m_scriptPath.filename().string(), TextTone::Accent);
+    scriptLabel.setGrow(true);
+
+    auto addTool = [](Row& row, const char* label, const char* tooltip,
+                      std::function<void()> onClick,
+                      ButtonVariant variant = ButtonVariant::Toolbar,
+                      float width = 0.0f) {
+        auto& button = row.emplace<Button>(label, variant);
+        if (width > 0.0f) button.setWidth(width);
+        if (tooltip) button.setTooltip(tooltip);
+        button.setOnClick(std::move(onClick));
+    };
+
+    auto& toolbar = tools.emplace<Row>("dryad_toolbar");
+    addTool(toolbar, "+ Add node", "Add a node to the graph", [this] {
         m_addNodeAtMouse = false;
         ImGui::OpenPopup("##dryad_add_node");
-    }
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Save", "Write the .dyd and its .node.json")) commitToDisk();
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Sync from .dyd", "Rebuild the canvas from the script text")) {
-        syncFromDydSource();
-    }
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Home", "Center the graph in the canvas")) m_resetView = true;
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Arrange", "Lay the graph out in flow order")) arrangeGraph();
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("Delete", "Delete the selected nodes and links")) {
-        m_deleteRequested = true;
-    }
+    }, ButtonVariant::Primary, 88.0f);
+    addTool(toolbar, "Save", "Write the .dyd and its .node.json",
+            [this] { commitToDisk(); }, ButtonVariant::Toolbar, 54.0f);
+    addTool(toolbar, "Sync from .dyd", "Rebuild the canvas from the script text",
+            [this] { syncFromDydSource(); }, ButtonVariant::Toolbar, 112.0f);
+    addTool(toolbar, "Delete", "Delete the selected nodes and links",
+            [this] { m_deleteRequested = true; }, ButtonVariant::Danger, 62.0f);
 
-    auto applyZoom = [&](f32 zoom) {
+    auto& viewRow = tools.emplace<Row>("dryad_view_toolbar");
+    addTool(viewRow, "Home", "Center the graph in the canvas",
+            [this] { m_resetView = true; }, ButtonVariant::Toolbar, 56.0f);
+    addTool(viewRow, "Arrange", "Lay the graph out in flow order",
+            [this] { arrangeGraph(); }, ButtonVariant::Toolbar, 72.0f);
+    auto applyZoom = [this](f32 zoom) {
         m_canvas.setZoom(zoom);
         m_pendingGraphSync = true;
         m_resetView = true;
     };
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("-", "Zoom out")) applyZoom(m_canvas.zoom() - 0.1f);
-    ImGui::SameLine();
+    addTool(viewRow, "-", "Zoom out", [this, applyZoom] {
+        applyZoom(m_canvas.zoom() - 0.1f);
+    }, ButtonVariant::Toolbar, 32.0f);
     char zoomLabel[16];
     std::snprintf(zoomLabel, sizeof(zoomLabel), "%.0f%%", m_canvas.zoom() * 100.0f);
-    if (UIKit::ToolbarButton(zoomLabel, "Reset zoom to 100%")) applyZoom(1.0f);
-    ImGui::SameLine();
-    if (UIKit::ToolbarButton("+", "Zoom in")) applyZoom(m_canvas.zoom() + 0.1f);
+    addTool(viewRow, zoomLabel, "Reset zoom to 100%", [applyZoom] {
+        applyZoom(1.0f);
+    }, ButtonVariant::Toolbar, 64.0f);
+    addTool(viewRow, "+", "Zoom in", [this, applyZoom] {
+        applyZoom(m_canvas.zoom() + 0.1f);
+    }, ButtonVariant::Toolbar, 32.0f);
 
     if (!m_status.empty()) {
-        UIKit::TextMuted(m_status.c_str());
+        tools.emplace<Label>(m_status, TextTone::Muted).setWrap(true);
     }
+    tools.emplace<CustomElement>("dryad_runtime", [this, &ctx] {
+        drawRuntimeControls(ctx);
+    });
+    tools.emplace<Elements::Paragraph>(
+        "Middle-drag: pan  -  Right-click: add node  -  Del: delete  -  drag a pin: link");
 
-    drawRuntimeControls(ctx);
-    ImGui::TextDisabled(
-        "Middle-drag: pan  ·  Right-click: add node  ·  Del: delete  ·  drag a pin: link");
-
+    root.emplace<CustomElement>("dryad_graph", [this] {
     ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
     m_canvas.begin();
 
@@ -1312,8 +1330,9 @@ void DryadNodeScriptPanel::onImGuiRender(EditorContext& ctx) {
     if (topologyChanged || graphDirty) {
         syncGraphFromEditor(topologyChanged || graphDirty);
     }
+    });
 
-    ImGui::End();
+    ui.draw(root);
 }
 
 } // namespace Caffeine::Editor
