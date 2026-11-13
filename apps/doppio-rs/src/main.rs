@@ -27,6 +27,7 @@ enum PaneKind {
 struct Entity {
     id: u32,
     name: String,
+    position: [f32; 3],
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ enum Message {
     TogglePlay,
     AddEntity,
     DeleteSelected,
+    NudgeX,
     Log,
 }
 
@@ -99,9 +101,11 @@ impl App {
                 let count = engine.entity_count();
                 for index in 0..count {
                     if let Ok(info) = engine.entity_at(index) {
+                        let position = engine.position(info.id).unwrap_or([0.0; 3]);
                         entities.push(Entity {
                             id: info.id,
                             name: info.name,
+                            position,
                         });
                         next_entity_id = next_entity_id.max(info.id.saturating_add(1));
                     }
@@ -112,6 +116,7 @@ impl App {
                         entities.push(Entity {
                             id,
                             name: name.to_owned(),
+                            position: [0.0; 3],
                         });
                         next_entity_id = next_entity_id.max(id.saturating_add(1));
                     }
@@ -123,6 +128,7 @@ impl App {
                 entities.push(Entity {
                     id: next_entity_id,
                     name: name.to_owned(),
+                    position: [0.0; 3],
                 });
                 next_entity_id += 1;
             }
@@ -209,6 +215,7 @@ impl App {
                     self.entities.push(Entity {
                         id,
                         name: name.clone(),
+                        position: [0.0; 3],
                     });
                     self.selected = index;
                     self.name_input = name.clone();
@@ -232,6 +239,21 @@ impl App {
                     .map(|entity| entity.name.clone())
                     .unwrap_or_default();
                 self.log.push(format!("Deleted {}", entity.name));
+            }
+            Message::NudgeX => {
+                if let Some(entity) = self.entities.get_mut(self.selected) {
+                    let mut position = entity.position;
+                    position[0] += 1.0;
+                    if let Some(engine) = self.engine.as_mut() {
+                        let _ = engine.set_position(entity.id, position);
+                        if let Ok(readback) = engine.position(entity.id) {
+                            position = readback;
+                        }
+                    }
+                    entity.position = position;
+                    self.log
+                        .push(format!("Moved {} to x={:.2}", entity.name, position[0]));
+                }
             }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
@@ -297,6 +319,12 @@ impl App {
                             .id("entity-name"),
                     );
                     content = content.push(text(format!("Entity ID: {}", entity.id)));
+                    content = content.push(text(format!(
+                        "Position: {:.2}, {:.2}, {:.2}",
+                        entity.position[0], entity.position[1], entity.position[2]
+                    )));
+                    content = content
+                        .push(container(button("+X").on_press(Message::NudgeX)).id("nudge-x"));
                     content = content.push(
                         container(button("Delete").on_press(Message::DeleteSelected))
                             .id("delete-entity"),
@@ -336,6 +364,7 @@ mod tests {
 
     #[test]
     fn add_entity_updates_hierarchy_and_inspector() {
+        let _guard = engine::test_lock();
         let mut app = App::new();
         let before = app.entities.len();
 
@@ -354,6 +383,7 @@ mod tests {
 
     #[test]
     fn toggle_play_updates_label() {
+        let _guard = engine::test_lock();
         let mut app = App::new();
 
         let mut ui = simulator(app.view());
@@ -368,7 +398,23 @@ mod tests {
     }
 
     #[test]
+    fn nudge_x_updates_position() {
+        let _guard = engine::test_lock();
+        let mut app = App::new();
+        let before = app.entities[0].position[0];
+
+        let mut ui = simulator(app.view());
+        let _ = ui.click(iced::widget::Id::new("nudge-x"));
+        for message in ui.into_messages() {
+            app.update(message);
+        }
+
+        assert!(app.entities[0].position[0] > before);
+    }
+
+    #[test]
     fn rename_updates_selected_entity() {
+        let _guard = engine::test_lock();
         let mut app = App::new();
 
         let mut ui = simulator(app.view());

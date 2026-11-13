@@ -25,6 +25,14 @@ TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
     REQUIRE(caffeine_session_select_entity(session, b) == CAFFEINE_OK);
     REQUIRE(caffeine_session_selected_entity(session) == b);
 
+    CaffeineVec3 position{};
+    REQUIRE(caffeine_session_entity_position(session, a, &position) == CAFFEINE_NOT_FOUND);
+    REQUIRE(caffeine_session_set_entity_position(session, a, {1.0f, 2.0f, 3.0f}) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_entity_position(session, a, &position) == CAFFEINE_OK);
+    REQUIRE(position.x == Approx(1.0f));
+    REQUIRE(position.y == Approx(2.0f));
+    REQUIRE(position.z == Approx(3.0f));
+
     CaffeineEntityInfo info{};
     REQUIRE(caffeine_session_entity_at(session, 0, &info) == CAFFEINE_OK);
     REQUIRE(info.id != CAFFEINE_ENTITY_NONE);

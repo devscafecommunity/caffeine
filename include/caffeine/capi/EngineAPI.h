@@ -43,6 +43,12 @@ typedef struct CaffeineFrameStats {
     uint32_t entity_count;
 } CaffeineFrameStats;
 
+typedef struct CaffeineVec3 {
+    float x;
+    float y;
+    float z;
+} CaffeineVec3;
+
 /** Create/destroy a scene session. The session owns its ECS world. */
 CaffeineSession* caffeine_session_create(void);
 void caffeine_session_destroy(CaffeineSession* session);
@@ -67,6 +73,12 @@ CaffeineResult caffeine_session_set_entity_name(CaffeineSession* session, Caffei
                                                 const char* name);
 CaffeineResult caffeine_session_select_entity(CaffeineSession* session, CaffeineEntity entity);
 CaffeineEntity caffeine_session_selected_entity(const CaffeineSession* session);
+
+/** Transform helpers. Setting a position creates a Transform when the entity has none. */
+CaffeineResult caffeine_session_entity_position(const CaffeineSession* session,
+                                                CaffeineEntity entity, CaffeineVec3* out);
+CaffeineResult caffeine_session_set_entity_position(CaffeineSession* session,
+                                                    CaffeineEntity entity, CaffeineVec3 position);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 void caffeine_session_tick(CaffeineSession* session, float delta_time);

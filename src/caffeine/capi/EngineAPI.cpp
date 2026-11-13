@@ -1,5 +1,7 @@
 #include "caffeine/capi/EngineAPI.h"
 
+#include "ecs/Components.hpp"
+#include "ecs/Components3D.hpp"
 #include "ecs/World.hpp"
 #include "scene/EditorContext.hpp"
 #include "scene/EditorSceneSerializer.hpp"
@@ -159,6 +161,54 @@ CaffeineResult caffeine_session_select_entity(CaffeineSession* session, Caffeine
 CaffeineEntity caffeine_session_selected_entity(const CaffeineSession* session) {
     if (!session || !session->context.selectedEntity.isValid()) return CAFFEINE_ENTITY_NONE;
     return session->context.selectedEntity.id();
+}
+
+CaffeineResult caffeine_session_entity_position(const CaffeineSession* session,
+                                                CaffeineEntity entityId, CaffeineVec3* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+
+    const Caffeine::ECS::Entity entity = entityOf(mutableSession, entityId);
+    if (const auto* transform = mutableSession.world.get<Caffeine::ECS::Transform>(entity)) {
+        out->x = transform->position.x;
+        out->y = transform->position.y;
+        out->z = transform->position.z;
+        return CAFFEINE_OK;
+    }
+    if (const auto* position =
+            mutableSession.world.get<Caffeine::ECS::Position3D>(entity)) {
+        out->x = position->position.x;
+        out->y = position->position.y;
+        out->z = position->position.z;
+        return CAFFEINE_OK;
+    }
+    return CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_set_entity_position(CaffeineSession* session,
+                                                    CaffeineEntity entityId,
+                                                    CaffeineVec3 position) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    bool touched = false;
+    if (auto* transform = session->world.get<Caffeine::ECS::Transform>(entity)) {
+        transform->position = Caffeine::Vec3(position.x, position.y, position.z);
+        touched = true;
+    }
+    if (auto* position3d = session->world.get<Caffeine::ECS::Position3D>(entity)) {
+        position3d->position = Caffeine::Vec3(position.x, position.y, position.z);
+        touched = true;
+    }
+    if (!touched) {
+        Caffeine::ECS::Transform transform;
+        transform.position = Caffeine::Vec3(position.x, position.y, position.z);
+        session->world.add<Caffeine::ECS::Transform>(entity, transform);
+    }
+    session->context.markDirty();
+    return CAFFEINE_OK;
 }
 
 void caffeine_session_tick(CaffeineSession* session, float delta_time) {

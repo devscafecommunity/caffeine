@@ -40,6 +40,14 @@ struct RawEntityInfo {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct RawVec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[repr(C)]
 struct RawFrameStats {
     delta_time: f32,
     frame_index: u64,
@@ -57,6 +65,8 @@ type DestroyEntityFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type SetNameFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char) -> i32;
 type SelectFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type SelectedFn = unsafe extern "C" fn(*mut c_void) -> u32;
+type PositionFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
+type SetPositionFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type TickFn = unsafe extern "C" fn(*mut c_void, f32);
 type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
 
@@ -71,6 +81,8 @@ struct Functions {
     set_name: SetNameFn,
     select: SelectFn,
     selected: SelectedFn,
+    position: PositionFn,
+    set_position: SetPositionFn,
     tick: TickFn,
     frame_stats: FrameStatsFn,
 }
@@ -123,6 +135,10 @@ impl Engine {
             set_name: unsafe { load_symbol(&library, b"caffeine_session_set_entity_name\0") }?,
             select: unsafe { load_symbol(&library, b"caffeine_session_select_entity\0") }?,
             selected: unsafe { load_symbol(&library, b"caffeine_session_selected_entity\0") }?,
+            position: unsafe { load_symbol(&library, b"caffeine_session_entity_position\0") }?,
+            set_position: unsafe {
+                load_symbol(&library, b"caffeine_session_set_entity_position\0")
+            }?,
             tick: unsafe { load_symbol(&library, b"caffeine_session_tick\0") }?,
             frame_stats: unsafe { load_symbol(&library, b"caffeine_session_frame_stats\0") }?,
         };
@@ -195,6 +211,26 @@ impl Engine {
         unsafe { (self.functions.selected)(self.session) }
     }
 
+    pub fn position(&self, entity: u32) -> EngineResult<[f32; 3]> {
+        let mut position = RawVec3::default();
+        result(unsafe { (self.functions.position)(self.session, entity, &mut position) })?;
+        Ok([position.x, position.y, position.z])
+    }
+
+    pub fn set_position(&mut self, entity: u32, position: [f32; 3]) -> EngineResult<()> {
+        result(unsafe {
+            (self.functions.set_position)(
+                self.session,
+                entity,
+                RawVec3 {
+                    x: position[0],
+                    y: position[1],
+                    z: position[2],
+                },
+            )
+        })
+    }
+
     pub fn tick(&mut self, delta_time: f32) {
         unsafe { (self.functions.tick)(self.session, delta_time) }
     }
@@ -230,11 +266,18 @@ fn result(value: i32) -> EngineResult<()> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn bridge_roundtrip_when_library_is_built() {
+        let _guard = test_lock();
         let Some(mut engine) = Engine::load_default() else {
             eprintln!(
                 "skipping C ABI bridge test: {} is not built",
@@ -252,6 +295,10 @@ mod tests {
         assert_eq!(engine.entity_name(player).unwrap(), "Hero");
         engine.select_entity(enemy).unwrap();
         assert_eq!(engine.selected_entity(), enemy);
+
+        assert_eq!(engine.position(player).unwrap_err(), EngineError::NotFound);
+        engine.set_position(player, [1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(engine.position(player).unwrap(), [1.0, 2.0, 3.0]);
 
         let first = engine.entity_at(0).unwrap();
         assert!(first.id == player || first.id == enemy);
