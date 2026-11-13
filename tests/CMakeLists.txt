@@ -38,6 +38,7 @@ set(CAFFEINE_TEST_SOURCES
     test_photon_farfield.cpp
     test_vegetation_kit.cpp
     test_cap_loader.cpp
+    test_capi.cpp
     test_phase2_3.cpp
     test_ui_elements.cpp
     test_natural_fluids.cpp

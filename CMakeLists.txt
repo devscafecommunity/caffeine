@@ -115,6 +115,7 @@ add_library(caffeine-core
     src/caffeine/render/ForwardRenderFeatures.cpp
     src/caffeine/engine/AssetLoader.cpp
     src/caffeine/core/DebugHookRegistry.cpp
+    src/caffeine/capi/EngineAPI.cpp
     src/caffeine/project/ProjectManager.cpp
     src/caffeine/scene/EditorContext.cpp
     src/caffeine/scene/EditorSceneSerializer.cpp

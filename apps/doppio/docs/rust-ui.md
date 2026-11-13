@@ -80,14 +80,23 @@ Current baseline:
 
 ### Phase 1 — C ABI / data-oriented boundary
 
-Expose an opaque, versioned C ABI:
+First slice implemented and tested:
 
-- handles: engine/session/world/entity;
-- lifecycle: create, load project/scene, tick, suspend/resume, shutdown;
-- snapshots in POD arrays: hierarchy, component schemas, field values, selection,
-  logs, frame stats (not one FFI call per field);
-- commands: create/destroy entity, set field, undo/redo, play/pause, asset ops;
-- events: dirty state, selection, log lines, asset changes.
+- header: `include/caffeine/capi/EngineAPI.h`
+- implementation: `src/caffeine/capi/EngineAPI.cpp`
+- test: `tests/test_capi.cpp` (`[capi]`, 23 assertions)
+- opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
+- session create/destroy and `.caf` scene load;
+- entity count/list/name, create, destroy, rename and selection;
+- tick/frame-stat bookkeeping (systems will be wired incrementally);
+- no ImGui and no editor headers in the ABI.
+
+Still to add before the Rust UI can be fully wired:
+
+- component schemas and field snapshots in POD arrays;
+- commands/undo/redo/play-pause and asset operations;
+- events (dirty state, selection, logs, asset changes);
+- Rust bindings crate and a shared-library build profile.
 
 The existing `PluginHostApi` is a good function-table precedent. The existing
 `DOPPIO_TEST_MODE` JSON loop (`TestRequestHandler`) is a good engine-side test
