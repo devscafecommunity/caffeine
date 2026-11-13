@@ -84,18 +84,19 @@ First slice implemented and tested:
 
 - header: `include/caffeine/capi/EngineAPI.h`
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
-- test: `tests/test_capi.cpp` (`[capi]`, 23 assertions)
+- test: `tests/test_capi.cpp` (`[capi]`, 43 assertions)
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
 - position get/set (setting creates a `Transform` when the entity has none);
+- dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
 - `libcaffeine-capi.so` shared library (CMake target `caffeine-capi`);
 - a `libloading` Rust bridge in `apps/doppio-rs/src/engine.rs`, with a
   round-trip integration test that skips when the library is absent;
-- the Rust Inspector shows the real C++ position and can nudge it with `+X`
-  (5 Rust tests, including the bridge test).
+- the Rust Inspector shows the real C++ position and can nudge it with `+X`;
+- 5 Rust tests, including the bridge round-trip (create/rename/position/save).
 
 The PoC now loads a real scene through the ABI:
 

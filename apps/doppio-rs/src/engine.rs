@@ -57,6 +57,9 @@ struct RawFrameStats {
 type CreateFn = unsafe extern "C" fn() -> *mut c_void;
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 type LoadSceneFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
+type SaveSceneFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
+type ScenePathFn = unsafe extern "C" fn(*const c_void) -> *const c_char;
+type IsDirtyFn = unsafe extern "C" fn(*const c_void) -> i32;
 type EntityCountFn = unsafe extern "C" fn(*mut c_void) -> u32;
 type EntityAtFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawEntityInfo) -> i32;
 type EntityNameFn = unsafe extern "C" fn(*mut c_void, u32, *mut c_char, usize) -> i32;
@@ -73,6 +76,9 @@ type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
 struct Functions {
     destroy: DestroyFn,
     load_scene: LoadSceneFn,
+    save_scene: SaveSceneFn,
+    scene_path: ScenePathFn,
+    is_dirty: IsDirtyFn,
     entity_count: EntityCountFn,
     entity_at: EntityAtFn,
     entity_name: EntityNameFn,
@@ -127,6 +133,9 @@ impl Engine {
         let functions = Functions {
             destroy: unsafe { load_symbol(&library, b"caffeine_session_destroy\0") }?,
             load_scene: unsafe { load_symbol(&library, b"caffeine_session_load_scene\0") }?,
+            save_scene: unsafe { load_symbol(&library, b"caffeine_session_save_scene\0") }?,
+            scene_path: unsafe { load_symbol(&library, b"caffeine_session_scene_path\0") }?,
+            is_dirty: unsafe { load_symbol(&library, b"caffeine_session_is_dirty\0") }?,
             entity_count: unsafe { load_symbol(&library, b"caffeine_session_entity_count\0") }?,
             entity_at: unsafe { load_symbol(&library, b"caffeine_session_entity_at\0") }?,
             entity_name: unsafe { load_symbol(&library, b"caffeine_session_entity_name\0") }?,
@@ -156,6 +165,30 @@ impl Engine {
     pub fn load_scene(&mut self, path: &str) -> EngineResult<()> {
         let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
         result(unsafe { (self.functions.load_scene)(self.session, path.as_ptr()) })
+    }
+
+    pub fn save_scene(&mut self, path: &str) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe { (self.functions.save_scene)(self.session, path.as_ptr()) })
+    }
+
+    pub fn scene_path(&self) -> Option<String> {
+        let path = unsafe { (self.functions.scene_path)(self.session) };
+        if path.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_string_lossy()
+            .into_owned();
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        unsafe { (self.functions.is_dirty)(self.session) != 0 }
     }
 
     pub fn entity_count(&self) -> u32 {
@@ -299,6 +332,12 @@ mod tests {
         assert_eq!(engine.position(player).unwrap_err(), EngineError::NotFound);
         engine.set_position(player, [1.0, 2.0, 3.0]).unwrap();
         assert_eq!(engine.position(player).unwrap(), [1.0, 2.0, 3.0]);
+        assert!(engine.is_dirty());
+
+        let path = std::env::temp_dir().join("caffeine_capi_rust_roundtrip.caf");
+        engine.save_scene(path.to_str().unwrap()).unwrap();
+        assert!(!engine.is_dirty());
+        assert_eq!(engine.scene_path().as_deref(), path.to_str());
 
         let first = engine.entity_at(0).unwrap();
         assert!(first.id == player || first.id == enemy);

@@ -40,6 +40,7 @@ enum Message {
     AddEntity,
     DeleteSelected,
     NudgeX,
+    SaveScene,
     Log,
 }
 
@@ -255,6 +256,19 @@ impl App {
                         .push(format!("Moved {} to x={:.2}", entity.name, position[0]));
                 }
             }
+            Message::SaveScene => {
+                if let Some(engine) = self.engine.as_mut() {
+                    match engine.scene_path() {
+                        Some(path) => match engine.save_scene(&path) {
+                            Ok(()) => self.log.push(format!("Saved {path}")),
+                            Err(_) => self.log.push(format!("Could not save {path}")),
+                        },
+                        None => self.log.push("No scene path to save".to_owned()),
+                    }
+                } else {
+                    self.log.push("No engine session to save".to_owned());
+                }
+            }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
             }
@@ -270,6 +284,7 @@ impl App {
             )
             .id("toggle-play"),
             container(button("Add Entity").on_press(Message::AddEntity)).id("add-entity"),
+            container(button("Save").on_press(Message::SaveScene)).id("save-scene"),
             container(button("Log").on_press(Message::Log)).id("log"),
             text(if self.engine.is_some() {
                 "C++ engine"
@@ -277,6 +292,19 @@ impl App {
                 "fake data"
             })
             .size(12),
+            text(
+                if self
+                    .engine
+                    .as_ref()
+                    .map(|engine| engine.is_dirty())
+                    .unwrap_or(false)
+                {
+                    "*"
+                } else {
+                    ""
+                }
+            )
+            .size(14),
         ]
         .spacing(8)
         .padding(8)

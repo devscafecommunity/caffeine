@@ -83,6 +83,20 @@ const char* caffeine_session_scene_path(const CaffeineSession* session) {
     return session ? session->scenePath.c_str() : "";
 }
 
+int caffeine_session_is_dirty(const CaffeineSession* session) {
+    return session && session->context.isDirty ? 1 : 0;
+}
+
+CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path) {
+    if (!session || !path || path[0] == '\0') return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Editor::SceneSerializer serializer(session->world);
+    if (!serializer.serialize(path)) return CAFFEINE_ERROR;
+    session->scenePath = path;
+    session->context.currentScenePath = path;
+    session->context.isDirty = false;
+    return CAFFEINE_OK;
+}
+
 uint32_t caffeine_session_entity_count(const CaffeineSession* session) {
     return session ? session->world.entityCount() : 0u;
 }
@@ -124,6 +138,7 @@ CaffeineEntity caffeine_session_create_entity(CaffeineSession* session, const ch
     if (name && name[0] != '\0') {
         Caffeine::Editor::setEntityName(session->world, entity, name);
     }
+    session->context.markDirty();
     return entity.id();
 }
 
@@ -136,6 +151,7 @@ CaffeineResult caffeine_session_destroy_entity(CaffeineSession* session, Caffein
     if (session->context.selectedEntity.id() == entityId) {
         session->context.selectEntity(Caffeine::ECS::Entity::INVALID);
     }
+    session->context.markDirty();
     return CAFFEINE_OK;
 }
 
@@ -144,6 +160,7 @@ CaffeineResult caffeine_session_set_entity_name(CaffeineSession* session, Caffei
     if (!session || !name) return CAFFEINE_INVALID_ARGUMENT;
     if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
     Caffeine::Editor::setEntityName(session->world, entityOf(*session, entityId), name);
+    session->context.markDirty();
     return CAFFEINE_OK;
 }
 

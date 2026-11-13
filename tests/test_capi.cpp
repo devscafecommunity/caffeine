@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "caffeine/capi/EngineAPI.h"
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -50,6 +51,39 @@ TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
     REQUIRE(stats.delta_time == Approx(0.016f));
 
     caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API saves and reloads a scene", "[capi]") {
+    const std::string path = "capi_roundtrip.caf";
+    {
+        CaffeineSession* session = caffeine_session_create();
+        REQUIRE(session != nullptr);
+        const CaffeineEntity entity = caffeine_session_create_entity(session, "Saved");
+        REQUIRE(caffeine_session_set_entity_position(session, entity, {4.0f, 5.0f, 6.0f}) ==
+                CAFFEINE_OK);
+        REQUIRE(caffeine_session_is_dirty(session) == 1);
+        REQUIRE(caffeine_session_save_scene(session, path.c_str()) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_is_dirty(session) == 0);
+        caffeine_session_destroy(session);
+    }
+    {
+        CaffeineSession* session = caffeine_session_create();
+        REQUIRE(session != nullptr);
+        REQUIRE(caffeine_session_load_scene(session, path.c_str()) == CAFFEINE_OK);
+        REQUIRE(caffeine_session_entity_count(session) == 1);
+
+        CaffeineEntityInfo info{};
+        REQUIRE(caffeine_session_entity_at(session, 0, &info) == CAFFEINE_OK);
+        REQUIRE(std::strcmp(info.name, "Saved") == 0);
+
+        CaffeineVec3 position{};
+        REQUIRE(caffeine_session_entity_position(session, info.id, &position) == CAFFEINE_OK);
+        REQUIRE(position.x == Approx(4.0f));
+        REQUIRE(position.y == Approx(5.0f));
+        REQUIRE(position.z == Approx(6.0f));
+        caffeine_session_destroy(session);
+    }
+    std::remove(path.c_str());
 }
 
 TEST_CASE("C API scene load reports missing files", "[capi]") {

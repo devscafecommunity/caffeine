@@ -57,6 +57,10 @@ void caffeine_session_destroy(CaffeineSession* session);
 CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char* path);
 /** Current scene path. Valid until the next load or session destruction. */
 const char* caffeine_session_scene_path(const CaffeineSession* session);
+/** 1 when the session has unsaved edits. */
+int caffeine_session_is_dirty(const CaffeineSession* session);
+/** Write the current world to a .caf scene and clear the dirty flag. */
+CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 
 /** Hierarchy queries. The index is stable within one call sequence; re-query after edits. */
 uint32_t caffeine_session_entity_count(const CaffeineSession* session);
