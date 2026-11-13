@@ -1,9 +1,10 @@
 # Rust UI frontend (Iced) — investigation and PoC
 
-Status: **phase 0/PoC**. The C++ editor still ships with ImGui. The Rust crate
-under `apps/doppio-rs/` is isolated from the CMake build and exists to validate
-the UI stack, the docking model and headless/agent testing before the engine
-boundary is refactored.
+Status: **phase 0 started + PoC**. `caffeine-core` is now built without
+ImGui/ImNodes; the ImGui draw-list adapters live in `caffeine-editor-support`.
+The C++ editor still ships with ImGui. The Rust crate under `apps/doppio-rs/`
+is isolated from the CMake build and exists to validate the UI stack, the
+docking model and headless/agent testing.
 
 ## Why Iced
 
@@ -23,6 +24,12 @@ boundary is refactored.
 - stable widget ids for the toolbar, inspector input and entity rows;
 - three `iced_test` cases: add entity, toggle play, rename selected entity;
 - an optional `agent` feature that routes `main` through `iced_mcp::run`.
+
+The C++ boundary now has:
+
+- `caffeine-core`: engine only, no ImGui/ImNodes.
+- `caffeine-editor-support`: ImGui adapters for engine render helpers.
+- `doppio-ui-kit`: the element kit and editor host helpers.
 
 Run it with:
 
@@ -61,9 +68,15 @@ python3 scripts/audit_core_ui_coupling.py
 python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 ```
 
-Current baseline: 18 UI-kit headers, 1 editor-UI header and 7 conditional core
-files reference ImGui/ImNodes; CMake still links ImGui to `caffeine-core` and
-`caffeine-runtime`.
+Current baseline:
+- `caffeine-core` builds without ImGui/ImNodes and `nm` reports 0 ImGui/ImNodes
+  symbols in `libcaffeine-core.a`.
+- `caffeine-editor-support` contains the engine ImGui adapters
+  (`Overlay2D::draw`, `SkyboxRenderer`).
+- 18 UI-kit headers and 1 editor-UI header still reference ImGui; that is the
+  editor/UI side.
+- `caffeine-runtime` is still an ImGui frontend and needs an RHI render path
+  before it can be made UI-free.
 
 ### Phase 1 — C ABI / data-oriented boundary
 

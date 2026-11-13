@@ -113,7 +113,6 @@ add_library(caffeine-core
     src/caffeine/script/PostProcessBindings.cpp
     src/caffeine/script/ForwardRenderBindings.cpp
     src/caffeine/render/ForwardRenderFeatures.cpp
-    src/caffeine/render/SkyboxRenderer.cpp
     src/caffeine/engine/AssetLoader.cpp
     src/caffeine/core/DebugHookRegistry.cpp
     src/caffeine/project/ProjectManager.cpp
@@ -523,9 +522,9 @@ with open(sys.argv[1], 'w') as f:
      endif()
      target_link_libraries(ImNodes PUBLIC ImGui)
 
-    # ── Link ImGui to caffeine-core for editor components ──────────────────────
-    target_link_libraries(caffeine-core PUBLIC ImGui ImNodes)
-    target_compile_definitions(caffeine-core PUBLIC CF_HAS_IMGUI=1)
+    # ImGui is an editor dependency, not an engine dependency. Editor targets
+    # (doppio, editor tests, plugins) opt in by linking ImGui/doppio-ui-kit or
+    # defining CF_HAS_IMGUI themselves. caffeine-core stays UI-free.
 
     # ── Caffeine UI kit — public, reusable by Doppio and plugins ───────────────
     # Header-only widgets + a small host library for theme, panel registry and
@@ -549,6 +548,33 @@ with open(sys.argv[1], 'w') as f:
         target_compile_options(doppio-ui-kit PRIVATE -Wno-macro-redefined -Wno-cpp)
     endif()
     add_library(Doppio::UIKit ALIAS doppio-ui-kit)
+
+    # ── Engine ImGui adapters (editor-only) ────────────────────────────────────
+    # Engine render helpers that expose ImGui draw-list entry points live here,
+    # not in caffeine-core. Any ImGui-based frontend can link this target.
+    add_library(caffeine-editor-support STATIC
+        src/caffeine/render/Overlay2DImGui.cpp
+        src/caffeine/render/SkyboxRenderer.cpp
+    )
+    target_include_directories(caffeine-editor-support PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/caffeine>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
+        $<BUILD_INTERFACE:${TINYGLTF_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include>
+    )
+    target_link_libraries(caffeine-editor-support PUBLIC caffeine-core ImGui ImNodes)
+    target_compile_features(caffeine-editor-support PUBLIC cxx_std_20)
+    target_compile_definitions(caffeine-editor-support PUBLIC CF_HAS_IMGUI=1)
+    target_compile_definitions(caffeine-editor-support PUBLIC
+        CAFFEINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    set_target_properties(caffeine-editor-support PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(Caffeine::EditorSupport ALIAS caffeine-editor-support)
+
+    if(TARGET caffeine-combined)
+        target_link_libraries(caffeine-combined PRIVATE caffeine-editor-support)
+    endif()
 
       # ── imgui_test_engine (for editor UI tests) ────────────────────
      FetchContent_Declare(
@@ -638,7 +664,7 @@ with open(sys.argv[1], 'w') as f:
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
          "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
      )
-     target_link_libraries(doppio PRIVATE caffeine-core doppio-ui-kit ImGui ImNodes ${CMAKE_DL_LIBS})
+     target_link_libraries(doppio PRIVATE caffeine-core caffeine-editor-support doppio-ui-kit ImGui ImNodes ${CMAKE_DL_LIBS})
      if(NOT MSVC)
          target_link_options(doppio PRIVATE "-rdynamic")
      endif()
@@ -667,7 +693,7 @@ with open(sys.argv[1], 'w') as f:
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_ui.cpp"
           "${imgui_test_engine_SOURCE_DIR}/imgui_test_engine/imgui_te_utils.cpp"
       )
-      target_link_libraries(caffeine-runtime PRIVATE caffeine-core ImGui)
+      target_link_libraries(caffeine-runtime PRIVATE caffeine-core caffeine-editor-support ImGui)
       target_include_directories(caffeine-runtime PRIVATE
           ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${CMAKE_CURRENT_SOURCE_DIR}/src/doppio

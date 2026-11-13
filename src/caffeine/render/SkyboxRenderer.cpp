@@ -263,6 +263,6 @@ bool SkyboxRenderer::draw(ImDrawList* drawList, ImVec2 origin, ImVec2 panelSize,
     return m_frame.valid;
 }
 
-#endif
-
 }  // namespace Caffeine::Render
+
+#endif

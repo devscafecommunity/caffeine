@@ -143,7 +143,7 @@ endif()
 
 # Link ImGui and test engine if SDL3 is available (needed for editor panels)
 if(SDL3_FOUND)
-    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine doppio-ui-kit)
+    target_link_libraries(CaffeineTest PRIVATE ImGui ImNodes ImGuiTestEngine doppio-ui-kit caffeine-editor-support)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_IMGUI=1 IMGUI_TEST_ENGINE_ENABLE_COROUTINE_STDTHREAD_IMPL=1)
     target_include_directories(CaffeineTest PRIVATE ${imgui_test_engine_SOURCE_DIR})
     if(DEFINED nanosvg_SOURCE_DIR)
@@ -253,7 +253,7 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
           ${IMGUI_TEST_ENGINE_SRCS}
       )
     
-    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes doppio-ui-kit)
+    target_link_libraries(DoppioTest PRIVATE caffeine-core caf-pack-lib ImGui ImNodes doppio-ui-kit caffeine-editor-support)
     target_include_directories(DoppioTest PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/doppio

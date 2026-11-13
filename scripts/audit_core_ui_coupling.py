@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,19 +50,36 @@ def scan() -> list[tuple[str, str]]:
     return sorted(findings)
 
 
-def cmake_findings() -> list[str]:
+def cmake_findings() -> tuple[list[str], list[str]]:
     cmake = (ROOT / "CMakeLists.txt").read_text(errors="replace")
-    findings: list[str] = []
+    core: list[str] = []
+    frontends: list[str] = []
     if re.search(r"target_link_libraries\(\s*caffeine-core\s+PUBLIC[^)]*ImGui", cmake,
                  re.DOTALL):
-        findings.append("CMake: caffeine-core links ImGui/ImNodes PUBLIC")
+        core.append("CMake: caffeine-core links ImGui/ImNodes PUBLIC")
     if re.search(r"target_compile_definitions\(\s*caffeine-core\s+PUBLIC[^)]*CF_HAS_IMGUI",
                  cmake, re.DOTALL):
-        findings.append("CMake: caffeine-core publishes CF_HAS_IMGUI=1")
+        core.append("CMake: caffeine-core publishes CF_HAS_IMGUI=1")
     if re.search(r"target_link_libraries\(\s*caffeine-runtime\s+PRIVATE[^)]*ImGui", cmake,
                  re.DOTALL):
-        findings.append("CMake: caffeine-runtime links ImGui")
-    return findings
+        frontends.append("frontend: caffeine-runtime still links ImGui")
+    return core, frontends
+
+
+def library_imgui_symbols() -> int | None:
+    library = ROOT / "build" / "libcaffeine-core.a"
+    if not library.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["nm", "-C", str(library)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    return len(re.findall(r"ImGui::|ImNodes::", result.stdout))
 
 
 def main() -> int:
@@ -84,18 +102,29 @@ def main() -> int:
         if category in {"Leak", "Editor UI"}:
             print(f"    [{category}] {rel}")
 
-    build = cmake_findings()
-    if build:
-        print("  build coupling:")
-        for line in build:
+    core_build, frontend_build = cmake_findings()
+    if core_build:
+        print("  core build coupling:")
+        for line in core_build:
+            print(f"    {line}")
+    if frontend_build:
+        print("  frontend dependencies (not core):")
+        for line in frontend_build:
             print(f"    {line}")
 
+    symbols = library_imgui_symbols()
+    if symbols is not None:
+        print(f"  caffeine-core ImGui/ImNodes symbols: {symbols}")
+
     leaks = counts.get("Leak", 0)
-    failed = leaks > 0 or bool(build)
+    failed = leaks > 0 or bool(core_build) or bool(symbols)
     if args.fail_on_leaks and failed:
-        print("FAIL: core/editor split is not complete")
+        print("FAIL: caffeine-core still depends on ImGui")
         return 1
-    print("OK (report only)" if not failed else "OK (report only; split still required)")
+    if failed:
+        print("FAIL: caffeine-core still depends on ImGui (report only)")
+        return 0
+    print("OK: caffeine-core is ImGui-free")
     return 0
 
 
