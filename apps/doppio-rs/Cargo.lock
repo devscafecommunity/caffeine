@@ -717,6 +717,7 @@ dependencies = [
  "iced",
  "iced-mcp",
  "iced_test",
+ "libloading",
 ]
 
 [[package]]

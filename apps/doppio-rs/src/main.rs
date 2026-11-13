@@ -3,6 +3,8 @@ use iced::widget::{
 };
 use iced::{Element, Length};
 
+mod engine;
+
 #[cfg(feature = "agent")]
 fn main() -> iced::Result {
     iced_mcp::run(iced::application(App::new, App::update, App::view))
@@ -23,8 +25,8 @@ enum PaneKind {
 
 #[derive(Debug, Clone)]
 struct Entity {
+    id: u32,
     name: String,
-    x: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -35,16 +37,19 @@ enum Message {
     NameChanged(String),
     TogglePlay,
     AddEntity,
+    DeleteSelected,
     Log,
 }
 
 struct App {
     panes: pane_grid::State<PaneKind>,
+    engine: Option<engine::Engine>,
     entities: Vec<Entity>,
     selected: usize,
     name_input: String,
     log: Vec<String>,
     playing: bool,
+    next_entity_id: u32,
 }
 
 impl App {
@@ -72,22 +77,71 @@ impl App {
         };
         let panes = pane_grid::State::with_configuration(configuration);
 
+        let mut engine = engine::Engine::load_default();
+        let mut log = vec!["Iced PoC ready".to_owned()];
+        let mut entities = Vec::new();
+        let mut next_entity_id = 0u32;
+        let mut scene_loaded = false;
+
+        if let Some(engine) = engine.as_mut() {
+            log.push("Connected to libcaffeine-capi".to_owned());
+            if let Some(path) = std::env::args().nth(1) {
+                match engine.load_scene(&path) {
+                    Ok(()) => {
+                        scene_loaded = true;
+                        log.push(format!("Loaded {path}"));
+                    }
+                    Err(_) => log.push(format!("Could not load {path}")),
+                }
+            }
+
+            if scene_loaded {
+                let count = engine.entity_count();
+                for index in 0..count {
+                    if let Ok(info) = engine.entity_at(index) {
+                        entities.push(Entity {
+                            id: info.id,
+                            name: info.name,
+                        });
+                        next_entity_id = next_entity_id.max(info.id.saturating_add(1));
+                    }
+                }
+            } else {
+                for name in ["Entity 1", "Entity 2"] {
+                    if let Ok(id) = engine.create_entity(name) {
+                        entities.push(Entity {
+                            id,
+                            name: name.to_owned(),
+                        });
+                        next_entity_id = next_entity_id.max(id.saturating_add(1));
+                    }
+                }
+            }
+        } else {
+            log.push("C ABI library not found; using fake data".to_owned());
+            for name in ["Entity 1", "Entity 2"] {
+                entities.push(Entity {
+                    id: next_entity_id,
+                    name: name.to_owned(),
+                });
+                next_entity_id += 1;
+            }
+        }
+
+        let name_input = entities
+            .first()
+            .map(|entity| entity.name.clone())
+            .unwrap_or_default();
+
         Self {
             panes,
-            entities: vec![
-                Entity {
-                    name: "Entity 1".to_owned(),
-                    x: 0.0,
-                },
-                Entity {
-                    name: "Entity 2".to_owned(),
-                    x: 5.0,
-                },
-            ],
+            engine,
+            entities,
             selected: 0,
-            name_input: "Entity 1".to_owned(),
-            log: vec!["Iced PoC ready".to_owned()],
+            name_input,
+            log,
             playing: false,
+            next_entity_id,
         }
     }
 
@@ -105,6 +159,12 @@ impl App {
                 if let Some(entity) = self.entities.get(index) {
                     self.selected = index;
                     self.name_input = entity.name.clone();
+                    if let Some(engine) = self.engine.as_mut() {
+                        let _ = engine.select_entity(entity.id);
+                        if engine.selected_entity() != entity.id {
+                            self.log.push("Engine selection mismatch".to_owned());
+                        }
+                    }
                     self.log.push(format!("Selected {}", entity.name));
                 }
             }
@@ -112,23 +172,66 @@ impl App {
                 self.name_input = value;
                 if let Some(entity) = self.entities.get_mut(self.selected) {
                     entity.name = self.name_input.clone();
+                    if let Some(engine) = self.engine.as_mut() {
+                        let _ = engine.set_entity_name(entity.id, &self.name_input);
+                        if let Ok(confirmed) = engine.entity_name(entity.id) {
+                            entity.name = confirmed;
+                        }
+                    }
                 }
             }
             Message::TogglePlay => {
                 self.playing = !self.playing;
                 self.log
                     .push(if self.playing { "Play" } else { "Stop" }.to_owned());
+                if let Some(engine) = self.engine.as_mut() {
+                    engine.tick(0.016);
+                    let stats = engine.frame_stats();
+                    self.log.push(format!(
+                        "Engine frame {} ({} entities, {:.2} ms)",
+                        stats.frame_index,
+                        stats.entity_count,
+                        stats.delta_time * 1000.0
+                    ));
+                }
             }
             Message::AddEntity => {
                 let index = self.entities.len();
-                self.entities.push(Entity {
-                    name: format!("Entity {}", index + 1),
-                    x: index as f32,
-                });
-                self.selected = index;
-                self.name_input = self.entities[index].name.clone();
-                self.log
-                    .push(format!("Added {}", self.entities[index].name));
+                let name = format!("Entity {}", index + 1);
+                let id = if let Some(engine) = self.engine.as_mut() {
+                    engine.create_entity(&name).unwrap_or(engine::ENTITY_NONE)
+                } else {
+                    let id = self.next_entity_id;
+                    self.next_entity_id += 1;
+                    id
+                };
+                if id != engine::ENTITY_NONE {
+                    self.entities.push(Entity {
+                        id,
+                        name: name.clone(),
+                    });
+                    self.selected = index;
+                    self.name_input = name.clone();
+                    self.log.push(format!("Added {name}"));
+                }
+            }
+            Message::DeleteSelected => {
+                if self.entities.is_empty() {
+                    return;
+                }
+                let entity = self.entities.remove(self.selected);
+                if let Some(engine) = self.engine.as_mut() {
+                    let _ = engine.destroy_entity(entity.id);
+                }
+                if self.selected >= self.entities.len() {
+                    self.selected = self.entities.len().saturating_sub(1);
+                }
+                self.name_input = self
+                    .entities
+                    .get(self.selected)
+                    .map(|entity| entity.name.clone())
+                    .unwrap_or_default();
+                self.log.push(format!("Deleted {}", entity.name));
             }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
@@ -146,6 +249,12 @@ impl App {
             .id("toggle-play"),
             container(button("Add Entity").on_press(Message::AddEntity)).id("add-entity"),
             container(button("Log").on_press(Message::Log)).id("log"),
+            text(if self.engine.is_some() {
+                "C++ engine"
+            } else {
+                "fake data"
+            })
+            .size(12),
         ]
         .spacing(8)
         .padding(8)
@@ -166,7 +275,7 @@ impl App {
             PaneKind::Hierarchy => {
                 let mut list = column![text("Hierarchy").size(16)].spacing(4);
                 for (index, entity) in self.entities.iter().enumerate() {
-                    let label = format!("{}  ({:.1})", entity.name, entity.x);
+                    let label = format!("{}  #{}", entity.name, entity.id);
                     let mut item = button(text(label)).width(Length::Fill);
                     if index == self.selected {
                         item = item.style(iced::widget::button::primary);
@@ -187,7 +296,11 @@ impl App {
                             .on_input(Message::NameChanged)
                             .id("entity-name"),
                     );
-                    content = content.push(text(format!("Position X: {:.2}", entity.x)));
+                    content = content.push(text(format!("Entity ID: {}", entity.id)));
+                    content = content.push(
+                        container(button("Delete").on_press(Message::DeleteSelected))
+                            .id("delete-entity"),
+                    );
                 } else {
                     content = content.push(text("No entity selected"));
                 }

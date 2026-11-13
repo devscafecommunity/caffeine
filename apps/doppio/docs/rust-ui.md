@@ -89,7 +89,20 @@ First slice implemented and tested:
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
-- no ImGui and no editor headers in the ABI.
+- no ImGui and no editor headers in the ABI;
+- `libcaffeine-capi.so` shared library (CMake target `caffeine-capi`);
+- a `libloading` Rust bridge in `apps/doppio-rs/src/engine.rs`, with a
+  round-trip integration test that skips when the library is absent.
+
+The PoC now loads a real scene through the ABI:
+
+```bash
+cd apps/doppio-rs
+cargo run -- ../../assets/benchmarks/dense_outdoor.caf
+```
+
+The hierarchy then shows the real C++ entities (Rock/Tree/...). Without the
+shared library it falls back to fake data, so UI tests do not depend on CMake.
 
 Still to add before the Rust UI can be fully wired:
 

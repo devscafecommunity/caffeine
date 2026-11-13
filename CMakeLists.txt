@@ -291,6 +291,24 @@ endif()
 # ── Backward-compat alias ───────────────────────────────────────
 add_library(Caffeine::Core ALIAS caffeine-core)
 
+# ── C ABI shared library for non-C++ frontends ──────────────────
+# Rust/Iced, tools and tests can load this library without linking the C++
+# engine directly. The ABI is versioned in include/caffeine/capi/EngineAPI.h.
+add_library(caffeine-capi SHARED
+    src/caffeine/capi/EngineAPI.cpp
+)
+target_include_directories(caffeine-capi PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(caffeine-capi PRIVATE caffeine-core)
+target_compile_features(caffeine-capi PRIVATE cxx_std_20)
+set_target_properties(caffeine-capi PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    OUTPUT_NAME "caffeine-capi"
+)
+add_library(Caffeine::CAPI ALIAS caffeine-capi)
+
 # ═══════════════════════════════════════════════════════════════════
 #  CAFFEINE UI — header-only UI module
 #

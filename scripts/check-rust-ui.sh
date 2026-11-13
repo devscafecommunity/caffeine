@@ -5,6 +5,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${root}/apps/doppio-rs"
 
+if [[ -d "${root}/build" ]]; then
+    cmake --build "${root}/build" --target caffeine-capi -j"$(nproc)"
+fi
+
 cargo fmt --check
 cargo test
 cargo check --features agent
