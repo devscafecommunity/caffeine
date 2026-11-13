@@ -53,6 +53,18 @@ kit, despite the CMake comment saying it is pure. Split the targets:
 Add a CI check that rejects ImGui includes/symbols in the engine target. Keep
 the ImGui editor building until the Rust frontend reaches feature parity.
 
+Measure the current coupling with:
+
+```bash
+python3 scripts/audit_core_ui_coupling.py
+# after the split:
+python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
+```
+
+Current baseline: 18 UI-kit headers, 1 editor-UI header and 7 conditional core
+files reference ImGui/ImNodes; CMake still links ImGui to `caffeine-core` and
+`caffeine-runtime`.
+
 ### Phase 1 — C ABI / data-oriented boundary
 
 Expose an opaque, versioned C ABI:
