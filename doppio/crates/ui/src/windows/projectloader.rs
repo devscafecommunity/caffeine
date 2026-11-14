@@ -1,9 +1,10 @@
 use crate::uikit::EntityView;
-use doppio_engine::Engine;
+use doppio_engine::{AssetInfo, Engine};
 
 pub struct LoadedProject {
     pub engine: Option<Engine>,
     pub entities: Vec<EntityView>,
+    pub assets: Vec<AssetInfo>,
     pub log: Vec<String>,
 }
 
@@ -29,6 +30,7 @@ pub fn load_from_args() -> LoadedProject {
         return LoadedProject {
             engine: None,
             entities,
+            assets: Vec::new(),
             log,
         };
     };
@@ -38,6 +40,7 @@ pub fn load_from_args() -> LoadedProject {
     let scene_path = std::env::args()
         .nth(1)
         .filter(|path| path.ends_with(".caf"));
+    let scene_from_args = scene_path.is_some();
     let scene_loaded = if let Some(path) = scene_path {
         match engine_ref.load_scene(&path) {
             Ok(()) => {
@@ -80,9 +83,28 @@ pub fn load_from_args() -> LoadedProject {
         }
     }
 
+    let mut assets = engine_ref.assets();
+    // Dev fallback: benchmarks live under assets/benchmarks, so their derived
+    // asset root is empty. Show the repository assets when a scene was passed
+    // explicitly; real projects get their own assets/raw root from load_scene.
+    if assets.is_empty() && scene_from_args {
+        if let Ok(cwd) = std::env::current_dir() {
+            let candidate = cwd.join("../assets");
+            if candidate.exists()
+                && engine_ref
+                    .set_asset_root(candidate.to_string_lossy().as_ref())
+                    .is_ok()
+            {
+                assets = engine_ref.assets();
+                log.push("Using ../assets as the development asset root".to_owned());
+            }
+        }
+    }
+
     LoadedProject {
         engine,
         entities,
+        assets,
         log,
     }
 }

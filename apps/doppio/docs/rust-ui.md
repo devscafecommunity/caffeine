@@ -96,12 +96,14 @@ First slice implemented and tested:
 
 - header: `include/caffeine/capi/EngineAPI.h`
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
-- test: `tests/test_capi.cpp` (`[capi]`, 61 assertions)
+- test: `tests/test_capi.cpp` (`[capi]`, 70 assertions / 4 cases)
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
 - position get/set (setting creates a `Transform` when the entity has none);
 - dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
+- project asset listing (`set_asset_root`, `refresh_assets`, `asset_at`); the
+  Rust Asset Manager shows real files and a file count;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
 - `libcaffeine-capi.so` shared library (CMake target `caffeine-capi`);

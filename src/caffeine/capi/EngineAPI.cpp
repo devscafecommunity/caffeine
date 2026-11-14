@@ -13,8 +13,10 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 #include "scene/EditorContext.hpp"
 #include "scene/EditorSceneSerializer.hpp"
@@ -25,6 +27,31 @@
 #include <new>
 #include <string>
 #include <vector>
+
+struct AssetEntry {
+    std::string name;
+    std::string relativePath;
+    std::string kind;
+    uint64_t sizeBytes = 0;
+    bool isDirectory = false;
+};
+
+std::string assetKind(const std::filesystem::path& path, bool isDirectory) {
+    if (isDirectory) return "folder";
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gif") {
+        return "image";
+    }
+    if (ext == ".obj" || ext == ".glb" || ext == ".gltf") return "mesh";
+    if (ext == ".mat" || ext == ".material") return "material";
+    if (ext == ".lua" || ext == ".dyd") return "script";
+    if (ext == ".caf" || ext == ".cap") return "asset";
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "audio";
+    if (ext == ".anim") return "animation";
+    return "file";
+}
 
 struct CaffeineSession {
     Caffeine::ECS::World world;
@@ -40,6 +67,48 @@ struct CaffeineSession {
     uint32_t renderHeight = 0;
     CaffeineCamera camera{0.65f, 0.35f, 10.0f, {0.0f, 0.0f, 0.0f}};
     bool cameraInitialized = false;
+    std::string assetRoot;
+    std::vector<AssetEntry> assets;
+
+    void scanAssets() {
+        assets.clear();
+        if (assetRoot.empty()) return;
+        std::error_code ec;
+        if (!std::filesystem::exists(assetRoot, ec) ||
+            !std::filesystem::is_directory(assetRoot, ec)) {
+            return;
+        }
+        auto iterator = std::filesystem::recursive_directory_iterator(
+            assetRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+        const auto end = std::filesystem::recursive_directory_iterator();
+        for (; !ec && iterator != end && assets.size() < 2000; ++iterator) {
+            if (iterator.depth() > 4) {
+                iterator.disable_recursion_pending();
+                continue;
+            }
+            const std::filesystem::path path = iterator->path();
+            const std::string name = path.filename().string();
+            if (name.empty() || name[0] == '.') {
+                if (iterator->is_directory(ec)) iterator.disable_recursion_pending();
+                continue;
+            }
+            const bool directory = iterator->is_directory(ec);
+            AssetEntry entry;
+            entry.name = name;
+            entry.relativePath = std::filesystem::relative(path, assetRoot, ec).generic_string();
+            if (ec) {
+                ec.clear();
+                entry.relativePath = path.filename().generic_string();
+            }
+            entry.kind = assetKind(path, directory);
+            entry.sizeBytes = directory ? 0 : iterator->file_size(ec);
+            entry.isDirectory = directory;
+            assets.push_back(std::move(entry));
+        }
+        std::sort(assets.begin(), assets.end(), [](const AssetEntry& a, const AssetEntry& b) {
+            return a.relativePath < b.relativePath;
+        });
+    }
 
     ~CaffeineSession() {
         shutdownRender();
@@ -236,6 +305,18 @@ CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char*
     session->context.projectRootPath = root.string();
     session->context.isDirty = false;
     session->cameraInitialized = false;
+
+    std::error_code assetEc;
+    const std::filesystem::path assetsDir = root / "assets";
+    const std::filesystem::path rawDir = assetsDir / "raw";
+    if (std::filesystem::exists(rawDir, assetEc)) {
+        session->assetRoot = rawDir.string();
+    } else if (std::filesystem::exists(assetsDir, assetEc)) {
+        session->assetRoot = assetsDir.string();
+    } else {
+        session->assetRoot.clear();
+    }
+    session->scanAssets();
     return CAFFEINE_OK;
 }
 
@@ -538,6 +619,40 @@ CaffeineResult caffeine_session_get_camera(const CaffeineSession* session,
                                            CaffeineCamera* out) {
     if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
     *out = session->camera;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_asset_root(CaffeineSession* session, const char* path) {
+    if (!session || !path) return CAFFEINE_INVALID_ARGUMENT;
+    session->assetRoot = path;
+    session->scanAssets();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_refresh_assets(CaffeineSession* session) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->scanAssets();
+    return CAFFEINE_OK;
+}
+
+uint32_t caffeine_session_asset_count(const CaffeineSession* session) {
+    return session ? static_cast<uint32_t>(session->assets.size()) : 0u;
+}
+
+CaffeineResult caffeine_session_asset_at(const CaffeineSession* session, uint32_t index,
+                                         CaffeineAssetInfo* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    if (index >= session->assets.size()) return CAFFEINE_NOT_FOUND;
+    const AssetEntry& entry = session->assets[index];
+    std::strncpy(out->name, entry.name.c_str(), sizeof(out->name) - 1);
+    out->name[sizeof(out->name) - 1] = '\0';
+    std::strncpy(out->relative_path, entry.relativePath.c_str(),
+                 sizeof(out->relative_path) - 1);
+    out->relative_path[sizeof(out->relative_path) - 1] = '\0';
+    std::strncpy(out->kind, entry.kind.c_str(), sizeof(out->kind) - 1);
+    out->kind[sizeof(out->kind) - 1] = '\0';
+    out->size_bytes = entry.sizeBytes;
+    out->is_directory = entry.isDirectory ? 1 : 0;
     return CAFFEINE_OK;
 }
 

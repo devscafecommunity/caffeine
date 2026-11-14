@@ -3,6 +3,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
@@ -110,6 +112,49 @@ TEST_CASE("C API saves and reloads a scene", "[capi]") {
         caffeine_session_destroy(session);
     }
     std::remove(path.c_str());
+}
+
+TEST_CASE("C API lists project assets", "[capi]") {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "caffeine_capi_assets_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "meshes", ec);
+    {
+        std::ofstream image(root / "rock.png", std::ios::binary);
+        image << "not-a-real-png";
+        std::ofstream mesh(root / "meshes" / "tree.obj", std::ios::binary);
+        mesh << "v 0 0 0";
+    }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    REQUIRE(caffeine_session_set_asset_root(session, root.string().c_str()) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_asset_count(session) >= 2);
+
+    bool foundImage = false;
+    bool foundMesh = false;
+    bool foundDirectory = false;
+    for (uint32_t i = 0; i < caffeine_session_asset_count(session); ++i) {
+        CaffeineAssetInfo info{};
+        REQUIRE(caffeine_session_asset_at(session, i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "rock.png") == 0) {
+            foundImage = std::strcmp(info.kind, "image") == 0 && info.size_bytes > 0;
+        }
+        if (std::strcmp(info.name, "tree.obj") == 0) {
+            foundMesh = std::strcmp(info.kind, "mesh") == 0;
+        }
+        if (std::strcmp(info.name, "meshes") == 0) {
+            foundDirectory = info.is_directory == 1 &&
+                             std::strcmp(info.kind, "folder") == 0;
+        }
+    }
+    REQUIRE(foundImage);
+    REQUIRE(foundMesh);
+    REQUIRE(foundDirectory);
+
+    caffeine_session_destroy(session);
+    std::filesystem::remove_all(root, ec);
 }
 
 TEST_CASE("C API scene load reports missing files", "[capi]") {

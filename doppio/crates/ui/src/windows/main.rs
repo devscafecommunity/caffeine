@@ -55,6 +55,7 @@ struct App {
     panes: pane_grid::State<PaneKind>,
     engine: Option<doppio_engine::Engine>,
     entities: Vec<EntityView>,
+    assets: Vec<doppio_engine::AssetInfo>,
     selected: usize,
     name_input: String,
     log: Vec<String>,
@@ -114,6 +115,7 @@ impl App {
             panes,
             engine: loaded.engine,
             entities: loaded.entities,
+            assets: loaded.assets,
             selected: 0,
             name_input,
             log: loaded.log,
@@ -389,7 +391,7 @@ impl App {
             PaneKind::Hierarchy => {
                 panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity)
             }
-            PaneKind::Assets => panels::assetmanager::view(),
+            PaneKind::Assets => panels::assetmanager::view(&self.assets),
             PaneKind::Viewport => panels::sceneviewport::view(
                 self.viewport_image.clone(),
                 Message::OrbitLeft,

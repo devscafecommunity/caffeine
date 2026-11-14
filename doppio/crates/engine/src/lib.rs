@@ -45,6 +45,15 @@ impl Default for Camera {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetInfo {
+    pub name: String,
+    pub relative_path: String,
+    pub kind: String,
+    pub size_bytes: u64,
+    pub is_directory: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
     pub delta_time: f32,
@@ -64,6 +73,15 @@ struct RawVec3 {
     x: f32,
     y: f32,
     z: f32,
+}
+
+#[repr(C)]
+struct RawAssetInfo {
+    name: [c_char; 128],
+    relative_path: [c_char; 512],
+    kind: [c_char; 32],
+    size_bytes: u64,
+    is_directory: i32,
 }
 
 #[repr(C)]
@@ -105,6 +123,10 @@ type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
 type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
 type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
+type SetAssetRootFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
+type RefreshAssetsFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type AssetCountFn = unsafe extern "C" fn(*const c_void) -> u32;
+type AssetAtFn = unsafe extern "C" fn(*const c_void, u32, *mut RawAssetInfo) -> i32;
 type TickFn = unsafe extern "C" fn(*mut c_void, f32);
 type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
 
@@ -131,6 +153,10 @@ struct Functions {
     render: RenderFn,
     set_camera: SetCameraFn,
     get_camera: GetCameraFn,
+    set_asset_root: SetAssetRootFn,
+    refresh_assets: RefreshAssetsFn,
+    asset_count: AssetCountFn,
+    asset_at: AssetAtFn,
     tick: TickFn,
     frame_stats: FrameStatsFn,
 }
@@ -199,6 +225,10 @@ impl Engine {
             render: unsafe { load_symbol(&library, b"caffeine_session_render\0") }?,
             set_camera: unsafe { load_symbol(&library, b"caffeine_session_set_camera\0") }?,
             get_camera: unsafe { load_symbol(&library, b"caffeine_session_get_camera\0") }?,
+            set_asset_root: unsafe { load_symbol(&library, b"caffeine_session_set_asset_root\0") }?,
+            refresh_assets: unsafe { load_symbol(&library, b"caffeine_session_refresh_assets\0") }?,
+            asset_count: unsafe { load_symbol(&library, b"caffeine_session_asset_count\0") }?,
+            asset_at: unsafe { load_symbol(&library, b"caffeine_session_asset_at\0") }?,
             tick: unsafe { load_symbol(&library, b"caffeine_session_tick\0") }?,
             frame_stats: unsafe { load_symbol(&library, b"caffeine_session_frame_stats\0") }?,
         };
@@ -365,6 +395,43 @@ impl Engine {
         Ok(pixels)
     }
 
+    pub fn set_asset_root(&mut self, path: &str) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe { (self.functions.set_asset_root)(self.session, path.as_ptr()) })
+    }
+
+    pub fn refresh_assets(&mut self) -> EngineResult<()> {
+        result(unsafe { (self.functions.refresh_assets)(self.session) })
+    }
+
+    pub fn asset_count(&self) -> u32 {
+        unsafe { (self.functions.asset_count)(self.session) }
+    }
+
+    pub fn asset_at(&self, index: u32) -> EngineResult<AssetInfo> {
+        let mut info = RawAssetInfo {
+            name: [0; 128],
+            relative_path: [0; 512],
+            kind: [0; 32],
+            size_bytes: 0,
+            is_directory: 0,
+        };
+        result(unsafe { (self.functions.asset_at)(self.session, index, &mut info) })?;
+        Ok(AssetInfo {
+            name: c_char_array(&info.name),
+            relative_path: c_char_array(&info.relative_path),
+            kind: c_char_array(&info.kind),
+            size_bytes: info.size_bytes,
+            is_directory: info.is_directory != 0,
+        })
+    }
+
+    pub fn assets(&self) -> Vec<AssetInfo> {
+        (0..self.asset_count())
+            .filter_map(|index| self.asset_at(index).ok())
+            .collect()
+    }
+
     pub fn tick(&mut self, delta_time: f32) {
         unsafe { (self.functions.tick)(self.session, delta_time) }
     }
@@ -388,6 +455,12 @@ impl Drop for Engine {
     fn drop(&mut self) {
         unsafe { (self.functions.destroy)(self.session) };
     }
+}
+
+fn c_char_array<const N: usize>(bytes: &[c_char; N]) -> String {
+    unsafe { CStr::from_ptr(bytes.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn to_raw(value: [f32; 3]) -> RawVec3 {

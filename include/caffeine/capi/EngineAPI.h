@@ -56,6 +56,14 @@ typedef struct CaffeineCamera {
     CaffeineVec3 focus;
 } CaffeineCamera;
 
+typedef struct CaffeineAssetInfo {
+    char name[128];
+    char relative_path[512];
+    char kind[32];
+    uint64_t size_bytes;
+    int is_directory;
+} CaffeineAssetInfo;
+
 /** Create/destroy a scene session. The session owns its ECS world. */
 CaffeineSession* caffeine_session_create(void);
 void caffeine_session_destroy(CaffeineSession* session);
@@ -77,6 +85,13 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
 /** Viewport camera (radians for yaw/pitch, world units for distance). */
 CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
+
+/** Project assets. The root defaults to <project>/assets/raw (or assets). */
+CaffeineResult caffeine_session_set_asset_root(CaffeineSession* session, const char* path);
+CaffeineResult caffeine_session_refresh_assets(CaffeineSession* session);
+uint32_t caffeine_session_asset_count(const CaffeineSession* session);
+CaffeineResult caffeine_session_asset_at(const CaffeineSession* session, uint32_t index,
+                                         CaffeineAssetInfo* out);
 /** Write the current world to a .caf scene and clear the dirty flag. */
 CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 
