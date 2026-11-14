@@ -12,4 +12,5 @@ pub struct EntityView {
     pub position: [f32; 3],
     pub rotation: [f32; 3],
     pub scale: [f32; 3],
+    pub parent: Option<u32>,
 }

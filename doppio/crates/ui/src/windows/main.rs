@@ -41,6 +41,12 @@ enum MenuId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutPreset {
+    Default,
+    Viewport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneKind {
     Hierarchy,
     Assets,
@@ -55,6 +61,7 @@ enum Message {
     PaneResized(pane_grid::ResizeEvent),
     SelectEntity(usize),
     HierarchyContext(usize),
+    HierarchyToggle(usize),
     HierarchyDoubleClick(usize),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SelectEntityByName(String),
@@ -71,6 +78,11 @@ enum Message {
         field: usize,
         value: doppio_engine::FieldValue,
     },
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    SetParent {
+        entity: u32,
+        parent: Option<u32>,
+    },
     SaveScene,
     RenderViewport,
     ViewportTick,
@@ -86,6 +98,8 @@ enum Message {
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     CloseScene,
     ToggleMenu(MenuId),
+    Layout(LayoutPreset),
+    MaximizeViewport,
 }
 
 struct App {
@@ -109,6 +123,7 @@ struct App {
     viewport_drag: Option<ViewportDrag>,
     open_menu: Option<MenuId>,
     hierarchy_menu: Option<usize>,
+    collapsed_hierarchy: std::collections::HashSet<u32>,
     camera: doppio_engine::Camera,
     history: History,
     component_types: Vec<doppio_engine::ComponentType>,
@@ -117,6 +132,54 @@ struct App {
 }
 
 impl App {
+    fn layout_configuration(preset: LayoutPreset) -> pane_grid::Configuration<PaneKind> {
+        use pane_grid::{Axis, Configuration};
+        match preset {
+            LayoutPreset::Default => Configuration::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.72,
+                a: Box::new(Configuration::Split {
+                    axis: Axis::Vertical,
+                    ratio: 0.22,
+                    a: Box::new(Configuration::Split {
+                        axis: Axis::Horizontal,
+                        ratio: 0.58,
+                        a: Box::new(Configuration::Pane(PaneKind::Hierarchy)),
+                        b: Box::new(Configuration::Pane(PaneKind::Assets)),
+                    }),
+                    b: Box::new(Configuration::Split {
+                        axis: Axis::Vertical,
+                        ratio: 0.72,
+                        a: Box::new(Configuration::Pane(PaneKind::Viewport)),
+                        b: Box::new(Configuration::Pane(PaneKind::Inspector)),
+                    }),
+                }),
+                b: Box::new(Configuration::Pane(PaneKind::Console)),
+            },
+            LayoutPreset::Viewport => Configuration::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.85,
+                a: Box::new(Configuration::Split {
+                    axis: Axis::Vertical,
+                    ratio: 0.16,
+                    a: Box::new(Configuration::Split {
+                        axis: Axis::Horizontal,
+                        ratio: 0.5,
+                        a: Box::new(Configuration::Pane(PaneKind::Hierarchy)),
+                        b: Box::new(Configuration::Pane(PaneKind::Assets)),
+                    }),
+                    b: Box::new(Configuration::Split {
+                        axis: Axis::Horizontal,
+                        ratio: 0.82,
+                        a: Box::new(Configuration::Pane(PaneKind::Viewport)),
+                        b: Box::new(Configuration::Pane(PaneKind::Inspector)),
+                    }),
+                }),
+                b: Box::new(Configuration::Pane(PaneKind::Console)),
+            },
+        }
+    }
+
     fn new() -> Self {
         let loaded = projectloader::load_from_args();
         Self::with_project(loaded)
@@ -134,30 +197,8 @@ impl App {
     }
 
     fn with_project(loaded: projectloader::LoadedProject) -> Self {
-        use pane_grid::{Axis, Configuration};
-
-        let configuration = Configuration::Split {
-            axis: Axis::Horizontal,
-            ratio: 0.72,
-            a: Box::new(Configuration::Split {
-                axis: Axis::Vertical,
-                ratio: 0.22,
-                a: Box::new(Configuration::Split {
-                    axis: Axis::Horizontal,
-                    ratio: 0.58,
-                    a: Box::new(Configuration::Pane(PaneKind::Hierarchy)),
-                    b: Box::new(Configuration::Pane(PaneKind::Assets)),
-                }),
-                b: Box::new(Configuration::Split {
-                    axis: Axis::Vertical,
-                    ratio: 0.72,
-                    a: Box::new(Configuration::Pane(PaneKind::Viewport)),
-                    b: Box::new(Configuration::Pane(PaneKind::Inspector)),
-                }),
-            }),
-            b: Box::new(Configuration::Pane(PaneKind::Console)),
-        };
-        let panes = pane_grid::State::with_configuration(configuration);
+        let panes =
+            pane_grid::State::with_configuration(Self::layout_configuration(LayoutPreset::Default));
 
         let next_entity_id = loaded
             .entities
@@ -198,6 +239,7 @@ impl App {
             viewport_drag: None,
             open_menu: None,
             hierarchy_menu: None,
+            collapsed_hierarchy: std::collections::HashSet::new(),
             camera,
             history: History::new(history::State::new(Vec::new(), None, false)),
             component_types: Vec::new(),
@@ -447,6 +489,7 @@ impl App {
             self.entities = state.entities.clone();
         }
 
+        self.collapsed_hierarchy.clear();
         self.selected = state.selected.min(self.entities.len().saturating_sub(1));
         self.name_input = self
             .entities
@@ -509,6 +552,7 @@ impl App {
                 position: [0.0; 3],
                 rotation: [0.0; 3],
                 scale: [1.0; 3],
+                parent: None,
             });
             self.selected = index;
             self.name_input = name.clone();
@@ -568,6 +612,13 @@ impl App {
                         Some(Message::RenderViewport)
                     }
                     iced::keyboard::Key::Character("0") => Some(Message::ResetCamera),
+                    iced::keyboard::Key::Character("1") => {
+                        Some(Message::Layout(LayoutPreset::Default))
+                    }
+                    iced::keyboard::Key::Character("2") => {
+                        Some(Message::Layout(LayoutPreset::Viewport))
+                    }
+                    iced::keyboard::Key::Character("m") => Some(Message::MaximizeViewport),
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
                         Some(Message::TogglePlay)
                     }
@@ -717,6 +768,14 @@ impl App {
                 self.select_index(index);
                 self.focus_selection();
             }
+            Message::HierarchyToggle(index) => {
+                if let Some(entity) = self.entities.get(index) {
+                    let id = entity.id;
+                    if !self.collapsed_hierarchy.remove(&id) {
+                        self.collapsed_hierarchy.insert(id);
+                    }
+                }
+            }
             Message::TogglePlay => {
                 self.playing = !self.playing;
                 self.log
@@ -761,6 +820,35 @@ impl App {
                 value,
             } => {
                 self.write_component_field(component, field, value);
+            }
+            Message::SetParent { entity, parent } => {
+                let result = self
+                    .engine
+                    .as_mut()
+                    .map(|engine| engine.set_entity_parent(entity, parent));
+                match result {
+                    Some(Ok(())) => {
+                        if let Some(view) = self.entities.iter_mut().find(|view| view.id == entity)
+                        {
+                            view.parent = parent;
+                        }
+                        eprintln!(
+                            "parent set entity={} parent={:?} view={:?}",
+                            entity,
+                            parent,
+                            self.entities
+                                .iter()
+                                .find(|view| view.id == entity)
+                                .map(|view| view.parent)
+                        );
+                        self.log.push("Changed parent".to_owned());
+                        self.commit("Change Parent", None);
+                    }
+                    Some(Err(error)) => {
+                        self.log.push(format!("Parent change failed: {error:?}"));
+                    }
+                    None => {}
+                }
             }
             Message::SaveScene => {
                 if let Some(engine) = self.engine.as_mut() {
@@ -855,6 +943,23 @@ impl App {
                     Some(menu)
                 };
             }
+            Message::Layout(preset) => {
+                self.panes =
+                    pane_grid::State::with_configuration(Self::layout_configuration(preset));
+            }
+            Message::MaximizeViewport => {
+                let viewport = self
+                    .panes
+                    .iter()
+                    .find(|(_, kind)| **kind == PaneKind::Viewport)
+                    .map(|(pane, _)| *pane);
+                if let Some(pane) = viewport {
+                    if self.panes.maximized().is_some() {
+                        self.panes.restore();
+                    }
+                    self.panes.maximize(pane);
+                }
+            }
         }
     }
 
@@ -940,6 +1045,24 @@ impl App {
                     shortcut: Some("Ctrl+R"),
                     message: Message::RenderViewport,
                 },
+                menu::Item {
+                    id: id::LAYOUT_DEFAULT,
+                    label: "Default Layout",
+                    shortcut: Some("Ctrl+1"),
+                    message: Message::Layout(LayoutPreset::Default),
+                },
+                menu::Item {
+                    id: id::LAYOUT_VIEWPORT,
+                    label: "Viewport Layout",
+                    shortcut: Some("Ctrl+2"),
+                    message: Message::Layout(LayoutPreset::Viewport),
+                },
+                menu::Item {
+                    id: id::LAYOUT_MAXIMIZE_VIEWPORT,
+                    label: "Maximize Viewport",
+                    shortcut: Some("Ctrl+M"),
+                    message: Message::MaximizeViewport,
+                },
             ],
             Message::ToggleMenu(MenuId::View),
         );
@@ -972,8 +1095,8 @@ impl App {
         let status_row = row![engine_status, save_status, play_status, entity_status].spacing(6);
         let bar = toolbar::view(brand.into(), vec![menu_group], status_row.into());
 
-        let grid = pane_grid(&self.panes, |_pane, kind, _is_maximized| {
-            pane_grid::Content::new(self.pane_view(*kind))
+        let grid = pane_grid(&self.panes, |pane, kind, is_maximized| {
+            self.pane_content(pane, *kind, is_maximized)
         })
         .on_drag(Message::PaneDragged)
         .on_resize(8, Message::PaneResized)
@@ -986,7 +1109,23 @@ impl App {
             .into()
     }
 
-    fn pane_view(&self, kind: PaneKind) -> Element<'_, Message> {
+    fn pane_content<'a>(
+        &'a self,
+        _pane: pane_grid::Pane,
+        kind: PaneKind,
+        _maximized: bool,
+    ) -> pane_grid::Content<'a, Message> {
+        let (pane_id, title, subtitle, body) = self.pane_parts(kind);
+        let title_bar = pane_grid::TitleBar::new(panel::title(title, subtitle))
+            .padding([0, 2])
+            .style(theme::panel_title);
+        pane_grid::Content::new(container(panel::body(body)).id(pane_id)).title_bar(title_bar)
+    }
+
+    fn pane_parts(
+        &self,
+        kind: PaneKind,
+    ) -> (id::UiId, &'static str, Option<String>, Element<'_, Message>) {
         let (pane_id, title, subtitle, body): (
             id::UiId,
             &str,
@@ -998,18 +1137,24 @@ impl App {
                 "Hierarchy",
                 Some(format!("{} entities", self.entities.len())),
                 panels::hierarchy::view(
-                    &self.entities,
-                    self.selected,
-                    self.hierarchy_menu,
-                    Message::SelectEntity,
-                    Message::HierarchyContext,
-                    Message::HierarchyDoubleClick,
-                    |action| match action {
-                        panels::hierarchy::Action::AddEntity => Message::AddEntity,
-                        panels::hierarchy::Action::Focus => Message::FocusSelection,
-                        panels::hierarchy::Action::Delete => {
-                            Message::Inspector(panels::inspector::Edit::Delete)
-                        }
+                    panels::hierarchy::View {
+                        entities: &self.entities,
+                        selected: self.selected,
+                        collapsed: &self.collapsed_hierarchy,
+                        menu_for: self.hierarchy_menu,
+                    },
+                    panels::hierarchy::Callbacks {
+                        on_toggle: Box::new(Message::HierarchyToggle),
+                        on_select: Box::new(Message::SelectEntity),
+                        on_context: Box::new(Message::HierarchyContext),
+                        on_double_click: Box::new(Message::HierarchyDoubleClick),
+                        on_action: Box::new(|action| match action {
+                            panels::hierarchy::Action::AddEntity => Message::AddEntity,
+                            panels::hierarchy::Action::Focus => Message::FocusSelection,
+                            panels::hierarchy::Action::Delete => {
+                                Message::Inspector(panels::inspector::Edit::Delete)
+                            }
+                        }),
                     },
                 ),
             ),
@@ -1107,12 +1252,7 @@ impl App {
             ),
         };
 
-        let content = panel::view(panel::Panel {
-            title,
-            subtitle,
-            body,
-        });
-        container(content).id(pane_id).into()
+        (pane_id, title, subtitle, body)
     }
 }
 

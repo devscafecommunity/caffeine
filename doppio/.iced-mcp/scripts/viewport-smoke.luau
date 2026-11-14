@@ -22,4 +22,13 @@ assert(focused.focus[1] == entity.position[1], "focus should target the selectio
 assert(focused.focus[2] == entity.position[2], "focus should target the selection Y")
 assert(focused.focus[3] == entity.position[3], "focus should target the selection Z")
 
+local layout = app:query("layout")
+assert(#layout.panes == 5, "layout should keep every pane")
+app:click({ id = "editor.menu.view" })
+app:click({ id = "editor.layout.maximize_viewport" })
+assert(app:query("layout").maximized ~= nil, "viewport should maximize")
+app:click({ id = "editor.menu.view" })
+app:click({ id = "editor.layout.default" })
+assert(app:query("layout").maximized == nil, "default layout should restore panes")
+
 return { yaw = focused.yaw, distance = focused.distance }

@@ -821,6 +821,48 @@ CaffeineResult caffeine_session_entity_name(const CaffeineSession* session,
                     buffer, buffer_size);
 }
 
+CaffeineResult caffeine_session_entity_parent(const CaffeineSession* session,
+                                              CaffeineEntity entityId,
+                                              CaffeineEntity* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const auto* parent =
+        mutableSession.world.get<Caffeine::Scene::Parent>(entityOf(mutableSession, entityId));
+    *out = (parent && parent->parent.isValid()) ? parent->parent.id() : CAFFEINE_ENTITY_NONE;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_entity_parent(CaffeineSession* session,
+                                                  CaffeineEntity entityId,
+                                                  CaffeineEntity parentId) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    if (parentId == CAFFEINE_ENTITY_NONE) {
+        session->world.remove<Caffeine::Scene::Parent>(entity);
+        session->context.markDirty();
+        return CAFFEINE_OK;
+    }
+    if (parentId == entityId || !entityAlive(*session, parentId)) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const Caffeine::ECS::Entity parent = entityOf(*session, parentId);
+    Caffeine::ECS::Entity cursor = parent;
+    for (int guard = 0; guard < 4096 && cursor.isValid(); ++guard) {
+        if (cursor.id() == entityId) return CAFFEINE_INVALID_ARGUMENT;
+        const auto* link = session->world.get<Caffeine::Scene::Parent>(cursor);
+        if (!link) break;
+        cursor = link->parent;
+    }
+
+    auto& link = session->world.add<Caffeine::Scene::Parent>(entity);
+    link.parent = parent;
+    link.dirty = true;
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
 CaffeineEntity caffeine_session_create_entity(CaffeineSession* session, const char* name) {
     if (!session) return CAFFEINE_ENTITY_NONE;
     const Caffeine::ECS::Entity entity = session->world.create(name);

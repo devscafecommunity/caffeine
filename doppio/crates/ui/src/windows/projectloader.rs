@@ -19,6 +19,7 @@ pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
                 position: engine.position(info.id).unwrap_or([0.0; 3]),
                 rotation: engine.rotation(info.id).unwrap_or([0.0; 3]),
                 scale: engine.scale(info.id).unwrap_or([1.0; 3]),
+                parent: engine.entity_parent(info.id).ok().flatten(),
             });
         }
     }
@@ -42,6 +43,7 @@ pub fn load_from_args() -> LoadedProject {
                 position: [0.0; 3],
                 rotation: [0.0; 3],
                 scale: [1.0; 3],
+                parent: None,
             });
         }
         return LoadedProject {
@@ -84,6 +86,7 @@ pub fn load_from_args() -> LoadedProject {
                     position: [0.0; 3],
                     rotation: [0.0; 3],
                     scale: [1.0; 3],
+                    parent: None,
                 });
             }
         }

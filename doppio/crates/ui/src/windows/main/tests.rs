@@ -516,6 +516,65 @@ fn viewport_right_drag_pans_and_focus_targets_selection() {
     );
 }
 
+fn tree_entity(id: u32, parent: Option<u32>) -> EntityView {
+    EntityView {
+        id,
+        name: format!("Node {id}"),
+        position: [0.0; 3],
+        rotation: [0.0; 3],
+        scale: [1.0; 3],
+        parent,
+    }
+}
+
+#[test]
+fn hierarchy_tree_collapses_and_expands_children() {
+    let entities = vec![
+        tree_entity(0, None),
+        tree_entity(1, Some(0)),
+        tree_entity(2, Some(1)),
+    ];
+    let loaded = projectloader::LoadedProject {
+        engine: None,
+        entities,
+        assets: Vec::new(),
+        log: Vec::new(),
+    };
+    let mut harness = Harness {
+        app: App::with_project(loaded),
+        _guard: test_guard(),
+    };
+    assert!(harness.has(Id::from(id::entity_row(2))));
+
+    harness.dispatch(Message::HierarchyToggle(0));
+    assert!(!harness.has(Id::from(id::entity_row(1))));
+    assert!(!harness.has(Id::from(id::entity_row(2))));
+
+    harness.dispatch(Message::HierarchyToggle(0));
+    assert!(harness.has(Id::from(id::entity_row(1))));
+    assert!(harness.has(Id::from(id::entity_row(2))));
+}
+
+#[test]
+fn layout_presets_keep_every_pane() {
+    for preset in [LayoutPreset::Default, LayoutPreset::Viewport] {
+        let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
+        assert_eq!(state.len(), 5);
+    }
+    let mut harness = Harness::with_entities();
+    harness.dispatch(Message::Layout(LayoutPreset::Viewport));
+    assert_eq!(harness.app().panes.len(), 5);
+}
+
+#[test]
+fn viewport_can_be_maximized_and_restored() {
+    let mut harness = Harness::with_entities();
+    harness.dispatch(Message::MaximizeViewport);
+    assert!(harness.app().panes.maximized().is_some());
+    harness.dispatch(Message::Layout(LayoutPreset::Default));
+    assert_eq!(harness.app().panes.maximized(), None);
+}
+
 #[test]
 fn empty_editor_has_no_entities() {
     let harness = Harness::empty();
@@ -781,6 +840,24 @@ fn engine_undo_restores_the_scene_snapshot() {
     assert_eq!(harness.app().entities.len(), 2);
     assert_eq!(harness.app().entities[0].name, "First");
     assert_eq!(harness.app().entities[0].position[0], start);
+}
+
+#[test]
+fn reparenting_updates_the_ui_and_engine() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    let child = harness.app().entities[1].id;
+    let parent = harness.app().entities[0].id;
+    harness.dispatch(Message::SetParent {
+        entity: child,
+        parent: Some(parent),
+    });
+    assert_eq!(harness.app().entities[1].parent, Some(parent));
+    // Undo restores the link through the scene snapshot.
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities[1].parent, None);
 }
 
 #[test]

@@ -215,6 +215,8 @@ type EntityNameFn = unsafe extern "C" fn(*mut c_void, u32, *mut c_char, usize) -
 type CreateEntityFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> u32;
 type DestroyEntityFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type SetNameFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char) -> i32;
+type ParentFn = unsafe extern "C" fn(*const c_void, u32, *mut u32) -> i32;
+type SetParentFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type SelectFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type SelectedFn = unsafe extern "C" fn(*mut c_void) -> u32;
 type PositionFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
@@ -261,6 +263,8 @@ struct Functions {
     create_entity: CreateEntityFn,
     destroy_entity: DestroyEntityFn,
     set_name: SetNameFn,
+    parent: ParentFn,
+    set_parent: SetParentFn,
     select: SelectFn,
     selected: SelectedFn,
     position: PositionFn,
@@ -368,6 +372,8 @@ impl Engine {
             create_entity: unsafe { load_symbol(library, b"caffeine_session_create_entity\0") }?,
             destroy_entity: unsafe { load_symbol(library, b"caffeine_session_destroy_entity\0") }?,
             set_name: unsafe { load_symbol(library, b"caffeine_session_set_entity_name\0") }?,
+            parent: unsafe { load_symbol(library, b"caffeine_session_entity_parent\0") }?,
+            set_parent: unsafe { load_symbol(library, b"caffeine_session_set_entity_parent\0") }?,
             select: unsafe { load_symbol(library, b"caffeine_session_select_entity\0") }?,
             selected: unsafe { load_symbol(library, b"caffeine_session_selected_entity\0") }?,
             position: unsafe { load_symbol(library, b"caffeine_session_entity_position\0") }?,
@@ -670,6 +676,18 @@ impl Engine {
     pub fn set_entity_name(&mut self, entity: u32, name: &str) -> EngineResult<()> {
         let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
         result(unsafe { (self.functions.set_name)(self.session, entity, name.as_ptr()) })
+    }
+
+    pub fn entity_parent(&self, entity: u32) -> EngineResult<Option<u32>> {
+        let mut parent = ENTITY_NONE;
+        result(unsafe { (self.functions.parent)(self.session, entity, &mut parent) })?;
+        Ok((parent != ENTITY_NONE).then_some(parent))
+    }
+
+    pub fn set_entity_parent(&mut self, entity: u32, parent: Option<u32>) -> EngineResult<()> {
+        result(unsafe {
+            (self.functions.set_parent)(self.session, entity, parent.unwrap_or(ENTITY_NONE))
+        })
     }
 
     pub fn select_entity(&mut self, entity: u32) -> EngineResult<()> {
@@ -1118,6 +1136,13 @@ mod tests {
             assert!(ready, "async render should complete");
             assert!(async_pixels.iter().any(|byte| *byte != 0));
         }
+        engine.set_entity_parent(enemy, Some(player)).unwrap();
+        assert_eq!(engine.entity_parent(enemy).unwrap(), Some(player));
+        assert_eq!(engine.entity_parent(player).unwrap(), None);
+        assert!(engine.set_entity_parent(player, Some(enemy)).is_err());
+        engine.set_entity_parent(enemy, None).unwrap();
+        assert_eq!(engine.entity_parent(enemy).unwrap(), None);
+
         drop(engine);
 
         let mut engine = Engine::load_default().expect("reload");

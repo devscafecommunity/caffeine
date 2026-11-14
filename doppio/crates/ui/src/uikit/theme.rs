@@ -42,6 +42,14 @@ pub fn panel(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn panel_title(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(PANEL.into()),
+        text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
 pub fn surface(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(SURFACE.into()),

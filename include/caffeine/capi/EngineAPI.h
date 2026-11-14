@@ -201,6 +201,13 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_at(const CaffeineSessio
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_name(const CaffeineSession* session,
                                             CaffeineEntity entity, char* buffer,
                                             size_t buffer_size);
+/** Hierarchy links. Pass CAFFEINE_ENTITY_NONE to set_entity_parent to unparent. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_parent(const CaffeineSession* session,
+                                              CaffeineEntity entity,
+                                              CaffeineEntity* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_entity_parent(CaffeineSession* session,
+                                                  CaffeineEntity entity,
+                                                  CaffeineEntity parent);
 
 /** Commands. */
 CAFFEINE_CAPI_API CaffeineEntity caffeine_session_create_entity(CaffeineSession* session, const char* name);

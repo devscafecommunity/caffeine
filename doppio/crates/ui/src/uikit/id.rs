@@ -83,6 +83,9 @@ pub struct UiMeta {
 }
 
 // ── Editor chrome ─────────────────────────────────────────────────────────
+pub const LAYOUT_DEFAULT: UiId = UiId::fixed("editor.layout.default");
+pub const LAYOUT_VIEWPORT: UiId = UiId::fixed("editor.layout.viewport");
+pub const LAYOUT_MAXIMIZE_VIEWPORT: UiId = UiId::fixed("editor.layout.maximize_viewport");
 pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
 pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
 pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
@@ -117,6 +120,11 @@ pub fn component_field(component: usize, field: usize, axis: usize) -> UiId {
     ))
 }
 
+/// The expand/collapse chevron of a hierarchy row.
+pub fn tree_toggle(parent: &str) -> UiId {
+    UiId::dynamic(format!("hierarchy.tree.toggle.{parent}"))
+}
+
 /// The remove button of one component block.
 pub fn component_remove(component: usize) -> UiId {
     UiId::dynamic(format!("inspector.component.remove.{component}"))
@@ -134,6 +142,21 @@ pub fn asset_card(index: usize) -> UiId {
 
 /// The statically documented part of the UI tree.
 pub const CATALOG: &[UiMeta] = &[
+    UiMeta {
+        id: LAYOUT_DEFAULT,
+        description: "Restores the default panel layout.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: LAYOUT_VIEWPORT,
+        description: "Gives the viewport most of the workspace.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: LAYOUT_MAXIMIZE_VIEWPORT,
+        description: "Maximizes the viewport pane.",
+        kind: "menu_item",
+    },
     UiMeta {
         id: MENU_SCENE,
         description: "Scene menu: add, save and play.",
@@ -242,6 +265,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("inspector.component.remove"),
         description: "Removes one component; buttons use the .component suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("hierarchy.tree.toggle"),
+        description: "Expand/collapse chevron of a hierarchy row.",
         kind: "list_row",
     },
     UiMeta {

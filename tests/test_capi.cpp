@@ -157,6 +157,41 @@ TEST_CASE("C API lists project assets", "[capi]") {
     std::filesystem::remove_all(root, ec);
 }
 
+TEST_CASE("C API hierarchy parent links", "[capi]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity root = caffeine_session_create_entity(session, "Root");
+    const CaffeineEntity child = caffeine_session_create_entity(session, "Child");
+    const CaffeineEntity grandchild = caffeine_session_create_entity(session, "Grandchild");
+    REQUIRE(root != CAFFEINE_ENTITY_NONE);
+    REQUIRE(child != CAFFEINE_ENTITY_NONE);
+    REQUIRE(grandchild != CAFFEINE_ENTITY_NONE);
+
+    CaffeineEntity parent = 1234;
+    REQUIRE(caffeine_session_entity_parent(session, child, &parent) == CAFFEINE_OK);
+    CHECK(parent == CAFFEINE_ENTITY_NONE);
+
+    REQUIRE(caffeine_session_set_entity_parent(session, child, root) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_set_entity_parent(session, grandchild, child) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_entity_parent(session, child, &parent) == CAFFEINE_OK);
+    CHECK(parent == root);
+    REQUIRE(caffeine_session_entity_parent(session, grandchild, &parent) == CAFFEINE_OK);
+    CHECK(parent == child);
+
+    // Cycles are rejected.
+    CHECK(caffeine_session_set_entity_parent(session, root, grandchild) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_entity_parent(session, child, child) ==
+          CAFFEINE_INVALID_ARGUMENT);
+
+    REQUIRE(caffeine_session_set_entity_parent(session, child, CAFFEINE_ENTITY_NONE) ==
+            CAFFEINE_OK);
+    REQUIRE(caffeine_session_entity_parent(session, child, &parent) == CAFFEINE_OK);
+    CHECK(parent == CAFFEINE_ENTITY_NONE);
+
+    caffeine_session_destroy(session);
+}
+
 TEST_CASE("C API exposes component schemas and values", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
     REQUIRE(session != nullptr);

@@ -12,4 +12,5 @@ pub mod slider;
 pub mod status;
 pub mod text_field;
 pub mod toolbar;
+pub mod tree_row;
 pub mod viewport_surface;

@@ -98,6 +98,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
 - project asset listing (`set_asset_root`, `refresh_assets`, `asset_at`); the
   Rust Asset Manager shows real files and a file count;
+- hierarchy links (`entity_parent`, `set_entity_parent`) with cycle rejection;
+  the Hierarchy panel renders a tree with expand/collapse chevrons;
 - component schema and values (`component_type_*`, `entity_component_*`,
   `add/remove_component`); the Inspector is generic and edits every registered
   component (Transform, Camera 3D, lights, renderers, physics, colliders,
@@ -113,7 +115,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 37 Rust tests: 2 engine bridge/snapshot tests, 34 UI/widget tests (1
+- 44 Rust tests: 2 engine bridge/snapshot tests, 41 UI/widget tests (1
 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
@@ -207,6 +209,8 @@ The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
 | `Ctrl+F` | focus selection |
 | `Ctrl+0` | reset camera |
 | `Ctrl+R` | render viewport now |
+| `Ctrl+1` / `Ctrl+2` | default / viewport panel layout |
+| `Ctrl+M` | maximize viewport |
 | right-click hierarchy row | add / focus / delete context menu |
 | double-click hierarchy row or viewport | focus selection |
 | left drag / right drag / wheel | orbit / pan / zoom |
@@ -317,6 +321,8 @@ registers scene-level queries and actions:
 | query | `scene` | scene path, dirty flag, counts and the console log |
 | query | `assets` | project assets with path, kind, size and directory flag |
 | query | `camera` | viewport yaw, pitch, distance and focus |
+| query | `layout` | panes and which one is maximized |
+| action | `set_entity_parent` | `{ "entity_id", "parent_id"?: number \| null }` |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
 | query | `component_types` | component schema: fields, kinds, limits, enum options |
 | query | `entity_components` | components and values for an entity |

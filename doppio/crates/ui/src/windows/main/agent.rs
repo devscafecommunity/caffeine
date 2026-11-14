@@ -26,6 +26,16 @@ pub fn run() -> iced::Result {
         .query("scene", "Scene path, dirty flag and engine connection.", |app, _| {
             Ok(scene_json(app))
         })
+        .query("layout", "Pane layout and maximize state.", |app, _| {
+            let maximized = app.panes.maximized();
+            Ok(json!({
+                "panes": app.panes.iter().map(|(pane, kind)| json!({
+                    "kind": format!("{kind:?}"),
+                    "maximized": maximized == Some(*pane),
+                })).collect::<Vec<_>>(),
+                "maximized": maximized.map(|pane| format!("{pane:?}")),
+            }))
+        })
         .query(
             "camera",
             "Viewport camera yaw, pitch, distance and focus.",
@@ -84,6 +94,22 @@ pub fn run() -> iced::Result {
         .action("redo", "Reapplies the last undone editor step. No args.", |_| {
             Ok(Message::Redo)
         })
+        .action(
+            "set_entity_parent",
+            "Reparents an entity. args: { \"entity_id\": number, \"parent_id\"?: number | null }",
+            |args| {
+                let entity = args
+                    .get("entity_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"entity_id\"".to_owned())?
+                    as u32;
+                let parent = args
+                    .get("parent_id")
+                    .and_then(Value::as_u64)
+                    .map(|parent| parent as u32);
+                Ok(Message::SetParent { entity, parent })
+            },
+        )
         .action(
             "add_component",
             "Adds a component by schema id. args: { \"type_id\": number }",
@@ -439,6 +465,7 @@ fn entities_json(app: &App) -> Value {
                     "id": entity.id,
                     "name": entity.name,
                     "selected": index == app.selected,
+                    "parent": entity.parent,
                     "position": entity.position,
                     "rotation": entity.rotation,
                     "scale": entity.scale,

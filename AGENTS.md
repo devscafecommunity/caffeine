@@ -63,7 +63,9 @@ Vulkan / D3D12 / Metal
 ## Doppio UI architecture
 
 - **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
-  (Hierarchy / Assets / Viewport / Inspector / Console).
+  (Hierarchy / Assets / Viewport / Inspector / Console). Pane title bars are drag
+  handles; layout presets/maximize live in the View menu. Hierarchy rows form a tree from
+  `EntityView.parent`, with expand/collapse and context actions.
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
   primitives (button, slider, text field, field editor, component card/picker, panel,
@@ -154,7 +156,8 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
    engine crate); run `./scripts/check-rust-ui.sh`.
 4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic
    helper) plus a `CATALOG` entry. Every editing command must record an undo step
-   (`App::commit`) and expose any agent-facing command as a `Message` action.
+   (`App::commit`) and expose any agent-facing command as a `Message` action. Hierarchy
+   edits use parent links (`Scene::Parent`), never UI-only nesting.
 5. **UI composition and theme** — panels compose reusable components; never build
    interactive widgets inline. Keep field editors, cards, pickers, panel chrome, menus and
    viewport interaction in `uikit/components/`; colours/spacing come from `uikit/theme.rs`.
