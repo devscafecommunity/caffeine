@@ -49,6 +49,17 @@ TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
     REQUIRE(scale.y == Approx(3.0f));
     REQUIRE(scale.z == Approx(4.0f));
 
+    CaffeineCamera camera{1.0f, 0.25f, 12.0f, {1.0f, 2.0f, 3.0f}};
+    REQUIRE(caffeine_session_set_camera(session, camera) == CAFFEINE_OK);
+    CaffeineCamera cameraOut{};
+    REQUIRE(caffeine_session_get_camera(session, &cameraOut) == CAFFEINE_OK);
+    REQUIRE(cameraOut.yaw == Approx(1.0f));
+    REQUIRE(cameraOut.pitch == Approx(0.25f));
+    REQUIRE(cameraOut.distance == Approx(12.0f));
+    REQUIRE(cameraOut.focus.x == Approx(1.0f));
+    REQUIRE(cameraOut.focus.y == Approx(2.0f));
+    REQUIRE(cameraOut.focus.z == Approx(3.0f));
+
     CaffeineEntityInfo info{};
     REQUIRE(caffeine_session_entity_at(session, 0, &info) == CAFFEINE_OK);
     REQUIRE(info.id != CAFFEINE_ENTITY_NONE);

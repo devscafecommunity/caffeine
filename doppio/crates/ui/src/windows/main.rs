@@ -43,6 +43,11 @@ enum Message {
     ScaleUp,
     SaveScene,
     RenderViewport,
+    OrbitLeft,
+    OrbitRight,
+    ZoomIn,
+    ZoomOut,
+    ResetCamera,
     Log,
 }
 
@@ -56,6 +61,7 @@ struct App {
     playing: bool,
     next_entity_id: u32,
     viewport_image: Option<iced::widget::image::Handle>,
+    camera: doppio_engine::Camera,
 }
 
 impl App {
@@ -98,6 +104,12 @@ impl App {
             .map(|entity| entity.name.clone())
             .unwrap_or_default();
 
+        let camera = loaded
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.camera().ok())
+            .unwrap_or_default();
+
         Self {
             panes,
             engine: loaded.engine,
@@ -108,6 +120,13 @@ impl App {
             playing: false,
             next_entity_id,
             viewport_image: None,
+            camera,
+        }
+    }
+
+    fn apply_camera(&mut self) {
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.set_camera(self.camera);
         }
     }
 
@@ -292,6 +311,26 @@ impl App {
             Message::RenderViewport => {
                 self.render_viewport();
             }
+            Message::OrbitLeft => {
+                self.camera.yaw -= 0.2;
+                self.apply_camera();
+            }
+            Message::OrbitRight => {
+                self.camera.yaw += 0.2;
+                self.apply_camera();
+            }
+            Message::ZoomIn => {
+                self.camera.distance = (self.camera.distance * 0.9).max(1.0);
+                self.apply_camera();
+            }
+            Message::ZoomOut => {
+                self.camera.distance = (self.camera.distance * 1.1).min(500.0);
+                self.apply_camera();
+            }
+            Message::ResetCamera => {
+                self.camera = doppio_engine::Camera::default();
+                self.apply_camera();
+            }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
             }
@@ -351,7 +390,14 @@ impl App {
                 panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity)
             }
             PaneKind::Assets => panels::assetmanager::view(),
-            PaneKind::Viewport => panels::sceneviewport::view(self.viewport_image.clone()),
+            PaneKind::Viewport => panels::sceneviewport::view(
+                self.viewport_image.clone(),
+                Message::OrbitLeft,
+                Message::OrbitRight,
+                Message::ZoomIn,
+                Message::ZoomOut,
+                Message::ResetCamera,
+            ),
             PaneKind::Inspector => panels::inspector::view(
                 self.entities.get(self.selected),
                 &self.name_input,
@@ -434,6 +480,15 @@ mod tests {
         let before = app.entities[0].scale[0];
         click_and_update(&mut app, "scale-up");
         assert!(app.entities[0].scale[0] > before);
+    }
+
+    #[test]
+    fn orbit_changes_camera_yaw() {
+        let _guard = test_guard();
+        let mut app = App::new();
+        let before = app.camera.yaw;
+        click_and_update(&mut app, "orbit-left");
+        assert!(app.camera.yaw < before);
     }
 
     #[test]

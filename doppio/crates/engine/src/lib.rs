@@ -26,6 +26,25 @@ pub struct EntityInfo {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Camera {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub focus: [f32; 3],
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            yaw: 0.65,
+            pitch: 0.35,
+            distance: 10.0,
+            focus: [0.0; 3],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
     pub delta_time: f32,
@@ -45,6 +64,15 @@ struct RawVec3 {
     x: f32,
     y: f32,
     z: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct RawCamera {
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    focus: RawVec3,
 }
 
 #[repr(C)]
@@ -75,6 +103,8 @@ type SetRotationFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type ScaleFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
+type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
+type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
 type TickFn = unsafe extern "C" fn(*mut c_void, f32);
 type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
 
@@ -99,6 +129,8 @@ struct Functions {
     scale: ScaleFn,
     set_scale: SetScaleFn,
     render: RenderFn,
+    set_camera: SetCameraFn,
+    get_camera: GetCameraFn,
     tick: TickFn,
     frame_stats: FrameStatsFn,
 }
@@ -165,6 +197,8 @@ impl Engine {
             scale: unsafe { load_symbol(&library, b"caffeine_session_entity_scale\0") }?,
             set_scale: unsafe { load_symbol(&library, b"caffeine_session_set_entity_scale\0") }?,
             render: unsafe { load_symbol(&library, b"caffeine_session_render\0") }?,
+            set_camera: unsafe { load_symbol(&library, b"caffeine_session_set_camera\0") }?,
+            get_camera: unsafe { load_symbol(&library, b"caffeine_session_get_camera\0") }?,
             tick: unsafe { load_symbol(&library, b"caffeine_session_tick\0") }?,
             frame_stats: unsafe { load_symbol(&library, b"caffeine_session_frame_stats\0") }?,
         };
@@ -287,6 +321,35 @@ impl Engine {
         result(unsafe { (self.functions.set_scale)(self.session, entity, to_raw(scale)) })
     }
 
+    pub fn camera(&self) -> EngineResult<Camera> {
+        let mut camera = RawCamera::default();
+        result(unsafe { (self.functions.get_camera)(self.session, &mut camera) })?;
+        Ok(Camera {
+            yaw: camera.yaw,
+            pitch: camera.pitch,
+            distance: camera.distance,
+            focus: [camera.focus.x, camera.focus.y, camera.focus.z],
+        })
+    }
+
+    pub fn set_camera(&mut self, camera: Camera) -> EngineResult<()> {
+        result(unsafe {
+            (self.functions.set_camera)(
+                self.session,
+                RawCamera {
+                    yaw: camera.yaw,
+                    pitch: camera.pitch,
+                    distance: camera.distance,
+                    focus: RawVec3 {
+                        x: camera.focus[0],
+                        y: camera.focus[1],
+                        z: camera.focus[2],
+                    },
+                },
+            )
+        })
+    }
+
     pub fn render(&mut self, width: u32, height: u32) -> EngineResult<Vec<u8>> {
         let size = width as usize * height as usize * 4;
         let mut pixels = vec![0u8; size];
@@ -394,6 +457,19 @@ mod tests {
         engine.set_scale(player, [2.0, 3.0, 4.0]).unwrap();
         assert_eq!(engine.scale(player).unwrap(), [2.0, 3.0, 4.0]);
         assert!(engine.is_dirty());
+
+        let camera = Camera {
+            yaw: 1.0,
+            pitch: 0.25,
+            distance: 12.0,
+            focus: [1.0, 2.0, 3.0],
+        };
+        engine.set_camera(camera).unwrap();
+        let readback = engine.camera().unwrap();
+        assert!((readback.yaw - 1.0).abs() < 0.001);
+        assert!((readback.pitch - 0.25).abs() < 0.001);
+        assert!((readback.distance - 12.0).abs() < 0.001);
+        assert_eq!(readback.focus, [1.0, 2.0, 3.0]);
 
         let path = std::env::temp_dir().join("caffeine_capi_rust_roundtrip.caf");
         engine.save_scene(path.to_str().unwrap()).unwrap();

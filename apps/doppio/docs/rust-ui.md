@@ -96,7 +96,7 @@ First slice implemented and tested:
 
 - header: `include/caffeine/capi/EngineAPI.h`
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
-- test: `tests/test_capi.cpp` (`[capi]`, 53 assertions)
+- test: `tests/test_capi.cpp` (`[capi]`, 61 assertions)
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
@@ -108,7 +108,7 @@ First slice implemented and tested:
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 7 Rust tests: 1 engine bridge round-trip + 6 UI tests (`iced_test`).
+- 8 Rust tests: 1 engine bridge round-trip + 7 UI tests (`iced_test`).
 
 The PoC now loads a real scene through the ABI:
 
@@ -141,6 +141,8 @@ The CPU-readback path is implemented and working:
 - `doppio-engine::Engine::render()` wraps the ABI.
 - `uikit/components/rendering_canvas.rs` displays the frame with Iced's image
   widget; the app refreshes it at 2 FPS via an `iced::time` subscription.
+- The camera (yaw, pitch, distance, focus) is stored in `CaffeineCamera` and
+  controlled from the viewport toolbar.
 - The current render size is 640x360.
 
 The viewport now shows the real C++ scene (terrain, rocks, sky) in Iced.

@@ -49,6 +49,13 @@ typedef struct CaffeineVec3 {
     float z;
 } CaffeineVec3;
 
+typedef struct CaffeineCamera {
+    float yaw;
+    float pitch;
+    float distance;
+    CaffeineVec3 focus;
+} CaffeineCamera;
+
 /** Create/destroy a scene session. The session owns its ECS world. */
 CaffeineSession* caffeine_session_create(void);
 void caffeine_session_destroy(CaffeineSession* session);
@@ -67,6 +74,9 @@ int caffeine_session_is_dirty(const CaffeineSession* session);
 CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
                                        uint32_t height, uint8_t* pixels,
                                        size_t pixel_bytes);
+/** Viewport camera (radians for yaw/pitch, world units for distance). */
+CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
+CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
 /** Write the current world to a .caf scene and clear the dirty flag. */
 CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 

@@ -38,6 +38,8 @@ struct CaffeineSession {
     Caffeine::RHI::Texture* colorTarget = nullptr;
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
+    CaffeineCamera camera{0.65f, 0.35f, 10.0f, {0.0f, 0.0f, 0.0f}};
+    bool cameraInitialized = false;
 
     ~CaffeineSession() {
         shutdownRender();
@@ -233,6 +235,7 @@ CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char*
             : parent;
     session->context.projectRootPath = root.string();
     session->context.isDirty = false;
+    session->cameraInitialized = false;
     return CAFFEINE_OK;
 }
 
@@ -472,16 +475,25 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
         radius = std::max((max - min).length() * 0.5f, 2.0f);
     }
 
-    const float distance = std::max(radius * 2.5f, 5.0f);
+    if (!session->cameraInitialized) {
+        session->camera.yaw = 0.65f;
+        session->camera.pitch = 0.35f;
+        session->camera.distance = std::max(radius * 2.5f, 5.0f);
+        session->camera.focus = {center.x, center.y, center.z};
+        session->cameraInitialized = true;
+    }
+    const Caffeine::Vec3 focus(session->camera.focus.x, session->camera.focus.y,
+                               session->camera.focus.z);
+    const float distance = std::max(session->camera.distance, 1.0f);
     const Caffeine::Vec3 cameraPosition = Caffeine::Editor::editorCameraPosition(
-        0.65f, 0.35f, distance, center);
+        session->camera.yaw, session->camera.pitch, distance, focus);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     const float farClip = std::max(1000.0f, distance * 20.0f);
 
     Caffeine::Render::GpuSceneCamera camera;
     camera.position = cameraPosition;
-    camera.focus = center;
-    camera.view = Caffeine::Mat4::lookAt(cameraPosition, center,
+    camera.focus = focus;
+    camera.view = Caffeine::Mat4::lookAt(cameraPosition, focus,
                                          Caffeine::Vec3(0.0f, 1.0f, 0.0f));
     camera.proj = Caffeine::Mat4::perspective(1.0472f, aspect, 0.1f, farClip);
     camera.fovRad = 1.0472f;
@@ -512,6 +524,20 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
     }
     const size_t copySize = std::min(readback.size(), required);
     std::memcpy(pixels, readback.data(), copySize);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->camera = camera;
+    session->cameraInitialized = true;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_get_camera(const CaffeineSession* session,
+                                           CaffeineCamera* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = session->camera;
     return CAFFEINE_OK;
 }
 
