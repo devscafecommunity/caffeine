@@ -54,6 +54,14 @@ pub struct AssetInfo {
     pub is_directory: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderState {
+    Idle,
+    Pending,
+    Ready,
+    Failed,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameStats {
     pub delta_time: f32,
@@ -121,6 +129,8 @@ type SetRotationFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type ScaleFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
+type RenderBeginFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
+type RenderPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
 type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
 type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
 type SetAssetRootFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
@@ -151,6 +161,8 @@ struct Functions {
     scale: ScaleFn,
     set_scale: SetScaleFn,
     render: RenderFn,
+    render_begin: RenderBeginFn,
+    render_poll: RenderPollFn,
     set_camera: SetCameraFn,
     get_camera: GetCameraFn,
     set_asset_root: SetAssetRootFn,
@@ -248,6 +260,8 @@ impl Engine {
             scale: unsafe { load_symbol(library, b"caffeine_session_entity_scale\0") }?,
             set_scale: unsafe { load_symbol(library, b"caffeine_session_set_entity_scale\0") }?,
             render: unsafe { load_symbol(library, b"caffeine_session_render\0") }?,
+            render_begin: unsafe { load_symbol(library, b"caffeine_session_render_begin\0") }?,
+            render_poll: unsafe { load_symbol(library, b"caffeine_session_render_poll\0") }?,
             set_camera: unsafe { load_symbol(library, b"caffeine_session_set_camera\0") }?,
             get_camera: unsafe { load_symbol(library, b"caffeine_session_get_camera\0") }?,
             set_asset_root: unsafe { load_symbol(library, b"caffeine_session_set_asset_root\0") }?,
@@ -399,6 +413,22 @@ impl Engine {
                 },
             )
         })
+    }
+
+    pub fn render_begin(&mut self, width: u32, height: u32) -> EngineResult<()> {
+        result(unsafe { (self.functions.render_begin)(self.session, width, height) })
+    }
+
+    pub fn render_poll(&mut self, pixels: &mut [u8]) -> EngineResult<RenderState> {
+        let state = unsafe {
+            (self.functions.render_poll)(self.session, pixels.as_mut_ptr(), pixels.len())
+        };
+        match state {
+            0 => Ok(RenderState::Idle),
+            1 => Ok(RenderState::Pending),
+            2 => Ok(RenderState::Ready),
+            _ => Ok(RenderState::Failed),
+        }
     }
 
     pub fn render(&mut self, width: u32, height: u32) -> EngineResult<Vec<u8>> {
@@ -574,8 +604,28 @@ mod tests {
         assert!(first.id == player || first.id == enemy);
         assert_eq!(engine.entity_at(99).unwrap_err(), EngineError::NotFound);
 
-        let pixels = engine.render(320, 180).expect("render");
-        assert_eq!(pixels.len(), 320 * 180 * 4);
+        if let Ok(pixels) = engine.render(320, 180) {
+            assert_eq!(pixels.len(), 320 * 180 * 4);
+        }
+
+        let mut async_pixels = vec![0u8; 160 * 90 * 4];
+        if engine.render_begin(160, 90).is_ok() {
+            let mut ready = false;
+            for _ in 0..200 {
+                match engine.render_poll(&mut async_pixels) {
+                    Ok(RenderState::Ready) => {
+                        ready = true;
+                        break;
+                    }
+                    Ok(RenderState::Pending) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    _ => break,
+                }
+            }
+            assert!(ready, "async render should complete");
+            assert!(async_pixels.iter().any(|byte| *byte != 0));
+        }
         drop(engine);
 
         let mut engine = Engine::load_default().expect("reload");

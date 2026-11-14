@@ -91,6 +91,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
 - project asset listing (`set_asset_root`, `refresh_assets`, `asset_at`); the
   Rust Asset Manager shows real files and a file count;
+- non-blocking render (`render_begin` / `render_poll`): submit a download copy
+  and poll its fence instead of waiting for the GPU;
 - camera get/set (`CaffeineCamera`), driven by the viewport toolbar;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
@@ -121,25 +123,38 @@ The existing `PluginHostApi` is a good function-table precedent. The existing
 `DOPPIO_TEST_MODE` JSON loop (`TestRequestHandler`) is a good engine-side test
 precedent.
 
-### Viewport — CPU readback done
+### Viewport — asynchronous CPU readback
 
 - `RenderDevice::initOffscreen()` creates a headless SDL_GPU device.
-- `caffeine_session_render()` renders with `GpuSceneRenderer::renderWithCamera`
-  into an RGBA8 target and reads it back with `RenderDevice::readTexture`.
-- `doppio-engine::Engine::render()` wraps the ABI.
+- `caffeine_session_render()` is the blocking path (tools/tests): render with
+  `GpuSceneRenderer::renderWithCamera` into an RGBA8 target and read it back.
+- `caffeine_session_render_begin()` renders, starts a texture→transfer-buffer
+  download and returns immediately with a fence.
+- `caffeine_session_render_poll()` returns `PENDING` until the fence is
+  signalled, then maps the transfer buffer and copies the pixels.
+- `doppio-engine::Engine::{render, render_begin, render_poll}` wrap the ABI.
 - `uikit/components/rendering_canvas.rs` displays the frame with Iced's image
-  widget; the app refreshes it at 2 FPS via an `iced::time` subscription.
+  widget; the app pumps `ViewportTick` every 16 ms, so rendering, readback and
+  UI stay decoupled.
 - The camera (yaw, pitch, distance, focus) is stored in `CaffeineCamera` and
   controlled from the viewport toolbar (Orbit -/+, Zoom +/-, Reset).
-- The current render size is 640x360.
+- The render size is 960x540.
 
 The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
 
-Next viewport step is replacing readback with a shared GPU texture:
+### Why not a shared GPU texture yet
 
-1. D3D12 shared handle on Windows.
-2. Vulkan external memory on Linux.
-3. Fallback: separate SDL3 viewport window while interop is unfinished.
+SDL_GPU exposes no native resource handles (no `VkImage`, D3D12 resource or
+shared handle), so Iced/wgpu cannot import the engine's colour target through
+the public API. The async readback above removes the GPU stall; the copy
+remains. Real zero-copy requires one of:
+
+1. a wgpu RHI backend for the engine (or rendering the scene in wgpu directly);
+2. Vulkan external memory via a custom SDL_GPU patch/extension;
+3. an embedding strategy with a separate SDL3 viewport window.
+
+Until then, keep the readback path responsive and treat the texture hand-off as
+a renderer-level project, not a UI change.
 
 ### Plugins
 

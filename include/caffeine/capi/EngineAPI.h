@@ -92,6 +92,20 @@ CAFFEINE_CAPI_API int caffeine_session_is_dirty(const CaffeineSession* session);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
                                        uint32_t height, uint8_t* pixels,
                                        size_t pixel_bytes);
+
+/** Non-blocking render: submit once, poll until READY, then reuse the pixels. */
+typedef enum CaffeineRenderState {
+    CAFFEINE_RENDER_IDLE = 0,
+    CAFFEINE_RENDER_PENDING = 1,
+    CAFFEINE_RENDER_READY = 2,
+    CAFFEINE_RENDER_FAILED = 3,
+} CaffeineRenderState;
+
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_begin(CaffeineSession* session,
+                                             uint32_t width, uint32_t height);
+CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session,
+                                                 uint8_t* pixels,
+                                                 size_t pixel_bytes);
 /** Viewport camera (radians for yaw/pitch, world units for distance). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);

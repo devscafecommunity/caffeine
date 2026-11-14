@@ -7,6 +7,9 @@ use crate::windows::projectloader;
 use iced::widget::{column, pane_grid, row, space, text};
 use iced::Element;
 
+const VIEWPORT_WIDTH: u32 = 960;
+const VIEWPORT_HEIGHT: u32 = 540;
+
 #[cfg(feature = "agent")]
 pub fn run() -> iced::Result {
     agent::run()
@@ -48,6 +51,7 @@ enum Message {
     ScaleUp,
     SaveScene,
     RenderViewport,
+    ViewportTick,
     OrbitLeft,
     OrbitRight,
     ZoomIn,
@@ -69,6 +73,8 @@ struct App {
     playing: bool,
     next_entity_id: u32,
     viewport_image: Option<iced::widget::image::Handle>,
+    viewport_pixels: Vec<u8>,
+    viewport_pending: bool,
     camera: doppio_engine::Camera,
 }
 
@@ -144,6 +150,8 @@ impl App {
             playing: false,
             next_entity_id,
             viewport_image: None,
+            viewport_pixels: vec![0; (VIEWPORT_WIDTH * VIEWPORT_HEIGHT * 4) as usize],
+            viewport_pending: false,
             camera,
         }
     }
@@ -194,29 +202,62 @@ impl App {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::RenderViewport)
+        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::ViewportTick)
     }
 
-    fn render_viewport(&mut self) {
-        const WIDTH: u32 = 640;
-        const HEIGHT: u32 = 360;
-        let Some(engine) = self.engine.as_mut() else {
+    fn request_viewport(&mut self) {
+        if self.viewport_pending {
             return;
+        }
+        let started = self
+            .engine
+            .as_mut()
+            .map(|engine| engine.render_begin(VIEWPORT_WIDTH, VIEWPORT_HEIGHT));
+        match started {
+            Some(Ok(())) => self.viewport_pending = true,
+            Some(Err(_)) => self.log_render_failure(),
+            None => {}
+        }
+    }
+
+    /// Non-blocking readback: submit one frame, then map it a few ticks later.
+    fn pump_viewport(&mut self) {
+        if !self.viewport_pending {
+            self.request_viewport();
+            return;
+        }
+
+        let polled = match self.engine.as_mut() {
+            Some(engine) => Some(engine.render_poll(&mut self.viewport_pixels)),
+            None => None,
         };
-        match engine.render(WIDTH, HEIGHT) {
-            Ok(pixels) => {
+        match polled {
+            Some(Ok(doppio_engine::RenderState::Ready)) => {
+                self.viewport_pending = false;
+                let pixels = std::mem::take(&mut self.viewport_pixels);
+                self.viewport_pixels = vec![0; pixels.len()];
                 if self.viewport_image.is_none() {
                     self.log.push("Viewport ready".to_owned());
                 }
                 self.viewport_image = Some(iced::widget::image::Handle::from_rgba(
-                    WIDTH, HEIGHT, pixels,
+                    VIEWPORT_WIDTH,
+                    VIEWPORT_HEIGHT,
+                    pixels,
                 ));
             }
-            Err(_) => {
-                if self.log.last().map(String::as_str) != Some("Viewport render failed") {
-                    self.log.push("Viewport render failed".to_owned());
-                }
+            Some(Ok(doppio_engine::RenderState::Pending)) => {}
+            Some(Ok(doppio_engine::RenderState::Idle)) => self.viewport_pending = false,
+            Some(Ok(doppio_engine::RenderState::Failed)) | Some(Err(_)) => {
+                self.viewport_pending = false;
+                self.log_render_failure();
             }
+            None => {}
+        }
+    }
+
+    fn log_render_failure(&mut self) {
+        if self.log.last().map(String::as_str) != Some("Viewport render failed") {
+            self.log.push("Viewport render failed".to_owned());
         }
     }
 
@@ -355,7 +396,10 @@ impl App {
                 }
             }
             Message::RenderViewport => {
-                self.render_viewport();
+                self.request_viewport();
+            }
+            Message::ViewportTick => {
+                self.pump_viewport();
             }
             Message::OrbitLeft => {
                 self.camera.yaw -= 0.2;

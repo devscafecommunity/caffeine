@@ -70,6 +70,14 @@ struct CaffeineSession {
     std::string assetRoot;
     std::vector<AssetEntry> assets;
 
+    // Async CPU readback: submit a download copy and poll its fence instead of
+    // blocking the UI thread in SDL_WaitForGPUIdle.
+    SDL_GPUTransferBuffer* readbackTransfer = nullptr;
+    SDL_GPUFence* readbackFence = nullptr;
+    uint32_t readbackWidth = 0;
+    uint32_t readbackHeight = 0;
+    bool readbackPending = false;
+
     void scanAssets() {
         assets.clear();
         if (assetRoot.empty()) return;
@@ -111,7 +119,28 @@ struct CaffeineSession {
     }
 
     ~CaffeineSession() {
+        releaseReadback();
         shutdownRender();
+    }
+
+    void releaseReadback() {
+        if (!renderDevice) {
+            readbackTransfer = nullptr;
+            readbackFence = nullptr;
+            readbackPending = false;
+            return;
+        }
+        if (readbackFence) {
+            SDL_ReleaseGPUFence(renderDevice->nativeDevice(), readbackFence);
+            readbackFence = nullptr;
+        }
+        if (readbackTransfer) {
+            SDL_ReleaseGPUTransferBuffer(renderDevice->nativeDevice(), readbackTransfer);
+            readbackTransfer = nullptr;
+        }
+        readbackPending = false;
+        readbackWidth = 0;
+        readbackHeight = 0;
     }
 
     void shutdownRender() {
@@ -519,15 +548,8 @@ void caffeine_session_tick(CaffeineSession* session, float delta_time) {
     ++session->frameIndex;
 }
 
-CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
-                                       uint32_t height, uint8_t* pixels,
-                                       size_t pixel_bytes) {
-    if (!session || !pixels || width == 0 || height == 0) {
-        return CAFFEINE_INVALID_ARGUMENT;
-    }
-    const size_t required = static_cast<size_t>(width) * height * 4u;
-    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
-    if (!session->ensureRender(width, height)) return CAFFEINE_ERROR;
+static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t height) {
+    if (!session.ensureRender(width, height)) return false;
 
     Caffeine::Vec3 min(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
@@ -539,7 +561,7 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
 
     Caffeine::ECS::ComponentQuery query;
     query.with<Caffeine::Scene::WorldTransform>();
-    session->world.forEach<Caffeine::Scene::WorldTransform>(
+    session.world.forEach<Caffeine::Scene::WorldTransform>(
         query, [&](Caffeine::ECS::Entity, Caffeine::Scene::WorldTransform& transform) {
             const Caffeine::Vec3 point =
                 transform.matrix.transformPoint(Caffeine::Vec3(0.0f, 0.0f, 0.0f));
@@ -558,18 +580,18 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
         radius = std::max((max - min).length() * 0.5f, 2.0f);
     }
 
-    if (!session->cameraInitialized) {
-        session->camera.yaw = 0.65f;
-        session->camera.pitch = 0.35f;
-        session->camera.distance = std::max(radius * 2.5f, 5.0f);
-        session->camera.focus = {center.x, center.y, center.z};
-        session->cameraInitialized = true;
+    if (!session.cameraInitialized) {
+        session.camera.yaw = 0.65f;
+        session.camera.pitch = 0.35f;
+        session.camera.distance = std::max(radius * 2.5f, 5.0f);
+        session.camera.focus = {center.x, center.y, center.z};
+        session.cameraInitialized = true;
     }
-    const Caffeine::Vec3 focus(session->camera.focus.x, session->camera.focus.y,
-                               session->camera.focus.z);
-    const float distance = std::max(session->camera.distance, 1.0f);
+    const Caffeine::Vec3 focus(session.camera.focus.x, session.camera.focus.y,
+                               session.camera.focus.z);
+    const float distance = std::max(session.camera.distance, 1.0f);
     const Caffeine::Vec3 cameraPosition = Caffeine::Editor::editorCameraPosition(
-        session->camera.yaw, session->camera.pitch, distance, focus);
+        session.camera.yaw, session.camera.pitch, distance, focus);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     const float farClip = std::max(1000.0f, distance * 20.0f);
 
@@ -594,12 +616,24 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
     options.postProcess = Caffeine::Render::PostProcessStack::defaults();
     options.postProcess.antiAliasing.enabled = false;
 
-    Caffeine::RHI::CommandBuffer* command = session->renderDevice->beginOffscreen();
-    if (!command) return CAFFEINE_ERROR;
-    session->sceneRenderer->renderWithCamera(
-        command, session->world, camera, session->colorTarget, nullptr, width, height,
-        session->context.projectRootPath, options);
-    session->renderDevice->endOffscreen(command);
+    Caffeine::RHI::CommandBuffer* command = session.renderDevice->beginOffscreen();
+    if (!command) return false;
+    session.sceneRenderer->renderWithCamera(
+        command, session.world, camera, session.colorTarget, nullptr, width, height,
+        session.context.projectRootPath, options);
+    session.renderDevice->endOffscreen(command);
+    return true;
+}
+
+CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
+                                       uint32_t height, uint8_t* pixels,
+                                       size_t pixel_bytes) {
+    if (!session || !pixels || width == 0 || height == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const size_t required = static_cast<size_t>(width) * height * 4u;
+    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
+    if (!renderFrame(*session, width, height)) return CAFFEINE_ERROR;
 
     std::vector<uint8_t> readback;
     if (!session->renderDevice->readTexture(session->colorTarget, readback)) {
@@ -608,6 +642,81 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
     const size_t copySize = std::min(readback.size(), required);
     std::memcpy(pixels, readback.data(), copySize);
     return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_render_begin(CaffeineSession* session, uint32_t width,
+                                             uint32_t height) {
+    if (!session || width == 0 || height == 0) return CAFFEINE_INVALID_ARGUMENT;
+    if (session->readbackPending) return CAFFEINE_ERROR;
+    if (!renderFrame(*session, width, height)) return CAFFEINE_ERROR;
+
+    session->releaseReadback();
+    SDL_GPUDevice* device = session->renderDevice->nativeDevice();
+    if (!device || !session->colorTarget) return CAFFEINE_ERROR;
+
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = static_cast<Uint32>(width) * height * 4u;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device, &info);
+    if (!transfer) return CAFFEINE_ERROR;
+
+    SDL_GPUCommandBuffer* command = SDL_AcquireGPUCommandBuffer(device);
+    if (!command) {
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        return CAFFEINE_ERROR;
+    }
+
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(command);
+    SDL_GPUTextureRegion source{};
+    source.texture = session->colorTarget->handle;
+    source.w = width;
+    source.h = height;
+    source.d = 1;
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = transfer;
+    destination.pixels_per_row = width;
+    destination.rows_per_layer = height;
+    SDL_DownloadFromGPUTexture(copy, &source, &destination);
+    SDL_EndGPUCopyPass(copy);
+
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command);
+    if (!fence) {
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        SDL_WaitForGPUIdle(device);
+        return CAFFEINE_ERROR;
+    }
+
+    session->readbackTransfer = transfer;
+    session->readbackFence = fence;
+    session->readbackWidth = width;
+    session->readbackHeight = height;
+    session->readbackPending = true;
+    return CAFFEINE_OK;
+}
+
+CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session, uint8_t* pixels,
+                                                size_t pixel_bytes) {
+    if (!session || !session->readbackPending) return CAFFEINE_RENDER_IDLE;
+    if (!pixels) return CAFFEINE_RENDER_FAILED;
+
+    const size_t required =
+        static_cast<size_t>(session->readbackWidth) * session->readbackHeight * 4u;
+    if (pixel_bytes < required) return CAFFEINE_RENDER_FAILED;
+
+    SDL_GPUDevice* device = session->renderDevice->nativeDevice();
+    if (!device || !SDL_QueryGPUFence(device, session->readbackFence)) {
+        return CAFFEINE_RENDER_PENDING;
+    }
+
+    const void* mapped = SDL_MapGPUTransferBuffer(device, session->readbackTransfer, false);
+    if (!mapped) {
+        session->releaseReadback();
+        return CAFFEINE_RENDER_FAILED;
+    }
+    std::memcpy(pixels, mapped, required);
+    SDL_UnmapGPUTransferBuffer(device, session->readbackTransfer);
+    session->releaseReadback();
+    return CAFFEINE_RENDER_READY;
 }
 
 CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera) {
