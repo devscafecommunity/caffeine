@@ -261,6 +261,27 @@ TEST_CASE("C API exposes component schemas and values", "[capi]") {
     REQUIRE(caffeine_session_remove_component(session, entity, cameraType) == CAFFEINE_OK);
     CHECK(caffeine_session_entity_component_count(session, entity) == before);
 
+    uint32_t lightType = 0;
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        CaffeineComponentTypeInfo info{};
+        REQUIRE(caffeine_component_type_at(i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "Light") == 0) lightType = info.id;
+    }
+    REQUIRE(lightType != 0);
+    REQUIRE(caffeine_session_add_component(session, entity, lightType) == CAFFEINE_OK);
+    for (uint32_t i = 0; i < caffeine_session_entity_component_count(session, entity); ++i) {
+        CaffeineComponentInfo info{};
+        REQUIRE(caffeine_session_entity_component_at(session, entity, i, &info) ==
+                CAFFEINE_OK);
+        if (info.type_id == lightType) {
+            CaffeineFieldValue value{};
+            REQUIRE(caffeine_session_entity_component_field_get(session, entity, i, 0,
+                                                                &value) ==
+                    CAFFEINE_OK);
+            CHECK(value.kind == CAFFEINE_FIELD_COLOR);
+        }
+    }
+
     caffeine_session_destroy(session);
 }
 

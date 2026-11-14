@@ -556,14 +556,39 @@ fn hierarchy_tree_collapses_and_expands_children() {
 }
 
 #[test]
-fn layout_presets_keep_every_pane() {
+fn hierarchy_root_collapses_and_search_filters() {
+    let mut harness = Harness::with_entities();
+    harness.click(id::HIERARCHY_ROOT);
+    assert!(!harness.has(Id::from(id::entity_row(0))));
+    harness.click(id::HIERARCHY_ROOT);
+    assert!(harness.has(Id::from(id::entity_row(0))));
+
+    harness.type_into(id::HIERARCHY_SEARCH, "Entity 2");
+    assert!(!harness.has(Id::from(id::entity_row(0))));
+    assert!(harness.has(Id::from(id::entity_row(1))));
+}
+
+#[test]
+fn layout_presets_keep_every_page() {
     for preset in [LayoutPreset::Default, LayoutPreset::Viewport] {
         let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
-        assert_eq!(state.len(), 5);
+        assert_eq!(state.len(), 4);
+        let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
+        assert_eq!(pages, 5);
     }
     let mut harness = Harness::with_entities();
     harness.dispatch(Message::Layout(LayoutPreset::Viewport));
-    assert_eq!(harness.app().panes.len(), 5);
+    assert_eq!(harness.app().panes.len(), 4);
+}
+
+#[test]
+fn pane_tabs_switch_between_grouped_panels() {
+    let mut harness = Harness::with_entities();
+    assert!(harness.has(Id::from(id::PANE_HIERARCHY)));
+    harness.click(id::PANE_TAB_ASSETS);
+    assert!(harness.has(Id::from(id::PANE_ASSETS)));
+    harness.click(id::PANE_TAB_HIERARCHY);
+    assert!(harness.has(Id::from(id::PANE_HIERARCHY)));
 }
 
 #[test]
@@ -581,10 +606,10 @@ fn every_pane_and_toolbar_button_is_addressable() {
         id::MENU_EDIT,
         id::MENU_VIEW,
         id::PANE_HIERARCHY,
-        id::PANE_ASSETS,
         id::PANE_VIEWPORT,
         id::PANE_INSPECTOR,
         id::PANE_CONSOLE,
+        id::PANE_TAB_ASSETS,
         id::ENTITY_NAME,
         id::VIEWPORT_SURFACE,
     ] {
@@ -766,7 +791,7 @@ fn select_by_name_and_add_named_entity() {
             .app()
             .log
             .iter()
-            .any(|line| line.contains("Missing")),
+            .any(|entry| entry.text.contains("Missing")),
         "unknown names should be reported in the console"
     );
 }
@@ -926,6 +951,21 @@ fn menus_stay_open_across_viewport_ticks() {
     harness.click(id::MENU_VIEW);
     harness.dispatch(Message::ViewportTick);
     assert!(harness.shows("Focus Selection"));
+}
+
+#[test]
+fn console_filters_hide_action_entries() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::AddEntity);
+    assert!(harness.shows("Added Entity 1"));
+    harness.dispatch(Message::ToggleConsoleFilter(
+        crate::windows::log::LogLevel::Action,
+    ));
+    assert!(!harness.shows("Added Entity 1"));
+    harness.dispatch(Message::ToggleConsoleFilter(
+        crate::windows::log::LogLevel::Action,
+    ));
+    assert!(harness.shows("Added Entity 1"));
 }
 
 #[test]

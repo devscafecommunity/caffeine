@@ -1,4 +1,4 @@
-use crate::uikit::components::text_field;
+use crate::uikit::components::{color_picker, slider, text_field};
 use doppio_engine::{FieldInfo, FieldKind, FieldValue};
 use iced::widget::{checkbox, pick_list, row, text, Column};
 use iced::{Element, Length};
@@ -11,6 +11,8 @@ pub enum FieldEdit {
     Text { axis: usize, value: String },
     Bool { value: bool },
     Enum { index: i32 },
+    Number { axis: usize, value: f32 },
+    Color { axis: usize, value: f32 },
 }
 
 pub struct Field<'a> {
@@ -22,6 +24,7 @@ pub struct Field<'a> {
 }
 
 /// Renders one component field (scalar, vector, bool, string or enum).
+#[allow(clippy::redundant_closure)]
 pub fn view<'a, Message: Clone + 'a>(
     field: Field<'a>,
     id_for_axis: impl Fn(usize) -> iced::widget::Id + 'a,
@@ -37,6 +40,22 @@ pub fn view<'a, Message: Clone + 'a>(
     };
 
     match (field.info.kind, field.value) {
+        (FieldKind::Color, FieldValue::Color(color)) => color_picker::view(
+            field.info.name.as_str(),
+            *color,
+            move |axis| id_for_axis(axis),
+            move |axis, value| emit(FieldEdit::Color { axis, value }),
+        ),
+        (FieldKind::F32, FieldValue::F32(number)) if field.info.max > field.info.min => {
+            let emit = emit.clone();
+            slider::labeled(
+                id_for_axis(0),
+                field.info.name.clone(),
+                field.info.min..=field.info.max,
+                *number,
+                move |value| emit(FieldEdit::Number { axis: 0, value }),
+            )
+        }
         (FieldKind::Bool, FieldValue::Bool(flag)) => {
             let emit = emit.clone();
             row![
@@ -121,6 +140,7 @@ fn display(value: &FieldValue, axis: usize) -> String {
         FieldValue::String(text) => text.clone(),
         FieldValue::Bool(flag) => flag.to_string(),
         FieldValue::Enum(index) => index.to_string(),
+        FieldValue::Color(color) => format_number(color[axis.min(3)]),
     }
 }
 
@@ -157,6 +177,11 @@ pub fn parse_value(current: &FieldValue, axis: usize, text: &str) -> Option<Fiel
         FieldValue::String(_) => Some(FieldValue::String(text.to_owned())),
         FieldValue::Enum(_) => text.parse::<i32>().ok().map(FieldValue::Enum),
         FieldValue::Bool(flag) => Some(FieldValue::Bool(*flag)),
+        FieldValue::Color(color) => {
+            let mut color = *color;
+            color[axis.min(3)] = text.parse::<f32>().ok()?;
+            Some(FieldValue::Color(color))
+        }
     }
 }
 

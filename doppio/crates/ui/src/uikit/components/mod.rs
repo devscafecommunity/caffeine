@@ -1,5 +1,6 @@
 pub mod asset_preview;
 pub mod button;
+pub mod color_picker;
 pub mod component_card;
 pub mod component_picker;
 pub mod field_editor;
@@ -10,7 +11,9 @@ pub mod panel;
 pub mod rendering_canvas;
 pub mod slider;
 pub mod status;
+pub mod tabs;
 pub mod text_field;
+pub mod toggle_chip;
 pub mod toolbar;
 pub mod tree_row;
 pub mod viewport_surface;

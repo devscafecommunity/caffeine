@@ -109,6 +109,62 @@ pub fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> button::St
     }
 }
 
+pub fn rgba(color: [f32; 4]) -> Color {
+    Color::from_rgba(
+        color[0].clamp(0.0, 1.0),
+        color[1].clamp(0.0, 1.0),
+        color[2].clamp(0.0, 1.0),
+        color[3].clamp(0.0, 1.0),
+    )
+}
+
+pub fn swatch(color: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(color.into()),
+        border: Border {
+            color: BORDER_STRONG,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn tab(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| button::Style {
+        background: if active || matches!(status, button::Status::Hovered | button::Status::Pressed)
+        {
+            Some(PANEL_ALT.into())
+        } else {
+            None
+        },
+        text_color: if active { TEXT } else { TEXT_MUTED },
+        border: Border::default(),
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
+pub fn filter_chip(active: bool, color: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| button::Style {
+        background: if active {
+            Some(Color { a: 0.16, ..color }.into())
+        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            Some(PANEL_ALT.into())
+        } else {
+            None
+        },
+        text_color: if active { color } else { TEXT_MUTED },
+        border: Border {
+            color: if active { color } else { BORDER },
+            width: 1.0,
+            radius: 9.0.into(),
+        },
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
 pub fn menu_item(_theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: match status {

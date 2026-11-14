@@ -29,8 +29,9 @@ pub fn run() -> iced::Result {
         .query("layout", "Pane layout and maximize state.", |app, _| {
             let maximized = app.panes.maximized();
             Ok(json!({
-                "panes": app.panes.iter().map(|(pane, kind)| json!({
-                    "kind": format!("{kind:?}"),
+                "panes": app.panes.iter().map(|(pane, group)| json!({
+                    "active": format!("{:?}", group.active_kind()),
+                    "pages": group.pages.iter().map(|kind| format!("{kind:?}")).collect::<Vec<_>>(),
                     "maximized": maximized == Some(*pane),
                 })).collect::<Vec<_>>(),
                 "maximized": maximized.map(|pane| format!("{pane:?}")),
@@ -300,6 +301,7 @@ fn field_kind_name(kind: doppio_engine::FieldKind) -> &'static str {
         FieldKind::Vec4 => "vec4",
         FieldKind::String => "string",
         FieldKind::Enum => "enum",
+        FieldKind::Color => "color",
     }
 }
 
@@ -315,6 +317,7 @@ fn field_value_json(value: &doppio_engine::FieldValue) -> Value {
         FieldValue::Vec4(vector) => json!(vector),
         FieldValue::String(text) => json!(text),
         FieldValue::Enum(index) => json!(index),
+        FieldValue::Color(color) => json!(color),
     }
 }
 
@@ -355,6 +358,19 @@ fn parse_field_value(kind: &str, value: &Value) -> Result<doppio_engine::FieldVa
                 .as_i64()
                 .ok_or_else(|| format!("expected an enum index, got {value}"))? as i32,
         )),
+        "color" => {
+            let array = value
+                .as_array()
+                .ok_or_else(|| format!("expected an RGBA array, got {value}"))?;
+            if array.len() != 4 {
+                return Err("color needs four numbers".to_owned());
+            }
+            let mut color = [0.0; 4];
+            for (index, item) in array.iter().enumerate() {
+                color[index] = number(item)?;
+            }
+            Ok(FieldValue::Color(color))
+        }
         "vec2" | "vec3" | "vec4" => {
             let array = value
                 .as_array()
@@ -503,7 +519,7 @@ fn scene_json(app: &App) -> Value {
         "dirty": dirty,
         "entity_count": app.entities.len(),
         "asset_count": app.assets.len(),
-        "log": app.log,
+        "log": app.log.iter().map(|entry| &entry.text).collect::<Vec<_>>(),
     })
 }
 

@@ -27,7 +27,19 @@
     "editor.menu.view": "View menu: focus, camera reset and render.",
     "hierarchy.tree.toggle": "Expand/collapse chevron of a hierarchy row.",
     "editor.layout.default": "Restores the default panel layout.",
-    "editor.layout.viewport": "Gives the viewport most of the workspace."
+    "editor.layout.viewport": "Gives the viewport most of the workspace.",
+    "editor.pane.tab.hierarchy": "Hierarchy tab in a shared pane.",
+    "editor.pane.tab.assets": "Assets tab in a shared pane.",
+    "editor.pane.tab.viewport": "Viewport tab in a shared pane.",
+    "editor.pane.tab.inspector": "Inspector tab in a shared pane.",
+    "editor.pane.tab.console": "Console tab in a shared pane.",
+    "console.filter.error": "Show or hide error entries in the Console.",
+    "console.filter.log": "Show or hide general log entries in the Console.",
+    "console.filter.action": "Show or hide editor action entries in the Console.",
+    "console.filter.engine": "Show or hide engine entries in the Console.",
+    "console.filter.ui": "Show or hide UI entries in the Console.",
+    "hierarchy.tree.scene": "The scene root row of the hierarchy tree.",
+    "hierarchy.search": "Search field for filtering hierarchy entities."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -57,6 +69,18 @@
     "editor.menu.view": "Menu Ver: focar, repor câmara e renderizar.",
     "hierarchy.tree.toggle": "Seta para expandir/fechar uma linha da hierarquia.",
     "editor.layout.default": "Repõe o layout predefinido dos painéis.",
-    "editor.layout.viewport": "Dá a maior parte do workspace ao viewport."
+    "editor.layout.viewport": "Dá a maior parte do workspace ao viewport.",
+    "editor.pane.tab.hierarchy": "Separador Hierarchy num painel partilhado.",
+    "editor.pane.tab.assets": "Separador Assets num painel partilhado.",
+    "editor.pane.tab.viewport": "Separador Viewport num painel partilhado.",
+    "editor.pane.tab.inspector": "Separador Inspector num painel partilhado.",
+    "editor.pane.tab.console": "Separador Console num painel partilhado.",
+    "console.filter.error": "Mostrar ou esconder erros no Console.",
+    "console.filter.log": "Mostrar ou esconder entradas gerais no Console.",
+    "console.filter.action": "Mostrar ou esconder ações do editor no Console.",
+    "console.filter.engine": "Mostrar ou esconder entradas do motor no Console.",
+    "console.filter.ui": "Mostrar ou esconder entradas da UI no Console.",
+    "hierarchy.tree.scene": "A linha raiz da cena na árvore da hierarquia.",
+    "hierarchy.search": "Campo de pesquisa para filtrar entidades da hierarquia."
   }
 }

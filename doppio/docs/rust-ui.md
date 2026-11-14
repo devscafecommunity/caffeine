@@ -115,7 +115,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 44 Rust tests: 2 engine bridge/snapshot tests, 41 UI/widget tests (1
+- 47 Rust tests: 2 engine bridge/snapshot tests, 44 UI/widget tests (1
 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
@@ -146,8 +146,9 @@ precedent.
 - The registry covers Transform, Position/Rotation/Scale 3D, Camera 3D,
   Light plus directional/point/spot, Mesh Renderer, Mesh Filter, Rigid Body
   3D/2D, Collider 3D/2D and Script.
-- The Inspector is generic: it lists every component with scalar, vector,
-  bool, string and enum editors, plus Remove per component and an Add
+- The Inspector is generic: scalar fields with limits use sliders, colours use
+  an RGBA swatch + channel sliders, and vector/bool/string/enum editors cover
+  the rest. Each component has a compact remove button and the pane has an Add
   Component picker. Every edit is an undo step.
 - The panel itself only composes uikit components (`text_field`,
   `field_editor`, `component_card`, `component_picker`); it contains no raw
@@ -197,6 +198,12 @@ precedent.
 - The render size is 960x540.
 
 The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
+
+### Console
+
+Entries are typed as Errors, Log, Actions, Engine or UI and prefixed in the
+list. The filter chips hide/show each category independently; the scrollable
+anchors to the newest entry.
 
 ### Shortcuts
 

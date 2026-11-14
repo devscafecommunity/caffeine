@@ -37,6 +37,21 @@ pub fn stacked<'a, Message: Clone + 'a>(
     .into()
 }
 
+/// A full-width search field without a label.
+pub fn search<'a, Message: Clone + 'a>(
+    id: impl Into<iced::widget::Id>,
+    placeholder: impl Into<String>,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+) -> Element<'a, Message> {
+    let placeholder = placeholder.into();
+    text_input(placeholder.as_str(), value)
+        .id(id)
+        .width(Length::Fill)
+        .on_input(on_input)
+        .into()
+}
+
 /// A compact field with a short axis label, for vector components.
 pub fn compact<'a, Message: Clone + 'a>(
     id: impl Into<iced::widget::Id>,

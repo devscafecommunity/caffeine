@@ -84,6 +84,7 @@ typedef enum CaffeineFieldKind {
     CAFFEINE_FIELD_VEC4 = 6,
     CAFFEINE_FIELD_STRING = 7,
     CAFFEINE_FIELD_ENUM = 8,
+    CAFFEINE_FIELD_COLOR = 9,
 } CaffeineFieldKind;
 
 typedef struct CaffeineFieldInfo {

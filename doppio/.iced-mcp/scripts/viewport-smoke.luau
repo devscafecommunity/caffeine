@@ -23,12 +23,15 @@ assert(focused.focus[2] == entity.position[2], "focus should target the selectio
 assert(focused.focus[3] == entity.position[3], "focus should target the selection Z")
 
 local layout = app:query("layout")
-assert(#layout.panes == 5, "layout should keep every pane")
+assert(#layout.panes == 4, "layout should keep four pane groups")
+local pages = 0
+for _, pane in ipairs(layout.panes) do pages = pages + #pane.pages end
+assert(pages == 5, "layout should keep every panel page")
 app:click({ id = "editor.menu.view" })
 app:click({ id = "editor.layout.viewport" })
-assert(#app:query("layout").panes == 5, "viewport layout keeps every pane")
+assert(#app:query("layout").panes == 4, "viewport layout keeps every pane group")
 app:click({ id = "editor.menu.view" })
 app:click({ id = "editor.layout.default" })
-assert(#app:query("layout").panes == 5, "default layout keeps every pane")
+assert(#app:query("layout").panes == 4, "default layout keeps every pane group")
 
 return { yaw = focused.yaw, distance = focused.distance }

@@ -414,6 +414,20 @@ FieldDesc vec4Field(const char* name, Caffeine::Vec4 T::*member, float minValue 
 }
 
 template <typename T>
+FieldDesc colorField(const char* name, Caffeine::Vec4 T::*member) {
+    FieldDesc field = vec4Field<T>(name, member, 0.0f, 1.0f, 0.01f);
+    field.kind = CAFFEINE_FIELD_COLOR;
+    auto original = field.get;
+    field.get = [original](CaffeineSession& session, Caffeine::ECS::Entity entity,
+                           CaffeineFieldValue& value) {
+        if (!original(session, entity, value)) return false;
+        value.kind = CAFFEINE_FIELD_COLOR;
+        return true;
+    };
+    return field;
+}
+
+template <typename T>
 FieldDesc stringField(const char* name, std::string T::*member) {
     return FieldDesc{
         name, CAFFEINE_FIELD_STRING, 0.0f, 0.0f, 0.0f, {},
@@ -470,7 +484,7 @@ const std::vector<ComponentDesc>& componentRegistry() {
              f32Field<ECS::Camera3DComponent>("Far clip", &ECS::Camera3DComponent::farClip, 1.0f, 100000.0f, 10.0f),
              f32Field<ECS::Camera3DComponent>("Aspect ratio", &ECS::Camera3DComponent::aspectRatio, 0.1f, 10.0f, 0.01f)}),
         component<ECS::LightComponent>(3, "Light",
-            {vec4Field<ECS::LightComponent>("Color", &ECS::LightComponent::color, 0.0f, 1.0f),
+            {colorField<ECS::LightComponent>("Color", &ECS::LightComponent::color),
              f32Field<ECS::LightComponent>("Intensity", &ECS::LightComponent::intensity, 0.0f, 1000.0f, 0.05f)}),
         component<ECS::DirectionalLightComponent>(4, "Directional Light",
             {f32Field<ECS::DirectionalLightComponent>("Shadow distance", &ECS::DirectionalLightComponent::shadowDistance, 0.0f, 10000.0f, 1.0f),

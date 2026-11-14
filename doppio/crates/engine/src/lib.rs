@@ -65,6 +65,7 @@ pub enum FieldKind {
     Vec4,
     String,
     Enum,
+    Color,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +79,7 @@ pub enum FieldValue {
     Vec4([f32; 4]),
     String(String),
     Enum(i32),
+    Color([f32; 4]),
 }
 
 #[derive(Debug, Clone)]
@@ -862,7 +864,8 @@ fn field_kind(kind: i32) -> FieldKind {
         5 => FieldKind::Vec3,
         6 => FieldKind::Vec4,
         7 => FieldKind::String,
-        _ => FieldKind::Enum,
+        8 => FieldKind::Enum,
+        _ => FieldKind::Color,
     }
 }
 
@@ -876,7 +879,8 @@ fn field_value(raw: &RawFieldValue) -> FieldValue {
         5 => FieldValue::Vec3([raw.vec[0], raw.vec[1], raw.vec[2]]),
         6 => FieldValue::Vec4(raw.vec),
         7 => FieldValue::String(c_char_array(&raw.text)),
-        _ => FieldValue::Enum(raw.integer),
+        8 => FieldValue::Enum(raw.integer),
+        _ => FieldValue::Color(raw.vec),
     }
 }
 
@@ -928,6 +932,10 @@ fn raw_field_value(value: &FieldValue) -> RawFieldValue {
         FieldValue::Enum(index) => {
             raw.kind = 8;
             raw.integer = *index;
+        }
+        FieldValue::Color(color) => {
+            raw.kind = 9;
+            raw.vec = *color;
         }
     }
     raw

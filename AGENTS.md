@@ -63,10 +63,12 @@ Vulkan / D3D12 / Metal
 ## Doppio UI architecture
 
 - **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
-  (Hierarchy / Assets / Viewport / Inspector / Console). Pane title bars are drag
-  handles; layout presets live in the View menu and menu dropdowns are floating overlays.
-  Hierarchy rows form a tree from `EntityView.parent`, with expand/collapse and context
-  actions.
+  (Hierarchy / Assets / Viewport / Inspector / Console). Panes host tabbed panels and the
+  tab strip is the drag handle; layout presets live in the View menu and menu dropdowns
+  are floating overlays. Hierarchy has a scene root, search and a tree from
+  `EntityView.parent` with expand/collapse and context actions. Console entries are typed
+  (Errors/Log/Actions/Engine/UI) and filterable; the Inspector uses sliders and a colour
+  picker for bounded/colour fields.
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
   primitives (button, slider, text field, field editor, component card/picker, panel,

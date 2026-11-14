@@ -1,4 +1,4 @@
-use crate::uikit::components::{menu, tree_row};
+use crate::uikit::components::{menu, text_field, tree_row};
 use crate::uikit::id;
 use crate::uikit::EntityView;
 use iced::widget::{column, container, scrollable, text};
@@ -110,9 +110,14 @@ pub struct View<'a> {
     pub selected: usize,
     pub collapsed: &'a HashSet<u32>,
     pub menu_for: Option<usize>,
+    pub root_label: &'a str,
+    pub root_open: bool,
+    pub search: &'a str,
 }
 
 pub struct Callbacks<'a, Message> {
+    pub on_root_toggle: Message,
+    pub on_search: Box<dyn Fn(String) -> Message + 'a>,
     pub on_toggle: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_select: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_context: Box<dyn Fn(usize) -> Message + 'a>,
@@ -124,48 +129,93 @@ pub fn view<'a, Message: Clone + 'a>(
     view: View<'a>,
     callbacks: Callbacks<'a, Message>,
 ) -> Element<'a, Message> {
+    let search = text_field::search(
+        id::HIERARCHY_SEARCH,
+        "Search entities…",
+        view.search,
+        move |value| (callbacks.on_search)(value),
+    );
+
+    let query = view.search.trim().to_lowercase();
+    let rows: Vec<TreeRow> = if query.is_empty() {
+        tree_rows(view.entities, view.collapsed)
+    } else {
+        view.entities
+            .iter()
+            .enumerate()
+            .filter(|(_, entity)| entity.name.to_lowercase().contains(&query))
+            .map(|(index, _)| TreeRow {
+                index,
+                depth: 0,
+                has_children: false,
+                expanded: false,
+            })
+            .collect()
+    };
+
     let mut list = column![].spacing(3);
-    if view.entities.is_empty() {
-        list = list.push(text("No entities").color(crate::uikit::theme::TEXT_MUTED));
-    }
-    for row in tree_rows(view.entities, view.collapsed) {
-        let entity = &view.entities[row.index];
-        list = list.push(tree_row::view(tree_row::Row {
-            id: id::entity_row(row.index),
-            label: format!("{}  #{}", entity.name, entity.id),
-            depth: row.depth,
-            has_children: row.has_children,
-            expanded: row.expanded,
-            selected: row.index == view.selected,
-            on_toggle: (callbacks.on_toggle)(row.index),
-            on_select: (callbacks.on_select)(row.index),
-            on_context: (callbacks.on_context)(row.index),
-            on_double_click: (callbacks.on_double_click)(row.index),
-        }));
-        if view.menu_for == Some(row.index) {
-            list = list.push(menu::context(vec![
-                menu::Item {
-                    id: id::ADD_ENTITY,
-                    label: "Add Entity",
-                    shortcut: Some("Ctrl+N"),
-                    message: (callbacks.on_action)(Action::AddEntity),
-                },
-                menu::Item {
-                    id: id::FOCUS_SELECTION,
-                    label: "Focus in Viewport",
-                    shortcut: Some("Ctrl+F"),
-                    message: (callbacks.on_action)(Action::Focus),
-                },
-                menu::Item {
-                    id: id::DELETE_ENTITY,
-                    label: "Delete Entity",
-                    shortcut: None,
-                    message: (callbacks.on_action)(Action::Delete),
-                },
-            ]));
+    list = list.push(tree_row::view(tree_row::Row {
+        id: id::HIERARCHY_ROOT,
+        label: view.root_label.to_owned(),
+        depth: 0,
+        has_children: !view.entities.is_empty(),
+        expanded: view.root_open,
+        selected: false,
+        on_toggle: callbacks.on_root_toggle.clone(),
+        on_select: callbacks.on_root_toggle.clone(),
+        on_context: callbacks.on_root_toggle.clone(),
+        on_double_click: callbacks.on_root_toggle.clone(),
+    }));
+
+    if view.root_open {
+        if rows.is_empty() {
+            let message = if query.is_empty() {
+                "No entities"
+            } else {
+                "No matches"
+            };
+            list = list.push(text(message).color(crate::uikit::theme::TEXT_MUTED));
+        }
+        for row in rows {
+            let entity = &view.entities[row.index];
+            list = list.push(tree_row::view(tree_row::Row {
+                id: id::entity_row(row.index),
+                label: format!("{}  #{}", entity.name, entity.id),
+                depth: row.depth + 1,
+                has_children: row.has_children,
+                expanded: row.expanded,
+                selected: row.index == view.selected,
+                on_toggle: (callbacks.on_toggle)(row.index),
+                on_select: (callbacks.on_select)(row.index),
+                on_context: (callbacks.on_context)(row.index),
+                on_double_click: (callbacks.on_double_click)(row.index),
+            }));
+            if view.menu_for == Some(row.index) {
+                list = list.push(menu::context(vec![
+                    menu::Item {
+                        id: id::ADD_ENTITY,
+                        label: "Add Entity",
+                        shortcut: Some("Ctrl+N"),
+                        message: (callbacks.on_action)(Action::AddEntity),
+                    },
+                    menu::Item {
+                        id: id::FOCUS_SELECTION,
+                        label: "Focus in Viewport",
+                        shortcut: Some("Ctrl+F"),
+                        message: (callbacks.on_action)(Action::Focus),
+                    },
+                    menu::Item {
+                        id: id::DELETE_ENTITY,
+                        label: "Delete Entity",
+                        shortcut: None,
+                        message: (callbacks.on_action)(Action::Delete),
+                    },
+                ]));
+            }
         }
     }
-    container(scrollable(list)).into()
+
+    container(column![search, scrollable(list)].spacing(6)).into()
 }
 
 #[cfg(test)]

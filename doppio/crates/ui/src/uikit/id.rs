@@ -101,6 +101,18 @@ pub const PANE_ASSETS: UiId = UiId::fixed("editor.pane.assets");
 pub const PANE_VIEWPORT: UiId = UiId::fixed("editor.pane.viewport");
 pub const PANE_INSPECTOR: UiId = UiId::fixed("editor.pane.inspector");
 pub const PANE_CONSOLE: UiId = UiId::fixed("editor.pane.console");
+pub const HIERARCHY_ROOT: UiId = UiId::fixed("hierarchy.tree.scene");
+pub const HIERARCHY_SEARCH: UiId = UiId::fixed("hierarchy.search");
+pub const PANE_TAB_HIERARCHY: UiId = UiId::fixed("editor.pane.tab.hierarchy");
+pub const PANE_TAB_ASSETS: UiId = UiId::fixed("editor.pane.tab.assets");
+pub const PANE_TAB_VIEWPORT: UiId = UiId::fixed("editor.pane.tab.viewport");
+pub const PANE_TAB_INSPECTOR: UiId = UiId::fixed("editor.pane.tab.inspector");
+pub const PANE_TAB_CONSOLE: UiId = UiId::fixed("editor.pane.tab.console");
+pub const CONSOLE_FILTER_ERROR: UiId = UiId::fixed("console.filter.error");
+pub const CONSOLE_FILTER_LOG: UiId = UiId::fixed("console.filter.log");
+pub const CONSOLE_FILTER_ACTION: UiId = UiId::fixed("console.filter.action");
+pub const CONSOLE_FILTER_ENGINE: UiId = UiId::fixed("console.filter.engine");
+pub const CONSOLE_FILTER_UI: UiId = UiId::fixed("console.filter.ui");
 
 // ── Viewport ─────────────────────────────────────────────────────────────
 pub const VIEWPORT_SURFACE: UiId = UiId::fixed("viewport.canvas.surface");
@@ -215,6 +227,66 @@ pub const CATALOG: &[UiMeta] = &[
         id: PANE_INSPECTOR,
         description: "Selected entity transform and actions.",
         kind: "pane",
+    },
+    UiMeta {
+        id: HIERARCHY_ROOT,
+        description: "The scene root row of the hierarchy tree.",
+        kind: "tree_row",
+    },
+    UiMeta {
+        id: HIERARCHY_SEARCH,
+        description: "Search field for filtering hierarchy entities.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: PANE_TAB_HIERARCHY,
+        description: "Hierarchy tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: PANE_TAB_ASSETS,
+        description: "Assets tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: PANE_TAB_VIEWPORT,
+        description: "Viewport tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: PANE_TAB_INSPECTOR,
+        description: "Inspector tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: PANE_TAB_CONSOLE,
+        description: "Console tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: CONSOLE_FILTER_ERROR,
+        description: "Show or hide error entries in the Console.",
+        kind: "filter",
+    },
+    UiMeta {
+        id: CONSOLE_FILTER_LOG,
+        description: "Show or hide general log entries in the Console.",
+        kind: "filter",
+    },
+    UiMeta {
+        id: CONSOLE_FILTER_ACTION,
+        description: "Show or hide editor action entries in the Console.",
+        kind: "filter",
+    },
+    UiMeta {
+        id: CONSOLE_FILTER_ENGINE,
+        description: "Show or hide engine entries in the Console.",
+        kind: "filter",
+    },
+    UiMeta {
+        id: CONSOLE_FILTER_UI,
+        description: "Show or hide UI entries in the Console.",
+        kind: "filter",
     },
     UiMeta {
         id: PANE_CONSOLE,

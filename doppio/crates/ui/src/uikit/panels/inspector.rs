@@ -27,6 +27,17 @@ pub enum Edit {
         field: usize,
         index: i32,
     },
+    FieldNumber {
+        component: usize,
+        field: usize,
+        value: f32,
+    },
+    FieldColor {
+        component: usize,
+        field: usize,
+        axis: usize,
+        value: f32,
+    },
     AddComponent(u32),
     RemoveComponent(usize),
     Delete,
@@ -119,6 +130,17 @@ fn map_field<Message: Clone>(
             component,
             field,
             index,
+        }),
+        field_editor::FieldEdit::Number { value, .. } => emit(Edit::FieldNumber {
+            component,
+            field,
+            value,
+        }),
+        field_editor::FieldEdit::Color { axis, value } => emit(Edit::FieldColor {
+            component,
+            field,
+            axis,
+            value,
         }),
     }
 }

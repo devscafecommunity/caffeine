@@ -1,9 +1,10 @@
 use crate::history::{self, History};
-use crate::uikit::components::{menu, panel, status, toolbar};
+use crate::uikit::components::{menu, panel, status, tabs, toolbar};
 use crate::uikit::id;
 use crate::uikit::panels;
 use crate::uikit::theme;
 use crate::uikit::EntityView;
+use crate::windows::log::{LogEntry, LogLevel};
 use crate::windows::projectloader;
 
 use iced::widget::{column, container, pane_grid, row, text};
@@ -46,6 +47,28 @@ enum LayoutPreset {
     Viewport,
 }
 
+#[derive(Debug, Clone)]
+struct PaneGroup {
+    pages: Vec<PaneKind>,
+    active: usize,
+}
+
+impl PaneGroup {
+    fn new(pages: &[PaneKind]) -> Self {
+        Self {
+            pages: pages.to_vec(),
+            active: 0,
+        }
+    }
+
+    fn active_kind(&self) -> PaneKind {
+        self.pages
+            .get(self.active)
+            .copied()
+            .unwrap_or(PaneKind::Hierarchy)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneKind {
     Hierarchy,
@@ -62,6 +85,8 @@ enum Message {
     SelectEntity(usize),
     HierarchyContext(usize),
     HierarchyToggle(usize),
+    HierarchyRootToggle,
+    HierarchySearch(String),
     HierarchyDoubleClick(usize),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SelectEntityByName(String),
@@ -99,17 +124,20 @@ enum Message {
     CloseScene,
     ToggleMenu(MenuId),
     CloseMenu,
+    ToggleConsoleFilter(LogLevel),
     Layout(LayoutPreset),
+    SelectPage(pane_grid::Pane, PaneKind),
 }
 
 struct App {
-    panes: pane_grid::State<PaneKind>,
+    panes: pane_grid::State<PaneGroup>,
     engine: Option<doppio_engine::Engine>,
     entities: Vec<EntityView>,
     assets: Vec<doppio_engine::AssetInfo>,
     selected: usize,
     name_input: String,
-    log: Vec<String>,
+    log: Vec<LogEntry>,
+    console_filters: std::collections::HashSet<LogLevel>,
     playing: bool,
     next_entity_id: u32,
     viewport_image: Option<iced::widget::image::Handle>,
@@ -124,6 +152,9 @@ struct App {
     open_menu: Option<MenuId>,
     hierarchy_menu: Option<usize>,
     collapsed_hierarchy: std::collections::HashSet<u32>,
+    hierarchy_root_open: bool,
+    hierarchy_search: String,
+    scene_label: String,
     camera: doppio_engine::Camera,
     history: History,
     component_types: Vec<doppio_engine::ComponentType>,
@@ -131,8 +162,30 @@ struct App {
     field_inputs: HashMap<(usize, usize, usize), String>,
 }
 
+impl PaneKind {
+    fn title(self) -> &'static str {
+        match self {
+            PaneKind::Hierarchy => "Hierarchy",
+            PaneKind::Assets => "Assets",
+            PaneKind::Viewport => "Viewport",
+            PaneKind::Inspector => "Inspector",
+            PaneKind::Console => "Console",
+        }
+    }
+
+    fn tab_id(self) -> id::UiId {
+        match self {
+            PaneKind::Hierarchy => id::PANE_TAB_HIERARCHY,
+            PaneKind::Assets => id::PANE_TAB_ASSETS,
+            PaneKind::Viewport => id::PANE_TAB_VIEWPORT,
+            PaneKind::Inspector => id::PANE_TAB_INSPECTOR,
+            PaneKind::Console => id::PANE_TAB_CONSOLE,
+        }
+    }
+}
+
 impl App {
-    fn layout_configuration(preset: LayoutPreset) -> pane_grid::Configuration<PaneKind> {
+    fn layout_configuration(preset: LayoutPreset) -> pane_grid::Configuration<PaneGroup> {
         use pane_grid::{Axis, Configuration};
         match preset {
             LayoutPreset::Default => Configuration::Split {
@@ -141,20 +194,18 @@ impl App {
                 a: Box::new(Configuration::Split {
                     axis: Axis::Vertical,
                     ratio: 0.22,
-                    a: Box::new(Configuration::Split {
-                        axis: Axis::Horizontal,
-                        ratio: 0.58,
-                        a: Box::new(Configuration::Pane(PaneKind::Hierarchy)),
-                        b: Box::new(Configuration::Pane(PaneKind::Assets)),
-                    }),
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
+                        PaneKind::Hierarchy,
+                        PaneKind::Assets,
+                    ]))),
                     b: Box::new(Configuration::Split {
                         axis: Axis::Vertical,
                         ratio: 0.72,
-                        a: Box::new(Configuration::Pane(PaneKind::Viewport)),
-                        b: Box::new(Configuration::Pane(PaneKind::Inspector)),
+                        a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Viewport]))),
+                        b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Inspector]))),
                     }),
                 }),
-                b: Box::new(Configuration::Pane(PaneKind::Console)),
+                b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Console]))),
             },
             LayoutPreset::Viewport => Configuration::Split {
                 axis: Axis::Horizontal,
@@ -162,20 +213,18 @@ impl App {
                 a: Box::new(Configuration::Split {
                     axis: Axis::Vertical,
                     ratio: 0.16,
-                    a: Box::new(Configuration::Split {
-                        axis: Axis::Horizontal,
-                        ratio: 0.5,
-                        a: Box::new(Configuration::Pane(PaneKind::Hierarchy)),
-                        b: Box::new(Configuration::Pane(PaneKind::Assets)),
-                    }),
-                    b: Box::new(Configuration::Split {
-                        axis: Axis::Horizontal,
-                        ratio: 0.82,
-                        a: Box::new(Configuration::Pane(PaneKind::Viewport)),
-                        b: Box::new(Configuration::Pane(PaneKind::Inspector)),
-                    }),
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
+                        PaneKind::Hierarchy,
+                        PaneKind::Assets,
+                    ]))),
+                    b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Console]))),
                 }),
-                b: Box::new(Configuration::Pane(PaneKind::Console)),
+                b: Box::new(Configuration::Split {
+                    axis: Axis::Horizontal,
+                    ratio: 0.8,
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Viewport]))),
+                    b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Inspector]))),
+                }),
             },
         }
     }
@@ -192,13 +241,20 @@ impl App {
             engine: None,
             entities: Vec::new(),
             assets: Vec::new(),
-            log: vec!["Empty fixture".to_owned()],
+            log: vec![LogEntry::new(LogLevel::Ui, "Empty fixture")],
         })
     }
 
     fn with_project(loaded: projectloader::LoadedProject) -> Self {
         let panes =
             pane_grid::State::with_configuration(Self::layout_configuration(LayoutPreset::Default));
+
+        let scene_label = loaded
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.scene_path())
+            .and_then(|path| path.rsplit(['/', '\\']).next().map(str::to_owned))
+            .unwrap_or_else(|| "Scene".to_owned());
 
         let next_entity_id = loaded
             .entities
@@ -226,6 +282,7 @@ impl App {
             selected: 0,
             name_input,
             log: loaded.log,
+            console_filters: LogLevel::ALL.into_iter().collect(),
             playing: false,
             next_entity_id,
             viewport_image: None,
@@ -240,6 +297,9 @@ impl App {
             open_menu: None,
             hierarchy_menu: None,
             collapsed_hierarchy: std::collections::HashSet::new(),
+            hierarchy_root_open: true,
+            hierarchy_search: String::new(),
+            scene_label,
             camera,
             history: History::new(history::State::new(Vec::new(), None, false)),
             component_types: Vec::new(),
@@ -253,6 +313,10 @@ impl App {
         let initial = app.capture_state();
         app.history = History::new(initial);
         app
+    }
+
+    fn log(&mut self, level: LogLevel, text: impl Into<String>) {
+        self.log.push(LogEntry::new(level, text));
     }
 
     fn refresh_components(&mut self) {
@@ -282,6 +346,19 @@ impl App {
                 field,
                 index,
             } => self.edit_component_enum(component, field, index),
+            panels::inspector::Edit::FieldNumber {
+                component,
+                field,
+                value,
+            } => {
+                self.write_component_field(component, field, doppio_engine::FieldValue::F32(value))
+            }
+            panels::inspector::Edit::FieldColor {
+                component,
+                field,
+                axis,
+                value,
+            } => self.edit_component_color(component, field, axis, value),
             panels::inspector::Edit::AddComponent(type_id) => self.add_component(type_id),
             panels::inspector::Edit::RemoveComponent(component) => self.remove_component(component),
             panels::inspector::Edit::Delete => self.delete_selected(),
@@ -384,6 +461,21 @@ impl App {
         self.write_component_field(component, field, doppio_engine::FieldValue::Bool(flag));
     }
 
+    fn edit_component_color(&mut self, component: usize, field: usize, axis: usize, value: f32) {
+        let Some(current) = self
+            .components
+            .get(component)
+            .and_then(|data| data.values.get(field))
+            .cloned()
+        else {
+            return;
+        };
+        if let doppio_engine::FieldValue::Color(mut color) = current {
+            color[axis.min(3)] = value;
+            self.write_component_field(component, field, doppio_engine::FieldValue::Color(color));
+        }
+    }
+
     fn edit_component_enum(&mut self, component: usize, field: usize, index: i32) {
         self.write_component_field(component, field, doppio_engine::FieldValue::Enum(index));
     }
@@ -441,7 +533,7 @@ impl App {
             .map(|entity| entity.name.clone())
             .unwrap_or_default();
         self.refresh_components();
-        self.log.push(format!("Deleted {}", entity.name));
+        self.log(LogLevel::Action, format!("Deleted {}", entity.name));
         self.commit(format!("Delete {}", entity.name), None);
     }
 
@@ -480,7 +572,7 @@ impl App {
                     self.entities = projectloader::read_entities(engine);
                 }
                 Err(error) => {
-                    self.log.push(format!("Restore failed: {error:?}"));
+                    self.log(LogLevel::Error, format!("Restore failed: {error:?}"));
                     self.entities = state.entities.clone();
                 }
             }
@@ -507,28 +599,32 @@ impl App {
     fn undo(&mut self) {
         if let Some((name, state)) = self.history.undo() {
             self.apply_history_state(state);
-            self.log.push(format!("Undo {name}"));
+            self.log(LogLevel::Action, format!("Undo {name}"));
         }
     }
 
     fn redo(&mut self) {
         if let Some((name, state)) = self.history.redo() {
             self.apply_history_state(state);
-            self.log.push(format!("Redo {name}"));
+            self.log(LogLevel::Action, format!("Redo {name}"));
         }
     }
 
     fn select_index(&mut self, index: usize) {
-        if let Some(entity) = self.entities.get(index) {
+        let selected = self
+            .entities
+            .get(index)
+            .map(|entity| (entity.id, entity.name.clone()));
+        if let Some((id, name)) = selected {
             self.selected = index;
-            self.name_input = entity.name.clone();
+            self.name_input = name.clone();
             if let Some(engine) = self.engine.as_mut() {
-                let _ = engine.select_entity(entity.id);
-                if engine.selected_entity() != entity.id {
-                    self.log.push("Engine selection mismatch".to_owned());
+                let _ = engine.select_entity(id);
+                if engine.selected_entity() != id {
+                    self.log(LogLevel::Engine, "Engine selection mismatch");
                 }
             }
-            self.log.push(format!("Selected {}", entity.name));
+            self.log(LogLevel::Action, format!("Selected {name}"));
         }
         self.refresh_components();
         self.amend_selection();
@@ -556,7 +652,7 @@ impl App {
             });
             self.selected = index;
             self.name_input = name.clone();
-            self.log.push(format!("Added {name}"));
+            self.log(LogLevel::Action, format!("Added {name}"));
         }
     }
 
@@ -682,7 +778,7 @@ impl App {
             self.camera.focus = position;
             self.camera.distance = (self.camera.distance * 0.5).clamp(1.0, 40.0);
             self.apply_camera();
-            self.log.push(format!("Focused {name}"));
+            self.log(LogLevel::Action, format!("Focused {name}"));
         }
     }
 
@@ -713,7 +809,7 @@ impl App {
                 let pixels = std::mem::take(&mut self.viewport_pixels);
                 self.viewport_pixels = vec![0; pixels.len()];
                 if self.viewport_image.is_none() {
-                    self.log.push("Viewport ready".to_owned());
+                    self.log(LogLevel::Ui, "Viewport ready");
                 }
                 self.viewport_image = Some(iced::widget::image::Handle::from_rgba(
                     VIEWPORT_WIDTH,
@@ -732,8 +828,8 @@ impl App {
     }
 
     fn log_render_failure(&mut self) {
-        if self.log.last().map(String::as_str) != Some("Viewport render failed") {
-            self.log.push("Viewport render failed".to_owned());
+        if self.log.last().map(|entry| entry.text.as_str()) != Some("Viewport render failed") {
+            self.log(LogLevel::Error, "Viewport render failed");
         }
     }
 
@@ -767,6 +863,12 @@ impl App {
                 self.select_index(index);
                 self.focus_selection();
             }
+            Message::HierarchyRootToggle => {
+                self.hierarchy_root_open = !self.hierarchy_root_open;
+            }
+            Message::HierarchySearch(value) => {
+                self.hierarchy_search = value;
+            }
             Message::HierarchyToggle(index) => {
                 if let Some(entity) = self.entities.get(index) {
                     let id = entity.id;
@@ -777,17 +879,19 @@ impl App {
             }
             Message::TogglePlay => {
                 self.playing = !self.playing;
-                self.log
-                    .push(if self.playing { "Play" } else { "Stop" }.to_owned());
+                self.log(LogLevel::Action, if self.playing { "Play" } else { "Stop" });
                 if let Some(engine) = self.engine.as_mut() {
                     engine.tick(0.016);
                     let stats = engine.frame_stats();
-                    self.log.push(format!(
-                        "Engine frame {} ({} entities, {:.2} ms)",
-                        stats.frame_index,
-                        stats.entity_count,
-                        stats.delta_time * 1000.0
-                    ));
+                    self.log(
+                        LogLevel::Engine,
+                        format!(
+                            "Engine frame {} ({} entities, {:.2} ms)",
+                            stats.frame_index,
+                            stats.entity_count,
+                            stats.delta_time * 1000.0
+                        ),
+                    );
                 }
             }
             Message::AddEntity => {
@@ -803,7 +907,7 @@ impl App {
                 if let Some(index) = self.entities.iter().position(|entity| entity.name == name) {
                     self.select_index(index);
                 } else {
-                    self.log.push(format!("No entity named {name}"));
+                    self.log(LogLevel::Error, format!("No entity named {name}"));
                 }
             }
             Message::SetCamera(camera) => {
@@ -831,11 +935,11 @@ impl App {
                         {
                             view.parent = parent;
                         }
-                        self.log.push("Changed parent".to_owned());
+                        self.log(LogLevel::Action, "Changed parent");
                         self.commit("Change Parent", None);
                     }
                     Some(Err(error)) => {
-                        self.log.push(format!("Parent change failed: {error:?}"));
+                        self.log(LogLevel::Error, format!("Parent change failed: {error:?}"));
                     }
                     None => {}
                 }
@@ -845,15 +949,15 @@ impl App {
                     match engine.scene_path() {
                         Some(path) => match engine.save_scene(&path) {
                             Ok(()) => {
-                                self.log.push(format!("Saved {path}"));
+                                self.log(LogLevel::Action, format!("Saved {path}"));
                                 self.history.amend_current(|state| state.dirty = false);
                             }
-                            Err(_) => self.log.push(format!("Could not save {path}")),
+                            Err(_) => self.log(LogLevel::Error, format!("Could not save {path}")),
                         },
-                        None => self.log.push("No scene path to save".to_owned()),
+                        None => self.log(LogLevel::Error, "No scene path to save"),
                     }
                 } else {
-                    self.log.push("No engine session to save".to_owned());
+                    self.log(LogLevel::Error, "No engine session to save");
                 }
             }
             Message::RenderViewport => {
@@ -924,7 +1028,7 @@ impl App {
                 self.selected = 0;
                 self.name_input.clear();
                 self.viewport_image = None;
-                self.log.push("Closed scene".to_owned());
+                self.log(LogLevel::Action, "Closed scene");
             }
             Message::ToggleMenu(menu) => {
                 self.open_menu = if self.open_menu == Some(menu) {
@@ -937,9 +1041,21 @@ impl App {
                 self.open_menu = None;
                 self.hierarchy_menu = None;
             }
+            Message::ToggleConsoleFilter(level) => {
+                if !self.console_filters.remove(&level) {
+                    self.console_filters.insert(level);
+                }
+            }
             Message::Layout(preset) => {
                 self.panes =
                     pane_grid::State::with_configuration(Self::layout_configuration(preset));
+            }
+            Message::SelectPage(pane, kind) => {
+                if let Some(group) = self.panes.get_mut(pane) {
+                    if let Some(index) = group.pages.iter().position(|page| *page == kind) {
+                        group.active = index;
+                    }
+                }
             }
         }
     }
@@ -1084,7 +1200,7 @@ impl App {
         let status_row = row![engine_status, save_status, play_status, entity_status].spacing(6);
         let bar = toolbar::view(brand.into(), vec![menu_group], status_row.into());
 
-        let grid = pane_grid(&self.panes, |pane, kind, _| self.pane_content(pane, *kind))
+        let grid = pane_grid(&self.panes, |pane, group, _| self.pane_content(pane, group))
             .on_drag(Message::PaneDragged)
             .on_resize(8, Message::PaneResized)
             .spacing(6);
@@ -1107,11 +1223,22 @@ impl App {
 
     fn pane_content<'a>(
         &'a self,
-        _pane: pane_grid::Pane,
-        kind: PaneKind,
+        pane: pane_grid::Pane,
+        group: &'a PaneGroup,
     ) -> pane_grid::Content<'a, Message> {
-        let (pane_id, title, subtitle, body) = self.pane_parts(kind);
-        let title_bar = pane_grid::TitleBar::new(panel::title(title, subtitle))
+        let active = group.active_kind();
+        let (pane_id, _title, subtitle, body) = self.pane_parts(active);
+        let tabs = group
+            .pages
+            .iter()
+            .map(|kind| tabs::Tab {
+                id: kind.tab_id(),
+                label: kind.title(),
+                active: *kind == active,
+                message: Message::SelectPage(pane, *kind),
+            })
+            .collect();
+        let title_bar = pane_grid::TitleBar::new(tabs::view(tabs, subtitle))
             .padding([0, 2])
             .style(theme::panel_title);
         pane_grid::Content::new(container(panel::body(body)).id(pane_id)).title_bar(title_bar)
@@ -1127,32 +1254,50 @@ impl App {
             Option<String>,
             Element<'_, Message>,
         ) = match kind {
-            PaneKind::Hierarchy => (
-                id::PANE_HIERARCHY,
-                "Hierarchy",
-                Some(format!("{} entities", self.entities.len())),
-                panels::hierarchy::view(
-                    panels::hierarchy::View {
-                        entities: &self.entities,
-                        selected: self.selected,
-                        collapsed: &self.collapsed_hierarchy,
-                        menu_for: self.hierarchy_menu,
-                    },
-                    panels::hierarchy::Callbacks {
-                        on_toggle: Box::new(Message::HierarchyToggle),
-                        on_select: Box::new(Message::SelectEntity),
-                        on_context: Box::new(Message::HierarchyContext),
-                        on_double_click: Box::new(Message::HierarchyDoubleClick),
-                        on_action: Box::new(|action| match action {
-                            panels::hierarchy::Action::AddEntity => Message::AddEntity,
-                            panels::hierarchy::Action::Focus => Message::FocusSelection,
-                            panels::hierarchy::Action::Delete => {
-                                Message::Inspector(panels::inspector::Edit::Delete)
-                            }
-                        }),
-                    },
-                ),
-            ),
+            PaneKind::Hierarchy => {
+                let query = self.hierarchy_search.trim().to_lowercase();
+                let subtitle = if query.is_empty() {
+                    format!("{} entities", self.entities.len())
+                } else {
+                    let matches = self
+                        .entities
+                        .iter()
+                        .filter(|entity| entity.name.to_lowercase().contains(&query))
+                        .count();
+                    format!("{matches} matches")
+                };
+                (
+                    id::PANE_HIERARCHY,
+                    "Hierarchy",
+                    Some(subtitle),
+                    panels::hierarchy::view(
+                        panels::hierarchy::View {
+                            entities: &self.entities,
+                            selected: self.selected,
+                            collapsed: &self.collapsed_hierarchy,
+                            menu_for: self.hierarchy_menu,
+                            root_label: &self.scene_label,
+                            root_open: self.hierarchy_root_open,
+                            search: &self.hierarchy_search,
+                        },
+                        panels::hierarchy::Callbacks {
+                            on_root_toggle: Message::HierarchyRootToggle,
+                            on_search: Box::new(Message::HierarchySearch),
+                            on_toggle: Box::new(Message::HierarchyToggle),
+                            on_select: Box::new(Message::SelectEntity),
+                            on_context: Box::new(Message::HierarchyContext),
+                            on_double_click: Box::new(Message::HierarchyDoubleClick),
+                            on_action: Box::new(|action| match action {
+                                panels::hierarchy::Action::AddEntity => Message::AddEntity,
+                                panels::hierarchy::Action::Focus => Message::FocusSelection,
+                                panels::hierarchy::Action::Delete => {
+                                    Message::Inspector(panels::inspector::Edit::Delete)
+                                }
+                            }),
+                        },
+                    ),
+                )
+            }
             PaneKind::Assets => {
                 let files = self
                     .assets
@@ -1243,7 +1388,11 @@ impl App {
                 id::PANE_CONSOLE,
                 "Console",
                 Some(format!("{} lines", self.log.len())),
-                panels::console::view(&self.log),
+                panels::console::view(
+                    &self.log,
+                    &self.console_filters,
+                    Message::ToggleConsoleFilter,
+                ),
             ),
         };
 

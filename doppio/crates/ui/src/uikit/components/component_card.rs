@@ -46,9 +46,9 @@ pub fn view<'a, Message: Clone + 'a>(
     container(
         column![
             row![
-                text(card.component.info.name.clone()).size(15),
+                text(card.component.info.name.clone()).size(13),
                 space::horizontal(),
-                button::toolbar(card.remove_id, "Remove", on_remove),
+                button::danger(card.remove_id, "×", on_remove),
             ]
             .align_y(iced::Alignment::Center),
             fields

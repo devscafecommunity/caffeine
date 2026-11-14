@@ -1,11 +1,12 @@
 use crate::uikit::EntityView;
+use crate::windows::log::{LogEntry, LogLevel};
 use doppio_engine::{AssetInfo, Engine};
 
 pub struct LoadedProject {
     pub engine: Option<Engine>,
     pub entities: Vec<EntityView>,
     pub assets: Vec<AssetInfo>,
-    pub log: Vec<String>,
+    pub log: Vec<LogEntry>,
 }
 
 /// Mirror the engine hierarchy into plain UI views.
@@ -30,12 +31,15 @@ pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
 /// engine hierarchy into UI-side views. Falls back to fixtures when the C ABI
 /// library has not been built.
 pub fn load_from_args() -> LoadedProject {
-    let mut log = vec!["Doppio UI ready".to_owned()];
+    let mut log = vec![LogEntry::new(LogLevel::Log, "Doppio UI ready")];
     let mut engine = Engine::load_default();
     let mut entities = Vec::new();
 
     let Some(engine_ref) = engine.as_mut() else {
-        log.push("C ABI library not found; using fixtures".to_owned());
+        log.push(LogEntry::new(
+            LogLevel::Engine,
+            "C ABI library not found; using fixtures",
+        ));
         for (index, name) in ["Entity 1", "Entity 2"].iter().enumerate() {
             entities.push(EntityView {
                 id: index as u32,
@@ -54,7 +58,10 @@ pub fn load_from_args() -> LoadedProject {
         };
     };
 
-    log.push("Connected to libcaffeine-capi".to_owned());
+    log.push(LogEntry::new(
+        LogLevel::Engine,
+        "Connected to libcaffeine-capi",
+    ));
 
     let scene_path = std::env::args()
         .nth(1)
@@ -63,11 +70,14 @@ pub fn load_from_args() -> LoadedProject {
     let scene_loaded = if let Some(path) = scene_path {
         match engine_ref.load_scene(&path) {
             Ok(()) => {
-                log.push(format!("Loaded {path}"));
+                log.push(LogEntry::new(LogLevel::Engine, format!("Loaded {path}")));
                 true
             }
             Err(_) => {
-                log.push(format!("Could not load {path}"));
+                log.push(LogEntry::new(
+                    LogLevel::Error,
+                    format!("Could not load {path}"),
+                ));
                 false
             }
         }
@@ -106,7 +116,10 @@ pub fn load_from_args() -> LoadedProject {
                     .is_ok()
             {
                 assets = engine_ref.assets();
-                log.push("Using ../assets as the development asset root".to_owned());
+                log.push(LogEntry::new(
+                    LogLevel::Engine,
+                    "Using ../assets as the development asset root",
+                ));
             }
         }
     }
