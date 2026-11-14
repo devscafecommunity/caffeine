@@ -85,7 +85,6 @@ pub struct UiMeta {
 // ── Editor chrome ─────────────────────────────────────────────────────────
 pub const LAYOUT_DEFAULT: UiId = UiId::fixed("editor.layout.default");
 pub const LAYOUT_VIEWPORT: UiId = UiId::fixed("editor.layout.viewport");
-pub const LAYOUT_MAXIMIZE_VIEWPORT: UiId = UiId::fixed("editor.layout.maximize_viewport");
 pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
 pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
 pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
@@ -150,11 +149,6 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: LAYOUT_VIEWPORT,
         description: "Gives the viewport most of the workspace.",
-        kind: "menu_item",
-    },
-    UiMeta {
-        id: LAYOUT_MAXIMIZE_VIEWPORT,
-        description: "Maximizes the viewport pane.",
         kind: "menu_item",
     },
     UiMeta {

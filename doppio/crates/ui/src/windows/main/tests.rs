@@ -567,15 +567,6 @@ fn layout_presets_keep_every_pane() {
 }
 
 #[test]
-fn viewport_can_be_maximized_and_restored() {
-    let mut harness = Harness::with_entities();
-    harness.dispatch(Message::MaximizeViewport);
-    assert!(harness.app().panes.maximized().is_some());
-    harness.dispatch(Message::Layout(LayoutPreset::Default));
-    assert_eq!(harness.app().panes.maximized(), None);
-}
-
-#[test]
 fn empty_editor_has_no_entities() {
     let harness = Harness::empty();
     assert!(harness.shows("No entities"));
@@ -919,6 +910,14 @@ fn new_edit_after_undo_drops_redo() {
     harness.dispatch(Message::AddEntity);
     assert!(!harness.app().history.can_redo());
     assert_eq!(harness.app().entities.len(), 2);
+}
+
+#[test]
+fn open_menu_items_have_bounds() {
+    let mut harness = Harness::with_entities();
+    harness.click(id::MENU_VIEW);
+    assert!(harness.shows("Focus Selection"));
+    assert!(harness.bounds(Id::from(id::LAYOUT_DEFAULT)).is_some());
 }
 
 #[test]

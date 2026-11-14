@@ -82,6 +82,46 @@ pub fn divider(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn menu(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(PANEL_ALT.into()),
+        border: Border {
+            color: BORDER_STRONG,
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.35),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 10.0,
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, _status| button::Style {
+        background: if open { Some(PANEL_ALT.into()) } else { None },
+        text_color: if open { TEXT } else { TEXT_MUTED },
+        border: Border::default(),
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
+pub fn menu_item(_theme: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: match status {
+            button::Status::Hovered | button::Status::Pressed => Some(PANEL.into()),
+            _ => None,
+        },
+        text_color: TEXT,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        snap: true,
+    }
+}
+
 pub fn list_row(selected: bool) -> impl Fn(&Theme) -> container::Style {
     move |_theme| container::Style {
         background: Some(if selected { ACCENT_PRESSED } else { PANEL }.into()),

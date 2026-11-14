@@ -64,8 +64,9 @@ Vulkan / D3D12 / Metal
 
 - **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
   (Hierarchy / Assets / Viewport / Inspector / Console). Pane title bars are drag
-  handles; layout presets/maximize live in the View menu. Hierarchy rows form a tree from
-  `EntityView.parent`, with expand/collapse and context actions.
+  handles; layout presets live in the View menu and menu dropdowns are floating overlays.
+  Hierarchy rows form a tree from `EntityView.parent`, with expand/collapse and context
+  actions.
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
   primitives (button, slider, text field, field editor, component card/picker, panel,

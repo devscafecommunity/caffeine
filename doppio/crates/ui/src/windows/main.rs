@@ -98,8 +98,8 @@ enum Message {
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     CloseScene,
     ToggleMenu(MenuId),
+    CloseMenu,
     Layout(LayoutPreset),
-    MaximizeViewport,
 }
 
 struct App {
@@ -618,7 +618,6 @@ impl App {
                     iced::keyboard::Key::Character("2") => {
                         Some(Message::Layout(LayoutPreset::Viewport))
                     }
-                    iced::keyboard::Key::Character("m") => Some(Message::MaximizeViewport),
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
                         Some(Message::TogglePlay)
                     }
@@ -832,15 +831,6 @@ impl App {
                         {
                             view.parent = parent;
                         }
-                        eprintln!(
-                            "parent set entity={} parent={:?} view={:?}",
-                            entity,
-                            parent,
-                            self.entities
-                                .iter()
-                                .find(|view| view.id == entity)
-                                .map(|view| view.parent)
-                        );
                         self.log.push("Changed parent".to_owned());
                         self.commit("Change Parent", None);
                     }
@@ -943,23 +933,100 @@ impl App {
                     Some(menu)
                 };
             }
+            Message::CloseMenu => {
+                self.open_menu = None;
+                self.hierarchy_menu = None;
+            }
             Message::Layout(preset) => {
                 self.panes =
                     pane_grid::State::with_configuration(Self::layout_configuration(preset));
             }
-            Message::MaximizeViewport => {
-                let viewport = self
-                    .panes
-                    .iter()
-                    .find(|(_, kind)| **kind == PaneKind::Viewport)
-                    .map(|(pane, _)| *pane);
-                if let Some(pane) = viewport {
-                    if self.panes.maximized().is_some() {
-                        self.panes.restore();
-                    }
-                    self.panes.maximize(pane);
-                }
-            }
+        }
+    }
+
+    fn menu_items(&self, menu: MenuId) -> (f32, Vec<menu::Item<'_, Message>>) {
+        match menu {
+            MenuId::Scene => (
+                126.0,
+                vec![
+                    menu::Item {
+                        id: id::ADD_ENTITY,
+                        label: "Add Entity",
+                        shortcut: Some("Ctrl+N"),
+                        message: Message::AddEntity,
+                    },
+                    menu::Item {
+                        id: id::SAVE_SCENE,
+                        label: "Save Scene",
+                        shortcut: Some("Ctrl+S"),
+                        message: Message::SaveScene,
+                    },
+                    menu::Item {
+                        id: id::TOGGLE_PLAY,
+                        label: if self.playing { "Pause" } else { "Play" },
+                        shortcut: Some("Ctrl+Enter"),
+                        message: Message::TogglePlay,
+                    },
+                ],
+            ),
+            MenuId::Edit => (
+                186.0,
+                vec![
+                    menu::Item {
+                        id: id::UNDO,
+                        label: "Undo",
+                        shortcut: Some("Ctrl+Z"),
+                        message: Message::Undo,
+                    },
+                    menu::Item {
+                        id: id::REDO,
+                        label: "Redo",
+                        shortcut: Some("Ctrl+Shift+Z"),
+                        message: Message::Redo,
+                    },
+                    menu::Item {
+                        id: id::DELETE_ENTITY,
+                        label: "Delete Selected",
+                        shortcut: None,
+                        message: Message::Inspector(panels::inspector::Edit::Delete),
+                    },
+                ],
+            ),
+            MenuId::View => (
+                238.0,
+                vec![
+                    menu::Item {
+                        id: id::FOCUS_SELECTION,
+                        label: "Focus Selection",
+                        shortcut: Some("Ctrl+F"),
+                        message: Message::FocusSelection,
+                    },
+                    menu::Item {
+                        id: id::RESET_CAMERA,
+                        label: "Reset Camera",
+                        shortcut: Some("Ctrl+0"),
+                        message: Message::ResetCamera,
+                    },
+                    menu::Item {
+                        id: id::RENDER_VIEWPORT,
+                        label: "Render Now",
+                        shortcut: Some("Ctrl+R"),
+                        message: Message::RenderViewport,
+                    },
+                    menu::Item {
+                        id: id::LAYOUT_DEFAULT,
+                        label: "Default Layout",
+                        shortcut: Some("Ctrl+1"),
+                        message: Message::Layout(LayoutPreset::Default),
+                    },
+                    menu::Item {
+                        id: id::LAYOUT_VIEWPORT,
+                        label: "Viewport Layout",
+                        shortcut: Some("Ctrl+2"),
+                        message: Message::Layout(LayoutPreset::Viewport),
+                    },
+                ],
+            ),
         }
     }
 
@@ -970,100 +1037,22 @@ impl App {
         ]
         .spacing(0);
 
-        let scene_menu = menu::view(
+        let scene_menu = menu::trigger(
             id::MENU_SCENE,
             "Scene",
             self.open_menu == Some(MenuId::Scene),
-            vec![
-                menu::Item {
-                    id: id::ADD_ENTITY,
-                    label: "Add Entity",
-                    shortcut: Some("Ctrl+N"),
-                    message: Message::AddEntity,
-                },
-                menu::Item {
-                    id: id::SAVE_SCENE,
-                    label: "Save Scene",
-                    shortcut: Some("Ctrl+S"),
-                    message: Message::SaveScene,
-                },
-                menu::Item {
-                    id: id::TOGGLE_PLAY,
-                    label: if self.playing { "Pause" } else { "Play" },
-                    shortcut: Some("Ctrl+Enter"),
-                    message: Message::TogglePlay,
-                },
-            ],
             Message::ToggleMenu(MenuId::Scene),
         );
-        let edit_menu = menu::view(
+        let edit_menu = menu::trigger(
             id::MENU_EDIT,
             "Edit",
             self.open_menu == Some(MenuId::Edit),
-            vec![
-                menu::Item {
-                    id: id::UNDO,
-                    label: "Undo",
-                    shortcut: Some("Ctrl+Z"),
-                    message: Message::Undo,
-                },
-                menu::Item {
-                    id: id::REDO,
-                    label: "Redo",
-                    shortcut: Some("Ctrl+Shift+Z"),
-                    message: Message::Redo,
-                },
-                menu::Item {
-                    id: id::DELETE_ENTITY,
-                    label: "Delete Selected",
-                    shortcut: None,
-                    message: Message::Inspector(panels::inspector::Edit::Delete),
-                },
-            ],
             Message::ToggleMenu(MenuId::Edit),
         );
-        let view_menu = menu::view(
+        let view_menu = menu::trigger(
             id::MENU_VIEW,
             "View",
             self.open_menu == Some(MenuId::View),
-            vec![
-                menu::Item {
-                    id: id::FOCUS_SELECTION,
-                    label: "Focus Selection",
-                    shortcut: Some("Ctrl+F"),
-                    message: Message::FocusSelection,
-                },
-                menu::Item {
-                    id: id::RESET_CAMERA,
-                    label: "Reset Camera",
-                    shortcut: Some("Ctrl+0"),
-                    message: Message::ResetCamera,
-                },
-                menu::Item {
-                    id: id::RENDER_VIEWPORT,
-                    label: "Render Now",
-                    shortcut: Some("Ctrl+R"),
-                    message: Message::RenderViewport,
-                },
-                menu::Item {
-                    id: id::LAYOUT_DEFAULT,
-                    label: "Default Layout",
-                    shortcut: Some("Ctrl+1"),
-                    message: Message::Layout(LayoutPreset::Default),
-                },
-                menu::Item {
-                    id: id::LAYOUT_VIEWPORT,
-                    label: "Viewport Layout",
-                    shortcut: Some("Ctrl+2"),
-                    message: Message::Layout(LayoutPreset::Viewport),
-                },
-                menu::Item {
-                    id: id::LAYOUT_MAXIMIZE_VIEWPORT,
-                    label: "Maximize Viewport",
-                    shortcut: Some("Ctrl+M"),
-                    message: Message::MaximizeViewport,
-                },
-            ],
             Message::ToggleMenu(MenuId::View),
         );
         let menu_group = toolbar::group(vec![scene_menu, edit_menu, view_menu]);
@@ -1095,25 +1084,31 @@ impl App {
         let status_row = row![engine_status, save_status, play_status, entity_status].spacing(6);
         let bar = toolbar::view(brand.into(), vec![menu_group], status_row.into());
 
-        let grid = pane_grid(&self.panes, |pane, kind, is_maximized| {
-            self.pane_content(pane, *kind, is_maximized)
-        })
-        .on_drag(Message::PaneDragged)
-        .on_resize(8, Message::PaneResized)
-        .spacing(6);
+        let grid = pane_grid(&self.panes, |pane, kind, _| self.pane_content(pane, *kind))
+            .on_drag(Message::PaneDragged)
+            .on_resize(8, Message::PaneResized)
+            .spacing(6);
 
-        container(column![bar, grid].spacing(8).padding(8))
+        let base: Element<'_, Message> = container(column![bar, grid].spacing(8).padding(8))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::background)
-            .into()
+            .into();
+
+        if let Some(menu) = self.open_menu {
+            let (x, items) = self.menu_items(menu);
+            let overlay =
+                iced::widget::mouse_area(menu::overlay(x, items)).on_press(Message::CloseMenu);
+            iced::widget::stack([base, overlay.into()]).into()
+        } else {
+            base
+        }
     }
 
     fn pane_content<'a>(
         &'a self,
         _pane: pane_grid::Pane,
         kind: PaneKind,
-        _maximized: bool,
     ) -> pane_grid::Content<'a, Message> {
         let (pane_id, title, subtitle, body) = self.pane_parts(kind);
         let title_bar = pane_grid::TitleBar::new(panel::title(title, subtitle))

@@ -210,7 +210,6 @@ The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
 | `Ctrl+0` | reset camera |
 | `Ctrl+R` | render viewport now |
 | `Ctrl+1` / `Ctrl+2` | default / viewport panel layout |
-| `Ctrl+M` | maximize viewport |
 | right-click hierarchy row | add / focus / delete context menu |
 | double-click hierarchy row or viewport | focus selection |
 | left drag / right drag / wheel | orbit / pan / zoom |
@@ -321,7 +320,7 @@ registers scene-level queries and actions:
 | query | `scene` | scene path, dirty flag, counts and the console log |
 | query | `assets` | project assets with path, kind, size and directory flag |
 | query | `camera` | viewport yaw, pitch, distance and focus |
-| query | `layout` | panes and which one is maximized |
+| query | `layout` | pane list and kinds |
 | action | `set_entity_parent` | `{ "entity_id", "parent_id"?: number \| null }` |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
 | query | `component_types` | component schema: fields, kinds, limits, enum options |

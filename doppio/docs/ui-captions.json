@@ -27,8 +27,7 @@
     "editor.menu.view": "View menu: focus, camera reset and render.",
     "hierarchy.tree.toggle": "Expand/collapse chevron of a hierarchy row.",
     "editor.layout.default": "Restores the default panel layout.",
-    "editor.layout.viewport": "Gives the viewport most of the workspace.",
-    "editor.layout.maximize_viewport": "Maximizes the viewport pane."
+    "editor.layout.viewport": "Gives the viewport most of the workspace."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -58,7 +57,6 @@
     "editor.menu.view": "Menu Ver: focar, repor câmara e renderizar.",
     "hierarchy.tree.toggle": "Seta para expandir/fechar uma linha da hierarquia.",
     "editor.layout.default": "Repõe o layout predefinido dos painéis.",
-    "editor.layout.viewport": "Dá a maior parte do workspace ao viewport.",
-    "editor.layout.maximize_viewport": "Maximiza o painel do viewport."
+    "editor.layout.viewport": "Dá a maior parte do workspace ao viewport."
   }
 }
