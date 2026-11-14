@@ -3,7 +3,19 @@
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/World.hpp"
+#include "math/Mat4.hpp"
 #include "math/Quat.hpp"
+#include "render/GpuSceneRenderer.hpp"
+#include "rhi/RenderDevice.hpp"
+#include "scene/EditorCameraMath.hpp"
+#include "scene/SceneComponents.hpp"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <limits>
+#include <memory>
+#include <vector>
 #include "scene/EditorContext.hpp"
 #include "scene/EditorSceneSerializer.hpp"
 
@@ -20,6 +32,62 @@ struct CaffeineSession {
     std::string scenePath;
     float lastDelta = 0.0f;
     uint64_t frameIndex = 0;
+
+    std::unique_ptr<Caffeine::RHI::RenderDevice> renderDevice;
+    std::unique_ptr<Caffeine::Render::GpuSceneRenderer> sceneRenderer;
+    Caffeine::RHI::Texture* colorTarget = nullptr;
+    uint32_t renderWidth = 0;
+    uint32_t renderHeight = 0;
+
+    ~CaffeineSession() {
+        shutdownRender();
+    }
+
+    void shutdownRender() {
+        if (sceneRenderer) sceneRenderer->shutdown();
+        if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
+        colorTarget = nullptr;
+        renderWidth = 0;
+        renderHeight = 0;
+        if (renderDevice) renderDevice->shutdown();
+        sceneRenderer.reset();
+        renderDevice.reset();
+    }
+
+    bool ensureRender(uint32_t width, uint32_t height) {
+        if (!renderDevice) {
+            if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) return false;
+            renderDevice = std::make_unique<Caffeine::RHI::RenderDevice>();
+            Caffeine::RHI::RenderConfig config;
+            config.width = width;
+            config.height = height;
+            if (!renderDevice->initOffscreen(config)) {
+                renderDevice.reset();
+                return false;
+            }
+            sceneRenderer = std::make_unique<Caffeine::Render::GpuSceneRenderer>();
+            if (!sceneRenderer->init(renderDevice.get())) {
+                sceneRenderer.reset();
+                renderDevice->shutdown();
+                renderDevice.reset();
+                return false;
+            }
+        }
+        if (renderWidth != width || renderHeight != height || !colorTarget) {
+            if (colorTarget) renderDevice->destroyTexture(colorTarget);
+            Caffeine::RHI::TextureDesc desc;
+            desc.width = width;
+            desc.height = height;
+            desc.format = Caffeine::RHI::TextureFormat::R8G8B8A8_UNORM;
+            desc.usage = Caffeine::RHI::TextureUsage::Sampler |
+                         Caffeine::RHI::TextureUsage::ColorTarget;
+            colorTarget = renderDevice->createTexture(desc);
+            renderWidth = width;
+            renderHeight = height;
+            if (!colorTarget) return false;
+        }
+        return true;
+    }
 };
 
 namespace {
@@ -363,6 +431,88 @@ void caffeine_session_tick(CaffeineSession* session, float delta_time) {
     if (!session) return;
     session->lastDelta = delta_time;
     ++session->frameIndex;
+}
+
+CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
+                                       uint32_t height, uint8_t* pixels,
+                                       size_t pixel_bytes) {
+    if (!session || !pixels || width == 0 || height == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const size_t required = static_cast<size_t>(width) * height * 4u;
+    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
+    if (!session->ensureRender(width, height)) return CAFFEINE_ERROR;
+
+    Caffeine::Vec3 min(std::numeric_limits<float>::max(),
+                       std::numeric_limits<float>::max(),
+                       std::numeric_limits<float>::max());
+    Caffeine::Vec3 max(-std::numeric_limits<float>::max(),
+                       -std::numeric_limits<float>::max(),
+                       -std::numeric_limits<float>::max());
+    bool any = false;
+
+    Caffeine::ECS::ComponentQuery query;
+    query.with<Caffeine::Scene::WorldTransform>();
+    session->world.forEach<Caffeine::Scene::WorldTransform>(
+        query, [&](Caffeine::ECS::Entity, Caffeine::Scene::WorldTransform& transform) {
+            const Caffeine::Vec3 point =
+                transform.matrix.transformPoint(Caffeine::Vec3(0.0f, 0.0f, 0.0f));
+            min = Caffeine::Vec3(std::min(min.x, point.x), std::min(min.y, point.y),
+                                 std::min(min.z, point.z));
+            max = Caffeine::Vec3(std::max(max.x, point.x), std::max(max.y, point.y),
+                                 std::max(max.z, point.z));
+            any = true;
+        });
+
+    Caffeine::Vec3 center(0.0f, 0.0f, 0.0f);
+    float radius = 10.0f;
+    if (any) {
+        center = Caffeine::Vec3((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f,
+                                (min.z + max.z) * 0.5f);
+        radius = std::max((max - min).length() * 0.5f, 2.0f);
+    }
+
+    const float distance = std::max(radius * 2.5f, 5.0f);
+    const Caffeine::Vec3 cameraPosition = Caffeine::Editor::editorCameraPosition(
+        0.65f, 0.35f, distance, center);
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const float farClip = std::max(1000.0f, distance * 20.0f);
+
+    Caffeine::Render::GpuSceneCamera camera;
+    camera.position = cameraPosition;
+    camera.focus = center;
+    camera.view = Caffeine::Mat4::lookAt(cameraPosition, center,
+                                         Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+    camera.proj = Caffeine::Mat4::perspective(1.0472f, aspect, 0.1f, farClip);
+    camera.fovRad = 1.0472f;
+    camera.nearClip = 0.1f;
+    camera.farClip = farClip;
+
+    Caffeine::Render::GpuSceneRenderOptions options;
+    options.enableShadows = false;
+    options.renderScale = 1.0f;
+    options.deltaTime = 1.0f / 60.0f;
+    options.viewId = 1;
+    options.resolveFeaturesFromScene = true;
+    options.resolveEnvironmentFromScene = true;
+    options.resolvePostProcessFromScene = false;
+    options.postProcess = Caffeine::Render::PostProcessStack::defaults();
+    options.postProcess.antiAliasing.enabled = false;
+
+    Caffeine::RHI::CommandBuffer* command = session->renderDevice->beginOffscreen();
+    if (!command) return CAFFEINE_ERROR;
+    session->sceneRenderer->renderWithCamera(
+        command, session->world, camera, session->colorTarget, nullptr, width, height,
+        session->context.projectRootPath, options);
+    session->renderDevice->endOffscreen(command);
+
+    std::vector<uint8_t> readback;
+    if (!session->renderDevice->readTexture(session->colorTarget, readback)) {
+        return CAFFEINE_ERROR;
+    }
+    const size_t copySize = std::min(readback.size(), required);
+    std::memcpy(pixels, readback.data(), copySize);
+    return CAFFEINE_OK;
 }
 
 void caffeine_session_frame_stats(const CaffeineSession* session, CaffeineFrameStats* out) {

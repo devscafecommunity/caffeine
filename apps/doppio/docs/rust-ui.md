@@ -133,19 +133,23 @@ precedent.
 
 ### Phase 2 — viewport
 
-The engine already renders the scene into an RHI `m_colorTarget`. The hard part
-is presenting that texture in Iced's wgpu renderer. Options, in order:
+The CPU-readback path is implemented and working:
 
-1. **PoC:** CPU readback of the offscreen target + wgpu upload. Cross-platform,
-   simple, higher latency/bandwidth.
-2. **Separate SDL3 viewport window** positioned by the UI. Good for a prototype,
-   weaker for docking/Wayland.
-3. **Production:** D3D12 shared handle on Windows, Vulkan external memory on
-   Linux. SDL_GPU hides the native device, so this needs an RHI backend that can
-   expose/accept the native device or a move away from SDL_GPU for the viewport.
+- `RenderDevice::initOffscreen()` creates a headless SDL_GPU device.
+- `caffeine_session_render()` renders with `GpuSceneRenderer::renderWithCamera`
+  into an RGBA8 target and reads it back with `RenderDevice::readTexture`.
+- `doppio-engine::Engine::render()` wraps the ABI.
+- `uikit/components/rendering_canvas.rs` displays the frame with Iced's image
+  widget; the app refreshes it at 2 FPS via an `iced::time` subscription.
+- The current render size is 640x360.
 
-Do not block the UI work on GPU interop; the ABI and panels can be validated with
-the readback path first.
+The viewport now shows the real C++ scene (terrain, rocks, sky) in Iced.
+
+Next viewport step is replacing readback with a shared GPU texture:
+
+1. D3D12 shared handle on Windows.
+2. Vulkan external memory on Linux.
+3. Fallback: separate SDL3 viewport window while interop is unfinished.
 
 ### Phase 3 — plugins
 

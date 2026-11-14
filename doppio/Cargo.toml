@@ -9,7 +9,7 @@ rust-version = "1.88"
 publish = false
 
 [workspace.dependencies]
-iced = "0.14"
+iced = { version = "0.14", features = ["image", "tokio"] }
 iced-mcp = "0.3.1"
 iced_test = "0.14"
 libloading = "0.8"

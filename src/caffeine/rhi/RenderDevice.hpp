@@ -296,6 +296,8 @@ public:
     RenderDevice& operator=(RenderDevice&&) = delete;
 
     bool init(SDL_Window* window, const RenderConfig& config = {});
+    /// Headless/offscreen device: no swapchain, only beginOffscreen()/readTexture().
+    bool initOffscreen(const RenderConfig& config = {});
     void shutdown();
 
     CommandBuffer* beginFrame();

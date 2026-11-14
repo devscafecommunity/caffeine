@@ -8,12 +8,16 @@ use iced::Element;
 
 #[cfg(feature = "agent")]
 pub fn run() -> iced::Result {
-    iced_mcp::run(iced::application(App::new, App::update, App::view))
+    iced_mcp::run(
+        iced::application(App::new, App::update, App::view).subscription(App::subscription),
+    )
 }
 
 #[cfg(not(feature = "agent"))]
 pub fn run() -> iced::Result {
-    iced::application(App::new, App::update, App::view).run()
+    iced::application(App::new, App::update, App::view)
+        .subscription(App::subscription)
+        .run()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +42,7 @@ enum Message {
     NudgeRotationY,
     ScaleUp,
     SaveScene,
+    RenderViewport,
     Log,
 }
 
@@ -50,6 +55,7 @@ struct App {
     log: Vec<String>,
     playing: bool,
     next_entity_id: u32,
+    viewport_image: Option<iced::widget::image::Handle>,
 }
 
 impl App {
@@ -101,6 +107,34 @@ impl App {
             log: loaded.log,
             playing: false,
             next_entity_id,
+            viewport_image: None,
+        }
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::RenderViewport)
+    }
+
+    fn render_viewport(&mut self) {
+        const WIDTH: u32 = 640;
+        const HEIGHT: u32 = 360;
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
+        match engine.render(WIDTH, HEIGHT) {
+            Ok(pixels) => {
+                if self.viewport_image.is_none() {
+                    self.log.push("Viewport ready".to_owned());
+                }
+                self.viewport_image = Some(iced::widget::image::Handle::from_rgba(
+                    WIDTH, HEIGHT, pixels,
+                ));
+            }
+            Err(_) => {
+                if self.log.last().map(String::as_str) != Some("Viewport render failed") {
+                    self.log.push("Viewport render failed".to_owned());
+                }
+            }
         }
     }
 
@@ -255,6 +289,9 @@ impl App {
                     self.log.push("No engine session to save".to_owned());
                 }
             }
+            Message::RenderViewport => {
+                self.render_viewport();
+            }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
             }
@@ -272,6 +309,7 @@ impl App {
             ),
             button::primary("add-entity", "Add Entity", Message::AddEntity),
             button::toolbar("save-scene", "Save", Message::SaveScene),
+            button::toolbar("render-viewport", "Render", Message::RenderViewport),
             button::toolbar("log", "Log", Message::Log),
             text(if self.engine.is_some() {
                 "C++ engine"
@@ -313,7 +351,7 @@ impl App {
                 panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity)
             }
             PaneKind::Assets => panels::assetmanager::view(),
-            PaneKind::Viewport => panels::sceneviewport::view(),
+            PaneKind::Viewport => panels::sceneviewport::view(self.viewport_image.clone()),
             PaneKind::Inspector => panels::inspector::view(
                 self.entities.get(self.selected),
                 &self.name_input,

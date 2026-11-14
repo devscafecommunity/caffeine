@@ -74,6 +74,7 @@ type RotationFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetRotationFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type ScaleFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
+type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
 type TickFn = unsafe extern "C" fn(*mut c_void, f32);
 type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
 
@@ -97,6 +98,7 @@ struct Functions {
     set_rotation: SetRotationFn,
     scale: ScaleFn,
     set_scale: SetScaleFn,
+    render: RenderFn,
     tick: TickFn,
     frame_stats: FrameStatsFn,
 }
@@ -162,6 +164,7 @@ impl Engine {
             }?,
             scale: unsafe { load_symbol(&library, b"caffeine_session_entity_scale\0") }?,
             set_scale: unsafe { load_symbol(&library, b"caffeine_session_set_entity_scale\0") }?,
+            render: unsafe { load_symbol(&library, b"caffeine_session_render\0") }?,
             tick: unsafe { load_symbol(&library, b"caffeine_session_tick\0") }?,
             frame_stats: unsafe { load_symbol(&library, b"caffeine_session_frame_stats\0") }?,
         };
@@ -282,6 +285,21 @@ impl Engine {
 
     pub fn set_scale(&mut self, entity: u32, scale: [f32; 3]) -> EngineResult<()> {
         result(unsafe { (self.functions.set_scale)(self.session, entity, to_raw(scale)) })
+    }
+
+    pub fn render(&mut self, width: u32, height: u32) -> EngineResult<Vec<u8>> {
+        let size = width as usize * height as usize * 4;
+        let mut pixels = vec![0u8; size];
+        result(unsafe {
+            (self.functions.render)(
+                self.session,
+                width,
+                height,
+                pixels.as_mut_ptr(),
+                pixels.len(),
+            )
+        })?;
+        Ok(pixels)
     }
 
     pub fn tick(&mut self, delta_time: f32) {

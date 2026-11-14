@@ -59,6 +59,14 @@ CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char*
 const char* caffeine_session_scene_path(const CaffeineSession* session);
 /** 1 when the session has unsaved edits. */
 int caffeine_session_is_dirty(const CaffeineSession* session);
+/**
+ * Render the scene offscreen to RGBA8 pixels. `pixels` must hold at least
+ * width * height * 4 bytes. This is the CPU-readback viewport path; GPU
+ * shared-texture interop will replace it later.
+ */
+CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
+                                       uint32_t height, uint8_t* pixels,
+                                       size_t pixel_bytes);
 /** Write the current world to a .caf scene and clear the dirty flag. */
 CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 

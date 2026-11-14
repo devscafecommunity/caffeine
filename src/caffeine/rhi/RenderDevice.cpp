@@ -57,6 +57,25 @@ bool RenderDevice::init(SDL_Window* window, const RenderConfig& config) {
     return true;
 }
 
+bool RenderDevice::initOffscreen(const RenderConfig& config) {
+    if (m_device) {
+        return false;
+    }
+
+    m_config = config;
+    m_window = nullptr;
+    m_device = SDL_CreateGPUDevice(
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
+        false,
+        nullptr
+    );
+    if (!m_device) {
+        return false;
+    }
+    m_frameIndex = 0;
+    return true;
+}
+
 void RenderDevice::shutdown() {
     if (!m_device) {
         return;
