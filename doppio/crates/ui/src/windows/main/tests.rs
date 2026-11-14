@@ -483,7 +483,7 @@ fn viewport_drag_orbits_and_wheel_zooms() {
     harness.dispatch(Message::ViewportMoved(Point::new(10.0, 10.0)));
     harness.dispatch(Message::ViewportMoved(Point::new(40.0, 10.0)));
     assert!(harness.app().camera.yaw > yaw, "left drag should orbit");
-    harness.dispatch(Message::ViewportReleased);
+    harness.dispatch(Message::ViewportReleased(mouse::Button::Left));
 
     harness.dispatch(Message::ViewportScrolled(mouse::ScrollDelta::Lines {
         x: 0.0,
@@ -504,7 +504,7 @@ fn viewport_right_drag_pans_and_focus_targets_selection() {
     harness.dispatch(Message::ViewportPressed(mouse::Button::Right));
     harness.dispatch(Message::ViewportMoved(Point::new(10.0, 10.0)));
     harness.dispatch(Message::ViewportMoved(Point::new(40.0, 25.0)));
-    harness.dispatch(Message::ViewportReleased);
+    harness.dispatch(Message::ViewportReleased(mouse::Button::Left));
     assert_ne!(harness.app().camera.focus, focus, "right drag should pan");
 
     harness.click(id::entity_row(1));
@@ -527,17 +527,16 @@ fn empty_editor_has_no_entities() {
 fn every_pane_and_toolbar_button_is_addressable() {
     let harness = Harness::with_entities();
     for target in [
-        id::UNDO,
-        id::REDO,
-        id::ADD_ENTITY,
-        id::TOGGLE_PLAY,
+        id::MENU_SCENE,
+        id::MENU_EDIT,
+        id::MENU_VIEW,
         id::PANE_HIERARCHY,
         id::PANE_ASSETS,
         id::PANE_VIEWPORT,
         id::PANE_INSPECTOR,
         id::PANE_CONSOLE,
         id::ENTITY_NAME,
-        id::ORBIT_LEFT,
+        id::VIEWPORT_SURFACE,
     ] {
         let bounds = harness
             .bounds(Id::from(target.clone()))
@@ -556,7 +555,7 @@ fn add_entity_updates_hierarchy_and_inspector() {
     assert_eq!(harness.app().entities.len(), 2);
     assert_eq!(harness.app().selected, 1);
 
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
     assert_eq!(harness.app().entities.len(), 3);
     assert_eq!(harness.app().selected, 2);
     assert!(harness.shows("Entity 3"));
@@ -564,15 +563,39 @@ fn add_entity_updates_hierarchy_and_inspector() {
 }
 
 #[test]
-fn play_pause_toggles_the_toolbar_label() {
+fn play_pause_toggles_the_status_and_menu() {
     let mut harness = Harness::with_entities();
     assert!(!harness.app().playing);
-    harness.click(id::TOGGLE_PLAY);
+    harness.dispatch(Message::TogglePlay);
     assert!(harness.app().playing);
+    assert!(harness.shows("Playing"));
+    harness.click(id::MENU_SCENE);
     assert!(harness.shows("Pause"));
-    harness.click(id::TOGGLE_PLAY);
+    harness.dispatch(Message::TogglePlay);
     assert!(!harness.app().playing);
-    assert!(harness.shows("Play"));
+    assert!(harness.shows("Stopped"));
+}
+
+#[test]
+fn hierarchy_context_menu_deletes_the_entity() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    harness.dispatch(Message::HierarchyContext(1));
+    harness.dispatch(Message::ViewportTick);
+    assert!(harness.shows("Delete Entity"));
+    harness.click(id::DELETE_ENTITY);
+    assert_eq!(harness.app().entities.len(), 1);
+    assert_eq!(harness.app().selected, 0);
+}
+
+#[test]
+fn hierarchy_double_click_focuses_the_entity() {
+    let mut harness = Harness::with_entities();
+    harness.dispatch(Message::HierarchyDoubleClick(1));
+    assert_eq!(
+        harness.app().camera.focus,
+        harness.app().entities[1].position
+    );
 }
 
 #[test]
@@ -644,7 +667,7 @@ fn component_fields_edit_transform_and_add_components() {
 fn delete_removes_the_selected_entity() {
     let mut harness = Harness::with_entities();
     harness.click(id::entity_row(1));
-    harness.click(id::DELETE_ENTITY);
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::Delete));
     assert_eq!(harness.app().entities.len(), 1);
     assert_eq!(harness.app().selected, 0);
     assert!(harness.shows("Entity: Entity 1"));
@@ -654,8 +677,11 @@ fn delete_removes_the_selected_entity() {
 fn orbit_changes_the_camera_and_reset_restores_it() {
     let mut harness = Harness::with_entities();
     let start = harness.app().camera.yaw;
-    harness.click(id::ORBIT_LEFT);
-    assert!(harness.app().camera.yaw < start);
+    harness.dispatch(Message::ViewportPressed(mouse::Button::Left));
+    harness.dispatch(Message::ViewportMoved(Point::new(0.0, 0.0)));
+    harness.dispatch(Message::ViewportMoved(Point::new(30.0, 0.0)));
+    harness.dispatch(Message::ViewportReleased(mouse::Button::Left));
+    assert!(harness.app().camera.yaw > start);
 
     harness.dispatch(Message::SetCamera(doppio_engine::Camera {
         yaw: 1.0,
@@ -665,6 +691,7 @@ fn orbit_changes_the_camera_and_reset_restores_it() {
     }));
     assert_eq!(harness.app().camera.distance, 20.0);
 
+    harness.click(id::MENU_VIEW);
     harness.click(id::RESET_CAMERA);
     assert_eq!(
         harness.app().camera,
@@ -699,8 +726,8 @@ fn undo_redo_covers_add_and_delete() {
     let mut harness = Harness::empty();
     harness.rebase_history();
 
-    harness.click(id::ADD_ENTITY);
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
+    harness.dispatch(Message::AddEntity);
     assert_eq!(harness.app().entities.len(), 2);
     assert_eq!(harness.app().history.len(), 2);
 
@@ -807,23 +834,33 @@ fn undo_restores_transform_and_selection() {
 fn new_edit_after_undo_drops_redo() {
     let mut harness = Harness::empty();
     harness.rebase_history();
-    harness.click(id::ADD_ENTITY);
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
+    harness.dispatch(Message::AddEntity);
     harness.dispatch(Message::Undo);
     assert!(harness.app().history.can_redo());
 
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
     assert!(!harness.app().history.can_redo());
     assert_eq!(harness.app().entities.len(), 2);
 }
 
 #[test]
-fn toolbar_undo_and_redo_click() {
+fn menus_stay_open_across_viewport_ticks() {
+    let mut harness = Harness::with_entities();
+    harness.click(id::MENU_VIEW);
+    harness.dispatch(Message::ViewportTick);
+    assert!(harness.shows("Focus Selection"));
+}
+
+#[test]
+fn menu_undo_and_redo_click() {
     let mut harness = Harness::empty();
     harness.rebase_history();
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
+    harness.click(id::MENU_EDIT);
     harness.click(id::UNDO);
     assert!(harness.app().entities.is_empty());
+    harness.click(id::MENU_EDIT);
     harness.click(id::REDO);
     assert_eq!(harness.app().entities.len(), 1);
 }
@@ -834,8 +871,8 @@ fn toolbar_undo_and_redo_click() {
 fn editor_workflow_end_to_end() {
     let mut harness = Harness::empty();
 
-    harness.click(id::ADD_ENTITY);
-    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::AddEntity);
+    harness.dispatch(Message::AddEntity);
     assert_eq!(harness.app().entities.len(), 2);
 
     harness.click(id::entity_row(1));
@@ -844,7 +881,7 @@ fn editor_workflow_end_to_end() {
     harness.type_into(id::ENTITY_NAME, "Boss");
     assert!(harness.app().entities[1].name.contains("Boss"));
 
-    harness.click(id::DELETE_ENTITY);
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::Delete));
     assert_eq!(harness.app().entities.len(), 1);
     assert!(harness.wait_for("Entity: Entity 1", 2));
 }
@@ -938,10 +975,7 @@ fn capture_ui_gallery() {
         );
     }
 
-    let mut inspector_controls = vec![
-        (id::ENTITY_NAME, "Entity name"),
-        (id::DELETE_ENTITY, "Delete"),
-    ];
+    let mut inspector_controls = vec![(id::ENTITY_NAME, "Entity name")];
     if harness.app().engine.is_some() {
         inspector_controls.insert(1, (id::component_field(0, 0, 0), "Position X"));
         inspector_controls.insert(2, (id::ADD_COMPONENT, "Add Component"));

@@ -9,17 +9,17 @@ pub fn card<'a, Message: 'a>(
     kind: impl Into<String>,
 ) -> Element<'a, Message> {
     let name = name.into();
-    let name = if name.chars().count() > 12 {
-        let mut short: String = name.chars().take(11).collect();
+    let name = if name.chars().count() > 10 {
+        let mut short: String = name.chars().take(10).collect();
         short.push('…');
         short
     } else {
         name
     };
-    container(column![text(name), text(kind.into()).size(11)])
+    container(column![text(name).size(10), text(kind.into()).size(9)])
         .id(id.into())
         .padding(6)
-        .width(90.0)
-        .height(58.0)
+        .width(96.0)
+        .height(54.0)
         .into()
 }

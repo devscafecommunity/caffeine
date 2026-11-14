@@ -74,7 +74,9 @@ Vulkan / D3D12 / Metal
   `uikit/panels/`.
 - **Visual tokens live in `uikit/theme.rs`.** Panels and components use its colours,
   borders and spacing; no hardcoded colours outside the theme (enforced by the check).
-  Window chrome uses `toolbar` + `status`; every pane body is wrapped by `panel`.
+  Window chrome uses a menu bar (`toolbar` + `menu`) plus `status`; every pane body is
+  wrapped by `panel`. Prefer direct manipulation (click, right-click, double-click, drag,
+  wheel) and shortcuts over adding a button for every action.
 - **Viewport interaction is a component.** `viewport_surface` owns mouse handling (drag,
   pan, wheel, double-click, cursor); camera maths and state stay in `windows/main.rs`.
   Keep the viewport non-blocking (async readback) and show latency/FPS in the HUD.
@@ -154,8 +156,9 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
    helper) plus a `CATALOG` entry. Every editing command must record an undo step
    (`App::commit`) and expose any agent-facing command as a `Message` action.
 5. **UI composition and theme** — panels compose reusable components; never build
-   interactive widgets inline. Keep field editors, cards, pickers, panel chrome and
+   interactive widgets inline. Keep field editors, cards, pickers, panel chrome, menus and
    viewport interaction in `uikit/components/`; colours/spacing come from `uikit/theme.rs`.
+   Prefer menus, shortcuts and mouse gestures to a button per action.
 6. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
    `doppio/crates/engine`, and both test suites in the same change. Version
    `CAFFEINE_CAPI_VERSION` for breaking changes; keep structs POD.

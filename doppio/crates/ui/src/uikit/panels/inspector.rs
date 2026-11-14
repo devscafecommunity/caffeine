@@ -1,6 +1,4 @@
-use crate::uikit::components::{
-    button, component_card, component_picker, field_editor, text_field,
-};
+use crate::uikit::components::{component_card, component_picker, field_editor, text_field};
 use crate::uikit::id;
 use crate::uikit::EntityView;
 use doppio_engine::{ComponentData, ComponentType};
@@ -51,17 +49,9 @@ pub fn view<'a, Message: Clone + 'a>(
     let mut content = Column::new().spacing(8);
 
     let Some(entity) = inspector.entity else {
-        return container(
-            content
-                .push(text("No entity selected"))
-                .push(button::danger(
-                    id::DELETE_ENTITY,
-                    "Delete",
-                    emit(Edit::Delete),
-                )),
-        )
-        .padding(8)
-        .into();
+        return container(content.push(text("No entity selected")))
+            .padding(8)
+            .into();
     };
 
     content = content.push(text(format!("Entity: {}", entity.name)));
@@ -103,12 +93,6 @@ pub fn view<'a, Message: Clone + 'a>(
     ) {
         content = content.push(picker);
     }
-
-    content = content.push(button::danger(
-        id::DELETE_ENTITY,
-        "Delete",
-        emit(Edit::Delete),
-    ));
 
     container(scrollable(content)).into()
 }

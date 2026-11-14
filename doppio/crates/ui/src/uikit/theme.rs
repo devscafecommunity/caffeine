@@ -74,6 +74,19 @@ pub fn divider(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn list_row(selected: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(if selected { ACCENT_PRESSED } else { PANEL }.into()),
+        border: Border {
+            color: if selected { ACCENT } else { BORDER },
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
 pub fn chip(tone: ChipTone) -> impl Fn(&Theme) -> container::Style {
     let (background, border, text) = match tone {
         ChipTone::Neutral => (PANEL_ALT, BORDER, TEXT_MUTED),

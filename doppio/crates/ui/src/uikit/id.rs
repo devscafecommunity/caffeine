@@ -83,13 +83,15 @@ pub struct UiMeta {
 }
 
 // ── Editor chrome ─────────────────────────────────────────────────────────
+pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
+pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
+pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
 pub const UNDO: UiId = UiId::fixed("editor.toolbar.undo");
 pub const REDO: UiId = UiId::fixed("editor.toolbar.redo");
 pub const ADD_ENTITY: UiId = UiId::fixed("editor.toolbar.add_entity");
 pub const TOGGLE_PLAY: UiId = UiId::fixed("editor.toolbar.toggle_play");
 pub const SAVE_SCENE: UiId = UiId::fixed("editor.toolbar.save");
 pub const RENDER_VIEWPORT: UiId = UiId::fixed("editor.toolbar.render");
-pub const LOG_MESSAGE: UiId = UiId::fixed("editor.toolbar.log");
 
 // ── Panes ────────────────────────────────────────────────────────────────
 pub const PANE_HIERARCHY: UiId = UiId::fixed("editor.pane.hierarchy");
@@ -100,10 +102,6 @@ pub const PANE_CONSOLE: UiId = UiId::fixed("editor.pane.console");
 
 // ── Viewport ─────────────────────────────────────────────────────────────
 pub const VIEWPORT_SURFACE: UiId = UiId::fixed("viewport.canvas.surface");
-pub const ORBIT_LEFT: UiId = UiId::fixed("viewport.camera.orbit_left");
-pub const ORBIT_RIGHT: UiId = UiId::fixed("viewport.camera.orbit_right");
-pub const ZOOM_IN: UiId = UiId::fixed("viewport.camera.zoom_in");
-pub const ZOOM_OUT: UiId = UiId::fixed("viewport.camera.zoom_out");
 pub const RESET_CAMERA: UiId = UiId::fixed("viewport.camera.reset");
 pub const FOCUS_SELECTION: UiId = UiId::fixed("viewport.camera.focus_selection");
 
@@ -137,6 +135,21 @@ pub fn asset_card(index: usize) -> UiId {
 /// The statically documented part of the UI tree.
 pub const CATALOG: &[UiMeta] = &[
     UiMeta {
+        id: MENU_SCENE,
+        description: "Scene menu: add, save and play.",
+        kind: "menu",
+    },
+    UiMeta {
+        id: MENU_EDIT,
+        description: "Edit menu: undo, redo and delete.",
+        kind: "menu",
+    },
+    UiMeta {
+        id: MENU_VIEW,
+        description: "View menu: focus, camera reset and render.",
+        kind: "menu",
+    },
+    UiMeta {
         id: UNDO,
         description: "Reverts the last editor step.",
         kind: "button",
@@ -164,11 +177,6 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: RENDER_VIEWPORT,
         description: "Forces an offscreen viewport render.",
-        kind: "button",
-    },
-    UiMeta {
-        id: LOG_MESSAGE,
-        description: "Writes a test message to the console.",
         kind: "button",
     },
     UiMeta {
@@ -200,26 +208,6 @@ pub const CATALOG: &[UiMeta] = &[
         id: VIEWPORT_SURFACE,
         description: "Engine render output shown inside the viewport pane.",
         kind: "image",
-    },
-    UiMeta {
-        id: ORBIT_LEFT,
-        description: "Rotates the viewport camera to the left.",
-        kind: "button",
-    },
-    UiMeta {
-        id: ORBIT_RIGHT,
-        description: "Rotates the viewport camera to the right.",
-        kind: "button",
-    },
-    UiMeta {
-        id: ZOOM_IN,
-        description: "Moves the camera closer to its focus.",
-        kind: "button",
-    },
-    UiMeta {
-        id: ZOOM_OUT,
-        description: "Moves the camera away from its focus.",
-        kind: "button",
     },
     UiMeta {
         id: FOCUS_SELECTION,

@@ -44,10 +44,10 @@ end
 
 local entities = app:query("entities")
 assert(#entities == 3, "entities query should list 3 rows")
-assert(app:find({ text = "Pause" }) == nil, "editor should start paused")
+app:expect({ text = "Stopped" })
 
 app:run_app_action("toggle_play")
-app:expect({ text = "Pause" })
+app:expect({ text = "Playing" })
 
 local scene_after_play = app:query("scene")
 local logged_play = false

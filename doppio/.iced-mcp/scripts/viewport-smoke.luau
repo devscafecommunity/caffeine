@@ -15,6 +15,7 @@ assert(zoomed.distance < orbited.distance, "wheel up should zoom in")
 
 app:run_app_action("select_entity", { index = 1 })
 local entity = app:query("selection")
+app:click({ id = "editor.menu.view" })
 app:click({ id = "viewport.camera.focus_selection" })
 local focused = app:query("camera")
 assert(focused.focus[1] == entity.position[1], "focus should target the selection X")

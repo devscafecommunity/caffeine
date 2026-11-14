@@ -1,7 +1,7 @@
-use crate::uikit::components::{button, viewport_surface};
+use crate::uikit::components::viewport_surface;
 use crate::uikit::id;
 use iced::mouse;
-use iced::widget::{column, container, row, space};
+use iced::widget::container;
 use iced::{Element, Point};
 
 pub struct ViewportState<'a> {
@@ -14,12 +14,6 @@ pub struct ViewportState<'a> {
 }
 
 pub struct ViewportCallbacks<'a, Message> {
-    pub orbit_left: Message,
-    pub orbit_right: Message,
-    pub zoom_in: Message,
-    pub zoom_out: Message,
-    pub focus: Message,
-    pub reset: Message,
     pub surface_left_press: Message,
     pub surface_right_press: Message,
     pub surface_left_release: Message,
@@ -34,18 +28,6 @@ pub fn view<'a, Message: Clone + 'a>(
     state: ViewportState<'a>,
     callbacks: ViewportCallbacks<'a, Message>,
 ) -> Element<'a, Message> {
-    let toolbar = row![
-        button::toolbar(id::ORBIT_LEFT, "Orbit -", callbacks.orbit_left),
-        button::toolbar(id::ORBIT_RIGHT, "Orbit +", callbacks.orbit_right),
-        button::toolbar(id::ZOOM_IN, "Zoom +", callbacks.zoom_in),
-        button::toolbar(id::ZOOM_OUT, "Zoom -", callbacks.zoom_out),
-        button::toolbar(id::FOCUS_SELECTION, "Focus", callbacks.focus),
-        button::toolbar(id::RESET_CAMERA, "Reset", callbacks.reset),
-        space::horizontal(),
-    ]
-    .spacing(4)
-    .align_y(iced::Alignment::Center);
-
     let surface = viewport_surface::view(viewport_surface::Surface {
         id: id::VIEWPORT_SURFACE,
         image: state.image,
@@ -62,7 +44,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_double_click: callbacks.surface_double_click,
     });
 
-    container(column![toolbar, surface].spacing(8))
+    container(surface)
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
         .into()

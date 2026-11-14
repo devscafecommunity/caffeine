@@ -1,7 +1,7 @@
 use crate::uikit::components::asset_preview;
 use crate::uikit::id;
 use doppio_engine::AssetInfo;
-use iced::widget::{container, scrollable, text, Row};
+use iced::widget::{container, scrollable, text, Column, Row};
 use iced::Element;
 
 pub fn view<'a, Message: 'a>(assets: &'a [AssetInfo]) -> Element<'a, Message> {
@@ -10,14 +10,24 @@ pub fn view<'a, Message: 'a>(assets: &'a [AssetInfo]) -> Element<'a, Message> {
         return container(text("No project assets")).into();
     }
 
-    let mut cards = Row::new().spacing(6);
-    for (index, asset) in files.iter().take(60).enumerate() {
-        cards = cards.push(asset_preview::card::<Message>(
-            id::asset_card(index),
-            asset.name.clone(),
-            asset.kind.clone(),
-        ));
+    let mut rows = Column::new().spacing(6);
+    for (row_index, chunk) in files
+        .iter()
+        .take(60)
+        .collect::<Vec<_>>()
+        .chunks(2)
+        .enumerate()
+    {
+        let mut row = Row::new().spacing(6);
+        for (offset, asset) in chunk.iter().enumerate() {
+            row = row.push(asset_preview::card::<Message>(
+                id::asset_card(row_index * 2 + offset),
+                asset.name.clone(),
+                asset.kind.clone(),
+            ));
+        }
+        rows = rows.push(row);
     }
 
-    container(scrollable(cards.wrap().vertical_spacing(6))).into()
+    container(scrollable(rows)).into()
 }

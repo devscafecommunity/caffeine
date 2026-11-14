@@ -4,6 +4,8 @@ pub mod component_card;
 pub mod component_picker;
 pub mod field_editor;
 pub mod gizmo;
+pub mod list_row;
+pub mod menu;
 pub mod panel;
 pub mod rendering_canvas;
 pub mod slider;

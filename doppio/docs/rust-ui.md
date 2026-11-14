@@ -113,7 +113,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 34 Rust tests: 2 engine bridge/snapshot tests, 31 UI/widget tests (1
+- 37 Rust tests: 2 engine bridge/snapshot tests, 34 UI/widget tests (1
 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
@@ -150,9 +150,14 @@ precedent.
 - The panel itself only composes uikit components (`text_field`,
   `field_editor`, `component_card`, `component_picker`); it contains no raw
   `text_input`/`checkbox`/`pick_list`. `scripts/check-rust-ui.sh` enforces it.
-- Window chrome is `toolbar` + `status` chips; every pane body is wrapped by the
-  `panel` component with a title and muted subtitle. Colours and spacing come
-  from `uikit/theme.rs` (the check rejects hardcoded colours outside it).
+- Window chrome is a **menu bar** (`Scene`, `Edit`, `View`) plus `status` chips;
+  every pane body is wrapped by the `panel` component with a title and muted
+  subtitle. Colours and spacing come from `uikit/theme.rs` (the check rejects
+  hardcoded colours outside it).
+- Prefer direct manipulation over button rows: hierarchy rows support click,
+  double-click (focus) and right-click (context menu: add/focus/delete);
+  viewport gestures are drag/pan/wheel/double-click/right-click. Menu entries
+  and `Ctrl` shortcuts cover the rest.
 
 ### Undo and redo
 
@@ -185,10 +190,26 @@ precedent.
 - The app pumps `ViewportTick` every 16 ms, so rendering, readback and UI stay
   decoupled; the HUD shows measured latency and a rolling FPS.
 - Camera maths (orbit, pan basis, zoom, focus selection) lives in
-  `windows/main.rs`; the toolbar offers Orbit -/+, Zoom +/-, Focus and Reset.
+  `windows/main.rs`; there is no camera button row. Gestures and shortcuts
+  (`Ctrl+F` focus, `Ctrl+0` reset, `Ctrl+R` render) drive it.
 - The render size is 960x540.
 
 The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
+
+### Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` | undo / redo |
+| `Ctrl+N` | add entity |
+| `Ctrl+S` | save scene |
+| `Ctrl+Enter` | play / pause |
+| `Ctrl+F` | focus selection |
+| `Ctrl+0` | reset camera |
+| `Ctrl+R` | render viewport now |
+| right-click hierarchy row | add / focus / delete context menu |
+| double-click hierarchy row or viewport | focus selection |
+| left drag / right drag / wheel | orbit / pan / zoom |
 
 ### Why not a shared GPU texture yet
 

@@ -1,5 +1,5 @@
 use crate::history::{self, History};
-use crate::uikit::components::{button, panel, status, toolbar};
+use crate::uikit::components::{menu, panel, status, toolbar};
 use crate::uikit::id;
 use crate::uikit::panels;
 use crate::uikit::theme;
@@ -30,6 +30,14 @@ pub fn run() -> iced::Result {
 struct ViewportDrag {
     button: mouse::Button,
     last: Option<Point>,
+    distance: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuId {
+    Scene,
+    Edit,
+    View,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +54,8 @@ enum Message {
     PaneDragged(pane_grid::DragEvent),
     PaneResized(pane_grid::ResizeEvent),
     SelectEntity(usize),
+    HierarchyContext(usize),
+    HierarchyDoubleClick(usize),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SelectEntityByName(String),
     TogglePlay,
@@ -65,21 +75,17 @@ enum Message {
     RenderViewport,
     ViewportTick,
     ViewportPressed(mouse::Button),
-    ViewportReleased,
+    ViewportReleased(mouse::Button),
     ViewportMoved(Point),
     ViewportScrolled(mouse::ScrollDelta),
     ViewportDoubleClick,
     FocusSelection,
-    OrbitLeft,
-    OrbitRight,
-    ZoomIn,
-    ZoomOut,
     ResetCamera,
     Undo,
     Redo,
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     CloseScene,
-    Log,
+    ToggleMenu(MenuId),
 }
 
 struct App {
@@ -101,6 +107,8 @@ struct App {
     viewport_fps_window: Instant,
     viewport_frames: u32,
     viewport_drag: Option<ViewportDrag>,
+    open_menu: Option<MenuId>,
+    hierarchy_menu: Option<usize>,
     camera: doppio_engine::Camera,
     history: History,
     component_types: Vec<doppio_engine::ComponentType>,
@@ -188,6 +196,8 @@ impl App {
             viewport_fps_window: Instant::now(),
             viewport_frames: 0,
             viewport_drag: None,
+            open_menu: None,
+            hierarchy_menu: None,
             camera,
             history: History::new(history::State::new(Vec::new(), None, false)),
             component_types: Vec::new(),
@@ -537,6 +547,30 @@ impl App {
                     {
                         Some(Message::Redo)
                     }
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("n") =>
+                    {
+                        Some(Message::AddEntity)
+                    }
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("s") =>
+                    {
+                        Some(Message::SaveScene)
+                    }
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("f") =>
+                    {
+                        Some(Message::FocusSelection)
+                    }
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("r") =>
+                    {
+                        Some(Message::RenderViewport)
+                    }
+                    iced::keyboard::Key::Character("0") => Some(Message::ResetCamera),
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        Some(Message::TogglePlay)
+                    }
                     _ => None,
                 }
             }),
@@ -654,6 +688,13 @@ impl App {
     }
 
     fn update(&mut self, message: Message) {
+        if !matches!(
+            &message,
+            Message::ToggleMenu(_) | Message::HierarchyContext(_) | Message::ViewportTick
+        ) {
+            self.open_menu = None;
+            self.hierarchy_menu = None;
+        }
         match message {
             Message::PaneDragged(event) => {
                 if let pane_grid::DragEvent::Dropped { pane, target } = event {
@@ -665,6 +706,16 @@ impl App {
             }
             Message::SelectEntity(index) => {
                 self.select_index(index);
+            }
+            Message::HierarchyContext(index) => {
+                if index < self.entities.len() {
+                    self.select_index(index);
+                    self.hierarchy_menu = Some(index);
+                }
+            }
+            Message::HierarchyDoubleClick(index) => {
+                self.select_index(index);
+                self.focus_selection();
             }
             Message::TogglePlay => {
                 self.playing = !self.playing;
@@ -734,10 +785,18 @@ impl App {
                 self.pump_viewport();
             }
             Message::ViewportPressed(button) => {
-                self.viewport_drag = Some(ViewportDrag { button, last: None });
+                self.viewport_drag = Some(ViewportDrag {
+                    button,
+                    last: None,
+                    distance: 0.0,
+                });
             }
-            Message::ViewportReleased => {
-                self.viewport_drag = None;
+            Message::ViewportReleased(button) => {
+                if let Some(drag) = self.viewport_drag.take() {
+                    if button == mouse::Button::Right && drag.distance < 4.0 {
+                        self.focus_selection();
+                    }
+                }
             }
             Message::ViewportMoved(point) => {
                 if let Some((button, Some(last))) = self
@@ -751,6 +810,9 @@ impl App {
                         mouse::Button::Left => self.orbit_camera(dx, dy),
                         mouse::Button::Right | mouse::Button::Middle => self.pan_camera(dx, dy),
                         _ => {}
+                    }
+                    if let Some(drag) = self.viewport_drag.as_mut() {
+                        drag.distance += dx.abs() + dy.abs();
                     }
                 }
                 if let Some(drag) = self.viewport_drag.as_mut() {
@@ -766,22 +828,6 @@ impl App {
             }
             Message::ViewportDoubleClick | Message::FocusSelection => {
                 self.focus_selection();
-            }
-            Message::OrbitLeft => {
-                self.camera.yaw -= 0.2;
-                self.apply_camera();
-            }
-            Message::OrbitRight => {
-                self.camera.yaw += 0.2;
-                self.apply_camera();
-            }
-            Message::ZoomIn => {
-                self.camera.distance = (self.camera.distance * 0.9).max(1.0);
-                self.apply_camera();
-            }
-            Message::ZoomOut => {
-                self.camera.distance = (self.camera.distance * 1.1).min(500.0);
-                self.apply_camera();
             }
             Message::ResetCamera => {
                 self.camera = doppio_engine::Camera::default();
@@ -802,8 +848,12 @@ impl App {
                 self.viewport_image = None;
                 self.log.push("Closed scene".to_owned());
             }
-            Message::Log => {
-                self.log.push("Hello from the Rust UI".to_owned());
+            Message::ToggleMenu(menu) => {
+                self.open_menu = if self.open_menu == Some(menu) {
+                    None
+                } else {
+                    Some(menu)
+                };
             }
         }
     }
@@ -815,21 +865,85 @@ impl App {
         ]
         .spacing(0);
 
-        let history_group = toolbar::group(vec![
-            button::toolbar(id::UNDO, "Undo", Message::Undo),
-            button::toolbar(id::REDO, "Redo", Message::Redo),
-        ]);
-        let scene_group = toolbar::group(vec![
-            button::toolbar(
-                id::TOGGLE_PLAY,
-                if self.playing { "Pause" } else { "Play" },
-                Message::TogglePlay,
-            ),
-            button::primary(id::ADD_ENTITY, "Add Entity", Message::AddEntity),
-            button::toolbar(id::SAVE_SCENE, "Save", Message::SaveScene),
-            button::toolbar(id::RENDER_VIEWPORT, "Render", Message::RenderViewport),
-            button::toolbar(id::LOG_MESSAGE, "Log", Message::Log),
-        ]);
+        let scene_menu = menu::view(
+            id::MENU_SCENE,
+            "Scene",
+            self.open_menu == Some(MenuId::Scene),
+            vec![
+                menu::Item {
+                    id: id::ADD_ENTITY,
+                    label: "Add Entity",
+                    shortcut: Some("Ctrl+N"),
+                    message: Message::AddEntity,
+                },
+                menu::Item {
+                    id: id::SAVE_SCENE,
+                    label: "Save Scene",
+                    shortcut: Some("Ctrl+S"),
+                    message: Message::SaveScene,
+                },
+                menu::Item {
+                    id: id::TOGGLE_PLAY,
+                    label: if self.playing { "Pause" } else { "Play" },
+                    shortcut: Some("Ctrl+Enter"),
+                    message: Message::TogglePlay,
+                },
+            ],
+            Message::ToggleMenu(MenuId::Scene),
+        );
+        let edit_menu = menu::view(
+            id::MENU_EDIT,
+            "Edit",
+            self.open_menu == Some(MenuId::Edit),
+            vec![
+                menu::Item {
+                    id: id::UNDO,
+                    label: "Undo",
+                    shortcut: Some("Ctrl+Z"),
+                    message: Message::Undo,
+                },
+                menu::Item {
+                    id: id::REDO,
+                    label: "Redo",
+                    shortcut: Some("Ctrl+Shift+Z"),
+                    message: Message::Redo,
+                },
+                menu::Item {
+                    id: id::DELETE_ENTITY,
+                    label: "Delete Selected",
+                    shortcut: None,
+                    message: Message::Inspector(panels::inspector::Edit::Delete),
+                },
+            ],
+            Message::ToggleMenu(MenuId::Edit),
+        );
+        let view_menu = menu::view(
+            id::MENU_VIEW,
+            "View",
+            self.open_menu == Some(MenuId::View),
+            vec![
+                menu::Item {
+                    id: id::FOCUS_SELECTION,
+                    label: "Focus Selection",
+                    shortcut: Some("Ctrl+F"),
+                    message: Message::FocusSelection,
+                },
+                menu::Item {
+                    id: id::RESET_CAMERA,
+                    label: "Reset Camera",
+                    shortcut: Some("Ctrl+0"),
+                    message: Message::ResetCamera,
+                },
+                menu::Item {
+                    id: id::RENDER_VIEWPORT,
+                    label: "Render Now",
+                    shortcut: Some("Ctrl+R"),
+                    message: Message::RenderViewport,
+                },
+            ],
+            Message::ToggleMenu(MenuId::View),
+        );
+        let menu_group = toolbar::group(vec![scene_menu, edit_menu, view_menu]);
 
         let engine_status = if self.engine.is_some() {
             status::chip("C++ engine", theme::ChipTone::Accent)
@@ -850,12 +964,13 @@ impl App {
             format!("{} entities", self.entities.len()),
             theme::ChipTone::Neutral,
         );
-        let status_row = row![engine_status, save_status, entity_status].spacing(6);
-        let bar = toolbar::view(
-            brand.into(),
-            vec![history_group, scene_group],
-            status_row.into(),
-        );
+        let play_status = if self.playing {
+            status::chip("Playing", theme::ChipTone::Success)
+        } else {
+            status::chip("Stopped", theme::ChipTone::Neutral)
+        };
+        let status_row = row![engine_status, save_status, play_status, entity_status].spacing(6);
+        let bar = toolbar::view(brand.into(), vec![menu_group], status_row.into());
 
         let grid = pane_grid(&self.panes, |_pane, kind, _is_maximized| {
             pane_grid::Content::new(self.pane_view(*kind))
@@ -882,7 +997,21 @@ impl App {
                 id::PANE_HIERARCHY,
                 "Hierarchy",
                 Some(format!("{} entities", self.entities.len())),
-                panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity),
+                panels::hierarchy::view(
+                    &self.entities,
+                    self.selected,
+                    self.hierarchy_menu,
+                    Message::SelectEntity,
+                    Message::HierarchyContext,
+                    Message::HierarchyDoubleClick,
+                    |action| match action {
+                        panels::hierarchy::Action::AddEntity => Message::AddEntity,
+                        panels::hierarchy::Action::Focus => Message::FocusSelection,
+                        panels::hierarchy::Action::Delete => {
+                            Message::Inspector(panels::inspector::Edit::Delete)
+                        }
+                    },
+                ),
             ),
             PaneKind::Assets => {
                 let files = self
@@ -933,16 +1062,10 @@ impl App {
                     camera: &self.camera,
                 };
                 let callbacks = panels::sceneviewport::ViewportCallbacks {
-                    orbit_left: Message::OrbitLeft,
-                    orbit_right: Message::OrbitRight,
-                    zoom_in: Message::ZoomIn,
-                    zoom_out: Message::ZoomOut,
-                    focus: Message::FocusSelection,
-                    reset: Message::ResetCamera,
                     surface_left_press: Message::ViewportPressed(mouse::Button::Left),
                     surface_right_press: Message::ViewportPressed(mouse::Button::Right),
-                    surface_left_release: Message::ViewportReleased,
-                    surface_right_release: Message::ViewportReleased,
+                    surface_left_release: Message::ViewportReleased(mouse::Button::Left),
+                    surface_right_release: Message::ViewportReleased(mouse::Button::Right),
                     surface_move: Box::new(Message::ViewportMoved),
                     surface_scroll: Box::new(Message::ViewportScrolled),
                     surface_double_click: Message::ViewportDoubleClick,
@@ -958,7 +1081,7 @@ impl App {
                 let selected = self
                     .entities
                     .get(self.selected)
-                    .map(|entity| entity.name.clone())
+                    .map(|entity| format!("ID {}", entity.id))
                     .unwrap_or_else(|| "No selection".to_owned());
                 (
                     id::PANE_INSPECTOR,

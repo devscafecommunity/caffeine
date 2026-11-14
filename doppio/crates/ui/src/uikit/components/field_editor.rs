@@ -1,6 +1,6 @@
 use crate::uikit::components::text_field;
 use doppio_engine::{FieldInfo, FieldKind, FieldValue};
-use iced::widget::{checkbox, pick_list, row, text, Column, Row};
+use iced::widget::{checkbox, pick_list, row, text, Column};
 use iced::{Element, Length};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -73,7 +73,7 @@ pub fn view<'a, Message: Clone + 'a>(
                 FieldKind::Vec3 => 3,
                 _ => 4,
             };
-            let mut vector = Row::new().spacing(4);
+            let mut vector = Column::new().spacing(2);
             for axis in 0..axes {
                 let emit = emit.clone();
                 vector = vector.push(text_field::compact(
