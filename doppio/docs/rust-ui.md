@@ -22,7 +22,10 @@ doppio/
   crates/engine/            libloading bindings to libcaffeine-capi
   crates/ui/
     src/windows/            main.rs (app state + PaneGrid), projectloader.rs
-    src/uikit/components/   button, slider, rendering_canvas, gizmo, asset_preview
+    src/uikit/components/   button, panel, toolbar, status, text_field, field_editor,
+                            component_card/picker, viewport_surface, rendering_canvas,
+                            gizmo, asset_preview
+    src/uikit/theme.rs      colours, borders and spacing for the whole workspace
     src/uikit/panels/       hierarchy, sceneviewport, assetmanager, inspector, console
 ```
 
@@ -110,7 +113,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 32 Rust tests: 2 engine bridge/snapshot tests, 29 UI/widget tests (1
+- 34 Rust tests: 2 engine bridge/snapshot tests, 31 UI/widget tests (1
 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
@@ -147,6 +150,9 @@ precedent.
 - The panel itself only composes uikit components (`text_field`,
   `field_editor`, `component_card`, `component_picker`); it contains no raw
   `text_input`/`checkbox`/`pick_list`. `scripts/check-rust-ui.sh` enforces it.
+- Window chrome is `toolbar` + `status` chips; every pane body is wrapped by the
+  `panel` component with a title and muted subtitle. Colours and spacing come
+  from `uikit/theme.rs` (the check rejects hardcoded colours outside it).
 
 ### Undo and redo
 
@@ -172,11 +178,14 @@ precedent.
 - `caffeine_session_render_poll()` returns `PENDING` until the fence is
   signalled, then maps the transfer buffer and copies the pixels.
 - `doppio-engine::Engine::{render, render_begin, render_poll}` wrap the ABI.
-- `uikit/components/rendering_canvas.rs` displays the frame with Iced's image
-  widget; the app pumps `ViewportTick` every 16 ms, so rendering, readback and
-  UI stay decoupled.
-- The camera (yaw, pitch, distance, focus) is stored in `CaffeineCamera` and
-  controlled from the viewport toolbar (Orbit -/+, Zoom +/-, Reset).
+- `uikit/components/viewport_surface.rs` owns the interactive surface: image or
+  empty state, HUD chips (resolution, latency, FPS, camera), mouse handling
+  (left drag orbit, right/middle drag pan, wheel zoom, double-click focus) and
+  grab/grabbing cursor feedback.
+- The app pumps `ViewportTick` every 16 ms, so rendering, readback and UI stay
+  decoupled; the HUD shows measured latency and a rolling FPS.
+- Camera maths (orbit, pan basis, zoom, focus selection) lives in
+  `windows/main.rs`; the toolbar offers Orbit -/+, Zoom +/-, Focus and Reset.
 - The render size is 960x540.
 
 The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
@@ -285,6 +294,8 @@ registers scene-level queries and actions:
 | query | `entities` | every entity with id, name, transform and selection |
 | query | `selection` | the selected entity or null |
 | query | `scene` | scene path, dirty flag, counts and the console log |
+| query | `assets` | project assets with path, kind, size and directory flag |
+| query | `camera` | viewport yaw, pitch, distance and focus |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
 | query | `component_types` | component schema: fields, kinds, limits, enum options |
 | query | `entity_components` | components and values for an entity |

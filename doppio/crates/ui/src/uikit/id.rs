@@ -105,6 +105,7 @@ pub const ORBIT_RIGHT: UiId = UiId::fixed("viewport.camera.orbit_right");
 pub const ZOOM_IN: UiId = UiId::fixed("viewport.camera.zoom_in");
 pub const ZOOM_OUT: UiId = UiId::fixed("viewport.camera.zoom_out");
 pub const RESET_CAMERA: UiId = UiId::fixed("viewport.camera.reset");
+pub const FOCUS_SELECTION: UiId = UiId::fixed("viewport.camera.focus_selection");
 
 // ── Inspector ────────────────────────────────────────────────────────────
 pub const ENTITY_NAME: UiId = UiId::fixed("inspector.entity.name");
@@ -218,6 +219,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: ZOOM_OUT,
         description: "Moves the camera away from its focus.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FOCUS_SELECTION,
+        description: "Frames the selected entity in the viewport.",
         kind: "button",
     },
     UiMeta {

@@ -1,13 +1,15 @@
 use crate::history::{self, History};
-use crate::uikit::components::button;
+use crate::uikit::components::{button, panel, status, toolbar};
 use crate::uikit::id;
 use crate::uikit::panels;
+use crate::uikit::theme;
 use crate::uikit::EntityView;
 use crate::windows::projectloader;
 
-use iced::widget::{column, pane_grid, row, space, text};
-use iced::Element;
+use iced::widget::{column, container, pane_grid, row, text};
+use iced::{mouse, Element, Length, Point};
 use std::collections::HashMap;
+use std::time::Instant;
 
 const VIEWPORT_WIDTH: u32 = 960;
 const VIEWPORT_HEIGHT: u32 = 540;
@@ -22,6 +24,12 @@ pub fn run() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .subscription(App::subscription)
         .run()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ViewportDrag {
+    button: mouse::Button,
+    last: Option<Point>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +64,12 @@ enum Message {
     SaveScene,
     RenderViewport,
     ViewportTick,
+    ViewportPressed(mouse::Button),
+    ViewportReleased,
+    ViewportMoved(Point),
+    ViewportScrolled(mouse::ScrollDelta),
+    ViewportDoubleClick,
+    FocusSelection,
     OrbitLeft,
     OrbitRight,
     ZoomIn,
@@ -81,6 +95,12 @@ struct App {
     viewport_image: Option<iced::widget::image::Handle>,
     viewport_pixels: Vec<u8>,
     viewport_pending: bool,
+    viewport_started: Option<Instant>,
+    viewport_latency_ms: f32,
+    viewport_fps: f32,
+    viewport_fps_window: Instant,
+    viewport_frames: u32,
+    viewport_drag: Option<ViewportDrag>,
     camera: doppio_engine::Camera,
     history: History,
     component_types: Vec<doppio_engine::ComponentType>,
@@ -162,6 +182,12 @@ impl App {
             viewport_image: None,
             viewport_pixels: vec![0; (VIEWPORT_WIDTH * VIEWPORT_HEIGHT * 4) as usize],
             viewport_pending: false,
+            viewport_started: None,
+            viewport_latency_ms: 0.0,
+            viewport_fps: 0.0,
+            viewport_fps_window: Instant::now(),
+            viewport_frames: 0,
+            viewport_drag: None,
             camera,
             history: History::new(history::State::new(Vec::new(), None, false)),
             component_types: Vec::new(),
@@ -526,9 +552,53 @@ impl App {
             .as_mut()
             .map(|engine| engine.render_begin(VIEWPORT_WIDTH, VIEWPORT_HEIGHT));
         match started {
-            Some(Ok(())) => self.viewport_pending = true,
+            Some(Ok(())) => {
+                self.viewport_pending = true;
+                self.viewport_started = Some(Instant::now());
+            }
             Some(Err(_)) => self.log_render_failure(),
             None => {}
+        }
+    }
+
+    fn orbit_camera(&mut self, dx: f32, dy: f32) {
+        self.camera.yaw += dx * 0.008;
+        self.camera.pitch = (self.camera.pitch + dy * 0.008).clamp(-1.45, 1.45);
+        self.apply_camera();
+    }
+
+    fn pan_camera(&mut self, dx: f32, dy: f32) {
+        let (sin_yaw, cos_yaw) = self.camera.yaw.sin_cos();
+        let (sin_pitch, cos_pitch) = self.camera.pitch.sin_cos();
+        let right = [-cos_yaw, 0.0, -sin_yaw];
+        let forward = [-sin_yaw * cos_pitch, -sin_pitch, cos_yaw * cos_pitch];
+        let up = [
+            right[1] * forward[2] - right[2] * forward[1],
+            right[2] * forward[0] - right[0] * forward[2],
+            right[0] * forward[1] - right[1] * forward[0],
+        ];
+        let scale = self.camera.distance * 0.0018;
+        for axis in 0..3 {
+            self.camera.focus[axis] += right[axis] * (-dx * scale) + up[axis] * (dy * scale);
+        }
+        self.apply_camera();
+    }
+
+    fn zoom_camera(&mut self, lines: f32) {
+        self.camera.distance = (self.camera.distance * 0.9f32.powf(lines)).clamp(0.5, 5000.0);
+        self.apply_camera();
+    }
+
+    fn focus_selection(&mut self) {
+        let target = self
+            .entities
+            .get(self.selected)
+            .map(|entity| (entity.position, entity.name.clone()));
+        if let Some((position, name)) = target {
+            self.camera.focus = position;
+            self.camera.distance = (self.camera.distance * 0.5).clamp(1.0, 40.0);
+            self.apply_camera();
+            self.log.push(format!("Focused {name}"));
         }
     }
 
@@ -546,6 +616,16 @@ impl App {
         match polled {
             Some(Ok(doppio_engine::RenderState::Ready)) => {
                 self.viewport_pending = false;
+                if let Some(started) = self.viewport_started.take() {
+                    self.viewport_latency_ms = started.elapsed().as_secs_f32() * 1000.0;
+                }
+                self.viewport_frames += 1;
+                let elapsed = self.viewport_fps_window.elapsed().as_secs_f32();
+                if elapsed >= 1.0 {
+                    self.viewport_fps = self.viewport_frames as f32 / elapsed;
+                    self.viewport_frames = 0;
+                    self.viewport_fps_window = Instant::now();
+                }
                 let pixels = std::mem::take(&mut self.viewport_pixels);
                 self.viewport_pixels = vec![0; pixels.len()];
                 if self.viewport_image.is_none() {
@@ -653,6 +733,40 @@ impl App {
             Message::ViewportTick => {
                 self.pump_viewport();
             }
+            Message::ViewportPressed(button) => {
+                self.viewport_drag = Some(ViewportDrag { button, last: None });
+            }
+            Message::ViewportReleased => {
+                self.viewport_drag = None;
+            }
+            Message::ViewportMoved(point) => {
+                if let Some((button, Some(last))) = self
+                    .viewport_drag
+                    .as_ref()
+                    .map(|drag| (drag.button, drag.last))
+                {
+                    let dx = point.x - last.x;
+                    let dy = point.y - last.y;
+                    match button {
+                        mouse::Button::Left => self.orbit_camera(dx, dy),
+                        mouse::Button::Right | mouse::Button::Middle => self.pan_camera(dx, dy),
+                        _ => {}
+                    }
+                }
+                if let Some(drag) = self.viewport_drag.as_mut() {
+                    drag.last = Some(point);
+                }
+            }
+            Message::ViewportScrolled(delta) => {
+                let lines = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y,
+                    mouse::ScrollDelta::Pixels { y, .. } => y / 40.0,
+                };
+                self.zoom_camera(lines);
+            }
+            Message::ViewportDoubleClick | Message::FocusSelection => {
+                self.focus_selection();
+            }
             Message::OrbitLeft => {
                 self.camera.yaw -= 0.2;
                 self.apply_camera();
@@ -695,11 +809,17 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let toolbar = row![
-            text("Doppio").size(20),
-            space::horizontal(),
+        let brand = column![
+            text("Doppio").size(18).color(theme::TEXT),
+            text("Caffeine engine").size(10).color(theme::TEXT_MUTED),
+        ]
+        .spacing(0);
+
+        let history_group = toolbar::group(vec![
             button::toolbar(id::UNDO, "Undo", Message::Undo),
             button::toolbar(id::REDO, "Redo", Message::Redo),
+        ]);
+        let scene_group = toolbar::group(vec![
             button::toolbar(
                 id::TOGGLE_PLAY,
                 if self.playing { "Pause" } else { "Play" },
@@ -709,74 +829,167 @@ impl App {
             button::toolbar(id::SAVE_SCENE, "Save", Message::SaveScene),
             button::toolbar(id::RENDER_VIEWPORT, "Render", Message::RenderViewport),
             button::toolbar(id::LOG_MESSAGE, "Log", Message::Log),
-            text(if self.engine.is_some() {
-                "C++ engine"
-            } else {
-                "fixtures"
-            })
-            .size(12),
-            text(
-                if self
-                    .engine
-                    .as_ref()
-                    .map(|engine| engine.is_dirty())
-                    .unwrap_or(false)
-                {
-                    "*"
-                } else {
-                    ""
-                }
-            )
-            .size(14),
-        ]
-        .spacing(8)
-        .padding(8)
-        .align_y(iced::Alignment::Center);
+        ]);
+
+        let engine_status = if self.engine.is_some() {
+            status::chip("C++ engine", theme::ChipTone::Accent)
+        } else {
+            status::chip("fixtures", theme::ChipTone::Neutral)
+        };
+        let dirty = self
+            .engine
+            .as_ref()
+            .map(|engine| engine.is_dirty())
+            .unwrap_or(false);
+        let save_status = if dirty {
+            status::chip("Unsaved", theme::ChipTone::Warning)
+        } else {
+            status::chip("Saved", theme::ChipTone::Success)
+        };
+        let entity_status = status::chip(
+            format!("{} entities", self.entities.len()),
+            theme::ChipTone::Neutral,
+        );
+        let status_row = row![engine_status, save_status, entity_status].spacing(6);
+        let bar = toolbar::view(
+            brand.into(),
+            vec![history_group, scene_group],
+            status_row.into(),
+        );
 
         let grid = pane_grid(&self.panes, |_pane, kind, _is_maximized| {
             pane_grid::Content::new(self.pane_view(*kind))
         })
         .on_drag(Message::PaneDragged)
         .on_resize(8, Message::PaneResized)
-        .spacing(4);
+        .spacing(6);
 
-        column![toolbar, grid].into()
+        container(column![bar, grid].spacing(8).padding(8))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(theme::background)
+            .into()
     }
 
     fn pane_view(&self, kind: PaneKind) -> Element<'_, Message> {
-        let (pane_id, content): (id::UiId, Element<'_, Message>) = match kind {
+        let (pane_id, title, subtitle, body): (
+            id::UiId,
+            &str,
+            Option<String>,
+            Element<'_, Message>,
+        ) = match kind {
             PaneKind::Hierarchy => (
                 id::PANE_HIERARCHY,
+                "Hierarchy",
+                Some(format!("{} entities", self.entities.len())),
                 panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity),
             ),
-            PaneKind::Assets => (id::PANE_ASSETS, panels::assetmanager::view(&self.assets)),
-            PaneKind::Viewport => (
-                id::PANE_VIEWPORT,
-                panels::sceneviewport::view(
-                    self.viewport_image.clone(),
-                    Message::OrbitLeft,
-                    Message::OrbitRight,
-                    Message::ZoomIn,
-                    Message::ZoomOut,
-                    Message::ResetCamera,
-                ),
+            PaneKind::Assets => {
+                let files = self
+                    .assets
+                    .iter()
+                    .filter(|asset| !asset.is_directory)
+                    .count();
+                let subtitle = if files > 60 {
+                    format!("{files} files · showing 60")
+                } else {
+                    format!("{files} files")
+                };
+                (
+                    id::PANE_ASSETS,
+                    "Assets",
+                    Some(subtitle),
+                    panels::assetmanager::view(&self.assets),
+                )
+            }
+            PaneKind::Viewport => {
+                let scene = self
+                    .engine
+                    .as_ref()
+                    .and_then(|engine| engine.scene_path())
+                    .and_then(|path| path.rsplit(['/', '\\']).next().map(str::to_owned))
+                    .unwrap_or_else(|| "No scene".to_owned());
+                let status_line = format!(
+                    "{}×{} · {:.0} ms · {:.0} FPS · yaw {:.2} · pitch {:.2} · dist {:.1}",
+                    VIEWPORT_WIDTH,
+                    VIEWPORT_HEIGHT,
+                    self.viewport_latency_ms,
+                    self.viewport_fps,
+                    self.camera.yaw,
+                    self.camera.pitch,
+                    self.camera.distance
+                );
+                let hint = self
+                    .entities
+                    .get(self.selected)
+                    .map(|entity| format!("Selected: {} · Double-click to focus", entity.name))
+                    .unwrap_or_else(|| "Double-click to focus the selection".to_owned());
+                let state = panels::sceneviewport::ViewportState {
+                    image: self.viewport_image.clone(),
+                    status: status_line,
+                    hint,
+                    empty: self.engine.is_some() && self.entities.is_empty(),
+                    dragging: self.viewport_drag.is_some(),
+                    camera: &self.camera,
+                };
+                let callbacks = panels::sceneviewport::ViewportCallbacks {
+                    orbit_left: Message::OrbitLeft,
+                    orbit_right: Message::OrbitRight,
+                    zoom_in: Message::ZoomIn,
+                    zoom_out: Message::ZoomOut,
+                    focus: Message::FocusSelection,
+                    reset: Message::ResetCamera,
+                    surface_left_press: Message::ViewportPressed(mouse::Button::Left),
+                    surface_right_press: Message::ViewportPressed(mouse::Button::Right),
+                    surface_left_release: Message::ViewportReleased,
+                    surface_right_release: Message::ViewportReleased,
+                    surface_move: Box::new(Message::ViewportMoved),
+                    surface_scroll: Box::new(Message::ViewportScrolled),
+                    surface_double_click: Message::ViewportDoubleClick,
+                };
+                (
+                    id::PANE_VIEWPORT,
+                    "Viewport",
+                    Some(scene),
+                    panels::sceneviewport::view(state, callbacks),
+                )
+            }
+            PaneKind::Inspector => {
+                let selected = self
+                    .entities
+                    .get(self.selected)
+                    .map(|entity| entity.name.clone())
+                    .unwrap_or_else(|| "No selection".to_owned());
+                (
+                    id::PANE_INSPECTOR,
+                    "Inspector",
+                    Some(selected),
+                    panels::inspector::view(
+                        panels::inspector::Inspector {
+                            entity: self.entities.get(self.selected),
+                            name_input: &self.name_input,
+                            components: &self.components,
+                            component_types: &self.component_types,
+                            field_inputs: &self.field_inputs,
+                        },
+                        Message::Inspector,
+                    ),
+                )
+            }
+            PaneKind::Console => (
+                id::PANE_CONSOLE,
+                "Console",
+                Some(format!("{} lines", self.log.len())),
+                panels::console::view(&self.log),
             ),
-            PaneKind::Inspector => (
-                id::PANE_INSPECTOR,
-                panels::inspector::view(
-                    panels::inspector::Inspector {
-                        entity: self.entities.get(self.selected),
-                        name_input: &self.name_input,
-                        components: &self.components,
-                        component_types: &self.component_types,
-                        field_inputs: &self.field_inputs,
-                    },
-                    Message::Inspector,
-                ),
-            ),
-            PaneKind::Console => (id::PANE_CONSOLE, panels::console::view(&self.log)),
         };
-        iced::widget::container(content).id(pane_id).into()
+
+        let content = panel::view(panel::Panel {
+            title,
+            subtitle,
+            body,
+        });
+        container(content).id(pane_id).into()
     }
 }
 

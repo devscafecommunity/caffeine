@@ -66,12 +66,18 @@ Vulkan / D3D12 / Metal
   (Hierarchy / Assets / Viewport / Inspector / Console).
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
-  primitives (button, slider, text field, field editor, component card/picker, rendering
-  canvas, gizmo, asset card).
+  primitives (button, slider, text field, field editor, component card/picker, panel,
+  toolbar, status chip, viewport surface, rendering canvas, gizmo, asset card).
 - **Panels compose; they do not draw widgets.** A panel must not call `text_input`,
   `checkbox`, `pick_list`, `slider` or `button` directly. Extend a component under
   `uikit/components/` and compose it. `scripts/check-rust-ui.sh` fails on raw widgets in
   `uikit/panels/`.
+- **Visual tokens live in `uikit/theme.rs`.** Panels and components use its colours,
+  borders and spacing; no hardcoded colours outside the theme (enforced by the check).
+  Window chrome uses `toolbar` + `status`; every pane body is wrapped by `panel`.
+- **Viewport interaction is a component.** `viewport_surface` owns mouse handling (drag,
+  pan, wheel, double-click, cursor); camera maths and state stay in `windows/main.rs`.
+  Keep the viewport non-blocking (async readback) and show latency/FPS in the HUD.
 - **Ids are hierarchical and catalogued.** Every interactive widget gets a
   `uikit::id::UiId` (`group.subgroup.object`, e.g. `editor.toolbar.add_entity`,
   `inspector.entity.name`, `hierarchy.list.entity_row.3`) and an entry in
@@ -147,8 +153,9 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic
    helper) plus a `CATALOG` entry. Every editing command must record an undo step
    (`App::commit`) and expose any agent-facing command as a `Message` action.
-5. **UI composition** — panels compose reusable components; never build interactive
-   widgets inline. Keep field editors, cards and pickers in `uikit/components/`.
+5. **UI composition and theme** — panels compose reusable components; never build
+   interactive widgets inline. Keep field editors, cards, pickers, panel chrome and
+   viewport interaction in `uikit/components/`; colours/spacing come from `uikit/theme.rs`.
 6. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
    `doppio/crates/engine`, and both test suites in the same change. Version
    `CAFFEINE_CAPI_VERSION` for breaking changes; keep structs POD.

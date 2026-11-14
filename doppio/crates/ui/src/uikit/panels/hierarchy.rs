@@ -9,7 +9,7 @@ pub fn view<'a, Message: Clone + 'a>(
     selected: usize,
     on_select: impl Fn(usize) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let mut list = column![text("Hierarchy").size(16)].spacing(4);
+    let mut list = column![].spacing(4);
     if entities.is_empty() {
         list = list.push(text("No entities"));
     }
@@ -22,5 +22,5 @@ pub fn view<'a, Message: Clone + 'a>(
             on_select(index),
         ));
     }
-    container(scrollable(list)).padding(8).into()
+    container(scrollable(list)).into()
 }

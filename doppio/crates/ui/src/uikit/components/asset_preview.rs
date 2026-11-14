@@ -8,10 +8,18 @@ pub fn card<'a, Message: 'a>(
     name: impl Into<String>,
     kind: impl Into<String>,
 ) -> Element<'a, Message> {
-    container(column![text(name.into()), text(kind.into()).size(12)])
+    let name = name.into();
+    let name = if name.chars().count() > 12 {
+        let mut short: String = name.chars().take(11).collect();
+        short.push('…');
+        short
+    } else {
+        name
+    };
+    container(column![text(name), text(kind.into()).size(11)])
         .id(id.into())
-        .padding(8)
-        .width(120.0)
-        .height(80.0)
+        .padding(6)
+        .width(90.0)
+        .height(58.0)
         .into()
 }

@@ -25,7 +25,8 @@
     "editor.toolbar.redo": "Reapplies the last undone editor step.",
     "inspector.add_component": "Adds a component to the selected entity.",
     "inspector.component.field": "One component field editor; fields use .component.field.axis.",
-    "inspector.component.remove": "Removes one component; buttons use the .component suffix."
+    "inspector.component.remove": "Removes one component; buttons use the .component suffix.",
+    "viewport.camera.focus_selection": "Frames the selected entity in the viewport."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -53,6 +54,7 @@
     "editor.toolbar.redo": "Refaz o último passo desfeito.",
     "inspector.add_component": "Adiciona um componente à entidade selecionada.",
     "inspector.component.field": "Editor de um campo de componente; usa .component.field.axis.",
-    "inspector.component.remove": "Remove um componente; botões usam o sufixo .component."
+    "inspector.component.remove": "Remove um componente; botões usam o sufixo .component.",
+    "viewport.camera.focus_selection": "Enquadra a entidade selecionada no viewport."
   }
 }

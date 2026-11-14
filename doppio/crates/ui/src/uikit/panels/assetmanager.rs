@@ -1,40 +1,23 @@
 use crate::uikit::components::asset_preview;
 use crate::uikit::id;
 use doppio_engine::AssetInfo;
-use iced::widget::{container, scrollable, text, Column, Row};
+use iced::widget::{container, scrollable, text, Row};
 use iced::Element;
 
 pub fn view<'a, Message: 'a>(assets: &'a [AssetInfo]) -> Element<'a, Message> {
     let files: Vec<&AssetInfo> = assets.iter().filter(|asset| !asset.is_directory).collect();
-    let mut header = Column::new()
-        .push(text("Asset Manager").size(16))
-        .spacing(2);
-    header = header.push(text(format!("{} files", files.len())).size(12));
-
     if files.is_empty() {
-        return container(header.push(text("No project assets")))
-            .padding(8)
-            .into();
+        return container(text("No project assets")).into();
     }
 
-    let mut rows = Column::new().spacing(6);
-    for (chunk_index, chunk) in files
-        .iter()
-        .take(60)
-        .collect::<Vec<_>>()
-        .chunks(3)
-        .enumerate()
-    {
-        let mut row = Row::new().spacing(8);
-        for (offset, asset) in chunk.iter().enumerate() {
-            row = row.push(asset_preview::card::<Message>(
-                id::asset_card(chunk_index * 3 + offset),
-                asset.name.clone(),
-                asset.kind.clone(),
-            ));
-        }
-        rows = rows.push(row);
+    let mut cards = Row::new().spacing(6);
+    for (index, asset) in files.iter().take(60).enumerate() {
+        cards = cards.push(asset_preview::card::<Message>(
+            id::asset_card(index),
+            asset.name.clone(),
+            asset.kind.clone(),
+        ));
     }
 
-    container(header.push(scrollable(rows))).padding(8).into()
+    container(scrollable(cards.wrap().vertical_spacing(6))).into()
 }

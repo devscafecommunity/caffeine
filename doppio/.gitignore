@@ -5,3 +5,6 @@
 
 # iced-mcp visual baselines are machine/GPU dependent
 .iced-mcp/baselines/
+
+# iced-mcp one-off screenshots
+.iced-mcp/screenshots/

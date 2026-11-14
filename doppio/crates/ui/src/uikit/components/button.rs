@@ -1,3 +1,4 @@
+use crate::uikit::theme;
 use iced::widget::{button, container, text, Id};
 use iced::{Element, Length};
 
@@ -7,9 +8,13 @@ pub fn toolbar<'a, Message: Clone + 'a>(
     label: impl Into<String>,
     message: Message,
 ) -> Element<'a, Message> {
-    container(button(text(label.into())).on_press(message))
-        .id(id.into())
-        .into()
+    container(
+        button(text(label.into()))
+            .style(theme::button_secondary)
+            .on_press(message),
+    )
+    .id(id.into())
+    .into()
 }
 
 /// Primary action with a stable id.
@@ -20,7 +25,7 @@ pub fn primary<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     container(
         button(text(label.into()))
-            .style(iced::widget::button::primary)
+            .style(theme::button_primary)
             .on_press(message),
     )
     .id(id.into())
@@ -35,7 +40,7 @@ pub fn danger<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     container(
         button(text(label.into()))
-            .style(iced::widget::button::danger)
+            .style(theme::button_danger)
             .on_press(message),
     )
     .id(id.into())
@@ -50,8 +55,10 @@ pub fn selectable<'a, Message: Clone + 'a>(
     message: Message,
 ) -> Element<'a, Message> {
     let mut item = button(text(label.into())).width(Length::Fill);
-    if selected {
-        item = item.style(iced::widget::button::primary);
-    }
+    item = item.style(if selected {
+        theme::button_primary
+    } else {
+        theme::button_secondary
+    });
     container(item.on_press(message)).id(id.into()).into()
 }

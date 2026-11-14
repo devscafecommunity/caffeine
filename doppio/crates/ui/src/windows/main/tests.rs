@@ -8,7 +8,7 @@
 use super::*;
 use crate::uikit::id::{self, UiId};
 use iced::widget::Id;
-use iced::{Rectangle, Theme};
+use iced::{mouse, Point, Rectangle, Theme};
 use iced_test::simulator;
 use image::{Rgba, RgbaImage};
 use std::path::Path;
@@ -470,6 +470,50 @@ fn engine_harness() -> Option<Harness> {
         app: App::with_project(loaded),
         _guard: test_guard(),
     })
+}
+
+#[test]
+fn viewport_drag_orbits_and_wheel_zooms() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    let yaw = harness.app().camera.yaw;
+    let distance = harness.app().camera.distance;
+
+    harness.dispatch(Message::ViewportPressed(mouse::Button::Left));
+    harness.dispatch(Message::ViewportMoved(Point::new(10.0, 10.0)));
+    harness.dispatch(Message::ViewportMoved(Point::new(40.0, 10.0)));
+    assert!(harness.app().camera.yaw > yaw, "left drag should orbit");
+    harness.dispatch(Message::ViewportReleased);
+
+    harness.dispatch(Message::ViewportScrolled(mouse::ScrollDelta::Lines {
+        x: 0.0,
+        y: 2.0,
+    }));
+    assert!(
+        harness.app().camera.distance < distance,
+        "wheel up should zoom in"
+    );
+}
+
+#[test]
+fn viewport_right_drag_pans_and_focus_targets_selection() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    let focus = harness.app().camera.focus;
+
+    harness.dispatch(Message::ViewportPressed(mouse::Button::Right));
+    harness.dispatch(Message::ViewportMoved(Point::new(10.0, 10.0)));
+    harness.dispatch(Message::ViewportMoved(Point::new(40.0, 25.0)));
+    harness.dispatch(Message::ViewportReleased);
+    assert_ne!(harness.app().camera.focus, focus, "right drag should pan");
+
+    harness.click(id::entity_row(1));
+    harness.dispatch(Message::FocusSelection);
+    assert_eq!(
+        harness.app().camera.focus,
+        harness.app().entities[1].position,
+        "focus should target the selected entity"
+    );
 }
 
 #[test]

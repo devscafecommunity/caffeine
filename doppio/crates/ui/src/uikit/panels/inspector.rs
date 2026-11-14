@@ -48,7 +48,7 @@ pub fn view<'a, Message: Clone + 'a>(
     on_edit: impl Fn(Edit) -> Message + 'a,
 ) -> Element<'a, Message> {
     let emit: Rc<dyn Fn(Edit) -> Message + 'a> = Rc::new(on_edit);
-    let mut content = Column::new().push(text("Inspector").size(16)).spacing(8);
+    let mut content = Column::new().spacing(8);
 
     let Some(entity) = inspector.entity else {
         return container(
@@ -66,7 +66,7 @@ pub fn view<'a, Message: Clone + 'a>(
 
     content = content.push(text(format!("Entity: {}", entity.name)));
     let on_name = emit.clone();
-    content = content.push(text_field::view(
+    content = content.push(text_field::stacked(
         id::ENTITY_NAME,
         "Name",
         inspector.name_input,
@@ -110,7 +110,7 @@ pub fn view<'a, Message: Clone + 'a>(
         emit(Edit::Delete),
     ));
 
-    container(scrollable(content)).padding(8).into()
+    container(scrollable(content)).into()
 }
 
 fn map_field<Message: Clone>(

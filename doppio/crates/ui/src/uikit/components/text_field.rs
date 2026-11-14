@@ -21,6 +21,22 @@ pub fn view<'a, Message: Clone + 'a>(
     .into()
 }
 
+/// A stacked label above the field, for narrow panels.
+pub fn stacked<'a, Message: Clone + 'a>(
+    id: impl Into<iced::widget::Id>,
+    label: impl Into<String>,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+) -> Element<'a, Message> {
+    let label = label.into();
+    iced::widget::column![
+        text(label).size(11),
+        text_input("", value).id(id).on_input(on_input)
+    ]
+    .spacing(3)
+    .into()
+}
+
 /// A compact field with a short axis label, for vector components.
 pub fn compact<'a, Message: Clone + 'a>(
     id: impl Into<iced::widget::Id>,

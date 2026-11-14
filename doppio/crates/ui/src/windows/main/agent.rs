@@ -27,6 +27,18 @@ pub fn run() -> iced::Result {
             Ok(scene_json(app))
         })
         .query(
+            "camera",
+            "Viewport camera yaw, pitch, distance and focus.",
+            |app, _| {
+                Ok(json!({
+                    "yaw": app.camera.yaw,
+                    "pitch": app.camera.pitch,
+                    "distance": app.camera.distance,
+                    "focus": app.camera.focus,
+                }))
+            },
+        )
+        .query(
             "component_types",
             "Component schema: id, name, fields with kind/limits/options.",
             |app, _| Ok(component_types_json(app)),
@@ -35,6 +47,26 @@ pub fn run() -> iced::Result {
             "entity_components",
             "Components and values for an entity. args: { \"index\"?: number } (default selection).",
             entity_components_json,
+        )
+        .query(
+            "assets",
+            "Project assets with name, relative path, kind, size and directory flag.",
+            |app, _| {
+                Ok(Value::Array(
+                    app.assets
+                        .iter()
+                        .map(|asset| {
+                            json!({
+                                "name": asset.name,
+                                "path": asset.relative_path,
+                                "kind": asset.kind,
+                                "size": asset.size_bytes,
+                                "is_directory": asset.is_directory,
+                            })
+                        })
+                        .collect(),
+                ))
+            },
         )
         .query(
             "history",

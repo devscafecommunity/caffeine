@@ -24,5 +24,14 @@ if [[ -n "${raw}" ]]; then
     exit 1
 fi
 
+# Visual tokens live in uikit/theme.rs; components and panels must not hardcode colours.
+leaks=$(grep -rnE 'Color::(from_rgb|from_rgba8|WHITE|BLACK)' \
+    "${root}/doppio/crates/ui/src/uikit" 2>/dev/null | grep -v '/theme.rs:' || true)
+if [[ -n "${leaks}" ]]; then
+    echo "ERROR: hardcoded colours outside uikit/theme.rs:" >&2
+    echo "${leaks}" >&2
+    exit 1
+fi
+
 # The Rust frontend is only useful if the C++ engine stays UI-free.
 python3 "${root}/scripts/audit_core_ui_coupling.py" --fail-on-leaks

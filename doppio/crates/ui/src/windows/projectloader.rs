@@ -93,7 +93,8 @@ pub fn load_from_args() -> LoadedProject {
     // Dev fallback: benchmarks live under assets/benchmarks, so their derived
     // asset root is empty. Show the repository assets when a scene was passed
     // explicitly; real projects get their own assets/raw root from load_scene.
-    if assets.is_empty() && scene_from_args {
+    let has_asset_files = assets.iter().any(|asset| !asset.is_directory);
+    if !has_asset_files && scene_from_args {
         if let Ok(cwd) = std::env::current_dir() {
             let candidate = cwd.join("../assets");
             if candidate.exists()
