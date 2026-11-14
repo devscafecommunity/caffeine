@@ -54,6 +54,62 @@ pub struct AssetInfo {
     pub is_directory: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    F32,
+    Bool,
+    I32,
+    U32,
+    Vec2,
+    Vec3,
+    Vec4,
+    String,
+    Enum,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldValue {
+    F32(f32),
+    Bool(bool),
+    I32(i32),
+    U32(u32),
+    Vec2([f32; 2]),
+    Vec3([f32; 3]),
+    Vec4([f32; 4]),
+    String(String),
+    Enum(i32),
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldInfo {
+    pub name: String,
+    pub kind: FieldKind,
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentType {
+    pub id: u32,
+    pub name: String,
+    pub fields: Vec<FieldInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentInfo {
+    pub type_id: u32,
+    pub name: String,
+    pub field_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentData {
+    pub info: ComponentInfo,
+    pub values: Vec<FieldValue>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub data: Vec<u8>,
@@ -87,6 +143,39 @@ struct RawVec3 {
     x: f32,
     y: f32,
     z: f32,
+}
+
+#[repr(C)]
+struct RawFieldInfo {
+    name: [c_char; 64],
+    kind: i32,
+    min_value: f32,
+    max_value: f32,
+    step: f32,
+    enum_options: [c_char; 256],
+}
+
+#[repr(C)]
+struct RawFieldValue {
+    kind: i32,
+    vec: [f32; 4],
+    integer: i32,
+    boolean: i32,
+    text: [c_char; 256],
+}
+
+#[repr(C)]
+struct RawComponentTypeInfo {
+    id: u32,
+    name: [c_char; 64],
+    field_count: u32,
+}
+
+#[repr(C)]
+struct RawComponentInfo {
+    type_id: u32,
+    name: [c_char; 64],
+    field_count: u32,
 }
 
 #[repr(C)]
@@ -140,6 +229,17 @@ type RenderPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
 type SnapshotFn = unsafe extern "C" fn(*const c_void, *mut *mut u8, *mut usize, *mut i32) -> i32;
 type FreeBytesFn = unsafe extern "C" fn(*mut c_void);
 type RestoreFn = unsafe extern "C" fn(*mut c_void, *const u8, usize, i32) -> i32;
+type ComponentTypeCountFn = unsafe extern "C" fn() -> u32;
+type ComponentTypeAtFn = unsafe extern "C" fn(u32, *mut RawComponentTypeInfo) -> i32;
+type ComponentTypeFieldAtFn = unsafe extern "C" fn(u32, u32, *mut RawFieldInfo) -> i32;
+type ComponentCountFn = unsafe extern "C" fn(*const c_void, u32) -> u32;
+type ComponentAtFn = unsafe extern "C" fn(*const c_void, u32, u32, *mut RawComponentInfo) -> i32;
+type ComponentFieldGetFn =
+    unsafe extern "C" fn(*const c_void, u32, u32, u32, *mut RawFieldValue) -> i32;
+type ComponentFieldSetFn =
+    unsafe extern "C" fn(*mut c_void, u32, u32, u32, *const RawFieldValue) -> i32;
+type AddComponentFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
+type RemoveComponentFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
 type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
 type SetAssetRootFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
@@ -175,6 +275,15 @@ struct Functions {
     snapshot: SnapshotFn,
     free_bytes: FreeBytesFn,
     restore: RestoreFn,
+    component_type_count: ComponentTypeCountFn,
+    component_type_at: ComponentTypeAtFn,
+    component_type_field_at: ComponentTypeFieldAtFn,
+    component_count: ComponentCountFn,
+    component_at: ComponentAtFn,
+    component_field_get: ComponentFieldGetFn,
+    component_field_set: ComponentFieldSetFn,
+    add_component: AddComponentFn,
+    remove_component: RemoveComponentFn,
     set_camera: SetCameraFn,
     get_camera: GetCameraFn,
     set_asset_root: SetAssetRootFn,
@@ -277,6 +386,29 @@ impl Engine {
             snapshot: unsafe { load_symbol(library, b"caffeine_session_snapshot\0") }?,
             free_bytes: unsafe { load_symbol(library, b"caffeine_session_free\0") }?,
             restore: unsafe { load_symbol(library, b"caffeine_session_restore\0") }?,
+            component_type_count: unsafe {
+                load_symbol(library, b"caffeine_component_type_count\0")
+            }?,
+            component_type_at: unsafe { load_symbol(library, b"caffeine_component_type_at\0") }?,
+            component_type_field_at: unsafe {
+                load_symbol(library, b"caffeine_component_type_field_at\0")
+            }?,
+            component_count: unsafe {
+                load_symbol(library, b"caffeine_session_entity_component_count\0")
+            }?,
+            component_at: unsafe {
+                load_symbol(library, b"caffeine_session_entity_component_at\0")
+            }?,
+            component_field_get: unsafe {
+                load_symbol(library, b"caffeine_session_entity_component_field_get\0")
+            }?,
+            component_field_set: unsafe {
+                load_symbol(library, b"caffeine_session_entity_component_field_set\0")
+            }?,
+            add_component: unsafe { load_symbol(library, b"caffeine_session_add_component\0") }?,
+            remove_component: unsafe {
+                load_symbol(library, b"caffeine_session_remove_component\0")
+            }?,
             set_camera: unsafe { load_symbol(library, b"caffeine_session_set_camera\0") }?,
             get_camera: unsafe { load_symbol(library, b"caffeine_session_get_camera\0") }?,
             set_asset_root: unsafe { load_symbol(library, b"caffeine_session_set_asset_root\0") }?,
@@ -291,6 +423,147 @@ impl Engine {
             return None;
         }
         Some(Self { session, functions })
+    }
+
+    pub fn component_types(&self) -> Vec<ComponentType> {
+        let count = unsafe { (self.functions.component_type_count)() };
+        let mut types = Vec::new();
+        for index in 0..count {
+            let mut raw = RawComponentTypeInfo {
+                id: 0,
+                name: [0; 64],
+                field_count: 0,
+            };
+            if result(unsafe { (self.functions.component_type_at)(index, &mut raw) }).is_err() {
+                continue;
+            }
+            let mut fields = Vec::new();
+            for field in 0..raw.field_count {
+                let mut info = RawFieldInfo {
+                    name: [0; 64],
+                    kind: 0,
+                    min_value: 0.0,
+                    max_value: 0.0,
+                    step: 0.0,
+                    enum_options: [0; 256],
+                };
+                if result(unsafe {
+                    (self.functions.component_type_field_at)(raw.id, field, &mut info)
+                })
+                .is_err()
+                {
+                    continue;
+                }
+                fields.push(FieldInfo {
+                    name: c_char_array(&info.name),
+                    kind: field_kind(info.kind),
+                    min: info.min_value,
+                    max: info.max_value,
+                    step: info.step,
+                    options: c_char_array(&info.enum_options)
+                        .split('|')
+                        .filter(|option| !option.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                });
+            }
+            types.push(ComponentType {
+                id: raw.id,
+                name: c_char_array(&raw.name),
+                fields,
+            });
+        }
+        types
+    }
+
+    pub fn entity_components(&self, entity: u32) -> Vec<ComponentInfo> {
+        let count = unsafe { (self.functions.component_count)(self.session, entity) };
+        let mut components = Vec::new();
+        for index in 0..count {
+            let mut raw = RawComponentInfo {
+                type_id: 0,
+                name: [0; 64],
+                field_count: 0,
+            };
+            if result(unsafe {
+                (self.functions.component_at)(self.session, entity, index, &mut raw)
+            })
+            .is_ok()
+            {
+                components.push(ComponentInfo {
+                    type_id: raw.type_id,
+                    name: c_char_array(&raw.name),
+                    field_count: raw.field_count,
+                });
+            }
+        }
+        components
+    }
+
+    pub fn component_values(&self, entity: u32, component: u32) -> Vec<FieldValue> {
+        let mut values = Vec::new();
+        let Some(info) = self
+            .entity_components(entity)
+            .get(component as usize)
+            .cloned()
+        else {
+            return values;
+        };
+        for field in 0..info.field_count {
+            let mut raw = RawFieldValue {
+                kind: 0,
+                vec: [0.0; 4],
+                integer: 0,
+                boolean: 0,
+                text: [0; 256],
+            };
+            if result(unsafe {
+                (self.functions.component_field_get)(
+                    self.session,
+                    entity,
+                    component,
+                    field,
+                    &mut raw,
+                )
+            })
+            .is_ok()
+            {
+                values.push(field_value(&raw));
+            }
+        }
+        values
+    }
+
+    pub fn entity_component_data(&self, entity: u32) -> Vec<ComponentData> {
+        self.entity_components(entity)
+            .into_iter()
+            .enumerate()
+            .map(|(index, info)| {
+                let values = self.component_values(entity, index as u32);
+                ComponentData { info, values }
+            })
+            .collect()
+    }
+
+    pub fn set_component_field(
+        &mut self,
+        entity: u32,
+        component: u32,
+        field: u32,
+        value: &FieldValue,
+    ) -> EngineResult<()> {
+        let raw = raw_field_value(value);
+        result(unsafe {
+            (self.functions.component_field_set)(self.session, entity, component, field, &raw)
+        })
+    }
+
+    pub fn add_component(&mut self, entity: u32, type_id: u32) -> EngineResult<()> {
+        result(unsafe { (self.functions.add_component)(self.session, entity, type_id) })
+    }
+
+    pub fn remove_component(&mut self, entity: u32, type_id: u32) -> EngineResult<()> {
+        result(unsafe { (self.functions.remove_component)(self.session, entity, type_id) })
     }
 
     pub fn snapshot(&self) -> EngineResult<Snapshot> {
@@ -561,6 +834,87 @@ fn c_char_array<const N: usize>(bytes: &[c_char; N]) -> String {
         .into_owned()
 }
 
+fn field_kind(kind: i32) -> FieldKind {
+    match kind {
+        0 => FieldKind::F32,
+        1 => FieldKind::Bool,
+        2 => FieldKind::I32,
+        3 => FieldKind::U32,
+        4 => FieldKind::Vec2,
+        5 => FieldKind::Vec3,
+        6 => FieldKind::Vec4,
+        7 => FieldKind::String,
+        _ => FieldKind::Enum,
+    }
+}
+
+fn field_value(raw: &RawFieldValue) -> FieldValue {
+    match raw.kind {
+        0 => FieldValue::F32(raw.vec[0]),
+        1 => FieldValue::Bool(raw.boolean != 0),
+        2 => FieldValue::I32(raw.integer),
+        3 => FieldValue::U32(raw.integer as u32),
+        4 => FieldValue::Vec2([raw.vec[0], raw.vec[1]]),
+        5 => FieldValue::Vec3([raw.vec[0], raw.vec[1], raw.vec[2]]),
+        6 => FieldValue::Vec4(raw.vec),
+        7 => FieldValue::String(c_char_array(&raw.text)),
+        _ => FieldValue::Enum(raw.integer),
+    }
+}
+
+fn raw_field_value(value: &FieldValue) -> RawFieldValue {
+    let mut raw = RawFieldValue {
+        kind: 0,
+        vec: [0.0; 4],
+        integer: 0,
+        boolean: 0,
+        text: [0; 256],
+    };
+    match value {
+        FieldValue::F32(number) => {
+            raw.kind = 0;
+            raw.vec[0] = *number;
+        }
+        FieldValue::Bool(flag) => {
+            raw.kind = 1;
+            raw.boolean = i32::from(*flag);
+        }
+        FieldValue::I32(number) => {
+            raw.kind = 2;
+            raw.integer = *number;
+        }
+        FieldValue::U32(number) => {
+            raw.kind = 3;
+            raw.integer = *number as i32;
+        }
+        FieldValue::Vec2(vector) => {
+            raw.kind = 4;
+            raw.vec[..2].copy_from_slice(vector);
+        }
+        FieldValue::Vec3(vector) => {
+            raw.kind = 5;
+            raw.vec[..3].copy_from_slice(vector);
+        }
+        FieldValue::Vec4(vector) => {
+            raw.kind = 6;
+            raw.vec = *vector;
+        }
+        FieldValue::String(text) => {
+            raw.kind = 7;
+            let bytes = text.as_bytes();
+            let length = bytes.len().min(255);
+            for (index, byte) in bytes[..length].iter().enumerate() {
+                raw.text[index] = *byte as c_char;
+            }
+        }
+        FieldValue::Enum(index) => {
+            raw.kind = 8;
+            raw.integer = *index;
+        }
+    }
+    raw
+}
+
 fn to_raw(value: [f32; 3]) -> RawVec3 {
     RawVec3 {
         x: value[0],
@@ -593,6 +947,42 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dense_scene_snapshot_restores_position() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        let scene = std::path::Path::new("../assets/benchmarks/dense_outdoor.caf");
+        if engine.load_scene(scene.to_str().unwrap()).is_err() {
+            return;
+        }
+        let mut target = None;
+        for index in 0..engine.entity_count() {
+            let info = engine.entity_at(index).unwrap();
+            let components = engine.entity_component_data(info.id);
+            if let Some(component) = components
+                .iter()
+                .position(|component| component.info.name == "Position 3D")
+            {
+                target = Some((info.id, component as u32));
+                break;
+            }
+        }
+        let Some((entity, component)) = target else {
+            return;
+        };
+        let old = engine.component_values(entity, component)[0].clone();
+        let snapshot = engine.snapshot().expect("snapshot");
+        engine
+            .set_component_field(entity, component, 0, &FieldValue::Vec3([7.0, 8.0, 9.0]))
+            .expect("set");
+        engine.restore(&snapshot).expect("restore");
+        let components = engine.entity_component_data(entity);
+        let restored = &components[component as usize].values[0];
+        assert_eq!(*restored, old);
+    }
 
     #[test]
     fn bridge_roundtrip_when_library_is_built() {
@@ -654,6 +1044,43 @@ mod tests {
         if let Ok(pixels) = engine.render(320, 180) {
             assert_eq!(pixels.len(), 320 * 180 * 4);
         }
+
+        let types = engine.component_types();
+        let camera = types
+            .iter()
+            .find(|component| component.name == "Camera 3D")
+            .cloned()
+            .expect("Camera 3D schema");
+        let fov_field = camera
+            .fields
+            .iter()
+            .position(|field| field.name == "Field of view")
+            .expect("fov field");
+        engine.add_component(player, camera.id).expect("add camera");
+        let components = engine.entity_components(player);
+        let camera_index = components
+            .iter()
+            .position(|component| component.type_id == camera.id)
+            .expect("camera component");
+        let values = engine.component_values(player, camera_index as u32);
+        assert!(matches!(values[fov_field], FieldValue::F32(_)));
+        engine
+            .set_component_field(
+                player,
+                camera_index as u32,
+                fov_field as u32,
+                &FieldValue::F32(90.0),
+            )
+            .expect("set fov");
+        let values = engine.component_values(player, camera_index as u32);
+        assert_eq!(values[fov_field], FieldValue::F32(90.0));
+        engine
+            .remove_component(player, camera.id)
+            .expect("remove camera");
+        assert!(engine
+            .entity_components(player)
+            .iter()
+            .all(|component| component.type_id != camera.id));
 
         let snapshot = engine.snapshot().expect("snapshot");
         let count_before_restore = engine.entity_count();

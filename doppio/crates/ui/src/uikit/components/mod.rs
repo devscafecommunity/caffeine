@@ -1,5 +1,9 @@
 pub mod asset_preview;
 pub mod button;
+pub mod component_card;
+pub mod component_picker;
+pub mod field_editor;
 pub mod gizmo;
 pub mod rendering_canvas;
 pub mod slider;
+pub mod text_field;

@@ -7,6 +7,7 @@
 
 use super::{App, Message};
 use crate::uikit::id;
+use crate::uikit::panels;
 use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
@@ -26,6 +27,16 @@ pub fn run() -> iced::Result {
             Ok(scene_json(app))
         })
         .query(
+            "component_types",
+            "Component schema: id, name, fields with kind/limits/options.",
+            |app, _| Ok(component_types_json(app)),
+        )
+        .query(
+            "entity_components",
+            "Components and values for an entity. args: { \"index\"?: number } (default selection).",
+            entity_components_json,
+        )
+        .query(
             "history",
             "Undo/redo timeline: steps, current cursor, availability and size.",
             |app, _| Ok(history_json(app)),
@@ -42,6 +53,57 @@ pub fn run() -> iced::Result {
             Ok(Message::Redo)
         })
         .action(
+            "add_component",
+            "Adds a component by schema id. args: { \"type_id\": number }",
+            |args| {
+                let type_id = args
+                    .get("type_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"type_id\"".to_owned())?;
+                Ok(Message::Inspector(panels::inspector::Edit::AddComponent(
+                    type_id as u32,
+                )))
+            },
+        )
+        .action(
+            "remove_component",
+            "Removes a component by its list index. args: { \"component\": number }",
+            |args| {
+                let component = args
+                    .get("component")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"component\"".to_owned())?;
+                Ok(Message::Inspector(
+                    panels::inspector::Edit::RemoveComponent(component as usize),
+                ))
+            },
+        )
+        .action(
+            "set_component_field",
+            "Sets a component field. args: { \"component\": number, \"field\": number, \"kind\": string, \"value\": any }",
+            |args| {
+                let component = args
+                    .get("component")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"component\"".to_owned())?
+                    as usize;
+                let field = args
+                    .get("field")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"field\"".to_owned())?
+                    as usize;
+                let kind = required_str(args, "kind")?;
+                let value = args
+                    .get("value")
+                    .ok_or_else(|| "missing \"value\"".to_owned())?;
+                Ok(Message::SetComponentField {
+                    component,
+                    field,
+                    value: parse_field_value(kind, value)?,
+                })
+            },
+        )
+        .action(
             "add_entity",
             "Adds an entity. args: { \"name\": string? }",
             |args| {
@@ -50,7 +112,7 @@ pub fn run() -> iced::Result {
             },
         )
         .action("delete_selected", "Deletes the selected entity. No args.", |_| {
-            Ok(Message::DeleteSelected)
+            Ok(Message::Inspector(panels::inspector::Edit::Delete))
         })
         .action(
             "select_entity",
@@ -70,7 +132,9 @@ pub fn run() -> iced::Result {
             "Renames the selected entity. args: { \"name\": string }",
             |args| {
                 let name = required_str(args, "name")?;
-                Ok(Message::NameChanged(name.to_owned()))
+                Ok(Message::Inspector(panels::inspector::Edit::Name(
+                    name.to_owned(),
+                )))
             },
         )
         .action("toggle_play", "Toggles the play/pause state. No args.", |_| {
@@ -110,6 +174,155 @@ pub fn run() -> iced::Result {
             Ok(app)
         })
         .run()
+}
+
+fn component_types_json(app: &App) -> Value {
+    Value::Array(
+        app.component_types
+            .iter()
+            .map(|kind| {
+                json!({
+                    "id": kind.id,
+                    "name": kind.name,
+                    "fields": kind.fields.iter().enumerate().map(|(index, field)| json!({
+                        "index": index,
+                        "name": field.name,
+                        "kind": field_kind_name(field.kind),
+                        "min": field.min,
+                        "max": field.max,
+                        "step": field.step,
+                        "options": field.options,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn entity_components_json(app: &App, args: &Value) -> Result<Value, String> {
+    let index = args
+        .get("index")
+        .and_then(Value::as_u64)
+        .map(|index| index as usize)
+        .unwrap_or(app.selected);
+    let Some(entity) = app.entities.get(index) else {
+        return Err(format!("no entity at index {index}"));
+    };
+    let components: Vec<Value> = app
+        .components
+        .iter()
+        .enumerate()
+        .map(|(component_index, component)| {
+            json!({
+                "index": component_index,
+                "type_id": component.info.type_id,
+                "name": component.info.name,
+                "fields": component.values.iter().enumerate().map(|(field_index, value)| json!({
+                    "index": field_index,
+                    "value": field_value_json(value),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "entity": { "index": index, "id": entity.id, "name": entity.name },
+        "components": components,
+    }))
+}
+
+fn field_kind_name(kind: doppio_engine::FieldKind) -> &'static str {
+    use doppio_engine::FieldKind;
+    match kind {
+        FieldKind::F32 => "f32",
+        FieldKind::Bool => "bool",
+        FieldKind::I32 => "i32",
+        FieldKind::U32 => "u32",
+        FieldKind::Vec2 => "vec2",
+        FieldKind::Vec3 => "vec3",
+        FieldKind::Vec4 => "vec4",
+        FieldKind::String => "string",
+        FieldKind::Enum => "enum",
+    }
+}
+
+fn field_value_json(value: &doppio_engine::FieldValue) -> Value {
+    use doppio_engine::FieldValue;
+    match value {
+        FieldValue::F32(number) => json!(number),
+        FieldValue::Bool(flag) => json!(flag),
+        FieldValue::I32(number) => json!(number),
+        FieldValue::U32(number) => json!(number),
+        FieldValue::Vec2(vector) => json!(vector),
+        FieldValue::Vec3(vector) => json!(vector),
+        FieldValue::Vec4(vector) => json!(vector),
+        FieldValue::String(text) => json!(text),
+        FieldValue::Enum(index) => json!(index),
+    }
+}
+
+fn parse_field_value(kind: &str, value: &Value) -> Result<doppio_engine::FieldValue, String> {
+    use doppio_engine::FieldValue;
+    let number = |value: &Value| {
+        value
+            .as_f64()
+            .map(|number| number as f32)
+            .ok_or_else(|| format!("expected a number, got {value}"))
+    };
+    match kind {
+        "f32" => Ok(FieldValue::F32(number(value)?)),
+        "i32" => Ok(FieldValue::I32(
+            value
+                .as_i64()
+                .ok_or_else(|| format!("expected an integer, got {value}"))? as i32,
+        )),
+        "u32" => Ok(FieldValue::U32(
+            value
+                .as_u64()
+                .ok_or_else(|| format!("expected an unsigned integer, got {value}"))?
+                as u32,
+        )),
+        "bool" => {
+            Ok(FieldValue::Bool(value.as_bool().ok_or_else(|| {
+                format!("expected a boolean, got {value}")
+            })?))
+        }
+        "string" => Ok(FieldValue::String(
+            value
+                .as_str()
+                .ok_or_else(|| format!("expected a string, got {value}"))?
+                .to_owned(),
+        )),
+        "enum" => Ok(FieldValue::Enum(
+            value
+                .as_i64()
+                .ok_or_else(|| format!("expected an enum index, got {value}"))? as i32,
+        )),
+        "vec2" | "vec3" | "vec4" => {
+            let array = value
+                .as_array()
+                .ok_or_else(|| format!("expected an array, got {value}"))?;
+            let expected = if kind == "vec2" {
+                2
+            } else if kind == "vec3" {
+                3
+            } else {
+                4
+            };
+            if array.len() != expected {
+                return Err(format!("{kind} needs {expected} numbers"));
+            }
+            let mut vector = [0.0; 4];
+            for (index, item) in array.iter().enumerate() {
+                vector[index] = number(item)?;
+            }
+            Ok(match kind {
+                "vec2" => FieldValue::Vec2([vector[0], vector[1]]),
+                "vec3" => FieldValue::Vec3([vector[0], vector[1], vector[2]]),
+                _ => FieldValue::Vec4(vector),
+            })
+        }
+        other => Err(format!("unknown field kind \"{other}\"")),
+    }
 }
 
 fn history_json(app: &App) -> Value {

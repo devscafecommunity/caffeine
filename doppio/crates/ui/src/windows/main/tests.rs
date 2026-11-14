@@ -454,6 +454,24 @@ fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
+fn engine_harness() -> Option<Harness> {
+    let mut engine = doppio_engine::Engine::load_default()?;
+    let first = engine.create_entity("First").ok()?;
+    engine.set_position(first, [2.0, 0.0, 0.0]).ok()?;
+    engine.create_entity("Second").ok()?;
+    let entities = projectloader::read_entities(&engine);
+    let loaded = projectloader::LoadedProject {
+        engine: Some(engine),
+        entities,
+        assets: Vec::new(),
+        log: Vec::new(),
+    };
+    Some(Harness {
+        app: App::with_project(loaded),
+        _guard: test_guard(),
+    })
+}
+
 #[test]
 fn empty_editor_has_no_entities() {
     let harness = Harness::empty();
@@ -542,20 +560,40 @@ fn typing_renames_the_selected_entity() {
 }
 
 #[test]
-fn nudges_update_transform_fields() {
-    let mut harness = Harness::with_entities();
-    harness.click(id::entity_row(0));
-    let start = harness.app().entities[0].position[0];
-    harness.click(id::NUDGE_X);
-    assert!(harness.app().entities[0].position[0] > start);
+fn component_fields_edit_transform_and_add_components() {
+    let Some(mut harness) = engine_harness() else {
+        eprintln!("skipping component test: libcaffeine-capi is not built");
+        return;
+    };
+    harness.rebase_history();
+    harness.dispatch(Message::SelectEntity(0));
+    assert!(
+        harness.shows("Transform"),
+        "the generic inspector lists components"
+    );
 
-    let rotation = harness.app().entities[0].rotation[1];
-    harness.click(id::NUDGE_ROT_Y);
-    assert!(harness.app().entities[0].rotation[1] > rotation);
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::FieldText {
+        component: 0,
+        field: 0,
+        axis: 0,
+        value: "5.5".to_owned(),
+    }));
+    assert_eq!(harness.app().entities[0].position[0], 5.5);
+    assert_eq!(harness.app().history.len(), 1);
 
-    let scale = harness.app().entities[0].scale[0];
-    harness.click(id::SCALE_UP);
-    assert!(harness.app().entities[0].scale[0] > scale);
+    let camera = harness
+        .app()
+        .component_types
+        .iter()
+        .find(|kind| kind.name == "Camera 3D")
+        .expect("camera schema")
+        .id;
+    let before = harness.app().components.len();
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::AddComponent(
+        camera,
+    )));
+    assert_eq!(harness.app().components.len(), before + 1);
+    assert!(harness.shows("Camera 3D"));
 }
 
 #[test]
@@ -660,8 +698,13 @@ fn engine_undo_restores_the_scene_snapshot() {
     harness.dispatch(Message::SelectEntity(0));
     let start = harness.app().entities[0].position[0];
 
-    harness.dispatch(Message::NudgeX);
-    assert!(harness.app().entities[0].position[0] > start);
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::FieldText {
+        component: 0,
+        field: 0,
+        axis: 0,
+        value: "9.0".to_owned(),
+    }));
+    assert_eq!(harness.app().entities[0].position[0], 9.0);
 
     harness.dispatch(Message::Undo);
     assert_eq!(harness.app().entities.len(), 2);
@@ -689,15 +732,22 @@ fn typing_renames_as_one_undo_step() {
 
 #[test]
 fn undo_restores_transform_and_selection() {
-    let mut harness = Harness::with_entities();
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
     harness.rebase_history();
-    harness.click(id::entity_row(0));
+    harness.dispatch(Message::SelectEntity(0));
     let start = harness.app().entities[0].position[0];
 
-    harness.click(id::NUDGE_X);
-    assert!(harness.app().entities[0].position[0] > start);
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::FieldText {
+        component: 0,
+        field: 0,
+        axis: 0,
+        value: "7.0".to_owned(),
+    }));
+    assert_eq!(harness.app().entities[0].position[0], 7.0);
 
-    harness.click(id::entity_row(1));
+    harness.dispatch(Message::SelectEntity(1));
     assert_eq!(harness.app().selected, 1);
 
     harness.dispatch(Message::Undo);
@@ -750,9 +800,6 @@ fn editor_workflow_end_to_end() {
     harness.type_into(id::ENTITY_NAME, "Boss");
     assert!(harness.app().entities[1].name.contains("Boss"));
 
-    harness.click(id::NUDGE_X);
-    assert!(harness.app().entities[1].position[0] > 0.0);
-
     harness.click(id::DELETE_ENTITY);
     assert_eq!(harness.app().entities.len(), 1);
     assert!(harness.wait_for("Entity: Entity 1", 2));
@@ -774,7 +821,7 @@ fn editor_workflow_end_to_end() {
 fn capture_ui_gallery() {
     use serde_json::{json, Value};
 
-    let harness = Harness::with_entities();
+    let harness = engine_harness().unwrap_or_else(Harness::with_entities);
     let out = std::env::var_os("DOPPIO_DOCS_OUT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
@@ -847,13 +894,14 @@ fn capture_ui_gallery() {
         );
     }
 
-    let inspector_controls = [
+    let mut inspector_controls = vec![
         (id::ENTITY_NAME, "Entity name"),
-        (id::NUDGE_X, "+X"),
-        (id::NUDGE_ROT_Y, "+Rot Y"),
-        (id::SCALE_UP, "Scale x1.1"),
         (id::DELETE_ENTITY, "Delete"),
     ];
+    if harness.app().engine.is_some() {
+        inspector_controls.insert(1, (id::component_field(0, 0, 0), "Position X"));
+        inspector_controls.insert(2, (id::ADD_COMPONENT, "Add Component"));
+    }
     let annotated = out.join("annotated-inspector.png");
     let annotated_caption = caption(&captions, "en", "annotated.inspector");
     harness

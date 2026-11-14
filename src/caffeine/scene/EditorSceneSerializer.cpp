@@ -1349,6 +1349,17 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
         }
     }
 
+    // Keep entities that have no serialized components, so undo/restore also
+    // preserves empty objects and the hierarchy order.
+    {
+        Caffeine::ECS::ComponentQuery allEntities;
+        m_world.forEach(allEntities, [&](Caffeine::ECS::Entity entity) {
+            if (entity.isValid()) {
+                entityMap[entity.id()];
+            }
+        });
+    }
+
     auto push = [&](const void* d, u32 n) {
         const u8* p = static_cast<const u8*>(d);
         out.insert(out.end(), p, p + n);

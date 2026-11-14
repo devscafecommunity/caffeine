@@ -108,10 +108,20 @@ pub const RESET_CAMERA: UiId = UiId::fixed("viewport.camera.reset");
 
 // ── Inspector ────────────────────────────────────────────────────────────
 pub const ENTITY_NAME: UiId = UiId::fixed("inspector.entity.name");
-pub const NUDGE_X: UiId = UiId::fixed("inspector.entity.nudge_x");
-pub const NUDGE_ROT_Y: UiId = UiId::fixed("inspector.entity.nudge_rot_y");
-pub const SCALE_UP: UiId = UiId::fixed("inspector.entity.scale_up");
 pub const DELETE_ENTITY: UiId = UiId::fixed("inspector.entity.delete");
+pub const ADD_COMPONENT: UiId = UiId::fixed("inspector.add_component");
+
+/// One editable field inside a component block.
+pub fn component_field(component: usize, field: usize, axis: usize) -> UiId {
+    UiId::dynamic(format!(
+        "inspector.component.field.{component}.{field}.{axis}"
+    ))
+}
+
+/// The remove button of one component block.
+pub fn component_remove(component: usize) -> UiId {
+    UiId::dynamic(format!("inspector.component.remove.{component}"))
+}
 
 /// One row of the hierarchy list.
 pub fn entity_row(index: usize) -> UiId {
@@ -221,24 +231,24 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "text_input",
     },
     UiMeta {
-        id: NUDGE_X,
-        description: "Moves the selected entity +1 on the X axis.",
-        kind: "button",
-    },
-    UiMeta {
-        id: NUDGE_ROT_Y,
-        description: "Rotates the selected entity +15° on Y.",
-        kind: "button",
-    },
-    UiMeta {
-        id: SCALE_UP,
-        description: "Scales the selected entity by 1.1.",
-        kind: "button",
-    },
-    UiMeta {
         id: DELETE_ENTITY,
         description: "Deletes the selected entity.",
         kind: "button",
+    },
+    UiMeta {
+        id: ADD_COMPONENT,
+        description: "Adds a component to the selected entity.",
+        kind: "picker",
+    },
+    UiMeta {
+        id: UiId::fixed("inspector.component.field"),
+        description: "One component field editor; fields use .component.field.axis.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("inspector.component.remove"),
+        description: "Removes one component; buttons use the .component suffix.",
+        kind: "list_row",
     },
     UiMeta {
         id: UiId::fixed("hierarchy.list.entity_row"),

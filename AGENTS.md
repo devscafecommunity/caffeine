@@ -66,7 +66,12 @@ Vulkan / D3D12 / Metal
   (Hierarchy / Assets / Viewport / Inspector / Console).
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
-  primitives (button, slider, rendering canvas, gizmo, asset card).
+  primitives (button, slider, text field, field editor, component card/picker, rendering
+  canvas, gizmo, asset card).
+- **Panels compose; they do not draw widgets.** A panel must not call `text_input`,
+  `checkbox`, `pick_list`, `slider` or `button` directly. Extend a component under
+  `uikit/components/` and compose it. `scripts/check-rust-ui.sh` fails on raw widgets in
+  `uikit/panels/`.
 - **Ids are hierarchical and catalogued.** Every interactive widget gets a
   `uikit::id::UiId` (`group.subgroup.object`, e.g. `editor.toolbar.add_entity`,
   `inspector.entity.name`, `hierarchy.list.entity_row.3`) and an entry in
@@ -142,21 +147,23 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic
    helper) plus a `CATALOG` entry. Every editing command must record an undo step
    (`App::commit`) and expose any agent-facing command as a `Message` action.
-5. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
+5. **UI composition** — panels compose reusable components; never build interactive
+   widgets inline. Keep field editors, cards and pickers in `uikit/components/`.
+6. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
    `doppio/crates/engine`, and both test suites in the same change. Version
    `CAFFEINE_CAPI_VERSION` for breaking changes; keep structs POD.
-6. **FFI boundaries** — no `libloading`/`unsafe` FFI in `doppio/crates/ui`; only the engine
+7. **FFI boundaries** — no `libloading`/`unsafe` FFI in `doppio/crates/ui`; only the engine
    crate may load symbols. Do not put ImGui back into `caffeine-core`.
-7. **No C++ Doppio revival** — `src/doppio/` and `apps/doppio/` are gone. Use
+8. **No C++ Doppio revival** — `src/doppio/` and `apps/doppio/` are gone. Use
    `doppio-archived/` for behaviour reference only.
-8. **Agents** — commands that an agent should drive must be exposed as an MCP action
+9. **Agents** — commands that an agent should drive must be exposed as an MCP action
    (`main/agent.rs`) returning a `Message`; queries must be read-only.
-9. **Submodules** — after clone, run `./scripts/submodules.sh`; see **Ecosystem submodules**.
-10. **Editor vs runtime** — keep play-mode-only code out of editor-only paths unless shared
+10. **Submodules** — after clone, run `./scripts/submodules.sh`; see **Ecosystem submodules**.
+11. **Editor vs runtime** — keep play-mode-only code out of editor-only paths unless shared
     APIs are intentional.
-11. **Scripting / native modules** — follow public headers in `include/caffeine/`; document
+12. **Scripting / native modules** — follow public headers in `include/caffeine/`; document
     API changes in the website repo, not here.
-12. **Commits** — only when the user requests; never commit secrets or local build artifacts.
+13. **Commits** — only when the user requests; never commit secrets or local build artifacts.
 
 ## Build and checks
 

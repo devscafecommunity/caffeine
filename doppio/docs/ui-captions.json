@@ -16,16 +16,16 @@
     "viewport.camera.zoom_out": "Moves the camera away from its focus point.",
     "viewport.camera.reset": "Restores the default camera position.",
     "inspector.entity.name": "Editable name of the selected entity; edits reach the engine.",
-    "inspector.entity.nudge_x": "Moves the selected entity one unit along +X.",
-    "inspector.entity.nudge_rot_y": "Rotates the selected entity 15 degrees around Y.",
-    "inspector.entity.scale_up": "Scales the selected entity by 1.1 on every axis.",
     "inspector.entity.delete": "Destroys the selected entity in the engine world.",
     "hierarchy.list.entity_row": "One selectable entity row; rows use the .<index> suffix.",
     "assets.grid.asset_card": "One asset card; cards use the .<index> suffix.",
     "annotated.inspector": "Inspector controls, numbered for documentation.",
     "viewport.canvas.surface": "Engine render output shown inside the viewport pane.",
     "editor.toolbar.undo": "Reverts the last editor step.",
-    "editor.toolbar.redo": "Reapplies the last undone editor step."
+    "editor.toolbar.redo": "Reapplies the last undone editor step.",
+    "inspector.add_component": "Adds a component to the selected entity.",
+    "inspector.component.field": "One component field editor; fields use .component.field.axis.",
+    "inspector.component.remove": "Removes one component; buttons use the .component suffix."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -44,15 +44,15 @@
     "viewport.camera.zoom_out": "Afasta a câmara do ponto de foco.",
     "viewport.camera.reset": "Repõe a posição de câmara predefinida.",
     "inspector.entity.name": "Nome editável da entidade selecionada; chega ao motor.",
-    "inspector.entity.nudge_x": "Move a entidade selecionada uma unidade em +X.",
-    "inspector.entity.nudge_rot_y": "Roda a entidade selecionada 15 graus em Y.",
-    "inspector.entity.scale_up": "Escala a entidade selecionada em 1.1 em todos os eixos.",
     "inspector.entity.delete": "Destrói a entidade selecionada no mundo do motor.",
     "hierarchy.list.entity_row": "Uma linha selecionável da hierarquia; usa o sufixo .<índice>.",
     "assets.grid.asset_card": "Um cartão de asset; usa o sufixo .<índice>.",
     "annotated.inspector": "Controlos do inspector, numerados para documentação.",
     "viewport.canvas.surface": "Imagem do motor apresentada dentro do painel de viewport.",
     "editor.toolbar.undo": "Desfaz o último passo do editor.",
-    "editor.toolbar.redo": "Refaz o último passo desfeito."
+    "editor.toolbar.redo": "Refaz o último passo desfeito.",
+    "inspector.add_component": "Adiciona um componente à entidade selecionada.",
+    "inspector.component.field": "Editor de um campo de componente; usa .component.field.axis.",
+    "inspector.component.remove": "Remove um componente; botões usam o sufixo .component."
   }
 }

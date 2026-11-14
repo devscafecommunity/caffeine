@@ -157,6 +157,78 @@ TEST_CASE("C API lists project assets", "[capi]") {
     std::filesystem::remove_all(root, ec);
 }
 
+TEST_CASE("C API exposes component schemas and values", "[capi]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Thing");
+    REQUIRE(entity != CAFFEINE_ENTITY_NONE);
+    REQUIRE(caffeine_session_set_entity_position(session, entity, {0.0f, 0.0f, 0.0f}) ==
+            CAFFEINE_OK);
+
+    uint32_t transformType = 0;
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        CaffeineComponentTypeInfo info{};
+        REQUIRE(caffeine_component_type_at(i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "Transform") == 0) transformType = info.id;
+    }
+    REQUIRE(transformType != 0);
+
+    uint32_t positionField = UINT32_MAX;
+    for (uint32_t i = 0; i < 3; ++i) {
+        CaffeineFieldInfo info{};
+        REQUIRE(caffeine_component_type_field_at(transformType, i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "Position") == 0) positionField = i;
+    }
+    REQUIRE(positionField != UINT32_MAX);
+
+    bool foundTransform = false;
+    uint32_t transformIndex = 0;
+    for (uint32_t i = 0; i < caffeine_session_entity_component_count(session, entity); ++i) {
+        CaffeineComponentInfo info{};
+        REQUIRE(caffeine_session_entity_component_at(session, entity, i, &info) ==
+                CAFFEINE_OK);
+        if (info.type_id == transformType) {
+            foundTransform = true;
+            transformIndex = i;
+        }
+    }
+    REQUIRE(foundTransform);
+
+    CaffeineFieldValue value{};
+    REQUIRE(caffeine_session_entity_component_field_get(session, entity, transformIndex,
+                                                        positionField, &value) ==
+            CAFFEINE_OK);
+    REQUIRE(value.kind == CAFFEINE_FIELD_VEC3);
+    value.vec[0] = 4.0f;
+    value.vec[1] = 5.0f;
+    value.vec[2] = 6.0f;
+    REQUIRE(caffeine_session_entity_component_field_set(session, entity, transformIndex,
+                                                        positionField, &value) ==
+            CAFFEINE_OK);
+    CaffeineFieldValue readback{};
+    REQUIRE(caffeine_session_entity_component_field_get(session, entity, transformIndex,
+                                                        positionField, &readback) ==
+            CAFFEINE_OK);
+    CHECK(readback.vec[0] == 4.0f);
+    CHECK(readback.vec[1] == 5.0f);
+    CHECK(readback.vec[2] == 6.0f);
+
+    uint32_t cameraType = 0;
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        CaffeineComponentTypeInfo info{};
+        REQUIRE(caffeine_component_type_at(i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "Camera 3D") == 0) cameraType = info.id;
+    }
+    REQUIRE(cameraType != 0);
+    const uint32_t before = caffeine_session_entity_component_count(session, entity);
+    REQUIRE(caffeine_session_add_component(session, entity, cameraType) == CAFFEINE_OK);
+    CHECK(caffeine_session_entity_component_count(session, entity) == before + 1);
+    REQUIRE(caffeine_session_remove_component(session, entity, cameraType) == CAFFEINE_OK);
+    CHECK(caffeine_session_entity_component_count(session, entity) == before);
+
+    caffeine_session_destroy(session);
+}
+
 TEST_CASE("C API snapshots restore the scene", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
     REQUIRE(session != nullptr);

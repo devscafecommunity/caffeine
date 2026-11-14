@@ -7,6 +7,7 @@ use crate::windows::projectloader;
 
 use iced::widget::{column, pane_grid, row, space, text};
 use iced::Element;
+use std::collections::HashMap;
 
 const VIEWPORT_WIDTH: u32 = 960;
 const VIEWPORT_HEIGHT: u32 = 540;
@@ -39,17 +40,19 @@ enum Message {
     SelectEntity(usize),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SelectEntityByName(String),
-    NameChanged(String),
     TogglePlay,
     AddEntity,
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     AddEntityNamed(String),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SetCamera(doppio_engine::Camera),
-    DeleteSelected,
-    NudgeX,
-    NudgeRotationY,
-    ScaleUp,
+    Inspector(panels::inspector::Edit),
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    SetComponentField {
+        component: usize,
+        field: usize,
+        value: doppio_engine::FieldValue,
+    },
     SaveScene,
     RenderViewport,
     ViewportTick,
@@ -80,6 +83,9 @@ struct App {
     viewport_pending: bool,
     camera: doppio_engine::Camera,
     history: History,
+    component_types: Vec<doppio_engine::ComponentType>,
+    components: Vec<doppio_engine::ComponentData>,
+    field_inputs: HashMap<(usize, usize, usize), String>,
 }
 
 impl App {
@@ -158,10 +164,207 @@ impl App {
             viewport_pending: false,
             camera,
             history: History::new(history::State::new(Vec::new(), None, false)),
+            component_types: Vec::new(),
+            components: Vec::new(),
+            field_inputs: HashMap::new(),
         };
+        if let Some(engine) = app.engine.as_ref() {
+            app.component_types = engine.component_types();
+        }
+        app.refresh_components();
         let initial = app.capture_state();
         app.history = History::new(initial);
         app
+    }
+
+    fn refresh_components(&mut self) {
+        self.field_inputs.clear();
+        self.components = match (self.engine.as_ref(), self.entities.get(self.selected)) {
+            (Some(engine), Some(entity)) => engine.entity_component_data(entity.id),
+            _ => Vec::new(),
+        };
+    }
+
+    fn handle_inspector(&mut self, edit: panels::inspector::Edit) {
+        match edit {
+            panels::inspector::Edit::Name(value) => self.rename_selected(value),
+            panels::inspector::Edit::FieldText {
+                component,
+                field,
+                axis,
+                value,
+            } => self.edit_component_text(component, field, axis, value),
+            panels::inspector::Edit::FieldBool {
+                component,
+                field,
+                value,
+            } => self.edit_component_bool(component, field, value),
+            panels::inspector::Edit::FieldEnum {
+                component,
+                field,
+                index,
+            } => self.edit_component_enum(component, field, index),
+            panels::inspector::Edit::AddComponent(type_id) => self.add_component(type_id),
+            panels::inspector::Edit::RemoveComponent(component) => self.remove_component(component),
+            panels::inspector::Edit::Delete => self.delete_selected(),
+        }
+    }
+
+    fn rename_selected(&mut self, value: String) {
+        self.name_input = value;
+        if let Some(entity) = self.entities.get_mut(self.selected) {
+            entity.name = self.name_input.clone();
+            if let Some(engine) = self.engine.as_mut() {
+                let _ = engine.set_entity_name(entity.id, &self.name_input);
+                if let Ok(confirmed) = engine.entity_name(entity.id) {
+                    entity.name = confirmed;
+                }
+            }
+        }
+        let name = format!("Rename {}", self.name_input);
+        let key = Some(format!("rename:{}", self.selected));
+        self.commit(name, key);
+    }
+
+    fn write_component_field(
+        &mut self,
+        component: usize,
+        field: usize,
+        value: doppio_engine::FieldValue,
+    ) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            return;
+        };
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.set_component_field(entity, component as u32, field as u32, &value);
+        }
+        let mut type_id = 0;
+        let mut field_name = String::new();
+        if let Some(data) = self.components.get_mut(component) {
+            type_id = data.info.type_id;
+            if let Some(slot) = data.values.get_mut(field) {
+                *slot = value;
+            }
+            if let Some(meta) = self
+                .component_types
+                .iter()
+                .find(|kind| kind.id == type_id)
+                .and_then(|kind| kind.fields.get(field))
+            {
+                field_name = meta.name.clone();
+            }
+        }
+        self.sync_selected_transform();
+        let name = format!("Set {field_name}");
+        let key = Some(format!("field:{}:{}:{}", self.selected, type_id, field));
+        self.commit(name, key);
+    }
+
+    fn sync_selected_transform(&mut self) {
+        let Some(id) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            return;
+        };
+        let Some(engine) = self.engine.as_ref() else {
+            return;
+        };
+        let position = engine.position(id).ok();
+        let rotation = engine.rotation(id).ok();
+        let scale = engine.scale(id).ok();
+        if let Some(entity) = self.entities.get_mut(self.selected) {
+            if let Some(position) = position {
+                entity.position = position;
+            }
+            if let Some(rotation) = rotation {
+                entity.rotation = rotation;
+            }
+            if let Some(scale) = scale {
+                entity.scale = scale;
+            }
+        }
+    }
+
+    fn edit_component_text(&mut self, component: usize, field: usize, axis: usize, text: String) {
+        self.field_inputs
+            .insert((component, field, axis), text.clone());
+        let Some(current) = self
+            .components
+            .get(component)
+            .and_then(|data| data.values.get(field))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(value) =
+            crate::uikit::components::field_editor::parse_value(&current, axis, &text)
+        else {
+            return;
+        };
+        self.write_component_field(component, field, value);
+    }
+
+    fn edit_component_bool(&mut self, component: usize, field: usize, flag: bool) {
+        self.write_component_field(component, field, doppio_engine::FieldValue::Bool(flag));
+    }
+
+    fn edit_component_enum(&mut self, component: usize, field: usize, index: i32) {
+        self.write_component_field(component, field, doppio_engine::FieldValue::Enum(index));
+    }
+
+    fn add_component(&mut self, type_id: u32) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            return;
+        };
+        let name = self
+            .component_types
+            .iter()
+            .find(|kind| kind.id == type_id)
+            .map(|kind| kind.name.clone())
+            .unwrap_or_else(|| format!("Component {type_id}"));
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.add_component(entity, type_id);
+        }
+        self.refresh_components();
+        self.commit(format!("Add {name}"), None);
+    }
+
+    fn remove_component(&mut self, component: usize) {
+        let Some(type_id) = self.components.get(component).map(|data| data.info.type_id) else {
+            return;
+        };
+        let name = self
+            .components
+            .get(component)
+            .map(|data| data.info.name.clone())
+            .unwrap_or_default();
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            return;
+        };
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.remove_component(entity, type_id);
+        }
+        self.refresh_components();
+        self.commit(format!("Remove {name}"), None);
+    }
+
+    fn delete_selected(&mut self) {
+        if self.entities.is_empty() {
+            return;
+        }
+        let entity = self.entities.remove(self.selected);
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.destroy_entity(entity.id);
+        }
+        if self.selected >= self.entities.len() {
+            self.selected = self.entities.len().saturating_sub(1);
+        }
+        self.name_input = self
+            .entities
+            .get(self.selected)
+            .map(|entity| entity.name.clone())
+            .unwrap_or_default();
+        self.refresh_components();
+        self.log.push(format!("Deleted {}", entity.name));
+        self.commit(format!("Delete {}", entity.name), None);
     }
 
     fn capture_state(&self) -> history::State {
@@ -194,10 +397,14 @@ impl App {
                 data: data.clone(),
                 dirty: state.dirty,
             };
-            if engine.restore(&snapshot).is_ok() {
-                self.entities = projectloader::read_entities(engine);
-            } else {
-                self.entities = state.entities.clone();
+            match engine.restore(&snapshot) {
+                Ok(()) => {
+                    self.entities = projectloader::read_entities(engine);
+                }
+                Err(error) => {
+                    self.log.push(format!("Restore failed: {error:?}"));
+                    self.entities = state.entities.clone();
+                }
             }
             self.viewport_pending = false;
         } else {
@@ -215,6 +422,7 @@ impl App {
         {
             let _ = engine.select_entity(entity.id);
         }
+        self.refresh_components();
     }
 
     fn undo(&mut self) {
@@ -243,6 +451,7 @@ impl App {
             }
             self.log.push(format!("Selected {}", entity.name));
         }
+        self.refresh_components();
         self.amend_selection();
     }
 
@@ -377,21 +586,6 @@ impl App {
             Message::SelectEntity(index) => {
                 self.select_index(index);
             }
-            Message::NameChanged(value) => {
-                self.name_input = value;
-                if let Some(entity) = self.entities.get_mut(self.selected) {
-                    entity.name = self.name_input.clone();
-                    if let Some(engine) = self.engine.as_mut() {
-                        let _ = engine.set_entity_name(entity.id, &self.name_input);
-                        if let Ok(confirmed) = engine.entity_name(entity.id) {
-                            entity.name = confirmed;
-                        }
-                    }
-                }
-                let name = format!("Rename {}", self.name_input);
-                let key = Some(format!("rename:{}", self.selected));
-                self.commit(name, key);
-            }
             Message::TogglePlay => {
                 self.playing = !self.playing;
                 self.log
@@ -427,72 +621,15 @@ impl App {
                 self.camera = camera;
                 self.apply_camera();
             }
-            Message::DeleteSelected => {
-                if self.entities.is_empty() {
-                    return;
-                }
-                let entity = self.entities.remove(self.selected);
-                if let Some(engine) = self.engine.as_mut() {
-                    let _ = engine.destroy_entity(entity.id);
-                }
-                if self.selected >= self.entities.len() {
-                    self.selected = self.entities.len().saturating_sub(1);
-                }
-                self.name_input = self
-                    .entities
-                    .get(self.selected)
-                    .map(|entity| entity.name.clone())
-                    .unwrap_or_default();
-                self.log.push(format!("Deleted {}", entity.name));
-                self.commit(format!("Delete {}", entity.name), None);
+            Message::Inspector(edit) => {
+                self.handle_inspector(edit);
             }
-            Message::NudgeX => {
-                if let Some(entity) = self.entities.get_mut(self.selected) {
-                    let mut position = entity.position;
-                    position[0] += 1.0;
-                    if let Some(engine) = self.engine.as_mut() {
-                        let _ = engine.set_position(entity.id, position);
-                        if let Ok(readback) = engine.position(entity.id) {
-                            position = readback;
-                        }
-                    }
-                    entity.position = position;
-                    let name = format!("Move {} to x={:.2}", entity.name, position[0]);
-                    self.log.push(name.clone());
-                    self.commit(name, None);
-                }
-            }
-            Message::NudgeRotationY => {
-                if let Some(entity) = self.entities.get_mut(self.selected) {
-                    let mut rotation = entity.rotation;
-                    rotation[1] += 15.0;
-                    if let Some(engine) = self.engine.as_mut() {
-                        let _ = engine.set_rotation(entity.id, rotation);
-                        if let Ok(readback) = engine.rotation(entity.id) {
-                            rotation = readback;
-                        }
-                    }
-                    entity.rotation = rotation;
-                    let name = format!("Rotate {} to y={:.2}", entity.name, rotation[1]);
-                    self.log.push(name.clone());
-                    self.commit(name, None);
-                }
-            }
-            Message::ScaleUp => {
-                if let Some(entity) = self.entities.get_mut(self.selected) {
-                    let mut scale = entity.scale;
-                    scale = [scale[0] * 1.1, scale[1] * 1.1, scale[2] * 1.1];
-                    if let Some(engine) = self.engine.as_mut() {
-                        let _ = engine.set_scale(entity.id, scale);
-                        if let Ok(readback) = engine.scale(entity.id) {
-                            scale = readback;
-                        }
-                    }
-                    entity.scale = scale;
-                    let name = format!("Scale {} to x={:.2}", entity.name, scale[0]);
-                    self.log.push(name.clone());
-                    self.commit(name, None);
-                }
+            Message::SetComponentField {
+                component,
+                field,
+                value,
+            } => {
+                self.write_component_field(component, field, value);
             }
             Message::SaveScene => {
                 if let Some(engine) = self.engine.as_mut() {
@@ -627,13 +764,14 @@ impl App {
             PaneKind::Inspector => (
                 id::PANE_INSPECTOR,
                 panels::inspector::view(
-                    self.entities.get(self.selected),
-                    &self.name_input,
-                    Message::NameChanged,
-                    Message::NudgeX,
-                    Message::NudgeRotationY,
-                    Message::ScaleUp,
-                    Message::DeleteSelected,
+                    panels::inspector::Inspector {
+                        entity: self.entities.get(self.selected),
+                        name_input: &self.name_input,
+                        components: &self.components,
+                        component_types: &self.component_types,
+                        field_inputs: &self.field_inputs,
+                    },
+                    Message::Inspector,
                 ),
             ),
             PaneKind::Console => (id::PANE_CONSOLE, panels::console::view(&self.log)),

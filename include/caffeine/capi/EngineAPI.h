@@ -74,6 +74,47 @@ typedef struct CaffeineAssetInfo {
     int is_directory;
 } CaffeineAssetInfo;
 
+typedef enum CaffeineFieldKind {
+    CAFFEINE_FIELD_F32 = 0,
+    CAFFEINE_FIELD_BOOL = 1,
+    CAFFEINE_FIELD_I32 = 2,
+    CAFFEINE_FIELD_U32 = 3,
+    CAFFEINE_FIELD_VEC2 = 4,
+    CAFFEINE_FIELD_VEC3 = 5,
+    CAFFEINE_FIELD_VEC4 = 6,
+    CAFFEINE_FIELD_STRING = 7,
+    CAFFEINE_FIELD_ENUM = 8,
+} CaffeineFieldKind;
+
+typedef struct CaffeineFieldInfo {
+    char name[64];
+    CaffeineFieldKind kind;
+    float min_value;
+    float max_value;
+    float step;
+    char enum_options[256]; /**< '|' separated labels for enum fields. */
+} CaffeineFieldInfo;
+
+typedef struct CaffeineFieldValue {
+    CaffeineFieldKind kind;
+    float vec[4];
+    int32_t integer;
+    int32_t boolean;
+    char text[256];
+} CaffeineFieldValue;
+
+typedef struct CaffeineComponentTypeInfo {
+    uint32_t id;
+    char name[64];
+    uint32_t field_count;
+} CaffeineComponentTypeInfo;
+
+typedef struct CaffeineComponentInfo {
+    uint32_t type_id;
+    char name[64];
+    uint32_t field_count;
+} CaffeineComponentInfo;
+
 /** Create/destroy a scene session. The session owns its ECS world. */
 CAFFEINE_CAPI_API CaffeineSession* caffeine_session_create(void);
 CAFFEINE_CAPI_API void caffeine_session_destroy(CaffeineSession* session);
@@ -109,6 +150,32 @@ CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_poll(CaffeineSessi
 /** Viewport camera (radians for yaw/pitch, world units for distance). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
+
+/** Component schema and per-entity component instances. */
+CAFFEINE_CAPI_API uint32_t caffeine_component_type_count(void);
+CAFFEINE_CAPI_API CaffeineResult caffeine_component_type_at(uint32_t index,
+                                            CaffeineComponentTypeInfo* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_component_type_field_at(uint32_t type_id,
+                                                  uint32_t field,
+                                                  CaffeineFieldInfo* out);
+CAFFEINE_CAPI_API uint32_t caffeine_session_entity_component_count(const CaffeineSession* session,
+                                                   CaffeineEntity entity);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_component_at(const CaffeineSession* session,
+                                                      CaffeineEntity entity,
+                                                      uint32_t index,
+                                                      CaffeineComponentInfo* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_component_field_get(
+    const CaffeineSession* session, CaffeineEntity entity, uint32_t component,
+    uint32_t field, CaffeineFieldValue* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_component_field_set(
+    CaffeineSession* session, CaffeineEntity entity, uint32_t component,
+    uint32_t field, const CaffeineFieldValue* value);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_add_component(CaffeineSession* session,
+                                                CaffeineEntity entity,
+                                                uint32_t type_id);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_remove_component(CaffeineSession* session,
+                                                   CaffeineEntity entity,
+                                                   uint32_t type_id);
 
 /** In-memory world snapshot for editor undo/redo. Free `out_data` with caffeine_session_free. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_snapshot(const CaffeineSession* session,

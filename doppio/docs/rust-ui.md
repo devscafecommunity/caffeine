@@ -28,6 +28,10 @@ doppio/
 
 - App/UI state lives in `windows/main.rs`; panels and components are
   reusable library modules.
+- **Panels compose components; they never build interactive widgets inline.**
+  Text fields, field editors, component cards/pickers and buttons live in
+  `uikit/components/`; `scripts/check-rust-ui.sh` rejects raw `text_input`,
+  `checkbox`, `pick_list`, `slider` or `button` calls in `uikit/panels/`.
 - The UI crates never touch FFI directly: only `doppio-engine` loads the
   shared library.
 - a five-pane `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
@@ -91,6 +95,10 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
 - project asset listing (`set_asset_root`, `refresh_assets`, `asset_at`); the
   Rust Asset Manager shows real files and a file count;
+- component schema and values (`component_type_*`, `entity_component_*`,
+  `add/remove_component`); the Inspector is generic and edits every registered
+  component (Transform, Camera 3D, lights, renderers, physics, colliders,
+  scripts) with scalar, vector, bool, string and enum fields;
 - non-blocking render (`render_begin` / `render_poll`): submit a download copy
   and poll its fence instead of waiting for the GPU;
 - in-memory scene snapshots (`snapshot` / `restore`): the whole world serialized
@@ -102,8 +110,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 28 Rust tests: 1 engine bridge round-trip, 26 UI/widget tests (1 ignored
-docs generator) and 1 doctest.
+- 32 Rust tests: 2 engine bridge/snapshot tests, 29 UI/widget tests (1
+ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
 
@@ -125,6 +133,20 @@ Still to add before the Rust UI is fully wired:
 The existing `PluginHostApi` is a good function-table precedent. The existing
 `DOPPIO_TEST_MODE` JSON loop (`TestRequestHandler`) is a good engine-side test
 precedent.
+
+### Component schema and generic Inspector
+
+- The C ABI exposes a component catalog (id, name, fields with kind/limits/
+  enum options) plus per-entity instances and field get/set/add/remove.
+- The registry covers Transform, Position/Rotation/Scale 3D, Camera 3D,
+  Light plus directional/point/spot, Mesh Renderer, Mesh Filter, Rigid Body
+  3D/2D, Collider 3D/2D and Script.
+- The Inspector is generic: it lists every component with scalar, vector,
+  bool, string and enum editors, plus Remove per component and an Add
+  Component picker. Every edit is an undo step.
+- The panel itself only composes uikit components (`text_field`,
+  `field_editor`, `component_card`, `component_picker`); it contains no raw
+  `text_input`/`checkbox`/`pick_list`. `scripts/check-rust-ui.sh` enforces it.
 
 ### Undo and redo
 
@@ -264,7 +286,11 @@ registers scene-level queries and actions:
 | query | `selection` | the selected entity or null |
 | query | `scene` | scene path, dirty flag, counts and the console log |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
+| query | `component_types` | component schema: fields, kinds, limits, enum options |
+| query | `entity_components` | components and values for an entity |
 | query | `history` | undo/redo timeline, current cursor, names and size |
+| action | `add_component` / `remove_component` | edits the selected entity's components |
+| action | `set_component_field` | `{ "component", "field", "kind", "value" }` |
 | action | `undo` / `redo` | moves through the editor timeline |
 | action | `add_entity` | `{ "name"?: string }` |
 | action | `delete_selected` | deletes the selected entity |
