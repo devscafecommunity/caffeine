@@ -98,7 +98,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 8 Rust tests: 1 engine bridge round-trip + 7 UI tests (`iced_test`).
+- 11 Rust tests: 1 engine bridge round-trip + 10 UI tests (`iced_test`).
 
 The app loads a real scene through the ABI:
 
@@ -153,8 +153,70 @@ from the runtime and the legacy SDK.
 
 ### Tests and agents
 
-- `iced_test` for component/layout logic and deterministic flows.
-- `iced-mcp` behind an optional feature for agent-driven E2E; pin the version.
+UI tests are Playwright-style but headless: they drive the real Iced widget
+tree, click by id, type into inputs, apply the resulting messages and assert on
+the next frame. No window, GPU or engine build is required.
+
+- `crates/ui/src/windows/main/tests.rs` has a `Harness` with `click`, `type_into`,
+  `shows`, `has` and `wait_for`, plus focused tests and one end-to-end
+  `editor_workflow` scenario (add → select → rename → move → delete).
+- Widgets that agents/tests target keep stable ids (`add-entity`, `entity-2`,
+  `entity-name`, `nudge-x`, `reset-camera`, …); add an id to anything new.
+- Fixtures (`App::empty` and two-entity editor) keep tests deterministic.
+
+### Agents (MCP)
+
+`iced-mcp` is behind the `agent` feature and attaches only when `ICED_MCP=1`:
+
+```bash
+cargo install iced-mcp-server        # once
+cd doppio
+ICED_MCP=1 cargo run -p doppio-ui --features agent
+```
+
+The MCP client (Claude Code, Cursor, any MCP client) launches the app, reads
+the widget tree (`snapshot`), clicks/types by id or text, records flows and
+replays them with `iced-mcp run-suite`. On top of the widget tools, Doppio
+registers scene-level queries and actions:
+
+| Kind | Name | What it does |
+|------|------|--------------|
+| state | — | engine connection, entity/asset counts, selection, play state, dirty flag, camera |
+| query | `entities` | every entity with id, name, transform and selection |
+| query | `selection` | the selected entity or null |
+| query | `scene` | scene path, dirty flag, counts and the console log |
+| action | `add_entity` | `{ "name"?: string }` |
+| action | `delete_selected` | deletes the selected entity |
+| action | `select_entity` | `{ "index"?: number, "name"?: string }` |
+| action | `rename_selected` | `{ "name": string }` |
+| action | `toggle_play` | toggles play/pause and ticks the engine |
+| action | `save_scene` | saves the current `.caf` |
+| action | `set_camera` | `{ "yaw"?: number, "pitch"?: number, "distance"?: number }` |
+| action | `reset_camera` | restores the default camera |
+| action | `close_scene` | drops the engine session and clears the editor |
+| fixture | `empty`, `editor` | deterministic starting states for flows |
+
+Because every action is an iced `Message`, agents can only do what the UI can
+do, and the `messages` tool shows exactly what each call published.
+
+A full scripted session lives in `doppio/.iced-mcp/scripts/editor-smoke.luau`.
+It loads the `editor` fixture, renames through the real text input, adds an
+entity, drives the camera and asserts the console:
+
+```bash
+cd doppio
+iced-mcp run-script .iced-mcp/scripts/editor-smoke.luau \
+  --launch "./target/debug/doppio ../assets/benchmarks/dense_outdoor.caf"
+```
+
+`scripts/doppio-agent.sh` builds the C ABI and launches the same app with
+`ICED_MCP=1` for an interactive agent session.
+
+Session teardown keeps the SDL GPU device for the process lifetime on purpose:
+`SDL_DestroyGPUDevice` unloads Vulkan entry points that the host's wgpu/Iced
+renderer still holds. Sessions are created rarely, so the editor leaks one
+small device instead of crashing the host.
+
 - Keep/extend the engine JSON protocol for scene/component/viewport assertions.
 - Add fixtures for project templates, scenes and component schemas.
 

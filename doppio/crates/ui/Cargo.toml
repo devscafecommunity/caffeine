@@ -13,9 +13,10 @@ path = "src/main.rs"
 iced.workspace = true
 doppio-engine = { path = "../engine" }
 iced-mcp = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [features]
-agent = ["dep:iced-mcp"]
+agent = ["dep:iced-mcp", "dep:serde_json"]
 
 [dev-dependencies]
 iced_test.workspace = true

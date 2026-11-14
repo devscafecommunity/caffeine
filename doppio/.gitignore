@@ -1,1 +1,4 @@
 /target
+
+# iced-mcp failure bundles and screenshots
+.iced-mcp/failures/

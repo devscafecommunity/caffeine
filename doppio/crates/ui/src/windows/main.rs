@@ -8,9 +8,7 @@ use iced::Element;
 
 #[cfg(feature = "agent")]
 pub fn run() -> iced::Result {
-    iced_mcp::run(
-        iced::application(App::new, App::update, App::view).subscription(App::subscription),
-    )
+    agent::run()
 }
 
 #[cfg(not(feature = "agent"))]
@@ -34,9 +32,15 @@ enum Message {
     PaneDragged(pane_grid::DragEvent),
     PaneResized(pane_grid::ResizeEvent),
     SelectEntity(usize),
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
+    SelectEntityByName(String),
     NameChanged(String),
     TogglePlay,
     AddEntity,
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
+    AddEntityNamed(String),
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
+    SetCamera(doppio_engine::Camera),
     DeleteSelected,
     NudgeX,
     NudgeRotationY,
@@ -48,6 +52,8 @@ enum Message {
     ZoomIn,
     ZoomOut,
     ResetCamera,
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    CloseScene,
     Log,
 }
 
@@ -67,6 +73,22 @@ struct App {
 
 impl App {
     fn new() -> Self {
+        let loaded = projectloader::load_from_args();
+        Self::with_project(loaded)
+    }
+
+    /// Editor with no scene and no engine session, used by agent fixtures.
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
+    fn empty() -> Self {
+        Self::with_project(projectloader::LoadedProject {
+            engine: None,
+            entities: Vec::new(),
+            assets: Vec::new(),
+            log: vec!["Empty fixture".to_owned()],
+        })
+    }
+
+    fn with_project(loaded: projectloader::LoadedProject) -> Self {
         use pane_grid::{Axis, Configuration};
 
         let configuration = Configuration::Split {
@@ -92,7 +114,6 @@ impl App {
         };
         let panes = pane_grid::State::with_configuration(configuration);
 
-        let loaded = projectloader::load_from_args();
         let next_entity_id = loaded
             .entities
             .iter()
@@ -123,6 +144,45 @@ impl App {
             next_entity_id,
             viewport_image: None,
             camera,
+        }
+    }
+
+    fn select_index(&mut self, index: usize) {
+        if let Some(entity) = self.entities.get(index) {
+            self.selected = index;
+            self.name_input = entity.name.clone();
+            if let Some(engine) = self.engine.as_mut() {
+                let _ = engine.select_entity(entity.id);
+                if engine.selected_entity() != entity.id {
+                    self.log.push("Engine selection mismatch".to_owned());
+                }
+            }
+            self.log.push(format!("Selected {}", entity.name));
+        }
+    }
+
+    fn add_entity_named(&mut self, name: String) {
+        let index = self.entities.len();
+        let id = if let Some(engine) = self.engine.as_mut() {
+            engine
+                .create_entity(&name)
+                .unwrap_or(doppio_engine::ENTITY_NONE)
+        } else {
+            let id = self.next_entity_id;
+            self.next_entity_id += 1;
+            id
+        };
+        if id != doppio_engine::ENTITY_NONE {
+            self.entities.push(EntityView {
+                id,
+                name: name.clone(),
+                position: [0.0; 3],
+                rotation: [0.0; 3],
+                scale: [1.0; 3],
+            });
+            self.selected = index;
+            self.name_input = name.clone();
+            self.log.push(format!("Added {name}"));
         }
     }
 
@@ -170,17 +230,7 @@ impl App {
                 self.panes.resize(event.split, event.ratio);
             }
             Message::SelectEntity(index) => {
-                if let Some(entity) = self.entities.get(index) {
-                    self.selected = index;
-                    self.name_input = entity.name.clone();
-                    if let Some(engine) = self.engine.as_mut() {
-                        let _ = engine.select_entity(entity.id);
-                        if engine.selected_entity() != entity.id {
-                            self.log.push("Engine selection mismatch".to_owned());
-                        }
-                    }
-                    self.log.push(format!("Selected {}", entity.name));
-                }
+                self.select_index(index);
             }
             Message::NameChanged(value) => {
                 self.name_input = value;
@@ -210,29 +260,22 @@ impl App {
                 }
             }
             Message::AddEntity => {
-                let index = self.entities.len();
-                let name = format!("Entity {}", index + 1);
-                let id = if let Some(engine) = self.engine.as_mut() {
-                    engine
-                        .create_entity(&name)
-                        .unwrap_or(doppio_engine::ENTITY_NONE)
+                let name = format!("Entity {}", self.entities.len() + 1);
+                self.add_entity_named(name);
+            }
+            Message::AddEntityNamed(name) => {
+                self.add_entity_named(name);
+            }
+            Message::SelectEntityByName(name) => {
+                if let Some(index) = self.entities.iter().position(|entity| entity.name == name) {
+                    self.select_index(index);
                 } else {
-                    let id = self.next_entity_id;
-                    self.next_entity_id += 1;
-                    id
-                };
-                if id != doppio_engine::ENTITY_NONE {
-                    self.entities.push(EntityView {
-                        id,
-                        name: name.clone(),
-                        position: [0.0; 3],
-                        rotation: [0.0; 3],
-                        scale: [1.0; 3],
-                    });
-                    self.selected = index;
-                    self.name_input = name.clone();
-                    self.log.push(format!("Added {name}"));
+                    self.log.push(format!("No entity named {name}"));
                 }
+            }
+            Message::SetCamera(camera) => {
+                self.camera = camera;
+                self.apply_camera();
             }
             Message::DeleteSelected => {
                 if self.entities.is_empty() {
@@ -333,6 +376,15 @@ impl App {
                 self.camera = doppio_engine::Camera::default();
                 self.apply_camera();
             }
+            Message::CloseScene => {
+                self.engine = None;
+                self.entities.clear();
+                self.assets.clear();
+                self.selected = 0;
+                self.name_input.clear();
+                self.viewport_image = None;
+                self.log.push("Closed scene".to_owned());
+            }
             Message::Log => {
                 self.log.push("Hello from the Rust UI".to_owned());
             }
@@ -415,98 +467,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use iced::widget::Id;
-    use iced_test::simulator;
+mod tests;
 
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn click_and_update(app: &mut App, id: &'static str) {
-        let mut ui = simulator(app.view());
-        let clicked = ui.click(Id::new(id));
-        assert!(clicked.is_ok(), "widget {id} should be clickable");
-        for message in ui.into_messages() {
-            app.update(message);
-        }
-    }
-
-    #[test]
-    fn add_entity_updates_hierarchy_and_inspector() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        let before = app.entities.len();
-        click_and_update(&mut app, "add-entity");
-        assert_eq!(app.entities.len(), before + 1);
-        assert_eq!(app.selected, before);
-
-        let mut ui = simulator(app.view());
-        assert!(ui.find("Entity 3").is_ok(), "new entity should be listed");
-    }
-
-    #[test]
-    fn toggle_play_updates_label() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        click_and_update(&mut app, "toggle-play");
-        assert!(app.playing);
-        let mut ui = simulator(app.view());
-        assert!(ui.find("Pause").is_ok(), "button should read Pause");
-    }
-
-    #[test]
-    fn nudge_x_updates_position() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        let before = app.entities[0].position[0];
-        click_and_update(&mut app, "nudge-x");
-        assert!(app.entities[0].position[0] > before);
-    }
-
-    #[test]
-    fn nudge_rotation_updates_rotation() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        let before = app.entities[0].rotation[1];
-        click_and_update(&mut app, "nudge-rot-y");
-        assert!(app.entities[0].rotation[1] > before);
-    }
-
-    #[test]
-    fn scale_up_updates_scale() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        let before = app.entities[0].scale[0];
-        click_and_update(&mut app, "scale-up");
-        assert!(app.entities[0].scale[0] > before);
-    }
-
-    #[test]
-    fn orbit_changes_camera_yaw() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        let before = app.camera.yaw;
-        click_and_update(&mut app, "orbit-left");
-        assert!(app.camera.yaw < before);
-    }
-
-    #[test]
-    fn rename_updates_selected_entity() {
-        let _guard = test_guard();
-        let mut app = App::new();
-        click_and_update(&mut app, "entity-1");
-        assert_eq!(app.selected, 1);
-
-        let mut ui = simulator(app.view());
-        let focused = ui.click(Id::new("entity-name"));
-        assert!(focused.is_ok(), "name field should be focusable");
-        let _ = ui.typewrite("Boss");
-        for message in ui.into_messages() {
-            app.update(message);
-        }
-        assert!(app.entities[1].name.contains("Boss"));
-    }
-}
+#[cfg(feature = "agent")]
+mod agent;

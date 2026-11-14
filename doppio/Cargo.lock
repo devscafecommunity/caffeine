@@ -870,6 +870,7 @@ dependencies = [
  "iced",
  "iced-mcp",
  "iced_test",
+ "serde_json",
 ]
 
 [[package]]

@@ -120,9 +120,11 @@ struct CaffeineSession {
         colorTarget = nullptr;
         renderWidth = 0;
         renderHeight = 0;
-        if (renderDevice) renderDevice->shutdown();
         sceneRenderer.reset();
-        renderDevice.reset();
+        // SDL_DestroyGPUDevice unloads Vulkan entry points that other GPU
+        // stacks in the host (wgpu/Iced) may still hold. The device is tiny
+        // and an editor owns one session, so let the process reclaim it.
+        if (renderDevice) renderDevice.release();
     }
 
     bool ensureRender(uint32_t width, uint32_t height) {

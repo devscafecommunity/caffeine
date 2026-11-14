@@ -26,7 +26,7 @@ pub struct EntityInfo {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
     pub yaw: f32,
     pub pitch: f32,
@@ -162,13 +162,29 @@ struct Functions {
 }
 
 pub struct Engine {
-    _library: Library,
     session: *mut c_void,
     functions: Functions,
 }
 
 unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
     library.get::<T>(name).ok().map(|symbol| *symbol)
+}
+
+/// The C ABI library stays loaded for the process lifetime.
+///
+/// Unloading it (`dlclose`) while the editor still holds SDL/GPU state crashes
+/// the process, and there is no benefit in reloading it. Sessions are still
+/// created and destroyed per `Engine`.
+fn shared_library(path: &Path) -> Option<&'static Library> {
+    use std::sync::OnceLock;
+
+    static LIBRARY: OnceLock<Library> = OnceLock::new();
+    if let Some(library) = LIBRARY.get() {
+        return Some(library);
+    }
+    let loaded = unsafe { Library::new(path) }.ok()?;
+    let _ = LIBRARY.set(loaded);
+    LIBRARY.get()
 }
 
 fn default_library_path() -> PathBuf {
@@ -205,51 +221,47 @@ impl Engine {
     }
 
     pub fn load(path: &Path) -> Option<Self> {
-        let library = unsafe { Library::new(path) }.ok()?;
-        let create: CreateFn = unsafe { load_symbol(&library, b"caffeine_session_create\0") }?;
+        let library = shared_library(path)?;
+        let create: CreateFn = unsafe { load_symbol(library, b"caffeine_session_create\0") }?;
         let functions = Functions {
-            destroy: unsafe { load_symbol(&library, b"caffeine_session_destroy\0") }?,
-            load_scene: unsafe { load_symbol(&library, b"caffeine_session_load_scene\0") }?,
-            save_scene: unsafe { load_symbol(&library, b"caffeine_session_save_scene\0") }?,
-            scene_path: unsafe { load_symbol(&library, b"caffeine_session_scene_path\0") }?,
-            is_dirty: unsafe { load_symbol(&library, b"caffeine_session_is_dirty\0") }?,
-            entity_count: unsafe { load_symbol(&library, b"caffeine_session_entity_count\0") }?,
-            entity_at: unsafe { load_symbol(&library, b"caffeine_session_entity_at\0") }?,
-            entity_name: unsafe { load_symbol(&library, b"caffeine_session_entity_name\0") }?,
-            create_entity: unsafe { load_symbol(&library, b"caffeine_session_create_entity\0") }?,
-            destroy_entity: unsafe { load_symbol(&library, b"caffeine_session_destroy_entity\0") }?,
-            set_name: unsafe { load_symbol(&library, b"caffeine_session_set_entity_name\0") }?,
-            select: unsafe { load_symbol(&library, b"caffeine_session_select_entity\0") }?,
-            selected: unsafe { load_symbol(&library, b"caffeine_session_selected_entity\0") }?,
-            position: unsafe { load_symbol(&library, b"caffeine_session_entity_position\0") }?,
+            destroy: unsafe { load_symbol(library, b"caffeine_session_destroy\0") }?,
+            load_scene: unsafe { load_symbol(library, b"caffeine_session_load_scene\0") }?,
+            save_scene: unsafe { load_symbol(library, b"caffeine_session_save_scene\0") }?,
+            scene_path: unsafe { load_symbol(library, b"caffeine_session_scene_path\0") }?,
+            is_dirty: unsafe { load_symbol(library, b"caffeine_session_is_dirty\0") }?,
+            entity_count: unsafe { load_symbol(library, b"caffeine_session_entity_count\0") }?,
+            entity_at: unsafe { load_symbol(library, b"caffeine_session_entity_at\0") }?,
+            entity_name: unsafe { load_symbol(library, b"caffeine_session_entity_name\0") }?,
+            create_entity: unsafe { load_symbol(library, b"caffeine_session_create_entity\0") }?,
+            destroy_entity: unsafe { load_symbol(library, b"caffeine_session_destroy_entity\0") }?,
+            set_name: unsafe { load_symbol(library, b"caffeine_session_set_entity_name\0") }?,
+            select: unsafe { load_symbol(library, b"caffeine_session_select_entity\0") }?,
+            selected: unsafe { load_symbol(library, b"caffeine_session_selected_entity\0") }?,
+            position: unsafe { load_symbol(library, b"caffeine_session_entity_position\0") }?,
             set_position: unsafe {
-                load_symbol(&library, b"caffeine_session_set_entity_position\0")
+                load_symbol(library, b"caffeine_session_set_entity_position\0")
             }?,
-            rotation: unsafe { load_symbol(&library, b"caffeine_session_entity_rotation\0") }?,
+            rotation: unsafe { load_symbol(library, b"caffeine_session_entity_rotation\0") }?,
             set_rotation: unsafe {
-                load_symbol(&library, b"caffeine_session_set_entity_rotation\0")
+                load_symbol(library, b"caffeine_session_set_entity_rotation\0")
             }?,
-            scale: unsafe { load_symbol(&library, b"caffeine_session_entity_scale\0") }?,
-            set_scale: unsafe { load_symbol(&library, b"caffeine_session_set_entity_scale\0") }?,
-            render: unsafe { load_symbol(&library, b"caffeine_session_render\0") }?,
-            set_camera: unsafe { load_symbol(&library, b"caffeine_session_set_camera\0") }?,
-            get_camera: unsafe { load_symbol(&library, b"caffeine_session_get_camera\0") }?,
-            set_asset_root: unsafe { load_symbol(&library, b"caffeine_session_set_asset_root\0") }?,
-            refresh_assets: unsafe { load_symbol(&library, b"caffeine_session_refresh_assets\0") }?,
-            asset_count: unsafe { load_symbol(&library, b"caffeine_session_asset_count\0") }?,
-            asset_at: unsafe { load_symbol(&library, b"caffeine_session_asset_at\0") }?,
-            tick: unsafe { load_symbol(&library, b"caffeine_session_tick\0") }?,
-            frame_stats: unsafe { load_symbol(&library, b"caffeine_session_frame_stats\0") }?,
+            scale: unsafe { load_symbol(library, b"caffeine_session_entity_scale\0") }?,
+            set_scale: unsafe { load_symbol(library, b"caffeine_session_set_entity_scale\0") }?,
+            render: unsafe { load_symbol(library, b"caffeine_session_render\0") }?,
+            set_camera: unsafe { load_symbol(library, b"caffeine_session_set_camera\0") }?,
+            get_camera: unsafe { load_symbol(library, b"caffeine_session_get_camera\0") }?,
+            set_asset_root: unsafe { load_symbol(library, b"caffeine_session_set_asset_root\0") }?,
+            refresh_assets: unsafe { load_symbol(library, b"caffeine_session_refresh_assets\0") }?,
+            asset_count: unsafe { load_symbol(library, b"caffeine_session_asset_count\0") }?,
+            asset_at: unsafe { load_symbol(library, b"caffeine_session_asset_at\0") }?,
+            tick: unsafe { load_symbol(library, b"caffeine_session_tick\0") }?,
+            frame_stats: unsafe { load_symbol(library, b"caffeine_session_frame_stats\0") }?,
         };
         let session = unsafe { create() };
         if session.is_null() {
             return None;
         }
-        Some(Self {
-            _library: library,
-            session,
-            functions,
-        })
+        Some(Self { session, functions })
     }
 
     pub fn load_scene(&mut self, path: &str) -> EngineResult<()> {
@@ -562,8 +574,15 @@ mod tests {
         assert!(first.id == player || first.id == enemy);
         assert_eq!(engine.entity_at(99).unwrap_err(), EngineError::NotFound);
 
+        let pixels = engine.render(320, 180).expect("render");
+        assert_eq!(pixels.len(), 320 * 180 * 4);
+        drop(engine);
+
+        let mut engine = Engine::load_default().expect("reload");
+        assert_eq!(engine.entity_count(), 0);
+        let player = engine.create_entity("Player").expect("create player");
         engine.destroy_entity(player).unwrap();
-        assert_eq!(engine.entity_count(), 1);
+        assert_eq!(engine.entity_count(), 0);
         assert_eq!(
             engine.entity_name(player).unwrap_err(),
             EngineError::NotFound
