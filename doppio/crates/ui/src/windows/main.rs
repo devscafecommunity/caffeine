@@ -1,4 +1,5 @@
 use crate::uikit::components::button;
+use crate::uikit::id;
 use crate::uikit::panels;
 use crate::uikit::EntityView;
 use crate::windows::projectloader;
@@ -396,14 +397,14 @@ impl App {
             text("Doppio").size(20),
             space::horizontal(),
             button::toolbar(
-                "toggle-play",
+                id::TOGGLE_PLAY,
                 if self.playing { "Pause" } else { "Play" },
                 Message::TogglePlay,
             ),
-            button::primary("add-entity", "Add Entity", Message::AddEntity),
-            button::toolbar("save-scene", "Save", Message::SaveScene),
-            button::toolbar("render-viewport", "Render", Message::RenderViewport),
-            button::toolbar("log", "Log", Message::Log),
+            button::primary(id::ADD_ENTITY, "Add Entity", Message::AddEntity),
+            button::toolbar(id::SAVE_SCENE, "Save", Message::SaveScene),
+            button::toolbar(id::RENDER_VIEWPORT, "Render", Message::RenderViewport),
+            button::toolbar(id::LOG_MESSAGE, "Log", Message::Log),
             text(if self.engine.is_some() {
                 "C++ engine"
             } else {
@@ -439,30 +440,38 @@ impl App {
     }
 
     fn pane_view(&self, kind: PaneKind) -> Element<'_, Message> {
-        match kind {
-            PaneKind::Hierarchy => {
-                panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity)
-            }
-            PaneKind::Assets => panels::assetmanager::view(&self.assets),
-            PaneKind::Viewport => panels::sceneviewport::view(
-                self.viewport_image.clone(),
-                Message::OrbitLeft,
-                Message::OrbitRight,
-                Message::ZoomIn,
-                Message::ZoomOut,
-                Message::ResetCamera,
+        let (pane_id, content): (id::UiId, Element<'_, Message>) = match kind {
+            PaneKind::Hierarchy => (
+                id::PANE_HIERARCHY,
+                panels::hierarchy::view(&self.entities, self.selected, Message::SelectEntity),
             ),
-            PaneKind::Inspector => panels::inspector::view(
-                self.entities.get(self.selected),
-                &self.name_input,
-                Message::NameChanged,
-                Message::NudgeX,
-                Message::NudgeRotationY,
-                Message::ScaleUp,
-                Message::DeleteSelected,
+            PaneKind::Assets => (id::PANE_ASSETS, panels::assetmanager::view(&self.assets)),
+            PaneKind::Viewport => (
+                id::PANE_VIEWPORT,
+                panels::sceneviewport::view(
+                    self.viewport_image.clone(),
+                    Message::OrbitLeft,
+                    Message::OrbitRight,
+                    Message::ZoomIn,
+                    Message::ZoomOut,
+                    Message::ResetCamera,
+                ),
             ),
-            PaneKind::Console => panels::console::view(&self.log),
-        }
+            PaneKind::Inspector => (
+                id::PANE_INSPECTOR,
+                panels::inspector::view(
+                    self.entities.get(self.selected),
+                    &self.name_input,
+                    Message::NameChanged,
+                    Message::NudgeX,
+                    Message::NudgeRotationY,
+                    Message::ScaleUp,
+                    Message::DeleteSelected,
+                ),
+            ),
+            PaneKind::Console => (id::PANE_CONSOLE, panels::console::view(&self.log)),
+        };
+        iced::widget::container(content).id(pane_id).into()
     }
 }
 

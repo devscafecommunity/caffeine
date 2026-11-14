@@ -1,4 +1,5 @@
 use crate::uikit::components::{button, gizmo};
+use crate::uikit::id;
 use crate::uikit::EntityView;
 use iced::widget::{column, container, text, text_input};
 use iced::Element;
@@ -19,7 +20,7 @@ pub fn view<'a, Message: Clone + 'a>(
         content = content.push(
             text_input("Name", name_input)
                 .on_input(on_name)
-                .id("entity-name"),
+                .id(id::ENTITY_NAME),
         );
         content = content.push(text(format!("Entity ID: {}", entity.id)));
         content = content.push(text(format!(
@@ -39,14 +40,14 @@ pub fn view<'a, Message: Clone + 'a>(
             on_nudge_rotation_y.clone(),
             on_scale_up.clone(),
         ));
-        content = content.push(button::toolbar("nudge-x", "+X", on_nudge_x));
+        content = content.push(button::toolbar(id::NUDGE_X, "+X", on_nudge_x));
         content = content.push(button::toolbar(
-            "nudge-rot-y",
+            id::NUDGE_ROT_Y,
             "+Rot Y",
             on_nudge_rotation_y,
         ));
-        content = content.push(button::toolbar("scale-up", "Scale x1.1", on_scale_up));
-        content = content.push(button::danger("delete-entity", "Delete", on_delete));
+        content = content.push(button::toolbar(id::SCALE_UP, "Scale x1.1", on_scale_up));
+        content = content.push(button::danger(id::DELETE_ENTITY, "Delete", on_delete));
     } else {
         content = content.push(text("No entity selected"));
     }

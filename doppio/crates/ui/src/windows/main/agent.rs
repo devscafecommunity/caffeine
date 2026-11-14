@@ -6,6 +6,7 @@
 //! entity inspection, camera control and the editor commands.
 
 use super::{App, Message};
+use crate::uikit::id;
 use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
@@ -24,6 +25,11 @@ pub fn run() -> iced::Result {
         .query("scene", "Scene path, dirty flag and engine connection.", |app, _| {
             Ok(scene_json(app))
         })
+        .query(
+            "ui_catalog",
+            "Documented widget ids as group/subgroup/object, with kind and description.",
+            |_, _| Ok(catalog_json()),
+        )
         .action(
             "add_entity",
             "Adds an entity. args: { \"name\": string? }",
@@ -93,6 +99,24 @@ pub fn run() -> iced::Result {
             Ok(app)
         })
         .run()
+}
+
+fn catalog_json() -> Value {
+    Value::Array(
+        id::CATALOG
+            .iter()
+            .map(|meta| {
+                json!({
+                    "id": meta.id.key(),
+                    "group": meta.id.group(),
+                    "subgroup": meta.id.subgroup(),
+                    "object": meta.id.object(),
+                    "kind": meta.kind,
+                    "description": meta.description,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn describe_state(app: &App) -> String {

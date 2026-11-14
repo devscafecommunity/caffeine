@@ -1,4 +1,5 @@
 use crate::uikit::components::button;
+use crate::uikit::id;
 use crate::uikit::EntityView;
 use iced::widget::{column, container, scrollable, text};
 use iced::Element;
@@ -15,7 +16,7 @@ pub fn view<'a, Message: Clone + 'a>(
     for (index, entity) in entities.iter().enumerate() {
         let label = format!("{}  #{}", entity.name, entity.id);
         list = list.push(button::selectable(
-            format!("entity-{index}"),
+            id::entity_row(index),
             label,
             index == selected,
             on_select(index),

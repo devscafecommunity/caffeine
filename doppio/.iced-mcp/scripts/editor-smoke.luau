@@ -5,12 +5,12 @@
 -- from doppio/ with ICED_MCP=1.
 
 app:load_fixture("editor")
-app:wait_for({ id = "entity-1" })
+app:wait_for({ id = "hierarchy.list.entity_row.1" })
 
 -- Select the second entity and rename it through the real text input.
-app:click({ id = "entity-1" })
-app:expect({ id = "entity-name", value = "Entity 2" })
-app:type_text({ id = "entity-name", text = "Boss", clear = true, submit = true })
+app:click({ id = "hierarchy.list.entity_row.1" })
+app:expect({ id = "inspector.entity.name", value = "Entity 2" })
+app:type_text({ id = "inspector.entity.name", text = "Boss", clear = true, submit = true })
 
 local selection = app:query("selection")
 assert(selection ~= nil, "selection query returned nothing")
@@ -26,6 +26,12 @@ app:run_app_action("select_entity", { name = "Boss" })
 app:run_app_action("set_camera", { distance = 20 })
 local camera = app:query("selection")
 assert(camera.name == "Boss", "select_entity by name failed")
+
+local catalog = app:query("ui_catalog")
+assert(#catalog >= 20, "ui_catalog should list the documented widgets")
+for _, entry in ipairs(catalog) do
+  assert(entry.id ~= nil and entry.description ~= "", "catalog entries need ids and descriptions")
+end
 
 local entities = app:query("entities")
 assert(#entities == 3, "entities query should list 3 rows")
@@ -48,4 +54,5 @@ return {
   entities = #entities,
   selected = selection.name,
   camera_distance = 20,
+  catalog = #catalog,
 }

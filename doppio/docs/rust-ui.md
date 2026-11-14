@@ -98,7 +98,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 11 Rust tests: 1 engine bridge round-trip + 10 UI tests (`iced_test`).
+- 15 Rust tests: 1 engine bridge round-trip, 13 UI/widget tests and 1 doctest.
 
 The app loads a real scene through the ABI:
 
@@ -158,11 +158,44 @@ tree, click by id, type into inputs, apply the resulting messages and assert on
 the next frame. No window, GPU or engine build is required.
 
 - `crates/ui/src/windows/main/tests.rs` has a `Harness` with `click`, `type_into`,
-  `shows`, `has` and `wait_for`, plus focused tests and one end-to-end
-  `editor_workflow` scenario (add → select → rename → move → delete).
-- Widgets that agents/tests target keep stable ids (`add-entity`, `entity-2`,
-  `entity-name`, `nudge-x`, `reset-camera`, …); add an id to anything new.
+  `shows`, `has`, `bounds`, `capture` and `wait_for`, plus focused tests and one
+  end-to-end `editor_workflow` scenario (add → select → rename → move → delete).
 - Fixtures (`App::empty` and two-entity editor) keep tests deterministic.
+
+### UI ids, bounds and visual captures
+
+Iced ids are flat strings, which does not scale to hundreds of widgets. Doppio
+uses a typed taxonomy in `uikit::id`:
+
+```
+group.subgroup.object        e.g. editor.toolbar.add_entity
+                                  inspector.entity.name
+                                  hierarchy.list.entity_row.3
+                                  assets.grid.asset_card.7
+```
+
+- `UiId` implements `Into<iced::widget::Id>`, so components take ids directly.
+- Static ids are constants (`id::ADD_ENTITY`, `id::PANE_INSPECTOR`, …).
+- List rows use `id::entity_row(index)` / `id::asset_card(index)`; the group
+  and subgroup stay stable while the object carries the index.
+- `id::CATALOG` documents every stable widget with a description and kind, and
+  `id::description(key)` resolves dynamic rows too.
+- Panes are wrapped in an id'd container, so a screenshot can target
+  `editor.pane.inspector` as naturally as a button.
+
+The native harness exposes the layout of any id (`Harness::bounds`) and writes
+annotated PNGs (`Harness::capture`): a headless `iced_test` frame is cropped to
+the target, gets a highlight border and a caption from the catalog. Generate
+the whole gallery + Markdown manifest with:
+
+```bash
+cargo test -p doppio-ui capture_ui_gallery -- --ignored --nocapture
+# target/doppio-ui-gallery/{pane-*.png,README.md}
+```
+
+Agents get the same views through iced-mcp: `snapshot` returns ids and bounds,
+`screenshot` accepts a target id plus `highlight` (or a region) and saves a
+PNG, and `ui_catalog` lists the documented ids, groups and descriptions.
 
 ### Agents (MCP)
 
@@ -185,6 +218,7 @@ registers scene-level queries and actions:
 | query | `entities` | every entity with id, name, transform and selection |
 | query | `selection` | the selected entity or null |
 | query | `scene` | scene path, dirty flag, counts and the console log |
+| query | `ui_catalog` | every documented widget id with group, kind and description |
 | action | `add_entity` | `{ "name"?: string }` |
 | action | `delete_selected` | deletes the selected entity |
 | action | `select_entity` | `{ "index"?: number, "name"?: string }` |

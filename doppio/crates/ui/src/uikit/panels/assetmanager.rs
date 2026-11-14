@@ -1,4 +1,5 @@
 use crate::uikit::components::asset_preview;
+use crate::uikit::id;
 use doppio_engine::AssetInfo;
 use iced::widget::{container, scrollable, text, Column, Row};
 use iced::Element;
@@ -17,10 +18,17 @@ pub fn view<'a, Message: 'a>(assets: &'a [AssetInfo]) -> Element<'a, Message> {
     }
 
     let mut rows = Column::new().spacing(6);
-    for chunk in files.iter().take(60).collect::<Vec<_>>().chunks(3) {
+    for (chunk_index, chunk) in files
+        .iter()
+        .take(60)
+        .collect::<Vec<_>>()
+        .chunks(3)
+        .enumerate()
+    {
         let mut row = Row::new().spacing(8);
-        for asset in chunk {
+        for (offset, asset) in chunk.iter().enumerate() {
             row = row.push(asset_preview::card::<Message>(
+                id::asset_card(chunk_index * 3 + offset),
                 asset.name.clone(),
                 asset.kind.clone(),
             ));

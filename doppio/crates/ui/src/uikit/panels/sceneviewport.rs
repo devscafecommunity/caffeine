@@ -1,4 +1,5 @@
 use crate::uikit::components::{button, rendering_canvas};
+use crate::uikit::id;
 use iced::widget::{column, container, row, text};
 use iced::Element;
 
@@ -19,11 +20,11 @@ pub fn view<'a, Message: Clone + 'a>(
     };
 
     let camera = row![
-        button::toolbar("orbit-left", "Orbit -", on_orbit_left),
-        button::toolbar("orbit-right", "Orbit +", on_orbit_right),
-        button::toolbar("zoom-in", "Zoom +", on_zoom_in),
-        button::toolbar("zoom-out", "Zoom -", on_zoom_out),
-        button::toolbar("reset-camera", "Reset", on_reset),
+        button::toolbar(id::ORBIT_LEFT, "Orbit -", on_orbit_left),
+        button::toolbar(id::ORBIT_RIGHT, "Orbit +", on_orbit_right),
+        button::toolbar(id::ZOOM_IN, "Zoom +", on_zoom_in),
+        button::toolbar(id::ZOOM_OUT, "Zoom -", on_zoom_out),
+        button::toolbar(id::RESET_CAMERA, "Reset", on_reset),
     ]
     .spacing(4);
 
