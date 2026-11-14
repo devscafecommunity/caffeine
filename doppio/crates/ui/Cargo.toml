@@ -21,4 +21,5 @@ agent = ["dep:iced-mcp", "dep:serde_json"]
 [dev-dependencies]
 iced_test.workspace = true
 image = "0.25"
-font8x8 = "0.3"
+fontdue = "0.9"
+serde_json.workspace = true

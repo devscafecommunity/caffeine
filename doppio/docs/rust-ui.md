@@ -184,14 +184,27 @@ group.subgroup.object        e.g. editor.toolbar.add_entity
   `editor.pane.inspector` as naturally as a button.
 
 The native harness exposes the layout of any id (`Harness::bounds`) and writes
-annotated PNGs (`Harness::capture`): a headless `iced_test` frame is cropped to
-the target, gets a highlight border and a caption from the catalog. Generate
-the whole gallery + Markdown manifest with:
+annotated PNGs:
+
+- `Harness::capture(id, path, caption)` crops a headless `iced_test` frame to
+  the target, adds a highlight border and a caption rendered with the bundled
+  JetBrains Mono (`assets/jetbrains-mono/`).
+- `Harness::capture_group(&[(id, label)], …)` crops the union of several
+  widgets, draws numbered colored boxes and a legend — the "annotated panel"
+  format.
+
+The gallery generator walks the catalog, captures every widget that exists in
+the fixture, and writes images, a JSON manifest and English/Portuguese
+Markdown:
 
 ```bash
-cargo test -p doppio-ui capture_ui_gallery -- --ignored --nocapture
-# target/doppio-ui-gallery/{pane-*.png,README.md}
+./scripts/generate-doppio-ui-docs.sh            # doppio/target/doppio-ui-docs
+./scripts/generate-doppio-ui-docs.sh --publish  # update caffeine-website
 ```
+
+Descriptions and translations live in `doppio/docs/ui-captions.json`, so an
+agent can improve the prose without touching Rust. The manifest
+(`manifest.json`) carries id/group/kind/bounds/image for each entry.
 
 Agents get the same views through iced-mcp: `snapshot` returns ids and bounds,
 `screenshot` accepts a target id plus `highlight` (or a region) and saves a
@@ -232,6 +245,21 @@ registers scene-level queries and actions:
 
 Because every action is an iced `Message`, agents can only do what the UI can
 do, and the `messages` tool shows exactly what each call published.
+
+### Visual regression
+
+`doppio/.iced-mcp/scripts/visual-regression.luau` captures the hierarchy,
+assets, inspector and console panes with `screenshot_diff` (the GPU viewport is
+excluded on purpose). Baselines are per-machine/GPU and live in
+`.iced-mcp/baselines/`, which is gitignored:
+
+```bash
+./scripts/check-doppio-visual.sh --update-baselines  # seed on this machine/image
+./scripts/check-doppio-visual.sh                     # CI check
+```
+
+The script skips cleanly without `iced-mcp` or a display. Commit baselines only
+from a controlled CI image if you want cross-machine visual diffs.
 
 A full scripted session lives in `doppio/.iced-mcp/scripts/editor-smoke.luau`.
 It loads the `editor` fixture, renames through the real text input, adds an

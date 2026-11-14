@@ -7,17 +7,31 @@
 
 use super::*;
 use crate::uikit::id::{self, UiId};
-use font8x8::UnicodeFonts;
 use iced::widget::Id;
 use iced::{Rectangle, Theme};
 use iced_test::simulator;
 use image::{Rgba, RgbaImage};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// `iced_test` renders screenshots at 2× the logical size.
 const SNAPSHOT_SCALE: f32 = 2.0;
+
+/// Documentation captions use the JetBrains Mono already shipped in `assets/`.
+const CAPTION_FONT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../assets/jetbrains-mono/static/jetbrains-mono-latin-400-normal.ttf"
+));
+const CAPTION_SIZE: f32 = 15.0;
+
+fn caption_font() -> &'static fontdue::Font {
+    static FONT: OnceLock<fontdue::Font> = OnceLock::new();
+    FONT.get_or_init(|| {
+        fontdue::Font::from_bytes(CAPTION_FONT, fontdue::FontSettings::default())
+            .expect("bundled JetBrains Mono should load")
+    })
+}
 
 /// Iced keeps process-wide state (themes, focus, text input), so UI tests run
 /// one at a time inside this process.
@@ -147,6 +161,75 @@ impl Harness {
         Ok(bounds)
     }
 
+    /// Captures a group of widgets with numbered overlays and a legend.
+    ///
+    /// The crop covers the union of their bounds; each target gets a colored
+    /// box and a badge, and the footer explains every number. This is the
+    /// "annotated panel" format used for docs and agent hand-offs.
+    pub fn capture_group(
+        &self,
+        targets: &[(UiId, &str)],
+        path: &Path,
+        caption: Option<&str>,
+    ) -> Result<Rectangle, String> {
+        let mut ui = simulator(self.app.view());
+        let mut boxes = Vec::with_capacity(targets.len());
+        for (index, (target, label)) in targets.iter().enumerate() {
+            let bounds = ui
+                .find(Id::from(target.clone()))
+                .map_err(|error| format!("{}: {error}", target.key()))?
+                .bounds();
+            boxes.push((bounds, *label, target, index));
+        }
+        let union = boxes
+            .iter()
+            .fold(boxes[0].0, |union, (bounds, ..)| Rectangle {
+                x: union.x.min(bounds.x),
+                y: union.y.min(bounds.y),
+                width: (union.x + union.width).max(bounds.x + bounds.width) - union.x.min(bounds.x),
+                height: (union.y + union.height).max(bounds.y + bounds.height)
+                    - union.y.min(bounds.y),
+            });
+
+        let full = self.full_frame()?;
+        let mut cropped = crop_scaled(&full, union)?;
+        let mut legend = Vec::with_capacity(boxes.len());
+        for (bounds, label, target, index) in boxes {
+            let local = Rectangle {
+                x: (bounds.x - union.x) * SNAPSHOT_SCALE,
+                y: (bounds.y - union.y) * SNAPSHOT_SCALE,
+                width: bounds.width * SNAPSHOT_SCALE,
+                height: bounds.height * SNAPSHOT_SCALE,
+            };
+            let color = BADGE_COLORS[index % BADGE_COLORS.len()];
+            draw_rect_border(&mut cropped, local, color, 2);
+            draw_badge(&mut cropped, local, index + 1, color);
+            legend.push(format!(
+                "{}. {label} — {}",
+                index + 1,
+                id::description(target.key()).unwrap_or(target.key())
+            ));
+        }
+
+        let mut lines = Vec::new();
+        if let Some(caption) = caption {
+            lines.extend(wrap(caption, caption_max_chars(union_width(&cropped))));
+        }
+        for line in legend {
+            lines.extend(wrap(&line, caption_max_chars(union_width(&cropped))));
+        }
+        let annotated = with_footer(cropped, &lines);
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        annotated
+            .save(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(union)
+    }
+
     fn full_frame(&self) -> Result<RgbaImage, String> {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let temp = std::env::temp_dir().join(format!(
@@ -191,6 +274,17 @@ impl Harness {
     }
 }
 
+fn union_width(image: &RgbaImage) -> u32 {
+    image.width()
+}
+
+fn caption_max_chars(width: u32) -> usize {
+    let advance = caption_font().rasterize('M', CAPTION_SIZE).0.advance_width;
+    ((width.saturating_sub(12)) as f32 / advance.max(1.0))
+        .floor()
+        .max(8.0) as usize
+}
+
 fn crop_scaled(image: &RgbaImage, bounds: Rectangle) -> Result<RgbaImage, String> {
     let x = (bounds.x * SNAPSHOT_SCALE).round().max(0.0) as u32;
     let y = (bounds.y * SNAPSHOT_SCALE).round().max(0.0) as u32;
@@ -205,75 +299,141 @@ fn crop_scaled(image: &RgbaImage, bounds: Rectangle) -> Result<RgbaImage, String
     Ok(image::imageops::crop_imm(image, x, y, width, height).to_image())
 }
 
-/// Adds a dark caption strip and a highlight border to a cropped widget.
-fn with_caption(mut image: RgbaImage, caption: &str) -> RgbaImage {
-    let border = Rgba([255, 96, 128, 255]);
-    draw_border(&mut image, border, 3);
+const BADGE_COLORS: [Rgba<u8>; 6] = [
+    Rgba([255, 96, 128, 255]),
+    Rgba([64, 196, 255, 255]),
+    Rgba([255, 214, 102, 255]),
+    Rgba([126, 231, 135, 255]),
+    Rgba([255, 159, 92, 255]),
+    Rgba([196, 160, 255, 255]),
+];
 
-    let scale = 2;
-    let line_height = 8 * scale + 4;
+fn with_caption(image: RgbaImage, caption: &str) -> RgbaImage {
+    let width = image.width();
+    let lines = wrap(caption, caption_max_chars(width));
+    with_footer(image, &lines)
+}
+
+/// Appends a dark footer with the given lines.
+fn with_footer(mut image: RgbaImage, lines: &[String]) -> RgbaImage {
+    draw_border(&mut image, BADGE_COLORS[0], 3);
+
+    let line_height = (CAPTION_SIZE * 1.45).round() as u32;
+    let padding = 6;
+    let strip_height = lines.len() as u32 * line_height + padding * 2;
     let width = image.width();
     let height = image.height();
-    let max_chars = ((width.saturating_sub(10)) / (8 * scale)).max(8) as usize;
-    let lines = wrap(caption, max_chars);
-    let strip_height = lines.len() as u32 * line_height + 10;
     let mut out = RgbaImage::from_pixel(width, height + strip_height, Rgba([20, 22, 28, 255]));
     image::imageops::overlay(&mut out, &image, 0, 0);
 
-    let mut y = height + 5;
+    let mut baseline = height + padding + CAPTION_SIZE as u32;
     for line in lines {
-        draw_text(&mut out, 6, y, &line, scale, Rgba([235, 238, 245, 255]));
-        y += line_height;
+        draw_text(
+            &mut out,
+            6,
+            baseline,
+            line,
+            CAPTION_SIZE,
+            Rgba([235, 238, 245, 255]),
+        );
+        baseline += line_height;
     }
     out
 }
 
-fn draw_border(image: &mut RgbaImage, color: Rgba<u8>, thickness: u32) {
-    let (width, height) = (image.width(), image.height());
-    for y in 0..height {
-        for x in 0..width {
-            let edge = x < thickness
-                || y < thickness
-                || x >= width.saturating_sub(thickness)
-                || y >= height.saturating_sub(thickness);
+fn draw_rect_border(image: &mut RgbaImage, rect: Rectangle, color: Rgba<u8>, thickness: i32) {
+    let x0 = rect.x.round() as i32;
+    let y0 = rect.y.round() as i32;
+    let x1 = (rect.x + rect.width).round() as i32;
+    let y1 = (rect.y + rect.height).round() as i32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let edge = x < x0 + thickness
+                || y < y0 + thickness
+                || x >= x1 - thickness
+                || y >= y1 - thickness;
             if edge {
-                image.put_pixel(x, y, color);
+                blend_pixel(image, x, y, color, 255);
             }
         }
     }
 }
 
-fn draw_text(image: &mut RgbaImage, mut x: u32, y: u32, text: &str, scale: u32, color: Rgba<u8>) {
-    for character in text.chars() {
-        if let Some(glyph) = font8x8::BASIC_FONTS.get(character) {
-            for (row, bits) in glyph.iter().enumerate() {
-                for column in 0..8 {
-                    if bits & (1 << column) != 0 {
-                        for dy in 0..scale {
-                            for dx in 0..scale {
-                                let px = x + column as u32 * scale + dx;
-                                let py = y + row as u32 * scale + dy;
-                                if px < image.width() && py < image.height() {
-                                    image.put_pixel(px, py, color);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        x += 8 * scale;
-        if x >= image.width() {
-            break;
+fn draw_border(image: &mut RgbaImage, color: Rgba<u8>, thickness: u32) {
+    let rect = Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: image.width() as f32,
+        height: image.height() as f32,
+    };
+    draw_rect_border(image, rect, color, thickness as i32);
+}
+
+fn draw_badge(image: &mut RgbaImage, rect: Rectangle, number: usize, color: Rgba<u8>) {
+    let size = 22;
+    let x = rect.x.round() as i32 + 2;
+    let y = rect.y.round() as i32 + 2;
+    for py in y..y + size {
+        for px in x..x + size {
+            blend_pixel(image, px, py, color, 255);
         }
     }
+    draw_text(
+        image,
+        x as u32 + 5,
+        y as u32 + size as u32 - 6,
+        &number.to_string(),
+        15.0,
+        Rgba([20, 22, 28, 255]),
+    );
+}
+
+fn draw_text(image: &mut RgbaImage, x: u32, baseline: u32, text: &str, size: f32, color: Rgba<u8>) {
+    let font = caption_font();
+    let mut pen = x as f32;
+    for character in text.chars() {
+        let (metrics, bitmap) = font.rasterize(character, size);
+        let origin_x = pen.round() as i32 + metrics.xmin;
+        let origin_y = baseline as i32 - metrics.ymin - metrics.height as i32;
+        for (index, coverage) in bitmap.iter().enumerate() {
+            if *coverage == 0 || metrics.width == 0 {
+                continue;
+            }
+            let px = origin_x + (index % metrics.width) as i32;
+            let py = origin_y + (index / metrics.width) as i32;
+            blend_pixel(image, px, py, color, *coverage);
+        }
+        pen += metrics.advance_width;
+    }
+}
+
+fn blend_pixel(image: &mut RgbaImage, x: i32, y: i32, color: Rgba<u8>, alpha: u8) {
+    if x < 0 || y < 0 || x >= image.width() as i32 || y >= image.height() as i32 {
+        return;
+    }
+    let pixel = image.get_pixel(x as u32, y as u32);
+    let a = alpha as u32;
+    let inverse = 255 - a;
+    let blend = |foreground: u8, background: u8| {
+        ((foreground as u32 * a + background as u32 * inverse) / 255) as u8
+    };
+    image.put_pixel(
+        x as u32,
+        y as u32,
+        Rgba([
+            blend(color[0], pixel[0]),
+            blend(color[1], pixel[1]),
+            blend(color[2], pixel[2]),
+            pixel[3].max(alpha),
+        ]),
+    );
 }
 
 fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        if !line.is_empty() && line.len() + 1 + word.len() > max_chars {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > max_chars {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
@@ -467,43 +627,183 @@ fn editor_workflow_end_to_end() {
     assert!(harness.wait_for("Entity: Entity 1", 2));
 }
 
-/// Generates annotated panel images + a Markdown manifest for docs.
+/// Generates annotated panel images, Markdown pages and a JSON manifest.
 ///
 /// ```bash
 /// cargo test -p doppio-ui capture_ui_gallery -- --ignored --nocapture
 /// ```
+///
+/// Env:
+/// - `DOPPIO_DOCS_OUT` — output directory (default `target/doppio-ui-gallery`);
+/// - `DOPPIO_DOCS_CAPTIONS` — JSON with `en`/`pt` descriptions
+///   (default `doppio/docs/ui-captions.json`). An agent can edit that file to
+///   improve or translate the captions without touching code.
 #[test]
 #[ignore = "writes documentation images"]
 fn capture_ui_gallery() {
+    use serde_json::{json, Value};
+
     let harness = Harness::with_entities();
-    let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/doppio-ui-gallery");
+    let out = std::env::var_os("DOPPIO_DOCS_OUT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/doppio-ui-gallery")
+        });
     std::fs::create_dir_all(&out).expect("gallery directory");
+    for entry in std::fs::read_dir(&out).expect("gallery directory") {
+        let path = entry.expect("gallery entry").path();
+        let stale = path.extension().is_some_and(|ext| ext == "png")
+            || path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("README"))
+            || path.file_name().is_some_and(|name| name == "manifest.json");
+        if stale {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 
-    let captures = [
-        (id::PANE_HIERARCHY, "pane-hierarchy"),
-        (id::PANE_ASSETS, "pane-assets"),
-        (id::PANE_VIEWPORT, "pane-viewport"),
-        (id::PANE_INSPECTOR, "pane-inspector"),
-        (id::PANE_CONSOLE, "pane-console"),
-        (id::ADD_ENTITY, "button-add-entity"),
-        (id::ENTITY_NAME, "input-entity-name"),
-    ];
+    let captions = load_captions();
+    let mut entries: Vec<Value> = Vec::new();
 
-    let mut manifest =
-        String::from("# Doppio UI gallery\n\nGenerated by `capture_ui_gallery`.\n\n");
-    for (target, name) in captures {
-        let file = format!("{name}.png");
+    let mut capture_entry = |target: &UiId, file: String, kind: &str, bounds: Rectangle| {
+        let en = caption(&captions, "en", target.key());
+        let pt = caption(&captions, "pt", target.key());
         harness
-            .capture(&target, &out.join(&file), None)
+            .capture(target, &out.join(&file), Some(&en))
             .unwrap_or_else(|error| panic!("{error}"));
-        manifest.push_str(&format!(
-            "## `{}`\n\n![{}]({})\n\n{}\n\n",
-            target.key(),
-            name,
-            file,
-            id::description(target.key()).unwrap_or_default()
+        entries.push(json!({
+            "id": target.key(),
+            "group": target.group(),
+            "subgroup": target.subgroup(),
+            "object": target.object(),
+            "kind": kind,
+            "image": format!("../images/ui-reference/{file}"),
+            "description": { "en": en, "pt": pt },
+            "bounds": {
+                "x": bounds.x,
+                "y": bounds.y,
+                "width": bounds.width,
+                "height": bounds.height,
+            },
+        }));
+    };
+
+    for meta in id::CATALOG {
+        if meta.kind == "list_row" {
+            continue;
+        }
+        let Some(bounds) = harness.bounds(Id::from(meta.id.clone())) else {
+            continue;
+        };
+        capture_entry(
+            &meta.id,
+            format!("{}.png", slug(meta.id.key())),
+            meta.kind,
+            bounds,
+        );
+    }
+
+    for index in 0..2 {
+        let target = id::entity_row(index);
+        let Some(bounds) = harness.bounds(Id::from(target.clone())) else {
+            continue;
+        };
+        capture_entry(
+            &target,
+            format!("entity-row-{index}.png"),
+            "list_row",
+            bounds,
+        );
+    }
+
+    let inspector_controls = [
+        (id::ENTITY_NAME, "Entity name"),
+        (id::NUDGE_X, "+X"),
+        (id::NUDGE_ROT_Y, "+Rot Y"),
+        (id::SCALE_UP, "Scale x1.1"),
+        (id::DELETE_ENTITY, "Delete"),
+    ];
+    let annotated = out.join("annotated-inspector.png");
+    let annotated_caption = caption(&captions, "en", "annotated.inspector");
+    harness
+        .capture_group(&inspector_controls, &annotated, Some(&annotated_caption))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let annotated_pt = caption(&captions, "pt", "annotated.inspector");
+    entries.push(json!({
+        "id": "annotated.inspector",
+        "group": "annotated",
+        "subgroup": "inspector",
+        "object": "controls",
+        "kind": "annotated_group",
+        "image": "../images/ui-reference/annotated-inspector.png",
+        "description": { "en": annotated_caption, "pt": annotated_pt },
+    }));
+
+    std::fs::write(
+        out.join("manifest.json"),
+        serde_json::to_string_pretty(&entries).expect("manifest"),
+    )
+    .expect("write manifest");
+
+    for lang in ["en", "pt"] {
+        std::fs::write(
+            out.join(format!("README.{lang}.md")),
+            render_markdown(lang, &entries),
+        )
+        .expect("write markdown");
+    }
+    std::fs::write(out.join("README.md"), render_markdown("en", &entries)).expect("write markdown");
+    println!("wrote {} ({} entries)", out.display(), entries.len());
+}
+
+fn load_captions() -> serde_json::Value {
+    let path = std::env::var_os("DOPPIO_DOCS_CAPTIONS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/ui-captions.json")
+        });
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn caption(captions: &serde_json::Value, lang: &str, key: &str) -> String {
+    captions[lang][key]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| id::description(key).map(str::to_owned))
+        .unwrap_or_else(|| key.to_owned())
+}
+
+fn slug(key: &str) -> String {
+    key.replace('.', "-")
+}
+
+fn render_markdown(lang: &str, entries: &[serde_json::Value]) -> String {
+    let title = if lang == "pt" {
+        "# Referência da UI do Doppio"
+    } else {
+        "# Doppio UI reference"
+    };
+    let note = if lang == "pt" {
+        "Gerado por `cargo test -p doppio-ui capture_ui_gallery -- --ignored`. \
+As descrições vivem em `doppio/docs/ui-captions.json`."
+    } else {
+        "Generated by `cargo test -p doppio-ui capture_ui_gallery -- --ignored`. \
+Descriptions live in `doppio/docs/ui-captions.json`."
+    };
+    let mut markdown = format!("{title}\n\n{note}\n\n");
+    for entry in entries {
+        let id = entry["id"].as_str().unwrap_or_default();
+        let image = entry["image"].as_str().unwrap_or_default();
+        let description = entry["description"][lang]
+            .as_str()
+            .or_else(|| entry["description"]["en"].as_str())
+            .unwrap_or_default();
+        markdown.push_str(&format!(
+            "## `{id}`\n\n![{id}]({image})\n\n{description}\n\n"
         ));
     }
-    std::fs::write(out.join("README.md"), manifest).expect("gallery manifest");
-    println!("wrote {}", out.display());
+    markdown
 }
