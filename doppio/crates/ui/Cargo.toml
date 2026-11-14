@@ -1,0 +1,21 @@
+[package]
+name = "doppio-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "doppio"
+path = "src/main.rs"
+
+[dependencies]
+iced.workspace = true
+doppio-engine = { path = "../engine" }
+iced-mcp = { workspace = true, optional = true }
+
+[features]
+agent = ["dep:iced-mcp"]
+
+[dev-dependencies]
+iced_test.workspace = true

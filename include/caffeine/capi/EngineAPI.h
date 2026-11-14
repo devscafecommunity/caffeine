@@ -83,6 +83,16 @@ CaffeineResult caffeine_session_entity_position(const CaffeineSession* session,
                                                 CaffeineEntity entity, CaffeineVec3* out);
 CaffeineResult caffeine_session_set_entity_position(CaffeineSession* session,
                                                     CaffeineEntity entity, CaffeineVec3 position);
+/** Euler rotation in degrees. */
+CaffeineResult caffeine_session_entity_rotation(const CaffeineSession* session,
+                                                CaffeineEntity entity, CaffeineVec3* out);
+CaffeineResult caffeine_session_set_entity_rotation(CaffeineSession* session,
+                                                    CaffeineEntity entity,
+                                                    CaffeineVec3 euler_degrees);
+CaffeineResult caffeine_session_entity_scale(const CaffeineSession* session,
+                                             CaffeineEntity entity, CaffeineVec3* out);
+CaffeineResult caffeine_session_set_entity_scale(CaffeineSession* session,
+                                                 CaffeineEntity entity, CaffeineVec3 scale);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 void caffeine_session_tick(CaffeineSession* session, float delta_time);

@@ -1,0 +1,1891 @@
+#include "caffeine/ui/UI.hpp"
+#include "editor/AssetBrowser.hpp"
+#include "editor/EditorIcons.hpp"
+#include "editor/CapLoader.hpp"
+#include "editor/FilePicker.hpp"
+#include "editor/DragDropSystem.hpp"
+#include "editor/PrefabSystem.hpp"
+#include "scene/EditorContext.hpp"
+#include "editor/AnimationEditorLink.hpp"
+#include "project/ProjectManager.hpp"
+#include "core/io/CafTypes.hpp"
+#include "assets/TextureCompiler.hpp"
+#include "assets/MeshImportValidator.hpp"
+#include "assets/MaterialFile.hpp"
+#include "scene/EnvironmentSystem.hpp"
+#ifdef CF_HAS_DRYAD
+#include "script/DryadHost.hpp"
+#include "script/nodes/NodeEmitter.hpp"
+#include "script/nodes/NodeGraphIO.hpp"
+#endif
+#ifdef CF_HAS_CAF_PACK
+#include "caf-pack/Packer.hpp"
+#include "caf-pack/HeaderGenerator.hpp"
+#endif
+#include "stb/stb_image.h"
+
+#include <fstream>
+#include <cstdio>
+#include <algorithm>
+#include <system_error>
+#include <cctype>
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Data layer — always compiled (no ImGui dependency)
+// ═════════════════════════════════════════════════════════════════════════════
+
+namespace Caffeine::Editor {
+
+namespace {
+
+AssetType readCafAssetType(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return AssetType::Unknown;
+    CafHeader header{};
+    in.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (!in || header.magic != CafHeader::kMagic) return AssetType::Unknown;
+    return header.type;
+}
+
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool isOpenableScriptAsset(const std::filesystem::path& path) {
+    const std::string ext = path.extension().string();
+    if (ext == ".lua") return true;
+#ifdef CF_HAS_DRYAD
+    if (Script::isDryadScriptPath(path.string())) return true;
+#endif
+    return false;
+}
+
+bool extensionMatchesFilter(const std::filesystem::path& path, const std::string& filter) {
+    if (filter.empty()) return true;
+    const std::string ext = toLower(path.extension().string());
+    size_t start = 0;
+    while (start < filter.size()) {
+        const size_t sep = filter.find(';', start);
+        std::string token = filter.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+        token = toLower(token);
+        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+        while (!token.empty() && token.back() == ' ') token.pop_back();
+        if (!token.empty() && token.front() != '.') token.insert(token.begin(), '.');
+        if (!token.empty() && ext == token) return true;
+        if (sep == std::string::npos) break;
+        start = sep + 1;
+    }
+    return false;
+}
+
+bool needsMeshBundleImport(const std::filesystem::path& path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext == ".gltf" || ext == ".obj";
+}
+
+}  // namespace
+
+// ── Init / Refresh ──────────────────────────────────────────────────────────
+
+AssetBrowser::AssetBrowser() = default;
+AssetBrowser::~AssetBrowser() = default;
+
+void AssetBrowser::init(const char* rootPath) {
+    m_rootPath = rootPath ? rootPath : "assets";
+    m_projectRoot.clear();
+    m_rawRoot = std::filesystem::absolute(m_rootPath);
+    m_processedRoot.clear();
+    m_assetScope = AssetScope::Raw;
+    m_currentDir = m_rootPath;
+    m_pathHistory.clear();
+    refresh();
+}
+
+void AssetBrowser::init(const ProjectConfig& projectConfig) {
+    m_projectRoot = std::filesystem::absolute(projectConfig.RootPath);
+    m_rawRoot = std::filesystem::absolute(m_projectRoot / projectConfig.AssetRawPath);
+    m_processedRoot = std::filesystem::absolute(m_projectRoot / projectConfig.AssetProcessedPath);
+    m_rootPath = m_rawRoot.string();
+    m_assetScope = AssetScope::Raw;
+    m_browseMode = BrowseMode::Filesystem;
+    m_currentDir = m_rawRoot;
+    m_pathHistory.clear();
+    std::filesystem::create_directories(m_rawRoot);
+    std::filesystem::create_directories(m_processedRoot);
+    ProjectManager::EnsureDefaultFolders(m_projectRoot);
+    refresh();
+}
+
+void AssetBrowser::shutdownGpu() {
+#ifdef CF_HAS_IMGUI
+    m_previewRenderer.shutdownGpu();
+#endif
+}
+
+#ifdef CF_HAS_SDL3
+void AssetBrowser::initGpu(RHI::RenderDevice* device) {
+#ifdef CF_HAS_IMGUI
+    m_previewRenderer.initGpu(device);
+#else
+    (void)device;
+#endif
+}
+
+void AssetBrowser::setFrameCommandBuffer(RHI::CommandBuffer* cmd) {
+#ifdef CF_HAS_IMGUI
+    m_frameCmd = cmd;
+    m_previewRenderer.setFrameCommandBuffer(cmd);
+#else
+    (void)cmd;
+#endif
+}
+#endif
+
+void AssetBrowser::refresh() {
+    if (m_browseMode == BrowseMode::CapFile) {
+        loadCapFile(m_currentCapPath);
+        return;
+    }
+
+    m_entries.clear();
+    if (!std::filesystem::exists(m_currentDir)) {
+        applySearchFilter();
+        return;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(m_currentDir)) {
+        Entry e;
+        e.path        = entry.path();
+        e.name        = entry.path().filename().string();
+        e.isDirectory = entry.is_directory();
+
+        if (!e.isDirectory) {
+            const auto ext = entry.path().extension().string();
+            if (ext == ".prefab") {
+                e.type = AssetType::Prefab;
+            } else if (ext == ".caf") {
+                e.type = readCafAssetType(entry.path());
+                if (e.type == AssetType::Unknown) e.type = AssetType::Scene;
+            }
+            else if (ext == ".png"  || ext == ".jpg"  || ext == ".jpeg" || ext == ".tga" ||
+                     ext == ".bmp" || ext == ".webp" || ext == ".gif"  || ext == ".hdr" ||
+                     ext == ".exr") e.type = AssetType::Texture;
+            else if (ext == ".wav"  || ext == ".ogg"  || ext == ".mp3"  || ext == ".flac" ||
+                     ext == ".aac") e.type = AssetType::Audio;
+            else if (ext == ".obj"  || ext == ".gltf" || ext == ".glb"  || ext == ".fbx"  ||
+                     ext == ".dae" || ext == ".bin") e.type = AssetType::Mesh;
+            else if (ext == ".lua"  || ext == ".dyd" || ext == ".cpp"  || ext == ".hpp"  || ext == ".h")
+                e.type = AssetType::Unknown;
+            else if (ext == ".mat"  || ext == ".shader" || ext == ".glsl") e.type = AssetType::Unknown;
+            else if (ext == ".mp4"  || ext == ".avi"  || ext == ".mov"  || ext == ".webm") e.type = AssetType::Unknown;
+            else                                     e.type = AssetType::Unknown;
+
+            std::error_code ec;
+            e.fileSize = std::filesystem::file_size(entry.path(), ec);
+
+            if (e.type == AssetType::Mesh) {
+                const auto report = Assets::MeshImportValidator::analyze(e.path);
+                e.meshImportIncomplete = !report.readyToLoad;
+            }
+        }
+
+        m_entries.push_back(std::move(e));
+    }
+
+    std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
+        if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
+        return a.name < b.name;
+    });
+
+    applySearchFilter();
+}
+
+void AssetBrowser::loadCapFile(const std::filesystem::path& capPath) {
+    m_entries.clear();
+    m_currentCapPath = capPath;
+    m_browseMode = BrowseMode::CapFile;
+    
+#ifdef CF_HAS_CAF_PACK
+    auto assets = CapLoader::loadCap(capPath);
+    
+    for (const auto& asset : assets) {
+        Entry entry{};
+        entry.name = std::to_string(asset.hashID);
+        
+        switch (asset.type) {
+            case Caffeine::Assets::CafAssetType::Texture:
+                entry.type = AssetType::Texture;
+                break;
+            case Caffeine::Assets::CafAssetType::Audio:
+                entry.type = AssetType::Audio;
+                break;
+            case Caffeine::Assets::CafAssetType::Mesh:
+                entry.type = AssetType::Mesh;
+                break;
+             default:
+                 entry.type = AssetType::Unknown;
+         }
+         
+         entry.path = capPath;
+         entry.fileSize = asset.cafBlob.size();
+         entry.isDirectory = false;
+         m_entries.push_back(entry);
+     }
+#else
+    // CAP loading not available without caf-pack
+#endif
+    
+    applySearchFilter();
+}
+
+void AssetBrowser::beginAssetPicker(const char* extensionFilter, const char* fieldLabel) {
+    m_assetPickerActive = true;
+    m_pickerFilter = extensionFilter ? extensionFilter : "";
+    m_pickerLabel = fieldLabel ? fieldLabel : "asset";
+    m_pickerResult.reset();
+    m_pickerCancelled = false;
+    setAssetScope(AssetScope::Raw);
+    if (!m_rawRoot.empty()) {
+        navigateToAssets();
+    } else if (!m_projectRoot.empty()) {
+        navigateToProjectRoot();
+    }
+}
+
+void AssetBrowser::cancelAssetPicker() {
+    m_assetPickerActive = false;
+    m_pickerCancelled = false;
+    m_pickerResult.reset();
+}
+
+AssetBrowser::AssetPickerPoll AssetBrowser::pollAssetPicker(std::string& outRelativePath) {
+    if (m_pickerCancelled) {
+        m_pickerCancelled = false;
+        m_assetPickerActive = false;
+        m_pickerResult.reset();
+        return AssetPickerPoll::Cancelled;
+    }
+    if (m_pickerResult.has_value()) {
+        outRelativePath = *m_pickerResult;
+        m_pickerResult.reset();
+        m_assetPickerActive = false;
+        return AssetPickerPoll::Selected;
+    }
+    return AssetPickerPoll::Idle;
+}
+
+bool AssetBrowser::pickerAcceptsPath(const std::filesystem::path& path) const {
+    return !path.empty() && extensionMatchesFilter(path, m_pickerFilter);
+}
+
+std::string AssetBrowser::pathRelativeToProject(const std::filesystem::path& absolute) const {
+    if (!m_projectRoot.empty()) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(absolute, m_projectRoot, ec);
+        if (!ec && !rel.empty() && rel.generic_string().rfind("..") != 0) {
+            return rel.generic_string();
+        }
+    }
+    return absolute.string();
+}
+
+void AssetBrowser::commitAssetPicker(const std::filesystem::path& absolutePath) {
+    if (!m_assetPickerActive || !pickerAcceptsPath(absolutePath)) return;
+    m_pickerResult = pathRelativeToProject(absolutePath);
+}
+
+void AssetBrowser::presentPickerModal() {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (!m_assetPickerActive) {
+        if (m_pickerDialog && m_pickerDialog->isOpen()) m_pickerDialog->close();
+        return;
+    }
+
+    if (!m_pickerDialog) {
+        m_pickerDialog = std::make_unique<Dialog>("Select Asset");
+        m_pickerDialog->setInitialSize(ImVec2(560.0f, 440.0f));
+        m_pickerDialog->setOnClose([this] {
+            if (!m_pickerResult.has_value() && !m_pickerCancelled) {
+                m_pickerCancelled = true;
+            }
+            m_assetPickerActive = false;
+        });
+        m_pickerDialog->open();
+    } else if (!m_pickerDialog->isOpen()) {
+        m_pickerDialog->open();
+    }
+
+    Dialog& dialog = *m_pickerDialog;
+    dialog.clear();
+
+    auto& header = dialog.emplace<Card>("asset_picker_header");
+    header.emplace<Label>("Choose " + m_pickerLabel, TextTone::Accent).setHeading(true);
+    header.emplace<Label>(m_currentDir.string(), TextTone::Muted).setWrap(true);
+    if (!m_pickerFilter.empty()) {
+        header.emplace<Label>("Filter: " + m_pickerFilter, TextTone::Disabled);
+    }
+
+    auto& nav = dialog.emplace<Row>("asset_picker_nav");
+    auto& up = nav.emplace<Button>("Up");
+    up.setEnabled(m_currentDir.has_parent_path());
+    up.setOnClick([this] { navigateUp(); });
+    nav.emplace<Button>("Project").setOnClick([this] { navigateToProjectRoot(); });
+    nav.emplace<Button>("Assets").setOnClick([this] { navigateToAssets(); });
+    nav.emplace<Button>("Scenes").setOnClick([this] { navigateToScenes(); });
+
+    auto& list = dialog.emplace<ListBox>("asset_pick_list");
+    list.setHeight(260.0f);
+    for (usize i = 0; i < m_filteredEntries.size(); ++i) {
+        const Entry& entry = m_filteredEntries[i];
+        if (!entry.isDirectory && !pickerAcceptsPath(entry.path)) continue;
+
+        const std::string row = entry.isDirectory ? (entry.name + "/") : entry.name;
+        auto& item = list.emplace<ListItem>(row, m_selectedEntry == static_cast<int>(i));
+        item.setId("asset_pick_" + std::to_string(i));
+        item.setTooltip(entry.path.string());
+        item.setOnClick([this, i] { m_selectedEntry = static_cast<int>(i); });
+        item.setOnDoubleClick([this, i] {
+            if (i >= m_filteredEntries.size()) return;
+            const Entry& picked = m_filteredEntries[i];
+            if (picked.isDirectory) {
+                navigateTo(picked.path);
+                m_selectedEntry = -1;
+            } else {
+                commitAssetPicker(picked.path);
+                if (m_pickerDialog) m_pickerDialog->close();
+            }
+        });
+    }
+
+    bool canSelect = false;
+    if (m_selectedEntry >= 0 &&
+        static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        canSelect = !entry.isDirectory && pickerAcceptsPath(entry.path);
+    }
+
+    auto& footer = dialog.emplace<Row>("asset_picker_footer");
+    auto& select = footer.emplace<Button>("Select", ButtonVariant::Primary);
+    select.setEnabled(canSelect);
+    select.setOnClick([this] {
+        if (m_selectedEntry < 0 ||
+            static_cast<usize>(m_selectedEntry) >= m_filteredEntries.size()) {
+            return;
+        }
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        if (entry.isDirectory || !pickerAcceptsPath(entry.path)) return;
+        commitAssetPicker(entry.path);
+        if (m_pickerDialog) m_pickerDialog->close();
+    });
+    footer.emplace<Button>("Cancel").setOnClick([this] {
+        m_pickerCancelled = true;
+        m_assetPickerActive = false;
+        if (m_pickerDialog) m_pickerDialog->close();
+    });
+
+    UIContext ui;
+    ui.draw(dialog);
+#else
+#endif
+}
+
+void AssetBrowser::setAssetScope(AssetScope scope) {
+    if (scope == m_assetScope && m_browseMode == BrowseMode::Filesystem) {
+        return;
+    }
+
+    m_assetScope = scope;
+    switchToFilesystemRoot(rootForScope(scope));
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────
+
+void AssetBrowser::setSearchFilter(const char* filter) {
+    m_searchFilter = filter ? filter : "";
+    applySearchFilter();
+}
+
+const std::string& AssetBrowser::searchFilter() const {
+    return m_searchFilter;
+}
+
+void AssetBrowser::applySearchFilter() {
+    m_filteredEntries.clear();
+    if (m_searchFilter.empty()) {
+        m_filteredEntries = m_entries;
+        return;
+    }
+
+    std::string lowerFilter = m_searchFilter;
+    std::transform(lowerFilter.begin(), lowerFilter.end(), lowerFilter.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    for (const auto& e : m_entries) {
+        std::string lowerName = e.name;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lowerName.find(lowerFilter) != std::string::npos) {
+            m_filteredEntries.push_back(e);
+        }
+    }
+}
+
+// ── Navigation ──────────────────────────────────────────────────────────────
+
+void AssetBrowser::navigateTo(const std::filesystem::path& dir) {
+    if (std::filesystem::is_directory(dir)) {
+        m_pathHistory.push_back(m_currentDir);
+        m_currentDir = dir;
+        refresh();
+    }
+}
+
+void AssetBrowser::navigateBack() {
+    if (!m_pathHistory.empty()) {
+        m_currentDir = m_pathHistory.back();
+        m_pathHistory.pop_back();
+        refresh();
+    }
+}
+
+void AssetBrowser::navigateUp() {
+    if (!m_currentDir.has_parent_path()) return;
+    const auto parent = m_currentDir.parent_path();
+    if (!m_projectRoot.empty()) {
+        std::error_code ec;
+        const auto rel = std::filesystem::relative(parent, m_projectRoot, ec);
+        if (ec || rel.empty()) return;
+        if (rel.generic_string().rfind("..", 0) == 0) return;
+    }
+    navigateTo(parent);
+}
+
+void AssetBrowser::navigateToProjectRoot() {
+    if (m_projectRoot.empty()) return;
+    m_pathHistory.clear();
+    m_currentDir = m_projectRoot;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
+void AssetBrowser::navigateToAssets() {
+    if (!m_rawRoot.empty()) {
+        m_pathHistory.clear();
+        m_currentDir = m_rawRoot;
+        m_assetScope = AssetScope::Raw;
+        m_rootPath = m_rawRoot.string();
+        m_browseMode = BrowseMode::Filesystem;
+        refresh();
+    }
+}
+
+void AssetBrowser::navigateToScenes() {
+    if (m_projectRoot.empty()) return;
+    const auto scenes = m_projectRoot / "scenes";
+    std::error_code ec;
+    std::filesystem::create_directories(scenes, ec);
+    m_pathHistory.clear();
+    m_currentDir = scenes;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
+void AssetBrowser::navigateToScripts() {
+    if (m_projectRoot.empty()) return;
+    const auto scripts = m_projectRoot / "scripts";
+    std::error_code ec;
+    std::filesystem::create_directories(scripts, ec);
+    m_pathHistory.clear();
+    m_currentDir = scripts;
+    m_browseMode = BrowseMode::Filesystem;
+    refresh();
+}
+
+bool AssetBrowser::canGoBack() const {
+    return !m_pathHistory.empty();
+}
+
+const std::filesystem::path& AssetBrowser::currentPath() const {
+    return m_currentDir;
+}
+
+// ── View mode ───────────────────────────────────────────────────────────────
+
+void AssetBrowser::setViewMode(ViewMode mode) {
+    m_viewMode = mode;
+}
+
+AssetBrowser::ViewMode AssetBrowser::viewMode() const {
+    return m_viewMode;
+}
+
+// ── Thumbnail size ──────────────────────────────────────────────────────────
+
+void AssetBrowser::setThumbnailSize(u32 size) {
+    m_thumbnailSize = size;
+}
+
+u32 AssetBrowser::thumbnailSize() const {
+    return m_thumbnailSize;
+}
+
+// ── Entry access ────────────────────────────────────────────────────────────
+
+const std::vector<AssetBrowser::Entry>& AssetBrowser::entries() const {
+    return m_filteredEntries;
+}
+
+usize AssetBrowser::entryCount() const {
+    return m_filteredEntries.size();
+}
+
+std::filesystem::path AssetBrowser::rootForScope(AssetScope scope) const {
+    const auto& root = (scope == AssetScope::Processed) ? m_processedRoot : m_rawRoot;
+    if (!root.empty()) {
+        return root;
+    }
+    return std::filesystem::absolute(m_rootPath);
+}
+
+void AssetBrowser::switchToFilesystemRoot(const std::filesystem::path& root) {
+    m_browseMode = BrowseMode::Filesystem;
+    m_currentDir = root;
+    m_rootPath = root.string();
+    m_pathHistory.clear();
+    refresh();
+}
+
+} // namespace Caffeine::Editor
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UI layer — requires ImGui
+// ═════════════════════════════════════════════════════════════════════════════
+
+#ifdef CF_HAS_IMGUI
+
+namespace Caffeine::Editor {
+
+// ── Icon helper ─────────────────────────────────────────────────────────────
+
+namespace {
+
+std::string lowerExtension(const std::filesystem::path& path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+bool isBrowserImage(const std::filesystem::path& path) {
+    const std::string ext = lowerExtension(path);
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+           ext == ".gif" || ext == ".webp";
+}
+
+}  // namespace
+
+const char* AssetBrowser::iconForType(AssetType type, const std::filesystem::path& path) {
+    const std::string ext = lowerExtension(path);
+    if (ext == ".lua") return "[L]";
+    if (ext == ".dyd") return "[D]";
+    if (ext == ".cpp" || ext == ".hpp" || ext == ".h") return "[C]";
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp") return "[T]";
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "[A]";
+    if (ext == ".gltf" || ext == ".glb" || ext == ".obj" || ext == ".fbx" || ext == ".bin") return "[M]";
+    if (ext == ".caf" || ext == ".prefab") return "[S]";
+    switch (type) {
+        case AssetType::Texture: return "[T]";
+        case AssetType::Audio:   return "[A]";
+        case AssetType::Mesh:    return "[M]";
+        case AssetType::Scene:   return "[S]";
+        case AssetType::Prefab:  return "[F]";
+        default:                 return "[ ]";
+    }
+}
+
+const char* AssetBrowser::iconNameForType(AssetType type, const std::filesystem::path& path) {
+    if (path.filename() == "project.caffeine") return "beer";
+    if (path.filename() == "game.cap") return "arrow-down-square";
+
+    const std::string ext = lowerExtension(path);
+    if (ext == ".lua" || ext == ".luac") return "at";
+    if (ext == ".dyd") return "align-left";
+    if (ext == ".cpp" || ext == ".hpp" || ext == ".h" || ext == ".cxx") return "align-left";
+    if (ext == ".cs" || ext == ".ts" || ext == ".js") return "at";
+
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+        ext == ".webp" || ext == ".gif" || ext == ".hdr" || ext == ".exr") {
+        return "beer";
+    }
+
+    if (ext == ".wav") return "bell";
+    if (ext == ".ogg" || ext == ".mp3" || ext == ".flac" || ext == ".aac") return "bell-twotone";
+
+    if (ext == ".glb") return "arrows-long-diagonal";
+    if (ext == ".gltf") return "arrows-diagonal";
+    if (ext == ".obj") return "arrows-diagonal-rotated";
+    if (ext == ".fbx" || ext == ".dae" || ext == ".blend") return "arrows-vertical";
+    if (ext == ".bin" || ext == ".mesh") return "arrow-down-square";
+
+    if (ext == ".caf" || ext == ".scene") return "account";
+    if (ext == ".prefab") return "account-small";
+    if (ext == ".cap") return "arrow-down-square";
+    if (ext == ".mat" || ext == ".material") return "beer-alt";
+    if (ext == ".shader" || ext == ".glsl" || ext == ".vert" || ext == ".frag") return "alert-circle";
+    if (ext == ".anim" || ext == ".controller") return "arrow-right-circle";
+
+    if (ext == ".json" || ext == ".yaml" || ext == ".yml") return "align-left";
+    if (ext == ".txt" || ext == ".md" || ext == ".readme") return "align-justify";
+    if (ext == ".xml" || ext == ".csv") return "align-center";
+
+    if (ext == ".mp4" || ext == ".avi" || ext == ".mov" || ext == ".webm") return "arrow-right-circle";
+    if (ext == ".ttf" || ext == ".otf" || ext == ".woff" || ext == ".woff2") return "align-right";
+    if (ext == ".zip" || ext == ".7z" || ext == ".rar") return "arrow-down-square-twotone";
+
+    switch (type) {
+        case AssetType::Texture: return "beer";
+        case AssetType::Audio:   return "bell";
+        case AssetType::Mesh:    return "arrows-diagonal";
+        case AssetType::Scene:   return "account";
+        case AssetType::Prefab:  return "account-small";
+        default:                 return "alert-circle";
+    }
+}
+
+void AssetBrowser::drawTypeIcon(AssetType type, const std::filesystem::path& path, bool isDirectory, f32 size) {
+    if (isDirectory) {
+        const std::string name = path.filename().string();
+        const char* folderIcon = "arrow-open-down";
+        if (name == "assets" || name == "raw" || name == "processed") folderIcon = "arrow-down-square";
+        else if (name == "scenes") folderIcon = "account";
+        else if (name == "scripts") folderIcon = "at";
+        else if (name == "build") folderIcon = "beer";
+        else if (name == "plugins") folderIcon = "beer-alt";
+
+        if (EditorIcons::hasIcon(folderIcon)) {
+            EditorIcons::image(folderIcon, size);
+        } else {
+            ImGui::Text("[dir]");
+        }
+        return;
+    }
+
+    const char* iconName = iconNameForType(type, path);
+    if (EditorIcons::hasIcon(iconName)) {
+        EditorIcons::image(iconName, size);
+    } else {
+        ImGui::Text("%s", iconForType(type, path));
+    }
+}
+
+// ── Toolbar ─────────────────────────────────────────────────────────────────
+
+void AssetBrowser::renderAssetPickerBar(Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (!m_assetPickerActive) return;
+
+    auto& card = parent.emplace<Card>("asset_picker_bar");
+    card.emplace<Label>("Choosing asset for: " + m_pickerLabel, TextTone::Accent);
+    card.emplace<Label>("Filter: " + (m_pickerFilter.empty() ? std::string("(any)")
+                                                            : m_pickerFilter),
+                        TextTone::Muted);
+
+    bool canSelect = false;
+    if (m_selectedEntry >= 0 &&
+        static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        canSelect = !entry.isDirectory && pickerAcceptsPath(entry.path);
+    }
+
+    auto& actions = card.emplace<Row>("asset_picker_actions");
+    auto& use = actions.emplace<Button>("Use Selected", ButtonVariant::Primary);
+    use.setWidth(120.0f);
+    use.setEnabled(canSelect);
+    use.setOnClick([this] {
+        if (m_selectedEntry < 0 ||
+            static_cast<usize>(m_selectedEntry) >= m_filteredEntries.size()) {
+            return;
+        }
+        const Entry& entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+        if (!entry.isDirectory && pickerAcceptsPath(entry.path)) {
+            commitAssetPicker(entry.path);
+        }
+    });
+    actions.emplace<Button>("Cancel").setOnClick([this] {
+        m_pickerCancelled = true;
+        m_assetPickerActive = false;
+    });
+}
+
+void AssetBrowser::renderToolbar(Caffeine::UIKit::Elements::Container& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    auto& tools = parent.emplace<Elements::Section>("Tools");
+    auto addButton = [](Row& row, const char* label, float width,
+                        std::function<void()> onClick,
+                        ButtonVariant variant = ButtonVariant::Toolbar,
+                        const char* tooltip = nullptr) {
+        auto& button = row.emplace<Button>(label, variant);
+        button.setWidth(width);
+        if (tooltip) button.setTooltip(tooltip);
+        button.setOnClick(std::move(onClick));
+    };
+
+    auto& nav = tools.emplace<Row>("asset_nav");
+    addButton(nav, "+ Create", 84.0f, [this] { m_showAssetCreator = true; },
+              ButtonVariant::Primary, "Create a new asset");
+    if (canGoBack()) {
+        addButton(nav, "< Back", 62.0f, [this] { navigateBack(); },
+                  ButtonVariant::Toolbar, "Back");
+    }
+    addButton(nav, "^ Up", 52.0f, [this] { navigateUp(); }, ButtonVariant::Toolbar,
+              "Parent folder");
+    if (!m_projectRoot.empty()) {
+        addButton(nav, "Project", 64.0f, [this] { navigateToProjectRoot(); },
+                  ButtonVariant::Toolbar, "Project root");
+        addButton(nav, "Assets", 60.0f, [this] { navigateToAssets(); },
+                  ButtonVariant::Toolbar, "Raw assets");
+        addButton(nav, "Scenes", 64.0f, [this] { navigateToScenes(); },
+                  ButtonVariant::Toolbar, "Scenes");
+        addButton(nav, "Scripts", 62.0f, [this] { navigateToScripts(); },
+                  ButtonVariant::Toolbar, "Scripts");
+    }
+
+    auto& searchRow = tools.emplace<Row>("asset_search_row");
+    std::strncpy(m_searchBuf, m_searchFilter.c_str(), sizeof(m_searchBuf) - 1);
+    m_searchBuf[sizeof(m_searchBuf) - 1] = '\0';
+    auto& search = searchRow.emplace<Elements::SearchField>(
+        m_searchBuf, sizeof(m_searchBuf), "Search assets...");
+    search.setGrow(true);
+    search.setOnChange([this](const std::string& value) {
+        setSearchFilter(value.c_str());
+    });
+    addButton(searchRow, m_viewMode == ViewMode::Grid ? "Grid" : "List", 58.0f,
+              [this] {
+                  m_viewMode = (m_viewMode == ViewMode::Grid) ? ViewMode::List
+                                                              : ViewMode::Grid;
+              },
+              ButtonVariant::Toolbar, "Toggle grid/list view");
+    m_thumbnailEdit = static_cast<int>(m_thumbnailSize);
+    auto& thumb = searchRow.emplace<SliderInt>("Thumb", &m_thumbnailEdit, 16, 256);
+    thumb.setWidth(170.0f);
+    thumb.setOnChange([this](int value) {
+        m_thumbnailSize = static_cast<u32>(std::clamp(value, 16, 256));
+    });
+
+    auto& options = tools.emplace<Row>("asset_options");
+    auto& autoCaf = options.emplace<Checkbox>("Auto .caf", &m_autoConvertOnImport);
+    autoCaf.setWidth(92.0f);
+    autoCaf.setTooltip("Automatically convert imported raw assets to .caf");
+    auto& raw = options.emplace<Button>("Raw", ButtonVariant::Segmented);
+    raw.setWidth(56.0f);
+    raw.setSelected(m_assetScope == AssetScope::Raw);
+    raw.setTooltip("Show raw source assets");
+    raw.setOnClick([this] { setAssetScope(AssetScope::Raw); });
+    auto& processed = options.emplace<Button>("Processed", ButtonVariant::Segmented);
+    processed.setWidth(92.0f);
+    processed.setSelected(m_assetScope == AssetScope::Processed);
+    processed.setTooltip("Show processed assets");
+    processed.setOnClick([this] { setAssetScope(AssetScope::Processed); });
+
+    auto& projectActions = tools.emplace<Row>("asset_project_actions");
+    addButton(projectActions, "Convert Raw", 98.0f, [this] {
+        const usize converted = convertAllSupportedAssets();
+        if (converted > 0) {
+            setStatusMessage("Converted " + std::to_string(converted) +
+                             " asset(s) to assets/processed");
+        } else {
+            setStatusMessage("No supported raw assets found to convert", true);
+        }
+        if (m_assetScope == AssetScope::Processed) refresh();
+    }, ButtonVariant::Toolbar, "Convert all supported raw assets to .caf");
+    addButton(projectActions, "Pack CAP", 80.0f, [this] {
+        std::string error;
+        if (packCurrentProjectCap(&error)) {
+            setStatusMessage("Packed game.cap successfully");
+        } else {
+            setStatusMessage(error.empty() ? "Failed to pack game.cap" : error, true);
+        }
+    }, ButtonVariant::Toolbar, "Pack the project into game.cap");
+    addButton(projectActions, "Open CAP", 80.0f, [this] {
+        std::string error;
+        if (openCurrentProjectCap(&error)) {
+            setStatusMessage("Opened game.cap in CAP view");
+        } else {
+            setStatusMessage(error.empty() ? "Failed to open game.cap" : error, true);
+        }
+    }, ButtonVariant::Toolbar, "Open game.cap in the CAP view");
+
+    auto& crumbs = tools.emplace<Row>("asset_breadcrumbs");
+    renderBreadcrumbs(crumbs);
+}
+
+void AssetBrowser::renderBreadcrumbs(Caffeine::UIKit::Elements::Row& parent) {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    std::vector<std::filesystem::path> crumbs;
+    const std::filesystem::path anchor =
+        !m_projectRoot.empty() ? m_projectRoot : std::filesystem::path(m_rootPath);
+
+    std::error_code ec;
+    auto rel = std::filesystem::relative(m_currentDir, anchor, ec);
+    if (!ec && !rel.empty() && rel.generic_string().rfind("..", 0) != 0) {
+        crumbs.push_back(anchor);
+        for (const auto& part : rel) {
+            crumbs.push_back(crumbs.back() / part);
+        }
+    } else {
+        crumbs.push_back(m_currentDir);
+    }
+
+    auto addCrumb = [this, &parent, &crumbs](std::size_t index) {
+        if (index > 0) parent.emplace<Label>("/", TextTone::Muted);
+        const std::string label =
+            (index == 0 && !m_projectRoot.empty()) ? "Project"
+                                                   : crumbs[index].filename().string();
+        auto& button = parent.emplace<Button>(label, ButtonVariant::Ghost);
+        button.setId("asset_crumb_" + std::to_string(index));
+        const std::filesystem::path target = crumbs[index];
+        button.setOnClick([this, target] { navigateTo(target); });
+    };
+
+    std::size_t start = 0;
+    if (crumbs.size() > 4) {
+        start = crumbs.size() - 3;
+        addCrumb(0);
+        parent.emplace<Label>("...", TextTone::Muted);
+    }
+    for (std::size_t i = start; i < crumbs.size(); ++i) {
+        if (i == start && start == 0) {
+            addCrumb(i);
+        } else {
+            if (i > start) parent.emplace<Label>("/", TextTone::Muted);
+            const std::string label = crumbs[i].filename().string();
+            auto& button = parent.emplace<Button>(label, ButtonVariant::Ghost);
+            button.setId("asset_crumb_" + std::to_string(i));
+            const std::filesystem::path target = crumbs[i];
+            button.setOnClick([this, target] { navigateTo(target); });
+        }
+    }
+}
+
+// ── Grid view ───────────────────────────────────────────────────────────────
+
+void AssetBrowser::activateEntry(usize index) {
+    if (index >= m_filteredEntries.size()) return;
+    const Entry& entry = m_filteredEntries[index];
+    if (entry.isDirectory) {
+        navigateTo(entry.path);
+        return;
+    }
+    if (m_assetPickerActive && pickerAcceptsPath(entry.path)) {
+        commitAssetPicker(entry.path);
+    } else if (m_onScriptOpen && isOpenableScriptAsset(entry.path)) {
+        m_onScriptOpen(entry.path);
+    } else if (entry.path.extension() == ".mat" && m_onMaterialOpen) {
+        m_onMaterialOpen(entry.path);
+    } else if (isBrowserImage(entry.path) && m_editorContext) {
+        m_editorContext->imageToOpen = entry.path.string();
+    } else if (entry.path.extension() == ".anim") {
+        AnimationEditorLink::get().openAnimRequest = entry.path.string();
+    }
+}
+
+void AssetBrowser::renderGridView() {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_filteredEntries.empty()) {
+        UIContext ui;
+        Column root("asset_grid_empty");
+        root.emplace<Elements::EmptyState>(
+            m_searchFilter.empty() ? "No assets here" : "No matching assets",
+            m_searchFilter.empty() ? "Drop files into the browser or use + Create."
+                                   : "Try a different search term.",
+            "assets");
+        ui.draw(root);
+        return;
+    }
+
+    const float thumb = static_cast<float>(std::max(24u, m_thumbnailSize));
+    const float cell = thumb + 40.0f;
+    const int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
+    const ImVec2 tileSize(cell - 8.0f, thumb + 44.0f);
+
+    UIContext ui;
+    Column root("asset_grid_root");
+    auto& grid = root.emplace<Grid>(cols);
+    for (usize i = 0; i < m_filteredEntries.size(); ++i) {
+        const Entry& entry = m_filteredEntries[i];
+        std::string subtitle = entry.isDirectory ? "folder" : entry.path.extension().string();
+        if (entry.meshImportIncomplete) subtitle += "  incomplete";
+
+        auto& card = grid.emplace<AssetCard>(entry.name, subtitle,
+                                             iconNameForType(entry.type, entry.path));
+        card.setId("asset_grid_" + std::to_string(i));
+        card.setSelected(m_selectedEntry == static_cast<int>(i));
+        card.setTileSize(tileSize);
+        if (!entry.isDirectory) {
+            const ImTextureRef texture =
+                m_previewRenderer.thumbnailTexture(entry.path, entry.type);
+            if (texture._TexData != nullptr || texture._TexID != ImTextureID_Invalid) {
+                card.setThumbnail(texture);
+            }
+        }
+
+        card.setOnClick([this, i] { m_selectedEntry = static_cast<int>(i); });
+        card.setOnRightClick([this, i] { m_selectedEntry = static_cast<int>(i); });
+        card.setOnDoubleClick([this, i] { activateEntry(i); });
+
+        if (!entry.isDirectory) {
+            const std::string path = entry.path.string();
+            const std::string name = entry.name;
+            const AssetType type = entry.type;
+            card.setOnDrag([path, name, type] {
+                AssetDropPayload payload{};
+                std::strncpy(payload.path, path.c_str(), sizeof(payload.path) - 1);
+                payload.type = type;
+                ImGui::SetDragDropPayload(kPayloadAssetPath, &payload, sizeof(payload));
+                ImGui::Text("%s", name.c_str());
+            });
+        } else {
+            const std::filesystem::path destination = entry.path;
+            card.setOnDrop([this, destination](const char* sourcePath) {
+                if (!sourcePath || sourcePath[0] == '\0') return;
+                const std::filesystem::path source(sourcePath);
+                const std::filesystem::path target = destination / source.filename();
+                std::error_code ec;
+                std::filesystem::rename(source, target, ec);
+                if (!ec) {
+                    m_selectedEntry = -1;
+                    refresh();
+                } else {
+                    setStatusMessage("Move failed: " + ec.message(), true);
+                }
+            });
+        }
+    }
+
+    ui.draw(root);
+}
+
+// ── List view ───────────────────────────────────────────────────────────────
+
+void AssetBrowser::renderListView() {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_filteredEntries.empty()) {
+        UIContext ui;
+        Column root("asset_list_empty");
+        root.emplace<Elements::EmptyState>(
+            m_searchFilter.empty() ? "No assets here" : "No matching assets",
+            m_searchFilter.empty() ? "Drop files into the browser or use + Create."
+                                   : "Try a different search term.",
+            "assets");
+        ui.draw(root);
+        return;
+    }
+
+    UIContext ui;
+    Column root("asset_list_root");
+    auto& table = root.emplace<DataTable>("asset_list_table");
+    table.addColumn("Name", 0.0f, true);
+    table.addColumn("Type", 110.0f, false);
+    table.addColumn("Size", 90.0f, false);
+    table.addColumn("Kind", 80.0f, false);
+    table.setSelectable(true);
+    table.setSelectedRow(m_selectedEntry);
+    table.setOnRowSelected([this](int index) { m_selectedEntry = index; });
+    table.setOnRowActivated([this](int index) { activateEntry(static_cast<usize>(index)); });
+
+    for (usize i = 0; i < m_filteredEntries.size(); ++i) {
+        const Entry& entry = m_filteredEntries[i];
+        std::string typeLabel;
+        if (entry.isDirectory) {
+            typeLabel = "Folder";
+        } else if (entry.path.extension() == ".lua") {
+            typeLabel = "Script";
+        } else if (entry.path.extension() == ".dyd") {
+            typeLabel = "Dryad Script";
+        } else {
+            switch (entry.type) {
+                case AssetType::Texture: typeLabel = "Texture"; break;
+                case AssetType::Audio: typeLabel = "Audio"; break;
+                case AssetType::Mesh: typeLabel = "Mesh"; break;
+                case AssetType::Scene: typeLabel = "Scene"; break;
+                default: typeLabel = "Unknown"; break;
+            }
+        }
+
+        std::string sizeLabel = "-";
+        if (!entry.isDirectory) {
+            const f32 sizeKB = static_cast<f32>(entry.fileSize) / 1024.0f;
+            char sizeBuffer[32];
+            if (sizeKB < 1024.0f) {
+                std::snprintf(sizeBuffer, sizeof(sizeBuffer), "%.1f KB", sizeKB);
+            } else {
+                std::snprintf(sizeBuffer, sizeof(sizeBuffer), "%.2f MB", sizeKB / 1024.0f);
+            }
+            sizeLabel = sizeBuffer;
+        }
+        const std::string kindLabel =
+            entry.isDirectory ? "dir" : entry.path.extension().string();
+        const std::string nameLabel =
+            entry.name + (entry.meshImportIncomplete ? "  [!]" : "");
+
+        auto& row = table.addRow({nameLabel, typeLabel, sizeLabel, kindLabel});
+        row.setIcon(iconNameForType(entry.type, entry.path));
+
+        if (!entry.isDirectory) {
+            const std::string path = entry.path.string();
+            const std::string name = entry.name;
+            const AssetType type = entry.type;
+            row.setOnDrag([path, name, type] {
+                AssetDropPayload payload{};
+                std::strncpy(payload.path, path.c_str(), sizeof(payload.path) - 1);
+                payload.type = type;
+                ImGui::SetDragDropPayload(kPayloadAssetPath, &payload, sizeof(payload));
+                ImGui::Text("%s", name.c_str());
+            });
+        } else {
+            const std::filesystem::path destination = entry.path;
+            row.setOnDrop([this, destination](const char* sourcePath) {
+                if (!sourcePath || sourcePath[0] == '\0') return;
+                const std::filesystem::path source(sourcePath);
+                const std::filesystem::path target = destination / source.filename();
+                std::error_code ec;
+                std::filesystem::rename(source, target, ec);
+                if (!ec) {
+                    m_selectedEntry = -1;
+                    refresh();
+                } else {
+                    setStatusMessage("Move failed: " + ec.message(), true);
+                }
+            });
+        }
+    }
+
+    ui.draw(root);
+}
+
+// ── Context menu ────────────────────────────────────────────────────────────
+
+void AssetBrowser::renderContextMenu() {
+    const bool hasSelection = (m_selectedEntry >= 0 &&
+                               static_cast<usize>(m_selectedEntry) < m_filteredEntries.size());
+    const bool hasClipboard = !m_clipboardPath.empty();
+
+    if (ImGui::BeginPopupContextWindow()) {
+        if (ImGui::MenuItem("New Asset")) {
+            m_showAssetCreator = true;
+        }
+        if (ImGui::MenuItem("New Folder")) {
+            m_pendingCreateType = 10;
+            std::strncpy(m_assetNamingBuf, "NewFolder", sizeof(m_assetNamingBuf) - 1);
+            m_showNamingPopup = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Import File...")) {
+            m_showImportFilePicker = true;
+        }
+        if (ImGui::MenuItem("Import Folder...")) {
+            m_showImportFolderPicker = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Cut", nullptr, false, hasSelection)) {
+            m_clipboardPath = m_filteredEntries[static_cast<usize>(m_selectedEntry)].path;
+            m_clipboardIsCut = true;
+        }
+        if (ImGui::MenuItem("Copy", nullptr, false, hasSelection)) {
+            m_clipboardPath = m_filteredEntries[static_cast<usize>(m_selectedEntry)].path;
+            m_clipboardIsCut = false;
+        }
+        if (ImGui::MenuItem("Paste", nullptr, false, hasClipboard)) {
+            std::error_code ec;
+            std::filesystem::path dst = m_currentDir / m_clipboardPath.filename();
+            if (m_clipboardIsCut) {
+                std::filesystem::rename(m_clipboardPath, dst, ec);
+                if (!ec) m_clipboardPath.clear();
+            } else {
+                std::filesystem::copy(m_clipboardPath, dst,
+                    std::filesystem::copy_options::overwrite_existing |
+                    std::filesystem::copy_options::recursive, ec);
+            }
+            if (!ec) refresh();
+            else setStatusMessage("Paste failed: " + ec.message(), true);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Rename", nullptr, false, hasSelection)) {
+            m_renamingEntry = m_selectedEntry;
+            const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+            std::strncpy(m_renameBuf, e.name.c_str(), sizeof(m_renameBuf) - 1);
+            m_renameBuf[sizeof(m_renameBuf) - 1] = '\0';
+        }
+        if (ImGui::MenuItem("Delete", nullptr, false, hasSelection)) {
+            const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+            std::error_code ec;
+            std::filesystem::remove_all(e.path, ec);
+            if (!ec) {
+                m_selectedEntry = -1;
+                refresh();
+            } else {
+                setStatusMessage("Delete failed: " + ec.message(), true);
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void AssetBrowser::renderRenamePopup() {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_renamingEntry >= 0) {
+        if (!m_renameDialog) {
+            m_renameDialog = std::make_unique<Dialog>("Rename");
+            m_renameDialog->setInitialSize(ImVec2(380.0f, 160.0f));
+            m_renameDialog->setOnClose([this] { m_renamingEntry = -1; });
+            m_renameDialog->open();
+        } else if (!m_renameDialog->isOpen()) {
+            m_renameDialog->open();
+        }
+        m_renamingEntry = -2;
+    }
+    if (!m_renameDialog || !m_renameDialog->isOpen()) return;
+
+    Dialog& dialog = *m_renameDialog;
+    dialog.clear();
+    dialog.emplace<Label>("Rename asset", TextTone::Accent).setHeading(true);
+    auto& grid = dialog.emplace<PropertyGrid>("rename_grid");
+    grid.typedRow<BufferProperty>("New name", m_renameBuf, sizeof(m_renameBuf));
+
+    auto& footer = dialog.emplace<Row>("rename_footer");
+    auto& ok = footer.emplace<Button>("OK", ButtonVariant::Primary);
+    ok.setOnClick([this] {
+        if (m_renameBuf[0] != '\0' && m_selectedEntry >= 0 &&
+            static_cast<usize>(m_selectedEntry) < m_filteredEntries.size()) {
+            const auto& e = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+            std::filesystem::path newPath = e.path.parent_path() / m_renameBuf;
+            std::error_code ec;
+            std::filesystem::rename(e.path, newPath, ec);
+            if (!ec) {
+                m_selectedEntry = -1;
+                refresh();
+            } else {
+                setStatusMessage("Rename failed: " + ec.message(), true);
+            }
+        }
+        if (m_renameDialog) m_renameDialog->close();
+    });
+    footer.emplace<Button>("Cancel").setOnClick([this] {
+        if (m_renameDialog) m_renameDialog->close();
+    });
+
+    UIContext ui;
+    ui.draw(dialog);
+#else
+#endif
+}
+
+void AssetBrowser::renderPreviewPane() {
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    UIContext ui;
+    Column root("asset_preview_root");
+    auto& card = root.emplace<Card>("asset_preview_card");
+    card.emplace<Label>("Preview", TextTone::Accent).setHeading(true);
+
+    if (m_selectedEntry < 0 ||
+        static_cast<usize>(m_selectedEntry) >= m_filteredEntries.size()) {
+        card.emplace<Label>("Select an item to preview", TextTone::Muted);
+        ui.draw(root);
+        return;
+    }
+
+    const Entry entry = m_filteredEntries[static_cast<usize>(m_selectedEntry)];
+    const std::string previewKey = entry.path.string();
+    if (previewKey != m_previewSourceKey) {
+        m_previewRenderer.invalidate();
+        m_previewSourceKey = previewKey;
+    }
+
+    if (!entry.isDirectory && m_browseMode == BrowseMode::Filesystem) {
+        card.emplace<CustomElement>("asset_preview_visual", [this, entry] {
+            const float previewHeight =
+                std::clamp(ImGui::GetContentRegionAvail().y * 0.42f, 160.0f, 260.0f);
+            m_previewRenderer.renderVisual(entry.path, entry.type, m_projectRoot.string(),
+                                           ImVec2(ImGui::GetContentRegionAvail().x,
+                                                  previewHeight));
+        });
+    }
+
+    auto& details = card.emplace<Elements::Section>("Details");
+    details.emplace<Label>(entry.name, TextTone::Normal).setWrap(true);
+
+    if (entry.isDirectory) {
+        details.emplace<KeyValue>("Type", "Folder");
+        details.emplace<Label>("Path: " + entry.path.string(), TextTone::Muted).setWrap(true);
+        ui.draw(root);
+        return;
+    }
+
+    const char* typeLabel = "Unknown";
+    switch (entry.type) {
+        case AssetType::Texture: typeLabel = "Texture"; break;
+        case AssetType::Audio: typeLabel = "Audio"; break;
+        case AssetType::Mesh: typeLabel = "Mesh"; break;
+        case AssetType::Scene: typeLabel = "Scene/CAF"; break;
+        default: break;
+    }
+    details.emplace<KeyValue>("Type", typeLabel);
+    details.emplace<KeyValue>("Kind", entry.path.extension().string());
+    char sizeBuffer[32];
+    std::snprintf(sizeBuffer, sizeof(sizeBuffer), "%.2f KB",
+                  static_cast<float>(entry.fileSize) / 1024.0f);
+    details.emplace<KeyValue>("Size", sizeBuffer);
+
+    if (m_browseMode == BrowseMode::Filesystem) {
+        details.emplace<Label>("Path: " + entry.path.string(), TextTone::Muted).setWrap(true);
+    } else {
+        details.emplace<Label>("Source CAP: " + m_currentCapPath.string(), TextTone::Muted)
+            .setWrap(true);
+        details.emplace<Label>("Asset ID: " + entry.name, TextTone::Muted).setWrap(true);
+    }
+
+    if (entry.type == AssetType::Texture && m_browseMode == BrowseMode::Filesystem) {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        if (stbi_info(entry.path.string().c_str(), &width, &height, &channels)) {
+            char resolution[32];
+            std::snprintf(resolution, sizeof(resolution), "%d x %d", width, height);
+            details.emplace<KeyValue>("Resolution", resolution);
+            details.emplace<KeyValue>("Channels", std::to_string(channels));
+        }
+    }
+
+    if (entry.type == AssetType::Mesh && m_browseMode == BrowseMode::Filesystem) {
+        auto& import = card.emplace<Elements::Section>("Import Status");
+        const auto report = Assets::MeshImportValidator::analyze(entry.path);
+        if (report.readyToLoad) {
+            import.emplace<Label>("Pronto para usar", TextTone::Success);
+        } else {
+            import.emplace<Label>(report.errorSummary, TextTone::Danger).setWrap(true);
+            if (!report.suggestion.empty()) {
+                import.emplace<Label>(report.suggestion, TextTone::Muted).setWrap(true);
+            }
+        }
+        if (!report.dependencies.empty()) {
+            import.emplace<Label>("Dependencias:", TextTone::Muted);
+            for (const std::string& dep : report.dependencies) {
+                const bool missing =
+                    std::find(report.missingDependencies.begin(),
+                              report.missingDependencies.end(), dep) !=
+                    report.missingDependencies.end();
+                import.emplace<Label>((missing ? "[x] " : "[ok] ") + dep,
+                                      missing ? TextTone::Danger : TextTone::Success);
+            }
+        }
+    }
+
+    ui.draw(root);
+}
+
+bool AssetBrowser::isSupportedRawAsset(const std::filesystem::path& path) const {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga";
+}
+
+bool AssetBrowser::convertRawAssetToCaf(const std::filesystem::path& rawPath, std::string* errorMessage) {
+    if (m_rawRoot.empty() || m_processedRoot.empty()) {
+        if (errorMessage) *errorMessage = "Asset pipeline paths are not configured";
+        return false;
+    }
+
+    if (!isSupportedRawAsset(rawPath)) {
+        if (errorMessage) *errorMessage = "No compiler available for " + rawPath.extension().string();
+        return false;
+    }
+
+    std::error_code ec;
+    auto relativePath = std::filesystem::relative(rawPath, m_rawRoot, ec);
+    if (ec) {
+        relativePath = rawPath.filename();
+    }
+
+    std::filesystem::path destPath = m_processedRoot / relativePath;
+    destPath.replace_extension(".caf");
+    std::filesystem::create_directories(destPath.parent_path(), ec);
+    if (ec) {
+        if (errorMessage) *errorMessage = "Failed to prepare output directory";
+        return false;
+    }
+
+    Caffeine::Assets::TextureCompiler compiler;
+    Caffeine::Assets::AssetImportContext importCtx;
+    importCtx.SourcePath = rawPath;
+    importCtx.DestinationPath = destPath;
+
+    if (!compiler.Compile(importCtx)) {
+        if (errorMessage) {
+            *errorMessage = importCtx.Logs.empty() ? "Texture conversion failed" : importCtx.Logs.back();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+usize AssetBrowser::convertAllSupportedAssets() {
+    if (m_rawRoot.empty() || !std::filesystem::exists(m_rawRoot)) {
+        return 0;
+    }
+
+    usize converted = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(m_rawRoot)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (!isSupportedRawAsset(entry.path())) {
+            continue;
+        }
+        std::string error;
+        if (convertRawAssetToCaf(entry.path(), &error)) {
+            ++converted;
+        }
+    }
+    return converted;
+}
+
+bool AssetBrowser::packCurrentProjectCap(std::string* errorMessage) {
+    if (m_projectRoot.empty() || m_rawRoot.empty()) {
+        if (errorMessage) *errorMessage = "Project paths are not configured";
+        return false;
+    }
+
+    if (!std::filesystem::exists(m_rawRoot)) {
+        if (errorMessage) *errorMessage = "assets/raw does not exist";
+        return false;
+    }
+
+#ifdef CF_HAS_CAF_PACK
+    std::filesystem::path capPath = m_projectRoot / "game.cap";
+    std::filesystem::path headerPath = m_processedRoot.empty()
+        ? (m_projectRoot / "game_assets.hpp")
+        : (m_processedRoot / "game_assets.hpp");
+
+    std::error_code ec;
+    std::filesystem::create_directories(headerPath.parent_path(), ec);
+
+    CafPack::Packer::Config config;
+    config.inputDir = m_rawRoot;
+    config.outputFile = capPath;
+    config.generateHeader = true;
+    config.headerPath = headerPath.string();
+    config.compress = false;
+
+    CafPack::Packer packer(config);
+    if (!packer.pack()) {
+        if (errorMessage) *errorMessage = packer.getError();
+        return false;
+    }
+
+    std::vector<CafPack::AssetEntry> entries;
+    for (const auto& [name, id] : packer.getAssetEntries()) {
+        entries.push_back({name, id});
+    }
+    CafPack::HeaderGenerator::generateHeader(entries, headerPath);
+    return true;
+#else
+    if (errorMessage) *errorMessage = "Asset packing not available - caf-pack submodule not included";
+    return false;
+#endif
+}
+
+bool AssetBrowser::openCurrentProjectCap(std::string* errorMessage) {
+    if (m_projectRoot.empty()) {
+        if (errorMessage) *errorMessage = "Project path is not configured";
+        return false;
+    }
+
+    std::filesystem::path capPath = m_projectRoot / "game.cap";
+    if (!std::filesystem::exists(capPath)) {
+        if (errorMessage) *errorMessage = "game.cap not found. Pack assets first.";
+        return false;
+    }
+
+    loadCapFile(capPath);
+    return true;
+}
+
+bool AssetBrowser::importPath(const std::filesystem::path& sourcePath, bool autoConvert) {
+    if (sourcePath.empty()) {
+        setStatusMessage("Provide a source path to import", true);
+        return false;
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(sourcePath, ec) || ec) {
+        setStatusMessage("Source path does not exist", true);
+        return false;
+    }
+
+    if (m_rawRoot.empty()) {
+        setStatusMessage("Raw asset path is not configured", true);
+        return false;
+    }
+
+    std::filesystem::create_directories(m_rawRoot, ec);
+    if (ec) {
+        setStatusMessage("Failed to create assets/raw", true);
+        return false;
+    }
+
+    usize copiedCount = 0;
+    usize convertedCount = 0;
+
+    auto importSingleFile = [&](const std::filesystem::path& filePath, const std::filesystem::path& targetPath) {
+        std::filesystem::create_directories(targetPath.parent_path(), ec);
+        if (ec) return false;
+        std::filesystem::copy_file(filePath, targetPath, std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return false;
+        ++copiedCount;
+        if (autoConvert && isSupportedRawAsset(targetPath)) {
+            std::string error;
+            if (convertRawAssetToCaf(targetPath, &error)) {
+                ++convertedCount;
+            }
+        }
+        return true;
+    };
+
+    if (std::filesystem::is_directory(sourcePath)) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(sourcePath)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            auto rel = std::filesystem::relative(entry.path(), sourcePath, ec);
+            if (ec) rel = entry.path().filename();
+            if (!importSingleFile(entry.path(), m_rawRoot / rel)) {
+                setStatusMessage("Failed to import some files from folder", true);
+                refresh();
+                return false;
+            }
+        }
+    } else if (needsMeshBundleImport(sourcePath)) {
+        const auto sourceDir = sourcePath.parent_path();
+        const auto bundle = Assets::MeshImportValidator::collectImportBundle(sourcePath);
+
+        for (const auto& file : bundle) {
+            std::filesystem::path rel = file.filename();
+            std::error_code relEc;
+            const auto computed = std::filesystem::relative(file, sourceDir, relEc);
+            if (!relEc) rel = computed;
+
+            if (!importSingleFile(file, m_rawRoot / rel)) {
+                setStatusMessage("Failed to import mesh files", true);
+                refresh();
+                return false;
+            }
+        }
+
+        refresh();
+        if (m_assetScope == AssetScope::Processed && convertedCount > 0) {
+            setAssetScope(AssetScope::Processed);
+        }
+
+        const auto report = Assets::MeshImportValidator::analyze(m_rawRoot / sourcePath.filename());
+        std::string message = "Mesh imported (" + std::to_string(copiedCount) + " file(s))";
+        if (!report.readyToLoad) {
+            message = "Importado mas incompleto: " + report.errorSummary;
+            if (!report.suggestion.empty()) {
+                message += " — " + report.suggestion;
+            }
+            setStatusMessage(message, true);
+            return true;
+        }
+        setStatusMessage(message, false);
+        return true;
+    } else {
+        if (!importSingleFile(sourcePath, m_rawRoot / sourcePath.filename())) {
+            setStatusMessage("Failed to import file", true);
+            refresh();
+            return false;
+        }
+    }
+
+    refresh();
+    if (m_assetScope == AssetScope::Processed && convertedCount > 0) {
+        setAssetScope(AssetScope::Processed);
+    }
+
+    std::string message = "Imported " + std::to_string(copiedCount) + " file(s)";
+    if (convertedCount > 0) {
+        message += " — converted " + std::to_string(convertedCount) + " to .caf";
+    }
+    setStatusMessage(message, false);
+    return true;
+}
+
+void AssetBrowser::setStatusMessage(const std::string& message, bool isError) {
+    m_statusMessage = message;
+    m_statusIsError = isError;
+}
+
+void AssetBrowser::dismissTransientUI() {
+    m_showAssetCreator = false;
+    m_showNamingPopup = false;
+    m_showImportFilePicker = false;
+    m_showImportFolderPicker = false;
+}
+
+// ── Main render ─────────────────────────────────────────────────────────────
+
+void AssetBrowser::renderAssetCreatorModal() {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_showAssetCreator) {
+        if (!m_creatorDialog) {
+            m_creatorDialog = std::make_unique<Dialog>("Asset Creator");
+            m_creatorDialog->setInitialSize(ImVec2(700.0f, 460.0f));
+            m_creatorDialog->setOnClose([this] { m_showAssetCreator = false; });
+            m_creatorDialog->open();
+        } else if (!m_creatorDialog->isOpen()) {
+            m_creatorDialog->open();
+        }
+        m_showAssetCreator = false;
+    }
+    if (!m_creatorDialog || !m_creatorDialog->isOpen()) return;
+
+    Dialog& dialog = *m_creatorDialog;
+    dialog.clear();
+
+    dialog.emplace<Label>("Create or Import Asset", TextTone::Accent).setHeading(true);
+
+    auto& columns = dialog.emplace<Row>("creator_columns");
+    auto& categoryCard = columns.emplace<Card>("creator_categories");
+    categoryCard.setWidth(180.0f);
+    auto& categoryList = categoryCard.emplace<ListBox>("creator_category_list");
+    categoryList.setHeight(300.0f);
+    static const char* categoryLabels[] = {"Media", "3D Models", "Scripts",
+                                           "Prefabs & Scenes", "Folders"};
+    for (int i = 0; i < 5; ++i) {
+        auto& item = categoryList.emplace<ListItem>(
+            categoryLabels[i], m_assetCreatorCategory == i);
+        item.setId("creator_category_" + std::to_string(i));
+        item.setOnClick([this, i] { m_assetCreatorCategory = i; });
+    }
+
+    auto& optionsCard = columns.emplace<Card>("creator_options");
+    optionsCard.setGrow(true);
+    if (m_assetCreatorCategory == 1) {
+        optionsCard.emplace<Elements::Paragraph>(
+            "Prefer .glb (one file). A separate glTF needs the .bin and textures.");
+    }
+
+    struct CreatorOption {
+        const char* icon;
+        const char* name;
+        const char* ext;
+        int typeId;
+        bool isImport;
+    };
+
+    CreatorOption options[10];
+    int optionCount = 0;
+    if (m_assetCreatorCategory == 0) {
+        options[optionCount++] = {"beer", "Image", "PNG/JPG/TGA", 0, true};
+        options[optionCount++] = {"bell", "Audio", "MP3/OGG/WAV", 1, true};
+        options[optionCount++] = {"beer-twotone", "GIF", "GIF", 2, true};
+        options[optionCount++] = {"arrow-right-circle", "Video", "MP4/AVI/MOV", 3, true};
+    } else if (m_assetCreatorCategory == 1) {
+        options[optionCount++] = {"arrows-diagonal-rotated", "OBJ Model", ".obj", 4, true};
+        options[optionCount++] = {"arrows-long-diagonal", "GLB Model", ".glb", 5, true};
+        options[optionCount++] = {"arrows-diagonal", "glTF Model", ".gltf + sidecars", 4, true};
+    } else if (m_assetCreatorCategory == 2) {
+        options[optionCount++] = {"at", "Lua Script", ".lua", 6, false};
+#ifdef CF_HAS_DRYAD
+        options[optionCount++] = {"align-left", "Dryad Script", ".dyd + .node.json", 11, false};
+#endif
+        options[optionCount++] = {"align-left", "C++ Script", ".cpp/.hpp", 7, false};
+    } else if (m_assetCreatorCategory == 3) {
+        options[optionCount++] = {"account-small", "Prefab", ".prefab", 8, false};
+        options[optionCount++] = {"beer-alt", "Material", ".mat", 9, false};
+        options[optionCount++] = {"account", "Scene", ".caf", 8, false};
+    } else if (m_assetCreatorCategory == 4) {
+        options[optionCount++] = {"arrow-open-down", "New Folder", "directory", 10, false};
+    }
+
+    auto& grid = optionsCard.emplace<Grid>(3);
+    for (int i = 0; i < optionCount; ++i) {
+        const CreatorOption& opt = options[i];
+        auto& card = grid.emplace<AssetCard>(opt.name, opt.ext, opt.icon);
+        card.setId("creator_option_" + std::string(opt.name));
+        card.setTileSize(ImVec2(150.0f, 108.0f));
+        card.setOnClick([this, opt] {
+            if (opt.isImport) {
+                m_showImportFilePicker = true;
+                if (m_creatorDialog) m_creatorDialog->close();
+            } else {
+                m_pendingCreateType = opt.typeId;
+                m_showNamingPopup = true;
+                std::strncpy(m_assetNamingBuf, opt.name, sizeof(m_assetNamingBuf) - 1);
+                m_assetNamingBuf[sizeof(m_assetNamingBuf) - 1] = '\0';
+                for (int c = 0; m_assetNamingBuf[c]; ++c) {
+                    if (m_assetNamingBuf[c] == ' ') m_assetNamingBuf[c] = '_';
+                }
+                if (m_creatorDialog) m_creatorDialog->close();
+            }
+        });
+    }
+
+    auto& footer = dialog.emplace<Row>("creator_footer");
+    footer.emplace<Button>("Cancel").setOnClick([this] {
+        if (m_creatorDialog) m_creatorDialog->close();
+    });
+
+    UIContext ui;
+    ui.draw(dialog);
+#else
+#endif
+}
+
+void AssetBrowser::renderNamingPopup() {
+#ifdef CF_HAS_IMGUI
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    if (m_showNamingPopup) {
+        if (!m_namingDialog) {
+            m_namingDialog = std::make_unique<Dialog>("Name Asset");
+            m_namingDialog->setInitialSize(ImVec2(420.0f, 180.0f));
+            m_namingDialog->setOnClose([this] { m_showNamingPopup = false; });
+            m_namingDialog->open();
+        } else if (!m_namingDialog->isOpen()) {
+            m_namingDialog->open();
+        }
+        m_showNamingPopup = false;
+    }
+    if (!m_namingDialog || !m_namingDialog->isOpen()) return;
+
+    Dialog& dialog = *m_namingDialog;
+    dialog.clear();
+    dialog.emplace<Label>("Name asset", TextTone::Accent).setHeading(true);
+    auto& grid = dialog.emplace<PropertyGrid>("naming_grid");
+    grid.typedRow<BufferProperty>("Name", m_assetNamingBuf, sizeof(m_assetNamingBuf));
+
+    auto& footer = dialog.emplace<Row>("naming_footer");
+    auto& ok = footer.emplace<Button>("OK", ButtonVariant::Primary);
+    ok.setOnClick([this] {
+        std::string nameStr = m_assetNamingBuf;
+        if (!nameStr.empty()) {
+            if (m_pendingCreateType == 6) {
+                std::ofstream f(m_currentDir / (nameStr + ".lua"));
+                f << "function onCreate(entity)\nend\n\nfunction onUpdate(entity, dt)\nend\n\nfunction onDestroy(entity)\nend\n";
+            } else if (m_pendingCreateType == 11) {
+#ifdef CF_HAS_DRYAD
+                const std::filesystem::path scriptPath = m_currentDir / (nameStr + ".dyd");
+                Script::Nodes::NodeGraph graph = Script::Nodes::defaultGraphForScript(scriptPath);
+                std::string writeErr;
+                if (Script::Nodes::NodeEmitter::writeSiblingFiles(scriptPath, graph, &writeErr)) {
+                    if (m_onScriptOpen) m_onScriptOpen(scriptPath);
+                } else {
+                    setStatusMessage(writeErr.empty() ? "Failed to create Dryad script" : writeErr, true);
+                }
+#endif
+            } else if (m_pendingCreateType == 7) {
+                std::ofstream hpp(m_currentDir / (nameStr + ".hpp"));
+                hpp << "#pragma once\n#include \"ecs/CppScript.hpp\"\n\nstruct " << nameStr << " : Caffeine::ECS::CppScript {\n    void onCreate() override {}\n    void onUpdate(float dt) override {}\n    void onDestroy() override {}\n};\n";
+                std::ofstream cpp(m_currentDir / (nameStr + ".cpp"));
+                cpp << "#include \"" << nameStr << ".hpp\"\n";
+            } else if (m_pendingCreateType == 8) {
+                std::ofstream f(m_currentDir / (nameStr + ".prefab"));
+                f << "{}";
+            } else if (m_pendingCreateType == 9) {
+                const std::filesystem::path matPath = m_currentDir / (nameStr + ".mat");
+                Assets::MaterialSurface surface;
+                surface.valid = true;
+                surface.name = nameStr;
+                if (Assets::saveMaterialFile(matPath, surface) && m_onMaterialOpen) {
+                    m_onMaterialOpen(matPath);
+                }
+            } else if (m_pendingCreateType == 10) {
+                std::error_code ec;
+                std::filesystem::path newPath = m_currentDir / nameStr;
+                int counter = 1;
+                while (std::filesystem::exists(newPath, ec)) {
+                    newPath = m_currentDir / (nameStr + std::to_string(counter++));
+                }
+                std::filesystem::create_directory(newPath, ec);
+            }
+            refresh();
+        }
+        if (m_namingDialog) m_namingDialog->close();
+    });
+    footer.emplace<Button>("Cancel").setOnClick([this] {
+        if (m_namingDialog) m_namingDialog->close();
+    });
+
+    UIContext ui;
+    ui.draw(dialog);
+#else
+#endif
+}
+
+void AssetBrowser::render(ECS::World& world, [[maybe_unused]] EditorContext& ctx) {
+    if (!m_open) return;
+    m_world = &world;
+    m_editorContext = &ctx;
+
+    if (!ctx.assetBrowserNavigateTo.empty()) {
+        const std::filesystem::path dir = ctx.assetBrowserNavigateTo;
+        ctx.assetBrowserNavigateTo.clear();
+        ctx.assetBrowserDirty = false;
+        navigateTo(dir);
+    } else if (ctx.assetBrowserDirty) {
+        ctx.assetBrowserDirty = false;
+        refresh();
+    }
+
+#ifdef CF_HAS_SDL3
+    m_previewRenderer.setFrameCommandBuffer(m_frameCmd);
+    std::string environment;
+    f32 exposure = 1.0f;
+    if (ctx.activeWorld) {
+        const Scene::ActiveSkybox sky = Scene::findActiveSkybox(*ctx.activeWorld);
+        if (sky.component) {
+            environment =
+                Scene::resolveSkyboxTexturePath(*sky.component, m_projectRoot.string()).string();
+            exposure = sky.component->exposure;
+        }
+    }
+    m_previewRenderer.setEnvironment(std::move(environment), exposure);
+    std::vector<std::pair<std::filesystem::path, AssetType>> thumbnails;
+    thumbnails.reserve(m_filteredEntries.size());
+    for (const Entry& entry : m_filteredEntries) {
+        if (!entry.isDirectory) thumbnails.emplace_back(entry.path, entry.type);
+    }
+    m_previewRenderer.prepareThumbnails(thumbnails, m_projectRoot.string());
+#endif
+
+    using namespace Caffeine::UIKit;
+    using namespace Caffeine::UIKit::Elements;
+
+    Panel root("Asset Browser", "Project assets", "assets", &m_open);
+    root.setInitialSize(ImVec2(960.0f, 600.0f));
+    UIContext ui;
+
+    renderAssetPickerBar(root);
+    renderToolbar(root);
+
+    if (!m_statusMessage.empty()) {
+        root.emplace<Label>(m_statusMessage,
+                            m_statusIsError ? TextTone::Danger : TextTone::Success)
+            .setWrap(true);
+    }
+
+    auto& content = root.emplace<Row>("asset_content");
+    auto& listArea = content.emplace<ScrollArea>("asset_list_area");
+    listArea.setGrow(true);
+
+    auto& entityDrop =
+        listArea.emplace<DropZone>("Drop an entity here to create a prefab", "ENTITY_DRAG");
+    entityDrop.setOnDrop([this](const char* data) {
+        if (!data) return;
+        u32 entityId = 0;
+        std::memcpy(&entityId, data, sizeof(entityId));
+        ECS::Entity entity(entityId, m_world);
+        if (!entity.isValid()) return;
+        const char* entityName = getEntityName(*m_world, entity);
+        const std::filesystem::path out =
+            m_currentDir / (std::string(entityName) + ".prefab.caf");
+        if (PrefabSystem::CreateFromEntity(*m_world, entity, out)) {
+            setStatusMessage("Prefab created: " + out.filename().string(), false);
+            refresh();
+        } else {
+            setStatusMessage("Failed to create prefab", true);
+        }
+    });
+
+    listArea.emplace<CustomElement>("asset_view_host", [this] {
+        if (m_viewMode == ViewMode::Grid) {
+            renderGridView();
+        } else {
+            renderListView();
+        }
+    });
+    listArea.emplace<CustomElement>("asset_context_host", [this] { renderContextMenu(); });
+
+    auto& previewArea = content.emplace<ScrollArea>("asset_preview_area");
+    previewArea.setWidth(300.0f);
+    previewArea.emplace<CustomElement>("asset_preview_host",
+                                        [this] { renderPreviewPane(); });
+
+    ui.draw(root);
+
+    renderAssetCreatorModal();
+    renderNamingPopup();
+    renderRenamePopup();
+
+    if (m_showImportFilePicker) {
+        const std::filesystem::path startPath =
+            m_rawRoot.empty() ? std::filesystem::current_path() : m_rawRoot;
+        if (auto selected = FilePicker::pickPath(FilePicker::Mode::PickFile,
+                                                 "Import Asset File", startPath)) {
+            importPath(selected.value(), m_autoConvertOnImport);
+            m_showImportFilePicker = false;
+        } else if (FilePicker::consumeCloseEvent("Import Asset File")) {
+            m_showImportFilePicker = false;
+        }
+    }
+
+    if (m_showImportFolderPicker) {
+        const std::filesystem::path startPath =
+            m_rawRoot.empty() ? std::filesystem::current_path() : m_rawRoot;
+        if (auto selected = FilePicker::pickPath(FilePicker::Mode::PickFolder,
+                                                 "Import Asset Folder", startPath)) {
+            importPath(selected.value(), m_autoConvertOnImport);
+            m_showImportFolderPicker = false;
+        } else if (FilePicker::consumeCloseEvent("Import Asset Folder")) {
+            m_showImportFolderPicker = false;
+        }
+    }
+}
+
+// ── Drag-drop target ─────────────────────────────────────────────────────────
+
+std::optional<std::filesystem::path> AssetBrowser::getDroppedAsset() const {
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::filesystem::path path(static_cast<const char*>(payload->Data));
+            ImGui::EndDragDropTarget();
+            return path;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    return {};
+}
+
+} // namespace Caffeine::Editor
+
+#endif // CF_HAS_IMGUI

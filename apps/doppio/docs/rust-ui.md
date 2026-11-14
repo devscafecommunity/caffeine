@@ -17,12 +17,24 @@ docking model and headless/agent testing.
 
 ## Current PoC
 
-`apps/doppio-rs` contains:
+The `doppio/` workspace contains:
 
-- a four-pane `PaneGrid` layout (Hierarchy / Viewport / Inspector / Console);
-- a fake entity list, inspector name field, play/pause state and console log;
-- stable widget ids for the toolbar, inspector input and entity rows;
-- three `iced_test` cases: add entity, toggle play, rename selected entity;
+```
+doppio/
+  crates/engine/        libloading bindings to libcaffeine-capi
+  crates/ui/
+    src/windows/        main.rs, projectloader.rs
+    src/uikit/components/  button, slider, rendering_canvas, gizmo, asset_preview
+    src/uikit/panels/      hierarchy, sceneviewport, assetmanager, inspector, console
+```
+
+- App/UI state lives in `windows/main.rs`; panels and components are
+  reusable library modules.
+- a five-pane `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
+  Console);
+- stable widget ids for the toolbar, inspector inputs and entity rows;
+- six `iced_test` cases: add, play/pause, nudge X, nudge rotation, scale up and
+  rename;
 - an optional `agent` feature that routes `main` through `iced_mcp::run`.
 
 The C++ boundary now has:
@@ -84,7 +96,7 @@ First slice implemented and tested:
 
 - header: `include/caffeine/capi/EngineAPI.h`
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
-- test: `tests/test_capi.cpp` (`[capi]`, 43 assertions)
+- test: `tests/test_capi.cpp` (`[capi]`, 53 assertions)
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
@@ -93,16 +105,16 @@ First slice implemented and tested:
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
 - `libcaffeine-capi.so` shared library (CMake target `caffeine-capi`);
-- a `libloading` Rust bridge in `apps/doppio-rs/src/engine.rs`, with a
+- a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 5 Rust tests, including the bridge round-trip (create/rename/position/save).
+- 7 Rust tests: 1 engine bridge round-trip + 6 UI tests (`iced_test`).
 
 The PoC now loads a real scene through the ABI:
 
 ```bash
-cd apps/doppio-rs
-cargo run -- ../../assets/benchmarks/dense_outdoor.caf
+cd doppio
+cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 ```
 
 The hierarchy then shows the real C++ entities (Rock/Tree/...). Without the

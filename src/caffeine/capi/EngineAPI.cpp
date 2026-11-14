@@ -3,6 +3,7 @@
 #include "ecs/Components.hpp"
 #include "ecs/Components3D.hpp"
 #include "ecs/World.hpp"
+#include "math/Quat.hpp"
 #include "scene/EditorContext.hpp"
 #include "scene/EditorSceneSerializer.hpp"
 
@@ -38,6 +39,94 @@ Caffeine::ECS::Entity entityOf(CaffeineSession& session, CaffeineEntity id) {
 bool entityAlive(CaffeineSession& session, CaffeineEntity id) {
     const Caffeine::ECS::Entity entity = entityOf(session, id);
     return entity.isValid() && session.world.isEntityAlive(entity);
+}
+
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kDegToRad = kPi / 180.0f;
+constexpr float kRadToDeg = 180.0f / kPi;
+
+bool readRotation(CaffeineSession& session, Caffeine::ECS::Entity entity,
+                  CaffeineVec3* out) {
+    if (const auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
+        out->x = transform->rotation.x;
+        out->y = transform->rotation.y;
+        out->z = transform->rotation.z;
+        return true;
+    }
+    if (const auto* rotation = session.world.get<Caffeine::ECS::Rotation3D>(entity)) {
+        const Caffeine::Vec3 euler =
+            Caffeine::Quat(rotation->quaternion.x, rotation->quaternion.y,
+                           rotation->quaternion.z, rotation->quaternion.w)
+                .normalized()
+                .toEuler();
+        out->x = euler.x * kRadToDeg;
+        out->y = euler.y * kRadToDeg;
+        out->z = euler.z * kRadToDeg;
+        return true;
+    }
+    return false;
+}
+
+bool readScale(CaffeineSession& session, Caffeine::ECS::Entity entity,
+               CaffeineVec3* out) {
+    if (const auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
+        out->x = transform->scale.x;
+        out->y = transform->scale.y;
+        out->z = transform->scale.z;
+        return true;
+    }
+    if (const auto* scale = session.world.get<Caffeine::ECS::Scale3D>(entity)) {
+        out->x = scale->scale.x;
+        out->y = scale->scale.y;
+        out->z = scale->scale.z;
+        return true;
+    }
+    return false;
+}
+
+void writeRotation(CaffeineSession& session, Caffeine::ECS::Entity entity,
+                   CaffeineVec3 euler) {
+    if (auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
+        transform->rotation =
+            Caffeine::Vec3(euler.x, euler.y, euler.z);
+        return;
+    }
+    const Caffeine::Quat quat =
+        Caffeine::Quat::fromEuler(euler.x * kDegToRad, euler.y * kDegToRad,
+                                  euler.z * kDegToRad)
+            .normalized();
+    if (auto* rotation = session.world.get<Caffeine::ECS::Rotation3D>(entity)) {
+        rotation->quaternion =
+            Caffeine::Vec4(quat.x, quat.y, quat.z, quat.w);
+        return;
+    }
+    if (session.world.has<Caffeine::ECS::Position3D>(entity)) {
+        auto& rotation = session.world.add<Caffeine::ECS::Rotation3D>(entity);
+        rotation.quaternion = Caffeine::Vec4(quat.x, quat.y, quat.z, quat.w);
+        return;
+    }
+    auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
+    transform.rotation = Caffeine::Vec3(euler.x, euler.y, euler.z);
+}
+
+void writeScale(CaffeineSession& session, Caffeine::ECS::Entity entity,
+                CaffeineVec3 scale) {
+    if (auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
+        transform->scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
+        return;
+    }
+    if (auto* scale3d = session.world.get<Caffeine::ECS::Scale3D>(entity)) {
+        scale3d->scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
+        return;
+    }
+    if (session.world.has<Caffeine::ECS::Position3D>(entity) ||
+        session.world.has<Caffeine::ECS::Rotation3D>(entity)) {
+        auto& scale3d = session.world.add<Caffeine::ECS::Scale3D>(entity);
+        scale3d.scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
+        return;
+    }
+    auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
+    transform.scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
 }
 
 CaffeineResult copyName(const char* name, char* buffer, std::size_t bufferSize) {
@@ -201,6 +290,48 @@ CaffeineResult caffeine_session_entity_position(const CaffeineSession* session,
         return CAFFEINE_OK;
     }
     return CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_entity_rotation(const CaffeineSession* session,
+                                                CaffeineEntity entityId,
+                                                CaffeineVec3* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    return readRotation(mutableSession, entityOf(mutableSession, entityId), out)
+               ? CAFFEINE_OK
+               : CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_set_entity_rotation(CaffeineSession* session,
+                                                    CaffeineEntity entityId,
+                                                    CaffeineVec3 euler_degrees) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    writeRotation(*session, entityOf(*session, entityId), euler_degrees);
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_entity_scale(const CaffeineSession* session,
+                                             CaffeineEntity entityId,
+                                             CaffeineVec3* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    return readScale(mutableSession, entityOf(mutableSession, entityId), out)
+               ? CAFFEINE_OK
+               : CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_set_entity_scale(CaffeineSession* session,
+                                                 CaffeineEntity entityId,
+                                                 CaffeineVec3 scale) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    writeScale(*session, entityOf(*session, entityId), scale);
+    session->context.markDirty();
+    return CAFFEINE_OK;
 }
 
 CaffeineResult caffeine_session_set_entity_position(CaffeineSession* session,
