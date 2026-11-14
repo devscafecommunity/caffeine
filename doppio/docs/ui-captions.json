@@ -22,7 +22,8 @@
     "inspector.entity.delete": "Destroys the selected entity in the engine world.",
     "hierarchy.list.entity_row": "One selectable entity row; rows use the .<index> suffix.",
     "assets.grid.asset_card": "One asset card; cards use the .<index> suffix.",
-    "annotated.inspector": "Inspector controls, numbered for documentation."
+    "annotated.inspector": "Inspector controls, numbered for documentation.",
+    "viewport.canvas.surface": "Engine render output shown inside the viewport pane."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -47,6 +48,7 @@
     "inspector.entity.delete": "Destrói a entidade selecionada no mundo do motor.",
     "hierarchy.list.entity_row": "Uma linha selecionável da hierarquia; usa o sufixo .<índice>.",
     "assets.grid.asset_card": "Um cartão de asset; usa o sufixo .<índice>.",
-    "annotated.inspector": "Controlos do inspector, numerados para documentação."
+    "annotated.inspector": "Controlos do inspector, numerados para documentação.",
+    "viewport.canvas.surface": "Imagem do motor apresentada dentro do painel de viewport."
   }
 }

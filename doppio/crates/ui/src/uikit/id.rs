@@ -97,6 +97,7 @@ pub const PANE_INSPECTOR: UiId = UiId::fixed("editor.pane.inspector");
 pub const PANE_CONSOLE: UiId = UiId::fixed("editor.pane.console");
 
 // ── Viewport ─────────────────────────────────────────────────────────────
+pub const VIEWPORT_SURFACE: UiId = UiId::fixed("viewport.canvas.surface");
 pub const ORBIT_LEFT: UiId = UiId::fixed("viewport.camera.orbit_left");
 pub const ORBIT_RIGHT: UiId = UiId::fixed("viewport.camera.orbit_right");
 pub const ZOOM_IN: UiId = UiId::fixed("viewport.camera.zoom_in");
@@ -171,6 +172,11 @@ pub const CATALOG: &[UiMeta] = &[
         id: PANE_CONSOLE,
         description: "Editor log and engine messages.",
         kind: "pane",
+    },
+    UiMeta {
+        id: VIEWPORT_SURFACE,
+        description: "Engine render output shown inside the viewport pane.",
+        kind: "image",
     },
     UiMeta {
         id: ORBIT_LEFT,

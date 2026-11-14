@@ -1,6 +1,8 @@
-# AGENTS.md — Caffeine Engine
+# AGENTS.md — Caffeine Engine + Doppio
 
-Rules for humans and coding agents working in **this repository** (the C++ engine). User-facing documentation lives in the **`caffeine-website`** submodule, not here.
+Rules for humans and coding agents working in **this repository**. The C++ engine lives in
+`src/caffeine/`; the **Doppio** editor is the Rust/Iced workspace in `doppio/`. User-facing
+documentation lives in the **`caffeine-website`** submodule, not here.
 
 ## Repository layout
 
@@ -8,24 +10,26 @@ Rules for humans and coding agents working in **this repository** (the C++ engin
 |------|---------|
 | `src/caffeine/` | **Caffeine core**: runtime, render, RHI, ECS, assets, physics, scripting, C ABI |
 | `src/caffeine/capi/`, `include/caffeine/capi/` | **C ABI** consumed by external frontends (the Rust Doppio) |
-| `src/caffeine/project`, `src/caffeine/scene` | Core services used by both runtime and frontend (project metadata, view context, scene I/O) |
-| `doppio/` | **Rust/Iced Doppio frontend** (`crates/engine` FFI bridge, `crates/ui` components/panels/windows) |
+| `src/caffeine/project`, `src/caffeine/scene` | Core services used by runtime and frontend (project metadata, view context, scene I/O) |
+| `doppio/` | **Rust/Iced Doppio workspace** (see below) |
+| `doppio/crates/engine/` | The **only** crate that loads `libcaffeine-capi` (libloading + C types) |
+| `doppio/crates/ui/` | Iced UI: `uikit/{components,panels,id.rs}` and `windows/` |
+| `doppio/crates/ui/src/windows/` | `main.rs` (state + PaneGrid), `projectloader.rs`, `main/tests.rs`, `main/agent.rs` |
+| `doppio/docs/`, `doppio/.iced-mcp/` | Live Doppio docs, caption source, MCP flows and visual baselines |
 | `doppio-archived/` | Frozen C++ Doppio snapshot; reference only, not built |
-| `apps/` | Executables (`caffeine-runtime`, `caffeine-combined`) |
-| `include/` | Public C++ headers shipped to games/tools/plugins |
-| `tests/` | Catch2 suites |
-| `cmake/` | CMake modules |
-| `assets/` | Sample content (no `node_modules` in git) |
+| `apps/` | C++ executables (`caffeine-runtime`, `caffeine-combined`) |
+| `include/` | Public C++ headers shipped to games/tools/plugins (incl. legacy `caffeine/ui`) |
+| `tests/` | Catch2 suites for the C++ engine |
+| `scripts/` | Build, audit, Rust UI, agent and docs tooling (see below) |
+| `cmake/`, `assets/` | CMake modules; sample content (no `node_modules` in git) |
 | `caf-pack/` | Asset packer CLI + `.caf` / `.cap` pipeline (submodule) |
-| `doppio-plugins/` | Official/community Doppio editor plugins (submodule, optional tools that only call the core) |
+| `doppio-plugins/` | Official/community Doppio plugins (submodule, legacy C++/ImGui SDK) |
 | `caffeine-website/` | Docs site (Svelte/HTML), TeX/PDF, docs MCP |
 | `caffeine-launcher/` | Desktop hub — launch apps, plugins, updates (Rust/Iced) |
-| `scripts/submodules.sh` | `git submodule update --init` for all paths below |
-| `scripts/build-plugins.sh` | Build `doppio-plugins` standalone (the engine build already does it by default) |
 
 Do not add a root `docs/`, `planning/`, or `.planning/` back to this repo.
-Doppio-specific architecture/plugin/roadmap notes live in `doppio/docs/` (see the
-documentation policy below).
+Doppio architecture/plugin/roadmap notes live in `doppio/docs/` (see the documentation
+policy below).
 
 ## Layering
 
@@ -34,25 +38,51 @@ Vulkan / D3D12 / Metal
         ↓
       SDL3 GPU
         ↓
-  caffeine-core  (src/, include/caffeine/)   ← no ImGui, no panels, no IDE state
+  caffeine-core  (src/, include/caffeine/)       ← no ImGui, no panels, no IDE state
         ↓
-   libcaffeine-capi  (C ABI)                 ← stable boundary for any frontend
+  libcaffeine-capi  (C ABI, versioned)           ← stable boundary for any frontend
         ↓
-  doppio  (Rust/Iced: doppio/crates/)        ← FFI bridge + components/panels/windows
+  doppio/crates/engine  (libloading)             ← only crate allowed to touch FFI
         ↓
-    plugins      (doppio-plugins submodule)  ← C++/ImGui tools that call core APIs only
+  doppio/crates/ui  (Iced)                       ← Window → Panel → Component
+        ↓
+  plugins  (doppio-plugins submodule)            ← C++/ImGui tools that call public core APIs
 ```
 
 - **Core must not include frontend code.** If a core service needs a view/serialization
   context, keep it under `src/caffeine/scene`, `src/caffeine/project` or another core module.
 - **The IDE must be replaceable.** Any frontend can consume the engine through
-  `include/caffeine/capi/EngineAPI.h`; the Rust UI crates never call FFI directly,
-  only `doppio/crates/engine` does.
+  `include/caffeine/capi/EngineAPI.h`. Inside Doppio, only `doppio/crates/engine` calls
+  FFI; `doppio/crates/ui` works with plain Rust types and `Message`s.
 - **Plugins extend Doppio but are optional**: everything they expose must remain possible
   through the core/IDE APIs without the plugin. A plugin must not be required to load or
-  run a scene.
-- **`caffeine-runtime` is still an ImGui host** (and the legacy plugin SDK headers in
+  run a scene. Plugins still target the legacy C++/ImGui SDK, not the Rust UI.
+- **`caffeine-runtime` is still an ImGui host** (and the legacy SDK headers in
   `include/caffeine/ui/` still use ImGui); that is frontend/plugin code, not core.
+
+## Doppio UI architecture
+
+- **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
+  (Hierarchy / Assets / Viewport / Inspector / Console).
+- **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
+  are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
+  primitives (button, slider, rendering canvas, gizmo, asset card).
+- **Ids are hierarchical and catalogued.** Every interactive widget gets a
+  `uikit::id::UiId` (`group.subgroup.object`, e.g. `editor.toolbar.add_entity`,
+  `inspector.entity.name`, `hierarchy.list.entity_row.3`) and an entry in
+  `uikit::id::CATALOG` with kind + description. List rows use `entity_row(i)` /
+  `asset_card(i)`. Add ids to new widgets; tests, docs and agents rely on them.
+- **Messages are the only mutation path.** `update` handles every `Message`; the MCP
+  bridge exposes commands as actions that return `Message`s, so agents cannot do more
+  than the UI.
+- **Viewport is non-blocking.** The engine renders offscreen and the app polls an async
+  readback (`render_begin` / `render_poll`) every 16 ms. SDL_GPU exposes no native
+  texture handles, so a shared wgpu texture is **not possible through the public API**;
+  zero-copy needs a renderer-level change (wgpu backend / SDL patch / separate window).
+  Do not pretend a readback change is a shared-texture fix.
+- **Fixtures keep tests deterministic**: `App::empty()` and the two-entity editor fixture.
+
+Architecture details and migration status: [`doppio/docs/rust-ui.md`](doppio/docs/rust-ui.md).
 
 ## Ecosystem submodules
 
@@ -63,7 +93,7 @@ All sibling repos live under [devscafecommunity](https://github.com/devscafecomm
 | *(this repo)* | `caffeine` | C++ engine, **Doppio** editor (`doppio/`, Rust/Iced), `libcaffeine-capi`, runtime, tests | yes (`caffeine-runtime`, `caffeine-capi`, …); Rust UI via `cargo` | `doppio`, `runtime` |
 | `caf-pack/` | [caf-pack](https://github.com/devscafecommunity/caf-pack) | Raw assets → `.caf`, pack `.cap`; shared `CafTypes` with engine | linked into `CaffeineTest`/tools when submodule present | — |
 | `caffeine-website/` | [caffeine-website](https://github.com/devscafecommunity/caffeine-website) | Public docs, i18n site, PDFs, **caffeine-docs** MCP | no (Node/npm) | — |
-| `caffeine-launcher/` | [caffeine-launcher](https://github.com/devscafecommunity/caffeine-launcher) | Hub UI; discovers `build/doppio`, `~/.local/share/caffeine/apps/` | `cargo build` / `scripts/build-launcher.sh` | hosts all apps |
+| `caffeine-launcher/` | [caffeine-launcher](https://github.com/devscafecommunity/caffeine-launcher) | Hub UI; discovers `doppio/target/<profile>/doppio`, `~/.local/share/caffeine/apps/` | `cargo build` / `scripts/build-launcher.sh` | hosts all apps |
 | `doppio-plugins/` | [doppio-plugins](https://github.com/devscafecommunity/doppio-plugins) | Official/community Doppio plugins (terrain, procedural, git, post-processing, AI, VC&M) | yes, by default (`CAFFEINE_BUILD_DOPPIO_PLUGINS=ON`) into `build/plugins`; loading is opt-in | — |
 
 **Clone / refresh submodules:**
@@ -74,32 +104,60 @@ git clone --recurse-submodules git@github.com:devscafecommunity/caffeine.git
 ./scripts/submodules.sh
 ```
 
-**Dev layout the launcher expects:** engine build dir `build/` with binaries such as `caffeine-runtime`; the Rust Doppio binary is `doppio/target/<profile>/doppio` (built with `cargo build`). Doppio plugins are installed under a `plugins/` directory (project, user config, or `build/plugins/`) and enabled in the Plugin Manager. Override with `CAFFEINE_ENGINE_ROOT`.
+**Dev layout the launcher expects:** engine build dir `build/` with binaries such as
+`caffeine-runtime`; the Rust Doppio binary is `doppio/target/<profile>/doppio` (built with
+`cargo build`). Doppio plugins are installed under a `plugins/` directory (project, user
+config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
+`CAFFEINE_ENGINE_ROOT`.
 
 ## Documentation policy
 
-- **No general Markdown documentation** in the engine tree (no root `docs/**/*.md`, no planning RFCs here).
-- **Exception — Doppio only**: `doppio/docs/*.md` document the
-  IDE (architecture, plugin rules, roadmap). They must not duplicate core/engine docs.
+- **No general Markdown documentation** in the engine tree (no root `docs/**/*.md`, no
+  planning RFCs here).
+- **Exception — Doppio only**: `doppio/docs/*.md` document the IDE architecture, ids,
+  agent bridge, tests and roadmap. They must not duplicate core/engine docs.
   `doppio-archived/` is a frozen C++ snapshot and holds no live documentation.
-- **Specs, guides, plans and screenshots**: `caffeine-website/content/{en,pt}/docs/`; PDFs and books under `caffeine-website/tex/`.
-- **Screenshots**: generated by `scripts/capture_doppio_ui.py` from `caffeine-website/captures/shots.json`.
-- **Agents**: Use the **caffeine-docs MCP** from `caffeine-website` (`search_docs`, `get_doc`). Do not scrape removed paths from git history unless the user asks.
-- **README.md** at the repo root is only a short entrypoint with build commands and a link to the site submodule.
-- **Plugins** are documented in `doppio-plugins/docs/` and linked from the site; the engine tree contains no plugin sources.
+- **Generated UI reference**: `doppio/docs/ui-captions.json` is the source of English and
+  Portuguese widget descriptions. `scripts/generate-doppio-ui-docs.sh` captures every
+  catalogued widget and can publish the Markdown + images into
+  `caffeine-website/content/{en,pt}/docs/editor/ui-reference.md`.
+- **Specs, guides, plans and screenshots**: `caffeine-website/content/{en,pt}/docs/`;
+  PDFs and books under `caffeine-website/tex/`. Publish with `--publish`, then commit the
+  website submodule and bump its pointer in the engine.
+- **Agents**: Use the **caffeine-docs MCP** from `caffeine-website` (`search_docs`,
+  `get_doc`). Do not scrape removed paths from git history unless the user asks.
+- **README.md** at the repo root is only a short entrypoint with build commands and a link
+  to the site submodule.
+- **Plugins** are documented in `doppio-plugins/docs/` and linked from the site; the
+  engine tree contains no plugin sources.
 
 ## Implementation rules
 
-1. **C++20**, CMake 3.20+, SDL3 for the engine; **Rust 2021** + Iced for the Doppio
-   frontend — match the existing style in the file you edit.
+1. **C++20**, CMake 3.20+, SDL3 for the engine; **Rust 2021** + Iced 0.14 for Doppio —
+   match the existing style in the file you edit.
 2. **Minimal diffs** — one concern per change; no drive-by refactors.
-3. **Tests** — add or update tests under `tests/` when behavior changes; run `ctest` from the build dir.
-4. **Submodules** — after clone, run `./scripts/submodules.sh` (or `git submodule update --init --recursive`). See **Ecosystem submodules** above.
-5. **Editor vs runtime** — keep play-mode-only code out of editor-only paths unless shared APIs are intentional.
-6. **Scripting / native modules** — follow public headers in `include/caffeine/`; document API changes in the website repo, not here.
-7. **Commits** — only when the user requests; never commit secrets or local build artifacts.
+3. **Tests** — C++ behavior changes need a test under `tests/` (`ctest` from `build/`).
+   Rust UI changes need a test in `doppio/crates/ui/src/windows/main/tests.rs` (or the
+   engine crate); run `./scripts/check-rust-ui.sh`.
+4. **UI ids** — new interactive widgets need a `UiId` constant (or dynamic helper) plus a
+   `CATALOG` entry. Prefer a `Message` action over ad-hoc state changes.
+5. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
+   `doppio/crates/engine`, and both test suites in the same change. Version
+   `CAFFEINE_CAPI_VERSION` for breaking changes; keep structs POD.
+6. **FFI boundaries** — no `libloading`/`unsafe` FFI in `doppio/crates/ui`; only the engine
+   crate may load symbols. Do not put ImGui back into `caffeine-core`.
+7. **No C++ Doppio revival** — `src/doppio/` and `apps/doppio/` are gone. Use
+   `doppio-archived/` for behaviour reference only.
+8. **Agents** — commands that an agent should drive must be exposed as an MCP action
+   (`main/agent.rs`) returning a `Message`; queries must be read-only.
+9. **Submodules** — after clone, run `./scripts/submodules.sh`; see **Ecosystem submodules**.
+10. **Editor vs runtime** — keep play-mode-only code out of editor-only paths unless shared
+    APIs are intentional.
+11. **Scripting / native modules** — follow public headers in `include/caffeine/`; document
+    API changes in the website repo, not here.
+12. **Commits** — only when the user requests; never commit secrets or local build artifacts.
 
-## Build (quick)
+## Build and checks
 
 ```bash
 ./scripts/submodules.sh
@@ -114,9 +172,20 @@ The Rust Doppio loads `libcaffeine-capi`, so build the C ABI first:
 cmake --build build --target caffeine-capi -j
 cd doppio
 cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
-./scripts/check-rust-ui.sh   # fmt, tests, clippy, core coupling audit
 ```
 
-Cross-platform helpers: `scripts/build.sh`, `scripts/build.bat`, `scripts/build.fish`, `scripts/build-launcher.sh`.
+Checks and tooling:
 
-**caffeine-website:** `cd caffeine-website && npm install && npm run dev`. Publish doc changes there; bump the submodule pointer in the engine when pinning a new docs revision.
+```bash
+./scripts/check-rust-ui.sh                 # fmt, tests, clippy, core/ImGui audit
+./scripts/doppio-agent.sh                  # ICED_MCP=1 + agent feature
+./scripts/generate-doppio-ui-docs.sh       # UI reference images + Markdown
+./scripts/generate-doppio-ui-docs.sh --publish
+./scripts/check-doppio-visual.sh           # iced-mcp visual regression (skips without display)
+```
+
+Cross-platform helpers: `scripts/build.sh`, `scripts/build.bat`, `scripts/build.fish`,
+`scripts/build-launcher.sh`.
+
+**caffeine-website:** `cd caffeine-website && npm install && npm run dev`. Publish doc
+changes there; bump the submodule pointer in the engine when pinning a new docs revision.

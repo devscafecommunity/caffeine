@@ -12,9 +12,9 @@ pub fn view<'a, Message: Clone + 'a>(
     on_reset: Message,
 ) -> Element<'a, Message> {
     let viewport = match image {
-        Some(handle) => rendering_canvas::preview::<Message>("scene-viewport", handle),
+        Some(handle) => rendering_canvas::preview::<Message>(id::VIEWPORT_SURFACE, handle),
         None => rendering_canvas::placeholder::<Message>(
-            "scene-viewport",
+            id::VIEWPORT_SURFACE,
             "Waiting for the engine viewport...",
         ),
     };

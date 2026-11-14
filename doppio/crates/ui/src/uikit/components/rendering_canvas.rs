@@ -1,4 +1,4 @@
-use iced::widget::{container, text};
+use iced::widget::{container, text, Id};
 use iced::{ContentFit, Element, Length};
 
 /// Placeholder for the engine render texture.
@@ -7,7 +7,7 @@ use iced::{ContentFit, Element, Length};
 /// first, shared texture later). Keeping it as a component means every panel
 /// uses the same host and the same stable id.
 pub fn placeholder<'a, Message: 'a>(
-    id: impl Into<String>,
+    id: impl Into<Id>,
     label: impl Into<String>,
 ) -> Element<'a, Message> {
     container(text(label.into()))
@@ -20,7 +20,7 @@ pub fn placeholder<'a, Message: 'a>(
 
 /// Displays a frame produced by the engine readback path.
 pub fn preview<'a, Message: 'a>(
-    id: impl Into<String>,
+    id: impl Into<Id>,
     handle: iced::widget::image::Handle,
 ) -> Element<'a, Message> {
     let image = iced::widget::image(handle)
