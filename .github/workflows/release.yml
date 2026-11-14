@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: cmake --build build-core --config Release
 
-      # ── full: caffeine-core + doppio com SDL3 + ImGui ────────────────────
+      # ── full: caffeine-core + runtime + C ABI with SDL3 ──────────────────
       - name: Configure Full (com SDL3)
         shell: pwsh
         run: |
@@ -59,10 +59,15 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DSDL3_DIR="${{ env.SDL3_CMAKE_DIR }}"
 
-      - name: Build Full (target doppio)
+      - name: Build Full (runtime + C ABI)
         shell: pwsh
         run: |
-          cmake --build build-full --config Release --target doppio
+          cmake --build build-full --config Release --target caffeine-runtime caffeine-capi
+
+      - name: Build Rust Doppio
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path doppio/Cargo.toml -p doppio-ui
 
       # ── Package: core ─────────────────────────────────────────────────────
       - name: Package Core
@@ -92,15 +97,12 @@ jobs:
         run: |
           $tag = "${{ env.VERSION }}"
           $pkg = "doppio-$tag-windows"
-          New-Item -ItemType Directory -Force "$pkg\lib", "$pkg\include\editor", "$pkg\bin" | Out-Null
+          New-Item -ItemType Directory -Force "$pkg\include\caffeine", "$pkg\bin" | Out-Null
 
-          Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
-          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
+          Copy-Item "doppio\target\release\doppio.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\caffeine-capi.dll" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
-
-          Get-ChildItem "src\editor" -Filter "*.hpp" | ForEach-Object {
-            Copy-Item $_.FullName "$pkg\include\editor\"
-          }
+          Copy-Item "include\caffeine\capi" "$pkg\include\caffeine\" -Recurse
 
           Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
 
@@ -114,7 +116,9 @@ jobs:
 
           Copy-Item "build-full\Release\caffeine-core.lib" "$pkg\lib\"
           Copy-Item "build-core\Release\caf-encode.exe" "$pkg\bin\"
-          Copy-Item "build-full\Release\doppio.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\caffeine-runtime.exe" "$pkg\bin\"
+          Copy-Item "build-full\Release\caffeine-capi.dll" "$pkg\bin\"
+          Copy-Item "doppio\target\release\doppio.exe" "$pkg\bin\"
           Copy-Item "${{ env.SDL3_BIN }}\SDL3.dll" "$pkg\bin\"
 
           Get-ChildItem "src" -Recurse -Filter "*.hpp" | ForEach-Object {
@@ -145,8 +149,8 @@ jobs:
             | Arquivo | Descrição |
             |---------|-----------|
             | `caffeine-core-*-windows.zip` | Engine base: `caffeine-core.lib` (headless) + `caf-encode.exe` + headers públicos |
-            | `doppio-*-windows.zip` | IDE: `doppio.exe` + `caffeine-core.lib` (com SDL3) + headers do editor + `SDL3.dll` |
-            | `caffeine-bundle-*-windows.zip` | Bundle completa: `doppio.exe` + `caf-encode.exe` + `caffeine-core.lib` + todos os headers + `SDL3.dll` |
+            | `doppio-*-windows.zip` | IDE Rust/Iced: `doppio.exe` + `caffeine-capi.dll` + headers da C ABI + `SDL3.dll` |
+            | `caffeine-bundle-*-windows.zip` | Bundle completa: `doppio.exe` + `caffeine-runtime.exe` + `caf-encode.exe` + `caffeine-capi.dll` + `caffeine-core.lib` + headers + `SDL3.dll` |
 
             ---
 

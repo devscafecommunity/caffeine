@@ -182,6 +182,15 @@ fn default_library_path() -> PathBuf {
     if let Some(path) = std::env::var_os("CAFFEINE_CAPI_LIB") {
         return PathBuf::from(path);
     }
+    // Packaged builds ship the shared library next to the executable.
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            let candidate = directory.join(FILE);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

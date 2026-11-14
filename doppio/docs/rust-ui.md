@@ -1,10 +1,10 @@
-# Rust UI frontend (Iced) — investigation and PoC
+# Rust UI frontend (Iced)
 
-Status: **phase 0 started + PoC**. `caffeine-core` is now built without
-ImGui/ImNodes; the ImGui draw-list adapters live in `caffeine-editor-support`.
-The C++ editor still ships with ImGui. The Rust crate under `apps/doppio-rs/`
-is isolated from the CMake build and exists to validate the UI stack, the
-docking model and headless/agent testing.
+Status: **the active editor**. `caffeine-core` is built without ImGui/ImNodes;
+the ImGui draw-list adapters live in `caffeine-editor-support`. The Rust
+workspace under `doppio/` is the live Doppio frontend and talks to the engine
+through `libcaffeine-capi`. The old C++ editor is frozen in `doppio-archived/`
+and is no longer part of the CMake build.
 
 ## Why Iced
 
@@ -15,39 +15,39 @@ docking model and headless/agent testing.
 - `iced-mcp` (MIT, iced 0.14) exposes the running widget tree to agents over MCP:
   snapshots, clicks, typing, assertions, flows and `run-suite`.
 
-## Current PoC
-
-The `doppio/` workspace contains:
+## Workspace
 
 ```
 doppio/
-  crates/engine/        libloading bindings to libcaffeine-capi
+  crates/engine/            libloading bindings to libcaffeine-capi
   crates/ui/
-    src/windows/        main.rs, projectloader.rs
-    src/uikit/components/  button, slider, rendering_canvas, gizmo, asset_preview
-    src/uikit/panels/      hierarchy, sceneviewport, assetmanager, inspector, console
+    src/windows/            main.rs (app state + PaneGrid), projectloader.rs
+    src/uikit/components/   button, slider, rendering_canvas, gizmo, asset_preview
+    src/uikit/panels/       hierarchy, sceneviewport, assetmanager, inspector, console
 ```
 
 - App/UI state lives in `windows/main.rs`; panels and components are
   reusable library modules.
+- The UI crates never touch FFI directly: only `doppio-engine` loads the
+  shared library.
 - a five-pane `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
   Console);
 - stable widget ids for the toolbar, inspector inputs and entity rows;
-- six `iced_test` cases: add, play/pause, nudge X, nudge rotation, scale up and
-  rename;
+- seven `iced_test` cases: add, play/pause, nudge X, nudge rotation, scale up,
+  rename and orbit;
 - an optional `agent` feature that routes `main` through `iced_mcp::run`.
 
-The C++ boundary now has:
+The C++ boundary:
 
 - `caffeine-core`: engine only, no ImGui/ImNodes.
 - `caffeine-editor-support`: ImGui adapters for engine render helpers.
-- `doppio-ui-kit`: the element kit and editor host helpers.
+- `caffeine-capi`: the C ABI used by Rust (and any other external frontend).
 
 Run it with:
 
 ```bash
-cd apps/doppio-rs
-cargo run
+cd doppio
+cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 ```
 
 Run the checks used by CI/agents:
@@ -55,44 +55,30 @@ Run the checks used by CI/agents:
 ```bash
 ./scripts/check-rust-ui.sh
 # cargo fmt --check, cargo test, cargo check --features agent, clippy -D warnings
+# plus the caffeine-core ImGui coupling audit
 ```
 
-## Migration phases
+## Migration status
 
-### Phase 0 — separate engine from ImGui (prerequisite)
+### Engine / ImGui split — done
 
-Today `caffeine-core` links ImGui/ImNodes publicly and contains the ImGui UI
-kit, despite the CMake comment saying it is pure. Split the targets:
-
-- `caffeine-engine`: ECS, scene, assets, RHI, physics, audio, scripting. No
-  ImGui/ImNodes and no `include/caffeine/ui`.
-- `doppio-ui-kit` / editor: ImGui panels, workspace, plugins.
-- `caffeine-runtime`: no ImGui.
-
-Add a CI check that rejects ImGui includes/symbols in the engine target. Keep
-the ImGui editor building until the Rust frontend reaches feature parity.
-
-Measure the current coupling with:
-
-```bash
-python3 scripts/audit_core_ui_coupling.py
-# after the split:
-python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
-```
-
-Current baseline:
-- `caffeine-core` builds without ImGui/ImNodes and `nm` reports 0 ImGui/ImNodes
+- `caffeine-core` builds without ImGui/ImNodes; `nm` reports 0 ImGui/ImNodes
   symbols in `libcaffeine-core.a`.
 - `caffeine-editor-support` contains the engine ImGui adapters
   (`Overlay2D::draw`, `SkyboxRenderer`).
 - 18 UI-kit headers and 1 editor-UI header still reference ImGui; that is the
-  editor/UI side.
+  legacy SDK/editor side, not core.
 - `caffeine-runtime` is still an ImGui frontend and needs an RHI render path
   before it can be made UI-free.
 
-### Phase 1 — C ABI / data-oriented boundary
+Measure the coupling with:
 
-First slice implemented and tested:
+```bash
+python3 scripts/audit_core_ui_coupling.py
+python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
+```
+
+### C ABI / data-oriented boundary — first slice done
 
 - header: `include/caffeine/capi/EngineAPI.h`
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
@@ -100,10 +86,12 @@ First slice implemented and tested:
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
-- position get/set (setting creates a `Transform` when the entity has none);
+- position/rotation/scale get/set (setting a transform creates one when the
+  entity has none);
 - dirty state and `.caf` save; the Rust toolbar has Save + a dirty marker;
 - project asset listing (`set_asset_root`, `refresh_assets`, `asset_at`); the
   Rust Asset Manager shows real files and a file count;
+- camera get/set (`CaffeineCamera`), driven by the viewport toolbar;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
 - `libcaffeine-capi.so` shared library (CMake target `caffeine-capi`);
@@ -112,7 +100,7 @@ First slice implemented and tested:
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
 - 8 Rust tests: 1 engine bridge round-trip + 7 UI tests (`iced_test`).
 
-The PoC now loads a real scene through the ABI:
+The app loads a real scene through the ABI:
 
 ```bash
 cd doppio
@@ -122,20 +110,18 @@ cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 The hierarchy then shows the real C++ entities (Rock/Tree/...). Without the
 shared library it falls back to fake data, so UI tests do not depend on CMake.
 
-Still to add before the Rust UI can be fully wired:
+Still to add before the Rust UI is fully wired:
 
 - component schemas and field snapshots in POD arrays;
 - commands/undo/redo/play-pause and asset operations;
 - events (dirty state, selection, logs, asset changes);
-- Rust bindings crate and a shared-library build profile.
+- a project loader (open/create project) in the Rust UI.
 
 The existing `PluginHostApi` is a good function-table precedent. The existing
 `DOPPIO_TEST_MODE` JSON loop (`TestRequestHandler`) is a good engine-side test
 precedent.
 
-### Phase 2 — viewport
-
-The CPU-readback path is implemented and working:
+### Viewport — CPU readback done
 
 - `RenderDevice::initOffscreen()` creates a headless SDL_GPU device.
 - `caffeine_session_render()` renders with `GpuSceneRenderer::renderWithCamera`
@@ -144,10 +130,10 @@ The CPU-readback path is implemented and working:
 - `uikit/components/rendering_canvas.rs` displays the frame with Iced's image
   widget; the app refreshes it at 2 FPS via an `iced::time` subscription.
 - The camera (yaw, pitch, distance, focus) is stored in `CaffeineCamera` and
-  controlled from the viewport toolbar.
+  controlled from the viewport toolbar (Orbit -/+, Zoom +/-, Reset).
 - The current render size is 640x360.
 
-The viewport now shows the real C++ scene (terrain, rocks, sky) in Iced.
+The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
 
 Next viewport step is replacing readback with a shared GPU texture:
 
@@ -155,16 +141,17 @@ Next viewport step is replacing readback with a shared GPU texture:
 2. Vulkan external memory on Linux.
 3. Fallback: separate SDL3 viewport window while interop is unfinished.
 
-### Phase 3 — plugins
+### Plugins
 
-Current plugins are C++ and draw ImGui. A Rust UI needs one of:
+Plugins are C++ and draw ImGui. The Rust UI needs one of:
 
 - a legacy ImGui host window for old plugins; or
 - a plugin v2 contract (data/commands, optional process/WASM isolation).
 
-This is the largest hidden cost and should be designed before removing ImGui.
+This is the largest hidden cost and should be designed before removing ImGui
+from the runtime and the legacy SDK.
 
-### Phase 4 — tests and agents
+### Tests and agents
 
 - `iced_test` for component/layout logic and deterministic flows.
 - `iced-mcp` behind an optional feature for agent-driven E2E; pin the version.
@@ -173,7 +160,9 @@ This is the largest hidden cost and should be designed before removing ImGui.
 
 ## Rules
 
-- Keep the ImGui editor working until the Rust frontend covers the same panels.
+- Do not re-add the C++ editor to the live tree; use `doppio-archived/` as a
+  behaviour reference only.
 - Add widget ids for anything an agent must find.
 - Prefer snapshots/arrays over per-field FFI calls.
-- Do not put the Rust frontend in the CMake build until the C ABI exists.
+- Keep the Rust frontend out of the CMake build; `scripts/check-rust-ui.sh`
+  builds the C ABI first and then the workspace.

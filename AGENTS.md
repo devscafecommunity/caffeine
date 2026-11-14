@@ -6,12 +6,14 @@ Rules for humans and coding agents working in **this repository** (the C++ engin
 
 | Path | Purpose |
 |------|---------|
-| `src/caffeine/` | **Caffeine core**: runtime, render, RHI, ECS, assets, physics, scripting |
-| `src/doppio/` | **Doppio IDE only**: `editor/` (panels, workspace) and `ui_kit/` (ImGui kit) |
-| `src/caffeine/project`, `src/caffeine/scene` | Core services used by both runtime and IDE (project metadata, view context, scene I/O) |
-| `apps/` | Executables (`doppio`, `caffeine-runtime`, `caffeine-combined`, `build-smoke`) |
-| `include/` | Public C++ headers shipped to games/tools |
-| `tests/` | GTest suites |
+| `src/caffeine/` | **Caffeine core**: runtime, render, RHI, ECS, assets, physics, scripting, C ABI |
+| `src/caffeine/capi/`, `include/caffeine/capi/` | **C ABI** consumed by external frontends (the Rust Doppio) |
+| `src/caffeine/project`, `src/caffeine/scene` | Core services used by both runtime and frontend (project metadata, view context, scene I/O) |
+| `doppio/` | **Rust/Iced Doppio frontend** (`crates/engine` FFI bridge, `crates/ui` components/panels/windows) |
+| `doppio-archived/` | Frozen C++ Doppio snapshot; reference only, not built |
+| `apps/` | Executables (`caffeine-runtime`, `caffeine-combined`) |
+| `include/` | Public C++ headers shipped to games/tools/plugins |
+| `tests/` | Catch2 suites |
 | `cmake/` | CMake modules |
 | `assets/` | Sample content (no `node_modules` in git) |
 | `caf-pack/` | Asset packer CLI + `.caf` / `.cap` pipeline (submodule) |
@@ -22,7 +24,7 @@ Rules for humans and coding agents working in **this repository** (the C++ engin
 | `scripts/build-plugins.sh` | Build `doppio-plugins` standalone (the engine build already does it by default) |
 
 Do not add a root `docs/`, `planning/`, or `.planning/` back to this repo.
-Doppio-specific architecture/plugin/roadmap notes live in `apps/doppio/docs/` (see the
+Doppio-specific architecture/plugin/roadmap notes live in `doppio/docs/` (see the
 documentation policy below).
 
 ## Layering
@@ -34,18 +36,23 @@ Vulkan / D3D12 / Metal
         ↓
   caffeine-core  (src/, include/caffeine/)   ← no ImGui, no panels, no IDE state
         ↓
-     doppio      (apps/doppio, src/doppio/)  ← ImGui IDE + doppio-ui-kit
+   libcaffeine-capi  (C ABI)                 ← stable boundary for any frontend
         ↓
-    plugins      (doppio-plugins submodule)  ← tools that call core APIs only
+  doppio  (Rust/Iced: doppio/crates/)        ← FFI bridge + components/panels/windows
+        ↓
+    plugins      (doppio-plugins submodule)  ← C++/ImGui tools that call core APIs only
 ```
 
-- **Core must not include `src/doppio/`.** If a core service needs a view/serialization
+- **Core must not include frontend code.** If a core service needs a view/serialization
   context, keep it under `src/caffeine/scene`, `src/caffeine/project` or another core module.
-- **The IDE must be replaceable.** A different front-end can consume `caffeine-core`
-  without `src/doppio/`.
+- **The IDE must be replaceable.** Any frontend can consume the engine through
+  `include/caffeine/capi/EngineAPI.h`; the Rust UI crates never call FFI directly,
+  only `doppio/crates/engine` does.
 - **Plugins extend Doppio but are optional**: everything they expose must remain possible
   through the core/IDE APIs without the plugin. A plugin must not be required to load or
   run a scene.
+- **`caffeine-runtime` is still an ImGui host** (and the legacy plugin SDK headers in
+  `include/caffeine/ui/` still use ImGui); that is frontend/plugin code, not core.
 
 ## Ecosystem submodules
 
@@ -53,8 +60,8 @@ All sibling repos live under [devscafecommunity](https://github.com/devscafecomm
 
 | Path | Repository | Role | Built from engine CMake? | Launcher `AppId` |
 |------|------------|------|--------------------------|------------------|
-| *(this repo)* | `caffeine` | C++ engine, **Doppio** editor (`apps/doppio`), runtime, tests | yes (`doppio`, `caffeine-runtime`, …) | `doppio`, `runtime` |
-| `caf-pack/` | [caf-pack](https://github.com/devscafecommunity/caf-pack) | Raw assets → `.caf`, pack `.cap`; shared `CafTypes` with engine | linked into `doppio` when submodule present | — |
+| *(this repo)* | `caffeine` | C++ engine, **Doppio** editor (`doppio/`, Rust/Iced), `libcaffeine-capi`, runtime, tests | yes (`caffeine-runtime`, `caffeine-capi`, …); Rust UI via `cargo` | `doppio`, `runtime` |
+| `caf-pack/` | [caf-pack](https://github.com/devscafecommunity/caf-pack) | Raw assets → `.caf`, pack `.cap`; shared `CafTypes` with engine | linked into `CaffeineTest`/tools when submodule present | — |
 | `caffeine-website/` | [caffeine-website](https://github.com/devscafecommunity/caffeine-website) | Public docs, i18n site, PDFs, **caffeine-docs** MCP | no (Node/npm) | — |
 | `caffeine-launcher/` | [caffeine-launcher](https://github.com/devscafecommunity/caffeine-launcher) | Hub UI; discovers `build/doppio`, `~/.local/share/caffeine/apps/` | `cargo build` / `scripts/build-launcher.sh` | hosts all apps |
 | `doppio-plugins/` | [doppio-plugins](https://github.com/devscafecommunity/doppio-plugins) | Official/community Doppio plugins (terrain, procedural, git, post-processing, AI, VC&M) | yes, by default (`CAFFEINE_BUILD_DOPPIO_PLUGINS=ON`) into `build/plugins`; loading is opt-in | — |
@@ -67,13 +74,14 @@ git clone --recurse-submodules git@github.com:devscafecommunity/caffeine.git
 ./scripts/submodules.sh
 ```
 
-**Dev layout the launcher expects:** engine build dir `build/` with binaries such as `doppio` and `caffeine-runtime`; Doppio plugins installed under a `plugins/` directory (project, user config, or `build/plugins/`) and enabled in the Plugin Manager. Override with `CAFFEINE_ENGINE_ROOT`.
+**Dev layout the launcher expects:** engine build dir `build/` with binaries such as `caffeine-runtime`; the Rust Doppio binary is `doppio/target/<profile>/doppio` (built with `cargo build`). Doppio plugins are installed under a `plugins/` directory (project, user config, or `build/plugins/`) and enabled in the Plugin Manager. Override with `CAFFEINE_ENGINE_ROOT`.
 
 ## Documentation policy
 
 - **No general Markdown documentation** in the engine tree (no root `docs/**/*.md`, no planning RFCs here).
-- **Exception — Doppio only**: `apps/doppio/README.md` and `apps/doppio/docs/*.md` document the
+- **Exception — Doppio only**: `doppio/docs/*.md` document the
   IDE (architecture, plugin rules, roadmap). They must not duplicate core/engine docs.
+  `doppio-archived/` is a frozen C++ snapshot and holds no live documentation.
 - **Specs, guides, plans and screenshots**: `caffeine-website/content/{en,pt}/docs/`; PDFs and books under `caffeine-website/tex/`.
 - **Screenshots**: generated by `scripts/capture_doppio_ui.py` from `caffeine-website/captures/shots.json`.
 - **Agents**: Use the **caffeine-docs MCP** from `caffeine-website` (`search_docs`, `get_doc`). Do not scrape removed paths from git history unless the user asks.
@@ -82,7 +90,8 @@ git clone --recurse-submodules git@github.com:devscafecommunity/caffeine.git
 
 ## Implementation rules
 
-1. **C++20**, CMake 3.20+, SDL3 — match existing style in the file you edit.
+1. **C++20**, CMake 3.20+, SDL3 for the engine; **Rust 2021** + Iced for the Doppio
+   frontend — match the existing style in the file you edit.
 2. **Minimal diffs** — one concern per change; no drive-by refactors.
 3. **Tests** — add or update tests under `tests/` when behavior changes; run `ctest` from the build dir.
 4. **Submodules** — after clone, run `./scripts/submodules.sh` (or `git submodule update --init --recursive`). See **Ecosystem submodules** above.
@@ -97,6 +106,15 @@ git clone --recurse-submodules git@github.com:devscafecommunity/caffeine.git
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 cd build && ctest --output-on-failure
+```
+
+The Rust Doppio loads `libcaffeine-capi`, so build the C ABI first:
+
+```bash
+cmake --build build --target caffeine-capi -j
+cd doppio
+cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
+./scripts/check-rust-ui.sh   # fmt, tests, clippy, core coupling audit
 ```
 
 Cross-platform helpers: `scripts/build.sh`, `scripts/build.bat`, `scripts/build.fish`, `scripts/build-launcher.sh`.
