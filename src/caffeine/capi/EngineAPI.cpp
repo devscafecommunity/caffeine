@@ -359,6 +359,43 @@ int caffeine_session_is_dirty(const CaffeineSession* session) {
     return session && session->context.isDirty ? 1 : 0;
 }
 
+CaffeineResult caffeine_session_snapshot(const CaffeineSession* session, uint8_t** out_data,
+                                          size_t* out_size, int* out_dirty) {
+    if (!session || !out_data || !out_size) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Editor::SceneSerializer serializer(
+        const_cast<Caffeine::ECS::World&>(session->world));
+    std::vector<Caffeine::u8> buffer;
+    if (!serializer.serializeToMemory(buffer, session->scenePath)) return CAFFEINE_ERROR;
+
+    uint8_t* copy = nullptr;
+    if (!buffer.empty()) {
+        copy = new (std::nothrow) uint8_t[buffer.size()];
+        if (!copy) return CAFFEINE_ERROR;
+        std::memcpy(copy, buffer.data(), buffer.size());
+    }
+    *out_data = copy;
+    *out_size = buffer.size();
+    if (out_dirty) *out_dirty = session->context.isDirty ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+void caffeine_session_free(void* data) {
+    delete[] static_cast<uint8_t*>(data);
+}
+
+CaffeineResult caffeine_session_restore(CaffeineSession* session, const uint8_t* data,
+                                         size_t size, int dirty) {
+    if (!session || (!data && size > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Editor::SceneSerializer serializer(session->world);
+    std::vector<Caffeine::u8> buffer;
+    if (size > 0) buffer.assign(data, data + size);
+    if (!serializer.deserializeFromMemory(buffer, session->scenePath)) return CAFFEINE_ERROR;
+    session->context.isDirty = dirty != 0;
+    session->context.selectEntity(Caffeine::ECS::Entity::INVALID);
+    session->cameraInitialized = false;
+    return CAFFEINE_OK;
+}
+
 CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path) {
     if (!session || !path || path[0] == '\0') return CAFFEINE_INVALID_ARGUMENT;
     Caffeine::Editor::SceneSerializer serializer(session->world);

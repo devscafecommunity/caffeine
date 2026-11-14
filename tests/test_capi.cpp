@@ -157,6 +157,57 @@ TEST_CASE("C API lists project assets", "[capi]") {
     std::filesystem::remove_all(root, ec);
 }
 
+TEST_CASE("C API snapshots restore the scene", "[capi]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+
+    const CaffeineEntity first = caffeine_session_create_entity(session, "First");
+    const CaffeineEntity second = caffeine_session_create_entity(session, "Second");
+    REQUIRE(first != CAFFEINE_ENTITY_NONE);
+    REQUIRE(second != CAFFEINE_ENTITY_NONE);
+    REQUIRE(caffeine_session_set_entity_position(session, first, {1.0f, 2.0f, 3.0f}) ==
+            CAFFEINE_OK);
+
+    uint8_t* snapshot = nullptr;
+    size_t snapshotSize = 0;
+    int dirty = 0;
+    REQUIRE(caffeine_session_snapshot(session, &snapshot, &snapshotSize, &dirty) ==
+            CAFFEINE_OK);
+    REQUIRE(snapshot != nullptr);
+    REQUIRE(snapshotSize > 0);
+
+    const CaffeineEntity third = caffeine_session_create_entity(session, "Third");
+    REQUIRE(third != CAFFEINE_ENTITY_NONE);
+    REQUIRE(caffeine_session_destroy_entity(session, second) == CAFFEINE_OK);
+
+    REQUIRE(caffeine_session_restore(session, snapshot, snapshotSize, dirty) == CAFFEINE_OK);
+    caffeine_session_free(snapshot);
+    REQUIRE(caffeine_session_entity_count(session) == 2);
+
+    bool foundFirst = false;
+    bool foundSecond = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(session); ++i) {
+        CaffeineEntityInfo info{};
+        REQUIRE(caffeine_session_entity_at(session, i, &info) == CAFFEINE_OK);
+        if (std::strcmp(info.name, "First") == 0) {
+            foundFirst = true;
+            CaffeineVec3 position{};
+            REQUIRE(caffeine_session_entity_position(session, info.id, &position) ==
+                    CAFFEINE_OK);
+            CHECK(position.x == 1.0f);
+            CHECK(position.y == 2.0f);
+            CHECK(position.z == 3.0f);
+        }
+        if (std::strcmp(info.name, "Second") == 0) {
+            foundSecond = true;
+        }
+    }
+    CHECK(foundFirst);
+    CHECK(foundSecond);
+
+    caffeine_session_destroy(session);
+}
+
 TEST_CASE("C API scene load reports missing files", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
     REQUIRE(session != nullptr);

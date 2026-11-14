@@ -26,10 +26,21 @@ pub fn run() -> iced::Result {
             Ok(scene_json(app))
         })
         .query(
+            "history",
+            "Undo/redo timeline: steps, current cursor, availability and size.",
+            |app, _| Ok(history_json(app)),
+        )
+        .query(
             "ui_catalog",
             "Documented widget ids as group/subgroup/object, with kind and description.",
             |_, _| Ok(catalog_json()),
         )
+        .action("undo", "Reverts the last editor step. No args.", |_| {
+            Ok(Message::Undo)
+        })
+        .action("redo", "Reapplies the last undone editor step. No args.", |_| {
+            Ok(Message::Redo)
+        })
         .action(
             "add_entity",
             "Adds an entity. args: { \"name\": string? }",
@@ -99,6 +110,33 @@ pub fn run() -> iced::Result {
             Ok(app)
         })
         .run()
+}
+
+fn history_json(app: &App) -> Value {
+    let cursor = app.history.cursor();
+    let steps: Vec<Value> = app
+        .history
+        .steps()
+        .iter()
+        .enumerate()
+        .map(|(index, step)| {
+            json!({
+                "step": index + 1,
+                "name": step.name,
+                "current": index + 1 == cursor,
+                "undone": index + 1 > cursor,
+            })
+        })
+        .collect();
+    json!({
+        "cursor": cursor,
+        "steps": steps,
+        "can_undo": app.history.can_undo(),
+        "can_redo": app.history.can_redo(),
+        "undo_name": app.history.undo_name(),
+        "redo_name": app.history.redo_name(),
+        "bytes": app.history.bytes(),
+    })
 }
 
 fn catalog_json() -> Value {

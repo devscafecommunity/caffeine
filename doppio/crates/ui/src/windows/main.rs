@@ -1,3 +1,4 @@
+use crate::history::{self, History};
 use crate::uikit::components::button;
 use crate::uikit::id;
 use crate::uikit::panels;
@@ -57,6 +58,8 @@ enum Message {
     ZoomIn,
     ZoomOut,
     ResetCamera,
+    Undo,
+    Redo,
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     CloseScene,
     Log,
@@ -76,6 +79,7 @@ struct App {
     viewport_pixels: Vec<u8>,
     viewport_pending: bool,
     camera: doppio_engine::Camera,
+    history: History,
 }
 
 impl App {
@@ -139,7 +143,7 @@ impl App {
             .and_then(|engine| engine.camera().ok())
             .unwrap_or_default();
 
-        Self {
+        let mut app = Self {
             panes,
             engine: loaded.engine,
             entities: loaded.entities,
@@ -153,6 +157,77 @@ impl App {
             viewport_pixels: vec![0; (VIEWPORT_WIDTH * VIEWPORT_HEIGHT * 4) as usize],
             viewport_pending: false,
             camera,
+            history: History::new(history::State::new(Vec::new(), None, false)),
+        };
+        let initial = app.capture_state();
+        app.history = History::new(initial);
+        app
+    }
+
+    fn capture_state(&self) -> history::State {
+        let mut state = history::State::new(self.entities.clone(), None, false);
+        state.selected = self.selected;
+        if let Some(engine) = self.engine.as_ref() {
+            if let Ok(snapshot) = engine.snapshot() {
+                state.engine = Some(snapshot.data);
+                state.dirty = snapshot.dirty;
+            }
+        }
+        state
+    }
+
+    /// Records the current editor state as one undo step.
+    fn commit(&mut self, name: impl Into<String>, key: Option<String>) {
+        let after = self.capture_state();
+        self.history.push(after, name, key);
+    }
+
+    fn amend_selection(&mut self) {
+        let selected = self.selected;
+        self.history
+            .amend_current(|state| state.selected = selected);
+    }
+
+    fn apply_history_state(&mut self, state: history::State) {
+        if let (Some(engine), Some(data)) = (self.engine.as_mut(), state.engine.as_ref()) {
+            let snapshot = doppio_engine::Snapshot {
+                data: data.clone(),
+                dirty: state.dirty,
+            };
+            if engine.restore(&snapshot).is_ok() {
+                self.entities = projectloader::read_entities(engine);
+            } else {
+                self.entities = state.entities.clone();
+            }
+            self.viewport_pending = false;
+        } else {
+            self.entities = state.entities.clone();
+        }
+
+        self.selected = state.selected.min(self.entities.len().saturating_sub(1));
+        self.name_input = self
+            .entities
+            .get(self.selected)
+            .map(|entity| entity.name.clone())
+            .unwrap_or_default();
+        if let (Some(engine), Some(entity)) =
+            (self.engine.as_mut(), self.entities.get(self.selected))
+        {
+            let _ = engine.select_entity(entity.id);
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some((name, state)) = self.history.undo() {
+            self.apply_history_state(state);
+            self.log.push(format!("Undo {name}"));
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some((name, state)) = self.history.redo() {
+            self.apply_history_state(state);
+            self.log.push(format!("Redo {name}"));
         }
     }
 
@@ -168,6 +243,7 @@ impl App {
             }
             self.log.push(format!("Selected {}", entity.name));
         }
+        self.amend_selection();
     }
 
     fn add_entity_named(&mut self, name: String) {
@@ -202,7 +278,34 @@ impl App {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::ViewportTick)
+        iced::Subscription::batch([
+            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::ViewportTick),
+            iced::keyboard::listen().filter_map(|event| {
+                let iced::keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
+                    return None;
+                };
+                if !modifiers.control() {
+                    return None;
+                }
+                match key.as_ref() {
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("z") =>
+                    {
+                        Some(if modifiers.shift() {
+                            Message::Redo
+                        } else {
+                            Message::Undo
+                        })
+                    }
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("y") =>
+                    {
+                        Some(Message::Redo)
+                    }
+                    _ => None,
+                }
+            }),
+        ])
     }
 
     fn request_viewport(&mut self) {
@@ -285,6 +388,9 @@ impl App {
                         }
                     }
                 }
+                let name = format!("Rename {}", self.name_input);
+                let key = Some(format!("rename:{}", self.selected));
+                self.commit(name, key);
             }
             Message::TogglePlay => {
                 self.playing = !self.playing;
@@ -303,10 +409,12 @@ impl App {
             }
             Message::AddEntity => {
                 let name = format!("Entity {}", self.entities.len() + 1);
-                self.add_entity_named(name);
+                self.add_entity_named(name.clone());
+                self.commit(format!("Add {name}"), None);
             }
             Message::AddEntityNamed(name) => {
-                self.add_entity_named(name);
+                self.add_entity_named(name.clone());
+                self.commit(format!("Add {name}"), None);
             }
             Message::SelectEntityByName(name) => {
                 if let Some(index) = self.entities.iter().position(|entity| entity.name == name) {
@@ -336,6 +444,7 @@ impl App {
                     .map(|entity| entity.name.clone())
                     .unwrap_or_default();
                 self.log.push(format!("Deleted {}", entity.name));
+                self.commit(format!("Delete {}", entity.name), None);
             }
             Message::NudgeX => {
                 if let Some(entity) = self.entities.get_mut(self.selected) {
@@ -348,8 +457,9 @@ impl App {
                         }
                     }
                     entity.position = position;
-                    self.log
-                        .push(format!("Moved {} to x={:.2}", entity.name, position[0]));
+                    let name = format!("Move {} to x={:.2}", entity.name, position[0]);
+                    self.log.push(name.clone());
+                    self.commit(name, None);
                 }
             }
             Message::NudgeRotationY => {
@@ -363,8 +473,9 @@ impl App {
                         }
                     }
                     entity.rotation = rotation;
-                    self.log
-                        .push(format!("Rotated {} to y={:.2}", entity.name, rotation[1]));
+                    let name = format!("Rotate {} to y={:.2}", entity.name, rotation[1]);
+                    self.log.push(name.clone());
+                    self.commit(name, None);
                 }
             }
             Message::ScaleUp => {
@@ -378,15 +489,19 @@ impl App {
                         }
                     }
                     entity.scale = scale;
-                    self.log
-                        .push(format!("Scaled {} to x={:.2}", entity.name, scale[0]));
+                    let name = format!("Scale {} to x={:.2}", entity.name, scale[0]);
+                    self.log.push(name.clone());
+                    self.commit(name, None);
                 }
             }
             Message::SaveScene => {
                 if let Some(engine) = self.engine.as_mut() {
                     match engine.scene_path() {
                         Some(path) => match engine.save_scene(&path) {
-                            Ok(()) => self.log.push(format!("Saved {path}")),
+                            Ok(()) => {
+                                self.log.push(format!("Saved {path}"));
+                                self.history.amend_current(|state| state.dirty = false);
+                            }
                             Err(_) => self.log.push(format!("Could not save {path}")),
                         },
                         None => self.log.push("No scene path to save".to_owned()),
@@ -421,6 +536,12 @@ impl App {
                 self.camera = doppio_engine::Camera::default();
                 self.apply_camera();
             }
+            Message::Undo => {
+                self.undo();
+            }
+            Message::Redo => {
+                self.redo();
+            }
             Message::CloseScene => {
                 self.engine = None;
                 self.entities.clear();
@@ -440,6 +561,8 @@ impl App {
         let toolbar = row![
             text("Doppio").size(20),
             space::horizontal(),
+            button::toolbar(id::UNDO, "Undo", Message::Undo),
+            button::toolbar(id::REDO, "Redo", Message::Redo),
             button::toolbar(
                 id::TOGGLE_PLAY,
                 if self.playing { "Pause" } else { "Play" },

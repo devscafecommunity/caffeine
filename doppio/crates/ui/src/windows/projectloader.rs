@@ -8,6 +8,23 @@ pub struct LoadedProject {
     pub log: Vec<String>,
 }
 
+/// Mirror the engine hierarchy into plain UI views.
+pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
+    let mut entities = Vec::new();
+    for index in 0..engine.entity_count() {
+        if let Ok(info) = engine.entity_at(index) {
+            entities.push(EntityView {
+                id: info.id,
+                name: info.name,
+                position: engine.position(info.id).unwrap_or([0.0; 3]),
+                rotation: engine.rotation(info.id).unwrap_or([0.0; 3]),
+                scale: engine.scale(info.id).unwrap_or([1.0; 3]),
+            });
+        }
+    }
+    entities
+}
+
 /// Load the optional `.caf` scene from the first CLI argument and mirror the
 /// engine hierarchy into UI-side views. Falls back to fixtures when the C ABI
 /// library has not been built.
@@ -57,18 +74,7 @@ pub fn load_from_args() -> LoadedProject {
     };
 
     if scene_loaded {
-        let count = engine_ref.entity_count();
-        for index in 0..count {
-            if let Ok(info) = engine_ref.entity_at(index) {
-                entities.push(EntityView {
-                    id: info.id,
-                    name: info.name,
-                    position: engine_ref.position(info.id).unwrap_or([0.0; 3]),
-                    rotation: engine_ref.rotation(info.id).unwrap_or([0.0; 3]),
-                    scale: engine_ref.scale(info.id).unwrap_or([1.0; 3]),
-                });
-            }
-        }
+        entities = read_entities(engine_ref);
     } else {
         for name in ["Entity 1", "Entity 2"] {
             if let Ok(id) = engine_ref.create_entity(name) {

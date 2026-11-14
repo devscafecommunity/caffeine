@@ -54,6 +54,12 @@ pub struct AssetInfo {
     pub is_directory: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub data: Vec<u8>,
+    pub dirty: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderState {
     Idle,
@@ -131,6 +137,9 @@ type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
 type RenderBeginFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type RenderPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
+type SnapshotFn = unsafe extern "C" fn(*const c_void, *mut *mut u8, *mut usize, *mut i32) -> i32;
+type FreeBytesFn = unsafe extern "C" fn(*mut c_void);
+type RestoreFn = unsafe extern "C" fn(*mut c_void, *const u8, usize, i32) -> i32;
 type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
 type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
 type SetAssetRootFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
@@ -163,6 +172,9 @@ struct Functions {
     render: RenderFn,
     render_begin: RenderBeginFn,
     render_poll: RenderPollFn,
+    snapshot: SnapshotFn,
+    free_bytes: FreeBytesFn,
+    restore: RestoreFn,
     set_camera: SetCameraFn,
     get_camera: GetCameraFn,
     set_asset_root: SetAssetRootFn,
@@ -262,6 +274,9 @@ impl Engine {
             render: unsafe { load_symbol(library, b"caffeine_session_render\0") }?,
             render_begin: unsafe { load_symbol(library, b"caffeine_session_render_begin\0") }?,
             render_poll: unsafe { load_symbol(library, b"caffeine_session_render_poll\0") }?,
+            snapshot: unsafe { load_symbol(library, b"caffeine_session_snapshot\0") }?,
+            free_bytes: unsafe { load_symbol(library, b"caffeine_session_free\0") }?,
+            restore: unsafe { load_symbol(library, b"caffeine_session_restore\0") }?,
             set_camera: unsafe { load_symbol(library, b"caffeine_session_set_camera\0") }?,
             get_camera: unsafe { load_symbol(library, b"caffeine_session_get_camera\0") }?,
             set_asset_root: unsafe { load_symbol(library, b"caffeine_session_set_asset_root\0") }?,
@@ -276,6 +291,38 @@ impl Engine {
             return None;
         }
         Some(Self { session, functions })
+    }
+
+    pub fn snapshot(&self) -> EngineResult<Snapshot> {
+        let mut data: *mut u8 = std::ptr::null_mut();
+        let mut size = 0usize;
+        let mut dirty = 0i32;
+        result(unsafe {
+            (self.functions.snapshot)(self.session, &mut data, &mut size, &mut dirty)
+        })?;
+        let bytes = if data.is_null() || size == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(data, size) }.to_vec()
+        };
+        if !data.is_null() {
+            unsafe { (self.functions.free_bytes)(data.cast()) };
+        }
+        Ok(Snapshot {
+            data: bytes,
+            dirty: dirty != 0,
+        })
+    }
+
+    pub fn restore(&mut self, snapshot: &Snapshot) -> EngineResult<()> {
+        result(unsafe {
+            (self.functions.restore)(
+                self.session,
+                snapshot.data.as_ptr(),
+                snapshot.data.len(),
+                i32::from(snapshot.dirty),
+            )
+        })
     }
 
     pub fn load_scene(&mut self, path: &str) -> EngineResult<()> {
@@ -607,6 +654,24 @@ mod tests {
         if let Ok(pixels) = engine.render(320, 180) {
             assert_eq!(pixels.len(), 320 * 180 * 4);
         }
+
+        let snapshot = engine.snapshot().expect("snapshot");
+        let count_before_restore = engine.entity_count();
+        engine.set_entity_name(enemy, "Changed").unwrap();
+        engine.create_entity("Temporary").unwrap();
+        engine.restore(&snapshot).expect("restore");
+        assert_eq!(engine.entity_count(), count_before_restore);
+        assert!(engine
+            .entity_at(0)
+            .map(|info| info.name != "Temporary")
+            .unwrap_or(true));
+        let enemy_after_restore = engine
+            .entity_count()
+            .gt(&0)
+            .then(|| engine.entity_at(0).unwrap().name)
+            .unwrap();
+        assert_ne!(enemy_after_restore, "Temporary");
+        let _ = enemy;
 
         let mut async_pixels = vec![0u8; 160 * 90 * 4];
         if engine.render_begin(160, 90).is_ok() {

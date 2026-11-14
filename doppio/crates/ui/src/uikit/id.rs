@@ -83,6 +83,8 @@ pub struct UiMeta {
 }
 
 // ── Editor chrome ─────────────────────────────────────────────────────────
+pub const UNDO: UiId = UiId::fixed("editor.toolbar.undo");
+pub const REDO: UiId = UiId::fixed("editor.toolbar.redo");
 pub const ADD_ENTITY: UiId = UiId::fixed("editor.toolbar.add_entity");
 pub const TOGGLE_PLAY: UiId = UiId::fixed("editor.toolbar.toggle_play");
 pub const SAVE_SCENE: UiId = UiId::fixed("editor.toolbar.save");
@@ -123,6 +125,16 @@ pub fn asset_card(index: usize) -> UiId {
 
 /// The statically documented part of the UI tree.
 pub const CATALOG: &[UiMeta] = &[
+    UiMeta {
+        id: UNDO,
+        description: "Reverts the last editor step.",
+        kind: "button",
+    },
+    UiMeta {
+        id: REDO,
+        description: "Reapplies the last undone editor step.",
+        kind: "button",
+    },
     UiMeta {
         id: ADD_ENTITY,
         description: "Adds an entity to the current scene.",

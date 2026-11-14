@@ -16,6 +16,15 @@ local selection = app:query("selection")
 assert(selection ~= nil, "selection query returned nothing")
 assert(selection.name == "Boss", "rename failed, got " .. tostring(selection.name))
 
+-- Undo/redo through the agent actions and the history query.
+app:run_app_action("undo")
+local undone = app:query("selection")
+assert(undone.name ~= "Boss", "undo should revert the rename")
+local history = app:query("history")
+assert(history.can_redo == true, "undo should leave a redo step")
+app:run_app_action("redo")
+assert(app:query("selection").name == "Boss", "redo should reapply the rename")
+
 -- Add an entity and move it through the scene-level action.
 app:run_app_action("add_entity", { name = "Rock" })
 app:wait_for({ text = "Rock", exact = false })
@@ -51,6 +60,7 @@ local messages = app:messages({ limit = 5 })
 assert(#messages > 0, "the bridge should log the app messages")
 
 return {
+  history_steps = #app:query("history").steps,
   entities = #entities,
   selected = selection.name,
   camera_distance = 20,

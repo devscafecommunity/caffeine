@@ -139,8 +139,9 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 3. **Tests** — C++ behavior changes need a test under `tests/` (`ctest` from `build/`).
    Rust UI changes need a test in `doppio/crates/ui/src/windows/main/tests.rs` (or the
    engine crate); run `./scripts/check-rust-ui.sh`.
-4. **UI ids** — new interactive widgets need a `UiId` constant (or dynamic helper) plus a
-   `CATALOG` entry. Prefer a `Message` action over ad-hoc state changes.
+4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic
+   helper) plus a `CATALOG` entry. Every editing command must record an undo step
+   (`App::commit`) and expose any agent-facing command as a `Message` action.
 5. **C ABI changes** — update `include/caffeine/capi/EngineAPI.h`, the C++ implementation,
    `doppio/crates/engine`, and both test suites in the same change. Version
    `CAFFEINE_CAPI_VERSION` for breaking changes; keep structs POD.

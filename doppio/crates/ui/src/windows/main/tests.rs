@@ -67,6 +67,13 @@ impl Harness {
         &self.app
     }
 
+    /// Starts a fresh undo timeline after fixture setup, so a test can undo
+    /// only the edits it makes itself.
+    pub fn rebase_history(&mut self) {
+        let initial = self.app.capture_state();
+        self.app.history = crate::history::History::new(initial);
+    }
+
     pub fn dispatch(&mut self, message: Message) {
         self.app.update(message);
     }
@@ -458,6 +465,8 @@ fn empty_editor_has_no_entities() {
 fn every_pane_and_toolbar_button_is_addressable() {
     let harness = Harness::with_entities();
     for target in [
+        id::UNDO,
+        id::REDO,
         id::ADD_ENTITY,
         id::TOGGLE_PLAY,
         id::PANE_HIERARCHY,
@@ -601,6 +610,128 @@ fn select_by_name_and_add_named_entity() {
             .any(|line| line.contains("Missing")),
         "unknown names should be reported in the console"
     );
+}
+
+#[test]
+fn undo_redo_covers_add_and_delete() {
+    let mut harness = Harness::empty();
+    harness.rebase_history();
+
+    harness.click(id::ADD_ENTITY);
+    harness.click(id::ADD_ENTITY);
+    assert_eq!(harness.app().entities.len(), 2);
+    assert_eq!(harness.app().history.len(), 2);
+
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities.len(), 1);
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities.len(), 0);
+
+    harness.dispatch(Message::Redo);
+    assert_eq!(harness.app().entities.len(), 1);
+    harness.dispatch(Message::Redo);
+    assert_eq!(harness.app().entities.len(), 2);
+}
+
+#[test]
+fn engine_undo_restores_the_scene_snapshot() {
+    let Some(mut engine) = doppio_engine::Engine::load_default() else {
+        eprintln!("skipping engine undo test: libcaffeine-capi is not built");
+        return;
+    };
+    let first = engine.create_entity("First").expect("first entity");
+    engine
+        .set_position(first, [2.0, 0.0, 0.0])
+        .expect("position");
+    engine.create_entity("Second").expect("second entity");
+    let entities = projectloader::read_entities(&engine);
+    let loaded = projectloader::LoadedProject {
+        engine: Some(engine),
+        entities,
+        assets: Vec::new(),
+        log: Vec::new(),
+    };
+
+    let mut harness = Harness {
+        app: App::with_project(loaded),
+        _guard: test_guard(),
+    };
+    harness.rebase_history();
+    harness.dispatch(Message::SelectEntity(0));
+    let start = harness.app().entities[0].position[0];
+
+    harness.dispatch(Message::NudgeX);
+    assert!(harness.app().entities[0].position[0] > start);
+
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities.len(), 2);
+    assert_eq!(harness.app().entities[0].name, "First");
+    assert_eq!(harness.app().entities[0].position[0], start);
+}
+
+#[test]
+fn typing_renames_as_one_undo_step() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    harness.click(id::entity_row(1));
+
+    harness.type_into(id::ENTITY_NAME, "Boss");
+    assert!(harness.app().entities[1].name.contains("Boss"));
+    assert_eq!(
+        harness.app().history.len(),
+        1,
+        "a typing session should coalesce into one step"
+    );
+
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities[1].name, "Entity 2");
+}
+
+#[test]
+fn undo_restores_transform_and_selection() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    harness.click(id::entity_row(0));
+    let start = harness.app().entities[0].position[0];
+
+    harness.click(id::NUDGE_X);
+    assert!(harness.app().entities[0].position[0] > start);
+
+    harness.click(id::entity_row(1));
+    assert_eq!(harness.app().selected, 1);
+
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities[0].position[0], start);
+    assert_eq!(
+        harness.app().selected,
+        0,
+        "undo restores the selection captured with the step"
+    );
+}
+
+#[test]
+fn new_edit_after_undo_drops_redo() {
+    let mut harness = Harness::empty();
+    harness.rebase_history();
+    harness.click(id::ADD_ENTITY);
+    harness.click(id::ADD_ENTITY);
+    harness.dispatch(Message::Undo);
+    assert!(harness.app().history.can_redo());
+
+    harness.click(id::ADD_ENTITY);
+    assert!(!harness.app().history.can_redo());
+    assert_eq!(harness.app().entities.len(), 2);
+}
+
+#[test]
+fn toolbar_undo_and_redo_click() {
+    let mut harness = Harness::empty();
+    harness.rebase_history();
+    harness.click(id::ADD_ENTITY);
+    harness.click(id::UNDO);
+    assert!(harness.app().entities.is_empty());
+    harness.click(id::REDO);
+    assert_eq!(harness.app().entities.len(), 1);
 }
 
 /// One scripted session covering the common editor loop, like a Playwright

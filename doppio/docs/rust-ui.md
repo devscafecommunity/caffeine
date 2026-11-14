@@ -93,6 +93,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
   Rust Asset Manager shows real files and a file count;
 - non-blocking render (`render_begin` / `render_poll`): submit a download copy
   and poll its fence instead of waiting for the GPU;
+- in-memory scene snapshots (`snapshot` / `restore`): the whole world serialized
+  to bytes, used by the editor undo/redo timeline;
 - camera get/set (`CaffeineCamera`), driven by the viewport toolbar;
 - tick/frame-stat bookkeeping (systems will be wired incrementally);
 - no ImGui and no editor headers in the ABI;
@@ -100,7 +102,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 15 Rust tests: 1 engine bridge round-trip, 13 UI/widget tests and 1 doctest.
+- 28 Rust tests: 1 engine bridge round-trip, 26 UI/widget tests (1 ignored
+docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
 
@@ -122,6 +125,20 @@ Still to add before the Rust UI is fully wired:
 The existing `PluginHostApi` is a good function-table precedent. The existing
 `DOPPIO_TEST_MODE` JSON loop (`TestRequestHandler`) is a good engine-side test
 precedent.
+
+### Undo and redo
+
+- `doppio/crates/ui/src/history.rs` keeps a timeline of editor states: the UI
+  entity list, an optional engine snapshot, the dirty flag and the selection.
+- States are full scene snapshots rather than per-field commands, so undo also
+  covers components the UI does not edit yet.
+- Steps are named (`Add Entity 3`, `Rename Boss`, `Move Rock to x=…`), typing in
+  one field coalesces into a single step, and a new edit drops the redo branch.
+- Cap: 200 steps / ~128 MB; the oldest steps are dropped first.
+- Toolbar Undo/Redo, Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y, and MCP `undo` / `redo`
+  actions. The `history` query returns the timeline, cursor and can-undo/redo.
+- Snapshot restore remaps entity ids, so the UI re-reads the hierarchy; the
+  serializer writes and recreates entities in stable id order to preserve it.
 
 ### Viewport — asynchronous CPU readback
 
@@ -247,6 +264,8 @@ registers scene-level queries and actions:
 | query | `selection` | the selected entity or null |
 | query | `scene` | scene path, dirty flag, counts and the console log |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
+| query | `history` | undo/redo timeline, current cursor, names and size |
+| action | `undo` / `redo` | moves through the editor timeline |
 | action | `add_entity` | `{ "name"?: string }` |
 | action | `delete_selected` | deletes the selected entity |
 | action | `select_entity` | `{ "index"?: number, "name"?: string }` |
@@ -259,7 +278,9 @@ registers scene-level queries and actions:
 | fixture | `empty`, `editor` | deterministic starting states for flows |
 
 Because every action is an iced `Message`, agents can only do what the UI can
-do, and the `messages` tool shows exactly what each call published.
+do, and the `messages` tool shows exactly what each call published. Agent edits
+are ordinary undo steps (`undo` / `redo`), and the `history` query exposes the
+timeline.
 
 ### Visual regression
 

@@ -110,6 +110,14 @@ CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_poll(CaffeineSessi
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
 
+/** In-memory world snapshot for editor undo/redo. Free `out_data` with caffeine_session_free. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_snapshot(const CaffeineSession* session,
+                                          uint8_t** out_data, size_t* out_size,
+                                          int* out_dirty);
+CAFFEINE_CAPI_API void caffeine_session_free(void* data);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_restore(CaffeineSession* session,
+                                          const uint8_t* data, size_t size, int dirty);
+
 /** Project assets. The root defaults to <project>/assets/raw (or assets). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_asset_root(CaffeineSession* session, const char* path);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_refresh_assets(CaffeineSession* session);

@@ -4,7 +4,7 @@ pub mod panels;
 
 /// A UI-side view of an engine entity. The engine crate owns the real data;
 /// panels consume this plain struct so they stay testable without the C++ lib.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EntityView {
     pub id: u32,
     pub name: String,
