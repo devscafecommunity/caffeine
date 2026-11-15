@@ -604,3 +604,38 @@ TEST_CASE("C API scene load reports missing files", "[capi]") {
     REQUIRE(std::string(caffeine_session_scene_path(session)).empty());
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C API runs a Dryad preview on an entity", "[capi]") {
+    if (!caffeine_dryad_available()) {
+        WARN("Dryad interpreter is not part of this build");
+        return;
+    }
+    const std::filesystem::path script =
+        std::filesystem::temp_directory_path() / "caffeine_capi_preview.dyd";
+    {
+        std::ofstream out(script);
+        out << "function onUpdate(entity, dt) {\n"
+               "  caffeine_translate(entity, 0.0, dt, 0.0);\n"
+               "}\n";
+    }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "DryadPreview");
+    REQUIRE(entity != CAFFEINE_ENTITY_NONE);
+
+    REQUIRE(caffeine_session_run_dryad(session, entity, script.string().c_str(), 0.5f) ==
+            CAFFEINE_OK);
+    CaffeineVec3 position{};
+    REQUIRE(caffeine_session_entity_position(session, entity, &position) == CAFFEINE_OK);
+    REQUIRE(position.y == Approx(0.5f));
+
+    REQUIRE(caffeine_session_run_dryad(session, entity, script.string().c_str(), 0.25f) ==
+            CAFFEINE_OK);
+    REQUIRE(caffeine_session_entity_position(session, entity, &position) == CAFFEINE_OK);
+    REQUIRE(position.y == Approx(0.75f));
+
+    std::error_code ec;
+    std::filesystem::remove(script, ec);
+    caffeine_session_destroy(session);
+}

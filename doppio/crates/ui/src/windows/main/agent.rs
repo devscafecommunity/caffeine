@@ -10,6 +10,7 @@ use crate::uikit::components::gizmo;
 use crate::uikit::generators;
 use crate::uikit::id;
 use crate::uikit::panels;
+use crate::uikit::panels::dryad_nodes;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
 use crate::uikit::panels::project_manager;
@@ -199,6 +200,29 @@ pub fn run() -> iced::Result {
             |app, _| Ok(project_json(app)),
         )
         .query(
+            "script_editor",
+            "Open script documents, active tab and dirty state.",
+            |app, _| {
+                Ok(json!({
+                    "active": app.script.current_index(),
+                    "status": app.script.status,
+                    "documents": app.script.documents.iter().enumerate().map(|(index, document)| json!({
+                        "index": index,
+                        "title": document.title,
+                        "path": document.path.display().to_string(),
+                        "relative_path": document.relative_path,
+                        "dirty": document.is_dirty(),
+                        "bytes": document.text().len(),
+                    })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "dryad",
+            "Dryad node graph: script, dirty state, selection, nodes and edges.",
+            |app, _| Ok(dryad_json(app)),
+        )
+        .query(
             "history",
             "Undo/redo timeline: steps, current cursor, availability and size.",
             |app, _| Ok(history_json(app)),
@@ -358,6 +382,111 @@ pub fn run() -> iced::Result {
                 Ok(Message::Project(project_manager::Edit::OpenPath(
                     required_str(args, "path")?.to_owned(),
                 )))
+            },
+        )
+        .action(
+            "open_script",
+            "Opens a .lua or .dyd script in the Script Editor. args: { \"path\": string }",
+            |args| {
+                Ok(Message::OpenScriptPath(
+                    required_str(args, "path")?.to_owned(),
+                ))
+            },
+        )
+        .action(
+            "open_dryad",
+            "Opens a .dyd script in the Dryad node editor. args: { \"path\": string }",
+            |args| {
+                Ok(Message::OpenDryadPath(
+                    required_str(args, "path")?.to_owned(),
+                ))
+            },
+        )
+        .action(
+            "dryad_add_node",
+            "Adds a Dryad node by type name. args: { \"kind\": string }",
+            |args| {
+                let kind = required_str(args, "kind")?;
+                let kind = crate::uikit::dryad::NodeKind::from_type_name(kind)
+                    .ok_or_else(|| format!("unknown Dryad node \"{kind}\""))?;
+                Ok(Message::DryadAddNode(kind))
+            },
+        )
+        .action("dryad_save", "Saves the open Dryad .dyd and .node.json.", |_| {
+            Ok(Message::DryadSave)
+        })
+        .action(
+            "dryad_sync",
+            "Rebuilds the Dryad canvas from the .dyd markers.",
+            |_| Ok(Message::DryadSync),
+        )
+        .action("dryad_delete", "Deletes the selected Dryad node or link.", |_| {
+            Ok(Message::DryadDelete)
+        })
+        .action("dryad_fit", "Frames the Dryad graph.", |_| Ok(Message::DryadFit))
+        .action(
+            "dryad_add_motion",
+            "Adds the OnUpdate -> Translate motion example.",
+            |_| Ok(Message::DryadAddMotion),
+        )
+        .action(
+            "dryad_attach",
+            "Attaches the open Dryad script to the selected entity.",
+            |_| Ok(Message::DryadAttach),
+        )
+        .action(
+            "dryad_run",
+            "Runs one Dryad preview frame on the selected entity.",
+            |_| Ok(Message::DryadRun),
+        )
+        .action(
+            "dryad_connect",
+            "Connects two Dryad endpoints. args: { \"from\": \"n1.out\", \"to\": \"n2.in\" }",
+            |args| {
+                Ok(Message::DryadCanvas(dryad_nodes::CanvasEvent::Connect {
+                    from: required_str(args, "from")?.to_owned(),
+                    to: required_str(args, "to")?.to_owned(),
+                }))
+            },
+        )
+        .action(
+            "dryad_set_number",
+            "Sets a Dryad numeric field. args: { \"node\": string, \"field\": string, \"value\": number }",
+            |args| {
+                let value = args
+                    .get("value")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| "expected a numeric \"value\"".to_owned())?;
+                Ok(Message::DryadNumber {
+                    node: required_str(args, "node")?.to_owned(),
+                    field: required_str(args, "field")?.to_owned(),
+                    text: format!("{value}"),
+                })
+            },
+        )
+        .action(
+            "dryad_set_bool",
+            "Sets a Dryad boolean field. args: { \"node\": string, \"field\": string, \"value\": bool }",
+            |args| {
+                let value = args
+                    .get("value")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "expected a boolean \"value\"".to_owned())?;
+                Ok(Message::DryadBool {
+                    node: required_str(args, "node")?.to_owned(),
+                    field: required_str(args, "field")?.to_owned(),
+                    value,
+                })
+            },
+        )
+        .action(
+            "dryad_set_text",
+            "Sets the Log message on a Dryad node. args: { \"node\": string, \"value\": string }",
+            |args| {
+                Ok(Message::DryadText {
+                    node: required_str(args, "node")?.to_owned(),
+                    value: required_str(args, "value")?.to_owned(),
+                })
             },
         )
         .action(
@@ -1061,6 +1190,37 @@ fn parse_field_value(kind: &str, value: &Value) -> Result<doppio_engine::FieldVa
         }
         other => Err(format!("unknown field kind \"{other}\"")),
     }
+}
+
+fn dryad_json(app: &App) -> Value {
+    let graph = app.dryad.graph.as_ref();
+    json!({
+        "script_path": app.dryad.script_path.as_ref().map(|path| path.display().to_string()),
+        "script_relative": app.dryad.script_relative,
+        "dirty": app.dryad.dirty,
+        "selected": app.dryad.selected,
+        "selected_link": app.dryad.selected_link,
+        "status": app.dryad.status,
+        "nodes": graph.map(|graph| graph.nodes.iter().map(|node| json!({
+            "id": node.id,
+            "kind": node.kind.type_name(),
+            "x": node.x,
+            "y": node.y,
+            "number_value": node.number_value,
+            "bool_value": node.bool_value,
+            "constant_is_bool": node.constant_is_bool,
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        "edges": graph.map(|graph| graph.edges.iter().map(|edge| json!({
+            "from": edge.from,
+            "to": edge.to,
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        "catalog": crate::uikit::dryad::catalog().iter().map(|entry| json!({
+            "kind": entry.type_name,
+            "label": entry.display_name,
+            "category": entry.category,
+            "description": entry.description,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn project_info_json(project: &crate::uikit::project::ProjectInfo) -> Value {

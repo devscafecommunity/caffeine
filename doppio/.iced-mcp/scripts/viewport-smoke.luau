@@ -53,7 +53,7 @@ local layout = app:query("layout")
 assert(#layout.panes == 4, "layout should keep four pane groups")
 local pages = 0
 for _, pane in ipairs(layout.panes) do pages = pages + #pane.pages end
-assert(pages == 8, "layout should keep every panel page")
+assert(pages == 10, "layout should keep every panel page")
 app:click({ id = "editor.menu.view" })
 app:click({ id = "editor.layout.viewport" })
 assert(#app:query("layout").panes == 4, "viewport layout keeps every pane group")

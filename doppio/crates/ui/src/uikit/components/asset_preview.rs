@@ -81,6 +81,7 @@ pub fn card<'a, Message: Clone + 'a>(
     entry: Entry<'a>,
     on_press: Message,
     on_release: Message,
+    on_double_click: Option<Message>,
 ) -> Element<'a, Message> {
     let detail = entry.detail.clone().unwrap_or_else(|| entry.kind.clone());
     let selected = entry.selected;
@@ -116,11 +117,16 @@ pub fn card<'a, Message: Clone + 'a>(
             theme::surface(iced_theme)
         }
     });
-    mouse_area(body)
+    let area = mouse_area(body)
         .on_press(on_press)
         .on_release(on_release)
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into()
+        .interaction(iced::mouse::Interaction::Pointer);
+    let area = if let Some(message) = on_double_click {
+        area.on_double_click(message)
+    } else {
+        area
+    };
+    area.into()
 }
 
 /// Full-width asset row used by the list view.
@@ -129,6 +135,7 @@ pub fn row<'a, Message: Clone + 'a>(
     entry: Entry<'a>,
     on_press: Message,
     on_release: Message,
+    on_double_click: Option<Message>,
 ) -> Element<'a, Message> {
     let mut label = column![text(short_name(&entry.name, 30))
         .size(11)
@@ -154,9 +161,14 @@ pub fn row<'a, Message: Clone + 'a>(
         .width(Length::Fill)
         .padding([3, 5])
         .style(theme::list_row(entry.selected));
-    mouse_area(body)
+    let area = mouse_area(body)
         .on_press(on_press)
         .on_release(on_release)
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into()
+        .interaction(iced::mouse::Interaction::Pointer);
+    let area = if let Some(message) = on_double_click {
+        area.on_double_click(message)
+    } else {
+        area
+    };
+    area.into()
 }

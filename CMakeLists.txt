@@ -357,6 +357,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/source/dryad-cpp/CMakeLists.txt")
     set(DRYAD_ENABLE_TLS OFF CACHE BOOL "" FORCE)
     set(DRYAD_ENABLE_SANITIZERS OFF CACHE BOOL "" FORCE)
     add_subdirectory(source/dryad-cpp)
+    # The C ABI is a shared library; Dryad's static archives must be PIC so
+    # their thread_local interpreter pointer uses a dynamic TLS model.
+    foreach(dryad_target dryad_common dryad_runtime dryad_compiler dryad_aot)
+        if(TARGET ${dryad_target})
+            set_target_properties(${dryad_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
+    endforeach()
     set(DRYAD_AVAILABLE TRUE)
 else()
     set(DRYAD_AVAILABLE FALSE)

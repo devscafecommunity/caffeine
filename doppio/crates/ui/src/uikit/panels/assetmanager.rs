@@ -32,6 +32,7 @@ pub struct Callbacks<'a, Message> {
     pub on_search: Box<dyn Fn(String) -> Message + 'a>,
     pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_release: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_double_click: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_folder: Box<dyn Fn(String) -> Message + 'a>,
     pub on_crumb: Box<dyn Fn(String) -> Message + 'a>,
     pub on_up: Message,
@@ -184,6 +185,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_search,
         on_press,
         on_release,
+        on_double_click,
         on_folder,
         on_crumb,
         on_up,
@@ -193,6 +195,7 @@ pub fn view<'a, Message: Clone + 'a>(
     } = callbacks;
     let on_press = &on_press;
     let on_release = &on_release;
+    let on_double_click = &on_double_click;
     let on_folder = &on_folder;
     let on_mode = &on_mode;
     let directory = normalize_directory(view.directory);
@@ -296,6 +299,7 @@ pub fn view<'a, Message: Clone + 'a>(
                             entry,
                             on_press,
                             on_release,
+                            (!asset.is_directory).then(|| (on_double_click)(*index)),
                         ));
                     }
                     rows = rows.push(row);
@@ -324,6 +328,7 @@ pub fn view<'a, Message: Clone + 'a>(
                         entry,
                         on_press,
                         on_release,
+                        (!asset.is_directory).then(|| (on_double_click)(index)),
                     ));
                 }
                 scrollable(rows).into()

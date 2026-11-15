@@ -1002,7 +1002,7 @@ fn layout_presets_keep_every_page() {
         let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
-        assert_eq!(pages, 8);
+        assert_eq!(pages, 10);
     }
     let mut harness = Harness::with_entities();
     harness.dispatch(Message::Layout(LayoutPreset::Viewport));
@@ -2938,6 +2938,206 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
             .as_ref()
             .map(|project| project.last_scene.as_str()),
         Some("scenes/other.caf")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn script_editor_opens_saves_and_attaches_to_selected_entity() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("script-editor");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("player.dyd");
+    std::fs::write(&path, "function onUpdate(entity, dt) {}\n").expect("script");
+
+    harness
+        .app
+        .script
+        .open(&path, Some("scripts/player.dyd".to_owned()))
+        .expect("open script");
+    assert_eq!(
+        harness
+            .app
+            .script
+            .current()
+            .map(|document| document.title.as_str()),
+        Some("player.dyd")
+    );
+    assert!(harness.has(iced::widget::Id::from(id::PANE_TAB_SCRIPT)));
+
+    harness.app.script.update(iced_code_editor::Message::Paste(
+        "function onUpdate(entity, dt) {}\n// edited\n".to_owned(),
+    ));
+    assert!(harness
+        .app
+        .script
+        .current()
+        .is_some_and(|document| document.is_dirty()));
+    harness.dispatch(Message::ScriptSave);
+    let saved = std::fs::read_to_string(&path).expect("read script");
+    assert!(
+        saved.contains("// edited"),
+        "saved script should include the edit"
+    );
+    assert!(harness
+        .app
+        .script
+        .current()
+        .is_some_and(|document| !document.is_dirty()));
+
+    harness.dispatch(Message::ScriptAttach);
+    let entity = harness
+        .app
+        .entities
+        .get(harness.app.selected)
+        .map(|entity| entity.id)
+        .expect("selected entity");
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let components = engine.entity_component_data(entity);
+    let script = components
+        .iter()
+        .find(|component| component.info.name == "Script")
+        .expect("script component");
+    assert!(matches!(
+        script.values.first(),
+        Some(doppio_engine::FieldValue::String(path)) if path == "scripts/player.dyd"
+    ));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn dryad_editor_opens_saves_runs_and_attaches_a_graph() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("dryad-editor");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("demo.dyd");
+    let mut graph = dryad::Graph::new("demo.dyd");
+    graph.add_node(dryad::NodeKind::OnUpdate, 40.0, 40.0);
+    graph
+        .write_sibling_files(&path)
+        .expect("write graph source");
+
+    harness
+        .app
+        .dryad
+        .open(&path, Some("scripts/demo.dyd".to_owned()))
+        .expect("open graph");
+    harness.dispatch(Message::OpenDryadNodes);
+    assert!(harness.has(iced::widget::Id::from(id::PANE_DRYAD_NODES)));
+    assert!(harness.has(iced::widget::Id::from(id::DRYAD_CANVAS)));
+
+    harness.dispatch(Message::DryadAddMotion);
+    assert!(harness.app().dryad.dirty);
+    harness.dispatch(Message::DryadSave);
+    assert!(!harness.app().dryad.dirty);
+    let source = std::fs::read_to_string(&path).expect("read emitted script");
+    assert!(
+        source.contains("// @node"),
+        "emitter should write node markers"
+    );
+    assert!(path.with_extension("node.json").is_file());
+
+    harness.dispatch(Message::DryadAttach);
+    let entity = harness
+        .app
+        .entities
+        .get(harness.app.selected)
+        .map(|entity| entity.id)
+        .expect("selected entity");
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let components = engine.entity_component_data(entity);
+    let script = components
+        .iter()
+        .find(|component| component.info.name == "Script")
+        .expect("script component");
+    assert!(matches!(
+        script.values.first(),
+        Some(doppio_engine::FieldValue::String(path)) if path == "scripts/demo.dyd"
+    ));
+
+    let before = engine.position(entity).expect("position before preview")[1];
+    harness.dispatch(Message::DryadRun);
+    let after = harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .position(entity)
+        .expect("position after preview")[1];
+    assert!(after > before, "Dryad preview should translate the entity");
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn asset_double_click_opens_a_script_in_the_editor() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("script-asset");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("enemy.lua");
+    std::fs::write(&path, "print('enemy')\n").expect("script");
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "enemy.lua".to_owned(),
+        relative_path: "Scripts/enemy.lua".to_owned(),
+        kind: "script".to_owned(),
+        size_bytes: 15,
+        is_directory: false,
+    });
+    harness.app.asset_paths.push(path.display().to_string());
+
+    harness.dispatch(Message::AssetDoubleClick(0));
+    assert_eq!(
+        harness
+            .app
+            .script
+            .current()
+            .map(|document| document.title.as_str()),
+        Some("enemy.lua")
+    );
+    assert!(harness.has(iced::widget::Id::from(id::PANE_SCRIPT)));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn opening_a_dyd_asset_uses_the_dryad_editor() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("dryad-asset");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("patrol.dyd");
+    std::fs::write(&path, "").expect("empty dyd");
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "patrol.dyd".to_owned(),
+        relative_path: "Scripts/patrol.dyd".to_owned(),
+        kind: "script".to_owned(),
+        size_bytes: 0,
+        is_directory: false,
+    });
+    harness.app.asset_paths.push(path.display().to_string());
+
+    harness.dispatch(Message::AssetPressed(0));
+    harness.dispatch(Message::AssetReleased(0));
+    assert!(harness
+        .app
+        .dryad
+        .script_path
+        .as_ref()
+        .is_some_and(|path| path.ends_with("patrol.dyd")));
+    assert!(harness.has(iced::widget::Id::from(id::PANE_DRYAD_NODES)));
+    assert_eq!(
+        harness
+            .app
+            .script
+            .current()
+            .map(|document| document.title.as_str()),
+        Some("patrol.dyd"),
+        "the source tab should also be ready"
     );
     std::fs::remove_dir_all(root).ok();
 }

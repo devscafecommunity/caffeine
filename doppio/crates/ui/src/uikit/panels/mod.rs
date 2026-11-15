@@ -1,9 +1,11 @@
 pub mod assetmanager;
 pub mod console;
+pub mod dryad_nodes;
 pub mod hierarchy;
 pub mod inspector;
 pub mod material;
 pub mod material_generator;
 pub mod project_manager;
 pub mod sceneviewport;
+pub mod script;
 pub mod texture_set;

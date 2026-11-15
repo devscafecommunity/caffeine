@@ -454,6 +454,8 @@ type PreviewBeginFn = unsafe extern "C" fn(
     f32,
 ) -> i32;
 type PreviewPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
+type DryadAvailableFn = unsafe extern "C" fn() -> i32;
+type RunDryadFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char, f32) -> i32;
 type PickUvFn =
     unsafe extern "C" fn(*mut c_void, u32, f32, f32, f32, f32, *mut f32, *mut f32) -> i32;
 type BakeAoFn = unsafe extern "C" fn(
@@ -562,6 +564,8 @@ struct Functions {
     material_preview_ex: PreviewExFn,
     material_preview_begin: PreviewBeginFn,
     material_preview_poll: PreviewPollFn,
+    dryad_available: Option<DryadAvailableFn>,
+    run_dryad: Option<RunDryadFn>,
 }
 
 pub struct Engine {
@@ -739,6 +743,8 @@ impl Engine {
             material_preview_poll: unsafe {
                 load_symbol(library, b"caffeine_session_render_material_preview_poll\0")
             }?,
+            dryad_available: unsafe { load_symbol(library, b"caffeine_dryad_available\0") },
+            run_dryad: unsafe { load_symbol(library, b"caffeine_session_run_dryad\0") },
         };
         let session = unsafe { create() };
         if session.is_null() {
@@ -922,6 +928,20 @@ impl Engine {
 
     pub fn capi_version(&self) -> i32 {
         unsafe { (self.functions.capi_version)() }
+    }
+
+    pub fn dryad_available(&self) -> bool {
+        self.functions
+            .dryad_available
+            .map(|available| unsafe { available() != 0 })
+            .unwrap_or(false)
+    }
+
+    /// Runs `onCreate` plus one `onUpdate` for a Dryad script on an entity.
+    pub fn run_dryad(&mut self, entity: u32, path: &str, dt: f32) -> EngineResult<()> {
+        let run = self.functions.run_dryad.ok_or(EngineError::Error)?;
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe { run(self.session, entity, path.as_ptr(), dt) })
     }
 
     pub fn load_scene(&mut self, path: &str) -> EngineResult<()> {

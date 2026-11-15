@@ -391,6 +391,18 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_texture_load_rgba(const char* input_pa
 /** Write the current world to a .caf scene and clear the dirty flag. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 
+/** 1 when this build includes the Dryad interpreter. */
+CAFFEINE_CAPI_API int caffeine_dryad_available(void);
+
+/**
+ * Runs onCreate plus one onUpdate for a Dryad `.dyd` script on an entity.
+ * `script_path` may be absolute or project-relative. Returns CAFFEINE_ERROR when
+ * the build has no Dryad interpreter or the script fails to load/run.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_run_dryad(CaffeineSession* session,
+                                             CaffeineEntity entity,
+                                             const char* script_path, float dt);
+
 /** Hierarchy queries. The index is stable within one call sequence; re-query after edits. */
 CAFFEINE_CAPI_API uint32_t caffeine_session_entity_count(const CaffeineSession* session);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_at(const CaffeineSession* session, uint32_t index,

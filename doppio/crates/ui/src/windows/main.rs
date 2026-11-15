@@ -2,15 +2,19 @@ use crate::history::{self, History};
 use crate::uikit::components::{
     button, gizmo, menu, panel, prefab_palette, status, tabs, toolbar, viewport_shader,
 };
+use crate::uikit::dryad;
 use crate::uikit::generators::{self, MaterialGraph};
 use crate::uikit::id;
 use crate::uikit::panels;
+use crate::uikit::panels::dryad_nodes;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
 use crate::uikit::panels::project_manager;
+use crate::uikit::panels::script as script_panel;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use crate::uikit::prefabs;
 use crate::uikit::project;
+use crate::uikit::script;
 use crate::uikit::texture_set;
 use crate::uikit::theme;
 use crate::uikit::EntityView;
@@ -144,6 +148,8 @@ enum PaneKind {
     Inspector,
     Material,
     TextureSet,
+    Script,
+    DryadNodes,
     Console,
 }
 
@@ -235,7 +241,49 @@ enum Message {
     CreatePrefab(usize),
     AssetPressed(usize),
     AssetReleased(usize),
+    AssetDoubleClick(usize),
     AssetSearch(String),
+    OpenScriptEditor,
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    OpenScriptPath(String),
+    OpenDryadNodes,
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    OpenDryadPath(String),
+    DryadCanvas(dryad_nodes::CanvasEvent),
+    DryadSearch(String),
+    DryadAddNode(dryad::NodeKind),
+    DryadSelectNode(Option<String>),
+    DryadSelectLink(Option<dryad_nodes::LinkEndpoints>),
+    DryadNumber {
+        node: String,
+        field: String,
+        text: String,
+    },
+    DryadBool {
+        node: String,
+        field: String,
+        value: bool,
+    },
+    DryadText {
+        node: String,
+        value: String,
+    },
+    DryadDelete,
+    DryadSave,
+    DryadSync,
+    DryadAttach,
+    DryadRun,
+    DryadFit,
+    DryadAddMotion,
+    Noop,
+    ScriptSelect(usize),
+    ScriptTabClose(usize),
+    ScriptAction(iced_code_editor::Message),
+    ScriptSave,
+    ScriptRevert,
+    ScriptClose,
+    ScriptAttach,
+    ScriptDetach,
     AssetNavigate(String),
     AssetUp,
     AssetRoot,
@@ -333,6 +381,8 @@ struct App {
     asset_selected: Option<usize>,
     project: project_manager::State,
     project_recent_file: std::path::PathBuf,
+    script: script::State,
+    dryad: dryad::State,
     selected: usize,
     name_input: String,
     log: Vec<LogEntry>,
@@ -461,6 +511,8 @@ impl PaneKind {
             PaneKind::Inspector => "Inspector",
             PaneKind::Material => "Material",
             PaneKind::TextureSet => "Texture Set",
+            PaneKind::Script => "Script",
+            PaneKind::DryadNodes => "Dryad Nodes",
             PaneKind::Console => "Console",
         }
     }
@@ -474,6 +526,8 @@ impl PaneKind {
             PaneKind::Inspector => id::PANE_TAB_INSPECTOR,
             PaneKind::Material => id::PANE_TAB_MATERIAL,
             PaneKind::TextureSet => id::PANE_TAB_TEXTURE_SET,
+            PaneKind::Script => id::PANE_TAB_SCRIPT,
+            PaneKind::DryadNodes => id::PANE_TAB_DRYAD_NODES,
             PaneKind::Console => id::PANE_TAB_CONSOLE,
         }
     }
@@ -499,6 +553,8 @@ impl App {
                         a: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Viewport,
                             PaneKind::Generator,
+                            PaneKind::Script,
+                            PaneKind::DryadNodes,
                         ]))),
                         b: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Inspector,
@@ -527,6 +583,8 @@ impl App {
                     a: Box::new(Configuration::Pane(PaneGroup::new(&[
                         PaneKind::Viewport,
                         PaneKind::Generator,
+                        PaneKind::Script,
+                        PaneKind::DryadNodes,
                     ]))),
                     b: Box::new(Configuration::Pane(PaneGroup::new(&[
                         PaneKind::Inspector,
@@ -617,6 +675,8 @@ impl App {
                 project::default_projects_directory().display().to_string(),
             ),
             project_recent_file: project::recent_projects_file(),
+            script: script::State::new(),
+            dryad: dryad::State::new(),
             selected: 0,
             name_input,
             log: loaded.log,
@@ -1871,6 +1931,9 @@ impl App {
                                 )),
                             }
                         }
+                        // Load the empty scene so the engine also learns the
+                        // project root used by script import resolution.
+                        let _ = engine.load_scene(&scene_text);
                         logs.push((LogLevel::Engine, format!("Created {scene_text}")));
                     }
                     Err(_) => {
@@ -1972,6 +2035,352 @@ impl App {
                 LogLevel::Error,
                 format!("Could not update project.caffeine: {error}"),
             ),
+        }
+    }
+
+    fn show_script_pane(&mut self) {
+        self.panes.restore();
+        let mut target = None;
+        for (pane, group) in self.panes.iter_mut() {
+            if let Some(index) = group
+                .pages
+                .iter()
+                .position(|page| *page == PaneKind::Script)
+            {
+                group.active = index;
+                target = Some(*pane);
+            }
+        }
+        if target.is_none() {
+            for (pane, group) in self.panes.iter_mut() {
+                if group.pages.contains(&PaneKind::Viewport) {
+                    group.pages.push(PaneKind::Script);
+                    group.active = group.pages.len() - 1;
+                    target = Some(*pane);
+                    break;
+                }
+            }
+        }
+        if target.is_none() {
+            if let Some((pane, group)) = self.panes.iter_mut().next() {
+                group.pages.push(PaneKind::Script);
+                group.active = group.pages.len() - 1;
+                target = Some(*pane);
+            }
+        }
+        if let Some(pane) = target {
+            self.panes.maximize(pane);
+        }
+    }
+
+    fn show_dryad_pane(&mut self) {
+        self.panes.restore();
+        let mut target = None;
+        for (pane, group) in self.panes.iter_mut() {
+            if let Some(index) = group
+                .pages
+                .iter()
+                .position(|page| *page == PaneKind::DryadNodes)
+            {
+                group.active = index;
+                target = Some(*pane);
+            }
+        }
+        if target.is_none() {
+            for (pane, group) in self.panes.iter_mut() {
+                if group.pages.contains(&PaneKind::Viewport) {
+                    group.pages.push(PaneKind::DryadNodes);
+                    group.active = group.pages.len() - 1;
+                    target = Some(*pane);
+                    break;
+                }
+            }
+        }
+        if target.is_none() {
+            if let Some((pane, group)) = self.panes.iter_mut().next() {
+                group.pages.push(PaneKind::DryadNodes);
+                group.active = group.pages.len() - 1;
+                target = Some(*pane);
+            }
+        }
+        if let Some(pane) = target {
+            self.panes.maximize(pane);
+        }
+    }
+
+    fn resolve_script_path(&self, path: &str) -> (String, String) {
+        let Some(engine) = self.engine.as_ref() else {
+            return (path.to_owned(), path.to_owned());
+        };
+        let absolute = engine
+            .resolve_path(path)
+            .ok()
+            .filter(|resolved| std::path::Path::new(resolved).exists())
+            .or_else(|| {
+                let scene = engine.scene_path()?;
+                let scene = std::path::Path::new(&scene);
+                let parent = scene.parent()?;
+                let root = if parent.file_name().and_then(|name| name.to_str()) == Some("scenes") {
+                    parent.parent()?
+                } else {
+                    parent
+                };
+                let candidate = root.join(path);
+                candidate
+                    .exists()
+                    .then(|| candidate.to_string_lossy().into_owned())
+            })
+            .or_else(|| engine.asset_path(path).ok())
+            .unwrap_or_else(|| path.to_owned());
+        let relative = engine
+            .asset_project_path(path)
+            .ok()
+            .filter(|relative| !relative.is_empty())
+            .unwrap_or_else(|| path.to_owned());
+        (absolute, relative)
+    }
+
+    fn open_dryad_path(&mut self, path: &str) {
+        let (absolute, relative) = self.resolve_script_path(path);
+        match self
+            .dryad
+            .open(std::path::Path::new(&absolute), Some(relative.clone()))
+        {
+            Ok(()) => {
+                let _ = self
+                    .script
+                    .open(std::path::Path::new(&absolute), Some(relative));
+                self.show_dryad_pane();
+                self.log(LogLevel::Action, format!("Opened Dryad graph {absolute}"));
+            }
+            Err(error) => self.log(LogLevel::Error, error),
+        }
+    }
+
+    fn open_dryad_asset(&mut self, index: usize) {
+        let Some(asset) = self.assets.get(index).cloned() else {
+            return;
+        };
+        let absolute = self
+            .asset_paths
+            .get(index)
+            .cloned()
+            .or_else(|| {
+                self.engine
+                    .as_ref()
+                    .and_then(|engine| engine.asset_path(&asset.relative_path).ok())
+            })
+            .unwrap_or_else(|| asset.relative_path.clone());
+        let relative = self
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.asset_project_path(&asset.relative_path).ok())
+            .filter(|relative| !relative.is_empty())
+            .unwrap_or_else(|| asset.relative_path.clone());
+        match self
+            .dryad
+            .open(std::path::Path::new(&absolute), Some(relative.clone()))
+        {
+            Ok(()) => {
+                let _ = self
+                    .script
+                    .open(std::path::Path::new(&absolute), Some(relative));
+                self.show_dryad_pane();
+                self.log(
+                    LogLevel::Action,
+                    format!("Opened Dryad graph {}", asset.relative_path),
+                );
+            }
+            Err(error) => self.log(LogLevel::Error, error),
+        }
+    }
+
+    fn handle_dryad_canvas(&mut self, event: dryad_nodes::CanvasEvent) {
+        use dryad_nodes::CanvasEvent;
+        match event {
+            CanvasEvent::Select(selected) => {
+                self.dryad.selected = selected;
+                self.dryad.selected_link = None;
+            }
+            CanvasEvent::SelectLink(link) => {
+                self.dryad.selected_link = link;
+                self.dryad.selected = None;
+            }
+            CanvasEvent::Detach { to } => {
+                if let Some(graph) = self.dryad.graph.as_mut() {
+                    graph.disconnect_input(&to);
+                    self.dryad.dirty = true;
+                    self.dryad.status = Some("Removed input wire.".to_owned());
+                }
+            }
+            CanvasEvent::MoveNode { id, delta } => {
+                self.dryad.move_node(&id, delta.x, delta.y);
+            }
+            CanvasEvent::Connect { from, to } => {
+                if let Err(error) = self.dryad.connect(&from, &to) {
+                    self.log(LogLevel::Error, error);
+                }
+            }
+            CanvasEvent::Viewport { pan, zoom } => {
+                self.dryad.pan = pan;
+                self.dryad.zoom = zoom;
+            }
+        }
+    }
+
+    fn run_dryad_preview(&mut self) {
+        let Some(path) = self.dryad.script_path.clone() else {
+            self.dryad.status = Some("Open a Dryad script first.".to_owned());
+            return;
+        };
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            self.dryad.status = Some("Select an entity to run the script on.".to_owned());
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            self.dryad.status = Some("No engine session for a Dryad preview.".to_owned());
+            return;
+        };
+        if !engine.dryad_available() {
+            self.dryad.status = Some("This build has no Dryad interpreter.".to_owned());
+            return;
+        }
+        let script = path.to_string_lossy().into_owned();
+        match engine.run_dryad(entity, &script, 1.0 / 60.0) {
+            Ok(()) => {
+                self.dryad.status = Some("Ran one preview frame.".to_owned());
+                self.refresh_components();
+                self.commit("Run Dryad Preview", None);
+                self.log(LogLevel::Action, "Ran Dryad preview");
+            }
+            Err(error) => {
+                let message = format!("Dryad preview failed: {error:?}");
+                self.dryad.status = Some(message.clone());
+                self.log(LogLevel::Error, message);
+            }
+        }
+    }
+
+    fn open_script_path(&mut self, path: &str) {
+        let (absolute, relative) = self.resolve_script_path(path);
+        self.open_script_file(std::path::Path::new(&absolute), Some(relative));
+    }
+
+    fn open_script_file(&mut self, path: &std::path::Path, relative: Option<String>) {
+        let title = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("script")
+            .to_owned();
+        match self.script.open(path, relative) {
+            Ok(_) => {
+                self.show_script_pane();
+                self.log(LogLevel::Action, format!("Opened script {title}"));
+            }
+            Err(error) => self.log(LogLevel::Error, error),
+        }
+    }
+
+    fn open_script_asset(&mut self, index: usize) {
+        let Some(asset) = self.assets.get(index).cloned() else {
+            return;
+        };
+        let absolute = self
+            .asset_paths
+            .get(index)
+            .cloned()
+            .or_else(|| {
+                self.engine
+                    .as_ref()
+                    .and_then(|engine| engine.asset_path(&asset.relative_path).ok())
+            })
+            .unwrap_or_else(|| asset.relative_path.clone());
+        let relative = self
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.asset_project_path(&asset.relative_path).ok())
+            .filter(|relative| !relative.is_empty())
+            .unwrap_or_else(|| asset.relative_path.clone());
+        self.open_script_file(std::path::Path::new(&absolute), Some(relative));
+    }
+
+    fn attach_active_script(&mut self) {
+        let Some(document) = self.script.current() else {
+            self.log(LogLevel::Error, "Open a script before attaching it");
+            return;
+        };
+        let relative = if document.relative_path.is_empty() {
+            document.path.display().to_string()
+        } else {
+            document.relative_path.clone()
+        };
+        self.attach_script_path(&relative);
+    }
+
+    fn attach_script_path(&mut self, relative: &str) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            self.log(
+                LogLevel::Error,
+                "Select an entity before attaching a script",
+            );
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            self.log(LogLevel::Error, "No engine session to attach a script");
+            return;
+        };
+        let type_id = engine
+            .entity_components(entity)
+            .iter()
+            .find(|component| component.name == "Script")
+            .map(|component| component.type_id)
+            .or_else(|| add_component(engine, entity, "Script").ok());
+        let Some(type_id) = type_id else {
+            self.log(LogLevel::Error, "Script component is not available");
+            return;
+        };
+        if let Err(error) = set_component_field(
+            engine,
+            entity,
+            type_id,
+            "Script",
+            doppio_engine::FieldValue::String(relative.to_owned()),
+        ) {
+            self.log(LogLevel::Error, format!("Could not attach script: {error}"));
+            return;
+        }
+        self.refresh_components();
+        self.commit("Attach Script", None);
+        self.log(LogLevel::Action, format!("Attached script {relative}"));
+    }
+
+    fn detach_script(&mut self) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return;
+        };
+        let Some(type_id) = engine
+            .entity_components(entity)
+            .iter()
+            .find(|component| component.name == "Script")
+            .map(|component| component.type_id)
+        else {
+            return;
+        };
+        if set_component_field(
+            engine,
+            entity,
+            type_id,
+            "Script",
+            doppio_engine::FieldValue::String(String::new()),
+        )
+        .is_ok()
+        {
+            self.refresh_components();
+            self.commit("Detach Script", None);
+            self.log(LogLevel::Action, "Detached script");
         }
     }
 
@@ -2674,6 +3083,17 @@ impl App {
         self.log(LogLevel::Action, format!("Opened material {}", asset.name));
     }
 
+    fn asset_double_clicked(&mut self, index: usize) {
+        let Some(asset) = self.assets.get(index) else {
+            return;
+        };
+        if asset.kind == "script" {
+            self.open_script_asset(index);
+        } else {
+            self.asset_pressed(index);
+        }
+    }
+
     fn asset_pressed(&mut self, index: usize) {
         let Some(asset) = self.assets.get(index) else {
             return;
@@ -2681,6 +3101,13 @@ impl App {
         match asset.kind.as_str() {
             "material" => self.open_material_asset(index),
             "image" => self.new_material_from_texture(index),
+            "script" => {
+                if asset.relative_path.to_ascii_lowercase().ends_with(".dyd") {
+                    self.open_dryad_asset(index);
+                } else {
+                    self.open_script_asset(index);
+                }
+            }
             _ => self.log(
                 LogLevel::Ui,
                 format!("{} is a {} asset", asset.name, asset.kind),
@@ -4982,6 +5409,20 @@ impl App {
                     }
                     match key.as_ref() {
                         iced::keyboard::Key::Character(character)
+                            if character.eq_ignore_ascii_case("e")
+                                && modifiers.control()
+                                && modifiers.shift() =>
+                        {
+                            Some(Message::OpenScriptEditor)
+                        }
+                        iced::keyboard::Key::Character(character)
+                            if character.eq_ignore_ascii_case("d")
+                                && modifiers.control()
+                                && modifiers.shift() =>
+                        {
+                            Some(Message::OpenDryadNodes)
+                        }
+                        iced::keyboard::Key::Character(character)
                             if character.eq_ignore_ascii_case("o") && modifiers.control() =>
                         {
                             Some(Message::Project(project_manager::Edit::Open))
@@ -5345,9 +5786,130 @@ impl App {
                 self.asset_drag = None;
                 self.asset_pressed(index);
             }
+            Message::AssetDoubleClick(index) => {
+                self.asset_double_clicked(index);
+            }
             Message::AssetSearch(text) => {
                 self.asset_search = text;
             }
+            Message::OpenScriptEditor => {
+                self.show_script_pane();
+            }
+            Message::OpenScriptPath(path) => {
+                self.open_script_path(&path);
+            }
+            Message::ScriptSelect(index) => {
+                self.script.select(index);
+            }
+            Message::ScriptTabClose(index) => {
+                self.script.close(index);
+            }
+            Message::ScriptAction(action) => {
+                self.script.update(action);
+            }
+            Message::ScriptSave => {
+                if let Some(index) = self.script.current_index() {
+                    match self.script.save(index) {
+                        Ok(()) => self.log(LogLevel::Action, "Saved script"),
+                        Err(error) => self.log(LogLevel::Error, error),
+                    }
+                }
+            }
+            Message::ScriptRevert => {
+                if let Some(index) = self.script.current_index() {
+                    match self.script.revert(index) {
+                        Ok(()) => self.log(LogLevel::Action, "Reverted script"),
+                        Err(error) => self.log(LogLevel::Error, error),
+                    }
+                }
+            }
+            Message::ScriptClose => {
+                if let Some(index) = self.script.current_index() {
+                    self.script.close(index);
+                }
+            }
+            Message::ScriptAttach => {
+                self.attach_active_script();
+            }
+            Message::ScriptDetach => {
+                self.detach_script();
+            }
+            Message::OpenDryadNodes => {
+                self.show_dryad_pane();
+            }
+            Message::OpenDryadPath(path) => {
+                self.open_dryad_path(&path);
+            }
+            Message::DryadCanvas(event) => self.handle_dryad_canvas(event),
+            Message::DryadSearch(search) => {
+                self.dryad.search = search;
+            }
+            Message::DryadAddNode(kind) => {
+                let id = self.dryad.add_node(kind);
+                if id.is_empty() {
+                    self.log(LogLevel::Error, "Open a Dryad script before adding nodes");
+                } else {
+                    self.show_dryad_pane();
+                }
+            }
+            Message::DryadSelectNode(selected) => {
+                self.dryad.selected = selected;
+                self.dryad.selected_link = None;
+            }
+            Message::DryadSelectLink(link) => {
+                self.dryad.selected_link = link;
+                self.dryad.selected = None;
+            }
+            Message::DryadNumber { node, field, text } => {
+                self.dryad.set_draft(&node, &field, text.clone());
+                if let Ok(value) = text.trim().parse::<f64>() {
+                    self.dryad.set_number(&node, &field, value);
+                }
+            }
+            Message::DryadBool { node, field, value } => {
+                self.dryad.set_bool(&node, &field, value);
+            }
+            Message::DryadText { node, value } => {
+                self.dryad.set_text(&node, value);
+            }
+            Message::DryadDelete => {
+                self.dryad.delete_selected();
+            }
+            Message::DryadSave => {
+                let path = self.dryad.script_path.clone();
+                match self.dryad.save() {
+                    Ok(()) => {
+                        if let Some(path) = path {
+                            let _ = self.script.reload_if_clean(&path);
+                        }
+                        self.log(LogLevel::Action, "Saved Dryad graph");
+                    }
+                    Err(error) => self.log(LogLevel::Error, error),
+                }
+            }
+            Message::DryadSync => match self.dryad.sync_from_dyd() {
+                Ok(()) => self.log(LogLevel::Action, "Synced Dryad graph from .dyd"),
+                Err(error) => self.log(LogLevel::Error, error),
+            },
+            Message::DryadAttach => {
+                let relative = if self.dryad.script_relative.is_empty() {
+                    self.dryad
+                        .script_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                } else {
+                    Some(self.dryad.script_relative.clone())
+                };
+                if let Some(relative) = relative {
+                    self.attach_script_path(&relative);
+                } else {
+                    self.log(LogLevel::Error, "Open a Dryad script before attaching it");
+                }
+            }
+            Message::DryadRun => self.run_dryad_preview(),
+            Message::DryadFit => self.dryad.fit_view(),
+            Message::DryadAddMotion => self.dryad.add_motion_example(),
+            Message::Noop => {}
             Message::AssetNavigate(path) => {
                 self.asset_directory = panels::assetmanager::normalize_directory(&path);
                 self.asset_search.clear();
@@ -5835,6 +6397,18 @@ impl App {
                         label: "Material Generator",
                         shortcut: None,
                         message: Message::OpenGenerator,
+                    },
+                    menu::Item {
+                        id: id::SCRIPT_EDITOR_MENU,
+                        label: "Script Editor…",
+                        shortcut: Some("Ctrl+Shift+E"),
+                        message: Message::OpenScriptEditor,
+                    },
+                    menu::Item {
+                        id: id::DRYAD_NODES_MENU,
+                        label: "Dryad Nodes…",
+                        shortcut: Some("Ctrl+Shift+D"),
+                        message: Message::OpenDryadNodes,
                     },
                     menu::Item {
                         id: id::SAVE_SCENE,
@@ -6451,6 +7025,7 @@ impl App {
                             on_search: Box::new(Message::AssetSearch),
                             on_press: Box::new(Message::AssetPressed),
                             on_release: Box::new(Message::AssetReleased),
+                            on_double_click: Box::new(Message::AssetDoubleClick),
                             on_folder: Box::new(Message::AssetNavigate),
                             on_crumb: Box::new(Message::AssetNavigate),
                             on_up: Message::AssetUp,
@@ -6753,6 +7328,97 @@ impl App {
                     )
                 };
                 (id::PANE_TEXTURE_SET, "Texture Set", subtitle, body)
+            }
+            PaneKind::Script => {
+                let subtitle = self
+                    .script
+                    .current()
+                    .map(|document| {
+                        if document.is_dirty() {
+                            format!("{} • unsaved", document.title)
+                        } else {
+                            document.title.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| "No file open".to_owned());
+                (
+                    id::PANE_SCRIPT,
+                    "Script",
+                    Some(subtitle),
+                    script_panel::view(
+                        &self.script,
+                        script_panel::Callbacks {
+                            ids: script_panel::Ids {
+                                root: id::SCRIPT_ROOT,
+                                editor: id::SCRIPT_EDITOR,
+                                save: id::SCRIPT_SAVE,
+                                revert: id::SCRIPT_REVERT,
+                                close: id::SCRIPT_CLOSE,
+                                attach: id::SCRIPT_ATTACH,
+                                detach: id::SCRIPT_DETACH,
+                                tab: id::script_tab,
+                                tab_close: id::script_tab_close,
+                            },
+                            on_select: Box::new(Message::ScriptSelect),
+                            on_tab_close: Box::new(Message::ScriptTabClose),
+                            on_action: Box::new(Message::ScriptAction),
+                            on_save: Message::ScriptSave,
+                            on_revert: Message::ScriptRevert,
+                            on_close: Message::ScriptClose,
+                            on_attach: Message::ScriptAttach,
+                            on_detach: Message::ScriptDetach,
+                        },
+                    ),
+                )
+            }
+            PaneKind::DryadNodes => {
+                let subtitle = if let Some(path) = self.dryad.script_path.as_ref() {
+                    let name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("script.dyd");
+                    if self.dryad.dirty {
+                        format!("{name} • unsaved")
+                    } else {
+                        name.to_owned()
+                    }
+                } else {
+                    "No script open".to_owned()
+                };
+                (
+                    id::PANE_DRYAD_NODES,
+                    "Dryad Nodes",
+                    Some(subtitle),
+                    dryad_nodes::view(
+                        dryad_nodes::View { state: &self.dryad },
+                        dryad_nodes::Callbacks {
+                            on_canvas: Box::new(Message::DryadCanvas),
+                            on_search: Box::new(Message::DryadSearch),
+                            add_node: Box::new(Message::DryadAddNode),
+                            select_node: Box::new(Message::DryadSelectNode),
+                            select_link: Box::new(Message::DryadSelectLink),
+                            delete: Message::DryadDelete,
+                            save: Message::DryadSave,
+                            sync: Message::DryadSync,
+                            attach: Message::DryadAttach,
+                            run: Message::DryadRun,
+                            fit: Message::DryadFit,
+                            add_motion: Message::DryadAddMotion,
+                            number_text: Box::new(|node, field, text| Message::DryadNumber {
+                                node,
+                                field,
+                                text,
+                            }),
+                            set_bool: Box::new(|node, field, value| Message::DryadBool {
+                                node,
+                                field,
+                                value,
+                            }),
+                            set_text: Box::new(|node, value| Message::DryadText { node, value }),
+                            noop: Message::Noop,
+                        },
+                    ),
+                )
             }
             PaneKind::Console => (
                 id::PANE_CONSOLE,

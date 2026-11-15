@@ -17,6 +17,9 @@ pub type LinkKey = (NodeId, usize);
 pub enum PortKind {
     Color,
     Scalar,
+    /// Control-flow port for node graphs whose pins run statements rather
+    /// than values (Dryad exec pins). Drawn as a triangle.
+    Exec,
 }
 
 impl PortKind {
@@ -24,6 +27,7 @@ impl PortKind {
         match self {
             PortKind::Color => theme::ICON_CYAN,
             PortKind::Scalar => theme::TEXT_MUTED,
+            PortKind::Exec => theme::ACCENT_HOVER,
         }
     }
 
@@ -31,7 +35,12 @@ impl PortKind {
         match self {
             PortKind::Color => "color",
             PortKind::Scalar => "scalar",
+            PortKind::Exec => "exec",
         }
+    }
+
+    pub fn is_exec(self) -> bool {
+        self == PortKind::Exec
     }
 }
 
@@ -283,8 +292,42 @@ fn draw_link(frame: &mut Frame, from: Point, to: Point, color: Color, width: f32
     );
 }
 
+/// Port marker: circles for value ports, direction triangles for exec ports.
+fn port_path(position: Point, radius: f32, kind: PortKind, output: bool) -> Path {
+    if kind.is_exec() {
+        let tip = if output { radius } else { -radius };
+        let base = -tip;
+        Path::new(|builder| {
+            builder.move_to(Point::new(position.x + base, position.y - radius));
+            builder.line_to(Point::new(position.x + tip, position.y));
+            builder.line_to(Point::new(position.x + base, position.y + radius));
+            builder.close();
+        })
+    } else {
+        Path::circle(position, radius)
+    }
+}
+
+enum Links<'a> {
+    Borrowed(&'a [Link]),
+    Owned(Vec<Link>),
+}
+
+impl Links<'_> {
+    fn as_slice(&self) -> &[Link] {
+        match self {
+            Links::Borrowed(links) => links,
+            Links::Owned(links) => links,
+        }
+    }
+}
+
 struct Program<'a, Message> {
-    view: View<'a>,
+    nodes: Vec<Node>,
+    links: Links<'a>,
+    pan: Vector,
+    zoom: f32,
+    selected_link: Option<LinkKey>,
     on_event: std::rc::Rc<dyn Fn(Event) -> Message + 'a>,
 }
 
@@ -325,7 +368,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
         if !inside && state.drag.is_none() {
             return None;
         }
-        let graph = |point: Point| to_graph(point, bounds, self.view.pan, self.view.zoom);
+        let graph = |point: Point| to_graph(point, bounds, self.pan, self.zoom);
 
         if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = event {
             if matches!(
@@ -334,7 +377,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
                 )
             ) {
-                if let Some(link) = self.view.selected_link {
+                if let Some(link) = self.selected_link {
                     return Some(emit(Event::Detach(link)));
                 }
             }
@@ -345,13 +388,9 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let cursor = local?;
                 if let Some(Drag::Link { from, output }) = state.drag {
-                    if let Some((to, input)) = input_at(
-                        cursor,
-                        &self.view.nodes,
-                        bounds,
-                        self.view.pan,
-                        self.view.zoom,
-                    ) {
+                    if let Some((to, input)) =
+                        input_at(cursor, &self.nodes, bounds, self.pan, self.zoom)
+                    {
                         state.drag = None;
                         state.link_cursor = None;
                         return Some(emit(Event::Connect {
@@ -364,17 +403,13 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     state.drag = None;
                     state.link_cursor = None;
                 }
-                if let Some((id, input)) = input_at(
-                    cursor,
-                    &self.view.nodes,
-                    bounds,
-                    self.view.pan,
-                    self.view.zoom,
-                ) {
+                if let Some((id, input)) =
+                    input_at(cursor, &self.nodes, bounds, self.pan, self.zoom)
+                {
                     let key = (id, input);
                     if let Some(link) = self
-                        .view
                         .links
+                        .as_slice()
                         .iter()
                         .find(|link| link.to == id && link.input == input)
                         .copied()
@@ -387,29 +422,25 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                         return Some(emit(Event::Detach(key)));
                     }
                 }
-                if let Some((id, output)) = output_at(
-                    cursor,
-                    &self.view.nodes,
-                    bounds,
-                    self.view.pan,
-                    self.view.zoom,
-                ) {
+                if let Some((id, output)) =
+                    output_at(cursor, &self.nodes, bounds, self.pan, self.zoom)
+                {
                     state.drag = Some(Drag::Link { from: id, output });
                     state.link_cursor = Some(cursor);
                     return Some(emit(Event::Select(Some(id))));
                 }
                 let point = graph(cursor);
-                if let Some(id) = node_at(point, &self.view.nodes) {
+                if let Some(id) = node_at(point, &self.nodes) {
                     state.drag = Some(Drag::Node { id, last: point });
                     return Some(emit(Event::Select(Some(id))));
                 }
                 if let Some(key) = link_at(
                     cursor,
-                    &self.view.nodes,
-                    self.view.links,
+                    &self.nodes,
+                    self.links.as_slice(),
                     bounds,
-                    self.view.pan,
-                    self.view.zoom,
+                    self.pan,
+                    self.zoom,
                 ) {
                     let now = Instant::now();
                     let double_click = state.last_wire_click.is_some_and(|(last, last_key)| {
@@ -429,16 +460,16 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 let cursor = local?;
                 let point = graph(cursor);
-                if let Some(id) = node_at(point, &self.view.nodes) {
+                if let Some(id) = node_at(point, &self.nodes) {
                     return Some(emit(Event::Select(Some(id))));
                 }
                 if let Some(key) = link_at(
                     cursor,
-                    &self.view.nodes,
-                    self.view.links,
+                    &self.nodes,
+                    self.links.as_slice(),
                     bounds,
-                    self.view.pan,
-                    self.view.zoom,
+                    self.pan,
+                    self.zoom,
                 ) {
                     return Some(emit(Event::Detach(key)));
                 }
@@ -450,8 +481,8 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                         let delta = cursor - *last;
                         *last = cursor;
                         return Some(emit(Event::Viewport {
-                            pan: self.view.pan + delta,
-                            zoom: self.view.zoom,
+                            pan: self.pan + delta,
+                            zoom: self.zoom,
                         }));
                     }
                     Some(Drag::Node { id, last }) => {
@@ -470,13 +501,9 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(Drag::Link { from, output }) = state.drag {
                     if let Some(cursor) = local {
-                        if let Some((to, input)) = input_at(
-                            cursor,
-                            &self.view.nodes,
-                            bounds,
-                            self.view.pan,
-                            self.view.zoom,
-                        ) {
+                        if let Some((to, input)) =
+                            input_at(cursor, &self.nodes, bounds, self.pan, self.zoom)
+                        {
                             state.drag = None;
                             state.link_cursor = None;
                             return Some(emit(Event::Connect {
@@ -501,11 +528,11 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     return None;
                 }
                 let factor = (amount * 0.12).exp();
-                let zoom = (self.view.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-                if (zoom - self.view.zoom).abs() < f32::EPSILON {
+                let zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                if (zoom - self.zoom).abs() < f32::EPSILON {
                     return None;
                 }
-                let before = to_graph(cursor, bounds, self.view.pan, self.view.zoom);
+                let before = to_graph(cursor, bounds, self.pan, self.zoom);
                 let pan = Vector::new(cursor.x - before.x * zoom, cursor.y - before.y * zoom);
                 return Some(emit(Event::Viewport { pan, zoom }));
             }
@@ -524,13 +551,13 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
     ) -> Vec<canvas::Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), theme::SURFACE);
-        draw_grid(&mut frame, bounds, self.view.pan, self.view.zoom);
+        draw_grid(&mut frame, bounds, self.pan, self.zoom);
 
-        for link in self.view.links {
-            let Some(from) = self.view.nodes.iter().find(|node| node.id == link.from) else {
+        for link in self.links.as_slice() {
+            let Some(from) = self.nodes.iter().find(|node| node.id == link.from) else {
                 continue;
             };
-            let Some(to) = self.view.nodes.iter().find(|node| node.id == link.to) else {
+            let Some(to) = self.nodes.iter().find(|node| node.id == link.to) else {
                 continue;
             };
             let Some(output) = from.outputs.get(link.output) else {
@@ -542,16 +569,11 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             let start = to_screen(
                 output_position(from, link.output),
                 bounds,
-                self.view.pan,
-                self.view.zoom,
+                self.pan,
+                self.zoom,
             );
-            let end = to_screen(
-                input_position(to, link.input),
-                bounds,
-                self.view.pan,
-                self.view.zoom,
-            );
-            let selected = self.view.selected_link == Some((link.to, link.input));
+            let end = to_screen(input_position(to, link.input), bounds, self.pan, self.zoom);
+            let selected = self.selected_link == Some((link.to, link.input));
             draw_link(
                 &mut frame,
                 start,
@@ -567,28 +589,21 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
 
         if let Some(Drag::Link { from, output }) = state.drag {
             if let (Some(node), Some(cursor)) = (
-                self.view.nodes.iter().find(|node| node.id == from),
+                self.nodes.iter().find(|node| node.id == from),
                 state.link_cursor,
             ) {
                 if let Some(port) = node.outputs.get(output) {
-                    let start = to_screen(
-                        output_position(node, output),
-                        bounds,
-                        self.view.pan,
-                        self.view.zoom,
-                    );
+                    let start =
+                        to_screen(output_position(node, output), bounds, self.pan, self.zoom);
                     draw_link(&mut frame, start, cursor, port.kind.color(), 2.0);
                 }
             }
         }
 
-        for node in &self.view.nodes {
-            let top_left = to_screen(node.position, bounds, self.view.pan, self.view.zoom);
-            let size = Size::new(
-                NODE_WIDTH * self.view.zoom,
-                node_height(node) * self.view.zoom,
-            );
-            let card = Path::rounded_rectangle(top_left, size, (7.0 * self.view.zoom).into());
+        for node in &self.nodes {
+            let top_left = to_screen(node.position, bounds, self.pan, self.zoom);
+            let size = Size::new(NODE_WIDTH * self.zoom, node_height(node) * self.zoom);
+            let card = Path::rounded_rectangle(top_left, size, (7.0 * self.zoom).into());
             frame.fill(&card, theme::PANEL_ALT);
             let border = if node.selected {
                 theme::ACCENT
@@ -603,15 +618,15 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     .with_color(border)
                     .with_width(if node.selected { 2.0 } else { 1.0 }),
             );
-            let header_height = HEADER_HEIGHT * self.view.zoom;
+            let header_height = HEADER_HEIGHT * self.zoom;
             let header = Path::rectangle(top_left, Size::new(size.width, header_height));
             frame.fill(&header, node.accent);
 
-            let title_size = 11.0 * self.view.zoom;
+            let title_size = 11.0 * self.zoom;
             frame.fill_text(Text {
                 content: node.title.clone(),
                 position: Point::new(
-                    top_left.x + 7.0 * self.view.zoom,
+                    top_left.x + 7.0 * self.zoom,
                     top_left.y + header_height * 0.5,
                 ),
                 color: theme::TEXT,
@@ -623,14 +638,14 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                 frame.fill_text(Text {
                     content: node.subtitle.clone(),
                     position: Point::new(
-                        top_left.x + size.width - 7.0 * self.view.zoom,
+                        top_left.x + size.width - 7.0 * self.zoom,
                         top_left.y + header_height * 0.5,
                     ),
                     color: Color {
                         a: 0.85,
                         ..theme::TEXT
                     },
-                    size: (8.5 * self.view.zoom).into(),
+                    size: (8.5 * self.zoom).into(),
                     align_x: iced::alignment::Horizontal::Right.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
@@ -638,41 +653,31 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             }
 
             for (index, port) in node.inputs.iter().enumerate() {
-                let position = to_screen(
-                    input_position(node, index),
-                    bounds,
-                    self.view.pan,
-                    self.view.zoom,
-                );
+                let position = to_screen(input_position(node, index), bounds, self.pan, self.zoom);
                 frame.fill(
-                    &Path::circle(position, PORT_RADIUS * self.view.zoom),
+                    &port_path(position, PORT_RADIUS * self.zoom, port.kind, false),
                     port.kind.color(),
                 );
                 frame.fill_text(Text {
                     content: port.label.clone(),
-                    position: Point::new(position.x + 8.0 * self.view.zoom, position.y),
+                    position: Point::new(position.x + 8.0 * self.zoom, position.y),
                     color: theme::TEXT_MUTED,
-                    size: (8.5 * self.view.zoom).into(),
+                    size: (8.5 * self.zoom).into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
                 });
             }
             for (index, port) in node.outputs.iter().enumerate() {
-                let position = to_screen(
-                    output_position(node, index),
-                    bounds,
-                    self.view.pan,
-                    self.view.zoom,
-                );
+                let position = to_screen(output_position(node, index), bounds, self.pan, self.zoom);
                 frame.fill(
-                    &Path::circle(position, PORT_RADIUS * self.view.zoom),
+                    &port_path(position, PORT_RADIUS * self.zoom, port.kind, true),
                     port.kind.color(),
                 );
                 frame.fill_text(Text {
                     content: port.label.clone(),
-                    position: Point::new(position.x - 8.0 * self.view.zoom, position.y),
+                    position: Point::new(position.x - 8.0 * self.zoom, position.y),
                     color: theme::TEXT_MUTED,
-                    size: (8.5 * self.view.zoom).into(),
+                    size: (8.5 * self.zoom).into(),
                     align_x: iced::alignment::Horizontal::Right.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
@@ -689,13 +694,50 @@ pub fn view<'a, Message: Clone + 'a>(
     view: View<'a>,
     on_event: impl Fn(Event) -> Message + 'a,
 ) -> Element<'a, Message> {
+    let program = Program {
+        nodes: view.nodes,
+        links: Links::Borrowed(view.links),
+        pan: view.pan,
+        zoom: view.zoom,
+        selected_link: view.selected_link,
+        on_event: std::rc::Rc::new(on_event),
+    };
+    canvas_element(id, program)
+}
+
+/// Like [`view`], but the caller hands over the node and link lists.
+///
+/// Node graphs whose canvas projection is derived from another model (Dryad
+/// builds links from `nodeId.pin` edges) can pass owned vectors instead of
+/// borrowing a slice that must outlive the element.
+pub fn view_owned<'a, Message: Clone + 'a>(
+    id: impl Into<iced::widget::Id>,
+    nodes: Vec<Node>,
+    links: Vec<Link>,
+    pan: Vector,
+    zoom: f32,
+    selected_link: Option<LinkKey>,
+    on_event: impl Fn(Event) -> Message + 'a,
+) -> Element<'a, Message> {
+    let program = Program {
+        nodes,
+        links: Links::Owned(links),
+        pan,
+        zoom,
+        selected_link,
+        on_event: std::rc::Rc::new(on_event),
+    };
+    canvas_element(id, program)
+}
+
+fn canvas_element<'a, Message: Clone + 'a>(
+    id: impl Into<iced::widget::Id>,
+    program: Program<'a, Message>,
+) -> Element<'a, Message> {
     iced::widget::container(
-        Canvas::new(Program {
-            view,
-            on_event: std::rc::Rc::new(on_event),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill),
+        Canvas::new(program)
+            .width(Length::Fill)
+            .height(Length::Fill),
     )
     .id(id.into())
     .width(Length::Fill)
@@ -791,13 +833,11 @@ mod tests {
     fn presses_outside_the_canvas_do_not_start_a_pan_or_clear_selection() {
         let links = [];
         let program = Program {
-            view: View {
-                nodes: Vec::new(),
-                links: &links,
-                pan: Vector::new(0.0, 0.0),
-                zoom: 1.0,
-                selected_link: None,
-            },
+            nodes: Vec::new(),
+            links: Links::Borrowed(&links),
+            pan: Vector::new(0.0, 0.0),
+            zoom: 1.0,
+            selected_link: None,
             on_event: std::rc::Rc::new(|event| event),
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 400.0));

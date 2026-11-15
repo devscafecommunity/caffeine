@@ -25,11 +25,14 @@ doppio/
     src/uikit/components/   button, panel, toolbar, status, text_field, field_editor,
                             tree_view, component_card/picker, viewport_surface,
                             viewport_shader, rendering_canvas, gizmo, asset_preview,
-                            breadcrumb
+                            breadcrumb, code_editor
     src/uikit/theme.rs      colours, borders and spacing for the whole workspace
     src/uikit/panels/       hierarchy, sceneviewport, assetmanager, inspector, console,
-                            material, material_generator, texture_set, project_manager
+                            material, material_generator, texture_set, project_manager,
+                            script, dryad_nodes
     src/uikit/project.rs    project.caffeine manifest, recursive scan, recent list
+    src/uikit/script.rs     open script documents, editor buffers and save/revert
+    src/uikit/dryad.rs      Dryad graph, catalog, emitter, .node.json and round-trip
 ```
 
 - App/UI state lives in `windows/main.rs`; panels and components are
@@ -40,8 +43,8 @@ doppio/
   `checkbox`, `pick_list`, `slider` or `button` calls in `uikit/panels/`.
 - The UI crates never touch FFI directly: only `doppio-engine` loads the
   shared library.
-- a five-pane `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
-  Console) with Material and Generator tabs;
+- a five-group `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
+  Console) with Material, Generator, Script and Dryad Nodes tabs;
 - stable widget ids for the toolbar, inspector inputs and entity rows;
 - a headless `iced_test` harness covering editing, panes, console filters,
   hierarchy search, viewport gestures and flight;
@@ -94,7 +97,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - implementation: `src/caffeine/capi/EngineAPI.cpp`
 - version: `CAFFEINE_CAPI_VERSION` 2; `caffeine_capi_version()` is exposed to
   frontends and shown as a status-bar badge.
-- test: `tests/test_capi.cpp` (`[capi]`, 310 assertions / 12 cases)
+- test: `tests/test_capi.cpp` (`[capi]`, 318 assertions / 13 cases)
 - opaque `CaffeineSession`, `CaffeineEntity` and versioned `CaffeineResult`;
 - session create/destroy and `.caf` scene load;
 - entity count/list/name, create, destroy, rename and selection;
@@ -130,6 +133,9 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
   `add/remove_component`); the Inspector is generic and edits every registered
   component (Transform, Camera 3D, lights, renderers, physics, colliders,
   scripts) with scalar, vector, bool, string and enum fields;
+- Dryad preview (`caffeine_session_run_dryad`) runs `onCreate` + one
+  `onUpdate` on an entity without entering play mode; `caffeine_dryad_available`
+  reports whether the interpreter was linked;
 - non-blocking render (`render_begin` / `render_poll`): submit a download copy
   and poll its fence instead of waiting for the GPU;
 - in-memory scene snapshots (`snapshot` / `restore`): the whole world serialized
@@ -143,7 +149,7 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 130 Rust tests: 2 engine bridge/snapshot tests, 127 UI/widget tests (1
+- 163 Rust tests: 2 engine bridge/snapshot tests, 160 UI/widget tests (1
 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
@@ -222,6 +228,35 @@ precedent.
   and material tints are reused, and the existing internal drag/drop path keeps
   original asset indices so dropping a `.mat` or image on the Hierarchy or
   Inspector still works.
+
+### Script editor and Dryad nodes
+
+- The **Script** pane opens `.lua` and `.dyd` files as tabs, with per-file dirty
+  tracking, Save/Revert/Close, line numbers, syntax colouring and the shared
+  project path. Scripts open from Assets (single-click for `.lua`; double-click
+  for the source of a `.dyd`), the Scene menu, `Ctrl+Shift+E`, or the MCP
+  `open_script` action.
+- Iced 0.14's stock `text_editor` paints empty under this workspace's
+  renderer, so `uikit/components/code_editor.rs` wraps the canvas-based
+  `iced-code-editor` widget. The pane still owns the document state, dirty
+  checks and disk I/O; the component is the only place that knows the editor
+  implementation.
+- **Attach Selected** writes the script's project-relative path into the
+  selected entity's `Script` component (adding the component when missing);
+  **Detach** clears it. Both are undoable scene edits.
+- The **Dryad Nodes** pane (`Ctrl+Shift+D`, Scene menu, or a `.dyd` asset)
+  edits the same `.dyd` plus its sibling `.node.json`. The Rust `dryad`
+  module matches the C++ `NodeEmitter`/`NodeGraphIO`/`NodeRoundTrip` formats
+  byte-for-byte: deterministic `// @node` markers, sorted JSON ids/edges and
+  `%.17g` numbers. It supports OnUpdate, Set/Get Position, Set/Get Scale,
+  Translate, DeltaTime, Constant, Branch and Log, with typed exec/data ports,
+  connection validation, inline input fallbacks, Add motion and Sync from
+  `.dyd`.
+- **Attach** and **Run once** reuse the script component and the C ABI
+  `caffeine_session_run_dryad` preview (onCreate + one onUpdate). Saving the
+  graph writes both files; opening a `.dyd` also stages its source in the
+  Script pane for hand editing. Sources without `// @node` markers stay valid
+  Dryad and the graph editor reports the mismatch instead of rewriting them.
 
 ### Material studio
 
@@ -597,6 +632,8 @@ registers scene-level queries and actions:
 | query | `scene` | scene path, dirty flag, counts and the console log |
 | query | `assets` | project assets with path, kind, size and directory flag |
 | query | `project` | active project, manager tab, recent/browse results and asset navigation |
+| query | `script_editor` | open script documents, active tab, paths and dirty state |
+| query | `dryad` | Dryad script, graph nodes/edges, selection, dirty state and status |
 | query | `camera` | viewport yaw, pitch, distance and focus |
 | query | `viewport` | pane/render size, grid, AA, render scale and hover |
 | query | `gizmo` | active transform tool and selected transform |
@@ -611,6 +648,10 @@ registers scene-level queries and actions:
 | action | `open_project_manager` | opens the Project Manager dialog |
 | action | `create_project` | `{ "name", "location"?, "template"?: "Empty"\|"2D"\|"3D" }` |
 | action | `open_project` | `{ "path": "project root or project.caffeine" }` |
+| action | `open_script` / `open_dryad` | `{ "path": "script.lua" \| "script.dyd" }` |
+| action | `dryad_add_node` / `dryad_connect` / `dryad_set_number` / `dryad_set_bool` / `dryad_set_text` | graph editing |
+| action | `dryad_save` / `dryad_sync` / `dryad_delete` / `dryad_fit` / `dryad_add_motion` | graph file and layout actions |
+| action | `dryad_attach` / `dryad_run` | attach or preview the open Dryad script |
 | action | `asset_navigate` / `asset_up` / `asset_root` | asset-browser folder navigation |
 | action | `refresh_assets` / `set_asset_view` | rescan assets / `{ "mode": "grid"\|"list" }` |
 | action | `create_prefab` | `{ "key": "cube" \| "light" \| ... }` |
@@ -690,8 +731,10 @@ A full scripted session lives in `doppio/.iced-mcp/scripts/editor-smoke.luau`.
 to an entity, presets and texture slots; `material-generator-smoke`,
 `materialcraft-smoke` and `texture-set-smoke` cover the node canvas, portable
 round-trip and texture-set painting/export; `project-smoke` covers creating and
-reopening a project plus asset navigation; `prefab-smoke`, `hierarchy-smoke`,
-`components-smoke`, `viewport-smoke` and `tabs-smoke` cover the rest.
+reopening a project plus asset navigation; `script-dryad-smoke` covers the
+Script Editor, Dryad graph save and the one-frame preview; `prefab-smoke`,
+`hierarchy-smoke`, `components-smoke`, `viewport-smoke` and `tabs-smoke` cover
+the rest.
 It loads the `editor` fixture, renames through the real text input, adds an
 entity, drives the camera and asserts the console:
 

@@ -88,6 +88,8 @@ pub const LAYOUT_VIEWPORT: UiId = UiId::fixed("editor.layout.viewport");
 pub const MENU_PROJECT: UiId = UiId::fixed("editor.menu.project");
 pub const PROJECT_MANAGER_MENU: UiId = UiId::fixed("editor.menu.project.manager");
 pub const PROJECT_REFRESH_ASSETS: UiId = UiId::fixed("editor.menu.project.refresh_assets");
+pub const SCRIPT_EDITOR_MENU: UiId = UiId::fixed("editor.menu.scene.script_editor");
+pub const DRYAD_NODES_MENU: UiId = UiId::fixed("editor.menu.scene.dryad_nodes");
 pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
 pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
 pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
@@ -129,12 +131,39 @@ pub const PROJECT_BROWSE_DEFAULT: UiId = UiId::fixed("project.browse.default");
 pub const PROJECT_BROWSE_SEARCH: UiId = UiId::fixed("project.browse.search");
 pub const PROJECT_BROWSE_OPEN: UiId = UiId::fixed("project.browse.open");
 pub const PROJECT_ERROR_DISMISS: UiId = UiId::fixed("project.error.dismiss");
+
+// ── Script editor ────────────────────────────────────────────────────────
+pub const SCRIPT_ROOT: UiId = UiId::fixed("script.editor");
+pub const SCRIPT_EDITOR: UiId = UiId::fixed("script.editor.code");
+pub const SCRIPT_SAVE: UiId = UiId::fixed("script.editor.save");
+pub const SCRIPT_REVERT: UiId = UiId::fixed("script.editor.revert");
+pub const SCRIPT_CLOSE: UiId = UiId::fixed("script.editor.close");
+pub const SCRIPT_ATTACH: UiId = UiId::fixed("script.editor.attach");
+pub const SCRIPT_DETACH: UiId = UiId::fixed("script.editor.detach");
+pub const SCRIPT_EMPTY: UiId = UiId::fixed("script.editor.empty");
+
+// ── Dryad nodes ──────────────────────────────────────────────────────────
+pub const DRYAD_ROOT: UiId = UiId::fixed("dryad.nodes");
+pub const DRYAD_CANVAS: UiId = UiId::fixed("dryad.nodes.canvas");
+pub const DRYAD_PALETTE_SEARCH: UiId = UiId::fixed("dryad.nodes.search");
+pub const DRYAD_SAVE: UiId = UiId::fixed("dryad.nodes.save");
+pub const DRYAD_SYNC: UiId = UiId::fixed("dryad.nodes.sync");
+pub const DRYAD_DELETE: UiId = UiId::fixed("dryad.nodes.delete");
+pub const DRYAD_FIT: UiId = UiId::fixed("dryad.nodes.fit");
+pub const DRYAD_ATTACH: UiId = UiId::fixed("dryad.nodes.attach");
+pub const DRYAD_RUN: UiId = UiId::fixed("dryad.nodes.run");
+pub const DRYAD_ADD_MOTION: UiId = UiId::fixed("dryad.nodes.add_motion");
+pub const DRYAD_STATUS: UiId = UiId::fixed("dryad.nodes.status");
+pub const DRYAD_PROPERTIES: UiId = UiId::fixed("dryad.nodes.properties");
+pub const DRYAD_EMPTY: UiId = UiId::fixed("dryad.nodes.empty");
 pub const PANE_VIEWPORT: UiId = UiId::fixed("editor.pane.viewport");
 pub const VIEWPORT_GIZMO: UiId = UiId::fixed("viewport.canvas.gizmo");
 pub const PANE_INSPECTOR: UiId = UiId::fixed("editor.pane.inspector");
 pub const PANE_MATERIAL: UiId = UiId::fixed("editor.pane.material");
 pub const PANE_TEXTURE_SET: UiId = UiId::fixed("editor.pane.texture_set");
 pub const PANE_GENERATOR: UiId = UiId::fixed("editor.pane.generator");
+pub const PANE_SCRIPT: UiId = UiId::fixed("editor.pane.script");
+pub const PANE_DRYAD_NODES: UiId = UiId::fixed("editor.pane.dryad_nodes");
 pub const PANE_CONSOLE: UiId = UiId::fixed("editor.pane.console");
 pub const HIERARCHY_ROOT: UiId = UiId::fixed("hierarchy.tree.scene");
 pub const HIERARCHY_ADD: UiId = UiId::fixed("hierarchy.toolbar.add");
@@ -150,6 +179,8 @@ pub const PANE_TAB_INSPECTOR: UiId = UiId::fixed("editor.pane.tab.inspector");
 pub const PANE_TAB_MATERIAL: UiId = UiId::fixed("editor.pane.tab.material");
 pub const PANE_TAB_GENERATOR: UiId = UiId::fixed("editor.pane.tab.generator");
 pub const PANE_TAB_TEXTURE_SET: UiId = UiId::fixed("editor.pane.tab.texture_set");
+pub const PANE_TAB_SCRIPT: UiId = UiId::fixed("editor.pane.tab.script");
+pub const PANE_TAB_DRYAD_NODES: UiId = UiId::fixed("editor.pane.tab.dryad_nodes");
 pub const PANE_TAB_CONSOLE: UiId = UiId::fixed("editor.pane.tab.console");
 pub const CONSOLE_FILTER_ERROR: UiId = UiId::fixed("console.filter.error");
 pub const CONSOLE_FILTER_LOG: UiId = UiId::fixed("console.filter.log");
@@ -410,6 +441,22 @@ pub fn project_browse_row(index: usize) -> UiId {
     UiId::dynamic(format!("project.browse.row.{index}"))
 }
 
+pub fn script_tab(index: usize) -> UiId {
+    UiId::dynamic(format!("script.editor.tab.{index}"))
+}
+
+pub fn script_tab_close(index: usize) -> UiId {
+    UiId::dynamic(format!("script.editor.tab.close.{index}"))
+}
+
+pub fn dryad_palette_item(type_name: &str) -> UiId {
+    UiId::dynamic(format!("dryad.nodes.palette.{type_name}"))
+}
+
+pub fn dryad_property(name: &str) -> UiId {
+    UiId::dynamic(format!("dryad.nodes.property.{name}"))
+}
+
 /// The statically documented part of the UI tree.
 pub const CATALOG: &[UiMeta] = &[
     UiMeta {
@@ -435,6 +482,16 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: PROJECT_REFRESH_ASSETS,
         description: "Rescans the project asset root.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: SCRIPT_EDITOR_MENU,
+        description: "Opens the Script Editor pane.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: DRYAD_NODES_MENU,
+        description: "Opens the Dryad Nodes pane.",
         kind: "menu_item",
     },
     UiMeta {
@@ -848,6 +905,121 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "pane",
     },
     UiMeta {
+        id: PANE_SCRIPT,
+        description: "Script editor for Lua and Dryad files with tabs, save, revert and attach.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_DRYAD_NODES,
+        description: "Visual Dryad node editor that writes .dyd and .node.json.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: SCRIPT_ROOT,
+        description: "Script editor root: tabs, toolbar and source code.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: SCRIPT_EDITOR,
+        description: "Monospace source editor for the active script file.",
+        kind: "text_editor",
+    },
+    UiMeta {
+        id: SCRIPT_SAVE,
+        description: "Saves the active script file.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SCRIPT_REVERT,
+        description: "Discards unsaved changes in the active script.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SCRIPT_CLOSE,
+        description: "Closes the active script tab.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SCRIPT_ATTACH,
+        description: "Attaches the active script to the selected entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SCRIPT_DETACH,
+        description: "Clears the script component from the selected entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SCRIPT_EMPTY,
+        description: "Shown when the script editor has no open file.",
+        kind: "label",
+    },
+    UiMeta {
+        id: DRYAD_ROOT,
+        description: "Dryad node editor: palette, canvas, properties and runtime actions.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: DRYAD_CANVAS,
+        description: "Dryad graph canvas with exec and data wires.",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: DRYAD_PALETTE_SEARCH,
+        description: "Filters the Dryad node palette.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: DRYAD_SAVE,
+        description: "Writes the Dryad .dyd and .node.json files.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_SYNC,
+        description: "Rebuilds the canvas from the current .dyd source.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_DELETE,
+        description: "Deletes the selected Dryad node or link.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_FIT,
+        description: "Frames the whole Dryad graph.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_ATTACH,
+        description: "Attaches the open Dryad script to the selected entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_RUN,
+        description: "Runs one Dryad preview frame on the selected entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_ADD_MOTION,
+        description: "Builds an OnUpdate -> Translate motion example.",
+        kind: "button",
+    },
+    UiMeta {
+        id: DRYAD_STATUS,
+        description: "Dryad editor status and emitted-script message.",
+        kind: "label",
+    },
+    UiMeta {
+        id: DRYAD_PROPERTIES,
+        description: "Selected Dryad node properties and inline input values.",
+        kind: "card",
+    },
+    UiMeta {
+        id: DRYAD_EMPTY,
+        description: "Shown when no Dryad script is open.",
+        kind: "label",
+    },
+    UiMeta {
         id: NODE_CANVAS,
         description: "Reusable node canvas: pan, zoom, drag nodes and connect ports.",
         kind: "node_canvas",
@@ -1138,6 +1310,16 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "tab",
     },
     UiMeta {
+        id: PANE_TAB_SCRIPT,
+        description: "Script editor tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: PANE_TAB_DRYAD_NODES,
+        description: "Dryad Nodes tab in a shared pane.",
+        kind: "tab",
+    },
+    UiMeta {
         id: PANE_TAB_CONSOLE,
         description: "Console tab in a shared pane.",
         kind: "tab",
@@ -1261,6 +1443,26 @@ pub const CATALOG: &[UiMeta] = &[
         id: UiId::fixed("project.browse.row"),
         description: "A scanned-project row; rows use the .N suffix.",
         kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("script.editor.tab"),
+        description: "A script editor file tab; tabs use the .N suffix.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: UiId::fixed("script.editor.tab.close"),
+        description: "Closes a script editor tab; tabs use the .N suffix.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("dryad.nodes.palette"),
+        description: "A Dryad palette node; entries use the type-name suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("dryad.nodes.property"),
+        description: "A Dryad node property; entries use the field-name suffix.",
+        kind: "text_input",
     },
     UiMeta {
         id: UiId::fixed("material.surface"),

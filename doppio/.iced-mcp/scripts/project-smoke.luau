@@ -13,9 +13,11 @@ local opened = app:query("project")
 assert(opened.open == true, "open_project_manager should show the dialog")
 app:expect({ id = "project.manager.tab.create" })
 
+local suffix = tostring(math.random(100000, 999999))
+local location = "/tmp/opencode/doppio-project-smoke-" .. suffix
 app:run_app_action("create_project", {
   name = "SmokeProject",
-  location = "/tmp/opencode/doppio-project-smoke",
+  location = location,
   template = "2D",
 })
 app:sleep(1500)

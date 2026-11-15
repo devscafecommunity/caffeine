@@ -1,4 +1,5 @@
 pub mod components;
+pub mod dryad;
 pub mod generators;
 pub mod icons;
 pub mod id;
@@ -8,6 +9,7 @@ pub mod mesh_material_import;
 pub mod panels;
 pub mod prefabs;
 pub mod project;
+pub mod script;
 pub mod texture_set;
 pub mod theme;
 

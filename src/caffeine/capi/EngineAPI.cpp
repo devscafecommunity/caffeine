@@ -37,6 +37,9 @@
 #include <string>
 #include <vector>
 #include "script/ScriptTypes.hpp"
+#ifdef CF_HAS_DRYAD
+#include "script/DryadHost.hpp"
+#endif
 #include "scene/EditorContext.hpp"
 #include "scene/EditorSceneSerializer.hpp"
 
@@ -918,6 +921,40 @@ CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char*
     }
     session->scanAssets();
     return CAFFEINE_OK;
+}
+
+int caffeine_dryad_available(void) {
+#ifdef CF_HAS_DRYAD
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+CaffeineResult caffeine_session_run_dryad(CaffeineSession* session, CaffeineEntity entityId,
+                                          const char* scriptPath, float dt) {
+#ifdef CF_HAS_DRYAD
+    if (!session || !scriptPath || scriptPath[0] == '\0') return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    Caffeine::Script::DryadHost host;
+    host.setWorld(&session->world);
+    if (!session->context.projectRootPath.empty()) {
+        host.setSearchRoot(session->context.projectRootPath);
+    }
+    std::string error;
+    if (!host.load(scriptPath, &error)) return CAFFEINE_ERROR;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    if (!host.call(scriptPath, "onCreate", entity, 0.0f, &error)) return CAFFEINE_ERROR;
+    if (!host.call(scriptPath, "onUpdate", entity, dt, &error)) return CAFFEINE_ERROR;
+    session->context.isDirty = true;
+    return CAFFEINE_OK;
+#else
+    (void)session;
+    (void)entityId;
+    (void)scriptPath;
+    (void)dt;
+    return CAFFEINE_ERROR;
+#endif
 }
 
 const char* caffeine_session_scene_path(const CaffeineSession* session) {
