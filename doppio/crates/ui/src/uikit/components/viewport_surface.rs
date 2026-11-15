@@ -1,13 +1,14 @@
-use crate::uikit::components::status;
+use crate::uikit::components::{status, viewport_shader};
 use crate::uikit::id::UiId;
 use crate::uikit::theme::{self, ChipTone};
 use iced::mouse;
-use iced::widget::{container, image, mouse_area, stack, text, Column};
-use iced::{ContentFit, Element, Length, Point};
+use iced::widget::{container, mouse_area, sensor, stack, text, Column};
+use iced::{Element, Length, Point, Size};
+use std::rc::Rc;
 
 pub struct Surface<'a, Message> {
     pub id: UiId,
-    pub image: Option<image::Handle>,
+    pub frame: Option<&'a viewport_shader::Frame>,
     pub status: String,
     pub hint: String,
     pub empty: bool,
@@ -16,16 +17,19 @@ pub struct Surface<'a, Message> {
     pub on_right_press: Message,
     pub on_left_release: Message,
     pub on_right_release: Message,
+    pub on_exit: Message,
     pub on_move: Box<dyn Fn(Point) -> Message + 'a>,
     pub on_scroll: Box<dyn Fn(mouse::ScrollDelta) -> Message + 'a>,
     pub on_double_click: Message,
+    pub on_resize: Box<dyn Fn(Size) -> Message + 'a>,
+    pub gizmo: Element<'a, Message>,
 }
 
 /// The engine surface: image or empty state, HUD chips and mouse handling.
 pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'a, Message> {
     let Surface {
         id,
-        image,
+        frame,
         status: status_label,
         hint,
         empty,
@@ -34,22 +38,20 @@ pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'
         on_right_press,
         on_left_release,
         on_right_release,
+        on_exit,
         on_move,
         on_scroll,
         on_double_click,
+        on_resize,
+        gizmo,
     } = surface;
-    let base: Element<'a, Message> = match image {
-        Some(handle) => container(
-            iced::widget::image(handle)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .content_fit(ContentFit::Contain),
-        )
-        .id(id)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(theme::surface)
-        .into(),
+    let base: Element<'a, Message> = match frame {
+        Some(frame) => container(viewport_shader::view(frame))
+            .id(id)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(theme::surface)
+            .into(),
         None => container(
             text("Waiting for the engine viewport…")
                 .size(13)
@@ -68,6 +70,7 @@ pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'
         .on_right_press(on_right_press)
         .on_release(on_left_release)
         .on_right_release(on_right_release)
+        .on_exit(on_exit)
         .on_move(on_move)
         .on_scroll(on_scroll)
         .on_double_click(on_double_click)
@@ -82,7 +85,7 @@ pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'
         iced::widget::row![
             status::chip(status_label, ChipTone::Accent),
             status::chip(
-                "Drag orbit · Right drag pan · Wheel zoom",
+                "WASD/QE fly · Shift boost · Drag orbit · Wheel zoom",
                 ChipTone::Neutral
             ),
         ]
@@ -103,7 +106,7 @@ pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'
         .align_y(iced::alignment::Vertical::Bottom)
         .into();
 
-    let mut layers = stack([interactive, top, bottom]);
+    let mut layers = stack([interactive, gizmo, top, bottom]);
     if empty {
         let empty: Element<'a, Message> = container(
             Column::new()
@@ -121,5 +124,14 @@ pub fn view<'a, Message: Clone + 'a>(surface: Surface<'a, Message>) -> Element<'
         .into();
         layers = layers.push(empty);
     }
-    layers.into()
+
+    // Report the real pane size so the engine can render at native resolution
+    // instead of stretching a fixed image.
+    let on_resize = Rc::new(on_resize);
+    let on_show = on_resize.clone();
+    let on_resize = on_resize.clone();
+    sensor(layers)
+        .on_show(move |size| on_show(size))
+        .on_resize(move |size| on_resize(size))
+        .into()
 }

@@ -139,6 +139,7 @@ target_compile_definitions(caffeine-core PUBLIC
 target_sources(caffeine-core PRIVATE
     src/caffeine/assets/MaterialCache.cpp
     src/caffeine/assets/MaterialFile.cpp
+    src/caffeine/assets/TextureMapGenerator.cpp
     src/caffeine/assets/MeshMaterialExport.cpp)
 
 if(CAFFEINE_ENABLE_BULLET3)

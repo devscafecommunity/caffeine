@@ -97,6 +97,63 @@ impl Harness {
         self.drain(messages);
     }
 
+    /// Presses, moves and releases the left mouse button over a widget.
+    pub fn drag(&mut self, id: impl Into<Id>, dx: f32, dy: f32) {
+        let start = {
+            let mut ui = simulator(self.app.view());
+            ui.find(id.into())
+                .expect("drag target should exist")
+                .bounds()
+                .center()
+        };
+        self.drag_at(start, Point::new(start.x + dx, start.y + dy));
+    }
+
+    /// Drags one widget onto the centre of another widget.
+    pub fn drag_to(&mut self, source: impl Into<Id>, target: impl Into<Id>) {
+        let (source, target) = {
+            let mut ui = simulator(self.app.view());
+            let source = ui
+                .find(source.into())
+                .expect("drag source should exist")
+                .bounds()
+                .center();
+            let target = ui
+                .find(target.into())
+                .expect("drop target should exist")
+                .bounds()
+                .center();
+            (source, target)
+        };
+        self.drag_at(source, target);
+    }
+
+    /// Drags from an absolute point to another absolute point.
+    pub fn drag_at(&mut self, start: Point, end: Point) {
+        let mut ui = simulator(self.app.view());
+        ui.point_at(start);
+        ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: start,
+        })]);
+        ui.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Left,
+        ))]);
+        for step in 1..=4 {
+            let t = step as f32 / 4.0;
+            let position = Point::new(
+                start.x + (end.x - start.x) * t,
+                start.y + (end.y - start.y) * t,
+            );
+            ui.point_at(position);
+            ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved { position })]);
+        }
+        ui.simulate([iced::Event::Mouse(mouse::Event::ButtonReleased(
+            mouse::Button::Left,
+        ))]);
+        let messages: Vec<_> = ui.into_messages().collect();
+        self.drain(messages);
+    }
+
     /// Clicks an input by id, types `text`, and applies the edits.
     pub fn type_into(&mut self, id: impl Into<Id>, text: &str) {
         let mut ui = simulator(self.app.view());
@@ -496,6 +553,237 @@ fn viewport_drag_orbits_and_wheel_zooms() {
 }
 
 #[test]
+fn prefab_palette_creates_an_entity_from_a_category() {
+    let mut harness = Harness::with_entities();
+    let before = harness.app().entities.len();
+    harness.click(id::HIERARCHY_ADD);
+    assert!(harness.shows("Create Entity"));
+    harness.click(Id::from(id::prefab_category("mesh")));
+    harness.click(Id::from(id::prefab_item("cube")));
+    assert_eq!(harness.app().entities.len(), before + 1);
+    assert_eq!(
+        harness
+            .app()
+            .entities
+            .last()
+            .map(|entity| entity.name.as_str()),
+        Some("Cube")
+    );
+    assert_eq!(harness.app().selected, before);
+}
+
+#[test]
+fn prefab_mesh_creation_adds_renderer_components() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    let index = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.app.create_prefab(index);
+    let entity = harness.app().entities.last().expect("created entity");
+    let components = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .entity_components(entity.id);
+    let names: Vec<&str> = components
+        .iter()
+        .map(|component| component.name.as_str())
+        .collect();
+    assert!(names.contains(&"Mesh Filter"));
+    assert!(names.contains(&"Mesh Renderer"));
+    assert_eq!(harness.app().history.undo_name(), Some("Create Cube"));
+}
+
+#[test]
+fn duplicate_prefab_copies_components() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.app.create_prefab(cube);
+    let source = harness.app().entities.last().expect("cube").id;
+    let source_components = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .entity_components(source)
+        .len();
+    let duplicate = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "duplicate")
+        .expect("duplicate prefab");
+    harness.app.create_prefab(duplicate);
+    let copy = harness.app().entities.last().expect("copy");
+    let copy_components = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .entity_components(copy.id)
+        .len();
+    assert_eq!(copy_components, source_components);
+    assert!(copy.name.contains("Copy"));
+}
+
+#[test]
+fn gizmo_shortcuts_switch_modes_only_over_the_viewport() {
+    let mut harness = Harness::with_entities();
+    harness.app.viewport_hovered = true;
+    harness.dispatch(Message::GizmoShortcut(2));
+    assert_eq!(harness.app().gizmo_mode, gizmo::Mode::Rotate);
+    harness.dispatch(Message::GizmoShortcut(3));
+    assert_eq!(harness.app().gizmo_mode, gizmo::Mode::Scale);
+    harness.app.viewport_hovered = false;
+    harness.dispatch(Message::GizmoShortcut(1));
+    assert_eq!(harness.app().gizmo_mode, gizmo::Mode::Scale);
+}
+
+#[test]
+fn gizmo_move_edit_updates_the_entity_and_history() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [2.0, 1.0, 0.0],
+    })));
+    let selected = harness.app().selected;
+    assert_eq!(harness.app().entities[selected].position, [2.0, 1.0, 0.0]);
+    assert_eq!(harness.app().history.undo_name(), Some("Move X"));
+}
+
+#[test]
+fn gizmo_move_uses_world_position_for_a_parented_child() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    let parent = harness.app().entities[0].id;
+    let child = harness.app().entities[1].id;
+    harness
+        .app
+        .engine
+        .as_mut()
+        .expect("engine")
+        .set_entity_parent(child, Some(parent))
+        .expect("parent link");
+    harness.app.selected = 1;
+
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [5.0, 0.0, 0.0],
+    })));
+
+    // First sits at x=2, so world x=5 is local x=3 on the child.
+    assert_eq!(harness.app().entities[1].position, [3.0, 0.0, 0.0]);
+    let local = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .position(child)
+        .expect("child position");
+    assert_eq!(local, [3.0, 0.0, 0.0]);
+    assert_eq!(harness.app().history.undo_name(), Some("Move X"));
+}
+
+#[test]
+fn viewport_drag_widget_orbits_the_camera() {
+    let mut harness = Harness::with_entities();
+    let yaw = harness.app().camera.yaw;
+    let pitch = harness.app().camera.pitch;
+    harness.drag(id::VIEWPORT_SURFACE, 60.0, 20.0);
+    assert!(
+        harness.app().camera.yaw > yaw,
+        "drag should reach the surface"
+    );
+    assert!(
+        harness.app().camera.pitch > pitch,
+        "drag should orbit pitch"
+    );
+}
+
+#[test]
+fn viewport_fly_moves_up_without_a_height_limit() {
+    let mut harness = Harness::with_entities();
+    // Looking up: W follows the view direction instead of the ground plane.
+    harness.app.camera.pitch = -PITCH_LIMIT;
+    harness.app.camera.distance = 100.0;
+    harness.dispatch(Message::ViewportKey(FlyKey::Forward, true));
+    for _ in 0..200 {
+        harness.app.fly_camera(0.1);
+    }
+    harness.dispatch(Message::ViewportKey(FlyKey::Forward, false));
+    assert!(
+        harness.app().camera.focus[1] > 1000.0,
+        "forward flight must leave the ground"
+    );
+
+    harness.dispatch(Message::ViewportKey(FlyKey::Up, true));
+    for _ in 0..200 {
+        harness.app.fly_camera(0.1);
+    }
+    harness.dispatch(Message::ViewportKey(FlyKey::Up, false));
+    assert!(
+        harness.app().camera.focus[1] > 5000.0,
+        "Q/E flight must not clamp altitude"
+    );
+
+    harness.dispatch(Message::ViewportKey(FlyKey::Forward, true));
+    harness.dispatch(Message::ViewportHover(false));
+    assert!(
+        harness.app().fly_keys.is_empty(),
+        "leaving the viewport must release held flight keys"
+    );
+}
+
+#[test]
+fn viewport_resize_targets_native_ratio_and_budget() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ViewportResized(800.0, 450.0));
+    assert_eq!(harness.app().viewport_desired, (1600, 900));
+
+    let (width, height) = App::viewport_target_size(4000.0, 3000.0);
+    assert!(width as f32 * height as f32 <= VIEWPORT_PIXEL_BUDGET + 10_000.0);
+    let ratio = width as f32 / height as f32;
+    assert!(
+        (ratio - 4.0 / 3.0).abs() < 0.01,
+        "pixel budget must preserve the pane aspect ratio"
+    );
+}
+
+#[test]
+fn view_menu_toggles_the_reference_grid() {
+    let mut harness = Harness::empty();
+    assert!(harness.app().viewport_settings.show_grid);
+    harness.dispatch(Message::ToggleGrid);
+    assert!(!harness.app().viewport_settings.show_grid);
+    harness.dispatch(Message::ToggleGrid);
+    assert!(harness.app().viewport_settings.show_grid);
+    harness.dispatch(Message::ToggleGrid);
+    assert!(harness.shows("Grid off"));
+
+    harness.dispatch(Message::SetViewportSettings {
+        show_grid: Some(true),
+        anti_aliasing: Some(doppio_engine::AntiAliasing::Taa),
+        render_scale: Some(1.25),
+    });
+    let settings = harness.app().viewport_settings;
+    assert!(settings.show_grid);
+    assert_eq!(settings.anti_aliasing, doppio_engine::AntiAliasing::Taa);
+    assert!((settings.render_scale - 1.25).abs() < 0.001);
+}
+
+#[test]
 fn viewport_right_drag_pans_and_focus_targets_selection() {
     let mut harness = Harness::with_entities();
     harness.rebase_history();
@@ -524,6 +812,7 @@ fn tree_entity(id: u32, parent: Option<u32>) -> EntityView {
         rotation: [0.0; 3],
         scale: [1.0; 3],
         parent,
+        icon: crate::uikit::icons::Icon::Generic,
     }
 }
 
@@ -556,6 +845,31 @@ fn hierarchy_tree_collapses_and_expands_children() {
 }
 
 #[test]
+fn hierarchy_toolbar_adds_and_chevron_toggles() {
+    let entities = vec![tree_entity(0, None), tree_entity(1, Some(0))];
+    let loaded = projectloader::LoadedProject {
+        engine: None,
+        entities,
+        assets: Vec::new(),
+        log: Vec::new(),
+    };
+    let mut harness = Harness {
+        app: App::with_project(loaded),
+        _guard: test_guard(),
+    };
+    let before = harness.app().entities.len();
+    harness.click(id::HIERARCHY_ADD);
+    harness.click(Id::from(id::prefab_item("empty")));
+    assert_eq!(harness.app().entities.len(), before + 1);
+
+    let toggle = id::tree_toggle(id::entity_row(0).key());
+    harness.click(toggle.clone());
+    assert!(!harness.has(Id::from(id::entity_row(1))));
+    harness.click(toggle);
+    assert!(harness.has(Id::from(id::entity_row(1))));
+}
+
+#[test]
 fn hierarchy_root_collapses_and_search_filters() {
     let mut harness = Harness::with_entities();
     harness.click(id::HIERARCHY_ROOT);
@@ -569,12 +883,126 @@ fn hierarchy_root_collapses_and_search_filters() {
 }
 
 #[test]
+fn dragging_a_tab_moves_only_that_page() {
+    let mut harness = Harness::with_entities();
+    let panes: Vec<_> = harness
+        .app()
+        .panes
+        .iter()
+        .map(|(pane, group)| (*pane, group.pages.clone()))
+        .collect();
+    let source = panes
+        .iter()
+        .find(|(_, pages)| pages.contains(&PaneKind::Assets))
+        .map(|(pane, _)| *pane)
+        .expect("assets tab");
+    let target = panes
+        .iter()
+        .find(|(_, pages)| pages.contains(&PaneKind::Viewport))
+        .map(|(pane, _)| *pane)
+        .expect("viewport tab");
+    harness.dispatch(Message::TabPressed(source, PaneKind::Assets));
+    harness.dispatch(Message::TabEnter(target, PaneKind::Viewport));
+    harness.dispatch(Message::PointerReleased);
+    let target_pages = harness
+        .app()
+        .panes
+        .get(target)
+        .expect("target pane")
+        .pages
+        .clone();
+    let source_pages = harness
+        .app()
+        .panes
+        .get(source)
+        .expect("source pane")
+        .pages
+        .clone();
+    assert!(target_pages.contains(&PaneKind::Assets));
+    assert!(!source_pages.contains(&PaneKind::Assets));
+    assert_eq!(
+        harness
+            .app()
+            .panes
+            .get(target)
+            .expect("target")
+            .active_kind(),
+        PaneKind::Assets
+    );
+}
+
+#[test]
+fn splitting_a_tab_creates_a_new_pane() {
+    let mut harness = Harness::with_entities();
+    let (pane, before) = {
+        let (pane, group) = harness
+            .app()
+            .panes
+            .iter()
+            .find(|(_, group)| group.pages.len() > 1)
+            .expect("grouped pane");
+        (*pane, group.pages.len())
+    };
+    harness.dispatch(Message::SplitPage(pane));
+    assert!(harness.app().panes.len() > 4);
+    assert!(harness
+        .app()
+        .panes
+        .iter()
+        .any(
+            |(_, group)| group.pages.len() == 1 && group.pages[0] == PaneKind::Assets
+                || group.pages.len() == 1 && group.pages[0] == PaneKind::Hierarchy
+        ));
+    assert!(before >= 2);
+}
+
+#[test]
+fn component_cards_collapse_without_touching_the_scene() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let type_id = harness
+        .app()
+        .components
+        .first()
+        .map(|component| component.info.type_id)
+        .expect("component");
+    let before = harness.app().entities.clone();
+    harness.dispatch(Message::Inspector(
+        panels::inspector::Edit::ToggleComponent(type_id),
+    ));
+    assert!(harness.app().collapsed_components.contains(&type_id));
+    harness.dispatch(Message::Inspector(
+        panels::inspector::Edit::ToggleComponent(type_id),
+    ));
+    assert!(!harness.app().collapsed_components.contains(&type_id));
+    assert_eq!(harness.app().entities, before);
+}
+
+#[test]
+fn transform_card_edits_position_with_one_undo_step() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::TransformText {
+        kind: 0,
+        axis: 0,
+        value: "7.5".to_owned(),
+    }));
+    assert_eq!(harness.app().entities[0].position[0], 7.5);
+    assert_eq!(harness.app().history.undo_name(), Some("Set Position X"));
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities[0].position[0], 2.0);
+}
+
+#[test]
 fn layout_presets_keep_every_page() {
     for preset in [LayoutPreset::Default, LayoutPreset::Viewport] {
         let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
-        assert_eq!(pages, 5);
+        assert_eq!(pages, 8);
     }
     let mut harness = Harness::with_entities();
     harness.dispatch(Message::Layout(LayoutPreset::Viewport));
@@ -678,11 +1106,11 @@ fn selecting_an_entity_updates_the_inspector() {
     let mut harness = Harness::with_entities();
     harness.click(id::entity_row(0));
     assert_eq!(harness.app().selected, 0);
-    assert!(harness.shows("Entity: Entity 1"));
+    assert!(harness.shows("Entity 1"));
 
     harness.click(id::entity_row(1));
     assert_eq!(harness.app().selected, 1);
-    assert!(harness.shows("Entity: Entity 2"));
+    assert!(harness.shows("Entity 2"));
 }
 
 #[test]
@@ -696,7 +1124,7 @@ fn typing_renames_the_selected_entity() {
         "typed text should reach the selected entity, got {renamed:?}"
     );
     assert!(
-        harness.shows(&format!("Entity: {renamed}")),
+        harness.shows(&renamed),
         "the inspector should show the renamed entity"
     );
 }
@@ -745,7 +1173,7 @@ fn delete_removes_the_selected_entity() {
     harness.dispatch(Message::Inspector(panels::inspector::Edit::Delete));
     assert_eq!(harness.app().entities.len(), 1);
     assert_eq!(harness.app().selected, 0);
-    assert!(harness.shows("Entity: Entity 1"));
+    assert!(harness.shows("Entity 1"));
 }
 
 #[test]
@@ -818,6 +1246,82 @@ fn undo_redo_covers_add_and_delete() {
 }
 
 #[test]
+fn child_world_position_includes_the_parent_transform() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let parent = engine.create_entity("Group").expect("group");
+    let child = engine.create_entity("Child").expect("child");
+    engine
+        .set_position(parent, [10.0, 0.0, 0.0])
+        .expect("parent position");
+    engine
+        .set_position(child, [2.0, 0.0, 0.0])
+        .expect("child position");
+    engine
+        .set_entity_parent(child, Some(parent))
+        .expect("parent link");
+    assert_eq!(
+        engine.world_position(child).expect("child world"),
+        [12.0, 0.0, 0.0]
+    );
+
+    engine
+        .set_scale(parent, [2.0, 2.0, 2.0])
+        .expect("parent scale");
+    assert_eq!(
+        engine.world_position(child).expect("child world"),
+        [14.0, 0.0, 0.0]
+    );
+
+    engine
+        .set_world_position(child, [20.0, 0.0, 0.0])
+        .expect("world position");
+    assert_eq!(
+        engine.position(child).expect("child local"),
+        [5.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        engine.world_position(child).expect("child world"),
+        [20.0, 0.0, 0.0]
+    );
+    engine
+        .set_position(child, [2.0, 0.0, 0.0])
+        .expect("restore child");
+
+    let entities = projectloader::read_entities(harness.app.engine.as_ref().expect("engine"));
+    harness.app.entities = entities;
+    harness.app.selected = harness
+        .app
+        .entities
+        .iter()
+        .position(|entity| entity.id == child)
+        .expect("child view");
+    harness.app.focus_selection();
+    assert!((harness.app().camera.focus[0] - 14.0).abs() < 0.001);
+}
+
+#[test]
+fn undo_does_not_drop_a_pending_viewport_readback() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    harness.dispatch(Message::Inspector(panels::inspector::Edit::TransformText {
+        kind: 0,
+        axis: 0,
+        value: "3.0".to_owned(),
+    }));
+    harness.app.viewport_pending = true;
+    harness.dispatch(Message::Undo);
+    assert!(
+        harness.app().viewport_pending,
+        "undo must keep polling the in-flight readback"
+    );
+}
+
+#[test]
 fn engine_undo_restores_the_scene_snapshot() {
     let Some(mut engine) = doppio_engine::Engine::load_default() else {
         eprintln!("skipping engine undo test: libcaffeine-capi is not built");
@@ -874,6 +1378,29 @@ fn reparenting_updates_the_ui_and_engine() {
     // Undo restores the link through the scene snapshot.
     harness.dispatch(Message::Undo);
     assert_eq!(harness.app().entities[1].parent, None);
+}
+
+#[test]
+fn dragging_a_tree_row_reparents_it() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.rebase_history();
+    let child = harness.app().entities[0].id;
+    let parent = harness.app().entities[1].id;
+    harness.drag(id::entity_row(0), 0.0, 28.0);
+    assert_eq!(
+        harness.app().entities[0].parent,
+        Some(parent),
+        "dragging row 0 onto row 1 should parent it"
+    );
+    harness.drag_to(id::entity_row(0), id::HIERARCHY_ROOT);
+    assert_eq!(
+        harness.app().entities[0].parent,
+        None,
+        "dropping on the scene root should unparent it"
+    );
+    let _ = child;
 }
 
 #[test]
@@ -992,14 +1519,14 @@ fn editor_workflow_end_to_end() {
     assert_eq!(harness.app().entities.len(), 2);
 
     harness.click(id::entity_row(1));
-    assert!(harness.shows("Entity: Entity 2"));
+    assert!(harness.shows("Entity 2"));
 
     harness.type_into(id::ENTITY_NAME, "Boss");
     assert!(harness.app().entities[1].name.contains("Boss"));
 
     harness.dispatch(Message::Inspector(panels::inspector::Edit::Delete));
     assert_eq!(harness.app().entities.len(), 1);
-    assert!(harness.wait_for("Entity: Entity 1", 2));
+    assert!(harness.wait_for("Entity 1", 2));
 }
 
 /// Generates annotated panel images, Markdown pages and a JSON manifest.
@@ -1013,6 +1540,1485 @@ fn editor_workflow_end_to_end() {
 /// - `DOPPIO_DOCS_CAPTIONS` — JSON with `en`/`pt` descriptions
 ///   (default `doppio/docs/ui-captions.json`). An agent can edit that file to
 ///   improve or translate the captions without touching code.
+#[test]
+fn material_open_message_loads_a_saved_material() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-material-open-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("open.mat");
+    let surface = doppio_engine::Material {
+        name: "Load Me".to_owned(),
+        roughness: 0.33,
+        ..Default::default()
+    };
+    harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .save_material(&path.to_string_lossy(), &surface)
+        .expect("save material");
+    harness.dispatch(Message::OpenMaterial(path.to_string_lossy().into_owned()));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.surface.name, "Load Me");
+    assert_eq!(document.surface.roughness, 0.33);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn material_new_and_edits_update_the_document() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    assert!(harness.app().material.is_some());
+    harness.dispatch(Message::Material(material::Edit::Metallic(0.75)));
+    harness.dispatch(Message::Material(material::Edit::Roughness(0.2)));
+    harness.dispatch(Message::Material(material::Edit::Albedo(0, 0.4)));
+    harness.dispatch(Message::Material(material::Edit::NormalDirectX(true)));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.surface.metallic, 0.75);
+    assert_eq!(document.surface.roughness, 0.2);
+    assert_eq!(document.surface.albedo[0], 0.4);
+    assert!(document.surface.normal_directx);
+    assert!(document.dirty);
+
+    harness.dispatch(Message::SetMaterialTexture {
+        slot: material::TextureSlot::Albedo,
+        path: "textures/wood.png".to_owned(),
+    });
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.surface.albedo_map, "textures/wood.png");
+    assert!(document.dirty);
+}
+
+#[test]
+fn material_preview_drag_orbits_and_marks_the_preview_dirty() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    if let Some(document) = harness.app.material.as_mut() {
+        document.preview_dirty = false;
+    }
+    harness.dispatch(Message::Material(material::Edit::PreviewPressed));
+    harness.dispatch(Message::Material(material::Edit::PreviewMoved(Point::new(
+        10.0, 10.0,
+    ))));
+    harness.dispatch(Message::Material(material::Edit::PreviewMoved(Point::new(
+        30.0, 20.0,
+    ))));
+    harness.dispatch(Message::Material(material::Edit::PreviewReleased));
+    assert!((harness.app().material_preview_yaw - 10.0).abs() < 0.001);
+    assert!((harness.app().material_preview_pitch - 17.0).abs() < 0.001);
+    assert!(harness
+        .app()
+        .material
+        .as_ref()
+        .is_some_and(|document| document.preview_dirty));
+}
+
+#[test]
+fn material_preset_keeps_the_name_and_maps() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.dispatch(Message::Material(material::Edit::New));
+    if let Some(document) = harness.app.material.as_mut() {
+        document.surface.albedo_map = "textures/keep.png".to_owned();
+    }
+    harness.dispatch(Message::Material(material::Edit::ApplyPreset(0)));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.surface.albedo_map, "textures/keep.png");
+    assert_eq!(document.surface.metallic, 1.0);
+    assert_eq!(document.surface.name, "New Material");
+}
+
+#[test]
+fn material_apply_assigns_the_selected_entity() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let filter_type = harness
+        .app()
+        .component_types
+        .iter()
+        .find(|kind| kind.name == "Mesh Filter")
+        .map(|kind| kind.id)
+        .expect("Mesh Filter schema");
+    let entity = harness.app().entities[0].id;
+    harness
+        .app
+        .engine
+        .as_mut()
+        .expect("engine")
+        .add_component(entity, filter_type)
+        .expect("add mesh filter");
+    harness.app.selected = 0;
+    harness.app.material = Some(MaterialDocument {
+        surface: doppio_engine::Material::default(),
+        asset_path: Some("materials/test.mat".to_owned()),
+        file_path: None,
+        dirty: false,
+        preview_dirty: false,
+        source: String::new(),
+        generator_history: generators::GraphHistory::new(MaterialGraph::default()),
+        generator_packing: generators::ChannelPacking::default(),
+        generator_bits: 8,
+        generator: MaterialGraph::default(),
+        thumbnails: [None, None, None, None],
+        source_thumbnail: None,
+    });
+    harness.dispatch(Message::Material(material::Edit::Apply));
+    let assigned = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .entity_material(entity)
+        .expect("assigned material");
+    assert_eq!(assigned, "materials/test.mat");
+    assert_eq!(harness.app().history.undo_name(), Some("Assign Material"));
+}
+
+#[test]
+fn material_map_baker_writes_and_assigns_maps() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-material-baker-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let height = root.join("height.ppm");
+    std::fs::write(
+        &height,
+        b"P6\n2 2\n255\n\x00\x00\x00\x40\x40\x40\x80\x80\x80\xc0\xc0\xc0",
+    )
+    .expect("height texture");
+    let material_path = root.join("baked.mat");
+    let surface = doppio_engine::Material::default();
+    harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .save_material(&material_path.to_string_lossy(), &surface)
+        .expect("save material");
+    harness.app.material = Some(MaterialDocument {
+        surface,
+        asset_path: Some("baked.mat".to_owned()),
+        file_path: Some(material_path.to_string_lossy().into_owned()),
+        dirty: false,
+        preview_dirty: false,
+        source: height.to_string_lossy().into_owned(),
+        generator_history: generators::GraphHistory::new(MaterialGraph::default()),
+        generator_packing: generators::ChannelPacking::default(),
+        generator_bits: 8,
+        generator: MaterialGraph::default(),
+        thumbnails: [None, None, None, None],
+        source_thumbnail: None,
+    });
+    harness.dispatch(Message::Material(material::Edit::Generate(
+        material::MapOperation::All,
+    )));
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document.surface.normal_map.ends_with("baked_normal.png"));
+    assert!(document.surface.orm_map.ends_with("baked_orm.png"));
+    assert!(root.join("baked_normal.png").exists());
+    assert!(root.join("baked_ao.png").exists());
+    assert!(root.join("baked_orm.png").exists());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn generator_adds_nodes_edits_params_and_rejects_cycles() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::Generator(material_generator::Edit::AddNode(
+        generators::NodeKind::Checker {
+            scale: 6.0,
+            color_a: [0.8, 0.8, 0.8, 1.0],
+            color_b: [0.1, 0.1, 0.1, 1.0],
+        },
+    )));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.generator.nodes.len(), 3);
+    let checker = document
+        .generator
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, generators::NodeKind::Checker { .. }))
+        .expect("checker")
+        .id;
+    let output = document.generator.output_node().expect("output");
+    harness.dispatch(Message::Generator(material_generator::Edit::SetParam(
+        checker,
+        material_generator::Param::Scale(12.0),
+    )));
+    harness.dispatch(Message::Generator(material_generator::Edit::Connect {
+        from: checker,
+        output: 0,
+        to: output,
+        input: 0,
+    }));
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| { link.from == checker && link.to == output && link.input == 0 }));
+    let mut graph = document.generator.clone();
+    assert!(!graph.connect(output, 0, checker, 0));
+    harness.dispatch(Message::Generator(material_generator::Edit::Select(Some(
+        checker,
+    ))));
+    assert_eq!(harness.app().generator_selected, Some(checker));
+}
+
+#[test]
+fn viewport_uv_pick_hits_the_selected_mesh() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.dispatch(Message::CreatePrefab(cube));
+    let entity = harness
+        .app()
+        .entities
+        .iter()
+        .find(|entity| entity.name == "Cube")
+        .expect("cube entity")
+        .id;
+    let focus = harness
+        .app()
+        .entities
+        .iter()
+        .find(|candidate| candidate.id == entity)
+        .map(|entity| entity.position)
+        .unwrap_or([0.0, 0.0, 0.0]);
+    harness.app.camera = doppio_engine::Camera {
+        yaw: 0.65,
+        pitch: 0.35,
+        distance: 8.0,
+        focus,
+    };
+    harness.app.apply_camera();
+    let (width, height) = harness.app().viewport_logical;
+    let picked = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .pick_uv(entity, width * 0.5, height * 0.5, width, height)
+        .expect("pick");
+    let (u, v) = picked.expect("cube should be under the camera center");
+    assert!((0.0..=1.0).contains(&u));
+    assert!((0.0..=1.0).contains(&v));
+}
+
+#[test]
+fn internal_asset_drag_assigns_materials_and_textures() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.dispatch(Message::CreatePrefab(cube));
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "ground.mat".to_owned(),
+        relative_path: "vegetation-kit/materials/ground.mat".to_owned(),
+        kind: "material".to_owned(),
+        size_bytes: 0,
+        is_directory: false,
+    });
+    harness.dispatch(Message::AssetPressed(0));
+    assert_eq!(harness.app().asset_drag, Some(0));
+    let target = harness.app().selected;
+    harness.dispatch(Message::HierarchyRowRelease(target));
+    assert_eq!(harness.app().asset_drag, None);
+    assert_eq!(
+        harness.app().selected_material.as_deref(),
+        Some("vegetation-kit/materials/ground.mat")
+    );
+
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "brick.png".to_owned(),
+        relative_path: "vegetation-kit/brick.png".to_owned(),
+        kind: "image".to_owned(),
+        size_bytes: 0,
+        is_directory: false,
+    });
+    harness.dispatch(Message::AssetPressed(1));
+    harness.dispatch(Message::Material(material::Edit::DropTextureAsset(
+        material::TextureSlot::Albedo,
+    )));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .map(|document| document.surface.albedo_map.as_str()),
+        Some("vegetation-kit/brick.png")
+    );
+}
+
+#[test]
+fn material_picker_assigns_a_mat_to_the_selected_mesh() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.dispatch(Message::CreatePrefab(cube));
+    harness.dispatch(Message::MaterialAssetPick(
+        "vegetation-kit/materials/ground.mat".to_owned(),
+    ));
+    assert_eq!(
+        harness.app().selected_material.as_deref(),
+        Some("vegetation-kit/materials/ground.mat")
+    );
+}
+
+#[test]
+fn material_preview_shapes_and_async_readback_work() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    assert!(engine.capi_version() >= 2);
+    let material = doppio_engine::Material::default();
+    let mut output = vec![0u8; 64 * 64 * 4];
+    engine
+        .begin_material_preview(
+            &material,
+            64,
+            20.0,
+            12.0,
+            doppio_engine::PreviewShape::Cube,
+            "",
+            1.0,
+        )
+        .expect("begin preview");
+    let mut ready = false;
+    for _ in 0..200 {
+        match engine.poll_material_preview(&mut output) {
+            Ok(doppio_engine::RenderState::Ready) => {
+                ready = true;
+                break;
+            }
+            Ok(doppio_engine::RenderState::Pending) => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            _ => break,
+        }
+    }
+    assert!(ready, "async material preview should finish");
+    assert!(output.chunks(4).any(|pixel| pixel[3] > 0));
+    let sphere = engine
+        .render_material_preview_ex(
+            &material,
+            64,
+            20.0,
+            12.0,
+            doppio_engine::PreviewShape::Sphere,
+            "",
+            1.0,
+        )
+        .expect("sphere preview");
+    assert_ne!(sphere, output, "cube and sphere previews should differ");
+}
+
+#[test]
+fn mesh_map_bakes_write_uv_channels() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|prefab| prefab.key == "cube")
+        .expect("cube prefab");
+    harness.dispatch(Message::CreatePrefab(cube));
+    let entity = harness
+        .app()
+        .entities
+        .iter()
+        .find(|entity| entity.name == "Cube")
+        .expect("cube")
+        .id;
+    let root = std::env::temp_dir().join(format!(
+        "doppio-meshmap-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let engine = harness.app.engine.as_ref().expect("engine");
+    for (kind, name) in [
+        (doppio_engine::MeshMapKind::Normal, "normal"),
+        (doppio_engine::MeshMapKind::Position, "position"),
+        (doppio_engine::MeshMapKind::ObjectId, "id"),
+    ] {
+        let path = root.join(format!("{name}.png"));
+        engine
+            .bake_mesh_map(entity, kind, 64, &path.to_string_lossy())
+            .expect("bake mesh map");
+        assert!(path.exists());
+        let data = crate::uikit::generators::decode_texture(&path.to_string_lossy())
+            .expect("decode mesh map");
+        assert_eq!((data.width, data.height), (64, 64));
+        assert!(data.rgba.chunks(4).any(|pixel| pixel[3] > 0));
+    }
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn texture_set_paints_undoes_saves_and_reopens() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::New));
+    assert!(harness.app().texture_set.is_some());
+    assert!(harness.app().texture_set_preview.is_some());
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::PaintStart([
+        0.5, 0.5,
+    ])));
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::PaintMove([
+        0.55, 0.55,
+    ])));
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::PaintEnd));
+    assert!(harness.app().texture_set_dirty);
+    assert!(harness.app().texture_set_history.can_undo());
+    let painted = harness
+        .app()
+        .texture_set
+        .as_ref()
+        .expect("set")
+        .composite(1001, "baseColor");
+    assert!(painted.chunks(4).any(|pixel| pixel[3] > 0));
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::Undo));
+    let undone = harness
+        .app()
+        .texture_set
+        .as_ref()
+        .expect("set")
+        .composite(1001, "baseColor");
+    assert!(undone.iter().all(|value| *value == 0));
+
+    let root = std::env::temp_dir().join(format!(
+        "doppio-texset-ui-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let path = root.join("painted.texset");
+    harness.app.texture_set_path = Some(path.clone());
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::Save));
+    assert!(path.exists());
+    assert!(!harness.app().texture_set_dirty);
+    harness.dispatch(Message::TextureSet(texture_set_panel::Edit::New));
+    harness.dispatch(Message::OpenTextureSet(path.to_string_lossy().into_owned()));
+    assert_eq!(
+        harness
+            .app()
+            .texture_set
+            .as_ref()
+            .map(|set| set.name.as_str()),
+        Some("Texture Set")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn materialcraft_portable_round_trip_through_the_engine() {
+    let Some(harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-mcmat-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let graph = MaterialGraph {
+        resolution: 64,
+        ..MaterialGraph::default()
+    };
+    let archive = root.join("brick.mcmat");
+    let exported =
+        crate::uikit::materialcraft_io::export_portable(engine, &graph, "Brick", &archive)
+            .expect("export");
+    assert!(archive.exists());
+    assert_eq!(exported.maps, 6);
+
+    let imported = crate::uikit::materialcraft_io::import_portable(
+        engine,
+        &archive,
+        Some(&root.join("imported")),
+    )
+    .expect("import");
+    assert!(imported.material_path.exists());
+    assert!(imported.material_path.with_extension("mgraph").exists());
+    assert!(imported
+        .source_path
+        .as_ref()
+        .is_some_and(|path| path.exists()));
+    assert!(imported.warnings.is_empty());
+    assert_eq!(imported.graph.nodes.len(), graph.nodes.len());
+    assert_eq!(imported.graph.resolution, 64);
+    assert!(imported.surface.orm_map.contains("brick_orm.png"));
+    assert!(imported.surface.albedo_map.contains("brick_basecolor.png"));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn generator_live_preview_updates_after_each_edit() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    let mut first = 0;
+    for _ in 0..300 {
+        harness.dispatch(Message::ViewportTick);
+        first = harness.app().generator_preview_revision;
+        if first > 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(first > 0, "live preview should produce an image");
+    let node = harness
+        .app()
+        .material
+        .as_ref()
+        .and_then(|document| document.generator.nodes.first())
+        .map(|node| node.id)
+        .expect("noise node");
+    harness.dispatch(Message::Generator(material_generator::Edit::SetParam(
+        node,
+        material_generator::Param::Scale(14.0),
+    )));
+    let mut second = first;
+    for _ in 0..300 {
+        harness.dispatch(Message::ViewportTick);
+        second = harness.app().generator_preview_revision;
+        if second > first {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        second > first,
+        "editing the graph should refresh the live preview"
+    );
+}
+
+#[test]
+fn generator_bake_writes_base_normal_and_orm() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-generator-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let material_path = root.join("generated.mat");
+    let surface = doppio_engine::Material::default();
+    harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .save_material(&material_path.to_string_lossy(), &surface)
+        .expect("save material");
+    harness.app.material = Some(MaterialDocument {
+        surface,
+        asset_path: Some("generated.mat".to_owned()),
+        file_path: Some(material_path.to_string_lossy().into_owned()),
+        dirty: false,
+        preview_dirty: false,
+        source: String::new(),
+        generator_history: generators::GraphHistory::new(MaterialGraph::default()),
+        generator_packing: generators::ChannelPacking::default(),
+        generator_bits: 8,
+        generator: MaterialGraph::default(),
+        thumbnails: [None, None, None, None],
+        source_thumbnail: None,
+    });
+    if let Some(document) = harness.app.material.as_mut() {
+        document.generator.resolution = 128;
+    }
+    harness.dispatch(Message::Generator(material_generator::Edit::Bake));
+    assert!(harness.app().generator_bake.is_some());
+    wait_for_bake(&mut harness);
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document
+        .surface
+        .albedo_map
+        .ends_with("generated_gen_base_8.png"));
+    assert!(document
+        .surface
+        .normal_map
+        .ends_with("generated_gen_normal.png"));
+    assert!(document
+        .surface
+        .orm_map
+        .ends_with("generated_gen_packed_8.png"));
+    assert!(root.join("generated_gen_base_8.png").exists());
+    assert!(root.join("generated_gen_normal.png").exists());
+    assert!(root.join("generated_gen_packed_8.png").exists());
+    assert!(harness.app().generator_preview.is_some());
+    assert_eq!(
+        harness.app().generator_status.as_deref(),
+        Some("Baked 128×128 · ORM (glTF/Unreal/Godot) · 8-bit")
+    );
+
+    if let Some(document) = harness.app.material.as_mut() {
+        document.generator_bits = 16;
+    }
+    harness.dispatch(Message::Generator(material_generator::Edit::Bake));
+    wait_for_bake(&mut harness);
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document
+        .surface
+        .albedo_map
+        .ends_with("generated_gen_base_16.png"));
+    assert!(root.join("generated_gen_base_16.png").exists());
+    assert!(root.join("generated_gen_packed_16.png").exists());
+
+    harness.dispatch(Message::Material(material::Edit::Apply));
+    let saved = harness
+        .app()
+        .engine
+        .as_ref()
+        .expect("engine")
+        .load_material(&material_path.to_string_lossy())
+        .expect("saved material");
+    assert!(saved.albedo_map.ends_with("generated_gen_base_16.png"));
+    assert!(saved.normal_map.ends_with("generated_gen_normal.png"));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn generator_bake_decodes_image_nodes_off_the_ui_thread() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-generator-image-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let texture_path = root.join("swatch.png");
+    let texture = image::RgbaImage::from_raw(
+        2,
+        2,
+        vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+    )
+    .expect("texture");
+    texture.save(&texture_path).expect("save texture");
+    let material_path = root.join("image.mat");
+    let surface = doppio_engine::Material::default();
+    harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .save_material(&material_path.to_string_lossy(), &surface)
+        .expect("save material");
+    let mut graph = MaterialGraph {
+        resolution: 64,
+        ..MaterialGraph::default()
+    };
+    graph.nodes[0].kind = generators::NodeKind::Image {
+        path: texture_path.to_string_lossy().into_owned(),
+        projection: generators::Projection::Uv,
+        tiling: [1.0, 1.0],
+        offset: [0.0, 0.0],
+        filter: generators::ImageFilter::Nearest,
+        wrap: generators::WrapMode::Repeat,
+    };
+    harness.app.material = Some(MaterialDocument {
+        surface,
+        asset_path: Some("image.mat".to_owned()),
+        file_path: Some(material_path.to_string_lossy().into_owned()),
+        dirty: false,
+        preview_dirty: false,
+        source: String::new(),
+        generator_history: generators::GraphHistory::new(graph.clone()),
+        generator_packing: generators::ChannelPacking::default(),
+        generator_bits: 8,
+        generator: graph,
+        thumbnails: [None, None, None, None],
+        source_thumbnail: None,
+    });
+    harness.dispatch(Message::Generator(material_generator::Edit::Bake));
+    wait_for_bake(&mut harness);
+    let baked = image::open(root.join("image_gen_base_8.png"))
+        .expect("baked image")
+        .to_rgba8();
+    assert_eq!(baked.get_pixel(0, 0).0, [255, 0, 0, 255]);
+    assert_eq!(baked.get_pixel(63, 0).0, [0, 255, 0, 255]);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn generator_bake_cancels_from_the_worker() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!(
+        "doppio-generator-cancel-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let material_path = root.join("cancel.mat");
+    let surface = doppio_engine::Material::default();
+    harness
+        .app
+        .engine
+        .as_ref()
+        .expect("engine")
+        .save_material(&material_path.to_string_lossy(), &surface)
+        .expect("save material");
+    let mut graph = MaterialGraph {
+        resolution: 512,
+        ..MaterialGraph::default()
+    };
+    let output = graph.output_node().expect("output");
+    let noise = graph.nodes[0].id;
+    let blur = graph.add_node_auto(generators::NodeKind::Blur {
+        radius: 32.0,
+        wrap: generators::WrapMode::Repeat,
+    });
+    assert!(graph.connect(noise, 0, blur, 0));
+    assert!(graph.connect(blur, 0, output, 0));
+    harness.app.material = Some(MaterialDocument {
+        surface,
+        asset_path: Some("cancel.mat".to_owned()),
+        file_path: Some(material_path.to_string_lossy().into_owned()),
+        dirty: false,
+        preview_dirty: false,
+        source: String::new(),
+        generator_history: generators::GraphHistory::new(graph.clone()),
+        generator_packing: generators::ChannelPacking::default(),
+        generator_bits: 8,
+        generator: graph,
+        thumbnails: [None, None, None, None],
+        source_thumbnail: None,
+    });
+    harness.dispatch(Message::Generator(material_generator::Edit::Bake));
+    assert!(harness.app().generator_bake.is_some());
+    harness.dispatch(Message::Generator(material_generator::Edit::CancelBake));
+    assert_eq!(
+        harness.app().generator_status.as_deref(),
+        Some("Cancelling bake…")
+    );
+    for _ in 0..600 {
+        if harness.app().generator_bake.is_none() {
+            break;
+        }
+        harness.dispatch(Message::ViewportTick);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(harness.app().generator_bake.is_none());
+    assert_eq!(
+        harness.app().generator_status.as_deref(),
+        Some("Bake cancelled")
+    );
+    assert!(!root.join("cancel_gen_base_8.png").exists());
+    std::fs::remove_dir_all(root).ok();
+}
+
+fn wait_for_bake(harness: &mut Harness) {
+    for _ in 0..600 {
+        if harness.app().generator_bake.is_none() {
+            return;
+        }
+        harness.dispatch(Message::ViewportTick);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("generator bake did not finish");
+}
+
+#[test]
+fn generator_palette_groups_collapse_with_the_tree_view() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    assert!(harness.has(Id::from(id::generator_group("Filters"))));
+    assert!(harness.has(Id::from(id::generator_add("blur"))));
+    harness.click(Id::from(id::generator_group("Filters")));
+    assert!(!harness.has(Id::from(id::generator_add("blur"))));
+    harness.click(Id::from(id::generator_group("Filters")));
+    assert!(harness.has(Id::from(id::generator_add("blur"))));
+}
+
+#[test]
+fn generator_image_picker_packing_and_bits_edit_the_document() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    harness.dispatch(Message::Generator(material_generator::Edit::AddNode(
+        generators::NodeKind::Image {
+            path: String::new(),
+            projection: generators::Projection::Uv,
+            tiling: [1.0, 1.0],
+            offset: [0.0, 0.0],
+            filter: generators::ImageFilter::Linear,
+            wrap: generators::WrapMode::Repeat,
+        },
+    )));
+    let node = harness.app().generator_selected.expect("image node");
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::OpenTexturePicker(node),
+    ));
+    assert_eq!(harness.app().generator_texture_target, Some(node));
+    harness.dispatch(Message::GeneratorTexturePick(
+        "textures/brick set/albedo.png".to_owned(),
+    ));
+    assert_eq!(harness.app().generator_texture_target, None);
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(matches!(
+        document.generator.node(node).map(|node| &node.kind),
+        Some(generators::NodeKind::Image { path, .. }) if path == "textures/brick set/albedo.png"
+    ));
+
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::SetPackingPreset(1),
+    ));
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::SetPackingChannel(0, 4),
+    ));
+    harness.dispatch(Message::Generator(material_generator::Edit::SetBits(16)));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(
+        document.generator_packing.preset,
+        generators::PackingPreset::Custom
+    );
+    assert_eq!(
+        document.generator_packing.channels[0],
+        generators::PackSource::from_index(4)
+    );
+    assert_eq!(document.generator_bits, 16);
+    assert!(document
+        .generator_history
+        .undo_name()
+        .is_some_and(|name| name.contains("image") || name == "Set image texture"));
+}
+
+#[test]
+fn packing_user_presets_save_and_delete_through_messages() {
+    let mut harness = Harness::empty();
+    let root = std::env::temp_dir().join(format!(
+        "doppio-packing-message-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    harness.app.packing_store_path = Some(root.join("presets.txt"));
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::SetPackingPresetName("Studio".to_owned()),
+    ));
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::SetPackingChannel(0, 4),
+    ));
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::SavePackingPreset,
+    ));
+    let path = harness.app.packing_store_path.clone().expect("path");
+    let presets = generators::load_user_packing_presets(&path);
+    assert_eq!(presets.len(), 1);
+    assert_eq!(presets[0].name, "Studio");
+    assert_eq!(
+        presets[0].channels[0],
+        generators::PackSource::from_index(4)
+    );
+
+    harness.dispatch(Message::Generator(
+        material_generator::Edit::DeletePackingPreset,
+    ));
+    assert!(generators::load_user_packing_presets(&path).is_empty());
+    harness.app.packing_user_presets.clear();
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn generator_scene_shortcut_routes_to_graph_history() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    harness.dispatch(Message::Generator(material_generator::Edit::AddNode(
+        generators::NodeKind::Checker {
+            scale: 4.0,
+            color_a: [1.0; 4],
+            color_b: [0.0; 4],
+        },
+    )));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .nodes
+            .len(),
+        3
+    );
+    harness.dispatch(Message::Undo);
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .nodes
+            .len(),
+        2
+    );
+    harness.dispatch(Message::Redo);
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .nodes
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn detaching_and_reconnecting_a_link_is_one_history_step() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::OpenGenerator);
+    harness.dispatch(Message::Generator(material_generator::Edit::AddNode(
+        generators::NodeKind::Checker {
+            scale: 4.0,
+            color_a: [1.0; 4],
+            color_b: [0.0; 4],
+        },
+    )));
+    let (checker, output) = {
+        let document = harness.app().material.as_ref().expect("material");
+        (
+            document
+                .generator
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, generators::NodeKind::Checker { .. }))
+                .expect("checker")
+                .id,
+            document.generator.output_node().expect("output"),
+        )
+    };
+    harness.dispatch(Message::Generator(material_generator::Edit::Connect {
+        from: checker,
+        output: 0,
+        to: output,
+        input: 0,
+    }));
+    let steps = harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator_history
+        .len();
+    harness.dispatch(Message::Generator(material_generator::Edit::DetachLink(
+        output, 0,
+    )));
+    harness.dispatch(Message::Generator(material_generator::Edit::Connect {
+        from: checker,
+        output: 0,
+        to: output,
+        input: 1,
+    }));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.generator_history.len(), steps + 1);
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| link.to == output && link.input == 1));
+
+    harness.dispatch(Message::Generator(material_generator::Edit::Undo));
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| link.to == output && link.input == 0));
+    harness.dispatch(Message::Generator(material_generator::Edit::Redo));
+    let document = harness.app().material.as_ref().expect("material");
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| link.to == output && link.input == 1));
+}
+
+#[test]
+fn generator_undo_redo_links_dots_copy_paste_and_snap() {
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::Generator(material_generator::Edit::AddNode(
+        generators::NodeKind::Checker {
+            scale: 6.0,
+            color_a: [0.8, 0.8, 0.8, 1.0],
+            color_b: [0.1, 0.1, 0.1, 1.0],
+        },
+    )));
+    let initial = harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator
+        .nodes
+        .len();
+    assert_eq!(initial, 3);
+
+    harness.dispatch(Message::Generator(material_generator::Edit::Undo));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .nodes
+            .len(),
+        2
+    );
+    harness.dispatch(Message::Generator(material_generator::Edit::Redo));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .nodes
+            .len(),
+        3
+    );
+
+    let (checker, output) = {
+        let document = harness.app().material.as_ref().expect("material");
+        (
+            document
+                .generator
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, generators::NodeKind::Checker { .. }))
+                .expect("checker")
+                .id,
+            document.generator.output_node().expect("output"),
+        )
+    };
+    harness.dispatch(Message::Generator(material_generator::Edit::Connect {
+        from: checker,
+        output: 0,
+        to: output,
+        input: 0,
+    }));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .links
+            .len(),
+        1
+    );
+
+    harness.dispatch(Message::Generator(material_generator::Edit::DeleteLink(
+        output, 0,
+    )));
+    assert!(harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator
+        .links
+        .is_empty());
+    harness.dispatch(Message::Generator(material_generator::Edit::Undo));
+    assert_eq!(
+        harness
+            .app()
+            .material
+            .as_ref()
+            .expect("material")
+            .generator
+            .links
+            .len(),
+        1
+    );
+
+    harness.dispatch(Message::Generator(material_generator::Edit::InsertDot(
+        output,
+        0,
+        iced::Point::new(120.0, 80.0),
+    )));
+    let document = harness.app().material.as_ref().expect("material");
+    assert_eq!(document.generator.links.len(), 2);
+    let dot = document
+        .generator
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, generators::NodeKind::Dot))
+        .expect("dot")
+        .id;
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| link.from == checker && link.to == dot && link.input == 0));
+    assert!(document
+        .generator
+        .links
+        .iter()
+        .any(|link| link.from == dot && link.to == output && link.input == 0));
+
+    harness.dispatch(Message::Generator(material_generator::Edit::Select(Some(
+        checker,
+    ))));
+    let before_paste = harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator
+        .nodes
+        .len();
+    harness.dispatch(Message::Generator(material_generator::Edit::Copy));
+    harness.dispatch(Message::Generator(material_generator::Edit::Paste));
+    let pasted = harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator
+        .nodes
+        .len();
+    assert_eq!(pasted, before_paste + 1);
+
+    harness.dispatch(Message::Generator(material_generator::Edit::MoveNode(
+        checker,
+        iced::Vector::new(5.0, 3.0),
+    )));
+    let position = harness
+        .app()
+        .material
+        .as_ref()
+        .expect("material")
+        .generator
+        .node(checker)
+        .expect("checker")
+        .position;
+    assert_eq!(position.x % 16.0, 0.0);
+    assert_eq!(position.y % 16.0, 0.0);
+}
+
+fn test_temp_root(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "doppio-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ))
+}
+
+#[test]
+fn project_manager_creates_a_project_and_reopens_it() {
+    let root = test_temp_root("project-create");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let mut harness = Harness::empty();
+    harness.app.project_recent_file = root.join("recent.txt");
+    harness.app.project.location = root.join("projects").display().to_string();
+
+    harness.dispatch(Message::Project(project_manager::Edit::Open));
+    assert!(harness.app.project.open);
+    assert!(harness.has(iced::widget::Id::from(id::PROJECT_MANAGER)));
+    assert!(harness.has(iced::widget::Id::from(id::PROJECT_TAB_CREATE)));
+
+    harness.type_into(id::PROJECT_NAME, "Demo");
+    assert_eq!(harness.app.project.name, "Demo");
+    harness.click(id::PROJECT_CREATE);
+
+    assert!(
+        !harness.app.project.open,
+        "creating a project should close the manager"
+    );
+    let active = harness
+        .app
+        .project
+        .active
+        .as_ref()
+        .expect("created project should become active")
+        .clone();
+    assert_eq!(active.name, "Demo");
+    assert_eq!(active.template, "3D");
+    assert!(active.root.join(project::PROJECT_FILE).exists());
+    assert!(active.root.join("assets/raw/Textures").is_dir());
+    assert!(active.root.join("scenes").is_dir());
+    let recents = project::recent_projects_at(&harness.app.project_recent_file);
+    assert_eq!(recents.len(), 1);
+    assert_eq!(recents[0].name, "Demo");
+
+    harness.dispatch(Message::Project(project_manager::Edit::Open));
+    harness.dispatch(Message::Project(project_manager::Edit::Tab(
+        project_manager::Tab::Recent,
+    )));
+    assert_eq!(harness.app.project.recent.len(), 1);
+    harness.click(id::project_recent_row(0));
+    assert_eq!(harness.app.project.selected_recent, Some(0));
+    harness.click(id::PROJECT_RECENT_OPEN);
+    assert_eq!(
+        harness
+            .app
+            .project
+            .active
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("Demo")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn project_manager_browse_finds_nested_projects() {
+    let root = test_temp_root("project-browse");
+    let nested = root.join("games").join("nested");
+    std::fs::create_dir_all(&nested).expect("nested dir");
+    project::create_project(&nested, "Nested", "2D").expect("create project");
+    let mut harness = Harness::empty();
+    harness.app.project_recent_file = root.join("recent.txt");
+
+    harness.dispatch(Message::Project(project_manager::Edit::Open));
+    harness.dispatch(Message::Project(project_manager::Edit::Tab(
+        project_manager::Tab::Browse,
+    )));
+    harness.dispatch(Message::Project(project_manager::Edit::BrowsePath(
+        root.join("games").display().to_string(),
+    )));
+    harness.click(id::PROJECT_BROWSE_SCAN);
+    assert_eq!(harness.app.project.browse_results.len(), 1);
+    assert_eq!(harness.app.project.browse_results[0].name, "Nested");
+
+    harness.click(id::project_browse_row(0));
+    assert_eq!(harness.app.project.selected_browse, Some(0));
+    harness.click(id::PROJECT_BROWSE_OPEN);
+    assert_eq!(
+        harness
+            .app
+            .project
+            .active
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("Nested")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn opening_a_project_creates_its_scene_and_asset_root() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("project-engine");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let project = project::create_project(&root, "EngineDemo", "3D").expect("create project");
+    std::fs::write(project.asset_root().join("Notes.txt"), b"hello").expect("asset file");
+    harness.app.project_recent_file = root.join("recent.txt");
+
+    harness.dispatch(Message::Project(project_manager::Edit::OpenPath(
+        project.root.display().to_string(),
+    )));
+
+    assert_eq!(
+        harness
+            .app
+            .project
+            .active
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("EngineDemo")
+    );
+    assert!(
+        harness.app.entities.is_empty(),
+        "new project should start empty"
+    );
+    let scene = project.root.join("scenes").join("main.caf");
+    assert!(scene.is_file(), "new project should get a default scene");
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert!(engine
+        .scene_path()
+        .is_some_and(|path| path.ends_with("main.caf")));
+    assert!(engine
+        .assets()
+        .iter()
+        .any(|asset| asset.name == "Notes.txt"));
+    let reloaded = project::load_project(&project.root).expect("reload project");
+    assert_eq!(reloaded.last_scene, "scenes/main.caf");
+
+    // Saving a renamed scene updates last_scene in the manifest.
+    let other = project.root.join("scenes").join("other.caf");
+    harness
+        .app
+        .engine
+        .as_mut()
+        .expect("engine")
+        .save_scene(other.to_string_lossy().as_ref())
+        .expect("save other scene");
+    harness.dispatch(Message::SaveScene);
+    let reloaded = project::load_project(&project.root).expect("reload project");
+    assert_eq!(reloaded.last_scene, "scenes/other.caf");
+    assert_eq!(
+        harness
+            .app
+            .project
+            .active
+            .as_ref()
+            .map(|project| project.last_scene.as_str()),
+        Some("scenes/other.caf")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn asset_browser_navigates_folders_and_switches_views() {
+    let mut harness = Harness::empty();
+    let assets_pane = harness
+        .app
+        .panes
+        .iter()
+        .find(|(_, group)| group.pages.contains(&PaneKind::Assets))
+        .map(|(pane, _)| *pane)
+        .expect("assets pane");
+    harness.dispatch(Message::TabPressed(assets_pane, PaneKind::Assets));
+    harness.app.assets = vec![
+        doppio_engine::AssetInfo {
+            name: "Textures".to_owned(),
+            relative_path: "Textures".to_owned(),
+            kind: "folder".to_owned(),
+            size_bytes: 0,
+            is_directory: true,
+        },
+        doppio_engine::AssetInfo {
+            name: "brick.png".to_owned(),
+            relative_path: "Textures/brick.png".to_owned(),
+            kind: "image".to_owned(),
+            size_bytes: 2048,
+            is_directory: false,
+        },
+        doppio_engine::AssetInfo {
+            name: "Materials".to_owned(),
+            relative_path: "Materials".to_owned(),
+            kind: "folder".to_owned(),
+            size_bytes: 0,
+            is_directory: true,
+        },
+        doppio_engine::AssetInfo {
+            name: "rock.mat".to_owned(),
+            relative_path: "Materials/rock.mat".to_owned(),
+            kind: "material".to_owned(),
+            size_bytes: 512,
+            is_directory: false,
+        },
+        doppio_engine::AssetInfo {
+            name: "root.png".to_owned(),
+            relative_path: "root.png".to_owned(),
+            kind: "image".to_owned(),
+            size_bytes: 1024,
+            is_directory: false,
+        },
+    ];
+
+    assert!(harness.has(iced::widget::Id::from(id::asset_card(0))));
+    harness.click(id::asset_card(0));
+    assert_eq!(harness.app.asset_directory, "Textures");
+    assert!(harness.has(iced::widget::Id::from(id::asset_card(1))));
+    assert!(!harness.has(iced::widget::Id::from(id::asset_card(3))));
+
+    harness.dispatch(Message::AssetSearch("rock".to_owned()));
+    assert_eq!(
+        panels::assetmanager::visible_count(&harness.app.assets, "Textures", "rock"),
+        1
+    );
+    assert!(harness.has(iced::widget::Id::from(id::asset_card(3))));
+
+    harness.dispatch(Message::AssetRoot);
+    assert_eq!(harness.app.asset_directory, "");
+    assert_eq!(harness.app.asset_search, "");
+    harness.dispatch(Message::AssetViewMode(panels::assetmanager::ViewMode::List));
+    assert_eq!(
+        harness.app.asset_view_mode,
+        panels::assetmanager::ViewMode::List
+    );
+    assert!(harness.has(iced::widget::Id::from(id::asset_row(4))));
+
+    harness.dispatch(Message::AssetNavigate("Textures/Sub".to_owned()));
+    harness.dispatch(Message::AssetUp);
+    assert_eq!(harness.app.asset_directory, "Textures");
+}
+
 #[test]
 #[ignore = "writes documentation images"]
 fn capture_ui_gallery() {
@@ -1093,7 +3099,7 @@ fn capture_ui_gallery() {
 
     let mut inspector_controls = vec![(id::ENTITY_NAME, "Entity name")];
     if harness.app().engine.is_some() {
-        inspector_controls.insert(1, (id::component_field(0, 0, 0), "Position X"));
+        inspector_controls.insert(1, (id::transform_axis(0, 0), "Position X"));
         inspector_controls.insert(2, (id::ADD_COMPONENT, "Add Component"));
     }
     let annotated = out.join("annotated-inspector.png");

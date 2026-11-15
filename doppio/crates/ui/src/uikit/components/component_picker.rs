@@ -1,6 +1,6 @@
 use doppio_engine::{ComponentData, ComponentType};
 use iced::widget::{container, pick_list, Id};
-use iced::Element;
+use iced::{Element, Length};
 
 /// "Add Component" picker for the types the entity does not have.
 pub fn view<'a, Message: Clone + 'a>(
@@ -12,7 +12,10 @@ pub fn view<'a, Message: Clone + 'a>(
     let available: Vec<TypeOption> = types
         .iter()
         .filter(|kind| {
-            present
+            !matches!(
+                kind.name.as_str(),
+                "Transform" | "Position 3D" | "Rotation 3D" | "Scale 3D"
+            ) && present
                 .iter()
                 .all(|component| component.info.type_id != kind.id)
         })
@@ -24,10 +27,17 @@ pub fn view<'a, Message: Clone + 'a>(
     if available.is_empty() {
         return None;
     }
+    let placeholder = TypeOption {
+        id: u32::MAX,
+        name: "Add Component…".to_owned(),
+    };
     Some(
-        container(pick_list(available, None::<TypeOption>, move |choice| {
-            on_add(choice.id)
-        }))
+        container(
+            pick_list(available, Some(placeholder), move |choice| {
+                on_add(choice.id)
+            })
+            .width(Length::Fill),
+        )
         .id(id)
         .into(),
     )

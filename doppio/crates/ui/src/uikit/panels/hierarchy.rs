@@ -1,8 +1,9 @@
-use crate::uikit::components::{menu, text_field, tree_row};
+use crate::uikit::components::{button, menu, text_field, tree_view};
+use crate::uikit::icons::Icon;
 use crate::uikit::id;
 use crate::uikit::EntityView;
-use iced::widget::{column, container, scrollable, text};
-use iced::Element;
+use iced::widget::{column, container, row, scrollable};
+use iced::{Element, Length};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,15 +114,25 @@ pub struct View<'a> {
     pub root_label: &'a str,
     pub root_open: bool,
     pub search: &'a str,
+    pub dragging: Option<u32>,
+    pub hovered: Option<u32>,
+    pub root_hovered: bool,
 }
 
 pub struct Callbacks<'a, Message> {
     pub on_root_toggle: Message,
     pub on_search: Box<dyn Fn(String) -> Message + 'a>,
     pub on_toggle: Box<dyn Fn(usize) -> Message + 'a>,
-    pub on_select: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_release: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_enter: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_exit: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_context: Box<dyn Fn(usize) -> Message + 'a>,
-    pub on_double_click: Box<dyn Fn(usize) -> Message + 'a>,
+    pub on_root_enter: Message,
+    pub on_root_exit: Message,
+    pub on_root_release: Message,
+    pub on_empty_hover: Message,
+    pub on_open_create: Message,
     pub on_action: Box<dyn Fn(Action) -> Message + 'a>,
 }
 
@@ -129,12 +140,16 @@ pub fn view<'a, Message: Clone + 'a>(
     view: View<'a>,
     callbacks: Callbacks<'a, Message>,
 ) -> Element<'a, Message> {
+    let add = button::compact(id::HIERARCHY_ADD, "+", callbacks.on_open_create.clone());
     let search = text_field::search(
         id::HIERARCHY_SEARCH,
         "Search entities…",
         view.search,
         move |value| (callbacks.on_search)(value),
     );
+    let header = row![add, search]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
 
     let query = view.search.trim().to_lowercase();
     let rows: Vec<TreeRow> = if query.is_empty() {
@@ -153,19 +168,26 @@ pub fn view<'a, Message: Clone + 'a>(
             .collect()
     };
 
-    let mut list = column![].spacing(3);
-    list = list.push(tree_row::view(tree_row::Row {
+    let mut items = Vec::with_capacity(rows.len() + 1);
+    items.push(tree_view::Item {
         id: id::HIERARCHY_ROOT,
         label: view.root_label.to_owned(),
+        icon: Icon::Scene,
         depth: 0,
         has_children: !view.entities.is_empty(),
         expanded: view.root_open,
         selected: false,
+        hovered: view.root_hovered,
+        drop_target: view.dragging.is_some() && view.root_hovered,
+        trailing: None,
+        extra: None,
         on_toggle: callbacks.on_root_toggle.clone(),
-        on_select: callbacks.on_root_toggle.clone(),
+        on_press: callbacks.on_root_toggle.clone(),
+        on_release: callbacks.on_root_release.clone(),
+        on_enter: callbacks.on_root_enter.clone(),
+        on_exit: callbacks.on_root_exit.clone(),
         on_context: callbacks.on_root_toggle.clone(),
-        on_double_click: callbacks.on_root_toggle.clone(),
-    }));
+    });
 
     if view.root_open {
         if rows.is_empty() {
@@ -174,24 +196,30 @@ pub fn view<'a, Message: Clone + 'a>(
             } else {
                 "No matches"
             };
-            list = list.push(text(message).color(crate::uikit::theme::TEXT_MUTED));
+            items.push(tree_view::Item {
+                id: id::HIERARCHY_EMPTY,
+                label: message.to_owned(),
+                icon: Icon::Generic,
+                depth: 1,
+                has_children: false,
+                expanded: false,
+                selected: false,
+                hovered: false,
+                drop_target: false,
+                trailing: None,
+                extra: None,
+                on_toggle: callbacks.on_root_toggle.clone(),
+                on_press: callbacks.on_root_toggle.clone(),
+                on_release: callbacks.on_empty_hover.clone(),
+                on_enter: callbacks.on_empty_hover.clone(),
+                on_exit: callbacks.on_empty_hover.clone(),
+                on_context: callbacks.on_root_toggle.clone(),
+            });
         }
         for row in rows {
             let entity = &view.entities[row.index];
-            list = list.push(tree_row::view(tree_row::Row {
-                id: id::entity_row(row.index),
-                label: format!("{}  #{}", entity.name, entity.id),
-                depth: row.depth + 1,
-                has_children: row.has_children,
-                expanded: row.expanded,
-                selected: row.index == view.selected,
-                on_toggle: (callbacks.on_toggle)(row.index),
-                on_select: (callbacks.on_select)(row.index),
-                on_context: (callbacks.on_context)(row.index),
-                on_double_click: (callbacks.on_double_click)(row.index),
-            }));
-            if view.menu_for == Some(row.index) {
-                list = list.push(menu::context(vec![
+            let context_menu = (view.menu_for == Some(row.index)).then(|| {
+                menu::context(vec![
                     menu::Item {
                         id: id::ADD_ENTITY,
                         label: "Add Entity",
@@ -210,12 +238,35 @@ pub fn view<'a, Message: Clone + 'a>(
                         shortcut: None,
                         message: (callbacks.on_action)(Action::Delete),
                     },
-                ]));
-            }
+                ])
+            });
+            items.push(tree_view::Item {
+                id: id::entity_row(row.index),
+                label: entity.name.clone(),
+                icon: entity.icon,
+                depth: row.depth + 1,
+                has_children: row.has_children,
+                expanded: row.expanded,
+                selected: row.index == view.selected,
+                hovered: view.hovered == Some(entity.id) && view.dragging != Some(entity.id),
+                drop_target: view.dragging.is_some()
+                    && view.dragging != Some(entity.id)
+                    && view.hovered == Some(entity.id),
+                trailing: None,
+                extra: context_menu,
+                on_toggle: (callbacks.on_toggle)(row.index),
+                on_press: (callbacks.on_press)(row.index),
+                on_release: (callbacks.on_release)(row.index),
+                on_enter: (callbacks.on_enter)(row.index),
+                on_exit: (callbacks.on_exit)(row.index),
+                on_context: (callbacks.on_context)(row.index),
+            });
         }
     }
 
-    container(column![search, scrollable(list)].spacing(6)).into()
+    container(column![header, scrollable(tree_view::view(items))].spacing(4))
+        .width(Length::Fill)
+        .into()
 }
 
 #[cfg(test)]
@@ -230,6 +281,7 @@ mod tests {
             rotation: [0.0; 3],
             scale: [1.0; 3],
             parent,
+            icon: crate::uikit::icons::Icon::Generic,
         }
     }
 

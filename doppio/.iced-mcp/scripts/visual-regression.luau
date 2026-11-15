@@ -21,6 +21,12 @@ local panes = {
 }
 
 for _, pane in ipairs(panes) do
+  -- Hierarchy and Assets share the left pane as tabs; activate the page
+  -- before capturing it.
+  if pane.id == "editor.pane.assets" then
+    app:click({ id = "editor.pane.tab.assets" })
+    app:wait_idle()
+  end
   app:expect({ id = pane.id })
   app:screenshot_diff({ id = pane.id, baseline = pane.baseline })
 end

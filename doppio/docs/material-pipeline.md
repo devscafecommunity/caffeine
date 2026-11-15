@@ -1,0 +1,237 @@
+# Material, texture and generator pipeline — backlog
+
+Living checklist for the Doppio material stack. Update the checkboxes as work
+lands; keep the **current foundation** section accurate so a future agent can
+continue without re-reading the whole history.
+
+Clean-room rule: MaterialCraft, TextureCraft and MistyEngine under
+`references/` are read for public behaviour, formats and UI conventions only.
+Do not copy source, shader text, node definitions or bundled assets.
+
+## Current foundation (done)
+
+- [x] `.mat` PBR assets: full `MaterialSurface`, presets, load/save, assign to
+      Mesh Filter, Inspector slot, undoable scene assignment.
+- [x] Engine sphere preview (`MaterialPreviewRenderer`) through the C ABI with
+      orbit drag and throttled refresh.
+- [x] Texture map utilities: normal from height (OpenGL/DirectX), AO from
+      height, roughness/metallic from albedo, ORM, Unity HDRP mask, Unity
+      metallic-smoothness. DirectX normals are flipped by the shader.
+- [x] Material Studio: surface/maps/UV/advanced cards, texture picker, map
+      baker, generated-map assignment.
+- [x] Assets: texture/material/mesh/scene filter, search, image thumbnails and
+      material albedo swatches.
+- [x] Reusable `node_canvas` component: graph-space nodes, typed ports, cubic
+      wires, drag, pan, zoom, selection and connect events.
+- [x] Atomic material graph: Color, Image, Noise (value/Perlin), Voronoi,
+      Checker, Bricks, Gradient, Blend, Levels, Curve, HSL, Threshold, Blur,
+      Warp, Value, Luminance, Dot and Output (Color/Roughness/Metallic/Height/
+      AO). Typed colour/scalar ports, blend masks and 13 blend modes.
+- [x] Bake graph → base colour, height, roughness, metallic, AO, normal and
+      packed maps; save and assign to the selected entity automatically.
+- [x] Background worker bake with progress/cancel; the UI keeps the last
+      result and never blocks the viewport. The Generator also runs a debounced
+      low-resolution live bake of the Output node after every graph edit.
+- [x] 8/16-bit generated maps and a channel-packing editor (ORM, Unity HDRP,
+      Unity metallic-smoothness, custom R/G/B/A sources).
+- [x] Per-material `<name>.mgraph` sidecar (versioned `CAFMGRAPH2` text, reads
+      `CAFMGRAPH1`) with nodes, links, parameters, positions and resolution.
+- [x] MCP queries/actions and `material-smoke` / `material-generator-smoke`.
+
+## Phase 1 — Complete the generator foundation
+
+- [x] Graph history, wire selection/delete/reconnect, reroute dots, palette
+      search, 16-unit snapping, copy/paste, fit-to-graph, undo/redo MCP actions,
+      Rust tests and the `material-generator-smoke` flow.
+
+### Undo/redo for graph edits — done
+
+- [x] Add a graph history stack per material (snapshots or reversible
+      commands). `MaterialGraph` is `Clone`, so snapshots are the simplest
+      first step; keep them small and cap memory.
+- [x] Coalesce continuous edits with a stable key: `generator:move:<node>`,
+      `generator:param:<node>:<param>`, so a drag is one step.
+- [x] Cover Add/Delete node, Connect/disconnect, Move, every parameter, output
+      assignment, resolution and graph load/clear.
+- [x] `Ctrl+Z` / `Ctrl+Shift+Z` and `Ctrl+Y` while the Generator pane is
+      focused; header Undo/Redo buttons remain available.
+- [x] MCP `generator_undo` / `generator_redo` plus `can_undo`, `undo_name`,
+      `can_redo`, `redo_name` in the `generator` query.
+- [x] Tests: add→undo, connect→undo/redo, coalesced drag, delete link, dot,
+      copy/paste and scene-shortcut routing.
+
+### Wire editing — first pass done
+
+- [x] Hit-test cubic wires (sample the bézier; ~5 px tolerance) and keep a
+      separate wire-selection state from node selection.
+- [x] Delete/Backspace removes a selected wire in one history step; right-click
+      a wire and the properties-panel Delete link button do the same. Dragging a
+      connected input detaches its source for reconnection.
+- [x] Add a **reroute dot** node: one input/one output, pass-through; insert on
+      double-click of a wire or with `insert_generator_dot`.
+- [ ] Wire context menu and source swap of exactly two wires.
+- [ ] Hover highlight + pointer feedback; canvas redraws only on changes.
+- [x] Tests for wire hit distance, single-input replacement, cycle rejection,
+      reroute round-trip and undo.
+
+### Canvas polish — first pass done
+
+- [x] Snap node placement to a 16-unit grid; toggle in the canvas toolbox.
+- [x] Search field filters the node palette by node name or category; the
+      palette is grouped by category in the shared tree view with collapsible
+      groups. A Space/Tab modal search remains a future refinement.
+- [x] Copy/paste the selected node (toolbox buttons and MCP); internal-link
+      duplication/duplicate-selection is still pending.
+- [ ] Optional frames/comments; keep them out of the first undo milestone.
+- [x] Fit-to-graph ("Fit" button / `fit_generator`).
+- [ ] Node thumbnails are optional; do not block editing on image baking.
+
+## Phase 2 — MaterialCraft-style node library
+
+### Image and texture nodes
+
+- [x] Project texture node: pick an image asset, sample UV, expose tiling and
+      offset; reuse the texture picker and engine path resolver.
+- [x] Image sampler node with nearest/linear and clamp/repeat.
+- [x] UV projection choices: UV, planar, tri-planar (synthetic spherical
+      domain until mesh-space UVs are available), cylindrical and spherical.
+- [x] Normal-map input node and normal blend (whiteout/linear) for
+      height/normal combinations.
+- [x] Image decoding runs on the bake worker; decode errors abort with a
+      message. A 4K resolution warning remains.
+
+### More atomic generators/filters
+
+- [x] Voronoi/cells with distance and cell-colour outputs.
+- [x] Perlin and value noise with octaves, persistence and lacunarity;
+      simplex/Worley variants and anisotropic scale/rotation remain.
+- [x] Curve, levels (brightness/contrast/gamma/invert), HSL, blur and warp.
+- [x] Sharpen, emboss and directional blur.
+- [x] Threshold/soft mask, distance, edge-detect and cavity/curvature masks;
+      dirt-like masks remain.
+- [x] Blend additions: overlay variants, soft light/hard light, subtract,
+      difference, darken/lighten, colour dodge/burn; per-channel alpha remains.
+- [x] Scalar constants and a value node, typed colour/scalar ports; arithmetic
+      nodes remain.
+- [ ] Function/group nodes only after the atomic graph is stable; do not add a
+      scripting VM in this phase.
+
+### Bake and output
+
+- [x] Bake on a worker thread with progress/cancel; the UI keeps the last
+      result. Never freeze the viewport while cooking.
+- [x] 16-bit generated maps plus 8-bit PNG defaults; float cook remains.
+- [x] Channel-packing editor: destination R/G/B/A ← AO, roughness, metallic,
+      height, smoothness, base luminance or constants; built-in ORM, Unity
+      HDRP and Unity metallic-smoothness presets plus custom channels, saved
+      user presets in `~/.config/caffeine/packing-presets.txt`.
+- [x] AO derived from the height map and scene-geometry AO through Photon
+      (`caffeine_session_bake_ao`, Material → AO from scene); displacement
+      height bake remains.
+- [x] Graph outputs generate base, normal, roughness, metallic, AO and height
+      maps and pack them for the material; emissive/opacity outputs remain.
+
+## Phase 3 — MaterialCraft interoperability
+
+- [x] Import `.mcmat`: manifest, cooked maps, parameters and `source.sbs` → a
+      Doppio `.mat`, map files, `.sbs` source and `.mgraph` sidecar.
+- [x] Parse SBS XML `compNode` graphs (known filter mapping for color, noise,
+      voronoi, checker, bricks, gradient, blend, levels, HSL, threshold, blur,
+      sharpen, emboss, directional blur, warp, edge/cavity/distance masks,
+      normal blend, image/normal-map nodes and outputs).
+- [x] Preserve unknown filters and unsupported graph outputs as
+      `NodeKind::Unknown` placeholders; keep all links and report warnings in
+      the generator status/log.
+- [x] Portable `.mcmat` export first: baked maps + manifest + minimal
+      `source.sbs`, with node/link round-trip validation before writing.
+- [ ] Full native SBS export parity. The current writer emits the Doppio subset
+      and validates it against our own reader; do not claim Substance parity.
+- [x] Headless `doppio-material` CLI (`import`, `import-sbs`, `export`,
+      `inspect`) and MCP `import_materialcraft` / `export_materialcraft`
+      actions using the same engine-backed helpers.
+
+### Explicit node mapping
+
+| SBS filter | Doppio node | Notes |
+|---|---|---|
+| `uniformcolor` / `solidcolor` | Color | colour parameter |
+| `noise`, `perlin_noise`, `fractal_*` | Noise | value/Perlin, scale, octaves, seed |
+| `voronoi` | Voronoi | scale, jitter, seed, mode |
+| `checker` / `checkerboard` | Checker | scale and two colours |
+| `bricks` / `brick` | Bricks | rows, columns, mortar, colours |
+| `gradient*` | Gradient | angle and two colours |
+| `blend` | Blend | destination/source inputs, opacity, blending mode |
+| `normal_blend` | Normal Blend | whiteout/linear |
+| `levels`, `hsl`, `threshold`/`mask` | Levels, HSL, Threshold | matching parameters |
+| `blur`, `sharpen`, `emboss`, `directional_blur`, `warp` | corresponding filter node | radius/intensity mapped heuristically |
+| `edge_detect`, `curvature`/`cavity`, `distance` | Edge/Cavity/Distance Mask | strength/threshold/radius |
+| `image` / `normalmap` | Image / Normal Map | path, projection, tiling, offset, filter, wrap |
+| `value`, `luminance`, `curve`, `dot` | Value, Luminance, Curve, Dot | constants/utilities |
+| output bridge | Output | usage selects Color/Roughness/Metallic/Height/AO port |
+| anything else | **Unknown placeholder** | links and port order preserved, warning reported |
+
+Known-name parameters that cannot be represented keep the node as a placeholder
+rather than silently dropping data. The native SBS writer covers this table and
+is validated by importing its own output; it is not advertised as full
+Substance Designer parity.
+
+## Phase 4 — TextureCraft-style texture sets and painting
+
+This is a separate pipeline from material graphs. Do not pretend the material
+map baker is a texture painter. The texture-set foundation below is implemented
+in `uikit/texture_set.rs`, `uikit/panels/texture_set.rs` and
+`uikit/components/uv_canvas.rs`; the unchecked items are the remaining painter
+depth.
+
+- [x] Texture sets with UDIM tiles (1001–1010), channel definitions and
+      per-tile RGBA resources.
+- [x] Layer stack: paint/fill layers, visibility, opacity, 13 blend modes,
+      reorder/delete and per-layer tile masks. Folder layers and thumbnails
+      remain.
+- [x] 2D UV painting canvas, channel selection and a 3D paint mode that
+      ray-picks the selected mesh and paints at the hit UV. Pressure/stylus
+      input, stamp masks, projection painting and seam handling remain.
+- [x] Mesh-map bakes: AO/curvature from height, scene-AO import through
+      Photon, and world-normal, world-position and object-ID bakes from the
+      selected mesh UVs. Thickness and bent-normal bakes remain.
+- [x] Built-in export presets (separate maps, glTF ORM, Unity HDRP mask) and a
+      CLI `texset-export`; user-defined output templates remain.
+- [x] Undo/redo from per-tile snapshots and the `.texset` project format
+      (ZIP manifest + PNG tiles/masks).
+- [ ] Integration: dropped texture becomes a material; generated maps can be
+      used by the map baker and Generator image nodes.
+
+## Phase 5 — Material rendering and asset polish
+
+- [x] Preview shapes Sphere/Cube/Plane and an HDRI environment + exposure
+      controls, rendered at 512 px with contain-fit framing; sphere remains the
+      fast default.
+- [x] Async material preview with begin/poll readback and no UI stall. The
+      synchronous C ABI entry point remains for tools/tests.
+- [x] Engine thumbnail decode (`caffeine_texture_load_thumbnail`) as the
+      primary asset/material thumbnail path, with the Iced loader as fallback;
+      cache entries are invalidated by file modification stamp.
+- [x] Apply saves dirty baked materials before assignment and creates a cube
+      preview mesh on empty entities, so masks/bricks reach the `.mat` file.
+- [x] Material picker in the Inspector with a searchable `.mat` list; internal
+      asset drag/drop assigns materials/textures, and OS file drops work too.
+- [ ] Drag presets into the generator canvas and reorder material maps.
+- [x] glTF/OBJ material import: base color, metallic-roughness, normal,
+      occlusion, emission, alpha and glTF UV transform into `.mat` + `.mgraph`.
+- [x] Material preview overlays: DirectX/OpenGL, alpha mode, map presence and
+      per-map resolution/missing-file badges.
+- [x] C ABI version bumped to **2** with `caffeine_capi_version()` and a status
+      bar badge; C API tests cover it.
+
+## Definition of done for "the base is complete"
+
+- Generator graph edit undo/redo and wire editing never lose work.
+- A material and its graph survive save/reopen, and a graph bake is
+  reproducible byte-for-byte at the same resolution.
+- MaterialCraft import covers the node set we expose; unsupported data is
+  reported, not dropped.
+- Texture sets/painting have their own project format and undo; material maps
+  can consume their exports.
+- The preview and asset browser work without blocking the UI thread.
+- `check-rust-ui.sh`, Rust tests, `[capi]`/`[material]`, and every MCP smoke
+  pass; docs and UI captions are regenerated.

@@ -1,3 +1,4 @@
+use crate::uikit::icons::Icon;
 use crate::uikit::EntityView;
 use crate::windows::log::{LogEntry, LogLevel};
 use doppio_engine::{AssetInfo, Engine};
@@ -9,6 +10,56 @@ pub struct LoadedProject {
     pub log: Vec<LogEntry>,
 }
 
+/// Pick a semantic icon from the entity's components first, then from its
+/// name for engine concepts that do not have a C ABI component type yet.
+pub fn entity_icon(engine: &Engine, id: u32, name: &str) -> Icon {
+    let lower = name.to_lowercase();
+    if lower.contains("camera") {
+        return Icon::Camera;
+    }
+    if lower.contains("light") || lower.contains("sun") {
+        return Icon::Light;
+    }
+    if lower.contains("terrain") {
+        return Icon::Terrain;
+    }
+    if lower.contains("water") {
+        return Icon::Water;
+    }
+    if lower.contains("wind") {
+        return Icon::Wind;
+    }
+    if lower.contains("volume")
+        || lower.contains("render environment")
+        || lower.contains("post process")
+    {
+        return Icon::Volume;
+    }
+    if lower.contains("player") {
+        return Icon::Player;
+    }
+
+    let components = engine.entity_components(id);
+    let has = |needle: &str| components.iter().any(|component| component.name == needle);
+    if has("Camera 3D") {
+        Icon::Camera
+    } else if has("Light") || has("Directional Light") || has("Point Light") || has("Spot Light") {
+        Icon::Light
+    } else if has("Mesh Renderer") || has("Mesh Filter") {
+        Icon::Mesh
+    } else if has("Script") {
+        Icon::Script
+    } else if has("Rigid Body 2D")
+        || has("Rigid Body 3D")
+        || has("Collider 2D")
+        || has("Collider 3D")
+    {
+        Icon::Physics
+    } else {
+        Icon::Generic
+    }
+}
+
 /// Mirror the engine hierarchy into plain UI views.
 pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
     let mut entities = Vec::new();
@@ -16,15 +67,25 @@ pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
         if let Ok(info) = engine.entity_at(index) {
             entities.push(EntityView {
                 id: info.id,
-                name: info.name,
+                name: info.name.clone(),
                 position: engine.position(info.id).unwrap_or([0.0; 3]),
                 rotation: engine.rotation(info.id).unwrap_or([0.0; 3]),
                 scale: engine.scale(info.id).unwrap_or([1.0; 3]),
                 parent: engine.entity_parent(info.id).ok().flatten(),
+                icon: entity_icon(engine, info.id, &info.name),
             });
         }
     }
     entities
+}
+
+/// Whether the process was started with a `.caf` scene argument. The startup
+/// Project Manager only appears when no scene was requested explicitly, so
+/// automated screenshots and fixtures stay deterministic.
+pub fn scene_from_args() -> bool {
+    std::env::args()
+        .nth(1)
+        .is_some_and(|path| path.ends_with(".caf"))
 }
 
 /// Load the optional `.caf` scene from the first CLI argument and mirror the
@@ -48,6 +109,7 @@ pub fn load_from_args() -> LoadedProject {
                 rotation: [0.0; 3],
                 scale: [1.0; 3],
                 parent: None,
+                icon: Icon::Generic,
             });
         }
         return LoadedProject {
@@ -97,6 +159,7 @@ pub fn load_from_args() -> LoadedProject {
                     rotation: [0.0; 3],
                     scale: [1.0; 3],
                     parent: None,
+                    icon: Icon::Generic,
                 });
             }
         }

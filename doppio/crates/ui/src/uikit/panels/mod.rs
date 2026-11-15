@@ -2,4 +2,8 @@ pub mod assetmanager;
 pub mod console;
 pub mod hierarchy;
 pub mod inspector;
+pub mod material;
+pub mod material_generator;
+pub mod project_manager;
 pub mod sceneviewport;
+pub mod texture_set;

@@ -1,6 +1,14 @@
 pub mod components;
+pub mod generators;
+pub mod icons;
 pub mod id;
+pub mod materialcraft;
+pub mod materialcraft_io;
+pub mod mesh_material_import;
 pub mod panels;
+pub mod prefabs;
+pub mod project;
+pub mod texture_set;
 pub mod theme;
 
 /// A UI-side view of an engine entity. The engine crate owns the real data;
@@ -13,4 +21,5 @@ pub struct EntityView {
     pub rotation: [f32; 3],
     pub scale: [f32; 3],
     pub parent: Option<u32>,
+    pub icon: crate::uikit::icons::Icon,
 }

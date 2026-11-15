@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 
 use libloading::Library;
 
+mod material;
+pub use material::{Material, MaterialAlphaMode, MaterialPreset};
+use material::{RawMaterial, RawMaterialPresetInfo};
+
 pub const ENTITY_NONE: u32 = u32::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +49,50 @@ impl Default for Camera {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AntiAliasing {
+    Off,
+    Fxaa,
+    Taa,
+}
+
+impl AntiAliasing {
+    fn from_raw(value: i32) -> Self {
+        match value {
+            0 => Self::Off,
+            2 => Self::Taa,
+            _ => Self::Fxaa,
+        }
+    }
+
+    fn raw(self) -> i32 {
+        match self {
+            Self::Off => 0,
+            Self::Fxaa => 1,
+            Self::Taa => 2,
+        }
+    }
+}
+
+/// Offscreen viewport quality and overlays.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewportSettings {
+    pub show_grid: bool,
+    pub anti_aliasing: AntiAliasing,
+    /// Internal supersampling factor, clamped by the engine to [0.5, 2.0].
+    pub render_scale: f32,
+}
+
+impl Default for ViewportSettings {
+    fn default() -> Self {
+        Self {
+            show_grid: true,
+            anti_aliasing: AntiAliasing::Fxaa,
+            render_scale: 1.5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetInfo {
     pub name: String,
@@ -52,6 +100,72 @@ pub struct AssetInfo {
     pub kind: String,
     pub size_bytes: u64,
     pub is_directory: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureMapKind {
+    Normal,
+    AmbientOcclusion,
+    Roughness,
+    Metallic,
+    Height,
+}
+
+impl TextureMapKind {
+    fn raw(self) -> i32 {
+        match self {
+            TextureMapKind::Normal => 0,
+            TextureMapKind::AmbientOcclusion => 1,
+            TextureMapKind::Roughness => 2,
+            TextureMapKind::Metallic => 3,
+            TextureMapKind::Height => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewShape {
+    Sphere,
+    Cube,
+    Plane,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshMapKind {
+    Normal,
+    Position,
+    ObjectId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexturePackKind {
+    /// R = AO, G = roughness, B = metallic.
+    Orm,
+    /// Unity HDRP: R = metallic, G = AO, B = detail, A = smoothness.
+    UnityHdrpMask,
+    /// Unity Standard: R = metallic, A = smoothness.
+    UnityMetallicSmoothness,
+}
+
+impl TexturePackKind {
+    fn raw(self) -> i32 {
+        match self {
+            TexturePackKind::Orm => 0,
+            TexturePackKind::UnityHdrpMask => 1,
+            TexturePackKind::UnityMetallicSmoothness => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextureMapOptions {
+    pub strength: f32,
+    pub directx: bool,
+    pub wrap: bool,
+    pub min_value: f32,
+    pub max_value: f32,
+    pub invert: bool,
+    pub radius: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,12 +313,41 @@ struct RawCamera {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+struct RawViewportSettings {
+    show_grid: i32,
+    anti_aliasing: i32,
+    render_scale: f32,
+}
+
+impl From<RawViewportSettings> for ViewportSettings {
+    fn from(raw: RawViewportSettings) -> Self {
+        Self {
+            show_grid: raw.show_grid != 0,
+            anti_aliasing: AntiAliasing::from_raw(raw.anti_aliasing),
+            render_scale: raw.render_scale,
+        }
+    }
+}
+
+impl From<ViewportSettings> for RawViewportSettings {
+    fn from(settings: ViewportSettings) -> Self {
+        Self {
+            show_grid: i32::from(settings.show_grid),
+            anti_aliasing: settings.anti_aliasing.raw(),
+            render_scale: settings.render_scale,
+        }
+    }
+}
+
+#[repr(C)]
 struct RawFrameStats {
     delta_time: f32,
     frame_index: u64,
     entity_count: u32,
 }
 
+type CapiVersionFn = unsafe extern "C" fn() -> i32;
 type CreateFn = unsafe extern "C" fn() -> *mut c_void;
 type DestroyFn = unsafe extern "C" fn(*mut c_void);
 type LoadSceneFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
@@ -227,6 +370,8 @@ type RotationFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetRotationFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type ScaleFn = unsafe extern "C" fn(*mut c_void, u32, *mut RawVec3) -> i32;
 type SetScaleFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
+type WorldPositionFn = unsafe extern "C" fn(*const c_void, u32, *mut RawVec3) -> i32;
+type SetWorldPositionFn = unsafe extern "C" fn(*mut c_void, u32, RawVec3) -> i32;
 type RenderFn = unsafe extern "C" fn(*mut c_void, u32, u32, *mut u8, usize) -> i32;
 type RenderBeginFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type RenderPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
@@ -246,14 +391,106 @@ type AddComponentFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type RemoveComponentFn = unsafe extern "C" fn(*mut c_void, u32, u32) -> i32;
 type SetCameraFn = unsafe extern "C" fn(*mut c_void, RawCamera) -> i32;
 type GetCameraFn = unsafe extern "C" fn(*mut c_void, *mut RawCamera) -> i32;
+type SetViewportSettingsFn = unsafe extern "C" fn(*mut c_void, RawViewportSettings) -> i32;
+type GetViewportSettingsFn = unsafe extern "C" fn(*const c_void, *mut RawViewportSettings) -> i32;
 type SetAssetRootFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> i32;
 type RefreshAssetsFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type AssetCountFn = unsafe extern "C" fn(*const c_void) -> u32;
 type AssetAtFn = unsafe extern "C" fn(*const c_void, u32, *mut RawAssetInfo) -> i32;
 type TickFn = unsafe extern "C" fn(*mut c_void, f32);
 type FrameStatsFn = unsafe extern "C" fn(*mut c_void, *mut RawFrameStats);
+type MaterialDefaultFn = unsafe extern "C" fn(*mut RawMaterial) -> i32;
+type MaterialLoadFn = unsafe extern "C" fn(*const c_char, *mut RawMaterial) -> i32;
+type MaterialSaveFn = unsafe extern "C" fn(*const c_char, *const RawMaterial) -> i32;
+type MaterialPresetCountFn = unsafe extern "C" fn() -> u32;
+type MaterialPresetAtFn =
+    unsafe extern "C" fn(u32, *mut RawMaterialPresetInfo, *mut RawMaterial) -> i32;
+type ApplyMaterialFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char) -> i32;
+type EntityMaterialFn = unsafe extern "C" fn(*const c_void, u32, *mut c_char, usize) -> i32;
+type MaterialPreviewFn =
+    unsafe extern "C" fn(*mut c_void, *const RawMaterial, u32, f32, f32, *mut u8, usize) -> i32;
+type AssetPathFn = unsafe extern "C" fn(*const c_void, *const c_char, *mut c_char, usize) -> i32;
+type GenerateMapFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    i32,
+    f32,
+    i32,
+    i32,
+    f32,
+    f32,
+    i32,
+    u32,
+) -> i32;
+type PackMapsFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char, i32) -> i32;
+type SaveRgbaFn = unsafe extern "C" fn(*const c_char, u32, u32, *const u8, usize) -> i32;
+type SaveRgba16Fn = unsafe extern "C" fn(*const c_char, u32, u32, *const u16, usize) -> i32;
+type LoadThumbnailFn =
+    unsafe extern "C" fn(*const c_char, u32, *mut u32, *mut u32, *mut *mut u8, *mut usize) -> i32;
+type LoadRgbaFn =
+    unsafe extern "C" fn(*const c_char, *mut u32, *mut u32, *mut *mut u8, *mut usize) -> i32;
+type BakeMeshMapFn = unsafe extern "C" fn(*mut c_void, u32, i32, u32, *const c_char) -> i32;
+type PreviewExFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const RawMaterial,
+    u32,
+    f32,
+    f32,
+    i32,
+    *const c_char,
+    f32,
+    *mut u8,
+    usize,
+) -> i32;
+type PreviewBeginFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const RawMaterial,
+    u32,
+    f32,
+    f32,
+    i32,
+    *const c_char,
+    f32,
+) -> i32;
+type PreviewPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
+type PickUvFn =
+    unsafe extern "C" fn(*mut c_void, u32, f32, f32, f32, f32, *mut f32, *mut f32) -> i32;
+type BakeAoFn = unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    u32,
+    u32,
+    f32,
+    *const c_char,
+    *mut RawAOBakeResult,
+) -> i32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawAOBakeResult {
+    ok: i32,
+    used_gpu: i32,
+    covered_texels: u32,
+    triangles: u32,
+    orm_path: [c_char; 512],
+    material_path: [c_char; 512],
+    error: [c_char; 256],
+}
+
+/// Result of a scene-geometry AO bake.
+pub struct AOBakeResult {
+    pub ok: bool,
+    pub used_gpu: bool,
+    pub covered_texels: u32,
+    pub triangles: u32,
+    pub orm_path: String,
+    pub material_path: String,
+    pub error: String,
+}
 
 struct Functions {
+    capi_version: CapiVersionFn,
     destroy: DestroyFn,
     load_scene: LoadSceneFn,
     save_scene: SaveSceneFn,
@@ -275,6 +512,8 @@ struct Functions {
     set_rotation: SetRotationFn,
     scale: ScaleFn,
     set_scale: SetScaleFn,
+    world_position: WorldPositionFn,
+    set_world_position: SetWorldPositionFn,
     render: RenderFn,
     render_begin: RenderBeginFn,
     render_poll: RenderPollFn,
@@ -292,12 +531,37 @@ struct Functions {
     remove_component: RemoveComponentFn,
     set_camera: SetCameraFn,
     get_camera: GetCameraFn,
+    set_viewport_settings: SetViewportSettingsFn,
+    get_viewport_settings: GetViewportSettingsFn,
     set_asset_root: SetAssetRootFn,
     refresh_assets: RefreshAssetsFn,
     asset_count: AssetCountFn,
     asset_at: AssetAtFn,
     tick: TickFn,
     frame_stats: FrameStatsFn,
+    material_default: MaterialDefaultFn,
+    material_load: MaterialLoadFn,
+    material_save: MaterialSaveFn,
+    material_preset_count: MaterialPresetCountFn,
+    material_preset_at: MaterialPresetAtFn,
+    apply_material: ApplyMaterialFn,
+    entity_material: EntityMaterialFn,
+    material_preview: MaterialPreviewFn,
+    asset_path: AssetPathFn,
+    asset_project_path: AssetPathFn,
+    resolve_path: AssetPathFn,
+    generate_map: GenerateMapFn,
+    pack_maps: PackMapsFn,
+    save_rgba: SaveRgbaFn,
+    save_rgba16: SaveRgba16Fn,
+    load_rgba: LoadRgbaFn,
+    load_thumbnail: LoadThumbnailFn,
+    bake_ao: BakeAoFn,
+    pick_uv: PickUvFn,
+    bake_mesh_map: BakeMeshMapFn,
+    material_preview_ex: PreviewExFn,
+    material_preview_begin: PreviewBeginFn,
+    material_preview_poll: PreviewPollFn,
 }
 
 pub struct Engine {
@@ -363,6 +627,7 @@ impl Engine {
         let library = shared_library(path)?;
         let create: CreateFn = unsafe { load_symbol(library, b"caffeine_session_create\0") }?;
         let functions = Functions {
+            capi_version: unsafe { load_symbol(library, b"caffeine_capi_version\0") }?,
             destroy: unsafe { load_symbol(library, b"caffeine_session_destroy\0") }?,
             load_scene: unsafe { load_symbol(library, b"caffeine_session_load_scene\0") }?,
             save_scene: unsafe { load_symbol(library, b"caffeine_session_save_scene\0") }?,
@@ -388,6 +653,12 @@ impl Engine {
             }?,
             scale: unsafe { load_symbol(library, b"caffeine_session_entity_scale\0") }?,
             set_scale: unsafe { load_symbol(library, b"caffeine_session_set_entity_scale\0") }?,
+            world_position: unsafe {
+                load_symbol(library, b"caffeine_session_entity_world_position\0")
+            }?,
+            set_world_position: unsafe {
+                load_symbol(library, b"caffeine_session_set_entity_world_position\0")
+            }?,
             render: unsafe { load_symbol(library, b"caffeine_session_render\0") }?,
             render_begin: unsafe { load_symbol(library, b"caffeine_session_render_begin\0") }?,
             render_poll: unsafe { load_symbol(library, b"caffeine_session_render_poll\0") }?,
@@ -419,12 +690,55 @@ impl Engine {
             }?,
             set_camera: unsafe { load_symbol(library, b"caffeine_session_set_camera\0") }?,
             get_camera: unsafe { load_symbol(library, b"caffeine_session_get_camera\0") }?,
+            set_viewport_settings: unsafe {
+                load_symbol(library, b"caffeine_session_set_viewport_settings\0")
+            }?,
+            get_viewport_settings: unsafe {
+                load_symbol(library, b"caffeine_session_get_viewport_settings\0")
+            }?,
             set_asset_root: unsafe { load_symbol(library, b"caffeine_session_set_asset_root\0") }?,
             refresh_assets: unsafe { load_symbol(library, b"caffeine_session_refresh_assets\0") }?,
             asset_count: unsafe { load_symbol(library, b"caffeine_session_asset_count\0") }?,
             asset_at: unsafe { load_symbol(library, b"caffeine_session_asset_at\0") }?,
             tick: unsafe { load_symbol(library, b"caffeine_session_tick\0") }?,
             frame_stats: unsafe { load_symbol(library, b"caffeine_session_frame_stats\0") }?,
+            material_default: unsafe { load_symbol(library, b"caffeine_material_default\0") }?,
+            material_load: unsafe { load_symbol(library, b"caffeine_material_load\0") }?,
+            material_save: unsafe { load_symbol(library, b"caffeine_material_save\0") }?,
+            material_preset_count: unsafe {
+                load_symbol(library, b"caffeine_material_preset_count\0")
+            }?,
+            material_preset_at: unsafe { load_symbol(library, b"caffeine_material_preset_at\0") }?,
+            apply_material: unsafe { load_symbol(library, b"caffeine_session_apply_material\0") }?,
+            entity_material: unsafe {
+                load_symbol(library, b"caffeine_session_entity_material\0")
+            }?,
+            material_preview: unsafe {
+                load_symbol(library, b"caffeine_session_render_material_preview\0")
+            }?,
+            asset_path: unsafe { load_symbol(library, b"caffeine_session_asset_path\0") }?,
+            asset_project_path: unsafe {
+                load_symbol(library, b"caffeine_session_asset_project_path\0")
+            }?,
+            resolve_path: unsafe { load_symbol(library, b"caffeine_session_resolve_path\0") }?,
+            generate_map: unsafe { load_symbol(library, b"caffeine_texture_generate_map\0") }?,
+            pack_maps: unsafe { load_symbol(library, b"caffeine_texture_pack_maps\0") }?,
+            save_rgba: unsafe { load_symbol(library, b"caffeine_texture_save_rgba\0") }?,
+            save_rgba16: unsafe { load_symbol(library, b"caffeine_texture_save_rgba16\0") }?,
+            load_rgba: unsafe { load_symbol(library, b"caffeine_texture_load_rgba\0") }?,
+            load_thumbnail: unsafe { load_symbol(library, b"caffeine_texture_load_thumbnail\0") }?,
+            bake_ao: unsafe { load_symbol(library, b"caffeine_session_bake_ao\0") }?,
+            pick_uv: unsafe { load_symbol(library, b"caffeine_session_pick_uv\0") }?,
+            bake_mesh_map: unsafe { load_symbol(library, b"caffeine_session_bake_mesh_map\0") }?,
+            material_preview_ex: unsafe {
+                load_symbol(library, b"caffeine_session_render_material_preview_ex\0")
+            }?,
+            material_preview_begin: unsafe {
+                load_symbol(library, b"caffeine_session_render_material_preview_begin\0")
+            }?,
+            material_preview_poll: unsafe {
+                load_symbol(library, b"caffeine_session_render_material_preview_poll\0")
+            }?,
         };
         let session = unsafe { create() };
         if session.is_null() {
@@ -606,6 +920,10 @@ impl Engine {
         })
     }
 
+    pub fn capi_version(&self) -> i32 {
+        unsafe { (self.functions.capi_version)() }
+    }
+
     pub fn load_scene(&mut self, path: &str) -> EngineResult<()> {
         let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
         result(unsafe { (self.functions.load_scene)(self.session, path.as_ptr()) })
@@ -726,6 +1044,18 @@ impl Engine {
         result(unsafe { (self.functions.set_scale)(self.session, entity, to_raw(scale)) })
     }
 
+    /// Resolved position after every parent transform in the hierarchy.
+    pub fn world_position(&self, entity: u32) -> EngineResult<[f32; 3]> {
+        read_vec3(|out| unsafe { (self.functions.world_position)(self.session, entity, out) })
+    }
+
+    /// Sets a scene-space position and lets the engine derive the local transform.
+    pub fn set_world_position(&mut self, entity: u32, position: [f32; 3]) -> EngineResult<()> {
+        result(unsafe {
+            (self.functions.set_world_position)(self.session, entity, to_raw(position))
+        })
+    }
+
     pub fn camera(&self) -> EngineResult<Camera> {
         let mut camera = RawCamera::default();
         result(unsafe { (self.functions.get_camera)(self.session, &mut camera) })?;
@@ -753,6 +1083,16 @@ impl Engine {
                 },
             )
         })
+    }
+
+    pub fn viewport_settings(&self) -> EngineResult<ViewportSettings> {
+        let mut raw = RawViewportSettings::default();
+        result(unsafe { (self.functions.get_viewport_settings)(self.session, &mut raw) })?;
+        Ok(raw.into())
+    }
+
+    pub fn set_viewport_settings(&mut self, settings: ViewportSettings) -> EngineResult<()> {
+        result(unsafe { (self.functions.set_viewport_settings)(self.session, settings.into()) })
     }
 
     pub fn render_begin(&mut self, width: u32, height: u32) -> EngineResult<()> {
@@ -821,6 +1161,401 @@ impl Engine {
         (0..self.asset_count())
             .filter_map(|index| self.asset_at(index).ok())
             .collect()
+    }
+
+    pub fn asset_path(&self, relative: &str) -> EngineResult<String> {
+        let relative = CString::new(relative).map_err(|_| EngineError::InvalidArgument)?;
+        read_string(512, |buffer, size| unsafe {
+            (self.functions.asset_path)(self.session, relative.as_ptr(), buffer, size)
+        })
+    }
+
+    pub fn asset_project_path(&self, relative: &str) -> EngineResult<String> {
+        let relative = CString::new(relative).map_err(|_| EngineError::InvalidArgument)?;
+        read_string(512, |buffer, size| unsafe {
+            (self.functions.asset_project_path)(self.session, relative.as_ptr(), buffer, size)
+        })
+    }
+
+    pub fn resolve_path(&self, path: &str) -> EngineResult<String> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        read_string(512, |buffer, size| unsafe {
+            (self.functions.resolve_path)(self.session, path.as_ptr(), buffer, size)
+        })
+    }
+
+    pub fn new_material(&self) -> EngineResult<Material> {
+        let mut raw = RawMaterial::default();
+        result(unsafe { (self.functions.material_default)(&mut raw) })?;
+        Ok(Material::from(&raw))
+    }
+
+    pub fn material_presets(&self) -> Vec<MaterialPreset> {
+        (0..unsafe { (self.functions.material_preset_count)() })
+            .filter_map(|index| self.material_preset_at(index).ok())
+            .collect()
+    }
+
+    pub fn material_preset_at(&self, index: u32) -> EngineResult<MaterialPreset> {
+        let mut info = RawMaterialPresetInfo::default();
+        let mut raw = RawMaterial::default();
+        result(unsafe { (self.functions.material_preset_at)(index, &mut info, &mut raw) })?;
+        Ok(MaterialPreset {
+            category: material::string_from_chars(&info.category),
+            name: material::string_from_chars(&info.name),
+            material: Material::from(&raw),
+        })
+    }
+
+    pub fn load_material(&self, path: &str) -> EngineResult<Material> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        let mut raw = RawMaterial::default();
+        result(unsafe { (self.functions.material_load)(path.as_ptr(), &mut raw) })?;
+        Ok(Material::from(&raw))
+    }
+
+    pub fn save_material(&self, path: &str, material: &Material) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        let raw = RawMaterial::from(material);
+        result(unsafe { (self.functions.material_save)(path.as_ptr(), &raw) })
+    }
+
+    pub fn apply_material(&mut self, entity: u32, path: &str) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe { (self.functions.apply_material)(self.session, entity, path.as_ptr()) })
+    }
+
+    pub fn entity_material(&self, entity: u32) -> EngineResult<String> {
+        read_string(512, |buffer, size| unsafe {
+            (self.functions.entity_material)(self.session, entity, buffer, size)
+        })
+    }
+
+    pub fn render_material_preview(
+        &mut self,
+        material: &Material,
+        size: u32,
+        yaw_degrees: f32,
+        pitch_degrees: f32,
+    ) -> EngineResult<Vec<u8>> {
+        let size = size.clamp(32, 1024);
+        let mut pixels = vec![0u8; size as usize * size as usize * 4];
+        let raw = RawMaterial::from(material);
+        result(unsafe {
+            (self.functions.material_preview)(
+                self.session,
+                &raw,
+                size,
+                yaw_degrees,
+                pitch_degrees,
+                pixels.as_mut_ptr(),
+                pixels.len(),
+            )
+        })?;
+        Ok(pixels)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_material_preview_ex(
+        &mut self,
+        material: &Material,
+        size: u32,
+        yaw_degrees: f32,
+        pitch_degrees: f32,
+        shape: PreviewShape,
+        environment: &str,
+        exposure: f32,
+    ) -> EngineResult<Vec<u8>> {
+        let size = size.clamp(32, 1024);
+        let mut pixels = vec![0u8; size as usize * size as usize * 4];
+        let raw = RawMaterial::from(material);
+        let environment = CString::new(environment).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.material_preview_ex)(
+                self.session,
+                &raw,
+                size,
+                yaw_degrees,
+                pitch_degrees,
+                shape as i32,
+                environment.as_ptr(),
+                exposure,
+                pixels.as_mut_ptr(),
+                pixels.len(),
+            )
+        })?;
+        Ok(pixels)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_material_preview(
+        &mut self,
+        material: &Material,
+        size: u32,
+        yaw_degrees: f32,
+        pitch_degrees: f32,
+        shape: PreviewShape,
+        environment: &str,
+        exposure: f32,
+    ) -> EngineResult<()> {
+        let size = size.clamp(32, 1024);
+        let raw = RawMaterial::from(material);
+        let environment = CString::new(environment).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.material_preview_begin)(
+                self.session,
+                &raw,
+                size,
+                yaw_degrees,
+                pitch_degrees,
+                shape as i32,
+                environment.as_ptr(),
+                exposure,
+            )
+        })
+    }
+
+    pub fn poll_material_preview(&mut self, pixels: &mut [u8]) -> EngineResult<RenderState> {
+        let state = unsafe {
+            (self.functions.material_preview_poll)(self.session, pixels.as_mut_ptr(), pixels.len())
+        };
+        Ok(match state {
+            0 => RenderState::Idle,
+            1 => RenderState::Pending,
+            2 => RenderState::Ready,
+            _ => RenderState::Failed,
+        })
+    }
+
+    pub fn generate_texture_map(
+        &self,
+        source: &str,
+        output: &str,
+        kind: TextureMapKind,
+        options: TextureMapOptions,
+    ) -> EngineResult<()> {
+        let source = CString::new(source).map_err(|_| EngineError::InvalidArgument)?;
+        let output = CString::new(output).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.generate_map)(
+                source.as_ptr(),
+                output.as_ptr(),
+                kind.raw(),
+                options.strength,
+                i32::from(options.directx),
+                i32::from(options.wrap),
+                options.min_value,
+                options.max_value,
+                i32::from(options.invert),
+                options.radius,
+            )
+        })
+    }
+
+    pub fn pack_texture_maps(
+        &self,
+        ao: Option<&str>,
+        roughness: Option<&str>,
+        metallic: Option<&str>,
+        output: &str,
+        kind: TexturePackKind,
+    ) -> EngineResult<()> {
+        let ao = ao
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| EngineError::InvalidArgument)?;
+        let roughness = roughness
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| EngineError::InvalidArgument)?;
+        let metallic = metallic
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| EngineError::InvalidArgument)?;
+        let output = CString::new(output).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.pack_maps)(
+                ao.as_ref().map_or(std::ptr::null(), |path| path.as_ptr()),
+                roughness
+                    .as_ref()
+                    .map_or(std::ptr::null(), |path| path.as_ptr()),
+                metallic
+                    .as_ref()
+                    .map_or(std::ptr::null(), |path| path.as_ptr()),
+                output.as_ptr(),
+                kind.raw(),
+            )
+        })
+    }
+
+    pub fn save_texture_rgba(
+        &self,
+        path: &str,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.save_rgba)(path.as_ptr(), width, height, pixels.as_ptr(), pixels.len())
+        })
+    }
+
+    pub fn save_texture_rgba16(
+        &self,
+        path: &str,
+        width: u32,
+        height: u32,
+        pixels: &[u16],
+    ) -> EngineResult<()> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.save_rgba16)(
+                path.as_ptr(),
+                width,
+                height,
+                pixels.as_ptr(),
+                pixels.len() * 2,
+            )
+        })
+    }
+
+    pub fn bake_mesh_map(
+        &self,
+        entity: u32,
+        kind: MeshMapKind,
+        resolution: u32,
+        output_path: &str,
+    ) -> EngineResult<()> {
+        let output_path = CString::new(output_path).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            (self.functions.bake_mesh_map)(
+                self.session,
+                entity,
+                kind as i32,
+                resolution,
+                output_path.as_ptr(),
+            )
+        })
+    }
+
+    pub fn pick_uv(
+        &self,
+        entity: u32,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> EngineResult<Option<(f32, f32)>> {
+        let mut u = 0.0f32;
+        let mut v = 0.0f32;
+        let status = unsafe {
+            (self.functions.pick_uv)(self.session, entity, x, y, width, height, &mut u, &mut v)
+        };
+        match status {
+            0 => Ok(Some((u, v))),
+            3 => Ok(None),
+            2 => Err(EngineError::InvalidArgument),
+            _ => Err(EngineError::Error),
+        }
+    }
+
+    pub fn bake_ao(
+        &self,
+        entity: u32,
+        resolution: u32,
+        rays: u32,
+        max_distance: f32,
+        output_directory: &str,
+    ) -> EngineResult<AOBakeResult> {
+        let output_directory =
+            CString::new(output_directory).map_err(|_| EngineError::InvalidArgument)?;
+        let mut raw = RawAOBakeResult {
+            ok: 0,
+            used_gpu: 0,
+            covered_texels: 0,
+            triangles: 0,
+            orm_path: [0; 512],
+            material_path: [0; 512],
+            error: [0; 256],
+        };
+        result(unsafe {
+            (self.functions.bake_ao)(
+                self.session,
+                entity,
+                resolution,
+                rays,
+                max_distance,
+                output_directory.as_ptr(),
+                &mut raw,
+            )
+        })?;
+        Ok(AOBakeResult {
+            ok: raw.ok != 0,
+            used_gpu: raw.used_gpu != 0,
+            covered_texels: raw.covered_texels,
+            triangles: raw.triangles,
+            orm_path: material::string_from_chars(&raw.orm_path),
+            material_path: material::string_from_chars(&raw.material_path),
+            error: material::string_from_chars(&raw.error),
+        })
+    }
+
+    pub fn load_texture_thumbnail(
+        &self,
+        path: &str,
+        max_size: u32,
+    ) -> EngineResult<(u32, u32, Vec<u8>)> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut pixels: *mut u8 = std::ptr::null_mut();
+        let mut bytes = 0usize;
+        result(unsafe {
+            (self.functions.load_thumbnail)(
+                path.as_ptr(),
+                max_size,
+                &mut width,
+                &mut height,
+                &mut pixels,
+                &mut bytes,
+            )
+        })?;
+        let data = if pixels.is_null() || bytes == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(pixels, bytes) }.to_vec()
+        };
+        if !pixels.is_null() {
+            unsafe { (self.functions.free_bytes)(pixels.cast()) };
+        }
+        Ok((width, height, data))
+    }
+
+    pub fn load_texture_rgba(&self, path: &str) -> EngineResult<(u32, u32, Vec<u8>)> {
+        let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut pixels: *mut u8 = std::ptr::null_mut();
+        let mut bytes = 0usize;
+        result(unsafe {
+            (self.functions.load_rgba)(
+                path.as_ptr(),
+                &mut width,
+                &mut height,
+                &mut pixels,
+                &mut bytes,
+            )
+        })?;
+        let data = if pixels.is_null() || bytes == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(pixels, bytes) }.to_vec()
+        };
+        if !pixels.is_null() {
+            unsafe { (self.functions.free_bytes)(pixels.cast()) };
+        }
+        Ok((width, height, data))
     }
 
     pub fn tick(&mut self, delta_time: f32) {
@@ -955,6 +1690,18 @@ fn read_vec3(call: impl FnOnce(*mut RawVec3) -> i32) -> EngineResult<[f32; 3]> {
     Ok([value.x, value.y, value.z])
 }
 
+fn read_string(
+    capacity: usize,
+    call: impl FnOnce(*mut c_char, usize) -> i32,
+) -> EngineResult<String> {
+    let mut buffer = vec![0 as c_char; capacity];
+    result(call(buffer.as_mut_ptr(), buffer.len()))?;
+    let text = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    Ok(text)
+}
+
 fn result(value: i32) -> EngineResult<()> {
     match value {
         0 => Ok(()),
@@ -1057,6 +1804,22 @@ mod tests {
         assert!((readback.pitch - 0.25).abs() < 0.001);
         assert!((readback.distance - 12.0).abs() < 0.001);
         assert_eq!(readback.focus, [1.0, 2.0, 3.0]);
+
+        let defaults = engine.viewport_settings().unwrap();
+        assert!(defaults.show_grid);
+        assert_eq!(defaults.anti_aliasing, AntiAliasing::Fxaa);
+        engine
+            .set_viewport_settings(ViewportSettings {
+                show_grid: false,
+                anti_aliasing: AntiAliasing::Taa,
+                render_scale: 9.0,
+            })
+            .unwrap();
+        let clamped = engine.viewport_settings().unwrap();
+        assert!(!clamped.show_grid);
+        assert_eq!(clamped.anti_aliasing, AntiAliasing::Taa);
+        assert!(clamped.render_scale <= 2.0);
+        engine.set_viewport_settings(defaults).unwrap();
 
         let path = std::env::temp_dir().join("caffeine_capi_rust_roundtrip.caf");
         engine.save_scene(path.to_str().unwrap()).unwrap();

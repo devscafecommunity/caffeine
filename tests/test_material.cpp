@@ -2,6 +2,7 @@
 
 #include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
+#include "assets/TextureMapGenerator.hpp"
 #include "render/ReflectionBudget.hpp"
 
 #include <filesystem>
@@ -25,6 +26,8 @@ TEST_CASE("CAFMAT2 roundtrip keeps maps and emission", "[material]") {
     written.emissionStrength = 2.5f;
     written.albedoMap = "textures/paint.png";
     written.normalMap = "textures/paint_n.png";
+    written.normalStrength = 1.25f;
+    written.normalDirectX = true;
     written.ormMap = "textures/paint_orm.png";
     REQUIRE(saveMaterialFile(path, written));
 
@@ -39,6 +42,8 @@ TEST_CASE("CAFMAT2 roundtrip keeps maps and emission", "[material]") {
     REQUIRE(loaded.emission.y == Approx(0.2f));
     REQUIRE(loaded.emissionStrength == Approx(2.5f));
     REQUIRE(loaded.ormMap == "textures/paint_orm.png");
+    REQUIRE(loaded.normalDirectX);
+    REQUIRE(loaded.normalStrength == Approx(1.25f));
 
     const u64 before = MaterialCache::instance().revision();
     const MaterialSurface resolved = MaterialCache::instance().resolve(path.string());
@@ -89,6 +94,120 @@ TEST_CASE("Published material without a file still resolves", "[material]") {
     REQUIRE(resolved.metallic == Approx(1.0f));
     REQUIRE(resolved.reflectance == Approx(0.9f));
     MaterialCache::instance().invalidate();
+}
+
+TEST_CASE("texture map generator derives normals, AO and ORM", "[material]") {
+    TextureImage height;
+    height.width = 3;
+    height.height = 3;
+    height.rgba.resize(3 * 3 * 4);
+    height.valid = true;
+    for (u32 y = 0; y < 3; ++y) {
+        for (u32 x = 0; x < 3; ++x) {
+            const u8 value = static_cast<u8>(x * 80);
+            const size_t index = (y * 3 + x) * 4;
+            height.rgba[index + 0] = value;
+            height.rgba[index + 1] = value;
+            height.rgba[index + 2] = value;
+            height.rgba[index + 3] = 255;
+        }
+    }
+
+    const TextureImage normal = generateNormalFromHeight(height, 1.0f, false, false);
+    REQUIRE(normal.valid);
+    const u8* center = normal.pixel(1, 1);
+    REQUIRE(center != nullptr);
+    // The height rises to the right, so the normal leans left (-X).
+    CHECK(center[0] < 128);
+    CHECK(center[1] == Approx(128).margin(2));
+    CHECK(center[2] > 128);
+    TextureImage vertical = height;
+    for (u32 y = 0; y < 3; ++y) {
+        for (u32 x = 0; x < 3; ++x) {
+            const u8 value = static_cast<u8>(y * 80);
+            const size_t index = (y * 3 + x) * 4;
+            vertical.rgba[index + 0] = value;
+            vertical.rgba[index + 1] = value;
+            vertical.rgba[index + 2] = value;
+        }
+    }
+    const TextureImage directX = generateNormalFromHeight(vertical, 1.0f, true, false);
+    CHECK(directX.pixel(1, 1)[1] > 128);
+
+    // A valley: the centre is darker than its neighbours.
+    TextureImage valley = height;
+    for (u32 y = 0; y < 3; ++y) {
+        for (u32 x = 0; x < 3; ++x) {
+            const u8 value = (x == 1 && y == 1) ? 0 : 255;
+            const size_t index = (y * 3 + x) * 4;
+            valley.rgba[index + 0] = value;
+            valley.rgba[index + 1] = value;
+            valley.rgba[index + 2] = value;
+        }
+    }
+    const TextureImage ao = generateAmbientOcclusion(valley, 1.0f, 1, false);
+    REQUIRE(ao.valid);
+    CHECK(ao.pixel(1, 1)[0] < ao.pixel(0, 0)[0]);
+
+    TextureImage albedo;
+    albedo.width = 1;
+    albedo.height = 1;
+    albedo.rgba = {128, 128, 128, 255};
+    albedo.valid = true;
+    const TextureImage roughness =
+        generateScalarFromAlbedo(albedo, TextureMapKind::Roughness, 0.0f, 1.0f, false);
+    REQUIRE(roughness.valid);
+    CHECK(roughness.pixel(0, 0)[0] == Approx(128).margin(2));
+
+    const TextureImage packed =
+        packMaterialMap(&ao, &roughness, nullptr, TexturePackKind::Orm);
+    REQUIRE(packed.valid);
+    CHECK(packed.pixel(1, 1)[0] == ao.pixel(1, 1)[0]);
+    CHECK(packed.pixel(1, 1)[1] == 128);
+    CHECK(packed.pixel(1, 1)[2] == 0);
+
+    const TextureImage hdrp =
+        packMaterialMap(&ao, &roughness, nullptr, TexturePackKind::UnityHdrpMask);
+    REQUIRE(hdrp.valid);
+    CHECK(hdrp.pixel(1, 1)[0] == 0);
+    CHECK(hdrp.pixel(1, 1)[1] == ao.pixel(1, 1)[0]);
+    CHECK(hdrp.pixel(1, 1)[2] == 0);
+    CHECK(hdrp.pixel(1, 1)[3] == Approx(127).margin(1));
+}
+
+TEST_CASE("texture map generator round-trips a PNG", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-mapgen";
+    std::filesystem::remove_all(dir);
+    TextureImage image;
+    image.width = 2;
+    image.height = 2;
+    image.rgba = {
+        255, 0, 0, 255, 0, 255, 0, 255,
+        0, 0, 255, 255, 255, 255, 255, 255,
+    };
+    image.valid = true;
+    const auto path = dir / "swatch.png";
+    REQUIRE(saveTextureImage(path, image));
+    TextureImage loaded;
+    REQUIRE(loadTextureImage(path, loaded));
+    REQUIRE(loaded.width == 2);
+    REQUIRE(loaded.height == 2);
+    CHECK(loaded.rgba == image.rgba);
+
+    const auto path16 = dir / "swatch16.png";
+    const uint16_t rgba16[16] = {
+        65535, 0,     0,     65535, 0,     65535, 0,     65535,
+        0,     0,     65535, 65535, 65535, 65535, 65535, 65535,
+    };
+    REQUIRE(saveTextureImage16(path16, 2, 2, rgba16));
+    TextureImage loaded16;
+    REQUIRE(loadTextureImage(path16, loaded16));
+    REQUIRE(loaded16.width == 2);
+    REQUIRE(loaded16.height == 2);
+    CHECK(loaded16.pixel(0, 0)[0] > 240);
+    CHECK(loaded16.pixel(1, 0)[1] > 240);
+    CHECK_FALSE(saveTextureImage16(path16, 0, 2, rgba16));
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("saveMaterialFile creates missing parent directories", "[material]") {

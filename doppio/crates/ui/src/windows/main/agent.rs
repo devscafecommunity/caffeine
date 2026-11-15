@@ -6,8 +6,14 @@
 //! entity inspection, camera control and the editor commands.
 
 use super::{App, Message};
+use crate::uikit::components::gizmo;
+use crate::uikit::generators;
 use crate::uikit::id;
 use crate::uikit::panels;
+use crate::uikit::panels::material;
+use crate::uikit::panels::material_generator;
+use crate::uikit::panels::project_manager;
+use crate::uikit::panels::texture_set as texture_set_panel;
 use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
@@ -35,6 +41,8 @@ pub fn run() -> iced::Result {
                     "maximized": maximized == Some(*pane),
                 })).collect::<Vec<_>>(),
                 "maximized": maximized.map(|pane| format!("{pane:?}")),
+                "tab_drag": app.tab_drag.map(|(_, page)| format!("{page:?}")),
+                "tab_hover_pane": app.tab_hover_pane.map(|pane| format!("{pane:?}")),
             }))
         })
         .query(
@@ -46,6 +54,112 @@ pub fn run() -> iced::Result {
                     "pitch": app.camera.pitch,
                     "distance": app.camera.distance,
                     "focus": app.camera.focus,
+                }))
+            },
+        )
+        .query(
+            "viewport",
+            "Viewport size, render target, grid and anti-aliasing settings.",
+            |app, _| {
+                Ok(json!({
+                    "target_width": app.viewport_desired.0,
+                    "target_height": app.viewport_desired.1,
+                    "render_width": app.viewport_render_size.0,
+                    "render_height": app.viewport_render_size.1,
+                    "uploads": app.viewport_uploads,
+                    "hovered": app.viewport_hovered,
+                    "grid": app.viewport_settings.show_grid,
+                    "anti_aliasing": format!("{:?}", app.viewport_settings.anti_aliasing),
+                    "render_scale": app.viewport_settings.render_scale,
+                    "pressed": app.fly_keys.iter().map(|key| format!("{key:?}")).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "prefabs",
+            "Built-in create-entity prefabs grouped by category.",
+            |_, _| {
+                Ok(json!({
+                    "categories": crate::uikit::prefabs::CATEGORIES.iter().map(|category| json!({
+                        "key": category.key,
+                        "label": category.label,
+                    })).collect::<Vec<_>>(),
+                    "items": crate::uikit::prefabs::PREFABS.iter().map(|prefab| json!({
+                        "key": prefab.key,
+                        "label": prefab.label,
+                        "description": prefab.description,
+                        "category": prefab.category,
+                    })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "materials",
+            "Project .mat assets with relative path and name.",
+            |app, _| {
+                Ok(Value::Array(
+                    app.assets
+                        .iter()
+                        .filter(|asset| asset.kind == "material")
+                        .map(|asset| json!({
+                            "name": asset.name,
+                            "path": asset.relative_path,
+                            "size": asset.size_bytes,
+                        }))
+                        .collect(),
+                ))
+            },
+        )
+        .query("version", "Engine and C ABI version information.", |app, _| {
+            Ok(json!({
+                "capi_version": app.engine.as_ref().map(|engine| engine.capi_version()),
+                "engine": app.engine.is_some(),
+            }))
+        })
+        .query(
+            "material",
+            "The open material: surface, maps, path and dirty state.",
+            |app, _| Ok(material_json(app)),
+        )
+        .query(
+            "material_presets",
+            "Built-in PBR material presets.",
+            |app, _| {
+                Ok(Value::Array(
+                    app.material_presets
+                        .iter()
+                        .map(|preset| json!({
+                            "category": preset.category,
+                            "name": preset.name,
+                        }))
+                        .collect(),
+                ))
+            },
+        )
+        .query(
+            "generator",
+            "Material generator graph, links, resolution and last bake status.",
+            |app, _| Ok(generator_json(app)),
+        )
+        .query(
+            "texture_set",
+            "Texture set: UDIM tiles, channels, layer stack, brush and undo state.",
+            |app, _| Ok(texture_set_json(app)),
+        )
+        .query(
+            "gizmo",
+            "Active transform tool and selected entity transform.",
+            |app, _| {
+                let target = app.entities.get(app.selected).map(|entity| json!({
+                    "id": entity.id,
+                    "name": entity.name,
+                    "position": entity.position,
+                    "rotation": entity.rotation,
+                    "scale": entity.scale,
+                }));
+                Ok(json!({
+                    "mode": app.gizmo_mode.label(),
+                    "target": target,
                 }))
             },
         )
@@ -78,6 +192,11 @@ pub fn run() -> iced::Result {
                         .collect(),
                 ))
             },
+        )
+        .query(
+            "project",
+            "Active project, manager tab, recent/browse results and asset navigation.",
+            |app, _| Ok(project_json(app)),
         )
         .query(
             "history",
@@ -205,19 +324,564 @@ pub fn run() -> iced::Result {
         .action("close_scene", "Closes the scene and drops the engine session. No args.", |_| {
             Ok(Message::CloseScene)
         })
+        .action(
+            "open_project_manager",
+            "Opens the Project Manager dialog. No args.",
+            |_| Ok(Message::Project(project_manager::Edit::Open)),
+        )
+        .action(
+            "create_project",
+            "Creates and opens a project. args: { \"name\": string, \"location\"?: string, \"template\"?: \"Empty\"|\"2D\"|\"3D\" }",
+            |args| {
+                let name = required_str(args, "name")?.to_owned();
+                let location = optional_str(args, "location")?
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        crate::uikit::project::default_projects_directory()
+                            .display()
+                            .to_string()
+                    });
+                let template = optional_str(args, "template")?
+                    .unwrap_or("3D")
+                    .to_owned();
+                Ok(Message::Project(project_manager::Edit::CreateAt {
+                    name,
+                    location,
+                    template,
+                }))
+            },
+        )
+        .action(
+            "open_project",
+            "Opens an existing project root or project.caffeine file. args: { \"path\": string }",
+            |args| {
+                Ok(Message::Project(project_manager::Edit::OpenPath(
+                    required_str(args, "path")?.to_owned(),
+                )))
+            },
+        )
+        .action(
+            "asset_navigate",
+            "Opens an asset-browser folder (relative to the asset root). args: { \"path\": string }",
+            |args| {
+                Ok(Message::AssetNavigate(
+                    required_str(args, "path")?.to_owned(),
+                ))
+            },
+        )
+        .action("asset_up", "Moves the asset browser to its parent folder. No args.", |_| {
+            Ok(Message::AssetUp)
+        })
+        .action("asset_root", "Returns the asset browser to the asset root. No args.", |_| {
+            Ok(Message::AssetRoot)
+        })
+        .action("refresh_assets", "Rescans the project asset root. No args.", |_| {
+            Ok(Message::AssetRefresh)
+        })
+        .action(
+            "set_asset_view",
+            "Switches the asset browser layout. args: { \"mode\": \"grid\"|\"list\" }",
+            |args| {
+                let mode = match required_str(args, "mode")?.to_ascii_lowercase().as_str() {
+                    "grid" => crate::uikit::panels::assetmanager::ViewMode::Grid,
+                    "list" => crate::uikit::panels::assetmanager::ViewMode::List,
+                    other => return Err(format!("unknown asset view \"{other}\"")),
+                };
+                Ok(Message::AssetViewMode(mode))
+            },
+        )
         .action("reset_camera", "Restores the default camera. No args.", |_| {
             Ok(Message::ResetCamera)
         })
+        .action("toggle_grid", "Shows or hides the viewport reference grid. No args.", |_| {
+            Ok(Message::ToggleGrid)
+        })
+        .action(
+            "create_prefab",
+            "Creates a built-in prefab. args: { \"key\": string }",
+            |args| {
+                let key = required_str(args, "key")?;
+                let index = crate::uikit::prefabs::PREFABS
+                    .iter()
+                    .position(|prefab| prefab.key == key)
+                    .ok_or_else(|| format!("unknown prefab \"{key}\""))?;
+                Ok(Message::CreatePrefab(index))
+            },
+        )
+        .action("open_prefab_palette", "Opens the create-entity palette. No args.", |_| {
+            Ok(Message::TogglePrefabPalette)
+        })
+        .action(
+            "open_material",
+            "Opens a .mat asset. args: { \"path\": string }",
+            |args| Ok(Message::OpenMaterial(required_str(args, "path")?.to_owned())),
+        )
+        .action("new_material", "Creates an unsaved material. No args.", |_| {
+            Ok(Message::Material(material::Edit::New))
+        })
+        .action("save_material", "Saves the open material. No args.", |_| {
+            Ok(Message::Material(material::Edit::Save))
+        })
+        .action(
+            "apply_material",
+            "Assigns the open material to the selected entity. No args.",
+            |_| Ok(Message::Material(material::Edit::Apply)),
+        )
+        .action(
+            "set_material_texture",
+            "Assigns a project texture. args: { \"slot\": \"albedo\"|\"normal\"|\"orm\"|\"emission\"|\"source\", \"path\": string }",
+            |args| {
+                let slot = match required_str(args, "slot")? {
+                    "albedo" | "base" => material::TextureSlot::Albedo,
+                    "normal" => material::TextureSlot::Normal,
+                    "orm" | "arm" => material::TextureSlot::Orm,
+                    "emission" | "emissive" => material::TextureSlot::Emission,
+                    "source" | "height" => material::TextureSlot::Source,
+                    other => return Err(format!("unknown texture slot \"{other}\"")),
+                };
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::SetMaterialTexture { slot, path })
+            },
+        )
+        .action(
+            "set_material_preview_shape",
+            "Changes the material preview subject. args: { \"shape\": \"sphere\"|\"cube\"|\"plane\" }",
+            |args| {
+                let shape = match required_str(args, "shape")?.to_lowercase().as_str() {
+                    "sphere" => 0,
+                    "cube" => 1,
+                    "plane" => 2,
+                    other => return Err(format!("unknown preview shape \"{other}\"")),
+                };
+                Ok(Message::Material(material::Edit::SetPreviewShape(shape)))
+            },
+        )
+        .action(
+            "set_material_preview_environment",
+            "Sets or clears the material preview HDRI. args: { \"path\": string? }",
+            |args| {
+                if let Some(path) = optional_str(args, "path")? {
+                    Ok(Message::MaterialEnvironmentPick(path.to_owned()))
+                } else {
+                    Ok(Message::Material(material::Edit::ClearPreviewEnvironment))
+                }
+            },
+        )
+        .action(
+            "set_material_preview_exposure",
+            "Sets material preview exposure. args: { \"value\": number }",
+            |args| {
+                let value = args
+                    .get("value")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| "expected numeric \"value\"".to_owned())? as f32;
+                Ok(Message::Material(material::Edit::SetPreviewExposure(value)))
+            },
+        )
+        .action(
+            "generate_material_maps",
+            "Bakes maps beside the material. args: { \"operation\": \"normal\"|\"ao\"|\"roughness\"|\"metallic\"|\"orm\"|\"all\" }",
+            |args| {
+                let operation = match required_str(args, "operation")? {
+                    "normal" => material::MapOperation::Normal,
+                    "ao" | "ambient_occlusion" => material::MapOperation::AmbientOcclusion,
+                    "roughness" => material::MapOperation::Roughness,
+                    "metallic" => material::MapOperation::Metallic,
+                    "orm" => material::MapOperation::Orm,
+                    "all" => material::MapOperation::All,
+                    other => return Err(format!("unknown map operation \"{other}\"")),
+                };
+                Ok(Message::Material(material::Edit::Generate(operation)))
+            },
+        )
+        .action(
+            "bake_scene_ao",
+            "Bakes AO from the selected entity's scene geometry into its ORM map. args: { \"resolution\"?: 512, \"rays\"?: 16, \"max_distance\"?: 2.5 }",
+            |args| {
+                let resolution = args
+                    .get("resolution")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(512) as u32;
+                let rays = args.get("rays").and_then(Value::as_u64).unwrap_or(16) as u32;
+                let max_distance = args
+                    .get("max_distance")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(2.5) as f32;
+                Ok(Message::Material(material::Edit::BakeSceneAo {
+                    resolution,
+                    rays,
+                    max_distance,
+                }))
+            },
+        )
+        .action(
+            "import_materialcraft",
+            "Imports a portable .mcmat (maps, manifest and SBS source). args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::ImportMaterialcraft(path))
+            },
+        )
+        .action(
+            "export_materialcraft",
+            "Bakes the generator and writes a portable .mcmat. args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::ExportMaterialcraft(path))
+            },
+        )
+        .action("new_texture_set", "Creates a texture set. No args.", |_| {
+            Ok(Message::TextureSet(
+                texture_set_panel::Edit::New,
+            ))
+        })
+        .action(
+            "open_texture_set",
+            "Opens a .texset project. args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::OpenTextureSet(path))
+            },
+        )
+        .action(
+            "save_texture_set",
+            "Saves the open texture set. No args.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::Save)),
+        )
+        .action(
+            "texture_set_bake_ao",
+            "Bakes AO from the height channel. No args.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::BakeHeightAo)),
+        )
+        .action(
+            "texture_set_bake_curvature",
+            "Bakes curvature from the height channel. No args.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::BakeCurvature)),
+        )
+        .action(
+            "texture_set_bake_scene_ao",
+            "Bakes AO from the selected entity geometry. No args.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::BakeSceneAo)),
+        )
+        .action(
+            "texture_set_bake_mesh_map",
+            "Bakes a mesh map from the selected entity. args: { \"kind\": \"normal\"|\"position\"|\"id\" }",
+            |args| {
+                let kind = required_str(args, "kind")?;
+                let edit = match kind.to_lowercase().as_str() {
+                    "normal" => texture_set_panel::Edit::BakeMeshNormal,
+                    "position" => texture_set_panel::Edit::BakeMeshPosition,
+                    "id" | "object_id" | "objectid" => {
+                        texture_set_panel::Edit::BakeMeshObjectId
+                    }
+                    other => return Err(format!("unknown mesh map \"{other}\"")),
+                };
+                Ok(Message::TextureSet(edit))
+            },
+        )
+        .action(
+            "texture_set_undo",
+            "Undoes the last tile paint stroke.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::Undo)),
+        )
+        .action(
+            "texture_set_redo",
+            "Redoes the last tile paint stroke.",
+            |_| Ok(Message::TextureSet(texture_set_panel::Edit::Redo)),
+        )
+        .action(
+            "paint_texture_set",
+            "Paints one brush dab. args: { \"tile\"?: 1001, \"u\": 0..1, \"v\": 0..1 }",
+            |args| {
+                let tile = args
+                    .get("tile")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1001) as u32;
+                let u = args
+                    .get("u")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| "expected numeric \"u\"".to_owned())? as f32;
+                let v = args
+                    .get("v")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| "expected numeric \"v\"".to_owned())? as f32;
+                Ok(Message::TextureSet(texture_set_panel::Edit::PaintDab(
+                    tile,
+                    [u, v],
+                )))
+            },
+        )
+        .action(
+            "export_texture_set",
+            "Exports the texture set with the active preset. args: { \"path\"?: directory }",
+            |args| {
+                if let Some(path) = optional_str(args, "path")? {
+                    Ok(Message::TextureSet(texture_set_panel::Edit::ExportTo(
+                        path.to_owned(),
+                    )))
+                } else {
+                    Ok(Message::TextureSet(texture_set_panel::Edit::Export))
+                }
+            },
+        )
+        .action(
+            "import_mesh_materials",
+            "Imports OBJ/MTL or glTF material definitions as .mat assets. args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::ImportMeshMaterials(path))
+            },
+        )
+        .action(
+            "open_generator",
+            "Opens the node-based material generator. No args.",
+            |_| Ok(Message::OpenGenerator),
+        )
+        .action(
+            "add_generator_node",
+            "Adds a generator node. args: { \"kind\": \"image\"|\"noise\"|\"voronoi\"|\"checker\"|\"bricks\"|\"gradient\"|\"blend\"|\"levels\"|\"curve\"|\"hsl\"|\"threshold\"|\"blur\"|\"warp\"|\"value\"|\"luminance\"|\"color\"|\"dot\"|\"output\" }",
+            |args| {
+                let kind = required_str(args, "kind")?.to_lowercase();
+                let node = generators::palette()
+                    .into_iter()
+                    .find(|node| node.title().eq_ignore_ascii_case(&kind))
+                    .ok_or_else(|| format!("unknown generator node \"{kind}\""))?;
+                Ok(Message::Generator(material_generator::Edit::AddNode(node)))
+            },
+        )
+        .action(
+            "connect_generator",
+            "Connects generator nodes. args: { \"from\": number, \"to\": number, \"input\": number? }",
+            |args| {
+                let from = args
+                    .get("from")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"from\"".to_owned())?;
+                let to = args
+                    .get("to")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"to\"".to_owned())?;
+                let input = args.get("input").and_then(Value::as_u64).unwrap_or(0) as usize;
+                Ok(Message::Generator(material_generator::Edit::Connect {
+                    from,
+                    output: 0,
+                    to,
+                    input,
+                }))
+            },
+        )
+        .action(
+            "bake_generator",
+            "Bakes the generator graph into the open material. No args.",
+            |_| Ok(Message::Generator(material_generator::Edit::Bake)),
+        )
+        .action("generator_undo", "Undoes the last generator graph edit.", |_| {
+            Ok(Message::Generator(material_generator::Edit::Undo))
+        })
+        .action("generator_redo", "Redoes the last generator graph edit.", |_| {
+            Ok(Message::Generator(material_generator::Edit::Redo))
+        })
+        .action("fit_generator", "Frames the whole generator graph.", |_| {
+            Ok(Message::Generator(material_generator::Edit::Fit))
+        })
+        .action(
+            "delete_generator_link",
+            "Deletes the wire feeding an input. args: { \"to\": number, \"input\": number }",
+            |args| {
+                let to = args
+                    .get("to")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"to\"".to_owned())?;
+                let input = args
+                    .get("input")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"input\"".to_owned())?
+                    as usize;
+                Ok(Message::Generator(material_generator::Edit::DeleteLink(
+                    to, input,
+                )))
+            },
+        )
+        .action(
+            "insert_generator_dot",
+            "Splits a wire with a reroute dot. args: { \"to\": number, \"input\": number, \"x\"?: number, \"y\"?: number }",
+            |args| {
+                let to = args
+                    .get("to")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"to\"".to_owned())?;
+                let input = args
+                    .get("input")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"input\"".to_owned())?
+                    as usize;
+                let x = args.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                let y = args.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                Ok(Message::Generator(material_generator::Edit::InsertDot(
+                    to,
+                    input,
+                    iced::Point::new(x, y),
+                )))
+            },
+        )
+        .action("copy_generator_node", "Copies the selected generator node.", |_| {
+            Ok(Message::Generator(material_generator::Edit::Copy))
+        })
+        .action("paste_generator_node", "Pastes the copied generator node.", |_| {
+            Ok(Message::Generator(material_generator::Edit::Paste))
+        })
+        .action(
+            "set_generator_snap",
+            "Toggles generator grid snapping. args: { \"enabled\": bool }",
+            |args| {
+                let enabled = args
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                Ok(Message::Generator(material_generator::Edit::SetSnap(enabled)))
+            },
+        )
+        .action(
+            "set_generator_search",
+            "Filters the generator node palette. args: { \"text\": string }",
+            |args| {
+                let text = optional_str(args, "text")?.unwrap_or("").to_owned();
+                Ok(Message::Generator(material_generator::Edit::SetSearch(text)))
+            },
+        )
+        .action(
+            "set_generator_image",
+            "Points an Image generator node at an asset-relative texture. args: { \"node\": number, \"path\": string }",
+            |args| {
+                let node = args
+                    .get("node")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"node\"".to_owned())?;
+                let path = required_str(args, "path")?.to_owned();
+                Ok(Message::Generator(material_generator::Edit::SetImagePath(
+                    node, path,
+                )))
+            },
+        )
+        .action(
+            "set_generator_bits",
+            "Sets the generated map bit depth. args: { \"bits\": 8|16 }",
+            |args| {
+                let bits = args
+                    .get("bits")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected a numeric \"bits\"".to_owned())?;
+                if bits != 8 && bits != 16 {
+                    return Err("bits must be 8 or 16".to_owned());
+                }
+                Ok(Message::Generator(material_generator::Edit::SetBits(
+                    bits as u8,
+                )))
+            },
+        )
+        .action(
+            "set_generator_packing_preset",
+            "Chooses the channel-packing preset. args: { \"preset\": \"orm\"|\"hdrp\"|\"metallic_smoothness\"|\"custom\" }",
+            |args| {
+                let preset = required_str(args, "preset")?.to_lowercase();
+                let index = match preset.as_str() {
+                    "orm" => 0,
+                    "hdrp" | "unity_hdrp" | "unity_hdrp_mask" => 1,
+                    "metallic_smoothness" | "unity_metallic_smoothness" => 2,
+                    "custom" => 3,
+                    other => return Err(format!("unknown packing preset \"{other}\"")),
+                };
+                Ok(Message::Generator(
+                    material_generator::Edit::SetPackingPreset(index),
+                ))
+            },
+        )
+        .action(
+            "set_generator_packing_channel",
+            "Assigns a packed channel. args: { \"channel\": \"r\"|\"g\"|\"b\"|\"a\", \"source\": \"ao\"|\"roughness\"|\"metallic\"|\"height\"|\"smoothness\"|\"base_luminance\"|\"zero\"|\"one\" }",
+            |args| {
+                let channel = match required_str(args, "channel")?.to_lowercase().as_str() {
+                    "r" | "0" => 0,
+                    "g" | "1" => 1,
+                    "b" | "2" => 2,
+                    "a" | "3" => 3,
+                    other => return Err(format!("unknown channel \"{other}\"")),
+                };
+                let source = match required_str(args, "source")?.to_lowercase().as_str() {
+                    "zero" | "0" => generators::PackSource::Zero,
+                    "one" | "1" => generators::PackSource::One,
+                    "ao" => generators::PackSource::Ao,
+                    "roughness" => generators::PackSource::Roughness,
+                    "metallic" => generators::PackSource::Metallic,
+                    "height" => generators::PackSource::Height,
+                    "smoothness" => generators::PackSource::Smoothness,
+                    "base_luminance" | "base_luma" => generators::PackSource::BaseLuminance,
+                    other => return Err(format!("unknown packing source \"{other}\"")),
+                };
+                let source_index = generators::PackSource::ALL
+                    .iter()
+                    .position(|candidate| *candidate == source)
+                    .unwrap_or(0);
+                Ok(Message::Generator(
+                    material_generator::Edit::SetPackingChannel(channel, source_index),
+                ))
+            },
+        )
+        .action(
+            "cancel_generator_bake",
+            "Cancels the running background generator bake. No args.",
+            |_| Ok(Message::Generator(material_generator::Edit::CancelBake)),
+        )
+        .action(
+            "set_gizmo_mode",
+            "Switches the transform gizmo. args: { \"mode\": \"move\"|\"rotate\"|\"scale\" }",
+            |args| {
+                let mode = match required_str(args, "mode")? {
+                    "move" | "translate" => gizmo::Mode::Translate,
+                    "rotate" => gizmo::Mode::Rotate,
+                    "scale" => gizmo::Mode::Scale,
+                    other => return Err(format!("unknown gizmo mode \"{other}\"")),
+                };
+                Ok(Message::SetGizmoMode(mode))
+            },
+        )
+        .action(
+            "set_viewport",
+            "Updates viewport quality. args: { \"grid\"?: bool, \"anti_aliasing\"?: \"off\"|\"fxaa\"|\"taa\", \"render_scale\"?: number }",
+            |args| {
+                let show_grid = args
+                    .get("grid")
+                    .map(|grid| {
+                        grid.as_bool()
+                            .ok_or_else(|| "\"grid\" must be a boolean".to_owned())
+                    })
+                    .transpose()?;
+                let anti_aliasing = args
+                    .get("anti_aliasing")
+                    .map(|mode| match mode.as_str() {
+                        Some("off") => Ok(doppio_engine::AntiAliasing::Off),
+                        Some("fxaa") => Ok(doppio_engine::AntiAliasing::Fxaa),
+                        Some("taa") => Ok(doppio_engine::AntiAliasing::Taa),
+                        _ => Err("anti_aliasing must be off, fxaa or taa".to_owned()),
+                    })
+                    .transpose()?;
+                Ok(Message::SetViewportSettings {
+                    show_grid,
+                    anti_aliasing,
+                    render_scale: optional_f32(args, "render_scale")?,
+                })
+            },
+        )
         .action(
             "set_camera",
-            "Sets the viewport camera. args: { \"yaw\"?: number, \"pitch\"?: number, \"distance\"?: number }",
+            "Sets the viewport camera. args: { \"yaw\"?: number, \"pitch\"?: number, \"distance\"?: number, \"focus\"?: [x,y,z] }",
             |args| {
                 let default = doppio_engine::Camera::default();
                 Ok(Message::SetCamera(doppio_engine::Camera {
                     yaw: optional_f32(args, "yaw")?.unwrap_or(default.yaw),
                     pitch: optional_f32(args, "pitch")?.unwrap_or(default.pitch),
                     distance: optional_f32(args, "distance")?.unwrap_or(default.distance),
-                    focus: default.focus,
+                    focus: camera_focus(args, default.focus)?,
                 }))
             },
         )
@@ -399,6 +1063,48 @@ fn parse_field_value(kind: &str, value: &Value) -> Result<doppio_engine::FieldVa
     }
 }
 
+fn project_info_json(project: &crate::uikit::project::ProjectInfo) -> Value {
+    json!({
+        "name": project.name,
+        "root": project.root.display().to_string(),
+        "manifest": project.manifest_path().display().to_string(),
+        "template": project.template,
+        "last_scene": project.last_scene,
+        "assets_raw": project.paths.assets_raw,
+    })
+}
+
+fn project_json(app: &App) -> Value {
+    let tab = match app.project.tab {
+        project_manager::Tab::Create => "create",
+        project_manager::Tab::Recent => "recent",
+        project_manager::Tab::Browse => "browse",
+    };
+    let asset_view = match app.asset_view_mode {
+        crate::uikit::panels::assetmanager::ViewMode::Grid => "grid",
+        crate::uikit::panels::assetmanager::ViewMode::List => "list",
+    };
+    json!({
+        "open": app.project.open,
+        "tab": tab,
+        "active": app.project.active.as_ref().map(project_info_json),
+        "name": app.project.name,
+        "location": app.project.location,
+        "template": app.project.template.manifest_name(),
+        "error": app.project.error,
+        "recent": app.project.recent.iter().map(project_info_json).collect::<Vec<_>>(),
+        "selected_recent": app.project.selected_recent,
+        "browse_path": app.project.browse_path,
+        "browse_results": app.project.browse_results.iter().map(project_info_json).collect::<Vec<_>>(),
+        "selected_browse": app.project.selected_browse,
+        "asset_directory": app.asset_directory,
+        "asset_search": app.asset_search,
+        "asset_view": asset_view,
+        "asset_selected": app.asset_selected,
+        "asset_count": app.assets.len(),
+    })
+}
+
 fn history_json(app: &App) -> Value {
     let cursor = app.history.cursor();
     let steps: Vec<Value> = app
@@ -491,15 +1197,159 @@ fn entities_json(app: &App) -> Value {
     )
 }
 
+fn texture_set_json(app: &App) -> Value {
+    app.texture_set.as_ref().map_or(Value::Null, |set| {
+        json!({
+            "name": set.name,
+            "path": app.texture_set_path,
+            "dirty": app.texture_set_dirty,
+            "tile_size": set.tile_size,
+            "tiles": set.tiles(),
+            "active_tile": set.active_tile,
+            "channels": set.channels.iter().map(|channel| json!({
+                "name": channel.name,
+                "kind": match channel.kind {
+                    crate::uikit::texture_set::ChannelKind::Color => "color",
+                    crate::uikit::texture_set::ChannelKind::Scalar => "scalar",
+                },
+                "srgb": channel.srgb,
+            })).collect::<Vec<_>>(),
+            "active_channel": set.channels.get(set.active_channel).map(|channel| channel.name.clone()),
+            "layers": set.layers.iter().enumerate().map(|(index, layer)| json!({
+                "index": index,
+                "name": layer.name,
+                "visible": layer.visible,
+                "opacity": layer.opacity,
+                "blend": layer.blend.label(),
+                "active": index == set.active_layer,
+                "paintable": matches!(layer.kind, crate::uikit::texture_set::LayerKind::Paint),
+                "has_mask": !layer.masks.is_empty(),
+            })).collect::<Vec<_>>(),
+            "brush": {
+                "radius": set.brush.radius,
+                "hardness": set.brush.hardness,
+                "opacity": set.brush.opacity,
+                "color": set.brush.color,
+                "mask": set.paint_mask,
+            },
+            "paint_mode": app.texture_set_paint_mode,
+            "can_undo": app.texture_set_history.can_undo(),
+            "can_redo": app.texture_set_history.can_redo(),
+            "status": app.texture_set_status,
+        })
+    })
+}
+
+fn generator_json(app: &App) -> Value {
+    app.material.as_ref().map_or(Value::Null, |document| {
+        let graph = &document.generator;
+        json!({
+            "material": document.surface.name,
+            "resolution": graph.resolution,
+            "selected": app.generator_selected,
+            "selected_link": app.generator_link.map(|(to, input)| json!({ "to": to, "input": input })),
+            "status": app.generator_status,
+            "baking": app.generator_bake.as_ref().map(|job| json!({
+                "progress": job.progress,
+                "stage": job.stage,
+            })),
+            "preview": app.generator_preview.is_some(),
+            "preview_revision": app.generator_preview_revision,
+            "snap": app.generator_snap,
+            "search": app.generator_search,
+            "clipboard": app.generator_clipboard.as_ref().map(|node| node.kind.title()),
+            "packing": document.generator_packing.label(),
+            "packing_channels": document.generator_packing.channels.iter().map(|source| source.label()).collect::<Vec<_>>(),
+            "bits": document.generator_bits,
+            "can_undo": document.generator_history.can_undo(),
+            "undo_name": document.generator_history.undo_name(),
+            "can_redo": document.generator_history.can_redo(),
+            "redo_name": document.generator_history.redo_name(),
+            "history": document.generator_history.len(),
+            "placeholder_nodes": graph
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, generators::NodeKind::Unknown { .. }))
+                .count(),
+            "nodes": graph.nodes.iter().map(|node| json!({
+                "id": node.id,
+                "kind": node.kind.title(),
+                "subtitle": node.kind.subtitle(),
+                "x": node.position.x,
+                "y": node.position.y,
+                "inputs": node.kind.inputs().iter().map(|port| json!({
+                    "label": port.label,
+                    "type": port.kind.label(),
+                })).collect::<Vec<_>>(),
+                "outputs": node.kind.outputs().iter().map(|port| json!({
+                    "label": port.label,
+                    "type": port.kind.label(),
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "links": graph.links.iter().map(|link| json!({
+                "from": link.from,
+                "output": link.output,
+                "to": link.to,
+                "input": link.input,
+            })).collect::<Vec<_>>(),
+        })
+    })
+}
+
+fn material_json(app: &App) -> Value {
+    app.material.as_ref().map_or(Value::Null, |document| {
+        json!({
+            "name": document.surface.name,
+            "path": document.asset_path,
+            "dirty": document.dirty,
+            "status": app.material_baking,
+            "preview": app.material_preview.is_some(),
+            "preview_pending": app.material_preview_pending,
+            "preview_shape": app.material_preview_shape,
+            "preview_environment": app.material_preview_environment,
+            "preview_exposure": app.material_preview_exposure,
+            "source": document.source,
+            "albedo": document.surface.albedo,
+            "metallic": document.surface.metallic,
+            "roughness": document.surface.roughness,
+            "reflectance": document.surface.reflectance,
+            "emission": document.surface.emission,
+            "emission_strength": document.surface.emission_strength,
+            "albedo_map": document.surface.albedo_map,
+            "normal_map": document.surface.normal_map,
+            "orm_map": document.surface.orm_map,
+            "emission_map": document.surface.emission_map,
+            "normal_strength": document.surface.normal_strength,
+            "ao_strength": document.surface.ao_strength,
+            "uv_tiling": document.surface.uv_tiling,
+            "uv_offset": document.surface.uv_offset,
+            "alpha_mode": document.surface.alpha_mode.label(),
+            "alpha_cutoff": document.surface.alpha_cutoff,
+            "ior": document.surface.ior,
+            "transmission": document.surface.transmission,
+            "clearcoat": document.surface.clearcoat,
+            "clearcoat_roughness": document.surface.clearcoat_roughness,
+            "iridescence": document.surface.iridescence,
+            "reflection": document.surface.reflection,
+        })
+    })
+}
+
 fn selection_json(app: &App) -> Value {
     app.entities
         .get(app.selected)
         .map_or(Value::Null, |entity| {
+            let world_position = app
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.world_position(entity.id).ok())
+                .unwrap_or(entity.position);
             json!({
                 "index": app.selected,
                 "id": entity.id,
                 "name": entity.name,
                 "position": entity.position,
+                "world_position": world_position,
                 "rotation": entity.rotation,
                 "scale": entity.scale,
             })
@@ -543,4 +1393,24 @@ fn optional_f32(args: &Value, key: &str) -> Result<Option<f32>, String> {
             .map(|number| Some(number as f32))
             .ok_or_else(|| format!("\"{key}\" must be a number")),
     }
+}
+
+fn camera_focus(args: &Value, default: [f32; 3]) -> Result<[f32; 3], String> {
+    let Some(value) = args.get("focus") else {
+        return Ok(default);
+    };
+    let array = value
+        .as_array()
+        .ok_or_else(|| "\"focus\" must be an [x, y, z] array".to_owned())?;
+    if array.len() != 3 {
+        return Err("\"focus\" needs three numbers".to_owned());
+    }
+    let mut focus = default;
+    for (axis, item) in array.iter().enumerate() {
+        focus[axis] = item
+            .as_f64()
+            .map(|number| number as f32)
+            .ok_or_else(|| "\"focus\" needs three numbers".to_owned())?;
+    }
+    Ok(focus)
 }

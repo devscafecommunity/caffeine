@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 1
+#define CAFFEINE_CAPI_VERSION 2
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -65,6 +65,31 @@ typedef struct CaffeineCamera {
     float distance;
     CaffeineVec3 focus;
 } CaffeineCamera;
+
+/** Material-preview subject shape. */
+typedef enum CaffeinePreviewShape {
+    CAFFEINE_PREVIEW_SPHERE = 0,
+    CAFFEINE_PREVIEW_CUBE = 1,
+    CAFFEINE_PREVIEW_PLANE = 2,
+} CaffeinePreviewShape;
+
+/** Mesh-map kinds baked from an entity's UV mesh. */
+typedef enum CaffeineMeshMapKind {
+    CAFFEINE_MESH_MAP_NORMAL = 0,
+    CAFFEINE_MESH_MAP_POSITION = 1,
+    CAFFEINE_MESH_MAP_OBJECT_ID = 2,
+} CaffeineMeshMapKind;
+
+/** Result of a Photon ambient-occlusion bake into an entity's ORM map. */
+typedef struct CaffeineAOBakeResult {
+    int ok;
+    int used_gpu;
+    uint32_t covered_texels;
+    uint32_t triangles;
+    char orm_path[512];
+    char material_path[512];
+    char error[256];
+} CaffeineAOBakeResult;
 
 typedef struct CaffeineAssetInfo {
     char name[128];
@@ -117,6 +142,8 @@ typedef struct CaffeineComponentInfo {
 } CaffeineComponentInfo;
 
 /** Create/destroy a scene session. The session owns its ECS world. */
+CAFFEINE_CAPI_API int caffeine_capi_version(void);
+
 CAFFEINE_CAPI_API CaffeineSession* caffeine_session_create(void);
 CAFFEINE_CAPI_API void caffeine_session_destroy(CaffeineSession* session);
 
@@ -151,6 +178,23 @@ CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_poll(CaffeineSessi
 /** Viewport camera (radians for yaw/pitch, world units for distance). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
+
+/**
+ * Offscreen viewport quality and overlays.
+ *
+ * `anti_aliasing` is 0 = off, 1 = FXAA, 2 = TAA. `render_scale` is the
+ * internal supersampling factor and is clamped to [0.5, 2.0].
+ */
+typedef struct CaffeineViewportSettings {
+    int show_grid;
+    int anti_aliasing;
+    float render_scale;
+} CaffeineViewportSettings;
+
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_viewport_settings(
+    CaffeineSession* session, CaffeineViewportSettings settings);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_viewport_settings(
+    const CaffeineSession* session, CaffeineViewportSettings* out);
 
 /** Component schema and per-entity component instances. */
 CAFFEINE_CAPI_API uint32_t caffeine_component_type_count(void);
@@ -189,9 +233,161 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_restore(CaffeineSession* sessi
 /** Project assets. The root defaults to <project>/assets/raw (or assets). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_asset_root(CaffeineSession* session, const char* path);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_refresh_assets(CaffeineSession* session);
+/** Absolute path for an asset path relative to the asset root. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_path(const CaffeineSession* session,
+                                             const char* relative_path, char* buffer,
+                                             size_t buffer_size);
+/** Project-relative form used by material files and scene references. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_project_path(const CaffeineSession* session,
+                                                     const char* relative_path, char* buffer,
+                                                     size_t buffer_size);
+/** Resolves a texture/material path against the scene, asset root and engine assets. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_resolve_path(const CaffeineSession* session,
+                                                const char* path, char* buffer,
+                                                size_t buffer_size);
 CAFFEINE_CAPI_API uint32_t caffeine_session_asset_count(const CaffeineSession* session);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_at(const CaffeineSession* session, uint32_t index,
                                          CaffeineAssetInfo* out);
+
+/** PBR material assets (.mat). Colours are sRGB; path fields are project-relative. */
+typedef struct CaffeineMaterial {
+    char name[128];
+    float albedo[4];
+    float metallic;
+    float roughness;
+    float reflectance;
+    float emission[3];
+    float emission_strength;
+    char albedo_map[512];
+    char normal_map[512];
+    char orm_map[512];
+    char emission_map[512];
+    float uv_tiling[2];
+    float uv_offset[2];
+    float normal_strength;
+    int normal_directx; /**< Normal map green channel follows DirectX (Y down). */
+    float ao_strength;
+    int alpha_mode; /**< 0 opaque, 1 cutout, 2 blend. */
+    float alpha_cutoff;
+    float transmission;
+    float ior;
+    float clearcoat;
+    float clearcoat_roughness;
+    float sheen_color[3];
+    float sheen_roughness;
+    float iridescence;
+    float iridescence_thickness;
+    float iridescence_ior;
+    float reflection;
+    int reflection_budget;
+    int reflection_performance;
+    int reflection_quality;
+    int reflection_planar;
+    float ssr_resolution;
+    float ssr_max_steps;
+    float ssr_temporal;
+    float ssr_distance;
+    float ssr_samples;
+    float ssr_denoise;
+    float ssr_probe_blend;
+    float ssr_bounces;
+} CaffeineMaterial;
+
+typedef struct CaffeineMaterialPresetInfo {
+    char category[64];
+    char name[64];
+} CaffeineMaterialPresetInfo;
+
+CAFFEINE_CAPI_API CaffeineResult caffeine_material_default(CaffeineMaterial* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_material_sanitize(CaffeineMaterial* material);
+CAFFEINE_CAPI_API CaffeineResult caffeine_material_load(const char* path, CaffeineMaterial* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_material_save(const char* path,
+                                          const CaffeineMaterial* material);
+CAFFEINE_CAPI_API uint32_t caffeine_material_preset_count(void);
+CAFFEINE_CAPI_API CaffeineResult caffeine_material_preset_at(uint32_t index,
+                                               CaffeineMaterialPresetInfo* info,
+                                               CaffeineMaterial* out);
+/** Assigns a .mat to the entity's Mesh Filter (the material the renderer uses). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_apply_material(CaffeineSession* session,
+                                                   CaffeineEntity entity, const char* path);
+/**
+ * Bakes static ambient occlusion for an entity from the scene's meshes and
+ * assigns the resulting ORM map to the entity material. `output_directory` is
+ * project-relative (default `processed/ao` when null/empty).
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_bake_ao(
+    CaffeineSession* session, CaffeineEntity entity, uint32_t resolution, uint32_t rays,
+    float max_distance, const char* output_directory, CaffeineAOBakeResult* out);
+/**
+ * Ray-picks the entity's mesh from a viewport pixel and returns its UV. The
+ * coordinates use the current editor camera and the logical viewport size.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_pick_uv(CaffeineSession* session,
+                                            CaffeineEntity entity, float x, float y,
+                                            float width, float height, float* u,
+                                            float* v);
+/** Bakes world normal, world position or object ID from the entity mesh into a PNG. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_bake_mesh_map(
+    CaffeineSession* session, CaffeineEntity entity, CaffeineMeshMapKind kind,
+    uint32_t resolution, const char* output_path);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_material(const CaffeineSession* session,
+                                                    CaffeineEntity entity, char* buffer,
+                                                    size_t buffer_size);
+/**
+ * Renders a material sphere preview to RGBA8. Blocks on the GPU readback; the
+ * editor calls it when the material changes, not every frame.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_material_preview(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, uint8_t* pixels, size_t pixel_bytes);
+/** Preview with shape, HDRI environment and exposure. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_material_preview_ex(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, CaffeinePreviewShape shape, const char* environment_path,
+    float exposure, uint8_t* pixels, size_t pixel_bytes);
+/** Starts an asynchronous preview render/readback; poll with render_material_preview_poll. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_material_preview_begin(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, CaffeinePreviewShape shape, const char* environment_path,
+    float exposure);
+CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_material_preview_poll(
+    CaffeineSession* session, uint8_t* pixels, size_t pixel_bytes);
+
+/** Texture map generation. All paths are resolved as given. */
+typedef enum CaffeineTextureMapKind {
+    CAFFEINE_TEXTURE_NORMAL = 0,
+    CAFFEINE_TEXTURE_AO = 1,
+    CAFFEINE_TEXTURE_ROUGHNESS = 2,
+    CAFFEINE_TEXTURE_METALLIC = 3,
+    CAFFEINE_TEXTURE_HEIGHT = 4,
+} CaffeineTextureMapKind;
+
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_generate_map(
+    const char* source_path, const char* output_path, CaffeineTextureMapKind kind, float strength,
+    int directx, int wrap, float min_value, float max_value, int invert, uint32_t radius);
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_pack_maps(
+    const char* ao_path, const char* roughness_path, const char* metallic_path,
+    const char* output_path, int kind);
+/** Writes raw RGBA8 pixels (generator output) as a PNG. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_save_rgba(const char* output_path, uint32_t width,
+                                              uint32_t height, const uint8_t* pixels,
+                                              size_t pixel_bytes);
+/** Decodes an image into a downscaled RGBA8 thumbnail. Free pixels with caffeine_session_free. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_load_thumbnail(
+    const char* input_path, uint32_t max_size, uint32_t* width, uint32_t* height,
+    uint8_t** pixels, size_t* pixel_bytes);
+/** Writes raw RGBA16 pixels as a 16-bit PNG. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_save_rgba16(
+    const char* output_path, uint32_t width, uint32_t height, const uint16_t* pixels,
+    size_t pixel_bytes);
+/**
+ * Loads an image as RGBA8. The returned buffer is allocated and must be freed
+ * with `caffeine_session_free`.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_texture_load_rgba(const char* input_path,
+                                              uint32_t* width, uint32_t* height,
+                                              uint8_t** pixels, size_t* pixel_bytes);
+
 /** Write the current world to a .caf scene and clear the dirty flag. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_save_scene(CaffeineSession* session, const char* path);
 
@@ -233,6 +429,14 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_scale(const CaffeineSes
                                              CaffeineEntity entity, CaffeineVec3* out);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_entity_scale(CaffeineSession* session,
                                                  CaffeineEntity entity, CaffeineVec3 scale);
+/** Resolved transform in scene space, including every parent link. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_world_position(const CaffeineSession* session,
+                                                      CaffeineEntity entity,
+                                                      CaffeineVec3* out);
+/** Sets a scene-space position; the local transform is derived from the parent. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_entity_world_position(CaffeineSession* session,
+                                                          CaffeineEntity entity,
+                                                          CaffeineVec3 position);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 CAFFEINE_CAPI_API void caffeine_session_tick(CaffeineSession* session, float delta_time);

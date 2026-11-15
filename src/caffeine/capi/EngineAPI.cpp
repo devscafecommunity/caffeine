@@ -9,11 +9,23 @@
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "render/GpuSceneRenderer.hpp"
+#include "render/GpuProceduralMeshes.hpp"
+#include "render/MaterialPreviewRenderer.hpp"
 #include "rhi/RenderDevice.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "scene/EditorCameraMath.hpp"
+#include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
+#include "assets/MaterialCache.hpp"
+#include "assets/MaterialFile.hpp"
+#include "assets/MaterialPresets.hpp"
+#include "assets/MeshCache.hpp"
+#include "assets/TextureMapGenerator.hpp"
+
+#include "caffeine/photon/PhotonBake.hpp"
+
+#include <stb/stb_image.h>
 
 #include <SDL3/SDL.h>
 
@@ -48,7 +60,8 @@ std::string assetKind(const std::filesystem::path& path, bool isDirectory) {
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gif") {
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gif" ||
+        ext == ".hdr" || ext == ".exr") {
         return "image";
     }
     if (ext == ".obj" || ext == ".glb" || ext == ".gltf") return "mesh";
@@ -69,11 +82,13 @@ struct CaffeineSession {
 
     std::unique_ptr<Caffeine::RHI::RenderDevice> renderDevice;
     std::unique_ptr<Caffeine::Render::GpuSceneRenderer> sceneRenderer;
+    std::unique_ptr<Caffeine::Render::MaterialPreviewRenderer> materialPreview;
     Caffeine::RHI::Texture* colorTarget = nullptr;
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
     CaffeineCamera camera{0.65f, 0.35f, 10.0f, {0.0f, 0.0f, 0.0f}};
     bool cameraInitialized = false;
+    CaffeineViewportSettings viewportSettings{1, 1, 1.5f};
     std::string assetRoot;
     std::vector<AssetEntry> assets;
 
@@ -81,9 +96,33 @@ struct CaffeineSession {
     // blocking the UI thread in SDL_WaitForGPUIdle.
     SDL_GPUTransferBuffer* readbackTransfer = nullptr;
     SDL_GPUFence* readbackFence = nullptr;
+    uint32_t readbackCapacity = 0;
     uint32_t readbackWidth = 0;
     uint32_t readbackHeight = 0;
     bool readbackPending = false;
+
+    // Material preview readback, separate from the viewport fence.
+    SDL_GPUTransferBuffer* previewTransfer = nullptr;
+    SDL_GPUFence* previewFence = nullptr;
+    uint32_t previewSize = 0;
+    bool previewPending = false;
+
+    void releasePreviewReadbackFence() {
+        if (previewFence && renderDevice) {
+            SDL_ReleaseGPUFence(renderDevice->nativeDevice(), previewFence);
+        }
+        previewFence = nullptr;
+    }
+
+    void releasePreviewReadback() {
+        releasePreviewReadbackFence();
+        if (previewTransfer && renderDevice) {
+            SDL_ReleaseGPUTransferBuffer(renderDevice->nativeDevice(), previewTransfer);
+        }
+        previewTransfer = nullptr;
+        previewSize = 0;
+        previewPending = false;
+    }
 
     void scanAssets() {
         assets.clear();
@@ -126,8 +165,16 @@ struct CaffeineSession {
     }
 
     ~CaffeineSession() {
+        releasePreviewReadback();
         releaseReadback();
         shutdownRender();
+    }
+
+    void releaseReadbackFence() {
+        if (readbackFence && renderDevice) {
+            SDL_ReleaseGPUFence(renderDevice->nativeDevice(), readbackFence);
+        }
+        readbackFence = nullptr;
     }
 
     void releaseReadback() {
@@ -135,22 +182,25 @@ struct CaffeineSession {
             readbackTransfer = nullptr;
             readbackFence = nullptr;
             readbackPending = false;
+            readbackCapacity = 0;
             return;
         }
-        if (readbackFence) {
-            SDL_ReleaseGPUFence(renderDevice->nativeDevice(), readbackFence);
-            readbackFence = nullptr;
-        }
+        releaseReadbackFence();
         if (readbackTransfer) {
             SDL_ReleaseGPUTransferBuffer(renderDevice->nativeDevice(), readbackTransfer);
             readbackTransfer = nullptr;
         }
         readbackPending = false;
+        readbackCapacity = 0;
         readbackWidth = 0;
         readbackHeight = 0;
     }
 
     void shutdownRender() {
+        if (materialPreview) {
+            materialPreview->shutdown();
+            materialPreview.reset();
+        }
         if (sceneRenderer) sceneRenderer->shutdown();
         if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
         colorTarget = nullptr;
@@ -584,6 +634,127 @@ std::string joinOptions(const std::vector<const char*>& options) {
     return joined;
 }
 
+void writeMaterial(const Caffeine::Assets::MaterialSurface& source, CaffeineMaterial& out) {
+    std::memset(&out, 0, sizeof(out));
+    copyText(out.name, sizeof(out.name), source.name.c_str());
+    out.albedo[0] = source.albedo.x;
+    out.albedo[1] = source.albedo.y;
+    out.albedo[2] = source.albedo.z;
+    out.albedo[3] = source.albedo.w;
+    out.metallic = source.metallic;
+    out.roughness = source.roughness;
+    out.reflectance = source.reflectance;
+    out.emission[0] = source.emission.x;
+    out.emission[1] = source.emission.y;
+    out.emission[2] = source.emission.z;
+    out.emission_strength = source.emissionStrength;
+    copyText(out.albedo_map, sizeof(out.albedo_map), source.albedoMap.c_str());
+    copyText(out.normal_map, sizeof(out.normal_map), source.normalMap.c_str());
+    copyText(out.orm_map, sizeof(out.orm_map), source.ormMap.c_str());
+    copyText(out.emission_map, sizeof(out.emission_map), source.emissionMap.c_str());
+    out.uv_tiling[0] = source.uvTiling.x;
+    out.uv_tiling[1] = source.uvTiling.y;
+    out.uv_offset[0] = source.uvOffset.x;
+    out.uv_offset[1] = source.uvOffset.y;
+    out.normal_strength = source.normalStrength;
+    out.normal_directx = source.normalDirectX ? 1 : 0;
+    out.ao_strength = source.aoStrength;
+    out.alpha_mode = static_cast<int>(source.alphaMode);
+    out.alpha_cutoff = source.alphaCutoff;
+    out.transmission = source.transmission;
+    out.ior = source.ior;
+    out.clearcoat = source.clearcoat;
+    out.clearcoat_roughness = source.clearcoatRoughness;
+    out.sheen_color[0] = source.sheenColor.x;
+    out.sheen_color[1] = source.sheenColor.y;
+    out.sheen_color[2] = source.sheenColor.z;
+    out.sheen_roughness = source.sheenRoughness;
+    out.iridescence = source.iridescence;
+    out.iridescence_thickness = source.iridescenceThickness;
+    out.iridescence_ior = source.iridescenceIor;
+    out.reflection = source.reflection;
+    out.reflection_budget = source.reflectionBudget;
+    out.reflection_performance = source.reflectionPerformance;
+    out.reflection_quality = source.reflectionQuality;
+    out.reflection_planar = source.reflectionPlanar;
+    out.ssr_resolution = source.ssrResolution;
+    out.ssr_max_steps = source.ssrMaxSteps;
+    out.ssr_temporal = source.ssrTemporalFrames;
+    out.ssr_distance = source.ssrDistance;
+    out.ssr_samples = source.ssrSamples;
+    out.ssr_denoise = source.ssrDenoise;
+    out.ssr_probe_blend = source.ssrProbeBlend;
+    out.ssr_bounces = source.ssrBounces;
+}
+
+Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
+    Caffeine::Assets::MaterialSurface out;
+    out.name = source.name;
+    out.albedo = Caffeine::Vec4(source.albedo[0], source.albedo[1], source.albedo[2],
+                                source.albedo[3]);
+    out.metallic = source.metallic;
+    out.roughness = source.roughness;
+    out.reflectance = source.reflectance;
+    out.emission = Caffeine::Vec3(source.emission[0], source.emission[1], source.emission[2]);
+    out.emissionStrength = source.emission_strength;
+    out.albedoMap = source.albedo_map;
+    out.normalMap = source.normal_map;
+    out.ormMap = source.orm_map;
+    out.emissionMap = source.emission_map;
+    out.uvTiling = Caffeine::Vec2(source.uv_tiling[0], source.uv_tiling[1]);
+    out.uvOffset = Caffeine::Vec2(source.uv_offset[0], source.uv_offset[1]);
+    out.normalStrength = source.normal_strength;
+    out.normalDirectX = source.normal_directx != 0;
+    out.aoStrength = source.ao_strength;
+    out.alphaMode = static_cast<Caffeine::Assets::MaterialAlphaMode>(
+        std::clamp(source.alpha_mode, 0, 2));
+    out.alphaCutoff = source.alpha_cutoff;
+    out.transmission = source.transmission;
+    out.ior = source.ior;
+    out.clearcoat = source.clearcoat;
+    out.clearcoatRoughness = source.clearcoat_roughness;
+    out.sheenColor = Caffeine::Vec3(source.sheen_color[0], source.sheen_color[1],
+                                    source.sheen_color[2]);
+    out.sheenRoughness = source.sheen_roughness;
+    out.iridescence = source.iridescence;
+    out.iridescenceThickness = source.iridescence_thickness;
+    out.iridescenceIor = source.iridescence_ior;
+    out.reflection = source.reflection;
+    out.reflectionBudget = static_cast<Caffeine::u8>(std::clamp(source.reflection_budget, 0, 3));
+    out.reflectionPerformance = source.reflection_performance ? 1 : 0;
+    out.reflectionQuality = source.reflection_quality ? 1 : 0;
+    out.reflectionPlanar = source.reflection_planar ? 1 : 0;
+    out.ssrResolution = source.ssr_resolution;
+    out.ssrMaxSteps = source.ssr_max_steps;
+    out.ssrTemporalFrames = source.ssr_temporal;
+    out.ssrDistance = source.ssr_distance;
+    out.ssrSamples = source.ssr_samples;
+    out.ssrDenoise = source.ssr_denoise;
+    out.ssrProbeBlend = source.ssr_probe_blend;
+    out.ssrBounces = source.ssr_bounces;
+    Caffeine::Assets::sanitizeMaterialSurface(out);
+    out.valid = true;
+    return out;
+}
+
+/// Converts an asset-root-relative path to the project-relative form stored in
+/// `.mat` files and scene components. Absolute paths are returned unchanged.
+std::string assetToProjectPath(const CaffeineSession& session, const std::string& path) {
+    if (path.empty()) return {};
+    std::filesystem::path input(path);
+    if (input.is_absolute()) return input.generic_string();
+    if (!session.assetRoot.empty() && !session.context.projectRootPath.empty()) {
+        std::error_code ec;
+        const std::filesystem::path root(session.context.projectRootPath);
+        const std::filesystem::path assets(session.assetRoot);
+        const std::filesystem::path relativeRoot = std::filesystem::relative(assets, root, ec);
+        if (!ec && !relativeRoot.empty()) {
+            return (relativeRoot / input).lexically_normal().generic_string();
+        }
+    }
+    return input.lexically_normal().generic_string();
+}
+
 }  // namespace
 
 namespace {
@@ -711,6 +882,10 @@ CaffeineSession* caffeine_session_create(void) {
 
 void caffeine_session_destroy(CaffeineSession* session) {
     delete session;
+}
+
+int caffeine_capi_version(void) {
+    return CAFFEINE_CAPI_VERSION;
 }
 
 CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char* path) {
@@ -990,6 +1165,22 @@ CaffeineResult caffeine_session_set_entity_scale(CaffeineSession* session,
     return CAFFEINE_OK;
 }
 
+CaffeineResult caffeine_session_entity_world_position(const CaffeineSession* session,
+                                                      CaffeineEntity entityId,
+                                                      CaffeineVec3* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::Mat4 matrix = Caffeine::Scene::computeWorldMatrix(
+        mutableSession.world, entityOf(mutableSession, entityId));
+    const Caffeine::Vec3 point =
+        matrix.transformPoint(Caffeine::Vec3(0.0f, 0.0f, 0.0f));
+    out->x = point.x;
+    out->y = point.y;
+    out->z = point.z;
+    return CAFFEINE_OK;
+}
+
 uint32_t caffeine_component_type_count(void) {
     return static_cast<uint32_t>(componentRegistry().size());
 }
@@ -1133,6 +1324,24 @@ CaffeineResult caffeine_session_set_entity_position(CaffeineSession* session,
     return CAFFEINE_OK;
 }
 
+CaffeineResult caffeine_session_set_entity_world_position(CaffeineSession* session,
+                                                          CaffeineEntity entityId,
+                                                          CaffeineVec3 position) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    Caffeine::Mat4 local = Caffeine::Mat4::identity();
+    if (const auto* link = session->world.get<Caffeine::Scene::Parent>(entity);
+        link && link->parent.isValid() && link->parent.id() != entityId) {
+        local = Caffeine::Scene::computeWorldMatrix(session->world, link->parent).inverted();
+    }
+    const Caffeine::Vec3 converted = local.transformPoint(
+        Caffeine::Vec3(position.x, position.y, position.z));
+    return caffeine_session_set_entity_position(
+        session, entityId, {converted.x, converted.y, converted.z});
+}
+
 void caffeine_session_tick(CaffeineSession* session, float delta_time) {
     if (!session) return;
     session->lastDelta = delta_time;
@@ -1141,6 +1350,11 @@ void caffeine_session_tick(CaffeineSession* session, float delta_time) {
 
 static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t height) {
     if (!session.ensureRender(width, height)) return false;
+
+    // Resolve parent links before anything reads Scene::WorldTransform: the
+    // renderer (and the bounds below) consume the cached world matrix, so a
+    // child must inherit its group's transform every frame.
+    Caffeine::Scene::propagateTransforms(session.world);
 
     Caffeine::Vec3 min(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
@@ -1184,28 +1398,54 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
     const Caffeine::Vec3 cameraPosition = Caffeine::Editor::editorCameraPosition(
         session.camera.yaw, session.camera.pitch, distance, focus);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const float farClip = std::max(1000.0f, distance * 20.0f);
+    const float visibleRange =
+        std::max(std::abs(distance), std::abs(cameraPosition.y));
+    const float farClip = std::min(
+        50000.0f, std::max(5000.0f, (distance + std::abs(cameraPosition.y)) * 20.0f));
+    // Keep the depth range useful when the editor is zoomed far out. A fixed
+    // 0.1 near plane with a 50k far plane turns the ground grid and terrain
+    // into z-fighting confetti.
+    const float nearClip = std::clamp(distance * 0.002f, 0.1f, 50.0f);
 
     Caffeine::Render::GpuSceneCamera camera;
     camera.position = cameraPosition;
     camera.focus = focus;
     camera.view = Caffeine::Mat4::lookAt(cameraPosition, focus,
                                          Caffeine::Vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = Caffeine::Mat4::perspective(1.0472f, aspect, 0.1f, farClip);
+    camera.proj = Caffeine::Mat4::perspective(1.0472f, aspect, nearClip, farClip);
     camera.fovRad = 1.0472f;
-    camera.nearClip = 0.1f;
+    camera.nearClip = nearClip;
     camera.farClip = farClip;
 
     Caffeine::Render::GpuSceneRenderOptions options;
     options.enableShadows = false;
-    options.renderScale = 1.0f;
+    options.renderScale =
+        std::clamp(session.viewportSettings.render_scale, 0.5f, 2.0f);
     options.deltaTime = 1.0f / 60.0f;
     options.viewId = 1;
     options.resolveFeaturesFromScene = true;
     options.resolveEnvironmentFromScene = true;
     options.resolvePostProcessFromScene = false;
     options.postProcess = Caffeine::Render::PostProcessStack::defaults();
-    options.postProcess.antiAliasing.enabled = false;
+    options.postProcess.antiAliasing.enabled = session.viewportSettings.anti_aliasing > 0;
+    options.postProcess.antiAliasing.mode =
+        session.viewportSettings.anti_aliasing == 2 ? 1u : 0u;
+    options.postProcess.antiAliasing.sharpness = 0.5f;
+
+    if (session.viewportSettings.show_grid) {
+        float spacing = 1.0f;
+        while (visibleRange / spacing > 40.0f) spacing *= 2.0f;
+        while (visibleRange / spacing < 8.0f && spacing > 0.25f) spacing *= 0.5f;
+        options.grid.enabled = true;
+        options.grid.cellSize = std::max(spacing, 0.25f);
+        options.grid.majorEvery = 10.0f;
+        options.grid.fadeDistance = std::max(visibleRange * 8.0f, 60.0f);
+        // At extreme zoom the grid sits on an almost coplanar terrain and its
+        // screen-space derivatives alias into dashed lines. Fade it out before
+        // that happens instead of showing broken reference lines.
+        const float fade = std::clamp((visibleRange - 1500.0f) / 3500.0f, 0.0f, 1.0f);
+        options.grid.opacity = 1.0f - fade * fade * (3.0f - 2.0f * fade);
+    }
 
     Caffeine::RHI::CommandBuffer* command = session.renderDevice->beginOffscreen();
     if (!command) return false;
@@ -1232,6 +1472,7 @@ CaffeineResult caffeine_session_render(CaffeineSession* session, uint32_t width,
     }
     const size_t copySize = std::min(readback.size(), required);
     std::memcpy(pixels, readback.data(), copySize);
+    session->renderDevice->releaseOffscreenResources();
     return CAFFEINE_OK;
 }
 
@@ -1241,19 +1482,30 @@ CaffeineResult caffeine_session_render_begin(CaffeineSession* session, uint32_t 
     if (session->readbackPending) return CAFFEINE_ERROR;
     if (!renderFrame(*session, width, height)) return CAFFEINE_ERROR;
 
-    session->releaseReadback();
     SDL_GPUDevice* device = session->renderDevice->nativeDevice();
     if (!device || !session->colorTarget) return CAFFEINE_ERROR;
 
-    SDL_GPUTransferBufferCreateInfo info{};
-    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-    info.size = static_cast<Uint32>(width) * height * 4u;
-    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device, &info);
-    if (!transfer) return CAFFEINE_ERROR;
+    // The previous fence has already been polled (readbackPending is false);
+    // release it and keep the transfer buffer for the next frame instead of
+    // allocating/freeing several megabytes every 33 ms.
+    session->releaseReadbackFence();
+    const Uint32 requiredBytes = static_cast<Uint32>(width) * height * 4u;
+    if (!session->readbackTransfer || session->readbackCapacity < requiredBytes) {
+        if (session->readbackTransfer) {
+            SDL_ReleaseGPUTransferBuffer(device, session->readbackTransfer);
+        }
+        SDL_GPUTransferBufferCreateInfo info{};
+        info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+        info.size = requiredBytes;
+        session->readbackTransfer = SDL_CreateGPUTransferBuffer(device, &info);
+        session->readbackCapacity = session->readbackTransfer ? info.size : 0;
+        if (!session->readbackTransfer) return CAFFEINE_ERROR;
+    }
 
+    SDL_GPUTransferBuffer* transfer = session->readbackTransfer;
     SDL_GPUCommandBuffer* command = SDL_AcquireGPUCommandBuffer(device);
     if (!command) {
-        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        session->releaseReadback();
         return CAFFEINE_ERROR;
     }
 
@@ -1272,12 +1524,12 @@ CaffeineResult caffeine_session_render_begin(CaffeineSession* session, uint32_t 
 
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command);
     if (!fence) {
-        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        session->releaseReadback();
         SDL_WaitForGPUIdle(device);
+        session->renderDevice->releaseOffscreenResources();
         return CAFFEINE_ERROR;
     }
 
-    session->readbackTransfer = transfer;
     session->readbackFence = fence;
     session->readbackWidth = width;
     session->readbackHeight = height;
@@ -1302,11 +1554,16 @@ CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session, uint8
     const void* mapped = SDL_MapGPUTransferBuffer(device, session->readbackTransfer, false);
     if (!mapped) {
         session->releaseReadback();
+        session->renderDevice->releaseOffscreenResources();
         return CAFFEINE_RENDER_FAILED;
     }
     std::memcpy(pixels, mapped, required);
     SDL_UnmapGPUTransferBuffer(device, session->readbackTransfer);
-    session->releaseReadback();
+    session->releaseReadbackFence();
+    session->readbackPending = false;
+    session->readbackWidth = 0;
+    session->readbackHeight = 0;
+    session->renderDevice->releaseOffscreenResources();
     return CAFFEINE_RENDER_READY;
 }
 
@@ -1321,6 +1578,23 @@ CaffeineResult caffeine_session_get_camera(const CaffeineSession* session,
                                            CaffeineCamera* out) {
     if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
     *out = session->camera;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_viewport_settings(
+    CaffeineSession* session, CaffeineViewportSettings settings) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    settings.show_grid = settings.show_grid ? 1 : 0;
+    settings.anti_aliasing = std::clamp(settings.anti_aliasing, 0, 2);
+    settings.render_scale = std::clamp(settings.render_scale, 0.5f, 2.0f);
+    session->viewportSettings = settings;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_get_viewport_settings(
+    const CaffeineSession* session, CaffeineViewportSettings* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = session->viewportSettings;
     return CAFFEINE_OK;
 }
 
@@ -1355,6 +1629,699 @@ CaffeineResult caffeine_session_asset_at(const CaffeineSession* session, uint32_
     out->kind[sizeof(out->kind) - 1] = '\0';
     out->size_bytes = entry.sizeBytes;
     out->is_directory = entry.isDirectory ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_asset_path(const CaffeineSession* session,
+                                             const char* relative_path, char* buffer,
+                                             size_t buffer_size) {
+    if (!session || !relative_path || !buffer || buffer_size == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    std::filesystem::path resolved(relative_path);
+    if (!resolved.is_absolute() && !session->assetRoot.empty()) {
+        resolved = std::filesystem::path(session->assetRoot) / resolved;
+    }
+    std::error_code ec;
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(resolved, ec);
+    copyText(buffer, buffer_size, (ec ? resolved : canonical).generic_string().c_str());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_asset_project_path(const CaffeineSession* session,
+                                                     const char* relative_path, char* buffer,
+                                                     size_t buffer_size) {
+    if (!session || !relative_path || !buffer || buffer_size == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    copyText(buffer, buffer_size, assetToProjectPath(*session, relative_path).c_str());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_resolve_path(const CaffeineSession* session, const char* path,
+                                                char* buffer, size_t buffer_size) {
+    if (!session || !path || !buffer || buffer_size == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const std::string resolved = Caffeine::Assets::MeshCache::resolveTexturePath(
+        path, session->context.projectRootPath);
+    if (!resolved.empty()) {
+        copyText(buffer, buffer_size, resolved.c_str());
+        return CAFFEINE_OK;
+    }
+    std::filesystem::path fallback(path);
+    if (!fallback.is_absolute()) {
+        if (!session->context.projectRootPath.empty()) {
+            fallback = std::filesystem::path(session->context.projectRootPath) / fallback;
+        } else if (!session->assetRoot.empty()) {
+            fallback = std::filesystem::path(session->assetRoot) / fallback;
+        }
+    }
+    copyText(buffer, buffer_size, fallback.lexically_normal().generic_string().c_str());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_material_default(CaffeineMaterial* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Assets::MaterialSurface surface;
+    surface.name = "New Material";
+    surface.valid = true;
+    Caffeine::Assets::sanitizeMaterialSurface(surface);
+    writeMaterial(surface, *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_material_sanitize(CaffeineMaterial* material) {
+    if (!material) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Assets::MaterialSurface surface = readMaterial(*material);
+    writeMaterial(surface, *material);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_material_load(const char* path, CaffeineMaterial* out) {
+    if (!path || path[0] == '\0' || !out) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Assets::MaterialSurface surface;
+    if (!Caffeine::Assets::loadMaterialFile(path, surface)) return CAFFEINE_ERROR;
+    writeMaterial(surface, *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_material_save(const char* path, const CaffeineMaterial* material) {
+    if (!path || path[0] == '\0' || !material) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Assets::MaterialSurface surface = readMaterial(*material);
+    if (surface.name.empty()) surface.name = "Material";
+    if (!Caffeine::Assets::saveMaterialFile(path, surface)) return CAFFEINE_ERROR;
+    Caffeine::Assets::MaterialCache::instance().invalidate(path);
+    return CAFFEINE_OK;
+}
+
+uint32_t caffeine_material_preset_count(void) {
+    return static_cast<uint32_t>(Caffeine::Assets::materialPresets().size());
+}
+
+CaffeineResult caffeine_material_preset_at(uint32_t index, CaffeineMaterialPresetInfo* info,
+                                               CaffeineMaterial* out) {
+    if (!info || !out) return CAFFEINE_INVALID_ARGUMENT;
+    const auto& presets = Caffeine::Assets::materialPresets();
+    if (index >= presets.size()) return CAFFEINE_NOT_FOUND;
+    const Caffeine::Assets::MaterialPreset& preset = presets[index];
+    std::memset(info, 0, sizeof(*info));
+    copyText(info->category, sizeof(info->category), std::string(preset.category).c_str());
+    copyText(info->name, sizeof(info->name), std::string(preset.name).c_str());
+    writeMaterial(preset.surface, *out);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_apply_material(CaffeineSession* session, CaffeineEntity entityId,
+                                                   const char* path) {
+    if (!session || !path) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    auto* filter = session->world.get<Caffeine::ECS::MeshFilterComponent>(entity);
+    if (!filter) {
+        // Applying a material to an empty entity gives it a visible preview
+        // mesh instead of failing with no feedback in the editor.
+        filter = &session->world.add<Caffeine::ECS::MeshFilterComponent>(entity);
+        filter->primitive = Caffeine::ECS::MeshPrimitive::Cube;
+    }
+    const std::string projectPath = assetToProjectPath(*session, path);
+    filter->customMaterialPath = projectPath;
+    auto* renderer = session->world.get<Caffeine::ECS::MeshRendererComponent>(entity);
+    if (!renderer) {
+        renderer = &session->world.add<Caffeine::ECS::MeshRendererComponent>(entity);
+    }
+    renderer->materialPath = projectPath;
+    Caffeine::Assets::MaterialCache::instance().invalidate(projectPath);
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_bake_ao(CaffeineSession* session, CaffeineEntity entityId,
+                                         uint32_t resolution, uint32_t rays, float maxDistance,
+                                         const char* outputDirectory, CaffeineAOBakeResult* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+
+    Caffeine::Photon::BakeSettings settings{};
+    settings.resolution = resolution == 0 ? 512 : resolution;
+    settings.rays = rays == 0 ? 16 : rays;
+    settings.maxDistance = maxDistance > 0.0f ? maxDistance : 2.5f;
+    settings.useGpu = true;
+    if (outputDirectory && outputDirectory[0]) {
+        settings.outputDirectory = outputDirectory;
+    }
+
+    const auto baked = Caffeine::Photon::bakeAmbientOcclusion(
+        session->world, entityOf(*session, entityId), settings,
+        session->context.projectRootPath, session->renderDevice.get());
+
+    CaffeineAOBakeResult result{};
+    result.ok = baked.ok ? 1 : 0;
+    result.used_gpu = baked.usedGpu ? 1 : 0;
+    result.covered_texels = baked.coveredTexels;
+    result.triangles = baked.triangles;
+    copyText(result.orm_path, sizeof(result.orm_path), baked.ormPath.c_str());
+    copyText(result.material_path, sizeof(result.material_path), baked.materialPath.c_str());
+    copyText(result.error, sizeof(result.error), baked.error.c_str());
+    *out = result;
+    if (baked.ok) session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_bake_mesh_map(CaffeineSession* session, CaffeineEntity entityId,
+                                                CaffeineMeshMapKind kind, uint32_t resolution,
+                                                const char* outputPath) {
+    if (!session || !outputPath || outputPath[0] == '\0' || resolution < 16 ||
+        resolution > 4096) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    auto* filter = session->world.get<Caffeine::ECS::MeshFilterComponent>(entity);
+    if (!filter) return CAFFEINE_NOT_FOUND;
+    Caffeine::Assets::Mesh3D* mesh = nullptr;
+    if (filter->primitive == Caffeine::ECS::MeshPrimitive::Custom) {
+        if (!filter->customMeshPath.empty()) {
+            mesh = Caffeine::Assets::MeshCache::getInstance().getMesh(
+                filter->customMeshPath, session->context.projectRootPath);
+        }
+    } else {
+        mesh = Caffeine::Render::GpuProceduralMeshes::get(filter->primitive);
+    }
+    if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) {
+        return CAFFEINE_NOT_FOUND;
+    }
+
+    const Caffeine::Mat4 world = Caffeine::Scene::computeWorldMatrix(session->world, entity);
+    const Caffeine::Mat4 normalMatrix = world.inverted().transposed();
+    Caffeine::Vec3 boundsMin(1e30f, 1e30f, 1e30f);
+    Caffeine::Vec3 boundsMax(-1e30f, -1e30f, -1e30f);
+    for (const auto& vertex : mesh->vertices) {
+        const Caffeine::Vec3 position = world.transformPoint(vertex.position);
+        boundsMin.x = std::min(boundsMin.x, position.x);
+        boundsMin.y = std::min(boundsMin.y, position.y);
+        boundsMin.z = std::min(boundsMin.z, position.z);
+        boundsMax.x = std::max(boundsMax.x, position.x);
+        boundsMax.y = std::max(boundsMax.y, position.y);
+        boundsMax.z = std::max(boundsMax.z, position.z);
+    }
+    const Caffeine::Vec3 center = (boundsMin + boundsMax) * 0.5f;
+    const Caffeine::Vec3 extent = (boundsMax - boundsMin) * 0.5f;
+    const auto encode = [](float value) {
+        return static_cast<uint8_t>(
+            std::clamp(value * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    const uint32_t idColor =
+        (static_cast<uint32_t>(entityId) * 2654435761u) | 0xff000000u;
+
+    Caffeine::Assets::TextureImage image;
+    image.width = resolution;
+    image.height = resolution;
+    image.rgba.assign(static_cast<size_t>(resolution) * resolution * 4, 0);
+    image.valid = true;
+
+    for (size_t i = 0; i + 2 < mesh->indices.size(); i += 3) {
+        const auto& va = mesh->vertices[mesh->indices[i + 0]];
+        const auto& vb = mesh->vertices[mesh->indices[i + 1]];
+        const auto& vc = mesh->vertices[mesh->indices[i + 2]];
+        const Caffeine::Vec3 a = world.transformPoint(va.position);
+        const Caffeine::Vec3 b = world.transformPoint(vb.position);
+        const Caffeine::Vec3 c = world.transformPoint(vc.position);
+        const Caffeine::Vec2 uv0 = va.texcoord;
+        const Caffeine::Vec2 uv1 = vb.texcoord;
+        const Caffeine::Vec2 uv2 = vc.texcoord;
+        const float minU = std::min({uv0.x, uv1.x, uv2.x});
+        const float maxU = std::max({uv0.x, uv1.x, uv2.x});
+        const float minV = std::min({uv0.y, uv1.y, uv2.y});
+        const float maxV = std::max({uv0.y, uv1.y, uv2.y});
+        if (maxU < 0.0f || minU > 1.0f || maxV < 0.0f || minV > 1.0f) continue;
+        if (maxU - minU < 1e-6f || maxV - minV < 1e-6f) continue;
+        const int x0 = std::max(0, static_cast<int>(std::floor(minU * resolution)) - 1);
+        const int x1 = std::min(static_cast<int>(resolution) - 1,
+                                static_cast<int>(std::ceil(maxU * resolution)) + 1);
+        const int y0 = std::max(0, static_cast<int>(std::floor(minV * resolution)) - 1);
+        const int y1 = std::min(static_cast<int>(resolution) - 1,
+                                static_cast<int>(std::ceil(maxV * resolution)) + 1);
+        const float area = (uv1.x - uv0.x) * (uv2.y - uv0.y) -
+                           (uv2.x - uv0.x) * (uv1.y - uv0.y);
+        if (std::abs(area) < 1e-9f) continue;
+        const float invArea = 1.0f / area;
+        for (int y = y0; y <= y1; ++y) {
+            const float py = (static_cast<float>(y) + 0.5f) / resolution;
+            for (int x = x0; x <= x1; ++x) {
+                const float px = (static_cast<float>(x) + 0.5f) / resolution;
+                const float w1 = ((px - uv0.x) * (uv2.y - uv0.y) -
+                                  (uv2.x - uv0.x) * (py - uv0.y)) *
+                                 invArea;
+                const float w2 = ((uv1.x - uv0.x) * (py - uv0.y) -
+                                  (px - uv0.x) * (uv1.y - uv0.y)) *
+                                 invArea;
+                const float w0 = 1.0f - w1 - w2;
+                if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+                const size_t index = (static_cast<size_t>(y) * resolution + x) * 4;
+                if (kind == CAFFEINE_MESH_MAP_NORMAL) {
+                    Caffeine::Vec3 normal = normalMatrix.transformVector(
+                        va.normal * w0 + vb.normal * w1 + vc.normal * w2);
+                    if (normal.lengthSquared() < 1e-8f) continue;
+                    normal = normal.normalized();
+                    image.rgba[index + 0] = encode(normal.x);
+                    image.rgba[index + 1] = encode(normal.y);
+                    image.rgba[index + 2] = encode(normal.z);
+                    image.rgba[index + 3] = 255;
+                } else if (kind == CAFFEINE_MESH_MAP_POSITION) {
+                    const Caffeine::Vec3 position = a * w0 + b * w1 + c * w2;
+                    image.rgba[index + 0] = encode((position.x - center.x) / std::max(extent.x, 1e-4f));
+                    image.rgba[index + 1] = encode((position.y - center.y) / std::max(extent.y, 1e-4f));
+                    image.rgba[index + 2] = encode((position.z - center.z) / std::max(extent.z, 1e-4f));
+                    image.rgba[index + 3] = 255;
+                } else {
+                    image.rgba[index + 0] = static_cast<uint8_t>(idColor & 0xff);
+                    image.rgba[index + 1] = static_cast<uint8_t>((idColor >> 8) & 0xff);
+                    image.rgba[index + 2] = static_cast<uint8_t>((idColor >> 16) & 0xff);
+                    image.rgba[index + 3] = 255;
+                }
+            }
+        }
+    }
+    return Caffeine::Assets::saveTextureImage(outputPath, image) ? CAFFEINE_OK : CAFFEINE_ERROR;
+}
+
+CaffeineResult caffeine_session_pick_uv(CaffeineSession* session, CaffeineEntity entityId,
+                                         float x, float y, float width, float height, float* u,
+                                         float* v) {
+    if (!session || !u || !v || width <= 0.0f || height <= 0.0f) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    auto* filter = session->world.get<Caffeine::ECS::MeshFilterComponent>(entity);
+    if (!filter) return CAFFEINE_NOT_FOUND;
+    Caffeine::Assets::Mesh3D* mesh = nullptr;
+    if (filter->primitive == Caffeine::ECS::MeshPrimitive::Custom) {
+        if (!filter->customMeshPath.empty()) {
+            mesh = Caffeine::Assets::MeshCache::getInstance().getMesh(
+                filter->customMeshPath, session->context.projectRootPath);
+        }
+    } else {
+        mesh = Caffeine::Render::GpuProceduralMeshes::get(filter->primitive);
+    }
+    if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) {
+        return CAFFEINE_NOT_FOUND;
+    }
+
+    const Caffeine::Vec3 focus(session->camera.focus.x, session->camera.focus.y,
+                               session->camera.focus.z);
+    const float distance = std::max(session->camera.distance, 1.0f);
+    const Caffeine::Vec3 eye = Caffeine::Editor::editorCameraPosition(
+        session->camera.yaw, session->camera.pitch, distance, focus);
+    const Caffeine::Vec3 forward = (focus - eye).normalized();
+    Caffeine::Vec3 right = forward.cross(Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+    if (right.lengthSquared() < 1e-8f) right = Caffeine::Vec3(1.0f, 0.0f, 0.0f);
+    right = right.normalized();
+    const Caffeine::Vec3 up = right.cross(forward).normalized();
+    const float aspect = width / height;
+    const float tangent = std::tan(1.0472f * 0.5f);
+    const float nx = (2.0f * x / width - 1.0f) * tangent * aspect;
+    const float ny = (1.0f - 2.0f * y / height) * tangent;
+    const Caffeine::Vec3 direction = (forward + right * nx + up * ny).normalized();
+
+    const Caffeine::Mat4 world = Caffeine::Scene::computeWorldMatrix(session->world, entity);
+    float nearest = std::numeric_limits<float>::max();
+    Caffeine::Vec2 hitUv{};
+    bool hit = false;
+    for (size_t i = 0; i + 2 < mesh->indices.size(); i += 3) {
+        const auto& va = mesh->vertices[mesh->indices[i + 0]];
+        const auto& vb = mesh->vertices[mesh->indices[i + 1]];
+        const auto& vc = mesh->vertices[mesh->indices[i + 2]];
+        const Caffeine::Vec3 a = world.transformPoint(va.position);
+        const Caffeine::Vec3 b = world.transformPoint(vb.position);
+        const Caffeine::Vec3 c = world.transformPoint(vc.position);
+        const Caffeine::Vec3 e1 = b - a;
+        const Caffeine::Vec3 e2 = c - a;
+        const Caffeine::Vec3 pvec = direction.cross(e2);
+        const float det = e1.dot(pvec);
+        if (std::abs(det) < 1e-8f) continue;
+        const float inv = 1.0f / det;
+        const Caffeine::Vec3 tvec = eye - a;
+        const float bu = tvec.dot(pvec) * inv;
+        if (bu < 0.0f || bu > 1.0f) continue;
+        const Caffeine::Vec3 qvec = tvec.cross(e1);
+        const float bv = direction.dot(qvec) * inv;
+        if (bv < 0.0f || bu + bv > 1.0f) continue;
+        const float t = e2.dot(qvec) * inv;
+        if (t <= 1e-4f || t >= nearest) continue;
+        const float bw = 1.0f - bu - bv;
+        nearest = t;
+        hitUv = va.texcoord * bw + vb.texcoord * bu + vc.texcoord * bv;
+        hit = true;
+    }
+    if (!hit) return CAFFEINE_NOT_FOUND;
+    *u = hitUv.x;
+    *v = hitUv.y;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_entity_material(const CaffeineSession* session,
+                                                    CaffeineEntity entityId, char* buffer,
+                                                    size_t buffer_size) {
+    if (!session || !buffer || buffer_size == 0) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = *const_cast<CaffeineSession*>(session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const auto* filter = mutableSession.world.get<Caffeine::ECS::MeshFilterComponent>(
+        entityOf(mutableSession, entityId));
+    if (!filter) return CAFFEINE_NOT_FOUND;
+    copyText(buffer, buffer_size, filter->customMaterialPath.c_str());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_render_material_preview(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, uint8_t* pixels, size_t pixel_bytes) {
+    return caffeine_session_render_material_preview_ex(
+        session, material, size, yaw_degrees, pitch_degrees, CAFFEINE_PREVIEW_SPHERE, nullptr,
+        1.0f, pixels, pixel_bytes);
+}
+
+CaffeineResult caffeine_session_render_material_preview_ex(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, CaffeinePreviewShape shape, const char* environmentPath, float exposure,
+    uint8_t* pixels, size_t pixel_bytes) {
+    if (!session || !material || !pixels) return CAFFEINE_INVALID_ARGUMENT;
+    const uint32_t previewSize = std::clamp(size, 32u, 1024u);
+    const size_t required = static_cast<size_t>(previewSize) * previewSize * 4u;
+    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
+    const uint32_t sceneWidth = session->renderWidth > 0 ? session->renderWidth : previewSize;
+    const uint32_t sceneHeight = session->renderHeight > 0 ? session->renderHeight : previewSize;
+    if (!session->ensureRender(sceneWidth, sceneHeight)) return CAFFEINE_ERROR;
+    if (!session->materialPreview) {
+        session->materialPreview = std::make_unique<Caffeine::Render::MaterialPreviewRenderer>();
+        if (!session->materialPreview->init(session->renderDevice.get())) {
+            session->materialPreview.reset();
+            return CAFFEINE_ERROR;
+        }
+    }
+
+    Caffeine::Render::MaterialPreviewSettings settings;
+    settings.yawDegrees = yaw_degrees;
+    settings.pitchDegrees = pitch_degrees;
+    settings.showFloor = true;
+    settings.probeResolution = 128;
+    settings.environmentExposure = std::max(exposure, 0.0f);
+    settings.subject = shape == CAFFEINE_PREVIEW_CUBE
+                           ? Caffeine::Render::MaterialPreviewSubject::Cube
+                           : shape == CAFFEINE_PREVIEW_PLANE
+                                 ? Caffeine::Render::MaterialPreviewSubject::Plane
+                                 : Caffeine::Render::MaterialPreviewSubject::Sphere;
+    if (environmentPath) settings.environmentPath = environmentPath;
+
+    Caffeine::RHI::CommandBuffer* command = session->renderDevice->beginOffscreen();
+    if (!command) return CAFFEINE_ERROR;
+    const Caffeine::Assets::MaterialSurface surface = readMaterial(*material);
+    const bool rendered = session->materialPreview->render(
+        command, surface, previewSize, settings, session->context.projectRootPath);
+    session->renderDevice->endOffscreen(command);
+    if (!rendered || !session->materialPreview->colorTexture()) return CAFFEINE_ERROR;
+    std::vector<Caffeine::u8> readback;
+    if (!session->renderDevice->readTexture(session->materialPreview->colorTexture(), readback) ||
+        readback.size() < required) {
+        return CAFFEINE_ERROR;
+    }
+    std::memcpy(pixels, readback.data(), required);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_render_material_preview_begin(
+    CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
+    float pitch_degrees, CaffeinePreviewShape shape, const char* environmentPath, float exposure) {
+    if (!session || !material) return CAFFEINE_INVALID_ARGUMENT;
+    if (session->previewPending) return CAFFEINE_ERROR;
+    const uint32_t previewSize = std::clamp(size, 32u, 1024u);
+    const uint32_t sceneWidth = session->renderWidth > 0 ? session->renderWidth : previewSize;
+    const uint32_t sceneHeight = session->renderHeight > 0 ? session->renderHeight : previewSize;
+    if (!session->ensureRender(sceneWidth, sceneHeight)) return CAFFEINE_ERROR;
+    if (!session->materialPreview) {
+        session->materialPreview = std::make_unique<Caffeine::Render::MaterialPreviewRenderer>();
+        if (!session->materialPreview->init(session->renderDevice.get())) {
+            session->materialPreview.reset();
+            return CAFFEINE_ERROR;
+        }
+    }
+    Caffeine::Render::MaterialPreviewSettings settings;
+    settings.yawDegrees = yaw_degrees;
+    settings.pitchDegrees = pitch_degrees;
+    settings.showFloor = true;
+    settings.probeResolution = 128;
+    settings.environmentExposure = std::max(exposure, 0.0f);
+    settings.subject = shape == CAFFEINE_PREVIEW_CUBE
+                           ? Caffeine::Render::MaterialPreviewSubject::Cube
+                           : shape == CAFFEINE_PREVIEW_PLANE
+                                 ? Caffeine::Render::MaterialPreviewSubject::Plane
+                                 : Caffeine::Render::MaterialPreviewSubject::Sphere;
+    if (environmentPath) settings.environmentPath = environmentPath;
+    Caffeine::RHI::CommandBuffer* command = session->renderDevice->beginOffscreen();
+    if (!command) return CAFFEINE_ERROR;
+    const Caffeine::Assets::MaterialSurface surface = readMaterial(*material);
+    const bool rendered = session->materialPreview->render(
+        command, surface, previewSize, settings, session->context.projectRootPath);
+    session->renderDevice->endOffscreen(command);
+    if (!rendered || !session->materialPreview->colorTexture()) return CAFFEINE_ERROR;
+
+    SDL_GPUDevice* device = session->renderDevice->nativeDevice();
+    if (!device) return CAFFEINE_ERROR;
+    session->releasePreviewReadback();
+    const Uint32 requiredBytes = previewSize * previewSize * 4u;
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = requiredBytes;
+    session->previewTransfer = SDL_CreateGPUTransferBuffer(device, &info);
+    if (!session->previewTransfer) return CAFFEINE_ERROR;
+    SDL_GPUCommandBuffer* readbackCommand = SDL_AcquireGPUCommandBuffer(device);
+    if (!readbackCommand) {
+        session->releasePreviewReadback();
+        return CAFFEINE_ERROR;
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(readbackCommand);
+    SDL_GPUTextureRegion source{};
+    source.texture = session->materialPreview->colorTexture()->handle;
+    source.w = previewSize;
+    source.h = previewSize;
+    source.d = 1;
+    SDL_GPUTextureTransferInfo destination{};
+    destination.transfer_buffer = session->previewTransfer;
+    destination.pixels_per_row = previewSize;
+    destination.rows_per_layer = previewSize;
+    SDL_DownloadFromGPUTexture(copy, &source, &destination);
+    SDL_EndGPUCopyPass(copy);
+    session->previewFence = SDL_SubmitGPUCommandBufferAndAcquireFence(readbackCommand);
+    if (!session->previewFence) {
+        SDL_WaitForGPUIdle(device);
+        session->releasePreviewReadback();
+        return CAFFEINE_ERROR;
+    }
+    session->previewSize = previewSize;
+    session->previewPending = true;
+    return CAFFEINE_OK;
+}
+
+CaffeineRenderState caffeine_session_render_material_preview_poll(CaffeineSession* session,
+                                                                 uint8_t* pixels,
+                                                                 size_t pixelBytes) {
+    if (!session || !session->previewPending) return CAFFEINE_RENDER_IDLE;
+    if (!pixels) return CAFFEINE_RENDER_FAILED;
+    const size_t required = static_cast<size_t>(session->previewSize) * session->previewSize * 4u;
+    if (pixelBytes < required) return CAFFEINE_RENDER_FAILED;
+    SDL_GPUDevice* device = session->renderDevice->nativeDevice();
+    if (!device || !SDL_QueryGPUFence(device, session->previewFence)) {
+        return CAFFEINE_RENDER_PENDING;
+    }
+    const void* mapped = SDL_MapGPUTransferBuffer(device, session->previewTransfer, false);
+    if (!mapped) {
+        session->releasePreviewReadback();
+        return CAFFEINE_RENDER_FAILED;
+    }
+    std::memcpy(pixels, mapped, required);
+    SDL_UnmapGPUTransferBuffer(device, session->previewTransfer);
+    session->releasePreviewReadback();
+    return CAFFEINE_RENDER_READY;
+}
+
+CaffeineResult caffeine_texture_generate_map(const char* source_path, const char* output_path,
+                                                 CaffeineTextureMapKind kind, float strength,
+                                                 int directx, int wrap, float min_value,
+                                                 float max_value, int invert, uint32_t radius) {
+    if (!source_path || source_path[0] == '\0' || !output_path || output_path[0] == '\0') {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    Caffeine::Assets::TextureImage source;
+    if (!Caffeine::Assets::loadTextureImage(source_path, source)) return CAFFEINE_ERROR;
+
+    Caffeine::Assets::TextureImage result;
+    switch (kind) {
+        case CAFFEINE_TEXTURE_NORMAL:
+            result = Caffeine::Assets::generateNormalFromHeight(source, strength, directx != 0,
+                                                                wrap != 0);
+            break;
+        case CAFFEINE_TEXTURE_AO:
+            result = Caffeine::Assets::generateAmbientOcclusion(source, strength, radius,
+                                                                wrap != 0);
+            break;
+        case CAFFEINE_TEXTURE_ROUGHNESS:
+        case CAFFEINE_TEXTURE_METALLIC:
+        case CAFFEINE_TEXTURE_HEIGHT:
+            result = Caffeine::Assets::generateScalarFromAlbedo(
+                source, static_cast<Caffeine::Assets::TextureMapKind>(kind), min_value, max_value,
+                invert != 0);
+            break;
+        default:
+            return CAFFEINE_INVALID_ARGUMENT;
+    }
+    if (!result.valid || !Caffeine::Assets::saveTextureImage(output_path, result)) {
+        return CAFFEINE_ERROR;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_texture_pack_maps(const char* ao_path, const char* roughness_path,
+                                              const char* metallic_path, const char* output_path,
+                                              int kind) {    if (!output_path || output_path[0] == '\0') return CAFFEINE_INVALID_ARGUMENT;
+    if (kind < 0 || kind > 2) return CAFFEINE_INVALID_ARGUMENT;
+    if (!ao_path && !roughness_path && !metallic_path) return CAFFEINE_INVALID_ARGUMENT;
+
+    Caffeine::Assets::TextureImage ao;
+    Caffeine::Assets::TextureImage roughness;
+    Caffeine::Assets::TextureImage metallic;
+    if (ao_path && ao_path[0] && !Caffeine::Assets::loadTextureImage(ao_path, ao)) {
+        return CAFFEINE_ERROR;
+    }
+    if (roughness_path && roughness_path[0] &&
+        !Caffeine::Assets::loadTextureImage(roughness_path, roughness)) {
+        return CAFFEINE_ERROR;
+    }
+    if (metallic_path && metallic_path[0] &&
+        !Caffeine::Assets::loadTextureImage(metallic_path, metallic)) {
+        return CAFFEINE_ERROR;
+    }
+    const Caffeine::Assets::TextureImage* aoPtr = ao.valid ? &ao : nullptr;
+    const Caffeine::Assets::TextureImage* roughnessPtr = roughness.valid ? &roughness : nullptr;
+    const Caffeine::Assets::TextureImage* metallicPtr = metallic.valid ? &metallic : nullptr;
+    Caffeine::Assets::TextureImage packed = Caffeine::Assets::packMaterialMap(
+        aoPtr, roughnessPtr, metallicPtr, static_cast<Caffeine::Assets::TexturePackKind>(kind));
+    if (!packed.valid || !Caffeine::Assets::saveTextureImage(output_path, packed)) {
+        return CAFFEINE_ERROR;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_texture_save_rgba(const char* output_path, uint32_t width,
+                                              uint32_t height, const uint8_t* pixels,
+                                              size_t pixel_bytes) {
+    if (!output_path || output_path[0] == '\0' || !pixels || width == 0 || height == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const size_t required = static_cast<size_t>(width) * height * 4u;
+    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Assets::TextureImage image;
+    image.width = width;
+    image.height = height;
+    image.rgba.assign(pixels, pixels + required);
+    image.valid = true;
+    return Caffeine::Assets::saveTextureImage(output_path, image) ? CAFFEINE_OK
+                                                                   : CAFFEINE_ERROR;
+}
+
+CaffeineResult caffeine_texture_save_rgba16(const char* output_path, uint32_t width,
+                                                uint32_t height, const uint16_t* pixels,
+                                                size_t pixel_bytes) {
+    if (!output_path || output_path[0] == '\0' || !pixels || width == 0 || height == 0) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const size_t required = static_cast<size_t>(width) * height * 4u * sizeof(uint16_t);
+    if (pixel_bytes < required) return CAFFEINE_INVALID_ARGUMENT;
+    return Caffeine::Assets::saveTextureImage16(
+               output_path, width, height, reinterpret_cast<const Caffeine::u16*>(pixels))
+               ? CAFFEINE_OK
+               : CAFFEINE_ERROR;
+}
+
+CaffeineResult caffeine_texture_load_thumbnail(const char* input_path, uint32_t maxSize,
+                                                uint32_t* width, uint32_t* height,
+                                                uint8_t** pixels, size_t* pixelBytes) {
+    if (!input_path || input_path[0] == '\0' || !width || !height || !pixels || !pixelBytes) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    const uint32_t maxSizeClamped = std::clamp(maxSize, 16u, 512u);
+    int sourceWidth = 0;
+    int sourceHeight = 0;
+    int channels = 0;
+    stbi_uc* source = stbi_load(input_path, &sourceWidth, &sourceHeight, &channels, 4);
+    bool hdr = false;
+    float* sourceHdr = nullptr;
+    if (!source) {
+        sourceHdr = stbi_loadf(input_path, &sourceWidth, &sourceHeight, &channels, 4);
+        hdr = sourceHdr != nullptr;
+    }
+    if ((!source && !sourceHdr) || sourceWidth <= 0 || sourceHeight <= 0) {
+        if (source) stbi_image_free(source);
+        if (sourceHdr) stbi_image_free(sourceHdr);
+        return CAFFEINE_ERROR;
+    }
+    const uint32_t longest = static_cast<uint32_t>(std::max(sourceWidth, sourceHeight));
+    const uint32_t targetWidth = std::max(
+        1u, static_cast<uint32_t>(sourceWidth) * maxSizeClamped / longest);
+    const uint32_t targetHeight = std::max(
+        1u, static_cast<uint32_t>(sourceHeight) * maxSizeClamped / longest);
+    const size_t bytes = static_cast<size_t>(targetWidth) * targetHeight * 4u;
+    auto* output = new (std::nothrow) uint8_t[bytes];
+    if (!output) {
+        if (source) stbi_image_free(source);
+        if (sourceHdr) stbi_image_free(sourceHdr);
+        return CAFFEINE_ERROR;
+    }
+    for (uint32_t y = 0; y < targetHeight; ++y) {
+        const uint32_t sy = y * static_cast<uint32_t>(sourceHeight) / targetHeight;
+        for (uint32_t x = 0; x < targetWidth; ++x) {
+            const uint32_t sx = x * static_cast<uint32_t>(sourceWidth) / targetWidth;
+            const size_t sourceIndex = (static_cast<size_t>(sy) * sourceWidth + sx) * 4;
+            const size_t targetIndex = (static_cast<size_t>(y) * targetWidth + x) * 4;
+            if (hdr) {
+                for (int channel = 0; channel < 3; ++channel) {
+                    const float linear = std::max(sourceHdr[sourceIndex + channel], 0.0f);
+                    output[targetIndex + channel] = static_cast<uint8_t>(
+                        std::pow(linear, 1.0f / 2.2f) * 255.0f + 0.5f);
+                }
+                output[targetIndex + 3] = 255;
+            } else {
+                for (int channel = 0; channel < 4; ++channel) {
+                    output[targetIndex + channel] = source[sourceIndex + channel];
+                }
+            }
+        }
+    }
+    if (source) stbi_image_free(source);
+    if (sourceHdr) stbi_image_free(sourceHdr);
+    *width = targetWidth;
+    *height = targetHeight;
+    *pixels = output;
+    *pixelBytes = bytes;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_texture_load_rgba(const char* input_path, uint32_t* width,
+                                              uint32_t* height, uint8_t** pixels,
+                                              size_t* pixel_bytes) {
+    if (!input_path || input_path[0] == '\0' || !width || !height || !pixels || !pixel_bytes) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    Caffeine::Assets::TextureImage image;
+    if (!Caffeine::Assets::loadTextureImage(input_path, image)) return CAFFEINE_ERROR;
+    const size_t bytes = image.rgba.size();
+    auto* copy = new (std::nothrow) uint8_t[bytes];
+    if (!copy) return CAFFEINE_ERROR;
+    std::memcpy(copy, image.rgba.data(), bytes);
+    *width = image.width;
+    *height = image.height;
+    *pixels = copy;
+    *pixel_bytes = bytes;
     return CAFFEINE_OK;
 }
 

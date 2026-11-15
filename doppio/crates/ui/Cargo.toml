@@ -12,14 +12,17 @@ path = "src/main.rs"
 [dependencies]
 iced.workspace = true
 doppio-engine = { path = "../engine" }
+image = "0.25"
 iced-mcp = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+roxmltree = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+zip = { version = "2.6", default-features = false, features = ["deflate"] }
 
 [features]
-agent = ["dep:iced-mcp", "dep:serde_json"]
+agent = ["dep:iced-mcp"]
 
 [dev-dependencies]
 iced_test.workspace = true
-image = "0.25"
 fontdue = "0.9"
 serde_json.workspace = true

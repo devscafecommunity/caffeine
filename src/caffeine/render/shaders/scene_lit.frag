@@ -202,6 +202,7 @@ vec3 surfaceNormal(vec2 uv) {
     vec3 T = normalize(v_tangent);
     vec3 B = normalize(v_bitangent);
     vec3 map = texture(uNormalMap, uv).xyz * 2.0 - 1.0;
+    if (lights.uProjParams.w > 0.5) map.y = -map.y;
     map.xy *= lights.uMaterialParams.x;
     return normalize(mat3(T, B, N) * map);
 }

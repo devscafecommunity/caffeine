@@ -63,16 +63,29 @@ Vulkan / D3D12 / Metal
 ## Doppio UI architecture
 
 - **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
-  (Hierarchy / Assets / Viewport / Inspector / Console). Panes host tabbed panels and the
-  tab strip is the drag handle; layout presets live in the View menu and menu dropdowns
-  are floating overlays. Hierarchy has a scene root, search and a tree from
-  `EntityView.parent` with expand/collapse and context actions. Console entries are typed
-  (Errors/Log/Actions/Engine/UI) and filterable; the Inspector uses sliders and a colour
-  picker for bounded/colour fields.
+  (Hierarchy / Assets / Viewport / Inspector / Console). Panes host tabbed panels; the
+  free title-bar area beside the tabs is the pane drag handle. Individual tabs can be dragged
+  between panes or split into a new pane. Layout presets live in the View menu and menu
+  dropdowns are floating overlays. Hierarchy composes the reusable `tree_view` component (icons,
+  hover, scene root, search, drag-to-reparent and `EntityView.parent` expansion) rather
+  than card rows. Its **+** opens a built-in prefab palette (mesh, lights, camera, physics,
+  terrain/water, duplicate selection). Parent groups compose position, rotation and scale
+  into their children (`Scene::propagateTransforms`); the gizmo projects the resolved world
+  position. A **Material** tab beside the Inspector edits `.mat` PBR assets with a rendered
+  sphere preview, texture slots and a map baker (normal/AO/roughness/metallic/ORM and Unity
+  packings); clicking a texture in Assets starts a material from it. A **Generator** tab hosts
+  a reusable node canvas (`uikit/components/node_canvas.rs`) over the clean-room atomic graph in
+  `uikit/generators.rs`, baking base, normal and ORM maps into the open material.
+  Console entries are typed (Errors/Log/Actions/Engine/UI) and filterable; the Inspector
+  has a combined Transform card, collapsible component cards and sliders/colour pickers
+  for bounded/colour fields. A **Texture Set** tab hosts a TextureCraft-style
+  UDIM/layer/mask painter (`uikit/texture_set.rs`, `uikit/components/uv_canvas.rs`),
+  with 3D painting through `caffeine_session_pick_uv`, mesh-map bakes and
+  `.texset` save/load.
 - **Window → Panel → Component.** Windows own state, subscriptions and `Message`s; panels
   are pure `view(...) -> Element` functions; components (`uikit/components/`) are reusable
-  primitives (button, slider, text field, field editor, component card/picker, panel,
-  toolbar, status chip, viewport surface, rendering canvas, gizmo, asset card).
+  primitives (button, slider, text field, field editor, tree view, component card/picker,
+  panel, toolbar, status chip, viewport surface/shader, rendering canvas, gizmo, asset card).
 - **Panels compose; they do not draw widgets.** A panel must not call `text_input`,
   `checkbox`, `pick_list`, `slider` or `button` directly. Extend a component under
   `uikit/components/` and compose it. `scripts/check-rust-ui.sh` fails on raw widgets in
@@ -84,7 +97,9 @@ Vulkan / D3D12 / Metal
   wheel) and shortcuts over adding a button for every action.
 - **Viewport interaction is a component.** `viewport_surface` owns mouse handling (drag,
   pan, wheel, double-click, cursor); camera maths and state stay in `windows/main.rs`.
-  Keep the viewport non-blocking (async readback) and show latency/FPS in the HUD.
+  `gizmo` overlays move/rotate/scale handles and emits absolute transform edits through
+  `Message`s, never engine calls. Keep the viewport non-blocking (async readback/shaders)
+  and show latency/FPS in the HUD.
 - **Ids are hierarchical and catalogued.** Every interactive widget gets a
   `uikit::id::UiId` (`group.subgroup.object`, e.g. `editor.toolbar.add_entity`,
   `inspector.entity.name`, `hierarchy.list.entity_row.3`) and an entry in
@@ -135,6 +150,10 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 - **Exception — Doppio only**: `doppio/docs/*.md` document the IDE architecture, ids,
   agent bridge, tests and roadmap. They must not duplicate core/engine docs.
   `doppio-archived/` is a frozen C++ snapshot and holds no live documentation.
+- **Material pipeline roadmap**: `doppio/docs/material-pipeline.md` is the living
+  checklist for materials, textures, map baking, node generators, MaterialCraft
+  interoperability and TextureCraft-style texture sets. Keep it current when one of
+  those areas changes.
 - **Generated UI reference**: `doppio/docs/ui-captions.json` is the source of English and
   Portuguese widget descriptions. `scripts/generate-doppio-ui-docs.sh` captures every
   catalogued widget and can publish the Markdown + images into

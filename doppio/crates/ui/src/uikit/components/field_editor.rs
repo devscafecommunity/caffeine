@@ -48,21 +48,29 @@ pub fn view<'a, Message: Clone + 'a>(
         ),
         (FieldKind::F32, FieldValue::F32(number)) if field.info.max > field.info.min => {
             let emit = emit.clone();
-            slider::labeled(
+            slider::property_step(
                 id_for_axis(0),
                 field.info.name.clone(),
                 field.info.min..=field.info.max,
                 *number,
+                field.info.step,
                 move |value| emit(FieldEdit::Number { axis: 0, value }),
             )
         }
         (FieldKind::Bool, FieldValue::Bool(flag)) => {
             let emit = emit.clone();
             row![
-                text(field.info.name.clone()).width(Length::Fixed(96.0)),
-                checkbox(*flag).on_toggle(move |flag| { emit(FieldEdit::Bool { value: flag }) })
+                checkbox(*flag).on_toggle(move |flag| { emit(FieldEdit::Bool { value: flag }) }),
+                iced::widget::space::horizontal(),
+                iced::widget::container(
+                    text(field.info.name.clone())
+                        .size(9)
+                        .color(crate::uikit::theme::TEXT_MUTED)
+                )
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
             ]
-            .spacing(6)
+            .spacing(5)
             .align_y(iced::Alignment::Center)
             .into()
         }
@@ -78,13 +86,15 @@ pub fn view<'a, Message: Clone + 'a>(
                     .unwrap_or(0) as i32;
                 emit(FieldEdit::Enum { index })
             });
-            row![
-                text(field.info.name.clone()).width(Length::Fixed(96.0)),
-                picker
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center)
-            .into()
+            Column::new()
+                .push(
+                    text(field.info.name.clone())
+                        .size(9)
+                        .color(crate::uikit::theme::TEXT_MUTED),
+                )
+                .push(picker.width(Length::Fill))
+                .spacing(1)
+                .into()
         }
         (FieldKind::Vec2 | FieldKind::Vec3 | FieldKind::Vec4, _) => {
             let axes = match field.info.kind {
@@ -92,25 +102,31 @@ pub fn view<'a, Message: Clone + 'a>(
                 FieldKind::Vec3 => 3,
                 _ => 4,
             };
-            let mut vector = Column::new().spacing(2);
+            let mut axes_row = row![].spacing(3);
             for axis in 0..axes {
                 let emit = emit.clone();
-                vector = vector.push(text_field::compact(
+                axes_row = axes_row.push(text_field::axis(
                     id_for_axis(axis),
                     axis_label(axis),
+                    axis_color(axis),
                     &input(axis),
                     move |value| emit(FieldEdit::Text { axis, value }),
                 ));
             }
-            Column::new()
-                .push(text(field.info.name.clone()))
-                .push(vector)
-                .spacing(2)
-                .into()
+            row![
+                text(field.info.name.clone())
+                    .size(9)
+                    .color(crate::uikit::theme::TEXT_MUTED)
+                    .width(Length::Fixed(62.0)),
+                axes_row,
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+            .into()
         }
         _ => {
             let emit = emit.clone();
-            text_field::view(
+            text_field::property(
                 id_for_axis(0),
                 field.info.name.clone(),
                 &input(0),
@@ -126,6 +142,15 @@ fn axis_label(axis: usize) -> &'static str {
         1 => "Y",
         2 => "Z",
         _ => "W",
+    }
+}
+
+fn axis_color(axis: usize) -> iced::Color {
+    match axis {
+        0 => crate::uikit::theme::DANGER,
+        1 => crate::uikit::theme::SUCCESS,
+        2 => crate::uikit::theme::ACCENT,
+        _ => crate::uikit::theme::TEXT_MUTED,
     }
 }
 

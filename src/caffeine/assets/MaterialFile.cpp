@@ -78,6 +78,10 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
             ss >> surface.uvOffset.x >> surface.uvOffset.y;
         } else if (tag == "normal_strength") {
             ss >> surface.normalStrength;
+        } else if (tag == "normal_directx") {
+            u32 flag = 0;
+            ss >> flag;
+            surface.normalDirectX = flag != 0;
         } else if (tag == "ao_strength") {
             ss >> surface.aoStrength;
         } else if (tag == "alpha_mode") {
@@ -214,6 +218,7 @@ bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& 
     out << "uv_tiling " << material.uvTiling.x << ' ' << material.uvTiling.y << '\n';
     out << "uv_offset " << material.uvOffset.x << ' ' << material.uvOffset.y << '\n';
     out << "normal_strength " << material.normalStrength << '\n';
+    out << "normal_directx " << (material.normalDirectX ? 1 : 0) << '\n';
     out << "ao_strength " << material.aoStrength << '\n';
     out << "alpha_mode " << alphaModeName(material.alphaMode) << '\n';
     out << "alpha_cutoff " << material.alphaCutoff << '\n';

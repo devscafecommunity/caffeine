@@ -161,8 +161,18 @@ void RenderDevice::endOffscreen(CommandBuffer* cmd) {
     cmd->submit();
     if (m_activeFrameCmd == cmd) m_activeFrameCmd = nullptr;
     delete cmd;
-    SDL_WaitForGPUIdle(m_device);
-    for (u32 slot = 0; slot < MAX_FRAMES_IN_FLIGHT; ++slot) releasePendingTransfers(slot);
+    // Do not wait for GPU idle here: this runs on the UI thread and the CAPI
+    // keeps one offscreen frame in flight. Its readback fence (submitted after
+    // this command) marks both commands complete; releaseOffscreenResources()
+    // then frees the upload buffers without stalling the editor.
+}
+
+void RenderDevice::releaseOffscreenResources() {
+    if (!m_device) return;
+    for (u32 slot = 0; slot < MAX_FRAMES_IN_FLIGHT; ++slot) {
+        releasePendingTransfers(slot);
+        releaseRetiredTextures(slot);
+    }
 }
 
 bool RenderDevice::readTexture(Texture* texture, std::vector<u8>& outPixels) {
