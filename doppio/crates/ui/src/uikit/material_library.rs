@@ -54,6 +54,45 @@ pub struct Preset {
     relief: f32,
     roughness: (f32, f32),
     metallic: f32,
+    /// Optional third layer laid over the surface (moss, foam, rust, wetness, lichen...).
+    accent: Option<Accent>,
+    /// Wire the base layer's third output into the Emissive input (lava).
+    emissive: bool,
+}
+
+/// A layer blended over the finished surface through its own value as a mask.
+#[derive(Debug, Clone, Copy)]
+pub struct Accent {
+    layer: Layer,
+    /// Maximum share of the accent colour (0..1).
+    strength: f32,
+    /// Roughness the accent drives the surface towards.
+    rough_to: f32,
+    /// How much the accent's value adds to the height (0..1).
+    relief: f32,
+}
+
+const fn accent(layer: Layer, strength: f32, rough_to: f32, relief: f32) -> Accent {
+    Accent {
+        layer,
+        strength,
+        rough_to,
+        relief,
+    }
+}
+
+const fn with_accent(p: Preset, accent: Accent) -> Preset {
+    Preset {
+        accent: Some(accent),
+        ..p
+    }
+}
+
+const fn glowing(p: Preset) -> Preset {
+    Preset {
+        emissive: true,
+        ..p
+    }
 }
 
 const fn c(r: f32, g: f32, b: f32) -> [f32; 4] {
@@ -112,6 +151,8 @@ const fn preset(
         relief,
         roughness,
         metallic,
+        accent: None,
+        emissive: false,
     }
 }
 
@@ -710,6 +751,813 @@ static PRESETS: &[Preset] = &[
         (0.4, 0.7),
         0.0,
     ),
+    // ======================================================== Realistic Rock
+    preset(
+        "Cliff Granite",
+        "Realistic Rock",
+        "Fractured granite cliff face with sharp facets.",
+        layer(
+            "rock_fracture",
+            &[("cells", 9.0), ("crack", 0.08), ("tilt", 0.6)],
+            &[c(0.22, 0.21, 0.21), c(0.64, 0.61, 0.57)],
+        ),
+        FINE,
+        0.45,
+        0.35,
+        (0.62, 0.92),
+        0.0,
+    ),
+    preset(
+        "Basalt Columns",
+        "Realistic Rock",
+        "Dark volcanic rock broken into angular blocks.",
+        layer(
+            "rock_fracture",
+            &[
+                ("cells", 6.0),
+                ("crack", 0.12),
+                ("tilt", 0.3),
+                ("jitter", 0.6),
+            ],
+            &[c(0.05, 0.05, 0.06), c(0.26, 0.26, 0.29)],
+        ),
+        COARSE,
+        0.35,
+        0.3,
+        (0.4, 0.78),
+        0.0,
+    ),
+    preset(
+        "Limestone Strata",
+        "Realistic Rock",
+        "Sedimentary limestone layers eroded by weather.",
+        layer(
+            "strata",
+            &[("layers", 16.0), ("warp", 0.45), ("tone", 0.95)],
+            &[c(0.50, 0.45, 0.36), c(0.88, 0.83, 0.72)],
+        ),
+        GRIME,
+        0.4,
+        0.3,
+        (0.7, 0.95),
+        0.0,
+    ),
+    preset(
+        "Sandstone Canyon",
+        "Realistic Rock",
+        "Wind-carved red sandstone bands.",
+        layer(
+            "strata",
+            &[
+                ("layers", 22.0),
+                ("warp", 0.7),
+                ("tone", 0.6),
+                ("grain", 0.6),
+            ],
+            &[c(0.50, 0.36, 0.26), c(0.84, 0.66, 0.48)],
+        ),
+        FINE,
+        0.35,
+        0.35,
+        (0.8, 0.98),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Mossy Boulder",
+            "Realistic Rock",
+            "Granite boulder swallowed by damp moss.",
+            layer(
+                "rock_fracture",
+                &[("cells", 5.0), ("crack", 0.1), ("tilt", 0.5)],
+                &[c(0.20, 0.20, 0.19), c(0.55, 0.53, 0.49)],
+            ),
+            FINE,
+            0.4,
+            0.4,
+            (0.6, 0.9),
+            0.0,
+        ),
+        accent(
+            layer(
+                "moss",
+                &[("scale", 5.0)],
+                &[c(0.05, 0.13, 0.03), c(0.28, 0.45, 0.10)],
+            ),
+            0.92,
+            0.95,
+            0.4,
+        ),
+    ),
+    with_accent(
+        preset(
+            "Lichen Granite",
+            "Realistic Rock",
+            "Weathered granite patched with pale lichen.",
+            layer(
+                "rock_fracture",
+                &[("cells", 8.0), ("crack", 0.07)],
+                &[c(0.30, 0.29, 0.28), c(0.66, 0.63, 0.58)],
+            ),
+            FINE,
+            0.4,
+            0.3,
+            (0.65, 0.95),
+            0.0,
+        ),
+        accent(
+            layer("lichen", &[], &[c(0.45, 0.43, 0.40), c(0.62, 0.68, 0.38)]),
+            0.85,
+            0.95,
+            0.3,
+        ),
+    ),
+    preset(
+        "River Pebbles",
+        "Realistic Rock",
+        "Smooth, rounded river stones packed tightly.",
+        layer(
+            "river_pebbles",
+            &[("cells", 10.0)],
+            &[
+                c(0.26, 0.24, 0.21),
+                c(0.74, 0.69, 0.60),
+                c(0.06, 0.05, 0.04),
+            ],
+        ),
+        FINE,
+        0.3,
+        0.4,
+        (0.3, 0.65),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Wet Pebbles",
+            "Realistic Rock",
+            "Pebbles at the water line, glossy where wet.",
+            layer(
+                "river_pebbles",
+                &[("cells", 12.0), ("gap", 0.1)],
+                &[
+                    c(0.30, 0.28, 0.25),
+                    c(0.70, 0.66, 0.58),
+                    c(0.05, 0.04, 0.03),
+                ],
+            ),
+            FINE,
+            0.3,
+            0.4,
+            (0.3, 0.65),
+            0.0,
+        ),
+        accent(
+            layer(
+                "clouds",
+                &[("coverage", 0.5)],
+                &[c(0.05, 0.05, 0.05), c(0.14, 0.13, 0.12)],
+            ),
+            0.75,
+            0.04,
+            0.0,
+        ),
+    ),
+    glowing(preset(
+        "Lava Flow",
+        "Realistic Rock",
+        "Cooling crust split by glowing magma.",
+        layer("lava", &[], &[c(0.03, 0.025, 0.025), c(1.0, 0.38, 0.05)]),
+        COARSE,
+        0.3,
+        0.3,
+        (0.55, 0.92),
+        0.0,
+    )),
+    preset(
+        "Frozen Lake",
+        "Realistic Rock",
+        "Cracked ice sheet with trapped bubbles.",
+        layer(
+            "ice_cracks",
+            &[],
+            &[c(0.45, 0.66, 0.80), c(0.93, 0.97, 1.0)],
+        ),
+        FINE,
+        0.2,
+        0.2,
+        (0.04, 0.3),
+        0.0,
+    ),
+    // ======================================================= Realistic Water
+    with_accent(
+        preset(
+            "Ocean Swell",
+            "Realistic Water",
+            "Deep ocean with rolling swell and foam on the crests.",
+            layer(
+                "water_waves",
+                &[("waves", 10.0), ("frequency", 3.0), ("choppy", 0.6)],
+                &[c(0.03, 0.14, 0.24), c(0.16, 0.48, 0.60)],
+            ),
+            COARSE,
+            0.08,
+            0.3,
+            (0.02, 0.1),
+            0.0,
+        ),
+        accent(
+            layer(
+                "foam",
+                &[("threshold", 0.7)],
+                &[c(0.02, 0.18, 0.26), c(0.96, 0.98, 0.99)],
+            ),
+            0.9,
+            0.45,
+            0.12,
+        ),
+    ),
+    preset(
+        "Calm Lake",
+        "Realistic Water",
+        "Glassy lake with faint wind ripples.",
+        layer(
+            "water_waves",
+            &[
+                ("waves", 6.0),
+                ("frequency", 6.0),
+                ("choppy", 0.1),
+                ("falloff", 1.7),
+            ],
+            &[c(0.03, 0.12, 0.15), c(0.12, 0.34, 0.38)],
+        ),
+        COARSE,
+        0.05,
+        0.12,
+        (0.01, 0.05),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Choppy Sea",
+            "Realistic Water",
+            "Wind-whipped sea breaking into foam.",
+            layer(
+                "water_waves",
+                &[
+                    ("waves", 12.0),
+                    ("frequency", 5.0),
+                    ("choppy", 0.95),
+                    ("spread", 0.8),
+                ],
+                &[c(0.04, 0.16, 0.22), c(0.20, 0.50, 0.58)],
+            ),
+            COARSE,
+            0.1,
+            0.35,
+            (0.04, 0.18),
+            0.0,
+        ),
+        accent(
+            layer(
+                "foam",
+                &[("threshold", 0.55), ("lace", 0.7)],
+                &[c(0.03, 0.2, 0.26), c(0.97, 0.99, 1.0)],
+            ),
+            1.0,
+            0.5,
+            0.2,
+        ),
+    ),
+    preset(
+        "Tropical Shallows",
+        "Realistic Water",
+        "Clear turquoise shallows with dancing caustics.",
+        layer(
+            "water_waves",
+            &[("waves", 6.0), ("frequency", 5.0), ("choppy", 0.2)],
+            &[c(0.05, 0.40, 0.45), c(0.45, 0.85, 0.80)],
+        ),
+        layer("caustics", &[], &[c(0.2, 0.5, 0.55), c(0.95, 1.0, 1.0)]),
+        0.45,
+        0.2,
+        (0.02, 0.1),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "River Rapids",
+            "Realistic Water",
+            "Fast white water over a rocky bed.",
+            layer(
+                "water_waves",
+                &[
+                    ("waves", 12.0),
+                    ("frequency", 4.0),
+                    ("choppy", 0.85),
+                    ("wind", 90.0),
+                    ("spread", 0.3),
+                ],
+                &[c(0.06, 0.20, 0.22), c(0.26, 0.52, 0.52)],
+            ),
+            COARSE,
+            0.12,
+            0.35,
+            (0.05, 0.2),
+            0.0,
+        ),
+        accent(
+            layer(
+                "foam",
+                &[("threshold", 0.5), ("lace", 0.8)],
+                &[c(0.05, 0.2, 0.22), c(0.98, 1.0, 1.0)],
+            ),
+            1.0,
+            0.55,
+            0.25,
+        ),
+    ),
+    preset(
+        "Rain Puddle",
+        "Realistic Water",
+        "Muddy puddle with expanding rain rings.",
+        layer(
+            "water_ripples",
+            &[("sources", 14.0), ("frequency", 26.0), ("decay", 6.0)],
+            &[c(0.10, 0.09, 0.07), c(0.42, 0.38, 0.32)],
+        ),
+        COARSE,
+        0.1,
+        0.1,
+        (0.01, 0.06),
+        0.0,
+    ),
+    preset(
+        "Wet Glass Droplets",
+        "Realistic Water",
+        "Condensation beads on a glass pane.",
+        layer(
+            "water_droplets",
+            &[],
+            &[c(0.12, 0.14, 0.16), c(0.85, 0.92, 0.98)],
+        ),
+        FINE,
+        0.1,
+        0.55,
+        (0.04, 0.22),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Swamp Water",
+            "Realistic Water",
+            "Murky stagnant water crusted with algae.",
+            layer(
+                "water_waves",
+                &[("waves", 5.0), ("frequency", 4.0), ("choppy", 0.15)],
+                &[c(0.05, 0.08, 0.03), c(0.22, 0.30, 0.11)],
+            ),
+            COARSE,
+            0.15,
+            0.15,
+            (0.05, 0.15),
+            0.0,
+        ),
+        accent(
+            layer(
+                "clouds",
+                &[("coverage", 0.55), ("scale", 4.0)],
+                &[c(0.08, 0.18, 0.03), c(0.30, 0.46, 0.10)],
+            ),
+            0.85,
+            0.7,
+            0.25,
+        ),
+    ),
+    // ====================================================== Realistic Nature
+    preset(
+        "Lawn Grass",
+        "Realistic Nature",
+        "Short, dense, healthy lawn.",
+        layer(
+            "grass_blades",
+            &[
+                ("cells", 22.0),
+                ("layers", 4.0),
+                ("length", 1.0),
+                ("width", 0.12),
+            ],
+            &[
+                c(0.05, 0.12, 0.03),
+                c(0.36, 0.56, 0.14),
+                c(0.10, 0.08, 0.05),
+            ],
+        ),
+        FINE,
+        0.2,
+        0.5,
+        (0.6, 0.88),
+        0.0,
+    ),
+    preset(
+        "Meadow Grass",
+        "Realistic Nature",
+        "Long meadow grass leaning in the breeze.",
+        layer(
+            "grass_blades",
+            &[
+                ("cells", 20.0),
+                ("layers", 4.0),
+                ("length", 1.5),
+                ("lean", 0.8),
+                ("curl", 0.5),
+            ],
+            &[
+                c(0.04, 0.09, 0.02),
+                c(0.50, 0.62, 0.18),
+                c(0.06, 0.05, 0.03),
+            ],
+        ),
+        FINE,
+        0.25,
+        0.55,
+        (0.55, 0.85),
+        0.0,
+    ),
+    preset(
+        "Dry Grass",
+        "Realistic Nature",
+        "Sun-bleached straw-coloured grass.",
+        layer(
+            "grass_blades",
+            &[
+                ("cells", 22.0),
+                ("layers", 4.0),
+                ("length", 1.3),
+                ("lean", 0.7),
+                ("curl", 0.45),
+            ],
+            &[
+                c(0.20, 0.14, 0.06),
+                c(0.82, 0.70, 0.38),
+                c(0.12, 0.09, 0.05),
+            ],
+        ),
+        FINE,
+        0.25,
+        0.5,
+        (0.65, 0.92),
+        0.0,
+    ),
+    preset(
+        "Tall Wild Grass",
+        "Realistic Nature",
+        "Tall tangled wild grass, deep shadows.",
+        layer(
+            "grass_blades",
+            &[
+                ("cells", 14.0),
+                ("layers", 5.0),
+                ("length", 2.0),
+                ("width", 0.12),
+                ("lean", 1.0),
+                ("curl", 0.7),
+            ],
+            &[
+                c(0.02, 0.06, 0.015),
+                c(0.38, 0.55, 0.14),
+                c(0.04, 0.03, 0.02),
+            ],
+        ),
+        FINE,
+        0.3,
+        0.6,
+        (0.55, 0.85),
+        0.0,
+    ),
+    preset(
+        "Pine Needles",
+        "Realistic Nature",
+        "Fine brown needle bed under conifers.",
+        layer(
+            "grass_blades",
+            &[
+                ("cells", 28.0),
+                ("layers", 4.0),
+                ("length", 1.1),
+                ("width", 0.055),
+                ("lean", 1.0),
+                ("curl", 0.1),
+            ],
+            &[
+                c(0.26, 0.14, 0.07),
+                c(0.64, 0.42, 0.20),
+                c(0.10, 0.06, 0.03),
+            ],
+        ),
+        FINE,
+        0.2,
+        0.45,
+        (0.65, 0.9),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Forest Floor",
+            "Realistic Nature",
+            "Fallen leaves over damp earth, moss in the cracks.",
+            layer(
+                "leaf_litter",
+                &[("cells", 8.0), ("layers", 3.0)],
+                &[
+                    c(0.22, 0.11, 0.04),
+                    c(0.62, 0.38, 0.10),
+                    c(0.05, 0.035, 0.02),
+                ],
+            ),
+            DIRT,
+            0.3,
+            0.4,
+            (0.7, 0.95),
+            0.0,
+        ),
+        accent(
+            layer(
+                "moss",
+                &[("scale", 6.0), ("coverage", 0.3)],
+                &[c(0.05, 0.12, 0.03), c(0.24, 0.40, 0.09)],
+            ),
+            0.55,
+            0.9,
+            0.2,
+        ),
+    ),
+    preset(
+        "Autumn Leaves",
+        "Realistic Nature",
+        "A deep drift of red and orange leaves.",
+        layer(
+            "leaf_litter",
+            &[("cells", 7.0), ("layers", 4.0), ("size", 1.0)],
+            &[
+                c(0.45, 0.10, 0.04),
+                c(0.88, 0.50, 0.10),
+                c(0.07, 0.04, 0.02),
+            ],
+        ),
+        FINE,
+        0.2,
+        0.45,
+        (0.6, 0.88),
+        0.0,
+    ),
+    // ====================================================== Realistic Ground
+    preset(
+        "Rich Soil",
+        "Realistic Ground",
+        "Crumbly garden soil with small stones.",
+        layer(
+            "soil_clumps",
+            &[],
+            &[c(0.15, 0.10, 0.06), c(0.48, 0.34, 0.21)],
+        ),
+        FINE,
+        0.3,
+        0.5,
+        (0.8, 1.0),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Forest Mud",
+            "Realistic Ground",
+            "Wet churned mud with glossy puddled patches.",
+            layer(
+                "soil_clumps",
+                &[("clumps", 9.0), ("grain", 0.4)],
+                &[c(0.10, 0.07, 0.045), c(0.34, 0.24, 0.15)],
+            ),
+            COARSE,
+            0.25,
+            0.4,
+            (0.7, 0.95),
+            0.0,
+        ),
+        accent(
+            layer(
+                "clouds",
+                &[("coverage", 0.45)],
+                &[c(0.04, 0.03, 0.02), c(0.10, 0.08, 0.06)],
+            ),
+            0.8,
+            0.06,
+            0.0,
+        ),
+    ),
+    preset(
+        "Fresh Asphalt",
+        "Realistic Ground",
+        "New road asphalt with exposed aggregate.",
+        layer(
+            "asphalt",
+            &[("cells", 60.0), ("density", 0.75)],
+            &[c(0.10, 0.10, 0.11), c(0.52, 0.50, 0.48)],
+        ),
+        FINE,
+        0.2,
+        0.4,
+        (0.75, 0.95),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Cracked Asphalt",
+            "Realistic Ground",
+            "Sun-faded asphalt split by frost cracks.",
+            layer(
+                "asphalt",
+                &[("cells", 60.0), ("density", 0.7), ("wear", 0.9)],
+                &[c(0.18, 0.18, 0.19), c(0.58, 0.56, 0.53)],
+            ),
+            GRIME,
+            0.35,
+            0.4,
+            (0.8, 0.98),
+            0.0,
+        ),
+        accent(
+            layer(
+                "cracks",
+                &[("scale", 4.0), ("width", 0.03), ("plate_var", 0.0)],
+                &[c(0.02, 0.02, 0.02), c(0.3, 0.3, 0.3)],
+            ),
+            0.85,
+            0.95,
+            0.7,
+        ),
+    ),
+    // ======================================================== Realistic Wood
+    preset(
+        "Oak Bark",
+        "Realistic Wood",
+        "Deep-furrowed oak bark.",
+        layer(
+            "bark_fissures",
+            &[],
+            &[c(0.04, 0.03, 0.02), c(0.34, 0.26, 0.19)],
+        ),
+        FINE,
+        0.35,
+        0.3,
+        (0.8, 1.0),
+        0.0,
+    ),
+    preset(
+        "Pine Bark",
+        "Realistic Wood",
+        "Plated, reddish pine bark.",
+        layer(
+            "bark_fissures",
+            &[("cells", 6.0), ("stretch", 3.0), ("depth", 0.9)],
+            &[c(0.06, 0.03, 0.02), c(0.52, 0.30, 0.18)],
+        ),
+        FINE,
+        0.35,
+        0.3,
+        (0.75, 0.98),
+        0.0,
+    ),
+    with_accent(
+        preset(
+            "Birch Bark",
+            "Realistic Wood",
+            "Pale birch bark with dark horizontal lenticels.",
+            layer(
+                "bark_fissures",
+                &[
+                    ("cells", 12.0),
+                    ("stretch", 1.0),
+                    ("depth", 0.35),
+                    ("warp", 0.2),
+                ],
+                &[c(0.45, 0.42, 0.38), c(0.88, 0.86, 0.80)],
+            ),
+            FINE,
+            0.2,
+            0.2,
+            (0.6, 0.88),
+            0.0,
+        ),
+        accent(
+            layer(
+                "lichen",
+                &[("coverage", 0.2)],
+                &[c(0.88, 0.86, 0.80), c(0.50, 0.58, 0.32)],
+            ),
+            0.5,
+            0.9,
+            0.1,
+        ),
+    ),
+    // ===================================================== Realistic Man-made
+    preset(
+        "Carbon Fibre",
+        "Realistic Man-made",
+        "2x2 twill carbon-fibre weave under clear coat.",
+        layer(
+            "carbon_fibre",
+            &[],
+            &[c(0.015, 0.015, 0.02), c(0.26, 0.28, 0.32)],
+        ),
+        FINE,
+        0.05,
+        0.35,
+        (0.1, 0.3),
+        0.0,
+    ),
+    preset(
+        "Chipped Red Paint",
+        "Realistic Man-made",
+        "Red enamel chipped down to bare steel.",
+        layer(
+            "paint_chips",
+            &[("scale", 12.0), ("coverage", 0.28)],
+            &[c(0.62, 0.08, 0.06), c(0.42, 0.42, 0.43)],
+        ),
+        SCRATCHED,
+        0.3,
+        0.3,
+        (0.3, 0.7),
+        0.45,
+    ),
+    preset(
+        "Chipped Blue Paint",
+        "Realistic Man-made",
+        "Flaking blue paint on a steel panel.",
+        layer(
+            "paint_chips",
+            &[("scale", 12.0), ("coverage", 0.35)],
+            &[c(0.10, 0.22, 0.50), c(0.45, 0.45, 0.47)],
+        ),
+        SCRATCHED,
+        0.3,
+        0.3,
+        (0.3, 0.7),
+        0.5,
+    ),
+    with_accent(
+        preset(
+            "Rusty Painted Panel",
+            "Realistic Man-made",
+            "Peeling paint with rust blooming underneath.",
+            layer(
+                "paint_chips",
+                &[("scale", 10.0), ("coverage", 0.5)],
+                &[c(0.20, 0.34, 0.22), c(0.40, 0.40, 0.40)],
+            ),
+            SCRATCHED,
+            0.3,
+            0.3,
+            (0.4, 0.8),
+            0.4,
+        ),
+        accent(
+            layer(
+                "rust",
+                &[("scale", 5.0)],
+                &[c(0.20, 0.08, 0.03), c(0.64, 0.28, 0.08)],
+            ),
+            0.85,
+            0.9,
+            0.3,
+        ),
+    ),
+    with_accent(
+        preset(
+            "Mossy Brick Wall",
+            "Realistic Man-made",
+            "Old brick wall with moss in the mortar joints.",
+            layer(
+                "bricks_pro",
+                &[],
+                &[c(0.48, 0.45, 0.42), c(0.52, 0.22, 0.14)],
+            ),
+            GRIME,
+            0.55,
+            0.35,
+            (0.75, 0.97),
+            0.0,
+        ),
+        accent(
+            layer(
+                "moss",
+                &[("scale", 6.0), ("coverage", 0.35)],
+                &[c(0.05, 0.12, 0.03), c(0.26, 0.42, 0.10)],
+            ),
+            0.7,
+            0.95,
+            0.3,
+        ),
+    ),
 ];
 
 pub fn presets() -> &'static [Preset] {
@@ -827,24 +1675,74 @@ impl Preset {
             false,
         );
         let shade = math(&mut graph, "math_multiply", &[], Point::new(-260.0, -150.0));
-        let colour = math(
+        let colour_raw = math(
             &mut graph,
             "math_lerp",
             &[("factor", mix)],
             Point::new(-20.0, -150.0),
         );
-        let height = math(
+        let height_raw = math(
             &mut graph,
             "math_lerp",
             &[("factor", relief)],
             Point::new(-20.0, 20.0),
         );
-        let rough = math(
+        let rough_raw = math(
             &mut graph,
             "math_remap",
             &[("out_min", self.roughness.0), ("out_max", self.roughness.1)],
             Point::new(-20.0, 190.0),
         );
+        let (colour, rough, height) = (colour_raw, rough_raw, height_raw);
+        let (colour, rough, height) = match &self.accent {
+            Some(accent) => {
+                let layer = add_layer(
+                    &mut graph,
+                    &accent.layer,
+                    params,
+                    Point::new(-520.0, 480.0),
+                    false,
+                );
+                let mask = math(
+                    &mut graph,
+                    "math_remap",
+                    &[(
+                        "out_max",
+                        (accent.strength * wear.clamp(0.3, 1.5)).clamp(0.0, 1.0),
+                    )],
+                    Point::new(-260.0, 480.0),
+                );
+                let lift = math(
+                    &mut graph,
+                    "math_remap",
+                    &[(
+                        "out_max",
+                        (accent.relief * wear.clamp(0.3, 1.5)).clamp(0.0, 1.0),
+                    )],
+                    Point::new(-260.0, 620.0),
+                );
+                let tinted = math(&mut graph, "math_lerp", &[], Point::new(240.0, -150.0));
+                let wet = math(
+                    &mut graph,
+                    "math_lerp",
+                    &[("b_value", accent.rough_to)],
+                    Point::new(240.0, 190.0),
+                );
+                let raised = math(&mut graph, "math_lerp", &[], Point::new(240.0, 20.0));
+                graph.connect(layer, 1, mask, 0);
+                graph.connect(layer, 1, lift, 0);
+                graph.connect(colour, 0, tinted, 0);
+                graph.connect(layer, 0, tinted, 1);
+                graph.connect(mask, 0, tinted, 2);
+                graph.connect(rough, 0, wet, 0);
+                graph.connect(mask, 0, wet, 2);
+                graph.connect(height, 0, raised, 0);
+                graph.connect(layer, 1, raised, 1);
+                graph.connect(lift, 0, raised, 2);
+                (tinted, wet, raised)
+            }
+            None => (colour, rough, height),
+        };
         let output = graph.add_node(
             NodeKind::Output {
                 roughness: 0.5,
@@ -858,11 +1756,14 @@ impl Preset {
         // Pattern ops: 0 = colour, 1 = value (relief).
         graph.connect(base, 0, shade, 0);
         graph.connect(detail, 0, shade, 1);
-        graph.connect(base, 0, colour, 0);
-        graph.connect(shade, 0, colour, 1);
-        graph.connect(base, 1, height, 0);
-        graph.connect(detail, 1, height, 1);
-        graph.connect(detail, 1, rough, 0);
+        graph.connect(base, 0, colour_raw, 0);
+        graph.connect(shade, 0, colour_raw, 1);
+        graph.connect(base, 1, height_raw, 0);
+        graph.connect(detail, 1, height_raw, 1);
+        graph.connect(detail, 1, rough_raw, 0);
+        if self.emissive {
+            graph.connect(base, 2, output, 5);
+        }
         graph.connect(colour, 0, output, 0);
         graph.connect(rough, 0, output, 1);
         graph.connect(height, 0, output, 3);
@@ -893,8 +1794,8 @@ mod tests {
 
     #[test]
     fn library_has_thirty_presets_across_categories() {
-        assert!(presets().len() >= 30, "{}", presets().len());
-        assert!(categories().len() >= 9);
+        assert!(presets().len() >= 70, "{}", presets().len());
+        assert!(categories().len() >= 13);
         let mut names: Vec<_> = presets().iter().map(|p| p.name).collect();
         names.sort_unstable();
         names.dedup();

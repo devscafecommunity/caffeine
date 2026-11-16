@@ -1996,13 +1996,8 @@ fn material_preview_sun_and_shadows_change_the_render() {
             .sum::<f32>()
             / count
     };
-    // Known gap: when an earlier test in the same process already rendered with another engine
-    // session, the floor shadow does not appear (a single session, as in the editor, is fine).
-    // Only enforce it when this is the process's first renderer, i.e. run it on its own:
-    // `cargo test -p doppio-ui --lib material_preview_sun`.
-    let strict = std::env::var("DOPPIO_STRICT_PREVIEW_SHADOW").is_ok();
     assert!(
-        !strict || bottom_mean(&moved) < bottom_mean(&unshadowed) * 0.7,
+        bottom_mean(&moved) < bottom_mean(&unshadowed) * 0.7,
         "the sphere must cast a shadow on the floor ({} vs {})",
         bottom_mean(&moved),
         bottom_mean(&unshadowed)
@@ -2032,7 +2027,9 @@ fn preview_reloads_a_map_rewritten_in_place() {
     std::fs::create_dir_all(&dir).expect("dir");
     let path = dir.join("albedo.png").to_string_lossy().to_string();
     let solid = |rgb: [u8; 3]| -> Vec<u8> {
-        (0..16 * 16).flat_map(|_| [rgb[0], rgb[1], rgb[2], 255]).collect()
+        (0..16 * 16)
+            .flat_map(|_| [rgb[0], rgb[1], rgb[2], 255])
+            .collect()
     };
     let material = doppio_engine::Material {
         albedo_map: path.clone(),

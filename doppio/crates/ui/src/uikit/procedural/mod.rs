@@ -37,6 +37,7 @@ pub mod math;
 pub mod natural;
 pub mod noise;
 pub mod patterns;
+pub mod realistic;
 pub mod shapes;
 
 use crate::uikit::components::node_canvas::PortKind;
@@ -209,6 +210,7 @@ pub fn all() -> &'static [&'static OpDef] {
             math::OPS,
             geometry::OPS,
             height::OPS,
+            realistic::OPS,
         ] {
             ops.extend(table.iter());
         }
@@ -221,7 +223,7 @@ pub fn find(id: &str) -> Option<ProcOp> {
 }
 
 /// Category display order.
-pub const CATEGORIES: [&str; 7] = [
+pub const CATEGORIES: [&str; 8] = [
     "Noise",
     "Natural",
     "Patterns",
@@ -229,6 +231,7 @@ pub const CATEGORIES: [&str; 7] = [
     "Math",
     "Geometry",
     "Height & PBR",
+    "Realistic",
 ];
 
 // ----------------------------------------------------------- spec builders
