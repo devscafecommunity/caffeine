@@ -10,6 +10,7 @@
 #include "math/Quat.hpp"
 #include "render/GpuSceneRenderer.hpp"
 #include "render/GpuProceduralMeshes.hpp"
+#include "render/GpuTextureCache.hpp"
 #include "render/MaterialPreviewRenderer.hpp"
 #include "rhi/RenderDevice.hpp"
 #include "physics/PhysicsComponents2D.hpp"
@@ -206,6 +207,12 @@ struct CaffeineSession {
             materialPreview.reset();
         }
         if (sceneRenderer) sceneRenderer->shutdown();
+        if (renderDevice) {
+            // The texture cache is global and outlives one session. Drop only
+            // this device's entries so the next session cannot reuse stale
+            // textures from a destroyed renderer.
+            Caffeine::Render::GpuTextureCache::instance().releaseAll(renderDevice.get());
+        }
         if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
         colorTarget = nullptr;
         renderWidth = 0;

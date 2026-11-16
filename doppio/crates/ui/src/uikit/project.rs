@@ -168,6 +168,7 @@ pub fn create_project(location: &Path, name: &str, template: &str) -> Result<Pro
         "assets/raw/Animations",
         "assets/raw/Models",
         "assets/raw/Materials",
+        "assets/raw/materials",
         "assets/raw/Textures",
         "assets/raw/Audio",
         "assets/raw/Prefabs",

@@ -84,7 +84,9 @@ Do not copy source, shader text, node definitions or bundled assets.
       duplication/duplicate-selection is still pending.
 - [ ] Optional frames/comments; keep them out of the first undo milestone.
 - [x] Fit-to-graph ("Fit" button / `fit_generator`).
-- [ ] Node thumbnails are optional; do not block editing on image baking.
+- [x] Node cards show a live 72 px thumbnail (96 px evaluated) of their own evaluated output,
+      computed in the debounced background preview worker; errors simply omit
+      that thumbnail and never block editing.
 
 ## Phase 2 — MaterialCraft-style node library
 
@@ -147,8 +149,10 @@ Do not copy source, shader text, node definitions or bundled assets.
 - [ ] Full native SBS export parity. The current writer emits the Doppio subset
       and validates it against our own reader; do not claim Substance parity.
 - [x] Headless `doppio-material` CLI (`import`, `import-sbs`, `export`,
-      `inspect`) and MCP `import_materialcraft` / `export_materialcraft`
-      actions using the same engine-backed helpers.
+      `bake-graph`, `inspect`) and MCP `import_materialcraft` /
+      `export_materialcraft` actions using the same engine-backed helpers.
+      `bake-graph <file.mgraph> [--size N] [--out DIR]` prints per-stage timing
+      and is the quickest way to reproduce a slow bake outside the editor.
 
 ### Explicit node mapping
 
@@ -210,7 +214,10 @@ depth.
       synchronous C ABI entry point remains for tools/tests.
 - [x] Engine thumbnail decode (`caffeine_texture_load_thumbnail`) as the
       primary asset/material thumbnail path, with the Iced loader as fallback;
-      cache entries are invalidated by file modification stamp.
+      cache entries are invalidated by file modification stamp. The GPU texture
+      cache also hot-reloads a file whose stamp changed even while the scene or
+      preview still holds the old pointer, retiring that texture instead of
+      destroying it in use.
 - [x] Apply saves dirty baked materials before assignment and creates a cube
       preview mesh on empty entities, so masks/bricks reach the `.mat` file.
 - [x] Material picker in the Inspector with a searchable `.mat` list; internal
@@ -243,7 +250,8 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
       kept). Tests bake every preset at 64² and check base variance, height
       std-dev > 0.02, determinism and `.mgraph` round trip.
 - [x] Output preview channel switcher (Base, Normal, Height, Roughness, Metal,
-      AO, Emissive, Opacity).
+      AO, Emissive, Opacity). Each node card shows a live 72 px thumbnail (96 px evaluated) of its
+      own evaluated output, refreshed with the same debounced worker pass.
 - [ ] Preset parameters (seed / scale / wear) are not yet exposed in the UI.
 
 ## Definition of done for "the base is complete"
@@ -263,10 +271,25 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
 
 - [x] Parallax occlusion mapping in `scene_lit.frag`; height in the normal map's
       alpha (16-sampler limit); `MaterialSurface::heightScale/parallaxSteps`,
-      `.mat` keys, C ABI v3, Rust `Material`, Material panel sliders.
+      `.mat` keys, C ABI v3, Rust `Material`, Material panel sliders. The
+      ray-march moves toward the camera for recessed texels (alpha 1 = surface,
+      0 = deepest), so pits read as depth instead of inverted peaks. POM
+      self-shadowing applies to directional, point and spot lights; the height
+      cavity also attenuates direct, ambient, IBL and reflected light, so the
+      relief does not flatten into plastic when the sun is not grazing. Direct
+      specular uses D*V*F without the extra PI factor that blew out highlights.
+- [x] Generator bake size is selectable at 128/256/512/1024/2048 px. 2048 is
+      the safe max; 4K needs a tiled/parallel evaluator (the current CPU memo
+      peaks above practical memory at 4096×4096 with 16-bit maps).
+- [x] Bake progress counts reachable nodes only and names the finalisation
+      stages (`Packing maps`, `Baking occlusion`, `Writing maps`, `Done`). The
+      automatic AO uses a separable box blur (O(pixels), not O(pixels ×
+      radius)), so 2K bakes finish in seconds instead of appearing stuck.
 - [x] Generator bake packs height into the normal alpha and enables depth;
       authored Normal / Emissive / Opacity outputs are written and wired.
-- [x] Preview cache key includes texture file stamps (re-bake refreshes it).
+- [x] Preview cache key includes texture file stamps, and a re-bake which
+      rewrites the same PNG paths now reloads those GPU textures in place
+      (`doppio/crates/engine/tests/material_preview.rs`).
 - [x] **Pack a height map into the normal…** (external height images).
 - [x] Parallax self-shadowing (`parallaxSelfShadow`) and a derivative-based UV frame
       (fixes the oblique/sheared look caused by non-u-aligned procedural tangents).

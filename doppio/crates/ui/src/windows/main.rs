@@ -511,8 +511,11 @@ struct MaterialDocument {
     source_thumbnail: Option<iced::widget::image::Handle>,
 }
 
+const GENERATOR_NODE_PREVIEW: u32 = 96;
+
 enum GeneratorBakeEvent {
     Progress(f32, String),
+    NodePreviews(Vec<(generators::NodeId, Vec<u8>)>),
     Done(Result<Box<generators::BakedMaterial>, String>),
 }
 
@@ -678,6 +681,7 @@ struct App {
     generator_preview_changed: Option<Instant>,
     generator_preview_version: u64,
     generator_preview_revision: u64,
+    generator_node_previews: HashMap<generators::NodeId, iced::widget::image::Handle>,
     packing_user_presets: Vec<generators::NamedPackingPreset>,
     packing_preset_name: String,
     packing_store_path: Option<std::path::PathBuf>,
@@ -792,10 +796,17 @@ impl App {
     }
 
     fn new() -> Self {
+        let project_arg = projectloader::project_from_args();
         let loaded = projectloader::load_from_args();
         let scene_from_args = projectloader::scene_from_args();
         let mut app = Self::with_project(loaded);
-        if !scene_from_args {
+        if let Some(path) = project_arg {
+            app.open_project_path(&path);
+            if app.project.active.is_none() {
+                app.project.open = true;
+                app.refresh_recent_projects();
+            }
+        } else if !scene_from_args {
             app.project.open = true;
             app.refresh_recent_projects();
         }
@@ -998,6 +1009,7 @@ impl App {
             generator_preview_changed: None,
             generator_preview_version: 0,
             generator_preview_revision: 0,
+            generator_node_previews: HashMap::new(),
             packing_user_presets: generators::user_packing_preset_path()
                 .map(|path| generators::load_user_packing_presets(&path))
                 .unwrap_or_default(),
@@ -3668,6 +3680,7 @@ impl App {
             .and_then(|document| document.generator.nodes.first())
             .map(|node| node.id);
         self.generator_preview = None;
+        self.generator_node_previews.clear();
         self.generator_status = None;
         self.generator_link = None;
         self.generator_search.clear();
@@ -3748,6 +3761,22 @@ impl App {
             self.panes.maximize(pane);
         }
         self.mark_generator_preview_dirty();
+    }
+
+    fn set_generator_node_previews(&mut self, previews: Vec<(generators::NodeId, Vec<u8>)>) {
+        self.generator_node_previews = previews
+            .into_iter()
+            .map(|(id, pixels)| {
+                (
+                    id,
+                    iced::widget::image::Handle::from_rgba(
+                        GENERATOR_NODE_PREVIEW,
+                        GENERATOR_NODE_PREVIEW,
+                        pixels,
+                    ),
+                )
+            })
+            .collect();
     }
 
     fn mark_generator_preview_dirty(&mut self) {
@@ -4114,7 +4143,7 @@ impl App {
             }
             material_generator::Edit::SetResolution(resolution) => {
                 if let Some(document) = self.material.as_mut() {
-                    document.generator.resolution = resolution.clamp(64, 1024);
+                    document.generator.resolution = resolution.clamp(64, 2048);
                 }
                 self.push_generator_history(
                     "Set generator resolution",
@@ -4259,6 +4288,11 @@ impl App {
             let result = worker_graph
                 .bake_with(&textures, Some(&mut progress), Some(&cancelled))
                 .map(Box::new);
+            if result.is_ok() {
+                let previews =
+                    worker_graph.node_previews(&textures, GENERATOR_NODE_PREVIEW, Some(&cancelled));
+                let _ = worker_tx.send(GeneratorBakeEvent::NodePreviews(previews));
+            }
             let _ = worker_tx.send(GeneratorBakeEvent::Done(result));
         });
         // The initial job message keeps the channel alive briefly so a fast
@@ -4283,12 +4317,14 @@ impl App {
             return;
         };
         let mut done = None;
+        let mut previews = None;
         loop {
             match job.rx.try_recv() {
                 Ok(GeneratorBakeEvent::Progress(fraction, stage)) => {
                     job.progress = fraction.clamp(0.0, 1.0);
                     job.stage = stage;
                 }
+                Ok(GeneratorBakeEvent::NodePreviews(images)) => previews = Some(images),
                 Ok(GeneratorBakeEvent::Done(result)) => {
                     done = Some(result);
                     break;
@@ -4299,6 +4335,9 @@ impl App {
                     break;
                 }
             }
+        }
+        if let Some(previews) = previews {
+            self.set_generator_node_previews(previews);
         }
         match done {
             Some(Ok(baked)) => self.finish_generator_bake(job, *baked),
@@ -4318,9 +4357,11 @@ impl App {
     fn pump_generator_preview(&mut self) {
         if let Some(job) = self.generator_live_job.take() {
             let mut done = None;
+            let mut previews = None;
             loop {
                 match job.rx.try_recv() {
                     Ok(GeneratorBakeEvent::Progress(..)) => {}
+                    Ok(GeneratorBakeEvent::NodePreviews(images)) => previews = Some(images),
                     Ok(GeneratorBakeEvent::Done(result)) => {
                         done = Some(result);
                         break;
@@ -4334,6 +4375,9 @@ impl App {
             }
             if let Some(result) = done {
                 if job.version == self.generator_preview_version {
+                    if let Some(previews) = previews {
+                        self.set_generator_node_previews(previews);
+                    }
                     match result {
                         Ok(baked) => {
                             self.generator_preview_maps = generators::PreviewChannel::ALL
@@ -4415,6 +4459,11 @@ impl App {
             let result = graph
                 .bake_with(&textures, None, Some(&cancelled))
                 .map(Box::new);
+            if result.is_ok() {
+                let previews =
+                    graph.node_previews(&textures, GENERATOR_NODE_PREVIEW, Some(&cancelled));
+                let _ = worker_tx.send(GeneratorBakeEvent::NodePreviews(previews));
+            }
             let _ = worker_tx.send(GeneratorBakeEvent::Done(result));
         });
         self.generator_preview_dirty = false;
@@ -8082,6 +8131,7 @@ impl App {
                             .or(self.generator_preview.as_ref()),
                         preview_channel: self.generator_preview_channel,
                         preview_3d: self.material_preview.as_ref(),
+                        node_previews: &self.generator_node_previews,
                         status: self.generator_status.as_deref(),
                         material_name: Some(&document.surface.name),
                         dirty: document.dirty,

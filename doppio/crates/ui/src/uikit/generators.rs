@@ -76,6 +76,13 @@ impl<'a> BakeContext<'a> {
         }
         Ok(())
     }
+
+    /// Reports a named finalisation step after the graph nodes have run.
+    fn stage(&mut self, fraction: f32, label: &str) {
+        if let Some(progress) = self.progress.as_deref_mut() {
+            progress(fraction, label);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -947,7 +954,11 @@ impl MaterialGraph {
         false
     }
 
-    pub fn canvas_nodes(&self, selected: Option<NodeId>) -> Vec<node_canvas::Node> {
+    pub fn canvas_nodes(
+        &self,
+        selected: Option<NodeId>,
+        previews: &HashMap<NodeId, iced::widget::image::Handle>,
+    ) -> Vec<node_canvas::Node> {
         self.nodes
             .iter()
             .map(|node| node_canvas::Node {
@@ -960,6 +971,7 @@ impl MaterialGraph {
                 accent: node.kind.accent(),
                 selected: selected == Some(node.id),
                 output: matches!(node.kind, NodeKind::Output { .. }),
+                preview: previews.get(&node.id).cloned(),
             })
             .collect()
     }
@@ -1357,7 +1369,7 @@ impl MaterialGraph {
             match words[0] {
                 "resolution" => {
                     if let Some(value) = words.get(1).and_then(|value| value.parse::<u32>().ok()) {
-                        graph.resolution = value.clamp(64, 1024);
+                        graph.resolution = value.clamp(64, 2048);
                     }
                 }
                 "node" if words.len() >= 5 => {
@@ -1603,6 +1615,48 @@ impl MaterialGraph {
         Some(graph)
     }
 
+    /// Evaluate every node at a small resolution for its in-canvas preview.
+    ///
+    /// The shared memo makes this much cheaper than evaluating each node from
+    /// scratch. Nodes whose inputs cannot be evaluated (for example an Image
+    /// node without a decoded texture) are simply omitted.
+    pub fn node_previews(
+        &self,
+        textures: &TextureMap,
+        size: u32,
+        cancel: Option<&CancelFn>,
+    ) -> Vec<(NodeId, Vec<u8>)> {
+        let resolution = size.clamp(32, 128) as usize;
+        let mut memo = HashMap::new();
+        let mut previews = Vec::new();
+        let mut ctx = BakeContext {
+            textures,
+            cancel,
+            progress: None,
+            total: self.nodes.len().max(1),
+            done: 0,
+            extra: HashMap::new(),
+        };
+        for node in &self.nodes {
+            let mut stack = Vec::new();
+            let Ok(image) = self.eval_node(node.id, resolution, &mut memo, &mut stack, &mut ctx)
+            else {
+                continue;
+            };
+            let mut bytes = Vec::with_capacity(resolution * resolution * 4);
+            for pixel in image.iter() {
+                bytes.extend_from_slice(&[
+                    to_byte(pixel[0]),
+                    to_byte(pixel[1]),
+                    to_byte(pixel[2]),
+                    to_byte(pixel[3]),
+                ]);
+            }
+            previews.push((node.id, bytes));
+        }
+        previews
+    }
+
     pub fn bake(&self) -> Result<BakedMaterial, String> {
         self.bake_with(&TextureMap::new(), None, None)
     }
@@ -1630,14 +1684,37 @@ impl MaterialGraph {
         else {
             return Err("The output node is not an Output".to_owned());
         };
-        let resolution = self.resolution.clamp(64, 1024) as usize;
+        let resolution = self.resolution.clamp(64, 2048) as usize;
         let count = resolution * resolution;
         let mut memo = HashMap::new();
+        // Only nodes upstream of the output are evaluated; counting the Output
+        // node itself (or disconnected nodes) left the bar stuck short of 90%
+        // for the whole finalisation phase.
+        let mut reachable = HashSet::new();
+        let mut pending = vec![output];
+        while let Some(id) = pending.pop() {
+            if !reachable.insert(id) {
+                continue;
+            }
+            for link in self.links.iter().filter(|link| link.to == id) {
+                pending.push(link.from);
+            }
+        }
+        let total = reachable
+            .iter()
+            .filter(|id| {
+                !matches!(
+                    self.node(**id).map(|node| &node.kind),
+                    Some(NodeKind::Output { .. })
+                )
+            })
+            .count()
+            .max(1);
         let mut ctx = BakeContext {
             textures,
             cancel,
             progress,
-            total: self.nodes.len().max(1),
+            total,
             done: 0,
             extra: HashMap::new(),
         };
@@ -1662,6 +1739,7 @@ impl MaterialGraph {
         let emissive_image = input(5)?;
         let opacity_image = input(6)?;
         let normal_image = input(7)?;
+        ctx.stage(0.9, "Packing maps");
 
         let plane = |image: &Option<Image>, fallback: f32| -> Vec<f32> {
             match image {
@@ -1708,6 +1786,7 @@ impl MaterialGraph {
         let (roughness_pixels, roughness_pixels16) = to_bytes(&plane(&roughness_image, roughness));
         let (metallic_pixels, metallic_pixels16) = to_bytes(&plane(&metallic_image, metallic));
         let (height_pixels, height_pixels16) = to_bytes(&height_plane);
+        ctx.stage(0.95, "Baking occlusion");
         let ao_values = match &ao_image {
             Some(_) => plane(&ao_image, ao),
             None => procedural::height::multiscale_ao(&height_plane, resolution, 0.02, 1.0, 0.6)
@@ -1716,6 +1795,7 @@ impl MaterialGraph {
                 .collect(),
         };
         let (ao_pixels, ao_pixels16) = to_bytes(&ao_values);
+        ctx.stage(0.98, "Writing maps");
 
         let has_emissive = emissive_image.is_some();
         let mut emissive = vec![0u8; count * 4];
@@ -3922,6 +4002,29 @@ pub fn palette() -> Vec<NodeKind> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn node_previews_cover_each_node_and_are_not_flat() {
+        let graph = super::MaterialGraph::default();
+        let previews = graph.node_previews(&super::TextureMap::new(), 32, None);
+        assert_eq!(
+            previews.len(),
+            graph.nodes.len(),
+            "every evaluable node should get a thumbnail"
+        );
+        for (id, pixels) in &previews {
+            assert_eq!(
+                pixels.len(),
+                32 * 32 * 4,
+                "thumbnail {id} should be 32px RGBA"
+            );
+            let first = pixels[0];
+            assert!(
+                pixels.iter().any(|value| *value != first),
+                "thumbnail {id} should not be a single flat colour"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -3932,6 +4035,26 @@ mod tests {
         assert_eq!(baked.roughness.len(), 512 * 512);
         let unique: HashSet<u8> = baked.base.chunks(4).map(|pixel| pixel[0]).collect();
         assert!(unique.len() > 1, "noise should vary across the image");
+    }
+
+    #[test]
+    fn bake_reports_finalisation_progress() {
+        let graph = MaterialGraph::default();
+        let mut stages: Vec<(f32, String)> = Vec::new();
+        let mut progress = |fraction: f32, stage: &str| {
+            stages.push((fraction, stage.to_owned()));
+        };
+        graph
+            .bake_with(&TextureMap::new(), Some(&mut progress), None)
+            .expect("bake");
+        assert!(
+            stages
+                .iter()
+                .any(|(fraction, stage)| stage == "Baking occlusion" && *fraction >= 0.95),
+            "AO should report itself instead of freezing at the last node: {stages:?}"
+        );
+        assert!(stages.iter().any(|(_, stage)| stage == "Writing maps"));
+        assert_eq!(stages.last().map(|(fraction, _)| *fraction), Some(1.0));
     }
 
     #[test]

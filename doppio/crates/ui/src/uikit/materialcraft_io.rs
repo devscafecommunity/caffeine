@@ -144,7 +144,7 @@ pub fn import_portable(
         match materialcraft::import_sbs(&portable.source, &portable.manifest.graph) {
             Ok(imported) => {
                 graph = imported.graph;
-                graph.resolution = portable.manifest.size[0].clamp(64, 1024);
+                graph.resolution = portable.manifest.size[0].clamp(64, 2048);
                 warnings.extend(imported.warnings);
                 if imported.unknown_nodes > 0 {
                     warnings.push(format!(

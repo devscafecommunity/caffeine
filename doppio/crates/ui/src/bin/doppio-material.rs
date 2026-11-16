@@ -1,7 +1,10 @@
 //! Headless MaterialCraft bridge: import/export `.mcmat`, inspect manifests and
 //! convert `.sbs` XML into a Doppio `.mgraph`.
 
-use doppio_ui::uikit::{generators::MaterialGraph, materialcraft, materialcraft_io};
+use doppio_ui::uikit::{
+    generators::{self, MaterialGraph},
+    materialcraft, materialcraft_io,
+};
 use std::path::{Path, PathBuf};
 
 fn usage() -> ! {
@@ -9,6 +12,7 @@ fn usage() -> ! {
         "usage:\n  doppio-material import <file.mcmat> [--out DIR]\n  \
          doppio-material import-sbs <file.sbs> [--out DIR]\n  \
          doppio-material export <file.mat|file.mgraph> --out <file.mcmat>\n  \
+         doppio-material bake-graph <file.mgraph> [--size N] [--out DIR]\n  \
          doppio-material inspect <file.mcmat|file.sbs>\n  \
          doppio-material texset-new --out <file.texset> [--size 512]\n  \
          doppio-material texset-info <file.texset>\n  \
@@ -27,6 +31,7 @@ fn main() {
         "import" => import(&args[1..]),
         "import-sbs" => import_sbs(&args[1..]),
         "export" => export(&args[1..]),
+        "bake-graph" => bake_graph(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "texset-new" => texset_new(&args[1..]),
         "texset-info" => texset_info(&args[1..]),
@@ -135,6 +140,70 @@ fn export(args: &[String]) -> Result<(), String> {
             String::new()
         }
     );
+    Ok(())
+}
+
+fn bake_graph(args: &[String]) -> Result<(), String> {
+    let input = positional(args).ok_or_else(|| "missing .mgraph path".to_owned())?;
+    let text = std::fs::read_to_string(input).map_err(|error| format!("{input}: {error}"))?;
+    let mut graph =
+        MaterialGraph::from_text(&text).ok_or_else(|| format!("{input} is not a valid .mgraph"))?;
+    if let Some(size) = argument(args, "--size") {
+        graph.resolution = size
+            .parse::<u32>()
+            .map_err(|_| format!("invalid --size `{size}`"))?;
+    }
+    let out = argument(args, "--out").map(PathBuf::from);
+    let start = std::time::Instant::now();
+    let mut last_percent = -1i32;
+    let mut progress = |fraction: f32, stage: &str| {
+        let percent = (fraction * 100.0).round() as i32;
+        if percent != last_percent {
+            last_percent = percent;
+            eprintln!(
+                "{:8.2}s {:3}% {}",
+                start.elapsed().as_secs_f32(),
+                percent,
+                stage
+            );
+        }
+    };
+    let baked = graph.bake_with(&generators::TextureMap::new(), Some(&mut progress), None)?;
+    let elapsed = start.elapsed().as_secs_f32();
+    println!(
+        "baked {input} at {}x{} in {elapsed:.2}s",
+        baked.resolution, baked.resolution
+    );
+    let Some(out) = out else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let engine = engine()?;
+    let res = baked.resolution;
+    let gray = |values: &[u8]| -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| [*value, *value, *value, 255])
+            .collect()
+    };
+    let maps = [
+        ("base", baked.base.clone()),
+        ("roughness", gray(&baked.roughness)),
+        ("metallic", gray(&baked.metallic)),
+        ("height", gray(&baked.height)),
+        ("ao", gray(&baked.ao)),
+        (
+            "packed",
+            generators::ChannelPacking::default().packed8(&baked),
+        ),
+    ];
+    for (name, pixels) in maps {
+        let path = out.join(format!("{name}.png"));
+        engine
+            .save_texture_rgba(&path.to_string_lossy(), res, res, &pixels)
+            .map_err(|error| format!("{error:?}"))?;
+        println!("wrote {}", path.display());
+    }
     Ok(())
 }
 

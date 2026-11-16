@@ -407,6 +407,49 @@ const AO_P: &[ParamSpec] = &[
     float("intensity", "Intensity", 0.0, 4.0, 1.0, 0.05),
     float("spread", "Multi-scale spread", 0.0, 1.0, 0.6, 0.01),
 ];
+/// Fast separable box blur used by the AO bake. A Gaussian at 2K/4K has a
+/// radius of hundreds of pixels; the O(pixels x radius) convolution made the
+/// final bake appear stuck at its last progress step. Sliding windows keep it
+/// O(pixels) and the three scales still smooth the cavity.
+fn box_blur_plane(plane: &[f32], res: usize, radius: f32) -> Vec<f32> {
+    let reach = radius.round().max(1.0) as i32;
+    let width = (2 * reach + 1) as f32;
+    let mut horizontal = vec![0.0f32; res * res];
+    for y in 0..res {
+        let yi = y as i32;
+        let mut sum = 0.0f32;
+        for offset in -reach..=reach {
+            sum += at_wrap(plane, res, offset, yi);
+        }
+        for x in 0..res {
+            horizontal[y * res + x] = sum / width;
+            let xi = x as i32;
+            sum -= at_wrap(plane, res, xi - reach, yi);
+            sum += at_wrap(plane, res, xi + reach + 1, yi);
+        }
+    }
+    let mut out = vec![0.0f32; res * res];
+    for x in 0..res {
+        let xi = x as i32;
+        let mut sum = 0.0f32;
+        for offset in -reach..=reach {
+            sum += horizontal[at_wrap_index(offset, xi, res)];
+        }
+        for y in 0..res {
+            out[y * res + x] = sum / width;
+            let yi = y as i32;
+            sum -= horizontal[at_wrap_index(yi - reach, xi, res)];
+            sum += horizontal[at_wrap_index(yi + reach + 1, xi, res)];
+        }
+    }
+    out
+}
+
+fn at_wrap_index(y: i32, x: i32, res: usize) -> usize {
+    let r = res as i32;
+    (y.rem_euclid(r) as usize) * res + x.rem_euclid(r) as usize
+}
+
 /// Cavity occlusion: how far a point sits below its blurred surroundings at
 /// three scales. 1 = open, 0 = fully occluded.
 pub fn multiscale_ao(h: &[f32], res: usize, radius: f32, intensity: f32, spread: f32) -> Vec<f32> {
@@ -417,7 +460,7 @@ pub fn multiscale_ao(h: &[f32], res: usize, radius: f32, intensity: f32, spread:
         (2.5, 0.7 * spread + 0.15),
         (6.0, 0.5 * spread + 0.05),
     ] {
-        let blurred = gaussian_plane(h, res, r * scale);
+        let blurred = box_blur_plane(h, res, r * scale);
         for k in 0..acc.len() {
             acc[k] += (blurred[k] - h[k]).max(0.0) * weight;
         }

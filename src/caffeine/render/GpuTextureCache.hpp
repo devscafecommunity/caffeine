@@ -8,6 +8,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Caffeine::Render {
@@ -47,11 +48,12 @@ public:
 
 private:
     struct Entry {
-        RHI::Texture* texture     = nullptr;
-        u32           refCount    = 0;
-        u64           fileStamp   = 0;
-        u32           width       = 0;
-        u32           height      = 0;
+        RHI::Texture*       texture = nullptr;
+        RHI::RenderDevice*  device  = nullptr;
+        u32                 refCount = 0;
+        u64                 fileStamp = 0;
+        u32                 width = 0;
+        u32                 height = 0;
     };
 
     std::string resolvePath(const std::string& path, const std::string& projectRoot) const;
@@ -63,7 +65,11 @@ private:
     void        destroyEntry(RHI::RenderDevice* device, Entry& entry);
 
     std::unordered_map<std::string, Entry> m_cache;
+    /// Textures replaced by an in-place file change while other systems still
+    /// held the old pointer. Kept alive until their device shuts down.
+    std::vector<std::pair<RHI::RenderDevice*, RHI::Texture*>> m_retired;
     RHI::Texture* m_white = nullptr;
+    RHI::RenderDevice* m_whiteDevice = nullptr;
 };
 
 }  // namespace Caffeine::Render

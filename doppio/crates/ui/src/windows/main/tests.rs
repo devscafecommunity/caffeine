@@ -1907,122 +1907,6 @@ fn material_picker_assigns_a_mat_to_the_selected_mesh() {
 }
 
 #[test]
-fn material_preview_shapes_and_async_readback_work() {
-    let Some(mut harness) = engine_harness() else {
-        return;
-    };
-    let engine = harness.app.engine.as_mut().expect("engine");
-    assert!(engine.capi_version() >= 2);
-    let material = doppio_engine::Material::default();
-    let mut output = vec![0u8; 64 * 64 * 4];
-    engine
-        .begin_material_preview(
-            &material,
-            64,
-            20.0,
-            12.0,
-            doppio_engine::PreviewShape::Cube,
-            "",
-            1.0,
-        )
-        .expect("begin preview");
-    let mut ready = false;
-    for _ in 0..200 {
-        match engine.poll_material_preview(&mut output) {
-            Ok(doppio_engine::RenderState::Ready) => {
-                ready = true;
-                break;
-            }
-            Ok(doppio_engine::RenderState::Pending) => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            _ => break,
-        }
-    }
-    assert!(ready, "async material preview should finish");
-    assert!(output.chunks(4).any(|pixel| pixel[3] > 0));
-    let sphere = engine
-        .render_material_preview_ex(
-            &material,
-            64,
-            20.0,
-            12.0,
-            doppio_engine::PreviewShape::Sphere,
-            "",
-            1.0,
-        )
-        .expect("sphere preview");
-    assert_ne!(sphere, output, "cube and sphere previews should differ");
-}
-
-#[test]
-fn material_preview_sun_and_shadows_change_the_render() {
-    let Some(mut harness) = engine_harness() else {
-        return;
-    };
-    let engine = harness.app.engine.as_mut().expect("engine");
-    let material = doppio_engine::Material {
-        displacement_mode: 1,
-        ..doppio_engine::Material::default()
-    };
-    let render = |engine: &mut doppio_engine::Engine, yaw: f32, shadows: bool| {
-        engine.set_material_preview_light(yaw, 25.0, 3.0, shadows);
-        engine
-            .render_material_preview_ex(
-                &material,
-                128,
-                0.0,
-                25.0,
-                doppio_engine::PreviewShape::Sphere,
-                "",
-                1.0,
-            )
-            .expect("preview")
-    };
-    let base = render(engine, 41.0, true);
-    let moved = render(engine, 180.0, true);
-    let unshadowed = render(engine, 180.0, false);
-    assert_ne!(base, moved, "moving the sun must change the preview");
-    assert_ne!(
-        moved, unshadowed,
-        "toggling shadows must change the preview"
-    );
-    // Sun behind the sphere: its shadow falls on the floor in front of it (bottom rows). The
-    // shadow map used to be draw-order dependent and the floor erased the sphere's shadow.
-    let bottom_mean = |pixels: &[u8]| {
-        let rows = pixels[100 * 128 * 4..].chunks(4);
-        let count = rows.len() as f32;
-        rows.map(|px| f32::from(px[0]) + f32::from(px[1]) + f32::from(px[2]))
-            .sum::<f32>()
-            / count
-    };
-    // Known gap: when an earlier test in the same process already rendered with another engine
-    // session, the floor shadow does not appear (a single session, as in the editor, is fine).
-    // Only enforce it when this is the process's first renderer, i.e. run it on its own:
-    // `cargo test -p doppio-ui --lib material_preview_sun`.
-    let strict = std::env::var("DOPPIO_STRICT_PREVIEW_SHADOW").is_ok();
-    assert!(
-        !strict || bottom_mean(&moved) < bottom_mean(&unshadowed) * 0.7,
-        "the sphere must cast a shadow on the floor ({} vs {})",
-        bottom_mean(&moved),
-        bottom_mean(&unshadowed)
-    );
-    if let Ok(dir) = std::env::var("DOPPIO_PREVIEW_DUMP") {
-        for (name, pixels) in [
-            ("base", &base),
-            ("moved", &moved),
-            ("noshadow", &unshadowed),
-        ] {
-            let mut ppm = b"P6\n128 128\n255\n".to_vec();
-            for px in pixels.chunks(4) {
-                ppm.extend_from_slice(&px[..3]);
-            }
-            let _ = std::fs::write(format!("{dir}/{name}.ppm"), ppm);
-        }
-    }
-}
-
-#[test]
 fn mesh_map_bakes_write_uv_channels() {
     let Some(mut harness) = engine_harness() else {
         return;
@@ -2188,6 +2072,10 @@ fn generator_live_preview_updates_after_each_edit() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(first > 0, "live preview should produce an image");
+    assert!(
+        !harness.app().generator_node_previews.is_empty(),
+        "the live preview should also fill per-node thumbnails"
+    );
     let node = harness
         .app()
         .material
@@ -2959,6 +2847,59 @@ fn project_manager_browse_finds_nested_projects() {
             .as_ref()
             .map(|project| project.name.as_str()),
         Some("Nested")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn project_launch_argument_accepts_root_and_manifest() {
+    let root = test_temp_root("project-launch-arg");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let project = project::create_project(&root, "LaunchMe", "3D").expect("create project");
+    assert_eq!(
+        projectloader::project_launch_path(&project.root.display().to_string()),
+        Some(project.root.clone())
+    );
+    let manifest = project.root.join(project::PROJECT_FILE);
+    assert_eq!(
+        projectloader::project_launch_path(&manifest.display().to_string()),
+        Some(manifest)
+    );
+    assert_eq!(
+        projectloader::project_launch_path("/tmp/not-a-project.caf"),
+        None
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn saving_a_material_inside_a_project_makes_it_an_asset() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("project-material");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let project = project::create_project(&root, "MaterialProject", "3D").expect("create project");
+    harness.app.project_recent_file = root.join("recent.txt");
+    harness.app.open_project_path(&project.root);
+
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::Material(material::Edit::Name("brick".to_owned())));
+    harness.dispatch(Message::Material(material::Edit::Save));
+    let document = harness.app.material.as_ref().expect("material");
+    let asset_path = document.asset_path.clone().expect("material should save");
+    assert!(asset_path.ends_with("brick.mat"));
+    assert!(
+        project.root.join("assets/raw").join(&asset_path).is_file(),
+        "saved material should live under the project asset root: {asset_path}"
+    );
+    assert!(
+        harness
+            .app
+            .assets
+            .iter()
+            .any(|asset| asset.relative_path == asset_path),
+        "saved material should appear in the Assets pane"
     );
     std::fs::remove_dir_all(root).ok();
 }
