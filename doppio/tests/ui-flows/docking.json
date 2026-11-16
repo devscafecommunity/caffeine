@@ -1,0 +1,15 @@
+{
+  "name": "Dragging a tab shows docking guides and docks on drop",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "state", "path": "/panes", "label": "initial layout" },
+    { "action": "expect", "state": { "/panes/0/id": "Pane(0)" }, "continue_on_error": true },
+    { "action": "find", "target": "id:editor.pane.viewport" },
+    { "action": "drag", "from": "id:editor.pane.tab.console", "by": [0, -120], "hold": true, "steps": 10, "label": "pick the Console tab up" },
+    { "action": "expect", "state": { "/tab_drag/dragging": true }, "label": "guides are showing" },
+    { "action": "screenshot", "name": "dock-guides" },
+    { "action": "mouse_up" },
+    { "action": "state", "path": "/tab_drag" }
+  ]
+}

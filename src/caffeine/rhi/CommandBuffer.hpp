@@ -36,6 +36,8 @@ public:
 
     void bindPipeline(Pipeline* pipeline);
     void bindVertexBuffer(Buffer* buf, u32 slot = 0, u32 offset = 0);
+    /// Binds a texture to the VERTEX stage (set 0 in SPIR-V); fragment textures use bindTexture.
+    void bindVertexTexture(Texture* tex, u32 slot, Sampler* sampler);
     void bindIndexBuffer(Buffer* buf);
     void bindTexture(Texture* tex, u32 slot = 0, Sampler* sampler = nullptr);
     void setViewport(f32 x, f32 y, f32 w, f32 h);

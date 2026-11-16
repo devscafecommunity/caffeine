@@ -1,0 +1,30 @@
+{
+  "name": "Capture the material pipeline screenshots used by docs/material-pipeline.md",
+  "description": "Run through scripts/capture-material-docs.sh (it strips the NNN- prefix so the images have stable names).",
+  "fixture": "material",
+  "preset": "Red Brick",
+  "size": [1600, 900],
+  "steps": [
+    { "action": "wait", "ms": 6000, "real_time": true, "label": "let the live preview bake (debug builds are slow)" },
+    { "action": "screenshot", "name": "generator-red-brick" },
+    { "action": "screenshot", "name": "generator-annotated", "annotate": true, "target": "id:generator.preview.channels", "padding": 160 },
+    { "action": "click", "target": "id:generator.preview.channel.height" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "channel-height", "target": "id:generator.preview", "padding": 6 },
+    { "action": "click", "target": "id:generator.preview.channel.normal" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "channel-normal", "target": "id:generator.preview", "padding": 6 },
+    { "action": "click", "target": "id:generator.preview.channel.rough" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "channel-roughness", "target": "id:generator.preview", "padding": 6 },
+    { "action": "click", "target": "id:generator.preview.channel.ao" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "channel-ao", "target": "id:generator.preview", "padding": 6 },
+    { "action": "click", "target": "id:generator.preview.channel.base" },
+    { "action": "click", "target": "id:editor.pane.maximize.Pane(1)", "label": "restore the maximised Generator pane" },
+    { "action": "click", "target": "id:editor.pane.tab.material" },
+    { "action": "scroll", "target": "id:material.body.scroll", "dy": -12, "label": "down to the depth controls" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "material-panel", "target": "id:editor.pane.material", "padding": 4 }
+  ]
+}

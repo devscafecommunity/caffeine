@@ -19,17 +19,25 @@ pub struct Tab<'a, Message> {
 /// mouse area so it can be selected with a click and moved independently.
 pub fn view<'a, Message: Clone + 'a>(
     tabs: Vec<Tab<'a, Message>>,
-    subtitle: Option<String>,
-    split: Option<(UiId, Message)>,
+    _subtitle: Option<String>,
+    _split: Option<(UiId, Message)>,
 ) -> Element<'a, Message> {
-    let mut strip = row![].spacing(2).align_y(iced::Alignment::Center);
+    let mut strip = row![].spacing(1).align_y(iced::Alignment::Center);
     for tab in tabs {
         strip = strip.push(
             mouse_area(
-                container(text(tab.label).size(11))
-                    .id(tab.id)
-                    .padding([3, 8])
-                    .style(theme::tab_item(tab.active, tab.hovered, tab.drop_target)),
+                // The outer container's 2 px bottom padding is the indicator.
+                container(
+                    container(text(tab.label).size(12))
+                        .id(tab.id)
+                        .padding([4, 10])
+                        .style(theme::tab_item(tab.active, tab.hovered, tab.drop_target)),
+                )
+                .padding(iced::Padding {
+                    bottom: 2.0,
+                    ..iced::Padding::ZERO
+                })
+                .style(theme::tab_indicator(tab.active)),
             )
             .on_press(tab.on_press)
             .on_release(tab.on_release)
@@ -38,23 +46,71 @@ pub fn view<'a, Message: Clone + 'a>(
             .interaction(iced::mouse::Interaction::Pointer),
         );
     }
-    if let Some(subtitle) = subtitle {
-        // Keep the strip narrow: the remaining title-bar space is PaneGrid's
-        // pick area and must stay free so panels can be dragged.
-        strip = strip
-            .push(text("·").size(9).color(theme::TEXT_MUTED))
-            .push(text(subtitle).size(9).color(theme::TEXT_MUTED));
-    }
+    container(strip).padding([1, 4]).into()
+}
+
+/// Right-aligned pane controls: split the active page out, maximise/restore.
+pub fn controls<'a, Message: Clone + 'a>(
+    split: Option<(UiId, Message)>,
+    maximize: (UiId, bool, Message),
+) -> Element<'a, Message> {
+    let mut bar = row![].spacing(2).align_y(iced::Alignment::Center);
     if let Some((id, message)) = split {
-        strip = strip.push(
+        bar = bar.push(
             container(
-                button(text("◫").size(11))
+                button(text("◫").size(12))
                     .style(theme::button_text)
-                    .padding([2, 5])
+                    .padding([2, 6])
                     .on_press(message),
             )
             .id(id),
         );
     }
-    container(strip).padding([1, 4]).into()
+    let (id, maximized, message) = maximize;
+    bar = bar.push(
+        container(
+            button(text(if maximized { "❐" } else { "▢" }).size(12))
+                .style(theme::button_text)
+                .padding([2, 6])
+                .on_press(message),
+        )
+        .id(id),
+    );
+    container(bar).padding([1, 4]).into()
+}
+
+/// One open document tab (title + close), styled like the pane tabs.
+pub fn document<'a, Message: Clone + 'a>(
+    id: UiId,
+    close_id: UiId,
+    label: String,
+    active: bool,
+    on_select: Message,
+    on_close: Message,
+) -> Element<'a, Message> {
+    let title = mouse_area(container(text(label).size(12)).id(id).padding([4, 4]))
+        .on_press(on_select)
+        .interaction(iced::mouse::Interaction::Pointer);
+    let close = container(
+        button(text("×").size(12))
+            .style(theme::button_text)
+            .padding([0, 4])
+            .on_press(on_close),
+    )
+    .id(close_id);
+    container(
+        container(
+            row![title, close]
+                .spacing(2)
+                .align_y(iced::Alignment::Center),
+        )
+        .padding([0, 6])
+        .style(theme::tab_item(active, false, false)),
+    )
+    .padding(iced::Padding {
+        bottom: 2.0,
+        ..iced::Padding::ZERO
+    })
+    .style(theme::tab_indicator(active))
+    .into()
 }

@@ -96,6 +96,8 @@ pub struct View<'a> {
     pub pan: Vector,
     pub zoom: f32,
     pub selected_link: Option<LinkKey>,
+    /// Grid size nodes snap to while dragging (`None` = free movement).
+    pub snap: Option<f32>,
 }
 
 const NODE_WIDTH: f32 = 158.0;
@@ -157,7 +159,7 @@ fn output_at(
         for (index, _) in node.outputs.iter().enumerate() {
             let position = to_screen(output_position(node, index), bounds, pan, zoom);
             if ((position.x - screen.x).powi(2) + (position.y - screen.y).powi(2)).sqrt()
-                <= PORT_RADIUS + 5.0
+                <= PORT_RADIUS + 3.5
             {
                 return Some((node.id, index));
             }
@@ -177,7 +179,7 @@ fn input_at(
         for (index, _) in node.inputs.iter().enumerate() {
             let position = to_screen(input_position(node, index), bounds, pan, zoom);
             if ((position.x - screen.x).powi(2) + (position.y - screen.y).powi(2)).sqrt()
-                <= PORT_RADIUS + 5.0
+                <= PORT_RADIUS + 3.5
             {
                 return Some((node.id, index));
             }
@@ -259,24 +261,24 @@ fn draw_grid(frame: &mut Frame, bounds: Rectangle, pan: Vector, zoom: f32) {
         return;
     }
     let color = Color {
-        a: 0.12,
+        a: 0.35,
         ..theme::BORDER
     };
     let start_x = (pan.x % spacing + bounds.width) % spacing;
     let start_y = (pan.y % spacing + bounds.height) % spacing;
     let mut x = start_x;
     while x < bounds.width {
-        frame.fill(
+        frame.stroke(
             &Path::line(Point::new(x, 0.0), Point::new(x, bounds.height)),
-            color,
+            Stroke::default().with_color(color).with_width(1.0),
         );
         x += spacing;
     }
     let mut y = start_y;
     while y < bounds.height {
-        frame.fill(
+        frame.stroke(
             &Path::line(Point::new(0.0, y), Point::new(bounds.width, y)),
-            color,
+            Stroke::default().with_color(color).with_width(1.0),
         );
         y += spacing;
     }
@@ -328,6 +330,7 @@ struct Program<'a, Message> {
     pan: Vector,
     zoom: f32,
     selected_link: Option<LinkKey>,
+    snap: Option<f32>,
     on_event: std::rc::Rc<dyn Fn(Event) -> Message + 'a>,
 }
 
@@ -339,9 +342,22 @@ struct State {
 }
 
 enum Drag {
-    Pan { last: Point },
-    Node { id: NodeId, last: Point },
-    Link { from: NodeId, output: usize },
+    Pan {
+        last: Point,
+    },
+    Node {
+        id: NodeId,
+        /// Node position when the drag began.
+        origin: Point,
+        /// Cursor position (graph space) when the drag began.
+        grab: Point,
+        /// Offset already reported to the caller.
+        applied: Vector,
+    },
+    Link {
+        from: NodeId,
+        output: usize,
+    },
 }
 
 impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> {
@@ -431,7 +447,18 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                 }
                 let point = graph(cursor);
                 if let Some(id) = node_at(point, &self.nodes) {
-                    state.drag = Some(Drag::Node { id, last: point });
+                    let origin = self
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == id)
+                        .map(|node| node.position)
+                        .unwrap_or(point);
+                    state.drag = Some(Drag::Node {
+                        id,
+                        origin,
+                        grab: point,
+                        applied: Vector::new(0.0, 0.0),
+                    });
                     return Some(emit(Event::Select(Some(id))));
                 }
                 if let Some(key) = link_at(
@@ -485,10 +512,29 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                             zoom: self.zoom,
                         }));
                     }
-                    Some(Drag::Node { id, last }) => {
-                        let point = graph(cursor);
-                        let delta = point - *last;
-                        *last = point;
+                    Some(Drag::Node {
+                        id,
+                        origin,
+                        grab,
+                        applied,
+                    }) => {
+                        // Work from the absolute target so snapping never
+                        // swallows small per-frame movements.
+                        let point = to_graph(cursor, bounds, self.pan, self.zoom);
+                        let mut target = Point::new(
+                            origin.x + (point.x - grab.x),
+                            origin.y + (point.y - grab.y),
+                        );
+                        if let Some(step) = self.snap.filter(|step| *step > 0.0) {
+                            target.x = (target.x / step).round() * step;
+                            target.y = (target.y / step).round() * step;
+                        }
+                        let wanted = Vector::new(target.x - origin.x, target.y - origin.y);
+                        let delta = wanted - *applied;
+                        if delta.x.abs() < f32::EPSILON && delta.y.abs() < f32::EPSILON {
+                            return Some(canvas::Action::request_redraw().and_capture());
+                        }
+                        *applied = wanted;
                         return Some(emit(Event::MoveNode(*id, delta)));
                     }
                     Some(Drag::Link { .. }) => {
@@ -700,6 +746,7 @@ pub fn view<'a, Message: Clone + 'a>(
         pan: view.pan,
         zoom: view.zoom,
         selected_link: view.selected_link,
+        snap: view.snap,
         on_event: std::rc::Rc::new(on_event),
     };
     canvas_element(id, program)
@@ -725,6 +772,7 @@ pub fn view_owned<'a, Message: Clone + 'a>(
         pan,
         zoom,
         selected_link,
+        snap: None,
         on_event: std::rc::Rc::new(on_event),
     };
     canvas_element(id, program)
@@ -838,6 +886,7 @@ mod tests {
             pan: Vector::new(0.0, 0.0),
             zoom: 1.0,
             selected_link: None,
+            snap: None,
             on_event: std::rc::Rc::new(|event| event),
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 400.0));
@@ -882,5 +931,60 @@ mod tests {
             output_at(position, &nodes, bounds, Vector::new(0.0, 0.0), 1.0),
             Some((7, 0))
         );
+    }
+
+    #[test]
+    fn snapped_drags_follow_the_cursor_instead_of_stalling() {
+        let node = Node {
+            id: 1,
+            title: "Noise".to_owned(),
+            subtitle: String::new(),
+            position: Point::new(0.0, 0.0),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            accent: theme::ACCENT,
+            selected: false,
+            output: false,
+        };
+        let links = [];
+        let program = Program {
+            nodes: vec![node],
+            links: Links::Borrowed(&links),
+            pan: Vector::new(0.0, 0.0),
+            zoom: 1.0,
+            selected_link: None,
+            snap: Some(16.0),
+            on_event: std::rc::Rc::new(|event| event),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 400.0));
+        let mut state = State::default();
+        let press = canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let _ = canvas::Program::update(
+            &program,
+            &mut state,
+            &press,
+            bounds,
+            mouse::Cursor::Available(Point::new(20.0, 10.0)),
+        );
+        assert!(matches!(state.drag, Some(Drag::Node { .. })));
+
+        let mut moved = Vector::new(0.0, 0.0);
+        // 1 px per frame: the old per-frame snapping would swallow every one.
+        for step in 1..=23 {
+            let position = Point::new(20.0 + step as f32, 10.0);
+            let event = canvas::Event::Mouse(mouse::Event::CursorMoved { position });
+            if let Some(action) = canvas::Program::update(
+                &program,
+                &mut state,
+                &event,
+                bounds,
+                mouse::Cursor::Available(position),
+            ) {
+                if let (Some(Event::MoveNode(_, delta)), _, _) = action.into_inner() {
+                    moved += delta;
+                }
+            }
+        }
+        assert_eq!(moved, Vector::new(16.0, 0.0));
     }
 }

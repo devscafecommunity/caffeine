@@ -199,6 +199,8 @@ else()
                 "scene_lit_frag|fragment|scene_lit.frag"
                 "terrain_lit_frag|fragment|terrain_lit.frag"
                 "shadow_depth_vert|vertex|shadow_depth.vert"
+                "scene_displace_vert|vertex|scene_displace.vert"
+                "shadow_displace_vert|vertex|shadow_displace.vert"
                 "shadow_depth_frag|fragment|shadow_depth.frag"
                 "fullscreen_vert|vertex|fullscreen.vert"
                 "sky_frag|fragment|sky.frag"

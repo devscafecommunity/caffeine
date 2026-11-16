@@ -5,11 +5,11 @@
 //! editor. Attaching a script to the selected entity is emitted as a message;
 //! the window owns the engine binding.
 
-use crate::uikit::components::{button, code_editor, status, toggle_chip};
+use crate::uikit::components::{button, code_editor, status};
 use crate::uikit::id::UiId;
 use crate::uikit::script;
 use crate::uikit::theme;
-use iced::widget::{column, container, row, scrollable, space, text};
+use iced::widget::{column, container, row, space, text};
 use iced::{Element, Length};
 
 /// Stable ids for the pane widgets. `tab`/`tab_close` build per-document ids.
@@ -92,28 +92,23 @@ pub fn view<'a, Message: Clone + 'a>(
         .into();
     }
 
-    let mut tabs = row![].spacing(3).align_y(iced::Alignment::Center);
+    let mut tabs = row![].spacing(1).align_y(iced::Alignment::Center);
     for (index, document) in state.documents.iter().enumerate() {
         let label = if document.is_dirty() {
             format!("{} *", document.title)
         } else {
             document.title.clone()
         };
-        tabs = tabs
-            .push(toggle_chip::view(
-                (ids.tab)(index),
-                label,
-                state.active == Some(index),
-                theme::ACCENT,
-                (on_select)(index),
-            ))
-            .push(button::compact(
-                (ids.tab_close)(index),
-                "×",
-                (on_tab_close)(index),
-            ));
+        tabs = tabs.push(crate::uikit::components::tabs::document(
+            (ids.tab)(index),
+            (ids.tab_close)(index),
+            label,
+            state.active == Some(index),
+            (on_select)(index),
+            (on_tab_close)(index),
+        ));
     }
-    let strip = scrollable(tabs).horizontal().height(Length::Shrink);
+    let strip = crate::uikit::components::scroll::horizontal(tabs).height(Length::Shrink);
 
     let toolbar = row![
         button::primary(ids.save, "Save", on_save),

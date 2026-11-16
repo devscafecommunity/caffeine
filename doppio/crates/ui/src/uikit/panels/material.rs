@@ -5,7 +5,7 @@ use crate::uikit::components::{
 use crate::uikit::id;
 use crate::uikit::theme;
 use doppio_engine::{Material, MaterialAlphaMode, MaterialPreset};
-use iced::widget::{column, container, row, scrollable, text, Column};
+use iced::widget::{column, container, row, text, Column};
 use iced::{Element, Length, Point};
 use std::collections::HashSet;
 use std::fmt;
@@ -71,6 +71,14 @@ pub enum Edit {
     Emission(usize, f32),
     EmissionStrength(f32),
     NormalStrength(f32),
+    /// Parallax depth in UV units (0 = off). Needs a normal map with height in its alpha.
+    HeightScale(f32),
+    ParallaxSteps(f32),
+    Geometric(bool),
+    DisplacementScale(f32),
+    Subdivisions(f32),
+    /// Opens the picker of an external height image to merge into the normal's alpha.
+    OpenHeightPicker,
     NormalDirectX(bool),
     AoStrength(f32),
     UvTiling(usize, f32),
@@ -410,9 +418,12 @@ pub fn view<'a, Message: Clone + 'a>(
         emit(Edit::ToggleSection(Section::Baker)),
     ));
 
-    container(scrollable(container(content).padding([0, 8])).id(id::MATERIAL_SCROLL))
-        .padding(6)
-        .into()
+    container(
+        crate::uikit::components::scroll::vertical(container(content).padding([0, 8]))
+            .id(id::MATERIAL_SCROLL),
+    )
+    .padding(6)
+    .into()
 }
 
 fn section<'a, Message: Clone + 'a>(
@@ -596,6 +607,68 @@ fn maps_body<'a, Message: Clone + 'a>(
             let emit = emit.clone();
             move |value| emit(Edit::NormalStrength(value))
         },
+    ));
+    body = body.push(slider::property_step(
+        id::material_field("height_scale"),
+        "Parallax depth",
+        0.0..=0.25,
+        material.height_scale,
+        0.005,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::HeightScale(value))
+        },
+    ));
+    if material.height_scale > 0.0 {
+        body = body.push(slider::property_step(
+            id::material_field("parallax_steps"),
+            "Parallax steps",
+            4.0..=96.0,
+            material.parallax_steps,
+            1.0,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::ParallaxSteps(value))
+            },
+        ));
+    }
+    body = body.push(checkbox::property(
+        id::material_field("displacement_mode"),
+        "Geometric displacement (real relief)",
+        material.displacement_mode == 1,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::Geometric(value))
+        },
+    ));
+    if material.displacement_mode == 1 {
+        body = body.push(slider::property_step(
+            id::material_field("displacement_scale"),
+            "Displacement depth (m)",
+            0.0..=0.5,
+            material.displacement_scale,
+            0.005,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::DisplacementScale(value))
+            },
+        ));
+        body = body.push(slider::property_step(
+            id::material_field("mesh_subdivisions"),
+            "Mesh subdivisions",
+            1.0..=9.0,
+            material.mesh_subdivisions as f32,
+            1.0,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::Subdivisions(value))
+            },
+        ));
+    }
+    body = body.push(button::block(
+        id::MATERIAL_PACK_HEIGHT,
+        "Pack a height map into the normal…",
+        emit(Edit::OpenHeightPicker),
     ));
     body = body.push(checkbox::property(
         id::material_field("normal_directx"),

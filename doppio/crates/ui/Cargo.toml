@@ -9,6 +9,11 @@ publish.workspace = true
 name = "doppio"
 path = "src/main.rs"
 
+[[bin]]
+name = "doppio-headless"
+path = "src/bin/doppio-headless.rs"
+required-features = ["headless"]
+
 [dependencies]
 iced.workspace = true
 doppio-engine = { path = "../engine" }
@@ -19,9 +24,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 zip = { version = "2.6", default-features = false, features = ["deflate"] }
 iced-code-editor = "0.5.3"
+iced_test = { workspace = true, optional = true }
+fontdue = { version = "0.9", optional = true }
 
 [features]
 agent = ["dep:iced-mcp"]
+# Headless UI driver (`doppio-headless`): scripted, human-like actions and
+# screenshots without opening a window. See doppio/docs/headless-testing.md.
+headless = ["dep:iced_test", "dep:fontdue"]
 
 [dev-dependencies]
 iced_test.workspace = true

@@ -22,6 +22,9 @@ where
             pick_list(options, selected, on_select)
                 .width(Length::Fill)
                 .text_size(11)
+                .padding([3, 6])
+                .style(crate::uikit::theme::pick_list)
+                .menu_style(crate::uikit::theme::pick_menu)
                 .placeholder("Choose…"),
         ]
         .spacing(6)

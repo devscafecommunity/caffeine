@@ -56,6 +56,9 @@ pub fn context<'a, Message: Clone + 'a>(items: Vec<Item<'a, Message>>) -> Elemen
         .into()
 }
 
+/// Height of the compact top bar the dropdowns hang from.
+const BAR_HEIGHT: f32 = 36.0;
+
 /// Positions a dropdown below the menu bar at `x` logical pixels.
 pub fn overlay<'a, Message: Clone + 'a>(
     x: f32,
@@ -63,7 +66,7 @@ pub fn overlay<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     container(
         column![
-            space().height(Length::Fixed(52.0)),
+            space().height(Length::Fixed(BAR_HEIGHT)),
             row![space().width(Length::Fixed(x)), context(items)],
         ]
         .width(Length::Fill),

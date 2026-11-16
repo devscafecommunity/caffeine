@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 2
+#define CAFFEINE_CAPI_VERSION 4
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -291,6 +291,13 @@ typedef struct CaffeineMaterial {
     float ssr_denoise;
     float ssr_probe_blend;
     float ssr_bounces;
+    /** Parallax depth in UV units (0 = off); height is the normal map's alpha channel. */
+    float height_scale;
+    float parallax_steps;
+    /** 0 parallax occlusion, 1 geometric (subdivided mesh + vertex displacement). */
+    int displacement_mode;
+    float displacement_scale; /**< metres */
+    int mesh_subdivisions;    /**< levels, 1..9 */
 } CaffeineMaterial;
 
 typedef struct CaffeineMaterialPresetInfo {

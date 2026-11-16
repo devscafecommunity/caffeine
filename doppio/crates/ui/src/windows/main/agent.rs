@@ -19,8 +19,11 @@ use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
 pub fn run() -> iced::Result {
-    let application =
-        iced::application(App::new, App::update, App::view).subscription(App::subscription);
+    let application = iced::application(App::new, App::update, App::view)
+        .subscription(App::subscription)
+        .theme(|_: &App| crate::uikit::theme::app_theme())
+        .settings(crate::uikit::theme::settings())
+        .window(crate::uikit::theme::window());
 
     iced_mcp::attach(application)
         .state(describe_state)

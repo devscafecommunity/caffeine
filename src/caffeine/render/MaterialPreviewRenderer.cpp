@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace Caffeine::Render {
 namespace {
@@ -35,8 +36,24 @@ struct Fnv {
     }
 };
 
+/// Identity of a texture file on disk (modified time + size), so a map that a bake rewrote
+/// in place under the same path still invalidates the preview.
+u64 textureStamp(const std::string& path, const std::string& projectRoot) {
+    if (path.empty()) return 0;
+    const std::string resolved = Assets::MeshCache::resolveTexturePath(path, projectRoot);
+    if (resolved.empty()) return 0;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(resolved, ec);
+    if (ec) return 0;
+    const auto size = std::filesystem::file_size(resolved, ec);
+    Fnv f;
+    f.value(time.time_since_epoch().count());
+    f.value(ec ? u64{0} : static_cast<u64>(size));
+    return f.h;
+}
+
 u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
-                      const MaterialPreviewSettings& settings) {
+                      const MaterialPreviewSettings& settings, const std::string& projectRoot) {
     Fnv f;
     f.value(s.albedo);
     f.value(s.metallic);
@@ -48,6 +65,15 @@ u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
     f.text(s.normalMap);
     f.text(s.ormMap);
     f.text(s.emissionMap);
+    f.value(textureStamp(s.albedoMap, projectRoot));
+    f.value(textureStamp(s.normalMap, projectRoot));
+    f.value(textureStamp(s.ormMap, projectRoot));
+    f.value(textureStamp(s.emissionMap, projectRoot));
+    f.value(s.heightScale);
+    f.value(s.parallaxSteps);
+    f.value(s.displacementMode);
+    f.value(s.displacementScale);
+    f.value(s.meshSubdivisions);
     f.value(s.uvTiling);
     f.value(s.uvOffset);
     f.value(s.normalStrength);
@@ -264,7 +290,7 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     Assets::MaterialSurface hashed;
     if (surface) hashed = *surface;
     hashed.name = m_subjectPath.empty() ? hashed.name : m_subjectPath;
-    u64 hash = hashWithRoot(hashPreviewInputs(hashed, pixelSize, settings), projectRoot);
+    u64 hash = hashWithRoot(hashPreviewInputs(hashed, pixelSize, settings, projectRoot), projectRoot);
     Fnv subject;
     subject.h = hash;
     subject.text(m_subjectPath);

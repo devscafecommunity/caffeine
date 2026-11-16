@@ -31,7 +31,9 @@ pub fn labeled<'a, Message: Clone + 'a>(
             text(label.into()).width(80.0),
             slider(range, value, on_change)
                 .step(step)
-                .shift_step(step * 0.1),
+                .shift_step(step * 0.1)
+                .height(18)
+                .style(crate::uikit::theme::slider),
             text(format_value(value)).size(10).width(42.0),
         ]
         .spacing(6)
@@ -74,7 +76,8 @@ pub fn property_step<'a, Message: Clone + 'a>(
                 .step(step)
                 .shift_step(step * 0.1)
                 .width(iced::Length::Fill)
-                .height(14),
+                .height(18)
+                .style(crate::uikit::theme::slider),
             text(format_value(value))
                 .size(9)
                 .width(iced::Length::Fixed(42.0)),
@@ -100,7 +103,9 @@ pub fn compact<'a, Message: Clone + 'a>(
             text(label.into()).size(9).width(10.0),
             slider(range, value, on_change)
                 .step(step)
-                .shift_step(step * 0.1),
+                .shift_step(step * 0.1)
+                .height(18)
+                .style(crate::uikit::theme::slider),
             text(format_value(value)).size(9).width(34.0),
         ]
         .spacing(4)

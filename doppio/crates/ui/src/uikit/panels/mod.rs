@@ -1,3 +1,4 @@
+pub mod asset_wizard;
 pub mod assetmanager;
 pub mod console;
 pub mod dryad_nodes;

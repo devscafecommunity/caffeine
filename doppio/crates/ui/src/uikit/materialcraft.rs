@@ -386,6 +386,7 @@ fn filter_kind(filter: &str, component: roxmltree::Node<'_, '_>) -> NodeKind {
             metallic: param_f32(component, &["metallic"], 0.0),
             height: param_f32(component, &["height"], 0.5),
             ao: param_f32(component, &["ambientocclusion", "ao"], 1.0),
+            options: super::generators::OutputOptions::default(),
         },
         "image" | "normalmap" => {
             let projection =
@@ -561,6 +562,32 @@ fn filter_kind(filter: &str, component: roxmltree::Node<'_, '_>) -> NodeKind {
             value: param_f32(component, &["value", "output"], 0.5),
         },
         "luminance" => NodeKind::Luminance,
+        "doppio_proc" => {
+            let op_id = param(component, &["op"])
+                .and_then(|value| value.text().map(str::to_owned))
+                .unwrap_or_default();
+            let numbers = |name: &str| -> Vec<f32> {
+                param(component, &[name])
+                    .and_then(|value| value.text().map(str::to_owned))
+                    .map(|text| {
+                        text.split_whitespace()
+                            .filter_map(|w| w.parse().ok())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let params = numbers("params");
+            let colors: Vec<[f32; 4]> = numbers("colors").as_chunks::<4>().0.to_vec();
+            match super::procedural::find(&op_id) {
+                Some(op) => NodeKind::proc_from_saved(op, &params, &colors),
+                None => NodeKind::Unknown {
+                    filter: op_id,
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                    note: "Missing procedural op".to_owned(),
+                },
+            }
+        }
         "unknown" => {
             let inputs = param(component, &["inputs"])
                 .and_then(|value| value.text().map(split_labels))
@@ -724,6 +751,7 @@ pub fn import_sbs(xml: &str, fallback_name: &str) -> Result<SbsImport, String> {
                         metallic: 0.0,
                         height: 0.5,
                         ao: 1.0,
+                        options: super::generators::OutputOptions::default(),
                     },
                     Some(port),
                 )
@@ -1055,6 +1083,7 @@ fn filter_name(kind: &NodeKind) -> &'static str {
         NodeKind::Luminance => "luminance",
         NodeKind::Dot => "dot",
         NodeKind::Unknown { .. } => "unknown",
+        NodeKind::Proc { .. } => "doppio_proc",
         NodeKind::Output { .. } => "output",
     }
 }
@@ -1300,11 +1329,22 @@ fn write_parameters(xml: &mut String, kind: &NodeKind) {
             metallic,
             height,
             ao,
+            ..
         } => {
             write("roughness", float(*roughness));
             write("metallic", float(*metallic));
             write("height", float(*height));
             write("ambientocclusion", float(*ao));
+        }
+        NodeKind::Proc { op, params, colors } => {
+            write("op", text(op.def().id));
+            let numbers: Vec<String> = params.iter().map(|v| v.to_string()).collect();
+            write("params", text(&numbers.join(" ")));
+            let flat: Vec<String> = colors
+                .iter()
+                .flat_map(|c| c.iter().map(|v| v.to_string()))
+                .collect();
+            write("colors", text(&flat.join(" ")));
         }
         NodeKind::Luminance | NodeKind::Dot => {}
     }

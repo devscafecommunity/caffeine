@@ -688,6 +688,11 @@ void writeMaterial(const Caffeine::Assets::MaterialSurface& source, CaffeineMate
     out.ssr_denoise = source.ssrDenoise;
     out.ssr_probe_blend = source.ssrProbeBlend;
     out.ssr_bounces = source.ssrBounces;
+    out.height_scale = source.heightScale;
+    out.parallax_steps = source.parallaxSteps;
+    out.displacement_mode = source.displacementMode;
+    out.displacement_scale = source.displacementScale;
+    out.mesh_subdivisions = source.meshSubdivisions;
 }
 
 Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
@@ -735,6 +740,11 @@ Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
     out.ssrDenoise = source.ssr_denoise;
     out.ssrProbeBlend = source.ssr_probe_blend;
     out.ssrBounces = source.ssr_bounces;
+    out.heightScale = source.height_scale;
+    out.parallaxSteps = source.parallax_steps;
+    out.displacementMode = static_cast<Caffeine::u8>(source.displacement_mode ? 1 : 0);
+    out.displacementScale = source.displacement_scale;
+    out.meshSubdivisions = static_cast<Caffeine::u8>(std::clamp(source.mesh_subdivisions, 1, 9));
     Caffeine::Assets::sanitizeMaterialSurface(out);
     out.valid = true;
     return out;

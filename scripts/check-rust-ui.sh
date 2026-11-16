@@ -12,8 +12,12 @@ fi
 cargo fmt --check
 cargo test --workspace
 cargo check -p doppio-ui --features agent
+cargo build -p doppio-ui --features headless --bin doppio-headless
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p doppio-ui --all-targets --features agent -- -D warnings
+cargo clippy -p doppio-ui --all-targets --features headless -- -D warnings
+# Every shipped UI flow must pass through the real CLI as well as `cargo test`.
+./target/debug/doppio-headless run "${root}/doppio/tests/ui-flows" --out "${TMPDIR:-/tmp}/doppio-flows" --format text
 
 # Panels compose reusable components; they must not build interactive widgets.
 raw=$(grep -rnE '\b(text_input|checkbox|pick_list|slider|button)\(' \

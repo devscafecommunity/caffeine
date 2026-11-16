@@ -9,8 +9,9 @@ pub fn toolbar<'a, Message: Clone + 'a>(
     message: Message,
 ) -> Element<'a, Message> {
     container(
-        button(text(label.into()))
+        button(text(label.into()).size(12))
             .style(theme::button_secondary)
+            .padding([4, 10])
             .on_press(message),
     )
     .id(id.into())
@@ -24,7 +25,7 @@ pub fn compact<'a, Message: Clone + 'a>(
     message: Message,
 ) -> Element<'a, Message> {
     container(
-        button(text(label.into()).size(13))
+        button(text(label.into()).size(12))
             .style(theme::button_secondary)
             .padding([1, 6])
             .on_press(message),
@@ -40,8 +41,9 @@ pub fn primary<'a, Message: Clone + 'a>(
     message: Message,
 ) -> Element<'a, Message> {
     container(
-        button(text(label.into()))
+        button(text(label.into()).size(12))
             .style(theme::button_primary)
+            .padding([4, 10])
             .on_press(message),
     )
     .id(id.into())
@@ -55,10 +57,29 @@ pub fn danger<'a, Message: Clone + 'a>(
     message: Message,
 ) -> Element<'a, Message> {
     container(
-        button(text(label.into()))
+        button(text(label.into()).size(12))
             .style(theme::button_danger)
+            .padding([4, 10])
             .on_press(message),
     )
     .id(id.into())
+    .into()
+}
+
+/// Full-width secondary action for stacked property panels.
+pub fn block<'a, Message: Clone + 'a>(
+    id: impl Into<Id>,
+    label: impl Into<String>,
+    message: Message,
+) -> Element<'a, Message> {
+    container(
+        button(text(label.into()).size(12).width(iced::Length::Fill))
+            .style(theme::button_secondary)
+            .padding([4, 8])
+            .width(iced::Length::Fill)
+            .on_press(message),
+    )
+    .id(id.into())
+    .width(iced::Length::Fill)
     .into()
 }

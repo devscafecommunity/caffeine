@@ -1,7 +1,7 @@
 use crate::uikit::id;
 use crate::uikit::prefabs::{Category, Prefab};
 use crate::uikit::theme;
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
 pub struct Callbacks<'a, Message> {
@@ -81,8 +81,8 @@ pub fn view<'a, Message: Clone + 'a>(
     }
 
     let body = row![
-        container(scrollable(sidebar)).width(Length::Fixed(124.0)),
-        container(scrollable(items))
+        container(crate::uikit::components::scroll::vertical(sidebar)).width(Length::Fixed(124.0)),
+        container(crate::uikit::components::scroll::vertical(items))
             .width(Length::Fill)
             .padding([0, 4]),
     ]

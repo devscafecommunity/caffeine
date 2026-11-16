@@ -79,6 +79,16 @@ pub struct Material {
     pub ssr_denoise: f32,
     pub ssr_probe_blend: f32,
     pub ssr_bounces: f32,
+    /// Parallax depth in UV units (0 = off); the height is the normal map's alpha channel.
+    pub height_scale: f32,
+    /// Maximum parallax ray-march steps.
+    pub parallax_steps: f32,
+    /// 0 = parallax occlusion, 1 = geometric (subdivided mesh + vertex displacement).
+    pub displacement_mode: i32,
+    /// Geometric depth in metres.
+    pub displacement_scale: f32,
+    /// Subdivision levels (1..9) for geometric mode.
+    pub mesh_subdivisions: i32,
 }
 
 impl Default for Material {
@@ -124,6 +134,11 @@ impl Default for Material {
             ssr_denoise: 0.7,
             ssr_probe_blend: 8.0,
             ssr_bounces: 1.0,
+            height_scale: 0.0,
+            parallax_steps: 32.0,
+            displacement_mode: 0,
+            displacement_scale: 0.05,
+            mesh_subdivisions: 7,
         }
     }
 }
@@ -177,6 +192,11 @@ pub(crate) struct RawMaterial {
     pub ssr_denoise: f32,
     pub ssr_probe_blend: f32,
     pub ssr_bounces: f32,
+    pub height_scale: f32,
+    pub parallax_steps: f32,
+    pub displacement_mode: i32,
+    pub displacement_scale: f32,
+    pub mesh_subdivisions: i32,
 }
 
 impl Default for RawMaterial {
@@ -222,6 +242,11 @@ impl Default for RawMaterial {
             ssr_denoise: 0.0,
             ssr_probe_blend: 0.0,
             ssr_bounces: 0.0,
+            height_scale: 0.0,
+            parallax_steps: 0.0,
+            displacement_mode: 0,
+            displacement_scale: 0.0,
+            mesh_subdivisions: 0,
         }
     }
 }
@@ -305,6 +330,11 @@ impl From<&RawMaterial> for Material {
             ssr_denoise: raw.ssr_denoise,
             ssr_probe_blend: raw.ssr_probe_blend,
             ssr_bounces: raw.ssr_bounces,
+            height_scale: raw.height_scale,
+            parallax_steps: raw.parallax_steps,
+            displacement_mode: raw.displacement_mode,
+            displacement_scale: raw.displacement_scale,
+            mesh_subdivisions: raw.mesh_subdivisions,
         }
     }
 }
@@ -352,6 +382,11 @@ impl From<&Material> for RawMaterial {
         raw.ssr_denoise = material.ssr_denoise;
         raw.ssr_probe_blend = material.ssr_probe_blend;
         raw.ssr_bounces = material.ssr_bounces;
+        raw.height_scale = material.height_scale;
+        raw.parallax_steps = material.parallax_steps;
+        raw.displacement_mode = material.displacement_mode;
+        raw.displacement_scale = material.displacement_scale;
+        raw.mesh_subdivisions = material.mesh_subdivisions;
         raw
     }
 }

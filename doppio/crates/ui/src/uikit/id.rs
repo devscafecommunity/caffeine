@@ -114,6 +114,38 @@ pub const ASSET_REFRESH: UiId = UiId::fixed("assets.toolbar.refresh");
 pub const ASSET_VIEW_GRID: UiId = UiId::fixed("assets.toolbar.view_grid");
 pub const ASSET_VIEW_LIST: UiId = UiId::fixed("assets.toolbar.view_list");
 pub const ASSET_EMPTY: UiId = UiId::fixed("assets.tree.empty");
+pub const ASSET_NEW: UiId = UiId::fixed("assets.toolbar.new");
+pub const ASSET_IMPORT: UiId = UiId::fixed("assets.toolbar.import");
+pub const ASSET_TREE: UiId = UiId::fixed("assets.tree.folders");
+pub const ASSET_TREE_TOGGLE: UiId = UiId::fixed("assets.toolbar.tree_toggle");
+pub const WIZARD: UiId = UiId::fixed("assets.wizard");
+pub const WIZARD_CLOSE: UiId = UiId::fixed("assets.wizard.close");
+pub const WIZARD_TAB_CREATE: UiId = UiId::fixed("assets.wizard.tab.create");
+pub const WIZARD_TAB_IMPORT: UiId = UiId::fixed("assets.wizard.tab.import");
+pub const WIZARD_TAB_PACK: UiId = UiId::fixed("assets.wizard.tab.pack");
+pub const WIZARD_NAME: UiId = UiId::fixed("assets.wizard.create.name");
+pub const WIZARD_CREATE: UiId = UiId::fixed("assets.wizard.create.confirm");
+pub const WIZARD_IMPORT_PATH: UiId = UiId::fixed("assets.wizard.import.path");
+pub const WIZARD_IMPORT_ADD: UiId = UiId::fixed("assets.wizard.import.add");
+pub const WIZARD_IMPORT_RUN: UiId = UiId::fixed("assets.wizard.import.run");
+pub const WIZARD_PACK_RUN: UiId = UiId::fixed("assets.wizard.pack.run");
+pub const WIZARD_PACK_IDS: UiId = UiId::fixed("assets.wizard.pack.ids");
+
+/// One template card in the wizard's Create tab.
+pub fn wizard_template(index: usize) -> UiId {
+    UiId::dynamic(format!("assets.wizard.create.template.{index}"))
+}
+
+/// One queued source in the wizard's Import tab.
+pub fn wizard_source(index: usize) -> UiId {
+    UiId::dynamic(format!("assets.wizard.import.source.{index}"))
+}
+
+/// One folder row in the asset browser's tree.
+pub fn asset_tree_row(path: &str) -> UiId {
+    UiId::dynamic(format!("assets.tree.folder.{path}"))
+}
+
 pub const PROJECT_MANAGER: UiId = UiId::fixed("project.manager");
 pub const PROJECT_CLOSE: UiId = UiId::fixed("project.manager.close");
 pub const PROJECT_TAB_CREATE: UiId = UiId::fixed("project.manager.tab.create");
@@ -196,7 +228,6 @@ pub const FOCUS_SELECTION: UiId = UiId::fixed("viewport.camera.focus_selection")
 // ── Inspector ────────────────────────────────────────────────────────────
 pub const ENTITY_NAME: UiId = UiId::fixed("inspector.entity.name");
 pub const DELETE_ENTITY: UiId = UiId::fixed("inspector.entity.delete");
-pub const ADD_COMPONENT: UiId = UiId::fixed("inspector.add_component");
 pub const INSPECTOR_MATERIAL: UiId = UiId::fixed("inspector.material.slot");
 pub const INSPECTOR_MATERIAL_CLEAR: UiId = UiId::fixed("inspector.material.clear");
 
@@ -221,6 +252,17 @@ pub const MATERIAL_BAKE_ALL: UiId = UiId::fixed("material.bake.all");
 pub const MATERIAL_GENERATOR: UiId = UiId::fixed("material.toolbar.generator");
 pub const MATERIAL_TEXTURE_SET: UiId = UiId::fixed("material.toolbar.texture_set");
 pub const INSPECTOR_MATERIAL_PICKER: UiId = UiId::fixed("inspector.material.picker");
+pub const INSPECTOR_ADD_BEHAVIOUR: UiId = UiId::fixed("inspector.behaviour.add");
+pub const BEHAVIOUR_PICKER: UiId = UiId::fixed("inspector.behaviour.picker");
+pub const BEHAVIOUR_PICKER_CLOSE: UiId = UiId::fixed("inspector.behaviour.picker.close");
+pub const BEHAVIOUR_PICKER_SEARCH: UiId = UiId::fixed("inspector.behaviour.picker.search");
+pub const BEHAVIOUR_NEW: UiId = UiId::fixed("inspector.behaviour.new");
+
+/// One script in the behaviour picker.
+pub fn behaviour_item(index: usize) -> UiId {
+    UiId::dynamic(format!("inspector.behaviour.picker.item.{index}"))
+}
+
 pub const MATERIAL_ASSET_PICKER: UiId = UiId::fixed("material.asset.picker");
 pub const MATERIAL_ASSET_PICKER_CLOSE: UiId = UiId::fixed("material.asset.picker.close");
 pub const MATERIAL_ASSET_PICKER_SEARCH: UiId = UiId::fixed("material.asset.picker.search");
@@ -234,6 +276,10 @@ pub const MATERIAL_ENVIRONMENT_PICKER_CLOSE: UiId =
     UiId::fixed("material.environment.picker.close");
 pub const MATERIAL_ENVIRONMENT_PICKER_SEARCH: UiId =
     UiId::fixed("material.environment.picker.search");
+pub const MATERIAL_PACK_HEIGHT: UiId = UiId::fixed("material.surface.pack_height");
+pub const MATERIAL_HEIGHT_PICKER: UiId = UiId::fixed("material.height.picker");
+pub const MATERIAL_HEIGHT_PICKER_CLOSE: UiId = UiId::fixed("material.height.picker.close");
+pub const MATERIAL_HEIGHT_PICKER_SEARCH: UiId = UiId::fixed("material.height.picker.search");
 pub const MATERIAL_SCROLL: UiId = UiId::fixed("material.body.scroll");
 pub const MATERIAL_BAKE_DIRECTX: UiId = UiId::fixed("material.bake.directx");
 pub const MATERIAL_BAKE_WRAP: UiId = UiId::fixed("material.bake.wrap");
@@ -249,6 +295,16 @@ pub const GENERATOR_OPEN_MATERIAL: UiId = UiId::fixed("generator.toolbar.materia
 pub const GENERATOR_DELETE_NODE: UiId = UiId::fixed("generator.node.delete");
 pub const GENERATOR_RESOLUTION: UiId = UiId::fixed("generator.toolbar.resolution");
 pub const GENERATOR_PREVIEW: UiId = UiId::fixed("generator.preview");
+pub const GENERATOR_LIBRARY: UiId = UiId::fixed("generator.library");
+pub const GENERATOR_CHANNELS: UiId = UiId::fixed("generator.preview.channels");
+
+/// One chip of the output-preview channel switcher (`Base`, `Normal`, `Height`…).
+pub fn generator_channel(label: &str) -> UiId {
+    UiId::dynamic(format!(
+        "generator.preview.channel.{}",
+        label.to_lowercase()
+    ))
+}
 pub const GENERATOR_UNDO: UiId = UiId::fixed("generator.toolbar.undo");
 pub const GENERATOR_REDO: UiId = UiId::fixed("generator.toolbar.redo");
 pub const GENERATOR_FIT: UiId = UiId::fixed("generator.toolbar.fit");
@@ -363,6 +419,10 @@ pub fn material_asset_item(index: usize) -> UiId {
     UiId::dynamic(format!("material.asset.picker.item.{index}"))
 }
 
+pub fn material_height_item(index: usize) -> UiId {
+    UiId::dynamic(format!("material.height.picker.item.{index}"))
+}
+
 pub fn material_environment_item(index: usize) -> UiId {
     UiId::dynamic(format!("material.environment.picker.item.{index}"))
 }
@@ -394,6 +454,10 @@ pub fn component_toggle(component: usize) -> UiId {
 
 pub fn component_remove(component: usize) -> UiId {
     UiId::dynamic(format!("inspector.component.remove.{component}"))
+}
+
+pub fn pane_maximize(pane: &str) -> UiId {
+    UiId::dynamic(format!("editor.pane.maximize.{pane}"))
 }
 
 /// One row of the hierarchy list.
@@ -605,6 +669,86 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "label",
     },
     UiMeta {
+        id: ASSET_NEW,
+        description: "Opens the asset wizard on the Create tab (folder, material, script…).",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_IMPORT,
+        description: "Opens the asset wizard on the Import tab.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_TREE_TOGGLE,
+        description: "Shows or hides the folder tree beside the file view.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: ASSET_TREE,
+        description: "Folder tree of the project asset root.",
+        kind: "list",
+    },
+    UiMeta {
+        id: WIZARD,
+        description: "Asset wizard: create, import and pack project assets.",
+        kind: "dialog",
+    },
+    UiMeta {
+        id: WIZARD_CLOSE,
+        description: "Closes the asset wizard.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_TAB_CREATE,
+        description: "Wizard tab: create a new asset from a template.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: WIZARD_TAB_IMPORT,
+        description: "Wizard tab: copy files into the project assets.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: WIZARD_TAB_PACK,
+        description: "Wizard tab: pack raw assets into a .cap with caf-pack.",
+        kind: "chip",
+    },
+    UiMeta {
+        id: WIZARD_NAME,
+        description: "Name of the asset to create.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: WIZARD_CREATE,
+        description: "Creates the asset in the current folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_IMPORT_PATH,
+        description: "Path of a file or folder to import.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: WIZARD_IMPORT_ADD,
+        description: "Queues the typed path for import.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_IMPORT_RUN,
+        description: "Copies the queued files into the current folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_PACK_RUN,
+        description: "Runs caf-pack over the asset root to build a .cap.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_PACK_IDS,
+        description: "Also generate the asset id header.",
+        kind: "checkbox",
+    },
+    UiMeta {
         id: PROJECT_MANAGER,
         description: "Create, reopen or browse Caffeine projects.",
         kind: "dialog",
@@ -805,6 +949,31 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "button",
     },
     UiMeta {
+        id: INSPECTOR_ADD_BEHAVIOUR,
+        description: "Opens the picker of everything that can be attached to the entity: components, scripts, meshes, materials.",
+        kind: "button",
+    },
+    UiMeta {
+        id: BEHAVIOUR_PICKER,
+        description: "Floating, searchable picker of components, scripts, meshes and materials.",
+        kind: "dialog",
+    },
+    UiMeta {
+        id: BEHAVIOUR_PICKER_CLOSE,
+        description: "Closes the behaviour picker.",
+        kind: "button",
+    },
+    UiMeta {
+        id: BEHAVIOUR_PICKER_SEARCH,
+        description: "Filters the behaviour picker by name, detail or group.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: BEHAVIOUR_NEW,
+        description: "Opens the asset wizard to create a new Lua script.",
+        kind: "button",
+    },
+    UiMeta {
         id: MATERIAL_ASSET_PICKER,
         description: "Searchable .mat material picker.",
         kind: "palette",
@@ -838,6 +1007,26 @@ pub const CATALOG: &[UiMeta] = &[
         id: MATERIAL_PREVIEW_EXPOSURE,
         description: "Environment exposure for the material preview.",
         kind: "slider",
+    },
+    UiMeta {
+        id: MATERIAL_PACK_HEIGHT,
+        description: "Merges an external height image into the normal map's alpha for parallax depth.",
+        kind: "button",
+    },
+    UiMeta {
+        id: MATERIAL_HEIGHT_PICKER,
+        description: "Picker of the height image to pack into the normal map.",
+        kind: "palette",
+    },
+    UiMeta {
+        id: MATERIAL_HEIGHT_PICKER_CLOSE,
+        description: "Closes the height picker.",
+        kind: "button",
+    },
+    UiMeta {
+        id: MATERIAL_HEIGHT_PICKER_SEARCH,
+        description: "Searches the project's images for a height map.",
+        kind: "text_input",
     },
     UiMeta {
         id: MATERIAL_ENVIRONMENT_PICKER,
@@ -1043,6 +1232,16 @@ pub const CATALOG: &[UiMeta] = &[
         id: GENERATOR_RESOLUTION,
         description: "Bake resolution for the generator graph.",
         kind: "dropdown",
+    },
+    UiMeta {
+        id: GENERATOR_LIBRARY,
+        description: "Starts the graph from a procedural library material (bricks, wood, rust, rock…).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: GENERATOR_CHANNELS,
+        description: "Switches the output preview between Base, Normal, Height, Roughness, Metal, AO, Emissive and Opacity.",
+        kind: "chip",
     },
     UiMeta {
         id: GENERATOR_PREVIEW,
@@ -1378,11 +1577,6 @@ pub const CATALOG: &[UiMeta] = &[
         id: DELETE_ENTITY,
         description: "Deletes the selected entity.",
         kind: "button",
-    },
-    UiMeta {
-        id: ADD_COMPONENT,
-        description: "Adds a component to the selected entity.",
-        kind: "picker",
     },
     UiMeta {
         id: INSPECTOR_MATERIAL,

@@ -2,7 +2,7 @@ use crate::uikit::components::toggle_chip;
 use crate::uikit::id;
 use crate::uikit::theme;
 use crate::windows::log::{LogEntry, LogLevel};
-use iced::widget::{column, container, row, scrollable, space, text};
+use iced::widget::{column, container, row, space, text};
 use iced::{Element, Length};
 use std::collections::HashSet;
 
@@ -70,7 +70,7 @@ pub fn view<'a, Message: Clone + 'a>(
     container(column![
         chips,
         space().height(6),
-        scrollable(content).anchor_bottom()
+        crate::uikit::components::scroll::vertical(content).anchor_bottom()
     ])
     .into()
 }

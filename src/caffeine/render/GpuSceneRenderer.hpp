@@ -1,4 +1,6 @@
 #pragma once
+#include <map>
+#include <utility>
 
 #include "../core/Types.hpp"
 #include "../ecs/World.hpp"
@@ -190,6 +192,15 @@ private:
         f32  normalStrength = 1.0f;
         bool normalDirectX = false;
         f32  aoStrength = 1.0f;
+        f32  heightScale = 0.0f;     ///< parallax depth (UV units); 0 = off
+        f32  parallaxSteps = 32.0f;
+        /// Geometric displacement: `mesh` is a subdivided copy and the vertex shaders push it
+        /// along its normals by the height in the normal map's alpha.
+        bool displaced = false;
+        RHI::Texture* displacementTexture = nullptr; ///< normal map (height in alpha)
+        f32  displacementScale = 0.0f; ///< metres
+        f32  displacementEps = 0.01f;  ///< finite-difference step, tiled UV units
+        f32  displacementMetresPerUv = 1.0f; ///< world metres per tiled UV unit
         u8   alphaMode = 0;
         f32  alphaCutoff = 0.5f;
         f32  transmission = 0.0f;
@@ -360,6 +371,11 @@ private:
     RHI::Pipeline* m_wireframePipeline = nullptr;
     RHI::Pipeline* m_terrainPipeline = nullptr;
     RHI::Pipeline* m_shadowPipeline = nullptr;
+    // Geometric displacement (vertex-stage height sampler).
+    RHI::Shader* m_displaceVert = nullptr;
+    RHI::Shader* m_shadowDisplaceVert = nullptr;
+    RHI::Pipeline* m_displacePipeline = nullptr;
+    RHI::Pipeline* m_shadowDisplacePipeline = nullptr;
     RHI::Shader* m_instancedVert = nullptr;
     RHI::Pipeline* m_instancedPipeline = nullptr;
     RHI::Buffer* m_instanceBuffer = nullptr;
@@ -418,6 +434,15 @@ private:
     GpuSpotShadowMap m_spotShadows;
     u32 m_activeCascadeCount = 4;
     std::unordered_map<const Assets::Mesh3D*, MeshLodCache> m_meshLods;
+    struct DisplacedMesh {
+        Assets::Mesh3D mesh;
+        f32 metersPerUv = 1.0f;
+        f32 edgeUv = 1.0f;
+        u64 sourceRevision = 0;
+        bool valid = false;
+    };
+    std::map<std::pair<const Assets::Mesh3D*, u32>, DisplacedMesh> m_displacedMeshes;
+    DisplacedMesh* displacedMeshFor(const Assets::Mesh3D* source, u32 levels);
     std::unordered_map<u32, u32> m_entityLod;
     bool m_ready = false;
 };

@@ -4,8 +4,8 @@ use iced::Element;
 
 pub fn chip<'a, Message: 'a>(label: impl Into<String>, tone: ChipTone) -> Element<'a, Message> {
     let label = label.into();
-    container(text(label).size(11))
-        .padding([3, 8])
+    container(text(label).size(10))
+        .padding([2, 7])
         .style(theme::chip(tone))
         .into()
 }

@@ -72,6 +72,20 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
             surface.ormMap = restOfLine(ss);
         } else if (tag == "emission_map") {
             surface.emissionMap = restOfLine(ss);
+        } else if (tag == "height_scale") {
+            ss >> surface.heightScale;
+        } else if (tag == "parallax_steps") {
+            ss >> surface.parallaxSteps;
+        } else if (tag == "displacement_mode") {
+            int value = 0;
+            ss >> value;
+            surface.displacementMode = static_cast<u8>(std::clamp(value, 0, 1));
+        } else if (tag == "displacement_scale") {
+            ss >> surface.displacementScale;
+        } else if (tag == "mesh_subdivisions") {
+            int value = 7;
+            ss >> value;
+            surface.meshSubdivisions = static_cast<u8>(std::clamp(value, 1, 9));
         } else if (tag == "uv_tiling") {
             ss >> surface.uvTiling.x >> surface.uvTiling.y;
         } else if (tag == "uv_offset") {
@@ -171,6 +185,11 @@ void sanitizeMaterialSurface(MaterialSurface& surface) {
     surface.emissionStrength = std::max(surface.emissionStrength, 0.0f);
     surface.normalStrength = std::clamp(surface.normalStrength, 0.0f, 4.0f);
     surface.aoStrength = clamp01(surface.aoStrength);
+    surface.heightScale = std::clamp(surface.heightScale, 0.0f, 0.5f);
+    surface.parallaxSteps = std::clamp(surface.parallaxSteps, 4.0f, 128.0f);
+    surface.displacementMode = surface.displacementMode ? 1 : 0;
+    surface.displacementScale = std::clamp(surface.displacementScale, 0.0f, 2.0f);
+    surface.meshSubdivisions = static_cast<u8>(std::clamp<int>(surface.meshSubdivisions, 1, 9));
     surface.alphaCutoff = clamp01(surface.alphaCutoff);
     surface.transmission = clamp01(surface.transmission);
     surface.ior = std::clamp(surface.ior, 1.0f, 3.0f);
@@ -215,6 +234,11 @@ bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& 
     out << "normal_map " << material.normalMap << '\n';
     out << "orm_map " << material.ormMap << '\n';
     out << "emission_map " << material.emissionMap << '\n';
+    out << "height_scale " << material.heightScale << '\n';
+    out << "parallax_steps " << material.parallaxSteps << '\n';
+    out << "displacement_mode " << static_cast<int>(material.displacementMode) << '\n';
+    out << "displacement_scale " << material.displacementScale << '\n';
+    out << "mesh_subdivisions " << static_cast<int>(material.meshSubdivisions) << '\n';
     out << "uv_tiling " << material.uvTiling.x << ' ' << material.uvTiling.y << '\n';
     out << "uv_offset " << material.uvOffset.x << ' ' << material.uvOffset.y << '\n';
     out << "normal_strength " << material.normalStrength << '\n';

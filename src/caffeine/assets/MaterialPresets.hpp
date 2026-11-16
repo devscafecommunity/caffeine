@@ -166,6 +166,11 @@ inline void applyMaterialPreset(const MaterialSurface& preset, MaterialSurface& 
     result.uvOffset = target.uvOffset;
     result.normalStrength = target.normalStrength;
     result.aoStrength = target.aoStrength;
+    result.heightScale = target.heightScale;
+    result.parallaxSteps = target.parallaxSteps;
+    result.displacementMode = target.displacementMode;
+    result.displacementScale = target.displacementScale;
+    result.meshSubdivisions = target.meshSubdivisions;
     result.valid = true;
     target = std::move(result);
 }

@@ -14,6 +14,8 @@ enum class BuiltinShader : u8 {
     SceneLitFragment,
     TerrainLitFragment,
     ShadowDepthVertex,
+    SceneDisplaceVertex,
+    ShadowDisplaceVertex,
     ShadowDepthFragment,
     FullscreenVertex,
     SkyFragment,

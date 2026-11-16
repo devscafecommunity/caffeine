@@ -42,6 +42,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .align_y(iced::Alignment::Center),
     )
     .padding([1, 4])
+    .width(Length::Fill)
     .style(theme::component_header);
 
     let mut body = column![].spacing(0);

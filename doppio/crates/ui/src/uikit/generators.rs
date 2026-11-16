@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::uikit::components::node_canvas::{self, Port, PortKind};
+use crate::uikit::procedural::{self, ProcOp};
 
 pub type NodeId = u64;
 type Image = Rc<Vec<[f32; 4]>>;
@@ -47,6 +48,8 @@ struct BakeContext<'a> {
     progress: Option<&'a mut ProgressFn<'a>>,
     total: usize,
     done: usize,
+    /// Secondary outputs of multi-output nodes, keyed by (node, output).
+    extra: HashMap<(NodeId, usize), Image>,
 }
 
 impl<'a> BakeContext<'a> {
@@ -282,6 +285,28 @@ impl NormalBlendMode {
     }
 }
 
+/// Extra Output-node settings that decide how the height map is produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputOptions {
+    /// When no Height is connected, derive it from the base-colour luminance
+    /// so the baked height (and the normal map built from it) is never flat.
+    pub auto_height: bool,
+    /// Stretch the final height to the full 0..1 range.
+    pub normalize_height: bool,
+    /// Contrast around mid-grey applied after normalising.
+    pub height_contrast: f32,
+}
+
+impl Default for OutputOptions {
+    fn default() -> Self {
+        OutputOptions {
+            auto_height: true,
+            normalize_height: true,
+            height_contrast: 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeKind {
     Color {
@@ -414,11 +439,18 @@ pub enum NodeKind {
         outputs: Vec<String>,
         note: String,
     },
+    /// A node from the data-driven procedural library (`uikit::procedural`).
+    Proc {
+        op: ProcOp,
+        params: Vec<f32>,
+        colors: Vec<[f32; 4]>,
+    },
     Output {
         roughness: f32,
         metallic: f32,
         height: f32,
         ao: f32,
+        options: OutputOptions,
     },
 }
 
@@ -451,6 +483,7 @@ impl NodeKind {
             NodeKind::Luminance => "Luminance",
             NodeKind::Dot => "Dot",
             NodeKind::Unknown { .. } => "Unknown",
+            NodeKind::Proc { op, .. } => op.def().title,
             NodeKind::Output { .. } => "Output",
         }
     }
@@ -480,6 +513,7 @@ impl NodeKind {
             | NodeKind::Warp { .. } => "Filters",
             NodeKind::Value { .. } | NodeKind::Luminance | NodeKind::Dot => "Utilities",
             NodeKind::Unknown { .. } => "Imported",
+            NodeKind::Proc { op, .. } => op.def().category,
             NodeKind::Output { .. } => "Output",
         }
     }
@@ -512,6 +546,15 @@ impl NodeKind {
             | NodeKind::Luminance
             | NodeKind::Dot => crate::uikit::theme::TEXT_MUTED,
             NodeKind::Unknown { .. } => crate::uikit::theme::WARNING,
+            NodeKind::Proc { op, .. } => match op.def().category {
+                "Noise" => crate::uikit::theme::ACCENT,
+                "Natural" => crate::uikit::theme::SUCCESS,
+                "Patterns" => crate::uikit::theme::WARNING,
+                "Shapes" => crate::uikit::theme::ICON_CYAN,
+                "Math" => crate::uikit::theme::TEXT_MUTED,
+                "Geometry" => crate::uikit::theme::ICON_PURPLE,
+                _ => crate::uikit::theme::ICON_TEAL,
+            },
             NodeKind::Output { .. } => crate::uikit::theme::SUCCESS,
         }
     }
@@ -545,12 +588,25 @@ impl NodeKind {
             | NodeKind::Luminance => vec![color("Input")],
             NodeKind::Dot => vec![color("In")],
             NodeKind::Unknown { inputs, .. } => inputs.iter().map(|label| color(label)).collect(),
+            NodeKind::Proc { op, .. } => op
+                .def()
+                .inputs
+                .iter()
+                .map(|port| Port {
+                    label: port.label.to_owned(),
+                    kind: port.kind(),
+                })
+                .collect(),
+            // Ports 0..4 keep their order for older graphs; new ones are appended.
             NodeKind::Output { .. } => vec![
                 color("Color"),
                 scalar("Roughness"),
                 scalar("Metallic"),
                 scalar("Height"),
                 scalar("AO"),
+                color("Emissive"),
+                scalar("Opacity"),
+                color("Normal"),
             ],
             _ => Vec::new(),
         }
@@ -578,6 +634,15 @@ impl NodeKind {
                 .map(|label| Port {
                     label: label.clone(),
                     kind: PortKind::Color,
+                })
+                .collect(),
+            NodeKind::Proc { op, .. } => op
+                .def()
+                .outputs
+                .iter()
+                .map(|port| Port {
+                    label: port.label.to_owned(),
+                    kind: port.kind(),
                 })
                 .collect(),
             NodeKind::Output { .. } => Vec::new(),
@@ -664,6 +729,7 @@ impl NodeKind {
                     format!("{} · {}", short_name(filter), short_name(note))
                 }
             }
+            NodeKind::Proc { op, params, .. } => proc_subtitle(*op, params),
             NodeKind::Output {
                 roughness,
                 metallic,
@@ -673,9 +739,60 @@ impl NodeKind {
         }
     }
 
+    /// A procedural node with the op's default parameters and colours.
+    pub fn proc_default(op: ProcOp) -> NodeKind {
+        NodeKind::Proc {
+            op,
+            params: op.default_params(),
+            colors: op.default_colors(),
+        }
+    }
+
+    /// Builds a procedural node from saved values, padding/truncating to the
+    /// op's current parameter list so older files keep loading.
+    pub fn proc_from_saved(op: ProcOp, params: &[f32], colors: &[[f32; 4]]) -> NodeKind {
+        let mut p = op.default_params();
+        for (slot, value) in p.iter_mut().zip(params.iter()) {
+            *slot = *value;
+        }
+        let mut c = op.default_colors();
+        for (slot, value) in c.iter_mut().zip(colors.iter()) {
+            *slot = *value;
+        }
+        NodeKind::Proc {
+            op,
+            params: p,
+            colors: c,
+        }
+    }
+
     pub fn default_color() -> [f32; 4] {
         [0.75, 0.75, 0.75, 1.0]
     }
+}
+
+fn proc_subtitle(op: ProcOp, params: &[f32]) -> String {
+    let mut parts = Vec::new();
+    for (spec, value) in op.def().params.iter().zip(params.iter()) {
+        if parts.len() >= 2 {
+            break;
+        }
+        match spec.kind {
+            procedural::ParamKind::Float => parts.push(format!("{} {:.2}", spec.key, value)),
+            procedural::ParamKind::Int => {
+                parts.push(format!("{} {}", spec.key, value.round() as i32))
+            }
+            procedural::ParamKind::Enum(options) => parts.push(
+                options
+                    .get(value.round() as usize)
+                    .copied()
+                    .unwrap_or("?")
+                    .to_owned(),
+            ),
+            procedural::ParamKind::Bool => {}
+        }
+    }
+    parts.join(" · ")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -736,6 +853,7 @@ impl Default for MaterialGraph {
                 metallic: 0.0,
                 height: 0.5,
                 ao: 1.0,
+                options: OutputOptions::default(),
             },
             Point::new(110.0, -60.0),
         );
@@ -1160,14 +1278,42 @@ impl MaterialGraph {
                     escape_list(outputs),
                     escape_token(note)
                 ),
+                NodeKind::Proc { op, params, colors } => {
+                    let mut text = format!(
+                        "node {} {} {} proc {} {}",
+                        node.id,
+                        node.position.x,
+                        node.position.y,
+                        op.def().id,
+                        params.len()
+                    );
+                    for value in params {
+                        text.push_str(&format!(" {value}"));
+                    }
+                    text.push_str(&format!(" {}", colors.len()));
+                    for c in colors {
+                        text.push_str(&format!(" {} {} {} {}", c[0], c[1], c[2], c[3]));
+                    }
+                    text
+                }
                 NodeKind::Output {
                     roughness,
                     metallic,
                     height,
                     ao,
+                    options,
                 } => format!(
-                    "node {} {} {} output {} {} {} {}",
-                    node.id, node.position.x, node.position.y, roughness, metallic, height, ao
+                    "node {} {} {} output {} {} {} {} {} {} {}",
+                    node.id,
+                    node.position.x,
+                    node.position.y,
+                    roughness,
+                    metallic,
+                    height,
+                    ao,
+                    options.auto_height as i32,
+                    options.normalize_height as i32,
+                    options.height_contrast
                 ),
             };
             text.push_str(&line);
@@ -1390,15 +1536,54 @@ impl MaterialGraph {
                             outputs: unescape_list(words.get(7).copied().unwrap_or("-")),
                             note: unescape_token(words.get(8).copied().unwrap_or("-")),
                         },
-                        "output" => NodeKind::Output {
-                            roughness: words.get(5)?.parse().ok()?,
-                            metallic: words.get(6)?.parse().ok()?,
-                            height: words.get(7)?.parse().ok()?,
-                            ao: words
-                                .get(8)
-                                .and_then(|value| value.parse().ok())
-                                .unwrap_or(1.0),
-                        },
+                        "proc" => {
+                            let op_id = *words.get(5)?;
+                            let count: usize = words.get(6)?.parse().ok()?;
+                            let mut params = Vec::with_capacity(count);
+                            for k in 0..count {
+                                params.push(words.get(7 + k)?.parse::<f32>().ok()?);
+                            }
+                            let color_count: usize = words.get(7 + count)?.parse().ok()?;
+                            let mut colors = Vec::with_capacity(color_count);
+                            for k in 0..color_count {
+                                colors.push(color(8 + count + k * 4, &words)?);
+                            }
+                            match procedural::find(op_id) {
+                                Some(op) => NodeKind::proc_from_saved(op, &params, &colors),
+                                None => NodeKind::Unknown {
+                                    filter: op_id.to_owned(),
+                                    inputs: Vec::new(),
+                                    outputs: Vec::new(),
+                                    note: "Missing procedural op".to_owned(),
+                                },
+                            }
+                        }
+                        "output" => {
+                            let defaults = OutputOptions::default();
+                            NodeKind::Output {
+                                roughness: words.get(5)?.parse().ok()?,
+                                metallic: words.get(6)?.parse().ok()?,
+                                height: words.get(7)?.parse().ok()?,
+                                ao: words
+                                    .get(8)
+                                    .and_then(|value| value.parse().ok())
+                                    .unwrap_or(1.0),
+                                options: OutputOptions {
+                                    auto_height: words
+                                        .get(9)
+                                        .and_then(|v| v.parse::<i32>().ok())
+                                        .map_or(defaults.auto_height, |v| v != 0),
+                                    normalize_height: words
+                                        .get(10)
+                                        .and_then(|v| v.parse::<i32>().ok())
+                                        .map_or(defaults.normalize_height, |v| v != 0),
+                                    height_contrast: words
+                                        .get(11)
+                                        .and_then(|v| v.parse().ok())
+                                        .unwrap_or(defaults.height_contrast),
+                                },
+                            }
+                        }
                         _ => continue,
                     };
                     graph.next_id = graph.next_id.max(id + 1);
@@ -1440,11 +1625,13 @@ impl MaterialGraph {
             metallic,
             height,
             ao,
+            options,
         } = output_kind
         else {
             return Err("The output node is not an Output".to_owned());
         };
         let resolution = self.resolution.clamp(64, 1024) as usize;
+        let count = resolution * resolution;
         let mut memo = HashMap::new();
         let mut ctx = BakeContext {
             textures,
@@ -1452,48 +1639,107 @@ impl MaterialGraph {
             progress,
             total: self.nodes.len().max(1),
             done: 0,
+            extra: HashMap::new(),
         };
         ctx.check()?;
         let color = self
             .input_image(output, 0, resolution, &mut memo, &mut Vec::new(), &mut ctx)?
-            .unwrap_or_else(|| Rc::new(vec![[0.5, 0.5, 0.5, 1.0]; resolution * resolution]));
-        let roughness_image =
-            self.input_image(output, 1, resolution, &mut memo, &mut Vec::new(), &mut ctx)?;
-        let metallic_image =
-            self.input_image(output, 2, resolution, &mut memo, &mut Vec::new(), &mut ctx)?;
-        let height_image =
-            self.input_image(output, 3, resolution, &mut memo, &mut Vec::new(), &mut ctx)?;
-        let ao_image =
-            self.input_image(output, 4, resolution, &mut memo, &mut Vec::new(), &mut ctx)?;
+            .unwrap_or_else(|| Rc::new(vec![[0.5, 0.5, 0.5, 1.0]; count]));
+        let mut input = |port: usize| {
+            self.input_image(
+                output,
+                port,
+                resolution,
+                &mut memo,
+                &mut Vec::new(),
+                &mut ctx,
+            )
+        };
+        let roughness_image = input(1)?;
+        let metallic_image = input(2)?;
+        let height_image = input(3)?;
+        let ao_image = input(4)?;
+        let emissive_image = input(5)?;
+        let opacity_image = input(6)?;
+        let normal_image = input(7)?;
 
-        let mut base = Vec::with_capacity(resolution * resolution * 4);
-        let mut base16 = Vec::with_capacity(resolution * resolution * 4);
-        for pixel in color.iter() {
-            for channel in pixel.iter() {
-                base.push(to_byte(*channel));
-                base16.push(to_u16(*channel));
+        let plane = |image: &Option<Image>, fallback: f32| -> Vec<f32> {
+            match image {
+                Some(image) => image.iter().map(|pixel| luminance(*pixel)).collect(),
+                None => vec![fallback; count],
+            }
+        };
+        let to_bytes = |values: &[f32]| -> (Vec<u8>, Vec<u16>) {
+            (
+                values.iter().map(|value| to_byte(*value)).collect(),
+                values.iter().map(|value| to_u16(*value)).collect(),
+            )
+        };
+
+        // Height: authored, else derived from the colour, else the constant.
+        let mut height_plane = match &height_image {
+            Some(_) => plane(&height_image, height),
+            None if options.auto_height => color.iter().map(|pixel| luminance(*pixel)).collect(),
+            None => vec![height; count],
+        };
+        if options.normalize_height {
+            procedural::normalize_plane(&mut height_plane);
+        }
+        if (options.height_contrast - 1.0).abs() > 1e-3 {
+            for value in height_plane.iter_mut() {
+                *value = ((*value - 0.5) * options.height_contrast + 0.5).clamp(0.0, 1.0);
             }
         }
-        let scalar = |image: &Option<Image>, fallback: f32| -> (Vec<u8>, Vec<u16>) {
-            let values: Vec<f32> = image
-                .as_ref()
-                .map(|image| image.iter().map(|pixel| luminance(*pixel)).collect())
-                .unwrap_or_else(|| vec![fallback; resolution * resolution]);
-            let bytes: Vec<u8> = values.iter().map(|value| to_byte(*value)).collect();
-            let words: Vec<u16> = values.iter().map(|value| to_u16(*value)).collect();
-            (bytes, words)
-        };
-        let (roughness_pixels, roughness_pixels16) = scalar(&roughness_image, roughness);
-        let (metallic_pixels, metallic_pixels16) = scalar(&metallic_image, metallic);
-        let (height_pixels, height_pixels16) = scalar(&height_image, height);
-        let (ao_pixels, ao_pixels16) = match &ao_image {
-            Some(image) => scalar(&Some(image.clone()), ao),
-            None => {
-                let bytes = cavity_ao(&height_pixels, resolution, ao);
-                let words: Vec<u16> = bytes.iter().map(|value| *value as u16 * 257).collect();
-                (bytes, words)
+
+        let opacity_plane = opacity_image.as_ref().map(|_| plane(&opacity_image, 1.0));
+        let mut base = Vec::with_capacity(count * 4);
+        let mut base16 = Vec::with_capacity(count * 4);
+        for (index, pixel) in color.iter().enumerate() {
+            for (channel, value) in pixel.iter().enumerate() {
+                let value = if channel == 3 {
+                    opacity_plane.as_ref().map_or(*value, |plane| plane[index])
+                } else {
+                    *value
+                };
+                base.push(to_byte(value));
+                base16.push(to_u16(value));
             }
+        }
+        let (roughness_pixels, roughness_pixels16) = to_bytes(&plane(&roughness_image, roughness));
+        let (metallic_pixels, metallic_pixels16) = to_bytes(&plane(&metallic_image, metallic));
+        let (height_pixels, height_pixels16) = to_bytes(&height_plane);
+        let ao_values = match &ao_image {
+            Some(_) => plane(&ao_image, ao),
+            None => procedural::height::multiscale_ao(&height_plane, resolution, 0.02, 1.0, 0.6)
+                .into_iter()
+                .map(|value| value * ao)
+                .collect(),
         };
+        let (ao_pixels, ao_pixels16) = to_bytes(&ao_values);
+
+        let has_emissive = emissive_image.is_some();
+        let mut emissive = vec![0u8; count * 4];
+        let mut emissive16 = vec![0u16; count * 4];
+        if let Some(image) = &emissive_image {
+            for (index, pixel) in image.iter().enumerate() {
+                for channel in 0..4 {
+                    let value = if channel == 3 { 1.0 } else { pixel[channel] };
+                    emissive[index * 4 + channel] = to_byte(value);
+                    emissive16[index * 4 + channel] = to_u16(value);
+                }
+            }
+        }
+        let has_opacity = opacity_plane.is_some();
+        let (opacity, opacity16) = match &opacity_plane {
+            Some(values) => to_bytes(values),
+            None => (vec![255u8; count], vec![u16::MAX; count]),
+        };
+        let normal = normal_image.map(|image| {
+            image
+                .iter()
+                .map(|pixel| [to_byte(pixel[0]), to_byte(pixel[1]), to_byte(pixel[2]), 255])
+                .collect::<Vec<[u8; 4]>>()
+        });
         ctx.finish()?;
         Ok(BakedMaterial {
             resolution: resolution as u32,
@@ -1507,6 +1753,13 @@ impl MaterialGraph {
             metallic16: metallic_pixels16,
             height16: height_pixels16,
             ao16: ao_pixels16,
+            emissive,
+            emissive16,
+            has_emissive,
+            opacity,
+            opacity16,
+            has_opacity,
+            normal,
         })
     }
 
@@ -1526,8 +1779,13 @@ impl MaterialGraph {
         else {
             return Ok(None);
         };
-        self.eval_node(link.from, resolution, memo, stack, ctx)
-            .map(Some)
+        let image = self.eval_node(link.from, resolution, memo, stack, ctx)?;
+        if link.output > 0 {
+            if let Some(extra) = ctx.extra.get(&(link.from, link.output)) {
+                return Ok(Some(extra.clone()));
+            }
+        }
+        Ok(Some(image))
     }
 
     fn eval_node(
@@ -2185,11 +2443,38 @@ impl MaterialGraph {
                     )?
                 }
             }
+            NodeKind::Proc { op, params, colors } => {
+                let def = op.def();
+                let mut inputs: Vec<Option<Image>> = Vec::with_capacity(def.inputs.len());
+                for port in 0..def.inputs.len() {
+                    inputs.push(self.input_image(id, port, resolution, memo, stack, ctx)?);
+                }
+                let refs: Vec<Option<&[[f32; 4]]>> = inputs
+                    .iter()
+                    .map(|input| input.as_ref().map(|image| image.as_slice()))
+                    .collect();
+                let (params, colors) = match NodeKind::proc_from_saved(*op, params, colors) {
+                    NodeKind::Proc { params, colors, .. } => (params, colors),
+                    _ => unreachable!(),
+                };
+                let args = procedural::Args::new(resolution, &params, &colors, &refs);
+                let mut outputs = (def.eval)(&args);
+                ctx.check()?;
+                let mut iter = outputs.drain(..);
+                let first = iter
+                    .next()
+                    .unwrap_or_else(|| vec![[0.5, 0.5, 0.5, 1.0]; resolution * resolution]);
+                for (index, extra) in iter.enumerate() {
+                    ctx.extra.insert((id, index + 1), Rc::new(extra));
+                }
+                Rc::new(first)
+            }
             NodeKind::Output {
                 roughness,
                 metallic,
                 height,
                 ao,
+                ..
             } => {
                 let color = node_input(
                     self,
@@ -2367,12 +2652,19 @@ fn graph_bytes(graph: &MaterialGraph) -> usize {
     96 + graph.nodes.len() * 256 + graph.links.len() * 32
 }
 
+/// Result of baking a graph. All planes are `resolution * resolution`
+/// unless noted.
 #[derive(Debug)]
 pub struct BakedMaterial {
     pub resolution: u32,
+    /// RGBA8 base colour (4 bytes/pixel). Alpha carries the Opacity input
+    /// when one is connected.
     pub base: Vec<u8>,
     pub roughness: Vec<u8>,
     pub metallic: Vec<u8>,
+    /// 8-bit height, never flat by default: authored, or derived from the base
+    /// colour when no Height is connected (`OutputOptions::auto_height`), and
+    /// normalised to the full 0..1 range (`normalize_height`).
     pub height: Vec<u8>,
     pub ao: Vec<u8>,
     /// Full-precision copies used by 16-bit exports.
@@ -2381,6 +2673,102 @@ pub struct BakedMaterial {
     pub metallic16: Vec<u16>,
     pub height16: Vec<u16>,
     pub ao16: Vec<u16>,
+    /// RGBA8 emissive colour (4 bytes/pixel, alpha 255); all zero unless
+    /// `has_emissive`.
+    pub emissive: Vec<u8>,
+    pub emissive16: Vec<u16>,
+    /// True when an Emissive input was connected.
+    pub has_emissive: bool,
+    /// Opacity plane (255 everywhere unless `has_opacity`).
+    pub opacity: Vec<u8>,
+    pub opacity16: Vec<u16>,
+    /// True when an Opacity input was connected (also written to `base` alpha).
+    pub has_opacity: bool,
+    /// Optional authored tangent-space normal map (RGBA8, OpenGL convention)
+    /// from the Output's Normal input. `None` means "derive the normal from
+    /// `height`".
+    pub normal: Option<Vec<[u8; 4]>>,
+}
+
+/// Map shown in the generator's output preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewChannel {
+    Base,
+    Normal,
+    Height,
+    Roughness,
+    Metallic,
+    Ao,
+    Emissive,
+    Opacity,
+}
+
+impl PreviewChannel {
+    pub const ALL: [PreviewChannel; 8] = [
+        PreviewChannel::Base,
+        PreviewChannel::Normal,
+        PreviewChannel::Height,
+        PreviewChannel::Roughness,
+        PreviewChannel::Metallic,
+        PreviewChannel::Ao,
+        PreviewChannel::Emissive,
+        PreviewChannel::Opacity,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PreviewChannel::Base => "Base",
+            PreviewChannel::Normal => "Normal",
+            PreviewChannel::Height => "Height",
+            PreviewChannel::Roughness => "Rough",
+            PreviewChannel::Metallic => "Metal",
+            PreviewChannel::Ao => "AO",
+            PreviewChannel::Emissive => "Emissive",
+            PreviewChannel::Opacity => "Opacity",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL
+            .get(index)
+            .copied()
+            .unwrap_or(PreviewChannel::Base)
+    }
+}
+
+impl BakedMaterial {
+    /// RGBA8 pixels of one channel for display. The normal map is the authored
+    /// one when present, otherwise derived from the height (strength 2).
+    pub fn channel_rgba(&self, channel: PreviewChannel) -> Vec<u8> {
+        let gray =
+            |plane: &[u8]| -> Vec<u8> { plane.iter().flat_map(|v| [*v, *v, *v, 255]).collect() };
+        match channel {
+            PreviewChannel::Base => self
+                .base
+                .chunks(4)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect(),
+            PreviewChannel::Normal => match &self.normal {
+                Some(normal) => normal.iter().flat_map(|p| *p).collect(),
+                None => procedural::height::height_to_normal_rgba8(
+                    &self.height,
+                    self.resolution as usize,
+                    2.0,
+                    false,
+                ),
+            },
+            PreviewChannel::Height => gray(&self.height),
+            PreviewChannel::Roughness => gray(&self.roughness),
+            PreviewChannel::Metallic => gray(&self.metallic),
+            PreviewChannel::Ao => gray(&self.ao),
+            PreviewChannel::Emissive => self
+                .emissive
+                .chunks(4)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect(),
+            PreviewChannel::Opacity => gray(&self.opacity),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2663,33 +3051,6 @@ impl ChannelPacking {
 
 fn pack_value16(source: PackSource, baked: &BakedMaterial, index: usize) -> u16 {
     source.value16(baked, index)
-}
-
-fn cavity_ao(height: &[u8], resolution: usize, fallback: f32) -> Vec<u8> {
-    if height.len() < resolution * resolution || resolution < 2 {
-        return vec![to_byte(fallback); resolution * resolution];
-    }
-    let radius = (resolution / 64).max(1) as isize;
-    let mut out = Vec::with_capacity(resolution * resolution);
-    for y in 0..resolution {
-        for x in 0..resolution {
-            let center = height[y * resolution + x] as f32 / 255.0;
-            let mut average = 0.0f32;
-            let mut samples = 0.0f32;
-            for dy in [-radius, radius] {
-                for dx in [-radius, radius] {
-                    let sx = (x as isize + dx).clamp(0, resolution as isize - 1) as usize;
-                    let sy = (y as isize + dy).clamp(0, resolution as isize - 1) as usize;
-                    average += height[sy * resolution + sx] as f32 / 255.0;
-                    samples += 1.0;
-                }
-            }
-            average /= samples.max(1.0);
-            let cavity = (average - center).max(0.0);
-            out.push(to_byte(fallback * (1.0 - cavity * 6.0).clamp(0.0, 1.0)));
-        }
-    }
-    out
 }
 
 fn escape_token(value: &str) -> String {
@@ -3547,8 +3908,16 @@ pub fn palette() -> Vec<NodeKind> {
             metallic: 0.0,
             height: 0.5,
             ao: 1.0,
+            options: OutputOptions::default(),
         },
     ]
+    .into_iter()
+    .chain(
+        procedural::all()
+            .iter()
+            .map(|def| NodeKind::proc_default(ProcOp(def))),
+    )
+    .collect()
 }
 
 #[cfg(test)]
@@ -3575,6 +3944,11 @@ mod tests {
                 metallic: 0.8,
                 height: 0.1,
                 ao: 1.0,
+                options: OutputOptions {
+                    auto_height: false,
+                    normalize_height: false,
+                    height_contrast: 1.0,
+                },
             };
         }
         let baked = graph.bake().expect("bake");
@@ -4193,6 +4567,13 @@ mod tests {
             metallic16: vec![200 * 257],
             height16: vec![150 * 257],
             ao16: vec![50 * 257],
+            emissive: vec![0, 0, 0, 255],
+            emissive16: vec![0, 0, 0, 65535],
+            has_emissive: false,
+            opacity: vec![255],
+            opacity16: vec![65535],
+            has_opacity: false,
+            normal: None,
         };
         let mut packing = ChannelPacking::default();
         let orm = packing.packed8(&baked);
@@ -4226,6 +4607,7 @@ mod tests {
             metallic: 0.0,
             height: 0.5,
             ao: 1.0,
+            options: OutputOptions::default(),
         };
         assert_eq!(output.inputs()[1].kind, PortKind::Scalar);
     }

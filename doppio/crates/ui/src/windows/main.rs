@@ -1,10 +1,15 @@
 use crate::history::{self, History};
+use crate::uikit::asset_wizard;
+use crate::uikit::behaviour;
 use crate::uikit::components::{
-    button, gizmo, menu, panel, prefab_palette, status, tabs, toolbar, viewport_shader,
+    behaviour_picker, button, dock_overlay, gizmo, menu, panel, prefab_palette, status, tabs,
+    toolbar, viewport_shader,
 };
 use crate::uikit::dryad;
 use crate::uikit::generators::{self, MaterialGraph};
+use crate::uikit::height_pack;
 use crate::uikit::id;
+use crate::uikit::material_library;
 use crate::uikit::panels;
 use crate::uikit::panels::dryad_nodes;
 use crate::uikit::panels::material;
@@ -50,7 +55,158 @@ pub fn run() -> iced::Result {
 pub fn run() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .subscription(App::subscription)
+        .theme(|_: &App| theme::app_theme())
+        .settings(theme::settings())
+        .window(theme::window())
         .run()
+}
+
+/// Shared result slot of a background caf-pack run.
+type PackSlot = std::sync::Arc<std::sync::Mutex<Option<Result<String, String>>>>;
+
+/// Pointer and window events the editor reacts to regardless of the widget
+/// under the cursor. Shared by the live subscription and the headless driver
+/// so both see exactly the same mapping.
+fn global_event_message(event: &iced::Event) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(Message::PointerReleased)
+        }
+        iced::Event::Window(iced::window::Event::FileDropped(path)) => {
+            Some(Message::FileDropped(path.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Keyboard shortcuts and fly-camera keys (events no widget captured).
+fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
+    match event {
+        iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+            if matches!(
+                key.as_ref(),
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+            ) {
+                return Some(Message::CloseMenu);
+            }
+            if !modifiers.control() {
+                if let iced::keyboard::Key::Character(character) = key.as_ref() {
+                    if let Some(key) = match character {
+                        "1" => Some(1),
+                        "2" => Some(2),
+                        "3" => Some(3),
+                        _ => None,
+                    } {
+                        return Some(Message::GizmoShortcut(key));
+                    }
+                }
+                if matches!(
+                    key.as_ref(),
+                    iced::keyboard::Key::Character(character)
+                        if character.eq_ignore_ascii_case("g")
+                ) {
+                    return Some(Message::ViewportGridShortcut);
+                }
+                if matches!(
+                    key.as_ref(),
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift)
+                ) {
+                    return Some(Message::ViewportBoost(true));
+                }
+                return fly_key(&key).map(|key| Message::ViewportKey(key, true));
+            }
+            match key.as_ref() {
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("e")
+                        && modifiers.control()
+                        && modifiers.shift() =>
+                {
+                    Some(Message::OpenScriptEditor)
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("d")
+                        && modifiers.control()
+                        && modifiers.shift() =>
+                {
+                    Some(Message::OpenDryadNodes)
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("o") && modifiers.control() =>
+                {
+                    Some(Message::Project(project_manager::Edit::Open))
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("z") =>
+                {
+                    Some(if modifiers.shift() {
+                        Message::Redo
+                    } else {
+                        Message::Undo
+                    })
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("y") =>
+                {
+                    Some(Message::Redo)
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("n") =>
+                {
+                    Some(if modifiers.shift() {
+                        Message::TogglePrefabPalette
+                    } else {
+                        Message::AddEntity
+                    })
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("m") && modifiers.shift() =>
+                {
+                    Some(Message::Material(material::Edit::New))
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("s") =>
+                {
+                    Some(Message::SaveScene)
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("f") =>
+                {
+                    Some(Message::FocusSelection)
+                }
+                iced::keyboard::Key::Character(character)
+                    if character.eq_ignore_ascii_case("r") =>
+                {
+                    Some(Message::RenderViewport)
+                }
+                iced::keyboard::Key::Character("0") => Some(Message::ResetCamera),
+                iced::keyboard::Key::Character("1") => Some(Message::Layout(LayoutPreset::Default)),
+                iced::keyboard::Key::Character("2") => {
+                    Some(Message::Layout(LayoutPreset::Viewport))
+                }
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                    Some(Message::TogglePlay)
+                }
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::F5) => {
+                    Some(Message::AssetRefresh)
+                }
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    Some(Message::Project(project_manager::Edit::Close))
+                }
+                _ => None,
+            }
+        }
+        iced::keyboard::Event::KeyReleased { key, .. } => {
+            if matches!(
+                key.as_ref(),
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift)
+            ) {
+                Some(Message::ViewportBoost(false))
+            } else {
+                fly_key(&key).map(|key| Message::ViewportKey(key, false))
+            }
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -234,6 +390,9 @@ enum Message {
     PaneExit(pane_grid::Pane, PaneKind),
     PaneReleased(pane_grid::Pane, PaneKind),
     SplitPage(pane_grid::Pane),
+    ToggleMaximize(pane_grid::Pane),
+    DockHover(pane_grid::Pane, Option<dock_overlay::Zone>),
+    DockDrop(pane_grid::Pane, dock_overlay::Zone),
     PointerReleased,
     TogglePrefabPalette,
     ClosePrefabPalette,
@@ -243,6 +402,9 @@ enum Message {
     AssetReleased(usize),
     AssetDoubleClick(usize),
     AssetSearch(String),
+    AssetTreeToggle(String),
+    AssetTreePanel,
+    Wizard(panels::asset_wizard::Edit),
     OpenScriptEditor,
     #[cfg_attr(not(feature = "agent"), allow(dead_code))]
     OpenScriptPath(String),
@@ -313,9 +475,16 @@ enum Message {
     MaterialPickerSearch(String),
     MaterialPickerPick(String),
     MaterialPickerClose,
+    MaterialHeightSearch(String),
+    MaterialHeightPick(String),
+    MaterialHeightClose,
     MaterialEnvironmentSearch(String),
     MaterialEnvironmentPick(String),
     MaterialEnvironmentClose,
+    BehaviourSearch(String),
+    BehaviourPick(behaviour::Behaviour),
+    BehaviourClose,
+    BehaviourNew,
     MaterialAssetSearch(String),
     MaterialAssetPick(String),
     MaterialAssetClose,
@@ -378,6 +547,13 @@ struct App {
     asset_drag: Option<usize>,
     asset_directory: String,
     asset_view_mode: panels::assetmanager::ViewMode,
+    asset_tree_collapsed: std::collections::HashSet<String>,
+    asset_tree_open: bool,
+    wizard: panels::asset_wizard::State,
+    /// Result slot of a running caf-pack job, polled on every tick.
+    pack_job: Option<PackSlot>,
+    /// Asset root used instead of the engine's (tests, offline fixtures).
+    asset_root_override: Option<std::path::PathBuf>,
     asset_selected: Option<usize>,
     project: project_manager::State,
     project_recent_file: std::path::PathBuf,
@@ -422,6 +598,11 @@ struct App {
     tab_drag: Option<(pane_grid::Pane, PaneKind)>,
     tab_hover: Option<(pane_grid::Pane, PaneKind)>,
     tab_hover_pane: Option<pane_grid::Pane>,
+    /// True once the pressed tab was dragged away from its own header; only
+    /// then do the docking guides appear, so a plain click never flashes them.
+    tab_dragging: bool,
+    /// Docking guide under the cursor while a tab is being dragged.
+    dock_hover: Option<(pane_grid::Pane, dock_overlay::Zone)>,
     prefab_open: bool,
     prefab_category: usize,
     gizmo_mode: gizmo::Mode,
@@ -454,8 +635,13 @@ struct App {
     material_packing: usize,
     material_picker: Option<material::TextureSlot>,
     material_picker_search: String,
+    material_height_picker: bool,
+    material_height_search: String,
     material_environment_picker: bool,
     material_environment_search: String,
+    /// Script picker opened by the inspector's "Add Behaviour".
+    behaviour_picker: bool,
+    behaviour_search: String,
     material_asset_picker: bool,
     material_asset_search: String,
     material_preview_shape: usize,
@@ -470,6 +656,8 @@ struct App {
     generator_pan: iced::Vector,
     generator_zoom: f32,
     generator_preview: Option<iced::widget::image::Handle>,
+    generator_preview_maps: Vec<iced::widget::image::Handle>,
+    generator_preview_channel: usize,
     generator_status: Option<String>,
     generator_snap: bool,
     generator_search: String,
@@ -539,59 +727,60 @@ impl App {
         match preset {
             LayoutPreset::Default => Configuration::Split {
                 axis: Axis::Horizontal,
-                ratio: 0.62,
+                ratio: 0.68,
                 a: Box::new(Configuration::Split {
                     axis: Axis::Vertical,
-                    ratio: 0.22,
-                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
-                        PaneKind::Hierarchy,
-                        PaneKind::Assets,
-                    ]))),
+                    ratio: 0.19,
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Hierarchy]))),
                     b: Box::new(Configuration::Split {
                         axis: Axis::Vertical,
-                        ratio: 0.70,
+                        ratio: 0.74,
                         a: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Viewport,
                             PaneKind::Generator,
+                            PaneKind::TextureSet,
                             PaneKind::Script,
                             PaneKind::DryadNodes,
                         ]))),
                         b: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Inspector,
                             PaneKind::Material,
-                            PaneKind::TextureSet,
                         ]))),
                     }),
                 }),
-                b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Console]))),
+                // Project-style bottom dock: the asset browser next to the console.
+                b: Box::new(Configuration::Pane(PaneGroup::new(&[
+                    PaneKind::Assets,
+                    PaneKind::Console,
+                ]))),
             },
             LayoutPreset::Viewport => Configuration::Split {
                 axis: Axis::Horizontal,
-                ratio: 0.85,
+                ratio: 0.82,
                 a: Box::new(Configuration::Split {
                     axis: Axis::Vertical,
-                    ratio: 0.16,
-                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
-                        PaneKind::Hierarchy,
-                        PaneKind::Assets,
-                    ]))),
-                    b: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Console]))),
+                    ratio: 0.14,
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Hierarchy]))),
+                    b: Box::new(Configuration::Split {
+                        axis: Axis::Vertical,
+                        ratio: 0.82,
+                        a: Box::new(Configuration::Pane(PaneGroup::new(&[
+                            PaneKind::Viewport,
+                            PaneKind::Generator,
+                            PaneKind::TextureSet,
+                            PaneKind::Script,
+                            PaneKind::DryadNodes,
+                        ]))),
+                        b: Box::new(Configuration::Pane(PaneGroup::new(&[
+                            PaneKind::Inspector,
+                            PaneKind::Material,
+                        ]))),
+                    }),
                 }),
-                b: Box::new(Configuration::Split {
-                    axis: Axis::Horizontal,
-                    ratio: 0.8,
-                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
-                        PaneKind::Viewport,
-                        PaneKind::Generator,
-                        PaneKind::Script,
-                        PaneKind::DryadNodes,
-                    ]))),
-                    b: Box::new(Configuration::Pane(PaneGroup::new(&[
-                        PaneKind::Inspector,
-                        PaneKind::Material,
-                        PaneKind::TextureSet,
-                    ]))),
-                }),
+                b: Box::new(Configuration::Pane(PaneGroup::new(&[
+                    PaneKind::Assets,
+                    PaneKind::Console,
+                ]))),
             },
         }
     }
@@ -670,6 +859,11 @@ impl App {
             asset_drag: None,
             asset_directory: String::new(),
             asset_view_mode: panels::assetmanager::ViewMode::Grid,
+            asset_tree_collapsed: std::collections::HashSet::new(),
+            asset_tree_open: true,
+            wizard: panels::asset_wizard::State::default(),
+            pack_job: None,
+            asset_root_override: None,
             asset_selected: None,
             project: project_manager::State::new(
                 project::default_projects_directory().display().to_string(),
@@ -719,6 +913,8 @@ impl App {
             tab_drag: None,
             tab_hover: None,
             tab_hover_pane: None,
+            dock_hover: None,
+            tab_dragging: false,
             prefab_open: false,
             prefab_category: 0,
             gizmo_mode: gizmo::Mode::Translate,
@@ -754,8 +950,12 @@ impl App {
             material_packing: 0,
             material_picker: None,
             material_picker_search: String::new(),
+            material_height_picker: false,
+            material_height_search: String::new(),
             material_environment_picker: false,
             material_environment_search: String::new(),
+            behaviour_picker: false,
+            behaviour_search: String::new(),
             material_asset_picker: false,
             material_asset_search: String::new(),
             material_preview_shape: 0,
@@ -770,6 +970,8 @@ impl App {
             generator_pan: iced::Vector::new(0.0, 0.0),
             generator_zoom: 1.0,
             generator_preview: None,
+            generator_preview_maps: Vec::new(),
+            generator_preview_channel: 0,
             generator_status: None,
             generator_snap: true,
             generator_search: String::new(),
@@ -905,6 +1107,11 @@ impl App {
             }
             panels::inspector::Edit::OpenMaterial(path) => {
                 self.open_material_path(&path);
+            }
+            panels::inspector::Edit::OpenBehaviourPicker => {
+                self.behaviour_picker = true;
+                self.behaviour_search.clear();
+                self.open_menu = None;
             }
             panels::inspector::Edit::OpenMaterialPicker => {
                 self.material_asset_picker = true;
@@ -1398,20 +1605,77 @@ impl App {
     fn finish_tab_drag(&mut self) {
         let source = self.tab_drag.take();
         let tab_target = self.tab_hover.take();
-        let pane_target = self.tab_hover_pane.take();
-        if let Some(source) = source {
-            if let Some(target) = tab_target {
-                self.move_page(source, target);
-            } else if let Some(target_pane) = pane_target {
-                let target = self
-                    .panes
-                    .get(target_pane)
-                    .map(|group| (target_pane, group.active_kind()));
-                if let Some(target) = target {
-                    self.move_page(source, target);
-                }
+        self.tab_hover_pane = None;
+        self.dock_hover = None;
+        self.tab_dragging = false;
+        // Dropping onto another tab reorders/merges; dropping onto a pane body
+        // is handled by the docking overlay (`DockDrop`).
+        if let (Some(source), Some(target)) = (source, tab_target) {
+            self.move_page(source, target);
+        }
+    }
+
+    /// Docks the dragged page into `target` according to the guide it was
+    /// dropped on: the centre joins the tab group, an edge splits the pane.
+    fn dock_page(
+        &mut self,
+        source: (pane_grid::Pane, PaneKind),
+        target: pane_grid::Pane,
+        zone: dock_overlay::Zone,
+    ) {
+        use dock_overlay::Zone;
+        let (source_pane, page) = source;
+        self.panes.restore();
+        let Some(source_group) = self.panes.get(source_pane) else {
+            return;
+        };
+        let source_len = source_group.pages.len();
+        let Some(source_index) = source_group.pages.iter().position(|item| *item == page) else {
+            return;
+        };
+        if zone == Zone::Center {
+            if source_pane == target {
+                return;
+            }
+            let Some(anchor) = self.panes.get(target).map(|group| group.active_kind()) else {
+                return;
+            };
+            self.move_page(source, (target, anchor));
+            return;
+        }
+        // Splitting a pane that only holds this page would just recreate it.
+        if source_pane == target && source_len < 2 {
+            return;
+        }
+        let (axis, new_first) = match zone {
+            Zone::Left => (pane_grid::Axis::Vertical, true),
+            Zone::Right => (pane_grid::Axis::Vertical, false),
+            Zone::Top => (pane_grid::Axis::Horizontal, true),
+            _ => (pane_grid::Axis::Horizontal, false),
+        };
+        let Some((new_pane, split)) = self.panes.split(axis, target, PaneGroup::new(&[page]))
+        else {
+            return;
+        };
+        if new_first {
+            self.panes.swap(target, new_pane);
+        }
+        self.panes
+            .resize(split, if new_first { 0.35 } else { 0.65 });
+        if let Some(group) = self.panes.get_mut(source_pane) {
+            if let Some(index) = group.pages.iter().position(|item| *item == page) {
+                group.pages.remove(index);
+            } else if source_index < group.pages.len() {
+                group.pages.remove(source_index);
+            }
+            if !group.pages.is_empty() {
+                group.active = group.active.min(group.pages.len() - 1);
             }
         }
+        if source_len == 1 {
+            self.panes.close(source_pane);
+        }
+        self.log(LogLevel::Action, format!("Docked {page:?} ({zone:?})"));
     }
 
     fn move_page(
@@ -2317,6 +2581,69 @@ impl App {
         self.attach_script_path(&relative);
     }
 
+    /// Attaches whatever the "Add Behaviour" picker chose to the selected entity.
+    fn add_behaviour(&mut self, picked: behaviour::Behaviour) {
+        match picked {
+            behaviour::Behaviour::Component(type_id) => self.add_component(type_id),
+            behaviour::Behaviour::Script(path) => self.attach_script_path(&path),
+            behaviour::Behaviour::Mesh(path) => self.add_mesh_behaviour(&path),
+            behaviour::Behaviour::Material(path) => self.add_material_behaviour(&path),
+        }
+    }
+
+    fn add_mesh_behaviour(&mut self, relative: &str) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            self.log(LogLevel::Error, "Select an entity before adding a mesh");
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            self.log(LogLevel::Error, "No engine session to add a mesh");
+            return;
+        };
+        let type_id = engine
+            .entity_components(entity)
+            .iter()
+            .find(|component| component.name == "Mesh Renderer")
+            .map(|component| component.type_id)
+            .or_else(|| add_component(engine, entity, "Mesh Renderer").ok());
+        let Some(type_id) = type_id else {
+            self.log(LogLevel::Error, "Mesh Renderer is not available");
+            return;
+        };
+        if let Err(error) = set_component_field(
+            engine,
+            entity,
+            type_id,
+            "Mesh",
+            doppio_engine::FieldValue::String(relative.to_owned()),
+        ) {
+            self.log(LogLevel::Error, format!("Could not set the mesh: {error}"));
+            return;
+        }
+        self.refresh_components();
+        self.commit("Add Mesh", None);
+        self.log(LogLevel::Action, format!("Added mesh {relative}"));
+    }
+
+    fn add_material_behaviour(&mut self, relative: &str) {
+        let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
+            self.log(LogLevel::Error, "Select an entity before adding a material");
+            return;
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            self.log(LogLevel::Error, "No engine session to assign a material");
+            return;
+        };
+        match engine.apply_material(entity, relative) {
+            Ok(()) => {
+                self.refresh_components();
+                self.commit("Assign Material", None);
+                self.log(LogLevel::Action, format!("Assigned {relative}"));
+            }
+            Err(_) => self.log(LogLevel::Error, format!("Could not assign {relative}")),
+        }
+    }
+
     fn attach_script_path(&mut self, relative: &str) {
         let Some(entity) = self.entities.get(self.selected).map(|entity| entity.id) else {
             self.log(
@@ -3087,9 +3414,17 @@ impl App {
         let Some(asset) = self.assets.get(index) else {
             return;
         };
-        if asset.kind == "script" {
+        if asset.is_directory {
+            let path = asset.relative_path.clone();
+            self.asset_directory = panels::assetmanager::normalize_directory(&path);
+            self.asset_search.clear();
+            self.asset_selected = None;
+        } else if asset.kind == "script"
+            && !asset.relative_path.to_ascii_lowercase().ends_with(".dyd")
+        {
             self.open_script_asset(index);
         } else {
+            // `.dyd` opens the Dryad node editor (and its source tab).
             self.asset_pressed(index);
         }
     }
@@ -3736,15 +4071,34 @@ impl App {
             material_generator::Edit::MoveNode(id, delta) => {
                 if let Some(document) = self.material.as_mut() {
                     if let Some(node) = document.generator.node_mut(id) {
-                        let mut position = generators::offset_position(node.position, delta);
-                        if self.generator_snap {
-                            position.x = (position.x / 16.0).round() * 16.0;
-                            position.y = (position.y / 16.0).round() * 16.0;
-                        }
-                        node.position = position;
+                        // Snapping happens in the canvas against the drag origin.
+                        node.position = generators::offset_position(node.position, delta);
                     }
                 }
                 self.push_generator_history("Move node", Some(format!("generator:move:{id}")));
+            }
+            material_generator::Edit::SetPreviewChannel(index) => {
+                self.generator_preview_channel =
+                    index.min(generators::PreviewChannel::ALL.len() - 1);
+            }
+            material_generator::Edit::ApplyPreset(index) => {
+                if let Some(preset) = material_library::presets().get(index) {
+                    let resolution = self.material.as_ref().map(|d| d.generator.resolution);
+                    let mut graph = preset.build(&material_library::PresetParams::default());
+                    if let Some(resolution) = resolution {
+                        graph.resolution = resolution;
+                    }
+                    if let Some(document) = self.material.as_mut() {
+                        document.generator = graph;
+                    }
+                    self.generator_selected = None;
+                    self.generator_link = None;
+                    self.push_generator_history(
+                        format!("Library: {}", preset.name),
+                        Some("generator:library".to_owned()),
+                    );
+                    self.fit_generator_view();
+                }
             }
             material_generator::Edit::SetResolution(resolution) => {
                 if let Some(document) = self.material.as_mut() {
@@ -3775,9 +4129,6 @@ impl App {
         &self,
         graph: &MaterialGraph,
     ) -> Result<Vec<(String, String)>, String> {
-        let Some(engine) = self.engine.as_ref() else {
-            return Err("No engine".to_owned());
-        };
         let mut texture_paths: Vec<(String, String)> = Vec::new();
         for node in &graph.nodes {
             let (generators::NodeKind::Image { path, .. }
@@ -3788,6 +4139,11 @@ impl App {
             if path.is_empty() || texture_paths.iter().any(|(key, _)| key == path) {
                 continue;
             }
+            // Only graphs that read project images need the engine to find them;
+            // purely procedural graphs preview and bake without one.
+            let Some(engine) = self.engine.as_ref() else {
+                return Err("No engine".to_owned());
+            };
             let resolved = engine
                 .resolve_path(path)
                 .ok()
@@ -3968,6 +4324,16 @@ impl App {
                 if job.version == self.generator_preview_version {
                     match result {
                         Ok(baked) => {
+                            self.generator_preview_maps = generators::PreviewChannel::ALL
+                                .iter()
+                                .map(|channel| {
+                                    iced::widget::image::Handle::from_rgba(
+                                        baked.resolution,
+                                        baked.resolution,
+                                        baked.channel_rgba(*channel),
+                                    )
+                                })
+                                .collect();
                             self.generator_preview = Some(iced::widget::image::Handle::from_rgba(
                                 baked.resolution,
                                 baked.resolution,
@@ -4150,14 +4516,61 @@ impl App {
             invert: false,
             radius: 8,
         };
-        let normal = engine
-            .generate_texture_map(
-                &height_path,
-                &normal_path,
-                doppio_engine::TextureMapKind::Normal,
-                normal_options,
-            )
-            .is_ok();
+        // An authored Normal input (OpenGL convention) wins over the height-derived one.
+        let authored_normal = baked.normal.is_some();
+        let normal = if let Some(authored) = &baked.normal {
+            let pixels: Vec<u8> = authored.iter().flat_map(|pixel| *pixel).collect();
+            engine
+                .save_texture_rgba(&normal_path, baked.resolution, baked.resolution, &pixels)
+                .is_ok()
+        } else {
+            engine
+                .generate_texture_map(
+                    &height_path,
+                    &normal_path,
+                    doppio_engine::TextureMapKind::Normal,
+                    normal_options,
+                )
+                .is_ok()
+        };
+        let emissive_name = format!("{stem}_gen_emissive_{suffix}.png");
+        let emissive_path = if baked.has_emissive {
+            if bits == 16 {
+                save16(&emissive_name, &baked.emissive16)
+            } else {
+                save8(&emissive_name, &baked.emissive)
+            }
+        } else {
+            None
+        };
+        // Depth: store the height in the normal map's alpha channel. The renderer's
+        // parallax occlusion mapping reads it from there (no extra texture sampler).
+        let mut has_depth = false;
+        if normal {
+            if let Ok((width, height, mut pixels)) = engine.load_texture_rgba(&normal_path) {
+                let expected = baked.resolution as usize;
+                if width as usize == expected
+                    && height as usize == expected
+                    && baked.height.len() == expected * expected
+                    && pixels.len() == expected * expected * 4
+                {
+                    for (index, value) in baked.height.iter().enumerate() {
+                        pixels[index * 4 + 3] = *value;
+                    }
+                    has_depth = engine
+                        .save_texture_rgba(&normal_path, width, height, &pixels)
+                        .is_ok();
+                }
+            }
+        }
+        let height_range = baked
+            .height
+            .iter()
+            .copied()
+            .fold((u8::MAX, u8::MIN), |(low, high), value| {
+                (low.min(value), high.max(value))
+            });
+        let has_relief = height_range.1.saturating_sub(height_range.0) > 12;
         let base_relative = relative(&base_name);
         let normal_relative = relative(&format!("{stem}_gen_normal.png"));
         let packed_relative = relative(&packed_name);
@@ -4173,10 +4586,36 @@ impl App {
         let is_orm = packing.preset == generators::PackingPreset::Orm;
         if let Some(document) = self.material.as_mut() {
             document.surface.albedo_map = base_map;
+            if emissive_path.is_some() {
+                let relative_emissive = relative(&emissive_name);
+                document.surface.emission_map = engine
+                    .asset_project_path(&relative_emissive)
+                    .unwrap_or(relative_emissive);
+                document.surface.emission = [1.0, 1.0, 1.0];
+                document.surface.emission_strength = document.surface.emission_strength.max(1.0);
+            }
+            if baked.has_opacity
+                && document.surface.alpha_mode == doppio_engine::MaterialAlphaMode::Opaque
+            {
+                // The Opacity input is in the base colour's alpha: cut it out by default.
+                document.surface.alpha_mode = doppio_engine::MaterialAlphaMode::Cutout;
+            }
             if normal {
                 document.surface.normal_map = normal_map;
-                document.surface.normal_directx = self.material_directx;
+                document.surface.normal_directx = if authored_normal {
+                    false
+                } else {
+                    self.material_directx
+                };
                 document.surface.ao_strength = 1.0;
+                if has_depth && has_relief {
+                    // Real parallax depth; keep a value the user already tuned.
+                    if document.surface.height_scale <= 0.0 {
+                        document.surface.height_scale = 0.035;
+                    }
+                } else if has_depth {
+                    document.surface.height_scale = 0.0;
+                }
             }
             if is_orm && packed_path.is_some() {
                 document.surface.orm_map = packed_map;
@@ -4368,7 +4807,234 @@ impl App {
         }
     }
 
+    /// Absolute asset root, when a project (or a test override) provides one.
+    fn asset_root_dir(&self) -> Option<std::path::PathBuf> {
+        if let Some(root) = &self.asset_root_override {
+            return Some(root.clone());
+        }
+        let engine = self.engine.as_ref()?;
+        let root = engine.asset_path("").ok()?;
+        let root = std::path::PathBuf::from(root);
+        (!root.as_os_str().is_empty()).then_some(root)
+    }
+
+    fn wizard_status(&mut self, text: impl Into<String>, ok: bool) {
+        self.wizard.status = Some(panels::asset_wizard::Status {
+            text: text.into(),
+            ok,
+        });
+    }
+
+    fn open_wizard(&mut self, tab: panels::asset_wizard::Tab) {
+        self.wizard.open = true;
+        self.wizard.tab = tab;
+        self.wizard.status = None;
+        self.open_menu = None;
+    }
+
+    fn pack_output_path(&self, root: &std::path::Path) -> std::path::PathBuf {
+        let name = self
+            .project
+            .active
+            .as_ref()
+            .map(|project| asset_wizard::sanitize_name(&project.name))
+            .unwrap_or(None)
+            .unwrap_or_else(|| "game".to_owned());
+        root.parent()
+            .unwrap_or(root)
+            .join(format!("{}.cap", name.replace(' ', "_")))
+    }
+
+    fn poll_pack_job(&mut self) {
+        let Some(job) = &self.pack_job else {
+            return;
+        };
+        let finished = job.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(result) = finished {
+            self.pack_job = None;
+            self.edit_wizard(panels::asset_wizard::Edit::PackDone(result));
+        }
+    }
+
+    fn edit_wizard(&mut self, edit: panels::asset_wizard::Edit) {
+        use panels::asset_wizard::{Edit, Tab};
+        match edit {
+            Edit::Open(tab) => self.open_wizard(tab),
+            Edit::Close => self.wizard.open = false,
+            Edit::Tab(tab) => {
+                self.wizard.tab = tab;
+                self.wizard.status = None;
+            }
+            Edit::Template(index) => {
+                if let Some(template) = asset_wizard::Template::ALL.get(index) {
+                    self.wizard.template = *template;
+                    self.wizard.status = None;
+                }
+            }
+            Edit::Name(name) => self.wizard.name = name,
+            Edit::Create => self.wizard_create(),
+            Edit::ImportInput(value) => self.wizard.import_input = value,
+            Edit::ImportAdd => self.wizard_queue_input(),
+            Edit::ImportRemove(index) => {
+                if index < self.wizard.sources.len() {
+                    self.wizard.sources.remove(index);
+                }
+            }
+            Edit::ImportRun => self.wizard_import(),
+            Edit::GenerateIds(value) => self.wizard.generate_ids = value,
+            Edit::PackRun => self.wizard_pack(),
+            Edit::PackDone(result) => {
+                self.wizard.packing = false;
+                match result {
+                    Ok(output) => {
+                        let text = if output.is_empty() {
+                            "Packed assets.".to_owned()
+                        } else {
+                            format!("Packed: {output}")
+                        };
+                        self.log(LogLevel::Action, &text);
+                        self.wizard_status(text, true);
+                    }
+                    Err(error) => {
+                        self.log(LogLevel::Error, &error);
+                        self.wizard_status(error, false);
+                    }
+                }
+            }
+        }
+        let _ = Tab::Create;
+    }
+
+    fn wizard_queue_input(&mut self) {
+        let raw = self
+            .wizard
+            .import_input
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'');
+        let path = raw.strip_prefix("file://").unwrap_or(raw).trim().to_owned();
+        if !path.is_empty() && !self.wizard.sources.contains(&path) {
+            self.wizard.sources.push(path);
+        }
+        self.wizard.import_input.clear();
+    }
+
+    fn wizard_create(&mut self) {
+        let template = self.wizard.template;
+        let name = self.wizard.name.clone();
+        if template.opens_editor() {
+            self.wizard.open = false;
+            match template {
+                asset_wizard::Template::Material => {
+                    self.new_material();
+                    if let (Some(name), Some(document)) =
+                        (asset_wizard::sanitize_name(&name), self.material.as_mut())
+                    {
+                        document.surface.name = name;
+                    }
+                }
+                _ => self.new_texture_set(),
+            }
+            self.wizard.name.clear();
+            return;
+        }
+        let Some(root) = self.asset_root_dir() else {
+            self.wizard_status("Open a project first: there is no asset folder yet.", false);
+            return;
+        };
+        let directory = self.asset_directory.clone();
+        match asset_wizard::create(&root, &directory, template, &name) {
+            Ok(relative) => {
+                self.refresh_assets();
+                self.asset_selected = self
+                    .assets
+                    .iter()
+                    .position(|asset| asset.relative_path == relative);
+                self.wizard.name.clear();
+                self.wizard_status(format!("Created {relative}"), true);
+                self.log(LogLevel::Action, format!("Created asset {relative}"));
+            }
+            Err(error) => self.wizard_status(error, false),
+        }
+    }
+
+    fn wizard_import(&mut self) {
+        self.wizard_queue_input();
+        if self.wizard.sources.is_empty() {
+            self.wizard_status("Add at least one file or folder to import.", false);
+            return;
+        }
+        let Some(root) = self.asset_root_dir() else {
+            self.wizard_status("Open a project first: there is no asset folder yet.", false);
+            return;
+        };
+        let sources: Vec<std::path::PathBuf> = self
+            .wizard
+            .sources
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let directory = self.asset_directory.clone();
+        let report = asset_wizard::import(&root, &directory, &sources);
+        for relative in &report.imported {
+            let lower = relative.to_ascii_lowercase();
+            if lower.ends_with(".glb") || lower.ends_with(".gltf") || lower.ends_with(".obj") {
+                let absolute = root.join(relative).to_string_lossy().into_owned();
+                self.import_mesh_materials(&absolute);
+            }
+        }
+        self.refresh_assets();
+        let mut text = report.summary();
+        if let Some((source, reason)) = report.skipped.first() {
+            text.push_str(&format!(" First skipped: {source} ({reason})."));
+        }
+        let ok = !report.imported.is_empty();
+        if ok {
+            self.wizard.sources.clear();
+        }
+        self.log(LogLevel::Action, &text);
+        self.wizard_status(text, ok);
+    }
+
+    fn wizard_pack(&mut self) {
+        if self.wizard.packing {
+            return;
+        }
+        let Some(root) = self.asset_root_dir() else {
+            self.wizard_status("Open a project first: there is no asset folder yet.", false);
+            return;
+        };
+        let Some(packer) = asset_wizard::find_packer() else {
+            self.wizard_status("caf-pack was not found; build it or set CAF_PACK.", false);
+            return;
+        };
+        let output = self.pack_output_path(&root);
+        let header = self
+            .wizard
+            .generate_ids
+            .then(|| output.with_extension("hpp"));
+        let arguments = asset_wizard::pack_arguments(&root, &output, header.as_deref());
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let worker = slot.clone();
+        std::thread::spawn(move || {
+            let result = asset_wizard::run_packer(&packer, &arguments);
+            if let Ok(mut guard) = worker.lock() {
+                *guard = Some(result);
+            }
+        });
+        self.pack_job = Some(slot);
+        self.wizard.packing = true;
+        self.wizard_status("Packing…", true);
+    }
+
     fn handle_dropped_file(&mut self, path: std::path::PathBuf) {
+        if self.wizard.open {
+            let text = path.to_string_lossy().into_owned();
+            if !self.wizard.sources.contains(&text) {
+                self.wizard.sources.push(text);
+            }
+            self.wizard.tab = panels::asset_wizard::Tab::Import;
+            return;
+        }
         let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -4553,6 +5219,10 @@ impl App {
                     document.preview_dirty = true;
                 }
             }
+            material::Edit::OpenHeightPicker => {
+                self.material_height_picker = true;
+                self.material_height_search.clear();
+            }
             material::Edit::OpenPreviewEnvironment => {
                 self.material_environment_picker = true;
                 self.material_environment_search.clear();
@@ -4630,6 +5300,26 @@ impl App {
                 }
                 material::Edit::NormalStrength(value) => {
                     surface.normal_strength = value.clamp(0.0, 4.0);
+                    changed = true;
+                }
+                material::Edit::HeightScale(value) => {
+                    surface.height_scale = value.clamp(0.0, 0.5);
+                    changed = true;
+                }
+                material::Edit::ParallaxSteps(value) => {
+                    surface.parallax_steps = value.clamp(4.0, 128.0);
+                    changed = true;
+                }
+                material::Edit::Geometric(value) => {
+                    surface.displacement_mode = i32::from(value);
+                    changed = true;
+                }
+                material::Edit::DisplacementScale(value) => {
+                    surface.displacement_scale = value.clamp(0.0, 0.5);
+                    changed = true;
+                }
+                material::Edit::Subdivisions(value) => {
+                    surface.mesh_subdivisions = (value.round() as i32).clamp(1, 9);
                     changed = true;
                 }
                 material::Edit::NormalDirectX(value) => {
@@ -4714,6 +5404,122 @@ impl App {
             return;
         };
         self.assign_material_texture(slot, source);
+    }
+
+    /// Merges an external height image into the normal map's alpha (parallax depth).
+    /// The result is a new `<material>_height_normal.png` next to the material, so the
+    /// artist's original normal map is never overwritten. Without a normal map the
+    /// normal is derived from the height first.
+    fn pack_height_into_normal(&mut self, source: &str) {
+        let Some(engine) = self.engine.as_ref() else {
+            self.log(
+                LogLevel::Error,
+                "Packing a height map needs an engine session",
+            );
+            return;
+        };
+        let Some(document) = self.material.as_ref() else {
+            return;
+        };
+        let resolve = |path: &str| -> Option<String> {
+            engine
+                .resolve_path(path)
+                .ok()
+                .filter(|resolved| std::path::Path::new(resolved).exists())
+                .or_else(|| engine.asset_path(path).ok())
+        };
+        let Some(height_path) = resolve(source) else {
+            self.log(LogLevel::Error, format!("Height map not found: {source}"));
+            return;
+        };
+        let Some(file_path) = document.file_path.clone() else {
+            self.log(
+                LogLevel::Error,
+                "Save the material before packing a height map",
+            );
+            return;
+        };
+        let directory = std::path::Path::new(&file_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let asset_path = document.asset_path.clone().unwrap_or_default();
+        let asset_directory = std::path::Path::new(&asset_path)
+            .parent()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let stem = std::path::Path::new(&asset_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("material")
+            .to_owned();
+        let out_name = format!("{stem}_height_normal.png");
+        let out_path = directory.join(&out_name).to_string_lossy().into_owned();
+        let existing_normal = if document.surface.normal_map.is_empty() {
+            None
+        } else {
+            resolve(&document.surface.normal_map)
+        };
+        let normal = match existing_normal {
+            Some(path) => engine.load_texture_rgba(&path),
+            None => engine
+                .generate_texture_map(
+                    &height_path,
+                    &out_path,
+                    doppio_engine::TextureMapKind::Normal,
+                    doppio_engine::TextureMapOptions {
+                        strength: 1.0,
+                        directx: self.material_directx,
+                        wrap: true,
+                        min_value: 0.0,
+                        max_value: 1.0,
+                        invert: false,
+                        radius: 8,
+                    },
+                )
+                .and_then(|_| engine.load_texture_rgba(&out_path)),
+        };
+        let (Ok((nw, nh, mut normal_pixels)), Ok((hw, hh, height_pixels))) =
+            (normal, engine.load_texture_rgba(&height_path))
+        else {
+            self.log(LogLevel::Error, "Could not read the normal or height image");
+            return;
+        };
+        if !height_pack::pack(
+            &mut normal_pixels,
+            nw as usize,
+            nh as usize,
+            &height_pixels,
+            hw as usize,
+            hh as usize,
+        ) || engine
+            .save_texture_rgba(&out_path, nw, nh, &normal_pixels)
+            .is_err()
+        {
+            self.log(LogLevel::Error, "Could not write the packed normal map");
+            return;
+        }
+        let relative = if asset_directory.is_empty() {
+            out_name
+        } else {
+            format!("{asset_directory}/{out_name}")
+        };
+        let project_path = engine
+            .asset_project_path(&relative)
+            .unwrap_or_else(|_| relative.clone());
+        if let Some(document) = self.material.as_mut() {
+            document.surface.normal_map = project_path;
+            if document.surface.height_scale <= 0.0 {
+                document.surface.height_scale = 0.035;
+            }
+            document.dirty = true;
+            document.preview_dirty = true;
+        }
+        self.refresh_material_thumbnails();
+        self.log(
+            LogLevel::Action,
+            format!("Packed height {source} into {relative}"),
+        );
     }
 
     fn assign_material_texture(&mut self, slot: material::TextureSlot, source: String) {
@@ -5370,137 +6176,8 @@ impl App {
     fn subscription(&self) -> iced::Subscription<Message> {
         iced::Subscription::batch([
             iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::ViewportTick),
-            iced::event::listen().filter_map(|event| match event {
-                iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Message::PointerReleased)
-                }
-                iced::Event::Window(iced::window::Event::FileDropped(path)) => {
-                    Some(Message::FileDropped(path))
-                }
-                _ => None,
-            }),
-            iced::keyboard::listen().filter_map(|event| match event {
-                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
-                    if !modifiers.control() {
-                        if let iced::keyboard::Key::Character(character) = key.as_ref() {
-                            if let Some(key) = match character {
-                                "1" => Some(1),
-                                "2" => Some(2),
-                                "3" => Some(3),
-                                _ => None,
-                            } {
-                                return Some(Message::GizmoShortcut(key));
-                            }
-                        }
-                        if matches!(
-                            key.as_ref(),
-                            iced::keyboard::Key::Character(character)
-                                if character.eq_ignore_ascii_case("g")
-                        ) {
-                            return Some(Message::ViewportGridShortcut);
-                        }
-                        if matches!(
-                            key.as_ref(),
-                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift)
-                        ) {
-                            return Some(Message::ViewportBoost(true));
-                        }
-                        return fly_key(&key).map(|key| Message::ViewportKey(key, true));
-                    }
-                    match key.as_ref() {
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("e")
-                                && modifiers.control()
-                                && modifiers.shift() =>
-                        {
-                            Some(Message::OpenScriptEditor)
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("d")
-                                && modifiers.control()
-                                && modifiers.shift() =>
-                        {
-                            Some(Message::OpenDryadNodes)
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("o") && modifiers.control() =>
-                        {
-                            Some(Message::Project(project_manager::Edit::Open))
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("z") =>
-                        {
-                            Some(if modifiers.shift() {
-                                Message::Redo
-                            } else {
-                                Message::Undo
-                            })
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("y") =>
-                        {
-                            Some(Message::Redo)
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("n") =>
-                        {
-                            Some(if modifiers.shift() {
-                                Message::TogglePrefabPalette
-                            } else {
-                                Message::AddEntity
-                            })
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("m") && modifiers.shift() =>
-                        {
-                            Some(Message::Material(material::Edit::New))
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("s") =>
-                        {
-                            Some(Message::SaveScene)
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("f") =>
-                        {
-                            Some(Message::FocusSelection)
-                        }
-                        iced::keyboard::Key::Character(character)
-                            if character.eq_ignore_ascii_case("r") =>
-                        {
-                            Some(Message::RenderViewport)
-                        }
-                        iced::keyboard::Key::Character("0") => Some(Message::ResetCamera),
-                        iced::keyboard::Key::Character("1") => {
-                            Some(Message::Layout(LayoutPreset::Default))
-                        }
-                        iced::keyboard::Key::Character("2") => {
-                            Some(Message::Layout(LayoutPreset::Viewport))
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
-                            Some(Message::TogglePlay)
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::F5) => {
-                            Some(Message::AssetRefresh)
-                        }
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
-                            Some(Message::Project(project_manager::Edit::Close))
-                        }
-                        _ => None,
-                    }
-                }
-                iced::keyboard::Event::KeyReleased { key, .. } => {
-                    if matches!(
-                        key.as_ref(),
-                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift)
-                    ) {
-                        Some(Message::ViewportBoost(false))
-                    } else {
-                        fly_key(&key).map(|key| Message::ViewportKey(key, false))
-                    }
-                }
-                _ => None,
-            }),
+            iced::event::listen().filter_map(|event| global_event_message(&event)),
+            iced::keyboard::listen().filter_map(keyboard_event_message),
         ])
     }
 
@@ -5689,6 +6366,15 @@ impl App {
                 | Message::TabExit(_, _)
                 | Message::PaneEnter(_, _)
                 | Message::PaneExit(_, _)
+                // Hover bookkeeping from widgets behind an open menu must not
+                // dismiss it; only deliberate actions (or a click outside,
+                // Escape, choosing an item) close menus.
+                | Message::HierarchyRowEnter(_)
+                | Message::HierarchyRowExit(_)
+                | Message::HierarchyRootEnter
+                | Message::HierarchyRootExit
+                | Message::HierarchyHoverClear
+                | Message::Noop
         ) {
             self.open_menu = None;
             self.hierarchy_menu = None;
@@ -5782,9 +6468,9 @@ impl App {
                 self.asset_selected = Some(index);
                 self.asset_drag = Some(index);
             }
-            Message::AssetReleased(index) => {
+            Message::AssetReleased(_index) => {
+                // A single click only selects; opening needs a double click.
                 self.asset_drag = None;
-                self.asset_pressed(index);
             }
             Message::AssetDoubleClick(index) => {
                 self.asset_double_clicked(index);
@@ -5792,6 +6478,15 @@ impl App {
             Message::AssetSearch(text) => {
                 self.asset_search = text;
             }
+            Message::AssetTreeToggle(path) => {
+                if !self.asset_tree_collapsed.remove(&path) {
+                    self.asset_tree_collapsed.insert(path);
+                }
+            }
+            Message::AssetTreePanel => {
+                self.asset_tree_open = !self.asset_tree_open;
+            }
+            Message::Wizard(edit) => self.edit_wizard(edit),
             Message::OpenScriptEditor => {
                 self.show_script_pane();
             }
@@ -5982,6 +6677,17 @@ impl App {
             Message::MaterialPickerClose => {
                 self.material_picker = None;
             }
+            Message::MaterialHeightSearch(text) => {
+                self.material_height_search = text;
+            }
+            Message::MaterialHeightPick(path) => {
+                self.material_height_picker = false;
+                self.material_height_search.clear();
+                self.pack_height_into_normal(&path);
+            }
+            Message::MaterialHeightClose => {
+                self.material_height_picker = false;
+            }
             Message::MaterialEnvironmentSearch(text) => {
                 self.material_environment_search = text;
             }
@@ -5995,6 +6701,23 @@ impl App {
             }
             Message::MaterialEnvironmentClose => {
                 self.material_environment_picker = false;
+            }
+            Message::BehaviourSearch(text) => {
+                self.behaviour_search = text;
+            }
+            Message::BehaviourPick(picked) => {
+                self.behaviour_picker = false;
+                self.behaviour_search.clear();
+                self.add_behaviour(picked);
+            }
+            Message::BehaviourClose => {
+                self.behaviour_picker = false;
+            }
+            Message::BehaviourNew => {
+                // Hand over to the wizard with the Lua template preselected.
+                self.behaviour_picker = false;
+                self.wizard.template = asset_wizard::Template::LuaScript;
+                self.open_wizard(panels::asset_wizard::Tab::Create);
             }
             Message::MaterialAssetSearch(text) => {
                 self.material_asset_search = text;
@@ -6052,6 +6775,9 @@ impl App {
                 if self.tab_hover == Some((pane, page)) {
                     self.tab_hover = None;
                 }
+                if self.tab_drag == Some((pane, page)) {
+                    self.tab_dragging = true;
+                }
             }
             Message::PaneEnter(pane, _page) => {
                 if self.tab_drag.is_some() {
@@ -6073,6 +6799,27 @@ impl App {
             }
             Message::SplitPage(pane) => {
                 self.split_active_page(pane);
+            }
+            Message::DockHover(pane, zone) => {
+                self.dock_hover = zone.map(|zone| (pane, zone));
+            }
+            Message::DockDrop(pane, zone) => {
+                let source = self.tab_drag;
+                self.tab_drag = None;
+                self.tab_hover = None;
+                self.tab_hover_pane = None;
+                self.dock_hover = None;
+                self.tab_dragging = false;
+                if let Some(source) = source {
+                    self.dock_page(source, pane, zone);
+                }
+            }
+            Message::ToggleMaximize(pane) => {
+                if self.panes.maximized() == Some(pane) {
+                    self.panes.restore();
+                } else {
+                    self.panes.maximize(pane);
+                }
             }
             Message::HierarchyRootToggle => {
                 self.hierarchy_root_open = !self.hierarchy_root_open;
@@ -6177,6 +6924,7 @@ impl App {
                 self.request_viewport();
             }
             Message::ViewportTick => {
+                self.poll_pack_job();
                 let dt = self
                     .viewport_last_tick
                     .map_or(1.0 / 60.0, |last| last.elapsed().as_secs_f32())
@@ -6514,11 +7262,12 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let brand = column![
-            text("Doppio").size(18).color(theme::TEXT),
-            text("Caffeine engine").size(10).color(theme::TEXT_MUTED),
+        let brand = row![
+            text("Doppio").size(14).color(theme::TEXT),
+            text("Caffeine").size(11).color(theme::TEXT_MUTED),
         ]
-        .spacing(0);
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
 
         let project_menu = menu::trigger(
             id::MENU_PROJECT,
@@ -6592,9 +7341,10 @@ impl App {
         let grid = pane_grid(&self.panes, |pane, group, _| self.pane_content(pane, group))
             .on_drag(Message::PaneDragged)
             .on_resize(8, Message::PaneResized)
-            .spacing(6);
+            .min_size(160)
+            .spacing(3);
 
-        let base: Element<'_, Message> = container(column![bar, grid].spacing(8).padding(8))
+        let base: Element<'_, Message> = container(column![bar, grid].spacing(4).padding(4))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::background)
@@ -6653,6 +7403,39 @@ impl App {
             )
             .on_press(Message::Project(project_manager::Edit::Close));
             iced::widget::stack([base, scrim.into(), overlay.into()]).into()
+        } else if self.wizard.open {
+            let root = self.asset_root_dir();
+            let destination = if self.asset_directory.is_empty() {
+                "asset root".to_owned()
+            } else {
+                self.asset_directory.clone()
+            };
+            let packer = asset_wizard::find_packer().map(|path| path.display().to_string());
+            let pack_output = root
+                .as_deref()
+                .map(|root| self.pack_output_path(root).display().to_string())
+                .unwrap_or_else(|| "(open a project)".to_owned());
+            let wizard = panels::asset_wizard::view(
+                &self.wizard,
+                panels::asset_wizard::Context {
+                    destination,
+                    packer,
+                    pack_output,
+                },
+                Message::Wizard,
+            );
+            let scrim = container(iced::widget::space())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::scrim);
+            let overlay = iced::widget::mouse_area(
+                container(wizard)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::Wizard(panels::asset_wizard::Edit::Close));
+            iced::widget::stack([base, scrim.into(), overlay.into()]).into()
         } else if let Some(menu) = self.open_menu {
             let (x, items) = self.menu_items(menu);
             let overlay =
@@ -6701,6 +7484,53 @@ impl App {
                     .center(Length::Fill),
             )
             .on_press(Message::GeneratorTextureClose);
+            iced::widget::stack([base, overlay.into()]).into()
+        } else if self.behaviour_picker {
+            let catalog = behaviour::catalog(&self.component_types, &self.components, &self.assets);
+            let mut sections: Vec<behaviour_picker::Section<Message>> = Vec::new();
+            let mut index = 0usize;
+            for group in behaviour::GROUPS {
+                let rows: Vec<behaviour_picker::Row<Message>> =
+                    behaviour::filter(&catalog, &self.behaviour_search)
+                        .into_iter()
+                        .filter(|entry| entry.group == group)
+                        .map(|entry| {
+                            let row = behaviour_picker::Row {
+                                id: id::behaviour_item(index),
+                                label: entry.label.clone(),
+                                detail: entry.detail.clone(),
+                                tag: entry.added.then_some("Added"),
+                                on_pick: (!entry.added)
+                                    .then(|| Message::BehaviourPick(entry.behaviour.clone())),
+                            };
+                            index += 1;
+                            row
+                        })
+                        .collect();
+                sections.push(behaviour_picker::Section { title: group, rows });
+            }
+            let empty = if self.engine.is_none() && self.component_types.is_empty() {
+                "No engine session: components are listed once the engine is connected. Project scripts, meshes and materials appear here."
+            } else {
+                "Nothing matches this search."
+            };
+            let picker = behaviour_picker::view(
+                sections,
+                &self.behaviour_search,
+                empty,
+                behaviour_picker::Callbacks {
+                    on_search: Box::new(Message::BehaviourSearch),
+                    on_close: Message::BehaviourClose,
+                    on_new_script: Message::BehaviourNew,
+                },
+            );
+            let overlay = iced::widget::mouse_area(
+                container(picker)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::BehaviourClose);
             iced::widget::stack([base, overlay.into()]).into()
         } else if self.material_asset_picker {
             let search = self.material_asset_search.to_lowercase();
@@ -6751,6 +7581,51 @@ impl App {
                     .center(Length::Fill),
             )
             .on_press(Message::MaterialAssetClose);
+            iced::widget::stack([base, overlay.into()]).into()
+        } else if self.material_height_picker {
+            let search = self.material_height_search.to_lowercase();
+            let items: Vec<crate::uikit::components::asset_picker::Item> = self
+                .assets
+                .iter()
+                .filter(|asset| asset.kind == "image")
+                .filter(|asset| search.is_empty() || asset.name.to_lowercase().contains(&search))
+                .take(200)
+                .map(|asset| crate::uikit::components::asset_picker::Item {
+                    key: asset.relative_path.clone(),
+                    label: asset.name.clone(),
+                    detail: asset.relative_path.clone(),
+                    thumbnail: self.load_thumbnail(&asset.relative_path),
+                })
+                .collect();
+            let picker = crate::uikit::components::asset_picker::view_labeled(
+                "Height map → normal alpha",
+                items,
+                &self.material_height_search,
+                crate::uikit::components::asset_picker::Callbacks {
+                    ids: crate::uikit::components::asset_picker::Ids {
+                        root: id::MATERIAL_HEIGHT_PICKER,
+                        close: id::MATERIAL_HEIGHT_PICKER_CLOSE,
+                        search: id::MATERIAL_HEIGHT_PICKER_SEARCH,
+                        item: id::material_height_item,
+                    },
+                    on_search: Box::new(Message::MaterialHeightSearch),
+                    on_pick: Box::new(Message::MaterialHeightPick),
+                    on_close: Message::MaterialHeightClose,
+                },
+                crate::uikit::components::asset_picker::Labels {
+                    placeholder: "Search height images…",
+                    badge: "HEIGHT",
+                    empty: "No images in the project yet.",
+                    footer: None,
+                },
+            );
+            let overlay = iced::widget::mouse_area(
+                container(picker)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::MaterialHeightClose);
             iced::widget::stack([base, overlay.into()]).into()
         } else if self.material_environment_picker {
             let search = self.material_environment_search.to_lowercase();
@@ -6914,10 +7789,20 @@ impl App {
                 Message::SplitPage(pane),
             )
         });
-        let title_bar = pane_grid::TitleBar::new(tabs::view(tabs, subtitle, split))
+        let maximized = self.panes.maximized() == Some(pane);
+        let controls = tabs::controls(
+            split,
+            (
+                id::pane_maximize(&format!("{pane:?}")),
+                maximized,
+                Message::ToggleMaximize(pane),
+            ),
+        );
+        let title_bar = pane_grid::TitleBar::new(tabs::view(tabs, subtitle, None))
+            .controls(controls)
+            .always_show_controls()
             .padding([0, 2])
             .style(theme::panel_title);
-        let drop_target = self.tab_drag.is_some() && self.tab_hover_pane == Some(pane);
         let body = container(
             iced::widget::mouse_area(container(panel::body(body)).id(pane_id))
                 .on_enter(Message::PaneEnter(pane, active))
@@ -6925,8 +7810,24 @@ impl App {
                 .on_release(Message::PaneReleased(pane, active)),
         )
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(theme::pane_drop_target(drop_target));
+        .height(Length::Fill);
+        let body: Element<'a, Message> = if self.tab_drag.is_some() && self.tab_dragging {
+            let hovered = self
+                .dock_hover
+                .filter(|(target, _)| *target == pane)
+                .map(|(_, zone)| zone);
+            iced::widget::stack![
+                body,
+                dock_overlay::view(
+                    hovered,
+                    move |zone| Message::DockHover(pane, zone),
+                    move |zone| Message::DockDrop(pane, zone),
+                )
+            ]
+            .into()
+        } else {
+            body.into()
+        };
         pane_grid::Content::new(body).title_bar(title_bar)
     }
 
@@ -7020,6 +7921,8 @@ impl App {
                             directory: &self.asset_directory,
                             mode: self.asset_view_mode,
                             selected: self.asset_selected,
+                            collapsed: &self.asset_tree_collapsed,
+                            tree_open: self.asset_tree_open,
                         },
                         panels::assetmanager::Callbacks {
                             on_search: Box::new(Message::AssetSearch),
@@ -7032,6 +7935,15 @@ impl App {
                             on_root: Message::AssetRoot,
                             on_refresh: Message::AssetRefresh,
                             on_mode: Box::new(Message::AssetViewMode),
+                            on_new: Message::Wizard(panels::asset_wizard::Edit::Open(
+                                panels::asset_wizard::Tab::Create,
+                            )),
+                            on_import: Message::Wizard(panels::asset_wizard::Edit::Open(
+                                panels::asset_wizard::Tab::Import,
+                            )),
+                            on_tree_toggle: Box::new(Message::AssetTreeToggle),
+                            on_noop: Message::Noop,
+                            on_tree_panel: Message::AssetTreePanel,
                         },
                     ),
                 )
@@ -7122,7 +8034,11 @@ impl App {
                         selected_link: self.generator_link,
                         pan: self.generator_pan,
                         zoom: self.generator_zoom,
-                        preview: self.generator_preview.as_ref(),
+                        preview: self
+                            .generator_preview_maps
+                            .get(self.generator_preview_channel)
+                            .or(self.generator_preview.as_ref()),
+                        preview_channel: self.generator_preview_channel,
                         preview_3d: self.material_preview.as_ref(),
                         status: self.generator_status.as_deref(),
                         material_name: Some(&document.surface.name),
@@ -7664,6 +8580,25 @@ fn apply_generator_param(kind: &mut generators::NodeKind, param: material_genera
         (NodeKind::Output { ao, .. }, Param::Ao(value)) => {
             *ao = value.clamp(0.0, 1.0);
         }
+        (NodeKind::Output { options, .. }, Param::OutputAutoHeight(value)) => {
+            options.auto_height = value;
+        }
+        (NodeKind::Output { options, .. }, Param::OutputNormalizeHeight(value)) => {
+            options.normalize_height = value;
+        }
+        (NodeKind::Output { options, .. }, Param::OutputHeightContrast(value)) => {
+            options.height_contrast = value.clamp(0.1, 4.0);
+        }
+        (NodeKind::Proc { op, params, .. }, Param::Proc(index, value)) => {
+            if let (Some(slot), Some(spec)) = (params.get_mut(index), op.0.params.get(index)) {
+                *slot = value.clamp(spec.min, spec.max);
+            }
+        }
+        (NodeKind::Proc { colors, .. }, Param::ProcColor(index, axis, value)) => {
+            if let Some(color) = colors.get_mut(index) {
+                color[axis.min(3)] = value.clamp(0.0, 1.0);
+            }
+        }
         _ => {}
     }
 }
@@ -7956,6 +8891,9 @@ fn format_transform_number(value: f32) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "headless"))]
+pub mod headless;
 
 #[cfg(feature = "agent")]
 mod agent;
