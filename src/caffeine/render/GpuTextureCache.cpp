@@ -221,7 +221,10 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
     auto it = m_cache.find(cacheKey);
     if (it != m_cache.end() && it->second.texture) {
         Entry& entry = it->second;
-        if (stamp != 0 && entry.fileStamp != stamp && entry.refCount == 0) {
+        // A file rewritten in place (a bake overwrites its maps) must reload. refCount is bumped on
+        // every acquire and never drops while a map is in use, so it cannot gate this; the
+        // device defers the release until in-flight commands finish.
+        if (stamp != 0 && entry.fileStamp != stamp) {
             destroyEntry(device, entry);
             m_cache.erase(it);
         } else {

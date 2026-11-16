@@ -2023,6 +2023,56 @@ fn material_preview_sun_and_shadows_change_the_render() {
 }
 
 #[test]
+fn preview_reloads_a_map_rewritten_in_place() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let dir = std::env::temp_dir().join(format!("doppio-rewrite-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("albedo.png").to_string_lossy().to_string();
+    let solid = |rgb: [u8; 3]| -> Vec<u8> {
+        (0..16 * 16).flat_map(|_| [rgb[0], rgb[1], rgb[2], 255]).collect()
+    };
+    let material = doppio_engine::Material {
+        albedo_map: path.clone(),
+        ..doppio_engine::Material::default()
+    };
+    let render = |engine: &mut doppio_engine::Engine| {
+        engine
+            .render_material_preview_ex(
+                &material,
+                64,
+                0.0,
+                20.0,
+                doppio_engine::PreviewShape::Plane,
+                "",
+                1.0,
+            )
+            .expect("preview")
+    };
+    engine
+        .save_texture_rgba(&path, 16, 16, &solid([230, 20, 20]))
+        .expect("write red");
+    let red = render(engine);
+    // Same path, new content, and make sure the modification time moves.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    engine
+        .save_texture_rgba(&path, 16, 16, &solid([20, 20, 230]))
+        .expect("write blue");
+    let blue = render(engine);
+    let centre = |pixels: &[u8]| {
+        let at = (32 * 64 + 32) * 4;
+        (pixels[at], pixels[at + 2])
+    };
+    let (red_r, red_b) = centre(&red);
+    let (blue_r, blue_b) = centre(&blue);
+    assert!(red_r > red_b, "first render should be reddish");
+    assert!(blue_b > blue_r, "the rewritten map must be reloaded");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn mesh_map_bakes_write_uv_channels() {
     let Some(mut harness) = engine_harness() else {
         return;
