@@ -23,6 +23,7 @@
 #include "assets/MaterialCache.hpp"
 #include "assets/MeshCache.hpp"
 #include "assets/MeshLOD.hpp"
+#include "assets/MeshSubdivide.hpp"
 #include "assets/MeshImportValidator.hpp"
 #include <filesystem>
 #include "ecs/TerrainComponents.hpp"
@@ -38,6 +39,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 
@@ -49,6 +52,23 @@ constexpr u32 kVertexStride = sizeof(Assets::Vertex3D);
 struct VertexUBO {
     float mvp[16];
     float model[16];
+};
+
+struct DisplaceVertexUBO {
+    float mvp[16];
+    float model[16];
+    float disp[4]; // depth (m), finite-difference step (tiled uv), metres per tiled uv
+    float uv[4];   // tiling xy, offset zw
+};
+
+struct DisplaceShadowUBO {
+    float mvp[16];
+    float model[16];
+    float lightPos[4];
+    int mode;
+    int pad[3];
+    float disp[4];
+    float uv[4];
 };
 
 struct LightingUBO {
@@ -546,6 +566,27 @@ RHI::Buffer* GpuSceneRenderer::vertexBufferFor(const MeshDraw& draw) {
     return slot ? slot : draw.mesh->vertexBuffer;
 }
 
+GpuSceneRenderer::DisplacedMesh* GpuSceneRenderer::displacedMeshFor(const Assets::Mesh3D* source,
+                                                                    u32 levels) {
+    if (!source || levels == 0 || !source->skin.empty()) return nullptr;
+    DisplacedMesh& entry = m_displacedMeshes[{source, levels}];
+    if (entry.valid && entry.sourceRevision == source->geometryRevision) return &entry;
+    if (entry.valid) destroyMeshGpu(entry.mesh);
+    entry.valid = false;
+    // Dense meshes (a UV sphere is ~3k indices) cannot take the full level count: lower it until
+    // the result fits the index budget instead of silently giving up.
+    constexpr size_t kBudget = 3'000'000;
+    while (levels > 0 && source->indices.size() * (size_t{1} << (2 * levels)) > kBudget) --levels;
+    if (levels == 0 || !Assets::subdivideMesh(*source, levels, entry.mesh)) return nullptr;
+    const Assets::MeshDensity density = Assets::measureMeshDensity(entry.mesh);
+    entry.metersPerUv = density.metersPerUv;
+    entry.edgeUv = density.averageEdgeUv;
+    entry.sourceRevision = source->geometryRevision;
+    if (!ensureMeshUploaded(&entry.mesh)) return nullptr;
+    entry.valid = true;
+    return &entry;
+}
+
 void GpuSceneRenderer::shutdown() {
     if (m_device) {
         for (auto& entry : m_skinBuffers) {
@@ -559,6 +600,8 @@ void GpuSceneRenderer::shutdown() {
         destroyMeshGpu(cache.far);
     }
     m_meshLods.clear();
+    for (auto& [_, entry] : m_displacedMeshes) destroyMeshGpu(entry.mesh);
+    m_displacedMeshes.clear();
     m_entityLod.clear();
     m_post.shutdown();
     if (m_device) {
@@ -568,6 +611,10 @@ void GpuSceneRenderer::shutdown() {
         if (m_sceneFrag) m_device->destroyShader(m_sceneFrag);
         if (m_terrainFrag) m_device->destroyShader(m_terrainFrag);
         if (m_shadowVert) m_device->destroyShader(m_shadowVert);
+        if (m_displaceVert) m_device->destroyShader(m_displaceVert);
+        if (m_shadowDisplaceVert) m_device->destroyShader(m_shadowDisplaceVert);
+        if (m_displacePipeline) m_device->destroyPipeline(m_displacePipeline);
+        if (m_shadowDisplacePipeline) m_device->destroyPipeline(m_shadowDisplacePipeline);
         if (m_shadowFrag) m_device->destroyShader(m_shadowFrag);
         if (m_fullscreenVert) m_device->destroyShader(m_fullscreenVert);
         if (m_skyFrag) m_device->destroyShader(m_skyFrag);
@@ -602,6 +649,10 @@ void GpuSceneRenderer::shutdown() {
     m_sceneFrag = nullptr;
     m_terrainFrag = nullptr;
     m_shadowVert = nullptr;
+    m_displaceVert = nullptr;
+    m_shadowDisplaceVert = nullptr;
+    m_displacePipeline = nullptr;
+    m_shadowDisplacePipeline = nullptr;
     m_shadowFrag = nullptr;
     m_fullscreenVert = nullptr;
     m_skyFrag = nullptr;
@@ -689,6 +740,15 @@ bool GpuSceneRenderer::createPipelines() {
     blendDesc.depthWrite = false;
     blendDesc.blendMode = RHI::BlendMode::Premultiplied;
     m_blendPipeline = m_device->createGraphicsPipeline(m_sceneVert, m_sceneFrag, blendDesc);
+    // Geometric displacement: one vertex sampler (set 0), one vertex UBO. Optional - when the
+    // backend cannot build these shaders, materials silently fall back to parallax.
+    m_displaceVert = createBuiltinShader(m_device, BuiltinShader::SceneDisplaceVertex,
+                                         RHI::ShaderStage::Vertex, 1, 1);
+    m_shadowDisplaceVert = createBuiltinShader(m_device, BuiltinShader::ShadowDisplaceVertex,
+                                               RHI::ShaderStage::Vertex, 1, 1);
+    if (m_displaceVert) {
+        m_displacePipeline = m_device->createGraphicsPipeline(m_displaceVert, m_sceneFrag, sceneDesc);
+    }
 
     if (m_fullscreenVert && m_skyFrag) {
         RHI::GraphicsPipelineDesc skyDesc{};
@@ -725,7 +785,14 @@ bool GpuSceneRenderer::createPipelines() {
     // Color-only shadow pass (no depth attachment) for cubemap / 2D shadow maps.
     RHI::GraphicsPipelineDesc shadowDesc{};
     fillMeshPipelineDesc(shadowDesc, layout, attrs, RHI::TextureFormat::R16_FLOAT, false, false);
+    // No depth attachment: keep the nearest occluder with MIN blending so the result does not
+    // depend on draw order (a floor drawn after a sphere used to erase the sphere's shadow).
+    shadowDesc.blendMode = RHI::BlendMode::Min;
     m_shadowPipeline = m_device->createGraphicsPipeline(m_shadowVert, m_shadowFrag, shadowDesc);
+    if (m_shadowDisplaceVert) {
+        m_shadowDisplacePipeline =
+            m_device->createGraphicsPipeline(m_shadowDisplaceVert, m_shadowFrag, shadowDesc);
+    }
 
     if (m_instancedVert && m_sceneFrag) {
         RHI::VertexBufferLayoutDesc instancedLayouts[2]{};
@@ -763,6 +830,28 @@ void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& d
                                       const Mat4& mvp, const Vec3& lightPos, int mode,
                                       u32 indexCount, u32 firstIndex) {
     if (!m_shadowPipeline || !draw.mesh || indexCount == 0) return;
+
+    if (draw.displaced && m_shadowDisplacePipeline && draw.displacementTexture) {
+        DisplaceShadowUBO dubo{};
+        std::memcpy(dubo.mvp, mvp.data(), sizeof(dubo.mvp));
+        std::memcpy(dubo.model, draw.worldMatrix.data(), sizeof(dubo.model));
+        dubo.lightPos[0] = lightPos.x;
+        dubo.lightPos[1] = lightPos.y;
+        dubo.lightPos[2] = lightPos.z;
+        dubo.mode = mode;
+        dubo.disp[0] = draw.displacementScale;
+        dubo.uv[0] = draw.uvTiling.x;
+        dubo.uv[1] = draw.uvTiling.y;
+        dubo.uv[2] = draw.uvOffset.x;
+        dubo.uv[3] = draw.uvOffset.y;
+        cmd->bindPipeline(m_shadowDisplacePipeline);
+        cmd->bindVertexTexture(draw.displacementTexture, 0, m_repeatSampler);
+        cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &dubo, sizeof(dubo));
+        cmd->bindVertexBuffer(vertexBufferFor(draw));
+        cmd->bindIndexBuffer(draw.mesh->indexBuffer);
+        cmd->drawIndexed(indexCount, firstIndex, 0);
+        return;
+    }
 
     ShadowUBO ubo{};
     std::memcpy(ubo.mvp, mvp.data(), sizeof(ubo.mvp));
@@ -1216,6 +1305,9 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
 
         CF_PROFILE_SCOPE(draw.isTerrain ? "GpuSceneRenderer::terrain" : "GpuSceneRenderer::mesh");
         RHI::Pipeline* pipeline = basePipeline;
+        const bool displaced = draw.displaced && !wireframe && !draw.isTerrain &&
+                               m_displacePipeline && basePipeline == m_scenePipeline;
+        if (displaced) pipeline = m_displacePipeline;
         if (wireframe) pipeline = m_wireframePipeline;
         else if (draw.isTerrain && m_terrainPipeline) pipeline = m_terrainPipeline;
         cmd->bindPipeline(pipeline);
@@ -1257,8 +1349,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                     draw.transmission);
             setVec4(lights.sheen, draw.sheenColor.x, draw.sheenColor.y, draw.sheenColor.z,
                     draw.sheenRoughness);
+            // iridescence.w is free: it carries the parallax depth (needs a normal map whose
+            // alpha channel holds the height; the shader skips it otherwise).
             setVec4(lights.iridescence, draw.iridescence, draw.iridescenceThickness,
-                    draw.iridescenceIor, 0.0f);
+                    draw.iridescenceIor, draw.customNormalPath.empty() ? 0.0f : draw.heightScale);
             setVec4(lights.materialFlags, static_cast<f32>(draw.alphaMode),
                     draw.emissionMapPath.empty() ? 0.0f : 1.0f, pass.opaqueCopyBound ? 1.0f : 0.0f,
                     ssrOn ? 1.0f : 0.0f);
@@ -1272,7 +1366,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             setVec4(lights.reflectQuality, draw.reflectQuality ? 1.0f : 0.0f, draw.ssrSamples,
                     draw.ssrDenoise, draw.ssrDistance);
             setVec4(lights.reflectExtra, draw.planarReceiver ? 1.0f : 0.0f, draw.ssrProbeBlend,
-                    draw.ssrBounces, 0.0f);
+                    draw.ssrBounces, draw.parallaxSteps);
         }
 
         if (!wireframe && draw.isTerrain) {
@@ -1342,11 +1436,27 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 2, &mat, sizeof(mat));
         }
 
-        VertexUBO vubo{};
         const Mat4 mvp = pass.viewProj * draw.worldMatrix;
-        std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
-        std::memcpy(vubo.model, draw.worldMatrix.data(), sizeof(vubo.model));
-        cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &vubo, sizeof(vubo));
+        if (displaced) {
+            DisplaceVertexUBO dubo{};
+            std::memcpy(dubo.mvp, mvp.data(), sizeof(dubo.mvp));
+            std::memcpy(dubo.model, draw.worldMatrix.data(), sizeof(dubo.model));
+            dubo.disp[0] = draw.displacementScale;
+            dubo.disp[1] = draw.displacementEps;
+            dubo.disp[2] = draw.displacementMetresPerUv;
+            dubo.uv[0] = draw.uvTiling.x;
+            dubo.uv[1] = draw.uvTiling.y;
+            dubo.uv[2] = draw.uvOffset.x;
+            dubo.uv[3] = draw.uvOffset.y;
+            RHI::Texture* heightTex = draw.displacementTexture;
+            if (heightTex) cmd->bindVertexTexture(heightTex, 0, m_repeatSampler);
+            cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &dubo, sizeof(dubo));
+        } else {
+            VertexUBO vubo{};
+            std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
+            std::memcpy(vubo.model, draw.worldMatrix.data(), sizeof(vubo.model));
+            cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &vubo, sizeof(vubo));
+        }
         cmd->bindVertexBuffer(vertexBufferFor(draw));
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
@@ -1437,7 +1547,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
-            const bool instanced = !wireframe && draw.batchCount > 1 && m_instancedPipeline &&
+            const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instancedPipeline &&
                                    m_instanceBuffer;
             if (instanced) {
                 VertexUBO instUbo{};
@@ -1773,6 +1883,28 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.normalStrength = surface.normalStrength;
                 draw.normalDirectX = surface.normalDirectX;
                 draw.aoStrength = surface.aoStrength;
+                draw.heightScale = surface.heightScale;
+                draw.parallaxSteps = surface.parallaxSteps;
+                if (surface.displacementMode == 1 && m_displacePipeline && draw.mesh &&
+                    !surface.normalMap.empty() && surface.displacementScale > 0.0f) {
+                    const u32 levels = std::min<u32>(surface.meshSubdivisions, 9u);
+                    RHI::Texture* heightTex = GpuTextureCache::instance().acquire(
+                        m_device, surface.normalMap, projectRoot, 0);
+                    DisplacedMesh* dm = heightTex ? displacedMeshFor(draw.mesh, levels) : nullptr;
+                    if (dm) {
+                        draw.displacementTexture = heightTex;
+                        const f32 sx = Vec3(worldMatrix.data()[0], worldMatrix.data()[1], worldMatrix.data()[2]).length();
+                        const f32 sz = Vec3(worldMatrix.data()[8], worldMatrix.data()[9], worldMatrix.data()[10]).length();
+                        const f32 avgScale = std::max(0.5f * (sx + sz), 1e-4f);
+                        const f32 tile = std::max(0.5f * (surface.uvTiling.x + surface.uvTiling.y), 1e-4f);
+                        draw.mesh = &dm->mesh;
+                        draw.displaced = true;
+                        draw.heightScale = 0.0f; // real geometry replaces parallax
+                        draw.displacementScale = surface.displacementScale;
+                        draw.displacementMetresPerUv = dm->metersPerUv * avgScale / tile;
+                        draw.displacementEps = std::max(dm->edgeUv * tile, 1e-5f);
+                    }
+                }
                 draw.alphaMode = static_cast<u8>(surface.alphaMode);
                 draw.alphaCutoff = surface.alphaCutoff;
                 draw.transmission = std::clamp(surface.transmission, 0.0f, 1.0f);
@@ -1948,7 +2080,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         const MeshDraw& draw = draws[i];
         const bool singleSubmesh = draw.mesh && draw.mesh->subMeshes.size() <= 1;
         // Probed and translucent draws need per-object data (cube map, sort order).
-        items[i].allow = singleSubmesh && !draw.isTerrain && draw.probeIndex < 0 &&
+        items[i].allow = singleSubmesh && !draw.isTerrain && !draw.displaced && draw.probeIndex < 0 &&
                          !draw.isTranslucent();
         u64 key = static_cast<u64>(reinterpret_cast<uintptr_t>(draw.mesh));
         auto mixBytes = [&](const std::string& text) {
@@ -1979,6 +2111,8 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         mixFloat(draw.uvOffset.y);
         mixFloat(draw.normalStrength);
         mixFloat(draw.aoStrength);
+        mixFloat(draw.heightScale);
+        mixFloat(draw.parallaxSteps);
         mixFloat(draw.clearcoat);
         mixFloat(draw.clearcoatRoughness);
         mixFloat(draw.sheenColor.x);
@@ -2465,6 +2599,17 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
+    } else {
+        // Shadows off: stale maps from an earlier frame must not keep shading the scene.
+        for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
+            m_directionalShadows.clearSlot(slot);
+        }
+        for (u32 slot = 0; slot < GpuPointShadowMap::kMaxPointShadowLights; ++slot) {
+            m_pointShadows.clearSlot(slot);
+        }
+        for (u32 slot = 0; slot < GpuSpotShadowMap::kMaxSpotShadowLights; ++slot) {
+            m_spotShadows.clearSlot(slot);
+        }
     }
 
     {

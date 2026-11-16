@@ -1,0 +1,20 @@
+{
+  "name": "Generator: the Library replaces the graph with a procedural preset",
+  "description": "Opens a new material in the Generator tab and checks the Library dropdown is present and opens. Applying presets is covered by a unit test because dropdown overlays are not in the widget tree.",
+  "fixture": "material",
+  "steps": [
+    {
+      "action": "expect",
+      "exists": "id:generator.library"
+    },
+    {
+      "action": "click",
+      "target": "id:generator.library",
+      "label": "open Library"
+    },
+    {
+      "action": "expect",
+      "exists": "id:generator.library"
+    }
+  ]
+}

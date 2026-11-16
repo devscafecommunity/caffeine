@@ -66,8 +66,26 @@ void buildScene(ECS::World& world) {
     Assets::MaterialSurface floor;
     floor.albedo = Vec4(0.55f, 0.55f, 0.57f, 1.0f);
     floor.roughness = 0.35f;
-    addMesh(world, ECS::MeshPrimitive::Plane, Vec3(0, 0, 0), Vec3(24, 1, 24), "floor.mat", floor);
+    if (const char* floorMat = std::getenv("SNAP_FLOOR_MAT")) {
+        // Test a material file on the floor (SNAP_FLOOR_MAT=/path/brick.mat), e.g. to check
+        // parallax depth. The material is loaded from disk by the renderer.
+        const ECS::Entity e = world.create("floor");
+        world.add<ECS::Position3D>(e);
+        world.add<ECS::Rotation3D>(e);
+        ECS::Scale3D scale;
+        scale.scale = Vec3(24, 1, 24);
+        world.add<ECS::Scale3D>(e, scale);
+        ECS::MeshFilterComponent filter;
+        filter.primitive = ECS::MeshPrimitive::Plane;
+        filter.customMaterialPath = floorMat;
+        world.add<ECS::MeshFilterComponent>(e, filter);
+        world.add<ECS::MeshRendererComponent>(e);
+    } else {
+        addMesh(world, ECS::MeshPrimitive::Plane, Vec3(0, 0, 0), Vec3(24, 1, 24), "floor.mat", floor);
+    }
 
+    // SNAP_ONLY_FLOOR=1 leaves just the floor and the sun (material close-ups).
+    if (!std::getenv("SNAP_ONLY_FLOOR")) {
     addMesh(world, ECS::MeshPrimitive::Sphere, Vec3(0.0f, 0.75f, 0.0f), Vec3(1.5f, 1.5f, 1.5f),
             "mirror.mat", preset("Mirror"));
     addMesh(world, ECS::MeshPrimitive::Sphere, Vec3(-1.9f, 0.5f, 0.4f), Vec3(1, 1, 1), "gold.mat",
@@ -89,6 +107,7 @@ void buildScene(ECS::World& world) {
     addMesh(world, ECS::MeshPrimitive::Cube, Vec3(2.6f, 0.5f, -1.6f), Vec3(1, 1, 1), "blue.mat", blue);
     addMesh(world, ECS::MeshPrimitive::Cube, Vec3(0.0f, 0.4f, 2.6f), Vec3(0.8f, 0.8f, 0.8f),
             "plastic.mat", preset("Glossy Plastic"));
+    }
 
     const ECS::Entity sun = world.create("Sun");
     world.add<ECS::Position3D>(sun);
@@ -156,6 +175,14 @@ int main(int argc, char** argv) {
         camera.position = Vec3(0.0f, 1.9f, 5.4f);
         camera.focus = Vec3(0.0f, 0.6f, 0.0f);
         if (viewPreset == 1) camera.position = Vec3(3.5f, 7.0f, 5.0f);         // high, shows shadows
+        if (viewPreset == 3) {                                                 // low, grazing floor
+            camera.position = Vec3(1.2f, 0.7f, 8.5f);
+            camera.focus = Vec3(1.2f, 0.0f, 5.0f);
+        }
+        if (viewPreset == 4) {                                                 // close-up on the floor
+            camera.position = Vec3(0.0f, 1.6f, 2.8f);
+            camera.focus = Vec3(0.0f, 0.0f, -0.4f);
+        }
         if (viewPreset == 2) camera.position = Vec3(-60.0f, 25.0f, 120.0f);    // distance / aliasing
         camera.fovRad = 50.0f * 3.14159265f / 180.0f;
         camera.nearClip = 0.1f;

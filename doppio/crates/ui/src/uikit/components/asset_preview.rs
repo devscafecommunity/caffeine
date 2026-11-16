@@ -1,7 +1,7 @@
 use crate::uikit::icons::Icon;
 use crate::uikit::theme;
 use iced::widget::image::Handle;
-use iced::widget::{button, column, container, image, mouse_area, text, Id};
+use iced::widget::{column, container, image, mouse_area, text, Id};
 use iced::{ContentFit, Element, Length};
 
 /// One asset tile or row. Panels build an `Entry` from their own asset data;
@@ -75,7 +75,12 @@ fn tile<'a, Message: 'a>(entry: &Entry<'a>, size: f32) -> Element<'a, Message> {
     }
 }
 
-/// Compact grid tile used by the asset browser.
+/// Width of one grid tile; the asset browser derives its column count from it.
+pub const CARD_WIDTH: f32 = 84.0;
+const CARD_THUMB: f32 = 64.0;
+
+/// Grid tile used by the asset browser: large thumbnail with the name below,
+/// the way every DCC/engine content browser lays assets out.
 pub fn card<'a, Message: Clone + 'a>(
     id: impl Into<Id>,
     entry: Entry<'a>,
@@ -83,38 +88,27 @@ pub fn card<'a, Message: Clone + 'a>(
     on_release: Message,
     on_double_click: Option<Message>,
 ) -> Element<'a, Message> {
-    let detail = entry.detail.clone().unwrap_or_else(|| entry.kind.clone());
     let selected = entry.selected;
     let body = container(
-        button(
-            iced::widget::row![
-                tile(&entry, 28.0),
-                column![
-                    text(short_name(&entry.name, 13))
-                        .size(10)
-                        .color(theme::TEXT),
-                    text(short_name(&detail, 14))
-                        .size(8)
-                        .color(theme::TEXT_MUTED),
-                ]
-                .spacing(0),
-            ]
-            .spacing(5)
-            .align_y(iced::Alignment::Center),
-        )
-        .style(theme::menu_item)
-        .padding(3)
-        .width(Length::Fill),
+        column![
+            tile(&entry, CARD_THUMB),
+            text(short_name(&entry.name, 12))
+                .size(10)
+                .color(theme::TEXT)
+                .wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(3)
+        .align_x(iced::Alignment::Center),
     )
     .id(id.into())
-    .width(Length::Fixed(92.0))
-    .height(Length::Fixed(46.0))
-    .padding(1)
+    .width(Length::Fixed(CARD_WIDTH))
+    .padding([5, 4])
+    .center_x(Length::Fixed(CARD_WIDTH))
     .style(move |iced_theme: &iced::Theme| {
         if selected {
             theme::list_row(true)(iced_theme)
         } else {
-            theme::surface(iced_theme)
+            theme::asset_card(iced_theme)
         }
     });
     let area = mouse_area(body)

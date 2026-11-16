@@ -1,0 +1,46 @@
+CAFMAT3
+name New Material
+albedo 1 1 1 1
+metallic 0
+roughness 0.5
+reflectance 0.04
+emission 0 0 0
+emission_strength 0
+albedo_map materials/New Material_gen_base_8.png
+normal_map materials/New Material_gen_normal.png
+orm_map materials/New Material_gen_packed_8.png
+emission_map 
+height_scale 0.195
+parallax_steps 51
+displacement_mode 0
+displacement_scale 0.05
+mesh_subdivisions 7
+uv_tiling 1.06534 1
+uv_offset 0 0
+normal_strength 1.976
+normal_directx 0
+ao_strength 1
+alpha_mode opaque
+alpha_cutoff 0.5
+transmission 0
+ior 1.5
+clearcoat 0.233
+clearcoat_roughness 0.16
+sheen 0 0 0
+sheen_roughness 0.5
+iridescence 0
+iridescence_thickness 400
+iridescence_ior 1.3
+reflection 0
+reflection_budget 0
+reflection_performance 0
+reflection_quality 0
+reflection_planar 0
+ssr_resolution 0.5
+ssr_max_steps 32
+ssr_temporal 4
+ssr_distance 15
+ssr_samples 64
+ssr_denoise 0.7
+ssr_probe_blend 8
+ssr_bounces 1

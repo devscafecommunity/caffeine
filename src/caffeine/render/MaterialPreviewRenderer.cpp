@@ -9,12 +9,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace Caffeine::Render {
 namespace {
 
 constexpr f32 kDegToRad = 3.14159265f / 180.0f;
-constexpr f32 kCameraDistance = 3.2f;
+constexpr f32 kCameraDistance = 2.4f;
 constexpr f32 kFovDegrees = 40.0f;
 constexpr f32 kFloorY = -0.5f;
 
@@ -35,8 +36,24 @@ struct Fnv {
     }
 };
 
+/// Identity of a texture file on disk (modified time + size), so a map that a bake rewrote
+/// in place under the same path still invalidates the preview.
+u64 textureStamp(const std::string& path, const std::string& projectRoot) {
+    if (path.empty()) return 0;
+    const std::string resolved = Assets::MeshCache::resolveTexturePath(path, projectRoot);
+    if (resolved.empty()) return 0;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(resolved, ec);
+    if (ec) return 0;
+    const auto size = std::filesystem::file_size(resolved, ec);
+    Fnv f;
+    f.value(time.time_since_epoch().count());
+    f.value(ec ? u64{0} : static_cast<u64>(size));
+    return f.h;
+}
+
 u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
-                      const MaterialPreviewSettings& settings) {
+                      const MaterialPreviewSettings& settings, const std::string& projectRoot) {
     Fnv f;
     f.value(s.albedo);
     f.value(s.metallic);
@@ -48,6 +65,15 @@ u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
     f.text(s.normalMap);
     f.text(s.ormMap);
     f.text(s.emissionMap);
+    f.value(textureStamp(s.albedoMap, projectRoot));
+    f.value(textureStamp(s.normalMap, projectRoot));
+    f.value(textureStamp(s.ormMap, projectRoot));
+    f.value(textureStamp(s.emissionMap, projectRoot));
+    f.value(s.heightScale);
+    f.value(s.parallaxSteps);
+    f.value(s.displacementMode);
+    f.value(s.displacementScale);
+    f.value(s.meshSubdivisions);
     f.value(s.uvTiling);
     f.value(s.uvOffset);
     f.value(s.normalStrength);
@@ -71,6 +97,10 @@ u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
     f.value(settings.environmentExposure);
     f.value(settings.showFloor);
     f.value(settings.probeResolution);
+    f.value(settings.sunYawDegrees);
+    f.value(settings.sunElevationDegrees);
+    f.value(settings.sunIntensity);
+    f.value(settings.shadows);
     return f.h;
 }
 
@@ -147,6 +177,7 @@ void MaterialPreviewRenderer::buildScene() {
     m_world.add<ECS::MeshRendererComponent>(m_floor);
 
     const ECS::Entity sun = m_world.create("Preview Sun");
+    m_sun = sun;
     m_world.add<ECS::Position3D>(sun);
     const Vec3 sunTravel = Vec3(-0.45f, -0.72f, -0.52f).normalized();
     const Quat aim = Quat::lookAt(-1.0f * sunTravel, Vec3(0.0f, 1.0f, 0.0f));
@@ -157,7 +188,7 @@ void MaterialPreviewRenderer::buildScene() {
     light.intensity = 1.6f;
     m_world.add<ECS::LightComponent>(sun, light);
     ECS::DirectionalLightComponent directional;
-    directional.shadowDistance = 6.0f;
+    directional.shadowDistance = 40.0f;
     m_world.add<ECS::DirectionalLightComponent>(sun, directional);
 }
 
@@ -188,6 +219,20 @@ bool MaterialPreviewRenderer::ensureTargets(u32 pixelSize) {
 }
 
 void MaterialPreviewRenderer::applySettings(const MaterialPreviewSettings& settings) {
+    if (m_sun != ECS::Entity::INVALID) {
+        const f32 yaw = settings.sunYawDegrees * kDegToRad;
+        const f32 elevation = std::clamp(settings.sunElevationDegrees, 2.0f, 89.0f) * kDegToRad;
+        // Direction towards the sun; the light travels the opposite way.
+        const Vec3 toSun(std::cos(elevation) * std::sin(yaw), std::sin(elevation),
+                         std::cos(elevation) * std::cos(yaw));
+        const Quat aim = Quat::lookAt(toSun, Vec3(0.0f, 1.0f, 0.0f));
+        if (auto* rotation = m_world.get<ECS::Rotation3D>(m_sun)) {
+            rotation->quaternion = Vec4(aim.x, aim.y, aim.z, aim.w);
+        }
+        if (auto* light = m_world.get<ECS::LightComponent>(m_sun)) {
+            light->intensity = std::clamp(settings.sunIntensity, 0.0f, 8.0f);
+        }
+    }
     if (auto* filter = m_world.get<ECS::MeshFilterComponent>(m_floor)) {
         filter->primitive = settings.showFloor ? ECS::MeshPrimitive::Plane : ECS::MeshPrimitive::Custom;
     }
@@ -264,7 +309,7 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     Assets::MaterialSurface hashed;
     if (surface) hashed = *surface;
     hashed.name = m_subjectPath.empty() ? hashed.name : m_subjectPath;
-    u64 hash = hashWithRoot(hashPreviewInputs(hashed, pixelSize, settings), projectRoot);
+    u64 hash = hashWithRoot(hashPreviewInputs(hashed, pixelSize, settings, projectRoot), projectRoot);
     Fnv subject;
     subject.h = hash;
     subject.text(m_subjectPath);
@@ -281,7 +326,7 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     Assets::MaterialSurface floor;
     floor.valid = true;
     floor.name = "Preview Floor";
-    floor.albedo = Vec4(0.42f, 0.42f, 0.44f, 1.0f);
+    floor.albedo = Vec4(0.72f, 0.72f, 0.74f, 1.0f);
     floor.roughness = 0.85f;
     Assets::MaterialCache::instance().publish(m_floorKey, projectRoot, floor);
     applySettings(settings);
@@ -304,8 +349,11 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     options.resolveEnvironmentFromScene = false;
     options.environmentPath = settings.environmentPath;
     options.environmentExposure = settings.environmentExposure;
-    options.enableShadows = true;
-    options.directionalCascadeCount = 1;
+    options.enableShadows = settings.shadows;
+    // Soft sky fill so the unlit side keeps readable detail instead of going pitch black.
+    options.overrideAmbient = true;
+    options.ambientColor = Vec3(0.20f, 0.22f, 0.27f);
+    options.directionalCascadeCount = 2;
     options.cameraSettled = true;
     options.features.reflections = ReflectionMode::Probe;
     options.features.probeResolution = std::clamp(settings.probeResolution, 32u, 256u);

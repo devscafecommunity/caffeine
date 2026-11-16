@@ -5,7 +5,7 @@ use crate::uikit::components::{
 use crate::uikit::id;
 use crate::uikit::theme;
 use doppio_engine::{Material, MaterialAlphaMode, MaterialPreset};
-use iced::widget::{column, container, row, scrollable, text, Column};
+use iced::widget::{column, container, row, text, Column};
 use iced::{Element, Length, Point};
 use std::collections::HashSet;
 use std::fmt;
@@ -71,6 +71,14 @@ pub enum Edit {
     Emission(usize, f32),
     EmissionStrength(f32),
     NormalStrength(f32),
+    /// Parallax depth in UV units (0 = off). Needs a normal map with height in its alpha.
+    HeightScale(f32),
+    ParallaxSteps(f32),
+    Geometric(bool),
+    DisplacementScale(f32),
+    Subdivisions(f32),
+    /// Opens the picker of an external height image to merge into the normal's alpha.
+    OpenHeightPicker,
     NormalDirectX(bool),
     AoStrength(f32),
     UvTiling(usize, f32),
@@ -112,6 +120,10 @@ pub enum Edit {
     OpenPreviewEnvironment,
     ClearPreviewEnvironment,
     SetPreviewExposure(f32),
+    SetSunYaw(f32),
+    SetSunElevation(f32),
+    SetSunIntensity(f32),
+    SetPreviewShadows(bool),
     PreviewPressed,
     PreviewMoved(Point),
     PreviewReleased,
@@ -139,6 +151,10 @@ pub struct MaterialView<'a> {
     pub preview_shape: usize,
     pub preview_environment: &'a str,
     pub preview_exposure: f32,
+    pub sun_yaw: f32,
+    pub sun_elevation: f32,
+    pub sun_intensity: f32,
+    pub preview_shadows: bool,
     pub map_details: [&'a str; 4],
 }
 
@@ -261,6 +277,47 @@ pub fn view<'a, Message: Clone + 'a>(
         view.preview_exposure,
         move |value| exposure_emit(Edit::SetPreviewExposure(value)),
     );
+    let sun_yaw = {
+        let emit = emit.clone();
+        slider::property_step(
+            id::MATERIAL_SUN_YAW,
+            "Light direction",
+            -180.0..=180.0,
+            view.sun_yaw,
+            1.0,
+            move |value| emit(Edit::SetSunYaw(value)),
+        )
+    };
+    let sun_elevation = {
+        let emit = emit.clone();
+        slider::property_step(
+            id::MATERIAL_SUN_ELEVATION,
+            "Light height",
+            2.0..=89.0,
+            view.sun_elevation,
+            1.0,
+            move |value| emit(Edit::SetSunElevation(value)),
+        )
+    };
+    let sun_intensity = {
+        let emit = emit.clone();
+        slider::property(
+            id::MATERIAL_SUN_INTENSITY,
+            "Light intensity",
+            0.0..=6.0,
+            view.sun_intensity,
+            move |value| emit(Edit::SetSunIntensity(value)),
+        )
+    };
+    let preview_shadows = {
+        let emit = emit.clone();
+        checkbox::property(
+            id::MATERIAL_PREVIEW_SHADOWS,
+            "Shadows",
+            view.preview_shadows,
+            move |value| emit(Edit::SetPreviewShadows(value)),
+        )
+    };
     let map_access = |label: &str, filled: bool, detail: &str| {
         if detail == "missing" {
             status::chip(format!("{label} missing"), theme::ChipTone::Danger)
@@ -345,6 +402,10 @@ pub fn view<'a, Message: Clone + 'a>(
     content = content.push(preview_shape);
     content = content.push(preview_environment);
     content = content.push(preview_exposure);
+    content = content.push(sun_yaw);
+    content = content.push(sun_elevation);
+    content = content.push(sun_intensity);
+    content = content.push(preview_shadows);
     content = content.push(map_summary);
     content = content.push(
         container(
@@ -410,9 +471,12 @@ pub fn view<'a, Message: Clone + 'a>(
         emit(Edit::ToggleSection(Section::Baker)),
     ));
 
-    container(scrollable(container(content).padding([0, 8])).id(id::MATERIAL_SCROLL))
-        .padding(6)
-        .into()
+    container(
+        crate::uikit::components::scroll::vertical(container(content).padding([0, 8]))
+            .id(id::MATERIAL_SCROLL),
+    )
+    .padding(6)
+    .into()
 }
 
 fn section<'a, Message: Clone + 'a>(
@@ -596,6 +660,68 @@ fn maps_body<'a, Message: Clone + 'a>(
             let emit = emit.clone();
             move |value| emit(Edit::NormalStrength(value))
         },
+    ));
+    body = body.push(slider::property_step(
+        id::material_field("height_scale"),
+        "Parallax depth",
+        0.0..=0.25,
+        material.height_scale,
+        0.005,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::HeightScale(value))
+        },
+    ));
+    if material.height_scale > 0.0 {
+        body = body.push(slider::property_step(
+            id::material_field("parallax_steps"),
+            "Parallax steps",
+            4.0..=96.0,
+            material.parallax_steps,
+            1.0,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::ParallaxSteps(value))
+            },
+        ));
+    }
+    body = body.push(checkbox::property(
+        id::material_field("displacement_mode"),
+        "Geometric displacement (real relief)",
+        material.displacement_mode == 1,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::Geometric(value))
+        },
+    ));
+    if material.displacement_mode == 1 {
+        body = body.push(slider::property_step(
+            id::material_field("displacement_scale"),
+            "Displacement depth (m)",
+            0.0..=0.5,
+            material.displacement_scale,
+            0.005,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::DisplacementScale(value))
+            },
+        ));
+        body = body.push(slider::property_step(
+            id::material_field("mesh_subdivisions"),
+            "Mesh subdivisions",
+            1.0..=9.0,
+            material.mesh_subdivisions as f32,
+            1.0,
+            {
+                let emit = emit.clone();
+                move |value| emit(Edit::Subdivisions(value))
+            },
+        ));
+    }
+    body = body.push(button::block(
+        id::MATERIAL_PACK_HEIGHT,
+        "Pack a height map into the normal…",
+        emit(Edit::OpenHeightPicker),
     ));
     body = body.push(checkbox::property(
         id::material_field("normal_directx"),

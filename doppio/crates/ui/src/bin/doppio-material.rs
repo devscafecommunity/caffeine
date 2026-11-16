@@ -12,7 +12,8 @@ fn usage() -> ! {
          doppio-material inspect <file.mcmat|file.sbs>\n  \
          doppio-material texset-new --out <file.texset> [--size 512]\n  \
          doppio-material texset-info <file.texset>\n  \
-         doppio-material texset-export <file.texset> --out DIR [--preset NAME]"
+         doppio-material texset-export <file.texset> --out DIR [--preset NAME]\n  \
+         doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list]"
     );
     std::process::exit(2);
 }
@@ -30,6 +31,7 @@ fn main() {
         "texset-new" => texset_new(&args[1..]),
         "texset-info" => texset_info(&args[1..]),
         "texset-export" => texset_export(&args[1..]),
+        "bake-preset" => bake_preset(&args[1..]),
         _ => usage(),
     };
     if let Err(error) = result {
@@ -257,5 +259,130 @@ fn inspect(args: &[String]) -> Result<(), String> {
         "{}",
         serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?
     );
+    Ok(())
+}
+
+/// Bakes procedural library presets into a ready-to-render material set:
+/// `<name>_base.png`, `<name>_normal.png` (height in alpha), `<name>_orm.png`,
+/// `<name>.mat` (parallax on) and `<name>_flat.mat` (same maps, parallax off).
+fn bake_preset(args: &[String]) -> Result<(), String> {
+    use doppio_ui::uikit::{generators, height_pack, material_library};
+    if args.iter().any(|argument| argument == "--list") {
+        for preset in material_library::presets() {
+            println!(
+                "{:<10} {:<22} {}",
+                preset.category, preset.name, preset.description
+            );
+        }
+        return Ok(());
+    }
+    let out = argument(args, "--out")
+        .map(PathBuf::from)
+        .ok_or_else(|| "expected --out DIR".to_owned())?;
+    let size: u32 = argument(args, "--size")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(512);
+    let depth: f32 = argument(args, "--depth")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0.04);
+    let wanted: Vec<&material_library::Preset> = if args.iter().any(|a| a == "--all") {
+        material_library::presets().iter().collect()
+    } else {
+        let name = positional(args).ok_or_else(|| "missing preset name (or --all)".to_owned())?;
+        vec![material_library::presets()
+            .iter()
+            .find(|preset| preset.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("unknown preset `{name}` (use --list)"))?]
+    };
+    std::fs::create_dir_all(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let engine = engine()?;
+    for preset in wanted {
+        let mut graph = preset.build(&material_library::PresetParams::default());
+        graph.resolution = size;
+        let baked = graph
+            .bake()
+            .map_err(|error| format!("{}: {error}", preset.name))?;
+        let slug: String = preset
+            .name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        let path = |suffix: &str| {
+            out.join(format!("{slug}{suffix}"))
+                .to_string_lossy()
+                .into_owned()
+        };
+        let res = baked.resolution;
+        let (base, normal, orm) = (path("_base.png"), path("_normal.png"), path("_orm.png"));
+        let height = path("_height.png");
+        engine
+            .save_texture_rgba(&base, res, res, &baked.base)
+            .map_err(|e| format!("{e:?}"))?;
+        let gray: Vec<u8> = baked
+            .height
+            .iter()
+            .flat_map(|v| [*v, *v, *v, 255])
+            .collect();
+        engine
+            .save_texture_rgba(&height, res, res, &gray)
+            .map_err(|e| format!("{e:?}"))?;
+        let options = doppio_engine::TextureMapOptions {
+            strength: 1.0,
+            directx: false,
+            wrap: true,
+            min_value: 0.0,
+            max_value: 1.0,
+            invert: false,
+            radius: 8,
+        };
+        engine
+            .generate_texture_map(
+                &height,
+                &normal,
+                doppio_engine::TextureMapKind::Normal,
+                options,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        let (nw, nh, mut pixels) = engine
+            .load_texture_rgba(&normal)
+            .map_err(|e| format!("{e:?}"))?;
+        height_pack::pack(
+            &mut pixels,
+            nw as usize,
+            nh as usize,
+            &gray,
+            res as usize,
+            res as usize,
+        );
+        engine
+            .save_texture_rgba(&normal, nw, nh, &pixels)
+            .map_err(|e| format!("{e:?}"))?;
+        engine
+            .save_texture_rgba(
+                &orm,
+                res,
+                res,
+                &generators::ChannelPacking::default().packed8(&baked),
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        for (suffix, scale) in [(".mat", depth), ("_flat.mat", 0.0)] {
+            let mut material = doppio_engine::Material {
+                name: preset.name.to_owned(),
+                albedo_map: base.clone(),
+                normal_map: normal.clone(),
+                orm_map: orm.clone(),
+                height_scale: scale,
+                parallax_steps: 64.0,
+                uv_tiling: [8.0, 8.0],
+                ..doppio_engine::Material::default()
+            };
+            material.roughness = 1.0;
+            engine
+                .save_material(&path(suffix), &material)
+                .map_err(|e| format!("{e:?}"))?;
+        }
+        println!("baked {} -> {}", preset.name, out.display());
+    }
     Ok(())
 }

@@ -18,6 +18,9 @@ bool sameSurface(const MaterialSurface& a, const MaterialSurface& b) {
            a.uvTiling.y == b.uvTiling.y && a.uvOffset.x == b.uvOffset.x &&
            a.uvOffset.y == b.uvOffset.y && a.normalStrength == b.normalStrength &&
            a.normalDirectX == b.normalDirectX && a.aoStrength == b.aoStrength &&
+           a.heightScale == b.heightScale && a.parallaxSteps == b.parallaxSteps &&
+           a.displacementMode == b.displacementMode && a.displacementScale == b.displacementScale &&
+           a.meshSubdivisions == b.meshSubdivisions &&
            a.alphaMode == b.alphaMode &&
            a.alphaCutoff == b.alphaCutoff && a.transmission == b.transmission && a.ior == b.ior &&
            a.clearcoat == b.clearcoat && a.clearcoatRoughness == b.clearcoatRoughness &&

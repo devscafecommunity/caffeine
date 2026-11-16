@@ -27,6 +27,8 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::SceneLitFragment:    return {Shaders::scene_lit_frag_spirv, Shaders::scene_lit_frag_spirvSize};
         case BuiltinShader::TerrainLitFragment:  return {Shaders::terrain_lit_frag_spirv, Shaders::terrain_lit_frag_spirvSize};
         case BuiltinShader::ShadowDepthVertex:   return {Shaders::shadow_depth_vert_spirv, Shaders::shadow_depth_vert_spirvSize};
+        case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_spirv, Shaders::scene_displace_vert_spirvSize};
+        case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_spirv, Shaders::shadow_displace_vert_spirvSize};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_spirv, Shaders::shadow_depth_frag_spirvSize};
         case BuiltinShader::FullscreenVertex:    return {Shaders::fullscreen_vert_spirv, Shaders::fullscreen_vert_spirvSize};
         case BuiltinShader::SkyFragment:         return {Shaders::sky_frag_spirv, Shaders::sky_frag_spirvSize};
@@ -71,6 +73,8 @@ ShaderBytecodeView lookupDxbc(BuiltinShader shader) {
         case BuiltinShader::SceneLitFragment:    return {Shaders::scene_lit_frag_dxbc, Shaders::scene_lit_frag_dxbcSize};
         case BuiltinShader::TerrainLitFragment:  return {Shaders::terrain_lit_frag_dxbc, Shaders::terrain_lit_frag_dxbcSize};
         case BuiltinShader::ShadowDepthVertex:   return {Shaders::shadow_depth_vert_dxbc, Shaders::shadow_depth_vert_dxbcSize};
+        case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_dxbc, Shaders::scene_displace_vert_dxbcSize};
+        case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_dxbc, Shaders::shadow_displace_vert_dxbcSize};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_dxbc, Shaders::shadow_depth_frag_dxbcSize};
         default: break;
     }
@@ -90,6 +94,8 @@ ShaderBytecodeView lookupMsl(BuiltinShader shader) {
         case BuiltinShader::SceneLitFragment:    return {Shaders::scene_lit_frag_msl, Shaders::scene_lit_frag_mslSize, "main0"};
         case BuiltinShader::TerrainLitFragment:  return {Shaders::terrain_lit_frag_msl, Shaders::terrain_lit_frag_mslSize, "main0"};
         case BuiltinShader::ShadowDepthVertex:   return {Shaders::shadow_depth_vert_msl, Shaders::shadow_depth_vert_mslSize, "main0"};
+        case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_msl, Shaders::scene_displace_vert_mslSize, "main0"};
+        case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_msl, Shaders::shadow_displace_vert_mslSize, "main0"};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_msl, Shaders::shadow_depth_frag_mslSize, "main0"};
         default: break;
     }

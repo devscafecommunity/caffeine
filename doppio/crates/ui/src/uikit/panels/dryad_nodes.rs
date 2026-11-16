@@ -16,7 +16,7 @@ use crate::uikit::dryad::{self, NodeKind, PinKind};
 use crate::uikit::icons::Icon;
 use crate::uikit::id::{self, UiId};
 use crate::uikit::theme;
-use iced::widget::{column, container, row, scrollable, text, Column};
+use iced::widget::{column, container, row, text, Column};
 use iced::{Element, Length, Vector};
 use std::rc::Rc;
 
@@ -173,7 +173,8 @@ pub fn view<'a, Message: Clone + 'a>(
         button::primary(ids.save.clone(), "Save", callbacks.save.clone()),
     ]
     .spacing(6)
-    .align_y(iced::Alignment::Center);
+    .align_y(iced::Alignment::Center)
+    .wrap();
 
     let header = container(
         row![
@@ -182,7 +183,8 @@ pub fn view<'a, Message: Clone + 'a>(
                 text(script_label).size(9).color(theme::TEXT_MUTED),
             ]
             .spacing(0)
-            .width(Length::Fill),
+            .width(Length::Shrink),
+            iced::widget::space::horizontal(),
             header_actions,
         ]
         .spacing(6)
@@ -287,12 +289,13 @@ pub fn view<'a, Message: Clone + 'a>(
     );
 
     let body = row![
-        container(scrollable(palette)).width(Length::Fixed(172.0)),
+        container(crate::uikit::components::scroll::vertical(palette)).width(Length::Fixed(172.0)),
         container(canvas_column)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::surface),
-        container(scrollable(properties)).width(Length::Fixed(248.0)),
+        container(crate::uikit::components::scroll::vertical(properties))
+            .width(Length::Fixed(248.0)),
     ]
     .spacing(6)
     .height(Length::Fill);

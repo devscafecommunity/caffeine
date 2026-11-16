@@ -207,6 +207,98 @@ vec3 surfaceNormal(vec2 uv) {
     return normalize(mat3(T, B, N) * map);
 }
 
+// Parallax occlusion mapping. The height lives in the ALPHA channel of the normal map
+// (1 = surface, 0 = deepest), so it needs no extra sampler. The view ray is marched through
+// the height field and the UV where it first dips below the surface is returned, refined
+// between the last two samples. uIridescence.w carries the depth (UV units, 0 = off) and
+// uReflectExtra.w the maximum number of steps.
+//
+// The ray is expressed in the *UV* frame (dP/du, dP/dv) rebuilt from screen-space
+// derivatives, not from the mesh tangents: those only agree with the UVs on well-authored
+// meshes, and a tangent that is not along `u` shears the whole effect into an oblique plane.
+bool g_pomActive = false;
+float g_pomHitDepth = 0.0;
+vec2 g_pomHitUv = vec2(0.0);
+vec3 g_pomT = vec3(1.0, 0.0, 0.0);
+vec3 g_pomB = vec3(0.0, 0.0, 1.0);
+float g_pomScale = 0.0;
+
+vec2 parallaxUv(vec2 uv) {
+    float depthScale = lights.uIridescence.w;
+    if (depthScale <= 0.0 || lights.uFlags.y < 0.5) return uv;
+    vec3 N = normalize(v_normal);
+    vec3 dp1 = dFdx(v_worldPos);
+    vec3 dp2 = dFdy(v_worldPos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x; // direction of increasing u
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y; // direction of increasing v
+    if (dot(T, T) < 1e-20 || dot(B, B) < 1e-20) return uv;
+    T = normalize(T);
+    B = normalize(B);
+    vec3 V = normalize(lights.uCameraPos.xyz - v_worldPos);
+    vec3 Vt = vec3(dot(V, T), dot(V, B), dot(V, N));
+    if (Vt.z <= 0.02) return uv; // back-facing: keep the flat lookup
+    float maxSteps = clamp(lights.uReflectExtra.w, 4.0, 96.0);
+    // Fewer layers when looking straight on, more at grazing angles.
+    float stepsF = mix(maxSteps, max(8.0, maxSteps * 0.4), clamp(Vt.z, 0.0, 1.0));
+    int steps = int(stepsF);
+    float layer = 1.0 / stepsF;
+    // Offset limiting: the divisor is floored so grazing angles do not smear the surface.
+    vec2 delta = (Vt.xy / max(Vt.z, 0.3)) * depthScale / stepsF;
+
+    vec2 cur = uv;
+    float curLayer = 0.0;
+    float h = 1.0 - textureGrad(uNormalMap, cur, duv1, duv2).a;
+    vec2 prev = cur;
+    float prevLayer = 0.0;
+    float prevH = h;
+    for (int i = 0; i < 96; ++i) {
+        if (i >= steps || curLayer >= h) break;
+        prev = cur;
+        prevLayer = curLayer;
+        prevH = h;
+        cur -= delta;
+        h = 1.0 - textureGrad(uNormalMap, cur, duv1, duv2).a;
+        curLayer += layer;
+    }
+    float after = h - curLayer;
+    float before = prevH - prevLayer;
+    float w = clamp(after / (after - before - 1e-5), 0.0, 1.0);
+    g_pomActive = true;
+    g_pomHitUv = mix(cur, prev, w);
+    g_pomHitDepth = mix(curLayer, prevLayer, w);
+    g_pomT = T;
+    g_pomB = B;
+    g_pomScale = depthScale;
+    return g_pomHitUv;
+}
+
+// Self-shadowing: march from the point the view ray hit towards the light through the same
+// height field; the crevices of the relief shade themselves. Returns 1 when lit.
+float parallaxSelfShadow(vec3 L) {
+    if (!g_pomActive) return 1.0;
+    vec3 N = normalize(v_normal);
+    vec3 Lt = vec3(dot(L, g_pomT), dot(L, g_pomB), dot(L, N));
+    if (Lt.z <= 0.05 || g_pomHitDepth <= 0.01) return 1.0;
+    const int kSteps = 12;
+    vec2 stepUv = (Lt.xy / max(Lt.z, 0.3)) * g_pomScale * (g_pomHitDepth / float(kSteps));
+    float stepDepth = g_pomHitDepth / float(kSteps);
+    vec2 uv = g_pomHitUv;
+    float rayDepth = g_pomHitDepth;
+    float occlusion = 0.0;
+    for (int i = 1; i <= kSteps; ++i) {
+        uv += stepUv;
+        rayDepth -= stepDepth;
+        float surfaceDepth = 1.0 - textureLod(uNormalMap, uv, 0.0).a;
+        // The surface is above the ray: something blocks the light, more so deeper in.
+        occlusion = max(occlusion, (rayDepth - surfaceDepth) * (1.0 - float(i) / float(kSteps + 1)));
+    }
+    return 1.0 - clamp(occlusion * 6.0, 0.0, 1.0);
+}
+
 float maxComponent(vec3 v) { return max(v.r, max(v.g, v.b)); }
 
 float D_GGX(float NoH, float a) {
@@ -621,7 +713,7 @@ void main() {
     if (lights.uReflectParams.z > 0.5 && v_worldPos.y < lights.uReflectParams.y - 0.02) {
         discard;
     }
-    vec2 uv = materialUv();
+    vec2 uv = parallaxUv(materialUv());
     vec4 albedoSample = texture(uAlbedoMap, uv);
     float opacity = clamp(albedoSample.a * lights.uAlbedo.a, 0.0, 1.0);
     int alphaMode = int(lights.uMaterialFlags.x + 0.5);
@@ -671,12 +763,13 @@ void main() {
 
     for (int i = 0; i < lights.uDirCount; ++i) {
         vec3 dir = normalize(-lights.uDirData[i].xyz);
-        float shadow = 1.0;
+        float pomShadow = parallaxSelfShadow(dir);
+        float shadow = pomShadow;
         if (lights.uFlags.x > 0.5 && lights.uDirData[i].w > 0.0) {
             if (i == 0 && shadows.uDirShadowValid.x > 0.5) {
-                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos, shadowNormal);
+                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos, shadowNormal) * pomShadow;
             } else if (i == 1 && shadows.uDirShadowValid.y > 0.5) {
-                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal);
+                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal) * pomShadow;
             }
         }
         shadeLight(s, dir, lights.uDirColor[i].rgb * lights.uDirData[i].w * shadow, diffuse, specular);

@@ -492,6 +492,14 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
         blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         blend.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
     }
+    if (blendMode == BlendMode::Min) {
+        blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.color_blend_op = SDL_GPU_BLENDOP_MIN;
+        blend.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        blend.alpha_blend_op = SDL_GPU_BLENDOP_MIN;
+    }
     blend.color_write_mask = SDL_GPU_COLORCOMPONENT_R | SDL_GPU_COLORCOMPONENT_G |
                              SDL_GPU_COLORCOMPONENT_B | SDL_GPU_COLORCOMPONENT_A;
     blend.enable_color_write_mask = true;

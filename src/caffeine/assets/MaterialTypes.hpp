@@ -35,6 +35,22 @@ struct MaterialSurface {
     bool normalDirectX = false;
     f32  aoStrength = 1.0f;
 
+    /// Parallax occlusion mapping depth, in UV units of the (tiled) texture. 0 turns it off.
+    /// The height is read from the ALPHA channel of the normal map (1 = surface, 0 = deepest),
+    /// so no extra sampler is needed: bake or author normal+height in one texture.
+    f32  heightScale = 0.0f;
+    /// Maximum parallax ray-march steps (the shader uses fewer when looking straight on).
+    f32  parallaxSteps = 32.0f;
+    /// 0 = parallax occlusion (texture space), 1 = geometric: the mesh is subdivided and its
+    /// vertices are displaced along their normals by the same height, so the silhouette changes
+    /// and the relief casts real shadows.
+    u8   displacementMode = 0;
+    /// Geometric depth in metres: the surface level stays put, valleys sink by up to this much.
+    f32  displacementScale = 0.05f;
+    /// Subdivision levels applied to the mesh in geometric mode (each level doubles the
+    /// segments per edge: a quad becomes 2^n x 2^n quads).
+    u8   meshSubdivisions = 7;
+
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     f32  alphaCutoff = 0.5f;
 

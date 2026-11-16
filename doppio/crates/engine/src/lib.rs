@@ -453,6 +453,7 @@ type PreviewBeginFn = unsafe extern "C" fn(
     *const c_char,
     f32,
 ) -> i32;
+type PreviewLightFn = unsafe extern "C" fn(*mut c_void, f32, f32, f32, i32) -> i32;
 type PreviewPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
 type DryadAvailableFn = unsafe extern "C" fn() -> i32;
 type RunDryadFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char, f32) -> i32;
@@ -564,6 +565,7 @@ struct Functions {
     material_preview_ex: PreviewExFn,
     material_preview_begin: PreviewBeginFn,
     material_preview_poll: PreviewPollFn,
+    preview_light: Option<PreviewLightFn>,
     dryad_available: Option<DryadAvailableFn>,
     run_dryad: Option<RunDryadFn>,
 }
@@ -743,6 +745,9 @@ impl Engine {
             material_preview_poll: unsafe {
                 load_symbol(library, b"caffeine_session_render_material_preview_poll\0")
             }?,
+            preview_light: unsafe {
+                load_symbol(library, b"caffeine_session_set_material_preview_light\0")
+            },
             dryad_available: unsafe { load_symbol(library, b"caffeine_dryad_available\0") },
             run_dryad: unsafe { load_symbol(library, b"caffeine_session_run_dryad\0") },
         };
@@ -1333,6 +1338,27 @@ impl Engine {
                 exposure,
             )
         })
+    }
+
+    /// Sun used by later material previews (older libraries without the symbol ignore it).
+    pub fn set_material_preview_light(
+        &mut self,
+        yaw_degrees: f32,
+        elevation_degrees: f32,
+        intensity: f32,
+        shadows: bool,
+    ) {
+        if let Some(set) = self.functions.preview_light {
+            unsafe {
+                set(
+                    self.session,
+                    yaw_degrees,
+                    elevation_degrees,
+                    intensity,
+                    i32::from(shadows),
+                );
+            }
+        }
     }
 
     pub fn poll_material_preview(&mut self, pixels: &mut [u8]) -> EngineResult<RenderState> {

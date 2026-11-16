@@ -19,8 +19,11 @@ use serde_json::{json, Value};
 
 /// Runs Doppio with the MCP bridge attached when `ICED_MCP=1`.
 pub fn run() -> iced::Result {
-    let application =
-        iced::application(App::new, App::update, App::view).subscription(App::subscription);
+    let application = iced::application(App::new, App::update, App::view)
+        .subscription(App::subscription)
+        .theme(|_: &App| crate::uikit::theme::app_theme())
+        .settings(crate::uikit::theme::settings())
+        .window(crate::uikit::theme::window());
 
     iced_mcp::attach(application)
         .state(describe_state)
@@ -594,6 +597,26 @@ pub fn run() -> iced::Result {
                 } else {
                     Ok(Message::Material(material::Edit::ClearPreviewEnvironment))
                 }
+            },
+        )
+        .action(
+            "set_material_preview_sun",
+            "Sets the material preview sun. args: { \"yaw\": degrees, \"elevation\": degrees, \"intensity\": number, \"shadows\": bool } (all optional, applied in order)",
+            |args| {
+                let number = |key: &str| args.get(key).and_then(Value::as_f64).map(|v| v as f32);
+                if let Some(value) = number("yaw") {
+                    return Ok(Message::Material(material::Edit::SetSunYaw(value)));
+                }
+                if let Some(value) = number("elevation") {
+                    return Ok(Message::Material(material::Edit::SetSunElevation(value)));
+                }
+                if let Some(value) = number("intensity") {
+                    return Ok(Message::Material(material::Edit::SetSunIntensity(value)));
+                }
+                if let Some(value) = args.get("shadows").and_then(Value::as_bool) {
+                    return Ok(Message::Material(material::Edit::SetPreviewShadows(value)));
+                }
+                Err("expected one of yaw, elevation, intensity, shadows".to_owned())
             },
         )
         .action(

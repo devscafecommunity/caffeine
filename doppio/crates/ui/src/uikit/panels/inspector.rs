@@ -1,12 +1,11 @@
 use crate::uikit::components::{
-    button, component_card, component_picker, field_editor, text_field, texture_slot,
-    transform_card,
+    button, component_card, field_editor, text_field, texture_slot, transform_card,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
 use crate::uikit::{theme, EntityView};
 use doppio_engine::{ComponentData, ComponentType};
-use iced::widget::{column, container, row, scrollable, text, Column};
+use iced::widget::{column, container, row, text, Column};
 use iced::Element;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -43,6 +42,8 @@ pub enum Edit {
         value: f32,
     },
     AddComponent(u32),
+    /// Opens the script picker (behaviours are scripts attached to the entity).
+    OpenBehaviourPicker,
     RemoveComponent(usize),
     ToggleComponent(u32),
     TransformText {
@@ -101,32 +102,24 @@ pub fn view<'a, Message: Clone + 'a>(
             .spacing(7)
             .align_y(iced::Alignment::Center),
         )
-        .padding([3, 6])
+        .padding([5, 8])
+        .width(iced::Length::Fill)
         .style(theme::inspector_header),
     );
+    let mut body = Column::new().spacing(5);
     let on_name = emit.clone();
-    content = content.push(text_field::property(
+    body = body.push(text_field::property(
         id::ENTITY_NAME,
         "Name",
         inspector.name_input,
         move |value| on_name(Edit::Name(value)),
     ));
 
-    let emit_add = emit.clone();
-    if let Some(picker) = component_picker::view(
-        inspector.component_types,
-        inspector.components,
-        id::ADD_COMPONENT.into(),
-        move |type_id| emit_add(Edit::AddComponent(type_id)),
-    ) {
-        content = content.push(picker);
-    }
-
     let material_path = inspector.material;
     if let Some(path) = material_path {
         let emit_open = emit.clone();
         let emit_clear = emit.clone();
-        content = content.push(texture_slot::view(
+        body = body.push(texture_slot::view(
             texture_slot::Slot {
                 id: id::INSPECTOR_MATERIAL,
                 label: "Material",
@@ -139,7 +132,7 @@ pub fn view<'a, Message: Clone + 'a>(
         ));
     }
     let emit_picker = emit.clone();
-    content = content.push(button::compact(
+    body = body.push(button::block(
         id::INSPECTOR_MATERIAL_PICKER,
         if material_path.is_some() {
             "Choose another material…"
@@ -149,6 +142,14 @@ pub fn view<'a, Message: Clone + 'a>(
         emit_picker(Edit::OpenMaterialPicker),
     ));
 
+    let entity_collapsed = inspector.collapsed_components.contains(&(u32::MAX - 1));
+    content = content.push(crate::uikit::components::section::view(
+        id::component_toggle(usize::MAX - 1),
+        "Entity",
+        entity_collapsed,
+        emit(Edit::ToggleComponent(u32::MAX - 1)),
+        body.into(),
+    ));
     let emit_transform = emit.clone();
     content = content.push(transform_card::view(
         transform_card::Transform {
@@ -196,8 +197,16 @@ pub fn view<'a, Message: Clone + 'a>(
         ));
     }
 
-    container(scrollable(container(content).padding([0, 9])))
-        .padding(6)
+    content = content.push(button::block(
+        id::INSPECTOR_ADD_BEHAVIOUR,
+        "+ Add Behaviour",
+        emit(Edit::OpenBehaviourPicker),
+    ));
+
+    // No extra padding here: the pane body already insets the content, and
+    // the scroll rail only takes its own thin gutter.
+    crate::uikit::components::scroll::vertical(content)
+        .width(iced::Length::Fill)
         .into()
 }
 

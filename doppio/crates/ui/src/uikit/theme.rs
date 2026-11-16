@@ -6,22 +6,22 @@
 use iced::widget::{button, container, progress_bar};
 use iced::{Background, Border, Color, Shadow, Theme};
 
-pub const BACKGROUND: Color = Color::from_rgba8(0x12, 0x15, 0x1c, 1.0);
-pub const PANEL: Color = Color::from_rgba8(0x1a, 0x1e, 0x27, 1.0);
-pub const PANEL_ALT: Color = Color::from_rgba8(0x21, 0x26, 0x31, 1.0);
-pub const SURFACE: Color = Color::from_rgba8(0x0d, 0x10, 0x15, 1.0);
-pub const TOOLBAR: Color = Color::from_rgba8(0x16, 0x1a, 0x22, 1.0);
-pub const BORDER: Color = Color::from_rgba8(0x2c, 0x33, 0x42, 1.0);
-pub const BORDER_STRONG: Color = Color::from_rgba8(0x3a, 0x44, 0x58, 1.0);
-pub const TEXT: Color = Color::from_rgba8(0xe7, 0xec, 0xf5, 1.0);
-pub const TEXT_MUTED: Color = Color::from_rgba8(0x8f, 0x99, 0xad, 1.0);
-pub const ACCENT: Color = Color::from_rgba8(0x5b, 0x7c, 0xfa, 1.0);
-pub const ACCENT_HOVER: Color = Color::from_rgba8(0x6d, 0x8d, 0xff, 1.0);
-pub const ACCENT_PRESSED: Color = Color::from_rgba8(0x46, 0x64, 0xd8, 1.0);
-pub const DANGER: Color = Color::from_rgba8(0xc9, 0x4b, 0x5b, 1.0);
-pub const DANGER_HOVER: Color = Color::from_rgba8(0xdc, 0x5c, 0x6d, 1.0);
-pub const WARNING: Color = Color::from_rgba8(0xd9, 0xa4, 0x41, 1.0);
-pub const SUCCESS: Color = Color::from_rgba8(0x55, 0xb8, 0x8a, 1.0);
+pub const BACKGROUND: Color = Color::from_rgba8(0x15, 0x15, 0x15, 1.0);
+pub const PANEL: Color = Color::from_rgba8(0x24, 0x24, 0x24, 1.0);
+pub const PANEL_ALT: Color = Color::from_rgba8(0x2e, 0x2e, 0x2e, 1.0);
+pub const SURFACE: Color = Color::from_rgba8(0x1a, 0x1a, 0x1a, 1.0);
+pub const TOOLBAR: Color = Color::from_rgba8(0x1e, 0x1e, 0x1e, 1.0);
+pub const BORDER: Color = Color::from_rgba8(0x31, 0x31, 0x31, 1.0);
+pub const BORDER_STRONG: Color = Color::from_rgba8(0x47, 0x47, 0x47, 1.0);
+pub const TEXT: Color = Color::from_rgba8(0xd6, 0xd6, 0xd6, 1.0);
+pub const TEXT_MUTED: Color = Color::from_rgba8(0x8e, 0x8e, 0x8e, 1.0);
+pub const ACCENT: Color = Color::from_rgba8(0x4a, 0x8f, 0xe0, 1.0);
+pub const ACCENT_HOVER: Color = Color::from_rgba8(0x62, 0xa1, 0xea, 1.0);
+pub const ACCENT_PRESSED: Color = Color::from_rgba8(0x2f, 0x5f, 0x96, 1.0);
+pub const DANGER: Color = Color::from_rgba8(0xc2, 0x4f, 0x4f, 1.0);
+pub const DANGER_HOVER: Color = Color::from_rgba8(0xd3, 0x62, 0x62, 1.0);
+pub const WARNING: Color = Color::from_rgba8(0xd1, 0xa0, 0x3c, 1.0);
+pub const SUCCESS: Color = Color::from_rgba8(0x5d, 0xa5, 0x6b, 1.0);
 pub const ICON_PURPLE: Color = Color::from_rgba8(0xb8, 0x8c, 0xf0, 1.0);
 pub const ICON_TEAL: Color = Color::from_rgba8(0x5c, 0xc7, 0xcf, 1.0);
 pub const ICON_CYAN: Color = Color::from_rgba8(0x6f, 0xb7, 0xe8, 1.0);
@@ -39,7 +39,7 @@ pub fn panel(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: 3.0.into(),
         },
         ..container::Style::default()
     }
@@ -47,7 +47,7 @@ pub fn panel(_theme: &Theme) -> container::Style {
 
 pub fn panel_title(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(PANEL.into()),
+        background: Some(TOOLBAR.into()),
         text_color: Some(TEXT),
         ..container::Style::default()
     }
@@ -59,7 +59,7 @@ pub fn surface(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         ..container::Style::default()
     }
@@ -71,7 +71,7 @@ pub fn material_preview(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER_STRONG,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: 3.0.into(),
         },
         ..container::Style::default()
     }
@@ -83,7 +83,7 @@ pub fn texture_slot(filled: bool) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: if filled { ACCENT_PRESSED } else { BORDER },
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         ..container::Style::default()
     }
@@ -95,7 +95,7 @@ pub fn toolbar(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: 3.0.into(),
         },
         ..container::Style::default()
     }
@@ -115,7 +115,7 @@ pub fn menu(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER_STRONG,
             width: 1.0,
-            radius: 5.0.into(),
+            radius: 3.0.into(),
         },
         shadow: Shadow {
             color: Color::from_rgba8(0, 0, 0, 0.35),
@@ -151,7 +151,7 @@ pub fn swatch(color: Color) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: BORDER_STRONG,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         ..container::Style::default()
     }
@@ -163,23 +163,25 @@ pub fn tab_item(
     drop_target: bool,
 ) -> impl Fn(&Theme) -> container::Style {
     move |_theme| container::Style {
-        background: if active || drop_target {
-            Some(ACCENT_PRESSED.into())
+        background: if drop_target {
+            Some(Color { a: 0.25, ..ACCENT }.into())
+        } else if active {
+            Some(PANEL.into())
         } else if hovered {
             Some(PANEL_ALT.into())
         } else {
             None
         },
-        border: if drop_target {
-            Border {
-                color: ACCENT,
-                width: 1.0,
-                radius: 3.0.into(),
-            }
-        } else {
-            Border::default()
-        },
-        text_color: Some(if active { TEXT } else { TEXT_MUTED }),
+        border: Border::default(),
+        text_color: Some(if active || hovered { TEXT } else { TEXT_MUTED }),
+        ..container::Style::default()
+    }
+}
+
+/// 2 px bar under the active tab.
+pub fn tab_indicator(active: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: active.then(|| ACCENT.into()),
         ..container::Style::default()
     }
 }
@@ -212,7 +214,7 @@ pub fn filter_chip(active: bool, color: Color) -> impl Fn(&Theme, button::Status
         border: Border {
             color: if active { color } else { BORDER },
             width: 1.0,
-            radius: 9.0.into(),
+            radius: 3.0.into(),
         },
         shadow: Shadow::default(),
         snap: true,
@@ -285,7 +287,7 @@ pub fn list_row(selected: bool) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: if selected { ACCENT } else { BORDER },
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         text_color: Some(TEXT),
         ..container::Style::default()
@@ -298,7 +300,7 @@ pub fn component_card(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 5.0.into(),
+            radius: 3.0.into(),
         },
         ..container::Style::default()
     }
@@ -333,7 +335,7 @@ pub fn pane_drop_target(drop: bool) -> impl Fn(&Theme) -> container::Style {
             Border {
                 color: ACCENT,
                 width: 2.0,
-                radius: 4.0.into(),
+                radius: 2.0.into(),
             }
         } else {
             Border::default()
@@ -348,7 +350,7 @@ pub fn inspector_header(_theme: &Theme) -> container::Style {
         border: Border {
             color: BORDER,
             width: 1.0,
-            radius: 5.0.into(),
+            radius: 3.0.into(),
         },
         ..container::Style::default()
     }
@@ -356,7 +358,7 @@ pub fn inspector_header(_theme: &Theme) -> container::Style {
 
 pub fn chip(tone: ChipTone) -> impl Fn(&Theme) -> container::Style {
     let (background, border, text) = match tone {
-        ChipTone::Neutral => (PANEL_ALT, BORDER, TEXT_MUTED),
+        ChipTone::Neutral => (TOOLBAR, BORDER, TEXT_MUTED),
         ChipTone::Accent => (ACCENT_PRESSED, ACCENT, TEXT),
         ChipTone::Warning => (Color::from_rgba8(0x3a, 0x2f, 0x18, 1.0), WARNING, WARNING),
         ChipTone::Success => (Color::from_rgba8(0x1c, 0x32, 0x2a, 1.0), SUCCESS, SUCCESS),
@@ -367,7 +369,7 @@ pub fn chip(tone: ChipTone) -> impl Fn(&Theme) -> container::Style {
         border: Border {
             color: border,
             width: 1.0,
-            radius: 10.0.into(),
+            radius: 3.0.into(),
         },
         text_color: Some(text),
         ..container::Style::default()
@@ -397,18 +399,22 @@ pub fn progress(_theme: &Theme) -> progress_bar::Style {
 
 pub fn button_secondary(_theme: &Theme, status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => ACCENT_PRESSED,
-        button::Status::Pressed => ACCENT,
-        button::Status::Disabled => PANEL_ALT,
+        button::Status::Hovered => Color::from_rgba8(0x3a, 0x3a, 0x3a, 1.0),
+        button::Status::Pressed => ACCENT_PRESSED,
+        button::Status::Disabled => TOOLBAR,
         _ => PANEL_ALT,
     };
     button::Style {
         background: Some(background.into()),
-        text_color: TEXT,
+        text_color: if matches!(status, button::Status::Disabled) {
+            TEXT_MUTED
+        } else {
+            TEXT
+        },
         border: Border {
             color: BORDER_STRONG,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         shadow: Shadow::default(),
         snap: true,
@@ -428,7 +434,7 @@ pub fn button_primary(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: ACCENT_HOVER,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         shadow: Shadow::default(),
         snap: true,
@@ -448,7 +454,7 @@ pub fn button_danger(_theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: DANGER_HOVER,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: 2.0.into(),
         },
         shadow: Shadow::default(),
         snap: true,
@@ -478,5 +484,206 @@ pub fn scrim(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(translucent_surface()),
         ..container::Style::default()
+    }
+}
+
+/// Thin, low-contrast scrollbar that brightens on hover.
+pub fn scrollbar(
+    _theme: &Theme,
+    status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
+    use iced::widget::scrollable::{AutoScroll, Rail, Scroller, Status, Style};
+    let hovered = matches!(
+        status,
+        Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        } | Status::Hovered {
+            is_horizontal_scrollbar_hovered: true,
+            ..
+        } | Status::Dragged { .. }
+    );
+    let rail = Rail {
+        background: Some(Color { a: 0.35, ..SURFACE }.into()),
+        border: Border {
+            radius: 3.0.into(),
+            ..Border::default()
+        },
+        scroller: Scroller {
+            background: if hovered { ACCENT } else { BORDER_STRONG }.into(),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+        },
+    };
+    Style {
+        container: container::Style::default(),
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+        auto_scroll: AutoScroll {
+            background: PANEL_ALT.into(),
+            border: Border {
+                color: BORDER_STRONG,
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            shadow: Shadow::default(),
+            icon: TEXT,
+        },
+    }
+}
+
+/// Filled-rail slider: accent up to the handle, muted after it, with a small
+/// round handle that grows on hover/drag.
+pub fn slider(_theme: &Theme, status: iced::widget::slider::Status) -> iced::widget::slider::Style {
+    use iced::widget::slider::{Handle, HandleShape, Rail, Status, Style};
+    let (radius, color) = match status {
+        Status::Active => (5.0, ACCENT),
+        Status::Hovered => (6.0, ACCENT_HOVER),
+        Status::Dragged => (7.0, TEXT),
+    };
+    Style {
+        rail: Rail {
+            backgrounds: (ACCENT_PRESSED.into(), BORDER_STRONG.into()),
+            width: 4.0,
+            border: Border {
+                radius: 2.0.into(),
+                ..Border::default()
+            },
+        },
+        handle: Handle {
+            shape: HandleShape::Circle { radius },
+            background: color.into(),
+            border_width: 2.0,
+            border_color: PANEL,
+        },
+    }
+}
+
+/// Palette handed to Iced so stock widgets (inputs, pick lists, checkboxes)
+/// pick up the workspace colours without per-call styling.
+pub fn app_theme() -> Theme {
+    Theme::custom(
+        "Doppio".to_owned(),
+        iced::theme::Palette {
+            background: BACKGROUND,
+            text: TEXT,
+            primary: ACCENT,
+            success: SUCCESS,
+            warning: WARNING,
+            danger: DANGER,
+        },
+    )
+}
+
+/// Base text size for the whole editor (Iced defaults to 16, which is too
+/// large for a dense tool UI).
+pub const BASE_TEXT_SIZE: f32 = 12.0;
+
+/// Window defaults shared by the plain and agent-instrumented entry points.
+pub fn window() -> iced::window::Settings {
+    iced::window::Settings {
+        size: iced::Size::new(1440.0, 860.0),
+        min_size: Some(iced::Size::new(1000.0, 620.0)),
+        ..iced::window::Settings::default()
+    }
+}
+
+pub fn settings() -> iced::Settings {
+    iced::Settings {
+        default_text_size: BASE_TEXT_SIZE.into(),
+        antialiasing: true,
+        ..iced::Settings::default()
+    }
+}
+
+/// Idle asset tile: flat until hovered/selected so the thumbnails lead.
+pub fn asset_card(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color { a: 0.5, ..SURFACE }.into()),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 1.0,
+            radius: 3.0.into(),
+        },
+        text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
+/// Inset text field: dark well, hairline border, accent ring on focus.
+pub fn input(
+    _theme: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input::{Status, Style};
+    let (border, background) = match status {
+        Status::Active => (BORDER_STRONG, SURFACE),
+        Status::Hovered => (Color::from_rgba8(0x5a, 0x5a, 0x5a, 1.0), SURFACE),
+        Status::Focused { .. } => (ACCENT, Color::from_rgba8(0x16, 0x16, 0x16, 1.0)),
+        Status::Disabled => (BORDER, TOOLBAR),
+    };
+    Style {
+        background: background.into(),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 2.0.into(),
+        },
+        icon: TEXT_MUTED,
+        placeholder: Color {
+            a: 0.55,
+            ..TEXT_MUTED
+        },
+        value: TEXT,
+        selection: Color { a: 0.45, ..ACCENT },
+    }
+}
+
+/// Closed dropdown: same inset well as text inputs.
+pub fn pick_list(
+    _theme: &Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    use iced::widget::pick_list::{Status, Style};
+    let border = match status {
+        Status::Active => BORDER_STRONG,
+        Status::Hovered | Status::Opened { is_hovered: true } => {
+            Color::from_rgba8(0x5a, 0x5a, 0x5a, 1.0)
+        }
+        Status::Opened { .. } => ACCENT,
+    };
+    Style {
+        text_color: TEXT,
+        placeholder_color: TEXT_MUTED,
+        handle_color: TEXT_MUTED,
+        background: SURFACE.into(),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: 2.0.into(),
+        },
+    }
+}
+
+/// Open dropdown list.
+pub fn pick_menu(_theme: &Theme) -> iced::overlay::menu::Style {
+    iced::overlay::menu::Style {
+        background: PANEL_ALT.into(),
+        border: Border {
+            color: BORDER_STRONG,
+            width: 1.0,
+            radius: 3.0.into(),
+        },
+        text_color: TEXT,
+        selected_text_color: Color::WHITE,
+        selected_background: ACCENT_PRESSED.into(),
+        shadow: Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.4),
+            offset: iced::Vector::new(0.0, 3.0),
+            blur_radius: 8.0,
+        },
     }
 }

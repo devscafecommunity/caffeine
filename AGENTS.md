@@ -16,6 +16,7 @@ documentation lives in the **`caffeine-website`** submodule, not here.
 | `doppio/crates/ui/` | Iced UI: `uikit/{components,panels,id.rs}` and `windows/` |
 | `doppio/crates/ui/src/windows/` | `main.rs` (state + PaneGrid), `projectloader.rs`, `main/tests.rs`, `main/agent.rs` |
 | `doppio/docs/`, `doppio/.iced-mcp/` | Live Doppio docs, caption source, MCP flows and visual baselines |
+| `doppio/tests/ui-flows/` | Headless UI flows (JSON) run by `cargo test` and the `doppio-headless` CLI |
 | `doppio-archived/` | Frozen C++ Doppio snapshot; reference only, not built |
 | `apps/` | C++ executables (`caffeine-runtime`, `caffeine-combined`) |
 | `include/` | Public C++ headers shipped to games/tools/plugins (incl. legacy `caffeine/ui`) |
@@ -154,6 +155,9 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
   checklist for materials, textures, map baking, node generators, MaterialCraft
   interoperability and TextureCraft-style texture sets. Keep it current when one of
   those areas changes.
+- **Headless testing**: `doppio/docs/headless-testing.md` documents the `doppio-headless`
+  driver (actions, targets, flows, recipes). Its reference section is generated from
+  `headless/reference.rs`; a test fails if they drift apart.
 - **Generated UI reference**: `doppio/docs/ui-captions.json` is the source of English and
   Portuguese widget descriptions. `scripts/generate-doppio-ui-docs.sh` captures every
   catalogued widget and can publish the Markdown + images into
@@ -175,7 +179,12 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 2. **Minimal diffs** — one concern per change; no drive-by refactors.
 3. **Tests** — C++ behavior changes need a test under `tests/` (`ctest` from `build/`).
    Rust UI changes need a test in `doppio/crates/ui/src/windows/main/tests.rs` (or the
-   engine crate); run `./scripts/check-rust-ui.sh`.
+   engine crate) and, for user-visible behaviour, a flow in `doppio/tests/ui-flows/*.json`;
+   run `./scripts/check-rust-ui.sh`.
+   **To see or exercise the UI, use the headless driver, never a real window or a desktop
+   screenshot** (`doppio/docs/headless-testing.md`): `./scripts/doppio-headless.sh` takes
+   JSON scripts (click/drag/type/keys/screenshot/expect), works with any agent and does
+   not open anything.
 4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic
    helper) plus a `CATALOG` entry. Every editing command must record an undo step
    (`App::commit`) and expose any agent-facing command as a `Message` action. Hierarchy
@@ -220,7 +229,12 @@ cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 Checks and tooling:
 
 ```bash
-./scripts/check-rust-ui.sh                 # fmt, tests, clippy, core/ImGui audit
+./scripts/check-rust-ui.sh                 # fmt, tests, clippy, core/ImGui audit, headless build
+./scripts/doppio-headless.sh widgets       # headless UI driver: list what is on screen
+./scripts/doppio-headless.sh run doppio/tests/ui-flows --format text   # run all UI flows
+./scripts/doppio-headless.sh screenshot --annotate --out /tmp/shots    # annotated PNG
+./scripts/render-material-gallery.sh       # engine-rendered material gallery + depth comparisons (docs)
+./scripts/capture-material-docs.sh         # headless UI screenshots for the materials guide
 ./scripts/doppio-agent.sh                  # ICED_MCP=1 + agent feature
 ./scripts/generate-doppio-ui-docs.sh       # UI reference images + Markdown
 ./scripts/generate-doppio-ui-docs.sh --publish

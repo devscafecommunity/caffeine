@@ -1,0 +1,18 @@
+{
+  "name": "Menus stay open while the pointer moves over widgets behind them",
+  "description": "Regression: hover bookkeeping from widgets behind an open menu used to dismiss it.",
+  "fixture": "entities",
+  "size": [1280, 720],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.scene", "label": "open the Scene menu" },
+    { "action": "expect", "state": { "/menu": "Scene" }, "exists": "text:Add Entity" },
+    { "action": "move", "target": "text:Entity 1", "label": "hover a hierarchy row behind the menu" },
+    { "action": "move", "target": "id:editor.pane.tab.viewport" },
+    { "action": "expect", "state": { "/menu": "Scene" }, "label": "menu is still open" },
+    { "action": "key", "key": "Escape" },
+    { "action": "expect", "state": { "/menu": null }, "missing": "text:Add Entity" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "click", "target": "text:Focus Selection", "label": "choosing an item closes the menu" },
+    { "action": "expect", "state": { "/menu": null } }
+  ]
+}

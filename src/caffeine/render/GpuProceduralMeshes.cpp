@@ -1,6 +1,7 @@
 #include "render/GpuProceduralMeshes.hpp"
 
 #include <cmath>
+#include <vector>
 #include <utility>  // std::pair
 
 namespace Caffeine::Render {
@@ -75,6 +76,42 @@ void buildCube(Assets::Mesh3D& mesh) {
     addQuad(mesh.vertices, mesh.indices, {-h, -h, h}, {h, -h, h}, {h, -h, -h}, {-h, -h, -h},
             {0, -1, 0});
     mesh.bounds = {{-h, -h, -h}, {h, h, h}};
+}
+
+/// Per-vertex tangents from the UV layout (Lengyel), with the engine's convention:
+/// T = dP/du and B = cross(N, T) * w = dP/dv. Every procedural vertex used to carry a fixed
+/// (1, 0, 0) tangent, which is not along `u` on most primitives: normal maps and parallax were
+/// sheared (the floor's `u` runs along +Z, not +X).
+void computeTangents(Assets::Mesh3D& mesh) {
+    if (mesh.vertices.empty() || mesh.indices.size() < 3) return;
+    std::vector<Vec3> tan1(mesh.vertices.size(), Vec3(0.0f, 0.0f, 0.0f));
+    std::vector<Vec3> tan2(mesh.vertices.size(), Vec3(0.0f, 0.0f, 0.0f));
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const auto& v0 = mesh.vertices[mesh.indices[i]];
+        const auto& v1 = mesh.vertices[mesh.indices[i + 1]];
+        const auto& v2 = mesh.vertices[mesh.indices[i + 2]];
+        const Vec3 e1 = v1.position - v0.position;
+        const Vec3 e2 = v2.position - v0.position;
+        const Vec2 duv1 = v1.texcoord - v0.texcoord;
+        const Vec2 duv2 = v2.texcoord - v0.texcoord;
+        const f32 denom = duv1.x * duv2.y - duv2.x * duv1.y;
+        if (std::abs(denom) < 1e-8f) continue;
+        const f32 r = 1.0f / denom;
+        const Vec3 tangent = (e1 * duv2.y - e2 * duv1.y) * r;
+        const Vec3 bitangent = (e2 * duv1.x - e1 * duv2.x) * r;
+        for (size_t k = 0; k < 3; ++k) {
+            tan1[mesh.indices[i + k]] += tangent;
+            tan2[mesh.indices[i + k]] += bitangent;
+        }
+    }
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const Vec3 n = mesh.vertices[i].normal;
+        Vec3 t = tan1[i];
+        if (t.lengthSquared() < 1e-8f) continue;
+        t = (t - n * n.dot(t)).normalized();
+        const f32 w = (n.cross(t).dot(tan2[i]) < 0.0f) ? -1.0f : 1.0f;
+        mesh.vertices[i].tangent = Vec4(t.x, t.y, t.z, w);
+    }
 }
 
 void buildPlane(Assets::Mesh3D& mesh) {
@@ -436,6 +473,10 @@ void GpuProceduralMeshes::ensureBuilt() {
     buildCone(g_cone);
     buildPyramid(g_pyramid);
     buildTorus(g_torus);
+    for (Assets::Mesh3D* mesh : {&g_cube, &g_plane, &g_sphere, &g_cylinder, &g_capsule, &g_cone,
+                                 &g_pyramid, &g_torus}) {
+        computeTangents(*mesh);
+    }
     g_built = true;
 }
 

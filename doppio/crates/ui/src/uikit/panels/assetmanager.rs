@@ -3,13 +3,17 @@
 //! Navigation is derived from the relative paths the engine already exposes,
 //! so no extra C ABI call is needed to enter a folder.
 
-use crate::uikit::components::{asset_preview, breadcrumb, button, text_field, toggle_chip};
+use crate::uikit::components::asset_preview::CARD_WIDTH;
+use crate::uikit::components::{
+    asset_preview, breadcrumb, button, scroll, text_field, toggle_chip, tree_view,
+};
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
 use crate::uikit::theme;
 use doppio_engine::AssetInfo;
-use iced::widget::{column, container, scrollable, text, Column, Row};
+use iced::widget::{column, container, responsive, row, text, Column, Row};
 use iced::{Element, Length};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -26,6 +30,9 @@ pub struct View<'a> {
     pub directory: &'a str,
     pub mode: ViewMode,
     pub selected: Option<usize>,
+    /// Folder paths collapsed in the tree.
+    pub collapsed: &'a std::collections::HashSet<String>,
+    pub tree_open: bool,
 }
 
 pub struct Callbacks<'a, Message> {
@@ -39,6 +46,11 @@ pub struct Callbacks<'a, Message> {
     pub on_root: Message,
     pub on_refresh: Message,
     pub on_mode: Box<dyn Fn(ViewMode) -> Message + 'a>,
+    pub on_new: Message,
+    pub on_import: Message,
+    pub on_tree_toggle: Box<dyn Fn(String) -> Message + 'a>,
+    pub on_noop: Message,
+    pub on_tree_panel: Message,
 }
 
 /// Canonical relative directory: no leading/trailing slashes, `/` separators.
@@ -177,6 +189,78 @@ fn crumbs(directory: &str) -> Vec<breadcrumb::Crumb> {
     result
 }
 
+/// One visible folder row of the tree (root first, then depth-first).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    pub path: String,
+    pub name: String,
+    pub depth: usize,
+    pub has_children: bool,
+    pub expanded: bool,
+}
+
+/// Folders derived from the asset list: directory entries plus the parents of
+/// every file, so the tree works even if the engine omits empty ancestors.
+pub fn folder_rows(
+    assets: &[AssetInfo],
+    collapsed: &std::collections::HashSet<String>,
+) -> Vec<FolderRow> {
+    let mut folders = std::collections::BTreeSet::new();
+    for asset in assets {
+        if asset.name.starts_with('.') {
+            continue;
+        }
+        let path = normalize_directory(&asset.relative_path);
+        let mut current = if asset.is_directory {
+            path.as_str()
+        } else {
+            parent_directory(&path)
+        };
+        while !current.is_empty() {
+            folders.insert(current.to_owned());
+            current = parent_directory(current);
+        }
+    }
+    let has_children = |path: &str| {
+        folders
+            .iter()
+            .any(|other| parent_directory(other) == path && other != path)
+    };
+    let mut rows = vec![FolderRow {
+        path: String::new(),
+        name: "Assets".to_owned(),
+        depth: 0,
+        has_children: !folders.is_empty(),
+        expanded: !collapsed.contains(""),
+    }];
+    // BTreeSet order puts every parent right before its children.
+    for path in &folders {
+        let mut hidden = false;
+        let mut ancestor = parent_directory(path);
+        loop {
+            if collapsed.contains(ancestor) {
+                hidden = true;
+                break;
+            }
+            if ancestor.is_empty() {
+                break;
+            }
+            ancestor = parent_directory(ancestor);
+        }
+        if hidden {
+            continue;
+        }
+        rows.push(FolderRow {
+            name: path.rsplit('/').next().unwrap_or(path).to_owned(),
+            depth: path.split('/').count(),
+            has_children: has_children(path),
+            expanded: !collapsed.contains(path.as_str()),
+            path: path.clone(),
+        });
+    }
+    rows
+}
+
 pub fn view<'a, Message: Clone + 'a>(
     view: View<'a>,
     callbacks: Callbacks<'a, Message>,
@@ -192,11 +276,16 @@ pub fn view<'a, Message: Clone + 'a>(
         on_root,
         on_refresh,
         on_mode,
+        on_new,
+        on_import,
+        on_tree_toggle,
+        on_noop,
+        on_tree_panel,
     } = callbacks;
-    let on_press = &on_press;
-    let on_release = &on_release;
-    let on_double_click = &on_double_click;
-    let on_folder = &on_folder;
+    let on_press_box = on_press;
+    let on_release_box = on_release;
+    let on_double_click_box = on_double_click;
+    let on_folder_rc: Rc<dyn Fn(String) -> Message + 'a> = Rc::from(on_folder);
     let on_mode = &on_mode;
     let directory = normalize_directory(view.directory);
     let needle = view.search.trim();
@@ -208,6 +297,15 @@ pub fn view<'a, Message: Clone + 'a>(
 
     let trail = breadcrumb::view(crumbs(&directory), on_crumb);
     let navigation = Row::new()
+        .push(button::primary(id::ASSET_NEW, "+ New", on_new))
+        .push(button::toolbar(id::ASSET_IMPORT, "Import", on_import))
+        .push(toggle_chip::view(
+            id::ASSET_TREE_TOGGLE,
+            "▤",
+            view.tree_open,
+            theme::ACCENT,
+            on_tree_panel,
+        ))
         .push(button::compact(id::ASSET_UP, "↑", on_up.clone()))
         .push(button::compact(id::ASSET_ROOT, "Root", on_root.clone()))
         .push(container(trail).width(Length::Fill))
@@ -274,72 +372,128 @@ pub fn view<'a, Message: Clone + 'a>(
         .center_x(Length::Fill)
         .into()
     } else {
-        match view.mode {
-            ViewMode::Grid => {
-                let mut rows = Column::new().spacing(4);
-                for chunk in entries.chunks(2) {
-                    let mut row = Row::new().spacing(4);
-                    for (index, asset) in chunk.iter() {
+        let mode = view.mode;
+        let assets_len = entries.len();
+        let entries: Vec<(usize, &'a AssetInfo)> = entries.to_vec();
+        let thumbnails = view.thumbnails;
+        let tints = view.tints;
+        let selected = view.selected;
+        let on_press: Rc<dyn Fn(usize) -> Message + 'a> = Rc::from(on_press_box);
+        let on_release: Rc<dyn Fn(usize) -> Message + 'a> = Rc::from(on_release_box);
+        let on_double_click: Rc<dyn Fn(usize) -> Message + 'a> = Rc::from(on_double_click_box);
+        let on_folder = on_folder_rc.clone();
+        let _ = assets_len;
+        // The grid reflows with the pane: as many tiles per row as fit.
+        responsive(move |size| {
+            let (on_press, on_release, on_double_click, on_folder) = (
+                on_press.clone(),
+                on_release.clone(),
+                on_double_click.clone(),
+                on_folder.clone(),
+            );
+            let open = move |asset: &AssetInfo, index: usize| -> Message {
+                if asset.is_directory {
+                    (on_folder)(asset.relative_path.clone())
+                } else {
+                    (on_double_click)(index)
+                }
+            };
+            match mode {
+                ViewMode::Grid => {
+                    let gap = 4.0;
+                    let usable = (size.width - 14.0).max(CARD_WIDTH);
+                    let columns = (((usable + gap) / (CARD_WIDTH + gap)).floor() as usize).max(1);
+                    let mut rows = Column::new().spacing(gap);
+                    for chunk in entries.chunks(columns) {
+                        let mut row = Row::new().spacing(gap);
+                        for (index, asset) in chunk.iter() {
+                            let entry = preview_entry(
+                                asset,
+                                *index,
+                                thumbnails,
+                                tints,
+                                selected == Some(*index),
+                                searching,
+                            );
+                            row = row.push(asset_preview::card(
+                                id::asset_card(*index),
+                                entry,
+                                (on_press)(*index),
+                                (on_release)(*index),
+                                Some(open(asset, *index)),
+                            ));
+                        }
+                        rows = rows.push(row);
+                    }
+                    scroll::vertical(rows).width(Length::Fill).into()
+                }
+                ViewMode::List => {
+                    let mut rows = Column::new().spacing(1);
+                    for (index, asset) in entries.iter().copied() {
                         let entry = preview_entry(
                             asset,
-                            *index,
-                            view.thumbnails,
-                            view.tints,
-                            view.selected == Some(*index),
+                            index,
+                            thumbnails,
+                            tints,
+                            selected == Some(index),
                             searching,
                         );
-                        let (on_press, on_release) = if asset.is_directory {
-                            let navigate = (on_folder)(asset.relative_path.clone());
-                            (navigate.clone(), navigate)
-                        } else {
-                            ((on_press)(*index), (on_release)(*index))
-                        };
-                        row = row.push(asset_preview::card(
-                            id::asset_card(*index),
+                        rows = rows.push(asset_preview::row(
+                            id::asset_row(index),
                             entry,
-                            on_press,
-                            on_release,
-                            (!asset.is_directory).then(|| (on_double_click)(*index)),
+                            (on_press)(index),
+                            (on_release)(index),
+                            Some(open(asset, index)),
                         ));
                     }
-                    rows = rows.push(row);
+                    scroll::vertical(rows).width(Length::Fill).into()
                 }
-                scrollable(rows).into()
             }
-            ViewMode::List => {
-                let mut rows = Column::new().spacing(1);
-                for (index, asset) in entries.iter().copied() {
-                    let entry = preview_entry(
-                        asset,
-                        index,
-                        view.thumbnails,
-                        view.tints,
-                        view.selected == Some(index),
-                        searching,
-                    );
-                    let (on_press, on_release) = if asset.is_directory {
-                        let navigate = (on_folder)(asset.relative_path.clone());
-                        (navigate.clone(), navigate)
-                    } else {
-                        ((on_press)(index), (on_release)(index))
-                    };
-                    rows = rows.push(asset_preview::row(
-                        id::asset_row(index),
-                        entry,
-                        on_press,
-                        on_release,
-                        (!asset.is_directory).then(|| (on_double_click)(index)),
-                    ));
-                }
-                scrollable(rows).into()
-            }
-        }
+        })
+        .into()
     };
 
-    column![navigation, search, actions, content]
+    let tree = {
+        let mut items = Vec::new();
+        for folder in folder_rows(view.assets, view.collapsed) {
+            let path = folder.path.clone();
+            items.push(tree_view::Item {
+                id: id::asset_tree_row(&folder.path),
+                label: folder.name,
+                icon: Icon::Folder,
+                depth: folder.depth,
+                has_children: folder.has_children,
+                expanded: folder.expanded,
+                selected: directory == folder.path,
+                hovered: false,
+                drop_target: false,
+                trailing: None,
+                extra: None,
+                on_toggle: (on_tree_toggle)(path.clone()),
+                on_press: (on_folder_rc)(path),
+                on_release: on_noop.clone(),
+                on_enter: on_noop.clone(),
+                on_exit: on_noop.clone(),
+                on_context: on_noop.clone(),
+            });
+        }
+        container(scroll::vertical(tree_view::view(items)))
+            .id(id::ASSET_TREE)
+            .width(Length::Fixed(190.0))
+            .height(Length::Fill)
+            .padding(3)
+            .style(theme::surface)
+    };
+
+    let files = column![navigation, search, actions, content]
         .spacing(4)
-        .height(Length::Fill)
-        .into()
+        .width(Length::Fill)
+        .height(Length::Fill);
+    if view.tree_open {
+        row![tree, files].spacing(6).height(Length::Fill).into()
+    } else {
+        files.into()
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,155 @@
+{
+  "name": "Inspector: Add Behaviour lists components, scripts, meshes and materials",
+  "fixture": "entities",
+  "size": [
+    1440,
+    800
+  ],
+  "assets": [
+    {
+      "name": "spin.lua",
+      "path": "Scripts/spin.lua"
+    },
+    {
+      "name": "patrol.dyd",
+      "path": "Scripts/patrol.dyd"
+    },
+    {
+      "name": "hero.glb",
+      "path": "Models/hero.glb"
+    },
+    {
+      "name": "brick.mat",
+      "path": "Materials/brick.mat"
+    },
+    {
+      "name": "rock.png",
+      "path": "Textures/rock.png"
+    }
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "target": "text:Entity 1",
+      "label": "select an entity"
+    },
+    {
+      "action": "expect",
+      "visible": "id:inspector.behaviour.add",
+      "label": "the button sits in the inspector"
+    },
+    {
+      "action": "click",
+      "target": "id:inspector.behaviour.add"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:inspector.behaviour.picker",
+        "text:Camera 3D",
+        "text:Mesh Renderer",
+        "text:Rigid Body 3D",
+        "text:spin.lua",
+        "text:patrol.dyd",
+        "text:hero.glb",
+        "text:brick.mat"
+      ],
+      "missing": [
+        "text:rock.png"
+      ],
+      "label": "components, scripts, meshes and materials are all behaviours"
+    },
+    {
+      "action": "screenshot",
+      "name": "picker",
+      "target": "id:inspector.behaviour.picker"
+    },
+    {
+      "action": "type",
+      "target": "id:inspector.behaviour.picker.search",
+      "text": "physics"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "text:Rigid Body 3D",
+        "text:Collider 3D"
+      ],
+      "missing": [
+        "text:Camera 3D",
+        "text:hero.glb"
+      ],
+      "label": "search also matches the group"
+    },
+    {
+      "action": "type",
+      "target": "id:inspector.behaviour.picker.search",
+      "text": "hero",
+      "clear": true
+    },
+    {
+      "action": "expect",
+      "exists": "text:hero.glb",
+      "missing": "text:Rigid Body 3D"
+    },
+    {
+      "action": "click",
+      "target": "id:inspector.behaviour.new",
+      "label": "start a new script"
+    },
+    {
+      "action": "expect",
+      "exists": "id:assets.wizard",
+      "state": {
+        "/wizard/open": true,
+        "/wizard/template": "Lua Script"
+      },
+      "missing": "id:inspector.behaviour.picker"
+    }
+  ],
+  "components": [
+    {
+      "name": "Transform",
+      "fields": [
+        "Position"
+      ]
+    },
+    {
+      "name": "Camera 3D",
+      "fields": [
+        "Field of view",
+        "Near clip",
+        "Far clip",
+        "Aspect ratio"
+      ]
+    },
+    {
+      "name": "Mesh Renderer",
+      "fields": [
+        "Mesh",
+        "Material",
+        "Cast shadows"
+      ]
+    },
+    {
+      "name": "Rigid Body 3D",
+      "fields": [
+        "Mass",
+        "Friction"
+      ]
+    },
+    {
+      "name": "Collider 3D",
+      "fields": [
+        "Shape",
+        "Half extents"
+      ]
+    },
+    {
+      "name": "Script",
+      "fields": [
+        "Script"
+      ]
+    }
+  ]
+}

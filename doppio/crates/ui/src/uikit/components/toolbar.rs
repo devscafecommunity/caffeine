@@ -17,12 +17,12 @@ pub fn view<'a, Message: 'a>(
     groups: Vec<Element<'a, Message>>,
     status: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut bar = row![brand].spacing(10).align_y(iced::Alignment::Start);
+    let mut bar = row![brand].spacing(10).align_y(iced::Alignment::Center);
     for group in groups {
         bar = bar.push(divider()).push(group);
     }
     bar = bar.push(space::horizontal()).push(status);
-    container(bar.padding([7, 12]).width(Length::Fill))
+    container(bar.padding([3, 10]).width(Length::Fill))
         .style(theme::toolbar)
         .into()
 }

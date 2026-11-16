@@ -223,6 +223,29 @@ depth.
 - [x] C ABI version bumped to **2** with `caffeine_capi_version()` and a status
       bar badge; C API tests cover it.
 
+## Procedural library and presets (no third-party assets needed)
+
+User guide with rendered images: [materials-guide.md](materials-guide.md).
+
+- [x] `uikit/procedural/`: ~106 data-driven, tileable, seeded, multi-threaded
+      ops (`NodeKind::Proc`) — Noise 16, Natural 17, Patterns 18, Shapes 8,
+      Math 25, Geometry 8, Height & PBR 14. Each op is one `OpDef` row (ports,
+      `ParamSpec`s, colours, `eval`); the palette, properties panel, `.mgraph`
+      (`proc <id> …`) and MaterialCraft (`doppio_proc`) are generated from it.
+- [x] Output node: Emissive / Opacity / Normal inputs appended after
+      Color..AO, plus `auto_height` (height from base luminance when Height is
+      unconnected), `normalize_height` and `height_contrast`, so height is never
+      a flat plane. `BakedMaterial` gained `emissive(16)`, `has_emissive`,
+      `opacity(16)`, `has_opacity`, `normal`.
+- [x] `uikit/material_library.rs`: 41 parameterisable presets (Stone, Brick,
+      Concrete, Ground, Wood, Metal, Fabric, Organic, Sci-fi, Misc), picked from
+      the generator header **Library** dropdown (one undoable step, resolution
+      kept). Tests bake every preset at 64² and check base variance, height
+      std-dev > 0.02, determinism and `.mgraph` round trip.
+- [x] Output preview channel switcher (Base, Normal, Height, Roughness, Metal,
+      AO, Emissive, Opacity).
+- [ ] Preset parameters (seed / scale / wear) are not yet exposed in the UI.
+
 ## Definition of done for "the base is complete"
 
 - Generator graph edit undo/redo and wire editing never lose work.
@@ -235,3 +258,24 @@ depth.
 - The preview and asset browser work without blocking the UI thread.
 - `check-rust-ui.sh`, Rust tests, `[capi]`/`[material]`, and every MCP smoke
   pass; docs and UI captions are regenerated.
+
+## Depth, bake and height packing
+
+- [x] Parallax occlusion mapping in `scene_lit.frag`; height in the normal map's
+      alpha (16-sampler limit); `MaterialSurface::heightScale/parallaxSteps`,
+      `.mat` keys, C ABI v3, Rust `Material`, Material panel sliders.
+- [x] Generator bake packs height into the normal alpha and enables depth;
+      authored Normal / Emissive / Opacity outputs are written and wired.
+- [x] Preview cache key includes texture file stamps (re-bake refreshes it).
+- [x] **Pack a height map into the normal…** (external height images).
+- [x] Parallax self-shadowing (`parallaxSelfShadow`) and a derivative-based UV frame
+      (fixes the oblique/sheared look caused by non-u-aligned procedural tangents).
+- [x] Geometric displacement: `displacement_mode geometric`, `displacement_scale` (m),
+      `mesh_subdivisions` in the `.mat`; the mesh is midpoint-subdivided
+      (`assets/MeshSubdivide.hpp`) and `scene_displace.vert` / `shadow_displace.vert` push
+      vertices along normals by the normal-map alpha through the vertex-stage sampler
+      (set 0, so the 16 fragment samplers are untouched). Normals are rebuilt by finite
+      differences and the shadow pass uses the same formula, so relief casts real shadows.
+      C ABI version 4. Material panel: "Geometric displacement" checkbox + depth + subdivisions.
+- [ ] Expand culling bounds by the displacement depth; distance-adaptive subdivision.
+- [ ] Preset seed / scale / wear in the UI.

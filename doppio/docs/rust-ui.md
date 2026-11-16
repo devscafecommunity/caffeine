@@ -43,8 +43,21 @@ doppio/
   `checkbox`, `pick_list`, `slider` or `button` calls in `uikit/panels/`.
 - The UI crates never touch FFI directly: only `doppio-engine` loads the
   shared library.
-- a five-group `PaneGrid` layout (Hierarchy / Assets / Viewport / Inspector /
-  Console) with Material, Generator, Script and Dryad Nodes tabs;
+- a five-group `PaneGrid` layout: Hierarchy | Viewport (+ Generator, Texture Set,
+  Script, Dryad Nodes) | Inspector (+ Material) on top and a Project-style bottom
+  dock with **Assets** (folder tree + file grid) next to the Console;
+- **docking**: dragging a tab away from its header shows guides on every pane
+  (`uikit/components/dock_overlay.rs`): the centre adds the tab to that pane's
+  group, the edge guides split the pane and dock on that side. Panes also have
+  a maximise/restore button; open menus only close on a click outside, Escape
+  or choosing an item (hover updates from widgets behind never dismiss them);
+- the **Assets wizard** (`+ New` / `Import` in the Assets toolbar,
+  `uikit/asset_wizard.rs` + `uikit/panels/asset_wizard.rs`): Create (folder,
+  Lua, Dryad script; material and texture set open their editors), Import
+  (copies files or folders into the current folder, never overwriting; dropped
+  files join the queue) and Pack (`caf-pack --input <asset root> --output
+  <project>.cap`, found via `CAF_PACK`, `CAFFEINE_ENGINE_ROOT`, a sibling
+  `caf-pack/build/src` or `PATH`);
 - stable widget ids for the toolbar, inspector inputs and entity rows;
 - a headless `iced_test` harness covering editing, panes, console filters,
   hierarchy search, viewport gestures and flight;
@@ -61,6 +74,17 @@ Run it with:
 ```bash
 cd doppio
 cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
+```
+
+Materials, procedural library and real depth: [`materials-guide.md`](materials-guide.md).
+
+Drive and inspect the UI without a window (any agent, CI or human; plain JSON
+over stdin/stdout, see [`headless-testing.md`](headless-testing.md)):
+
+```bash
+./scripts/doppio-headless.sh widgets                      # what is on screen
+./scripts/doppio-headless.sh run doppio/tests/ui-flows --format text
+./scripts/doppio-headless.sh screenshot --annotate --out /tmp/shots
 ```
 
 Run the checks used by CI/agents:

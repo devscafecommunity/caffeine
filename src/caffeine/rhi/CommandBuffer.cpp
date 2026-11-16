@@ -185,6 +185,16 @@ void CommandBuffer::bindTexture(Texture* tex, u32 slot, Sampler* sampler) {
     SDL_BindGPUFragmentSamplers(m_renderPass, slot, &samplerBinding, 1);
 }
 
+void CommandBuffer::bindVertexTexture(Texture* tex, u32 slot, Sampler* sampler) {
+    if (!m_renderPass || !tex || !tex->handle || !sampler || !sampler->handle) {
+        return;
+    }
+    SDL_GPUTextureSamplerBinding samplerBinding{};
+    samplerBinding.texture = tex->handle;
+    samplerBinding.sampler = sampler->handle;
+    SDL_BindGPUVertexSamplers(m_renderPass, slot, &samplerBinding, 1);
+}
+
 void CommandBuffer::setViewport(f32 x, f32 y, f32 w, f32 h) {
     if (!m_renderPass) {
         return;

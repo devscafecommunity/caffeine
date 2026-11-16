@@ -16,6 +16,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .id(id)
             .width(Length::Fill)
             .on_input(on_input)
+            .style(theme::input)
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center)
@@ -32,7 +33,10 @@ pub fn stacked<'a, Message: Clone + 'a>(
     let label = label.into();
     iced::widget::column![
         text(label).size(11),
-        text_input("", value).id(id).on_input(on_input)
+        text_input("", value)
+            .id(id)
+            .on_input(on_input)
+            .style(theme::input)
     ]
     .spacing(3)
     .into()
@@ -49,7 +53,10 @@ pub fn search<'a, Message: Clone + 'a>(
     text_input(placeholder.as_str(), value)
         .id(id)
         .width(Length::Fill)
+        .size(12)
+        .padding([4, 7])
         .on_input(on_input)
+        .style(theme::input)
         .into()
 }
 
@@ -68,7 +75,8 @@ pub fn axis<'a, Message: Clone + 'a>(
             .size(11)
             .padding([2, 4])
             .width(Length::Fill)
-            .on_input(on_input),
+            .on_input(on_input)
+            .style(theme::input),
     ]
     .spacing(3)
     .width(Length::Fill)
@@ -90,7 +98,8 @@ pub fn property<'a, Message: Clone + 'a>(
             .size(11)
             .padding([2, 5])
             .width(Length::Fill)
-            .on_input(on_input),
+            .on_input(on_input)
+            .style(theme::input),
     ]
     .spacing(5)
     .align_y(iced::Alignment::Center)
@@ -112,7 +121,8 @@ pub fn compact<'a, Message: Clone + 'a>(
                 .size(11)
                 .padding([2, 4])
                 .width(Length::Fixed(56.0))
-                .on_input(on_input),
+                .on_input(on_input)
+                .style(theme::input),
         )
         .spacing(4)
         .align_y(iced::Alignment::Center)

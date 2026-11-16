@@ -4,13 +4,14 @@ use crate::uikit::components::{
 };
 use crate::uikit::generators::{
     BlendMode, ChannelPacking, ImageFilter, MaterialGraph, NodeId, NodeKind, NoiseType,
-    NormalBlendMode, PackSource, PackingPreset, Projection, VoronoiMode, WrapMode,
+    NormalBlendMode, PackSource, PackingPreset, PreviewChannel, Projection, VoronoiMode, WrapMode,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
+use crate::uikit::procedural::{ParamKind, ProcOp};
 use crate::uikit::theme;
 use iced::widget::image::Handle;
-use iced::widget::{column, container, image, row, scrollable, text, Column};
+use iced::widget::{column, container, image, row, text, Column};
 use iced::{ContentFit, Element, Length, Vector};
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -69,6 +70,13 @@ pub enum Param {
     MaskStrength(f32),
     MaskRadius(f32),
     MaskInvert(bool),
+    /// Parameter `index` of a procedural node.
+    Proc(usize, f32),
+    /// Colour parameter `index`, channel `axis`, of a procedural node.
+    ProcColor(usize, usize, f32),
+    OutputAutoHeight(bool),
+    OutputNormalizeHeight(bool),
+    OutputHeightContrast(f32),
 }
 
 impl Param {
@@ -126,6 +134,11 @@ impl Param {
             Param::MaskStrength(_) => "mask strength",
             Param::MaskRadius(_) => "mask radius",
             Param::MaskInvert(_) => "mask invert",
+            Param::Proc(..) => "parameter",
+            Param::ProcColor(..) => "colour",
+            Param::OutputAutoHeight(_) => "auto height",
+            Param::OutputNormalizeHeight(_) => "normalise height",
+            Param::OutputHeightContrast(_) => "height contrast",
         }
     }
 
@@ -183,6 +196,11 @@ impl Param {
             Param::MaskStrength(_) => "mask_strength".to_owned(),
             Param::MaskRadius(_) => "mask_radius".to_owned(),
             Param::MaskInvert(_) => "mask_invert".to_owned(),
+            Param::Proc(index, _) => format!("proc:{index}"),
+            Param::ProcColor(index, axis, _) => format!("proc_color:{index}:{axis}"),
+            Param::OutputAutoHeight(_) => "output_auto_height".to_owned(),
+            Param::OutputNormalizeHeight(_) => "output_normalize_height".to_owned(),
+            Param::OutputHeightContrast(_) => "output_height_contrast".to_owned(),
         }
     }
 }
@@ -230,6 +248,9 @@ pub enum Edit {
     Paste,
     Bake,
     OpenMaterial,
+    /// Replace the graph with a procedural library preset (index into `material_library::presets()`).
+    ApplyPreset(usize),
+    SetPreviewChannel(usize),
 }
 
 pub struct BakeProgress<'a> {
@@ -261,6 +282,8 @@ pub struct View<'a> {
     pub packing_preset_name: &'a str,
     pub bits: u8,
     pub baking: Option<BakeProgress<'a>>,
+    /// Index into `PreviewChannel::ALL` shown in the output preview.
+    pub preview_channel: usize,
 }
 
 pub fn view<'a, Message: Clone + 'a>(
@@ -297,6 +320,25 @@ pub fn view<'a, Message: Clone + 'a>(
     let material_name = view
         .material_name
         .unwrap_or("No material open — create one in Material");
+    let library_options: Vec<String> = crate::uikit::material_library::presets()
+        .iter()
+        .map(|preset| format!("{} · {}", preset.category, preset.name))
+        .collect();
+    let library_lookup = library_options.clone();
+    let library_emit = emit.clone();
+    let library = dropdown::property(
+        id::GENERATOR_LIBRARY,
+        "Library",
+        library_options,
+        None,
+        move |choice| {
+            let index = library_lookup
+                .iter()
+                .position(|label| *label == choice)
+                .unwrap_or(0);
+            library_emit(Edit::ApplyPreset(index))
+        },
+    );
     let header = container(
         row![
             column![
@@ -304,7 +346,9 @@ pub fn view<'a, Message: Clone + 'a>(
                 text(material_name).size(9).color(theme::TEXT_MUTED),
             ]
             .spacing(0)
-            .width(Length::Fill),
+            .width(Length::Shrink),
+            iced::widget::space::horizontal(),
+            container(library).width(Length::Fixed(230.0)),
             button::compact(id::GENERATOR_UNDO, "↶", emit(Edit::Undo)),
             button::compact(id::GENERATOR_REDO, "↷", emit(Edit::Redo)),
             button::compact(id::GENERATOR_FIT, "Fit", emit(Edit::Fit)),
@@ -317,7 +361,8 @@ pub fn view<'a, Message: Clone + 'a>(
             button::primary(id::GENERATOR_BAKE, "Bake to Material", emit(Edit::Bake)),
         ]
         .spacing(6)
-        .align_y(iced::Alignment::Center),
+        .align_y(iced::Alignment::Center)
+        .wrap(),
     )
     .padding([4, 7])
     .style(theme::panel_title);
@@ -386,6 +431,9 @@ pub fn view<'a, Message: Clone + 'a>(
                 "Filters" => Icon::Material,
                 "Utilities" => Icon::Script,
                 "Output" => Icon::Material,
+                "Noise" | "Natural" => Icon::Terrain,
+                "Patterns" | "Shapes" => Icon::Texture,
+                "Math" | "Geometry" | "Height & PBR" => Icon::Script,
                 _ => Icon::Generic,
             };
             tree_items.push(tree_view::Item {
@@ -445,6 +493,7 @@ pub fn view<'a, Message: Clone + 'a>(
             pan: view.pan,
             zoom: view.zoom,
             selected_link: view.selected_link,
+            snap: view.snap.then_some(16.0),
         },
         {
             let emit = emit.clone();
@@ -495,10 +544,30 @@ pub fn view<'a, Message: Clone + 'a>(
         .center_y(Length::Fixed(72.0))
         .into()
     };
+    let mut channel_row = Vec::new();
+    for (index, channel) in PreviewChannel::ALL.iter().enumerate() {
+        let channel_emit = emit.clone();
+        channel_row.push(crate::uikit::components::toggle_chip::view(
+            id::generator_channel(channel.label()),
+            channel.label(),
+            view.preview_channel == index,
+            theme::ACCENT,
+            channel_emit(Edit::SetPreviewChannel(index)),
+        ));
+    }
+    let channels = container(
+        iced::widget::Row::with_children(channel_row)
+            .spacing(3)
+            .wrap()
+            .vertical_spacing(3),
+    )
+    .id(id::GENERATOR_CHANNELS)
+    .width(Length::Fill);
     right = right.push(
         container(
             column![
                 text("OUTPUT PREVIEW").size(8).color(theme::TEXT_MUTED),
+                channels,
                 preview_body,
             ]
             .spacing(3),
@@ -657,12 +726,12 @@ pub fn view<'a, Message: Clone + 'a>(
     }
 
     let body = row![
-        container(scrollable(toolbox)).width(Length::Fixed(112.0)),
+        container(crate::uikit::components::scroll::vertical(toolbox)).width(Length::Fixed(150.0)),
         container(canvas)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::surface),
-        container(scrollable(right)).width(Length::Fixed(228.0)),
+        container(crate::uikit::components::scroll::vertical(right)).width(Length::Fixed(250.0)),
     ]
     .spacing(6)
     .height(Length::Fill);
@@ -1540,11 +1609,15 @@ fn properties_panel<'a, Message: Clone + 'a>(
                     .color(theme::TEXT_MUTED),
             );
         }
+        NodeKind::Proc { op, params, colors } => {
+            body = body.push(proc_controls(emit.clone(), node_id, op, &params, &colors));
+        }
         NodeKind::Output {
             roughness,
             metallic,
             height,
             ao,
+            options,
         } => {
             body = body.push(
                 text("Connect scalar maps or use constants.")
@@ -1591,13 +1664,124 @@ fn properties_panel<'a, Message: Clone + 'a>(
                 ao,
                 Param::Ao,
             ));
+            body = body.push(text("HEIGHT").size(8).color(theme::TEXT_MUTED));
+            let emit_auto = emit.clone();
+            body = body.push(checkbox::property(
+                id::generator_field("output_auto_height"),
+                "Auto height from colour",
+                options.auto_height,
+                move |value| emit_auto(Edit::SetParam(node_id, Param::OutputAutoHeight(value))),
+            ));
+            let emit_norm = emit.clone();
+            body = body.push(checkbox::property(
+                id::generator_field("output_normalize_height"),
+                "Normalise to 0..1",
+                options.normalize_height,
+                move |value| {
+                    emit_norm(Edit::SetParam(node_id, Param::OutputNormalizeHeight(value)))
+                },
+            ));
+            body = body.push(parameter_slider(
+                emit.clone(),
+                node_id,
+                "output_height_contrast",
+                "Contrast",
+                0.2..=4.0,
+                0.05,
+                options.height_contrast,
+                Param::OutputHeightContrast,
+            ));
+            body = body.push(
+                text("Unconnected Height uses the colour's luminance so depth is never flat.")
+                    .size(8)
+                    .color(theme::TEXT_MUTED),
+            );
         }
     }
 
-    container(scrollable(body))
+    container(crate::uikit::components::scroll::vertical(body))
         .padding(5)
         .style(theme::surface)
         .into()
+}
+
+/// Controls generated from a procedural op's parameter table.
+fn proc_controls<'a, Message: Clone + 'a>(
+    emit: Rc<dyn Fn(Edit) -> Message + 'a>,
+    node: NodeId,
+    op: ProcOp,
+    params: &[f32],
+    colors: &[[f32; 4]],
+) -> Element<'a, Message> {
+    let def = op.def();
+    let mut body = Column::new().spacing(4);
+    for (index, spec) in def.params.iter().enumerate() {
+        let value = params.get(index).copied().unwrap_or(spec.default);
+        let field = format!("proc.{}", spec.key);
+        let emit = emit.clone();
+        match spec.kind {
+            ParamKind::Float => {
+                body = body.push(slider::property_step(
+                    id::generator_field(&field),
+                    spec.label,
+                    spec.min..=spec.max,
+                    value,
+                    spec.step,
+                    move |v| emit(Edit::SetParam(node, Param::Proc(index, v))),
+                ));
+            }
+            ParamKind::Int => {
+                body = body.push(slider::property_step(
+                    id::generator_field(&field),
+                    spec.label,
+                    spec.min..=spec.max,
+                    value.round(),
+                    1.0,
+                    move |v| emit(Edit::SetParam(node, Param::Proc(index, v.round()))),
+                ));
+            }
+            ParamKind::Bool => {
+                body = body.push(checkbox::property(
+                    id::generator_field(&field),
+                    spec.label,
+                    value >= 0.5,
+                    move |v| {
+                        emit(Edit::SetParam(
+                            node,
+                            Param::Proc(index, if v { 1.0 } else { 0.0 }),
+                        ))
+                    },
+                ));
+            }
+            ParamKind::Enum(options) => {
+                let labels: Vec<String> = options.iter().map(|o| (*o).to_owned()).collect();
+                let selected = labels.get(value.round() as usize).cloned();
+                let lookup = labels.clone();
+                body = body.push(dropdown::property(
+                    id::generator_field(&field),
+                    spec.label,
+                    labels,
+                    selected,
+                    move |choice| {
+                        let at = lookup.iter().position(|item| *item == choice).unwrap_or(0);
+                        emit(Edit::SetParam(node, Param::Proc(index, at as f32)))
+                    },
+                ));
+            }
+        }
+    }
+    for (index, spec) in def.colors.iter().enumerate() {
+        let value = colors.get(index).copied().unwrap_or(spec.default);
+        let key = spec.key;
+        let emit = emit.clone();
+        body = body.push(color_picker::view(
+            spec.label,
+            value,
+            move |axis| id::generator_axis(&format!("proc.{key}"), axis).into(),
+            move |axis, v| emit(Edit::SetParam(node, Param::ProcColor(index, axis, v))),
+        ));
+    }
+    body.into()
 }
 
 fn mode_index(mode: BlendMode) -> usize {

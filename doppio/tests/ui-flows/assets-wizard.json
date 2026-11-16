@@ -1,0 +1,24 @@
+{
+  "name": "Assets wizard: create a folder and a script, then import a file",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "asset_root": "temp",
+  "steps": [
+    { "action": "expect", "exists": ["id:assets.tree.folders", "id:assets.toolbar.new", "id:assets.toolbar.import"] },
+    { "action": "click", "target": "id:assets.toolbar.new", "label": "open the wizard" },
+    { "action": "expect", "exists": "id:assets.wizard", "state": { "/wizard/open": true, "/wizard/tab": "Create" } },
+    { "action": "click", "target": "id:assets.wizard.create.template.0", "label": "Folder" },
+    { "action": "type", "target": "id:assets.wizard.create.name", "text": "Props" },
+    { "action": "click", "target": "id:assets.wizard.create.confirm" },
+    { "action": "expect", "state": { "/wizard/status/ok": true }, "label": "folder created" },
+    { "action": "click", "target": "id:assets.wizard.create.template.3", "label": "Lua script" },
+    { "action": "type", "target": "id:assets.wizard.create.name", "text": "spin", "clear": true },
+    { "action": "click", "target": "id:assets.wizard.create.confirm" },
+    { "action": "expect", "state": { "/wizard/status/ok": true } },
+    { "action": "click", "target": "id:assets.wizard.tab.pack", "label": "the Pack tab explains caf-pack" },
+    { "action": "expect", "shows": "Build .cap" },
+    { "action": "screenshot", "name": "wizard-pack", "target": "id:assets.wizard" },
+    { "action": "click", "target": "id:assets.wizard.close" },
+    { "action": "expect", "missing": "id:assets.wizard", "state": { "/wizard/open": false } }
+  ]
+}

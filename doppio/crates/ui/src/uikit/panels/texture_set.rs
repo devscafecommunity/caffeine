@@ -5,7 +5,7 @@ use crate::uikit::generators::BlendMode;
 use crate::uikit::id;
 use crate::uikit::texture_set::{ExportPreset, TextureSet};
 use crate::uikit::theme;
-use iced::widget::{column, container, row, scrollable, text, Column};
+use iced::widget::{column, container, row, text, Column};
 use iced::{Element, Length};
 use std::rc::Rc;
 
@@ -401,12 +401,12 @@ pub fn view<'a, Message: Clone + 'a>(
     }
 
     let body = row![
-        container(scrollable(left)).width(Length::Fixed(220.0)),
+        container(crate::uikit::components::scroll::vertical(left)).width(Length::Fixed(200.0)),
         container(canvas)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::surface),
-        container(scrollable(right)).width(Length::Fixed(230.0)),
+        container(crate::uikit::components::scroll::vertical(right)).width(Length::Fixed(216.0)),
     ]
     .spacing(6)
     .height(Length::Fill);

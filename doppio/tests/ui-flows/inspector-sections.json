@@ -1,0 +1,12 @@
+{
+  "name": "Inspector: the Entity section collapses and expands",
+  "fixture": "entities",
+  "steps": [
+    { "action": "click", "target": "text:Entity 1" },
+    { "action": "expect", "exists": "id:inspector.entity.name" },
+    { "action": "click", "target": "id:inspector.component.toggle.18446744073709551614", "label": "collapse Entity" },
+    { "action": "expect", "missing": "id:inspector.entity.name" },
+    { "action": "click", "target": "id:inspector.component.toggle.18446744073709551614", "label": "expand again" },
+    { "action": "expect", "exists": "id:inspector.entity.name" }
+  ]
+}

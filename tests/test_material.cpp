@@ -1,5 +1,6 @@
 #include "catch.hpp"
 
+#include "assets/MeshSubdivide.hpp"
 #include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
 #include "assets/TextureMapGenerator.hpp"
@@ -303,4 +304,72 @@ TEST_CASE("reflection march steps follow the optional modules", "[material]") {
     both.quality = true;
     both.samples = 64.0f;
     REQUIRE(reflectionMarchSteps(48.0f, 1.0f, both) == 64);
+}
+
+TEST_CASE("parallax depth roundtrips through the .mat file and stays clamped", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-parallax";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "bricks.mat";
+
+    MaterialSurface written;
+    written.name = "Bricks";
+    written.normalMap = "textures/bricks_n.png"; // height lives in this map's alpha
+    written.heightScale = 0.06f;
+    written.parallaxSteps = 40.0f;
+    REQUIRE(saveMaterialFile(path, written));
+
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.heightScale == Approx(0.06f));
+    REQUIRE(loaded.parallaxSteps == Approx(40.0f));
+
+    // Materials saved before depth existed keep it off.
+    MaterialSurface legacy;
+    legacy.name = "Legacy";
+    REQUIRE(legacy.heightScale == 0.0f);
+
+    MaterialSurface wild;
+    wild.heightScale = 9.0f;
+    wild.parallaxSteps = 100000.0f;
+    sanitizeMaterialSurface(wild);
+    REQUIRE(wild.heightScale <= 0.5f);
+    REQUIRE(wild.parallaxSteps <= 128.0f);
+    wild.heightScale = -1.0f;
+    wild.parallaxSteps = 0.0f;
+    sanitizeMaterialSurface(wild);
+    REQUIRE(wild.heightScale == 0.0f);
+    REQUIRE(wild.parallaxSteps >= 4.0f);
+
+    // The cache must notice a depth-only edit.
+    MaterialCache::instance().publish(path.string(), "", written);
+    const u64 before = MaterialCache::instance().revision();
+    written.heightScale = 0.12f;
+    MaterialCache::instance().publish(path.string(), "", written);
+    REQUIRE(MaterialCache::instance().revision() != before);
+    MaterialCache::instance().invalidate(path.string());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("midpoint subdivision quadruples triangles and keeps the surface welded", "[material]") {
+    using namespace Caffeine;
+    Assets::Mesh3D quad;
+    auto vert = [](f32 x, f32 z) {
+        Assets::Vertex3D v;
+        v.position = Vec3(x, 0, z);
+        v.normal = Vec3(0, 1, 0);
+        v.texcoord = Vec2(x, z);
+        v.tangent = Vec4(1, 0, 0, 1);
+        return v;
+    };
+    quad.vertices = {vert(0, 0), vert(1, 0), vert(1, 1), vert(0, 1)};
+    quad.indices = {0, 1, 2, 0, 2, 3};
+
+    Assets::Mesh3D out;
+    REQUIRE(Assets::subdivideMesh(quad, 3, out));
+    CHECK(out.indices.size() == 6 * 64);
+    CHECK(out.vertices.size() == 81); // (2^3+1)^2: shared edge vertices are welded
+    const Assets::MeshDensity density = Assets::measureMeshDensity(out);
+    CHECK(density.metersPerUv == Approx(1.0f));
+    CHECK(density.averageEdgeUv < 0.2f);
+    CHECK_FALSE(Assets::subdivideMesh(quad, 3, out, 100)); // over the index budget
 }

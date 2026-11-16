@@ -2,7 +2,7 @@ use crate::uikit::components::{button, menu, text_field, tree_view};
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
 use crate::uikit::EntityView;
-use iced::widget::{column, container, row, scrollable};
+use iced::widget::{column, container, row};
 use iced::{Element, Length};
 use std::collections::{HashMap, HashSet};
 
@@ -264,9 +264,15 @@ pub fn view<'a, Message: Clone + 'a>(
         }
     }
 
-    container(column![header, scrollable(tree_view::view(items))].spacing(4))
-        .width(Length::Fill)
-        .into()
+    container(
+        column![
+            header,
+            crate::uikit::components::scroll::vertical(tree_view::view(items))
+        ]
+        .spacing(4),
+    )
+    .width(Length::Fill)
+    .into()
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use crate::uikit::components::{button, list_row, text_field, toggle_chip};
 use crate::uikit::id;
 use crate::uikit::project::ProjectInfo;
 use crate::uikit::theme;
-use iced::widget::{column, container, row, scrollable, space, text};
+use iced::widget::{column, container, row, space, text};
 use iced::{Element, Length};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,7 +230,9 @@ fn project_rows<'a, Message: Clone + 'a>(
             on_open(index),
         ));
     }
-    scrollable(rows).height(Length::Fill).into()
+    crate::uikit::components::scroll::vertical(rows)
+        .height(Length::Fill)
+        .into()
 }
 
 pub fn view<'a, Message: Clone + 'a>(
@@ -455,7 +457,7 @@ pub fn view<'a, Message: Clone + 'a>(
     }
     container(panel)
         .id(id::PROJECT_MANAGER)
-        .width(Length::Fixed(660.0))
+        .width(Length::Fixed(620.0))
         .height(Length::Fixed(520.0))
         .style(theme::menu)
         .into()

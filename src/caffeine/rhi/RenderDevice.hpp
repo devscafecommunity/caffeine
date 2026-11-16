@@ -121,6 +121,7 @@ enum class BlendMode : u8 {
     Alpha,          // src.a, 1 - src.a
     Premultiplied,  // 1, 1 - src.a
     Additive,       // 1, 1
+    Min,            // min(src, dst): order-independent nearest-depth for shadow maps
 };
 
 /// Maximum number of colour attachments in one render pass. All SDL_GPU
