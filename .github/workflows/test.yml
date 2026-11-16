@@ -33,13 +33,8 @@ jobs:
       if: github.event_name != 'workflow_dispatch' || github.inputs.run_stress != 'true'
       run: cd build && ./tests/CaffeineTest ~[stress] --success
 
-    - name: Run Editor UI Tests
-      run: |
-        if [ -f build/tests/DoppioTest ]; then
-          SDL_VIDEO_DRIVER=offscreen ./build/tests/DoppioTest --success || echo "DoppioTest: skipped (GPU not available)"
-        else
-          echo "DoppioTest not built (SDL3 not available) — skipping"
-        fi
+    - name: Run Rust UI tests
+      run: ./scripts/check-rust-ui.sh
       
     - name: Run Stress Tests
       if: github.event_name == 'workflow_dispatch' && github.inputs.run_stress == 'true'

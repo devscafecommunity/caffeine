@@ -12,7 +12,7 @@
 #include "script/ScriptTypes.hpp"
 #include "project/ProjectManager.hpp"
 #include "scene/EditorSceneSerializer.hpp"
-#include "editor/ImGuiIntegration.hpp"
+#include "ImGuiIntegration.hpp"
 #include "runtime/RuntimeSceneRenderer.hpp"
 #include "scene/EditorContext.hpp"
 #include "ecs/World.hpp"

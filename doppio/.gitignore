@@ -1,0 +1,10 @@
+/target
+
+# iced-mcp failure bundles and screenshots
+.iced-mcp/failures/
+
+# iced-mcp visual baselines are machine/GPU dependent
+.iced-mcp/baselines/
+
+# iced-mcp one-off screenshots
+.iced-mcp/screenshots/

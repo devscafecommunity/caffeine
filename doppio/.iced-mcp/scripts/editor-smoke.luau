@@ -1,0 +1,68 @@
+--! timeout_ms=90000
+-- End-to-end smoke flow for the session-based agent bridge.
+-- Run with: iced-mcp run-script .iced-mcp/scripts/editor-smoke.luau
+--           --launch "./target/debug/doppio ../assets/benchmarks/dense_outdoor.caf"
+-- from doppio/ with ICED_MCP=1.
+
+app:load_fixture("editor")
+app:wait_for({ id = "hierarchy.list.entity_row.1" })
+
+-- Select the second entity and rename it through the real text input.
+app:click({ id = "hierarchy.list.entity_row.1" })
+app:expect({ id = "inspector.entity.name", value = "Entity 2" })
+app:type_text({ id = "inspector.entity.name", text = "Boss", clear = true, submit = true })
+
+local selection = app:query("selection")
+assert(selection ~= nil, "selection query returned nothing")
+assert(selection.name == "Boss", "rename failed, got " .. tostring(selection.name))
+
+-- Undo/redo through the agent actions and the history query.
+app:run_app_action("undo")
+local undone = app:query("selection")
+assert(undone.name ~= "Boss", "undo should revert the rename")
+local history = app:query("history")
+assert(history.can_redo == true, "undo should leave a redo step")
+app:run_app_action("redo")
+assert(app:query("selection").name == "Boss", "redo should reapply the rename")
+
+-- Add an entity and move it through the scene-level action.
+app:run_app_action("add_entity", { name = "Rock" })
+app:wait_for({ text = "Rock", exact = false })
+local scene = app:query("scene")
+assert(scene.entity_count == 3, "expected 3 entities, got " .. tostring(scene.entity_count))
+
+app:run_app_action("select_entity", { name = "Boss" })
+app:run_app_action("set_camera", { distance = 20 })
+local camera = app:query("selection")
+assert(camera.name == "Boss", "select_entity by name failed")
+
+local catalog = app:query("ui_catalog")
+assert(#catalog >= 20, "ui_catalog should list the documented widgets")
+for _, entry in ipairs(catalog) do
+  assert(entry.id ~= nil and entry.description ~= "", "catalog entries need ids and descriptions")
+end
+
+local entities = app:query("entities")
+assert(#entities == 3, "entities query should list 3 rows")
+app:expect({ text = "Stopped" })
+
+app:run_app_action("toggle_play")
+app:expect({ text = "Playing" })
+
+local scene_after_play = app:query("scene")
+local logged_play = false
+for _, line in ipairs(scene_after_play.log) do
+  if line == "Play" then logged_play = true end
+end
+assert(logged_play, "toggle_play should log Play in the console")
+
+local messages = app:messages({ limit = 5 })
+assert(#messages > 0, "the bridge should log the app messages")
+
+return {
+  history_steps = #app:query("history").steps,
+  entities = #entities,
+  selected = selection.name,
+  camera_distance = 20,
+  catalog = #catalog,
+}

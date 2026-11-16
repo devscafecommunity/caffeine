@@ -8,6 +8,7 @@
  * linking against Doppio internals.
  */
 
+#include <cstdarg>
 #include <imgui.h>
 
 #include <string>

@@ -1,6 +1,8 @@
 # Caffeine Engine
 
-C++20 game engine and **Doppio** scene editor (SDL3). User-facing documentation lives in the **`caffeine-website`** submodule, not in this tree.
+C++20 game engine (SDL3) and **Doppio**, its Rust/Iced editor. The engine exposes a
+C ABI (`libcaffeine-capi`) so any frontend can drive it. User-facing documentation
+lives in the **`caffeine-website`** submodule, not in this tree.
 
 ## Ecosystem (git submodules)
 
@@ -9,7 +11,7 @@ C++20 game engine and **Doppio** scene editor (SDL3). User-facing documentation 
 | **`caf-pack/`** | Asset packer — `.caf` / `.cap` pipeline |
 | **`caffeine-website/`** | Docs site + MCP for agents |
 | **`caffeine-launcher/`** | Desktop launcher (Rust) — start studio apps and manage plugins |
-| **`doppio-plugins/`** | Official/community Doppio editor plugins (built separately) |
+| **`doppio-plugins/`** | Official/community Doppio C++ plugins (built with the engine, loaded on demand) |
 
 Initialize everything:
 
@@ -34,6 +36,22 @@ cd build && ctest --output-on-failure
 
 Helpers: `scripts/build.sh`, `scripts/build.fish`, `scripts/build.bat`.
 
+## Doppio (Rust/Iced editor)
+
+Doppio is the `doppio/` workspace: `crates/engine` is the `libloading` bridge to
+`libcaffeine-capi`, and `crates/ui` holds the components, panels and windows.
+Build the C ABI first, then run the editor:
+
+```bash
+cmake --build build --target caffeine-capi -j
+cd doppio
+cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
+```
+
+Checks used by CI/agents: `./scripts/check-rust-ui.sh` (fmt, tests, clippy and the
+core/ImGui coupling audit). The old C++ editor is frozen in `doppio-archived/`;
+architecture notes live in [`doppio/docs/rust-ui.md`](doppio/docs/rust-ui.md).
+
 ## Editor plugins
 
 The engine build compiles **every** plugin from the `doppio-plugins` submodule and
@@ -46,9 +64,11 @@ cmake --build build -j
 ```
 
 `CAFFEINE_BUILD_DOPPIO_PLUGINS=OFF` is the only way to skip them, and it is intended
-for minimal/headless environments — not for normal editor builds.
+for minimal/headless environments — not for normal builds.
 
-Start Doppio and enable the plugins you need in **Plugins → Plugin Manager**
+Plugins target the legacy C++/ImGui plugin SDK (`include/caffeine/plugin/`,
+`include/caffeine/ui/`), not the Rust UI. Install the libraries in a `plugins/`
+directory and enable the ones you need in the Plugin Manager
 (persisted in `~/.config/caffeine/plugins.cfg`).
 
 ## Docs

@@ -1349,6 +1349,17 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
         }
     }
 
+    // Keep entities that have no serialized components, so undo/restore also
+    // preserves empty objects and the hierarchy order.
+    {
+        Caffeine::ECS::ComponentQuery allEntities;
+        m_world.forEach(allEntities, [&](Caffeine::ECS::Entity entity) {
+            if (entity.isValid()) {
+                entityMap[entity.id()];
+            }
+        });
+    }
+
     auto push = [&](const void* d, u32 n) {
         const u8* p = static_cast<const u8*>(d);
         out.insert(out.end(), p, p + n);
@@ -1360,7 +1371,16 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     push(&signature, 4);
     push(&version, 4);
     push(&count, 4);
-    for (auto& [eid, components] : entityMap) {
+    // Stable entity order keeps saved files and undo snapshots deterministic.
+    std::vector<u32> entityIds;
+    entityIds.reserve(entityMap.size());
+    for (const auto& [eid, components] : entityMap) {
+        (void)components;
+        entityIds.push_back(eid);
+    }
+    std::sort(entityIds.begin(), entityIds.end());
+    for (u32 eid : entityIds) {
+        auto& components = entityMap[eid];
         u32 compCount = static_cast<u32>(components.size());
         push(&eid, 4);
         push(&compCount, 4);
@@ -1499,7 +1519,10 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
     m_world.destroyAll();
     std::unordered_map<u32, ECS::Entity> remap;
     remap.reserve(uniqueIds.size());
-    for (u32 oldId : uniqueIds) {
+    // Create in stable id order so hierarchy order survives a reload/undo.
+    std::vector<u32> orderedIds(uniqueIds.begin(), uniqueIds.end());
+    std::sort(orderedIds.begin(), orderedIds.end());
+    for (u32 oldId : orderedIds) {
         remap[oldId] = m_world.create();
     }
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Audit plugin coupling in the Doppio editor.
+Audit Doppio plugins for coupling to editor internals.
 
-The UI rework makes panels data-driven so plugin UI can move out of the core.
-This scanner reports the remaining coupling points:
+Plugins live in the doppio-plugins submodule and only use the public SDK. The
+legacy C++ editor is archived, so this scanner reports:
 
-  * plugin identifiers or plugin-only components referenced by src/doppio/editor
-  * internal Doppio headers included by plugins
+  * internal editor headers (``editor/...``) included by plugins
   * raw ImGui usage in plugin panels (should use caffeine/ui)
 
 Usage:
@@ -25,15 +24,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-PLUGIN_NAMES = (
-    "terrain_plugin",
-    "procedural_tools_plugin",
-    "git_plugin",
-    "post_processing_plugin",
-    "ai_development_plugin",
-    "hello_plugin",
-)
-
 # Plugin sources live in the doppio-plugins submodule, not in the engine tree.
 PLUGIN_SOURCE_DIR = "doppio-plugins/plugins"
 
@@ -42,7 +32,7 @@ PLUGIN_SOURCE_DIR = "doppio-plugins/plugins"
 # plugin-owned, which avoids flagging the engine's own scene data.
 ENGINE_ECS_PREFIX = "src/caffeine/ecs"
 
-# A plugin may use these public headers. Anything under src/doppio/editor is coupling.
+# A plugin may use these public headers. Anything under ``editor/`` is coupling.
 PUBLIC_INCLUDES = (
     "caffeine/plugin/",
     "caffeine/ui/",
@@ -52,16 +42,6 @@ PUBLIC_INCLUDES = (
     "caffeine/navigation/",
     "caffeine/runtime/",
 )
-
-# Files that legitimately describe the plugin contract.
-CORE_CONTRACT_FILES = {
-    "src/doppio/editor/PluginSystem.cpp",
-    "src/doppio/editor/PluginSystem.hpp",
-    "src/doppio/editor/PluginAPI.hpp",
-    "src/doppio/editor/PluginServiceRegistry.cpp",
-    "src/doppio/editor/PluginSymbolExports.cpp",
-    "src/doppio/editor/ComponentRegistry.cpp",
-}
 
 
 @dataclass
@@ -76,7 +56,6 @@ class Finding:
 @dataclass
 class Report:
     findings: list[Finding] = field(default_factory=list)
-    scanned_core: int = 0
     scanned_plugins: int = 0
 
     def add(self, finding: Finding) -> None:
@@ -115,42 +94,6 @@ def relative(root: Path, path: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
-
-
-def scan_core(root: Path, report: Report) -> None:
-    owned_components = plugin_owned_components(root)
-    for path in iter_sources(root, "src/doppio/editor"):
-        report.scanned_core += 1
-        rel = relative(root, path)
-        lines = path.read_text(errors="replace").splitlines()
-        for number, line in enumerate(lines, 1):
-            stripped = line.strip()
-            if stripped.startswith("//") or stripped.startswith("*"):
-                continue
-
-            for name in PLUGIN_NAMES:
-                if name in line and rel not in CORE_CONTRACT_FILES:
-                    report.add(
-                        Finding(
-                            "error" if "include" in line or "load" in line.lower() else "warn",
-                            "core-references-plugin",
-                            rel,
-                            number,
-                            f"core references plugin identifier '{name}'",
-                        )
-                    )
-
-            for component in owned_components:
-                if component in line and rel not in CORE_CONTRACT_FILES:
-                    report.add(
-                        Finding(
-                            "warn",
-                            "core-references-plugin-component",
-                            rel,
-                            number,
-                            f"core references plugin-owned component '{component}'",
-                        )
-                    )
 
 
 def scan_plugins(root: Path, report: Report) -> None:
@@ -194,7 +137,6 @@ def print_report(report: Report) -> None:
     infos = report.by_severity("info")
 
     print("Caffeine plugin coupling audit")
-    print(f"  core files   : {report.scanned_core}")
     print(f"  plugin files : {report.scanned_plugins}")
     print(f"  errors       : {len(errors)}")
     print(f"  warnings     : {len(warns)}")
@@ -218,14 +160,12 @@ def main() -> int:
     args = parser.parse_args()
 
     report = Report()
-    scan_core(args.root, report)
     scan_plugins(args.root, report)
 
     if args.json:
         args.json.write_text(
             json.dumps(
                 {
-                    "scanned_core": report.scanned_core,
                     "scanned_plugins": report.scanned_plugins,
                     "findings": [finding.__dict__ for finding in report.findings],
                 },

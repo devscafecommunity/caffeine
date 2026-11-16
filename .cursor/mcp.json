@@ -4,6 +4,9 @@
       "command": "node",
       "args": ["packages/docs-mcp/src/index.js"],
       "cwd": "${workspaceFolder}/caffeine-website"
+    },
+    "iced": {
+      "command": "iced-mcp"
     }
   }
 }

@@ -1251,6 +1251,8 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
             setVec4(lights.materialParams, draw.normalStrength, draw.aoStrength, thickness,
                     draw.alphaCutoff);
+            // uProjParams.w is unused by the shader; carry the normal-map convention.
+            lights.projParams[3] = draw.normalDirectX ? 1.0f : 0.0f;
             setVec4(lights.coat, draw.clearcoat, draw.clearcoatRoughness, draw.ior,
                     draw.transmission);
             setVec4(lights.sheen, draw.sheenColor.x, draw.sheenColor.y, draw.sheenColor.z,
@@ -1769,6 +1771,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.uvTiling = surface.uvTiling;
                 draw.uvOffset = surface.uvOffset;
                 draw.normalStrength = surface.normalStrength;
+                draw.normalDirectX = surface.normalDirectX;
                 draw.aoStrength = surface.aoStrength;
                 draw.alphaMode = static_cast<u8>(surface.alphaMode);
                 draw.alphaCutoff = surface.alphaCutoff;

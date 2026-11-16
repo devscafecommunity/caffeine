@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "../src/caffeine/Caffeine.hpp"
 #include "../src/caffeine/scene/SceneComponents.hpp"
+#include "../src/caffeine/scene/HierarchySystem.hpp"
 #include "../src/caffeine/scene/SceneSerializer.hpp"
 #include "../src/caffeine/scene/SceneManager.hpp"
 
@@ -237,6 +238,51 @@ TEST_CASE("SceneManager - pushWorld twice, popScene returns first world", "[scen
 TEST_CASE("SceneManager - isTransitioning initially false", "[scene]") {
     SceneManager mgr;
     REQUIRE_FALSE(mgr.isTransitioning());
+}
+
+TEST_CASE("propagateTransforms composes nested parent transforms", "[scene]") {
+    World world;
+    Entity root = world.create();
+    Entity child = world.create();
+    Entity grand = world.create();
+
+    world.add<Transform>(root);
+    world.get<Transform>(root)->position = Vec3(10.0f, 0.0f, 0.0f);
+    world.get<Transform>(root)->rotation = Vec3(0.0f, 90.0f, 0.0f);
+    world.get<Transform>(root)->scale = Vec3(2.0f, 2.0f, 2.0f);
+
+    world.add<Transform>(child);
+    world.get<Transform>(child)->position = Vec3(5.0f, 0.0f, 0.0f);
+    world.add<Parent>(child);
+    world.get<Parent>(child)->parent = root;
+
+    world.add<Transform>(grand);
+    world.get<Transform>(grand)->position = Vec3(2.0f, 0.0f, 0.0f);
+    world.add<Parent>(grand);
+    world.get<Parent>(grand)->parent = child;
+
+    propagateTransforms(world);
+
+    // Root stays local; children inherit position, rotation and scale.
+    REQUIRE(world.get<WorldTransform>(root) != nullptr);
+    REQUIRE(approxEq(world.get<WorldTransform>(root)->matrix.data()[12], 10.0f));
+
+    REQUIRE(world.get<WorldTransform>(child) != nullptr);
+    CHECK(approxEq(world.get<WorldTransform>(child)->matrix.data()[12], 10.0f));
+    CHECK(approxEq(world.get<WorldTransform>(child)->matrix.data()[14], -10.0f));
+
+    REQUIRE(world.get<WorldTransform>(grand) != nullptr);
+    CHECK(approxEq(world.get<WorldTransform>(grand)->matrix.data()[12], 10.0f));
+    CHECK(approxEq(world.get<WorldTransform>(grand)->matrix.data()[14], -14.0f));
+
+    // Inheritance never rewrites the local transform used by the inspector.
+    CHECK(approxEq(world.get<Transform>(child)->position.x, 5.0f));
+
+    // Unparenting resolves the child back to local space.
+    world.remove<Parent>(child);
+    propagateTransforms(world);
+    CHECK(approxEq(world.get<WorldTransform>(child)->matrix.data()[12], 5.0f));
+    CHECK(approxEq(world.get<WorldTransform>(grand)->matrix.data()[12], 7.0f));
 }
 
 TEST_CASE("SceneManager - update with dt=0 does not crash", "[scene]") {

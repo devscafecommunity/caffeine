@@ -188,6 +188,7 @@ private:
         Vec2 uvTiling{1.0f, 1.0f};
         Vec2 uvOffset{0.0f, 0.0f};
         f32  normalStrength = 1.0f;
+        bool normalDirectX = false;
         f32  aoStrength = 1.0f;
         u8   alphaMode = 0;
         f32  alphaCutoff = 0.5f;

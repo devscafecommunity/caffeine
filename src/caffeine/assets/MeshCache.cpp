@@ -190,6 +190,7 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
                                                          const std::string& projectRoot) {
     std::vector<std::string> candidates;
     const std::filesystem::path input(path);
+    const std::filesystem::path engineAssets = findEngineAssetsRoot();
 
     appendUnique(candidates, input);
     if (input.is_absolute()) {
@@ -210,27 +211,39 @@ std::vector<std::string> MeshCache::buildCandidatePaths(const std::string& path,
     }
 
     if (!input.is_absolute()) {
+        appendUnique(candidates, std::filesystem::current_path() / input);
+        appendUnique(candidates, std::filesystem::path("assets/raw") / input.filename());
+        appendUnique(candidates, std::filesystem::path("assets/raw") / input);
 
-    appendUnique(candidates, std::filesystem::current_path() / input);
-    appendUnique(candidates, std::filesystem::path("assets/raw") / input.filename());
-    appendUnique(candidates, std::filesystem::path("assets/raw") / input);
+        if (!projectRoot.empty()) {
+            const std::filesystem::path root(projectRoot);
+            appendUnique(candidates, root / input);
+            appendUnique(candidates, root / "assets" / input);
+            appendUnique(candidates, root / "assets/raw" / input.filename());
+            appendUnique(candidates, root / "assets/raw" / input);
+            // Packaged game layout (build output): data/assets/raw/...
+            appendUnique(candidates, root / "data" / input);
+            appendUnique(candidates, root / "data/assets/raw" / input.filename());
+            appendUnique(candidates, root / "data/assets/raw" / input);
+            appendUnique(candidates, root / "data/assets/processed" / input.filename());
+            appendUnique(candidates, root / "data/assets/processed" / input);
+        }
 
-    if (!projectRoot.empty()) {
-        const std::filesystem::path root(projectRoot);
-        appendUnique(candidates, root / input);
-        appendUnique(candidates, root / "assets" / input);
-        appendUnique(candidates, root / "assets/raw" / input.filename());
-        appendUnique(candidates, root / "assets/raw" / input);
-        // Packaged game layout (build output): data/assets/raw/...
-        appendUnique(candidates, root / "data" / input);
-        appendUnique(candidates, root / "data/assets/raw" / input.filename());
-        appendUnique(candidates, root / "data/assets/raw" / input);
-        appendUnique(candidates, root / "data/assets/processed" / input.filename());
-        appendUnique(candidates, root / "data/assets/processed" / input);
+        // Materials in the sample projects are authored relative to the
+        // repository root ("assets/vegetation-kit/...") while the engine root
+        // can be the asset folder itself. Try the path without that prefix.
+        const std::string generic = input.generic_string();
+        if (generic.rfind("assets/", 0) == 0) {
+            const std::filesystem::path stripped(generic.substr(7));
+            if (!engineAssets.empty()) {
+                appendUnique(candidates, engineAssets / stripped);
+            }
+            if (!projectRoot.empty()) {
+                appendUnique(candidates, std::filesystem::path(projectRoot) / stripped);
+            }
+        }
     }
-    }
 
-    const std::filesystem::path engineAssets = findEngineAssetsRoot();
     if (!engineAssets.empty()) {
         appendUnique(candidates, engineAssets / input);
         appendUnique(candidates, engineAssets / input.filename());

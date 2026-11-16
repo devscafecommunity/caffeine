@@ -14,7 +14,7 @@ namespace Caffeine::Render {
 namespace {
 
 constexpr f32 kDegToRad = 3.14159265f / 180.0f;
-constexpr f32 kCameraDistance = 1.9f;
+constexpr f32 kCameraDistance = 3.2f;
 constexpr f32 kFovDegrees = 40.0f;
 constexpr f32 kFloorY = -0.5f;
 
@@ -51,6 +51,7 @@ u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
     f.value(s.uvTiling);
     f.value(s.uvOffset);
     f.value(s.normalStrength);
+    f.value(s.normalDirectX);
     f.value(s.aoStrength);
     f.value(s.alphaMode);
     f.value(s.alphaCutoff);
@@ -198,12 +199,16 @@ void MaterialPreviewRenderer::setMaterialKeys(const char* previewKey, const char
     m_lastHash = 0;
 }
 
-void MaterialPreviewRenderer::placeSphere() {
+void MaterialPreviewRenderer::placeSubject(MaterialPreviewSubject subject) {
     auto* filter = m_world.get<ECS::MeshFilterComponent>(m_sphere);
     auto* pos = m_world.get<ECS::Position3D>(m_sphere);
     auto* scale = m_world.get<ECS::Scale3D>(m_sphere);
     if (!filter || !pos || !scale) return;
-    filter->primitive = ECS::MeshPrimitive::Sphere;
+    filter->primitive = subject == MaterialPreviewSubject::Cube
+                             ? ECS::MeshPrimitive::Cube
+                             : subject == MaterialPreviewSubject::Plane
+                                   ? ECS::MeshPrimitive::Plane
+                                   : ECS::MeshPrimitive::Sphere;
     filter->customMeshPath.clear();
     filter->customMaterialPath = m_previewKey;
     pos->position = Vec3(0.0f, 0.0f, 0.0f);
@@ -236,7 +241,7 @@ void MaterialPreviewRenderer::placeMesh(const std::string& meshPath, const std::
 bool MaterialPreviewRenderer::render(RHI::CommandBuffer* cmd, const Assets::MaterialSurface& surface,
                                      u32 pixelSize, const MaterialPreviewSettings& settings,
                                      const std::string& projectRoot) {
-    placeSphere();
+    placeSubject(settings.subject);
     return renderPlaced(cmd, &surface, pixelSize, settings, projectRoot, true);
 }
 

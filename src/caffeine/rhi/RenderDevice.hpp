@@ -296,6 +296,8 @@ public:
     RenderDevice& operator=(RenderDevice&&) = delete;
 
     bool init(SDL_Window* window, const RenderConfig& config = {});
+    /// Headless/offscreen device: no swapchain, only beginOffscreen()/readTexture().
+    bool initOffscreen(const RenderConfig& config = {});
     void shutdown();
 
     CommandBuffer* beginFrame();
@@ -305,7 +307,11 @@ public:
     /// while it is active are recorded into it.
     CommandBuffer* beginOffscreen();
     /// Submits `cmd` and waits for the GPU to finish it.
+    /// Submits the offscreen command without waiting for GPU idle. Callers must
+    /// follow it with a readback copy; once that fence signals, call
+    /// releaseOffscreenResources() to free upload/retire buffers.
     void           endOffscreen(CommandBuffer* cmd);
+    void           releaseOffscreenResources();
     /// Reads mip 0 of a 4-byte-per-pixel colour texture back to the CPU. Blocks.
     bool readTexture(Texture* texture, std::vector<u8>& outPixels);
 

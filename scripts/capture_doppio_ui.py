@@ -2,14 +2,14 @@
 """Capture the Doppio window for documentation.
 
 Each entry in caffeine-website/captures/shots.json is its own process:
-launch build/doppio with that shot's args, wait until the window is up,
-then grab only the active window (not the whole desktop).
+launch the Rust Doppio binary with that shot's args, wait until the window is
+up, then grab only the active window (not the whole desktop).
 
 On KDE Wayland this uses Spectacle. grim / ImageMagick are fallbacks.
 
   python3 scripts/capture_doppio_ui.py
   python3 scripts/capture_doppio_ui.py --id doppio-startup
-  DOPPIO_BIN=build/doppio python3 scripts/capture_doppio_ui.py --dry-run
+  DOPPIO_BIN=doppio/target/debug/doppio python3 scripts/capture_doppio_ui.py --dry-run
 
 Images: caffeine-website/content/en/docs/images/captures/{id}.png
 """
@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "caffeine-website" / "captures" / "shots.json"
 OUT_DIR = ROOT / "caffeine-website" / "content" / "en" / "docs" / "images" / "captures"
-DEFAULT_BIN = ROOT / "build" / "doppio"
+DEFAULT_BIN = ROOT / "doppio" / "target" / "debug" / "doppio"
 FOCUS_SCRIPT = Path(__file__).resolve().parent / "kwin_focus_doppio.js"
 
 
@@ -146,7 +146,7 @@ def main() -> int:
 
     if not binary.exists():
         print(f"Doppio binary not found: {binary}", file=sys.stderr)
-        print("Build it, or set DOPPIO_BIN.", file=sys.stderr)
+        print("Build it with `cd doppio && cargo build -p doppio-ui`, or set DOPPIO_BIN.", file=sys.stderr)
         return 1
     if not kind:
         print("Need spectacle, grim, or ImageMagick import.", file=sys.stderr)

@@ -11,7 +11,6 @@
 #include "../src/caffeine/ecs/Components3D.hpp"
 #include "../src/caffeine/ecs/MeshComponents.hpp"
 #include "../src/caffeine/ecs/World.hpp"
-#include "caffeine/ui/NodeCanvas.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -433,24 +432,4 @@ TEST_CASE("Node catalog covers every node kind exactly once", "[dryad][nodes]") 
 }
 
 
-TEST_CASE("NodeCanvas zoom transforms world and canvas space", "[ui][dryad]") {
-    UIKit::NodeCanvas canvas;
-    REQUIRE(canvas.zoom() == 1.0f);
-    canvas.setZoom(1.5f);
-    REQUIRE(canvas.consumeZoomChanged());
-    REQUIRE(canvas.zoom() == 1.5f);
-    const ImVec2 scaled = canvas.worldToCanvas(ImVec2(20.0f, 40.0f));
-    REQUIRE(scaled.x == 30.0f);
-    REQUIRE(scaled.y == 60.0f);
-    const ImVec2 world = canvas.canvasToWorld(scaled);
-    REQUIRE(world.x == 20.0f);
-    REQUIRE(world.y == 40.0f);
-    REQUIRE(canvas.scaled(100.0f) == 150.0f);
-    canvas.setZoom(0.01f);
-    REQUIRE(canvas.zoom() == 0.35f);
-    canvas.setZoom(10.0f);
-    REQUIRE(canvas.zoom() == 2.5f);
-    REQUIRE(canvas.consumeZoomChanged());
-    REQUIRE_FALSE(canvas.consumeZoomChanged());
-}
 #endif

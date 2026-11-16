@@ -11,8 +11,15 @@
 
 namespace Caffeine::Render {
 
+enum class MaterialPreviewSubject {
+    Sphere,
+    Cube,
+    Plane,
+};
+
 struct MaterialPreviewSettings {
-    /// Camera orbit around the sphere, in degrees.
+    MaterialPreviewSubject subject = MaterialPreviewSubject::Sphere;
+    /// Camera orbit around the subject, in degrees.
     f32 yawDegrees = 0.0f;
     f32 pitchDegrees = 12.0f;
     std::string environmentPath;
@@ -56,7 +63,7 @@ private:
     void buildScene();
     bool ensureTargets(u32 pixelSize);
     void applySettings(const MaterialPreviewSettings& settings);
-    void placeSphere();
+    void placeSubject(MaterialPreviewSubject subject);
     void placeMesh(const std::string& meshPath, const std::string& projectRoot);
     bool renderPlaced(RHI::CommandBuffer* cmd, const Assets::MaterialSurface* surface, u32 pixelSize,
                       const MaterialPreviewSettings& settings, const std::string& projectRoot,
