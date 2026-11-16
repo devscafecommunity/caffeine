@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 4
+#define CAFFEINE_CAPI_VERSION 5
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -352,6 +352,13 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_material_preview_ex(
     CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
     float pitch_degrees, CaffeinePreviewShape shape, const char* environment_path,
     float exposure, uint8_t* pixels, size_t pixel_bytes);
+/**
+ * Sun used by the material preview (applies to every later preview render): direction as
+ * yaw/elevation in degrees, intensity, and whether it casts shadow-mapped shadows.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_material_preview_light(
+    CaffeineSession* session, float sun_yaw_degrees, float sun_elevation_degrees,
+    float sun_intensity, int shadows);
 /** Starts an asynchronous preview render/readback; poll with render_material_preview_poll. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_material_preview_begin(
     CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,

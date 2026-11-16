@@ -647,6 +647,12 @@ struct App {
     material_preview_shape: usize,
     material_preview_environment: String,
     material_preview_exposure: f32,
+    material_light_generation: u32,
+    material_light_inflight: u32,
+    material_sun_yaw: f32,
+    material_sun_elevation: f32,
+    material_sun_intensity: f32,
+    material_preview_shadows: bool,
     material_preview_pending: bool,
     material_preview_pixels: Vec<u8>,
     material_preview_inflight: Option<(doppio_engine::Material, usize, String, f32, f32, f32)>,
@@ -961,6 +967,12 @@ impl App {
             material_preview_shape: 0,
             material_preview_environment: String::new(),
             material_preview_exposure: 1.0,
+            material_light_generation: 0,
+            material_light_inflight: 0,
+            material_sun_yaw: 41.0,
+            material_sun_elevation: 46.0,
+            material_sun_intensity: 1.6,
+            material_preview_shadows: true,
             material_preview_pending: false,
             material_preview_pixels: Vec::new(),
             material_preview_inflight: None,
@@ -5239,6 +5251,22 @@ impl App {
                     document.preview_dirty = true;
                 }
             }
+            material::Edit::SetSunYaw(value) => {
+                self.material_sun_yaw = value.clamp(-180.0, 180.0);
+                self.mark_material_preview_dirty();
+            }
+            material::Edit::SetSunElevation(value) => {
+                self.material_sun_elevation = value.clamp(2.0, 89.0);
+                self.mark_material_preview_dirty();
+            }
+            material::Edit::SetSunIntensity(value) => {
+                self.material_sun_intensity = value.clamp(0.0, 8.0);
+                self.mark_material_preview_dirty();
+            }
+            material::Edit::SetPreviewShadows(value) => {
+                self.material_preview_shadows = value;
+                self.mark_material_preview_dirty();
+            }
             material::Edit::PreviewPressed => {
                 self.material_preview_dragging = true;
                 self.material_preview_last = None;
@@ -5558,8 +5586,15 @@ impl App {
         self.refresh_material_thumbnails();
     }
 
+    fn mark_material_preview_dirty(&mut self) {
+        self.material_light_generation = self.material_light_generation.wrapping_add(1);
+        if let Some(document) = self.material.as_mut() {
+            document.preview_dirty = true;
+        }
+    }
+
     fn update_material_preview(&mut self) {
-        const PREVIEW_SIZE: u32 = 512;
+        const PREVIEW_SIZE: u32 = 768;
         let visible = self
             .panes
             .iter()
@@ -5609,7 +5644,7 @@ impl App {
                             })
                         },
                     );
-                    if same {
+                    if same && self.material_light_inflight == self.material_light_generation {
                         if let Some(document) = self.material.as_mut() {
                             document.preview_dirty = false;
                         }
@@ -5642,6 +5677,13 @@ impl App {
             return;
         }
         let surface = document.surface.clone();
+        engine.set_material_preview_light(
+            self.material_sun_yaw,
+            self.material_sun_elevation,
+            self.material_sun_intensity,
+            self.material_preview_shadows,
+        );
+        self.material_light_inflight = self.material_light_generation;
         self.material_preview_pixels = vec![0u8; PREVIEW_SIZE as usize * PREVIEW_SIZE as usize * 4];
         if engine
             .begin_material_preview(
@@ -8160,6 +8202,10 @@ impl App {
                         preview_shape: self.material_preview_shape,
                         preview_environment: &self.material_preview_environment,
                         preview_exposure: self.material_preview_exposure,
+                        sun_yaw: self.material_sun_yaw,
+                        sun_elevation: self.material_sun_elevation,
+                        sun_intensity: self.material_sun_intensity,
+                        preview_shadows: self.material_preview_shadows,
                         map_details: [
                             self.material_map_details[0].as_str(),
                             self.material_map_details[1].as_str(),

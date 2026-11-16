@@ -108,6 +108,7 @@ struct CaffeineSession {
     SDL_GPUTransferBuffer* previewTransfer = nullptr;
     SDL_GPUFence* previewFence = nullptr;
     uint32_t previewSize = 0;
+    Caffeine::Render::MaterialPreviewSettings previewLight; // sun/shadow state only
     bool previewPending = false;
 
     void releasePreviewReadbackFence() {
@@ -2068,7 +2069,7 @@ CaffeineResult caffeine_session_render_material_preview_ex(
         }
     }
 
-    Caffeine::Render::MaterialPreviewSettings settings;
+    Caffeine::Render::MaterialPreviewSettings settings = session->previewLight;
     settings.yawDegrees = yaw_degrees;
     settings.pitchDegrees = pitch_degrees;
     settings.showFloor = true;
@@ -2097,6 +2098,17 @@ CaffeineResult caffeine_session_render_material_preview_ex(
     return CAFFEINE_OK;
 }
 
+CaffeineResult caffeine_session_set_material_preview_light(
+    CaffeineSession* session, float sun_yaw_degrees, float sun_elevation_degrees,
+    float sun_intensity, int shadows) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->previewLight.sunYawDegrees = sun_yaw_degrees;
+    session->previewLight.sunElevationDegrees = std::clamp(sun_elevation_degrees, 2.0f, 89.0f);
+    session->previewLight.sunIntensity = std::clamp(sun_intensity, 0.0f, 8.0f);
+    session->previewLight.shadows = shadows != 0;
+    return CAFFEINE_OK;
+}
+
 CaffeineResult caffeine_session_render_material_preview_begin(
     CaffeineSession* session, const CaffeineMaterial* material, uint32_t size, float yaw_degrees,
     float pitch_degrees, CaffeinePreviewShape shape, const char* environmentPath, float exposure) {
@@ -2113,7 +2125,7 @@ CaffeineResult caffeine_session_render_material_preview_begin(
             return CAFFEINE_ERROR;
         }
     }
-    Caffeine::Render::MaterialPreviewSettings settings;
+    Caffeine::Render::MaterialPreviewSettings settings = session->previewLight;
     settings.yawDegrees = yaw_degrees;
     settings.pitchDegrees = pitch_degrees;
     settings.showFloor = true;

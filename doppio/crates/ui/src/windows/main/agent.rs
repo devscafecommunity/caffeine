@@ -600,6 +600,26 @@ pub fn run() -> iced::Result {
             },
         )
         .action(
+            "set_material_preview_sun",
+            "Sets the material preview sun. args: { \"yaw\": degrees, \"elevation\": degrees, \"intensity\": number, \"shadows\": bool } (all optional, applied in order)",
+            |args| {
+                let number = |key: &str| args.get(key).and_then(Value::as_f64).map(|v| v as f32);
+                if let Some(value) = number("yaw") {
+                    return Ok(Message::Material(material::Edit::SetSunYaw(value)));
+                }
+                if let Some(value) = number("elevation") {
+                    return Ok(Message::Material(material::Edit::SetSunElevation(value)));
+                }
+                if let Some(value) = number("intensity") {
+                    return Ok(Message::Material(material::Edit::SetSunIntensity(value)));
+                }
+                if let Some(value) = args.get("shadows").and_then(Value::as_bool) {
+                    return Ok(Message::Material(material::Edit::SetPreviewShadows(value)));
+                }
+                Err("expected one of yaw, elevation, intensity, shadows".to_owned())
+            },
+        )
+        .action(
             "set_material_preview_exposure",
             "Sets material preview exposure. args: { \"value\": number }",
             |args| {

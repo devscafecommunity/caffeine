@@ -763,12 +763,13 @@ void main() {
 
     for (int i = 0; i < lights.uDirCount; ++i) {
         vec3 dir = normalize(-lights.uDirData[i].xyz);
-        float shadow = parallaxSelfShadow(dir);
+        float pomShadow = parallaxSelfShadow(dir);
+        float shadow = pomShadow;
         if (lights.uFlags.x > 0.5 && lights.uDirData[i].w > 0.0) {
             if (i == 0 && shadows.uDirShadowValid.x > 0.5) {
-                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos, shadowNormal);
+                shadow = sampleDirShadow(uShadowMap0, 0, v_worldPos, shadowNormal) * pomShadow;
             } else if (i == 1 && shadows.uDirShadowValid.y > 0.5) {
-                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal);
+                shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal) * pomShadow;
             }
         }
         shadeLight(s, dir, lights.uDirColor[i].rgb * lights.uDirData[i].w * shadow, diffuse, specular);

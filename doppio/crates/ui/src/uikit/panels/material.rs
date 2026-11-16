@@ -120,6 +120,10 @@ pub enum Edit {
     OpenPreviewEnvironment,
     ClearPreviewEnvironment,
     SetPreviewExposure(f32),
+    SetSunYaw(f32),
+    SetSunElevation(f32),
+    SetSunIntensity(f32),
+    SetPreviewShadows(bool),
     PreviewPressed,
     PreviewMoved(Point),
     PreviewReleased,
@@ -147,6 +151,10 @@ pub struct MaterialView<'a> {
     pub preview_shape: usize,
     pub preview_environment: &'a str,
     pub preview_exposure: f32,
+    pub sun_yaw: f32,
+    pub sun_elevation: f32,
+    pub sun_intensity: f32,
+    pub preview_shadows: bool,
     pub map_details: [&'a str; 4],
 }
 
@@ -269,6 +277,47 @@ pub fn view<'a, Message: Clone + 'a>(
         view.preview_exposure,
         move |value| exposure_emit(Edit::SetPreviewExposure(value)),
     );
+    let sun_yaw = {
+        let emit = emit.clone();
+        slider::property_step(
+            id::MATERIAL_SUN_YAW,
+            "Light direction",
+            -180.0..=180.0,
+            view.sun_yaw,
+            1.0,
+            move |value| emit(Edit::SetSunYaw(value)),
+        )
+    };
+    let sun_elevation = {
+        let emit = emit.clone();
+        slider::property_step(
+            id::MATERIAL_SUN_ELEVATION,
+            "Light height",
+            2.0..=89.0,
+            view.sun_elevation,
+            1.0,
+            move |value| emit(Edit::SetSunElevation(value)),
+        )
+    };
+    let sun_intensity = {
+        let emit = emit.clone();
+        slider::property(
+            id::MATERIAL_SUN_INTENSITY,
+            "Light intensity",
+            0.0..=6.0,
+            view.sun_intensity,
+            move |value| emit(Edit::SetSunIntensity(value)),
+        )
+    };
+    let preview_shadows = {
+        let emit = emit.clone();
+        checkbox::property(
+            id::MATERIAL_PREVIEW_SHADOWS,
+            "Shadows",
+            view.preview_shadows,
+            move |value| emit(Edit::SetPreviewShadows(value)),
+        )
+    };
     let map_access = |label: &str, filled: bool, detail: &str| {
         if detail == "missing" {
             status::chip(format!("{label} missing"), theme::ChipTone::Danger)
@@ -353,6 +402,10 @@ pub fn view<'a, Message: Clone + 'a>(
     content = content.push(preview_shape);
     content = content.push(preview_environment);
     content = content.push(preview_exposure);
+    content = content.push(sun_yaw);
+    content = content.push(sun_elevation);
+    content = content.push(sun_intensity);
+    content = content.push(preview_shadows);
     content = content.push(map_summary);
     content = content.push(
         container(

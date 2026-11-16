@@ -271,6 +271,10 @@ pub const MATERIAL_PREVIEW_ENVIRONMENT: UiId = UiId::fixed("material.preview.env
 pub const MATERIAL_PREVIEW_ENVIRONMENT_CLEAR: UiId =
     UiId::fixed("material.preview.environment.clear");
 pub const MATERIAL_PREVIEW_EXPOSURE: UiId = UiId::fixed("material.preview.exposure");
+pub const MATERIAL_SUN_YAW: UiId = UiId::fixed("material.preview.sun_yaw");
+pub const MATERIAL_SUN_ELEVATION: UiId = UiId::fixed("material.preview.sun_elevation");
+pub const MATERIAL_SUN_INTENSITY: UiId = UiId::fixed("material.preview.sun_intensity");
+pub const MATERIAL_PREVIEW_SHADOWS: UiId = UiId::fixed("material.preview.shadows");
 pub const MATERIAL_ENVIRONMENT_PICKER: UiId = UiId::fixed("material.environment.picker");
 pub const MATERIAL_ENVIRONMENT_PICKER_CLOSE: UiId =
     UiId::fixed("material.environment.picker.close");
@@ -1007,6 +1011,26 @@ pub const CATALOG: &[UiMeta] = &[
         id: MATERIAL_PREVIEW_EXPOSURE,
         description: "Environment exposure for the material preview.",
         kind: "slider",
+    },
+    UiMeta {
+        id: MATERIAL_SUN_YAW,
+        description: "Horizontal direction of the preview sun, in degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: MATERIAL_SUN_ELEVATION,
+        description: "Height of the preview sun above the horizon, in degrees.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: MATERIAL_SUN_INTENSITY,
+        description: "Brightness of the preview sun.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: MATERIAL_PREVIEW_SHADOWS,
+        description: "Toggles shadow-mapped shadows in the material preview.",
+        kind: "checkbox",
     },
     UiMeta {
         id: MATERIAL_PACK_HEIGHT,

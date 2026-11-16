@@ -39,6 +39,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 
@@ -571,7 +573,11 @@ GpuSceneRenderer::DisplacedMesh* GpuSceneRenderer::displacedMeshFor(const Assets
     if (entry.valid && entry.sourceRevision == source->geometryRevision) return &entry;
     if (entry.valid) destroyMeshGpu(entry.mesh);
     entry.valid = false;
-    if (!Assets::subdivideMesh(*source, levels, entry.mesh)) return nullptr;
+    // Dense meshes (a UV sphere is ~3k indices) cannot take the full level count: lower it until
+    // the result fits the index budget instead of silently giving up.
+    constexpr size_t kBudget = 3'000'000;
+    while (levels > 0 && source->indices.size() * (size_t{1} << (2 * levels)) > kBudget) --levels;
+    if (levels == 0 || !Assets::subdivideMesh(*source, levels, entry.mesh)) return nullptr;
     const Assets::MeshDensity density = Assets::measureMeshDensity(entry.mesh);
     entry.metersPerUv = density.metersPerUv;
     entry.edgeUv = density.averageEdgeUv;
@@ -779,6 +785,9 @@ bool GpuSceneRenderer::createPipelines() {
     // Color-only shadow pass (no depth attachment) for cubemap / 2D shadow maps.
     RHI::GraphicsPipelineDesc shadowDesc{};
     fillMeshPipelineDesc(shadowDesc, layout, attrs, RHI::TextureFormat::R16_FLOAT, false, false);
+    // No depth attachment: keep the nearest occluder with MIN blending so the result does not
+    // depend on draw order (a floor drawn after a sphere used to erase the sphere's shadow).
+    shadowDesc.blendMode = RHI::BlendMode::Min;
     m_shadowPipeline = m_device->createGraphicsPipeline(m_shadowVert, m_shadowFrag, shadowDesc);
     if (m_shadowDisplaceVert) {
         m_shadowDisplacePipeline =
@@ -2590,6 +2599,17 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
+    } else {
+        // Shadows off: stale maps from an earlier frame must not keep shading the scene.
+        for (u32 slot = 0; slot < GpuDirectionalShadowMap::kMaxDirectionalShadowLights; ++slot) {
+            m_directionalShadows.clearSlot(slot);
+        }
+        for (u32 slot = 0; slot < GpuPointShadowMap::kMaxPointShadowLights; ++slot) {
+            m_pointShadows.clearSlot(slot);
+        }
+        for (u32 slot = 0; slot < GpuSpotShadowMap::kMaxSpotShadowLights; ++slot) {
+            m_spotShadows.clearSlot(slot);
+        }
     }
 
     {

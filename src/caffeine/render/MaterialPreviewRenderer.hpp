@@ -26,6 +26,11 @@ struct MaterialPreviewSettings {
     f32 environmentExposure = 1.0f;
     bool showFloor = true;
     u32 probeResolution = 128;
+    /// Sun direction as seen from the subject: yaw around +Y, elevation above the horizon.
+    f32 sunYawDegrees = 41.0f;
+    f32 sunElevationDegrees = 46.0f;
+    f32 sunIntensity = 1.6f;
+    bool shadows = true;
 };
 
 /// Material preview drawn by the scene renderer: a sphere wearing the material, a floor, a sun
@@ -74,6 +79,7 @@ private:
     ECS::World m_world;
     ECS::Entity m_sphere = ECS::Entity::INVALID;
     ECS::Entity m_floor = ECS::Entity::INVALID;
+    ECS::Entity m_sun = ECS::Entity::INVALID;
     RHI::Texture* m_color = nullptr;
     RHI::Texture* m_depth = nullptr;
     u32 m_pixelSize = 0;
