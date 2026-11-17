@@ -54,6 +54,13 @@ f32 defaultSpreadDeg(WaterQuality quality) {
 
 }  // namespace
 
+void WaveField::refreshDerived() {
+    m_wavenumbers.resize(m_waves.size());
+    for (size_t i = 0; i < m_waves.size(); ++i) {
+        m_wavenumbers[i] = Math::TAU / std::max(m_waves[i].wavelength, 0.05f);
+    }
+}
+
 void WaveField::configure(const WaveSettings& settings) {
     m_settings = settings;
     m_waves.clear();
@@ -70,11 +77,13 @@ void WaveField::configure(const WaveSettings& settings) {
             }
             m_waves.push_back(wave);
         }
+        refreshDerived();
         ++m_revision;
         return;
     }
 
     if (settings.quality == WaterQuality::Flat || settings.windSpeed <= 0.01f) {
+        refreshDerived();
         ++m_revision;
         return;
     }
@@ -82,6 +91,7 @@ void WaveField::configure(const WaveSettings& settings) {
     const int count = settings.waveCount > 0 ? settings.waveCount
                                               : defaultWaveCount(settings.quality);
     if (count <= 0) {
+        refreshDerived();
         ++m_revision;
         return;
     }
@@ -149,6 +159,7 @@ void WaveField::configure(const WaveSettings& settings) {
               });
 
     m_waves = std::move(waves);
+    refreshDerived();
     ++m_revision;
 }
 
@@ -165,12 +176,14 @@ WaveSample WaveField::sample(f32 x, f32 z, f32 time) const {
     f32 pz_x = 0.0f, pz_y = 0.0f, pz_z = 0.0f;
     f32 steepness = 0.0f;
 
-    for (const GerstnerWave& wave : m_waves) {
-        const f32 k = Math::TAU / wave.wavelength;
+    for (size_t w = 0; w < m_waves.size(); ++w) {
+        const GerstnerWave& wave = m_waves[w];
+        const f32 k = m_wavenumbers[w];
         const f32 theta =
             k * (wave.direction.x * x + wave.direction.y * z) - wave.omega * time + wave.phase;
-        const f32 c = std::cos(theta);
-        const f32 s = std::sin(theta);
+        f32 s = 0.0f;
+        f32 c = 0.0f;
+        sincosf(theta, &s, &c);
 
         const f32 qa = wave.steepness * wave.amplitude;
         dx += qa * wave.direction.x * c;

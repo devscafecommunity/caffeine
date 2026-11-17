@@ -3,6 +3,8 @@
 #include "math/Math.hpp"
 
 #include <algorithm>
+#include <functional>
+#include <thread>
 #include <cmath>
 
 namespace Caffeine::Fluids {
@@ -167,31 +169,61 @@ void FluidWorld::buildSurfaceMesh(int resolution, f32 sizeX, f32 sizeZ, SurfaceM
     Vec3 boundsMin(1.0e30f, 1.0e30f, 1.0e30f);
     Vec3 boundsMax(-1.0e30f, -1.0e30f, -1.0e30f);
 
-    out.positions.reserve(static_cast<size_t>(stride) * stride);
-    out.normals.reserve(static_cast<size_t>(stride) * stride);
-    out.texcoords.reserve(static_cast<size_t>(stride) * stride);
+    const size_t vertexCount = static_cast<size_t>(stride) * stride;
+    out.positions.resize(vertexCount);
+    out.normals.resize(vertexCount);
+    out.texcoords.resize(vertexCount);
 
-    for (int j = 0; j <= resolution; ++j) {
-        for (int i = 0; i <= resolution; ++i) {
-            const f32 x = originX + static_cast<f32>(i) * stepX;
-            const f32 z = originZ + static_cast<f32>(j) * stepZ;
-            const WaveSample sample = sampleSurface(x, z);
-            Vec3 position(x + sample.displacement.x, sample.height,
-                          z + sample.displacement.z);
-            if (m_settings.simulateShallowWater) position.y = sample.height;
-
-            out.positions.push_back(position);
-            out.normals.push_back(sample.normal);
-            out.texcoords.push_back(Vec2(static_cast<f32>(i) / static_cast<f32>(resolution),
-                                         static_cast<f32>(j) / static_cast<f32>(resolution)));
-
-            boundsMin.x = std::min(boundsMin.x, position.x);
-            boundsMin.y = std::min(boundsMin.y, position.y);
-            boundsMin.z = std::min(boundsMin.z, position.z);
-            boundsMax.x = std::max(boundsMax.x, position.x);
-            boundsMax.y = std::max(boundsMax.y, position.y);
-            boundsMax.z = std::max(boundsMax.z, position.z);
+    // Rows are independent, so large surfaces are sampled on several threads. Each worker keeps
+    // its own bounds, merged afterwards.
+    struct RowBounds {
+        Vec3 lo{1.0e30f, 1.0e30f, 1.0e30f};
+        Vec3 hi{-1.0e30f, -1.0e30f, -1.0e30f};
+    };
+    const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+    const int workers = vertexCount < 8192 ? 1 : static_cast<int>(std::min(hardware, 8u));
+    std::vector<RowBounds> bounds(static_cast<size_t>(workers));
+    auto buildRows = [&](int first, int last, RowBounds& local) {
+        for (int j = first; j < last; ++j) {
+            for (int i = 0; i <= resolution; ++i) {
+                const f32 x = originX + static_cast<f32>(i) * stepX;
+                const f32 z = originZ + static_cast<f32>(j) * stepZ;
+                const WaveSample sample = sampleSurface(x, z);
+                Vec3 position(x + sample.displacement.x, sample.height, z + sample.displacement.z);
+                if (m_settings.simulateShallowWater) position.y = sample.height;
+                const size_t index = static_cast<size_t>(j) * stride + i;
+                out.positions[index] = position;
+                out.normals[index] = sample.normal;
+                out.texcoords[index] = Vec2(static_cast<f32>(i) / static_cast<f32>(resolution),
+                                            static_cast<f32>(j) / static_cast<f32>(resolution));
+                local.lo.x = std::min(local.lo.x, position.x);
+                local.lo.y = std::min(local.lo.y, position.y);
+                local.lo.z = std::min(local.lo.z, position.z);
+                local.hi.x = std::max(local.hi.x, position.x);
+                local.hi.y = std::max(local.hi.y, position.y);
+                local.hi.z = std::max(local.hi.z, position.z);
+            }
         }
+    };
+    if (workers == 1) {
+        buildRows(0, resolution + 1, bounds[0]);
+    } else {
+        std::vector<std::thread> threads;
+        const int rows = resolution + 1;
+        for (int w = 0; w < workers; ++w) {
+            const int first = rows * w / workers;
+            const int last = rows * (w + 1) / workers;
+            threads.emplace_back(buildRows, first, last, std::ref(bounds[static_cast<size_t>(w)]));
+        }
+        for (std::thread& thread : threads) thread.join();
+    }
+    for (const RowBounds& b : bounds) {
+        boundsMin.x = std::min(boundsMin.x, b.lo.x);
+        boundsMin.y = std::min(boundsMin.y, b.lo.y);
+        boundsMin.z = std::min(boundsMin.z, b.lo.z);
+        boundsMax.x = std::max(boundsMax.x, b.hi.x);
+        boundsMax.y = std::max(boundsMax.y, b.hi.y);
+        boundsMax.z = std::max(boundsMax.z, b.hi.z);
     }
 
     out.indices.reserve(static_cast<size_t>(resolution) * resolution * 6);

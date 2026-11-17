@@ -85,6 +85,9 @@ public:
 private:
     WaveSettings m_settings;
     std::vector<GerstnerWave> m_waves;
+    /// 2 pi / wavelength for each wave, computed once in configure().
+    std::vector<f32> m_wavenumbers;
+    void refreshDerived();
     u32 m_revision = 1;
 };
 
