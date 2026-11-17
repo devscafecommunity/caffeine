@@ -28,6 +28,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// anything that renders must run one at a time inside a process.
 pub fn ui_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static DEVICE_TEARDOWN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    // Headless runs create several short-lived engine sessions in one process.
+    // Destroying each GPU device on session close keeps the driver from running
+    // out of devices; the interactive editor keeps its single device for the
+    // process lifetime.
+    DEVICE_TEARDOWN.get_or_init(|| std::env::set_var("CAFFEINE_CAPI_DESTROY_DEVICE", "1"));
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 

@@ -517,6 +517,9 @@ fn wrap(text: &str, max_chars: usize) -> Vec<String> {
 }
 
 fn engine_harness() -> Option<Harness> {
+    // Take the UI/GPU lock before creating the engine: two idle devices in the
+    // same process make later render_begin calls fail under the full suite.
+    let guard = test_guard();
     let mut engine = doppio_engine::Engine::load_default()?;
     let first = engine.create_entity("First").ok()?;
     engine.set_position(first, [2.0, 0.0, 0.0]).ok()?;
@@ -530,7 +533,7 @@ fn engine_harness() -> Option<Harness> {
     };
     Some(Harness {
         app: App::with_project(loaded),
-        _guard: test_guard(),
+        _guard: guard,
     })
 }
 
@@ -1330,6 +1333,7 @@ fn undo_does_not_drop_a_pending_viewport_readback() {
 
 #[test]
 fn engine_undo_restores_the_scene_snapshot() {
+    let guard = test_guard();
     let Some(mut engine) = doppio_engine::Engine::load_default() else {
         eprintln!("skipping engine undo test: libcaffeine-capi is not built");
         return;
@@ -1349,7 +1353,7 @@ fn engine_undo_restores_the_scene_snapshot() {
 
     let mut harness = Harness {
         app: App::with_project(loaded),
-        _guard: test_guard(),
+        _guard: guard,
     };
     harness.rebase_history();
     harness.dispatch(Message::SelectEntity(0));
@@ -4312,6 +4316,7 @@ fn scale_edits_change_what_the_engine_renders() {
 
 #[test]
 fn scale_applies_to_scene_loaded_entities_too() {
+    let _guard = test_guard();
     let Some(mut engine) = doppio_engine::Engine::load_default() else {
         return;
     };
@@ -4320,7 +4325,6 @@ fn scale_applies_to_scene_loaded_entities_too() {
     if engine.load_scene(&scene.to_string_lossy()).is_err() {
         return;
     }
-    let _guard = test_guard();
     let count = engine.entity_count();
     let mut both = 0;
     for index in 0..count {
@@ -4607,6 +4611,7 @@ fn gizmo_plane_and_uniform_edits_reach_the_engine() {
 
 #[test]
 fn rebuilding_markers_for_a_large_scene_stays_cheap() {
+    let _guard = test_guard();
     let Some(mut engine) = doppio_engine::Engine::load_default() else {
         return;
     };
@@ -4635,10 +4640,10 @@ fn rebuilding_markers_for_a_large_scene_stays_cheap() {
 
 #[test]
 fn a_scaled_parent_scales_where_its_children_are() {
+    let _guard = test_guard();
     let Some(mut engine) = doppio_engine::Engine::load_default() else {
         return;
     };
-    let _guard = test_guard();
     let parent = engine.create_entity("Group").unwrap();
     let child = engine.create_entity("Child").unwrap();
     engine.set_position(child, [1.0, 0.0, 0.0]).unwrap();

@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -228,7 +229,18 @@ struct CaffeineSession {
         // SDL_DestroyGPUDevice unloads Vulkan entry points that other GPU
         // stacks in the host (wgpu/Iced) may still hold. The device is tiny
         // and an editor owns one session, so let the process reclaim it.
-        if (renderDevice) renderDevice.release();
+        // Headless test harnesses create dozens of short-lived sessions; leaking
+        // a device per test exhausts the driver and later render_begin calls
+        // fail, so they opt into destroying it.
+        static const bool destroyDevice =
+            std::getenv("CAFFEINE_CAPI_DESTROY_DEVICE") != nullptr;
+        if (renderDevice) {
+            if (destroyDevice) {
+                renderDevice.reset();
+            } else {
+                renderDevice.release();
+            }
+        }
     }
 
     bool ensureRender(uint32_t width, uint32_t height) {
