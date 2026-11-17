@@ -361,6 +361,27 @@ reference; this driver is for development and verification.)
 
 ## Reference
 
+### Recording GIFs and videos (ffmpeg)
+
+`record_start` / `record_stop` capture the window (or one widget) while a script runs and let **ffmpeg**
+encode a **GIF, MP4 or WebM**. A frame is taken after every step that changes something (so a click is
+visible) and every few frames during a `wait`; with `real_time: true` the wait plays at normal speed, so
+`{ "action": "wait", "ms": 2000, "real_time": true }` is about two seconds of video. `fps` is both the capture
+and the playback rate. ffmpeg must be on the `PATH` (or set `FFMPEG` to its path); without it the step fails
+with a hint and the frames are kept. A recording left open at the end of a script is finished automatically.
+
+```json
+{ "steps": [
+  { "action": "record_start", "name": "orbit", "format": "mp4", "fps": 30, "target": "id:editor.pane.terrain_generator" },
+  { "action": "click", "target": "id:terraingen.preset" },
+  { "action": "wait", "ms": 2000, "real_time": true },
+  { "action": "record_stop" }
+] }
+```
+
+The result of `record_stop` reports `path`, `frames`, `seconds` and `bytes`. Use `width` for a smaller file,
+`scale` for a sharper capture and `keep_frames` to keep the PNGs.
+
 The sections below are generated from `headless/reference.rs`.
 
 <!-- BEGIN GENERATED REFERENCE -->
@@ -693,6 +714,35 @@ Returns: `{ "path", "width", "height", "hash", "baseline": { "status", "diff_rat
 ```json
 { "action": "screenshot", "name": "assets-wizard", "target": "id:assets.wizard", "annotate": true }
 ```
+#### `record_start`
+
+Starts recording the window (or one widget). Frames are taken after every step that changes something and every few frames during `wait`; `record_stop` turns them into a GIF, MP4 or WebM with ffmpeg.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | no | File stem of the result (default `recording`): `<out>/<name>.<format>`. |
+| `format` | `string` | no | `gif` (default), `mp4` or `webm`. |
+| `fps` | `int` | no | Capture and playback rate, 1-60 (default 15). A `wait` of 2000 ms with `real_time` is about two seconds of video. |
+| `target` | `target` | no | Record only this widget; omit for the whole window. |
+| `padding` | `number` | no | Logical pixels around a target (default 8). |
+| `scale` | `number` | no | Capture pixel density, 0.25-3 (default 1). |
+| `width` | `int` | no | Output width in pixels (height keeps the aspect); omit to keep the captured size. |
+| `keep_frames` | `bool` | no | Keep the PNG frames (their folder is returned) instead of deleting them. |
+
+Returns: `{ "recording": true, "fps" }`
+
+```json
+{ "action": "record_start", "name": "orbit", "format": "mp4", "fps": 30, "target": "id:editor.pane.viewport" }
+```
+#### `record_stop`
+
+Stops the recording and encodes it with ffmpeg (the FFMPEG environment variable overrides the program path). A recording still open when the script ends is finished automatically.
+
+Returns: `{ "path", "format", "frames", "fps", "seconds", "bytes" }`
+
+```json
+{ "action": "record_stop" }
+```
 
 ### Assert
 
@@ -736,4 +786,5 @@ Returns: `{ "asset_root": … }`
 ```json
 { "action": "reset", "fixture": "entities", "asset_root": "temp" }
 ```
+
 <!-- END GENERATED REFERENCE -->

@@ -16,6 +16,7 @@ mod annotate;
 pub mod cli;
 mod driver;
 pub mod protocol;
+pub mod record;
 pub mod reference;
 mod state;
 
