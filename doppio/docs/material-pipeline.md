@@ -234,9 +234,9 @@ depth.
 
 User guide with rendered images: [materials-guide.md](materials-guide.md).
 
-- [x] `uikit/procedural/`: ~106 data-driven, tileable, seeded, multi-threaded
+- [x] `uikit/procedural/`: ~123 data-driven, tileable, seeded, multi-threaded
       ops (`NodeKind::Proc`) — Noise 16, Natural 17, Patterns 18, Shapes 8,
-      Math 25, Geometry 8, Height & PBR 14. Each op is one `OpDef` row (ports,
+      Math 25, Geometry 8, Height & PBR 14, **Realistic 17** (`realistic.rs`). Each op is one `OpDef` row (ports,
       `ParamSpec`s, colours, `eval`); the palette, properties panel, `.mgraph`
       (`proc <id> …`) and MaterialCraft (`doppio_proc`) are generated from it.
 - [x] Output node: Emissive / Opacity / Normal inputs appended after
@@ -244,8 +244,10 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
       unconnected), `normalize_height` and `height_contrast`, so height is never
       a flat plane. `BakedMaterial` gained `emissive(16)`, `has_emissive`,
       `opacity(16)`, `has_opacity`, `normal`.
-- [x] `uikit/material_library.rs`: 41 parameterisable presets (Stone, Brick,
-      Concrete, Ground, Wood, Metal, Fabric, Organic, Sci-fi, Misc), picked from
+- [x] `uikit/material_library.rs`: 78 parameterisable presets (Stone, Brick,
+      Concrete, Ground, Wood, Metal, Fabric, Organic, Sci-fi, Misc and the Realistic
+      Rock/Water/Nature/Ground/Wood/Man-made families with optional accent layers
+      and emissive wiring), picked from
       the generator header **Library** dropdown (one undoable step, resolution
       kept). Tests bake every preset at 64² and check base variance, height
       std-dev > 0.02, determinism and `.mgraph` round trip.
@@ -300,5 +302,14 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
       (set 0, so the 16 fragment samplers are untouched). Normals are rebuilt by finite
       differences and the shadow pass uses the same formula, so relief casts real shadows.
       C ABI version 4. Material panel: "Geometric displacement" checkbox + depth + subdivisions.
+- [x] Material preview: sun direction/height/intensity and a Shadows toggle (C ABI v5,
+      `caffeine_session_set_material_preview_light`, agent action `set_material_preview_sun`),
+      768 px render, closer camera, brighter floor, sky fill.
+- [x] Shadow pass is order independent (`BlendMode::Min`); stale shadow maps are cleared when
+      shadows are off; POM self-shadow multiplies with the shadow-map term.
+- [x] Cross-session fix: process-wide GPU texture cache, procedural meshes and mesh cache are
+      released on session shutdown (the device is leaked on purpose).
+- [x] Re-bake fix: `GpuTextureCache` reloads a file rewritten in place (stamp changed) even
+      while its ref count is non-zero.
 - [ ] Expand culling bounds by the displacement depth; distance-adaptive subdivision.
 - [ ] Preset seed / scale / wear in the UI.

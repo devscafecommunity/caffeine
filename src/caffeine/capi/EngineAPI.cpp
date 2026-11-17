@@ -207,11 +207,13 @@ struct CaffeineSession {
             materialPreview.reset();
         }
         if (sceneRenderer) sceneRenderer->shutdown();
+        // The texture cache and the procedural/imported meshes are process-wide. The device
+        // below is leaked on purpose, so a later session would otherwise inherit their handles
+        // (white texture, shadow-map users, mesh buffers) from a device it does not own.
         if (renderDevice) {
-            // The texture cache is global and outlives one session. Drop only
-            // this device's entries so the next session cannot reuse stale
-            // textures from a destroyed renderer.
             Caffeine::Render::GpuTextureCache::instance().releaseAll(renderDevice.get());
+            Caffeine::Render::GpuProceduralMeshes::releaseGpuResources(renderDevice.get());
+            Caffeine::Assets::MeshCache::getInstance().releaseGpuResources(renderDevice.get());
         }
         if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
         colorTarget = nullptr;

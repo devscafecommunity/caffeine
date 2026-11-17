@@ -1907,6 +1907,169 @@ fn material_picker_assigns_a_mat_to_the_selected_mesh() {
 }
 
 #[test]
+fn material_preview_shapes_and_async_readback_work() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    assert!(engine.capi_version() >= 2);
+    let material = doppio_engine::Material::default();
+    let mut output = vec![0u8; 64 * 64 * 4];
+    engine
+        .begin_material_preview(
+            &material,
+            64,
+            20.0,
+            12.0,
+            doppio_engine::PreviewShape::Cube,
+            "",
+            1.0,
+        )
+        .expect("begin preview");
+    let mut ready = false;
+    for _ in 0..200 {
+        match engine.poll_material_preview(&mut output) {
+            Ok(doppio_engine::RenderState::Ready) => {
+                ready = true;
+                break;
+            }
+            Ok(doppio_engine::RenderState::Pending) => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            _ => break,
+        }
+    }
+    assert!(ready, "async material preview should finish");
+    assert!(output.chunks(4).any(|pixel| pixel[3] > 0));
+    let sphere = engine
+        .render_material_preview_ex(
+            &material,
+            64,
+            20.0,
+            12.0,
+            doppio_engine::PreviewShape::Sphere,
+            "",
+            1.0,
+        )
+        .expect("sphere preview");
+    assert_ne!(sphere, output, "cube and sphere previews should differ");
+}
+
+#[test]
+fn material_preview_sun_and_shadows_change_the_render() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let material = doppio_engine::Material {
+        displacement_mode: 1,
+        ..doppio_engine::Material::default()
+    };
+    let render = |engine: &mut doppio_engine::Engine, yaw: f32, shadows: bool| {
+        engine.set_material_preview_light(yaw, 25.0, 3.0, shadows);
+        engine
+            .render_material_preview_ex(
+                &material,
+                128,
+                0.0,
+                25.0,
+                doppio_engine::PreviewShape::Sphere,
+                "",
+                1.0,
+            )
+            .expect("preview")
+    };
+    let base = render(engine, 41.0, true);
+    let moved = render(engine, 180.0, true);
+    let unshadowed = render(engine, 180.0, false);
+    assert_ne!(base, moved, "moving the sun must change the preview");
+    assert_ne!(
+        moved, unshadowed,
+        "toggling shadows must change the preview"
+    );
+    // Sun behind the sphere: its shadow falls on the floor in front of it (bottom rows). The
+    // shadow map used to be draw-order dependent and the floor erased the sphere's shadow.
+    let bottom_mean = |pixels: &[u8]| {
+        let rows = pixels[100 * 128 * 4..].chunks(4);
+        let count = rows.len() as f32;
+        rows.map(|px| f32::from(px[0]) + f32::from(px[1]) + f32::from(px[2]))
+            .sum::<f32>()
+            / count
+    };
+    assert!(
+        bottom_mean(&moved) < bottom_mean(&unshadowed) * 0.7,
+        "the sphere must cast a shadow on the floor ({} vs {})",
+        bottom_mean(&moved),
+        bottom_mean(&unshadowed)
+    );
+    if let Ok(dir) = std::env::var("DOPPIO_PREVIEW_DUMP") {
+        for (name, pixels) in [
+            ("base", &base),
+            ("moved", &moved),
+            ("noshadow", &unshadowed),
+        ] {
+            let mut ppm = b"P6\n128 128\n255\n".to_vec();
+            for px in pixels.chunks(4) {
+                ppm.extend_from_slice(&px[..3]);
+            }
+            let _ = std::fs::write(format!("{dir}/{name}.ppm"), ppm);
+        }
+    }
+}
+
+#[test]
+fn preview_reloads_a_map_rewritten_in_place() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let dir = std::env::temp_dir().join(format!("doppio-rewrite-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("albedo.png").to_string_lossy().to_string();
+    let solid = |rgb: [u8; 3]| -> Vec<u8> {
+        (0..16 * 16)
+            .flat_map(|_| [rgb[0], rgb[1], rgb[2], 255])
+            .collect()
+    };
+    let material = doppio_engine::Material {
+        albedo_map: path.clone(),
+        ..doppio_engine::Material::default()
+    };
+    let render = |engine: &mut doppio_engine::Engine| {
+        engine
+            .render_material_preview_ex(
+                &material,
+                64,
+                0.0,
+                20.0,
+                doppio_engine::PreviewShape::Plane,
+                "",
+                1.0,
+            )
+            .expect("preview")
+    };
+    engine
+        .save_texture_rgba(&path, 16, 16, &solid([230, 20, 20]))
+        .expect("write red");
+    let red = render(engine);
+    // Same path, new content, and make sure the modification time moves.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    engine
+        .save_texture_rgba(&path, 16, 16, &solid([20, 20, 230]))
+        .expect("write blue");
+    let blue = render(engine);
+    let centre = |pixels: &[u8]| {
+        let at = (32 * 64 + 32) * 4;
+        (pixels[at], pixels[at + 2])
+    };
+    let (red_r, red_b) = centre(&red);
+    let (blue_r, blue_b) = centre(&blue);
+    assert!(red_r > red_b, "first render should be reddish");
+    assert!(blue_b > blue_r, "the rewritten map must be reloaded");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn mesh_map_bakes_write_uv_channels() {
     let Some(mut harness) = engine_harness() else {
         return;

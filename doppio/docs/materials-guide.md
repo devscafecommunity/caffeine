@@ -9,7 +9,7 @@ regenerate them are at the end.
 ## 1. The procedural library
 
 The Generator tab is a node graph that bakes into the material's maps. Besides
-the original nodes it now has **106 data-driven operations** (`uikit/procedural/`),
+the original nodes it now has **123 data-driven operations** (`uikit/procedural/`),
 all seeded, tileable and multi-threaded:
 
 | Category | Examples |
@@ -21,19 +21,20 @@ all seeded, tileable and multi-threaded:
 | Math (25) | Add, Multiply, Lerp, Remap, Clamp, Power, Smoothstep, Posterize, Gradient Map, Channel Split/Merge… |
 | Geometry (8) | Transform 2D, Mirror, Polar, Twirl, Pixelate, Slope Blur, Tile Sampler, Warp |
 | Height & PBR (14) | Height-to-Normal, Height Blend, Terrace, Bevel, Curvature, multi-scale AO, Edge Wear, Dust |
+| **Realistic (17)** | Rock Fracture, River Pebbles, Grass Blades, Water Waves, Foam, Bark Fissures, Soil Clumps, Leaf Litter, Lichen, Wet / Puddle Mask, Cavity Grime, Ice, Lava, Asphalt, Carbon Fibre, Paint Chips, Water Droplets |
 
 They appear in the node palette grouped by category (searchable) and their
 parameters get sliders, colour pickers and dropdowns automatically in the
 properties panel, because each op is one table row (`OpDef`).
 
-### Preset library (41 materials)
+### Preset library (78 materials)
 
 The **Library** dropdown in the Generator header starts from a ready-made
 graph (one undoable step; your resolution is kept). Presets are normal graphs,
 so you can keep editing them. Every preset has real height variation and tiles
 seamlessly.
 
-![All 41 presets, base colour](images/material/gallery-albedo.png)
+![All presets, base colour](images/material/gallery-albedo.png)
 
 The same presets as height maps (white = surface, black = deepest) and as
 normal maps:
@@ -41,6 +42,46 @@ normal maps:
 ![Height maps](images/material/gallery-height.png)
 
 ![Normal maps](images/material/gallery-normal.png)
+
+### Realistic library: rock, water, foliage, ground and man-made PBR
+
+The *Realistic* category holds the Substance-style building blocks behind the photoreal
+presets. All of them tile, are seeded and live in `uikit/procedural/realistic.rs`:
+
+| Op | What it makes | Notable outputs |
+|---|---|---|
+| Rock Fracture | angular facets, each a tilted plane with sharp cracks | Colour, Height, Facet id |
+| River Pebbles | tightly packed rounded stones with gaps | Colour, Height, Pebble id |
+| Grass Blades | layered, tapered, leaning and curling blades over soil | Colour, Height, Blade id |
+| Water Waves | sum of directional waves (integer wave vectors, so it tiles) plus capillary ripples | Colour, Height |
+| Foam | crest foam with lacework, from any height input or its own noise | Mask |
+| Bark Fissures | vertically stretched plates separated by fissures | Colour, Height |
+| Soil Clumps | clods, crumbs and small stones | Colour, Height |
+| Leaf Litter | overlapping leaves with veins, three to four layers deep | Colour, Height |
+| Lichen | ragged colonies | Mask |
+| Wet / Puddle Mask | low areas of a height input fill with water | Mask |
+| Cavity Grime | dirt gathering in the crevices of a height input | Mask |
+| Ice, Lava, Asphalt, Carbon Fibre, Paint Chips, Water Droplets | single-purpose surfaces | Lava also outputs **Emissive** |
+
+![Realistic presets, base colour](images/material/realistic-albedo.png)
+
+Rendered by the engine on a floor with parallax depth, a real sun and shadows:
+
+![Realistic presets rendered](images/material/realistic-renders.png)
+
+**Accent layers.** A preset can carry a third layer (moss, foam, rust, lichen, wetness...).
+The accent's value is the mask: it blends its colour over the surface, drives the roughness
+towards a target (wet = glossy) and adds a little height. Presets built this way are normal
+graphs (`Lerp` nodes keyed by the accent), so you can rebalance or replace the accent in the
+node editor. `wear` scales the accent as well.
+
+Preset families: **Realistic Rock** (granite cliff, basalt columns, limestone, sandstone,
+mossy boulder, lichen granite, river and wet pebbles, lava flow, frozen lake), **Realistic
+Water** (ocean swell, choppy sea, calm lake, tropical shallows, river rapids, rain puddle,
+droplets on glass, swamp), **Realistic Nature** (lawn, meadow, dry and tall wild grass, pine
+needles, forest floor, autumn leaves), **Realistic Ground** (soil, forest mud, fresh and cracked
+asphalt), **Realistic Wood** (oak, pine and birch bark) and **Realistic Man-made** (carbon fibre,
+chipped red and blue paint, rusty painted panel, mossy brick wall).
 
 ## 2. The Output node
 
@@ -127,10 +168,40 @@ unchanged. The preview now also hashes each texture's modification time and size
 so **every bake refreshes the preview** (and any tool that rewrites a map in
 place does too). Covered by `generator_bake_can_run_again_and_stores_height_as_real_depth`.
 
+**Why a re-bake could still look unchanged.** The preview's hash was right, but the engine's
+GPU texture cache only refreshed a file that changed on disk when its reference count was zero.
+The count is raised on every acquire and never drops while a map is used, so the first bake
+stayed on screen. The cache now reloads whenever the file's modification time moves (covered by
+`preview_reloads_a_map_rewritten_in_place`).
+
 Purely procedural graphs also preview and bake **without an engine session**;
 only graphs that read project images need one to locate them.
 
-## 5. Regenerating the images
+## 5. The material preview: light, shadows and resolution
+
+The preview sphere now has its own sun. Under the shape / environment / exposure controls:
+
+| Control | Effect |
+|---|---|
+| Light direction | sun yaw around the subject (-180..180 degrees) |
+| Light height | sun elevation (2..89 degrees) |
+| Light intensity | sun brightness |
+| Shadows | toggles the shadow map |
+
+Agents use `set_material_preview_sun` (`yaw`, `elevation`, `intensity`, `shadows`). The preview
+renders at 768 px with the camera closer, on a brighter floor with a soft sky fill, so a
+material's relief, its cast shadow and its wet or dry gloss can be judged immediately.
+With *Geometric displacement* enabled the sphere is subdivided and really displaced, and its
+silhouette and shadows show it.
+
+**Engine fix found while building this.** The directional shadow pass has no depth attachment, so
+whichever mesh was drawn last overwrote the others: a floor drawn after a sphere erased the
+sphere's shadow. The pass now uses `BlendMode::Min`, which keeps the nearest occluder
+regardless of draw order. The process-wide GPU caches (textures, procedural meshes, mesh cache)
+are also released when a session shuts down, so a second session no longer inherits handles
+from a dead device.
+
+## 6. Regenerating the images
 
 ```bash
 ./rebuild.sh                              # engine + Doppio (needs ImageMagick for the sheets)

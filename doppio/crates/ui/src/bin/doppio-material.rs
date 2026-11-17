@@ -17,7 +17,7 @@ fn usage() -> ! {
          doppio-material texset-new --out <file.texset> [--size 512]\n  \
          doppio-material texset-info <file.texset>\n  \
          doppio-material texset-export <file.texset> --out DIR [--preset NAME]\n  \
-         doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list]"
+         doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list|--slugs]"
     );
     std::process::exit(2);
 }
@@ -333,9 +333,28 @@ fn inspect(args: &[String]) -> Result<(), String> {
 
 /// Bakes procedural library presets into a ready-to-render material set:
 /// `<name>_base.png`, `<name>_normal.png` (height in alpha), `<name>_orm.png`,
+fn preset_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 /// `<name>.mat` (parallax on) and `<name>_flat.mat` (same maps, parallax off).
 fn bake_preset(args: &[String]) -> Result<(), String> {
     use doppio_ui::uikit::{generators, height_pack, material_library};
+    if args.iter().any(|argument| argument == "--slugs") {
+        // Machine-readable: slug <TAB> category <TAB> name (used by the gallery script).
+        for preset in material_library::presets() {
+            println!(
+                "{}\t{}\t{}",
+                preset_slug(preset.name),
+                preset.category,
+                preset.name
+            );
+        }
+        return Ok(());
+    }
     if args.iter().any(|argument| argument == "--list") {
         for preset in material_library::presets() {
             println!(
@@ -371,12 +390,7 @@ fn bake_preset(args: &[String]) -> Result<(), String> {
         let baked = graph
             .bake()
             .map_err(|error| format!("{}: {error}", preset.name))?;
-        let slug: String = preset
-            .name
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '_' })
-            .collect();
+        let slug = preset_slug(preset.name);
         let path = |suffix: &str| {
             out.join(format!("{slug}{suffix}"))
                 .to_string_lossy()

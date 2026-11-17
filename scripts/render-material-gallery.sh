@@ -59,4 +59,22 @@ for name in red_brick cobblestone oak_planks diamond_plate dragon_scales rusted_
         -font "${root}/assets/jetbrains-mono/static/jetbrains-mono-latin-400-normal.ttf" -fill white -pointsize 18 -annotate +0+4 "${name//_/ }   —   parallax off  |  parallax on" \
         "${out}/depth-${name}.png"
 done
+# Realistic library: contact sheet of the "Realistic ..." presets + engine renders.
+mapfile -t realistic < <("${root}/doppio/target/debug/doppio-material" bake-preset --slugs \
+    | awk -F'\t' '$2 ~ /^Realistic/ { print $1 }')
+base_files=()
+for slug in "${realistic[@]}"; do base_files+=("${work}/${slug}_base.png"); done
+if [[ ${#base_files[@]} -gt 0 ]]; then
+    montage "${base_files[@]}" -tile 7x -geometry 150x150+3+3 -background '#151515' "${out}/realistic-albedo.png"
+fi
+shots=()
+for name in ocean_swell meadow_grass cliff_granite autumn_leaves lava_flow oak_bark river_pebbles carbon_fibre; do
+    [[ -f "${work}/${name}.mat" ]] || continue
+    SNAP_ONLY_FLOOR=1 SNAP_FLOOR_MAT="${work}/${name}.mat" "${root}/build/caffeine-render-snapshot" \
+        "${work}/r-${name}.png" 800 450 40 0 4 >/dev/null
+    shots+=("${work}/r-${name}.png")
+done
+if [[ ${#shots[@]} -gt 0 ]]; then
+    montage "${shots[@]}" -tile 2x -geometry 640x360+3+3 -background '#151515' "${out}/realistic-renders.png"
+fi
 echo "wrote gallery to ${out}"
