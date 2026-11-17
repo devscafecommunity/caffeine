@@ -1,0 +1,25 @@
+{
+  "name": "Capture the Texture Generator screenshots used by docs/texture-generator-guide.md",
+  "description": "Run through scripts/capture-texture-docs.sh (it strips the NNN- prefix so the images have stable names).",
+  "fixture": "texture",
+  "preset": "Green Leaf",
+  "size": [1600, 900],
+  "steps": [
+    { "action": "wait", "ms": 800, "real_time": true, "label": "let the preview bake" },
+    { "action": "screenshot", "name": "texgen-leaf" },
+    { "action": "screenshot", "name": "texgen-annotated", "annotate": true, "target": "id:texturegen.preview", "padding": 220 },
+    { "action": "click", "target": "id:texturegen.preview.mode.alpha" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "mode-alpha", "target": "id:texturegen.preview", "padding": 6 },
+    { "action": "click", "target": "id:texturegen.preview.mode.colour" },
+    { "action": "wait", "ms": 200 },
+    { "action": "screenshot", "name": "mode-colour", "target": "id:texturegen.preview", "padding": 6 },
+    { "action": "click", "target": "id:texturegen.preview.mode.over checker" },
+    { "action": "reset", "fixture": "texture", "preset": "Explosion Burst" },
+    { "action": "wait", "ms": 800, "real_time": true },
+    { "action": "screenshot", "name": "texgen-explosion" },
+    { "action": "reset", "fixture": "texture", "preset": "Packed VFX Masks" },
+    { "action": "wait", "ms": 800, "real_time": true },
+    { "action": "screenshot", "name": "texgen-packed" }
+  ]
+}

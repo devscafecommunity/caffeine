@@ -25,6 +25,14 @@ pub const SUCCESS: Color = Color::from_rgba8(0x5d, 0xa5, 0x6b, 1.0);
 pub const ICON_PURPLE: Color = Color::from_rgba8(0xb8, 0x8c, 0xf0, 1.0);
 pub const ICON_TEAL: Color = Color::from_rgba8(0x5c, 0xc7, 0xcf, 1.0);
 pub const ICON_CYAN: Color = Color::from_rgba8(0x6f, 0xb7, 0xe8, 1.0);
+/// Viewport overlays (transform gizmo, scene markers).
+pub const OVERLAY_HALO: Color = Color::from_rgba(0.0, 0.0, 0.0, 0.35);
+pub const OVERLAY_NEUTRAL: Color = Color::from_rgb(0.86, 0.86, 0.9);
+pub const OVERLAY_SPHERE_FILL: Color = Color::from_rgba(0.75, 0.8, 0.95, 0.05);
+pub const OVERLAY_SPHERE_EDGE: Color = Color::from_rgba(0.85, 0.88, 1.0, 0.22);
+pub const OVERLAY_WHITE: Color = Color::from_rgb(1.0, 1.0, 1.0);
+pub const OVERLAY_PLATE: Color = Color::from_rgba(0.06, 0.07, 0.09, 0.62);
+pub const ICON_ORANGE: Color = Color::from_rgba8(0xf0, 0x9a, 0x4a, 1.0);
 
 pub fn background(_theme: &Theme) -> container::Style {
     container::Style {
@@ -49,6 +57,54 @@ pub fn panel_title(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(TOOLBAR.into()),
         text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
+/// Thin vertical bar in the Texture Generator's orange, the visual cue that separates it from
+/// the Material Generator.
+pub fn accent_bar(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(ICON_ORANGE.into()),
+        border: Border {
+            radius: 1.5.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Thin vertical bar in green: the Nature Generator's identity next to the cyan Material and the
+/// orange Texture generators.
+pub fn nature_bar(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(SUCCESS.into()),
+        border: Border {
+            radius: 1.5.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn water_bar(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(ICON_CYAN.into()),
+        border: Border {
+            radius: 1.5.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn terrain_bar(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(ICON_ORANGE.into()),
+        border: Border {
+            radius: 1.5.into(),
+            ..Border::default()
+        },
         ..container::Style::default()
     }
 }

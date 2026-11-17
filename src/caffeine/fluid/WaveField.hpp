@@ -44,6 +44,8 @@ struct WaveSettings {
     u32 seed = 1337u;
     /// 0 selects the default count for the quality level.
     int waveCount = 0;
+    /// Authored waves; when not empty they replace the generated spectrum.
+    std::vector<GerstnerWave> explicitWaves;
 };
 
 struct WaveSample {

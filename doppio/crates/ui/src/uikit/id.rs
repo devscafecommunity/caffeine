@@ -189,10 +189,85 @@ pub const DRYAD_STATUS: UiId = UiId::fixed("dryad.nodes.status");
 pub const DRYAD_PROPERTIES: UiId = UiId::fixed("dryad.nodes.properties");
 pub const DRYAD_EMPTY: UiId = UiId::fixed("dryad.nodes.empty");
 pub const PANE_VIEWPORT: UiId = UiId::fixed("editor.pane.viewport");
+pub const VIEWPORT_MARKERS: UiId = UiId::fixed("viewport.canvas.markers");
+pub const TOGGLE_MARKERS: UiId = UiId::fixed("editor.view.toggle_markers");
 pub const VIEWPORT_GIZMO: UiId = UiId::fixed("viewport.canvas.gizmo");
 pub const PANE_INSPECTOR: UiId = UiId::fixed("editor.pane.inspector");
 pub const PANE_MATERIAL: UiId = UiId::fixed("editor.pane.material");
 pub const PANE_TEXTURE_SET: UiId = UiId::fixed("editor.pane.texture_set");
+pub const PANE_TEXTURE_GENERATOR: UiId = UiId::fixed("editor.pane.texture_generator");
+pub const PANE_TAB_TEXTURE_GENERATOR: UiId = UiId::fixed("editor.pane.tab.texture_generator");
+pub const TEXTUREGEN_CANVAS: UiId = UiId::fixed("texturegen.canvas");
+pub const TEXTUREGEN_NEW: UiId = UiId::fixed("texturegen.toolbar.new");
+pub const TEXTUREGEN_LIBRARY: UiId = UiId::fixed("texturegen.library");
+pub const TEXTUREGEN_SIZE: UiId = UiId::fixed("texturegen.size");
+pub const TEXTUREGEN_UNDO: UiId = UiId::fixed("texturegen.toolbar.undo");
+pub const TEXTUREGEN_REDO: UiId = UiId::fixed("texturegen.toolbar.redo");
+pub const TEXTUREGEN_FIT: UiId = UiId::fixed("texturegen.toolbar.fit");
+pub const TEXTUREGEN_SAVE: UiId = UiId::fixed("texturegen.toolbar.save");
+pub const TEXTUREGEN_EXPORT: UiId = UiId::fixed("texturegen.toolbar.export");
+pub const TEXTUREGEN_SEARCH: UiId = UiId::fixed("texturegen.search");
+pub const TEXTUREGEN_SNAP: UiId = UiId::fixed("texturegen.snap");
+pub const TEXTUREGEN_NAME: UiId = UiId::fixed("texturegen.name");
+pub const TEXTUREGEN_PREVIEW: UiId = UiId::fixed("texturegen.preview");
+pub const TEXTUREGEN_BITS: UiId = UiId::fixed("texturegen.export.bits");
+pub const TEXTUREGEN_FLIP_COLS: UiId = UiId::fixed("texturegen.export.flip_columns");
+pub const TEXTUREGEN_FLIP_ROWS: UiId = UiId::fixed("texturegen.export.flip_rows");
+pub const TEXTUREGEN_EXPORT_FLIPBOOK: UiId = UiId::fixed("texturegen.export.flipbook");
+pub const SHOW_TEXTURE_GENERATOR: UiId = UiId::fixed("editor.menu.view.texture_generator");
+pub const PANE_NATURE_GENERATOR: UiId = UiId::fixed("editor.pane.nature_generator");
+pub const PANE_TAB_NATURE_GENERATOR: UiId = UiId::fixed("editor.pane.tab.nature_generator");
+pub const PANE_WATER_GENERATOR: UiId = UiId::fixed("editor.pane.water_generator");
+pub const PANE_TAB_WATER_GENERATOR: UiId = UiId::fixed("editor.pane.tab.water_generator");
+pub const SHOW_WATER_GENERATOR: UiId = UiId::fixed("editor.menu.view.water_generator");
+pub const WATERGEN_CANVAS: UiId = UiId::fixed("watergen.canvas");
+pub const WATERGEN_UNDO: UiId = UiId::fixed("watergen.toolbar.undo");
+pub const WATERGEN_REDO: UiId = UiId::fixed("watergen.toolbar.redo");
+pub const WATERGEN_FIT: UiId = UiId::fixed("watergen.toolbar.fit");
+pub const WATERGEN_NEW: UiId = UiId::fixed("watergen.toolbar.new");
+pub const WATERGEN_SEARCH: UiId = UiId::fixed("watergen.search");
+pub const WATERGEN_SNAP: UiId = UiId::fixed("watergen.snap");
+pub const WATERGEN_DELETE_NODE: UiId = UiId::fixed("watergen.delete_node");
+pub const WATERGEN_PREVIEW: UiId = UiId::fixed("watergen.preview");
+pub const WATERGEN_PLAY: UiId = UiId::fixed("watergen.play");
+pub const WATERGEN_PRESET: UiId = UiId::fixed("watergen.preset");
+pub const WATERGEN_NAME: UiId = UiId::fixed("watergen.name");
+pub const WATERGEN_EXPORT: UiId = UiId::fixed("watergen.export");
+pub const WATERGEN_PLACE: UiId = UiId::fixed("watergen.place");
+pub const WATERGEN_STATS: UiId = UiId::fixed("watergen.stats");
+pub const PANE_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.terrain_generator");
+pub const PANE_TAB_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.pane.tab.terrain_generator");
+pub const SHOW_TERRAIN_GENERATOR: UiId = UiId::fixed("editor.menu.view.terrain_generator");
+pub const TERRAINGEN_CANVAS: UiId = UiId::fixed("terraingen.canvas");
+pub const TERRAINGEN_UNDO: UiId = UiId::fixed("terraingen.toolbar.undo");
+pub const TERRAINGEN_REDO: UiId = UiId::fixed("terraingen.toolbar.redo");
+pub const TERRAINGEN_FIT: UiId = UiId::fixed("terraingen.toolbar.fit");
+pub const TERRAINGEN_NEW: UiId = UiId::fixed("terraingen.toolbar.new");
+pub const TERRAINGEN_SEARCH: UiId = UiId::fixed("terraingen.search");
+pub const TERRAINGEN_SNAP: UiId = UiId::fixed("terraingen.snap");
+pub const TERRAINGEN_DELETE_NODE: UiId = UiId::fixed("terraingen.delete_node");
+pub const TERRAINGEN_PREVIEW: UiId = UiId::fixed("terraingen.preview");
+pub const TERRAINGEN_PRESET: UiId = UiId::fixed("terraingen.preset");
+pub const TERRAINGEN_NAME: UiId = UiId::fixed("terraingen.name");
+pub const TERRAINGEN_EXPORT: UiId = UiId::fixed("terraingen.export");
+pub const TERRAINGEN_PLACE: UiId = UiId::fixed("terraingen.place");
+pub const TERRAINGEN_STATS: UiId = UiId::fixed("terraingen.stats");
+pub const NATUREGEN_PREVIEW: UiId = UiId::fixed("naturegen.preview");
+pub const NATUREGEN_PRESET: UiId = UiId::fixed("naturegen.preset");
+pub const NATUREGEN_QUALITY: UiId = UiId::fixed("naturegen.quality");
+pub const NATUREGEN_NAME: UiId = UiId::fixed("naturegen.name");
+pub const NATUREGEN_EXPORT: UiId = UiId::fixed("naturegen.export");
+pub const NATUREGEN_PLACE: UiId = UiId::fixed("naturegen.place");
+pub const NATUREGEN_STATS: UiId = UiId::fixed("naturegen.stats");
+pub const SHOW_NATURE_GENERATOR: UiId = UiId::fixed("editor.menu.view.nature_generator");
+pub const NATUREGEN_CANVAS: UiId = UiId::fixed("naturegen.canvas");
+pub const NATUREGEN_UNDO: UiId = UiId::fixed("naturegen.toolbar.undo");
+pub const NATUREGEN_REDO: UiId = UiId::fixed("naturegen.toolbar.redo");
+pub const NATUREGEN_FIT: UiId = UiId::fixed("naturegen.toolbar.fit");
+pub const NATUREGEN_NEW: UiId = UiId::fixed("naturegen.toolbar.new");
+pub const NATUREGEN_SEARCH: UiId = UiId::fixed("naturegen.search");
+pub const NATUREGEN_SNAP: UiId = UiId::fixed("naturegen.snap");
+pub const NATUREGEN_DELETE_NODE: UiId = UiId::fixed("naturegen.delete_node");
 pub const PANE_GENERATOR: UiId = UiId::fixed("editor.pane.generator");
 pub const PANE_SCRIPT: UiId = UiId::fixed("editor.pane.script");
 pub const PANE_DRYAD_NODES: UiId = UiId::fixed("editor.pane.dryad_nodes");
@@ -331,6 +406,66 @@ pub fn generator_group(name: &str) -> UiId {
         "generator.group.{}",
         name.to_lowercase().replace(' ', "_")
     ))
+}
+
+pub fn texturegen_add(kind: &str) -> UiId {
+    UiId::dynamic(format!("texturegen.add.{kind}"))
+}
+
+pub fn texturegen_group(name: &str) -> UiId {
+    UiId::dynamic(format!(
+        "texturegen.group.{}",
+        name.to_lowercase().replace([' ', '&'], "_")
+    ))
+}
+
+pub fn texturegen_mode(label: &str) -> UiId {
+    UiId::dynamic(format!("texturegen.preview.mode.{}", label.to_lowercase()))
+}
+
+pub fn naturegen_group(name: &str) -> UiId {
+    UiId::dynamic(format!(
+        "naturegen.group.{}",
+        name.to_lowercase().replace(' ', "_")
+    ))
+}
+
+pub fn naturegen_add(op: &str) -> UiId {
+    UiId::dynamic(format!("naturegen.add.{op}"))
+}
+
+pub fn naturegen_param(key: &str) -> UiId {
+    UiId::dynamic(format!("naturegen.param.{key}"))
+}
+
+pub fn watergen_group(name: &str) -> UiId {
+    UiId::dynamic(format!(
+        "watergen.group.{}",
+        name.to_lowercase().replace(' ', "_")
+    ))
+}
+
+pub fn watergen_add(op: &str) -> UiId {
+    UiId::dynamic(format!("watergen.add.{op}"))
+}
+
+pub fn watergen_param(key: &str) -> UiId {
+    UiId::dynamic(format!("watergen.param.{key}"))
+}
+
+pub fn terraingen_group(name: &str) -> UiId {
+    UiId::dynamic(format!(
+        "terraingen.group.{}",
+        name.to_lowercase().replace(' ', "_")
+    ))
+}
+
+pub fn terraingen_add(op: &str) -> UiId {
+    UiId::dynamic(format!("terraingen.add.{op}"))
+}
+
+pub fn terraingen_param(key: &str) -> UiId {
+    UiId::dynamic(format!("terraingen.param.{key}"))
 }
 
 pub fn generator_add(kind: &str) -> UiId {
@@ -527,6 +662,381 @@ pub fn dryad_property(name: &str) -> UiId {
 
 /// The statically documented part of the UI tree.
 pub const CATALOG: &[UiMeta] = &[
+    UiMeta {
+        id: NATUREGEN_CANVAS,
+        description: "Nature Generator node canvas: wire shapes, modifiers, trees, plants and scatter nodes into the Output.",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: NATUREGEN_UNDO,
+        description: "Undoes the last graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_REDO,
+        description: "Redoes the last undone graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_FIT,
+        description: "Frames the whole graph in the canvas.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_NEW,
+        description: "Starts an empty graph with an Output node.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_SEARCH,
+        description: "Filters the node palette.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: NATUREGEN_SNAP,
+        description: "Snaps node positions to a 16 px grid.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: NATUREGEN_DELETE_NODE,
+        description: "Deletes the selected node.",
+        kind: "button",
+    },
+    UiMeta {
+        id: SHOW_NATURE_GENERATOR,
+        description: "Opens the Nature Generator tab (procedural rocks, trees and plants).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PANE_NATURE_GENERATOR,
+        description: "Nature Generator: procedural rocks, trees and plants with a live 3D preview, OBJ export and one-click placement in the scene.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_NATURE_GENERATOR,
+        description: "Tab of the Nature Generator pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: NATUREGEN_PREVIEW,
+        description: "Software-rendered preview of the generated model. Drag to orbit, scroll to zoom.",
+        kind: "image",
+    },
+    UiMeta {
+        id: NATUREGEN_PRESET,
+        description: "Starts from a ready-made rock, tree or plant.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: NATUREGEN_QUALITY,
+        description: "Detail level: stylised low-poly, balanced or detailed.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: NATUREGEN_NAME,
+        description: "Model name; used for the exported files and the group entity.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: NATUREGEN_EXPORT,
+        description: "Writes one .obj per part and the .nature recipe into the project's nature folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_PLACE,
+        description: "Creates the model in the scene as a group of entities, one per part, each with its own material.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_STATS,
+        description: "Triangles, vertices and parts of the generated model.",
+        kind: "text",
+    },
+    UiMeta {
+        id: PANE_WATER_GENERATOR,
+        description: "Water Generator: water bodies built with nodes (wave sources, modifiers, look) with a live animated preview and one-click placement as an engine water surface.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_WATER_GENERATOR,
+        description: "Tab of the Water Generator pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_WATER_GENERATOR,
+        description: "Opens the Water Generator tab (lakes, rivers, seas and storms from nodes).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: WATERGEN_CANVAS,
+        description: "Water Generator node canvas: wire wave sources and modifiers into the Output, and a Water Look beside them.",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: WATERGEN_UNDO,
+        description: "Undoes the last water graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_REDO,
+        description: "Redoes the last undone water graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_FIT,
+        description: "Frames the whole water graph in the canvas.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_NEW,
+        description: "Starts an empty water graph with an Output node.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_SEARCH,
+        description: "Filters the water node palette.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: WATERGEN_SNAP,
+        description: "Snaps nodes to a 16 px grid while dragging.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: WATERGEN_DELETE_NODE,
+        description: "Deletes the selected node (the Output node stays).",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_PREVIEW,
+        description: "Top-down animated preview of the water surface, computed from the same waves the engine animates.",
+        kind: "image",
+    },
+    UiMeta {
+        id: WATERGEN_PLAY,
+        description: "Animates the preview: waves travel using the engine's dispersion relation.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: WATERGEN_PRESET,
+        description: "Starts from a ready-made lake, river, sea, storm, pool or swamp.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: WATERGEN_NAME,
+        description: "Water name; used for the saved .water file and the entity.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: WATERGEN_EXPORT,
+        description: "Writes the .water graph into the project's water folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_PLACE,
+        description: "Creates the water body in the scene as an animated engine water surface.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WATERGEN_STATS,
+        description: "Waves, size and depth of the evaluated water.",
+        kind: "text",
+    },
+    UiMeta {
+        id: PANE_TERRAIN_GENERATOR,
+        description: "Terrain Generator: heightfields built with nodes (noise, mountains, erosion, masks) with a live 3D preview and placement as an engine terrain with splat layers.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TERRAIN_GENERATOR,
+        description: "Tab of the Terrain Generator pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_TERRAIN_GENERATOR,
+        description: "Opens the Terrain Generator tab (mountains, islands, canyons from nodes).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: TERRAINGEN_CANVAS,
+        description: "Terrain Generator node canvas: wire sources, modifiers, masks and erosion into the Output.",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: TERRAINGEN_UNDO,
+        description: "Undoes the last terrain graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_REDO,
+        description: "Redoes the last undone terrain graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_FIT,
+        description: "Frames the whole terrain graph in the canvas.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_NEW,
+        description: "Starts an empty terrain graph with an Output node.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_SEARCH,
+        description: "Filters the terrain node palette.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: TERRAINGEN_SNAP,
+        description: "Snaps nodes to a 16 px grid while dragging.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TERRAINGEN_DELETE_NODE,
+        description: "Deletes the selected node (the Output node stays).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_PREVIEW,
+        description: "Software 3D preview of the terrain with its splat layers and sea level. Drag to orbit, scroll to zoom.",
+        kind: "image",
+    },
+    UiMeta {
+        id: TERRAINGEN_PRESET,
+        description: "Starts from a ready-made hills, range, island, badlands, archipelago or highland lake.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TERRAINGEN_NAME,
+        description: "Terrain name; used for the saved graph file and the entity.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: TERRAINGEN_EXPORT,
+        description: "Writes the terrain graph and a 16-bit height map PNG into the project's terrain folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_PLACE,
+        description: "Creates the terrain in the scene as an engine terrain with ground, rock, dirt and mud splat layers.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_STATS,
+        description: "Size, height range and resolution of the evaluated terrain.",
+        kind: "text",
+    },
+    UiMeta {
+        id: VIEWPORT_MARKERS,
+        description: "Scene markers over the viewport: light rays, bulbs and cones, camera frustums, colliders and locators. Click one to select its entity.",
+        kind: "canvas",
+    },
+    UiMeta {
+        id: TOGGLE_MARKERS,
+        description: "Shows or hides the scene markers (lights, cameras, colliders, empties).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: SHOW_TEXTURE_GENERATOR,
+        description: "Opens the Texture Generator tab (graphs that bake one texture with alpha).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PANE_TEXTURE_GENERATOR,
+        description: "Texture Generator: node graph that bakes one texture (leaf, flame, packed mask) with alpha.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_TEXTURE_GENERATOR,
+        description: "Tab of the Texture Generator pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: TEXTUREGEN_CANVAS,
+        description: "Texture Generator node canvas: pan, zoom, drag nodes and connect ports.",
+        kind: "node_canvas",
+    },
+    UiMeta {
+        id: TEXTUREGEN_NEW,
+        description: "Starts a new texture graph (a leaf feeding a Texture Output).",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_LIBRARY,
+        description: "Replaces the graph with a ready-made texture: foliage, feathers, fire, smoke, effects, data.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TEXTUREGEN_SIZE,
+        description: "Texture resolution in pixels (64 to 2048).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TEXTUREGEN_UNDO,
+        description: "Undoes the last graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_REDO,
+        description: "Redoes the last undone graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_FIT,
+        description: "Frames the whole graph in the canvas.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_SAVE,
+        description: "Saves the graph as a .texgraph file in the project's textures folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_EXPORT,
+        description: "Bakes and writes the texture as a single PNG next to the graph.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_SEARCH,
+        description: "Filters the texture node palette.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: TEXTUREGEN_SNAP,
+        description: "Snaps node positions to a 16 px grid.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TEXTUREGEN_NAME,
+        description: "Name of the texture; used for the .texgraph and .png file names.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: TEXTUREGEN_PREVIEW,
+        description: "Texture preview over a checkerboard, so transparency is visible.",
+        kind: "image",
+    },
+    UiMeta {
+        id: TEXTUREGEN_BITS,
+        description: "PNG bit depth: 8 or 16 bits per channel.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TEXTUREGEN_FLIP_COLS,
+        description: "Flipbook columns.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TEXTUREGEN_FLIP_ROWS,
+        description: "Flipbook rows.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: TEXTUREGEN_EXPORT_FLIPBOOK,
+        description: "Bakes columns x rows frames, advancing every Phase parameter, into one sheet.",
+        kind: "button",
+    },
     UiMeta {
         id: LAYOUT_DEFAULT,
         description: "Restores the default panel layout.",

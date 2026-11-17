@@ -724,11 +724,11 @@ Starts over with a fresh app (new fixture, window size and assets).
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `fixture` | `string` | no | `empty` or `entities` (default `entities`). |
+| `fixture` | `string` | no | `empty`, `entities`, `material`, `texture`, `scene3d` (an engine-backed scene with lights, a camera and meshes; needs libcaffeine-capi) `nature` (the same, filled with generated rocks, trees and plants) `water` (the Water Generator tab in front) or `terrain` (the Terrain Generator tab in front). Default `entities`. |
 | `size` | `[w, h]` | no | Window size. |
 | `assets` | `[{ name, path, kind, directory? }]` | no | Asset list shown in the Assets panel. |
 | `asset_root` | `string` | no | Folder the asset wizard writes to; `temp` creates a scratch directory. |
-| `preset` | `string` | no | Procedural library preset applied to the Generator (fixture `material`), e.g. `Red Brick`. |
+| `preset` | `string` | no | Library preset applied to the Material Generator (fixture `material`, e.g. `Red Brick`) to the Texture Generator (fixture `texture`, e.g. `Torch Flame`) to the Nature Generator (fixture `nature`, e.g. `Pine`) to the Water Generator (fixture `water`, e.g. `Storm`) or to the Terrain Generator (fixture `terrain`, e.g. `Badlands`). |
 | `components` | `[{ name, fields? }]` | no | Engine component types the fixture pretends to have (for Add Behaviour). |
 
 Returns: `{ "asset_root": … }`

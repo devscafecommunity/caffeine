@@ -57,7 +57,7 @@ struct VertexUBO {
 struct DisplaceVertexUBO {
     float mvp[16];
     float model[16];
-    float disp[4]; // depth (m), finite-difference step (tiled uv), metres per tiled uv
+    float disp[4]; // depth (m), finite-difference step (tiled uv), metres per tiled uv, w = uv follows object scale
     float uv[4];   // tiling xy, offset zw
 };
 
@@ -67,7 +67,7 @@ struct DisplaceShadowUBO {
     float lightPos[4];
     int mode;
     int pad[3];
-    float disp[4];
+    float disp[4]; // x depth (m), y = uv follows object scale
     float uv[4];
 };
 
@@ -840,6 +840,7 @@ void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& d
         dubo.lightPos[2] = lightPos.z;
         dubo.mode = mode;
         dubo.disp[0] = draw.displacementScale;
+        dubo.disp[1] = draw.uvObjectScale ? 1.0f : 0.0f;
         dubo.uv[0] = draw.uvTiling.x;
         dubo.uv[1] = draw.uvTiling.y;
         dubo.uv[2] = draw.uvOffset.x;
@@ -1336,6 +1337,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             setVec4(lights.emission, draw.emission.x, draw.emission.y, draw.emission.z, 0.0f);
             setVec4(lights.uvTransform, draw.uvTiling.x, draw.uvTiling.y, draw.uvOffset.x,
                     draw.uvOffset.y);
+            lights.alignPad = draw.uvObjectScale ? 1 : 0; // shader: uUvObjectScale
             f32 thickness = 0.5f;
             if (draw.hasAabb) {
                 const Vec3 extent = draw.aabbMax - draw.aabbMin;
@@ -1444,6 +1446,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             dubo.disp[0] = draw.displacementScale;
             dubo.disp[1] = draw.displacementEps;
             dubo.disp[2] = draw.displacementMetresPerUv;
+            dubo.disp[3] = draw.uvObjectScale ? 1.0f : 0.0f;
             dubo.uv[0] = draw.uvTiling.x;
             dubo.uv[1] = draw.uvTiling.y;
             dubo.uv[2] = draw.uvOffset.x;
@@ -1880,6 +1883,7 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.emissionMapPath = surface.emissionMap;
                 draw.uvTiling = surface.uvTiling;
                 draw.uvOffset = surface.uvOffset;
+                draw.uvObjectScale = surface.uvObjectScale != 0;
                 draw.normalStrength = surface.normalStrength;
                 draw.normalDirectX = surface.normalDirectX;
                 draw.aoStrength = surface.aoStrength;
@@ -1968,12 +1972,15 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                                        std::clamp(fluid->albedoA, 0.0f, 1.0f));
                     draw.metallic = std::clamp(fluid->metallic, 0.0f, 1.0f);
                     draw.roughness = std::clamp(fluid->roughness, 0.02f, 1.0f);
-                    draw.reflectance = 0.65f;
+                    // Water reflects about 2% head-on and much more at grazing angles
+                    // (Fresnel): a low F0 keeps the body colour, the clearcoat adds the
+                    // sharp sky reflection.
+                    draw.reflectance = 0.5f;
                     draw.alphaMode = 2;
-                    draw.transmission = 0.35f;
+                    draw.transmission = 0.12f;
                     draw.ior = 1.333f;
-                    draw.clearcoat = 0.9f;
-                    draw.clearcoatRoughness = 0.04f;
+                    draw.clearcoat = 0.35f;
+                    draw.clearcoatRoughness = 0.03f;
                     draw.hasAuthoredMaterial = true;
                 } else {
                     // Fluid volume voxels. The density field is real; the colour
@@ -2109,6 +2116,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         mixFloat(draw.uvTiling.y);
         mixFloat(draw.uvOffset.x);
         mixFloat(draw.uvOffset.y);
+        mixFloat(draw.uvObjectScale ? 1.0f : 0.0f);
         mixFloat(draw.normalStrength);
         mixFloat(draw.aoStrength);
         mixFloat(draw.heightScale);

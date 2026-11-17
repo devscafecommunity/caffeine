@@ -307,10 +307,78 @@ impl Driver {
                     ));
                 }
             }
+            "scene3d" => {
+                // A small engine-backed scene so the gizmos and scene markers have something to
+                // draw on: needs libcaffeine-capi (build it first).
+                let engine = doppio_engine::Engine::load_default()
+                    .ok_or_else(|| "fixture `scene3d` needs libcaffeine-capi".to_owned())?;
+                app.engine = Some(engine);
+                app.build_demo_scene();
+            }
+            "nature" => {
+                // An engine-backed scene filled with generated rocks, trees and plants (written to a
+                // scratch asset folder), with the Nature Generator tab in front.
+                let engine = doppio_engine::Engine::load_default()
+                    .ok_or_else(|| "fixture `nature` needs libcaffeine-capi".to_owned())?;
+                app.engine = Some(engine);
+                let dir =
+                    std::env::temp_dir().join(format!("doppio-nature-{}", std::process::id()));
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                app.asset_root_override = Some(dir);
+                app.build_nature_demo();
+                if let Some(name) = &init.preset {
+                    let index = crate::uikit::nature::presets()
+                        .iter()
+                        .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| format!("unknown nature preset `{name}`"))?;
+                    app.update(Message::NatureGen(
+                        crate::uikit::panels::nature_generator::Edit::ApplyPreset(index),
+                    ));
+                }
+                app.show_nature_pane();
+            }
+            "terrain" => {
+                // The Terrain Generator tab in front (no engine needed for the graph and preview).
+                if let Some(name) = &init.preset {
+                    let index = crate::uikit::terrain::presets()
+                        .iter()
+                        .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| format!("unknown terrain preset `{name}`"))?;
+                    app.update(Message::TerrainGen(
+                        crate::uikit::panels::terrain_generator::Edit::ApplyPreset(index),
+                    ));
+                }
+                app.show_terrain_pane();
+            }
+            "water" => {
+                // The Water Generator tab in front (no engine needed for the graph and preview).
+                if let Some(name) = &init.preset {
+                    let index = crate::uikit::water::presets()
+                        .iter()
+                        .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| format!("unknown water preset `{name}`"))?;
+                    app.update(Message::WaterGen(
+                        crate::uikit::panels::water_generator::Edit::ApplyPreset(index),
+                    ));
+                }
+                app.show_water_pane();
+            }
+            "texture" => {
+                app.show_texgen_pane();
+                if let Some(name) = &init.preset {
+                    let index = crate::uikit::texture_graph::presets()
+                        .iter()
+                        .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| format!("unknown texture preset `{name}`"))?;
+                    app.update(Message::TextureGen(
+                        crate::uikit::panels::texture_generator::Edit::ApplyPreset(index),
+                    ));
+                }
+            }
             other => {
                 return Err(format!(
-                    "unknown fixture `{other}` (empty, entities, material)"
-                ))
+                "unknown fixture `{other}` (empty, entities, material, texture, scene3d, nature, water, terrain)"
+            ))
             }
         }
         app.project.open = false;

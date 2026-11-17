@@ -1008,7 +1008,7 @@ fn layout_presets_keep_every_page() {
         let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
-        assert_eq!(pages, 10);
+        assert_eq!(pages, 14);
     }
     let mut harness = Harness::with_entities();
     harness.dispatch(Message::Layout(LayoutPreset::Viewport));
@@ -4097,4 +4097,1516 @@ fn procedural_graphs_preview_without_an_engine() {
         "a purely procedural graph must preview without an engine (status: {:?})",
         harness.app().generator_status
     );
+}
+
+// ----------------------------------------------------------- Texture Generator
+
+#[test]
+fn texture_generator_is_a_separate_pane_with_its_own_widgets() {
+    use crate::uikit::panels::texture_generator as tg;
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ShowTextureGenerator);
+    let active = harness
+        .app()
+        .panes
+        .iter()
+        .any(|(_, group)| group.active_kind() == PaneKind::TextureGenerator);
+    assert!(active, "the Texture Generator tab must come to the front");
+    for widget in [
+        id::TEXTUREGEN_CANVAS,
+        id::TEXTUREGEN_LIBRARY,
+        id::TEXTUREGEN_EXPORT,
+        id::TEXTUREGEN_PREVIEW,
+        id::TEXTUREGEN_FLIP_COLS,
+    ] {
+        assert!(harness.has(Id::from(widget.clone())), "missing {widget:?}");
+    }
+    // It never borrows the Material Generator's ids for its own toolbar.
+    assert!(!harness.has(Id::from(id::GENERATOR_BAKE)));
+    assert_eq!(PaneKind::Generator.title(), "Material Generator");
+    assert_eq!(PaneKind::TextureGenerator.title(), "Texture Generator");
+    let _ = tg::PREVIEW_MODES;
+}
+
+#[test]
+fn texture_generator_edits_the_graph_with_undo_and_a_live_preview() {
+    use crate::uikit::generators::{NodeKind, TextureOutputMode};
+    use crate::uikit::panels::{material_generator as n, texture_generator as tg};
+    let mut harness = Harness::empty();
+    assert!(
+        harness.app().texgen.preview.is_some(),
+        "the new graph previews at once"
+    );
+    // A library preset replaces the graph and keeps the chosen size.
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::SetResolution(
+        256,
+    ))));
+    let explosion = crate::uikit::texture_graph::presets()
+        .iter()
+        .position(|preset| preset.name == "Explosion Burst")
+        .expect("preset");
+    harness.dispatch(Message::TextureGen(tg::Edit::ApplyPreset(explosion)));
+    assert_eq!(harness.app().texgen.graph.resolution, 256);
+    assert!(harness.app().texgen.graph.nodes.len() >= 6);
+    assert!(harness.app().texgen.preview.is_some());
+
+    // The Texture Output cannot be deleted.
+    let output = harness
+        .app()
+        .texgen
+        .graph
+        .texture_output_node()
+        .expect("out");
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::DeleteNode(
+        output,
+    ))));
+    assert!(harness.app().texgen.graph.node(output).is_some());
+
+    // Add a node, undo it, redo it.
+    let before = harness.app().texgen.graph.nodes.len();
+    let kind = crate::uikit::texture_graph::palette()
+        .into_iter()
+        .find(|kind| kind.title() == "Flame")
+        .expect("flame");
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::AddNode(kind))));
+    assert_eq!(harness.app().texgen.graph.nodes.len(), before + 1);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Undo)));
+    assert_eq!(harness.app().texgen.graph.nodes.len(), before);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Redo)));
+    assert_eq!(harness.app().texgen.graph.nodes.len(), before + 1);
+
+    // Switching the output to packed channels keeps RGBA ports and drops nothing valid; going
+    // back to colour+alpha removes links to the ports that vanished.
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::SetParam(
+        output,
+        n::Param::TextureOutputMode(1),
+    ))));
+    assert!(matches!(
+        harness
+            .app()
+            .texgen
+            .graph
+            .node(output)
+            .map(|node| &node.kind),
+        Some(NodeKind::TextureOutput {
+            mode: TextureOutputMode::Channels
+        })
+    ));
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::SetParam(
+        output,
+        n::Param::TextureOutputMode(0),
+    ))));
+    let ports = harness
+        .app()
+        .texgen
+        .graph
+        .node(output)
+        .map(|node| node.kind.inputs().len());
+    assert_eq!(ports, Some(2));
+    assert!(harness
+        .app()
+        .texgen
+        .graph
+        .links
+        .iter()
+        .all(|link| link.to != output || link.input < 2));
+}
+
+#[test]
+fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
+    use crate::uikit::panels::texture_generator as tg;
+    let root = test_temp_root("texgen-root");
+    let mut harness = Harness::empty();
+    harness.app.asset_root_override = Some(root.clone());
+    harness.dispatch(Message::TextureGen(tg::Edit::SetName(
+        "Maple Leaf".to_owned(),
+    )));
+    harness.dispatch(Message::TextureGen(tg::Edit::SetBits(16)));
+    harness.dispatch(Message::TextureGen(tg::Edit::Export));
+    let png = root.join("textures/maple_leaf.png");
+    let graph = root.join("textures/maple_leaf.texgraph");
+    assert!(
+        png.is_file(),
+        "png missing: {:?}",
+        harness.app().texgen.status
+    );
+    assert!(graph.is_file(), "the graph travels with its image");
+    let image = image::open(&png).expect("png");
+    assert!(image.color().has_alpha());
+    assert_eq!(image.color().bits_per_pixel(), 64);
+
+    // A flipbook is one wide sheet.
+    harness.dispatch(Message::TextureGen(tg::Edit::SetFlipbook(2, 2)));
+    harness.dispatch(Message::TextureGen(tg::Edit::ExportFlipbook));
+    let sheet = root.join("textures/maple_leaf_flipbook_2x2.png");
+    let sheet = image::open(sheet).expect("sheet");
+    assert_eq!(sheet.width(), 2 * 512);
+    assert_eq!(sheet.height(), 2 * 512);
+
+    // The saved graph reopens as a texture graph, never as a material.
+    let loaded = crate::uikit::texture_graph::load(&graph).expect("load");
+    assert!(crate::uikit::texture_graph::is_texture_graph(&loaded));
+    std::fs::remove_dir_all(root).ok();
+}
+
+fn render_entity_view(engine: &mut doppio_engine::Engine) -> Vec<u8> {
+    render_entity_view_sized(engine, 160, 90)
+}
+
+fn render_entity_view_sized(
+    engine: &mut doppio_engine::Engine,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    engine.render_begin(width, height).expect("begin");
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    for _ in 0..400 {
+        match engine.render_poll(&mut pixels).expect("poll") {
+            doppio_engine::RenderState::Ready => return pixels,
+            _ => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    panic!("render did not finish");
+}
+
+/// Pixels that differ from a render of the empty scene: roughly "how much the object covers".
+fn coverage(engine: &mut doppio_engine::Engine, empty: &[u8]) -> usize {
+    let frame = render_entity_view(engine);
+    frame
+        .chunks(4)
+        .zip(empty.chunks(4))
+        .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 6))
+        .count()
+}
+
+#[test]
+fn scale_edits_change_what_the_engine_renders() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view(engine)
+    };
+    for label in ["Cube", "Plane", "Quad"] {
+        let index = prefabs::PREFABS
+            .iter()
+            .position(|p| p.label == label)
+            .unwrap_or_else(|| panic!("{label} prefab"));
+        harness.dispatch(Message::CreatePrefab(index));
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+        engine.set_scale(id, [1.0, 1.0, 1.0]).unwrap();
+        let small = coverage(engine, &empty);
+        engine.set_scale(id, [2.0, 2.0, 2.0]).unwrap();
+        let large = coverage(engine, &empty);
+        assert!(
+            large as f32 > small as f32 * 1.6,
+            "{label}: doubling the scale must roughly quadruple the covered pixels ({small} -> {large})"
+        );
+        engine.set_scale(id, [1.0, 1.0, 1.0]).unwrap();
+        harness.dispatch(Message::Inspector(panels::inspector::Edit::Delete));
+    }
+}
+
+#[test]
+fn scale_applies_to_scene_loaded_entities_too() {
+    let Some(mut engine) = doppio_engine::Engine::load_default() else {
+        return;
+    };
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../assets/benchmarks/dense_outdoor.caf");
+    if engine.load_scene(&scene.to_string_lossy()).is_err() {
+        return;
+    }
+    let _guard = test_guard();
+    let count = engine.entity_count();
+    let mut both = 0;
+    for index in 0..count {
+        if let Ok(info) = engine.entity_at(index) {
+            let names: Vec<String> = engine
+                .entity_components(info.id)
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            let has = |n: &str| names.iter().any(|x| x == n);
+            if has("Transform") && has("Position 3D") {
+                both += 1;
+            }
+        }
+    }
+    eprintln!("entities with BOTH Transform and Position 3D: {both} of {count}");
+    let mut checked = 0;
+    for index in 0..count.min(40) {
+        let Ok(info) = engine.entity_at(index) else {
+            continue;
+        };
+        let before = engine.scale(info.id).unwrap_or([1.0; 3]);
+        let want = [before[0] * 2.0, before[1] * 2.0, before[2] * 2.0];
+        if engine.set_scale(info.id, want).is_err() {
+            continue;
+        }
+        let got = engine.scale(info.id).unwrap_or([0.0; 3]);
+        assert_eq!(
+            got, want,
+            "entity {} ({}) lost its scale",
+            info.id, info.name
+        );
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+/// Luminance steps *inside the object* (pixels that differ from the empty scene): a proxy for
+/// how finely its texture tiles. The grid and axis lines of the empty viewport are ignored.
+fn texture_edges(pixels: &[u8], empty: &[u8], width: usize) -> usize {
+    let luma =
+        |p: &[u8], i: usize| p[i * 4] as i32 * 3 + p[i * 4 + 1] as i32 * 6 + p[i * 4 + 2] as i32;
+    let inside = |i: usize| (0..3).any(|c| pixels[i * 4 + c].abs_diff(empty[i * 4 + c]) > 10);
+    let height = pixels.len() / 4 / width;
+    let mut edges = 0;
+    for y in 0..height - 1 {
+        for x in 0..width - 1 {
+            let i = y * width + x;
+            if !inside(i) || !inside(i + 1) || !inside(i + width) {
+                continue;
+            }
+            if (luma(pixels, i) - luma(pixels, i + 1)).abs() > 60
+                || (luma(pixels, i) - luma(pixels, i + width)).abs() > 60
+            {
+                edges += 1;
+            }
+        }
+    }
+    edges
+}
+
+#[test]
+fn scaled_objects_keep_their_texture_density_when_uvs_follow_the_scale() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("uv-object-scale");
+    std::fs::create_dir_all(&root).expect("dir");
+    let checker = root.join("checker.png");
+    let mut image = RgbaImage::new(64, 64);
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if (x / 16 + y / 16) % 2 == 0 {
+            Rgba([245, 245, 245, 255])
+        } else {
+            Rgba([15, 15, 15, 255])
+        };
+    }
+    image.save(&checker).expect("checker");
+
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view_sized(engine, 480, 270)
+    };
+    let plane = prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .expect("plane prefab");
+    harness.dispatch(Message::CreatePrefab(plane));
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+
+    let mut edges = |follow: bool, size: f32| -> usize {
+        let material = doppio_engine::Material {
+            albedo: [1.0, 1.0, 1.0, 1.0],
+            roughness: 0.8,
+            albedo_map: checker.display().to_string(),
+            // Self-lit, so the pattern is readable whatever the light does (and in the docs).
+            emission: [1.0, 1.0, 1.0],
+            emission_strength: 1.0,
+            emission_map: checker.display().to_string(),
+            uv_object_scale: follow,
+            ..doppio_engine::Material::default()
+        };
+        let path = root.join(format!("m_{follow}.mat"));
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .expect("save material");
+        engine
+            .apply_material(id, &path.to_string_lossy())
+            .expect("apply material");
+        engine.set_scale(id, [size, 1.0, size]).unwrap();
+        let frame = render_entity_view_sized(engine, 480, 270);
+        if let Ok(dir) = std::env::var("DOPPIO_UV_DOC_DIR") {
+            // Doc images: the same plane, UVs authored 1:1 versus following the scale.
+            std::fs::create_dir_all(&dir).ok();
+            if let Some(image) = RgbaImage::from_raw(480, 270, frame.clone()) {
+                image
+                    .save(format!(
+                        "{dir}/uv-scale-{}-{size}.png",
+                        if follow { "follows" } else { "stretched" }
+                    ))
+                    .ok();
+            }
+        }
+        texture_edges(&frame, &empty, 480)
+    };
+    let stretched = edges(false, 4.0);
+    let following = edges(true, 4.0);
+    assert!(
+        following as f32 > stretched as f32 * 1.5,
+        "a 4x plane must tile the texture finer when UVs follow the scale ({stretched} -> {following} edges)"
+    );
+    // At scale 1 nothing changes: the flag only matters once the object is scaled.
+    let unit_off = edges(false, 1.0);
+    let unit_on = edges(true, 1.0);
+    let ratio = unit_on as f32 / unit_off.max(1) as f32;
+    assert!(
+        (0.8..1.25).contains(&ratio),
+        "scale 1 must look the same ({unit_off} vs {unit_on})"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+// ------------------------------------------------------------- scene markers
+
+fn create_prefab_labelled(harness: &mut Harness, label: &str) -> u32 {
+    let index = prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == label)
+        .unwrap_or_else(|| panic!("{label} prefab"));
+    harness.dispatch(Message::CreatePrefab(index));
+    harness.app().entities[harness.app().selected].id
+}
+
+#[test]
+fn scene_markers_describe_lights_cameras_colliders_and_empties() {
+    use crate::uikit::components::scene_markers::{ColliderShape, Kind};
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let sun = create_prefab_labelled(&mut harness, "Directional Light");
+    let point = create_prefab_labelled(&mut harness, "Point Light");
+    let spot = create_prefab_labelled(&mut harness, "Spot Light");
+    let camera = create_prefab_labelled(&mut harness, "Camera");
+    let empty = create_prefab_labelled(&mut harness, "Empty Entity");
+    let body = create_prefab_labelled(&mut harness, "Physics Cube");
+    let kind_of = |harness: &Harness, id: u32| {
+        harness
+            .app()
+            .markers
+            .iter()
+            .find(|marker| marker.id == id)
+            .map(|marker| marker.kind.clone())
+    };
+    // An unrotated sun uses the engine's default direction, exactly like the renderer.
+    let Some(Kind::Directional { direction }) = kind_of(&harness, sun) else {
+        panic!("directional light marker missing");
+    };
+    assert!(
+        direction[1] < -0.5,
+        "the default sun shines down: {direction:?}"
+    );
+    assert!(matches!(kind_of(&harness, point), Some(Kind::Point { radius }) if radius > 0.0));
+    assert!(matches!(kind_of(&harness, spot), Some(Kind::Spot { angle, .. }) if angle > 0.0));
+    assert!(matches!(kind_of(&harness, camera), Some(Kind::Camera { fov, .. }) if fov > 10.0));
+    assert!(matches!(kind_of(&harness, empty), Some(Kind::Empty { .. })));
+    let colliders = harness
+        .app()
+        .markers
+        .iter()
+        .filter(|m| {
+            m.id == body
+                && matches!(
+                    m.kind,
+                    Kind::Collider {
+                        shape: ColliderShape::Box,
+                        ..
+                    }
+                )
+        })
+        .count();
+    assert_eq!(colliders, 1, "a physics cube shows its box collider");
+    // A plain mesh has no marker of its own.
+    let cube = create_prefab_labelled(&mut harness, "Cube");
+    assert!(kind_of(&harness, cube).is_none());
+
+    // Rotating the sun re-aims its marker.
+    harness.dispatch(Message::MarkerSelected(sun));
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(
+        gizmo::Edit::Rotate {
+            axis: gizmo::Axis::Y,
+            rotation: [0.0, 90.0, 0.0],
+        },
+    )));
+    let Some(Kind::Directional { direction }) = kind_of(&harness, sun) else {
+        panic!("directional light marker missing");
+    };
+    assert!(
+        direction[1].abs() < 0.2,
+        "a rotated sun no longer uses the default: {direction:?}"
+    );
+    assert!(
+        (direction[0] + 1.0).abs() < 0.05,
+        "turned 90 degrees about Y it shines along -X: {direction:?}"
+    );
+    assert_eq!(
+        harness.app().selected,
+        sun_index(&harness, sun),
+        "clicking a marker selects its entity"
+    );
+
+    // The toggle hides the overlay without losing the data.
+    harness.dispatch(Message::ToggleMarkers);
+    assert!(!harness.app().show_markers && !harness.app().markers.is_empty());
+    harness.dispatch(Message::ToggleMarkers);
+    assert!(harness.app().show_markers);
+}
+
+fn sun_index(harness: &Harness, id: u32) -> usize {
+    harness
+        .app()
+        .entities
+        .iter()
+        .position(|entity| entity.id == id)
+        .expect("entity")
+}
+
+#[test]
+fn gizmo_plane_and_uniform_edits_reach_the_engine() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let id = create_prefab_labelled(&mut harness, "Cube");
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(
+        gizmo::Edit::MovePlane {
+            plane: gizmo::Plane::XZ,
+            position: [3.0, 0.0, -2.0],
+        },
+    )));
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let moved = engine.world_position(id).expect("position");
+    assert!(
+        (moved[0] - 3.0).abs() < 1e-3 && (moved[2] + 2.0).abs() < 1e-3,
+        "{moved:?}"
+    );
+
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(
+        gizmo::Edit::ScaleUniform {
+            scale: [2.0, 2.0, 2.0],
+        },
+    )));
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert_eq!(engine.scale(id).unwrap(), [2.0, 2.0, 2.0]);
+    assert_eq!(
+        harness.app().entities[harness.app().selected].scale,
+        [2.0, 2.0, 2.0]
+    );
+    // Undo restores the previous scale: gizmo edits stay undoable.
+    harness.dispatch(Message::Undo);
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert_ne!(engine.scale(id).unwrap(), [2.0, 2.0, 2.0]);
+}
+
+#[test]
+fn rebuilding_markers_for_a_large_scene_stays_cheap() {
+    let Some(mut engine) = doppio_engine::Engine::load_default() else {
+        return;
+    };
+    let scene = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../assets/benchmarks/dense_outdoor.caf");
+    if engine.load_scene(&scene.to_string_lossy()).is_err() {
+        return;
+    }
+    let entities: Vec<_> = projectloader::read_entities(&engine)
+        .into_iter()
+        .map(|e| (e.id, e.name, e.position, e.rotation, e.scale))
+        .collect();
+    let count = entities.len();
+    let started = std::time::Instant::now();
+    let markers = scene_markers::collect(&engine, &entities, |id| engine.world_position(id).ok());
+    let elapsed = started.elapsed();
+    eprintln!(
+        "{count} entities -> {} markers in {elapsed:?}",
+        markers.len()
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(400),
+        "collecting markers for {count} entities took {elapsed:?}"
+    );
+}
+
+#[test]
+fn a_scaled_parent_scales_where_its_children_are() {
+    let Some(mut engine) = doppio_engine::Engine::load_default() else {
+        return;
+    };
+    let _guard = test_guard();
+    let parent = engine.create_entity("Group").unwrap();
+    let child = engine.create_entity("Child").unwrap();
+    engine.set_position(child, [1.0, 0.0, 0.0]).unwrap();
+    engine.set_entity_parent(child, Some(parent)).unwrap();
+    engine.set_scale(parent, [3.0, 3.0, 3.0]).unwrap();
+    let world = engine.world_position(child).unwrap();
+    assert!(
+        (world[0] - 3.0).abs() < 1e-3,
+        "child at x=1 under a 3x parent must sit at x=3, got {world:?}"
+    );
+}
+
+#[test]
+fn scale_survives_a_save_and_reload_and_still_renders() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view(engine)
+    };
+    let id = create_prefab_labelled(&mut harness, "Cube");
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+    let path = std::env::temp_dir().join(format!("doppio-scale-{}.caf", std::process::id()));
+    engine.save_scene(&path.to_string_lossy()).expect("save");
+    engine.load_scene(&path.to_string_lossy()).expect("load");
+    let mut found = None;
+    for index in 0..engine.entity_count() {
+        let info = engine.entity_at(index).unwrap();
+        let names: Vec<String> = engine
+            .entity_components(info.id)
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        eprintln!("{} {:?}", info.name, names);
+        if names.iter().any(|n| n == "Mesh Filter") {
+            found = Some(info.id);
+        }
+    }
+    let id = found.expect("cube after reload");
+    engine.set_scale(id, [1.0; 3]).unwrap();
+    let small = coverage(engine, &empty);
+    engine.set_scale(id, [3.0; 3]).unwrap();
+    let large = coverage(engine, &empty);
+    assert!(
+        large as f32 > small as f32 * 1.6,
+        "after reload: {small} -> {large}"
+    );
+}
+
+#[test]
+fn a_cube_with_a_stone_like_material_still_scales() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("cube-material-scale");
+    std::fs::create_dir_all(&root).expect("dir");
+    let tex = root.join("t.png");
+    RgbaImage::from_pixel(64, 64, Rgba([120, 118, 110, 255]))
+        .save(&tex)
+        .unwrap();
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view(engine)
+    };
+    let id = create_prefab_labelled(&mut harness, "Cube");
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+    for (label, material) in [
+        ("plain", doppio_engine::Material::default()),
+        (
+            "textured",
+            doppio_engine::Material {
+                albedo_map: tex.display().to_string(),
+                normal_map: tex.display().to_string(),
+                height_scale: 0.04,
+                ..doppio_engine::Material::default()
+            },
+        ),
+        (
+            "displaced",
+            doppio_engine::Material {
+                albedo_map: tex.display().to_string(),
+                normal_map: tex.display().to_string(),
+                displacement_mode: 1,
+                ..doppio_engine::Material::default()
+            },
+        ),
+    ] {
+        let path = root.join(format!("{label}.mat"));
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        engine.apply_material(id, &path.to_string_lossy()).unwrap();
+        engine.set_scale(id, [1.0; 3]).unwrap();
+        let small = coverage(engine, &empty);
+        engine.set_scale(id, [3.0; 3]).unwrap();
+        let large = coverage(engine, &empty);
+        assert!(
+            large as f32 > small as f32 * 1.6,
+            "{label}: {small} -> {large}"
+        );
+    }
+}
+
+#[test]
+fn entities_with_both_transform_and_split_components_render_their_scale_and_rotation() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view(engine)
+    };
+    let id = create_prefab_labelled(&mut harness, "Cube");
+    let engine = harness.app.engine.as_mut().expect("engine");
+    // Scenes saved by older editors carry the legacy Transform AND Position/Rotation/Scale 3D.
+    for name in ["Position 3D", "Rotation 3D", "Scale 3D"] {
+        add_component(engine, id, name).expect(name);
+    }
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+    engine.set_scale(id, [1.0; 3]).unwrap();
+    let small = coverage(engine, &empty);
+    engine.set_scale(id, [3.0; 3]).unwrap();
+    let large = coverage(engine, &empty);
+    assert!(
+        large as f32 > small as f32 * 1.6,
+        "the scale of an entity that has both component sets must reach the renderer ({small} -> {large})"
+    );
+    assert_eq!(engine.scale(id).unwrap(), [3.0; 3]);
+
+    // Rotation too: a 45 degree turn about Y changes the silhouette of a cube.
+    engine.set_scale(id, [2.0, 1.0, 1.0]).unwrap();
+    let before = render_entity_view(engine);
+    engine.set_rotation(id, [0.0, 90.0, 0.0]).unwrap();
+    let after = render_entity_view(engine);
+    assert_ne!(
+        before, after,
+        "rotating an entity with both component sets must change the render"
+    );
+    let turned = engine.rotation(id).unwrap();
+    assert!((turned[1] - 90.0).abs() < 0.5, "{turned:?}");
+}
+
+// ------------------------------------------------------------- Nature Generator
+
+#[test]
+fn nature_generator_is_a_node_graph_pane_with_live_parameters() {
+    use crate::uikit::panels::nature_generator as ng;
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ShowNatureGenerator);
+    assert!(
+        harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, g)| g.active_kind() == PaneKind::NatureGenerator),
+        "the tab comes to the front"
+    );
+    for widget in [
+        id::NATUREGEN_CANVAS,
+        id::NATUREGEN_PREVIEW,
+        id::NATUREGEN_PRESET,
+        id::NATUREGEN_PLACE,
+        id::NATUREGEN_EXPORT,
+    ] {
+        assert!(harness.has(Id::from(widget.clone())), "missing {widget:?}");
+    }
+    assert!(
+        harness.app().nature.preview.is_some(),
+        "the preview renders at once"
+    );
+    let before = harness.app().nature.stats.clone();
+    let grow = harness
+        .app()
+        .nature
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "grow")
+        .unwrap()
+        .id;
+    let levels = crate::uikit::nature::ops::find("grow")
+        .unwrap()
+        .params
+        .iter()
+        .position(|p| p.key == "levels")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::SetParam(grow, levels, 4.0)));
+    assert_ne!(
+        harness.app().nature.stats,
+        before,
+        "parameters regenerate the model"
+    );
+
+    // Nodes can be added, wired, undone and redone; port colours are enforced.
+    let nodes = harness.app().nature.graph.nodes.len();
+    harness.dispatch(Message::NatureGen(ng::Edit::AddNode("noise_displace")));
+    assert_eq!(harness.app().nature.graph.nodes.len(), nodes + 1);
+    let added = harness
+        .app()
+        .nature
+        .selected
+        .expect("the new node is selected");
+    harness.dispatch(Message::NatureGen(ng::Edit::Connect {
+        from: grow,
+        output: 0,
+        to: added,
+        input: 0,
+    }));
+    assert!(
+        harness
+            .app()
+            .nature
+            .status
+            .as_deref()
+            .unwrap_or("")
+            .contains("cannot connect"),
+        "a skeleton cannot feed a mesh input"
+    );
+    harness.dispatch(Message::NatureGen(ng::Edit::Undo));
+    assert_eq!(
+        harness.app().nature.graph.nodes.len(),
+        nodes,
+        "undo removes the node"
+    );
+    harness.dispatch(Message::NatureGen(ng::Edit::Redo));
+    assert_eq!(harness.app().nature.graph.nodes.len(), nodes + 1);
+    // The Output node stays.
+    let output = harness.app().nature.graph.output_node().unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::DeleteNode(output)));
+    assert!(harness.app().nature.graph.node(output).is_some());
+
+    // A preset replaces the graph; a rock has one part.
+    let rock = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Boulder")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(rock)));
+    assert!(
+        harness.app().nature.stats.contains("1 part"),
+        "{}",
+        harness.app().nature.stats
+    );
+    harness.dispatch(Message::NatureGen(ng::Edit::SetQuality(0)));
+    let low = harness.app().nature.stats.clone();
+    harness.dispatch(Message::NatureGen(ng::Edit::SetQuality(2)));
+    assert_ne!(
+        harness.app().nature.stats,
+        low,
+        "quality changes the polygon count"
+    );
+}
+
+#[test]
+fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-place");
+    harness.app.asset_root_override = Some(root.clone());
+    let empty = {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        render_entity_view(engine)
+    };
+    // A tree: trunk with a baked bark material, leaves with a cut-out card material.
+    let oak = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Oak")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(oak)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Export));
+    assert!(
+        root.join("nature/oak_trunk.obj").is_file(),
+        "{:?}",
+        harness.app().nature.status
+    );
+    assert!(root.join("nature/oak_leaves.obj").is_file());
+    let recipe = std::fs::read_to_string(root.join("nature/oak.nature")).expect("recipe file");
+    assert!(
+        crate::uikit::nature::from_text(&recipe).is_some(),
+        "the .nature file holds the graph"
+    );
+
+    let before = harness.app().entities.len();
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    assert_eq!(
+        harness.app().entities.len(),
+        before + 3,
+        "group + trunk + leaves: {:?}",
+        harness.app().nature.status
+    );
+    assert!(
+        harness
+            .app()
+            .nature
+            .status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("Placed Oak ("),
+        "{:?}",
+        harness.app().nature.status
+    );
+    let group = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let children: Vec<u32> = (0..engine.entity_count())
+        .filter_map(|i| engine.entity_at(i).ok())
+        .filter(|info| engine.entity_parent(info.id).ok().flatten() == Some(group))
+        .map(|info| info.id)
+        .collect();
+    assert_eq!(children.len(), 2);
+    let materials: Vec<String> = children
+        .iter()
+        .map(|c| engine.entity_material(*c).unwrap_or_default())
+        .collect();
+    assert!(
+        materials
+            .iter()
+            .all(|m| m.contains("nature/materials") || m.contains("materials/")),
+        "{materials:?}"
+    );
+    assert_ne!(
+        materials[0], materials[1],
+        "trunk and leaves get different materials"
+    );
+    assert!(
+        root.join("nature/materials").read_dir().unwrap().count() >= 3,
+        "maps and .mat files were written"
+    );
+
+    // Every kind places cleanly (several parts under one group: trees, a four-part flower...).
+    for name in [
+        "Pine",
+        "Boulder",
+        "Pink Flower",
+        "Grass Clump",
+        "Low-poly Tree",
+        "Fern",
+    ] {
+        let index = harness
+            .app()
+            .nature
+            .presets
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap();
+        harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(index)));
+        harness.dispatch(Message::NatureGen(ng::Edit::Place));
+        let status = harness.app().nature.status.clone().unwrap_or_default();
+        assert!(
+            status.starts_with(&format!("Placed {name} (")) && !status.contains("problems"),
+            "{name}: {status}"
+        );
+    }
+    let engine = harness.app.engine.as_mut().expect("engine");
+    // The real engine draws it.
+    let mut covered = 0;
+    for _ in 0..3 {
+        let frame = render_entity_view(engine);
+        covered = frame
+            .chunks(4)
+            .zip(empty.chunks(4))
+            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 6))
+            .count();
+    }
+    assert!(
+        covered > 150,
+        "the placed tree must show up in the viewport ({covered} px)"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn nature_parts_can_use_your_own_materials_and_textures() {
+    use crate::uikit::nature::ops;
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-own-assets");
+    std::fs::create_dir_all(&root).expect("dir");
+    harness.app.asset_root_override = Some(root.clone());
+    // Your own material (a .mat saved by the engine) and your own cut-out image.
+    let mat = root.join("my wet stone.mat");
+    {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        let mut material = engine.new_material().unwrap();
+        material.albedo = [0.1, 0.4, 0.8, 1.0];
+        engine
+            .save_material(&mat.to_string_lossy(), &material)
+            .unwrap();
+    }
+    let png = root.join("my_grass.png");
+    RgbaImage::from_fn(32, 32, |x, _| {
+        Rgba([40, 160, 40, if (8..24).contains(&x) { 255 } else { 0 }])
+    })
+    .save(&png)
+    .unwrap();
+
+    // Rock with your material, grass with your PNG.
+    let rock = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Boulder")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(rock)));
+    let part = harness
+        .app()
+        .nature
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "part")
+        .unwrap()
+        .id;
+    let params = ops::find("part").unwrap().params;
+    let material_index = params.iter().position(|p| p.key == "material").unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::SetParam(
+        part,
+        material_index,
+        ops::material_index("Your material (.mat)"),
+    )));
+    harness.dispatch(Message::NatureGen(ng::Edit::SetString(
+        part,
+        0,
+        mat.to_string_lossy().into_owned(),
+    )));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Placed Boulder"), "{status}");
+    let group = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let child = (0..engine.entity_count())
+        .filter_map(|i| engine.entity_at(i).ok())
+        .find(|info| engine.entity_parent(info.id).ok().flatten() == Some(group))
+        .expect("a child part")
+        .id;
+    assert_eq!(
+        engine.entity_material(child).unwrap(),
+        mat.to_string_lossy(),
+        "your .mat is applied as it is"
+    );
+    assert!(
+        !root
+            .join("nature/materials")
+            .join("project_my_wet_stone.mat")
+            .exists(),
+        "your material is never copied or rebaked"
+    );
+
+    let grass = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Grass Clump")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(grass)));
+    let part = harness
+        .app()
+        .nature
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "part")
+        .unwrap()
+        .id;
+    harness.dispatch(Message::NatureGen(ng::Edit::SetParam(
+        part,
+        material_index,
+        ops::material_index("Your texture (cut-out PNG)"),
+    )));
+    harness.dispatch(Message::NatureGen(ng::Edit::SetString(
+        part,
+        0,
+        png.to_string_lossy().into_owned(),
+    )));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(
+        status.starts_with("Placed Grass Clump") && !status.contains("problems"),
+        "{status}"
+    );
+    let wrapped = root.join("nature/materials/project_my_grass.mat");
+    assert!(
+        wrapped.is_file(),
+        "a cut-out material is made around your image"
+    );
+    let text = std::fs::read_to_string(wrapped).unwrap();
+    assert!(
+        text.contains("my_grass.png") && text.contains("alpha_mode"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn photoreal_rock_places_with_a_generated_texture_set() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-surface");
+    harness.app.asset_root_override = Some(root.clone());
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 8.0, 0.0]).unwrap();
+        engine.set_rotation(id, [-42.0, 140.0, 0.0]).unwrap();
+    }
+    let rock = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Photoreal Rock")
+        .unwrap();
+    let other = std::env::var("DOPPIO_NATURE_PRESET").ok();
+    let rock = other
+        .as_deref()
+        .and_then(|n| {
+            harness
+                .app()
+                .nature
+                .presets
+                .iter()
+                .position(|p| p.name == n)
+        })
+        .unwrap_or(rock);
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(rock)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(
+        status.starts_with("Placed ") && !status.contains("problems"),
+        "{status}"
+    );
+    let materials = root.join("nature/materials");
+    let names: Vec<String> = std::fs::read_dir(&materials)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .collect();
+    for suffix in ["_albedo.png", "_normal.png", "_orm.png", ".mat"] {
+        if other.is_some() {
+            break;
+        }
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("rock_") && n.ends_with(suffix)),
+            "{suffix}: {names:?}"
+        );
+    }
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.7,
+            pitch: 0.32,
+            distance: 3.1,
+            focus: [0.0, 0.7, 0.0],
+        })
+        .unwrap();
+    let frame = render_entity_view_sized(engine, 960, 540);
+    if let Ok(dir) = std::env::var("DOPPIO_NATURE_SURFACE_DUMP") {
+        image::save_buffer(
+            format!(
+                "{dir}/render_{}.png",
+                other.as_deref().unwrap_or("surface").replace(' ', "_")
+            ),
+            &frame,
+            960,
+            540,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn water_generator_is_a_node_graph_tab_with_a_live_preview() {
+    use crate::uikit::panels::water_generator as wg;
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ShowWaterGenerator);
+    assert!(
+        harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, g)| g.active_kind() == PaneKind::WaterGenerator),
+        "the tab comes to the front"
+    );
+    for widget in [
+        id::WATERGEN_CANVAS,
+        id::WATERGEN_PREVIEW,
+        id::WATERGEN_PRESET,
+        id::WATERGEN_PLACE,
+        id::WATERGEN_EXPORT,
+        id::WATERGEN_PLAY,
+    ] {
+        assert!(harness.has(Id::from(widget.clone())), "missing {widget:?}");
+    }
+    assert!(harness.app().watergen.preview.is_some());
+    let before = harness.app().watergen.stats.clone();
+
+    // A parameter regenerates the water; the preset list replaces the graph.
+    let wind = harness
+        .app()
+        .watergen
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "wind")
+        .unwrap()
+        .id;
+    let index = crate::uikit::water::find("wind")
+        .unwrap()
+        .params
+        .iter()
+        .position(|p| p.key == "count")
+        .unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::SetParam(wind, index, 3.0)));
+    assert_ne!(
+        harness.app().watergen.stats,
+        before,
+        "{}",
+        harness.app().watergen.stats
+    );
+
+    // Nodes can be added and wired; port colours are enforced; undo and redo work.
+    let nodes = harness.app().watergen.graph.nodes.len();
+    harness.dispatch(Message::WaterGen(wg::Edit::AddNode("ripples")));
+    assert_eq!(harness.app().watergen.graph.nodes.len(), nodes + 1);
+    let look = harness
+        .app()
+        .watergen
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "look")
+        .unwrap()
+        .id;
+    let ripples = harness.app().watergen.selected.unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::Connect {
+        from: look,
+        output: 0,
+        to: ripples,
+        input: 0,
+    }));
+    assert!(harness
+        .app()
+        .watergen
+        .status
+        .as_deref()
+        .unwrap_or("")
+        .contains("cannot connect"));
+    harness.dispatch(Message::WaterGen(wg::Edit::Undo));
+    assert_eq!(harness.app().watergen.graph.nodes.len(), nodes);
+    harness.dispatch(Message::WaterGen(wg::Edit::Redo));
+    assert_eq!(harness.app().watergen.graph.nodes.len(), nodes + 1);
+    let output = harness.app().watergen.graph.output_node().unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::DeleteNode(output)));
+    assert!(harness.app().watergen.graph.node(output).is_some());
+
+    let storm = harness
+        .app()
+        .watergen
+        .presets
+        .iter()
+        .position(|p| p.name == "Storm")
+        .unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(storm)));
+    assert_eq!(harness.app().watergen.name, "Storm");
+    let storm_waves = harness.app().watergen.water.as_ref().unwrap().waves.len();
+    assert!(storm_waves >= 12, "{storm_waves}");
+
+    // The preview animates.
+    let first = harness.app().watergen.preview.clone();
+    harness.app.watergen.time = 3.0;
+    harness.app.watergen.redraw();
+    assert_ne!(
+        format!("{first:?}"),
+        format!("{:?}", harness.app().watergen.preview)
+    );
+}
+
+#[test]
+fn placing_water_creates_an_animated_engine_surface() {
+    use crate::uikit::panels::water_generator as wg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_ref().expect("engine");
+    if engine.capi_version() < 7 {
+        return;
+    }
+    let root = test_temp_root("water-place");
+    harness.app.asset_root_override = Some(root.clone());
+    let sea = harness
+        .app()
+        .watergen
+        .presets
+        .iter()
+        .position(|p| p.name == "Open Sea")
+        .unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(sea)));
+    let before = harness.app().entities.len();
+    harness.dispatch(Message::WaterGen(wg::Edit::Place));
+    let status = harness.app().watergen.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Placed Open Sea"), "{status}");
+    assert_eq!(harness.app().entities.len(), before + 1);
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let water = engine.water(id).expect("a water component");
+    assert_eq!(water.size, [300.0, 300.0]);
+    assert!(water.waves.len() >= 8);
+    // Ticking builds the surface; the waves move the height over time.
+    for _ in 0..3 {
+        engine.tick(0.05);
+    }
+    let h0 = engine.water_height(id, 5.0, 5.0).expect("height");
+    for _ in 0..40 {
+        engine.tick(0.05);
+    }
+    let h1 = engine.water_height(id, 5.0, 5.0).expect("height");
+    assert!(h0.abs() < 3.0 && h1.abs() < 3.0);
+    assert!((h0 - h1).abs() > 1e-4, "the surface animates: {h0} vs {h1}");
+
+    // Saving writes the graph, which reloads to the same water.
+    harness.dispatch(Message::WaterGen(wg::Edit::Export));
+    let file = root.join("water/open_sea.water");
+    let text = std::fs::read_to_string(&file).expect("saved");
+    let (name, graph) = crate::uikit::water::from_text(&text).expect("parses");
+    assert_eq!(name, "Open Sea");
+    assert_eq!(
+        graph.build().unwrap().waves,
+        harness.app().watergen.water.as_ref().unwrap().waves
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// Renders every water preset in the engine to `DOPPIO_WATER_DUMP` (documentation images).
+#[test]
+fn water_presets_render_in_the_engine() {
+    use crate::uikit::panels::water_generator as wg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 7 {
+        return;
+    }
+    let Ok(dir) = std::env::var("DOPPIO_WATER_DUMP") else {
+        return;
+    };
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 8.0, 0.0]).unwrap();
+        engine.set_rotation(id, [-35.0, 140.0, 0.0]).unwrap();
+    }
+    let count = harness.app().watergen.presets.len();
+    for index in 0..count {
+        let name = harness.app().watergen.presets[index].name;
+        harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(index)));
+        harness.dispatch(Message::WaterGen(wg::Edit::Place));
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        // Above the editor grid plane, which would otherwise cut the troughs.
+        engine.set_position(id, [0.0, 1.0, 0.0]).unwrap();
+        for _ in 0..30 {
+            engine.tick(0.05);
+        }
+        let sea = matches!(name, "Open Sea" | "Storm");
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.5,
+                pitch: if sea { 0.3 } else { 0.4 },
+                distance: if sea { 46.0 } else { 12.0 },
+                focus: [0.0, 1.0, 0.0],
+            })
+            .unwrap();
+        let frame = render_entity_view_sized(engine, 960, 540);
+        image::save_buffer(
+            format!("{dir}/{}.png", name.to_lowercase().replace(' ', "_")),
+            &frame,
+            960,
+            540,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+        engine.destroy_entity(id).ok();
+        harness.app.has_water = false;
+    }
+}
+
+#[test]
+fn terrain_generator_is_a_node_graph_tab_with_a_3d_preview() {
+    use crate::uikit::panels::terrain_generator as tg;
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ShowTerrainGenerator);
+    assert!(
+        harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, g)| g.active_kind() == PaneKind::TerrainGenerator),
+        "the tab comes to the front"
+    );
+    for widget in [
+        id::TERRAINGEN_CANVAS,
+        id::TERRAINGEN_PREVIEW,
+        id::TERRAINGEN_PRESET,
+        id::TERRAINGEN_PLACE,
+        id::TERRAINGEN_EXPORT,
+    ] {
+        assert!(harness.has(Id::from(widget.clone())), "missing {widget:?}");
+    }
+    assert!(harness.app().terraingen.preview.is_some());
+    let before = harness.app().terraingen.stats.clone();
+    let ridge = harness
+        .app()
+        .terraingen
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "output")
+        .unwrap()
+        .id;
+    let max = crate::uikit::terrain::find("output")
+        .unwrap()
+        .params
+        .iter()
+        .position(|p| p.key == "max_height")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::SetParam(ridge, max, 900.0)));
+    assert_ne!(harness.app().terraingen.stats, before);
+
+    // Nodes can be added; undo/redo; the Output stays; presets replace the graph.
+    let nodes = harness.app().terraingen.graph.nodes.len();
+    harness.dispatch(Message::TerrainGen(tg::Edit::AddNode("blur")));
+    assert_eq!(harness.app().terraingen.graph.nodes.len(), nodes + 1);
+    harness.dispatch(Message::TerrainGen(tg::Edit::Undo));
+    assert_eq!(harness.app().terraingen.graph.nodes.len(), nodes);
+    harness.dispatch(Message::TerrainGen(tg::Edit::Redo));
+    assert_eq!(harness.app().terraingen.graph.nodes.len(), nodes + 1);
+    harness.dispatch(Message::TerrainGen(tg::Edit::DeleteNode(ridge)));
+    assert!(harness.app().terraingen.graph.node(ridge).is_some());
+    let island = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Volcanic Island")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(island)));
+    assert_eq!(harness.app().terraingen.name, "Volcanic Island");
+
+    // Orbiting redraws the preview without re-evaluating the graph.
+    let first = format!("{:?}", harness.app().terraingen.preview);
+    harness.dispatch(Message::TerrainGen(tg::Edit::PreviewPress));
+    harness.dispatch(Message::TerrainGen(tg::Edit::PreviewMove(
+        iced::Point::new(10.0, 10.0),
+    )));
+    harness.dispatch(Message::TerrainGen(tg::Edit::PreviewMove(
+        iced::Point::new(90.0, 40.0),
+    )));
+    harness.dispatch(Message::TerrainGen(tg::Edit::PreviewRelease));
+    assert_ne!(first, format!("{:?}", harness.app().terraingen.preview));
+}
+
+#[test]
+fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
+    use crate::uikit::panels::terrain_generator as tg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 8 {
+        return;
+    }
+    let root = test_temp_root("terrain-place");
+    harness.app.asset_root_override = Some(root.clone());
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let lid = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(lid, [0.0, 300.0, 0.0]).unwrap();
+        engine.set_rotation(lid, [-38.0, 140.0, 0.0]).unwrap();
+    }
+    let before = harness.app().entities.len();
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let status = harness.app().terraingen.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Placed Alpine Range"), "{status}");
+    assert_eq!(harness.app().entities.len(), before + 1);
+    let id = harness.app().entities[harness.app().selected].id;
+    let model = harness.app().terraingen.graph.build(257).unwrap();
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let terrain = engine.terrain(id).expect("a terrain component");
+    assert_eq!(terrain.resolution, [257, 257]);
+    assert_eq!(terrain.size, model.size);
+    // The engine's height at the centre is the generated height there.
+    let centre = engine
+        .terrain_height(id, model.size[0] * 0.5, model.size[1] * 0.5)
+        .expect("height");
+    let expected = model.height.sample(0.5, 0.5) * model.max_height;
+    assert!((centre - expected).abs() < 2.0, "{centre} vs {expected}");
+    // It renders: the terrain changes the picture of an empty scene.
+    let frame = render_entity_view_sized(engine, 160, 90);
+    assert!(frame.chunks(4).any(|p| p[0..3] != frame[0..3]));
+    if let Ok(dir) = std::env::var("DOPPIO_TERRAIN_DUMP") {
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.9,
+                pitch: 0.9,
+                distance: 1300.0,
+                focus: [0.0, 80.0, 0.0],
+            })
+            .unwrap();
+        let big = render_entity_view_sized(engine, 960, 540);
+        image::save_buffer(
+            format!("{dir}/engine_alpine.png"),
+            &big,
+            960,
+            540,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+
+    harness.dispatch(Message::TerrainGen(tg::Edit::Export));
+    assert!(root.join("terrain/alpine_range.terrain-graph").is_file());
+    assert!(root.join("terrain/alpine_range_height.png").is_file());
+    let text = std::fs::read_to_string(root.join("terrain/alpine_range.terrain-graph")).unwrap();
+    let (name, graph) = crate::uikit::terrain::from_text(&text).expect("parses");
+    assert_eq!(name, "Alpine Range");
+    assert_eq!(
+        graph.build(65).unwrap(),
+        harness.app().terraingen.graph.build(65).unwrap()
+    );
+    std::fs::remove_dir_all(root).ok();
 }

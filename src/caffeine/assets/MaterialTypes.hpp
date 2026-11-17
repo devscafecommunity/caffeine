@@ -30,6 +30,11 @@ struct MaterialSurface {
 
     Vec2 uvTiling{1.0f, 1.0f};
     Vec2 uvOffset{0.0f, 0.0f};
+    /// 1 = UVs follow the object's scale: a mesh scaled 2x keeps the texture's density (it
+    /// tiles twice) instead of stretching it. The factor is the world length of the mesh's
+    /// tangent / bitangent per object-space unit, so non-uniform scale is handled per face.
+    /// 0 = the authored 1:1 UVs.
+    u8   uvObjectScale = 1;
     f32  normalStrength = 1.0f;
     /// The normal map stores DirectX-convention green (Y down) data.
     bool normalDirectX = false;

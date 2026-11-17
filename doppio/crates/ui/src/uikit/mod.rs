@@ -10,13 +10,17 @@ pub mod material_library;
 pub mod materialcraft;
 pub mod materialcraft_io;
 pub mod mesh_material_import;
+pub mod nature;
 pub mod panels;
 pub mod prefabs;
 pub mod procedural;
 pub mod project;
 pub mod script;
+pub mod terrain;
+pub mod texture_graph;
 pub mod texture_set;
 pub mod theme;
+pub mod water;
 
 /// A UI-side view of an engine entity. The engine crate owns the real data;
 /// panels consume this plain struct so they stay testable without the C++ lib.

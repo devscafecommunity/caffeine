@@ -83,15 +83,21 @@ inline void propagateTransforms(ECS::World& world) {
 
     static constexpr int MAX_DEPTH = 8;
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {
+        // Adding a component while iterating moves entities between archetypes and invalidates
+        // the iteration (a child that had no WorldTransform yet crashed the renderer), so the
+        // new matrices are collected first and written afterwards.
+        std::vector<std::pair<ECS::Entity, Mat4>> updates;
         ECS::ComponentQuery q;
         q.with<Scene::Parent>();
         world.forEach<Scene::Parent>(q, [&](ECS::Entity child, Scene::Parent& pc) {
             if (!pc.parent.isValid()) return;
             auto* parentWT = world.get<WorldTransform>(pc.parent);
             if (!parentWT) return;
-            WorldTransform& childWT = world.add<WorldTransform>(child);
-            childWT.matrix = parentWT->matrix * localMatrix(world, child);
+            updates.emplace_back(child, parentWT->matrix * localMatrix(world, child));
         });
+        for (const auto& [child, matrix] : updates) {
+            world.add<WorldTransform>(child).matrix = matrix;
+        }
     }
 
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {

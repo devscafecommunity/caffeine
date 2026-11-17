@@ -1,4 +1,4 @@
-use crate::uikit::components::{gizmo, viewport_shader, viewport_surface};
+use crate::uikit::components::{gizmo, scene_markers, viewport_shader, viewport_surface};
 use crate::uikit::id;
 use iced::mouse;
 use iced::widget::container;
@@ -14,6 +14,9 @@ pub struct ViewportState<'a> {
     pub size: Size,
     pub mode: gizmo::Mode,
     pub target: Option<gizmo::Target>,
+    pub markers: &'a [scene_markers::Marker],
+    pub show_markers: bool,
+    pub selected_entity: Option<u32>,
 }
 
 pub struct ViewportCallbacks<'a, Message> {
@@ -27,6 +30,7 @@ pub struct ViewportCallbacks<'a, Message> {
     pub surface_double_click: Message,
     pub surface_resized: Box<dyn Fn(Size) -> Message + 'a>,
     pub surface_gizmo: Box<dyn Fn(gizmo::Message) -> Message + 'a>,
+    pub surface_marker: Box<dyn Fn(scene_markers::Message) -> Message + 'a>,
 }
 
 /// The viewport panel: camera toolbar + interactive engine surface.
@@ -41,6 +45,22 @@ pub fn view<'a, Message: Clone + 'a>(
         target: state.target,
     })
     .map(callbacks.surface_gizmo);
+    // Markers sit under the gizmo: its handles win a click, then a marker icon, then the scene.
+    let overlay: Element<'a, Message> = if state.show_markers && !state.markers.is_empty() {
+        iced::widget::stack![
+            scene_markers::view(scene_markers::View {
+                camera: state.camera,
+                viewport: state.size,
+                markers: state.markers,
+                selected: state.selected_entity,
+            })
+            .map(callbacks.surface_marker),
+            gizmo,
+        ]
+        .into()
+    } else {
+        gizmo
+    };
 
     let surface = viewport_surface::view(viewport_surface::Surface {
         id: id::VIEWPORT_SURFACE,
@@ -58,7 +78,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_scroll: callbacks.surface_scroll,
         on_double_click: callbacks.surface_double_click,
         on_resize: callbacks.surface_resized,
-        gizmo,
+        gizmo: overlay,
     });
 
     container(surface)

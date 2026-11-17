@@ -2,8 +2,8 @@ use crate::history::{self, History};
 use crate::uikit::asset_wizard;
 use crate::uikit::behaviour;
 use crate::uikit::components::{
-    behaviour_picker, button, dock_overlay, gizmo, menu, panel, prefab_palette, status, tabs,
-    toolbar, viewport_shader,
+    behaviour_picker, button, dock_overlay, gizmo, menu, panel, prefab_palette, scene_markers,
+    status, tabs, toolbar, viewport_shader,
 };
 use crate::uikit::dryad;
 use crate::uikit::generators::{self, MaterialGraph};
@@ -14,9 +14,13 @@ use crate::uikit::panels;
 use crate::uikit::panels::dryad_nodes;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
+use crate::uikit::panels::nature_generator as nature_generator_panel;
 use crate::uikit::panels::project_manager;
 use crate::uikit::panels::script as script_panel;
+use crate::uikit::panels::terrain_generator as terrain_generator_panel;
+use crate::uikit::panels::texture_generator as texture_generator_panel;
 use crate::uikit::panels::texture_set as texture_set_panel;
+use crate::uikit::panels::water_generator as water_generator_panel;
 use crate::uikit::prefabs;
 use crate::uikit::project;
 use crate::uikit::script;
@@ -301,6 +305,10 @@ enum PaneKind {
     Assets,
     Viewport,
     Generator,
+    TextureGenerator,
+    NatureGenerator,
+    WaterGenerator,
+    TerrainGenerator,
     Inspector,
     Material,
     TextureSet,
@@ -366,6 +374,8 @@ enum Message {
     ViewportResized(f32, f32),
     ViewportGridShortcut,
     ToggleGrid,
+    ToggleMarkers,
+    MarkerSelected(u32),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SetViewportSettings {
         show_grid: Option<bool>,
@@ -461,6 +471,14 @@ enum Message {
     },
     Material(material::Edit),
     TextureSet(texture_set_panel::Edit),
+    TextureGen(texture_generator_panel::Edit),
+    ShowTextureGenerator,
+    NatureGen(nature_generator_panel::Edit),
+    ShowNatureGenerator,
+    WaterGen(water_generator_panel::Edit),
+    ShowWaterGenerator,
+    TerrainGen(terrain_generator_panel::Edit),
+    ShowTerrainGenerator,
     Generator(material_generator::Edit),
     GeneratorTextureSearch(String),
     GeneratorTexturePick(String),
@@ -585,6 +603,9 @@ struct App {
     viewport_fps_window: Instant,
     viewport_frames: u32,
     viewport_hovered: bool,
+    /// The scene holds a water surface, so the editor keeps stepping the engine for it.
+    has_water: bool,
+    water_scan: u32,
     viewport_last_tick: Option<Instant>,
     fly_keys: HashSet<FlyKey>,
     fly_boost: bool,
@@ -685,6 +706,14 @@ struct App {
     packing_user_presets: Vec<generators::NamedPackingPreset>,
     packing_preset_name: String,
     packing_store_path: Option<std::path::PathBuf>,
+    texgen: texturegen::TextureGen,
+    nature: naturegen::NatureGen,
+    watergen: watergen::WaterGen,
+    terraingen: terraingen::TerrainGen,
+    /// Scene markers (lights, cameras, colliders, empties) drawn over the viewport.
+    markers: Vec<scene_markers::Marker>,
+    show_markers: bool,
+    markers_dirty: bool,
     texture_set: Option<texture_set::TextureSet>,
     texture_set_history: texture_set::TileHistory,
     texture_set_path: Option<std::path::PathBuf>,
@@ -705,7 +734,11 @@ impl PaneKind {
             PaneKind::Hierarchy => "Hierarchy",
             PaneKind::Assets => "Assets",
             PaneKind::Viewport => "Viewport",
-            PaneKind::Generator => "Generator",
+            PaneKind::Generator => "Material Generator",
+            PaneKind::TextureGenerator => "Texture Generator",
+            PaneKind::NatureGenerator => "Nature",
+            PaneKind::WaterGenerator => "Water",
+            PaneKind::TerrainGenerator => "Terrain",
             PaneKind::Inspector => "Inspector",
             PaneKind::Material => "Material",
             PaneKind::TextureSet => "Texture Set",
@@ -721,6 +754,10 @@ impl PaneKind {
             PaneKind::Assets => id::PANE_TAB_ASSETS,
             PaneKind::Viewport => id::PANE_TAB_VIEWPORT,
             PaneKind::Generator => id::PANE_TAB_GENERATOR,
+            PaneKind::TextureGenerator => id::PANE_TAB_TEXTURE_GENERATOR,
+            PaneKind::NatureGenerator => id::PANE_TAB_NATURE_GENERATOR,
+            PaneKind::WaterGenerator => id::PANE_TAB_WATER_GENERATOR,
+            PaneKind::TerrainGenerator => id::PANE_TAB_TERRAIN_GENERATOR,
             PaneKind::Inspector => id::PANE_TAB_INSPECTOR,
             PaneKind::Material => id::PANE_TAB_MATERIAL,
             PaneKind::TextureSet => id::PANE_TAB_TEXTURE_SET,
@@ -748,6 +785,7 @@ impl App {
                         a: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Viewport,
                             PaneKind::Generator,
+                            PaneKind::TextureGenerator,
                             PaneKind::TextureSet,
                             PaneKind::Script,
                             PaneKind::DryadNodes,
@@ -755,6 +793,9 @@ impl App {
                         b: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Inspector,
                             PaneKind::Material,
+                            PaneKind::NatureGenerator,
+                            PaneKind::WaterGenerator,
+                            PaneKind::TerrainGenerator,
                         ]))),
                     }),
                 }),
@@ -777,6 +818,7 @@ impl App {
                         a: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Viewport,
                             PaneKind::Generator,
+                            PaneKind::TextureGenerator,
                             PaneKind::TextureSet,
                             PaneKind::Script,
                             PaneKind::DryadNodes,
@@ -784,6 +826,9 @@ impl App {
                         b: Box::new(Configuration::Pane(PaneGroup::new(&[
                             PaneKind::Inspector,
                             PaneKind::Material,
+                            PaneKind::NatureGenerator,
+                            PaneKind::WaterGenerator,
+                            PaneKind::TerrainGenerator,
                         ]))),
                     }),
                 }),
@@ -914,6 +959,8 @@ impl App {
             viewport_fps_window: Instant::now(),
             viewport_frames: 0,
             viewport_hovered: false,
+            has_water: false,
+            water_scan: 0,
             viewport_last_tick: None,
             fly_keys: HashSet::new(),
             fly_boost: false,
@@ -1015,6 +1062,13 @@ impl App {
                 .unwrap_or_default(),
             packing_preset_name: String::new(),
             packing_store_path: generators::user_packing_preset_path(),
+            texgen: texturegen::TextureGen::new(),
+            nature: naturegen::NatureGen::new(),
+            watergen: watergen::WaterGen::new(),
+            terraingen: terraingen::TerrainGen::new(),
+            markers: Vec::new(),
+            show_markers: true,
+            markers_dirty: true,
             texture_set: None,
             texture_set_history: texture_set::TileHistory::default(),
             texture_set_path: None,
@@ -5411,6 +5465,10 @@ impl App {
                     surface.uv_tiling[axis.min(1)] = value.max(0.001);
                     changed = true;
                 }
+                material::Edit::UvObjectScale(value) => {
+                    surface.uv_object_scale = value;
+                    changed = true;
+                }
                 material::Edit::UvOffset(axis, value) => {
                     surface.uv_offset[axis.min(1)] = value;
                     changed = true;
@@ -6165,8 +6223,9 @@ impl App {
         let Some(id) = self.entities.get(self.selected).map(|entity| entity.id) else {
             return;
         };
-        let (name, key) = match edit {
-            gizmo::Edit::Move { axis, position } => {
+        let (name, key) = (edit.label(), edit.history_key(id));
+        match edit {
+            gizmo::Edit::Move { position, .. } | gizmo::Edit::MovePlane { position, .. } => {
                 if let Some(engine) = self.engine.as_mut() {
                     let _ = engine.set_world_position(id, position);
                 }
@@ -6178,36 +6237,24 @@ impl App {
                 if let Some(entity) = self.entities.get_mut(self.selected) {
                     entity.position = local;
                 }
-                (
-                    format!("Move {}", axis.label()),
-                    format!("gizmo:move:{id}:{}", axis.label()),
-                )
             }
-            gizmo::Edit::Rotate { axis, rotation } => {
+            gizmo::Edit::Rotate { rotation, .. } => {
                 if let Some(engine) = self.engine.as_mut() {
                     let _ = engine.set_rotation(id, rotation);
                 }
                 if let Some(entity) = self.entities.get_mut(self.selected) {
                     entity.rotation = rotation;
                 }
-                (
-                    format!("Rotate {}", axis.label()),
-                    format!("gizmo:rotate:{id}:{}", axis.label()),
-                )
             }
-            gizmo::Edit::Scale { axis, scale } => {
+            gizmo::Edit::Scale { scale, .. } | gizmo::Edit::ScaleUniform { scale } => {
                 if let Some(engine) = self.engine.as_mut() {
                     let _ = engine.set_scale(id, scale);
                 }
                 if let Some(entity) = self.entities.get_mut(self.selected) {
                     entity.scale = scale;
                 }
-                (
-                    format!("Scale {}", axis.label()),
-                    format!("gizmo:scale:{id}:{}", axis.label()),
-                )
             }
-        };
+        }
         self.sync_selected_transform();
         self.refresh_components();
         self.commit(name, Some(key));
@@ -6442,6 +6489,118 @@ impl App {
     }
 
     fn update(&mut self, message: Message) {
+        // Pointer noise never changes the scene; everything else may, so markers rebuild.
+        let noisy = matches!(
+            &message,
+            Message::ViewportTick
+                | Message::ViewportHover(_)
+                | Message::ViewportMoved(_)
+                | Message::ViewportKey(_, _)
+                | Message::ViewportBoost(_)
+                | Message::PointerReleased
+                | Message::ViewportResized(_, _)
+        );
+        self.update_inner(message);
+        if !noisy {
+            self.markers_dirty = true;
+        }
+        if self.markers_dirty {
+            self.refresh_markers();
+        }
+    }
+
+    /// Fills the scene with a floor, a few meshes, three kinds of light and a camera, framed so
+    /// the gizmos and markers read well. Used by the headless `scene3d` fixture and the docs.
+    #[cfg_attr(not(any(test, feature = "headless")), allow(dead_code))]
+    pub(crate) fn build_demo_scene(&mut self) {
+        let place = |app: &mut App,
+                     label: &str,
+                     position: [f32; 3],
+                     rotation: [f32; 3],
+                     scale: [f32; 3]| {
+            let Some(index) = prefabs::PREFABS.iter().position(|p| p.label == label) else {
+                return;
+            };
+            app.update(Message::CreatePrefab(index));
+            if let (Some(engine), Some(entity)) =
+                (app.engine.as_mut(), app.entities.get(app.selected))
+            {
+                let id = entity.id;
+                let _ = engine.set_position(id, position);
+                let _ = engine.set_rotation(id, rotation);
+                let _ = engine.set_scale(id, scale);
+            }
+            if let Some(engine) = app.engine.as_ref() {
+                app.entities = projectloader::read_entities(engine);
+            }
+        };
+        place(self, "Plane", [0.0, 0.0, 0.0], [0.0; 3], [8.0, 1.0, 8.0]);
+        place(
+            self,
+            "Cube",
+            [0.0, 0.5, 0.0],
+            [0.0, 25.0, 0.0],
+            [1.0, 1.0, 1.0],
+        );
+        place(
+            self,
+            "Physics Cube",
+            [2.6, 0.5, 1.0],
+            [0.0; 3],
+            [1.0, 1.0, 1.0],
+        );
+        place(
+            self,
+            "Directional Light",
+            [-3.0, 4.5, -2.0],
+            [-50.0, 35.0, 0.0],
+            [1.0; 3],
+        );
+        place(self, "Point Light", [-2.4, 1.6, 2.2], [0.0; 3], [1.0; 3]);
+        place(
+            self,
+            "Spot Light",
+            [3.2, 3.2, -2.6],
+            [-55.0, 150.0, 0.0],
+            [1.0; 3],
+        );
+        place(
+            self,
+            "Camera",
+            [-5.0, 2.6, 5.5],
+            [-12.0, -38.0, 0.0],
+            [1.0; 3],
+        );
+        self.camera = doppio_engine::Camera {
+            yaw: 0.85,
+            pitch: 0.5,
+            distance: 11.0,
+            focus: [0.0, 1.0, 0.0],
+        };
+        self.selected = 1.min(self.entities.len().saturating_sub(1));
+        self.sync_selected_transform();
+        self.refresh_components();
+        self.markers_dirty = true;
+        self.refresh_markers();
+    }
+
+    /// Rebuilds the viewport markers from the engine's component data.
+    fn refresh_markers(&mut self) {
+        self.markers_dirty = false;
+        let Some(engine) = self.engine.as_ref() else {
+            self.markers.clear();
+            return;
+        };
+        let entities: Vec<scene_markers::EntityTransform> = self
+            .entities
+            .iter()
+            .map(|e| (e.id, e.name.clone(), e.position, e.rotation, e.scale))
+            .collect();
+        self.markers =
+            scene_markers::collect(engine, &entities, |id| engine.world_position(id).ok());
+    }
+
+    fn update_inner(&mut self, message: Message) {
         if !matches!(
             &message,
             Message::ToggleMenu(_)
@@ -6756,6 +6915,14 @@ impl App {
             Message::ImportMaterialcraft(path) => self.import_materialcraft(&path),
             Message::ExportMaterialcraft(path) => self.export_materialcraft(&path),
             Message::OpenTextureSet(path) => self.open_texture_set(&path),
+            Message::TextureGen(edit) => self.edit_texgen(edit),
+            Message::ShowTextureGenerator => self.show_texgen_pane(),
+            Message::NatureGen(edit) => self.edit_nature(edit),
+            Message::ShowNatureGenerator => self.show_nature_pane(),
+            Message::WaterGen(edit) => self.edit_water(edit),
+            Message::ShowWaterGenerator => self.show_water_pane(),
+            Message::TerrainGen(edit) => self.edit_terrain(edit),
+            Message::ShowTerrainGenerator => self.show_terrain_pane(),
             Message::OpenGenerator => {
                 self.show_generator_pane();
             }
@@ -7024,6 +7191,8 @@ impl App {
                 if self.viewport_hovered {
                     self.fly_camera(dt);
                 }
+                self.pump_water_preview(dt);
+                self.tick_engine_water(dt);
                 self.pump_viewport();
                 self.pump_generator_bake();
                 self.pump_generator_preview();
@@ -7053,6 +7222,16 @@ impl App {
             Message::ViewportGridShortcut => {
                 if self.viewport_hovered {
                     self.toggle_grid();
+                }
+            }
+            Message::ToggleMarkers => {
+                self.show_markers = !self.show_markers;
+                let state = if self.show_markers { "on" } else { "off" };
+                self.log(LogLevel::Action, format!("Scene markers {state}"));
+            }
+            Message::MarkerSelected(id) => {
+                if let Some(index) = self.entities.iter().position(|entity| entity.id == id) {
+                    self.select_index(index);
                 }
             }
             Message::ToggleGrid => {
@@ -7287,8 +7466,32 @@ impl App {
                 ],
             ),
             MenuId::View => (
-                293.0,
+                341.0,
                 vec![
+                    menu::Item {
+                        id: id::SHOW_TERRAIN_GENERATOR,
+                        label: "Terrain Generator",
+                        shortcut: None,
+                        message: Message::ShowTerrainGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_WATER_GENERATOR,
+                        label: "Water Generator",
+                        shortcut: None,
+                        message: Message::ShowWaterGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_NATURE_GENERATOR,
+                        label: "Nature Generator",
+                        shortcut: None,
+                        message: Message::ShowNatureGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_TEXTURE_GENERATOR,
+                        label: "Texture Generator",
+                        shortcut: None,
+                        message: Message::ShowTextureGenerator,
+                    },
                     menu::Item {
                         id: id::FOCUS_SELECTION,
                         label: "Focus Selection",
@@ -7306,6 +7509,16 @@ impl App {
                         label: "Render Now",
                         shortcut: Some("Ctrl+R"),
                         message: Message::RenderViewport,
+                    },
+                    menu::Item {
+                        id: id::TOGGLE_MARKERS,
+                        label: if self.show_markers {
+                            "Hide Scene Markers"
+                        } else {
+                            "Show Scene Markers"
+                        },
+                        shortcut: None,
+                        message: Message::ToggleMarkers,
                     },
                     menu::Item {
                         id: id::TOGGLE_GRID,
@@ -8085,6 +8298,9 @@ impl App {
                     camera: self.viewport_frame_camera.as_ref().unwrap_or(&self.camera),
                     size: Size::new(self.viewport_logical.0, self.viewport_logical.1),
                     mode: self.gizmo_mode,
+                    markers: &self.markers,
+                    show_markers: self.show_markers && self.engine.is_some(),
+                    selected_entity: self.entities.get(self.selected).map(|entity| entity.id),
                     target: self
                         .entities
                         .get(self.selected)
@@ -8109,6 +8325,9 @@ impl App {
                         Message::ViewportResized(size.width, size.height)
                     }),
                     surface_gizmo: Box::new(Message::Gizmo),
+                    surface_marker: Box::new(|message| match message {
+                        scene_markers::Message::Select(id) => Message::MarkerSelected(id),
+                    }),
                 };
                 (
                     id::PANE_VIEWPORT,
@@ -8156,7 +8375,7 @@ impl App {
                     };
                     (
                         id::PANE_GENERATOR,
-                        "Generator",
+                        "Material Generator",
                         Some(format!(
                             "{} · {}×{}",
                             document.surface.name,
@@ -8168,7 +8387,7 @@ impl App {
                 } else {
                     (
                         id::PANE_GENERATOR,
-                        "Generator",
+                        "Material Generator",
                         Some("No material open".to_owned()),
                         container(
                             column![
@@ -8287,6 +8506,42 @@ impl App {
                 };
                 (id::PANE_MATERIAL, "Material", subtitle, body)
             }
+            PaneKind::NatureGenerator => (
+                id::PANE_NATURE_GENERATOR,
+                "Nature Generator",
+                Some(format!("{} · {}", self.nature.name, self.nature.stats)),
+                {
+                    let (materials, textures) = self.nature_assets();
+                    nature_generator_panel::view(
+                        self.nature.view_state(materials, textures),
+                        Message::NatureGen,
+                    )
+                },
+            ),
+            PaneKind::WaterGenerator => (
+                id::PANE_WATER_GENERATOR,
+                "Water Generator",
+                Some(format!("{} · {}", self.watergen.name, self.watergen.stats)),
+                water_generator_panel::view(self.watergen.view_state(), Message::WaterGen),
+            ),
+            PaneKind::TerrainGenerator => (
+                id::PANE_TERRAIN_GENERATOR,
+                "Terrain Generator",
+                Some(format!(
+                    "{} · {}",
+                    self.terraingen.name, self.terraingen.stats
+                )),
+                terrain_generator_panel::view(self.terraingen.view_state(), Message::TerrainGen),
+            ),
+            PaneKind::TextureGenerator => (
+                id::PANE_TEXTURE_GENERATOR,
+                "Texture Generator",
+                Some(format!(
+                    "{} · {}×{}",
+                    self.texgen.name, self.texgen.graph.resolution, self.texgen.graph.resolution
+                )),
+                texture_generator_panel::view(self.texgen.view_state(), Message::TextureGen),
+            ),
             PaneKind::TextureSet => {
                 let (subtitle, body) = if let Some(set) = &self.texture_set {
                     let path = self
@@ -8685,6 +8940,9 @@ fn apply_generator_param(kind: &mut generators::NodeKind, param: material_genera
         (NodeKind::Output { options, .. }, Param::OutputHeightContrast(value)) => {
             options.height_contrast = value.clamp(0.1, 4.0);
         }
+        (NodeKind::TextureOutput { mode }, Param::TextureOutputMode(index)) => {
+            *mode = generators::TextureOutputMode::from_index(index);
+        }
         (NodeKind::Proc { op, params, .. }, Param::Proc(index, value)) => {
             if let (Some(slot), Some(spec)) = (params.get_mut(index), op.0.params.get(index)) {
                 *slot = value.clamp(spec.min, spec.max);
@@ -8984,6 +9242,11 @@ fn format_transform_number(value: f32) -> String {
         format!("{value:.3}")
     }
 }
+
+mod naturegen;
+mod terraingen;
+mod texturegen;
+mod watergen;
 
 #[cfg(test)]
 mod tests;

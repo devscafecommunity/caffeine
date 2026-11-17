@@ -82,6 +82,8 @@ pub enum Edit {
     NormalDirectX(bool),
     AoStrength(f32),
     UvTiling(usize, f32),
+    /// UVs follow the object's scale: a scaled mesh keeps the texture density.
+    UvObjectScale(bool),
     UvOffset(usize, f32),
     AlphaMode(usize),
     AlphaCutoff(f32),
@@ -747,6 +749,15 @@ fn uv_body<'a, Message: Clone + 'a>(
     emit: Rc<dyn Fn(Edit) -> Message + 'a>,
 ) -> Element<'a, Message> {
     let mut body = Column::new().spacing(4);
+    body = body.push(checkbox::property(
+        id::material_field("uv_object_scale"),
+        "Scale UVs with the object",
+        material.uv_object_scale,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::UvObjectScale(value))
+        },
+    ));
     for axis in 0..2 {
         let emit = emit.clone();
         let label = if axis == 0 { "Tiling X" } else { "Tiling Y" };

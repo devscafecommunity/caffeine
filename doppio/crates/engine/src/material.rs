@@ -89,6 +89,8 @@ pub struct Material {
     pub displacement_scale: f32,
     /// Subdivision levels (1..9) for geometric mode.
     pub mesh_subdivisions: i32,
+    /// UVs follow the object's scale (texture density is kept when the mesh is scaled).
+    pub uv_object_scale: bool,
 }
 
 impl Default for Material {
@@ -139,6 +141,7 @@ impl Default for Material {
             displacement_mode: 0,
             displacement_scale: 0.05,
             mesh_subdivisions: 7,
+            uv_object_scale: true,
         }
     }
 }
@@ -197,6 +200,7 @@ pub(crate) struct RawMaterial {
     pub displacement_mode: i32,
     pub displacement_scale: f32,
     pub mesh_subdivisions: i32,
+    pub uv_object_scale: i32,
 }
 
 impl Default for RawMaterial {
@@ -247,6 +251,7 @@ impl Default for RawMaterial {
             displacement_mode: 0,
             displacement_scale: 0.0,
             mesh_subdivisions: 0,
+            uv_object_scale: 0,
         }
     }
 }
@@ -335,6 +340,7 @@ impl From<&RawMaterial> for Material {
             displacement_mode: raw.displacement_mode,
             displacement_scale: raw.displacement_scale,
             mesh_subdivisions: raw.mesh_subdivisions,
+            uv_object_scale: raw.uv_object_scale != 0,
         }
     }
 }
@@ -387,6 +393,7 @@ impl From<&Material> for RawMaterial {
         raw.displacement_mode = material.displacement_mode;
         raw.displacement_scale = material.displacement_scale;
         raw.mesh_subdivisions = material.mesh_subdivisions;
+        raw.uv_object_scale = i32::from(material.uv_object_scale);
         raw
     }
 }

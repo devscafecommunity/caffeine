@@ -1,5 +1,8 @@
 # Materials in Doppio: procedural library, real depth and baking
 
+> Looking for sprites, leaves, flames or packed VFX masks instead of a PBR material? That is the
+> separate **Texture Generator**: see [texture-generator-guide.md](texture-generator-guide.md).
+
 This guide covers what you need to author realistic, tileable PBR materials
 **without downloading third-party assets**: the procedural node library, the
 preset library, the Output node, parallax depth and how baking works.
@@ -9,7 +12,7 @@ regenerate them are at the end.
 ## 1. The procedural library
 
 The Generator tab is a node graph that bakes into the material's maps. Besides
-the original nodes it now has **123 data-driven operations** (`uikit/procedural/`),
+the original nodes it now has **129 data-driven operations** (`uikit/procedural/`),
 all seeded, tileable and multi-threaded:
 
 | Category | Examples |
@@ -21,13 +24,14 @@ all seeded, tileable and multi-threaded:
 | Math (25) | Add, Multiply, Lerp, Remap, Clamp, Power, Smoothstep, Posterize, Gradient Map, Channel Split/Merge… |
 | Geometry (8) | Transform 2D, Mirror, Polar, Twirl, Pixelate, Slope Blur, Tile Sampler, Warp |
 | Height & PBR (14) | Height-to-Normal, Height Blend, Terrace, Bevel, Curvature, multi-scale AO, Edge Wear, Dust |
+| **Variation (6)** | Noise Variation, Cell Variation, Patch Blend, Tile Shuffle, Wave Function Collapse, Diamond-Square |
 | **Realistic (17)** | Rock Fracture, River Pebbles, Grass Blades, Water Waves, Foam, Bark Fissures, Soil Clumps, Leaf Litter, Lichen, Wet / Puddle Mask, Cavity Grime, Ice, Lava, Asphalt, Carbon Fibre, Paint Chips, Water Droplets |
 
 They appear in the node palette grouped by category (searchable) and their
 parameters get sliders, colour pickers and dropdowns automatically in the
 properties panel, because each op is one table row (`OpDef`).
 
-### Preset library (78 materials)
+### Preset library (85 materials)
 
 The **Library** dropdown in the Generator header starts from a ready-made
 graph (one undoable step; your resolution is kept). Presets are normal graphs,
@@ -82,6 +86,47 @@ droplets on glass, swamp), **Realistic Nature** (lawn, meadow, dry and tall wild
 needles, forest floor, autumn leaves), **Realistic Ground** (soil, forest mud, fresh and cracked
 asphalt), **Realistic Wood** (oak, pine and birch bark) and **Realistic Man-made** (carbon fibre,
 chipped red and blue paint, rusty painted panel, mossy brick wall).
+
+### Variation: lively patterns that never repeat
+
+A repeated tile or a clean noise looks mechanical. The **Variation** class adds controlled
+randomness so surfaces look lived-in. Every op is seeded (a new seed is a new variation of the same
+material), deterministic, and keeps results seamless where its input is (`uikit/procedural/variation.rs`).
+
+![Variation nodes applied to the same brick input](images/material/variation-ops.png)
+
+| Node | What it does | Main controls |
+|---|---|---|
+| **Noise Variation** | **Perlin** or **Simplex** noise drifts the input's brightness, hue and saturation in large soft patches, each channel with its own noise field | noise kind, patch size, octaves, brightness / hue / saturation drift, contrast |
+| **Cell Variation** | every cell gets its own random tone, and optionally its own offset into the input (stochastic tiling). Cells are a grid, Voronoi, or **the pattern's own cell ids**: wire a brick / stone / tile pattern's *Variation* output into **Cell ID** and each brick varies individually | cells, brightness / hue / saturation variation, texture shift, jitter |
+| **Patch Blend** | mixes two inputs (A, B) in organic patches shaped by Perlin / Simplex noise: clean and worn, wet and dry, moss and rock | noise kind, patch size, coverage of B, edge softness |
+| **Tile Shuffle** | cuts the input into cells and swaps, rotates and flips them at random | cells, swap chance, rotate, flip |
+| **Wave Function Collapse** | builds a new arrangement, of any size, whose every local neighbourhood already exists in a *sample*: bricks, tiles, runes... see below | output cells, sample cells, pattern size (2 or 3), tone levels, symmetry, softness |
+| **Diamond-Square** | the classic fractal heightfield (clouds, dunes, rock relief), computed on a torus so it tiles | grid (2^n), roughness (Hurst exponent), contrast, bicubic smoothing |
+
+**Wave Function Collapse (overlapping model).** The sample (the connected input, or a built-in
+brick wall when nothing is connected) is reduced to `sample x sample` cells and quantised into
+`levels` tone bands; every `N x N` window of it (optionally flipped / rotated) becomes a *pattern*
+with a weight (how often it occurs). The solver then fills a periodic output grid: it repeatedly
+collapses the cell with the lowest entropy to one of its remaining patterns (chosen by weight) and
+propagates the consequences to the neighbours, restarting with a derived seed on a contradiction
+(up to 14 attempts, then falling back to a random draw from the sample's tones). Because the output is
+periodic it **tiles**, and the test `wave_function_collapse_only_builds_arrangements_the_sample_allows`
+checks that every window of the result exists in the sample. The *Value* output is the tone band: feed it
+to a Gradient Map for crisp, recolourable results.
+
+Tips: WFC needs a sample with **chunky features** (a few tones, features several cells wide). Thin
+lines vanish when the sample is reduced, so a 1 px mortar line is lost; raise *Sample cells* (up to 32) or
+pre-thicken the sample. Pattern size 3 follows the sample closely, 2 explores more. Patterns are
+capped at 420 so the solver stays fast (about 0.6 s extra for a 1024 px bake).
+
+**Varied presets.** Seven presets show the class working (`Varied` category): *Varied Brick Wall*,
+*Varied Cobblestone*, *Varied Planks*, *Varied Hex Tiles* (each brick, stone, plank or tile gets its own
+tone from the pattern's cell ids, plus Simplex drift across the wall), *WFC Brick Remix*,
+*Diamond-Square Badlands* and *Diamond-Square Moss Rock*. They are normal graphs, so the Variation nodes
+can be rebalanced or replaced in the node editor.
+
+![Varied presets next to the plain Red Brick](images/material/variation-presets.png)
 
 ## 2. The Output node
 
@@ -201,11 +246,41 @@ regardless of draw order. The process-wide GPU caches (textures, procedural mesh
 are also released when a session shuts down, so a second session no longer inherits handles
 from a dead device.
 
-## 6. Regenerating the images
+## 6. Scaling an object: keep the texture density
+
+A mesh's UVs are authored 1:1, so a quad scaled to twice its size used to stretch its material to
+twice the size too. Materials now have **Scale UVs with the object** (`.mat` key
+`uv_object_scale`, **on by default**, in the Material panel's UV card):
+
+![UVs 1:1 versus UVs that follow the scale, plane scaled 4x](images/material/uv-object-scale.png)
+
+How it works: the vertex shader measures how much the model matrix stretches the mesh's tangent
+(U) and bitangent (V) directions and the fragment shader multiplies the tiled UV by that factor.
+A plane scaled 4x tiles the texture 4x, a stretched cube keeps its density on every face, and at
+scale 1 nothing changes (`scaled_objects_keep_their_texture_density_when_uvs_follow_the_scale` checks
+both). The same factor is used by the geometric-displacement vertex and shadow shaders, so relief
+stays aligned with the colour.
+
+| Case | Behaviour |
+|---|---|
+| Scale 1 | identical to before |
+| Uniform scale | the texture tiles by the scale |
+| Non-uniform scale on a box or plane | each face uses its own U / V stretch |
+| Curved mesh with non-uniform scale | the factor varies smoothly with the tangent direction, so very strong stretches can show a slight density change |
+| Instanced draws (batched vegetation) | keep the authored UVs |
+| Material preview | always shows the authored UVs (its shapes have fixed sizes) |
+| `Tiling` / `Offset` | still apply on top: the final UV is `uv * tiling * objectScale + offset` |
+
+Turn it off for materials whose UVs are already in world units (a world-aligned atlas, a decal).
+Materials written before the key existed behave like new ones (on). `uv_object_scale` is part of the
+C ABI (version 6), the `.mat` file, the preview cache key and the agent's `material` query.
+
+## 7. Regenerating the images
 
 ```bash
 ./rebuild.sh                              # engine + Doppio (needs ImageMagick for the sheets)
 ./scripts/render-material-gallery.sh      # bakes all presets, renders sheets + depth comparisons
+./scripts/render-variation-docs.sh        # the Variation node and preset sheets
 ./scripts/capture-material-docs.sh        # headless UI screenshots (generator, channels, panel)
 doppio/target/release/doppio-material bake-preset "Red Brick" --out /tmp/brick   # one preset to disk
 doppio/target/release/doppio-material bake-graph path/to/material.mgraph --size 2048  # time one graph

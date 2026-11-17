@@ -59,6 +59,21 @@ NaturalFluidSettings settingsFrom(const ECS::NaturalFluidComponent& component) {
     settings.waves.seed = component.seed;
     settings.waves.waveCount = mode == 2 ? 14 : (mode == 1 ? 5 : 0);
 
+    const u32 custom = std::min<u32>(component.customWaveCount, 16u);
+    for (u32 i = 0; i < custom; ++i) {
+        const f32* w = component.customWaves[i];
+        Fluids::GerstnerWave wave;
+        wave.direction = Vec2(w[0], w[1]);
+        wave.wavelength = w[2];
+        wave.amplitude = w[3];
+        wave.steepness = w[4];
+        wave.phase = w[5];
+        settings.waves.explicitWaves.push_back(wave);
+    }
+    if (custom > 0) {
+        settings.waves.quality = WaterQuality::Realistic;
+    }
+
     settings.shallow.resolution =
         std::clamp(static_cast<int>(component.simulationResolution), 8, 192);
     settings.shallow.sizeX = component.sizeX;

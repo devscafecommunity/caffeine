@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform sampler2D uHeightMap;
 layout(set = 1, binding = 0) uniform VertexUBO {
     mat4 uMVP;
     mat4 uModel;
-    vec4 uDisp; // x depth (metres), y finite-difference step (tiled uv), z metres per tiled uv, w unused
+    vec4 uDisp; // x depth (metres), y finite-difference step (tiled uv), z metres per tiled uv, w uv follows object scale
     vec4 uUv;   // xy tiling, zw offset
 } ubo;
 
@@ -24,13 +24,26 @@ layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_texCoord;
 layout(location = 3) out vec3 v_tangent;
 layout(location = 4) out vec3 v_bitangent;
+layout(location = 5) out vec2 v_uvScale;
+
+// World length of the mesh's tangent / bitangent per object-space unit: how much the model
+// matrix stretches the U and V directions. Multiplying the UVs by it keeps the texture's
+// density when the object is scaled (a quad made twice as big tiles the texture twice).
+vec2 objectUvScale(mat3 model, vec3 normal, vec4 tangent) {
+    float tl = length(tangent.xyz);
+    if (tl < 1e-6) return vec2(1.0);
+    vec3 T = tangent.xyz / tl;
+    vec3 B = cross(normalize(normal), T) * tangent.w;
+    return vec2(length(model * T), length(model * B));
+}
 
 float heightAt(vec2 uv) {
     return textureLod(uHeightMap, uv, 0.0).a;
 }
 
 void main() {
-    vec2 uv = aTexCoord * ubo.uUv.xy + ubo.uUv.zw;
+    vec2 uvScale = ubo.uDisp.w > 0.5 ? objectUvScale(mat3(ubo.uModel), aNormal, aTangent) : vec2(1.0);
+    vec2 uv = aTexCoord * ubo.uUv.xy * uvScale + ubo.uUv.zw;
     float h = heightAt(uv);
 
     // Metres of displacement -> object space (the model may scale along the normal).
@@ -56,5 +69,6 @@ void main() {
     v_tangent = Td;
     v_bitangent = Bd;
     v_texCoord = aTexCoord;
+    v_uvScale = uvScale;
     gl_Position = ubo.uMVP * vec4(localPos, 1.0);
 }

@@ -20,6 +20,18 @@ pub enum PortKind {
     /// Control-flow port for node graphs whose pins run statements rather
     /// than values (Dryad exec pins). Drawn as a triangle.
     Exec,
+    /// Nature Generator: a triangle mesh.
+    Mesh,
+    /// Nature Generator: tree branches (polylines with radii).
+    Skeleton,
+    /// Nature Generator: scattered points.
+    Points,
+    /// Water Generator: a list of waves.
+    Waves,
+    /// Water Generator: the water's colour and shading.
+    Look,
+    /// Terrain Generator: a field (a grid of 0-1 values: a height map or a mask).
+    Height,
 }
 
 impl PortKind {
@@ -28,6 +40,12 @@ impl PortKind {
             PortKind::Color => theme::ICON_CYAN,
             PortKind::Scalar => theme::TEXT_MUTED,
             PortKind::Exec => theme::ACCENT_HOVER,
+            PortKind::Mesh => theme::SUCCESS,
+            PortKind::Skeleton => theme::ICON_ORANGE,
+            PortKind::Points => theme::ICON_PURPLE,
+            PortKind::Waves => theme::ICON_CYAN,
+            PortKind::Look => theme::WARNING,
+            PortKind::Height => theme::ICON_ORANGE,
         }
     }
 
@@ -36,6 +54,12 @@ impl PortKind {
             PortKind::Color => "color",
             PortKind::Scalar => "scalar",
             PortKind::Exec => "exec",
+            PortKind::Mesh => "mesh",
+            PortKind::Skeleton => "skeleton",
+            PortKind::Points => "points",
+            PortKind::Waves => "waves",
+            PortKind::Look => "look",
+            PortKind::Height => "field",
         }
     }
 

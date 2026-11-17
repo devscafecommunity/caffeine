@@ -19,6 +19,7 @@ layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_texCoord;
 layout(location = 3) out vec3 v_tangent;
 layout(location = 4) out vec3 v_bitangent;
+layout(location = 5) out vec2 v_uvScale;
 
 void main() {
     mat4 model = mat4(aModel0, aModel1, aModel2, aModel3);
@@ -33,5 +34,6 @@ void main() {
     v_tangent = T;
     v_bitangent = B;
     v_texCoord = aTexCoord;
+    v_uvScale = vec2(1.0); // instances keep their authored UVs (batched vegetation)
     gl_Position = ubo.uMVP * worldPos + ubo.uModel[3] * 0.0;
 }

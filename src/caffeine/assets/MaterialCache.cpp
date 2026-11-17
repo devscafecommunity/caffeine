@@ -16,7 +16,8 @@ bool sameSurface(const MaterialSurface& a, const MaterialSurface& b) {
            a.albedoMap == b.albedoMap && a.normalMap == b.normalMap && a.ormMap == b.ormMap &&
            a.emissionMap == b.emissionMap && a.uvTiling.x == b.uvTiling.x &&
            a.uvTiling.y == b.uvTiling.y && a.uvOffset.x == b.uvOffset.x &&
-           a.uvOffset.y == b.uvOffset.y && a.normalStrength == b.normalStrength &&
+           a.uvOffset.y == b.uvOffset.y && a.uvObjectScale == b.uvObjectScale &&
+           a.normalStrength == b.normalStrength &&
            a.normalDirectX == b.normalDirectX && a.aoStrength == b.aoStrength &&
            a.heightScale == b.heightScale && a.parallaxSteps == b.parallaxSteps &&
            a.displacementMode == b.displacementMode && a.displacementScale == b.displacementScale &&

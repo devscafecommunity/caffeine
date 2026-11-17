@@ -17,7 +17,9 @@ fn usage() -> ! {
          doppio-material texset-new --out <file.texset> [--size 512]\n  \
          doppio-material texset-info <file.texset>\n  \
          doppio-material texset-export <file.texset> --out DIR [--preset NAME]\n  \
-         doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list|--slugs]"
+         doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list|--slugs]\n  \
+         doppio-material nature <NAME|--all> --out DIR [--quality 0|1|2] [--seed N] [--list]\n  \
+         doppio-material bake-texture <NAME|FILE.texgraph|--all> --out DIR [--size 512] [--bits 8|16] [--flipbook CxR] [--list|--slugs]"
     );
     std::process::exit(2);
 }
@@ -37,6 +39,8 @@ fn main() {
         "texset-info" => texset_info(&args[1..]),
         "texset-export" => texset_export(&args[1..]),
         "bake-preset" => bake_preset(&args[1..]),
+        "bake-texture" => bake_texture(&args[1..]),
+        "nature" => nature_models(&args[1..]),
         _ => usage(),
     };
     if let Err(error) = result {
@@ -458,6 +462,8 @@ fn bake_preset(args: &[String]) -> Result<(), String> {
                 height_scale: scale,
                 parallax_steps: 64.0,
                 uv_tiling: [8.0, 8.0],
+                // The docs floor is a scaled plane tuned with an explicit tiling.
+                uv_object_scale: false,
                 ..doppio_engine::Material::default()
             };
             material.roughness = 1.0;
@@ -466,6 +472,162 @@ fn bake_preset(args: &[String]) -> Result<(), String> {
                 .map_err(|e| format!("{e:?}"))?;
         }
         println!("baked {} -> {}", preset.name, out.display());
+    }
+    Ok(())
+}
+
+/// Slug used for the output file names of a texture preset.
+fn texture_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Bakes Texture Generator presets (or a `.texgraph`) to PNG, optionally as a flipbook sheet.
+fn bake_texture(args: &[String]) -> Result<(), String> {
+    use doppio_ui::uikit::texture_graph as tg;
+    let presets = tg::presets();
+    if args.iter().any(|arg| arg == "--list") {
+        for preset in presets {
+            println!(
+                "{} / {}  {}",
+                preset.category, preset.name, preset.description
+            );
+        }
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--slugs") {
+        for preset in presets {
+            println!(
+                "{}\t{}\t{}",
+                texture_slug(preset.name),
+                preset.category,
+                preset.name
+            );
+        }
+        return Ok(());
+    }
+    let out = argument(args, "--out")
+        .map(PathBuf::from)
+        .ok_or_else(|| "expected --out DIR".to_owned())?;
+    let size: u32 = argument(args, "--size")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(512);
+    let depth = if argument(args, "--bits") == Some("16") {
+        tg::BitDepth::Sixteen
+    } else {
+        tg::BitDepth::Eight
+    };
+    let flipbook = argument(args, "--flipbook").and_then(|value| {
+        let (c, r) = value.split_once(['x', 'X'])?;
+        Some((c.parse::<u32>().ok()?, r.parse::<u32>().ok()?))
+    });
+    let mut jobs: Vec<(String, generators::MaterialGraph)> = Vec::new();
+    if args.iter().any(|arg| arg == "--all") {
+        for preset in presets {
+            jobs.push((texture_slug(preset.name), preset.build()));
+        }
+    } else {
+        let target =
+            positional(args).ok_or_else(|| "name a preset, a .texgraph or --all".to_owned())?;
+        if let Some(preset) = presets
+            .iter()
+            .find(|preset| preset.name.eq_ignore_ascii_case(target))
+        {
+            jobs.push((texture_slug(preset.name), preset.build()));
+        } else if Path::new(target).is_file() {
+            let stem = Path::new(target)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("texture");
+            jobs.push((texture_slug(stem), tg::load(Path::new(target))?));
+        } else {
+            return Err(format!("unknown texture preset `{target}` (try --list)"));
+        }
+    }
+    for (slug, mut graph) in jobs {
+        graph.resolution = size;
+        let (baked, name) = match flipbook {
+            Some((columns, rows)) => (
+                tg::bake_flipbook(&graph, columns, rows)?,
+                format!("{slug}_flipbook_{columns}x{rows}.png"),
+            ),
+            None => (
+                graph.bake_texture_with(&std::collections::HashMap::new(), None, None)?,
+                format!("{slug}.png"),
+            ),
+        };
+        let path = out.join(name);
+        tg::export_png(&baked, &path, depth)?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+/// Exports Nature Generator presets as `.obj` files (one per part) plus their `.nature` recipe.
+fn nature_models(args: &[String]) -> Result<(), String> {
+    use doppio_ui::uikit::nature;
+    let presets = nature::presets();
+    if args.iter().any(|arg| arg == "--list") {
+        for preset in &presets {
+            println!(
+                "{:<7} {:<16} {}",
+                preset.category, preset.name, preset.description
+            );
+        }
+        return Ok(());
+    }
+    let out = argument(args, "--out")
+        .map(PathBuf::from)
+        .ok_or_else(|| "expected --out DIR".to_owned())?;
+    let quality = argument(args, "--quality")
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(nature::Quality::from_index);
+    let seed: Option<u32> = argument(args, "--seed").and_then(|value| value.parse().ok());
+    let wanted: Vec<&nature::NaturePreset> = if args.iter().any(|a| a == "--all") {
+        presets.iter().collect()
+    } else {
+        let name = positional(args).ok_or_else(|| "name a preset or use --all".to_owned())?;
+        vec![presets
+            .iter()
+            .find(|preset| preset.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("unknown nature preset `{name}` (try --list)"))?]
+    };
+    for preset in wanted {
+        let mut graph = preset.graph();
+        if let Some(seed) = seed {
+            // Re-seeds every node that has a seed, so the same preset gives another individual.
+            let ids: Vec<nature::NodeId> = graph.nodes.iter().map(|n| n.id).collect();
+            for id in ids {
+                if graph.get(id, "seed").is_some() {
+                    graph.set(id, "seed", seed as f32);
+                }
+            }
+        }
+        let quality = quality.unwrap_or(preset.quality);
+        let model = graph.build(quality)?;
+        let files = nature::write_obj_files(&model, &out, preset.name)?;
+        std::fs::write(
+            out.join(format!(
+                "{}.{}",
+                nature::slug(preset.name),
+                nature::EXTENSION
+            )),
+            nature::to_text(preset.name, &graph, quality),
+        )
+        .map_err(|error| error.to_string())?;
+        println!(
+            "{}: {} triangles, {} part(s): {}",
+            preset.name,
+            model.triangles(),
+            model.parts.len(),
+            files.join(", ")
+        );
     }
     Ok(())
 }

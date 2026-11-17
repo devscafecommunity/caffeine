@@ -11,6 +11,8 @@
 #include "scene/NaturalFluidSystem.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <filesystem>
 
 using namespace Caffeine;
@@ -184,4 +186,51 @@ TEST_CASE("Natural fluids core runs the four product levels", "[naturalfluids][s
     for (int frame = 0; frame < 45; ++frame) fluid.update(1.0f / 60.0f);
     REQUIRE(fluid.volume().totalDensity() > 0.0f);
     REQUIRE(fluid.volume().temperatureCenterOfMass().z > 2.0f);
+}
+
+TEST_CASE("Authored Gerstner waves replace the generated spectrum", "[fluid][water]") {
+    WaveSettings settings;
+    settings.quality = WaterQuality::Realistic;
+    GerstnerWave swell;
+    swell.direction = Vec2(1.0f, 0.0f);
+    swell.wavelength = 20.0f;
+    swell.amplitude = 0.5f;
+    swell.steepness = 0.3f;
+    settings.explicitWaves.push_back(swell);
+
+    WaveField field;
+    field.configure(settings);
+    REQUIRE(field.waves().size() == 1);
+    CHECK(field.waves()[0].omega > 0.0f);  // dispersion filled in
+    // One 0.5 m wave: the surface stays within its amplitude.
+    f32 lo = 1e9f, hi = -1e9f;
+    for (int i = 0; i < 200; ++i) {
+        const f32 h = field.heightAt(static_cast<f32>(i) * 0.3f, 0.0f, 1.25f);
+        lo = std::min(lo, h);
+        hi = std::max(hi, h);
+    }
+    CHECK(hi <= 0.5001f);
+    CHECK(lo >= -0.5001f);
+    CHECK(hi - lo > 0.8f);
+
+    WaveSettings wind;
+    wind.windSpeed = 14.0f;
+    WaveField generated;
+    generated.configure(wind);
+    CHECK(generated.waves().size() > 1);
+}
+
+TEST_CASE("Custom waves survive the component prefix serialisation", "[fluid][water]") {
+    NaturalFluidComponent component;
+    component.customWaveCount = 2;
+    component.customWaves[1][2] = 33.0f;
+    static_assert(sizeof(NaturalFluidComponent) > 400, "waves are appended to the component");
+    NaturalFluidComponent copy;
+    std::memcpy(&copy, &component, sizeof(component));
+    CHECK(copy.customWaveCount == 2);
+    CHECK(copy.customWaves[1][2] == 33.0f);
+    // An older scene stores a shorter prefix: the new fields keep their defaults.
+    NaturalFluidComponent old;
+    std::memcpy(&old, &component, offsetof(NaturalFluidComponent, customWaveCount));
+    CHECK(old.customWaveCount == 0);
 }

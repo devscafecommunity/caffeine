@@ -5,6 +5,7 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_texCoord;
 layout(location = 3) in vec3 v_tangent;
 layout(location = 4) in vec3 v_bitangent;
+layout(location = 5) in vec2 v_uvScale; // object scale along U / V (see scene_lit.vert)
 
 // Photon G-buffer (attachment order is fixed in GpuSceneRenderer.hpp):
 //   1 = albedo          rgb linear, a = 1 on GI-relevant surfaces (RGBA8)
@@ -26,7 +27,7 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     int uDirCount;
     int uPointCount;
     int uSpotCount;
-    int uAlignPad;
+    int uUvObjectScale; // 1 = UVs follow the object scale (used to be std140 padding)
     vec4 uDirData[4];
     vec4 uDirColor[4];
     vec4 uPointData[4];
@@ -192,7 +193,8 @@ struct Surface {
 };
 
 vec2 materialUv() {
-    return v_texCoord * lights.uUvTransform.xy + lights.uUvTransform.zw;
+    vec2 follow = lights.uUvObjectScale != 0 ? v_uvScale : vec2(1.0);
+    return v_texCoord * lights.uUvTransform.xy * follow + lights.uUvTransform.zw;
 }
 
 vec3 surfaceNormal(vec2 uv) {

@@ -13,7 +13,9 @@ use crate::uikit::panels;
 use crate::uikit::panels::dryad_nodes;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
+use crate::uikit::panels::nature_generator;
 use crate::uikit::panels::project_manager;
+use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use serde_json::{json, Value};
 
@@ -112,6 +114,89 @@ pub fn run() -> iced::Result {
                         }))
                         .collect(),
                 ))
+            },
+        )
+        .query(
+            "markers",
+            "Scene markers drawn over the viewport: entity id, name, kind (directional, point, spot, camera, collider, empty), world position and visibility.",
+            |app, _| {
+                use crate::uikit::components::scene_markers::Kind;
+                Ok(json!({
+                    "visible": app.show_markers,
+                    "markers": app.markers.iter().map(|marker| json!({
+                        "id": marker.id,
+                        "name": marker.name,
+                        "position": marker.position,
+                        "kind": match &marker.kind {
+                            Kind::Directional { .. } => "directional",
+                            Kind::Point { .. } => "point",
+                            Kind::Spot { .. } => "spot",
+                            Kind::Camera { .. } => "camera",
+                            Kind::Collider { .. } => "collider",
+                            Kind::Empty { .. } => "empty",
+                        },
+                    })).collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "nature",
+            "Nature Generator state: name, quality, stats, every node (id, op, parameters with ranges, strings), the links, the op catalogue and the preset names.",
+            |app, _| {
+                use crate::uikit::procedural::ParamKind;
+                let nature = &app.nature;
+                Ok(json!({
+                    "name": nature.name,
+                    "quality": nature.quality.label(),
+                    "stats": nature.stats,
+                    "dirty": nature.dirty,
+                    "nodes": nature.graph.nodes.iter().map(|n| {
+                        let def = n.def();
+                        json!({
+                            "id": n.id, "op": n.op,
+                            "params": def.params.iter().enumerate().map(|(i, p)| json!({
+                                "index": i, "key": p.key, "label": p.label, "value": n.params[i],
+                                "min": p.min, "max": p.max, "choice": matches!(p.kind, ParamKind::Enum(_)),
+                            })).collect::<Vec<_>>(),
+                            "strings": n.strings,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "links": nature.graph.links.iter().map(|l| json!({
+                        "from": l.from, "output": l.output, "to": l.to, "input": l.input,
+                    })).collect::<Vec<_>>(),
+                    "ops": crate::uikit::nature::ops::NODES.iter().map(|d| json!({
+                        "id": d.id, "title": d.title, "category": d.category,
+                    })).collect::<Vec<_>>(),
+                    "presets": crate::uikit::nature::presets()
+                        .iter()
+                        .map(|preset| json!({ "name": preset.name, "category": preset.category }))
+                        .collect::<Vec<_>>(),
+                }))
+            },
+        )
+        .query(
+            "texture_generator",
+            "Texture Generator state: name, size, output mode, nodes, dirty flag and the preset names.",
+            |app, _| {
+                let graph = &app.texgen.graph;
+                Ok(json!({
+                    "name": app.texgen.name,
+                    "resolution": graph.resolution,
+                    "dirty": app.texgen.dirty,
+                    "bits": app.texgen.bits,
+                    "flipbook": [app.texgen.flip.0, app.texgen.flip.1],
+                    "path": app.texgen.path.as_ref().map(|path| path.display().to_string()),
+                    "nodes": graph.nodes.iter().map(|node| json!({
+                        "id": node.id,
+                        "title": node.kind.title(),
+                        "subtitle": node.kind.subtitle(),
+                    })).collect::<Vec<_>>(),
+                    "links": graph.links.len(),
+                    "presets": crate::uikit::texture_graph::presets()
+                        .iter()
+                        .map(|preset| json!({ "name": preset.name, "category": preset.category }))
+                        .collect::<Vec<_>>(),
+                }))
             },
         )
         .query("version", "Engine and C ABI version information.", |app, _| {
@@ -617,6 +702,148 @@ pub fn run() -> iced::Result {
                     return Ok(Message::Material(material::Edit::SetPreviewShadows(value)));
                 }
                 Err("expected one of yaw, elevation, intensity, shadows".to_owned())
+            },
+        )
+        .action(
+            "nature_apply_preset",
+            "Loads a Nature Generator preset graph (rock, tree or plant). args: { \"name\": \"Oak\" } (see query nature for names)",
+            |args| {
+                let name = args
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "expected \"name\"".to_owned())?;
+                let index = crate::uikit::nature::presets()
+                    .iter()
+                    .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("unknown nature preset `{name}`"))?;
+                Ok(Message::NatureGen(nature_generator::Edit::ApplyPreset(index)))
+            },
+        )
+        .action(
+            "nature_add_node",
+            "Adds a node to the Nature Generator graph. args: { \"op\": \"noise_displace\" } (op ids in query nature)",
+            |args| {
+                let op = args.get("op").and_then(Value::as_str).ok_or_else(|| "expected \"op\"".to_owned())?;
+                let def = crate::uikit::nature::ops::find(op).ok_or_else(|| format!("unknown node `{op}`"))?;
+                Ok(Message::NatureGen(nature_generator::Edit::AddNode(def.id)))
+            },
+        )
+        .action(
+            "nature_connect",
+            "Wires two nodes. args: { \"from\": id, \"output\": 0, \"to\": id, \"input\": 0 }",
+            |args| {
+                let get = |key: &str| args.get(key).and_then(Value::as_u64).ok_or_else(|| format!("expected numeric \"{key}\""));
+                Ok(Message::NatureGen(nature_generator::Edit::Connect {
+                    from: get("from")?,
+                    output: get("output")? as usize,
+                    to: get("to")?,
+                    input: get("input")? as usize,
+                }))
+            },
+        )
+        .action(
+            "nature_set",
+            "Edits the Nature Generator graph. args: { \"node\": id, \"param\": index, \"value\": number } or { \"node\": id, \"string\": index, \"text\": path } (a Part's own asset) or { \"quality\": 0|1|2 } or { \"name\": string }",
+            |args| {
+                if let (Some(node), Some(param), Some(value)) = (
+                    args.get("node").and_then(Value::as_u64),
+                    args.get("param").and_then(Value::as_u64),
+                    args.get("value").and_then(Value::as_f64),
+                ) {
+                    return Ok(Message::NatureGen(nature_generator::Edit::SetParam(node, param as usize, value as f32)));
+                }
+                if let (Some(node), Some(index), Some(text)) = (
+                    args.get("node").and_then(Value::as_u64),
+                    args.get("string").and_then(Value::as_u64),
+                    args.get("text").and_then(Value::as_str),
+                ) {
+                    return Ok(Message::NatureGen(nature_generator::Edit::SetString(node, index as usize, text.to_owned())));
+                }
+                if let Some(quality) = args.get("quality").and_then(Value::as_u64) {
+                    return Ok(Message::NatureGen(nature_generator::Edit::SetQuality(quality as usize)));
+                }
+                if let Some(name) = args.get("name").and_then(Value::as_str) {
+                    return Ok(Message::NatureGen(nature_generator::Edit::SetName(name.to_owned())));
+                }
+                Err("expected node + param + value, node + string + text, quality or name".to_owned())
+            },
+        )
+        .action(
+            "nature_export",
+            "Writes the Nature Generator model as one .obj per part (plus the .nature recipe) into the project's nature folder.",
+            |_| Ok(Message::NatureGen(nature_generator::Edit::Export)),
+        )
+        .action(
+            "nature_place",
+            "Places the Nature Generator model in the scene as a group of entities, one per part, each with its own material.",
+            |_| Ok(Message::NatureGen(nature_generator::Edit::Place)),
+        )
+        .action(
+            "toggle_scene_markers",
+            "Shows or hides the scene markers (light rays, camera frustums, colliders, locators) over the viewport.",
+            |_| Ok(Message::ToggleMarkers),
+        )
+        .action(
+            "select_marker",
+            "Selects the entity behind a scene marker, like clicking its icon. args: { \"id\": entity id }",
+            |args| {
+                let id = args
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "expected numeric \"id\"".to_owned())?;
+                Ok(Message::MarkerSelected(id as u32))
+            },
+        )
+        .action(
+            "texture_generator_apply_preset",
+            "Replaces the Texture Generator graph with a library preset. args: { \"name\": \"Torch Flame\" } (see query texture_generator for names)",
+            |args| {
+                let name = args
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "expected \"name\"".to_owned())?;
+                let index = crate::uikit::texture_graph::presets()
+                    .iter()
+                    .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("unknown texture preset `{name}`"))?;
+                Ok(Message::TextureGen(texture_generator::Edit::ApplyPreset(index)))
+            },
+        )
+        .action(
+            "texture_generator_export",
+            "Bakes the Texture Generator graph to a PNG in the project's textures folder. set the file name, bit depth, size and flipbook grid first with texture_generator_configure. args: { \"flipbook\": true } exports the flipbook sheet instead of the single PNG",
+            |args| {
+                if args.get("flipbook").and_then(Value::as_bool) == Some(true) {
+                    Ok(Message::TextureGen(texture_generator::Edit::ExportFlipbook))
+                } else {
+                    Ok(Message::TextureGen(texture_generator::Edit::Export))
+                }
+            },
+        )
+        .action(
+            "texture_generator_configure",
+            "Configures the Texture Generator export. args: { \"name\": string } or { \"bits\": 8|16 } or { \"flipbook\": [columns, rows] } or { \"size\": 64..2048 }",
+            |args| {
+                if let Some(name) = args.get("name").and_then(Value::as_str) {
+                    return Ok(Message::TextureGen(texture_generator::Edit::SetName(name.to_owned())));
+                }
+                if let Some(bits) = args.get("bits").and_then(Value::as_u64) {
+                    return Ok(Message::TextureGen(texture_generator::Edit::SetBits(bits as u8)));
+                }
+                if let Some(size) = args.get("size").and_then(Value::as_u64) {
+                    return Ok(Message::TextureGen(texture_generator::Edit::Node(
+                        material_generator::Edit::SetResolution(size as u32),
+                    )));
+                }
+                if let Some(grid) = args.get("flipbook").and_then(Value::as_array) {
+                    let get = |i: usize| grid.get(i).and_then(Value::as_u64).map(|v| v as u32);
+                    if let (Some(columns), Some(rows)) = (get(0), get(1)) {
+                        return Ok(Message::TextureGen(texture_generator::Edit::SetFlipbook(
+                            columns, rows,
+                        )));
+                    }
+                }
+                Err("expected one of name, bits, size, flipbook".to_owned())
             },
         )
         .action(
@@ -1505,6 +1732,7 @@ fn material_json(app: &App) -> Value {
             "normal_strength": document.surface.normal_strength,
             "ao_strength": document.surface.ao_strength,
             "uv_tiling": document.surface.uv_tiling,
+            "uv_object_scale": document.surface.uv_object_scale,
             "uv_offset": document.surface.uv_offset,
             "alpha_mode": document.surface.alpha_mode.label(),
             "alpha_cutoff": document.surface.alpha_cutoff,

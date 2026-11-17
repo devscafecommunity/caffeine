@@ -58,6 +58,34 @@ pub struct Preset {
     accent: Option<Accent>,
     /// Wire the base layer's third output into the Emissive input (lava).
     emissive: bool,
+    /// Randomises the finished albedo (Variation nodes) so the surface looks lived-in.
+    vary: Option<Vary>,
+}
+
+/// How the Variation nodes liven up a preset's albedo.
+#[derive(Debug, Clone, Copy)]
+pub struct Vary {
+    /// Strength of the Perlin / Simplex drift of brightness, hue and saturation (0..1).
+    noise: f32,
+    /// Grid cells for per-cell tone variation (0 = none).
+    cells: i32,
+    /// Strength of the per-cell variation (0..1).
+    cell_amount: f32,
+    /// The base pattern exposes a cell-id output (port 2) that drives the per-cell variation, so
+    /// bricks, stones and tiles vary individually instead of following an unrelated grid.
+    cell_ids: bool,
+}
+
+const fn varied(p: Preset, noise: f32, cells: i32, cell_amount: f32, cell_ids: bool) -> Preset {
+    Preset {
+        vary: Some(Vary {
+            noise,
+            cells,
+            cell_amount,
+            cell_ids,
+        }),
+        ..p
+    }
 }
 
 /// A layer blended over the finished surface through its own value as a mask.
@@ -153,6 +181,7 @@ const fn preset(
         metallic,
         accent: None,
         emissive: false,
+        vary: None,
     }
 }
 
@@ -1558,6 +1587,126 @@ static PRESETS: &[Preset] = &[
             0.3,
         ),
     ),
+    // ============================================================== Varied
+    varied(
+        preset(
+            "Varied Brick Wall",
+            "Varied",
+            "Running-bond bricks where every brick has its own tone and the wall drifts in large patches.",
+            layer("bricks_pro", &[], &[c(0.55, 0.53, 0.50), c(0.55, 0.20, 0.13)]),
+            GRIME,
+            0.5,
+            0.3,
+            (0.7, 0.95),
+            0.0,
+        ),
+        0.9,
+        14,
+        0.8,
+        true,
+    ),
+    varied(
+        preset(
+            "Varied Cobblestone",
+            "Varied",
+            "Cobblestones with per-stone tone and soft patches of weathering.",
+            layer("cobblestones", &[], &[c(0.14, 0.13, 0.12), c(0.60, 0.57, 0.52)]),
+            DIRT,
+            0.45,
+            0.35,
+            (0.65, 0.95),
+            0.0,
+        ),
+        1.0,
+        12,
+        0.7,
+        true,
+    ),
+    varied(
+        preset(
+            "Varied Planks",
+            "Varied",
+            "Wooden planks with plank-to-plank colour and a Simplex drift along the boards.",
+            layer("planks", &[], &[c(0.16, 0.09, 0.04), c(0.58, 0.38, 0.20)]),
+            FINE,
+            0.4,
+            0.2,
+            (0.45, 0.8),
+            0.0,
+        ),
+        0.8,
+        6,
+        0.9,
+        true,
+    ),
+    varied(
+        preset(
+            "Varied Hex Tiles",
+            "Varied",
+            "Hexagonal ceramic tiles where each tile is a slightly different shade.",
+            layer("hex_tiles", &[], &[c(0.09, 0.09, 0.09), c(0.72, 0.70, 0.64)]),
+            FINE,
+            0.3,
+            0.2,
+            (0.25, 0.6),
+            0.0,
+        ),
+        0.5,
+        12,
+        0.9,
+        true,
+    ),
+    varied(
+        preset(
+            "WFC Brick Remix",
+            "Varied",
+            "A brick wall rebuilt by Wave Function Collapse: new, never-repeating arrangements of bricks obeying the sample's local rules.",
+            layer("variation_wfc", &[("cells", 28.0), ("softness", 0.2)], &[]),
+            GRIME,
+            0.45,
+            0.4,
+            (0.7, 0.95),
+            0.0,
+        ),
+        0.6,
+        0,
+        0.0,
+        false,
+    ),
+    varied(
+        preset(
+            "Diamond-Square Badlands",
+            "Varied",
+            "Fractal sandstone terrain from the Diamond-Square algorithm, weathered by Simplex drift.",
+            layer("variation_diamond_square", &[("exponent", 7.0), ("roughness", 0.8)], &[c(0.28, 0.17, 0.10), c(0.82, 0.62, 0.40)]),
+            FINE,
+            0.35,
+            0.7,
+            (0.8, 1.0),
+            0.0,
+        ),
+        1.0,
+        0,
+        0.0,
+        false,
+    ),
+    varied(
+        preset(
+            "Diamond-Square Moss Rock",
+            "Varied",
+            "Fractal grey rock with green patches blended in by noise.",
+            layer("variation_diamond_square", &[("exponent", 6.0), ("roughness", 0.65), ("contrast", 1.8)], &[c(0.12, 0.12, 0.12), c(0.60, 0.58, 0.54)]),
+            COARSE,
+            0.4,
+            0.6,
+            (0.7, 0.95),
+            0.0,
+        ),
+        1.0,
+        0,
+        0.0,
+        false,
+    ),
 ];
 
 pub fn presets() -> &'static [Preset] {
@@ -1743,6 +1892,47 @@ impl Preset {
             }
             None => (colour, rough, height),
         };
+        let colour = match &self.vary {
+            Some(vary) => {
+                let seed = 1.0 + params.seed as f32;
+                let amount = vary.noise * wear.clamp(0.5, 1.5);
+                let drift = math(
+                    &mut graph,
+                    "variation_noise",
+                    &[
+                        ("brightness", (0.30 * amount).clamp(0.0, 1.0)),
+                        ("hue", 14.0 * amount),
+                        ("saturation", (0.28 * amount).clamp(0.0, 1.0)),
+                        ("scale", 3.0),
+                        ("seed", seed),
+                    ],
+                    Point::new(520.0, -150.0),
+                );
+                graph.connect(colour, 0, drift, 0);
+                if vary.cells > 0 || vary.cell_ids {
+                    let cells = math(
+                        &mut graph,
+                        "variation_cells",
+                        &[
+                            ("cells", vary.cells as f32),
+                            ("brightness", (0.35 * vary.cell_amount).clamp(0.0, 1.0)),
+                            ("hue", 8.0 * vary.cell_amount),
+                            ("saturation", (0.22 * vary.cell_amount).clamp(0.0, 1.0)),
+                            ("seed", seed),
+                        ],
+                        Point::new(780.0, -150.0),
+                    );
+                    graph.connect(drift, 0, cells, 0);
+                    if vary.cell_ids {
+                        graph.connect(base, 2, cells, 1);
+                    }
+                    cells
+                } else {
+                    drift
+                }
+            }
+            None => colour,
+        };
         let output = graph.add_node(
             NodeKind::Output {
                 roughness: 0.5,
@@ -1751,7 +1941,7 @@ impl Preset {
                 ao: 1.0,
                 options: OutputOptions::default(),
             },
-            Point::new(260.0, -20.0),
+            Point::new(if self.vary.is_some() { 1040.0 } else { 260.0 }, -20.0),
         );
         // Pattern ops: 0 = colour, 1 = value (relief).
         graph.connect(base, 0, shade, 0);
@@ -1871,5 +2061,30 @@ mod tests {
             assert!(!channel.label().is_empty());
             assert_eq!(baked.channel_rgba(channel).len(), 64 * 64 * 4);
         }
+    }
+}
+
+#[cfg(test)]
+mod varied_tests {
+    use super::*;
+
+    #[test]
+    fn varied_presets_drive_cell_variation_from_the_patterns_own_cell_ids() {
+        let preset = presets()
+            .iter()
+            .find(|p| p.name == "Varied Brick Wall")
+            .expect("preset");
+        let graph = preset.build(&PresetParams::default());
+        let cells = graph
+            .nodes
+            .iter()
+            .find(|n| matches!(&n.kind, NodeKind::Proc { op, .. } if op.def().id == "variation_cells"))
+            .expect("cell variation node");
+        let link = graph
+            .links
+            .iter()
+            .find(|l| l.to == cells.id && l.input == 1)
+            .expect("the cell-id input must be wired to the brick pattern");
+        assert_eq!(link.output, 2, "the pattern's Variation output");
     }
 }

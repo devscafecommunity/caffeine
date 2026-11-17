@@ -459,6 +459,43 @@ pub enum NodeKind {
         ao: f32,
         options: OutputOptions,
     },
+    /// Result of a **Texture Generator** graph: one image, not a material. It never
+    /// appears in the Material Generator's palette and the material baker ignores it.
+    TextureOutput {
+        mode: TextureOutputMode,
+    },
+}
+
+/// How a Texture Output node turns its inputs into one RGBA image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureOutputMode {
+    /// Port 0 = colour (its own alpha is kept), port 1 = optional alpha mask.
+    ColorAlpha,
+    /// Ports 0..4 = R, G, B, A, each a greyscale mask (packed VFX / data textures).
+    Channels,
+}
+
+impl TextureOutputMode {
+    pub const ALL: [TextureOutputMode; 2] =
+        [TextureOutputMode::ColorAlpha, TextureOutputMode::Channels];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TextureOutputMode::ColorAlpha => "Colour + alpha",
+            TextureOutputMode::Channels => "Packed channels (RGBA)",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL
+            .get(index)
+            .copied()
+            .unwrap_or(TextureOutputMode::ColorAlpha)
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|mode| *mode == self).unwrap_or(0)
+    }
 }
 
 impl NodeKind {
@@ -492,6 +529,7 @@ impl NodeKind {
             NodeKind::Unknown { .. } => "Unknown",
             NodeKind::Proc { op, .. } => op.def().title,
             NodeKind::Output { .. } => "Output",
+            NodeKind::TextureOutput { .. } => "Texture Output",
         }
     }
 
@@ -522,6 +560,7 @@ impl NodeKind {
             NodeKind::Unknown { .. } => "Imported",
             NodeKind::Proc { op, .. } => op.def().category,
             NodeKind::Output { .. } => "Output",
+            NodeKind::TextureOutput { .. } => "Output",
         }
     }
 
@@ -563,6 +602,7 @@ impl NodeKind {
                 _ => crate::uikit::theme::ICON_TEAL,
             },
             NodeKind::Output { .. } => crate::uikit::theme::SUCCESS,
+            NodeKind::TextureOutput { .. } => crate::uikit::theme::ICON_ORANGE,
         }
     }
 
@@ -615,6 +655,12 @@ impl NodeKind {
                 scalar("Opacity"),
                 color("Normal"),
             ],
+            NodeKind::TextureOutput { mode } => match mode {
+                TextureOutputMode::ColorAlpha => vec![color("Color"), scalar("Alpha")],
+                TextureOutputMode::Channels => {
+                    vec![scalar("R"), scalar("G"), scalar("B"), scalar("A")]
+                }
+            },
             _ => Vec::new(),
         }
     }
@@ -652,7 +698,7 @@ impl NodeKind {
                     kind: port.kind(),
                 })
                 .collect(),
-            NodeKind::Output { .. } => Vec::new(),
+            NodeKind::Output { .. } | NodeKind::TextureOutput { .. } => Vec::new(),
             _ => vec![Port {
                 label: "Color".to_owned(),
                 kind: PortKind::Color,
@@ -743,6 +789,7 @@ impl NodeKind {
                 height,
                 ..
             } => format!("R{roughness:.2} M{metallic:.2} H{height:.2}"),
+            NodeKind::TextureOutput { mode } => mode.label().to_owned(),
         }
     }
 
@@ -902,6 +949,14 @@ impl MaterialGraph {
             .map(|node| node.id)
     }
 
+    /// The Texture Generator's result node, if the graph has one.
+    pub fn texture_output_node(&self) -> Option<NodeId> {
+        self.nodes
+            .iter()
+            .find(|node| matches!(node.kind, NodeKind::TextureOutput { .. }))
+            .map(|node| node.id)
+    }
+
     pub fn remove_node(&mut self, id: NodeId) {
         self.nodes.retain(|node| node.id != id);
         self.links.retain(|link| link.from != id && link.to != id);
@@ -970,7 +1025,10 @@ impl MaterialGraph {
                 outputs: node.kind.outputs(),
                 accent: node.kind.accent(),
                 selected: selected == Some(node.id),
-                output: matches!(node.kind, NodeKind::Output { .. }),
+                output: matches!(
+                    node.kind,
+                    NodeKind::Output { .. } | NodeKind::TextureOutput { .. }
+                ),
                 preview: previews.get(&node.id).cloned(),
             })
             .collect()
@@ -1327,6 +1385,13 @@ impl MaterialGraph {
                     options.normalize_height as i32,
                     options.height_contrast
                 ),
+                NodeKind::TextureOutput { mode } => format!(
+                    "node {} {} {} texoutput {}",
+                    node.id,
+                    node.position.x,
+                    node.position.y,
+                    mode.index()
+                ),
             };
             text.push_str(&line);
             text.push('\n');
@@ -1596,6 +1661,11 @@ impl MaterialGraph {
                                 },
                             }
                         }
+                        "texoutput" => NodeKind::TextureOutput {
+                            mode: TextureOutputMode::from_index(
+                                words.get(5).and_then(|v| v.parse().ok()).unwrap_or(0),
+                            ),
+                        },
                         _ => continue,
                     };
                     graph.next_id = graph.next_id.max(id + 1);
@@ -1840,6 +1910,111 @@ impl MaterialGraph {
             opacity16,
             has_opacity,
             normal,
+        })
+    }
+
+    /// Bakes a Texture Generator graph into one RGBA image. Only nodes upstream of the
+    /// Texture Output are evaluated. Colour + alpha keeps the colour's own alpha unless an
+    /// Alpha mask is connected; packed channels default to 0 (R, G, B) and 1 (A).
+    pub fn bake_texture_with<'a>(
+        &self,
+        textures: &'a TextureMap,
+        progress: Option<&'a mut ProgressFn<'a>>,
+        cancel: Option<&'a CancelFn<'a>>,
+    ) -> Result<BakedTexture, String> {
+        let output = self
+            .texture_output_node()
+            .ok_or_else(|| "The graph needs a Texture Output node".to_owned())?;
+        let Some(NodeKind::TextureOutput { mode }) = self.node(output).map(|n| n.kind.clone())
+        else {
+            return Err("The output node is not a Texture Output".to_owned());
+        };
+        let resolution = self.resolution.clamp(64, 2048) as usize;
+        let count = resolution * resolution;
+        let mut reachable = HashSet::new();
+        let mut pending = vec![output];
+        while let Some(id) = pending.pop() {
+            if !reachable.insert(id) {
+                continue;
+            }
+            for link in self.links.iter().filter(|link| link.to == id) {
+                pending.push(link.from);
+            }
+        }
+        let total = reachable.len().saturating_sub(1).max(1);
+        let mut ctx = BakeContext {
+            textures,
+            cancel,
+            progress,
+            total,
+            done: 0,
+            extra: HashMap::new(),
+        };
+        ctx.check()?;
+        let mut memo = HashMap::new();
+        let mut input = |port: usize, ctx: &mut BakeContext| {
+            self.input_image(output, port, resolution, &mut memo, &mut Vec::new(), ctx)
+        };
+        let plane = |image: &Option<Image>, fallback: f32| -> Vec<f32> {
+            match image {
+                Some(image) => image.iter().map(|pixel| luminance(*pixel)).collect(),
+                None => vec![fallback; count],
+            }
+        };
+        let mut pixels: Vec<[f32; 4]> = Vec::with_capacity(count);
+        match mode {
+            TextureOutputMode::ColorAlpha => {
+                let color = input(0, &mut ctx)?;
+                let alpha = input(1, &mut ctx)?;
+                let alpha_plane = alpha.as_ref().map(|_| plane(&alpha, 1.0));
+                match color {
+                    Some(color) => {
+                        for (index, pixel) in color.iter().enumerate() {
+                            let a = alpha_plane.as_ref().map_or(pixel[3], |p| p[index]);
+                            pixels.push([pixel[0], pixel[1], pixel[2], a]);
+                        }
+                    }
+                    None => {
+                        for index in 0..count {
+                            let a = alpha_plane.as_ref().map_or(0.0, |p| p[index]);
+                            pixels.push([0.0, 0.0, 0.0, a]);
+                        }
+                    }
+                }
+            }
+            TextureOutputMode::Channels => {
+                let r = input(0, &mut ctx)?;
+                let g = input(1, &mut ctx)?;
+                let b = input(2, &mut ctx)?;
+                let a = input(3, &mut ctx)?;
+                let (r, g, b, a) = (
+                    plane(&r, 0.0),
+                    plane(&g, 0.0),
+                    plane(&b, 0.0),
+                    plane(&a, 1.0),
+                );
+                for index in 0..count {
+                    pixels.push([r[index], g[index], b[index], a[index]]);
+                }
+            }
+        }
+        ctx.stage(0.95, "Packing texture");
+        let mut rgba8 = Vec::with_capacity(count * 4);
+        let mut rgba16 = Vec::with_capacity(count * 4);
+        for pixel in &pixels {
+            for value in pixel {
+                rgba8.push(to_byte(*value));
+                rgba16.push(to_u16(*value));
+            }
+        }
+        let has_alpha = pixels.iter().any(|pixel| pixel[3] < 0.999);
+        ctx.finish()?;
+        Ok(BakedTexture {
+            resolution: resolution as u32,
+            rgba8,
+            rgba16,
+            has_alpha,
+            mode,
         })
     }
 
@@ -2573,6 +2748,19 @@ impl MaterialGraph {
                 let _ = (roughness, metallic, height, ao);
                 Rc::new(pixels)
             }
+            NodeKind::TextureOutput { .. } => {
+                let color = node_input(
+                    self,
+                    id,
+                    0,
+                    resolution,
+                    memo,
+                    stack,
+                    ctx,
+                    [0.0, 0.0, 0.0, 0.0],
+                )?;
+                Rc::new(color.to_vec())
+            }
         };
         stack.pop();
         ctx.node_done(node.kind.title());
@@ -2768,6 +2956,17 @@ pub struct BakedMaterial {
     /// from the Output's Normal input. `None` means "derive the normal from
     /// `height`".
     pub normal: Option<Vec<[u8; 4]>>,
+}
+
+/// Result of baking a Texture Generator graph.
+#[derive(Debug, Clone)]
+pub struct BakedTexture {
+    pub resolution: u32,
+    pub rgba8: Vec<u8>,
+    pub rgba16: Vec<u16>,
+    /// True when some pixel is translucent.
+    pub has_alpha: bool,
+    pub mode: TextureOutputMode,
 }
 
 /// Map shown in the generator's output preview.
@@ -3995,6 +4194,8 @@ pub fn palette() -> Vec<NodeKind> {
     .chain(
         procedural::all()
             .iter()
+            // VFX & Shapes belongs to the Texture Generator, not to materials.
+            .filter(|def| def.category != crate::uikit::texture_graph::VFX_CATEGORY)
             .map(|def| NodeKind::proc_default(ProcOp(def))),
     )
     .collect()

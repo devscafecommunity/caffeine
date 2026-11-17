@@ -639,3 +639,114 @@ TEST_CASE("C API runs a Dryad preview on an entity", "[capi]") {
     std::filesystem::remove(script, ec);
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C API scale and rotation reach entities that carry both Transform and the split 3D components",
+          "[capi]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Legacy cube");
+    REQUIRE(caffeine_session_set_entity_position(session, entity, {1.0f, 2.0f, 3.0f}) == CAFFEINE_OK);
+    // Older scenes keep the legacy Transform next to Position/Rotation/Scale 3D (ids 13, 14, 15).
+    for (uint32_t type : {13u, 14u, 15u}) {
+        REQUIRE(caffeine_session_add_component(session, entity, type) == CAFFEINE_OK);
+    }
+    REQUIRE(caffeine_session_set_entity_scale(session, entity, {2.0f, 3.0f, 4.0f}) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_set_entity_rotation(session, entity, {0.0f, 90.0f, 0.0f}) == CAFFEINE_OK);
+
+    // The renderer builds the world matrix from the split components, so they must hold the edit.
+    auto componentField = [&](const char* typeName, CaffeineFieldValue* out) {
+        const uint32_t count = caffeine_session_entity_component_count(session, entity);
+        for (uint32_t i = 0; i < count; ++i) {
+            CaffeineComponentInfo info{};
+            REQUIRE(caffeine_session_entity_component_at(session, entity, i, &info) == CAFFEINE_OK);
+            if (std::strcmp(info.name, typeName) == 0) {
+                return caffeine_session_entity_component_field_get(session, entity, i, 0, out) ==
+                       CAFFEINE_OK;
+            }
+        }
+        return false;
+    };
+    CaffeineFieldValue value{};
+    REQUIRE(componentField("Scale 3D", &value));
+    CHECK(value.vec[0] == Approx(2.0f));
+    CHECK(value.vec[1] == Approx(3.0f));
+    CHECK(value.vec[2] == Approx(4.0f));
+
+    CaffeineVec3 read{};
+    REQUIRE(caffeine_session_entity_scale(session, entity, &read) == CAFFEINE_OK);
+    CHECK(read.y == Approx(3.0f));
+    REQUIRE(caffeine_session_entity_rotation(session, entity, &read) == CAFFEINE_OK);
+    CHECK(read.y == Approx(90.0f).margin(0.01));
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API authors a water surface with explicit waves", "[capi][water]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Lake");
+    CaffeineWater water{};
+    water.enabled = 1;
+    water.size_x = 40.0f;
+    water.size_z = 40.0f;
+    water.depth = 30.0f;
+    water.resolution = 64;
+    water.time_scale = 1.0f;
+    water.albedo[3] = 0.8f;
+    water.roughness = 0.05f;
+    water.wave_count = 2;
+    water.waves[0] = {1.0f, 0.0f, 12.0f, 0.3f, 0.2f, 0.0f};
+    water.waves[1] = {0.0f, 1.0f, 5.0f, 0.1f, 0.2f, 1.0f};
+    REQUIRE(caffeine_session_set_water(session, entity, &water) == CAFFEINE_OK);
+
+    CaffeineWater back{};
+    REQUIRE(caffeine_session_water(session, entity, &back) == CAFFEINE_OK);
+    CHECK(back.wave_count == 2);
+    CHECK(back.waves[0].wavelength == Approx(12.0f));
+    CHECK(back.size_x == Approx(40.0f));
+
+    // The session tick builds the surface, so the height is sampled from the waves.
+    for (int i = 0; i < 4; ++i) caffeine_session_tick(session, 0.016f);
+    float height = 99.0f;
+    REQUIRE(caffeine_session_water_height(session, entity, 3.0f, 2.0f, &height) == CAFFEINE_OK);
+    CHECK(std::abs(height) <= 0.41f);
+    CHECK(caffeine_session_set_water(session, 9999u, &water) == CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API builds a terrain from generated heights and splat weights", "[capi][terrain]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 65;
+    terrain.resolution_z = 65;
+    terrain.size_x = 200.0f;
+    terrain.size_z = 100.0f;
+    terrain.max_height = 50.0f;
+    terrain.cast_shadows = 1;
+    std::vector<float> heights(65 * 65);
+    std::vector<uint8_t> splat(65 * 65 * 4, 0);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 0; x < 65; ++x) {
+            heights[z * 65 + x] = static_cast<float>(x) / 64.0f;  // a ramp along X
+            uint8_t* p = &splat[(z * 65 + x) * 4];
+            p[x < 32 ? 0 : 1] = 255;
+        }
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), splat.data()) ==
+            CAFFEINE_OK);
+    CaffeineTerrain back{};
+    REQUIRE(caffeine_session_terrain(session, entity, &back) == CAFFEINE_OK);
+    CHECK(back.resolution_x == 65);
+    CHECK(back.size_x == Approx(200.0f));
+    float h = -1.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 100.0f, 50.0f, &h) == CAFFEINE_OK);
+    CHECK(h == Approx(25.0f).margin(0.5f));
+    REQUIRE(caffeine_session_terrain_height(session, entity, 200.0f, 10.0f, &h) == CAFFEINE_OK);
+    CHECK(h == Approx(50.0f).margin(0.5f));
+    CHECK(caffeine_session_set_terrain(session, entity, &terrain, nullptr, nullptr) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_terrain(session, 9999u, &terrain, heights.data(), nullptr) ==
+          CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}

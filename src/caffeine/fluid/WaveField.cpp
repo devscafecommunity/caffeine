@@ -58,6 +58,22 @@ void WaveField::configure(const WaveSettings& settings) {
     m_settings = settings;
     m_waves.clear();
 
+    if (!settings.explicitWaves.empty()) {
+        // Authored waves: complete the dispersion relation when omega is missing.
+        for (GerstnerWave wave : settings.explicitWaves) {
+            wave.wavelength = std::max(wave.wavelength, 0.05f);
+            wave.direction = wave.direction.normalized();
+            if (wave.omega <= 0.0f) {
+                const f32 k = Math::TAU / wave.wavelength;
+                wave.omega = std::sqrt(std::max(
+                    settings.gravity * k * std::tanh(k * std::max(settings.depth, 0.01f)), 0.0f));
+            }
+            m_waves.push_back(wave);
+        }
+        ++m_revision;
+        return;
+    }
+
     if (settings.quality == WaterQuality::Flat || settings.windSpeed <= 0.01f) {
         ++m_revision;
         return;

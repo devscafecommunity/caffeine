@@ -17,6 +17,11 @@
 #include "physics/PhysicsComponents3D.hpp"
 #include "scene/EditorCameraMath.hpp"
 #include "scene/HierarchySystem.hpp"
+#include "scene/NaturalFluidSystem.hpp"
+#include "scene/TerrainSystem.hpp"
+#include "ecs/TerrainComponents.hpp"
+#include "terrain/TerrainCache.hpp"
+#include "caffeine/environment/NaturalFluids.hpp"
 #include "scene/SceneComponents.hpp"
 #include "assets/MaterialCache.hpp"
 #include "assets/MaterialFile.hpp"
@@ -703,6 +708,7 @@ void writeMaterial(const Caffeine::Assets::MaterialSurface& source, CaffeineMate
     out.displacement_mode = source.displacementMode;
     out.displacement_scale = source.displacementScale;
     out.mesh_subdivisions = source.meshSubdivisions;
+    out.uv_object_scale = source.uvObjectScale ? 1 : 0;
 }
 
 Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
@@ -755,6 +761,7 @@ Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
     out.displacementMode = static_cast<Caffeine::u8>(source.displacement_mode ? 1 : 0);
     out.displacementScale = source.displacement_scale;
     out.meshSubdivisions = static_cast<Caffeine::u8>(std::clamp(source.mesh_subdivisions, 1, 9));
+    out.uvObjectScale = source.uv_object_scale ? 1 : 0;
     Caffeine::Assets::sanitizeMaterialSurface(out);
     out.valid = true;
     return out;
@@ -803,8 +810,32 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDegToRad = kPi / 180.0f;
 constexpr float kRadToDeg = 180.0f / kPi;
 
+// An entity can carry the legacy `Transform` and/or the split `Position3D` / `Rotation3D` /
+// `Scale3D` components (scenes saved by older editors have both). The renderer and the
+// hierarchy system build the world matrix from the split components whenever `Position3D`
+// exists (see Scene::localMatrix), so reads must report those values and writes must reach
+// every component that is present, or an edit would be invisible: the Inspector and gizmos
+// would show the new number while the object keeps rendering with the old one.
+bool prefersSplitComponents(CaffeineSession& session, Caffeine::ECS::Entity entity) {
+    return session.world.has<Caffeine::ECS::Position3D>(entity);
+}
+
 bool readRotation(CaffeineSession& session, Caffeine::ECS::Entity entity,
                   CaffeineVec3* out) {
+    const bool split = prefersSplitComponents(session, entity);
+    if (split) {
+        if (const auto* rotation = session.world.get<Caffeine::ECS::Rotation3D>(entity)) {
+            const Caffeine::Vec3 euler =
+                Caffeine::Quat(rotation->quaternion.x, rotation->quaternion.y,
+                               rotation->quaternion.z, rotation->quaternion.w)
+                    .normalized()
+                    .toEuler();
+            out->x = euler.x * kRadToDeg;
+            out->y = euler.y * kRadToDeg;
+            out->z = euler.z * kRadToDeg;
+            return true;
+        }
+    }
     if (const auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
         out->x = transform->rotation.x;
         out->y = transform->rotation.y;
@@ -827,6 +858,14 @@ bool readRotation(CaffeineSession& session, Caffeine::ECS::Entity entity,
 
 bool readScale(CaffeineSession& session, Caffeine::ECS::Entity entity,
                CaffeineVec3* out) {
+    if (prefersSplitComponents(session, entity)) {
+        if (const auto* scale = session.world.get<Caffeine::ECS::Scale3D>(entity)) {
+            out->x = scale->scale.x;
+            out->y = scale->scale.y;
+            out->z = scale->scale.z;
+            return true;
+        }
+    }
     if (const auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
         out->x = transform->scale.x;
         out->y = transform->scale.y;
@@ -844,47 +883,51 @@ bool readScale(CaffeineSession& session, Caffeine::ECS::Entity entity,
 
 void writeRotation(CaffeineSession& session, Caffeine::ECS::Entity entity,
                    CaffeineVec3 euler) {
+    bool written = false;
     if (auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
-        transform->rotation =
-            Caffeine::Vec3(euler.x, euler.y, euler.z);
-        return;
+        transform->rotation = Caffeine::Vec3(euler.x, euler.y, euler.z);
+        written = true;
     }
     const Caffeine::Quat quat =
         Caffeine::Quat::fromEuler(euler.x * kDegToRad, euler.y * kDegToRad,
                                   euler.z * kDegToRad)
             .normalized();
+    const Caffeine::Vec4 packed(quat.x, quat.y, quat.z, quat.w);
     if (auto* rotation = session.world.get<Caffeine::ECS::Rotation3D>(entity)) {
-        rotation->quaternion =
-            Caffeine::Vec4(quat.x, quat.y, quat.z, quat.w);
-        return;
+        rotation->quaternion = packed;
+        written = true;
+    } else if (session.world.has<Caffeine::ECS::Position3D>(entity)) {
+        // The renderer ignores Transform.rotation for split entities: give it a Rotation3D.
+        session.world.add<Caffeine::ECS::Rotation3D>(entity).quaternion = packed;
+        written = true;
     }
-    if (session.world.has<Caffeine::ECS::Position3D>(entity)) {
-        auto& rotation = session.world.add<Caffeine::ECS::Rotation3D>(entity);
-        rotation.quaternion = Caffeine::Vec4(quat.x, quat.y, quat.z, quat.w);
-        return;
+    if (!written) {
+        auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
+        transform.rotation = Caffeine::Vec3(euler.x, euler.y, euler.z);
     }
-    auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
-    transform.rotation = Caffeine::Vec3(euler.x, euler.y, euler.z);
 }
 
 void writeScale(CaffeineSession& session, Caffeine::ECS::Entity entity,
                 CaffeineVec3 scale) {
+    const Caffeine::Vec3 value(scale.x, scale.y, scale.z);
+    bool written = false;
     if (auto* transform = session.world.get<Caffeine::ECS::Transform>(entity)) {
-        transform->scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
-        return;
+        transform->scale = value;
+        written = true;
     }
     if (auto* scale3d = session.world.get<Caffeine::ECS::Scale3D>(entity)) {
-        scale3d->scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
-        return;
+        scale3d->scale = value;
+        written = true;
+    } else if (session.world.has<Caffeine::ECS::Position3D>(entity) ||
+               session.world.has<Caffeine::ECS::Rotation3D>(entity)) {
+        // The renderer ignores Transform.scale for split entities: give it a Scale3D.
+        session.world.add<Caffeine::ECS::Scale3D>(entity).scale = value;
+        written = true;
     }
-    if (session.world.has<Caffeine::ECS::Position3D>(entity) ||
-        session.world.has<Caffeine::ECS::Rotation3D>(entity)) {
-        auto& scale3d = session.world.add<Caffeine::ECS::Scale3D>(entity);
-        scale3d.scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
-        return;
+    if (!written) {
+        auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
+        transform.scale = value;
     }
-    auto& transform = session.world.add<Caffeine::ECS::Transform>(entity);
-    transform.scale = Caffeine::Vec3(scale.x, scale.y, scale.z);
 }
 
 CaffeineResult copyName(const char* name, char* buffer, std::size_t bufferSize) {
@@ -1164,6 +1207,14 @@ CaffeineResult caffeine_session_entity_position(const CaffeineSession* session,
     if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
 
     const Caffeine::ECS::Entity entity = entityOf(mutableSession, entityId);
+    if (const auto* position =
+            mutableSession.world.get<Caffeine::ECS::Position3D>(entity)) {
+        // Split entities render from Position3D (see prefersSplitComponents).
+        out->x = position->position.x;
+        out->y = position->position.y;
+        out->z = position->position.z;
+        return CAFFEINE_OK;
+    }
     if (const auto* transform = mutableSession.world.get<Caffeine::ECS::Transform>(entity)) {
         out->x = transform->position.x;
         out->y = transform->position.y;
@@ -1403,6 +1454,8 @@ void caffeine_session_tick(CaffeineSession* session, float delta_time) {
     if (!session) return;
     session->lastDelta = delta_time;
     ++session->frameIndex;
+    // Water surfaces animate in the editor too (previewInEditor).
+    Caffeine::Scene::tickNaturalFluids(session->world, delta_time, true);
 }
 
 static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t height) {
@@ -1412,6 +1465,7 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
     // renderer (and the bounds below) consume the cached world matrix, so a
     // child must inherit its group's transform every frame.
     Caffeine::Scene::propagateTransforms(session.world);
+    Caffeine::Scene::syncTerrainMeshes(session.world);
 
     Caffeine::Vec3 min(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
@@ -2401,3 +2455,197 @@ void caffeine_session_frame_stats(const CaffeineSession* session, CaffeineFrameS
 }
 
 }  // extern "C"
+
+// ---------------------------------------------------------------------------------- water
+
+CaffeineResult caffeine_session_set_water(CaffeineSession* session, CaffeineEntity entityId,
+                                          const CaffeineWater* water) {
+    if (!session || !water) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    auto* fluid = session->world.get<Caffeine::ECS::NaturalFluidComponent>(entity);
+    if (!fluid) fluid = &session->world.add<Caffeine::ECS::NaturalFluidComponent>(entity);
+    fluid->enabled = water->enabled ? 1 : 0;
+    fluid->mode = static_cast<uint8_t>(Caffeine::ECS::NaturalFluidMode::RealisticWater);
+    fluid->preset = static_cast<uint8_t>(Caffeine::ECS::NaturalFluidPreset::Water);
+    fluid->sizeX = std::clamp(water->size_x, 1.0f, 2000.0f);
+    fluid->sizeZ = std::clamp(water->size_z, 1.0f, 2000.0f);
+    fluid->waterLevel = water->water_level;
+    fluid->depth = std::clamp(water->depth, 0.05f, 4000.0f);
+    fluid->surfaceResolution = std::clamp(water->resolution, 8u, 512u);
+    fluid->timeScale = std::clamp(water->time_scale, 0.0f, 8.0f);
+    fluid->albedoR = water->albedo[0];
+    fluid->albedoG = water->albedo[1];
+    fluid->albedoB = water->albedo[2];
+    fluid->albedoA = std::clamp(water->albedo[3], 0.0f, 1.0f);
+    fluid->roughness = std::clamp(water->roughness, 0.02f, 1.0f);
+    fluid->foamThreshold = water->foam_threshold;
+    fluid->seed = water->seed;
+    const uint32_t count = std::min<uint32_t>(water->wave_count, CAFFEINE_WATER_MAX_WAVES);
+    fluid->customWaveCount = count;
+    for (uint32_t i = 0; i < CAFFEINE_WATER_MAX_WAVES; ++i) {
+        float* slot = fluid->customWaves[i];
+        if (i < count) {
+            const CaffeineWaterWave& w = water->waves[i];
+            slot[0] = w.dir_x;
+            slot[1] = w.dir_z;
+            slot[2] = w.wavelength;
+            slot[3] = w.amplitude;
+            slot[4] = w.steepness;
+            slot[5] = w.phase;
+        } else {
+            for (int k = 0; k < 6; ++k) slot[k] = 0.0f;
+        }
+    }
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_water(const CaffeineSession* session, CaffeineEntity entityId,
+                                      CaffeineWater* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(mutableSession, entityId);
+    const auto* fluid = session->world.get<Caffeine::ECS::NaturalFluidComponent>(entity);
+    if (!fluid) return CAFFEINE_NOT_FOUND;
+    *out = CaffeineWater{};
+    out->enabled = fluid->enabled;
+    out->size_x = fluid->sizeX;
+    out->size_z = fluid->sizeZ;
+    out->water_level = fluid->waterLevel;
+    out->depth = fluid->depth;
+    out->resolution = fluid->surfaceResolution;
+    out->time_scale = fluid->timeScale;
+    out->albedo[0] = fluid->albedoR;
+    out->albedo[1] = fluid->albedoG;
+    out->albedo[2] = fluid->albedoB;
+    out->albedo[3] = fluid->albedoA;
+    out->roughness = fluid->roughness;
+    out->foam_threshold = fluid->foamThreshold;
+    out->seed = fluid->seed;
+    out->wave_count = std::min<uint32_t>(fluid->customWaveCount, CAFFEINE_WATER_MAX_WAVES);
+    for (uint32_t i = 0; i < out->wave_count; ++i) {
+        const float* slot = fluid->customWaves[i];
+        out->waves[i] = {slot[0], slot[1], slot[2], slot[3], slot[4], slot[5]};
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_water_height(const CaffeineSession* session,
+                                             CaffeineEntity entityId, float x, float z,
+                                             float* out_height) {
+    if (!session || !out_height) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(const_cast<CaffeineSession&>(*session), entityId)) return CAFFEINE_NOT_FOUND;
+    const auto* world = Caffeine::Scene::naturalFluidWorldFor(
+        const_cast<Caffeine::ECS::World&>(session->world), entityId);
+    if (!world) return CAFFEINE_NOT_FOUND;
+    *out_height = world->surfaceHeight(x, z);
+    return CAFFEINE_OK;
+}
+
+// -------------------------------------------------------------------------------- terrain
+
+CaffeineResult caffeine_session_set_terrain(CaffeineSession* session, CaffeineEntity entityId,
+                                            const CaffeineTerrain* terrain, const float* heights,
+                                            const uint8_t* splat_rgba) {
+    using namespace Caffeine;
+    if (!session || !terrain || !heights) return CAFFEINE_INVALID_ARGUMENT;
+    if (terrain->resolution_x < 8 || terrain->resolution_z < 8 || terrain->resolution_x > 4097 ||
+        terrain->resolution_z > 4097) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(*session, entityId);
+    auto* component = session->world.get<ECS::TerrainComponent>(entity);
+    if (!component) component = &session->world.add<ECS::TerrainComponent>(entity);
+    component->resolutionX = terrain->resolution_x;
+    component->resolutionZ = terrain->resolution_z;
+    component->worldSizeX = std::clamp(terrain->size_x, 1.0f, 20000.0f);
+    component->worldSizeZ = std::clamp(terrain->size_z, 1.0f, 20000.0f);
+    component->maxHeight = std::clamp(terrain->max_height, 0.1f, 8000.0f);
+    component->castShadows = terrain->cast_shadows != 0;
+    // The renderer draws terrains from the mesh-filter pass: give the entity the components it
+    // looks for (the terrain mesh itself comes from the terrain cache).
+    if (!session->world.get<ECS::MeshFilterComponent>(entity)) {
+        session->world.add<ECS::MeshFilterComponent>(entity);
+    }
+    if (!session->world.get<ECS::MeshRendererComponent>(entity)) {
+        session->world.add<ECS::MeshRendererComponent>(entity);
+    }
+    // Adding components can move the entity's data: fetch the terrain component again.
+    component = session->world.get<ECS::TerrainComponent>(entity);
+    if (!component) return CAFFEINE_ERROR;
+
+    auto& cache = Terrain::TerrainCache::instance();
+    cache.syncEntity(session->world, entity);
+    Terrain::TerrainHeightmap* map = cache.heightmapFor(entity);
+    if (!map) return CAFFEINE_ERROR;
+    const size_t count = static_cast<size_t>(terrain->resolution_x) * terrain->resolution_z;
+    if (map->heights().size() != count) return CAFFEINE_ERROR;
+    for (size_t i = 0; i < count; ++i) map->heights()[i] = std::clamp(heights[i], 0.0f, 1.0f);
+
+    if (splat_rgba) {
+        if (Terrain::TerrainSplatmap* splat = cache.splatmapFor(entity)) {
+            const u32 sx = splat->resolutionX();
+            const u32 sz = splat->resolutionZ();
+            const u32 rx = terrain->resolution_x;
+            const u32 rz = terrain->resolution_z;
+            for (u32 z = 0; z < sz; ++z) {
+                for (u32 x = 0; x < sx; ++x) {
+                    const u32 gx = std::min(rx - 1, static_cast<u32>(
+                        (static_cast<f32>(x) + 0.5f) / static_cast<f32>(sx) * static_cast<f32>(rx)));
+                    const u32 gz = std::min(rz - 1, static_cast<u32>(
+                        (static_cast<f32>(z) + 0.5f) / static_cast<f32>(sz) * static_cast<f32>(rz)));
+                    const uint8_t* p = splat_rgba + (static_cast<size_t>(gz) * rx + gx) * 4;
+                    Vec4 w(p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f, p[3] / 255.0f);
+                    const f32 sum = w.x + w.y + w.z + w.w;
+                    if (sum > 1e-5f) {
+                        w = Vec4(w.x / sum, w.y / sum, w.z / sum, w.w / sum);
+                    } else {
+                        w = Vec4(1.0f, 0.0f, 0.0f, 0.0f);
+                    }
+                    splat->set(x, z, w);
+                }
+            }
+        }
+        component->splatRevision++;
+    }
+    component->dataRevision++;
+    cache.syncEntity(session->world, entity);
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain(const CaffeineSession* session, CaffeineEntity entityId,
+                                        CaffeineTerrain* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const auto* component = mutableSession.world.get<Caffeine::ECS::TerrainComponent>(
+        entityOf(mutableSession, entityId));
+    if (!component) return CAFFEINE_NOT_FOUND;
+    out->resolution_x = component->resolutionX;
+    out->resolution_z = component->resolutionZ;
+    out->size_x = component->worldSizeX;
+    out->size_z = component->worldSizeZ;
+    out->max_height = component->maxHeight;
+    out->cast_shadows = component->castShadows ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,
+                                               CaffeineEntity entityId, float x, float z,
+                                               float* out_height) {
+    if (!session || !out_height) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(mutableSession, entityId);
+    const auto* component = mutableSession.world.get<Caffeine::ECS::TerrainComponent>(entity);
+    const auto* map = Caffeine::Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!component || !map || map->empty()) return CAFFEINE_NOT_FOUND;
+    const float u = std::clamp(x / component->worldSizeX, 0.0f, 1.0f);
+    const float v = std::clamp(z / component->worldSizeZ, 0.0f, 1.0f);
+    *out_height = map->sampleBilinear(u, v) * component->maxHeight;
+    return CAFFEINE_OK;
+}
