@@ -1085,6 +1085,7 @@ fn filter_name(kind: &NodeKind) -> &'static str {
         NodeKind::Unknown { .. } => "unknown",
         NodeKind::Proc { .. } => "doppio_proc",
         NodeKind::Output { .. } => "output",
+        NodeKind::TextureOutput { .. } => "output",
     }
 }
 
@@ -1336,6 +1337,7 @@ fn write_parameters(xml: &mut String, kind: &NodeKind) {
             write("height", float(*height));
             write("ambientocclusion", float(*ao));
         }
+        NodeKind::TextureOutput { .. } => {}
         NodeKind::Proc { op, params, colors } => {
             write("op", text(op.def().id));
             let numbers: Vec<String> = params.iter().map(|v| v.to_string()).collect();

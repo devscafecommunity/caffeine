@@ -502,7 +502,7 @@ pub const ACTIONS: &[ActionDoc] = &[
                 name: "fixture",
                 ty: "string",
                 required: false,
-                doc: "`empty` or `entities` (default `entities`).",
+                doc: "`empty`, `entities`, `material`, `texture`, `scene3d` (an engine-backed scene with lights, a camera and meshes; needs libcaffeine-capi) `nature` (the same, filled with generated rocks, trees and plants) `water` (the Water Generator tab in front) or `terrain` (the Terrain Generator tab in front). Default `entities`.",
             },
             Param {
                 name: "size",
@@ -526,7 +526,7 @@ pub const ACTIONS: &[ActionDoc] = &[
                 name: "preset",
                 ty: "string",
                 required: false,
-                doc: "Procedural library preset applied to the Generator (fixture `material`), e.g. `Red Brick`.",
+                doc: "Library preset applied to the Material Generator (fixture `material`, e.g. `Red Brick`) to the Texture Generator (fixture `texture`, e.g. `Torch Flame`) to the Nature Generator (fixture `nature`, e.g. `Pine`) to the Water Generator (fixture `water`, e.g. `Storm`) or to the Terrain Generator (fixture `terrain`, e.g. `Badlands`).",
             },
             Param {
                 name: "components",

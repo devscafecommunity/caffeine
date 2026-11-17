@@ -77,6 +77,8 @@ pub enum Param {
     OutputAutoHeight(bool),
     OutputNormalizeHeight(bool),
     OutputHeightContrast(f32),
+    /// Texture Output node: index into `TextureOutputMode::ALL`.
+    TextureOutputMode(usize),
 }
 
 impl Param {
@@ -139,6 +141,7 @@ impl Param {
             Param::OutputAutoHeight(_) => "auto height",
             Param::OutputNormalizeHeight(_) => "normalise height",
             Param::OutputHeightContrast(_) => "height contrast",
+            Param::TextureOutputMode(_) => "texture output mode",
         }
     }
 
@@ -201,6 +204,7 @@ impl Param {
             Param::OutputAutoHeight(_) => "output_auto_height".to_owned(),
             Param::OutputNormalizeHeight(_) => "output_normalize_height".to_owned(),
             Param::OutputHeightContrast(_) => "output_height_contrast".to_owned(),
+            Param::TextureOutputMode(_) => "texture_output_mode".to_owned(),
         }
     }
 }
@@ -743,7 +747,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .into()
 }
 
-fn properties_panel<'a, Message: Clone + 'a>(
+pub(crate) fn properties_panel<'a, Message: Clone + 'a>(
     graph: &'a MaterialGraph,
     selected: Option<NodeId>,
     selected_link: Option<(NodeId, usize)>,
@@ -1613,6 +1617,25 @@ fn properties_panel<'a, Message: Clone + 'a>(
         }
         NodeKind::Proc { op, params, colors } => {
             body = body.push(proc_controls(emit.clone(), node_id, op, &params, &colors));
+        }
+        NodeKind::TextureOutput { mode } => {
+            body = body.push(
+                text("The finished texture. Pick how its inputs become RGBA.")
+                    .size(9)
+                    .color(theme::TEXT_MUTED),
+            );
+            body = body.push(option_dropdown(
+                emit.clone(),
+                node_id,
+                "texture_output_mode",
+                "Output",
+                crate::uikit::generators::TextureOutputMode::ALL
+                    .iter()
+                    .map(|mode| mode.label().to_owned())
+                    .collect(),
+                mode.index(),
+                Param::TextureOutputMode,
+            ));
         }
         NodeKind::Output {
             roughness,
