@@ -2235,6 +2235,10 @@ fn generator_live_preview_updates_after_each_edit() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(first > 0, "live preview should produce an image");
+    assert!(
+        !harness.app().generator_node_previews.is_empty(),
+        "the live preview should also fill per-node thumbnails"
+    );
     let node = harness
         .app()
         .material
@@ -3006,6 +3010,59 @@ fn project_manager_browse_finds_nested_projects() {
             .as_ref()
             .map(|project| project.name.as_str()),
         Some("Nested")
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn project_launch_argument_accepts_root_and_manifest() {
+    let root = test_temp_root("project-launch-arg");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let project = project::create_project(&root, "LaunchMe", "3D").expect("create project");
+    assert_eq!(
+        projectloader::project_launch_path(&project.root.display().to_string()),
+        Some(project.root.clone())
+    );
+    let manifest = project.root.join(project::PROJECT_FILE);
+    assert_eq!(
+        projectloader::project_launch_path(&manifest.display().to_string()),
+        Some(manifest)
+    );
+    assert_eq!(
+        projectloader::project_launch_path("/tmp/not-a-project.caf"),
+        None
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn saving_a_material_inside_a_project_makes_it_an_asset() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("project-material");
+    std::fs::create_dir_all(&root).expect("temp dir");
+    let project = project::create_project(&root, "MaterialProject", "3D").expect("create project");
+    harness.app.project_recent_file = root.join("recent.txt");
+    harness.app.open_project_path(&project.root);
+
+    harness.dispatch(Message::Material(material::Edit::New));
+    harness.dispatch(Message::Material(material::Edit::Name("brick".to_owned())));
+    harness.dispatch(Message::Material(material::Edit::Save));
+    let document = harness.app.material.as_ref().expect("material");
+    let asset_path = document.asset_path.clone().expect("material should save");
+    assert!(asset_path.ends_with("brick.mat"));
+    assert!(
+        project.root.join("assets/raw").join(&asset_path).is_file(),
+        "saved material should live under the project asset root: {asset_path}"
+    );
+    assert!(
+        harness
+            .app
+            .assets
+            .iter()
+            .any(|asset| asset.relative_path == asset_path),
+        "saved material should appear in the Assets pane"
     );
     std::fs::remove_dir_all(root).ok();
 }

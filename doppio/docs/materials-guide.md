@@ -208,7 +208,12 @@ from a dead device.
 ./scripts/render-material-gallery.sh      # bakes all presets, renders sheets + depth comparisons
 ./scripts/capture-material-docs.sh        # headless UI screenshots (generator, channels, panel)
 doppio/target/release/doppio-material bake-preset "Red Brick" --out /tmp/brick   # one preset to disk
+doppio/target/release/doppio-material bake-graph path/to/material.mgraph --size 2048  # time one graph
 ```
+
+* `doppio-material bake-graph <file.mgraph> [--size N] [--out DIR]` bakes an
+  existing graph with per-stage progress timings; useful when a 2K bake looks
+  stuck in the editor.
 
 * `doppio-material bake-preset <name|--all> --out DIR [--size 512] [--depth 0.04] [--list]`
   writes `*_base.png`, `*_normal.png` (height in alpha), `*_orm.png`, `*.mat`

@@ -201,6 +201,7 @@ RHI::Texture* GpuTextureCache::acquireFromPixels(RHI::RenderDevice* device,
 
     Entry entry;
     entry.texture = texture;
+    entry.device = device;
     entry.refCount = 1;
     entry.width = uploadW;
     entry.height = uploadH;
@@ -221,12 +222,17 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
     auto it = m_cache.find(cacheKey);
     if (it != m_cache.end() && it->second.texture) {
         Entry& entry = it->second;
-        // A file rewritten in place (a bake overwrites its maps) must reload. refCount is bumped on
-        // every acquire and never drops while a map is in use, so it cannot gate this; the
-        // device defers the release until in-flight commands finish.
         if (stamp != 0 && entry.fileStamp != stamp) {
-            destroyEntry(device, entry);
-            m_cache.erase(it);
+            // Hot reload: a bake rewrote the same file. The scene renderer and
+            // preview hold raw texture pointers across frames and do not
+            // release them, so retire the old texture instead of destroying a
+            // pointer that may still be bound by another system. The retired
+            // list is drained on device shutdown.
+            m_retired.emplace_back(entry.device, entry.texture);
+            entry.texture = nullptr;
+            entry.device = nullptr;
+            entry.refCount = 0;
+            entry.fileStamp = 0;
         } else {
             entry.refCount++;
             return entry.texture;
@@ -238,6 +244,7 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
 
     Entry entry;
     entry.texture = texture;
+    entry.device = device;
     entry.refCount = 1;
     entry.fileStamp = stamp;
     entry.width = texture->width;
@@ -280,7 +287,7 @@ void GpuTextureCache::release(RHI::RenderDevice* device, RHI::Texture* texture) 
 }
 
 RHI::Texture* GpuTextureCache::whiteTexture(RHI::RenderDevice* device) {
-    if (m_white) return m_white;
+    if (m_white && m_whiteDevice == device) return m_white;
     if (!device) return nullptr;
 
     RHI::TextureDesc desc;
@@ -293,6 +300,7 @@ RHI::Texture* GpuTextureCache::whiteTexture(RHI::RenderDevice* device) {
     if (!m_white) return nullptr;
     const u8 white[4] = {255, 255, 255, 255};
     device->uploadTexture(m_white, white, 1, 1, 4, 0);
+    m_whiteDevice = device;
     return m_white;
 }
 
@@ -313,13 +321,26 @@ void GpuTextureCache::invalidate(const std::string& resolvedPath) {
 }
 
 void GpuTextureCache::releaseAll(RHI::RenderDevice* device) {
-    for (auto& [_, entry] : m_cache) {
-        destroyEntry(device, entry);
+    for (auto it = m_cache.begin(); it != m_cache.end();) {
+        if (!device || it->second.device == device) {
+            destroyEntry(device, it->second);
+            it = m_cache.erase(it);
+        } else {
+            ++it;
+        }
     }
-    m_cache.clear();
-    if (m_white) {
+    for (auto it = m_retired.begin(); it != m_retired.end();) {
+        if (!device || it->first == device) {
+            if (it->first && it->second) it->first->destroyTexture(it->second);
+            it = m_retired.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (m_white && (!device || m_whiteDevice == device)) {
         if (device) device->destroyTexture(m_white);
         m_white = nullptr;
+        m_whiteDevice = nullptr;
     }
 }
 

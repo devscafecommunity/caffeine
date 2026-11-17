@@ -79,6 +79,23 @@ pub fn read_entities(engine: &Engine) -> Vec<EntityView> {
     entities
 }
 
+/// Resolve a project launch argument: a project root containing
+/// `project.caffeine`, or the manifest file itself.
+pub fn project_launch_path(arg: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(arg);
+    if path.file_name().and_then(|name| name.to_str()) == Some("project.caffeine") {
+        return path.is_file().then_some(path);
+    }
+    (path.is_dir() && path.join("project.caffeine").is_file()).then_some(path)
+}
+
+/// Project passed by the launcher as the first CLI argument, if any.
+pub fn project_from_args() -> Option<std::path::PathBuf> {
+    std::env::args()
+        .nth(1)
+        .and_then(|arg| project_launch_path(&arg))
+}
+
 /// Whether the process was started with a `.caf` scene argument. The startup
 /// Project Manager only appears when no scene was requested explicitly, so
 /// automated screenshots and fixtures stay deterministic.

@@ -260,7 +260,10 @@ vec2 parallaxUv(vec2 uv) {
         prev = cur;
         prevLayer = curLayer;
         prevH = h;
-        cur -= delta;
+        // The alpha channel is height (1 = surface, 0 = deepest). The view ray
+        // travels from the surface toward the camera, so a recessed texel is
+        // reached by moving in the camera-projected UV direction.
+        cur += delta;
         h = 1.0 - textureGrad(uNormalMap, cur, duv1, duv2).a;
         curLayer += layer;
     }
@@ -356,7 +359,8 @@ vec3 iridescentWeight(Surface s, vec3 weight) {
 
 // Direct light, returning diffuse and specular separately so blended surfaces can keep their
 // highlights at full strength.
-void shadeLight(Surface s, vec3 l, vec3 radiance, inout vec3 diffuseOut, inout vec3 specularOut) {
+void shadeLight(Surface s, vec3 l, vec3 radiance, float occlusion, inout vec3 diffuseOut,
+                inout vec3 specularOut) {
     float NoL = max(dot(s.n, l), 0.0);
     if (NoL <= 0.0) return;
     vec3 h = normalize(s.v + l);
@@ -366,7 +370,10 @@ void shadeLight(Surface s, vec3 l, vec3 radiance, inout vec3 diffuseOut, inout v
 
     float a = max(s.roughness * s.roughness, 0.002);
     vec3 F = iridescentWeight(s, F_Schlick(s.F0, VoH));
-    vec3 spec = D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, NoL, a) * F * PI;
+    // D*V already contains the BRDF denominator; multiplying by PI made direct
+    // highlights ~3x too bright and blew out the normal/height detail on faces
+    // pointing at the sun.
+    vec3 spec = D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, NoL, a) * F;
     vec3 kd = (1.0 - F) * (1.0 - s.metallic) * (1.0 - s.transmission);
     vec3 diffuse = kd * s.albedo * s.ao;
 
@@ -376,12 +383,14 @@ void shadeLight(Surface s, vec3 l, vec3 radiance, inout vec3 diffuseOut, inout v
     if (s.clearcoat > 0.0) {
         float ac = max(s.clearcoatRoughness * s.clearcoatRoughness, 0.002);
         float Fc = (0.04 + 0.96 * pow(1.0 - VoH, 5.0)) * s.clearcoat;
-        float coat = D_GGX(NoH, ac) * V_SmithGGXCorrelated(NoV, NoL, ac) * Fc * PI;
+        float coat = D_GGX(NoH, ac) * V_SmithGGXCorrelated(NoV, NoL, ac) * Fc;
         diffuse *= 1.0 - Fc;
         spec = spec * (1.0 - Fc) + vec3(coat);
     }
-    diffuseOut += diffuse * radiance * NoL;
-    specularOut += spec * radiance * NoL;
+    // The height cavity also darkens direct light, so a face pointing at the
+    // sun keeps its grooves instead of turning into a flat white/plastic plate.
+    diffuseOut += diffuse * radiance * NoL * occlusion;
+    specularOut += spec * radiance * NoL * occlusion;
 }
 
 bool environmentAvailable() {
@@ -660,7 +669,7 @@ vec3 applyVolumetrics(vec3 color) {
     return color * transmittance + accum;
 }
 
-vec3 applyReflection(vec3 n, vec3 viewDir, vec3 color, float roughness) {
+vec3 applyReflection(vec3 n, vec3 viewDir, vec3 color, float roughness, float occlusion) {
     if (lights.uFlags.z < 0.5 || lights.uReflectParams.x <= 0.01) return color;
     vec3 R = reflect(-viewDir, n);
     float dist = max(lights.uReflectParams.w, 0.5);
@@ -687,7 +696,7 @@ vec3 applyReflection(vec3 n, vec3 viewDir, vec3 color, float roughness) {
     }
     if (wsum <= 0.001) return color;
     float rough = clamp(roughness, 0.0, 1.0);
-    float amount = lights.uReflectParams.x * (1.0 - rough * 0.65);
+    float amount = lights.uReflectParams.x * (1.0 - rough * 0.65) * clamp(occlusion, 0.0, 1.0);
     return mix(color, accum / wsum, clamp(amount, 0.0, 1.0));
 }
 
@@ -714,6 +723,14 @@ void main() {
         discard;
     }
     vec2 uv = parallaxUv(materialUv());
+    // Height-field micro-occlusion for the non-directional lighting. The direct
+    // lights get parallaxSelfShadow(); ambient, IBL and reflections need this
+    // cavity term or the relief disappears when the sun is not grazing.
+    float microAo = 1.0;
+    if (g_pomActive) {
+        float surfaceHeight = textureLod(uNormalMap, uv, 0.0).a;
+        microAo = mix(0.35, 1.0, clamp(surfaceHeight, 0.0, 1.0));
+    }
     vec4 albedoSample = texture(uAlbedoMap, uv);
     float opacity = clamp(albedoSample.a * lights.uAlbedo.a, 0.0, 1.0);
     int alphaMode = int(lights.uMaterialFlags.x + 0.5);
@@ -755,7 +772,7 @@ void main() {
     // diffuse + emissive only, so IBL/ambient/SSR are not double counted.
     vec3 ambient = vec3(0.0);
     if (lights.uIblParams.y < 0.5) {
-        ambient = lights.uAmbient.rgb * s.albedo * s.ao * (1.0 - s.transmission);
+        ambient = lights.uAmbient.rgb * s.albedo * s.ao * (1.0 - s.transmission) * microAo;
     }
     vec3 diffuse = ambient;
     vec3 specular = vec3(0.0);
@@ -772,7 +789,8 @@ void main() {
                 shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal) * pomShadow;
             }
         }
-        shadeLight(s, dir, lights.uDirColor[i].rgb * lights.uDirData[i].w * shadow, diffuse, specular);
+        shadeLight(s, dir, lights.uDirColor[i].rgb * lights.uDirData[i].w * shadow, microAo,
+                   diffuse, specular);
     }
 
     for (int i = 0; i < lights.uPointCount; ++i) {
@@ -783,18 +801,18 @@ void main() {
 
         vec3 ldir = toLight / dist;
         float atten = 1.0 - smoothstep(radius * 0.75, radius, dist);
-        float shadow = 1.0;
+        float shadow = parallaxSelfShadow(ldir);
         if (lights.uFlags.x > 0.5) {
             if (i == 0 && shadows.uPointShadowValid.x > 0.5) {
-                shadow = samplePointShadow(uPointShadow0, v_worldPos,
+                shadow *= samplePointShadow(uPointShadow0, v_worldPos,
                     shadows.uPointShadowPos[0].xyz, shadows.uPointShadowRadius.x);
             } else if (i == 1 && shadows.uPointShadowValid.y > 0.5) {
-                shadow = samplePointShadow(uPointShadow1, v_worldPos,
+                shadow *= samplePointShadow(uPointShadow1, v_worldPos,
                     shadows.uPointShadowPos[1].xyz, shadows.uPointShadowRadius.y);
             }
         }
         shadeLight(s, ldir, lights.uPointColor[i].rgb * lights.uPointColor[i].a * atten * shadow,
-                   diffuse, specular);
+                   microAo, diffuse, specular);
     }
 
     for (int i = 0; i < lights.uSpotCount; ++i) {
@@ -811,18 +829,18 @@ void main() {
 
         float spotAtten = (cone - cosHalfAngle) / max(0.0001, 1.0 - cosHalfAngle);
         float rangeAtten = 1.0 - (dist / radius);
-        float shadow = 1.0;
+        float shadow = parallaxSelfShadow(-fromLight);
         if (lights.uFlags.x > 0.5) {
             if (i == 0 && shadows.uSpotShadowValid.x > 0.5) {
-                shadow = sampleSpotShadow(uSpotShadow0, shadows.uSpotShadowVP[0], v_worldPos, shadowNormal);
+                shadow *= sampleSpotShadow(uSpotShadow0, shadows.uSpotShadowVP[0], v_worldPos, shadowNormal);
             } else if (i == 1 && shadows.uSpotShadowValid.y > 0.5) {
-                shadow = sampleSpotShadow(uSpotShadow1, shadows.uSpotShadowVP[1], v_worldPos, shadowNormal);
+                shadow *= sampleSpotShadow(uSpotShadow1, shadows.uSpotShadowVP[1], v_worldPos, shadowNormal);
             }
         }
         shadeLight(s, -fromLight,
                    lights.uSpotColor[i].rgb * lights.uSpotDir[i].w * spotAtten * rangeAtten *
                        rangeAtten * shadow,
-                   diffuse, specular);
+                   microAo, diffuse, specular);
     }
 
     // Emission and direct diffuse are captured before IBL/SSR/transmission.
@@ -830,7 +848,13 @@ void main() {
     if (lights.uMaterialFlags.y > 0.5) emission *= texture(uEmissionMap, uv).rgb;
     vec3 directDiffuse = max(diffuse - ambient, vec3(0.0)) + emission;
 
+    vec3 diffuseBeforeIbl = diffuse;
+    vec3 specularBeforeIbl = specular;
     applyIbl(s, diffuse, specular);
+    // IBL has no direction to ray-march; scale only its contribution by the
+    // height cavity so crevices stay dark even under pure sky light.
+    diffuse = diffuseBeforeIbl + (diffuse - diffuseBeforeIbl) * microAo;
+    specular = specularBeforeIbl + (specular - specularBeforeIbl) * microAo;
 
     if (s.transmission > 0.0) {
         float NoV = max(dot(s.n, s.v), 1e-4);
@@ -848,7 +872,7 @@ void main() {
     }
 
     vec3 color = diffuse + specular;
-    color = applyReflection(s.n, s.v, color, s.roughness);
+    color = applyReflection(s.n, s.v, color, s.roughness, microAo);
     color += emission;
     color = applyVolumetrics(color);
     writePhotonGBuffer(s.albedo, s.n, s.roughness, s.metallic, directDiffuse);

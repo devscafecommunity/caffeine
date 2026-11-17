@@ -61,6 +61,8 @@ pub struct Node {
     pub accent: Color,
     pub selected: bool,
     pub output: bool,
+    /// Optional square thumbnail of this node's current output.
+    pub preview: Option<iced::widget::image::Handle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,12 +107,19 @@ const HEADER_HEIGHT: f32 = 24.0;
 const PORT_SPACING: f32 = 18.0;
 const BODY_PADDING: f32 = 9.0;
 const PORT_RADIUS: f32 = 4.5;
+const PREVIEW_SIZE: f32 = 72.0;
+const PREVIEW_GAP: f32 = 6.0;
 const MIN_ZOOM: f32 = 0.35;
 const MAX_ZOOM: f32 = 2.2;
 
 fn node_height(node: &Node) -> f32 {
     let ports = node.inputs.len().max(node.outputs.len()) as f32;
-    HEADER_HEIGHT + BODY_PADDING * 2.0 + ports * PORT_SPACING
+    let preview = if node.preview.is_some() {
+        PREVIEW_GAP + PREVIEW_SIZE
+    } else {
+        0.0
+    };
+    HEADER_HEIGHT + BODY_PADDING * 2.0 + ports * PORT_SPACING + preview
 }
 
 fn input_position(node: &Node, index: usize) -> Point {
@@ -729,6 +738,24 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     ..Text::default()
                 });
             }
+
+            if let Some(preview) = &node.preview {
+                let ports = node.inputs.len().max(node.outputs.len()) as f32;
+                let preview_size = PREVIEW_SIZE * self.zoom;
+                let top = top_left.y
+                    + (HEADER_HEIGHT + BODY_PADDING + ports * PORT_SPACING + PREVIEW_GAP)
+                        * self.zoom;
+                let left = top_left.x + (size.width - preview_size) * 0.5;
+                let preview_bounds =
+                    Rectangle::new(Point::new(left, top), Size::new(preview_size, preview_size));
+                frame.draw_image(preview_bounds, preview);
+                frame.stroke(
+                    &Path::rectangle(preview_bounds.position(), preview_bounds.size()),
+                    Stroke::default()
+                        .with_color(theme::BORDER_STRONG)
+                        .with_width(1.0),
+                );
+            }
         }
 
         vec![frame.into_geometry()]
@@ -824,6 +851,7 @@ mod tests {
             accent: theme::ACCENT,
             selected: false,
             output: false,
+            preview: None,
         };
         let target = Node {
             id: 2,
@@ -838,6 +866,7 @@ mod tests {
             accent: theme::SUCCESS,
             selected: false,
             output: true,
+            preview: None,
         };
         let nodes = [source, target];
         let links = [Link {
@@ -918,6 +947,7 @@ mod tests {
             accent: theme::ACCENT,
             selected: false,
             output: false,
+            preview: None,
         };
         let nodes = [node];
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(500.0, 400.0));
@@ -945,6 +975,7 @@ mod tests {
             accent: theme::ACCENT,
             selected: false,
             output: false,
+            preview: None,
         };
         let links = [];
         let program = Program {

@@ -13,7 +13,7 @@ use crate::uikit::theme;
 use iced::widget::image::Handle;
 use iced::widget::{column, container, image, row, text, Column};
 use iced::{ContentFit, Element, Length, Vector};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -266,6 +266,7 @@ pub struct View<'a> {
     pub zoom: f32,
     pub preview: Option<&'a Handle>,
     pub preview_3d: Option<&'a Handle>,
+    pub node_previews: &'a HashMap<NodeId, Handle>,
     pub status: Option<&'a str>,
     pub material_name: Option<&'a str>,
     pub dirty: bool,
@@ -298,6 +299,7 @@ pub fn view<'a, Message: Clone + 'a>(
         "256".to_owned(),
         "512".to_owned(),
         "1024".to_owned(),
+        "2048".to_owned(),
     ];
     let resolution_selected = graph.resolution.to_string();
     let resolution_lookup = resolution_options.clone();
@@ -311,7 +313,7 @@ pub fn view<'a, Message: Clone + 'a>(
             let value = resolution_lookup
                 .iter()
                 .position(|label| *label == choice)
-                .map(|index| [128u32, 256, 512, 1024][index])
+                .map(|index| [128u32, 256, 512, 1024, 2048][index])
                 .unwrap_or(512);
             resolution_emit(Edit::SetResolution(value))
         },
@@ -484,7 +486,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .color(theme::TEXT_MUTED),
     );
 
-    let nodes = graph.canvas_nodes(view.selected);
+    let nodes = graph.canvas_nodes(view.selected, view.node_previews);
     let canvas = node_canvas::view(
         id::NODE_CANVAS,
         node_canvas::View {

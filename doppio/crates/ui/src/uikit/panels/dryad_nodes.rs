@@ -692,6 +692,7 @@ pub fn canvas_nodes(graph: &dryad::Graph, selected: Option<&str>) -> Vec<node_ca
             accent: accent(node.kind),
             selected: selected == Some(node.id.as_str()),
             output: false,
+            preview: None,
         })
         .collect()
 }

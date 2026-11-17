@@ -164,6 +164,27 @@ fn normal_height_round_trip_recovers_the_relief() {
 }
 
 #[test]
+fn multiscale_ao_follows_the_height_cavity() {
+    let flat = vec![0.5f32; RES * RES];
+    let open = height::multiscale_ao(&flat, RES, 0.05, 1.0, 0.6);
+    assert!(
+        open.iter().all(|value| (*value - 1.0).abs() < 1e-4),
+        "a flat plane should stay fully open"
+    );
+
+    let mut pit = vec![0.5f32; RES * RES];
+    let (cx, cy) = (RES / 2, RES / 2);
+    for y in cy - 4..=cy + 4 {
+        for x in cx - 4..=cx + 4 {
+            pit[y * RES + x] = 0.0;
+        }
+    }
+    let ao = height::multiscale_ao(&pit, RES, 0.05, 1.0, 0.6);
+    assert!(ao[cy * RES + cx] < 0.85, "pit centre should darken");
+    assert!(ao[0] > 0.99, "corners far from the pit should stay open");
+}
+
+#[test]
 fn blur_keeps_the_average_and_smooths() {
     let base = tileable_input();
     let blurred = gaussian_plane(&base.iter().map(|p| p[0]).collect::<Vec<_>>(), RES, 5.0);

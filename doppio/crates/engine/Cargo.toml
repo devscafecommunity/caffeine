@@ -7,3 +7,6 @@ publish.workspace = true
 
 [dependencies]
 libloading.workspace = true
+
+[dev-dependencies]
+image = "0.25"

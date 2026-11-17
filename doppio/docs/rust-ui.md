@@ -173,8 +173,8 @@ python3 scripts/audit_core_ui_coupling.py --fail-on-leaks
 - a `libloading` Rust bridge in `doppio/crates/engine/src/lib.rs`, with a
   round-trip integration test that skips when the library is absent;
 - the Rust Inspector shows the real C++ position and can nudge it with `+X`;
-- 163 Rust tests: 2 engine bridge/snapshot tests, 160 UI/widget tests (1
-ignored docs generator) and 1 doctest.
+- 222 Rust tests: 2 engine bridge/snapshot tests, 3 material-preview
+integration tests, 216 UI/widget tests (1 ignored docs generator) and 1 doctest.
 
 The app loads a real scene through the ABI:
 
@@ -227,9 +227,12 @@ precedent.
   **Project Manager** over the workspace (the editor fixtures and screenshot
   runs pass a scene, so they stay deterministic). The Project menu and
   `Ctrl+O` reopen it at any time.
+- The launcher may also pass a project root or `project.caffeine` as the first
+  argument. Doppio opens it directly, sets the engine asset root, loads
+  `last_scene` and shows the active-project chip instead of the startup dialog.
 - The manager has **Create New**, **Open Recent** and **Browse Projects** tabs,
   mirroring the archived startup dialog. Create validates the name, creates
-  `assets/raw/{Models,Textures,Materials,...}`, `assets/processed`, `scripts`,
+  `assets/raw/{Models,Textures,Materials,materials,...}`, `assets/processed`, `scripts`,
   `scenes`, `materials`, `texture_sets` and `build`, writes `project.caffeine`
   and opens the project. Browse recursively scans a folder up to six levels for
   `project.caffeine`, and Recent reads `~/.config/caffeine/recent.txt`
@@ -339,14 +342,19 @@ precedent.
   with Color/Roughness/Metallic/Height/AO inputs and imported `Unknown`
   placeholders. Ports are typed colour/scalar; scalar inputs read the luminance
   of connected colour maps and fall back to Output constants. Evaluation is
-  CPU, tileable at 128–1024 px, cycle-safe and memoized.
+  CPU, tileable at 128–2048 px, cycle-safe and memoized; 2K is the safe max
+  until the evaluator gets a tiled/parallel 4K path.
 - The **Generator** tab (opened from Material → Generate…, the Scene menu, or
   the MCP action) puts the palette, canvas and selected-node properties side by
   side and maximizes the pane while editing. Image and Normal Map nodes use the
   shared texture picker and support UV/planar/tri-planar/cylindrical/spherical
   projection, tiling, offset, linear/nearest filtering and clamp/repeat
   wrapping. **Bake to Material** runs on a worker thread with progress and
-  cancel; image decoding also happens on that worker. It writes
+  cancel; image decoding also happens on that worker. The progress bar follows
+  the reachable nodes, then reports `Packing maps`, `Baking occlusion`,
+  `Writing maps` and `Done`, so the final AO and map packing no longer look
+  stuck at the last node. Occlusion uses a separable box blur (O(pixels)
+  instead of O(pixels × radius)), which keeps 2K bakes fast. It writes
   `<material>_gen_base_<bits>.png`, height/roughness/metallic/packed maps,
   derives a normal map from height and assigns the maps to the open `.mat`
   before marking it unsaved. A successful bake now saves the `.mat` and assigns
@@ -354,9 +362,13 @@ precedent.
   generator's **3D PREVIEW** (the live material preview sphere) show exactly
   what the graph produced. The generator's **OUTPUT PREVIEW** is a low-resolution
   live bake of the Output node, refreshed after each graph edit with a 160 ms
-  debounce; no manual bake is needed to see parameter/brick/mask changes. The
-  right-hand panel edits the channel-packing preset/sources, saves named user
-  presets and chooses 8/16-bit output.
+  debounce; no manual bake is needed to see parameter/brick/mask changes. Direct
+  specular is energy-normalised and the height field darkens direct, ambient,
+  IBL and reflected light (and point/spot POM shadows), so a face pointing at
+  the sun keeps its grooves instead of flattening to a white plastic plate. Every
+  node also shows a live 72 px thumbnail of its own evaluated output, computed
+  in the same worker pass. The right-hand panel edits the channel-packing
+  preset/sources, saves named user presets and chooses 8/16-bit output.
 - Saving a material also writes its `<name>.mgraph` sidecar (versioned text)
   beside the `.mat`; reopening restores nodes, links, parameters, positions and
   resolution. Graphs are per material, not shared session state.
@@ -782,6 +794,8 @@ cargo run -p doppio-ui --bin doppio-material -- \
   import-sbs material.sbs --out imported/
 cargo run -p doppio-ui --bin doppio-material -- \
   export materials/paint.mat --out paint.mcmat
+cargo run -p doppio-ui --bin doppio-material -- \
+  bake-graph materials/paint.mgraph --size 2048 --out maps/
 cargo run -p doppio-ui --bin doppio-material -- \
   texset-info painted.texset
 cargo run -p doppio-ui --bin doppio-material -- \
