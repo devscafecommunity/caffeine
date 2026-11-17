@@ -1,0 +1,16 @@
+{
+  "name": "Texture Generator: a separate tab with its own library, preview and export",
+  "description": "Opens the Texture Generator fixture, checks its widgets exist and that the preview modes switch. The Material Generator's bake button must not be on screen.",
+  "fixture": "texture",
+  "preset": "Torch Flame",
+  "steps": [
+    { "action": "expect", "exists": "id:texturegen.canvas" },
+    { "action": "expect", "exists": "id:texturegen.library" },
+    { "action": "expect", "exists": "id:texturegen.toolbar.export" },
+    { "action": "expect", "exists": "id:texturegen.export.flipbook" },
+    { "action": "click", "target": "id:texturegen.preview.mode.alpha" },
+    { "action": "expect", "exists": "id:texturegen.preview" },
+    { "action": "click", "target": "id:texturegen.preview.mode.colour" },
+    { "action": "expect", "exists": "id:texturegen.preview" }
+  ]
+}

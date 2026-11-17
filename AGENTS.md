@@ -155,6 +155,22 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
   checklist for materials, textures, map baking, node generators, MaterialCraft
   interoperability and TextureCraft-style texture sets. Keep it current when one of
   those areas changes.
+- **Gizmos and markers**: `doppio/docs/gizmos-and-markers.md` documents the viewport overlays
+  (transform gizmo, scene markers for lights / cameras / colliders / empties). Keep it current when
+  they change.
+- **Nature Generator**: `doppio/docs/nature-generator-guide.md` documents the separate nature tool
+  (rocks, trees, plants built with a node graph: Mesh/Skeleton/Points ports, quality modes from low poly to hi-fi, your own materials and textures, `.obj` export, placement with per-part materials).
+  Keep it current when that tool changes.
+- **Terrain Generator**: `doppio/docs/terrain-generator-guide.md` documents the terrain tool (node graph of
+  field sources, modifiers, masks and erosion; presets; splat layers from slope, height and sea level; the C ABI
+  v8 terrain and its limits). `reference/nerthus` (MIT) is study material only: nothing is copied from it.
+  Keep the guide current when the tool or the engine terrain changes.
+- **Water Generator**: `doppio/docs/water-generator-guide.md` documents the water tool (node graph of
+  wave sources, modifiers and look; presets; the C ABI v7 water surface and `water_height`; limits and the
+  shader roadmap). Keep it current when that tool or the engine water changes.
+- **Texture Generator**: `doppio/docs/texture-generator-guide.md` documents the separate texture
+  tool (`.texgraph`, Texture Output, VFX & Shapes ops, presets, export, flipbooks). Keep it current
+  when that tool changes.
 - **Headless testing**: `doppio/docs/headless-testing.md` documents the `doppio-headless`
   driver (actions, targets, flows, recipes). Its reference section is generated from
   `headless/reference.rs`; a test fails if they drift apart.

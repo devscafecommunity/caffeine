@@ -24,7 +24,8 @@ doppio/
     src/windows/            main.rs (app state + PaneGrid), projectloader.rs
     src/uikit/components/   button, panel, toolbar, status, text_field, field_editor,
                             tree_view, component_card/picker, viewport_surface,
-                            viewport_shader, rendering_canvas, gizmo, asset_preview,
+                            viewport_shader, rendering_canvas, gizmo, scene_markers,
+                            viewport_math, asset_preview,
                             breadcrumb, code_editor
     src/uikit/theme.rs      colours, borders and spacing for the whole workspace
     src/uikit/panels/       hierarchy, sceneviewport, assetmanager, inspector, console,
@@ -513,16 +514,21 @@ precedent.
   stops just short of the pole so `lookAt` stays stable. That allows reaching
   cloud layers and orbiting beyond the old 5,000-unit zoom limit.
 - `uikit/components/gizmo.rs` draws the selected entity's transform gizmo over
-  the shader surface using the same orbit camera projection. `1`/`2`/`3` (or
-  View → Move/Rotate/Scale Tool) switch modes. Drag X/Y/Z to move, rotate or
-  scale on global axes; edits flow through the normal commit path and coalesce
-  into one undo step per drag. Clicking the gizmo centre keeps the viewport
-  orbit gesture. The overlay projects the entity's resolved world position, so
-  a child stays attached to a moved/rotated/scaled group, and move edits are
-  converted back through the parent transform. The overlay projects with the
-  camera snapshot of the frame
-  currently on screen, not the UI's newest camera, so an orbiting world and its
-  gizmo stay aligned despite the asynchronous readback.
+  the shader surface using the same orbit camera projection (shared maths in
+  `components/viewport_math.rs`). `1`/`2`/`3` (or View → Move/Rotate/Scale Tool)
+  switch modes. Move has shaded 3D arrows and plane handles, Rotate has depth-shaded
+  rings with a swept-angle wedge, and Scale follows the object's **local** axes and has a
+  centre cube for uniform scale. The handle under the cursor is highlighted. Edits flow
+  through the normal commit path and coalesce into one undo step per handle drag. The
+  overlay projects the entity's resolved world position, so a child stays attached to a
+  moved/rotated/scaled group, and move edits are converted back through the parent
+  transform. It projects with the camera snapshot of the frame currently on screen, not
+  the UI's newest camera, so an orbiting world and its gizmo stay aligned despite the
+  asynchronous readback.
+- `uikit/components/scene_markers.rs` draws markers for entities that have no mesh: light
+  rays, bulbs and cones, camera frustums, colliders and locators. They sit under the gizmo,
+  can be clicked to select their entity and are toggled from the View menu. Details, limits
+  and images: [`gizmos-and-markers.md`](gizmos-and-markers.md).
 - `ViewportTick` still fires every 16 ms, but the viewport submits at most one
   frame per 33 ms; the HUD shows measured latency and a rolling FPS. The
   persistent shader texture is kept when a frame is unchanged, so dropped
@@ -673,6 +679,9 @@ registers scene-level queries and actions:
 | query | `camera` | viewport yaw, pitch, distance and focus |
 | query | `viewport` | pane/render size, grid, AA, render scale and hover |
 | query | `gizmo` | active transform tool and selected transform |
+| query | `markers` | scene markers (id, name, kind, world position) and their visibility |
+| action | `toggle_scene_markers` | shows or hides the scene markers |
+| action | `select_marker` | `{ "id": entity id }`, like clicking the marker icon |
 | query | `prefabs` | built-in prefab categories and recipes |
 | query | `materials` | project `.mat` assets |
 | query | `material` | open material surface, maps, path and dirty state |

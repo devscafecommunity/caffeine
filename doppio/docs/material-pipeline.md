@@ -311,5 +311,41 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
       released on session shutdown (the device is leaked on purpose).
 - [x] Re-bake fix: `GpuTextureCache` reloads a file rewritten in place (stamp changed) even
       while its ref count is non-zero.
+- [x] UVs follow the object's scale (`uv_object_scale`, on by default; C ABI v6): the vertex
+      shaders measure the model matrix's stretch along the tangent / bitangent and the fragment and
+      displacement shaders multiply the tiled UV by it, so a scaled quad keeps its texture density.
+      Instanced draws and the material preview keep the authored UVs. Material panel checkbox.
+- [x] **Variation** node class (`procedural/variation.rs`, 6 ops): Noise Variation (Perlin / Simplex),
+      Cell Variation (grid, Voronoi or a pattern's own cell ids), Patch Blend, Tile Shuffle, Wave
+      Function Collapse (overlapping model, periodic output) and Diamond-Square (toroidal). Seven
+      `Varied` presets use them; also in the Texture Generator (two `Procedural` presets).
+- [ ] Variation: simple-tiled WFC with an explicit tile set and adjacency rules; WFC constraints
+      (fixed cells, region masks); Diamond-Square with an erosion pass.
 - [ ] Expand culling bounds by the displacement depth; distance-adaptive subdivision.
 - [ ] Preset seed / scale / wear in the UI.
+
+## Texture Generator (separate tool, see `texture-generator-guide.md`)
+
+- [x] Its own pane, `.texgraph` file (`CAFTEXGRAPH1`), `Texture Output` node (Colour + alpha, or
+      packed R/G/B/A), palette and presets; the material and texture loaders refuse each other's
+      files, and the material palette hides the VFX & Shapes ops.
+- [x] 10 VFX & Shapes ops (leaf, feather, droplet, shockwave ring, flame, smoke puff, sparks,
+      radial burst, soft glow, colour ramp) and 16 presets.
+- [x] Preview over a checkerboard with Colour / Alpha / R / G / B views.
+- [x] PNG export (8 and 16 bit, straight alpha) and flipbook sheets that loop every `phase`
+      parameter; `doppio-material bake-texture`; agent query `texture_generator` and actions.
+- [ ] Float / EXR output for heightmaps and LUTs.
+- [ ] Image-reader node and seamless (tiled) export mode in the Texture Generator.
+- [ ] Preset seed / colour variation in the UI; more presets (decals, runes, scratches, stylised
+      clouds).
+
+## Nature Generator (separate tool, see `nature-generator-guide.md`)
+
+- [x] Recipe-driven rocks (icosphere + noise + cut planes), trees (recursive tubes, broadleaf /
+      conifer / dead) and plants (grass, fern, bush, flower); stylised / balanced / detailed quality.
+- [x] Software 3D preview, `.obj` export (one file per part) and `.nature` recipes, **Place in scene** as a
+      group with one entity per part and baked materials (library presets, Texture Generator cards).
+- [x] Engine fix: `propagateTransforms` no longer crashes on children without a world matrix.
+- [ ] Material slots per submesh (ABI), vertex colour, wind mask, leaf atlas, LOD / impostors, `.glb` writer.
+- [ ] Scatter over terrain and biomes (belongs to the terrain generator).
+

@@ -1,0 +1,13 @@
+{
+  "name": "Capture the Terrain Generator screenshots used by docs/terrain-generator-guide.md",
+  "description": "Run through scripts/capture-terrain-docs.sh (it strips the NNN- prefix). No engine needed.",
+  "fixture": "terrain",
+  "size": [1600, 900],
+  "steps": [
+    {"action": "wait", "ms": 600, "real_time": true, "label": "let the preview render"},
+    {"action": "screenshot", "name": "terrain-pane"},
+    {"action": "reset", "fixture": "terrain", "preset": "Volcanic Island"},
+    {"action": "wait", "ms": 600, "real_time": true},
+    {"action": "screenshot", "name": "terrain-island", "target": "id:editor.pane.terrain_generator", "padding": 0}
+  ]
+}
