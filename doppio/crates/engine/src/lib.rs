@@ -10,8 +10,14 @@ use std::path::{Path, PathBuf};
 use libloading::Library;
 
 mod material;
+mod terrain;
+mod water;
 pub use material::{Material, MaterialAlphaMode, MaterialPreset};
 use material::{RawMaterial, RawMaterialPresetInfo};
+use terrain::RawTerrain;
+pub use terrain::Terrain;
+use water::RawWater;
+pub use water::{Water, WaterWave, MAX_WATER_WAVES};
 
 pub const ENTITY_NONE: u32 = u32::MAX;
 
@@ -453,6 +459,13 @@ type PreviewBeginFn = unsafe extern "C" fn(
     *const c_char,
     f32,
 ) -> i32;
+type SetTerrainFn =
+    unsafe extern "C" fn(*mut c_void, u32, *const RawTerrain, *const f32, *const u8) -> i32;
+type GetTerrainFn = unsafe extern "C" fn(*const c_void, u32, *mut RawTerrain) -> i32;
+type TerrainHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
+type SetWaterFn = unsafe extern "C" fn(*mut c_void, u32, *const RawWater) -> i32;
+type GetWaterFn = unsafe extern "C" fn(*const c_void, u32, *mut RawWater) -> i32;
+type WaterHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
 type PreviewLightFn = unsafe extern "C" fn(*mut c_void, f32, f32, f32, i32) -> i32;
 type PreviewPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
 type DryadAvailableFn = unsafe extern "C" fn() -> i32;
@@ -566,6 +579,12 @@ struct Functions {
     material_preview_begin: PreviewBeginFn,
     material_preview_poll: PreviewPollFn,
     preview_light: Option<PreviewLightFn>,
+    set_water: Option<SetWaterFn>,
+    set_terrain: Option<SetTerrainFn>,
+    get_terrain: Option<GetTerrainFn>,
+    terrain_height: Option<TerrainHeightFn>,
+    get_water: Option<GetWaterFn>,
+    water_height: Option<WaterHeightFn>,
     dryad_available: Option<DryadAvailableFn>,
     run_dryad: Option<RunDryadFn>,
 }
@@ -748,6 +767,12 @@ impl Engine {
             preview_light: unsafe {
                 load_symbol(library, b"caffeine_session_set_material_preview_light\0")
             },
+            set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
+            get_terrain: unsafe { load_symbol(library, b"caffeine_session_terrain\0") },
+            terrain_height: unsafe { load_symbol(library, b"caffeine_session_terrain_height\0") },
+            set_water: unsafe { load_symbol(library, b"caffeine_session_set_water\0") },
+            get_water: unsafe { load_symbol(library, b"caffeine_session_water\0") },
+            water_height: unsafe { load_symbol(library, b"caffeine_session_water_height\0") },
             dryad_available: unsafe { load_symbol(library, b"caffeine_dryad_available\0") },
             run_dryad: unsafe { load_symbol(library, b"caffeine_session_run_dryad\0") },
         };
@@ -1359,6 +1384,69 @@ impl Engine {
                 );
             }
         }
+    }
+
+    /// Creates or updates a terrain on an entity from generated heights (0..1, row-major) and
+    /// optional splat weights (RGBA8 per texel, same grid). Needs a C ABI v8 library.
+    pub fn set_terrain(
+        &mut self,
+        entity: u32,
+        terrain: &Terrain,
+        heights: &[f32],
+        splat_rgba: Option<&[u8]>,
+    ) -> EngineResult<()> {
+        let set = self.functions.set_terrain.ok_or(EngineError::Error)?;
+        let cells = terrain.resolution[0] as usize * terrain.resolution[1] as usize;
+        if heights.len() != cells || splat_rgba.is_some_and(|s| s.len() != cells * 4) {
+            return Err(EngineError::InvalidArgument);
+        }
+        let raw = terrain.to_raw();
+        result(unsafe {
+            set(
+                self.session,
+                entity,
+                &raw,
+                heights.as_ptr(),
+                splat_rgba.map_or(std::ptr::null(), <[u8]>::as_ptr),
+            )
+        })
+    }
+
+    pub fn terrain(&self, entity: u32) -> EngineResult<Terrain> {
+        let get = self.functions.get_terrain.ok_or(EngineError::Error)?;
+        let mut raw = RawTerrain::default();
+        result(unsafe { get(self.session, entity, &mut raw) })?;
+        Ok(Terrain::from_raw(&raw))
+    }
+
+    /// World-space height of a terrain at local (x, z) metres from its corner.
+    pub fn terrain_height(&self, entity: u32, x: f32, z: f32) -> EngineResult<f32> {
+        let sample = self.functions.terrain_height.ok_or(EngineError::Error)?;
+        let mut height = 0.0f32;
+        result(unsafe { sample(self.session, entity, x, z, &mut height) })?;
+        Ok(height)
+    }
+
+    /// Adds or updates a water surface on an entity (needs a C ABI v7 library).
+    pub fn set_water(&mut self, entity: u32, water: &Water) -> EngineResult<()> {
+        let set = self.functions.set_water.ok_or(EngineError::Error)?;
+        let raw = water.to_raw();
+        result(unsafe { set(self.session, entity, &raw) })
+    }
+
+    pub fn water(&self, entity: u32) -> EngineResult<Water> {
+        let get = self.functions.get_water.ok_or(EngineError::Error)?;
+        let mut raw = RawWater::default();
+        result(unsafe { get(self.session, entity, &mut raw) })?;
+        Ok(Water::from_raw(&raw))
+    }
+
+    /// Surface height of a water entity at a rest position, as the engine simulates it.
+    pub fn water_height(&self, entity: u32, x: f32, z: f32) -> EngineResult<f32> {
+        let sample = self.functions.water_height.ok_or(EngineError::Error)?;
+        let mut height = 0.0f32;
+        result(unsafe { sample(self.session, entity, x, z, &mut height) })?;
+        Ok(height)
     }
 
     pub fn poll_material_preview(&mut self, pixels: &mut [u8]) -> EngineResult<RenderState> {
