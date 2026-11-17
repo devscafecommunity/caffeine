@@ -10,9 +10,17 @@
 #include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
 
+#include "containers/FixedString.hpp"
+#include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
+#include "math/Vec4.hpp"
+#include "scene/ComponentReflectionGenerated.includes.inc"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <string>
+#include <type_traits>
 
 namespace Caffeine::Scene::Reflection {
 namespace {
@@ -266,6 +274,79 @@ FieldDesc enumField(const char* name, E T::*member, std::vector<const char*> opt
         }};
 }
 
+
+// ---- Accessor-based fields (used by the generated entries) -------------------------------------
+// One template handles every supported member type, so a component's fields are just lambdas
+// returning a reference to the member (including members of nested structs).
+
+template <typename X> struct IsFixedString : std::false_type {};
+template <usize N> struct IsFixedString<Caffeine::FixedString<N>> : std::true_type {};
+template <typename X> struct IsCharArray : std::false_type {};
+template <usize N> struct IsCharArray<char[N]> : std::true_type {};
+
+template <typename X>
+constexpr FieldKind kindOf() {
+    if constexpr (std::is_same_v<X, bool>) return FieldKind::Bool;
+    else if constexpr (std::is_enum_v<X>) return FieldKind::Enum;
+    else if constexpr (std::is_floating_point_v<X>) return FieldKind::F32;
+    else if constexpr (std::is_integral_v<X> && std::is_signed_v<X>) return FieldKind::I32;
+    else if constexpr (std::is_integral_v<X>) return FieldKind::U32;
+    else if constexpr (std::is_same_v<X, Caffeine::Vec2>) return FieldKind::Vec2;
+    else if constexpr (std::is_same_v<X, Caffeine::Vec3>) return FieldKind::Vec3;
+    else if constexpr (std::is_same_v<X, Caffeine::Vec4>) return FieldKind::Vec4;
+    else return FieldKind::String;
+}
+
+template <typename X>
+void loadMember(const X& member, FieldValue& value) {
+    value = baseValue(kindOf<X>());
+    if constexpr (std::is_same_v<X, bool>) value.boolean = member ? 1 : 0;
+    else if constexpr (std::is_enum_v<X>) value.integer = static_cast<std::int32_t>(member);
+    else if constexpr (std::is_floating_point_v<X>) value.vec[0] = static_cast<float>(member);
+    else if constexpr (std::is_integral_v<X>) value.integer = static_cast<std::int32_t>(member);
+    else if constexpr (std::is_same_v<X, Caffeine::Vec2>) { value.vec[0] = member.x; value.vec[1] = member.y; }
+    else if constexpr (std::is_same_v<X, Caffeine::Vec3>) { value.vec[0] = member.x; value.vec[1] = member.y; value.vec[2] = member.z; }
+    else if constexpr (std::is_same_v<X, Caffeine::Vec4>) { value.vec[0] = member.x; value.vec[1] = member.y; value.vec[2] = member.z; value.vec[3] = member.w; }
+    else if constexpr (std::is_same_v<X, std::string>) std::strncpy(value.text, member.c_str(), sizeof(value.text) - 1);
+    else if constexpr (IsFixedString<X>::value) std::strncpy(value.text, member.cStr(), sizeof(value.text) - 1);
+    else if constexpr (IsCharArray<X>::value) std::strncpy(value.text, member, sizeof(value.text) - 1);
+}
+
+template <typename X>
+void storeMember(X& member, const FieldValue& value) {
+    if constexpr (std::is_same_v<X, bool>) member = value.boolean != 0;
+    else if constexpr (std::is_enum_v<X>) member = static_cast<X>(value.integer);
+    else if constexpr (std::is_floating_point_v<X>) member = static_cast<X>(value.vec[0]);
+    else if constexpr (std::is_integral_v<X>) member = static_cast<X>(value.integer);
+    else if constexpr (std::is_same_v<X, Caffeine::Vec2>) { member.x = value.vec[0]; member.y = value.vec[1]; }
+    else if constexpr (std::is_same_v<X, Caffeine::Vec3>) { member.x = value.vec[0]; member.y = value.vec[1]; member.z = value.vec[2]; }
+    else if constexpr (std::is_same_v<X, Caffeine::Vec4>) { member.x = value.vec[0]; member.y = value.vec[1]; member.z = value.vec[2]; member.w = value.vec[3]; }
+    else if constexpr (std::is_same_v<X, std::string>) member = std::string(value.text);
+    else if constexpr (IsFixedString<X>::value) member = X(value.text);
+    else if constexpr (IsCharArray<X>::value) { std::strncpy(member, value.text, sizeof(member) - 1); member[sizeof(member) - 1] = '\0'; }
+}
+
+template <typename T, typename Accessor>
+FieldDesc ref(const char* name, Accessor accessor, std::vector<const char*> options = {}) {
+    using X = std::remove_cv_t<std::remove_reference_t<decltype(accessor(std::declval<T&>()))>>;
+    constexpr FieldKind kind = kindOf<X>();
+    float maxValue = options.empty() ? 0.0f : static_cast<float>(options.size() - 1);
+    return FieldDesc{
+        name, kind, 0.0f, maxValue, options.empty() ? 0.0f : 1.0f, std::move(options),
+        [accessor](Caffeine::ECS::World& world, Caffeine::ECS::Entity entity, FieldValue& value) {
+            const auto* component = world.get<T>(entity);
+            if (!component) return false;
+            loadMember<X>(accessor(*const_cast<T*>(component)), value);
+            return true;
+        },
+        [accessor](Caffeine::ECS::World& world, Caffeine::ECS::Entity entity, const FieldValue& value) {
+            auto* component = world.get<T>(entity);
+            if (!component) return false;
+            storeMember<X>(accessor(*component), value);
+            return true;
+        }};
+}
+
 const std::vector<ComponentDesc>& componentRegistry() {
     using namespace Caffeine;
     static const std::vector<ComponentDesc> registry = {
@@ -344,6 +425,7 @@ const std::vector<ComponentDesc>& componentRegistry() {
              f32Field<ECS::MeshFilterComponent>("Shininess", &ECS::MeshFilterComponent::shininess, 0.0f, 1024.0f, 1.0f)}),
         component<Caffeine::Script::ScriptComponent>(12, "Script",
             {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath)}),
+#include "scene/ComponentReflectionGenerated.entries.inc"
     };
     return registry;
 }

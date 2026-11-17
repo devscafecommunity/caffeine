@@ -15,6 +15,7 @@ set(CAFFEINE_TEST_SOURCES
     test_assetmanager.cpp
     test_camera2d.cpp
     test_camera3d.cpp
+    test_component_reflection.cpp
     test_textureatlas.cpp
     test_scenemanager.cpp
     test_physics2d.cpp

@@ -511,6 +511,10 @@ TEST_CASE("World getVelocity and setVelocity work", "[script]") {
 #include "../src/caffeine/ecs/Components3D.hpp"
 #include "../src/caffeine/ecs/MeshComponents.hpp"
 #include "../src/caffeine/physics/PhysicsComponents3D.hpp"
+#include "../src/caffeine/ecs/TerrainComponents.hpp"
+#include "../src/caffeine/ecs/PostProcessComponents.hpp"
+#include "../src/caffeine/audio/AudioComponents.hpp"
+#include "../src/caffeine/navigation/NavVolume.hpp"
 
 TEST_CASE("caffeine.component reads and writes any reflected component", "[script][component]") {
     ScriptTestFixture fix;
@@ -555,6 +559,34 @@ TEST_CASE("caffeine.component reads and writes any reflected component", "[scrip
     REQUIRE(pos != nullptr);
     REQUIRE(pos->position.z == Approx(3.0f));
     REQUIRE_FALSE(entity.has<Physics3D::RigidBody3D>());
+}
+
+TEST_CASE("caffeine.component reaches the whole registry, including generated components", "[script][component]") {
+    ScriptTestFixture fix;
+    auto entity = fix.world.create("Thing");
+    const char* code = R"(
+        function onCreate(eid)
+            local C = caffeine.component
+            registry_size = #C.list()
+            C.set(eid, "Terrain", { ["Max height"] = 321, ["Splat Layer Paths 2"] = "my/rock.png" })
+            C.set(eid, "Post Process", { ["Bloom: Intensity"] = 0.8, Enabled = true })
+            C.set(eid, "Audio Emitter", { ["Clip path"] = "sfx/hit.wav", Loop = true })
+            C.set(eid, "Nav Agent", { Speed = 7, Destination = { x = 1, y = 2, z = 3 } })
+            C.set(eid, "Environment Effects", { ["Time of day"] = 6.5 })
+            terrain_h = C.getField(eid, "Terrain", "Max height")
+            terrain_path = C.getField(eid, "Terrain", "Splat Layer Paths 2")
+            bloom = C.getField(eid, "Post Process", "Bloom: Intensity")
+            dest = C.getField(eid, "Nav Agent", "Destination")
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "component_registry.lua"));
+    REQUIRE(fix.engine.callOnCreate("component_registry.lua", entity));
+    REQUIRE(entity.has<ECS::TerrainComponent>());
+    REQUIRE(entity.get<ECS::TerrainComponent>()->maxHeight == Approx(321.0f));
+    REQUIRE(std::string(entity.get<ECS::TerrainComponent>()->splatLayerPaths[1]) == "my/rock.png");
+    REQUIRE(entity.get<ECS::PostProcessComponent>()->bloom.intensity == Approx(0.8f));
+    REQUIRE(std::string(entity.get<Audio::AudioEmitter>()->clipPath.cStr()) == "sfx/hit.wav");
+    REQUIRE(entity.get<Navigation::NavAgent>()->destination.z == Approx(3.0f));
 }
 
 TEST_CASE("caffeine.component reports mistakes with helpful messages", "[script][component]") {
