@@ -491,3 +491,70 @@ fn baked_masks_and_rock_surface_describe_the_geometry() {
         }
     }
 }
+
+#[test]
+fn leaf_atlas_gives_varied_folded_drooping_leaves() {
+    use super::tree;
+    let graph = preset("Oak").graph();
+    assert!(graph
+        .nodes
+        .iter()
+        .any(|n| n.op == "leaves" && graph.get(n.id, "shapes") == Some(1.0)));
+    let model = graph.build(Quality::Balanced).unwrap();
+    let leaves = model
+        .parts
+        .iter()
+        .find(|p| p.name == "leaves")
+        .expect("leaves part");
+    assert!(matches!(&leaves.material, MaterialSpec::Cards(name) if name.starts_with("Atlas")));
+    // Cards sample every column and row of the 4x2 atlas.
+    let columns: std::collections::HashSet<u32> = leaves
+        .uvs
+        .iter()
+        .map(|uv| (uv[0] * 4.0).min(3.999) as u32)
+        .collect();
+    let rows: std::collections::HashSet<u32> = leaves
+        .uvs
+        .iter()
+        .map(|uv| (uv[1] * 2.0).min(1.999) as u32)
+        .collect();
+    assert_eq!(columns.len(), 4, "{columns:?}");
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    // Cards are not flat quads: several rows and a folded section (many triangles per leaf).
+    assert!(leaves.triangle_count() > 400);
+    // More rows at higher quality, and flat single-shape cards still work.
+    let detailed = graph.build(Quality::Detailed).unwrap();
+    let per = |m: &super::NatureModel| {
+        m.parts
+            .iter()
+            .find(|p| p.name == "leaves")
+            .unwrap()
+            .triangle_count()
+    };
+    assert!(per(&detailed) > per(&model));
+    let _ = tree::LeafCards {
+        density: 1.0,
+        size: 1.0,
+        inner_share: 0.5,
+        max_triangles: 100,
+        atlas: (1, 1),
+        fold: 0.0,
+        droop: 0.0,
+        rows: 1,
+    };
+
+    // The atlas image holds eight different leaves: tiles are not copies of each other.
+    let (cols, rows_n, cells) = crate::uikit::texture_graph::atlas("Atlas · Broadleaf").unwrap();
+    assert_eq!((cols, rows_n, cells.len()), (4, 2, 8));
+    let mut seen = std::collections::HashSet::new();
+    for mut cell in cells {
+        cell.resolution = 64;
+        let baked = cell
+            .bake_texture_with(&crate::uikit::generators::TextureMap::new(), None, None)
+            .unwrap();
+        assert!(baked.has_alpha, "leaves are cut out");
+        seen.insert(baked.rgba8);
+    }
+    assert_eq!(seen.len(), 8, "every cell is a different leaf");
+    assert!(crate::uikit::texture_graph::atlas("Atlas · Nothing").is_none());
+}

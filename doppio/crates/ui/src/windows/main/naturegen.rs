@@ -178,16 +178,38 @@ impl NatureGen {
     }
 }
 
-fn texture_cards_png(name: &str, size: u32) -> Result<Vec<u8>, String> {
+/// RGBA pixels of a leaf/petal card material and their size. Atlas names (`Atlas · ...`) bake every
+/// cell of the atlas and tile them, so one image holds several leaf shapes.
+fn texture_cards_png(name: &str, size: u32) -> Result<(Vec<u8>, u32, u32), String> {
+    let bake = |mut graph: crate::uikit::generators::MaterialGraph,
+                cell: u32|
+     -> Result<Vec<u8>, String> {
+        graph.resolution = cell;
+        Ok(graph
+            .bake_texture_with(&TextureMap::new(), None, None)?
+            .rgba8)
+    };
+    if let Some((cols, rows, graphs)) = texture_graph::atlas(name) {
+        let cell = (size / 2).max(64);
+        let (width, height) = (cell * cols, cell * rows);
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        for (index, graph) in graphs.into_iter().enumerate() {
+            let (cx, cy) = (index as u32 % cols, index as u32 / cols);
+            let tile = bake(graph, cell)?;
+            for y in 0..cell {
+                let from = (y * cell * 4) as usize;
+                let to = (((cy * cell + y) * width + cx * cell) * 4) as usize;
+                pixels[to..to + (cell * 4) as usize]
+                    .copy_from_slice(&tile[from..from + (cell * 4) as usize]);
+            }
+        }
+        return Ok((pixels, width, height));
+    }
     let preset = texture_graph::presets()
         .iter()
         .find(|p| p.name == name)
         .ok_or_else(|| format!("unknown texture preset `{name}`"))?;
-    let mut graph = preset.build();
-    graph.resolution = size;
-    Ok(graph
-        .bake_texture_with(&TextureMap::new(), None, None)?
-        .rgba8)
+    Ok((bake(preset.build(), size)?, size, size))
 }
 
 fn snap_position(point: Point, snap: bool) -> Point {
@@ -598,13 +620,13 @@ impl App {
             MaterialSpec::Cards(name) => {
                 write = !mat_file.exists();
                 if write {
-                    let pixels = texture_cards_png(name, 512)?;
+                    let (pixels, width, height) = texture_cards_png(name, 512)?;
                     let file = format!("{slug}_cards.png");
                     image::save_buffer(
                         folder.join(&file),
                         &pixels,
-                        512,
-                        512,
+                        width,
+                        height,
                         image::ColorType::Rgba8,
                     )
                     .map_err(|e| e.to_string())?;

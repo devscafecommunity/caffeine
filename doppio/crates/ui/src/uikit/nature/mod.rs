@@ -431,6 +431,7 @@ fn tree(
                 ("density", leaf_density),
                 ("size", leaf_size),
                 ("seed", seed),
+                ("shapes", if foliage.contains("Mix") { 1.0 } else { 0.0 }),
             ],
         );
         let leaf_part = part(&mut g, 2.0, 2.0, "leaves", foliage);
@@ -459,9 +460,14 @@ fn ancient_oak() -> NatureGraph {
     let leaves = g.add_with(
         "leaves",
         at(2.0, 2.0),
-        &[("density", 14.0), ("size", 0.75), ("seed", 12.0)],
+        &[
+            ("density", 14.0),
+            ("size", 0.75),
+            ("seed", 12.0),
+            ("shapes", 1.0),
+        ],
     );
-    let leaf_part = part(&mut g, 3.0, 2.0, "leaves", "Leaves · Green");
+    let leaf_part = part(&mut g, 3.0, 2.0, "leaves", "Leaves · Broadleaf Mix (atlas)");
     assert!(g.connect(grow, 0, leaves, 0));
     assert!(g.connect(leaves, 0, leaf_part, 0));
     // Moss on the trunk and the roots (only the up-facing, lower parts get it).
@@ -730,7 +736,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     12.0,
                     0.7,
                     "Bark · Oak",
-                    "Leaves · Green",
+                    "Leaves · Broadleaf Mix (atlas)",
                     1.0,
                 )
             },
@@ -782,7 +788,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     12.0,
                     0.5,
                     "Bark · Birch",
-                    "Leaves · Green",
+                    "Leaves · Broadleaf Mix (atlas)",
                     5.0,
                 )
             },
@@ -808,7 +814,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     12.0,
                     0.75,
                     "Bark · Oak",
-                    "Leaves · Autumn",
+                    "Leaves · Autumn Mix (atlas)",
                     8.0,
                 )
             },
@@ -834,7 +840,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     0.0,
                     0.7,
                     "Bark · Oak",
-                    "Leaves · Green",
+                    "Leaves · Broadleaf Mix (atlas)",
                     6.0,
                 )
             },
@@ -860,7 +866,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     12.0,
                     1.0,
                     "Bark · Oak",
-                    "Leaves · Green",
+                    "Leaves · Broadleaf Mix (atlas)",
                     2.0,
                 )
             },
@@ -886,7 +892,7 @@ pub fn presets() -> Vec<NaturePreset> {
                     12.0,
                     1.0,
                     "Bark · Pine",
-                    "Leaves · Green",
+                    "Leaves · Broadleaf Mix (atlas)",
                     4.0,
                 )
             },
