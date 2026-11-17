@@ -22,7 +22,7 @@ iced-mcp = { workspace = true, optional = true }
 roxmltree = "0.20"
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
-zip = { version = "2.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 iced-code-editor = "0.5.3"
 iced_test = { workspace = true, optional = true }
 fontdue = { version = "0.9", optional = true }
