@@ -20,6 +20,13 @@ using namespace Caffeine::Script;
 // Helpers
 // ============================================================================
 
+static ECS::Transform transformAt(f32 x, f32 y) {
+    ECS::Transform t;
+    t.position.x = x;
+    t.position.y = y;
+    return t;
+}
+
 struct ScriptTestFixture {
     ECS::World world;
     Input::InputManager input;
@@ -89,14 +96,12 @@ TEST_CASE("callOnCreate moves entity via world transform binding", "[script]") {
     auto entity = fix.world.create("Test");
     REQUIRE(fix.engine.callOnCreate("create_test.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(42.5f));
-    REQUIRE(pos->y == Approx(99.5f));
+    REQUIRE(pos->position.x == Approx(42.5f));
+    REQUIRE(pos->position.y == Approx(99.5f));
 
-    auto* rot = entity.get<ECS::Rotation>();
-    REQUIRE(rot != nullptr);
-    REQUIRE(rot->angle == Approx(1.5f));
+    REQUIRE(pos->rotation.z == Approx(1.5f));
 }
 
 // ============================================================================
@@ -116,16 +121,16 @@ TEST_CASE("callOnUpdate receives correct delta time", "[script]") {
     REQUIRE(fix.engine.loadString(code, "update_test.lua"));
 
     auto entity = fix.world.create("Test");
-    entity.add<ECS::Position2D>(ECS::Position2D{10.0f, 20.0f});
+    entity.add<ECS::Transform>(transformAt(10.0f, 20.0f));
 
     REQUIRE(fix.engine.callOnCreate("update_test.lua", entity));
 
     REQUIRE(fix.engine.callOnUpdate("update_test.lua", entity, 3.0f));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(13.0f));
-    REQUIRE(pos->y == Approx(23.0f));
+    REQUIRE(pos->position.x == Approx(13.0f));
+    REQUIRE(pos->position.y == Approx(23.0f));
 }
 
 // ============================================================================
@@ -144,14 +149,14 @@ TEST_CASE("callOnDestroy fires cleanly", "[script]") {
     REQUIRE(fix.engine.loadString(code, "destroy_test.lua"));
 
     auto entity = fix.world.create("Test");
-    entity.add<ECS::Position2D>(ECS::Position2D{100.0f, 200.0f});
+    entity.add<ECS::Transform>(transformAt(100.0f, 200.0f));
 
     REQUIRE(fix.engine.callOnDestroy("destroy_test.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(0.0f));
-    REQUIRE(pos->y == Approx(0.0f));
+    REQUIRE(pos->position.x == Approx(0.0f));
+    REQUIRE(pos->position.y == Approx(0.0f));
 }
 
 // ============================================================================
@@ -174,10 +179,10 @@ TEST_CASE("ScriptSystem calls onCreate on first frame", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 0.0f);
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(77.0f));
-    REQUIRE(pos->y == Approx(88.0f));
+    REQUIRE(pos->position.x == Approx(77.0f));
+    REQUIRE(pos->position.y == Approx(88.0f));
 }
 
 TEST_CASE("ScriptSystem calls onUpdate every frame after onCreate", "[script]") {
@@ -199,15 +204,15 @@ TEST_CASE("ScriptSystem calls onUpdate every frame after onCreate", "[script]") 
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 1.0f); // frame 1: onCreate + onUpdate(1.0)
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(1.0f)); // 0 + 1
-    REQUIRE(pos->y == Approx(1.0f)); // 0 + 1.0
+    REQUIRE(pos->position.x == Approx(1.0f)); // 0 + 1
+    REQUIRE(pos->position.y == Approx(1.0f)); // 0 + 1.0
 
     system.onUpdate(fix.world, 2.0f); // frame 2: onUpdate(2.0) only
 
-    REQUIRE(pos->x == Approx(2.0f)); // 1 + 1
-    REQUIRE(pos->y == Approx(3.0f)); // 1 + 2.0
+    REQUIRE(pos->position.x == Approx(2.0f)); // 1 + 1
+    REQUIRE(pos->position.y == Approx(3.0f)); // 1 + 2.0
 }
 
 // ============================================================================
@@ -233,14 +238,14 @@ TEST_CASE("Input isKeyDown reflects injected key state", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 0.0f); // frame: key not pressed
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(0.0f));
+    REQUIRE(pos->position.x == Approx(0.0f));
 
     fix.input.injectKeyDown(Input::Key::Space);
     system.onUpdate(fix.world, 0.0f); // frame: Space pressed
 
-    REQUIRE(pos->x == Approx(1.0f));
+    REQUIRE(pos->position.x == Approx(1.0f));
 }
 
 // ============================================================================
@@ -268,14 +273,14 @@ TEST_CASE("Input getAxis returns correct axis value", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 0.0f); // frame 1: axis is 0
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(0.0f));
+    REQUIRE(pos->position.x == Approx(0.0f));
 
     fix.input.injectKeyDown(Input::Key::D);
     system.onUpdate(fix.world, 0.0f); // frame 2: axis is +1
 
-    REQUIRE(pos->x == Approx(1.0f));
+    REQUIRE(pos->position.x == Approx(1.0f));
 }
 
 // ============================================================================
@@ -300,10 +305,10 @@ TEST_CASE("Input mousePosition returns correct coords", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 0.0f);
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(320.0f));
-    REQUIRE(pos->y == Approx(240.0f));
+    REQUIRE(pos->position.x == Approx(320.0f));
+    REQUIRE(pos->position.y == Approx(240.0f));
 }
 
 // ============================================================================
@@ -326,10 +331,10 @@ TEST_CASE("Math vec2 length and normalize work", "[script]") {
     auto entity = fix.world.create("Test");
     REQUIRE(fix.engine.callOnCreate("math_len.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(5.0f));   // length of (3,4)
-    REQUIRE(pos->y == Approx(3.0f / 5.0f)); // 0.6
+    REQUIRE(pos->position.x == Approx(5.0f));   // length of (3,4)
+    REQUIRE(pos->position.y == Approx(3.0f / 5.0f)); // 0.6
 }
 
 // ============================================================================
@@ -355,10 +360,10 @@ TEST_CASE("Math vec2 arithmetic operations work", "[script]") {
     auto entity = fix.world.create("Test");
     REQUIRE(fix.engine.callOnCreate("math_arith.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(13.0f));  // 10 + 3
-    REQUIRE(pos->y == Approx(10*3 + 20*4.0f)); // 110
+    REQUIRE(pos->position.x == Approx(13.0f));  // 10 + 3
+    REQUIRE(pos->position.y == Approx(10*3 + 20*4.0f)); // 110
 }
 
 // ============================================================================
@@ -379,13 +384,13 @@ TEST_CASE("Sandbox blocks dofile and load", "[script]") {
     REQUIRE(fix.engine.loadString(code, "sandbox.lua"));
 
     auto entity = fix.world.create("Test");
-    entity.add<ECS::Position2D>(ECS::Position2D{0.0f, 0.0f});
+    entity.add<ECS::Transform>(transformAt(0.0f, 0.0f));
 
     REQUIRE(fix.engine.callOnCreate("sandbox.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(0.0f)); // dofile was nil so transform wasn't set
+    REQUIRE(pos->position.x == Approx(0.0f)); // dofile was nil so transform wasn't set
 }
 
 // ============================================================================
@@ -433,15 +438,15 @@ TEST_CASE("Multiple entities with same script each get onCreate", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 0.0f);
 
-    auto* p1 = e1.get<ECS::Position2D>();
-    auto* p2 = e2.get<ECS::Position2D>();
-    auto* p3 = e3.get<ECS::Position2D>();
+    auto* p1 = e1.get<ECS::Transform>();
+    auto* p2 = e2.get<ECS::Transform>();
+    auto* p3 = e3.get<ECS::Transform>();
     REQUIRE(p1 != nullptr);
     REQUIRE(p2 != nullptr);
     REQUIRE(p3 != nullptr);
-    REQUIRE(p1->x == Approx(1.0f));
-    REQUIRE(p2->x == Approx(2.0f));
-    REQUIRE(p3->x == Approx(3.0f));
+    REQUIRE(p1->position.x == Approx(1.0f));
+    REQUIRE(p2->position.x == Approx(2.0f));
+    REQUIRE(p3->position.x == Approx(3.0f));
 }
 
 // ============================================================================
@@ -468,10 +473,10 @@ TEST_CASE("Event on and emit trigger Lua callbacks", "[script]") {
     ScriptSystem system(&fix.engine);
     system.onUpdate(fix.world, 10.0f); // onCreate + onUpdate -> emit(10, 20)
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(10.0f));
-    REQUIRE(pos->y == Approx(20.0f));
+    REQUIRE(pos->position.x == Approx(10.0f));
+    REQUIRE(pos->position.y == Approx(20.0f));
 }
 
 // ============================================================================
@@ -493,10 +498,120 @@ TEST_CASE("World getVelocity and setVelocity work", "[script]") {
     auto entity = fix.world.create("Test");
     REQUIRE(fix.engine.callOnCreate("vel_test.lua", entity));
 
-    auto* pos = entity.get<ECS::Position2D>();
+    auto* pos = entity.get<ECS::Transform>();
     REQUIRE(pos != nullptr);
-    REQUIRE(pos->x == Approx(5.0f));
-    REQUIRE(pos->y == Approx(10.0f));
+    REQUIRE(pos->position.x == Approx(5.0f));
+    REQUIRE(pos->position.y == Approx(10.0f));
+}
+
+// ============================================================================
+// Generic component access (caffeine.component, reflection-driven)
+// ============================================================================
+
+#include "../src/caffeine/ecs/Components3D.hpp"
+#include "../src/caffeine/ecs/MeshComponents.hpp"
+#include "../src/caffeine/physics/PhysicsComponents3D.hpp"
+#include "../src/caffeine/ecs/TerrainComponents.hpp"
+#include "../src/caffeine/ecs/PostProcessComponents.hpp"
+#include "../src/caffeine/audio/AudioComponents.hpp"
+#include "../src/caffeine/navigation/NavVolume.hpp"
+
+TEST_CASE("caffeine.component reads and writes any reflected component", "[script][component]") {
+    ScriptTestFixture fix;
+    auto entity = fix.world.create("Thing");
+
+    const char* code = R"(
+        function onCreate(eid)
+            local C = caffeine.component
+            assert(not C.has(eid, "Rigid Body 3D"))
+            C.add(eid, "rigidbody3d")                         -- names ignore case and spaces
+            assert(C.has(eid, "Rigid Body 3D"))
+            C.setField(eid, "Rigid Body 3D", "Mass", 12.5)
+            C.set(eid, "Rigid Body 3D", { Friction = 0.9, ["Body type"] = "Static" })
+            local rb = C.get(eid, "Rigid Body 3D")
+            assert(rb.Mass == 12.5)
+            result_mass = rb.Mass
+            result_type = C.getField(eid, "Rigid Body 3D", "Body type")
+
+            C.set(eid, "Position 3D", { Position = { x = 1, y = 2, z = 3 } })
+            local p = C.getField(eid, "Position 3D", "Position")
+            result_pos = p.x + p.y * 10 + p.z * 100
+
+            C.set(eid, "Mesh Filter", { Primitive = "Sphere", Mesh = "a.obj" })
+            result_prim = C.getField(eid, "Mesh Filter", "Primitive")
+
+            local names = C.names(eid)
+            result_count = #names
+            C.remove(eid, "Rigid Body 3D")
+            result_removed = not C.has(eid, "Rigid Body 3D")
+            result_list = #C.list()
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "component_test.lua"));
+    REQUIRE(fix.engine.callOnCreate("component_test.lua", entity));
+
+    // The C++ side sees what the script did.
+    auto* mesh = entity.get<ECS::MeshFilterComponent>();
+    REQUIRE(mesh != nullptr);
+    REQUIRE(mesh->primitive == ECS::MeshPrimitive::Sphere);
+    REQUIRE(mesh->customMeshPath == "a.obj");
+    auto* pos = entity.get<ECS::Position3D>();
+    REQUIRE(pos != nullptr);
+    REQUIRE(pos->position.z == Approx(3.0f));
+    REQUIRE_FALSE(entity.has<Physics3D::RigidBody3D>());
+}
+
+TEST_CASE("caffeine.component reaches the whole registry, including generated components", "[script][component]") {
+    ScriptTestFixture fix;
+    auto entity = fix.world.create("Thing");
+    const char* code = R"(
+        function onCreate(eid)
+            local C = caffeine.component
+            registry_size = #C.list()
+            C.set(eid, "Terrain", { ["Max height"] = 321, ["Splat Layer Paths 2"] = "my/rock.png" })
+            C.set(eid, "Post Process", { ["Bloom: Intensity"] = 0.8, Enabled = true })
+            C.set(eid, "Audio Emitter", { ["Clip path"] = "sfx/hit.wav", Loop = true })
+            C.set(eid, "Nav Agent", { Speed = 7, Destination = { x = 1, y = 2, z = 3 } })
+            C.set(eid, "Environment Effects", { ["Time of day"] = 6.5 })
+            terrain_h = C.getField(eid, "Terrain", "Max height")
+            terrain_path = C.getField(eid, "Terrain", "Splat Layer Paths 2")
+            bloom = C.getField(eid, "Post Process", "Bloom: Intensity")
+            dest = C.getField(eid, "Nav Agent", "Destination")
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "component_registry.lua"));
+    REQUIRE(fix.engine.callOnCreate("component_registry.lua", entity));
+    REQUIRE(entity.has<ECS::TerrainComponent>());
+    REQUIRE(entity.get<ECS::TerrainComponent>()->maxHeight == Approx(321.0f));
+    REQUIRE(std::string(entity.get<ECS::TerrainComponent>()->splatLayerPaths[1]) == "my/rock.png");
+    REQUIRE(entity.get<ECS::PostProcessComponent>()->bloom.intensity == Approx(0.8f));
+    REQUIRE(std::string(entity.get<Audio::AudioEmitter>()->clipPath.cStr()) == "sfx/hit.wav");
+    REQUIRE(entity.get<Navigation::NavAgent>()->destination.z == Approx(3.0f));
+}
+
+TEST_CASE("caffeine.component reports mistakes with helpful messages", "[script][component]") {
+    ScriptTestFixture fix;
+    auto entity = fix.world.create("Thing");
+    const char* code = R"(
+        function onCreate(eid)
+            local C = caffeine.component
+            local ok, err = pcall(C.has, eid, "Flux Capacitor")
+            unknown_component = (not ok) and err:find("unknown component", 1, true) ~= nil
+            C.add(eid, "Rigid Body 3D")
+            ok, err = pcall(C.setField, eid, "Rigid Body 3D", "Nope", 1)
+            unknown_field = (not ok) and err:find("has no field", 1, true) ~= nil
+            ok, err = pcall(C.setField, eid, "Rigid Body 3D", "Mass", "heavy")
+            wrong_type = (not ok) and err:find("expects a number", 1, true) ~= nil
+            ok, err = pcall(C.setField, eid, "Rigid Body 3D", "Body type", "Floaty")
+            bad_enum = (not ok) and err:find("options", 1, true) ~= nil
+            ok, err = pcall(C.get, 999999, "Rigid Body 3D")
+            dead_entity = (not ok) and err:find("does not exist", 1, true) ~= nil
+            no_component = C.get(eid, "Collider 3D") == nil
+            assert(unknown_component and unknown_field and wrong_type and bad_enum and dead_entity and no_component)
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "component_errors.lua"));
+    REQUIRE(fix.engine.callOnCreate("component_errors.lua", entity));
 }
 
 #else // !CF_HAS_SCRIPTING

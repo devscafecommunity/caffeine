@@ -16,6 +16,7 @@
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "scene/EditorCameraMath.hpp"
+#include "scene/ComponentReflection.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/NaturalFluidSystem.hpp"
 #include "scene/TerrainSystem.hpp"
@@ -281,372 +282,34 @@ struct CaffeineSession {
 
 namespace {
 
-struct FieldDesc {
-    const char* name;
-    CaffeineFieldKind kind;
-    float minValue = 0.0f;
-    float maxValue = 0.0f;
-    float step = 0.0f;
-    std::vector<const char*> options;
-    std::function<bool(CaffeineSession&, Caffeine::ECS::Entity, CaffeineFieldValue&)> get;
-    std::function<bool(CaffeineSession&, Caffeine::ECS::Entity,
-                       const CaffeineFieldValue&)> set;
-};
+namespace Refl = Caffeine::Scene::Reflection;
+using ComponentDesc = Refl::ComponentDesc;
+using FieldDesc = Refl::FieldDesc;
 
-struct ComponentDesc {
-    uint32_t id;
-    const char* name;
-    std::function<bool(CaffeineSession&, Caffeine::ECS::Entity)> has;
-    std::function<void(CaffeineSession&, Caffeine::ECS::Entity)> add;
-    std::function<void(CaffeineSession&, Caffeine::ECS::Entity)> remove;
-    std::vector<FieldDesc> fields;
-};
-
-template <typename T>
-ComponentDesc component(uint32_t id, const char* name, std::vector<FieldDesc> fields) {
-    return ComponentDesc{
-        id,
-        name,
-        [](CaffeineSession& session, Caffeine::ECS::Entity entity) {
-            return session.world.has<T>(entity);
-        },
-        [](CaffeineSession& session, Caffeine::ECS::Entity entity) {
-            session.world.add<T>(entity, T{});
-        },
-        [](CaffeineSession& session, Caffeine::ECS::Entity entity) {
-            session.world.remove<T>(entity);
-        },
-        std::move(fields)};
-}
-
-CaffeineFieldValue baseValue(CaffeineFieldKind kind) {
-    CaffeineFieldValue value{};
-    value.kind = kind;
-    return value;
-}
-
-template <typename T>
-FieldDesc f32Field(const char* name, float T::*member, float minValue = 0.0f,
-                   float maxValue = 0.0f, float step = 0.0f) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_F32, minValue, maxValue, step, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_F32);
-            value.vec[0] = (*component).*member;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = value.vec[0];
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc boolField(const char* name, bool T::*member) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_BOOL, 0.0f, 0.0f, 0.0f, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_BOOL);
-            value.boolean = (*component).*member ? 1 : 0;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = value.boolean != 0;
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc i32Field(const char* name, int32_t T::*member, float minValue = 0.0f,
-                   float maxValue = 0.0f, float step = 1.0f) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_I32, minValue, maxValue, step, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_I32);
-            value.integer = (*component).*member;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = value.integer;
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc u32Field(const char* name, uint32_t T::*member) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_U32, 0.0f, 0.0f, 1.0f, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_U32);
-            value.integer = static_cast<int32_t>((*component).*member);
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = static_cast<uint32_t>(value.integer);
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc vec2Field(const char* name, Caffeine::Vec2 T::*member, float step = 0.1f) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_VEC2, 0.0f, 0.0f, step, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_VEC2);
-            const Caffeine::Vec2& vec = (*component).*member;
-            value.vec[0] = vec.x;
-            value.vec[1] = vec.y;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            Caffeine::Vec2& vec = (*component).*member;
-            vec.x = value.vec[0];
-            vec.y = value.vec[1];
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc vec3Field(const char* name, Caffeine::Vec3 T::*member, float step = 0.1f) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_VEC3, 0.0f, 0.0f, step, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_VEC3);
-            const Caffeine::Vec3& vec = (*component).*member;
-            value.vec[0] = vec.x;
-            value.vec[1] = vec.y;
-            value.vec[2] = vec.z;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            Caffeine::Vec3& vec = (*component).*member;
-            vec.x = value.vec[0];
-            vec.y = value.vec[1];
-            vec.z = value.vec[2];
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc vec4Field(const char* name, Caffeine::Vec4 T::*member, float minValue = 0.0f,
-                    float maxValue = 0.0f, float step = 0.01f) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_VEC4, minValue, maxValue, step, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_VEC4);
-            const Caffeine::Vec4& vec = (*component).*member;
-            value.vec[0] = vec.x;
-            value.vec[1] = vec.y;
-            value.vec[2] = vec.z;
-            value.vec[3] = vec.w;
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            Caffeine::Vec4& vec = (*component).*member;
-            vec.x = value.vec[0];
-            vec.y = value.vec[1];
-            vec.z = value.vec[2];
-            vec.w = value.vec[3];
-            return true;
-        }};
-}
-
-template <typename T>
-FieldDesc colorField(const char* name, Caffeine::Vec4 T::*member) {
-    FieldDesc field = vec4Field<T>(name, member, 0.0f, 1.0f, 0.01f);
-    field.kind = CAFFEINE_FIELD_COLOR;
-    auto original = field.get;
-    field.get = [original](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                           CaffeineFieldValue& value) {
-        if (!original(session, entity, value)) return false;
-        value.kind = CAFFEINE_FIELD_COLOR;
-        return true;
-    };
-    return field;
-}
-
-template <typename T>
-FieldDesc stringField(const char* name, std::string T::*member) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_STRING, 0.0f, 0.0f, 0.0f, {},
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_STRING);
-            std::strncpy(value.text, ((*component).*member).c_str(),
-                         sizeof(value.text) - 1);
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = std::string(value.text);
-            return true;
-        }};
-}
-
-template <typename T, typename E>
-FieldDesc enumField(const char* name, E T::*member, std::vector<const char*> options) {
-    return FieldDesc{
-        name, CAFFEINE_FIELD_ENUM, 0.0f,
-        static_cast<float>(options.size() - 1), 1.0f, std::move(options),
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 CaffeineFieldValue& value) {
-            const auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            value = baseValue(CAFFEINE_FIELD_ENUM);
-            value.integer = static_cast<int32_t>((*component).*member);
-            return true;
-        },
-        [member](CaffeineSession& session, Caffeine::ECS::Entity entity,
-                 const CaffeineFieldValue& value) {
-            auto* component = session.world.get<T>(entity);
-            if (!component) return false;
-            (*component).*member = static_cast<E>(value.integer);
-            return true;
-        }};
-}
-
-const std::vector<ComponentDesc>& componentRegistry() {
-    using namespace Caffeine;
-    static const std::vector<ComponentDesc> registry = {
-        component<ECS::Transform>(1, "Transform",
-            {vec3Field<ECS::Transform>("Position", &ECS::Transform::position),
-             vec3Field<ECS::Transform>("Rotation", &ECS::Transform::rotation),
-             vec3Field<ECS::Transform>("Scale", &ECS::Transform::scale)}),
-        component<ECS::Camera3DComponent>(2, "Camera 3D",
-            {f32Field<ECS::Camera3DComponent>("Field of view", &ECS::Camera3DComponent::fov, 10.0f, 170.0f, 1.0f),
-             f32Field<ECS::Camera3DComponent>("Near clip", &ECS::Camera3DComponent::nearClip, 0.001f, 100.0f, 0.01f),
-             f32Field<ECS::Camera3DComponent>("Far clip", &ECS::Camera3DComponent::farClip, 1.0f, 100000.0f, 10.0f),
-             f32Field<ECS::Camera3DComponent>("Aspect ratio", &ECS::Camera3DComponent::aspectRatio, 0.1f, 10.0f, 0.01f)}),
-        component<ECS::LightComponent>(3, "Light",
-            {colorField<ECS::LightComponent>("Color", &ECS::LightComponent::color),
-             f32Field<ECS::LightComponent>("Intensity", &ECS::LightComponent::intensity, 0.0f, 1000.0f, 0.05f)}),
-        component<ECS::DirectionalLightComponent>(4, "Directional Light",
-            {f32Field<ECS::DirectionalLightComponent>("Shadow distance", &ECS::DirectionalLightComponent::shadowDistance, 0.0f, 10000.0f, 1.0f),
-             boolField<ECS::DirectionalLightComponent>("Cast shadows", &ECS::DirectionalLightComponent::castShadows)}),
-        component<ECS::PointLightComponent>(5, "Point Light",
-            {f32Field<ECS::PointLightComponent>("Radius", &ECS::PointLightComponent::radius, 0.0f, 10000.0f, 0.1f),
-             boolField<ECS::PointLightComponent>("Cast shadows", &ECS::PointLightComponent::castShadows)}),
-        component<ECS::SpotLightComponent>(6, "Spot Light",
-            {f32Field<ECS::SpotLightComponent>("Radius", &ECS::SpotLightComponent::radius, 0.0f, 10000.0f, 0.1f),
-             f32Field<ECS::SpotLightComponent>("Angle", &ECS::SpotLightComponent::angle, 1.0f, 179.0f, 1.0f),
-             boolField<ECS::SpotLightComponent>("Cast shadows", &ECS::SpotLightComponent::castShadows)}),
-        component<ECS::MeshRendererComponent>(7, "Mesh Renderer",
-            {stringField<ECS::MeshRendererComponent>("Mesh", &ECS::MeshRendererComponent::meshPath),
-             stringField<ECS::MeshRendererComponent>("Material", &ECS::MeshRendererComponent::materialPath),
-             boolField<ECS::MeshRendererComponent>("Cast shadows", &ECS::MeshRendererComponent::castShadows),
-             boolField<ECS::MeshRendererComponent>("Receive shadows", &ECS::MeshRendererComponent::receiveShadows)}),
-        component<Physics3D::RigidBody3D>(8, "Rigid Body 3D",
-            {f32Field<Physics3D::RigidBody3D>("Mass", &Physics3D::RigidBody3D::mass, 0.0f, 100000.0f, 0.1f),
-             f32Field<Physics3D::RigidBody3D>("Linear damping", &Physics3D::RigidBody3D::linearDamping, 0.0f, 10.0f, 0.01f),
-             f32Field<Physics3D::RigidBody3D>("Angular damping", &Physics3D::RigidBody3D::angularDamping, 0.0f, 10.0f, 0.01f),
-             f32Field<Physics3D::RigidBody3D>("Friction", &Physics3D::RigidBody3D::friction, 0.0f, 10.0f, 0.01f),
-             f32Field<Physics3D::RigidBody3D>("Restitution", &Physics3D::RigidBody3D::restitution, 0.0f, 10.0f, 0.01f),
-             enumField<Physics3D::RigidBody3D, Physics3D::BodyType3D>("Body type", &Physics3D::RigidBody3D::bodyType, {"Dynamic", "Kinematic", "Static"}),
-             boolField<Physics3D::RigidBody3D>("Lock rotation", &Physics3D::RigidBody3D::lockRotation)}),
-        component<Physics3D::Collider3D>(9, "Collider 3D",
-            {enumField<Physics3D::Collider3D, Physics3D::ColliderShape3D>("Shape", &Physics3D::Collider3D::shape, {"Box", "Sphere", "Capsule"}),
-             vec3Field<Physics3D::Collider3D>("Half extents", &Physics3D::Collider3D::halfExtents),
-             vec3Field<Physics3D::Collider3D>("Offset", &Physics3D::Collider3D::offset),
-             boolField<Physics3D::Collider3D>("Is trigger", &Physics3D::Collider3D::isTrigger)}),
-        component<Physics2D::RigidBody2D>(10, "Rigid Body 2D",
-            {f32Field<Physics2D::RigidBody2D>("Mass", &Physics2D::RigidBody2D::mass, 0.0f, 100000.0f, 0.1f),
-             f32Field<Physics2D::RigidBody2D>("Restitution", &Physics2D::RigidBody2D::restitution, 0.0f, 10.0f, 0.01f),
-             f32Field<Physics2D::RigidBody2D>("Friction", &Physics2D::RigidBody2D::friction, 0.0f, 10.0f, 0.01f),
-             f32Field<Physics2D::RigidBody2D>("Linear damping", &Physics2D::RigidBody2D::linearDamping, 0.0f, 10.0f, 0.01f),
-             boolField<Physics2D::RigidBody2D>("Kinematic", &Physics2D::RigidBody2D::isKinematic),
-             boolField<Physics2D::RigidBody2D>("Lock rotation", &Physics2D::RigidBody2D::lockRotation),
-             boolField<Physics2D::RigidBody2D>("Sleeping", &Physics2D::RigidBody2D::isSleeping),
-             f32Field<Physics2D::RigidBody2D>("Velocity X", &Physics2D::RigidBody2D::velocityX, -10000.0f, 10000.0f, 0.1f),
-             f32Field<Physics2D::RigidBody2D>("Velocity Y", &Physics2D::RigidBody2D::velocityY, -10000.0f, 10000.0f, 0.1f)}),
-        component<Physics2D::Collider2D>(11, "Collider 2D",
-            {vec2Field<Physics2D::Collider2D>("Size", &Physics2D::Collider2D::size),
-             vec2Field<Physics2D::Collider2D>("Offset", &Physics2D::Collider2D::offset),
-             f32Field<Physics2D::Collider2D>("Radius", &Physics2D::Collider2D::radius, 0.0f, 10000.0f, 0.05f),
-             enumField<Physics2D::Collider2D, Physics2D::ColliderShape>("Shape", &Physics2D::Collider2D::shape, {"AABB", "Circle"}),
-             u32Field<Physics2D::Collider2D>("Layer", &Physics2D::Collider2D::layer),
-             u32Field<Physics2D::Collider2D>("Layer mask", &Physics2D::Collider2D::layerMask),
-             boolField<Physics2D::Collider2D>("Static", &Physics2D::Collider2D::isStatic),
-             boolField<Physics2D::Collider2D>("Is trigger", &Physics2D::Collider2D::isTrigger),
-             boolField<Physics2D::Collider2D>("One way", &Physics2D::Collider2D::isOneWay)}),
-        component<ECS::Position3D>(13, "Position 3D",
-            {vec3Field<ECS::Position3D>("Position", &ECS::Position3D::position)}),
-        component<ECS::Rotation3D>(14, "Rotation 3D",
-            {vec4Field<ECS::Rotation3D>("Quaternion", &ECS::Rotation3D::quaternion, -1.0f, 1.0f, 0.01f)}),
-        component<ECS::Scale3D>(15, "Scale 3D",
-            {vec3Field<ECS::Scale3D>("Scale", &ECS::Scale3D::scale)}),
-        component<ECS::MeshFilterComponent>(16, "Mesh Filter",
-            {enumField<ECS::MeshFilterComponent, ECS::MeshPrimitive>("Primitive", &ECS::MeshFilterComponent::primitive, {"Custom", "Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Cone", "Pyramid", "Torus"}),
-             stringField<ECS::MeshFilterComponent>("Mesh", &ECS::MeshFilterComponent::customMeshPath),
-             stringField<ECS::MeshFilterComponent>("Texture", &ECS::MeshFilterComponent::customTexturePath),
-             stringField<ECS::MeshFilterComponent>("Normal map", &ECS::MeshFilterComponent::customNormalPath),
-             stringField<ECS::MeshFilterComponent>("Material", &ECS::MeshFilterComponent::customMaterialPath),
-             f32Field<ECS::MeshFilterComponent>("Shininess", &ECS::MeshFilterComponent::shininess, 0.0f, 1024.0f, 1.0f)}),
-        component<Caffeine::Script::ScriptComponent>(12, "Script",
-            {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath)}),
-    };
-    return registry;
-}
-
-const ComponentDesc* componentTypeById(uint32_t id) {
-    for (const ComponentDesc& desc : componentRegistry()) {
-        if (desc.id == id) return &desc;
-    }
-    return nullptr;
-}
+const std::vector<ComponentDesc>& componentRegistry() { return Refl::registry(); }
+const ComponentDesc* componentTypeById(uint32_t id) { return Refl::findById(id); }
 
 std::vector<const ComponentDesc*> presentComponents(CaffeineSession& session,
                                                     Caffeine::ECS::Entity entity) {
-    std::vector<const ComponentDesc*> present;
-    for (const ComponentDesc& desc : componentRegistry()) {
-        if (desc.has(session, entity)) present.push_back(&desc);
-    }
-    return present;
+    return Refl::presentComponents(session.world, entity);
+}
+
+void toC(const Refl::FieldValue& from, CaffeineFieldValue& to) {
+    std::memset(&to, 0, sizeof(to));
+    to.kind = static_cast<CaffeineFieldKind>(from.kind);
+    for (int i = 0; i < 4; ++i) to.vec[i] = from.vec[i];
+    to.integer = from.integer;
+    to.boolean = from.boolean;
+    std::memcpy(to.text, from.text, sizeof(to.text));
+}
+
+void fromC(const CaffeineFieldValue& from, Refl::FieldValue& to) {
+    to = Refl::FieldValue{};
+    to.kind = static_cast<Refl::FieldKind>(from.kind);
+    for (int i = 0; i < 4; ++i) to.vec[i] = from.vec[i];
+    to.integer = from.integer;
+    to.boolean = from.boolean;
+    std::memcpy(to.text, from.text, sizeof(to.text));
 }
 
 void copyText(char* destination, size_t size, const char* text) {
@@ -1324,7 +987,7 @@ CaffeineResult caffeine_component_type_field_at(uint32_t typeId, uint32_t field,
     const FieldDesc& source = desc->fields[field];
     std::memset(out, 0, sizeof(*out));
     copyText(out->name, sizeof(out->name), source.name);
-    out->kind = source.kind;
+    out->kind = static_cast<CaffeineFieldKind>(source.kind);
     out->min_value = source.minValue;
     out->max_value = source.maxValue;
     out->step = source.step;
@@ -1369,9 +1032,12 @@ CaffeineResult caffeine_session_entity_component_field_get(
     const ComponentDesc& desc = *present[component];
     if (field >= desc.fields.size()) return CAFFEINE_NOT_FOUND;
     std::memset(out, 0, sizeof(*out));
-    return desc.fields[field].get(mutableSession, entityOf(mutableSession, entityId), *out)
-               ? CAFFEINE_OK
-               : CAFFEINE_ERROR;
+    Refl::FieldValue value;
+    if (!desc.fields[field].get(mutableSession.world, entityOf(mutableSession, entityId), value)) {
+        return CAFFEINE_ERROR;
+    }
+    toC(value, *out);
+    return CAFFEINE_OK;
 }
 
 CaffeineResult caffeine_session_entity_component_field_set(
@@ -1383,7 +1049,9 @@ CaffeineResult caffeine_session_entity_component_field_set(
     if (component >= present.size()) return CAFFEINE_NOT_FOUND;
     const ComponentDesc& desc = *present[component];
     if (field >= desc.fields.size()) return CAFFEINE_NOT_FOUND;
-    if (!desc.fields[field].set(*session, entityOf(*session, entityId), *value)) {
+    Refl::FieldValue converted;
+    fromC(*value, converted);
+    if (!desc.fields[field].set(session->world, entityOf(*session, entityId), converted)) {
         return CAFFEINE_ERROR;
     }
     session->context.markDirty();
@@ -1398,8 +1066,8 @@ CaffeineResult caffeine_session_add_component(CaffeineSession* session,
     const ComponentDesc* desc = componentTypeById(typeId);
     if (!desc) return CAFFEINE_NOT_FOUND;
     const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
-    if (!desc->has(*session, entity)) {
-        desc->add(*session, entity);
+    if (!desc->has(session->world, entity)) {
+        desc->add(session->world, entity);
         session->context.markDirty();
     }
     return CAFFEINE_OK;
@@ -1413,8 +1081,8 @@ CaffeineResult caffeine_session_remove_component(CaffeineSession* session,
     const ComponentDesc* desc = componentTypeById(typeId);
     if (!desc) return CAFFEINE_NOT_FOUND;
     const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
-    if (!desc->has(*session, entity)) return CAFFEINE_NOT_FOUND;
-    desc->remove(*session, entity);
+    if (!desc->has(session->world, entity)) return CAFFEINE_NOT_FOUND;
+    desc->remove(session->world, entity);
     session->context.markDirty();
     return CAFFEINE_OK;
 }

@@ -264,3 +264,80 @@ fn a_held_drag_can_be_finished_with_mouse_up_and_hover_follows_the_pointer() {
     let after = driver.run_step(3, &json!({ "action": "state", "path": "/tab_drag" }));
     assert_eq!(ok(&after), &Value::Null);
 }
+
+#[test]
+fn recordings_become_gifs_and_videos_with_ffmpeg() {
+    use super::record;
+    let _guard = super::ui_lock();
+    // Frame pacing and encoder arguments do not need ffmpeg.
+    assert_eq!(record::frames_per_capture(15), 4);
+    assert_eq!(record::frames_per_capture(60), 1);
+    let rec = record::Recording {
+        dir: std::path::PathBuf::from("/tmp/x"),
+        name: "demo".into(),
+        format: "mp4".into(),
+        fps: 30,
+        scale: 1.0,
+        width: 801,
+        frames: 3,
+        every: 2,
+        tick: 0,
+        crop: None,
+        padding: 8.0,
+        keep_frames: false,
+    };
+    let args = record::encode_args(&rec, std::path::Path::new("/tmp/out.mp4")).join(" ");
+    assert!(
+        args.contains("libx264") && args.contains("yuv420p") && args.contains("scale=800:-2"),
+        "{args}"
+    );
+    let gif = record::Recording {
+        format: "gif".into(),
+        ..rec
+    };
+    assert!(
+        record::encode_args(&gif, std::path::Path::new("/tmp/o.gif"))
+            .join(" ")
+            .contains("palettegen")
+    );
+
+    if !record::ffmpeg_available(&record::ffmpeg_command()) {
+        return;
+    }
+    let mut driver = driver("record");
+    let out = driver.out_dir().to_path_buf();
+    let steps = [
+        json!({ "action": "record_start", "name": "menu", "format": "gif", "fps": 10, "width": 320 }),
+        json!({ "action": "click", "target": "id:editor.menu.view" }),
+        json!({ "action": "wait", "frames": 12 }),
+        json!({ "action": "key", "key": "Escape" }),
+        json!({ "action": "record_stop" }),
+        json!({ "action": "record_start", "name": "clip", "format": "mp4", "fps": 20 }),
+        json!({ "action": "wait", "frames": 8 }),
+        json!({ "action": "record_stop" }),
+        json!({ "action": "record_stop" }),
+    ];
+    let results: Vec<_> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| driver.run_step(i, s))
+        .collect();
+    for index in [0, 1, 2, 3, 5, 6] {
+        assert!(results[index].ok, "{index}: {:?}", results[index].error);
+    }
+    assert!(
+        results[4].ok,
+        "{:?} {:?}",
+        results[4].error, results[4].hint
+    );
+    assert!(results[7].ok, "{:?}", results[7].error);
+    assert!(!results[8].ok, "stopping twice fails");
+    let gif = out.join("menu.gif");
+    let mp4 = out.join("clip.mp4");
+    assert!(std::fs::metadata(&gif).unwrap().len() > 500, "gif");
+    assert!(std::fs::metadata(&mp4).unwrap().len() > 500, "mp4");
+    assert_eq!(&std::fs::read(&gif).unwrap()[0..6], b"GIF89a");
+    assert!(results[4].data["frames"].as_u64().unwrap() >= 3);
+    assert_eq!(results[4].data["format"], "gif");
+    std::fs::remove_dir_all(out).ok();
+}

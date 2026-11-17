@@ -246,16 +246,27 @@ pub fn tubes(
     part
 }
 
-/// Leaf cards along the outer branches.
-#[allow(clippy::too_many_arguments)]
-pub fn leaf_cards(
-    skeleton: &Skeleton,
-    density: f32,
-    size: f32,
-    inner_share: f32,
-    max_triangles: usize,
-    seed: u32,
-) -> Part {
+/// How leaf cards are built.
+#[derive(Debug, Clone, Copy)]
+pub struct LeafCards {
+    pub density: f32,
+    pub size: f32,
+    pub inner_share: f32,
+    pub max_triangles: usize,
+    /// Columns and rows of the leaf atlas (1 x 1 = one leaf shape); each card picks a random cell.
+    pub atlas: (u32, u32),
+    /// Fold of the blade along its midrib, 0..1.
+    pub fold: f32,
+    /// How much the tip droops under its own weight, 0..1.
+    pub droop: f32,
+    /// Segments along the length (more = smoother curl).
+    pub rows: u32,
+}
+
+/// Leaf cards along the outer branches. Each card is a **folded, drooping blade** (three vertices
+/// across, `rows + 1` along) that shows one random cell of the leaf atlas, so a crown mixes shapes,
+/// sizes and tints instead of repeating one flat round card.
+pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
     let mut part = Part::new(
         "leaves",
         MaterialSpec::Solid {
@@ -264,12 +275,15 @@ pub fn leaf_cards(
         },
         [0.28, 0.5, 0.2],
     );
+    let (cols, atlas_rows) = (p.atlas.0.max(1), p.atlas.1.max(1));
+    let cells = cols * atlas_rows;
+    let rows = p.rows.max(1) as usize;
     let mut rng = Rng::new(seed.wrapping_add(777));
     for branch in skeleton.branches.iter().filter(|b| b.kind == 0) {
         let share = if branch.terminal || skeleton.conifer && branch.level > 0 {
             1.0
         } else if branch.level > 0 && !skeleton.conifer {
-            inner_share
+            p.inner_share
         } else {
             0.0
         };
@@ -279,11 +293,11 @@ pub fn leaf_cards(
         let points = &branch.points;
         let tip = *points.last().unwrap();
         let branch_length: f32 = points.windows(2).map(|w| length(sub(w[1], w[0]))).sum();
-        let count = ((branch_length * density * share * if skeleton.conifer { 1.6 } else { 1.0 })
+        let count = ((branch_length * p.density * share * if skeleton.conifer { 1.6 } else { 1.0 })
             .ceil() as usize)
             .clamp(2, 60);
         for _ in 0..count {
-            if part.triangle_count() * 2 > max_triangles * 2 {
+            if part.triangle_count() >= p.max_triangles {
                 return part;
             }
             let t = rng.range(if branch.level == 0 { 0.0 } else { 0.35 }, 1.0);
@@ -291,7 +305,8 @@ pub fn leaf_cards(
             let i = (f as usize).min(points.len() - 2);
             let at = lerp(points[i], points[i + 1], f - i as f32);
             let along = normalize(sub(tip, points[0]));
-            let leaf_size = size * rng.range(0.7, 1.2);
+            // Sizes vary a lot: young small leaves next to big mature ones.
+            let leaf_size = p.size * rng.range(0.55, 1.35);
             let outward = normalize(sub(at, skeleton.crown_center));
             let random = rng.direction();
             let mut up = normalize(add(
@@ -305,12 +320,44 @@ pub fn leaf_cards(
             let face = normalize(cross(side, up));
             let normal = normalize(add(mul(outward, 0.7), mul(face, 0.3)));
             let (w, l) = (leaf_size * 0.5, leaf_size);
-            let top = add(at, mul(up, l));
-            let a = part.vertex(add(at, mul(side, -w * 0.2)), normal, [0.4, 0.02]);
-            let b = part.vertex(add(at, mul(side, w * 0.2)), normal, [0.6, 0.02]);
-            let c = part.vertex(add(top, mul(side, w)), normal, [1.0, 0.98]);
-            let d = part.vertex(add(top, mul(side, -w)), normal, [0.0, 0.98]);
-            part.quad(a, b, c, d);
+            // A random cell of the atlas (V runs from the card's base up to its tip).
+            let cell = (rng.next() * cells as f32) as u32 % cells;
+            let (cx, cy) = (cell % cols, cell / cols);
+            let uv = |u: f32, v: f32| {
+                [
+                    (cx as f32 + u) / cols as f32,
+                    (cy as f32 + 0.02 + v * 0.96) / atlas_rows as f32,
+                ]
+            };
+            let curl = p.droop * rng.range(0.5, 1.2);
+            let fold = p.fold * rng.range(0.6, 1.2);
+            let twist = rng.range(-0.25, 0.25);
+            // Vertices: left edge, midrib, right edge for each row along the blade.
+            let mut grid: Vec<[u32; 3]> = Vec::with_capacity(rows + 1);
+            for r in 0..=rows {
+                let t = r as f32 / rows as f32;
+                // The blade is narrow at the stalk, widest around 40% and tapers to the tip.
+                let width = w
+                    * (0.18 + 0.82 * (std::f32::consts::PI * t.powf(0.8)).sin().max(0.12))
+                    * if r == 0 { 0.25 } else { 1.0 };
+                // Along the blade, the tip droops down (gravity) and twists a little.
+                let droop_offset = mul([0.0, -1.0, 0.0], curl * l * t * t * 0.55);
+                let centre = add(add(at, mul(up, l * t)), droop_offset);
+                let side_t = normalize(add(side, mul(face, twist * t)));
+                // Folded edges sit lower than the midrib: a shallow V section.
+                let lift = mul(face, -fold * width * 0.55);
+                let left = add(add(centre, mul(side_t, -width)), lift);
+                let right = add(add(centre, mul(side_t, width)), lift);
+                let a = part.vertex(left, normal, uv(0.0, t));
+                let m = part.vertex(centre, normal, uv(0.5, t));
+                let b = part.vertex(right, normal, uv(1.0, t));
+                grid.push([a, m, b]);
+            }
+            for r in 0..rows {
+                let (lo, hi) = (grid[r], grid[r + 1]);
+                part.quad(lo[0], lo[1], hi[1], hi[0]);
+                part.quad(lo[1], lo[2], hi[2], hi[1]);
+            }
         }
     }
     part

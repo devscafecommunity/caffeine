@@ -309,3 +309,39 @@ fn terrain_mesh_follows_the_generated_heights() {
 /// The terrain cache is process-wide (keyed by entity id) and a session's teardown clears it, so
 /// engine sessions in this file must not overlap: every test holds this lock.
 static ENGINE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn big_water_meshes_update_fast_enough_to_animate() {
+    let _guard = ENGINE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut engine) = doppio_engine::Engine::load_default() else {
+        return;
+    };
+    if engine.capi_version() < 7 {
+        return;
+    }
+    let entity = engine.create_entity("Sea").expect("entity");
+    let waves: Vec<doppio_engine::WaterWave> = (0..12)
+        .map(|i| doppio_engine::WaterWave {
+            direction: [(i as f32 * 0.5).cos(), (i as f32 * 0.5).sin()],
+            wavelength: 8.0 + i as f32 * 9.0,
+            amplitude: 0.15,
+            steepness: 0.1,
+            phase: i as f32,
+        })
+        .collect();
+    let water = doppio_engine::Water {
+        size: [300.0, 300.0],
+        resolution: 256,
+        waves,
+        ..Default::default()
+    };
+    engine.set_water(entity, &water).expect("water");
+    engine.tick(0.016);
+    let start = std::time::Instant::now();
+    for _ in 0..10 {
+        engine.tick(0.016);
+    }
+    let per_tick = start.elapsed().as_secs_f32() / 10.0;
+    eprintln!("256x256 water tick: {:.1} ms", per_tick * 1000.0);
+    assert!(per_tick < 0.03, "{per_tick} s per tick");
+}

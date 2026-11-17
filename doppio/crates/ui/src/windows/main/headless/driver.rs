@@ -126,6 +126,7 @@ pub struct Driver {
     artifacts: Vec<String>,
     temp_roots: Vec<PathBuf>,
     asset_root: Option<PathBuf>,
+    recording: Option<super::record::Recording>,
 }
 
 fn select_all(candidate: Candidate<'_>) -> Option<Hit> {
@@ -278,6 +279,7 @@ impl Driver {
             shots: 0,
             artifacts: Vec::new(),
             temp_roots: Vec::new(),
+            recording: None,
             asset_root: None,
         };
         driver.reset(init)?;
@@ -994,6 +996,7 @@ impl Driver {
         let real = step.bool("real_time", false);
         for _ in 0..frames {
             self.settle();
+            self.record_tick();
             if real {
                 std::thread::sleep(FRAME);
             }
@@ -1133,6 +1136,135 @@ impl Driver {
     }
 
     // --------------------------------------------------------------- capture
+
+    // ---------------------------------------------------------------- recording
+
+    fn do_record_start(&mut self, step: &Step) -> Outcome {
+        if self.recording.is_some() {
+            return Err("a recording is already running: use `record_stop` first".into());
+        }
+        let format = step.str("format").unwrap_or("gif").to_lowercase();
+        if !super::record::FORMATS.contains(&format.as_str()) {
+            return Err(format!("`format` must be one of gif, mp4, webm (got `{format}`)").into());
+        }
+        let fps = step.usize("fps", 15).clamp(1, 60) as u32;
+        let dir = std::env::temp_dir().join(format!(
+            "doppio-record-{}-{}",
+            std::process::id(),
+            self.shots
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        self.recording = Some(super::record::Recording {
+            dir,
+            name: sanitize_file_stem(step.str("name").unwrap_or("recording")),
+            format,
+            fps,
+            scale: step.f32("scale").unwrap_or(1.0).clamp(0.25, 3.0),
+            width: step.usize("width", 0) as u32,
+            frames: 0,
+            every: super::record::frames_per_capture(fps),
+            tick: 0,
+            crop: step.aim("target")?,
+            padding: step.f32("padding").unwrap_or(8.0),
+            keep_frames: step.bool("keep_frames", false),
+        });
+        // The first frame is the starting state.
+        self.record_frame();
+        Ok(json!({ "recording": true, "fps": fps }))
+    }
+
+    fn do_record_stop(&mut self, _step: &Step) -> Outcome {
+        self.finish_recording()
+    }
+
+    /// Captures a frame on every Nth settled frame (called from `wait`).
+    fn record_tick(&mut self) {
+        let due = match self.recording.as_mut() {
+            Some(rec) => {
+                rec.tick += 1;
+                rec.tick % rec.every == 0
+            }
+            None => false,
+        };
+        if due {
+            self.record_frame();
+        }
+    }
+
+    /// Writes one frame of the current window (or the recording's target) to the scratch folder.
+    fn record_frame(&mut self) {
+        let Some((scale, crop, padding, path)) = self
+            .recording
+            .as_ref()
+            .map(|r| (r.scale, r.crop.clone(), r.padding, r.frame_path(r.frames)))
+        else {
+            return;
+        };
+        let Ok(full) = self.render(scale) else {
+            return;
+        };
+        let image = match crop {
+            Some(aim) => match self.locate(&aim) {
+                Ok(located) => {
+                    let area = located.visible.unwrap_or(located.bounds);
+                    let x = ((area.x - padding).max(0.0) * scale).round() as u32;
+                    let y = ((area.y - padding).max(0.0) * scale).round() as u32;
+                    let w = (((area.width + 2.0 * padding) * scale).round() as u32)
+                        .min(full.width().saturating_sub(x));
+                    let h = (((area.height + 2.0 * padding) * scale).round() as u32)
+                        .min(full.height().saturating_sub(y));
+                    image::imageops::crop_imm(&full, x, y, w.max(2), h.max(2)).to_image()
+                }
+                Err(_) => full,
+            },
+            None => full,
+        };
+        // Every frame of a video must have the size of the first one.
+        let size = self.recording.as_ref().and_then(|r| {
+            (r.frames > 0)
+                .then(|| image::image_dimensions(r.frame_path(0)).ok())
+                .flatten()
+        });
+        let image = match size {
+            Some((w, h)) if (w, h) != (image.width(), image.height()) => {
+                image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle)
+            }
+            _ => image,
+        };
+        if image.save(&path).is_ok() {
+            if let Some(rec) = self.recording.as_mut() {
+                rec.frames += 1;
+            }
+        }
+    }
+
+    /// Encodes the captured frames with ffmpeg and returns the artifact description.
+    fn finish_recording(&mut self) -> Outcome {
+        let Some(rec) = self.recording.take() else {
+            return Err("no recording is running: use `record_start` first".into());
+        };
+        if rec.frames == 0 {
+            return Err("the recording captured no frames".into());
+        }
+        let output = super::record::encode(&rec, &self.config.out_dir)?;
+        let frames = rec.frames;
+        if !rec.keep_frames {
+            let _ = std::fs::remove_dir_all(&rec.dir);
+        }
+        let path_text = output.display().to_string();
+        self.artifacts.push(path_text.clone());
+        let bytes = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+        Ok(json!({
+            "path": path_text,
+            "format": rec.format,
+            "frames": frames,
+            "fps": rec.fps,
+            "seconds": frames as f32 / rec.fps as f32,
+            "bytes": bytes,
+            "frames_dir": rec.keep_frames.then(|| rec.dir.display().to_string()),
+        }))
+    }
 
     fn do_screenshot(&mut self, step: &Step) -> Outcome {
         let name = sanitize_file_stem(step.str("name").unwrap_or("shot"));
@@ -1570,6 +1702,25 @@ impl Driver {
             }
         };
         let outcome = self.execute(&step);
+        // While recording, a step that changed something gets a frame (so a click is visible).
+        if outcome.is_ok()
+            && self.recording.is_some()
+            && !matches!(
+                step.action.as_str(),
+                "wait"
+                    | "record_start"
+                    | "record_stop"
+                    | "screenshot"
+                    | "expect"
+                    | "find"
+                    | "widgets"
+                    | "text"
+                    | "state"
+                    | "log"
+            )
+        {
+            self.record_frame();
+        }
         let (ok, data, error, hint) = match outcome {
             Ok(data) => (true, data, None, None),
             Err(failure) => (false, json!({}), Some(failure.error), failure.hint),
@@ -1629,6 +1780,8 @@ impl Driver {
             "state" => self.do_state(step),
             "log" => self.do_log(step),
             "screenshot" => self.do_screenshot(step),
+            "record_start" => self.do_record_start(step),
+            "record_stop" => self.do_record_stop(step),
             "expect" => self.do_expect(step),
             "reset" => {
                 let mut init = Init::default();
@@ -1673,6 +1826,10 @@ impl Driver {
             if failed && !keep_going {
                 break;
             }
+        }
+        if self.recording.is_some() {
+            // A recording left open is finished so its video is not lost.
+            let _ = self.finish_recording();
         }
         let failed = steps.iter().filter(|step| !step.ok).count();
         RunReport {

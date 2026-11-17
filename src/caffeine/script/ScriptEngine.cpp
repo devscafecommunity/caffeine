@@ -28,6 +28,7 @@ void registerForwardRenderScriptBindings(sol::state& lua, ECS::World** worldPtr)
 void registerAnimationScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerEffectScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerNavigationScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerComponentScriptBindings(sol::state& lua, ECS::World** worldPtr);
 sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
@@ -274,8 +275,33 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
             t["linearDamping"] = rb->linearDamping;
             t["isKinematic"] = rb->isKinematic;
             t["lockRotation"] = rb->lockRotation;
+            t["velocityX"] = rb->velocityX;
+            t["velocityY"] = rb->velocityY;
         }
         return t;
+    };
+
+    // Convenience over the 2D rigid body: the linear velocity as {x, y}.
+    wt["getVelocity"] = [&lua, worldPtr](u32 entityId) -> sol::table {
+        sol::table v = lua.create_table();
+        v["x"] = 0.0f;
+        v["y"] = 0.0f;
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return v;
+        if (auto* rb = ECS::Entity(entityId, world).get<Physics2D::RigidBody2D>()) {
+            v["x"] = rb->velocityX;
+            v["y"] = rb->velocityY;
+        }
+        return v;
+    };
+
+    wt["setVelocity"] = [worldPtr](u32 entityId, sol::table v) {
+        ECS::World* world = worldPtr ? *worldPtr : nullptr;
+        if (!world) return;
+        auto& rb = ECS::Entity(entityId, world).getOrAdd<Physics2D::RigidBody2D>();
+        rb.velocityX = v["x"].get_or(rb.velocityX);
+        rb.velocityY = v["y"].get_or(rb.velocityY);
+        rb.isSleeping = false;
     };
 
     wt["setRigidBody2D"] = [worldPtr](u32 entityId, sol::table t) {
@@ -289,6 +315,8 @@ void registerWorldBindings(sol::state& lua, ECS::World** worldPtr) {
         rb.linearDamping = t["linearDamping"].get_or(0.0f);
         rb.isKinematic = t["isKinematic"].get_or(false);
         rb.lockRotation = t["lockRotation"].get_or(true);
+        rb.velocityX = t["velocityX"].get_or(rb.velocityX);
+        rb.velocityY = t["velocityY"].get_or(rb.velocityY);
     };
 
     wt["getSprite"] = [&lua, worldPtr](u32 entityId) -> sol::table {
@@ -637,6 +665,7 @@ bool ScriptEngine::init(const InitParams& params) {
     registerAnimationScriptBindings(lua, &m_impl->m_world);
     registerEffectScriptBindings(lua, &m_impl->m_world);
     registerNavigationScriptBindings(lua, &m_impl->m_world);
+    registerComponentScriptBindings(lua, &m_impl->m_world);
 
     registerRuntimeScriptBindings(
         lua, &m_impl->m_world, &m_impl->m_input, &m_impl->m_ui, &m_impl->m_assetText,

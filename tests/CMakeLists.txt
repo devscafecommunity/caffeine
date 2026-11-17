@@ -15,6 +15,7 @@ set(CAFFEINE_TEST_SOURCES
     test_assetmanager.cpp
     test_camera2d.cpp
     test_camera3d.cpp
+    test_component_reflection.cpp
     test_textureatlas.cpp
     test_scenemanager.cpp
     test_physics2d.cpp
@@ -74,7 +75,8 @@ enable_testing()
 add_test(NAME CaffeineTest COMMAND CaffeineTest)
 
 if(CAFFEINE_ENABLE_SCRIPTING)
-    list(APPEND CAFFEINE_TEST_SOURCES test_script.cpp)
+    # Appended after add_executable, so it must go through target_sources.
+    target_sources(CaffeineTest PRIVATE test_script.cpp)
 endif()
 
 if(SDL3_FOUND AND WIN32)

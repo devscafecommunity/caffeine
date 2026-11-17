@@ -143,6 +143,16 @@ const MATERIALS: &[(&str, Source, [f32; 3])] = &[
         Source::ProjectTexture,
         [0.3, 0.5, 0.2],
     ),
+    (
+        "Leaves · Broadleaf Mix (atlas)",
+        Source::Cards("Atlas · Broadleaf"),
+        [0.26, 0.50, 0.16],
+    ),
+    (
+        "Leaves · Autumn Mix (atlas)",
+        Source::Cards("Atlas · Autumn"),
+        [0.80, 0.42, 0.10],
+    ),
 ];
 
 const MATERIAL_LABELS: &[&str] = &[
@@ -170,6 +180,8 @@ const MATERIAL_LABELS: &[&str] = &[
     "Solid · Custom colour",
     "Your material (.mat)",
     "Your texture (cut-out PNG)",
+    "Leaves · Broadleaf Mix (atlas)",
+    "Leaves · Autumn Mix (atlas)",
 ];
 
 /// True when the label table the editor shows matches the material table graphs index into.
@@ -715,6 +727,14 @@ const LEAVES_P: &[crate::uikit::procedural::ParamSpec] = &[
     float("inner", "Inner limbs", 0.0, 1.0, 0.45, 0.01),
     int("budget", "Triangle budget", 200, 30000, 9000),
     int("seed", "Seed", 0, 9999, 1),
+    choice(
+        "shapes",
+        "Leaf shapes",
+        &["Single leaf", "Atlas 4x2 (8 shapes)"],
+        0,
+    ),
+    float("fold", "Fold along the midrib", 0.0, 1.0, 0.35, 0.01),
+    float("droop", "Droop", 0.0, 1.0, 0.3, 0.01),
 ];
 
 fn eval_leaves(a: &Args) -> Vec<Value> {
@@ -732,12 +752,24 @@ fn eval_leaves(a: &Args) -> Vec<Value> {
         part.flat_shade();
         return mesh_out(part);
     }
+    let rows = match a.quality {
+        super::Quality::Stylized => 1,
+        super::Quality::Balanced => 2,
+        super::Quality::Detailed => 4,
+    };
     mesh_out(tree::leaf_cards(
         skeleton,
-        a.q(a.f(1)),
-        a.f(2),
-        a.f(3),
-        a.u(4) as usize,
+        tree::LeafCards {
+            // Atlas leaves are drawn smaller and sparser per card: more of them fill the crown.
+            density: a.q(a.f(1)) * if a.u(6) == 1 { 1.5 } else { 1.0 },
+            size: a.f(2),
+            inner_share: a.f(3),
+            max_triangles: a.u(4) as usize,
+            atlas: if a.u(6) == 1 { (4, 2) } else { (1, 1) },
+            fold: a.f(7),
+            droop: a.f(8),
+            rows,
+        },
         seed,
     ))
 }

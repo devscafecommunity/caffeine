@@ -167,6 +167,216 @@ fn eval_leaf(a: &Args) -> Vec<Pixels> {
     ]
 }
 
+// ----------------------------------------------------------------- needles
+
+const NEEDLES_P: &[ParamSpec] = &[
+    int("count", "Needles", 3, 40, 18),
+    float("length", "Length", 0.2, 0.95, 0.7, 0.01),
+    float("spread", "Fan angle", 0.2, 3.0, 1.5, 0.02),
+    float("thickness", "Thickness", 0.004, 0.03, 0.012, 0.001),
+    float("curve", "Curve", -1.0, 1.0, 0.25, 0.01),
+    float("variation", "Length variation", 0.0, 0.8, 0.35, 0.01),
+    int("seed", "Seed", 0, 9999, 1),
+];
+const NEEDLES_C: &[ColorSpec] = &[
+    color("base", "Base", [0.07, 0.17, 0.06, 1.0]),
+    color("tip", "Tip", [0.22, 0.38, 0.14, 1.0]),
+    color("centre", "Centre line", [0.45, 0.6, 0.3, 1.0]),
+];
+
+/// A fan of pine-like needles growing from the bottom centre of the card.
+fn eval_needles(a: &Args) -> Vec<Pixels> {
+    let (count, length, spread, thickness) = (a.i(0).max(1), a.f(1), a.f(2), a.f(3));
+    let (curve, variation, seed) = (a.f(4), a.f(5), a.i(6));
+    let (base, tip, centre) = (a.color(0), a.color(1), a.color(2));
+    let res = a.res;
+    let px = 1.0 / res as f32;
+    // Needle i: angle from vertical, length, small sideways offset at the root.
+    let needles: Vec<(f32, f32, f32)> = (0..count)
+        .map(|i| {
+            let t = if count > 1 {
+                i as f32 / (count - 1) as f32
+            } else {
+                0.5
+            };
+            let jitter = (rand01(i, 0, seed) - 0.5) * 0.12;
+            let angle = (t - 0.5) * spread + jitter;
+            let len = length * (1.0 - variation * rand01(i, 1, seed));
+            (angle, len, (rand01(i, 2, seed) - 0.5) * 0.05)
+        })
+        .collect();
+    // Plane 0 mask, 1 centre line, 2 height, 3 along (0 root .. 1 tip) of the nearest needle.
+    let planes_out = planes(res, |u, v| {
+        let (x, y) = (u - 0.5, 0.96 - v);
+        let mut best = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for (angle, len, offset) in &needles {
+            let (s, c) = angle.sin_cos();
+            let (px_, py_) = (x - offset, y);
+            // Coordinates along and across the needle, with a gentle curve.
+            let along = px_ * s + py_ * c;
+            if along < 0.0 || along > *len {
+                continue;
+            }
+            let t = along / len;
+            let across = px_ * c - py_ * s - curve * 0.25 * t * t * len;
+            let half = thickness * (1.0 - 0.85 * t.powf(1.6)) + px * 0.4;
+            let d = across.abs();
+            let m = 1.0 - smoothstep(half * 0.6, half * 1.1, d);
+            if m > best.0 {
+                let ridge = 1.0 - (d / half.max(1e-4)).min(1.0);
+                best = (
+                    m,
+                    (1.0 - smoothstep(0.0, half * 0.35, d)) * 0.9,
+                    0.35 + 0.65 * ridge,
+                    t,
+                );
+            }
+        }
+        [best.0, best.1, best.2 * best.0, best.3]
+    });
+    let [mask, line, height, along] = planes_out;
+    let rgb: Vec<[f32; 3]> = (0..res * res)
+        .map(|i| {
+            let mut c = mix3(base, tip, along[i].clamp(0.0, 1.0));
+            for ch in 0..3 {
+                c[ch] += (centre[ch] - c[ch]) * line[i] * 0.55;
+            }
+            [clamp01(c[0]), clamp01(c[1]), clamp01(c[2])]
+        })
+        .collect();
+    vec![
+        with_alpha(rgb, &mask),
+        plane_image(&mask),
+        plane_image(&line),
+        plane_image(&height),
+    ]
+}
+
+// ------------------------------------------------------------ compound leaf
+
+const COMPOUND_P: &[ParamSpec] = &[
+    int("pairs", "Leaflet pairs", 2, 9, 4),
+    float("leaflet", "Leaflet size", 0.06, 0.26, 0.15, 0.005),
+    float("angle", "Leaflet angle", 0.3, 1.5, 0.95, 0.02),
+    float("taper", "Size taper to the tip", 0.0, 0.8, 0.45, 0.01),
+    float("bend", "Rachis bend", -1.0, 1.0, 0.3, 0.01),
+    float("serration", "Serration", 0.0, 1.0, 0.25, 0.01),
+    int("seed", "Seed", 0, 9999, 1),
+];
+const COMPOUND_C: &[ColorSpec] = &[
+    color("edge", "Leaflet edge", [0.34, 0.48, 0.12, 1.0]),
+    color("body", "Leaflet body", [0.12, 0.32, 0.06, 1.0]),
+    color("vein", "Veins and rachis", [0.58, 0.68, 0.30, 1.0]),
+];
+
+/// A pinnate compound leaf: leaflets in pairs along a curved stalk, one at the tip.
+fn eval_compound(a: &Args) -> Vec<Pixels> {
+    let (pairs, size, angle, taper) = (a.i(0).max(1), a.f(1), a.f(2), a.f(3));
+    let (bend, serration, seed) = (a.f(4), a.f(5), a.i(6));
+    let (edge, body, vein_c) = (a.color(0), a.color(1), a.color(2));
+    let res = a.res;
+    let px = 1.0 / res as f32;
+    // Rachis: from (0.5, 0.96) upward, curving sideways.
+    let rachis = |t: f32| -> (f32, f32) { (0.5 + 0.16 * bend * t * t, 0.96 - 0.86 * t) };
+    // Leaflets: (centre x, y, half length, half width, angle of its axis).
+    let mut leaflets: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+    for i in 0..pairs {
+        let t = 0.2 + 0.62 * i as f32 / pairs as f32;
+        let (cx, cy) = rachis(t);
+        let scale = size * (1.0 - taper * t);
+        for side in [-1.0f32, 1.0] {
+            let wobble = (rand01(i * 2 + (side > 0.0) as i32, 3, seed) - 0.5) * 0.25;
+            let ang = side * angle + wobble;
+            let (s, c) = ang.sin_cos();
+            // The leaflet's base touches the rachis; its centre is half a length away.
+            let half_len = scale * 1.15;
+            leaflets.push((
+                cx + s * half_len,
+                cy - c * half_len * 0.55 - 0.0,
+                half_len,
+                scale * 0.52,
+                ang,
+            ));
+        }
+    }
+    let (tx, ty) = rachis(0.97);
+    leaflets.push((
+        tx,
+        ty - size * (1.0 - taper) * 0.55,
+        size * (1.0 - taper) * 1.2,
+        size * (1.0 - taper) * 0.5,
+        0.0,
+    ));
+
+    // Plane 0 mask, 1 veins, 2 height, 3 radial position inside the leaflet.
+    let planes_out = planes(res, |u, v| {
+        // The rachis itself.
+        let mut best = (0.0f32, 0.0f32, 0.0f32, 1.0f32);
+        let mut nearest = f32::MAX;
+        for k in 0..=24 {
+            let (rx, ry) = rachis(k as f32 / 24.0 * 0.97);
+            nearest = nearest.min(((u - rx).powi(2) + (v - ry).powi(2)).sqrt());
+        }
+        let stalk = 1.0 - smoothstep(0.004, 0.011, nearest);
+        if stalk > 0.0 {
+            best = (stalk, stalk, 0.7 * stalk, 1.0);
+        }
+        for (cx, cy, hl, hw, ang) in &leaflets {
+            let (dx, dy) = (u - cx, v - cy);
+            let (s, c) = ang.sin_cos();
+            // Local axes: along the leaflet's length (pointing outward and up) and across it.
+            let along = (dx * s - dy * c) / hl;
+            let across = (dx * c + dy * s) / hw;
+            let t = (along + 1.0) * 0.5;
+            if !(0.0..=1.0).contains(&t) {
+                continue;
+            }
+            // Ovate outline with a toothed edge.
+            let outline = (std::f32::consts::PI * t.powf(0.9))
+                .sin()
+                .max(0.0)
+                .powf(0.75);
+            let teeth = 1.0 - serration * 0.18 * fract(t * 9.0 + rand01(0, 4, seed));
+            let r = across.abs() / (outline * teeth).max(1e-3);
+            let m = 1.0 - smoothstep(1.0 - px * 6.0, 1.0 + px * 4.0, r);
+            if m > best.0 {
+                let rib = 1.0 - smoothstep(0.03, 0.09, across.abs());
+                let lateral =
+                    (1.0 - smoothstep(
+                        0.05,
+                        0.14,
+                        ((t * 6.0 - across.abs() * 1.3).fract() - 0.5).abs(),
+                    )) * (1.0 - r * r)
+                        * 0.6;
+                best = (
+                    m,
+                    rib.max(lateral) * m,
+                    (0.55 + 0.25 * (1.0 - r) - 0.2 * lateral + 0.3 * rib) * m,
+                    r.min(1.0),
+                );
+            }
+        }
+        [best.0, best.1, best.2, best.3]
+    });
+    let [mask, vein_plane, height, radial] = planes_out;
+    let rgb: Vec<[f32; 3]> = (0..res * res)
+        .map(|i| {
+            let mut c = mix3(body, edge, radial[i].powf(2.2));
+            let lift = vein_plane[i] * 0.8;
+            for ch in 0..3 {
+                c[ch] += (vein_c[ch] - c[ch]) * lift;
+            }
+            [clamp01(c[0]), clamp01(c[1]), clamp01(c[2])]
+        })
+        .collect();
+    vec![
+        with_alpha(rgb, &mask),
+        plane_image(&mask),
+        plane_image(&vein_plane),
+        plane_image(&height),
+    ]
+}
+
 // ---------------------------------------------------------------- feather
 
 const FEATHER_P: &[ParamSpec] = &[
@@ -666,6 +876,28 @@ pub const OPS: &[OpDef] = &[
         LEAF_P,
         LEAF_C,
         eval_leaf
+    ),
+    op!(
+        "needles",
+        "Needle Cluster",
+        "VFX & Shapes",
+        false,
+        NO_PORTS,
+        OUT_LEAF,
+        NEEDLES_P,
+        NEEDLES_C,
+        eval_needles
+    ),
+    op!(
+        "compound_leaf",
+        "Compound Leaf",
+        "VFX & Shapes",
+        false,
+        NO_PORTS,
+        OUT_LEAF,
+        COMPOUND_P,
+        COMPOUND_C,
+        eval_compound
     ),
     op!(
         "feather",

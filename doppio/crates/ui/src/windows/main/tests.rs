@@ -5216,8 +5216,18 @@ fn photoreal_rock_places_with_a_generated_texture_set() {
         .set_camera(doppio_engine::Camera {
             yaw: 0.7,
             pitch: 0.32,
-            distance: 3.1,
-            focus: [0.0, 0.7, 0.0],
+            distance: std::env::var("DOPPIO_NATURE_DIST")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3.1),
+            focus: [
+                0.0,
+                std::env::var("DOPPIO_NATURE_FOCUS_Y")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.7),
+                0.0,
+            ],
         })
         .unwrap();
     let frame = render_entity_view_sized(engine, 960, 540);

@@ -12,7 +12,9 @@ use iced::{Point, Vector};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-const PREVIEW_SIZE: u32 = 256;
+/// The preview is drawn small and scaled by the widget; it redraws at most `PREVIEW_FPS` times a second.
+const PREVIEW_SIZE: u32 = 160;
+const PREVIEW_FPS: f32 = 20.0;
 
 pub(super) struct WaterGen {
     pub graph: WaterGraph,
@@ -34,6 +36,8 @@ pub(super) struct WaterGen {
     pub dirty: bool,
     pub playing: bool,
     pub time: f32,
+    /// Time since the preview was last drawn (animation throttle).
+    pub since_draw: f32,
     /// The evaluated water, cached for the preview animation and placement.
     pub water: Option<doppio_engine::Water>,
 }
@@ -70,6 +74,7 @@ impl WaterGen {
             dirty: false,
             playing: true,
             time: 0.0,
+            since_draw: 0.0,
             water: None,
         };
         state.fit();
@@ -237,7 +242,11 @@ impl App {
             .any(|(_, group)| group.active_kind() == PaneKind::WaterGenerator);
         if visible && self.watergen.playing {
             self.watergen.time += dt;
-            self.watergen.redraw();
+            self.watergen.since_draw += dt;
+            if self.watergen.since_draw >= 1.0 / PREVIEW_FPS {
+                self.watergen.since_draw = 0.0;
+                self.watergen.redraw();
+            }
         }
     }
 

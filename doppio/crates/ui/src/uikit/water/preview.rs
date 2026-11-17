@@ -7,26 +7,55 @@ use doppio_engine::Water;
 
 const GRAVITY: f32 = 9.81;
 
-/// Height, slope (dh/dx, dh/dz) and the Jacobian of the horizontal mapping at a rest position.
-pub fn sample(water: &Water, x: f32, z: f32, time: f32) -> (f32, f32, f32, f32) {
+/// One wave with everything that does not depend on the pixel or the time worked out once.
+struct Prepared {
+    dir: [f32; 2],
+    k: f32,
+    omega: f32,
+    amplitude: f32,
+    steepness: f32,
+    phase: f32,
+}
+
+fn prepare(water: &Water) -> Vec<Prepared> {
+    water
+        .waves
+        .iter()
+        .map(|wave| {
+            let len = (wave.direction[0].powi(2) + wave.direction[1].powi(2))
+                .sqrt()
+                .max(1e-6);
+            let k = std::f32::consts::TAU / wave.wavelength.max(0.05);
+            Prepared {
+                dir: [wave.direction[0] / len, wave.direction[1] / len],
+                k,
+                omega: (GRAVITY * k * (k * water.depth.max(0.01)).tanh())
+                    .max(0.0)
+                    .sqrt(),
+                amplitude: wave.amplitude,
+                steepness: wave.steepness,
+                phase: wave.phase,
+            }
+        })
+        .collect()
+}
+
+fn sample_prepared(waves: &[Prepared], x: f32, z: f32, clock: f32) -> (f32, f32, f32, f32) {
     let (mut h, mut sx, mut sz, mut j) = (0.0f32, 0.0f32, 0.0f32, 1.0f32);
-    for wave in &water.waves {
-        let len = (wave.direction[0].powi(2) + wave.direction[1].powi(2))
-            .sqrt()
-            .max(1e-6);
-        let d = [wave.direction[0] / len, wave.direction[1] / len];
-        let k = std::f32::consts::TAU / wave.wavelength.max(0.05);
-        let omega = (GRAVITY * k * (k * water.depth.max(0.01)).tanh())
-            .max(0.0)
-            .sqrt();
-        let theta = k * (d[0] * x + d[1] * z) - omega * time * water.time_scale + wave.phase;
+    for wave in waves {
+        let theta = wave.k * (wave.dir[0] * x + wave.dir[1] * z) - wave.omega * clock + wave.phase;
         let (sin, cos) = theta.sin_cos();
         h += wave.amplitude * cos;
-        sx -= wave.amplitude * k * d[0] * sin;
-        sz -= wave.amplitude * k * d[1] * sin;
-        j -= wave.steepness * k * wave.amplitude * cos;
+        sx -= wave.amplitude * wave.k * wave.dir[0] * sin;
+        sz -= wave.amplitude * wave.k * wave.dir[1] * sin;
+        j -= wave.steepness * wave.k * wave.amplitude * cos;
     }
     (h, sx, sz, j)
+}
+
+/// Height, slope (dh/dx, dh/dz) and the Jacobian of the horizontal mapping at a rest position.
+pub fn sample(water: &Water, x: f32, z: f32, time: f32) -> (f32, f32, f32, f32) {
+    sample_prepared(&prepare(water), x, z, time * water.time_scale)
 }
 
 /// The longest wave, to frame the preview.
@@ -41,6 +70,14 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 
 /// `size` x `size` RGBA8.
 pub fn render(water: &Water, size: u32, time: f32) -> Vec<u8> {
+    let waves = prepare(water);
+    let clock = time * water.time_scale;
+    let amplitude_sum = water
+        .waves
+        .iter()
+        .map(|w| w.amplitude)
+        .sum::<f32>()
+        .max(0.05);
     let span = (longest(water) * 2.0)
         .clamp(8.0, 160.0)
         .min(water.size[0].max(water.size[1]));
@@ -55,7 +92,7 @@ pub fn render(water: &Water, size: u32, time: f32) -> Vec<u8> {
         for px in 0..size {
             let x = (px as f32 / size as f32 - 0.5) * span;
             let z = (py as f32 / size as f32 - 0.5) * span;
-            let (h, sx, sz, j) = sample(water, x, z, time);
+            let (h, sx, sz, j) = sample_prepared(&waves, x, z, clock);
             let n = {
                 let v = [-sx, 1.0, -sz];
                 let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
@@ -67,15 +104,7 @@ pub fn render(water: &Water, size: u32, time: f32) -> Vec<u8> {
             let fresnel = 0.02 + 0.98 * (1.0 - n_dot_v).powi(5);
             let diffuse = (n[0] * sun[0] + n[1] * sun[1] + n[2] * sun[2]).max(0.0);
             // Deeper troughs are a little darker; opacity lets the colour through.
-            let depth_tint = (0.8
-                + h * 0.6
-                    / (water
-                        .waves
-                        .iter()
-                        .map(|w| w.amplitude)
-                        .sum::<f32>()
-                        .max(0.05)))
-            .clamp(0.55, 1.15);
+            let depth_tint = (0.8 + h * 0.6 / amplitude_sum).clamp(0.55, 1.15);
             let reflect_y = 2.0 * n_dot_v * n[1] - view[1];
             let sky = [
                 0.45 + 0.25 * reflect_y.max(0.0),

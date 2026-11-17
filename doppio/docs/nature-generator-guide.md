@@ -36,7 +36,7 @@ Everything is deterministic: the same graph, quality and seeds always build the 
 | Shapes | **Icosphere**, **Ellipsoid** |
 | Modifiers | **Noise Displace** (fractal lumps), **Cut Planes** (faceted rock faces), **Flat Base**, **Transform**, **Place on Ground**, **Subdivide**, **Shade** (smooth / flat / crease angle), **UV Box Projection** |
 | Combine | **Merge** |
-| Trees | **Grow Branches** (skeleton), **Roots**, **Branch Tubes**, **Leaves** (cards or blobs) |
+| Trees | **Grow Branches** (skeleton), **Roots**, **Branch Tubes**, **Leaves** (folded, drooping cards with a leaf-shape atlas, or blobs) |
 | Plants | **Grass Blades**, **Fern Fronds**, **Leafy Bush**, **Stem**, **Petals** |
 | Scatter | **Scatter Points**, **Instance on Points** (moss, pebbles, small leaves on any mesh) |
 | Output | **Part**, **Output** |
@@ -78,6 +78,7 @@ The **Part** node has a *Material* choice:
 |---|---|
 | Library presets (rock, bark, moss, ...) | baked once from the PBR library into `nature/materials/` |
 | Texture Generator cards | a procedural cut-out card (leaf, blade, petal) baked to RGBA |
+| **Leaf atlases** (*Broadleaf Mix*, *Autumn Mix*) | one image with **eight different leaf shapes and tints** (4 x 2); pair it with the Leaves node's *Leaf shapes: Atlas 4x2* |
 | Solid colours / custom colour | only a `.mat`, ideal for low poly |
 | **Your material (.mat)** | pick any `.mat` of the project; it is applied **as it is**, never copied or rebaked |
 | **Your texture (cut-out PNG)** | pick a PNG with alpha; a **Cutout** material is made around it (`nature/materials/project_<name>.mat`) |
@@ -152,29 +153,40 @@ engine-backed scene of generated models (`reset` accepts a `preset`).
 
 ## 8. Limits and roadmap
 
-### Still missing: high-resolution trees and real vegetation
+### Leaves: what is done, what is still missing
 
-Rocks are in good shape; **trees and plants are not at the same level yet**. Look at the Oak or the Ancient
-Oak: the leaves are, literally, flat round cards. Nothing about them resembles a real tree or real foliage,
-and the hi-fi presets only add more of the same. What is needed, in order:
+![An oak with the broadleaf atlas: different shapes, tints, folds and droop](images/nature/nature-oak-atlas.png)
 
-* **Leaves of many shapes.** Real foliage mixes outlines (lobed, serrated, compound, needle clusters, ferns),
-  sizes and ages (fresh, dry, spotted) on the same plant. The leaf cards need a *set* of shapes with a
-  per-instance pick, plus colour and size variation, instead of one round card.
-* **Leaves that are not a flat PNG.** Curved and folded blades and leaves (a midrib fold, a droop, a twist),
-  real 3D leaf meshes for the nearest ones, a translucent back face and a normal map, not a single straight quad.
+**Done (the first refinement of vegetation):**
+
+* **Leaves of many shapes.** The Leaves node's *Leaf shapes* option uses a **4 x 2 atlas** baked from the Texture
+  Generator's leaf operator: ovate, serrated, narrow, rounded, dark mature, young yellow-green, dry-edged and
+  lobed leaves (*Broadleaf Mix*), or the autumn palette (*Autumn Mix*). Every card picks a random cell, so a crown
+  mixes shapes and tints; card sizes vary from 0.55x to 1.35x. Oak, Birch, Autumn Maple, Ancient Oak and the
+  other broadleaf presets use it.
+* **Leaves that are not a flat quad.** Each card is a **folded, drooping blade**: three vertices across (the
+  edges sit lower than the midrib, a shallow V), 2-4 segments along it by quality, the tip drooping under its
+  weight and a little twist. *Fold* and *Droop* are node parameters. A test checks the atlas is sampled in full,
+  the blade is not planar and Detailed has more segments than Balanced.
+
+**Still missing:**
+
+* **Real 3D leaf meshes** for the nearest leaves, a **translucent back face** (leaves facing away from the sun are
+  nearly black under a single sun, there is no light transmission through the blade) and a **normal map** on the
+  cards.
+* **Compound leaves and needle clusters** as atlas cells (the atlas is broadleaf only; conifers still use the
+  single card), and a per-instance **tint** (it needs vertex colour, so tints come from the atlas cells).
 * **High-resolution trunks and branches.** The same bake used by the Rock Surface (curvature, AO, height) feeding
   a **bark surface**: deep furrows, peeling, knots, moss on the shady side and in cracks, roots flaring into the
   ground, broken branches and stumps (the reference is a mossy rotten stump).
 * **Ground cover that blends.** Moss carpets and low grass mixed with leaf litter, twigs, cones and small
-  plants, as a **blended ground material plus instances**, not only cards: moss as a surface layer (it already is
-  one on rocks) and as thick clumps; grass as GPU-instanced blades with colour variation and dry patches.
+  plants, as a **blended ground material plus instances**: moss as a surface layer (it already is one on rocks)
+  and as thick clumps; grass as GPU-instanced blades with colour variation and dry patches.
 * **Trees as a model plus a texture set**: a trunk mesh with its bark set, branch tubes with their own, and
-  leaf clusters with an atlas of leaf shapes, all driven from the same graph and quality range.
+  leaf clusters, all driven from the same graph and quality range.
 
 References for the target: a photoreal mossy stump with ferns, clover and leaf litter around it; a dense
 oak crown with varied, curved leaves.
-
 
 * The Rock Surface node covers **rock only** for now; bark, grass-card and soil surfaces use the same bake with other layers. Steep faces of a very lumpy rock still stretch a little in the cube atlas (a seam-aware unwrap would fix it).
 * Next for hi-fi vegetation: **GPU-instanced scatter** (grass and leaves are still merged meshes), **vertex colour**, material slots and **wind** (a later transformation pass).

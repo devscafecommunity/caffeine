@@ -7,6 +7,7 @@
 #include "../src/caffeine/ecs/Components3D.hpp"
 #include "../src/caffeine/ecs/MeshComponents.hpp"
 #include "../src/caffeine/ecs/World.hpp"
+#include "../src/caffeine/physics/PhysicsComponents3D.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -142,6 +143,49 @@ TEST_CASE("Dryad reload is a no-op without file changes", "[dryad][reload]") {
     host.setWorld(&world);
     REQUIRE(host.load(path));
     REQUIRE_FALSE(host.reloadIfChanged(path));
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Dryad reads and writes any reflected component", "[dryad][component]") {
+    const std::string path = "dryad_host_components.dyd";
+    {
+        std::ofstream out(path);
+        out << "function onUpdate(entity, dt) {\n"
+            << "  caffeine_component_add(entity, \"Rigid Body 3D\");\n"
+            << "  caffeine_component_set_number(entity, \"Rigid Body 3D\", \"Mass\", 7.5);\n"
+            << "  caffeine_component_set_text(entity, \"Rigid Body 3D\", \"Body type\", \"Static\");\n"
+            << "  caffeine_component_add(entity, \"Mesh Filter\");\n"
+            << "  caffeine_component_set_text(entity, \"Mesh Filter\", \"Primitive\", \"Cone\");\n"
+            << "  caffeine_component_add(entity, \"Position 3D\");\n"
+            << "  caffeine_component_set_vec(entity, \"Position 3D\", \"Position\", 4, 5, 6);\n"
+            << "  let mass = caffeine_component_get_number(entity, \"Rigid Body 3D\", \"Mass\");\n"
+            << "  caffeine_component_set_number(entity, \"Position 3D\", \"Position\", mass * 2, 0);\n"
+            << "  let kind = caffeine_component_get_text(entity, \"Mesh Filter\", \"Primitive\");\n"
+            << "  caffeine_log(kind);\n"
+            << "  let index = caffeine_component_get_number(entity, \"Mesh Filter\", \"Primitive\");\n"
+            << "  if (index == 6) { caffeine_component_set_number(entity, \"Position 3D\", \"Position\", 9, 0); }\n"
+            << "  caffeine_component_has(entity, \"Nonsense\");\n"
+            << "}\n";
+    }
+    ECS::World world;
+    DryadHost host;
+    host.setWorld(&world);
+    ECS::Entity entity = world.create("DryadThing");
+    REQUIRE(host.load(path));
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f));
+
+    auto* rb = entity.get<Physics3D::RigidBody3D>();
+    REQUIRE(rb != nullptr);
+    REQUIRE(rb->mass == 7.5f);
+    REQUIRE(rb->bodyType == Physics3D::BodyType3D::Static);
+    auto* mesh = entity.get<ECS::MeshFilterComponent>();
+    REQUIRE(mesh != nullptr);
+    REQUIRE(mesh->primitive == ECS::MeshPrimitive::Cone);
+    auto* pos = entity.get<ECS::Position3D>();
+    REQUIRE(pos != nullptr);
+    REQUIRE(pos->position.x == 9.0f);   // read back (enum index 6 = Cone), then written conditionally
+    REQUIRE(pos->position.y == 5.0f);
+    REQUIRE(pos->position.z == 6.0f);
     std::remove(path.c_str());
 }
 
