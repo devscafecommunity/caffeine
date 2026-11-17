@@ -74,7 +74,8 @@ enable_testing()
 add_test(NAME CaffeineTest COMMAND CaffeineTest)
 
 if(CAFFEINE_ENABLE_SCRIPTING)
-    list(APPEND CAFFEINE_TEST_SOURCES test_script.cpp)
+    # Appended after add_executable, so it must go through target_sources.
+    target_sources(CaffeineTest PRIVATE test_script.cpp)
 endif()
 
 if(SDL3_FOUND AND WIN32)

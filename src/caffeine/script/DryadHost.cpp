@@ -18,6 +18,8 @@
 
 namespace Caffeine::Script {
 
+void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr);
+
 namespace {
 
 double asNumber(const dryad::Value& value) {
@@ -192,6 +194,7 @@ struct DryadHost::Impl {
                 }
                 return dryad::Value();
             });
+        bindComponentNatives(interp, worldPtr);
         interp.set_network_allowed(false);
         if (const char* stdlib = std::getenv("DRYAD_STDLIB_DIR")) {
             interp.set_stdlib_root(stdlib);

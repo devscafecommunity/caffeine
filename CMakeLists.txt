@@ -89,6 +89,8 @@ add_library(caffeine-core
     src/caffeine/scene/Camera3DSystem.cpp
     src/caffeine/scene/TerrainSystem.cpp
     src/caffeine/scene/NaturalFluidSystem.cpp
+    src/caffeine/scene/ComponentReflection.cpp
+    src/caffeine/scene/ComponentAccess.cpp
     src/caffeine/fluid/WaveField.cpp
     src/caffeine/fluid/ShallowWater.cpp
     src/caffeine/fluid/EulerFluid.cpp
@@ -456,6 +458,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/caffeine/script/AnimationBindings.cpp
         src/caffeine/script/EffectBindings.cpp
         src/caffeine/script/NavigationBindings.cpp
+        src/caffeine/script/ComponentBindings.cpp
         src/caffeine/script/RuntimeScriptBindings.cpp
         src/caffeine/script/AssetTextLoader.cpp
         src/caffeine/script/NativeModuleHost.cpp
@@ -463,6 +466,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
     if(DRYAD_AVAILABLE)
         target_sources(caffeine-core PRIVATE
             src/caffeine/script/DryadHost.cpp
+            src/caffeine/script/DryadComponentBindings.cpp
             src/caffeine/script/nodes/NodeGraph.cpp
             src/caffeine/script/nodes/NodeCatalog.cpp
             src/caffeine/script/nodes/NodeEmitter.cpp
