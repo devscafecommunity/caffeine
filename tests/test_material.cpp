@@ -373,3 +373,29 @@ TEST_CASE("midpoint subdivision quadruples triangles and keeps the surface welde
     CHECK(density.averageEdgeUv < 0.2f);
     CHECK_FALSE(Assets::subdivideMesh(quad, 3, out, 100)); // over the index budget
 }
+
+TEST_CASE("uv_object_scale defaults on, round-trips and older materials keep the default", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine_uv_object_scale";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "scaled.mat";
+
+    MaterialSurface fresh;
+    REQUIRE(fresh.uvObjectScale == 1);
+
+    MaterialSurface off;
+    off.uvObjectScale = 0;
+    REQUIRE(saveMaterialFile(path, off));
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.uvObjectScale == 0);
+
+    // A material written before the key existed behaves like a new one: UVs follow the scale.
+    {
+        std::ofstream legacy(dir / "legacy.mat");
+        legacy << "CAFMAT3\nname Legacy\nroughness 0.5\n";
+    }
+    MaterialSurface old;
+    REQUIRE(loadMaterialFile(dir / "legacy.mat", old));
+    REQUIRE(old.uvObjectScale == 1);
+    std::filesystem::remove_all(dir);
+}

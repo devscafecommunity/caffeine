@@ -88,6 +88,10 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
             surface.meshSubdivisions = static_cast<u8>(std::clamp(value, 1, 9));
         } else if (tag == "uv_tiling") {
             ss >> surface.uvTiling.x >> surface.uvTiling.y;
+        } else if (tag == "uv_object_scale") {
+            int value = 1;
+            ss >> value;
+            surface.uvObjectScale = value ? 1 : 0;
         } else if (tag == "uv_offset") {
             ss >> surface.uvOffset.x >> surface.uvOffset.y;
         } else if (tag == "normal_strength") {
@@ -188,6 +192,7 @@ void sanitizeMaterialSurface(MaterialSurface& surface) {
     surface.heightScale = std::clamp(surface.heightScale, 0.0f, 0.5f);
     surface.parallaxSteps = std::clamp(surface.parallaxSteps, 4.0f, 128.0f);
     surface.displacementMode = surface.displacementMode ? 1 : 0;
+    surface.uvObjectScale = surface.uvObjectScale ? 1 : 0;
     surface.displacementScale = std::clamp(surface.displacementScale, 0.0f, 2.0f);
     surface.meshSubdivisions = static_cast<u8>(std::clamp<int>(surface.meshSubdivisions, 1, 9));
     surface.alphaCutoff = clamp01(surface.alphaCutoff);
@@ -240,6 +245,7 @@ bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& 
     out << "displacement_scale " << material.displacementScale << '\n';
     out << "mesh_subdivisions " << static_cast<int>(material.meshSubdivisions) << '\n';
     out << "uv_tiling " << material.uvTiling.x << ' ' << material.uvTiling.y << '\n';
+    out << "uv_object_scale " << (material.uvObjectScale ? 1 : 0) << '\n';
     out << "uv_offset " << material.uvOffset.x << ' ' << material.uvOffset.y << '\n';
     out << "normal_strength " << material.normalStrength << '\n';
     out << "normal_directx " << (material.normalDirectX ? 1 : 0) << '\n';

@@ -81,6 +81,13 @@ struct NaturalFluidComponent {
     f32 fluidSourceRadius = 2.0f;
     f32 fluidSourceTemperature = 1.4f;
     f32 fluidEmission = 0.0f;
+
+    /// Explicit Gerstner waves authored with nodes (Doppio's Water tab). When
+    /// `customWaveCount` > 0 they replace the wind spectrum. Appended at the end
+    /// so older scenes keep loading. Per wave: dirX, dirZ, wavelength,
+    /// amplitude, steepness, phase.
+    u32 customWaveCount = 0;
+    f32 customWaves[16][6] = {};
 };
 
 }  // namespace Caffeine::ECS

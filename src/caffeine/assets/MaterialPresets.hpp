@@ -164,6 +164,7 @@ inline void applyMaterialPreset(const MaterialSurface& preset, MaterialSurface& 
     result.emissionMap = target.emissionMap;
     result.uvTiling = target.uvTiling;
     result.uvOffset = target.uvOffset;
+    result.uvObjectScale = target.uvObjectScale;
     result.normalStrength = target.normalStrength;
     result.aoStrength = target.aoStrength;
     result.heightScale = target.heightScale;

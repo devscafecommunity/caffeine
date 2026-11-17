@@ -338,3 +338,25 @@ TEST_CASE("WorldTransform - 3 levels of hierarchy propagated correctly", "[scene
     REQUIRE(approxEq(grandWT->matrix.data()[12], 17.0f));
     REQUIRE(approxEq(grandWT->matrix.data()[13], 0.0f));
 }
+
+TEST_CASE("propagateTransforms gives children without a Transform a world matrix without crashing",
+          "[scene]") {
+    // Several children that have never had a WorldTransform: adding it while the hierarchy is
+    // being iterated used to invalidate the iteration (a crash in the renderer).
+    World world;
+    const Entity root = world.create("root");
+    world.add<Transform>(root);
+    world.get<Transform>(root)->position = Vec3(4.0f, 0.0f, 0.0f);
+    std::vector<Entity> children;
+    for (int i = 0; i < 12; ++i) {
+        const Entity child = world.create("child");
+        world.add<Parent>(child);
+        world.get<Parent>(child)->parent = root;
+        children.push_back(child);
+    }
+    propagateTransforms(world);
+    for (const Entity child : children) {
+        REQUIRE(world.get<WorldTransform>(child) != nullptr);
+        CHECK(approxEq(world.get<WorldTransform>(child)->matrix.data()[12], 4.0f));
+    }
+}

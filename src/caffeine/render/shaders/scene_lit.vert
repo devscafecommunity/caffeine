@@ -15,6 +15,18 @@ layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec2 v_texCoord;
 layout(location = 3) out vec3 v_tangent;
 layout(location = 4) out vec3 v_bitangent;
+layout(location = 5) out vec2 v_uvScale;
+
+// World length of the mesh's tangent / bitangent per object-space unit: how much the model
+// matrix stretches the U and V directions. Multiplying the UVs by it keeps the texture's
+// density when the object is scaled (a quad made twice as big tiles the texture twice).
+vec2 objectUvScale(mat3 model, vec3 normal, vec4 tangent) {
+    float tl = length(tangent.xyz);
+    if (tl < 1e-6) return vec2(1.0);
+    vec3 T = tangent.xyz / tl;
+    vec3 B = cross(normalize(normal), T) * tangent.w;
+    return vec2(length(model * T), length(model * B));
+}
 
 void main() {
     vec4 worldPos = ubo.uModel * vec4(aPosition, 1.0);
@@ -28,5 +40,6 @@ void main() {
     v_tangent = T;
     v_bitangent = B;
     v_texCoord = aTexCoord;
+    v_uvScale = objectUvScale(mat3(ubo.uModel), aNormal, aTangent);
     gl_Position = ubo.uMVP * vec4(aPosition, 1.0);
 }

@@ -321,6 +321,8 @@ bool MaterialPreviewRenderer::renderPlaced(RHI::CommandBuffer* cmd, const Assets
     if (bindPreviewMaterial && surface) {
         Assets::MaterialSurface published = *surface;
         published.valid = true;
+        // The preview shapes have fixed sizes: show the authored UVs, not a scaled copy.
+        published.uvObjectScale = 0;
         Assets::MaterialCache::instance().publish(m_previewKey, projectRoot, published);
     }
     Assets::MaterialSurface floor;

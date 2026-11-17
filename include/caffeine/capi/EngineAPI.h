@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 5
+#define CAFFEINE_CAPI_VERSION 8
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -298,6 +298,8 @@ typedef struct CaffeineMaterial {
     int displacement_mode;
     float displacement_scale; /**< metres */
     int mesh_subdivisions;    /**< levels, 1..9 */
+    /** 1 = UVs follow the object's scale (texel density is kept), 0 = authored 1:1 UVs. */
+    int uv_object_scale;
 } CaffeineMaterial;
 
 typedef struct CaffeineMaterialPresetInfo {
@@ -463,6 +465,75 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_entity_world_position(const Ca
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_entity_world_position(CaffeineSession* session,
                                                           CaffeineEntity entity,
                                                           CaffeineVec3 position);
+
+/** One authored Gerstner wave. */
+typedef struct CaffeineWaterWave {
+    float dir_x;
+    float dir_z;
+    float wavelength;
+    float amplitude;
+    float steepness;
+    float phase;
+} CaffeineWaterWave;
+
+#define CAFFEINE_WATER_MAX_WAVES 16
+
+/** A water surface (NaturalFluid component in water mode) with authored waves. POD. */
+typedef struct CaffeineWater {
+    int enabled;
+    float size_x;
+    float size_z;
+    float water_level;
+    float depth;
+    uint32_t resolution;
+    float time_scale;
+    float albedo[4];
+    float roughness;
+    float foam_threshold;
+    uint32_t seed;
+    uint32_t wave_count;
+    CaffeineWaterWave waves[CAFFEINE_WATER_MAX_WAVES];
+} CaffeineWater;
+
+/** Adds (or updates) a water surface on an entity. With wave_count 0 the wind spectrum is used. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_water(CaffeineSession* session,
+                                                            CaffeineEntity entity,
+                                                            const CaffeineWater* water);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_water(const CaffeineSession* session,
+                                                        CaffeineEntity entity,
+                                                        CaffeineWater* out);
+/** Surface height of the water at a rest position and time (for floating objects and previews). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_water_height(const CaffeineSession* session,
+                                                               CaffeineEntity entity, float x,
+                                                               float z, float* out_height);
+
+/** Terrain settings of an entity (POD). Heights are normalised 0..1 and scaled by max_height. */
+typedef struct CaffeineTerrain {
+    uint32_t resolution_x;
+    uint32_t resolution_z;
+    float size_x;
+    float size_z;
+    float max_height;
+    int cast_shadows;
+} CaffeineTerrain;
+
+/**
+ * Creates or updates a terrain on an entity from generated data. `heights` holds
+ * resolution_x * resolution_z floats in 0..1 (row-major, z rows); `splat_rgba` (optional, same
+ * grid) holds the four layer weights as bytes and is resampled to the splat map.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_terrain(CaffeineSession* session,
+                                                              CaffeineEntity entity,
+                                                              const CaffeineTerrain* terrain,
+                                                              const float* heights,
+                                                              const uint8_t* splat_rgba);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain(const CaffeineSession* session,
+                                                          CaffeineEntity entity,
+                                                          CaffeineTerrain* out);
+/** Terrain height in metres at (x, z) metres from the terrain's corner. The mesh is centred on its entity, so the corner is at the entity position minus half the size. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,
+                                                                 CaffeineEntity entity, float x,
+                                                                 float z, float* out_height);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 CAFFEINE_CAPI_API void caffeine_session_tick(CaffeineSession* session, float delta_time);
