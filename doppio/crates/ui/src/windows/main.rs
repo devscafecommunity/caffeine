@@ -8537,7 +8537,13 @@ impl App {
                     "{} · {}",
                     self.terraingen.name, self.terraingen.stats
                 )),
-                terrain_generator_panel::view(self.terraingen.view_state(), Message::TerrainGen),
+                {
+                    let (_, textures) = self.nature_assets();
+                    terrain_generator_panel::view(
+                        self.terraingen.view_state(textures),
+                        Message::TerrainGen,
+                    )
+                },
             ),
             PaneKind::TextureGenerator => (
                 id::PANE_TEXTURE_GENERATOR,

@@ -5681,6 +5681,16 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
     let status = harness.app().terraingen.status.clone().unwrap_or_default();
     assert!(status.starts_with("Placed Alpine Range"), "{status}");
     assert_eq!(harness.app().entities.len(), before + 1);
+    // The four layer pictures are real files in the project, written when the preset was applied.
+    let layers = harness.app().terraingen.graph.layer_paths();
+    assert_eq!(layers.len(), 4);
+    for path in &layers {
+        assert!(!path.is_empty() && path.ends_with(".png"), "{path}");
+        assert!(root.join("terrain/layers").is_dir());
+    }
+    for name in ["ground", "rock", "dirt", "mud"] {
+        assert!(root.join(format!("terrain/layers/{name}.png")).is_file());
+    }
     let id = harness.app().entities[harness.app().selected].id;
     let model = harness.app().terraingen.graph.build(257).unwrap();
     let engine = harness.app.engine.as_mut().expect("engine");
