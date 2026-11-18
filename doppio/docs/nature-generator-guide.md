@@ -1,13 +1,28 @@
 # Nature Generator: procedural rocks, trees and plants, built with nodes
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Build rocks, trees and low vegetation from a node graph, choose a quality level and place the result in the scene.</p>
+
 The **Nature** tab (next to Inspector and Material) builds rocks, trees and low vegetation from a **node
 graph**. The same graph serves a flat-shaded low-poly pine and a hi-fi mossy forest: pick a **Quality**,
-wire the nodes you want, give every part **your own material or texture**, and **Place in scene**. Terrain is
-a separate, later tool: nothing here scatters over a landscape.
+wire the nodes you want, give every part **your own material or texture**, and **Place in scene**. Terrain is a separate tool: nothing here scatters over a landscape automatically.
 
-![The Nature tab with the Oak graph](images/nature/ui/nature-pane.png)
+<figure class="doc-figure">
+  <img src="images/nature/ui/nature-pane.png" alt="The Nature tab with the Oak graph" loading="lazy">
+  <figcaption>The Nature tab with the Oak graph</figcaption>
+</figure>
 
-![Generated trees placed in the scene](images/nature/ui/nature-scene.png)
+
+<figure class="doc-figure">
+  <img src="images/nature/ui/nature-scene.png" alt="Generated trees placed in the scene" loading="lazy">
+  <figcaption>Generated trees placed in the scene</figcaption>
+</figure>
+
 
 ## 1. How a graph works
 
@@ -62,11 +77,23 @@ range**.
 
 Tested rule: Stylized < Balanced < Detailed in triangle count for rocks, trees and plants.
 
-![Rock presets](images/nature/nature-rocks.png)
+<figure class="doc-figure">
+  <img src="images/nature/nature-rocks.png" alt="Rock presets" loading="lazy">
+  <figcaption>Rock presets</figcaption>
+</figure>
 
-![Tree presets](images/nature/nature-trees.png)
 
-![Plant presets](images/nature/nature-plants.png)
+<figure class="doc-figure">
+  <img src="images/nature/nature-trees.png" alt="Tree presets" loading="lazy">
+  <figcaption>Tree presets</figcaption>
+</figure>
+
+
+<figure class="doc-figure">
+  <img src="images/nature/nature-plants.png" alt="Plant presets" loading="lazy">
+  <figcaption>Plant presets</figcaption>
+</figure>
+
 
 Presets are graphs too (23 of them; open one and every node is there to edit). The hi-fi ones show what
 the graph is for: **Mossy Rock** (moss cards scattered over the rock), **Ancient Oak** (roots, thick
@@ -104,7 +131,11 @@ The **Rock Surface** node (category *Surface*, between the last mesh node and **
 preset with a **generated PBR texture set** (albedo, normal + height, occlusion/roughness/metal), so a
 rock gets the surface of a scan instead of one repeating texture.
 
-![The Photoreal Rock preset, placed in the engine](images/nature/nature-photoreal-rock.png)
+<figure class="doc-figure">
+  <img src="images/nature/nature-photoreal-rock.png" alt="The Photoreal Rock preset, placed in the engine" loading="lazy">
+  <figcaption>The Photoreal Rock preset, placed in the engine</figcaption>
+</figure>
+
 
 How it works (`uikit/nature/bake.rs`, `surface.rs`):
 
@@ -119,7 +150,11 @@ How it works (`uikit/nature/bake.rs`, `surface.rs`):
    roughness are packed into the ORM map. Placement writes `nature/materials/rock_*_{albedo,normal,orm}.png`
    plus a `.mat`, reused until a parameter changes.
 
-![Albedo, normal, ORM, ambient occlusion and curvature of the Photoreal Rock](images/nature/nature-surface-maps.png)
+<figure class="doc-figure">
+  <img src="images/nature/nature-surface-maps.png" alt="Albedo, normal, ORM, ambient occlusion and curvature of the Photoreal Rock" loading="lazy">
+  <figcaption>Albedo, normal, ORM, ambient occlusion and curvature of the Photoreal Rock</figcaption>
+</figure>
+
 
 Parameters: moss, lichen, cracks, edge wear, dust, pattern scale, warmth (grey to sandstone), texture size
 (256-2048; Stylized caps it at 512) and seed. Everything is deterministic and tested (coverage, curvature
@@ -166,7 +201,11 @@ engine-backed scene of generated models (`reset` accepts a `preset`).
 
 ### Leaves: what is done, what is still missing
 
-![An oak with the broadleaf atlas: different shapes, tints, folds and droop](images/nature/nature-oak-atlas.png)
+<figure class="doc-figure">
+  <img src="images/nature/nature-oak-atlas.png" alt="An oak with the broadleaf atlas: different shapes, tints, folds and droop" loading="lazy">
+  <figcaption>An oak with the broadleaf atlas: different shapes, tints, folds and droop</figcaption>
+</figure>
+
 
 **Done (the first refinement of vegetation):**
 
@@ -226,3 +265,12 @@ them. Nothing stays hidden in the menu: open the `.mat` in the Material tab, rep
 point the node at another file. A material is only written once, so your edits to it are kept.
 Your Material and Your Texture carry *Shapes across / down*, the atlas layout of the picture, which
 the Leaves node reads to know how many leaf shapes it holds.
+
+### Opening old `.nature` files
+
+Files saved before materials became nodes (`NATUREGRAPH1`) are migrated when they load. Each Part gets the
+material node its old choice meant (library, texture, solid colour with its old colour, your `.mat` or your
+PNG with its old path). The Leaves node is wired to its leaf part's texture so it reads the atlas from it,
+and its old size in metres becomes a share of the tree height (measured on that tree), with fold and droop
+kept. Saving writes the new format (`NATUREGRAPH2`), which older builds cannot open. A leaf-shape choice
+of "atlas" on a single-picture texture is not carried over: the layout now comes from the texture.

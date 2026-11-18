@@ -1,13 +1,29 @@
 # Water Generator: water bodies built with nodes
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Assemble lakes, rivers, seas and storms from a node graph and place them as an animated engine water surface.</p>
+
 The **Water** tab (View menu, next to Nature) builds lakes, rivers, seas and storms from a **node graph**
 and places them in the scene as an animated engine water surface. It replaces the old fixed wind-wave
 block: waves are now *data* you assemble, and the same waves drive the editor preview, the engine mesh and
 gameplay queries (`water_height`, for floating objects).
 
-![The Water tab with the Storm graph](images/water/ui/water-storm.png)
+<figure class="doc-figure">
+  <img src="images/water/ui/water-storm.png" alt="The Water tab with the Storm graph" loading="lazy">
+  <figcaption>The Water tab with the Storm graph</figcaption>
+</figure>
 
-![The eight presets, rendered by the engine](images/water/water-presets.png)
+
+<figure class="doc-figure">
+  <img src="images/water/water-presets.png" alt="The eight presets, rendered by the engine" loading="lazy">
+  <figcaption>The eight presets, rendered by the engine</figcaption>
+</figure>
+
 
 ## 1. How a graph works
 
@@ -161,3 +177,9 @@ project and turns the node into **Your Water Material (.mat)** pointing at it. A
 never overwritten, so repainting it in the Material tab, or pointing the node at your own `.mat`,
 sticks. The terrain's splat layers are still shaded by the engine; making them project materials
 needs an engine change and is on the list.
+
+### Opening old `.water` files
+
+A graph saved before the material was required has no Water Material node. It gets the default one wired
+into the Output when it loads, so it builds again; apply or place to turn it into the project's `.mat`.
+Graphs saved with *Your Water Material* keep their `.mat` path (stored with the graph, spaces escaped).

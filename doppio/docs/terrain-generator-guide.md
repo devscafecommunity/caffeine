@@ -1,5 +1,13 @@
 # Terrain Generator: heightfields built with nodes
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Build heightfields from a node graph and place them as engine terrain with ground, rock, dirt and mud splat layers.</p>
+
 The **Terrain** tab (View menu, next to Nature and Water) builds landscapes from a **node graph** and places
 them in the scene as an engine terrain with ground, rock, dirt and mud splat layers. It is the last of the
 generators (material, texture, nature, water, terrain) and borrows its shape from node-based terrain tools:
@@ -10,11 +18,23 @@ the map of what a complete tool needs. **Nothing was copied**; the nodes here ar
 well-known techniques (gradient noise, ridged multifractals, Voronoi, terracing, thermal and particle-based
 hydraulic erosion), sized to what the engine can use today.
 
-![The Terrain tab with the Volcanic Island graph](images/terrain/ui/terrain-island.png)
+<figure class="doc-figure">
+  <img src="images/terrain/ui/terrain-island.png" alt="The Terrain tab with the Volcanic Island graph" loading="lazy">
+  <figcaption>The Terrain tab with the Volcanic Island graph</figcaption>
+</figure>
 
-![The six presets, rendered by the tab's software preview](images/terrain/terrain-presets.png)
 
-![Alpine Range placed in the engine](images/terrain/terrain-engine-alpine.png)
+<figure class="doc-figure">
+  <img src="images/terrain/terrain-presets.png" alt="The six presets, rendered by the tab's software preview" loading="lazy">
+  <figcaption>The six presets, rendered by the tab's software preview</figcaption>
+</figure>
+
+
+<figure class="doc-figure">
+  <img src="images/terrain/terrain-engine-alpine.png" alt="Alpine Range placed in the engine" loading="lazy">
+  <figcaption>Alpine Range placed in the engine</figcaption>
+</figure>
+
 
 ## 1. How a graph works
 
@@ -114,3 +134,18 @@ and rendering are covered by engine-backed tests.
 DOPPIO_TERRAIN_DUMP=/tmp/terrain cargo test -p doppio-ui --lib terrain_presets_dump   # preview of every preset
 DOPPIO_TERRAIN_DUMP=/tmp/terrain cargo test -p doppio-ui --lib placing_a_terrain      # engine render of Alpine Range
 ```
+
+## The layers are project materials
+
+The Output node holds four material slots (ground, rock, dirt, mud). Applying a preset, or placing,
+fills empty slots by baking a material-library picture into `terrain/layers/<layer>.png` and writing a
+`terrain/layers/<layer>.mat` whose albedo map is that picture. The slot holds the `.mat`; placing
+paints the engine's `Splat Layer Paths 1..4` with each material's albedo map. A slot that already has a
+path, or a file that already exists, is never touched: repaint the PNG, edit the `.mat`, or pick another
+material from the node's list. A slot holding a plain picture (older graphs) still works.
+
+Limit: the engine's splat shader blends the four **albedo** pictures only. Normal, roughness and the
+other `.mat` channels are stored in the file but not used for terrain layers yet; that needs a shader
+change.
+
+Old `.terrain-graph` files load as before; their empty slots are filled the next time you apply or place.

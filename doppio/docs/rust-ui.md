@@ -1,5 +1,20 @@
 # Rust UI frontend (Iced)
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last verified: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Source: <a href="https://github.com/devscafecommunity/caffeine/tree/main/doppio"><code>doppio/</code></a></span>
+</div>
+
+<p class="doc-lede">Architecture of the active Rust/Iced editor: workspace, panels,
+components, the C ABI boundary and the checks that keep it coherent.</p>
+
+<figure class="doc-figure">
+  <img src="images/editor/workspace-scene.png" alt="Doppio Rust workspace with Hierarchy, Viewport, Inspector and Assets and Console panes" loading="lazy">
+  <figcaption>The live Rust editor. Every pane is an Iced view over <code>App</code> state; engine rendering arrives through <code>libcaffeine-capi</code>.</figcaption>
+</figure>
+
 Status: **the active editor**. `caffeine-core` is built without ImGui/ImNodes;
 the ImGui draw-list adapters live in `caffeine-editor-support`. The Rust
 workspace under `doppio/` is the live Doppio frontend and talks to the engine
@@ -28,8 +43,10 @@ doppio/
                             viewport_math, asset_preview,
                             breadcrumb, code_editor
     src/uikit/theme.rs      colours, borders and spacing for the whole workspace
-    src/uikit/panels/       hierarchy, sceneviewport, assetmanager, inspector, console,
-                            material, material_generator, texture_set, project_manager,
+    src/uikit/panels/       hierarchy, sceneviewport, assetmanager, asset_wizard,
+                            inspector, console, material, material_generator,
+                            texture_generator, texture_set, nature_generator,
+                            water_generator, terrain_generator, project_manager,
                             script, dryad_nodes
     src/uikit/project.rs    project.caffeine manifest, recursive scan, recent list
     src/uikit/script.rs     open script documents, editor buffers and save/revert
@@ -44,9 +61,10 @@ doppio/
   `checkbox`, `pick_list`, `slider` or `button` calls in `uikit/panels/`.
 - The UI crates never touch FFI directly: only `doppio-engine` loads the
   shared library.
-- a five-group `PaneGrid` layout: Hierarchy | Viewport (+ Generator, Texture Set,
-  Script, Dryad Nodes) | Inspector (+ Material) on top and a Project-style bottom
-  dock with **Assets** (folder tree + file grid) next to the Console;
+- a four-region `PaneGrid` layout: Hierarchy on the left; Viewport (+ Material,
+  Texture and other generators, Texture Set, Script, Dryad Nodes) in the centre;
+  Inspector (+ Material, Nature, Water, Terrain) on the right; and a Project-style
+  bottom dock with **Assets** (folder tree + file grid) next to the Console;
 - **docking**: dragging a tab away from its header shows guides on every pane
   (`uikit/components/dock_overlay.rs`): the centre adds the tab to that pane's
   group, the edge guides split the pane and dock on that side. Panes also have
@@ -77,7 +95,7 @@ cd doppio
 cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 ```
 
-Materials, procedural library and real depth: [`materials-guide.md`](materials-guide.md).
+Materials, procedural library and real depth: [`materials-guide.md`](materials-guide.md). The current widget catalogue and screenshots are published as the [UI reference](https://github.com/devscafecommunity/caffeine/blob/main/caffeine-website/content/en/docs/editor/ui-reference.md).
 
 Drive and inspect the UI without a window (any agent, CI or human; plain JSON
 over stdin/stdout, see [`headless-testing.md`](headless-testing.md)):

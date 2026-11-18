@@ -1,5 +1,13 @@
 # Gizmos and scene markers
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Move, rotate and scale handles for the selected entity, plus icons and frusta for lights, cameras, colliders and empties.</p>
+
 The viewport draws two overlays over the engine's render. Both are 2D canvases that rebuild the
 orbit camera's projection (`uikit/components/viewport_math.rs`), so they need no engine calls: they
 work from plain transform values and from component data the editor already reads.
@@ -12,7 +20,11 @@ work from plain transform values and from component data the editor already read
 Markers sit **under** the gizmo: a click goes to a gizmo handle first, then to a marker icon, then
 to the scene (orbit and mesh picking).
 
-![Move gizmo, light markers and a camera frustum](images/gizmos/gizmo-move.png)
+<figure class="doc-figure">
+  <img src="images/gizmos/gizmo-move.png" alt="Move gizmo, light markers and a camera frustum" loading="lazy">
+  <figcaption>Move gizmo, light markers and a camera frustum</figcaption>
+</figure>
+
 
 ## 1. Transform gizmo
 
@@ -31,7 +43,11 @@ dragging turns yellow. Every drag is one undo step per handle.
 
 ### Rotate (`2`)
 
-![Rotate gizmo](images/gizmos/gizmo-rotate.png)
+<figure class="doc-figure">
+  <img src="images/gizmos/gizmo-rotate.png" alt="Rotate gizmo" loading="lazy">
+  <figcaption>Rotate gizmo</figcaption>
+</figure>
+
 
 * Three rings on a translucent sphere. The half of each ring that is **in front** of the object is
   bright and thick, the half behind it is faint, which makes the orientation of every ring obvious.
@@ -42,11 +58,19 @@ dragging turns yellow. Every drag is one undo step per handle.
   counter-clockwise when the axis points at the viewer, and screen angles run clockwise). It used to
   be a fixed sign, so the gizmo felt inverted from half of the viewing angles.
 
-![Rotate gizmo on the camera](images/gizmos/gizmo-rotate-camera.png)
+<figure class="doc-figure">
+  <img src="images/gizmos/gizmo-rotate-camera.png" alt="Rotate gizmo on the camera" loading="lazy">
+  <figcaption>Rotate gizmo on the camera</figcaption>
+</figure>
+
 
 ### Scale (`3`)
 
-![Scale gizmo](images/gizmos/gizmo-scale.png)
+<figure class="doc-figure">
+  <img src="images/gizmos/gizmo-scale.png" alt="Scale gizmo" loading="lazy">
+  <figcaption>Scale gizmo</figcaption>
+</figure>
+
 
 * The axis handles follow the object's **local** axes, with shaded cube ends. A rotated object
   therefore scales along what you see; before, the handles were world-aligned while the scale is
@@ -85,7 +109,11 @@ you can **click to select** the entity (the mesh raycast cannot hit them). Hover
 | **Collider 3D** | (selected only) the box, sphere or capsule with its offset and the entity's scale; triggers are orange and labelled |
 | **Empty entity** | a three-axis locator (red X, green Y, blue Z) |
 
-![Directional light](images/gizmos/marker-directional.png)
+<figure class="doc-figure">
+  <img src="images/gizmos/marker-directional.png" alt="Directional light" loading="lazy">
+  <figcaption>Directional light</figcaption>
+</figure>
+
 
 | Point light (selected) | Spot light (selected) |
 |---|---|

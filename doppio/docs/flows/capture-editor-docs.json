@@ -1,0 +1,55 @@
+{
+  "name": "Capture the editor pages used by caffeine-website",
+  "description": "Run through scripts/capture-editor-docs.sh. Produces workspace, pane, menu, project-manager and generator screenshots with stable names.",
+  "fixture": "scene3d",
+  "size": [1600, 900],
+  "steps": [
+    { "action": "wait", "ms": 2200, "real_time": true, "label": "let the first engine frame arrive" },
+    { "action": "screenshot", "name": "workspace-scene" },
+    { "action": "screenshot", "name": "pane-hierarchy", "target": "id:editor.pane.hierarchy", "padding": 4 },
+    { "action": "screenshot", "name": "pane-inspector", "target": "id:editor.pane.inspector", "padding": 4 },
+    { "action": "screenshot", "name": "pane-assets", "target": "id:editor.pane.assets", "padding": 4 },
+    { "action": "click", "target": "id:editor.pane.tab.console" },
+    { "action": "wait", "ms": 120 },
+    { "action": "screenshot", "name": "pane-console", "target": "id:editor.pane.console", "padding": 4 },
+    { "action": "click", "target": "id:editor.pane.tab.assets" },
+    { "action": "click", "target": "id:editor.menu.scene", "label": "open the Scene menu" },
+    { "action": "wait", "ms": 120 },
+    { "action": "screenshot", "name": "menu-scene" },
+    { "action": "key", "key": "Escape" },
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "wait", "ms": 120 },
+    { "action": "screenshot", "name": "menu-view" },
+    { "action": "key", "key": "Escape" },
+    { "action": "click", "target": "id:editor.menu.project" },
+    { "action": "click", "target": "id:editor.menu.project.manager" },
+    { "action": "wait", "ms": 300 },
+    { "action": "screenshot", "name": "project-manager", "target": "id:project.manager", "padding": 8 },
+    { "action": "click", "target": "id:project.manager.close" },
+
+    { "action": "reset", "fixture": "material", "preset": "Red Brick", "size": [1600, 900] },
+    { "action": "wait", "ms": 6000, "real_time": true, "label": "let the live preview bake" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "click", "target": "id:editor.layout.default", "label": "restore the default workspace" },
+    { "action": "click", "target": "id:editor.pane.tab.generator" },
+    { "action": "wait", "ms": 300 },
+    { "action": "screenshot", "name": "material-generator" },
+    { "action": "screenshot", "name": "generator-canvas", "target": "id:editor.pane.generator", "padding": 4 },
+
+    { "action": "reset", "fixture": "texture", "preset": "Torch Flame", "size": [1600, 900] },
+    { "action": "wait", "ms": 2500, "real_time": true },
+    { "action": "screenshot", "name": "texture-generator" },
+
+    { "action": "reset", "fixture": "nature", "preset": "Pine", "size": [1600, 900] },
+    { "action": "wait", "ms": 3000, "real_time": true },
+    { "action": "screenshot", "name": "nature-generator" },
+
+    { "action": "reset", "fixture": "water", "preset": "Storm", "size": [1600, 900] },
+    { "action": "wait", "ms": 2000, "real_time": true },
+    { "action": "screenshot", "name": "water-generator" },
+
+    { "action": "reset", "fixture": "terrain", "preset": "Badlands", "size": [1600, 900] },
+    { "action": "wait", "ms": 3000, "real_time": true },
+    { "action": "screenshot", "name": "terrain-generator" }
+  ]
+}

@@ -1,5 +1,13 @@
 # Materials in Doppio: procedural library, real depth and baking
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">A practical guide to authoring tileable PBR materials with the procedural node library, depth and map baking.</p>
+
 > Looking for sprites, leaves, flames or packed VFX masks instead of a PBR material? That is the
 > separate **Texture Generator**: see [texture-generator-guide.md](texture-generator-guide.md).
 
@@ -38,14 +46,26 @@ graph (one undoable step; your resolution is kept). Presets are normal graphs,
 so you can keep editing them. Every preset has real height variation and tiles
 seamlessly.
 
-![All presets, base colour](images/material/gallery-albedo.png)
+<figure class="doc-figure">
+  <img src="images/material/gallery-albedo.png" alt="All presets, base colour" loading="lazy">
+  <figcaption>All presets, base colour</figcaption>
+</figure>
+
 
 The same presets as height maps (white = surface, black = deepest) and as
 normal maps:
 
-![Height maps](images/material/gallery-height.png)
+<figure class="doc-figure">
+  <img src="images/material/gallery-height.png" alt="Height maps" loading="lazy">
+  <figcaption>Height maps</figcaption>
+</figure>
 
-![Normal maps](images/material/gallery-normal.png)
+
+<figure class="doc-figure">
+  <img src="images/material/gallery-normal.png" alt="Normal maps" loading="lazy">
+  <figcaption>Normal maps</figcaption>
+</figure>
+
 
 ### Realistic library: rock, water, foliage, ground and man-made PBR
 
@@ -67,11 +87,19 @@ presets. All of them tile, are seeded and live in `uikit/procedural/realistic.rs
 | Cavity Grime | dirt gathering in the crevices of a height input | Mask |
 | Ice, Lava, Asphalt, Carbon Fibre, Paint Chips, Water Droplets | single-purpose surfaces | Lava also outputs **Emissive** |
 
-![Realistic presets, base colour](images/material/realistic-albedo.png)
+<figure class="doc-figure">
+  <img src="images/material/realistic-albedo.png" alt="Realistic presets, base colour" loading="lazy">
+  <figcaption>Realistic presets, base colour</figcaption>
+</figure>
+
 
 Rendered by the engine on a floor with parallax depth, a real sun and shadows:
 
-![Realistic presets rendered](images/material/realistic-renders.png)
+<figure class="doc-figure">
+  <img src="images/material/realistic-renders.png" alt="Realistic presets rendered" loading="lazy">
+  <figcaption>Realistic presets rendered</figcaption>
+</figure>
+
 
 **Accent layers.** A preset can carry a third layer (moss, foam, rust, lichen, wetness...).
 The accent's value is the mask: it blends its colour over the surface, drives the roughness
@@ -93,7 +121,11 @@ A repeated tile or a clean noise looks mechanical. The **Variation** class adds 
 randomness so surfaces look lived-in. Every op is seeded (a new seed is a new variation of the same
 material), deterministic, and keeps results seamless where its input is (`uikit/procedural/variation.rs`).
 
-![Variation nodes applied to the same brick input](images/material/variation-ops.png)
+<figure class="doc-figure">
+  <img src="images/material/variation-ops.png" alt="Variation nodes applied to the same brick input" loading="lazy">
+  <figcaption>Variation nodes applied to the same brick input</figcaption>
+</figure>
+
 
 | Node | What it does | Main controls |
 |---|---|---|
@@ -126,7 +158,11 @@ tone from the pattern's cell ids, plus Simplex drift across the wall), *WFC Bric
 *Diamond-Square Badlands* and *Diamond-Square Moss Rock*. They are normal graphs, so the Variation nodes
 can be rebalanced or replaced in the node editor.
 
-![Varied presets next to the plain Red Brick](images/material/variation-presets.png)
+<figure class="doc-figure">
+  <img src="images/material/variation-presets.png" alt="Varied presets next to the plain Red Brick" loading="lazy">
+  <figcaption>Varied presets next to the plain Red Brick</figcaption>
+</figure>
+
 
 ## 2. The Output node
 
@@ -152,7 +188,11 @@ every baked map, not only the colour:
 | **Roughness** | **AO** |
 | ![roughness channel](images/material/ui/channel-roughness.png) | ![ao channel](images/material/ui/channel-ao.png) |
 
-![Generator with the Red Brick preset](images/material/ui/generator-red-brick.png)
+<figure class="doc-figure">
+  <img src="images/material/ui/generator-red-brick.png" alt="Generator with the Red Brick preset" loading="lazy">
+  <figcaption>Generator with the Red Brick preset</figcaption>
+</figure>
+
 
 ## 3. Real depth: parallax occlusion mapping
 
@@ -165,14 +205,46 @@ cobbles overlap their joints.
 
 Left: depth off. Right: depth on (same maps, same lights).
 
-![red brick depth](images/material/depth-red_brick.png)
-![cobblestone depth](images/material/depth-cobblestone.png)
-![oak planks depth](images/material/depth-oak_planks.png)
-![diamond plate depth](images/material/depth-diamond_plate.png)
-![dragon scales depth](images/material/depth-dragon_scales.png)
-![hex armour depth](images/material/depth-hex_armour.png)
-![rusted iron depth](images/material/depth-rusted_iron.png)
-![bark depth](images/material/depth-bark.png)
+<figure class="doc-figure">
+  <img src="images/material/depth-red_brick.png" alt="red brick depth" loading="lazy">
+  <figcaption>red brick depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-cobblestone.png" alt="cobblestone depth" loading="lazy">
+  <figcaption>cobblestone depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-oak_planks.png" alt="oak planks depth" loading="lazy">
+  <figcaption>oak planks depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-diamond_plate.png" alt="diamond plate depth" loading="lazy">
+  <figcaption>diamond plate depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-dragon_scales.png" alt="dragon scales depth" loading="lazy">
+  <figcaption>dragon scales depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-hex_armour.png" alt="hex armour depth" loading="lazy">
+  <figcaption>hex armour depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-rusted_iron.png" alt="rusted iron depth" loading="lazy">
+  <figcaption>rusted iron depth</figcaption>
+</figure>
+
+<figure class="doc-figure">
+  <img src="images/material/depth-bark.png" alt="bark depth" loading="lazy">
+  <figcaption>bark depth</figcaption>
+</figure>
+
 
 ### How the height is stored
 
@@ -191,7 +263,11 @@ normal map** (`1` = surface, `0` = deepest). No extra texture or sampler.
 
 ### Controls
 
-![Material panel: parallax depth](images/material/ui/material-panel.png)
+<figure class="doc-figure">
+  <img src="images/material/ui/material-panel.png" alt="Material panel: parallax depth" loading="lazy">
+  <figcaption>Material panel: parallax depth</figcaption>
+</figure>
+
 
 | Setting (`.mat`) | Meaning |
 |---|---|
@@ -252,7 +328,11 @@ A mesh's UVs are authored 1:1, so a quad scaled to twice its size used to stretc
 twice the size too. Materials now have **Scale UVs with the object** (`.mat` key
 `uv_object_scale`, **on by default**, in the Material panel's UV card):
 
-![UVs 1:1 versus UVs that follow the scale, plane scaled 4x](images/material/uv-object-scale.png)
+<figure class="doc-figure">
+  <img src="images/material/uv-object-scale.png" alt="UVs 1:1 versus UVs that follow the scale, plane scaled 4x" loading="lazy">
+  <figcaption>UVs 1:1 versus UVs that follow the scale, plane scaled 4x</figcaption>
+</figure>
+
 
 How it works: the vertex shader measures how much the model matrix stretches the mesh's tangent
 (U) and bitangent (V) directions and the fragment shader multiplies the tiled UV by that factor.
