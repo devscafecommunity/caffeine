@@ -272,6 +272,8 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
       own evaluated output, refreshed with the same debounced worker pass.
 - [ ] Preset parameters (seed / scale / wear) are not yet exposed in the UI.
 
+World-scale plan (seed, scatter, streaming): [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
+
 ## Definition of done for "the base is complete"
 
 - Generator graph edit undo/redo and wire editing never lose work.

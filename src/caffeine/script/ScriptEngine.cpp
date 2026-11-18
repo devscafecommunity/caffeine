@@ -1,4 +1,5 @@
 #include "script/ScriptEngine.hpp"
+#include "script/ScriptInputNames.hpp"
 #include "script/NativeModuleHost.hpp"
 #include "events/Events.hpp"
 #include "script/ScriptTypes.hpp"
@@ -496,72 +497,152 @@ void registerDebugBindings(sol::state& lua) {
     };
 }
 
+// Vectors are plain tables {x, y[, z]}. A result carries `z` only when an operand does,
+// so the original 2D scripts keep getting {x, y}.
+struct ScriptVec {
+    f32 x = 0.0f, y = 0.0f, z = 0.0f;
+    bool has3 = false;
+};
+
+ScriptVec readVec(const sol::table& t) {
+    ScriptVec v;
+    v.x = t["x"].get_or(0.0f);
+    v.y = t["y"].get_or(0.0f);
+    sol::object z = t["z"];
+    v.has3 = z.valid() && z.get_type() == sol::type::number;
+    v.z = v.has3 ? z.as<f32>() : 0.0f;
+    return v;
+}
+
+sol::table writeVec(sol::state_view lua, f32 x, f32 y, f32 z, bool has3) {
+    sol::table t = lua.create_table();
+    t["x"] = x;
+    t["y"] = y;
+    if (has3) t["z"] = z;
+    return t;
+}
+
 void registerMathBindings(sol::state& lua) {
     sol::table mt = lua["caffeine"]["math"];
 
-    mt["vec2"] = [&lua](f32 x, f32 y) -> sol::table {
-        sol::table t = lua.create_table();
-        t["x"] = x;
-        t["y"] = y;
-        return t;
-    };
+    mt["pi"] = 3.14159265358979323846;
+    mt["epsilon"] = 1.0e-5;
 
-    mt["add"] = [&lua](sol::table a, sol::table b) -> sol::table {
-        sol::table t = lua.create_table();
-        t["x"] = a["x"].get_or(0.0f) + b["x"].get_or(0.0f);
-        t["y"] = a["y"].get_or(0.0f) + b["y"].get_or(0.0f);
-        return t;
-    };
+    // --- Constructors ---
+    mt["vec2"] = [&lua](f32 x, f32 y) { return writeVec(lua, x, y, 0.0f, false); };
+    mt["vec3"] = [&lua](f32 x, f32 y, f32 z) { return writeVec(lua, x, y, z, true); };
 
-    mt["sub"] = [&lua](sol::table a, sol::table b) -> sol::table {
-        sol::table t = lua.create_table();
-        t["x"] = a["x"].get_or(0.0f) - b["x"].get_or(0.0f);
-        t["y"] = a["y"].get_or(0.0f) - b["y"].get_or(0.0f);
-        return t;
+    // --- Vector algebra (2D and 3D) ---
+    mt["add"] = [&lua](sol::table a, sol::table b) {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return writeVec(lua, p.x + q.x, p.y + q.y, p.z + q.z, p.has3 || q.has3);
     };
-
-    mt["length"] = [](sol::table v) -> f32 {
-        f32 x = v["x"].get_or(0.0f);
-        f32 y = v["y"].get_or(0.0f);
-        return std::sqrt(x * x + y * y);
+    mt["sub"] = [&lua](sol::table a, sol::table b) {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return writeVec(lua, p.x - q.x, p.y - q.y, p.z - q.z, p.has3 || q.has3);
     };
-
-    mt["normalize"] = [&lua](sol::table v) -> sol::table {
-        f32 x = v["x"].get_or(0.0f);
-        f32 y = v["y"].get_or(0.0f);
-        f32 len = std::sqrt(x * x + y * y);
-        sol::table t = lua.create_table();
-        if (len > 0.0001f) {
-            t["x"] = x / len;
-            t["y"] = y / len;
-        } else {
-            t["x"] = 0.0f;
-            t["y"] = 0.0f;
-        }
-        return t;
+    mt["mul"] = [&lua](sol::table a, sol::table b) {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return writeVec(lua, p.x * q.x, p.y * q.y, p.z * q.z, p.has3 || q.has3);
     };
-
+    mt["scale"] = [&lua](sol::table v, f32 s) {
+        const ScriptVec p = readVec(v);
+        return writeVec(lua, p.x * s, p.y * s, p.z * s, p.has3);
+    };
     mt["dot"] = [](sol::table a, sol::table b) -> f32 {
-        return a["x"].get_or(0.0f) * b["x"].get_or(0.0f)
-             + a["y"].get_or(0.0f) * b["y"].get_or(0.0f);
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return p.x * q.x + p.y * q.y + p.z * q.z;
+    };
+    mt["cross"] = [&lua](sol::table a, sol::table b) {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return writeVec(lua, p.y * q.z - p.z * q.y, p.z * q.x - p.x * q.z, p.x * q.y - p.y * q.x, true);
+    };
+    mt["length"] = [](sol::table v) -> f32 {
+        const ScriptVec p = readVec(v);
+        return std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+    };
+    mt["lengthSquared"] = [](sol::table v) -> f32 {
+        const ScriptVec p = readVec(v);
+        return p.x * p.x + p.y * p.y + p.z * p.z;
+    };
+    mt["distance"] = [](sol::table a, sol::table b) -> f32 {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        const f32 dx = p.x - q.x, dy = p.y - q.y, dz = p.z - q.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    mt["normalize"] = [&lua](sol::table v) {
+        const ScriptVec p = readVec(v);
+        const f32 len = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+        if (len <= 0.0001f) return writeVec(lua, 0.0f, 0.0f, 0.0f, p.has3);
+        return writeVec(lua, p.x / len, p.y / len, p.z / len, p.has3);
+    };
+    mt["lerpVec"] = [&lua](sol::table a, sol::table b, f32 t) {
+        const ScriptVec p = readVec(a), q = readVec(b);
+        return writeVec(lua, p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t, p.z + (q.z - p.z) * t,
+                        p.has3 || q.has3);
     };
 
-    mt["mul"] = [&lua](sol::table a, sol::table b) -> sol::table {
-        sol::table t = lua.create_table();
-        t["x"] = a["x"].get_or(0.0f) * b["x"].get_or(0.0f);
-        t["y"] = a["y"].get_or(0.0f) * b["y"].get_or(0.0f);
-        return t;
+    // --- Scalar helpers ---
+    mt["clamp"] = [](f32 v, f32 lo, f32 hi) -> f32 { return lo > hi ? std::clamp(v, hi, lo) : std::clamp(v, lo, hi); };
+    mt["clamp01"] = [](f32 v) -> f32 { return std::clamp(v, 0.0f, 1.0f); };
+    mt["lerp"] = [](f32 a, f32 b, f32 t) -> f32 { return a + (b - a) * t; };
+    mt["inverseLerp"] = [](f32 a, f32 b, f32 v) -> f32 {
+        return std::abs(b - a) < 1.0e-9f ? 0.0f : (v - a) / (b - a);
     };
-
-    mt["scale"] = [&lua](sol::table v, f32 s) -> sol::table {
-        sol::table t = lua.create_table();
-        t["x"] = v["x"].get_or(0.0f) * s;
-        t["y"] = v["y"].get_or(0.0f) * s;
-        return t;
+    mt["remap"] = [](f32 v, f32 inLo, f32 inHi, f32 outLo, f32 outHi) -> f32 {
+        const f32 t = std::abs(inHi - inLo) < 1.0e-9f ? 0.0f : (v - inLo) / (inHi - inLo);
+        return outLo + (outHi - outLo) * t;
     };
+    mt["smoothstep"] = [](f32 e0, f32 e1, f32 v) -> f32 {
+        if (std::abs(e1 - e0) < 1.0e-9f) return v < e0 ? 0.0f : 1.0f;
+        const f32 t = std::clamp((v - e0) / (e1 - e0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    mt["approach"] = [](f32 cur, f32 target, f32 step) -> f32 {
+        step = std::abs(step);
+        if (cur < target) return std::min(cur + step, target);
+        return std::max(cur - step, target);
+    };
+    mt["sign"] = [](f32 v) -> f32 { return v > 0.0f ? 1.0f : (v < 0.0f ? -1.0f : 0.0f); };
+    mt["radians"] = [](f32 deg) -> f32 { return deg * 3.14159265358979f / 180.0f; };
+    mt["degrees"] = [](f32 rad) -> f32 { return rad * 180.0f / 3.14159265358979f; };
 }
 
+
 } // anonymous namespace
+
+bool lookupScriptKey(const std::string& name, Input::Key& out) {
+    static const HashMap<std::string, Input::Key> map = makeKeyMap();
+    const auto* v = map.get(name);
+    if (!v) return false;
+    out = *v;
+    return true;
+}
+
+bool lookupScriptAxis(const std::string& name, Input::Axis& out) {
+    static const HashMap<std::string, Input::Axis> map = makeAxisMap();
+    const auto* v = map.get(name);
+    if (!v) return false;
+    out = *v;
+    return true;
+}
+
+bool lookupScriptAction(const std::string& name, Input::Action& out) {
+    static const HashMap<std::string, Input::Action> map = makeActionMap();
+    const auto* v = map.get(name);
+    if (!v) return false;
+    out = *v;
+    return true;
+}
+
+bool lookupScriptMouseButton(unsigned index, Input::MouseButton& out) {
+    switch (index) {
+        case 1: out = Input::MouseButton::Left; return true;
+        case 2: out = Input::MouseButton::Middle; return true;
+        case 3: out = Input::MouseButton::Right; return true;
+        default: return false;
+    }
+}
 
 // ============================================================================
 // ScriptEngine implementation
@@ -747,6 +828,8 @@ void ScriptEngine::shutdown() {
 void ScriptEngine::setWorld(ECS::World* world) {
     m_impl->m_world = world;
 }
+
+Input::InputManager* ScriptEngine::input() const { return m_impl->m_input; }
 
 void ScriptEngine::setInput(Input::InputManager* input) {
     m_impl->m_input = input;

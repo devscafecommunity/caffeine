@@ -467,6 +467,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         target_sources(caffeine-core PRIVATE
             src/caffeine/script/DryadHost.cpp
             src/caffeine/script/DryadComponentBindings.cpp
+            src/caffeine/script/DryadRuntimeBindings.cpp
             src/caffeine/script/nodes/NodeGraph.cpp
             src/caffeine/script/nodes/NodeCatalog.cpp
             src/caffeine/script/nodes/NodeEmitter.cpp

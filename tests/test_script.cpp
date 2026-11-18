@@ -338,6 +338,37 @@ TEST_CASE("Math vec2 length and normalize work", "[script]") {
 }
 
 // ============================================================================
+// 10b. Math binding — 3D vectors and scalar helpers
+// ============================================================================
+
+TEST_CASE("Math supports 3D vectors and scalar helpers", "[script][math]") {
+    ScriptTestFixture fix;
+
+    const char* code = R"(
+        function onCreate(eid)
+            local m = caffeine.math
+            local c = m.cross(m.vec3(1, 0, 0), m.vec3(0, 1, 0))            -- (0, 0, 1)
+            local d = m.distance(m.vec3(0, 0, 0), m.vec3(2, 3, 6))         -- 7
+            local r = m.remap(5, 0, 10, 100, 200)                          -- 150
+            local a = m.approach(0, 10, 3)                                 -- 3
+            local flat = m.add(m.vec2(1, 2), m.vec2(3, 4))                 -- stays 2D
+            local keep2d = (flat.z == nil) and 1 or 0
+            caffeine.world.setTransform(eid, {x = c.z + d, y = r + a, z = keep2d})
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "math_3d.lua"));
+
+    auto entity = fix.world.create("Test");
+    REQUIRE(fix.engine.callOnCreate("math_3d.lua", entity));
+
+    auto* t = entity.get<ECS::Transform>();
+    REQUIRE(t != nullptr);
+    REQUIRE(t->position.x == Approx(8.0f));
+    REQUIRE(t->position.y == Approx(153.0f));
+    REQUIRE(t->position.z == Approx(1.0f));
+}
+
+// ============================================================================
 // 11. Math binding — add, sub, dot, scale
 // ============================================================================
 

@@ -32,6 +32,7 @@ public:
     void shutdown();
     void setWorld(ECS::World* world);
     void setInput(Input::InputManager* input);
+    Input::InputManager* input() const;
     void setSearchRoot(const std::string& root);
 
     struct ExposedVar {

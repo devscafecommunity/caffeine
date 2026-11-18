@@ -123,6 +123,7 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
 void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
     if (!m_dryad) return;
     m_dryad->setWorld(&world);
+    if (m_engine) m_dryad->setInput(m_engine->input());
     if (!m_projectRoot.empty()) m_dryad->setSearchRoot(m_projectRoot);
 
     ECS::ComponentQuery q;

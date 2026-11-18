@@ -8,6 +8,8 @@
 #include "../src/caffeine/ecs/MeshComponents.hpp"
 #include "../src/caffeine/ecs/World.hpp"
 #include "../src/caffeine/physics/PhysicsComponents3D.hpp"
+#include "../src/caffeine/input/InputManager.hpp"
+#include "../src/caffeine/runtime/PlayClock.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -186,6 +188,44 @@ TEST_CASE("Dryad reads and writes any reflected component", "[dryad][component]"
     REQUIRE(pos->position.x == 9.0f);   // read back (enum index 6 = Cone), then written conditionally
     REQUIRE(pos->position.y == 5.0f);
     REQUIRE(pos->position.z == 6.0f);
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Dryad natives read input, time and the world", "[dryad][runtime]") {
+    const std::string path = "dryad_host_runtime.dyd";
+    {
+        std::ofstream out(path);
+        out << "function onUpdate(entity, dt) {\n"
+            << "  let x = 0;\n"
+            << "  if (caffeine_input_key_down(\"Space\")) { x = x + 1; }\n"
+            << "  if (caffeine_input_key_down(\"Nope\")) { x = x + 100; }\n"
+            << "  let spawned = caffeine_world_create(\"Spawned\");\n"
+            << "  if (caffeine_world_is_alive(spawned)) { x = x + 10; }\n"
+            << "  caffeine_world_destroy(spawned);\n"
+            << "  if (!caffeine_world_is_alive(spawned)) { x = x + 20; }\n"
+            << "  caffeine_set_position(entity, x, caffeine_world_distance(entity, entity), caffeine_time_scale());\n"
+            << "}\n";
+    }
+
+    ECS::World world;
+    Input::InputManager input;
+    DryadHost host;
+    host.setWorld(&world);
+    host.setInput(&input);
+    ECS::Entity entity = world.create("DryadRuntime");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(0, 0, 0);
+    input.injectKeyDown(Input::Key::Space);
+
+    Runtime::PlayClock::instance().setTimeScale(1.0f);
+    REQUIRE(host.load(path));
+    std::string err;
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f, &err));
+
+    auto* pos = entity.get<ECS::Position3D>();
+    REQUIRE(pos != nullptr);
+    REQUIRE(pos->position.x == 31.0f);  // Space + alive + destroyed, unknown key ignored
+    REQUIRE(pos->position.y == 0.0f);
+    REQUIRE(pos->position.z == 1.0f);
     std::remove(path.c_str());
 }
 

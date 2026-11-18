@@ -6,6 +6,7 @@
 #include <string>
 
 namespace Caffeine::ECS { class World; }
+namespace Caffeine::Input { class InputManager; }
 
 namespace Caffeine::Script {
 
@@ -19,6 +20,8 @@ public:
     DryadHost& operator=(const DryadHost&) = delete;
 
     void setWorld(ECS::World* world);
+    /// Optional; without it the `caffeine_input_*` natives report no input.
+    void setInput(Input::InputManager* input);
 
     /// Project root used to resolve relative script paths (for example
     /// `scripts/player.dyd`). Relative paths that already exist from the

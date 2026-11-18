@@ -19,6 +19,8 @@
 namespace Caffeine::Script {
 
 void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr);
+void bindRuntimeNatives(dryad::Interpreter& interp, ECS::World** worldPtr,
+                        Input::InputManager** inputPtr);
 
 namespace {
 
@@ -117,6 +119,7 @@ struct DryadHost::Impl {
     };
 
     ECS::World* world = nullptr;
+    Input::InputManager* input = nullptr;
     std::string searchRoot;
     std::unordered_map<std::string, Session> sessions;
 
@@ -195,6 +198,7 @@ struct DryadHost::Impl {
                 return dryad::Value();
             });
         bindComponentNatives(interp, worldPtr);
+        bindRuntimeNatives(interp, worldPtr, &input);
         interp.set_network_allowed(false);
         if (const char* stdlib = std::getenv("DRYAD_STDLIB_DIR")) {
             interp.set_stdlib_root(stdlib);
@@ -212,6 +216,8 @@ DryadHost::DryadHost() : m_impl(new Impl) {}
 DryadHost::~DryadHost() { delete m_impl; }
 
 void DryadHost::setWorld(ECS::World* world) { m_impl->world = world; }
+
+void DryadHost::setInput(Input::InputManager* input) { m_impl->input = input; }
 
 void DryadHost::setSearchRoot(const std::string& root) { m_impl->searchRoot = root; }
 
