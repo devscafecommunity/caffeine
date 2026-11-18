@@ -485,10 +485,29 @@ impl App {
                 .as_ref()
                 .and_then(|e| e.asset_path("").ok())
                 .is_some_and(|root| !root.is_empty());
+            // The slot holds a material: the layer's `.mat`, with its picture as the albedo map.
+            let mat_file = folder.join(format!("{slug}.mat"));
+            if !mat_file.exists() {
+                let engine = self.engine.as_ref().ok_or("The engine is not available")?;
+                let mut material = engine.new_material().map_err(|e| format!("{e:?}"))?;
+                material.name = format!("{slug} terrain layer");
+                material.albedo_map = if rooted {
+                    engine
+                        .asset_project_path(&format!("terrain/layers/{slug}.png"))
+                        .unwrap_or_else(|_| format!("terrain/layers/{slug}.png"))
+                } else {
+                    file.display().to_string()
+                };
+                material.roughness = 0.9;
+                material.uv_object_scale = false;
+                engine
+                    .save_material(&mat_file.to_string_lossy(), &material)
+                    .map_err(|e| format!("{e:?}"))?;
+            }
             let path = if rooted {
-                format!("terrain/layers/{slug}.png")
+                format!("terrain/layers/{slug}.mat")
             } else {
-                file.display().to_string()
+                mat_file.display().to_string()
             };
             self.terraingen.graph.set_string(output, i, path);
             self.terraingen.dirty = true;
@@ -503,6 +522,7 @@ impl App {
             return;
         }
         let layers = self.terraingen.graph.layer_paths();
+        let layer_root = self.asset_root_dir();
         let res = self.terraingen.graph.output_resolution();
         let model = match self.terraingen.graph.build(res) {
             Ok(model) => model,
@@ -543,9 +563,22 @@ impl App {
         // The four layer pictures are the project's textures, written from the Output node.
         if let Some(type_id) = super::component_type_id(engine, "Terrain") {
             for (i, path) in layers.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+                // A slot is a material (its albedo map paints the layer) or, as before, a picture.
+                let picture = if path.ends_with(".mat") {
+                    let file = layer_root
+                        .as_ref()
+                        .map(|root| root.join(path))
+                        .unwrap_or_else(|| std::path::PathBuf::from(path));
+                    match engine.load_material(&file.to_string_lossy()) {
+                        Ok(material) if !material.albedo_map.is_empty() => material.albedo_map,
+                        _ => continue,
+                    }
+                } else {
+                    path.clone()
+                };
                 let resolved = engine
-                    .asset_project_path(path)
-                    .unwrap_or_else(|_| path.clone());
+                    .asset_project_path(&picture)
+                    .unwrap_or_else(|_| picture.clone());
                 let _ = super::set_component_field(
                     engine,
                     id,

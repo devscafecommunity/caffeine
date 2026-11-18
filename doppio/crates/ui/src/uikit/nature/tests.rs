@@ -666,3 +666,80 @@ fn leaf_size_scales_with_the_tree_and_the_texture_sets_the_atlas() {
         "single-leaf cards are fewer than atlas cards"
     );
 }
+
+/// Rewrites a current graph's text the way version 1 stored it: no material nodes, the material
+/// chosen inside the Part node, and leaf size in metres with a `shapes` choice.
+fn as_version_one(text: &str) -> String {
+    let mut material_nodes = std::collections::HashSet::new();
+    for line in text.lines() {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        if w.first() == Some(&"node") && w[4].starts_with("mat_") {
+            material_nodes.insert(w[1].to_owned());
+        }
+    }
+    let mut out = String::from("NATUREGRAPH1\n");
+    for line in text.lines().skip(1) {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        match w.first().copied() {
+            Some("node") if material_nodes.contains(w[1]) => {}
+            Some("link") if material_nodes.contains(w[1]) => {}
+            Some("node") if w[4] == "part" => {
+                // name, material (Bark · Oak = 6, Leaves · Green = 11), r, g, b, roughness
+                let material = if w[6] == "3" { 11 } else { 6 };
+                out.push_str(&format!(
+                    "node {} {} {} part 6 {} {material} 0.5 0.5 0.5 0.8 1 %00\n",
+                    w[1], w[2], w[3], w[6]
+                ));
+            }
+            Some("node") if w[4] == "leaves" => {
+                // style density size(m) inner budget seed shapes fold droop
+                out.push_str(&format!(
+                    "node {} {} {} leaves 9 0 12 0.75 0.45 9000 1 0 0.2 0.6 0\n",
+                    w[1], w[2], w[3]
+                ));
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn version_one_graphs_gain_material_nodes_and_keep_their_look() {
+    let current = preset("Oak").graph();
+    let old = as_version_one(&current.to_text());
+    let migrated = NatureGraph::from_text(&old).expect("version 1 loads");
+    // Every part now has an explicit material node, so the graph builds again.
+    let parts = migrated.nodes.iter().filter(|n| n.op == "part").count();
+    assert!(parts >= 2);
+    let wired = migrated
+        .links
+        .iter()
+        .filter(|l| {
+            migrated.node(l.to).is_some_and(|n| n.op == "part")
+                && migrated
+                    .node(l.from)
+                    .is_some_and(|n| n.op.starts_with("mat_"))
+        })
+        .count();
+    assert_eq!(wired, parts);
+    // The leaf part keeps its leaf texture, shared with the Leaves node, and the folds survive.
+    let leaves = migrated.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    assert!(migrated
+        .links
+        .iter()
+        .any(|l| l.to == leaves && l.input == 1));
+    assert_eq!(migrated.get(leaves, "fold"), Some(0.2));
+    assert_eq!(migrated.get(leaves, "droop"), Some(0.6));
+    // 0.75 m on this tree is a share of its height, not 0.75 %.
+    let size = migrated.get(leaves, "size").unwrap();
+    assert!(size > 1.0 && size < 30.0, "{size}");
+    assert!(migrated.build(Quality::Balanced).is_ok());
+    // Saving writes the new format, which loads without migrating again.
+    assert!(migrated.to_text().starts_with("NATUREGRAPH2"));
+    let again = NatureGraph::from_text(&migrated.to_text()).unwrap();
+    assert_eq!(again.nodes.len(), migrated.nodes.len());
+}

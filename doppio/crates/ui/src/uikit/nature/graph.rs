@@ -412,7 +412,7 @@ impl NatureGraph {
                 .replace(' ', "%20")
                 .replace('\n', "%0A")
         };
-        let mut text = String::from("NATUREGRAPH1\n");
+        let mut text = String::from("NATUREGRAPH2\n");
         for node in &self.nodes {
             text.push_str(&format!(
                 "node {} {} {} {} {}",
@@ -449,9 +449,13 @@ impl NatureGraph {
 
     pub fn from_text(text: &str) -> Option<NatureGraph> {
         let mut lines = text.lines();
-        if lines.next()?.trim() != "NATUREGRAPH1" {
-            return None;
-        }
+        // Version 1 files kept the material inside the Part node: they are migrated on load.
+        let legacy = match lines.next()?.trim() {
+            "NATUREGRAPH2" => false,
+            "NATUREGRAPH1" => true,
+            _ => return None,
+        };
+        let mut old: Vec<(NodeId, &'static str, Vec<f32>, Vec<String>)> = Vec::new();
         let unescape = |s: &str| {
             if s == "%00" {
                 String::new()
@@ -484,6 +488,14 @@ impl NatureGraph {
                             *slot = unescape(word);
                         }
                     }
+                    if legacy && matches!(def.id, "part" | "leaves") {
+                        let raw: Vec<f32> = w
+                            .get(6..6 + n)?
+                            .iter()
+                            .map(|word| word.parse().unwrap_or(0.0))
+                            .collect();
+                        old.push((id, def.id, raw, strings.clone()));
+                    }
                     graph.next_id = graph.next_id.max(id + 1);
                     graph.nodes.push(NatureNode {
                         id,
@@ -501,6 +513,9 @@ impl NatureGraph {
                 }),
                 _ => {}
             }
+        }
+        if legacy {
+            super::migrate_legacy(&mut graph, &old);
         }
         (graph.output_node().is_some()).then_some(graph)
     }

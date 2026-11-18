@@ -8538,9 +8538,10 @@ impl App {
                     self.terraingen.name, self.terraingen.stats
                 )),
                 {
-                    let (_, textures) = self.nature_assets();
+                    let (mut layers, textures) = self.nature_assets();
+                    layers.extend(textures);
                     terrain_generator_panel::view(
-                        self.terraingen.view_state(textures),
+                        self.terraingen.view_state(layers),
                         Message::TerrainGen,
                     )
                 },

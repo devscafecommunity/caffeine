@@ -421,12 +421,13 @@ fn eval_hydraulic(a: &Args) -> Vec<Field> {
 // ------------------------------------------------------------------ output
 
 const RESOLUTIONS: &[&str] = &["129", "257", "513"];
-/// The four splat layer pictures the terrain is painted with: project textures, not built-ins.
+/// The four splat layers the terrain is painted with: project materials (their albedo map is the
+/// layer's picture), not built-ins.
 pub const LAYER_LABELS: &[&str] = &[
-    "Ground texture",
-    "Rock texture",
-    "Dirt texture",
-    "Mud texture",
+    "Ground material (.mat)",
+    "Rock material (.mat)",
+    "Dirt material (.mat)",
+    "Mud material (.mat)",
 ];
 
 const OUTPUT_IN: &[PortDef] = &[port("Height")];

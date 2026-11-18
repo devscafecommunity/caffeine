@@ -786,7 +786,21 @@ impl WaterGraph {
                 _ => {}
             }
         }
-        graph.output_node().is_some().then_some(graph)
+        let output = graph.output_node()?;
+        // Graphs saved before water needed a material get the default one wired in.
+        let has_look = graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, "look" | "look_asset"));
+        if !has_look {
+            let position = graph
+                .node(output)
+                .map(|n| Point::new(n.position.x - 200.0, n.position.y + 140.0))
+                .unwrap_or_default();
+            let look = graph.add("look", position);
+            let _ = graph.connect(look, 0, output, 1);
+        }
+        Some(graph)
     }
 }
 

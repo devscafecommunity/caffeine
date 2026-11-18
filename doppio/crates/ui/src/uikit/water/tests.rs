@@ -292,3 +292,14 @@ fn water_cannot_exist_without_its_material() {
         assert_eq!(graph.node(link.from).unwrap().op, "look", "{}", p.name);
     }
 }
+
+#[test]
+fn old_graphs_without_a_material_get_the_default_one() {
+    let mut graph = presets()[0].graph();
+    let look = graph.nodes.iter().find(|n| n.op == "look").unwrap().id;
+    graph.remove(look);
+    assert!(graph.build().is_err(), "no material, no water");
+    let loaded = WaterGraph::from_text(&graph.to_text()).expect("loads");
+    assert!(loaded.nodes.iter().any(|n| n.op == "look"));
+    assert!(loaded.build().is_ok(), "the migrated graph builds again");
+}
