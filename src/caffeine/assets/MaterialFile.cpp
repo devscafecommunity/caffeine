@@ -120,6 +120,22 @@ bool loadMaterialFile(const std::filesystem::path& path, MaterialSurface& out) {
             ss >> surface.sheenColor.x >> surface.sheenColor.y >> surface.sheenColor.z;
         } else if (tag == "sheen_roughness") {
             ss >> surface.sheenRoughness;
+        } else if (tag == "wind_strength") {
+            ss >> surface.windStrength;
+        } else if (tag == "wind_speed") {
+            ss >> surface.windSpeed;
+        } else if (tag == "wind_flutter") {
+            ss >> surface.windFlutter;
+        } else if (tag == "translucency") {
+            ss >> surface.translucency;
+        } else if (tag == "mod_tint") {
+            ss >> surface.modTint.x >> surface.modTint.y >> surface.modTint.z;
+        } else if (tag == "mod_wetness") {
+            ss >> surface.modWetness;
+        } else if (tag == "mod_snow") {
+            ss >> surface.modSnow;
+        } else if (tag == "mod_age") {
+            ss >> surface.modAge;
         } else if (tag == "iridescence") {
             ss >> surface.iridescence;
         } else if (tag == "iridescence_thickness") {
@@ -203,6 +219,15 @@ void sanitizeMaterialSurface(MaterialSurface& surface) {
     surface.sheenColor = Vec3(clamp01(surface.sheenColor.x), clamp01(surface.sheenColor.y),
                               clamp01(surface.sheenColor.z));
     surface.sheenRoughness = clamp01(surface.sheenRoughness);
+    surface.windStrength = std::clamp(surface.windStrength, 0.0f, 0.5f);
+    surface.windSpeed = std::clamp(surface.windSpeed, 0.0f, 8.0f);
+    surface.windFlutter = clamp01(surface.windFlutter);
+    surface.translucency = clamp01(surface.translucency);
+    surface.modTint = Vec3(clamp01(surface.modTint.x), clamp01(surface.modTint.y),
+                           clamp01(surface.modTint.z));
+    surface.modWetness = clamp01(surface.modWetness);
+    surface.modSnow = clamp01(surface.modSnow);
+    surface.modAge = clamp01(surface.modAge);
     surface.iridescence = clamp01(surface.iridescence);
     surface.iridescenceThickness = std::clamp(surface.iridescenceThickness, 50.0f, 1500.0f);
     surface.iridescenceIor = std::clamp(surface.iridescenceIor, 1.0f, 2.5f);
@@ -259,6 +284,15 @@ bool saveMaterialFile(const std::filesystem::path& path, const MaterialSurface& 
     out << "sheen " << material.sheenColor.x << ' ' << material.sheenColor.y << ' '
         << material.sheenColor.z << '\n';
     out << "sheen_roughness " << material.sheenRoughness << '\n';
+    out << "wind_strength " << material.windStrength << '\n';
+    out << "wind_speed " << material.windSpeed << '\n';
+    out << "wind_flutter " << material.windFlutter << '\n';
+    out << "translucency " << material.translucency << '\n';
+    out << "mod_tint " << material.modTint.x << ' ' << material.modTint.y << ' '
+        << material.modTint.z << '\n';
+    out << "mod_wetness " << material.modWetness << '\n';
+    out << "mod_snow " << material.modSnow << '\n';
+    out << "mod_age " << material.modAge << '\n';
     out << "iridescence " << material.iridescence << '\n';
     out << "iridescence_thickness " << material.iridescenceThickness << '\n';
     out << "iridescence_ior " << material.iridescenceIor << '\n';

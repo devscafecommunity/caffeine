@@ -30,6 +30,11 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_spirv, Shaders::scene_displace_vert_spirvSize};
         case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_spirv, Shaders::shadow_displace_vert_spirvSize};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_spirv, Shaders::shadow_depth_frag_spirvSize};
+        case BuiltinShader::ShadowCutoutFragment: return {Shaders::shadow_cutout_frag_spirv, Shaders::shadow_cutout_frag_spirvSize};
+        case BuiltinShader::SceneFoliageVertex: return {Shaders::scene_foliage_vert_spirv, Shaders::scene_foliage_vert_spirvSize};
+        case BuiltinShader::SceneFoliageInstancedVertex: return {Shaders::scene_foliage_instanced_vert_spirv, Shaders::scene_foliage_instanced_vert_spirvSize};
+        case BuiltinShader::ShadowFoliageVertex: return {Shaders::shadow_foliage_vert_spirv, Shaders::shadow_foliage_vert_spirvSize};
+        case BuiltinShader::WaterVertex: return {Shaders::water_vert_spirv, Shaders::water_vert_spirvSize};
         case BuiltinShader::FullscreenVertex:    return {Shaders::fullscreen_vert_spirv, Shaders::fullscreen_vert_spirvSize};
         case BuiltinShader::SkyFragment:         return {Shaders::sky_frag_spirv, Shaders::sky_frag_spirvSize};
         case BuiltinShader::GridFragment:        return {Shaders::grid_frag_spirv, Shaders::grid_frag_spirvSize};
@@ -76,6 +81,11 @@ ShaderBytecodeView lookupDxbc(BuiltinShader shader) {
         case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_dxbc, Shaders::scene_displace_vert_dxbcSize};
         case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_dxbc, Shaders::shadow_displace_vert_dxbcSize};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_dxbc, Shaders::shadow_depth_frag_dxbcSize};
+        case BuiltinShader::ShadowCutoutFragment: return {Shaders::shadow_cutout_frag_dxbc, Shaders::shadow_cutout_frag_dxbcSize};
+        case BuiltinShader::SceneFoliageVertex: return {Shaders::scene_foliage_vert_dxbc, Shaders::scene_foliage_vert_dxbcSize};
+        case BuiltinShader::SceneFoliageInstancedVertex: return {Shaders::scene_foliage_instanced_vert_dxbc, Shaders::scene_foliage_instanced_vert_dxbcSize};
+        case BuiltinShader::ShadowFoliageVertex: return {Shaders::shadow_foliage_vert_dxbc, Shaders::shadow_foliage_vert_dxbcSize};
+        case BuiltinShader::WaterVertex: return {Shaders::water_vert_dxbc, Shaders::water_vert_dxbcSize};
         default: break;
     }
 #endif
@@ -97,6 +107,11 @@ ShaderBytecodeView lookupMsl(BuiltinShader shader) {
         case BuiltinShader::SceneDisplaceVertex: return {Shaders::scene_displace_vert_msl, Shaders::scene_displace_vert_mslSize, "main0"};
         case BuiltinShader::ShadowDisplaceVertex: return {Shaders::shadow_displace_vert_msl, Shaders::shadow_displace_vert_mslSize, "main0"};
         case BuiltinShader::ShadowDepthFragment: return {Shaders::shadow_depth_frag_msl, Shaders::shadow_depth_frag_mslSize, "main0"};
+        case BuiltinShader::ShadowCutoutFragment: return {Shaders::shadow_cutout_frag_msl, Shaders::shadow_cutout_frag_mslSize, "main0"};
+        case BuiltinShader::SceneFoliageVertex: return {Shaders::scene_foliage_vert_msl, Shaders::scene_foliage_vert_mslSize, "main0"};
+        case BuiltinShader::SceneFoliageInstancedVertex: return {Shaders::scene_foliage_instanced_vert_msl, Shaders::scene_foliage_instanced_vert_mslSize, "main0"};
+        case BuiltinShader::ShadowFoliageVertex: return {Shaders::shadow_foliage_vert_msl, Shaders::shadow_foliage_vert_mslSize, "main0"};
+        case BuiltinShader::WaterVertex: return {Shaders::water_vert_msl, Shaders::water_vert_mslSize, "main0"};
         default: break;
     }
 #endif

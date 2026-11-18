@@ -327,6 +327,10 @@ void MeshCache::releaseGpuResources(RHI::RenderDevice* device) {
             device->destroyBuffer(mesh.vertexBuffer);
             mesh.vertexBuffer = nullptr;
         }
+        if (mesh.colorBuffer) {
+            device->destroyBuffer(mesh.colorBuffer);
+            mesh.colorBuffer = nullptr;
+        }
         if (mesh.indexBuffer) {
             device->destroyBuffer(mesh.indexBuffer);
             mesh.indexBuffer = nullptr;

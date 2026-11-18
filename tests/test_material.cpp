@@ -399,3 +399,90 @@ TEST_CASE("uv_object_scale defaults on, round-trips and older materials keep the
     REQUIRE(old.uvObjectScale == 1);
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("foliage wind and translucency round-trip, stay clamped and default to still", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-foliage";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "leaf.mat";
+
+    MaterialSurface fresh;
+    REQUIRE(fresh.windStrength == Approx(0.0f));
+    REQUIRE(fresh.windFlutter == Approx(0.0f));
+    REQUIRE(fresh.translucency == Approx(0.0f));
+
+    MaterialSurface written;
+    written.name = "Leaf";
+    written.windStrength = 0.012f;
+    written.windSpeed = 1.5f;
+    written.windFlutter = 0.6f;
+    written.translucency = 0.55f;
+    REQUIRE(saveMaterialFile(path, written));
+
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.windStrength == Approx(0.012f));
+    REQUIRE(loaded.windSpeed == Approx(1.5f));
+    REQUIRE(loaded.windFlutter == Approx(0.6f));
+    REQUIRE(loaded.translucency == Approx(0.55f));
+
+    // Absurd values are clamped on load.
+    {
+        std::ofstream file(path, std::ios::app);
+        file << "wind_strength 9\nwind_flutter 4\ntranslucency -2\n";
+    }
+    MaterialSurface clamped;
+    REQUIRE(loadMaterialFile(path, clamped));
+    REQUIRE(clamped.windStrength <= 0.5f);
+    REQUIRE(clamped.windFlutter <= 1.0f);
+    REQUIRE(clamped.translucency >= 0.0f);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("run-time modifiers round-trip, stay clamped and default to none", "[material]") {
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine-material-modifiers";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "rock.mat";
+
+    MaterialSurface fresh;
+    REQUIRE(fresh.modTint.x == Approx(1.0f));
+    REQUIRE(fresh.modWetness == Approx(0.0f));
+    REQUIRE(fresh.modSnow == Approx(0.0f));
+    REQUIRE(fresh.modAge == Approx(0.0f));
+
+    MaterialSurface written;
+    written.name = "Rock";
+    written.modTint = Vec3(0.8f, 0.9f, 1.0f);
+    written.modWetness = 0.4f;
+    written.modSnow = 0.6f;
+    written.modAge = 0.2f;
+    REQUIRE(saveMaterialFile(path, written));
+    MaterialSurface loaded;
+    REQUIRE(loadMaterialFile(path, loaded));
+    REQUIRE(loaded.modTint.x == Approx(0.8f));
+    REQUIRE(loaded.modTint.z == Approx(1.0f));
+    REQUIRE(loaded.modWetness == Approx(0.4f));
+    REQUIRE(loaded.modSnow == Approx(0.6f));
+    REQUIRE(loaded.modAge == Approx(0.2f));
+
+    {
+        std::ofstream file(path, std::ios::app);
+        file << "mod_wetness 7\nmod_snow -3\nmod_tint 2 2 2\n";
+    }
+    MaterialSurface clamped;
+    REQUIRE(loadMaterialFile(path, clamped));
+    REQUIRE(clamped.modWetness <= 1.0f);
+    REQUIRE(clamped.modSnow >= 0.0f);
+    REQUIRE(clamped.modTint.x <= 1.0f);
+
+    // A material written before modifiers existed loads as "no modifiers".
+    {
+        std::ofstream legacy(dir / "old.mat");
+        legacy << "CAFMAT3\nname Old\nroughness 0.5\n";
+    }
+    MaterialSurface old;
+    REQUIRE(loadMaterialFile(dir / "old.mat", old));
+    REQUIRE(old.modWetness == Approx(0.0f));
+    REQUIRE(old.modTint.y == Approx(1.0f));
+    std::filesystem::remove_all(dir);
+}

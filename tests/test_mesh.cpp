@@ -386,3 +386,29 @@ TEST_CASE("MeshLoader - glTF material carries alpha mode and cutoff", "[mesh][gl
     std::filesystem::remove(materialPath);
     std::filesystem::remove(path);
 }
+
+TEST_CASE("MeshLoader::parseOBJ reads per-vertex colour (tint and painted flutter weight)", "[mesh]") {
+    // `v x y z r g b a`: a is the flutter weight (0 = rigid stalk, 1 = free tip).
+    const char* obj =
+        "v 0 0 0 0.5 0.6 0.7 0.0\n"
+        "v 1 0 0 1.0 1.0 1.0 1.0\n"
+        "v 0 1 0 0.2 0.3 0.4 0.5\n"
+        "vt 0 0\nvt 1 0\nvt 0 1\n"
+        "vn 0 0 1\n"
+        "f 1/1/1 2/2/1 3/3/1\n";
+    Mesh3D* mesh = MeshLoader::parseOBJ(obj, strlen(obj));
+    REQUIRE(mesh != nullptr);
+    REQUIRE(mesh->vertices.size() == 3);
+    REQUIRE(mesh->vertexColors.size() == 3);
+    REQUIRE(mesh->vertexColors[0].x == Approx(0.5f));
+    REQUIRE(mesh->vertexColors[0].w == Approx(0.0f));
+    REQUIRE(mesh->vertexColors[1].w == Approx(1.0f));
+    REQUIRE(mesh->vertexColors[2].z == Approx(0.4f));
+    delete mesh;
+
+    // A plain OBJ has no colour stream, so it keeps the single-stream pipelines.
+    Mesh3D* plain = MeshLoader::parseOBJ(kTriangleOBJ, strlen(kTriangleOBJ));
+    REQUIRE(plain != nullptr);
+    REQUIRE(plain->vertexColors.empty());
+    delete plain;
+}

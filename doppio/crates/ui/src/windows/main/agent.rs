@@ -1741,6 +1741,14 @@ fn material_json(app: &App) -> Value {
             "clearcoat": document.surface.clearcoat,
             "clearcoat_roughness": document.surface.clearcoat_roughness,
             "iridescence": document.surface.iridescence,
+            "translucency": document.surface.translucency,
+            "mod_tint": document.surface.mod_tint,
+            "mod_wetness": document.surface.mod_wetness,
+            "mod_snow": document.surface.mod_snow,
+            "mod_age": document.surface.mod_age,
+            "wind_strength": document.surface.wind_strength,
+            "wind_speed": document.surface.wind_speed,
+            "wind_flutter": document.surface.wind_flutter,
             "reflection": document.surface.reflection,
         })
     })

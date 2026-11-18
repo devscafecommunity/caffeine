@@ -362,6 +362,16 @@ void writeMaterial(const Caffeine::Assets::MaterialSurface& source, CaffeineMate
     out.sheen_color[1] = source.sheenColor.y;
     out.sheen_color[2] = source.sheenColor.z;
     out.sheen_roughness = source.sheenRoughness;
+    out.wind_strength = source.windStrength;
+    out.wind_speed = source.windSpeed;
+    out.wind_flutter = source.windFlutter;
+    out.translucency = source.translucency;
+    out.mod_tint[0] = source.modTint.x;
+    out.mod_tint[1] = source.modTint.y;
+    out.mod_tint[2] = source.modTint.z;
+    out.mod_wetness = source.modWetness;
+    out.mod_snow = source.modSnow;
+    out.mod_age = source.modAge;
     out.iridescence = source.iridescence;
     out.iridescence_thickness = source.iridescenceThickness;
     out.iridescence_ior = source.iridescenceIor;
@@ -415,6 +425,14 @@ Caffeine::Assets::MaterialSurface readMaterial(const CaffeineMaterial& source) {
     out.sheenColor = Caffeine::Vec3(source.sheen_color[0], source.sheen_color[1],
                                     source.sheen_color[2]);
     out.sheenRoughness = source.sheen_roughness;
+    out.windStrength = source.wind_strength;
+    out.windSpeed = source.wind_speed;
+    out.windFlutter = source.wind_flutter;
+    out.translucency = source.translucency;
+    out.modTint = Caffeine::Vec3(source.mod_tint[0], source.mod_tint[1], source.mod_tint[2]);
+    out.modWetness = source.mod_wetness;
+    out.modSnow = source.mod_snow;
+    out.modAge = source.mod_age;
     out.iridescence = source.iridescence;
     out.iridescenceThickness = source.iridescence_thickness;
     out.iridescenceIor = source.iridescence_ior;

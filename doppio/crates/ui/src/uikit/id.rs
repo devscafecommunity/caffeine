@@ -116,6 +116,13 @@ pub const ASSET_VIEW_LIST: UiId = UiId::fixed("assets.toolbar.view_list");
 pub const ASSET_EMPTY: UiId = UiId::fixed("assets.tree.empty");
 pub const ASSET_NEW: UiId = UiId::fixed("assets.toolbar.new");
 pub const ASSET_IMPORT: UiId = UiId::fixed("assets.toolbar.import");
+pub const ASSET_NEW_FOLDER: UiId = UiId::fixed("assets.files.new_folder");
+pub const ASSET_RENAME: UiId = UiId::fixed("assets.files.rename");
+pub const ASSET_DELETE: UiId = UiId::fixed("assets.files.delete");
+pub const ASSET_DELETE_CONFIRM: UiId = UiId::fixed("assets.files.delete_confirm");
+pub const ASSET_EDIT_NAME: UiId = UiId::fixed("assets.files.name");
+pub const ASSET_EDIT_OK: UiId = UiId::fixed("assets.files.ok");
+pub const ASSET_EDIT_CANCEL: UiId = UiId::fixed("assets.files.cancel");
 pub const ASSET_TREE: UiId = UiId::fixed("assets.tree.folders");
 pub const ASSET_TREE_TOGGLE: UiId = UiId::fixed("assets.toolbar.tree_toggle");
 pub const WIZARD: UiId = UiId::fixed("assets.wizard");
@@ -395,6 +402,9 @@ pub const GENERATOR_PASTE: UiId = UiId::fixed("generator.toolbar.paste");
 pub const GENERATOR_TEXTURE_PICKER: UiId = UiId::fixed("generator.texture.picker");
 pub const GENERATOR_TEXTURE_PICKER_CLOSE: UiId = UiId::fixed("generator.texture.picker.close");
 pub const GENERATOR_TEXTURE_PICKER_SEARCH: UiId = UiId::fixed("generator.texture.picker.search");
+pub const NATUREGEN_PICKER: UiId = UiId::fixed("naturegen.picker");
+pub const NATUREGEN_PICKER_CLOSE: UiId = UiId::fixed("naturegen.picker.close");
+pub const NATUREGEN_PICKER_SEARCH: UiId = UiId::fixed("naturegen.picker.search");
 pub const GENERATOR_BAKE_PROGRESS: UiId = UiId::fixed("generator.bake.progress");
 pub const GENERATOR_CANCEL_BAKE: UiId = UiId::fixed("generator.bake.cancel");
 pub const GENERATOR_PACKING_NAME: UiId = UiId::fixed("generator.packing.name");
@@ -548,6 +558,10 @@ pub fn material_section(section: &str) -> UiId {
 
 pub fn material_alpha_mode(mode: usize) -> UiId {
     UiId::dynamic(format!("material.surface.alpha_mode.{mode}"))
+}
+
+pub fn naturegen_picker_item(index: usize) -> UiId {
+    UiId::dynamic(format!("naturegen.picker.item.{index}"))
 }
 
 pub fn generator_texture_item(index: usize) -> UiId {
@@ -1193,6 +1207,41 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "button",
     },
     UiMeta {
+        id: ASSET_NEW_FOLDER,
+        description: "Starts a new folder in the folder being browsed.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_RENAME,
+        description: "Renames the selected asset or folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_DELETE,
+        description: "Asks to move the selected asset or folder to the project trash.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_DELETE_CONFIRM,
+        description: "Confirms moving the selected asset to the trash.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_EDIT_NAME,
+        description: "Name of the folder being created or the asset being renamed.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: ASSET_EDIT_OK,
+        description: "Applies the new folder name or the rename.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_EDIT_CANCEL,
+        description: "Cancels the folder, rename or delete action.",
+        kind: "button",
+    },
+    UiMeta {
         id: ASSET_TREE_TOGGLE,
         description: "Shows or hides the folder tree beside the file view.",
         kind: "chip",
@@ -1835,6 +1884,21 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: GENERATOR_TEXTURE_PICKER_SEARCH,
         description: "Searches textures for the Image node.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: NATUREGEN_PICKER,
+        description: "Asset picker with previews for a Nature node (image or material).",
+        kind: "palette",
+    },
+    UiMeta {
+        id: NATUREGEN_PICKER_CLOSE,
+        description: "Closes the Nature asset picker.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_PICKER_SEARCH,
+        description: "Searches the project assets in the Nature asset picker.",
         kind: "text_input",
     },
     UiMeta {

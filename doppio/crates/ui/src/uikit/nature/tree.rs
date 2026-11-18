@@ -261,6 +261,9 @@ pub struct LeafCards {
     pub droop: f32,
     /// Segments along the length (more = smoother curl).
     pub rows: u32,
+    /// Atlas cell with the darkest leaf. Cards deep inside the crown pick it more often, which
+    /// fakes the shade between leaves (the cut-out cards cast no shadows of their own).
+    pub shade_cell: Option<u32>,
 }
 
 /// Leaf cards along the outer branches. Each card is a **folded, drooping blade** (three vertices
@@ -279,6 +282,14 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
     let cells = cols * atlas_rows;
     let rows = p.rows.max(1) as usize;
     let mut rng = Rng::new(seed.wrapping_add(777));
+    let crown_radius = skeleton
+        .branches
+        .iter()
+        .filter(|b| b.kind == 0)
+        .filter_map(|b| b.points.last())
+        .map(|p| length(sub(*p, skeleton.crown_center)))
+        .fold(0.0f32, f32::max)
+        .max(0.1);
     for branch in skeleton.branches.iter().filter(|b| b.kind == 0) {
         let share = if branch.terminal || skeleton.conifer && branch.level > 0 {
             1.0
@@ -298,6 +309,7 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
             .clamp(2, 60);
         for _ in 0..count {
             if part.triangle_count() >= p.max_triangles {
+                part.pad_colors();
                 return part;
             }
             let t = rng.range(if branch.level == 0 { 0.0 } else { 0.35 }, 1.0);
@@ -321,7 +333,17 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
             let normal = normalize(add(mul(outward, 0.7), mul(face, 0.3)));
             let (w, l) = (leaf_size * 0.5, leaf_size);
             // A random cell of the atlas (V runs from the card's base up to its tip).
-            let cell = (rng.next() * cells as f32) as u32 % cells;
+            let mut cell = (rng.next() * cells as f32) as u32 % cells;
+            // Depth in the crown: 0 at the centre, 1 at the outer shell.
+            let depth = (length(sub(at, skeleton.crown_center)) / crown_radius).min(1.0);
+            if let Some(dark) = p.shade_cell.filter(|c| *c < cells) {
+                if rng.next() < (1.0 - depth / 0.7).max(0.0) * 0.85 {
+                    cell = dark;
+                }
+            }
+            // Baked occlusion: leaves inside the crown are lit less, and every leaf varies a bit.
+            let occlusion = 0.64 + 0.36 * (depth / 0.9).min(1.0).powf(0.8);
+            let tone = occlusion * rng.range(0.9, 1.08);
             let (cx, cy) = (cell % cols, cell / cols);
             let uv = |u: f32, v: f32| {
                 [
@@ -351,6 +373,12 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
                 let a = part.vertex(left, normal, uv(0.0, t));
                 let m = part.vertex(centre, normal, uv(0.5, t));
                 let b = part.vertex(right, normal, uv(1.0, t));
+                // Painted: the stalk is rigid (it follows its branch), the tip flutters most.
+                let paint = [tone * (0.92 + 0.08 * t); 3];
+                let flutter = t.powf(0.8);
+                for v in [a, m, b] {
+                    part.set_color(v, [paint[0], paint[1], paint[2], flutter]);
+                }
                 grid.push([a, m, b]);
             }
             for r in 0..rows {
@@ -360,6 +388,7 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
             }
         }
     }
+    part.pad_colors();
     part
 }
 

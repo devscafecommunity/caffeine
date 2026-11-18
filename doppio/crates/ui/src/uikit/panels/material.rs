@@ -93,6 +93,15 @@ pub enum Edit {
     ClearcoatRoughness(f32),
     Sheen(usize, f32),
     SheenRoughness(f32),
+    WindStrength(f32),
+    WindSpeed(f32),
+    WindFlutter(f32),
+    Translucency(f32),
+    /// Run-time modifiers: tint (axis, value), wetness, snow, age.
+    ModTint(usize, f32),
+    ModWetness(f32),
+    ModSnow(f32),
+    ModAge(f32),
     Iridescence(f32),
     IridescenceThickness(f32),
     IridescenceIor(f32),
@@ -646,7 +655,8 @@ fn maps_body<'a, Message: Clone + 'a>(
                 id: slot_id,
                 label: slot.label(),
                 path,
-                thumbnail,
+                thumbnail: thumbnail.cloned(),
+                badge: "TEX",
             },
             pick(Edit::OpenTexturePicker(slot)),
             clear_message,
@@ -788,6 +798,7 @@ fn advanced_body<'a, Message: Clone + 'a>(
     emit: Rc<dyn Fn(Edit) -> Message + 'a>,
 ) -> Element<'a, Message> {
     let sheen_emit = emit.clone();
+    let tint_emit = emit.clone();
     let mut body = Column::new().spacing(4);
     body = body.push(slider::property(
         id::material_field("transmission"),
@@ -850,6 +861,88 @@ fn advanced_body<'a, Message: Clone + 'a>(
             move |value| emit(Edit::SheenRoughness(value))
         },
     ));
+    body = body.push(text("RUN-TIME MODIFIERS").size(8).color(theme::TEXT_MUTED));
+    body = body.push(color_picker::view(
+        "Tint",
+        [
+            material.mod_tint[0],
+            material.mod_tint[1],
+            material.mod_tint[2],
+            1.0,
+        ],
+        |axis| id::material_axis("mod_tint", axis).into(),
+        move |axis, value| tint_emit(Edit::ModTint(axis, value)),
+    ));
+    body = body.push(slider::property(
+        id::material_field("mod_wetness"),
+        "Wetness",
+        0.0..=1.0,
+        material.mod_wetness,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::ModWetness(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("mod_snow"),
+        "Snow cover",
+        0.0..=1.0,
+        material.mod_snow,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::ModSnow(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("mod_age"),
+        "Age",
+        0.0..=1.0,
+        material.mod_age,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::ModAge(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("translucency"),
+        "Translucency",
+        0.0..=1.0,
+        material.translucency,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::Translucency(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("wind_strength"),
+        "Wind sway",
+        0.0..=0.2,
+        material.wind_strength,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::WindStrength(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("wind_speed"),
+        "Wind speed",
+        0.0..=4.0,
+        material.wind_speed,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::WindSpeed(value))
+        },
+    ));
+    body = body.push(slider::property(
+        id::material_field("wind_flutter"),
+        "Leaf flutter",
+        0.0..=1.0,
+        material.wind_flutter,
+        {
+            let emit = emit.clone();
+            move |value| emit(Edit::WindFlutter(value))
+        },
+    ));
     body = body.push(slider::property(
         id::material_field("iridescence"),
         "Iridescence",
@@ -903,7 +996,8 @@ fn baker_body<'a, Message: Clone + 'a>(
             id: id::MATERIAL_TEXTURE_SOURCE,
             label: "Source (height)",
             path: source,
-            thumbnail: view.source_thumbnail,
+            thumbnail: view.source_thumbnail.cloned(),
+            badge: "TEX",
         },
         pick(Edit::OpenTexturePicker(TextureSlot::Source)),
         (!source.is_empty()).then(|| clear(Edit::ClearTexture(TextureSlot::Source))),

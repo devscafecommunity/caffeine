@@ -19,6 +19,7 @@
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/EnvironmentSystem.hpp"
+#include "scene/NaturalFluidSystem.hpp"
 #include "scene/CpuDirectionalShadowMap.hpp"
 #include "assets/MaterialCache.hpp"
 #include "assets/MeshCache.hpp"
@@ -52,6 +53,14 @@ constexpr u32 kVertexStride = sizeof(Assets::Vertex3D);
 struct VertexUBO {
     float mvp[16];
     float model[16];
+    float wind[4]; // strength per metre of height, speed, flutter, time (s); 0 strength = static
+};
+
+struct WaterVertexUBO {
+    float mvp[16];
+    float model[16];
+    float params[4];     // time, wave count, foam threshold
+    float waves[16 * 8]; // 16 waves x two vec4
 };
 
 struct DisplaceVertexUBO {
@@ -114,6 +123,10 @@ struct LightingUBO {
     float reflectPerf[4];
     float reflectQuality[4];
     float reflectExtra[4];
+    float foliage[4]; // x translucency
+    float modifiers[4]; // x wetness, y snow, z age
+    float modTint[4];   // rgb albedo tint
+    float water[4];     // x water surface, y foam scale, z ripple detail, w time
 };
 
 static_assert(offsetof(LightingUBO, iblColor) == 608, "LightingUBO.iblColor must match GLSL std140");
@@ -185,6 +198,7 @@ struct ShadowUBO {
     float lightPos[4];
     int mode;
     int pad[3];
+    float wind[4]; // same wind as the colour pass, so shadows sway with the foliage
 };
 
 struct TerrainMaterialUBO {
@@ -513,9 +527,11 @@ void GpuSceneRenderer::destroyMeshGpu(Assets::Mesh3D& mesh) {
     if (m_device) {
         if (mesh.vertexBuffer) m_device->destroyBuffer(mesh.vertexBuffer);
         if (mesh.indexBuffer) m_device->destroyBuffer(mesh.indexBuffer);
+        if (mesh.colorBuffer) m_device->destroyBuffer(mesh.colorBuffer);
     }
     mesh.vertexBuffer = nullptr;
     mesh.indexBuffer = nullptr;
+    mesh.colorBuffer = nullptr;
 }
 
 Assets::Mesh3D* GpuSceneRenderer::selectMeshLod(const Assets::Mesh3D* source, ECS::Entity entity,
@@ -616,6 +632,18 @@ void GpuSceneRenderer::shutdown() {
         if (m_displacePipeline) m_device->destroyPipeline(m_displacePipeline);
         if (m_shadowDisplacePipeline) m_device->destroyPipeline(m_shadowDisplacePipeline);
         if (m_shadowFrag) m_device->destroyShader(m_shadowFrag);
+        if (m_shadowCutoutFrag) m_device->destroyShader(m_shadowCutoutFrag);
+        if (m_shadowCutoutPipeline) m_device->destroyPipeline(m_shadowCutoutPipeline);
+        if (m_foliageVert) m_device->destroyShader(m_foliageVert);
+        if (m_waterVert) m_device->destroyShader(m_waterVert);
+        if (m_waterPipeline) m_device->destroyPipeline(m_waterPipeline);
+        if (m_waterBlendPipeline) m_device->destroyPipeline(m_waterBlendPipeline);
+        if (m_foliageInstancedVert) m_device->destroyShader(m_foliageInstancedVert);
+        if (m_foliageInstancedPipeline) m_device->destroyPipeline(m_foliageInstancedPipeline);
+        if (m_shadowFoliageVert) m_device->destroyShader(m_shadowFoliageVert);
+        if (m_foliagePipeline) m_device->destroyPipeline(m_foliagePipeline);
+        if (m_shadowFoliagePipeline) m_device->destroyPipeline(m_shadowFoliagePipeline);
+        if (m_shadowFoliageCutoutPipeline) m_device->destroyPipeline(m_shadowFoliageCutoutPipeline);
         if (m_fullscreenVert) m_device->destroyShader(m_fullscreenVert);
         if (m_skyFrag) m_device->destroyShader(m_skyFrag);
         if (m_gridFrag) m_device->destroyShader(m_gridFrag);
@@ -654,6 +682,18 @@ void GpuSceneRenderer::shutdown() {
     m_displacePipeline = nullptr;
     m_shadowDisplacePipeline = nullptr;
     m_shadowFrag = nullptr;
+    m_shadowCutoutFrag = nullptr;
+    m_shadowCutoutPipeline = nullptr;
+    m_foliageVert = nullptr;
+    m_waterVert = nullptr;
+    m_waterPipeline = nullptr;
+    m_waterBlendPipeline = nullptr;
+    m_foliageInstancedVert = nullptr;
+    m_foliageInstancedPipeline = nullptr;
+    m_shadowFoliageVert = nullptr;
+    m_foliagePipeline = nullptr;
+    m_shadowFoliagePipeline = nullptr;
+    m_shadowFoliageCutoutPipeline = nullptr;
     m_fullscreenVert = nullptr;
     m_skyFrag = nullptr;
     m_gridFrag = nullptr;
@@ -715,6 +755,15 @@ bool GpuSceneRenderer::createPipelines() {
                                        RHI::ShaderStage::Vertex, 1);
     m_shadowFrag = createBuiltinShader(m_device, BuiltinShader::ShadowDepthFragment,
                                        RHI::ShaderStage::Fragment, 0);
+    m_foliageVert = createBuiltinShader(m_device, BuiltinShader::SceneFoliageVertex,
+                                        RHI::ShaderStage::Vertex, 1);
+    m_foliageInstancedVert = createBuiltinShader(m_device, BuiltinShader::SceneFoliageInstancedVertex,
+                                                 RHI::ShaderStage::Vertex, 1);
+    m_waterVert = createBuiltinShader(m_device, BuiltinShader::WaterVertex, RHI::ShaderStage::Vertex, 1);
+    m_shadowFoliageVert = createBuiltinShader(m_device, BuiltinShader::ShadowFoliageVertex,
+                                              RHI::ShaderStage::Vertex, 1);
+    m_shadowCutoutFrag = createBuiltinShader(m_device, BuiltinShader::ShadowCutoutFragment,
+                                             RHI::ShaderStage::Fragment, 1, 1);
     m_fullscreenVert = createBuiltinShader(m_device, BuiltinShader::FullscreenVertex,
                                            RHI::ShaderStage::Vertex, 0);
     m_skyFrag = createBuiltinShader(m_device, BuiltinShader::SkyFragment,
@@ -789,9 +838,48 @@ bool GpuSceneRenderer::createPipelines() {
     // depend on draw order (a floor drawn after a sphere used to erase the sphere's shadow).
     shadowDesc.blendMode = RHI::BlendMode::Min;
     m_shadowPipeline = m_device->createGraphicsPipeline(m_shadowVert, m_shadowFrag, shadowDesc);
+    if (m_shadowCutoutFrag) {
+        m_shadowCutoutPipeline =
+            m_device->createGraphicsPipeline(m_shadowVert, m_shadowCutoutFrag, shadowDesc);
+    }
     if (m_shadowDisplaceVert) {
         m_shadowDisplacePipeline =
             m_device->createGraphicsPipeline(m_shadowDisplaceVert, m_shadowFrag, shadowDesc);
+    }
+
+    // Water: the same blended pass as translucent meshes, waves displaced in the vertex shader.
+    if (m_waterVert) {
+        m_waterPipeline = m_device->createGraphicsPipeline(m_waterVert, m_sceneFrag, sceneDesc);
+        m_waterBlendPipeline = m_device->createGraphicsPipeline(m_waterVert, m_sceneFrag, blendDesc);
+    }
+
+    // Meshes with per-vertex colour read it from a second vertex stream (never instanced).
+    RHI::VertexBufferLayoutDesc foliageLayouts[2]{};
+    RHI::VertexAttributeDesc foliageAttrs[5]{};
+    foliageLayouts[0] = {0, kVertexStride, false};
+    foliageLayouts[1] = {1, static_cast<u32>(sizeof(float) * 4), false};
+    for (u32 i = 0; i < 4; ++i) foliageAttrs[i] = attrs[i];
+    foliageAttrs[4] = {4, 1, RHI::VertexFormat::Float4, 0};
+    if (m_foliageVert) {
+        RHI::GraphicsPipelineDesc foliageDesc = sceneDesc;
+        foliageDesc.vertexBuffers = foliageLayouts;
+        foliageDesc.numVertexBuffers = 2;
+        foliageDesc.attributes = foliageAttrs;
+        foliageDesc.numAttributes = 5;
+        m_foliagePipeline = m_device->createGraphicsPipeline(m_foliageVert, m_sceneFrag, foliageDesc);
+    }
+    if (m_shadowFoliageVert) {
+        RHI::GraphicsPipelineDesc foliageShadow = shadowDesc;
+        foliageShadow.vertexBuffers = foliageLayouts;
+        foliageShadow.numVertexBuffers = 2;
+        foliageShadow.attributes = foliageAttrs;
+        foliageShadow.numAttributes = 5;
+        m_shadowFoliagePipeline =
+            m_device->createGraphicsPipeline(m_shadowFoliageVert, m_shadowFrag, foliageShadow);
+        if (m_shadowCutoutFrag) {
+            m_shadowFoliageCutoutPipeline = m_device->createGraphicsPipeline(
+                m_shadowFoliageVert, m_shadowCutoutFrag, foliageShadow);
+        }
     }
 
     if (m_instancedVert && m_sceneFrag) {
@@ -813,6 +901,24 @@ bool GpuSceneRenderer::createPipelines() {
         instancedDesc.attributes = instancedAttrs;
         instancedDesc.numAttributes = 8;
         m_instancedPipeline = m_device->createGraphicsPipeline(m_instancedVert, m_sceneFrag, instancedDesc);
+
+        // The same with the per-vertex colour stream as a third buffer (location 8).
+        if (m_foliageInstancedVert) {
+            RHI::VertexBufferLayoutDesc layouts[3]{};
+            layouts[0] = instancedLayouts[0];
+            layouts[1] = instancedLayouts[1];
+            layouts[2] = {2, static_cast<u32>(sizeof(float) * 4), false};
+            RHI::VertexAttributeDesc colourAttrs[9]{};
+            for (u32 i = 0; i < 8; ++i) colourAttrs[i] = instancedAttrs[i];
+            colourAttrs[8] = {8, 2, RHI::VertexFormat::Float4, 0};
+            RHI::GraphicsPipelineDesc colourDesc = instancedDesc;
+            colourDesc.vertexBuffers = layouts;
+            colourDesc.numVertexBuffers = 3;
+            colourDesc.attributes = colourAttrs;
+            colourDesc.numAttributes = 9;
+            m_foliageInstancedPipeline =
+                m_device->createGraphicsPipeline(m_foliageInstancedVert, m_sceneFrag, colourDesc);
+        }
     }
 
     if (m_instancedPipeline) {
@@ -824,6 +930,13 @@ bool GpuSceneRenderer::createPipelines() {
 
     return m_scenePipeline && m_wireframePipeline && m_terrainPipeline && m_shadowPipeline &&
            m_blendPipeline;
+}
+
+void GpuSceneRenderer::setWind(float* out, const MeshDraw& draw) const {
+    out[0] = draw.windStrength;
+    out[1] = draw.windSpeed;
+    out[2] = draw.windFlutter;
+    out[3] = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
 }
 
 void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw,
@@ -861,10 +974,32 @@ void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& d
     ubo.lightPos[1] = lightPos.y;
     ubo.lightPos[2] = lightPos.z;
     ubo.mode = mode;
+    setWind(ubo.wind, draw);
 
-    cmd->bindPipeline(m_shadowPipeline);
+    // Cut-out cards (leaves, petals, grass) test the albedo's alpha, so the sun falls through the
+    // gaps and the crown shades its own interior.
+    RHI::Texture* cutoutTex = nullptr;
+    if (draw.alphaMode == 1 && m_shadowCutoutPipeline) {
+        cutoutTex = resolveMeshAlbedo(m_device, draw.mesh, draw.meshPath, m_shadowProjectRoot,
+                                      draw.customTexturePath, 0,
+                                      textureQualityTier(draw.viewerDistance, m_shadowTextureQuality))
+                        .texture;
+    }
+    // A painted wind weight lives in the mesh's colour stream: use the foliage variants.
+    const bool coloured = draw.mesh->colorBuffer && m_shadowFoliagePipeline;
+    if (cutoutTex) {
+        float cutout[8] = {draw.alphaCutoff, 0.0f, 0.0f, 0.0f,
+                           draw.uvTiling.x, draw.uvTiling.y, draw.uvOffset.x, draw.uvOffset.y};
+        cmd->bindPipeline(coloured && m_shadowFoliageCutoutPipeline ? m_shadowFoliageCutoutPipeline
+                                                                    : m_shadowCutoutPipeline);
+        cmd->bindTexture(cutoutTex, 0, m_repeatSampler);
+        cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, cutout, sizeof(cutout));
+    } else {
+        cmd->bindPipeline(coloured ? m_shadowFoliagePipeline : m_shadowPipeline);
+    }
     cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &ubo, sizeof(ubo));
     cmd->bindVertexBuffer(vertexBufferFor(draw));
+    if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 1);
     cmd->bindIndexBuffer(draw.mesh->indexBuffer);
     cmd->drawIndexed(indexCount, firstIndex, 0);
 }
@@ -896,6 +1031,34 @@ bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
         return true;
     }
 
+    // The optional colour stream follows the geometry: (re)uploaded whenever the mesh is.
+    auto syncColors = [&]() {
+        const u64 bytes = mesh->vertexColors.size() == mesh->vertices.size()
+                              ? mesh->vertexColors.size() * sizeof(float) * 4
+                              : 0;
+        if (bytes == 0) {
+            if (mesh->colorBuffer) {
+                m_device->destroyBuffer(mesh->colorBuffer);
+                mesh->colorBuffer = nullptr;
+            }
+            return;
+        }
+        if (mesh->colorBuffer && mesh->colorBuffer->size != bytes) {
+            m_device->destroyBuffer(mesh->colorBuffer);
+            mesh->colorBuffer = nullptr;
+        }
+        if (!mesh->colorBuffer) {
+            RHI::BufferDesc cdesc;
+            cdesc.size = bytes;
+            mesh->colorBuffer = m_device->createBuffer(cdesc, RHI::BufferUsage::Vertex);
+        }
+        if (mesh->colorBuffer &&
+            !m_device->uploadBuffer(mesh->colorBuffer, mesh->vertexColors.data(), bytes)) {
+            m_device->destroyBuffer(mesh->colorBuffer);
+            mesh->colorBuffer = nullptr;
+        }
+    };
+
     // Dynamic meshes (water, fluid voxels) change every frame. Reuse the GPU
     // buffers when the size is unchanged and only re-upload the contents.
     if (mesh->vertexBuffer && mesh->indexBuffer && mesh->vertexBuffer->size == vertexBytes &&
@@ -906,6 +1069,7 @@ bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
         if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
             return false;
         }
+        syncColors();
         mesh->uploadedRevision = mesh->geometryRevision;
         return true;
     }
@@ -933,6 +1097,7 @@ bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
     if (!m_device->uploadBuffer(mesh->indexBuffer, mesh->indices.data(), indexBytes)) {
         return false;
     }
+    syncColors();
     mesh->uploadedRevision = mesh->geometryRevision;
     return true;
 }
@@ -1311,6 +1476,14 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         if (displaced) pipeline = m_displacePipeline;
         if (wireframe) pipeline = m_wireframePipeline;
         else if (draw.isTerrain && m_terrainPipeline) pipeline = m_terrainPipeline;
+        // Per-vertex colour (baked occlusion, painted wind weight) comes from a second stream.
+        const bool coloured = !wireframe && !displaced && !draw.isTerrain && m_foliagePipeline &&
+                              draw.mesh->colorBuffer && basePipeline == m_scenePipeline;
+        if (coloured) pipeline = m_foliagePipeline;
+        const bool blendedPass = basePipeline == m_blendPipeline;
+        const bool gpuWater = draw.gpuWater && !wireframe && m_waterPipeline && m_waterBlendPipeline &&
+                              (blendedPass || basePipeline == m_scenePipeline);
+        if (gpuWater) pipeline = blendedPass ? m_waterBlendPipeline : m_waterPipeline;
         cmd->bindPipeline(pipeline);
 
         LightingUBO lights = base;
@@ -1349,6 +1522,11 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             lights.projParams[3] = draw.normalDirectX ? 1.0f : 0.0f;
             setVec4(lights.coat, draw.clearcoat, draw.clearcoatRoughness, draw.ior,
                     draw.transmission);
+            setVec4(lights.foliage, draw.translucency, 0.0f, 0.0f, 0.0f);
+            setVec4(lights.modifiers, draw.modWetness, draw.modSnow, draw.modAge, 0.0f);
+            setVec4(lights.modTint, draw.modTint.x, draw.modTint.y, draw.modTint.z, 1.0f);
+            setVec4(lights.water, draw.isWater ? 1.0f : 0.0f, draw.gpuWater ? 1.0f : 0.0f, 0.4f,
+                    draw.waterTime);
             setVec4(lights.sheen, draw.sheenColor.x, draw.sheenColor.y, draw.sheenColor.z,
                     draw.sheenRoughness);
             // iridescence.w is free: it carries the parallax depth (needs a normal map whose
@@ -1454,13 +1632,24 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             RHI::Texture* heightTex = draw.displacementTexture;
             if (heightTex) cmd->bindVertexTexture(heightTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &dubo, sizeof(dubo));
+        } else if (gpuWater) {
+            WaterVertexUBO wubo{};
+            std::memcpy(wubo.mvp, mvp.data(), sizeof(wubo.mvp));
+            std::memcpy(wubo.model, draw.worldMatrix.data(), sizeof(wubo.model));
+            wubo.params[0] = draw.waterTime;
+            wubo.params[1] = static_cast<f32>(draw.waveCount);
+            wubo.params[2] = draw.waterFoamThreshold;
+            std::memcpy(wubo.waves, draw.waveData, sizeof(wubo.waves));
+            cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &wubo, sizeof(wubo));
         } else {
             VertexUBO vubo{};
             std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
             std::memcpy(vubo.model, draw.worldMatrix.data(), sizeof(vubo.model));
+            setWind(vubo.wind, draw);
             cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &vubo, sizeof(vubo));
         }
         cmd->bindVertexBuffer(vertexBufferFor(draw));
+        if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 1);
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
         if (draw.isTerrain) {
@@ -1550,15 +1739,17 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
-            const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instancedPipeline &&
-                                   m_instanceBuffer;
+            const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instanceBuffer &&
+                                   (coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
             if (instanced) {
                 VertexUBO instUbo{};
                 std::memcpy(instUbo.mvp, pass.viewProj.data(), sizeof(instUbo.mvp));
-                cmd->bindPipeline(m_instancedPipeline);
+                setWind(instUbo.wind, draw);
+                cmd->bindPipeline(coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
                 cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &instUbo, sizeof(instUbo));
                 cmd->bindVertexBuffer(draw.mesh->vertexBuffer, 0);
                 cmd->bindVertexBuffer(m_instanceBuffer, 1, draw.batchByteOffset);
+                if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 2);
                 cmd->bindIndexBuffer(draw.mesh->indexBuffer);
                 cmd->drawIndexedInstanced(indexCount, draw.batchCount, firstIndex, 0, 0);
             } else {
@@ -1850,6 +2041,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
             draw.castShadows = renderer->castShadows;
             draw.receiveShadows = renderer->receiveShadows;
+            draw.modTint = Vec3(renderer->modTint.x, renderer->modTint.y, renderer->modTint.z);
+            draw.modWetness = renderer->modWetness;
+            draw.modSnow = renderer->modSnow;
+            draw.modAge = renderer->modAge;
         }
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
@@ -1917,6 +2112,16 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 draw.clearcoatRoughness = std::clamp(surface.clearcoatRoughness, 0.02f, 1.0f);
                 draw.sheenColor = srgbToLinear(surface.sheenColor);
                 draw.sheenRoughness = surface.sheenRoughness;
+                draw.windStrength = surface.windStrength;
+                draw.windSpeed = surface.windSpeed;
+                draw.windFlutter = surface.windFlutter;
+                draw.translucency = surface.translucency;
+                // The material's modifiers combine with the entity's: tint multiplies, amounts add.
+                draw.modTint = Vec3(draw.modTint.x * surface.modTint.x, draw.modTint.y * surface.modTint.y,
+                                    draw.modTint.z * surface.modTint.z);
+                draw.modWetness = std::clamp(draw.modWetness + surface.modWetness, 0.0f, 1.0f);
+                draw.modSnow = std::clamp(draw.modSnow + surface.modSnow, 0.0f, 1.0f);
+                draw.modAge = std::clamp(draw.modAge + surface.modAge, 0.0f, 1.0f);
                 draw.iridescence = std::clamp(surface.iridescence, 0.0f, 1.0f);
                 draw.iridescenceThickness = surface.iridescenceThickness;
                 draw.iridescenceIor = surface.iridescenceIor;
@@ -1982,6 +2187,18 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                     draw.clearcoat = 0.35f;
                     draw.clearcoatRoughness = 0.03f;
                     draw.hasAuthoredMaterial = true;
+                    draw.isWater = true;
+                    Scene::GpuWaterWaves waves;
+                    if (Scene::naturalFluidGpuWaves(world, entity.id(), waves)) {
+                        draw.gpuWater = true;
+                        draw.waveCount = waves.count;
+                        draw.waterTime = waves.time;
+                        draw.waterFoamThreshold = waves.foamThreshold;
+                        std::memcpy(draw.waveData, waves.packed, sizeof(draw.waveData));
+                    } else if (const Fluids::FluidWorld* world3 =
+                                   Scene::naturalFluidWorldFor(world, entity.id())) {
+                        draw.waterTime = world3->time();
+                    }
                 } else {
                     // Fluid volume voxels. The density field is real; the colour
                     // and emission come from the selected material preset.
@@ -2087,8 +2304,10 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         const MeshDraw& draw = draws[i];
         const bool singleSubmesh = draw.mesh && draw.mesh->subMeshes.size() <= 1;
         // Probed and translucent draws need per-object data (cube map, sort order).
+        const bool hasColours = draw.mesh && !draw.mesh->vertexColors.empty() &&
+                                draw.mesh->vertexColors.size() == draw.mesh->vertices.size();
         items[i].allow = singleSubmesh && !draw.isTerrain && !draw.displaced && draw.probeIndex < 0 &&
-                         !draw.isTranslucent();
+                         !draw.isTranslucent() && (!hasColours || m_foliageInstancedPipeline);
         u64 key = static_cast<u64>(reinterpret_cast<uintptr_t>(draw.mesh));
         auto mixBytes = [&](const std::string& text) {
             for (unsigned char c : text) key = key * 131u + c;
@@ -2129,6 +2348,16 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         mixFloat(draw.sheenRoughness);
         mixFloat(draw.iridescence);
         mixFloat(draw.iridescenceThickness);
+        mixFloat(draw.windStrength);
+        mixFloat(draw.windSpeed);
+        mixFloat(draw.windFlutter);
+        mixFloat(draw.translucency);
+        mixFloat(draw.modTint.x);
+        mixFloat(draw.modTint.y);
+        mixFloat(draw.modTint.z);
+        mixFloat(draw.modWetness);
+        mixFloat(draw.modSnow);
+        mixFloat(draw.modAge);
         key = key * 131u + draw.alphaMode;
         if (draw.receiveShadows) key ^= 0x9e3779b97f4a7c15ull;
         items[i].key = key == 0 ? 1 : key;
@@ -2602,6 +2831,8 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     }
 
     m_activeCascadeCount = opts.directionalCascadeCount;
+    m_shadowProjectRoot = projectRoot;
+    m_shadowTextureQuality = opts.textureQuality;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
         renderDirectionalShadows(cmd, world, lighting, draws, camera);

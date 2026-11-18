@@ -69,8 +69,17 @@ the waves, and no preset contains a wave its mesh cannot show.
   `Water`, `WaterWave`, `Engine::set_water/water/water_height`.
 * `caffeine_session_tick` now steps natural fluids, and the editor ticks the engine while a water surface is
   in the scene, so the surface animates in the viewport (the runtime app already did this).
-* The water surface shading was retuned to physical values (low F0, a thinner clearcoat) so the body colour
-  reads; it is still the PBR transparent path.
+* **Waves run on the GPU.** The surface used to be rebuilt on the CPU every frame (a 256 x 256 grid sampled
+  against 16 waves, normals included, then re-uploaded: about **28 ms per frame** at 256 x 256). Now an
+  analytic sea is a **flat grid uploaded once**; `water.vert` evaluates the Gerstner sum (the same maths as
+  `WaveField::sample`, so `water_height` agrees with what you see) and the CPU cost per frame is about zero.
+  The culling box is padded by the wave amplitude and choppiness (`MeshGeometryComponent::boundsPadding`).
+  Surfaces with **shallow-water physics** or more than 16 waves keep the CPU mesh, as before.
+* **Water look in the shader** (`scene_lit.frag`, enabled for water surfaces): two layers of procedural
+  **ripple normals** that fade out with distance (the fine, chaotic detail a displaced mesh cannot show),
+  **depth colour** (turquoise shallows when looking down, deep blue at grazing angles), **whitecaps** from the
+  wave Jacobian (crests that compress), broken up by noise, and sun glints from the ripples on the glossy
+  surface. The body is still the PBR transparent path with the retuned low F0 and thin clearcoat.
 
 ## 5. Agents and scripting
 
@@ -122,14 +131,14 @@ What this changes in the roadmap, in order:
 
 This is the foundation of the rework, not all of it. Honest status:
 
-* **No dedicated water shader yet.** The surface is still the engine's PBR transparent material. What is
-  missing and next: **depth-based absorption and colour** (shallow turquoise to deep blue), **refraction**,
-  **foam and shoreline** from depth/Jacobian, **caustics**, and a **normal-map detail layer** so ripples need
-  no vertices. Until then the look in the engine is paler and flatter than the Look node suggests; it also
-  reflects a lot of sky at grazing angles.
-* **Vertex-displaced mesh only**, up to 256 x 256 cells, rebuilt on the CPU each frame. A **clipmap/LOD mesh**
-  around the camera and moving the waves to the **vertex shader** are what make an ocean scale; the graph
-  and ABI are already shaped for that (waves are plain data).
+* **The water shading is a mode of the lit shader, not a full water shader.** Done: ripple detail, depth-ish
+  colour from the view angle, whitecaps, GPU waves. Still missing: **true depth-based absorption** (it needs
+  the floor depth), **refraction** with a floor, **shoreline foam**, **caustics**, **god rays**, and the
+  **Look node's colour does not yet vary over depth**. The editor grid shows through the water (it is part of
+  the refracted scene).
+* **Vertex-displaced grid**, up to 256 x 256 cells (a few thousand quads cost nothing now; the grid is no longer
+  rebuilt). A **clipmap/LOD mesh** around the camera is what lets an ocean reach the horizon with the detail
+  near you; waves are already plain data for it.
 * **Orbit-free preview**: the tab previews the surface top-down; the 3D look is in the viewport after Place.
 * No **FFT ocean** node, no **flow maps** (rivers are stretched waves, not advected), no **interactive
   ripples** from objects yet (the shallow-water solver exists in the engine and is the way to get them), no

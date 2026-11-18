@@ -10,7 +10,7 @@
 
 use crate::uikit::components::{
     button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status, text_field,
-    tree_view,
+    texture_slot, tree_view,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
@@ -47,6 +47,14 @@ pub enum Edit {
     SetParam(NodeId, usize, f32),
     /// Node, string index, text.
     SetString(NodeId, usize, String),
+    /// Opens the asset picker for a node's string (node, string index, what to pick).
+    OpenPicker(NodeId, usize, PickKind),
+    PickerSearch(String),
+    /// A picked asset's project-relative path.
+    PickerPick(String),
+    PickerClose,
+    /// Drops the asset being dragged from the Assets pane onto a node's slot.
+    DropAsset(NodeId, usize, PickKind),
     Undo,
     Redo,
     Fit,
@@ -65,6 +73,30 @@ pub enum Edit {
     PreviewMove(Point),
     PreviewRelease,
     PreviewZoom(f32),
+}
+
+/// What a node slot takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickKind {
+    Image,
+    Material,
+}
+
+impl PickKind {
+    /// The engine's asset kind.
+    pub fn asset_kind(self) -> &'static str {
+        match self {
+            PickKind::Image => "image",
+            PickKind::Material => "material",
+        }
+    }
+
+    pub fn badge(self) -> &'static str {
+        match self {
+            PickKind::Image => "TEX",
+            PickKind::Material => "MAT",
+        }
+    }
 }
 
 pub struct View<'a> {
@@ -86,6 +118,8 @@ pub struct View<'a> {
     /// Project `.mat` assets and image assets, for the Part node's "your own" materials.
     pub project_materials: Vec<String>,
     pub project_textures: Vec<String>,
+    /// Thumbnails of the images the selected node uses, by project path.
+    pub thumbnails: std::collections::HashMap<String, Handle>,
 }
 
 fn accent(category: &str) -> iced::Color {
@@ -437,7 +471,8 @@ fn properties<'a, Message: Clone + 'a>(
     view: &View<'a>,
     emit: Rc<dyn Fn(Edit) -> Message + 'a>,
 ) -> Element<'a, Message> {
-    let Some(node) = view.selected.and_then(|id| view.graph.node(id)) else {
+    let graph: &'a NatureGraph = view.graph;
+    let Some(node) = view.selected.and_then(|id| graph.node(id)) else {
         return container(
             column![
                 text("NODE").size(8).color(theme::TEXT_MUTED),
@@ -530,37 +565,47 @@ fn properties<'a, Message: Clone + 'a>(
             }
         }
     }
-    // The parts material choice is a plain dropdown in the node table (`material`), so it is above;
-    // "your own" assets add a picker for the matching project files.
+    // Asset slots: a thumbnail, the file name, clear, and drop from the Assets pane; a click opens
+    // the picker with previews. The Part node takes your own .mat / image when asked.
+    let mut slots: Vec<(usize, &'static str, PickKind)> = Vec::new();
     if material_choice {
-        let choice = node.params[1].round() as usize;
-        let (options, label): (&[String], &str) = match choice {
-            22 => (&view.project_materials, "Your .mat"),
-            23 => (&view.project_textures, "Your image"),
-            _ => (&[], ""),
-        };
-        if !label.is_empty() {
-            let current = node.strings.first().cloned().unwrap_or_default();
-            let pick_emit = emit.clone();
-            body = body.push(dropdown::property(
-                id::naturegen_param("asset"),
-                label,
-                options.to_vec(),
-                Some(current.clone()).filter(|c| !c.is_empty()),
-                move |choice| pick_emit(Edit::SetString(node_id, 0, choice)),
-            ));
-            let text_emit = emit.clone();
-            body = body.push(text_field::property(
-                id::naturegen_param("asset_path"),
-                "Path",
-                &current,
-                move |value| text_emit(Edit::SetString(node_id, 0, value)),
-            ));
-            if options.is_empty() {
-                body = body.push(text("No matching assets found in the project: type a path relative to the assets folder.").size(8).color(theme::TEXT_MUTED));
-            }
+        match node.params[1].round() as usize {
+            22 => slots.push((0, "Your .mat", PickKind::Material)),
+            23 => slots.push((0, "Your image", PickKind::Image)),
+            _ => {}
         }
     }
+    match node.op {
+        "texture" => slots.push((0, "Image", PickKind::Image)),
+        "material" => slots.push((0, "Base material (.mat)", PickKind::Material)),
+        _ => {}
+    }
+    for (index, label, kind) in slots {
+        let current: &'a str = node.strings.get(index).map(String::as_str).unwrap_or("");
+        let pick = emit.clone();
+        let clear = emit.clone();
+        let drop = emit.clone();
+        body = body.push(texture_slot::view(
+            texture_slot::Slot {
+                id: id::naturegen_param(&format!("slot_{index}_{}", kind.asset_kind())),
+                label,
+                path: current,
+                thumbnail: view.thumbnails.get(current).cloned(),
+                badge: kind.badge(),
+            },
+            pick(Edit::OpenPicker(node_id, index, kind)),
+            (!current.is_empty()).then(|| clear(Edit::SetString(node_id, index, String::new()))),
+            Some(drop(Edit::DropAsset(node_id, index, kind))),
+        ));
+        let text_emit = emit.clone();
+        body = body.push(text_field::property(
+            id::naturegen_param(&format!("path_{index}_{}", kind.asset_kind())),
+            "Path",
+            current,
+            move |value| text_emit(Edit::SetString(node_id, index, value)),
+        ));
+    }
+    let _ = (&view.project_materials, &view.project_textures);
     container(body)
         .width(Length::Fill)
         .padding(4)

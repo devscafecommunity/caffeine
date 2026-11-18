@@ -27,6 +27,10 @@ bool sameSurface(const MaterialSurface& a, const MaterialSurface& b) {
            a.clearcoat == b.clearcoat && a.clearcoatRoughness == b.clearcoatRoughness &&
            a.sheenColor.x == b.sheenColor.x && a.sheenColor.y == b.sheenColor.y &&
            a.sheenColor.z == b.sheenColor.z && a.sheenRoughness == b.sheenRoughness &&
+           a.windStrength == b.windStrength && a.windSpeed == b.windSpeed &&
+           a.windFlutter == b.windFlutter && a.translucency == b.translucency &&
+           a.modTint.x == b.modTint.x && a.modTint.y == b.modTint.y && a.modTint.z == b.modTint.z &&
+           a.modWetness == b.modWetness && a.modSnow == b.modSnow && a.modAge == b.modAge &&
            a.iridescence == b.iridescence && a.iridescenceThickness == b.iridescenceThickness &&
            a.iridescenceIor == b.iridescenceIor && a.reflection == b.reflection &&
            a.reflectionBudget == b.reflectionBudget &&

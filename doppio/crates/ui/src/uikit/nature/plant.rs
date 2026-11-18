@@ -49,8 +49,13 @@ fn strip(
         ));
         let face = normalize(cross(side, tangent));
         let normal = normalize(add(mul(face, 0.45), [0.0, 0.8, 0.0]));
-        part.vertex(add(center, mul(side, -half)), normal, [0.0, t]);
-        part.vertex(add(center, mul(side, half)), normal, [1.0, t]);
+        let left = part.vertex(add(center, mul(side, -half)), normal, [0.0, t]);
+        let right = part.vertex(add(center, mul(side, half)), normal, [1.0, t]);
+        // Painted: darker (occluded) and rigid at the root, lighter and fluttering at the tip.
+        let shade = 0.55 + 0.45 * t.powf(0.7);
+        for v in [left, right] {
+            part.set_color(v, [shade, shade, shade, t.powf(1.3)]);
+        }
     }
     for i in 0..rows as u32 {
         let a = first + i * 2;

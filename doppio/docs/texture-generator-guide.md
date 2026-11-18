@@ -10,7 +10,7 @@ flame, a shock ring, a packed RGBA mask. It is a tool of its own, next to the
 | Result node | `Output` (Color, Roughness, Metallic, Height, AO, Emissive, Opacity, Normal) | `Texture Output` (Colour + alpha, or packed R, G, B, A) |
 | Tiling | seamless | optional: an object sits in the image with a transparent margin |
 | Preview | engine sphere or plane with real lighting | checkerboard, plus single-channel views |
-| File | `<material>.mgraph` beside the `.mat` | `<name>.texgraph` in `textures/`, with the `.png` |
+| File | `<material>.mgraph` beside the `.mat` | `<name>.texgraph` in `Textures/`, with the `.png` |
 | Library | 85 materials | 21 textures: foliage, organic, fire and smoke, effects, procedural, data |
 | Accent colour | cyan | orange (title bar and the Texture Output node) |
 
@@ -107,8 +107,9 @@ live. It is drawn **over a checkerboard**, so transparency is visible. The chips
 
 ## 6. Saving and exporting
 
-Files go to `<project assets>/textures/` (`textures/` relative to the working directory without a
-project):
+Files go to `<project assets>/Textures/` (an existing `textures/` is reused; `Textures/` relative to the
+working directory without a project). Export runs on a worker thread, so a 16-bit or flipbook bake does not
+freeze the editor, and the new image appears in Assets when it finishes:
 
 | Button | Writes |
 |---|---|

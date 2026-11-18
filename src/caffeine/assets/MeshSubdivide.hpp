@@ -126,6 +126,8 @@ inline bool subdivideMesh(const Mesh3D& source, u32 levels, Mesh3D& out,
 #ifdef CF_HAS_SDL3
     out.vertexBuffer = nullptr; // the copy owns no GPU buffers yet
     out.indexBuffer = nullptr;
+    out.colorBuffer = nullptr;
+    out.vertexColors.clear(); // subdivision adds vertices: the colours no longer line up
 #endif
     return true;
 }

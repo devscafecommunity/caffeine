@@ -168,7 +168,6 @@ pub fn create_project(location: &Path, name: &str, template: &str) -> Result<Pro
         "assets/raw/Animations",
         "assets/raw/Models",
         "assets/raw/Materials",
-        "assets/raw/materials",
         "assets/raw/Textures",
         "assets/raw/Audio",
         "assets/raw/Prefabs",
@@ -176,8 +175,6 @@ pub fn create_project(location: &Path, name: &str, template: &str) -> Result<Pro
         "assets/processed",
         "scripts",
         "scenes",
-        "materials",
-        "texture_sets",
         "build",
     ] {
         std::fs::create_dir_all(root.join(folder)).map_err(|error| error.to_string())?;
@@ -424,7 +421,6 @@ mod tests {
         let project = create_project(&root, "Demo", "3D").expect("create");
         assert!(project.root.join(PROJECT_FILE).exists());
         assert!(project.root.join("assets/raw/Textures").is_dir());
-        assert!(project.root.join("texture_sets").is_dir());
         assert_eq!(project.asset_root(), project.root.join("assets/raw"));
 
         let loaded = load_project(&project.root).expect("load");

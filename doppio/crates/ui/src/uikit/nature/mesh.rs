@@ -55,6 +55,93 @@ pub enum MaterialSpec {
     /// One of your own images with transparency (a PNG leaf, petal, grass blade...): turned into a
     /// cut-out card material.
     ProjectTexture(String),
+    /// Built by a **Material node** in the graph: colour, your textures and the surface settings.
+    Custom(CustomMaterial),
+}
+
+/// The settings of a Material node plus the texture layers Texture nodes added.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomMaterial {
+    pub rgb: [f32; 3],
+    pub roughness: f32,
+    pub metallic: f32,
+    /// A project `.mat` to start from (its maps and settings); empty = a plain material.
+    pub base: String,
+    /// Texture layers in the order the nodes were wired; they are summed per slot at placement.
+    pub layers: Vec<TextureLayer>,
+    pub cutout: bool,
+    pub cutoff: f32,
+    pub normal_strength: f32,
+    pub translucency: f32,
+    pub sway: f32,
+    pub flutter: f32,
+}
+
+impl CustomMaterial {
+    /// A plain material of one colour (what a Texture node starts from).
+    pub fn plain(rgb: [f32; 3], roughness: f32) -> Self {
+        CustomMaterial {
+            rgb,
+            roughness,
+            metallic: 0.0,
+            base: String::new(),
+            layers: Vec::new(),
+            cutout: false,
+            cutoff: 0.45,
+            normal_strength: 1.0,
+            translucency: 0.0,
+            sway: 0.0,
+            flutter: 0.0,
+        }
+    }
+}
+
+/// Which map of the material a layer writes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureSlot {
+    Albedo,
+    Normal,
+    /// Occlusion (R), roughness (G), metallic (B).
+    Orm,
+}
+
+impl TextureSlot {
+    pub const ALL: [TextureSlot; 3] = [TextureSlot::Albedo, TextureSlot::Normal, TextureSlot::Orm];
+}
+
+/// How a layer combines with what is already in its slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerBlend {
+    /// Mix toward the layer by its strength.
+    Replace,
+    /// Add the layer (scaled by its strength); for normals, add the slopes.
+    Add,
+    /// Multiply (darkens; for normals, add the slopes).
+    Multiply,
+    /// Contrast-preserving overlay.
+    Overlay,
+}
+
+impl LayerBlend {
+    pub const ALL: [LayerBlend; 4] = [
+        LayerBlend::Replace,
+        LayerBlend::Add,
+        LayerBlend::Multiply,
+        LayerBlend::Overlay,
+    ];
+}
+
+/// One image of a Texture node: where it goes, how it blends, how often it repeats.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextureLayer {
+    pub slot: TextureSlot,
+    /// Project-relative image path.
+    pub path: String,
+    pub blend: LayerBlend,
+    pub strength: f32,
+    pub tiling: [f32; 2],
+    /// Multiplies the albedo layer (a tint); ignored for other slots.
+    pub tint: [f32; 3],
 }
 
 impl MaterialSpec {
@@ -79,6 +166,13 @@ impl MaterialSpec {
                         .collect::<String>()
                 )
             }
+            MaterialSpec::Custom(custom) => {
+                use std::hash::{Hash, Hasher};
+                // Stable across runs (the default hasher has fixed keys): one file per setting set.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                format!("{custom:?}").hash(&mut hasher);
+                format!("custom_{:012x}", hasher.finish() & 0xffff_ffff_ffff)
+            }
             MaterialSpec::Solid { rgb, .. } => format!(
                 "solid_{:02x}{:02x}{:02x}",
                 (rgb[0] * 255.0) as u8,
@@ -101,6 +195,41 @@ pub struct Part {
     pub preview: [f32; 3],
     /// A generated texture set (from the Surface node); replaces `material` when placed.
     pub surface: Option<super::surface::SurfaceSpec>,
+    /// When the part is many copies of one small mesh (scattered moss, pebbles, clumps), the
+    /// copies as transforms. `positions`/`indices` still hold the merged geometry (preview, stats,
+    /// export); placing in the scene writes the template once and creates one entity per copy,
+    /// which the renderer **GPU-instances** (one draw call, per-copy wind phase).
+    pub instances: Option<Instances>,
+    /// Optional per-vertex colour, parallel to `positions` (empty or the same length): rgb tints
+    /// the albedo (baked occlusion, per-leaf variation), alpha is the **painted flutter weight**
+    /// (0 = the stalk, rigid; 1 = the tip, full shimmer). Written to the `.obj` as
+    /// `v x y z r g b a`, which the engine reads into a second vertex stream.
+    pub colors: Vec<[f32; 4]>,
+}
+
+/// One copy of an instanced template, in the engine's transform terms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstanceTransform {
+    pub position: V3,
+    /// Pitch, yaw, roll in degrees (the engine's ZYX convention).
+    pub euler_degrees: [f32; 3],
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Instances {
+    pub template: Box<Part>,
+    pub transforms: Vec<InstanceTransform>,
+}
+
+/// Engine Euler angles (pitch, yaw, roll in degrees, ZYX) of a rotation given by where it sends
+/// the X, Y and Z axes (the matrix columns).
+pub fn euler_from_columns(c0: V3, c1: V3, c2: V3) -> [f32; 3] {
+    // R = [c0 c1 c2]; R_ij is component i of column j.
+    let pitch = c1[2].atan2(c2[2]);
+    let yaw = (-c0[2]).clamp(-1.0, 1.0).asin();
+    let roll = c0[1].atan2(c0[0]);
+    [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()]
 }
 
 impl Part {
@@ -114,6 +243,8 @@ impl Part {
             indices: Vec::new(),
             preview,
             surface: None,
+            instances: None,
+            colors: Vec::new(),
         }
     }
 
@@ -121,6 +252,10 @@ impl Part {
         self.positions.push(position);
         self.normals.push(normal);
         self.uvs.push(uv);
+        // Once a part is painted, later vertices are white (neutral) so the arrays stay parallel.
+        if !self.colors.is_empty() {
+            self.colors.push([1.0; 4]);
+        }
         (self.positions.len() - 1) as u32
     }
 
@@ -195,7 +330,44 @@ impl Part {
     }
 
     /// Appends another part's geometry (materials must match; the caller guarantees it).
+    /// Paints a vertex: rgb tint and flutter weight. Vertices created later stay white / weight 1.
+    pub fn set_color(&mut self, vertex: u32, rgba: [f32; 4]) {
+        if self.colors.len() < self.positions.len() {
+            self.colors.resize(self.positions.len(), [1.0; 4]);
+        }
+        if let Some(slot) = self.colors.get_mut(vertex as usize) {
+            *slot = rgba;
+        }
+    }
+
+    /// Pads the colours with white up to the vertex count (call after the last painted vertex).
+    pub fn pad_colors(&mut self) {
+        if !self.colors.is_empty() && self.colors.len() < self.positions.len() {
+            self.colors.resize(self.positions.len(), [1.0; 4]);
+        }
+    }
+
+    /// The colours when they line up with the vertices and say anything (not all white).
+    pub fn painted_colors(&self) -> Option<&[[f32; 4]]> {
+        (self.colors.len() == self.positions.len() && self.colors.iter().any(|c| *c != [1.0; 4]))
+            .then_some(self.colors.as_slice())
+    }
+
     pub fn append(&mut self, other: &Part) {
+        // Colours stay parallel to the vertices: pad whichever side has none with white.
+        if self.painted_colors().is_some() || other.painted_colors().is_some() {
+            self.colors.resize(self.positions.len(), [1.0; 4]);
+            match other.painted_colors() {
+                Some(colors) => self.colors.extend_from_slice(colors),
+                None => self
+                    .colors
+                    .extend(std::iter::repeat_n([1.0; 4], other.positions.len())),
+            }
+        } else {
+            self.colors.clear();
+        }
+        // Two sets of copies (or copies and plain geometry) are one merged mesh from here on.
+        self.instances = None;
         let base = self.positions.len() as u32;
         self.positions.extend_from_slice(&other.positions);
         self.normals.extend_from_slice(&other.normals);
@@ -206,8 +378,15 @@ impl Part {
     /// Wavefront OBJ text: `v`, `vt`, `vn` and `f v/vt/vn`, one object named after the part.
     pub fn to_obj(&self) -> String {
         let mut text = format!("# Caffeine Nature Generator\no {}\n", self.name);
-        for p in &self.positions {
-            text.push_str(&format!("v {:.5} {:.5} {:.5}\n", p[0], p[1], p[2]));
+        let colors = self.painted_colors();
+        for (i, p) in self.positions.iter().enumerate() {
+            match colors {
+                Some(c) => text.push_str(&format!(
+                    "v {:.5} {:.5} {:.5} {:.4} {:.4} {:.4} {:.4}\n",
+                    p[0], p[1], p[2], c[i][0], c[i][1], c[i][2], c[i][3]
+                )),
+                None => text.push_str(&format!("v {:.5} {:.5} {:.5}\n", p[0], p[1], p[2])),
+            }
         }
         for t in &self.uvs {
             text.push_str(&format!("vt {:.5} {:.5}\n", t[0], t[1]));

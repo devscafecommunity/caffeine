@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 8
+#define CAFFEINE_CAPI_VERSION 10
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -300,6 +300,17 @@ typedef struct CaffeineMaterial {
     int mesh_subdivisions;    /**< levels, 1..9 */
     /** 1 = UVs follow the object's scale (texel density is kept), 0 = authored 1:1 UVs. */
     int uv_object_scale;
+    /** Foliage (v9). Wind sway per metre of height, time scale, leaf flutter 0..1. */
+    float wind_strength;
+    float wind_speed;
+    float wind_flutter;
+    /** Light passing through thin leaves and petals, 0..1. */
+    float translucency;
+    /** Run-time modifiers (v10): albedo tint, wetness, snow cover, age. */
+    float mod_tint[3];
+    float mod_wetness;
+    float mod_snow;
+    float mod_age;
 } CaffeineMaterial;
 
 typedef struct CaffeineMaterialPresetInfo {

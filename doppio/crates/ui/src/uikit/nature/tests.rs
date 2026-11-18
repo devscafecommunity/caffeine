@@ -541,6 +541,7 @@ fn leaf_atlas_gives_varied_folded_drooping_leaves() {
         fold: 0.0,
         droop: 0.0,
         rows: 1,
+        shade_cell: None,
     };
 
     // The atlas image holds eight different leaves: tiles are not copies of each other.
@@ -557,4 +558,320 @@ fn leaf_atlas_gives_varied_folded_drooping_leaves() {
     }
     assert_eq!(seen.len(), 8, "every cell is a different leaf");
     assert!(crate::uikit::texture_graph::atlas("Atlas · Nothing").is_none());
+}
+
+#[test]
+fn bark_sets_tile_are_distinct_and_carry_relief() {
+    use super::surface::{bark, BarkKind};
+    let res = 128;
+    let oak = bark(BarkKind::Oak, res, 1);
+    let birch = bark(BarkKind::Birch, res, 1);
+    assert_eq!(oak.albedo.len(), res * res * 4);
+    // Deterministic.
+    assert_eq!(oak.normal, bark(BarkKind::Oak, res, 1).normal);
+    // Different bark, different image; oak is darker than birch on average.
+    let mean = |m: &super::surface::SurfaceMaps| {
+        m.albedo.chunks(4).map(|p| p[0] as f32).sum::<f32>() / (res * res) as f32
+    };
+    assert!(
+        mean(&birch) > mean(&oak) + 40.0,
+        "{} {}",
+        mean(&birch),
+        mean(&oak)
+    );
+    // Furrows: the height (normal alpha) spans a wide range and the occlusion darkens crevices.
+    let heights: Vec<u8> = oak.normal.chunks(4).map(|p| p[3]).collect();
+    let (lo, hi) = (
+        *heights.iter().min().unwrap(),
+        *heights.iter().max().unwrap(),
+    );
+    assert!(hi - lo > 120, "{lo}..{hi}");
+    let ao_min = oak.orm.chunks(4).map(|p| p[0]).min().unwrap();
+    assert!(ao_min < 130, "{ao_min}");
+    // Tileable: the seam between the last and the first column is no rougher than inside.
+    let h = |x: usize, y: usize| oak.normal[(y * res + x) * 4 + 3] as f32;
+    let seam: f32 = (0..res).map(|y| (h(0, y) - h(res - 1, y)).abs()).sum();
+    let inside: f32 = (0..res)
+        .map(|y| (h(res / 2, y) - h(res / 2 - 1, y)).abs())
+        .sum();
+    assert!(seam < inside * 2.0 + 1.0, "seam {seam} vs {inside}");
+    // Library names map to a kind.
+    assert_eq!(BarkKind::from_name("Pine Bark"), Some(BarkKind::Pine));
+    assert_eq!(BarkKind::from_name("Birch Bark"), Some(BarkKind::Birch));
+    assert_eq!(BarkKind::from_name("Cliff Granite"), None);
+}
+
+#[test]
+fn leaf_card_normals_follow_veins_and_stay_flat_on_plain_cards() {
+    use super::surface::card_normal;
+    let (w, h) = (32usize, 32usize);
+    let flat: Vec<u8> = (0..w * h).flat_map(|_| [90u8, 140, 40, 255]).collect();
+    let n = card_normal(&flat, w, h);
+    // A plain opaque card points straight out.
+    assert!(n
+        .chunks(4)
+        .all(|p| p[0].abs_diff(128) <= 1 && p[1].abs_diff(128) <= 1 && p[2] >= 254));
+    // A dark vein down the middle tilts the normals on both sides in opposite directions.
+    let mut veined = flat.clone();
+    for y in 0..h {
+        for x in 15..17 {
+            let i = (y * w + x) * 4;
+            veined[i] = 30;
+            veined[i + 1] = 60;
+            veined[i + 2] = 20;
+        }
+    }
+    let n = card_normal(&veined, w, h);
+    let left = n[(16 * w + 14) * 4];
+    let right = n[(16 * w + 17) * 4];
+    assert!(left != right, "{left} {right}");
+    assert!(left.abs_diff(128) > 4 || right.abs_diff(128) > 4);
+}
+
+#[test]
+fn crown_interior_uses_the_dark_leaf_cell_more_than_the_shell() {
+    let graph = preset("Oak").graph();
+    let model = graph.build(Quality::Balanced).unwrap();
+    let leaves = model.parts.iter().find(|p| p.name == "leaves").unwrap();
+    // Share of vertices sampling atlas cell 4 (column 0, row 1 of the 4 x 2 atlas).
+    let dark = leaves
+        .uvs
+        .iter()
+        .filter(|uv| (uv[0] * 4.0) as u32 == 0 && (uv[1] * 2.0) as u32 == 1)
+        .count() as f32
+        / leaves.uvs.len() as f32;
+    // Without shading a cell is picked 1 time in 8 (12.5%): shading raises it clearly.
+    assert!(dark > 0.2, "dark cell share {dark}");
+}
+
+#[test]
+fn instanced_scatter_keeps_copies_as_transforms_next_to_the_merged_geometry() {
+    use super::mesh::euler_from_columns;
+    let model = preset("Mossy Rock")
+        .graph()
+        .build(Quality::Detailed)
+        .unwrap();
+    let moss = model
+        .parts
+        .iter()
+        .find(|p| p.instances.is_some())
+        .expect("the moss scatter is instanced");
+    let set = moss.instances.as_ref().unwrap();
+    assert!(set.transforms.len() > 3, "{}", set.transforms.len());
+    // The merged geometry is exactly the template repeated once per copy.
+    assert_eq!(
+        moss.triangle_count(),
+        set.template.triangle_count() * set.transforms.len()
+    );
+    assert!(set.template.instances.is_none());
+    assert!(set.transforms.iter().all(|t| t.scale > 0.0));
+    // Merging with other geometry (or another set) drops the copy list: it would be wrong.
+    let mut merged = moss.clone();
+    merged.append(&set.template);
+    assert!(merged.instances.is_none());
+
+    // Euler angles rebuild the rotation they came from (ZYX: R = Rz * Ry * Rx).
+    for (pitch, yaw, roll) in [
+        (20.0f32, 35.0f32, -15.0f32),
+        (-40.0, 70.0, 10.0),
+        (0.0, 0.0, 0.0),
+    ] {
+        let (p, y, r) = (pitch.to_radians(), yaw.to_radians(), roll.to_radians());
+        let (sp, cp, sy, cy, sr, cr) = (p.sin(), p.cos(), y.sin(), y.cos(), r.sin(), r.cos());
+        let c0 = [cr * cy, sr * cy, -sy];
+        let c1 = [cr * sy * sp - sr * cp, sr * sy * sp + cr * cp, cy * sp];
+        let c2 = [cr * sy * cp + sr * sp, sr * sy * cp - cr * sp, cy * cp];
+        let e = euler_from_columns(c0, c1, c2);
+        for (got, want) in e.iter().zip([pitch, yaw, roll]) {
+            assert!((got - want).abs() < 0.01, "{e:?} vs {pitch} {yaw} {roll}");
+        }
+    }
+}
+
+#[test]
+fn leaves_and_blades_are_painted_with_occlusion_and_a_flutter_weight() {
+    let model = preset("Oak").graph().build(Quality::Balanced).unwrap();
+    let leaves = model.parts.iter().find(|p| p.name == "leaves").unwrap();
+    let colors = leaves.painted_colors().expect("leaf cards are painted");
+    assert_eq!(colors.len(), leaves.positions.len());
+    // The stalk end is rigid and the tip flutters: both extremes are present.
+    let min_w = colors.iter().map(|c| c[3]).fold(f32::MAX, f32::min);
+    let max_w = colors.iter().map(|c| c[3]).fold(f32::MIN, f32::max);
+    assert!(min_w < 0.05 && max_w > 0.95, "{min_w}..{max_w}");
+    // Occlusion: leaves inside the crown are darker than the outer shell.
+    let (lo, hi) = colors.iter().fold((f32::MAX, f32::MIN), |(lo, hi), c| {
+        (lo.min(c[0]), hi.max(c[0]))
+    });
+    assert!(hi - lo > 0.2, "{lo}..{hi}");
+    // The OBJ carries `v x y z r g b a` so the engine can read the colour stream.
+    let obj = leaves.to_obj();
+    let first = obj.lines().find(|l| l.starts_with("v ")).unwrap();
+    assert_eq!(first.split_whitespace().count(), 8, "{first}");
+    // Rocks have no painted colour: plain `v x y z` and no colour stream.
+    let rock = preset("Boulder").graph().build(Quality::Balanced).unwrap();
+    assert!(rock.parts.iter().all(|p| p.painted_colors().is_none()));
+    let line = rock.parts[0].to_obj();
+    let v = line.lines().find(|l| l.starts_with("v ")).unwrap();
+    assert_eq!(v.split_whitespace().count(), 4);
+    // Grass roots are rigid and dark, tips free and light.
+    let grass = preset("Grass Clump")
+        .graph()
+        .build(Quality::Balanced)
+        .unwrap();
+    let blades = grass
+        .parts
+        .iter()
+        .find(|p| p.painted_colors().is_some())
+        .unwrap();
+    let c = blades.painted_colors().unwrap();
+    assert!(c.iter().any(|c| c[3] < 0.05) && c.iter().any(|c| c[3] > 0.9));
+}
+
+#[test]
+fn texture_and_material_nodes_build_one_custom_material_from_summed_layers() {
+    use super::mesh::{CustomMaterial, LayerBlend, TextureSlot};
+    use iced::Point;
+    let mut g = NatureGraph::new();
+    let ico = g.add("icosphere", Point::new(0.0, 0.0));
+    let t1 = g.add("texture", Point::new(1.0, 0.0));
+    g.set_string(t1, 0, "textures/bark.png".to_owned());
+    let t2 = g.add_with(
+        "texture",
+        Point::new(2.0, 0.0),
+        &[
+            ("slot", 1.0),
+            ("blend", 1.0),
+            ("strength", 0.5),
+            ("mapping", 1.0),
+        ],
+    );
+    g.set_string(t2, 0, "textures/bark_n.png".to_owned());
+    let material = g.add_with(
+        "material",
+        Point::new(3.0, 0.0),
+        &[
+            ("roughness", 0.3),
+            ("translucency", 0.5),
+            ("sway", 0.02),
+            ("alpha", 1.0),
+        ],
+    );
+    // A fresh Part keeps what the nodes upstream made.
+    let part = g.add("part", Point::new(4.0, 0.0));
+    let out = g.add("output", Point::new(5.0, 0.0));
+    assert!(g.connect(ico, 0, t1, 0) && g.connect(t1, 0, t2, 0));
+    assert!(g.connect(t2, 0, material, 0) && g.connect(material, 0, part, 0));
+    assert!(g.connect(part, 0, out, 0));
+    let model = g.build(Quality::Balanced).unwrap();
+    let MaterialSpec::Custom(CustomMaterial {
+        layers,
+        cutout,
+        roughness,
+        translucency,
+        sway,
+        ..
+    }) = &model.parts[0].material
+    else {
+        panic!("{:?}", model.parts[0].material);
+    };
+    // Layers are summed in node order; the Material node added no layer and kept both.
+    assert_eq!(layers.len(), 2);
+    assert_eq!(
+        (layers[0].slot, layers[0].path.as_str()),
+        (TextureSlot::Albedo, "textures/bark.png")
+    );
+    assert_eq!(
+        (layers[1].slot, layers[1].blend),
+        (TextureSlot::Normal, LayerBlend::Add)
+    );
+    assert!(*cutout && (*roughness - 0.3).abs() < 1e-5);
+    assert!((*translucency - 0.5).abs() < 1e-5 && (*sway - 0.02).abs() < 1e-5);
+    // Fit to the object re-projected the UVs from the part's size (about one repeat across it).
+    let uvs = &model.parts[0].uvs;
+    let max = uvs
+        .iter()
+        .flat_map(|uv| uv.iter().copied())
+        .fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(max > 0.3 && max < 3.0, "{max}");
+    // Different settings are a different material file.
+    let a = model.parts[0].material.slug();
+    g.set(material, "roughness", 0.9);
+    assert_ne!(
+        a,
+        g.build(Quality::Balanced).unwrap().parts[0].material.slug()
+    );
+    // A Part with another material choice overrides the nodes, as before.
+    g.set(
+        part,
+        "material",
+        super::ops::material_index("Solid · Green"),
+    );
+    assert!(matches!(
+        g.build(Quality::Balanced).unwrap().parts[0].material,
+        MaterialSpec::Solid { .. }
+    ));
+}
+
+#[test]
+fn texture_layers_sum_blend_and_adapt() {
+    use super::mesh::{CustomMaterial, LayerBlend, TextureLayer, TextureSlot};
+    use super::texlayers::{bake, Image};
+    let solid = |rgba: [u8; 4]| Image {
+        width: 4,
+        height: 4,
+        rgba: (0..16).flat_map(|_| rgba).collect(),
+    };
+    let load = |path: &str| match path {
+        "red" => Some(solid([200, 0, 0, 255])),
+        "grey" => Some(solid([128, 128, 128, 255])),
+        "hole" => Some(solid([10, 200, 10, 0])),
+        "bump" => Some(solid([160, 128, 220, 255])),
+        _ => None,
+    };
+    let layer = |slot, path: &str, blend, strength: f32| TextureLayer {
+        slot,
+        path: path.to_owned(),
+        blend,
+        strength,
+        tiling: [2.0, 2.0],
+        tint: [1.0; 3],
+    };
+    let mut m = CustomMaterial::plain([0.0, 0.0, 1.0], 0.8);
+    // Nothing loads: nothing baked, no crash.
+    m.layers.push(layer(
+        TextureSlot::Albedo,
+        "missing",
+        LayerBlend::Replace,
+        1.0,
+    ));
+    assert!(bake(&m, 16, &load).albedo.is_none());
+    // Replace, then Multiply by grey: red * 0.5.
+    m.layers = vec![
+        layer(TextureSlot::Albedo, "red", LayerBlend::Replace, 1.0),
+        layer(TextureSlot::Albedo, "grey", LayerBlend::Multiply, 1.0),
+    ];
+    let baked = bake(&m, 16, &load);
+    let px = &baked.albedo.unwrap()[..4];
+    assert!(
+        (px[0] as i32 - 100).abs() <= 2 && px[1] == 0 && px[2] == 0,
+        "{px:?}"
+    );
+    assert!(!baked.has_alpha);
+    // Add sums on top of the base colour (blue + grey).
+    m.layers = vec![layer(TextureSlot::Albedo, "grey", LayerBlend::Add, 1.0)];
+    let px = bake(&m, 16, &load).albedo.unwrap();
+    assert!(px[0] > 120 && px[2] == 255);
+    // An albedo with transparency marks the material for cut-out.
+    m.layers = vec![layer(TextureSlot::Albedo, "hole", LayerBlend::Replace, 1.0)];
+    assert!(bake(&m, 16, &load).has_alpha);
+    // Normals add their slopes and stay unit length.
+    m.layers = vec![
+        layer(TextureSlot::Normal, "bump", LayerBlend::Replace, 1.0),
+        layer(TextureSlot::Normal, "bump", LayerBlend::Add, 1.0),
+    ];
+    let n = bake(&m, 16, &load).normal.unwrap();
+    let v = |c: u8| c as f32 / 255.0 * 2.0 - 1.0;
+    let len = (v(n[0]).powi(2) + v(n[1]).powi(2) + v(n[2]).powi(2)).sqrt();
+    assert!((len - 1.0).abs() < 0.03, "{len}");
+    assert!(v(n[0]) > 0.3, "two bumps lean further than one");
 }

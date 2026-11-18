@@ -6,6 +6,7 @@
 //! plain colours, or **your own project materials and textures**).
 
 use super::{add_component, set_component_field, App, LogLevel, PaneKind};
+use crate::uikit::asset_folders;
 use crate::uikit::generators::TextureMap;
 use crate::uikit::material_library;
 use crate::uikit::nature::mesh::MaterialSpec;
@@ -18,6 +19,84 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const PREVIEW_SIZE: u32 = 330;
+
+/// Wind and light-through-leaf settings of a part's material (see `MaterialSurface`).
+///
+/// Every part of one model that sways uses the same `sway`, so leaves stay attached to the
+/// branches that carry them: the shader moves a vertex by `sway` x height above the entity origin,
+/// the same way for trunk and crown. Only leaves and petals flutter.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Foliage {
+    pub sway: f32,
+    pub flutter: f32,
+    pub translucency: f32,
+}
+
+impl Foliage {
+    const STILL: Foliage = Foliage {
+        sway: 0.0,
+        flutter: 0.0,
+        translucency: 0.0,
+    };
+
+    /// The profile for a part by its name (`trunk`, `leaves`, `blades`, ...).
+    pub(crate) fn for_part(part: &str) -> Foliage {
+        let tree = 0.012;
+        let low = 0.25;
+        match part {
+            "trunk" | "branches" | "roots" => Foliage {
+                sway: tree,
+                ..Foliage::STILL
+            },
+            "leaves" => Foliage {
+                sway: tree,
+                flutter: 0.6,
+                translucency: 0.55,
+            },
+            "blades" | "fronds" => Foliage {
+                sway: low,
+                flutter: 0.25,
+                translucency: 0.45,
+            },
+            "petals" => Foliage {
+                sway: low,
+                flutter: 0.35,
+                translucency: 0.4,
+            },
+            "stem" | "center" => Foliage {
+                sway: low,
+                ..Foliage::STILL
+            },
+            _ => Foliage::STILL,
+        }
+    }
+
+    /// The profile of a part: a Material node's own wind and translucency, else the part's default.
+    pub(crate) fn for_spec(part: &str, spec: &MaterialSpec) -> Foliage {
+        match spec {
+            MaterialSpec::Custom(custom) => Foliage {
+                sway: custom.sway,
+                flutter: custom.flutter,
+                translucency: custom.translucency,
+            },
+            _ => Foliage::for_part(part),
+        }
+    }
+
+    /// File-name suffix so materials with different wind do not overwrite each other.
+    fn suffix(self) -> String {
+        if self == Foliage::STILL {
+            String::new()
+        } else {
+            format!(
+                "_w{}f{}t{}",
+                (self.sway * 1000.0).round() as i32,
+                (self.flutter * 100.0).round() as i32,
+                (self.translucency * 100.0).round() as i32
+            )
+        }
+    }
+}
 
 pub(super) struct NatureGen {
     pub graph: NatureGraph,
@@ -38,6 +117,11 @@ pub(super) struct NatureGen {
     pub view: preview::View,
     pub stats: String,
     pub status: Option<String>,
+    /// The open asset picker: node, string index, what it takes.
+    pub picker: Option<(NodeId, usize, panel::PickKind)>,
+    pub picker_search: String,
+    /// Decoded thumbnails by project path (filled while drawing, cleared when assets change).
+    pub thumb_cache: std::cell::RefCell<std::collections::HashMap<String, Option<Handle>>>,
     pub dirty: bool,
     orbit: Option<Point>,
 }
@@ -70,6 +154,9 @@ impl NatureGen {
             view: preview::View::default(),
             stats: String::new(),
             status: None,
+            picker: None,
+            picker_search: String::new(),
+            thumb_cache: Default::default(),
             dirty: false,
             orbit: None,
         };
@@ -155,7 +242,12 @@ impl NatureGen {
         }
     }
 
-    pub fn view_state(&self, materials: Vec<String>, textures: Vec<String>) -> panel::View<'_> {
+    pub fn view_state(
+        &self,
+        materials: Vec<String>,
+        textures: Vec<String>,
+        thumbnails: std::collections::HashMap<String, Handle>,
+    ) -> panel::View<'_> {
         panel::View {
             graph: &self.graph,
             selected: self.selected,
@@ -174,6 +266,7 @@ impl NatureGen {
             dirty: self.dirty,
             project_materials: materials,
             project_textures: textures,
+            thumbnails,
         }
     }
 }
@@ -253,6 +346,22 @@ impl App {
     }
 
     /// The project's `.mat` files and images (asset-root relative), for the Part node's pickers.
+    /// A decoded thumbnail of a project image, cached so drawing it every frame stays cheap.
+    pub(super) fn nature_thumbnail(&self, path: &str) -> Option<Handle> {
+        if path.is_empty() {
+            return None;
+        }
+        if let Some(found) = self.nature.thumb_cache.borrow().get(path) {
+            return found.clone();
+        }
+        let handle = self.load_thumbnail(path);
+        self.nature
+            .thumb_cache
+            .borrow_mut()
+            .insert(path.to_owned(), handle.clone());
+        handle
+    }
+
     pub(super) fn nature_assets(&self) -> (Vec<String>, Vec<String>) {
         let pick = |kind: &str| -> Vec<String> {
             self.assets
@@ -357,6 +466,39 @@ impl App {
                 self.nature.push(Some(format!("param:{id}:{index}")));
                 self.nature.refresh();
             }
+            Edit::OpenPicker(id, index, kind) => {
+                self.nature.picker = Some((id, index, kind));
+                self.nature.picker_search.clear();
+            }
+            Edit::PickerSearch(text) => self.nature.picker_search = text,
+            Edit::PickerClose => self.nature.picker = None,
+            Edit::PickerPick(path) => {
+                if let Some((id, index, _)) = self.nature.picker.take() {
+                    self.nature.graph.set_string(id, index, path);
+                    self.nature.push(Some(format!("string:{id}:{index}")));
+                    self.nature.refresh();
+                }
+            }
+            Edit::DropAsset(id, index, kind) => {
+                // The asset being dragged from the Assets pane lands on the slot it was released on.
+                if let Some(asset) = self.asset_drag.take() {
+                    let path = self
+                        .assets
+                        .get(asset)
+                        .filter(|a| !a.is_directory && a.kind == kind.asset_kind())
+                        .map(|a| a.relative_path.clone());
+                    match path {
+                        Some(path) => {
+                            self.nature.graph.set_string(id, index, path);
+                            self.nature.push(Some(format!("string:{id}:{index}")));
+                            self.nature.refresh();
+                        }
+                        None => {
+                            self.nature.status = Some(format!("Drop a {} here", kind.asset_kind()));
+                        }
+                    }
+                }
+            }
             Edit::SetString(id, index, text) => {
                 self.nature.graph.set_string(id, index, text);
                 self.nature.push(Some(format!("string:{id}:{index}")));
@@ -456,7 +598,8 @@ impl App {
     }
 
     fn nature_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("nature"))
+        self.asset_root_dir()
+            .map(|root| asset_folders::resolve(&root, asset_folders::AssetFolder::NatureModels))
     }
 
     fn export_nature(&mut self) {
@@ -498,18 +641,23 @@ impl App {
         &self,
         part: &nature::mesh::Part,
         spec: &nature::surface::SurfaceSpec,
-        dir: &Path,
     ) -> Result<String, String> {
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
-        let folder = dir.join("materials");
-        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let root = self.asset_root_dir().ok_or("No project is open")?;
+        let mat_folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureMaterials)
+            .map_err(|e| e.to_string())?;
+        let tex_folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureTextures)
+            .map_err(|e| e.to_string())?;
+        let mat_rel = asset_folders::relative(&root, &mat_folder);
+        let tex_rel = asset_folders::relative(&root, &tex_folder);
         let slug = format!(
             "{}_{}",
             part.name.to_lowercase().replace(' ', "_"),
             spec.slug()
         );
-        let mat_file = folder.join(format!("{slug}.mat"));
-        let relative = |file: &str| format!("nature/materials/{file}");
+        let mat_file = mat_folder.join(format!("{slug}.mat"));
+        let relative = |file: &str| format!("{tex_rel}/{file}");
+        let relative_mat = |file: &str| format!("{mat_rel}/{file}");
         let absolute_ok = engine
             .asset_path("")
             .map(|root| !root.is_empty())
@@ -520,7 +668,7 @@ impl App {
                     .asset_project_path(&relative(file))
                     .unwrap_or_else(|_| relative(file))
             } else {
-                folder.join(file).display().to_string()
+                tex_folder.join(file).display().to_string()
             }
         };
         if !mat_file.exists() {
@@ -529,7 +677,7 @@ impl App {
             let set = nature::surface::rock(&maps, spec);
             let save = |file: &str, pixels: &[u8]| {
                 image::save_buffer(
-                    folder.join(file),
+                    tex_folder.join(file),
                     pixels,
                     res as u32,
                     res as u32,
@@ -554,7 +702,7 @@ impl App {
                 .map_err(|e| format!("{e:?}"))?;
         }
         Ok(if absolute_ok {
-            relative(&format!("{slug}.mat"))
+            relative_mat(&format!("{slug}.mat"))
         } else {
             mat_file.display().to_string()
         })
@@ -563,18 +711,25 @@ impl App {
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
-        dir: &Path,
+        foliage: Foliage,
     ) -> Result<String, String> {
         // Your own material is used exactly as it is.
         if let MaterialSpec::Project(path) = spec {
             return Ok(path.clone());
         }
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
-        let folder = dir.join("materials");
-        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let root = self.asset_root_dir().ok_or("No project is open")?;
+        let mat_folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureMaterials)
+            .map_err(|e| e.to_string())?;
+        let tex_folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureTextures)
+            .map_err(|e| e.to_string())?;
+        let mat_rel = asset_folders::relative(&root, &mat_folder);
+        let tex_rel = asset_folders::relative(&root, &tex_folder);
         let slug = spec.slug();
-        let mat_file = folder.join(format!("{slug}.mat"));
-        let relative = |file: &str| format!("nature/materials/{file}");
+        let mat_slug = format!("{slug}{}", foliage.suffix());
+        let mat_file = mat_folder.join(format!("{mat_slug}.mat"));
+        let relative = |file: &str| format!("{tex_rel}/{file}");
+        let relative_mat = |file: &str| format!("{mat_rel}/{file}");
         let absolute_ok = engine
             .asset_path("")
             .map(|root| !root.is_empty())
@@ -585,18 +740,48 @@ impl App {
                     .asset_project_path(&relative(file))
                     .unwrap_or_else(|_| relative(file))
             } else {
-                folder.join(file).display().to_string()
+                tex_folder.join(file).display().to_string()
             }
         };
         let mut material = engine.new_material().map_err(|e| format!("{e:?}"))?;
-        material.name = slug.clone();
+        material.wind_strength = foliage.sway;
+        material.wind_speed = 1.0;
+        material.wind_flutter = foliage.flutter;
+        material.translucency = foliage.translucency;
+        material.name = mat_slug.clone();
         // Cards and your own PNGs are always rebuilt (so changing the source updates the model);
         // baked library materials are reused.
         let mut write = true;
         match spec {
             MaterialSpec::Preset(name) => {
                 write = !mat_file.exists();
-                if write {
+                if write && nature::surface::BarkKind::from_name(name).is_some() {
+                    // Generated bark: albedo, normal + height and occlusion/roughness, with
+                    // furrows deep enough for parallax and self-shadowing.
+                    let kind = nature::surface::BarkKind::from_name(name).expect("checked");
+                    let res = 512usize;
+                    let set = nature::surface::bark(kind, res, 1);
+                    let save = |file: &str, pixels: &[u8]| {
+                        image::save_buffer(
+                            tex_folder.join(file),
+                            pixels,
+                            res as u32,
+                            res as u32,
+                            image::ColorType::Rgba8,
+                        )
+                        .map_err(|e| e.to_string())
+                    };
+                    save(&format!("{slug}_albedo.png"), &set.albedo)?;
+                    save(&format!("{slug}_normal.png"), &set.normal)?;
+                    save(&format!("{slug}_orm.png"), &set.orm)?;
+                    material.albedo_map = map_ref(&format!("{slug}_albedo.png"));
+                    material.normal_map = map_ref(&format!("{slug}_normal.png"));
+                    material.orm_map = map_ref(&format!("{slug}_orm.png"));
+                    material.roughness = 1.0;
+                    material.metallic = 1.0;
+                    material.uv_object_scale = false;
+                    material.height_scale = 0.05;
+                } else if write {
                     let preset = material_library::presets()
                         .iter()
                         .find(|p| p.name == *name)
@@ -606,7 +791,7 @@ impl App {
                     let baked = graph.bake().map_err(|e| format!("{name}: {e}"))?;
                     let file = format!("{slug}_base.png");
                     image::save_buffer(
-                        folder.join(&file),
+                        tex_folder.join(&file),
                         &baked.base,
                         512,
                         512,
@@ -623,7 +808,7 @@ impl App {
                     let (pixels, width, height) = texture_cards_png(name, 512)?;
                     let file = format!("{slug}_cards.png");
                     image::save_buffer(
-                        folder.join(&file),
+                        tex_folder.join(&file),
                         &pixels,
                         width,
                         height,
@@ -631,9 +816,23 @@ impl App {
                     )
                     .map_err(|e| e.to_string())?;
                     material.albedo_map = map_ref(&file);
+                    // Veins and a rounded blade profile from the card itself.
+                    let normal =
+                        nature::surface::card_normal(&pixels, width as usize, height as usize);
+                    let normal_file = format!("{slug}_cards_n.png");
+                    image::save_buffer(
+                        tex_folder.join(&normal_file),
+                        &normal,
+                        width,
+                        height,
+                        image::ColorType::Rgba8,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    material.normal_map = map_ref(&normal_file);
+                    material.normal_strength = 0.9;
                     material.alpha_mode = doppio_engine::MaterialAlphaMode::Cutout;
                     material.alpha_cutoff = 0.45;
-                    material.roughness = 0.7;
+                    material.roughness = 0.55;
                     material.uv_object_scale = false;
                 }
             }
@@ -652,6 +851,94 @@ impl App {
                 material.albedo = [rgb[0], rgb[1], rgb[2], 1.0];
                 material.roughness = *roughness;
             }
+            MaterialSpec::Custom(custom) => {
+                // Start from a project material when one was picked: its maps and settings stay
+                // unless a Texture layer or the node's own switches change them.
+                let mut based = false;
+                if !custom.base.is_empty() {
+                    let found = engine
+                        .resolve_path(&custom.base)
+                        .ok()
+                        .filter(|resolved| Path::new(resolved).exists())
+                        .or_else(|| engine.asset_path(&custom.base).ok());
+                    if let Some(Ok(mut loaded)) = found.map(|path| engine.load_material(&path)) {
+                        loaded.name = mat_slug.clone();
+                        loaded.wind_strength = loaded.wind_strength.max(foliage.sway);
+                        loaded.wind_flutter = loaded.wind_flutter.max(foliage.flutter);
+                        loaded.translucency = loaded.translucency.max(foliage.translucency);
+                        material = loaded;
+                        based = true;
+                    }
+                }
+                if !based {
+                    material.albedo = [custom.rgb[0], custom.rgb[1], custom.rgb[2], 1.0];
+                    material.roughness = custom.roughness;
+                    material.metallic = custom.metallic;
+                }
+                // The Texture nodes' images are summed per map into one set of PNGs.
+                let root = engine
+                    .asset_path("")
+                    .ok()
+                    .filter(|root| !root.is_empty())
+                    .map(PathBuf::from)
+                    // Without an open project, paths are relative to the assets folder `dir` is in.
+                    .or_else(|| self.asset_root_dir());
+                let load = |relative: &str| -> Option<nature::texlayers::Image> {
+                    let path = Path::new(relative);
+                    let full = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        root.as_ref()?.join(relative)
+                    };
+                    let image = image::open(full).ok()?.to_rgba8();
+                    Some(nature::texlayers::Image {
+                        width: image.width() as usize,
+                        height: image.height() as usize,
+                        rgba: image.into_raw(),
+                    })
+                };
+                let size = 512usize;
+                let baked = nature::texlayers::bake(custom, size, &load);
+                let save = |suffix: &str, pixels: &Option<Vec<u8>>| -> Result<String, String> {
+                    let Some(pixels) = pixels else {
+                        return Ok(String::new());
+                    };
+                    let file = format!("{mat_slug}_{suffix}.png");
+                    image::save_buffer(
+                        tex_folder.join(&file),
+                        pixels,
+                        size as u32,
+                        size as u32,
+                        image::ColorType::Rgba8,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(map_ref(&file))
+                };
+                // Only the maps a layer wrote replace the base material's.
+                for (suffix, pixels, slot) in [
+                    ("albedo", &baked.albedo, &mut material.albedo_map),
+                    ("normal", &baked.normal, &mut material.normal_map),
+                    ("orm", &baked.orm, &mut material.orm_map),
+                ] {
+                    let written = save(suffix, pixels)?;
+                    if !written.is_empty() {
+                        *slot = written;
+                    }
+                }
+                if !material.normal_map.is_empty() {
+                    material.normal_strength = custom.normal_strength;
+                }
+                if !material.orm_map.is_empty() {
+                    // The summed map drives roughness and metal.
+                    material.roughness = 1.0;
+                    material.metallic = 1.0;
+                }
+                if custom.cutout || baked.has_alpha {
+                    material.alpha_mode = doppio_engine::MaterialAlphaMode::Cutout;
+                    material.alpha_cutoff = custom.cutoff;
+                }
+                material.uv_object_scale = false;
+            }
             MaterialSpec::Project(_) => unreachable!("handled above"),
         }
         if write {
@@ -660,7 +947,7 @@ impl App {
                 .map_err(|e| format!("{e:?}"))?;
         }
         Ok(if absolute_ok {
-            relative(&format!("{slug}.mat"))
+            relative_mat(&format!("{mat_slug}.mat"))
         } else {
             mat_file.display().to_string()
         })
@@ -713,7 +1000,9 @@ impl App {
                 let _ = engine.set_position(id, [0.0, 0.0, 0.0]);
                 let _ = engine.set_scale(id, [30.0, 1.0, 30.0]);
                 if let (Some(dir), Ok(mut material)) = (ground_dir.clone(), engine.new_material()) {
-                    let path = dir.join("nature").join("ground.mat");
+                    let path =
+                        asset_folders::resolve(&dir, asset_folders::AssetFolder::NatureMaterials)
+                            .join("ground.mat");
                     let _ = std::fs::create_dir_all(path.parent().unwrap());
                     material.albedo = [0.22, 0.34, 0.15, 1.0];
                     material.roughness = 0.95;
@@ -781,8 +1070,11 @@ impl App {
             .parts
             .iter()
             .map(|part| match &part.surface {
-                Some(spec) => self.ensure_surface_material(part, spec, &dir),
-                None => self.ensure_nature_material(&part.material, &dir),
+                Some(spec) => self.ensure_surface_material(part, spec),
+                None => self.ensure_nature_material(
+                    &part.material,
+                    Foliage::for_spec(&part.name, &part.material),
+                ),
             })
             .collect();
         let focus = self.camera.focus;
@@ -791,6 +1083,10 @@ impl App {
             .as_ref()
             .and_then(|e| e.asset_path("").ok())
             .is_some_and(|root| !root.is_empty());
+        let models_rel = self
+            .asset_root_dir()
+            .map(|root| asset_folders::relative(&root, &dir))
+            .unwrap_or_default();
         let engine = self.engine.as_mut().expect("checked above");
         let group = match engine.create_entity(&name) {
             Ok(id) => id,
@@ -802,64 +1098,66 @@ impl App {
         let _ = engine.set_position(group, [focus[0], 0.0, focus[2]]);
         let mut problems = Vec::new();
         for ((part, file), material) in model.parts.iter().zip(files.iter()).zip(materials.iter()) {
-            let Ok(child) = engine.create_entity(&format!("{name} {}", part.name)) else {
-                continue;
-            };
-            let _ = engine.set_entity_parent(child, Some(group));
-            let mesh_ref = if absolute_ok {
-                format!("nature/{file}")
-            } else {
-                dir.join(file).display().to_string()
-            };
-            // The renderer draws a custom mesh from the Mesh Filter (primitive Custom + path); the
-            // Mesh Renderer carries the shadow flags and is where materials are read from.
-            match add_component(engine, child, "Mesh Filter") {
-                Ok(filter) => {
-                    let outcome = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom")
-                        .and_then(|value| {
-                            set_component_field(engine, child, filter, "Primitive", value)
-                        })
-                        .and_then(|_| {
-                            set_component_field(
-                                engine,
-                                child,
-                                filter,
-                                "Mesh",
-                                doppio_engine::FieldValue::String(mesh_ref.clone()),
-                            )
-                        });
-                    if let Err(error) = outcome {
-                        problems.push(error);
-                    }
+            let mesh_path = |file: &str| {
+                if absolute_ok {
+                    format!("{models_rel}/{file}")
+                } else {
+                    dir.join(file).display().to_string()
                 }
-                Err(error) => problems.push(error),
-            }
-            match add_component(engine, child, "Mesh Renderer") {
-                Ok(renderer) => {
-                    // Cut-out cards (leaves, petals, blades) would only shadow each other: let the
-                    // sun fall through them and keep the shadows for trunks, rocks and moss.
-                    if matches!(
-                        part.material,
-                        MaterialSpec::Cards(_) | MaterialSpec::ProjectTexture(_)
-                    ) {
-                        let _ = set_component_field(
+            };
+            match &part.instances {
+                // Copies of one small mesh: write the template once and make one entity per copy.
+                // They share mesh and material, so the renderer batches them into one instanced
+                // draw call, and every copy gets its own wind phase from its position.
+                Some(set) if !set.transforms.is_empty() => {
+                    let template_file =
+                        format!("{}_{}_instance.obj", nature::slug(&name), part.name);
+                    if let Err(error) =
+                        std::fs::write(dir.join(&template_file), set.template.to_obj())
+                    {
+                        problems.push(format!("{}: {error}", part.name));
+                        continue;
+                    }
+                    let mesh_ref = mesh_path(&template_file);
+                    let Ok(holder) = engine.create_entity(&format!("{name} {}", part.name)) else {
+                        continue;
+                    };
+                    let _ = engine.set_entity_parent(holder, Some(group));
+                    for (index, transform) in set.transforms.iter().enumerate() {
+                        let Ok(child) =
+                            engine.create_entity(&format!("{name} {} {}", part.name, index + 1))
+                        else {
+                            continue;
+                        };
+                        let _ = engine.set_entity_parent(child, Some(holder));
+                        let _ = engine.set_position(child, transform.position);
+                        let _ = engine.set_rotation(child, transform.euler_degrees);
+                        let s = transform.scale;
+                        let _ = engine.set_scale(child, [s, s, s]);
+                        build_part_entity(
                             engine,
                             child,
-                            renderer,
-                            "Cast shadows",
-                            doppio_engine::FieldValue::Bool(false),
+                            &mesh_ref,
+                            material,
+                            &part.name,
+                            &mut problems,
                         );
                     }
                 }
-                Err(error) => problems.push(error),
-            }
-            match material {
-                Ok(path) => {
-                    if let Err(error) = engine.apply_material(child, path) {
-                        problems.push(format!("{}: {error:?}", part.name));
-                    }
+                _ => {
+                    let Ok(child) = engine.create_entity(&format!("{name} {}", part.name)) else {
+                        continue;
+                    };
+                    let _ = engine.set_entity_parent(child, Some(group));
+                    build_part_entity(
+                        engine,
+                        child,
+                        &mesh_path(file),
+                        material,
+                        &part.name,
+                        &mut problems,
+                    );
                 }
-                Err(error) => problems.push(format!("{}: {error}", part.name)),
             }
         }
         if let Some(engine) = self.engine.as_ref() {
@@ -886,3 +1184,47 @@ impl App {
 
 #[allow(dead_code)]
 fn _vector_is_used(_: Vector) {}
+
+/// Gives an entity its mesh (Mesh Filter, primitive Custom) and its material. Cut-out cards cast
+/// alpha-tested shadows: the engine reads the albedo's alpha, so nothing special is needed here.
+fn build_part_entity(
+    engine: &mut doppio_engine::Engine,
+    child: u32,
+    mesh_ref: &str,
+    material: &Result<String, String>,
+    part_name: &str,
+    problems: &mut Vec<String>,
+) {
+    // The renderer draws a custom mesh from the Mesh Filter (primitive Custom + path); the Mesh
+    // Renderer carries the shadow flags and is where materials are read from.
+    match add_component(engine, child, "Mesh Filter") {
+        Ok(filter) => {
+            let outcome = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom")
+                .and_then(|value| set_component_field(engine, child, filter, "Primitive", value))
+                .and_then(|_| {
+                    set_component_field(
+                        engine,
+                        child,
+                        filter,
+                        "Mesh",
+                        doppio_engine::FieldValue::String(mesh_ref.to_owned()),
+                    )
+                });
+            if let Err(error) = outcome {
+                problems.push(error);
+            }
+        }
+        Err(error) => problems.push(error),
+    }
+    if let Err(error) = add_component(engine, child, "Mesh Renderer") {
+        problems.push(error);
+    }
+    match material {
+        Ok(path) => {
+            if let Err(error) = engine.apply_material(child, path) {
+                problems.push(format!("{part_name}: {error:?}"));
+            }
+        }
+        Err(error) => problems.push(format!("{part_name}: {error}")),
+    }
+}

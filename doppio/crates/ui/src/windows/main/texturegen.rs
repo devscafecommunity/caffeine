@@ -5,6 +5,7 @@
 //! It reuses the shared node store, the canvas component and the parameter editor.
 
 use super::{apply_generator_param, snap_generator_position, App, LogLevel, PaneKind};
+use crate::uikit::asset_folders;
 use crate::uikit::generators::{self, GraphHistory, MaterialGraph, NodeId, NodeKind};
 use crate::uikit::panels::material_generator as nodes_panel;
 use crate::uikit::panels::texture_generator::{self as panel, Edit};
@@ -36,6 +37,10 @@ pub(super) struct TextureGen {
     pub status: Option<String>,
     pub bits: u8,
     pub flip: (u32, u32),
+    /// A running export: baking and writing a big (16-bit, flipbook) texture takes seconds, so it
+    /// runs on a worker thread and the UI stays responsive. Polled by the tick.
+    export: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    export_path: Option<PathBuf>,
     reconnect: bool,
 }
 
@@ -61,6 +66,8 @@ impl TextureGen {
             status: None,
             bits: 8,
             flip: (4, 4),
+            export: None,
+            export_path: None,
             reconnect: false,
         };
         state.fit();
@@ -192,8 +199,8 @@ fn file_stem(name: &str) -> String {
 impl App {
     pub(super) fn texgen_dir(&self) -> PathBuf {
         self.asset_root_dir()
-            .map(|root| root.join("textures"))
-            .unwrap_or_else(|| PathBuf::from("textures"))
+            .map(|root| asset_folders::resolve(&root, asset_folders::AssetFolder::Textures))
+            .unwrap_or_else(|| PathBuf::from("Textures"))
     }
 
     pub(super) fn show_texgen_pane(&mut self) {
@@ -298,6 +305,10 @@ impl App {
     }
 
     fn export_texgen(&mut self, flipbook: bool) {
+        if self.texgen.export.is_some() {
+            self.texgen.status = Some("An export is already running".to_owned());
+            return;
+        }
         let stem = file_stem(&self.texgen.name);
         let directory = self.texgen_dir();
         let depth = if self.texgen.bits == 16 {
@@ -305,22 +316,50 @@ impl App {
         } else {
             BitDepth::Eight
         };
-        let (path, baked) = if flipbook {
-            let (columns, rows) = self.texgen.flip;
-            let name = format!("{stem}_flipbook_{columns}x{rows}.png");
-            (
-                directory.join(name),
-                texture_graph::bake_flipbook(&self.texgen.graph, columns, rows),
-            )
+        let graph = self.texgen.graph.clone();
+        let (columns, rows) = self.texgen.flip;
+        let path = if flipbook {
+            directory.join(format!("{stem}_flipbook_{columns}x{rows}.png"))
         } else {
-            (
-                directory.join(format!("{stem}.png")),
-                self.texgen
-                    .graph
-                    .bake_texture_with(&HashMap::new(), None, None),
-            )
+            directory.join(format!("{stem}.png"))
         };
-        let result = baked.and_then(|baked| texture_graph::export_png(&baked, &path, depth));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let target = path.clone();
+        std::thread::spawn(move || {
+            let baked = if flipbook {
+                texture_graph::bake_flipbook(&graph, columns, rows)
+            } else {
+                graph.bake_texture_with(&HashMap::new(), None, None)
+            };
+            let _ =
+                tx.send(baked.and_then(|baked| texture_graph::export_png(&baked, &target, depth)));
+        });
+        self.texgen.status = Some(format!("Exporting {}…", path.display()));
+        self.texgen.export = Some(rx);
+        self.texgen.export_path = Some(path);
+    }
+
+    /// Polls the running export (every tick); `wait` blocks until it ends (tests).
+    pub(super) fn pump_texgen_export(&mut self, wait: bool) {
+        let Some(rx) = self.texgen.export.take() else {
+            return;
+        };
+        let result = if wait {
+            rx.recv()
+                .unwrap_or_else(|_| Err("Export worker stopped".to_owned()))
+        } else {
+            match rx.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.texgen.export = Some(rx);
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err("Export worker stopped".to_owned())
+                }
+            }
+        };
+        let path = self.texgen.export_path.take().unwrap_or_default();
         match result {
             Ok(()) => {
                 self.texgen.status = Some(format!("Exported {}", path.display()));
@@ -335,6 +374,8 @@ impl App {
                         self.texgen.status = Some(format!("Exported {} · {saved}", path.display()));
                     }
                 }
+                // The new image shows up in Assets.
+                self.refresh_assets();
             }
             Err(error) => {
                 self.texgen.status = Some(format!("Export failed: {error}"));

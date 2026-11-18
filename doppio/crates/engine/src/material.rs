@@ -63,6 +63,15 @@ pub struct Material {
     pub clearcoat_roughness: f32,
     pub sheen_color: [f32; 3],
     pub sheen_roughness: f32,
+    pub wind_strength: f32,
+    pub wind_speed: f32,
+    pub wind_flutter: f32,
+    pub translucency: f32,
+    /// Run-time modifiers: albedo tint, wetness, snow cover, age (0..1).
+    pub mod_tint: [f32; 3],
+    pub mod_wetness: f32,
+    pub mod_snow: f32,
+    pub mod_age: f32,
     pub iridescence: f32,
     pub iridescence_thickness: f32,
     pub iridescence_ior: f32,
@@ -120,6 +129,14 @@ impl Default for Material {
             clearcoat_roughness: 0.03,
             sheen_color: [0.0; 3],
             sheen_roughness: 0.5,
+            wind_strength: 0.0,
+            wind_speed: 1.0,
+            wind_flutter: 0.0,
+            translucency: 0.0,
+            mod_tint: [1.0; 3],
+            mod_wetness: 0.0,
+            mod_snow: 0.0,
+            mod_age: 0.0,
             iridescence: 0.0,
             iridescence_thickness: 400.0,
             iridescence_ior: 1.3,
@@ -201,6 +218,14 @@ pub(crate) struct RawMaterial {
     pub displacement_scale: f32,
     pub mesh_subdivisions: i32,
     pub uv_object_scale: i32,
+    pub wind_strength: f32,
+    pub wind_speed: f32,
+    pub wind_flutter: f32,
+    pub translucency: f32,
+    pub mod_tint: [f32; 3],
+    pub mod_wetness: f32,
+    pub mod_snow: f32,
+    pub mod_age: f32,
 }
 
 impl Default for RawMaterial {
@@ -230,6 +255,14 @@ impl Default for RawMaterial {
             clearcoat_roughness: 0.0,
             sheen_color: [0.0; 3],
             sheen_roughness: 0.0,
+            wind_strength: 0.0,
+            wind_speed: 0.0,
+            wind_flutter: 0.0,
+            translucency: 0.0,
+            mod_tint: [0.0; 3],
+            mod_wetness: 0.0,
+            mod_snow: 0.0,
+            mod_age: 0.0,
             iridescence: 0.0,
             iridescence_thickness: 0.0,
             iridescence_ior: 0.0,
@@ -319,6 +352,14 @@ impl From<&RawMaterial> for Material {
             clearcoat_roughness: raw.clearcoat_roughness,
             sheen_color: raw.sheen_color,
             sheen_roughness: raw.sheen_roughness,
+            wind_strength: raw.wind_strength,
+            wind_speed: raw.wind_speed,
+            wind_flutter: raw.wind_flutter,
+            translucency: raw.translucency,
+            mod_tint: raw.mod_tint,
+            mod_wetness: raw.mod_wetness,
+            mod_snow: raw.mod_snow,
+            mod_age: raw.mod_age,
             iridescence: raw.iridescence,
             iridescence_thickness: raw.iridescence_thickness,
             iridescence_ior: raw.iridescence_ior,
@@ -372,6 +413,14 @@ impl From<&Material> for RawMaterial {
         raw.clearcoat_roughness = material.clearcoat_roughness;
         raw.sheen_color = material.sheen_color;
         raw.sheen_roughness = material.sheen_roughness;
+        raw.wind_strength = material.wind_strength;
+        raw.wind_speed = material.wind_speed;
+        raw.wind_flutter = material.wind_flutter;
+        raw.translucency = material.translucency;
+        raw.mod_tint = material.mod_tint;
+        raw.mod_wetness = material.mod_wetness;
+        raw.mod_snow = material.mod_snow;
+        raw.mod_age = material.mod_age;
         raw.iridescence = material.iridescence;
         raw.iridescence_thickness = material.iridescence_thickness;
         raw.iridescence_ior = material.iridescence_ior;

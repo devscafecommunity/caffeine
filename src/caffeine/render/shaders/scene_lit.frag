@@ -5,7 +5,9 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec2 v_texCoord;
 layout(location = 3) in vec3 v_tangent;
 layout(location = 4) in vec3 v_bitangent;
-layout(location = 5) in vec2 v_uvScale; // object scale along U / V (see scene_lit.vert)
+layout(location = 5) in vec2 v_uvScale;
+layout(location = 7) in float v_foam;   // whitecap amount from the water vertex shader (0 elsewhere)
+layout(location = 6) in vec4 v_color; // per-vertex tint (rgb); neutral white without a colour stream // object scale along U / V (see scene_lit.vert)
 
 // Photon G-buffer (attachment order is fixed in GpuSceneRenderer.hpp):
 //   1 = albedo          rgb linear, a = 1 on GI-relevant surfaces (RGBA8)
@@ -58,6 +60,10 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uReflectPerf;    // x enabled, y resolution scale, z max steps, w temporal frames
     vec4 uReflectQuality; // x enabled, y samples, z denoise, w distance fade
     vec4 uReflectExtra;   // x planar, y probe blend, z bounces
+    vec4 uFoliage;        // x translucency (light through thin leaves)
+    vec4 uModifiers;      // run-time modifiers: x wetness, y snow, z age
+    vec4 uModTint;        // rgb albedo tint
+    vec4 uWater;          // x water surface, y foam scale, z ripple detail, w time
 } lights;
 
 layout(set = 3, binding = 1) uniform ShadowUBO {
@@ -188,6 +194,7 @@ struct Surface {
     vec3 sheen;
     float sheenRoughness;
     float transmission;
+    float translucency;
     vec3 film;          // thin-film reflectance per channel
     float iridescence;
 };
@@ -363,7 +370,16 @@ vec3 iridescentWeight(Surface s, vec3 weight) {
 // highlights at full strength.
 void shadeLight(Surface s, vec3 l, vec3 radiance, float occlusion, inout vec3 diffuseOut,
                 inout vec3 specularOut) {
-    float NoL = max(dot(s.n, l), 0.0);
+    float NoLRaw = dot(s.n, l);
+    if (s.translucency > 0.0) {
+        // Thin leaves pass light: the face turned away from the sun glows in the leaf colour
+        // (more so when the viewer looks toward the sun through it) instead of going black.
+        float through = max(-NoLRaw, 0.0);
+        float glow = pow(max(dot(s.v, -l), 0.0), 3.0);
+        vec3 tint = sqrt(max(s.albedo, vec3(0.0)));
+        diffuseOut += tint * s.albedo * s.translucency * (through * 0.55 + glow * 0.6) * radiance * occlusion;
+    }
+    float NoL = max(NoLRaw, 0.0);
     if (NoL <= 0.0) return;
     vec3 h = normalize(s.v + l);
     float NoV = max(dot(s.n, s.v), 1e-4);
@@ -720,6 +736,37 @@ void writePhotonGBuffer(vec3 albedo, vec3 normal, float roughness, float metalli
     gDirect = vec4(max(direct, vec3(0.0)), 1.0);
 }
 
+// ---- water look: procedural ripple detail and foam breakup (no textures)
+float waterHash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float waterNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(waterHash(i), waterHash(i + vec2(1.0, 0.0)), f.x),
+               mix(waterHash(i + vec2(0.0, 1.0)), waterHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+float waterFbm(vec2 p) {
+    return waterNoise(p) * 0.55 + waterNoise(p * 2.07 + 17.0) * 0.3 + waterNoise(p * 4.3 + 41.0) * 0.15;
+}
+
+// Slope of two ripple layers drifting in different directions.
+vec2 waterRipples(vec2 p, float t) {
+    vec2 a = p * 0.4 + vec2(t * 0.04, t * 0.025);
+    vec2 b = p * 1.05 + vec2(-t * 0.03, t * 0.05);
+    const float e = 0.03;
+    float ca = waterFbm(a);
+    float cb = waterFbm(b);
+    vec2 ga = vec2(waterFbm(a + vec2(e, 0.0)) - ca, waterFbm(a + vec2(0.0, e)) - ca) / e;
+    vec2 gb = vec2(waterFbm(b + vec2(e, 0.0)) - cb, waterFbm(b + vec2(0.0, e)) - cb) / e;
+    return ga * 0.7 + gb * 0.3;
+}
+
 void main() {
     if (lights.uReflectParams.z > 0.5 && v_worldPos.y < lights.uReflectParams.y - 0.02) {
         discard;
@@ -740,6 +787,15 @@ void main() {
 
     Surface s;
     s.n = surfaceNormal(uv);
+    float waterFoam = 0.0;
+    bool isWater = lights.uWater.x > 0.5;
+    if (isWater) {
+        // Fine ripples the grid cannot show, fading with distance so the far sea stays calm.
+        float camDist = length(lights.uCameraPos.xyz - v_worldPos);
+        float fade = 1.0 - smoothstep(25.0, 140.0, camDist);
+        vec2 g = waterRipples(v_worldPos.xz, lights.uWater.w);
+        s.n = normalize(s.n + vec3(g.x, 0.0, g.y) * lights.uWater.z * fade);
+    }
     s.v = normalize(lights.uCameraPos.xyz - v_worldPos);
     s.metallic = clamp(lights.uMetallic, 0.0, 1.0);
     s.roughness = clamp(lights.uRoughness, 0.0, 1.0);
@@ -750,12 +806,51 @@ void main() {
         s.roughness = clamp(orm.g, 0.0, 1.0);
         s.metallic = clamp(orm.b, 0.0, 1.0);
     }
-    s.albedo = albedoSample.rgb * lights.uAlbedo.rgb;
+    s.albedo = albedoSample.rgb * lights.uAlbedo.rgb * v_color.rgb;
+    // Run-time modifiers: the same material reacts to the world without re-baking its maps.
+    s.albedo *= lights.uModTint.rgb;
+    float modAge = clamp(lights.uModifiers.z, 0.0, 1.0);
+    if (modAge > 0.0) {
+        // Old: washed-out, darker, rougher.
+        float luma = dot(s.albedo, vec3(0.2126, 0.7152, 0.0722));
+        s.albedo = mix(s.albedo, vec3(luma) * vec3(1.0, 0.92, 0.78), modAge * 0.6) * (1.0 - 0.25 * modAge);
+        s.roughness = mix(s.roughness, 1.0, modAge * 0.5);
+    }
+    float modWet = clamp(lights.uModifiers.x, 0.0, 1.0);
+    if (modWet > 0.0) {
+        // Wet: darker albedo and a glossy film.
+        s.albedo *= mix(1.0, 0.55, modWet);
+        s.roughness = mix(s.roughness, 0.08, modWet * 0.85);
+    }
+    float modSnow = clamp(lights.uModifiers.y, 0.0, 1.0);
+    if (modSnow > 0.0) {
+        // Snow settles on what faces up: the more snow, the further down the slopes it reaches.
+        float up = clamp(normalize(v_normal).y, 0.0, 1.0);
+        float cover = smoothstep(1.0 - modSnow, 1.0 - modSnow + 0.2, up);
+        s.albedo = mix(s.albedo, vec3(0.92, 0.94, 0.98), cover);
+        s.roughness = mix(s.roughness, 0.65, cover);
+        s.metallic *= 1.0 - cover;
+    }
+    if (isWater) {
+        // Depth colour: looking down shows the lit, turquoise shallows, grazing views the deep
+        // blue; crests facing the sun let light through.
+        float facing = clamp(dot(s.n, s.v), 0.0, 1.0);
+        vec3 deepColor = s.albedo * vec3(0.30, 0.45, 0.65);
+        vec3 shallowColor = s.albedo * vec3(0.9, 1.9, 1.7);
+        s.albedo = mix(deepColor, shallowColor, pow(facing, 1.6));
+        // Whitecaps where crests compress, broken up by noise.
+        float breakup = smoothstep(0.52, 0.8, waterFbm(v_worldPos.xz * 1.3 + lights.uWater.w * 0.1) + 0.22);
+        waterFoam = clamp(v_foam * lights.uWater.y, 0.0, 1.0) * breakup;
+        s.albedo = mix(s.albedo, vec3(0.92, 0.96, 1.0), waterFoam);
+        s.roughness = mix(s.roughness, 0.9, waterFoam);
+    }
     float reflectance = clamp(lights.uReflectance, 0.0, 1.0);
     s.F0 = mix(vec3(reflectance), s.albedo, s.metallic);
     s.clearcoat = clamp(lights.uCoat.x, 0.0, 1.0);
     s.clearcoatRoughness = clamp(lights.uCoat.y, 0.0, 1.0);
     s.transmission = clamp(lights.uCoat.w, 0.0, 1.0) * (1.0 - s.metallic);
+    s.translucency = clamp(lights.uFoliage.x, 0.0, 1.0);
+    s.transmission *= 1.0 - waterFoam;
     s.sheen = max(lights.uSheen.rgb, vec3(0.0));
     s.sheenRoughness = clamp(lights.uSheen.a, 0.0, 1.0);
     s.iridescence = clamp(lights.uIridescence.x, 0.0, 1.0);

@@ -1,6 +1,7 @@
 #include "catch.hpp"
 
 #include "../src/caffeine/ecs/World.hpp"
+#include "../src/caffeine/ecs/MeshComponents.hpp"
 #include "../src/caffeine/scene/ComponentAccess.hpp"
 #include "../src/caffeine/scene/ComponentReflection.hpp"
 
@@ -109,4 +110,24 @@ TEST_CASE("Newly reflected components expose their real fields", "[reflection]")
     double z = 0.0;
     REQUIRE(A::getNumber(world, entity, "Nav Agent", "Destination", 2, z, &error));
     CHECK(z == Approx(9.0));
+}
+
+TEST_CASE("Scripts can drive the run-time material modifiers of a Mesh Renderer", "[reflection]") {
+    ECS::World world;
+    ECS::Entity entity = world.create("Rock");
+    R::findByName("Mesh Renderer")->add(world, entity);
+    // Defaults are neutral: white tint, nothing wet, snowy or old.
+    double value = -1.0;
+    REQUIRE(A::getNumber(world, entity, "Mesh Renderer", "Wetness", 0, value, nullptr));
+    CHECK(value == Approx(0.0));
+    // The same numeric access scripts use writes the modifiers.
+    REQUIRE(A::setNumber(world, entity, "Mesh Renderer", "Wetness", 0, 0.7, nullptr));
+    REQUIRE(A::setNumber(world, entity, "Mesh Renderer", "Snow", 0, 0.5, nullptr));
+    REQUIRE(A::setNumber(world, entity, "Mesh Renderer", "Age", 0, 0.25, nullptr));
+    const auto* renderer = world.get<ECS::MeshRendererComponent>(entity);
+    REQUIRE(renderer != nullptr);
+    CHECK(renderer->modWetness == Approx(0.7f));
+    CHECK(renderer->modSnow == Approx(0.5f));
+    CHECK(renderer->modAge == Approx(0.25f));
+    CHECK(renderer->modTint.x == Approx(1.0f));
 }

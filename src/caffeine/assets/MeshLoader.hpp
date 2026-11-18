@@ -55,6 +55,9 @@ public:
         std::vector<Vec3> positions;
         std::vector<Vec3> normals;
         std::vector<Vec2> texcoords;
+        std::vector<Vec4> positionColors;
+        std::vector<Vec4> vertexColors;
+        bool hasColors = false;
         std::vector<Vertex3D> vertices;
         std::vector<u32> indices;
         
@@ -82,11 +85,17 @@ public:
             }
             else if (line[0] == 'v' && (line[1] == ' ' || line[1] == '\t')) {
                 Vec3 p;
-                sscanf(line + 1, "%f %f %f", &p.x, &p.y, &p.z);
+                Vec4 c(1.0f, 1.0f, 1.0f, 1.0f);
+                // `v x y z r g b [a]` is the common vertex-colour extension of OBJ.
+                const int read = sscanf(line + 1, "%f %f %f %f %f %f %f", &p.x, &p.y, &p.z, &c.x,
+                                        &c.y, &c.z, &c.w);
+                if (read >= 6) hasColors = true;
                 positions.push_back(p);
+                positionColors.push_back(c);
             }
             else if (line[0] == 'f' && (line[1] == ' ' || line[1] == '\t')) {
                 std::vector<Vertex3D> faceVerts;
+                std::vector<Vec4> faceColors;
                 const char* fp = line + 1;
                 
                 while (fp < end && *fp != '\n' && *fp != '\r') {
@@ -114,8 +123,10 @@ public:
                     if (vni < 0) vni = (int)normals.size() + vni + 1;
                     
                     Vertex3D vert = {};
+                    Vec4 color(1.0f, 1.0f, 1.0f, 1.0f);
                     if (vi > 0 && vi <= (int)positions.size()) {
                         vert.position = positions[vi - 1];
+                        color = positionColors[vi - 1];
                     }
                     if (vti > 0 && vti <= (int)texcoords.size()) {
                         vert.texcoord = texcoords[vti - 1];
@@ -125,6 +136,7 @@ public:
                     }
                     
                     faceVerts.push_back(vert);
+                    faceColors.push_back(color);
                     
                     while (fp < end && *fp != ' ' && *fp != '\t' && *fp != '\n' && *fp != '\r') ++fp;
                 }
@@ -133,6 +145,9 @@ public:
                     vertices.push_back(faceVerts[0]);
                     vertices.push_back(faceVerts[i]);
                     vertices.push_back(faceVerts[i + 1]);
+                    vertexColors.push_back(faceColors[0]);
+                    vertexColors.push_back(faceColors[i]);
+                    vertexColors.push_back(faceColors[i + 1]);
                 }
             }
             
@@ -144,6 +159,7 @@ public:
         
         Mesh3D* mesh = new Mesh3D();
         mesh->vertices = vertices;
+        if (hasColors) mesh->vertexColors = vertexColors;
         mesh->indices.resize(vertices.size());
         for (usize i = 0; i < vertices.size(); ++i) {
             mesh->indices[i] = (u32)i;

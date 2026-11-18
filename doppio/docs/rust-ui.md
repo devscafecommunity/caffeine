@@ -233,8 +233,8 @@ precedent.
   `last_scene` and shows the active-project chip instead of the startup dialog.
 - The manager has **Create New**, **Open Recent** and **Browse Projects** tabs,
   mirroring the archived startup dialog. Create validates the name, creates
-  `assets/raw/{Models,Textures,Materials,materials,...}`, `assets/processed`, `scripts`,
-  `scenes`, `materials`, `texture_sets` and `build`, writes `project.caffeine`
+  `assets/raw/{Animations,Models,Materials,Textures,Audio,Prefabs,Sky}`, `assets/processed`,
+  `scripts`, `scenes` and `build`, writes `project.caffeine`
   and opens the project. Browse recursively scans a folder up to six levels for
   `project.caffeine`, and Recent reads `~/.config/caffeine/recent.txt`
   (`$CAFFEINE_RECENT_PROJECTS` overrides the file for tests and portable runs).

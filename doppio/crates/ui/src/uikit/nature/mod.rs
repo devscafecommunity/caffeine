@@ -17,6 +17,7 @@ pub mod plant;
 pub mod preview;
 pub mod rock;
 pub mod surface;
+pub mod texlayers;
 pub mod tree;
 
 pub use graph::{Kind, NatureGraph, NatureNode, NodeId};

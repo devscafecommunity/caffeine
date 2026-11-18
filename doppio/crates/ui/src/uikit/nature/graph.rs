@@ -65,7 +65,10 @@ pub struct PointInst {
     pub yaw: f32,
 }
 
+/// A node output. Values live only for one graph evaluation, so the size gap between a whole
+/// mesh and the other variants is not worth boxing every `Value::Mesh` match.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Value {
     Mesh(Part),
     Skeleton(super::tree::Skeleton),
@@ -319,7 +322,16 @@ impl NatureGraph {
             quality,
             salt: (id as u32).wrapping_mul(7919),
         };
-        let values = (def.eval)(&args);
+        let mut values = (def.eval)(&args);
+        // Only the instance node creates copies and the part node passes them on: any other op
+        // changed the geometry, so the copy list no longer describes it.
+        if !matches!(def.id, "instance" | "part" | "material" | "texture") {
+            for value in values.iter_mut() {
+                if let Value::Mesh(part) = value {
+                    part.instances = None;
+                }
+            }
+        }
         stack.pop();
         memo.insert(id, values);
         Ok(())

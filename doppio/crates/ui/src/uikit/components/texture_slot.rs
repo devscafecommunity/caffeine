@@ -8,7 +8,9 @@ pub struct Slot<'a> {
     pub id: UiId,
     pub label: &'a str,
     pub path: &'a str,
-    pub thumbnail: Option<&'a Handle>,
+    pub thumbnail: Option<Handle>,
+    /// Short tag where a thumbnail would be (`TEX`, `MAT`).
+    pub badge: &'a str,
 }
 
 /// A map slot: thumbnail, label, path and an optional clear button.
@@ -23,13 +25,13 @@ pub fn view<'a, Message: Clone + 'a>(
         .and_then(|name| name.to_str())
         .unwrap_or("Empty");
     let thumbnail: Element<'a, Message> = if let Some(handle) = slot.thumbnail {
-        image(handle.clone())
+        image(handle)
             .width(Length::Fixed(34.0))
             .height(Length::Fixed(34.0))
             .content_fit(ContentFit::Cover)
             .into()
     } else {
-        container(text("TEX").size(8).color(theme::TEXT_MUTED))
+        container(text(slot.badge.to_owned()).size(8).color(theme::TEXT_MUTED))
             .width(Length::Fixed(34.0))
             .height(Length::Fixed(34.0))
             .center_x(Length::Fixed(34.0))

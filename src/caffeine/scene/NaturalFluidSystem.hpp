@@ -23,6 +23,20 @@ const Fluids::FluidWorld* naturalFluidWorldFor(ECS::World& world, u32 entityId);
 /// Mutable accessor used by authoring tools to inject drops / impulses.
 Fluids::FluidWorld* naturalFluidWorldForEdit(ECS::World& world, u32 entityId);
 
+/// The waves of a water surface that the GPU displaces (a flat grid is uploaded once and the vertex
+/// shader evaluates the Gerstner sum). `packed[i]` is `dirX, dirZ, k, omega, amplitude, steepness,
+/// phase, 0`.
+struct GpuWaterWaves {
+    u32 count = 0;
+    f32 time = 0.0f;
+    f32 foamThreshold = 0.72f;
+    f32 packed[16][8] = {};
+};
+
+/// True when the entity's surface is waved on the GPU; fills `out`. False for the CPU surface
+/// (shallow-water simulation, more than 16 waves, flat water, volumes).
+bool naturalFluidGpuWaves(ECS::World& world, u32 entityId, GpuWaterWaves& out);
+
 /// Forces one entity to rebuild its simulators on the next tick.
 void resetNaturalFluid(ECS::World& world, u32 entityId);
 

@@ -1,3 +1,5 @@
+pub mod asset_files;
+pub mod asset_folders;
 pub mod asset_wizard;
 pub mod behaviour;
 pub mod components;

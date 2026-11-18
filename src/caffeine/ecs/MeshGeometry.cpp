@@ -80,7 +80,7 @@ void rebuild(MeshSlot& slot, const MeshGeometryComponent& geometry) {
     if (mesh.vertices.empty()) {
         mesh.bounds = {};
     } else {
-        mesh.bounds = {bmin, bmax};
+        mesh.bounds = {bmin - geometry.boundsPadding, bmax + geometry.boundsPadding};
     }
     slot.revision = geometry.revision;
     mesh.geometryRevision = geometry.revision;

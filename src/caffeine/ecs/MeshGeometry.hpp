@@ -17,6 +17,9 @@ struct MeshGeometryComponent {
     /// procedural surfaces.
     std::vector<Vec3> normals;
     std::vector<Vec2> texcoords;
+    /// Added to the mesh bounds on every side: surfaces displaced on the GPU (water waves) stay
+    /// inside their culling box.
+    Vec3 boundsPadding{0.0f, 0.0f, 0.0f};
     u32 revision = 1;
 };
 

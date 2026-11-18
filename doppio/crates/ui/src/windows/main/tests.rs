@@ -4227,8 +4227,9 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     )));
     harness.dispatch(Message::TextureGen(tg::Edit::SetBits(16)));
     harness.dispatch(Message::TextureGen(tg::Edit::Export));
-    let png = root.join("textures/maple_leaf.png");
-    let graph = root.join("textures/maple_leaf.texgraph");
+    harness.app.pump_texgen_export(true);
+    let png = root.join("Textures/maple_leaf.png");
+    let graph = root.join("Textures/maple_leaf.texgraph");
     assert!(
         png.is_file(),
         "png missing: {:?}",
@@ -4242,7 +4243,8 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     // A flipbook is one wide sheet.
     harness.dispatch(Message::TextureGen(tg::Edit::SetFlipbook(2, 2)));
     harness.dispatch(Message::TextureGen(tg::Edit::ExportFlipbook));
-    let sheet = root.join("textures/maple_leaf_flipbook_2x2.png");
+    harness.app.pump_texgen_export(true);
+    let sheet = root.join("Textures/maple_leaf_flipbook_2x2.png");
     let sheet = image::open(sheet).expect("sheet");
     assert_eq!(sheet.width(), 2 * 512);
     assert_eq!(sheet.height(), 2 * 512);
@@ -4925,12 +4927,13 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
     harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(oak)));
     harness.dispatch(Message::NatureGen(ng::Edit::Export));
     assert!(
-        root.join("nature/oak_trunk.obj").is_file(),
+        root.join("Models/Nature/oak_trunk.obj").is_file(),
         "{:?}",
         harness.app().nature.status
     );
-    assert!(root.join("nature/oak_leaves.obj").is_file());
-    let recipe = std::fs::read_to_string(root.join("nature/oak.nature")).expect("recipe file");
+    assert!(root.join("Models/Nature/oak_leaves.obj").is_file());
+    let recipe =
+        std::fs::read_to_string(root.join("Models/Nature/oak.nature")).expect("recipe file");
     assert!(
         crate::uikit::nature::from_text(&recipe).is_some(),
         "the .nature file holds the graph"
@@ -4970,7 +4973,7 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
     assert!(
         materials
             .iter()
-            .all(|m| m.contains("nature/materials") || m.contains("materials/")),
+            .all(|m| m.contains("Materials/Nature") || m.contains("Textures/Nature")),
         "{materials:?}"
     );
     assert_ne!(
@@ -4978,8 +4981,15 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
         "trunk and leaves get different materials"
     );
     assert!(
-        root.join("nature/materials").read_dir().unwrap().count() >= 3,
-        "maps and .mat files were written"
+        crate::uikit::asset_folders::resolve(
+            &root,
+            crate::uikit::asset_folders::AssetFolder::NatureMaterials
+        )
+        .read_dir()
+        .unwrap()
+        .count()
+            >= 2,
+        "the .mat files were written"
     );
 
     // Every kind places cleanly (several parts under one group: trees, a four-part flower...).
@@ -5098,7 +5108,7 @@ fn nature_parts_can_use_your_own_materials_and_textures() {
     );
     assert!(
         !root
-            .join("nature/materials")
+            .join("Materials/Nature")
             .join("project_my_wet_stone.mat")
             .exists(),
         "your material is never copied or rebaked"
@@ -5137,15 +5147,27 @@ fn nature_parts_can_use_your_own_materials_and_textures() {
         status.starts_with("Placed Grass Clump") && !status.contains("problems"),
         "{status}"
     );
-    let wrapped = root.join("nature/materials/project_my_grass.mat");
-    assert!(
-        wrapped.is_file(),
-        "a cut-out material is made around your image"
-    );
+    // The file name carries the wind profile of the part (blades sway and let light through).
+    let wrapped = std::fs::read_dir(crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureMaterials,
+    ))
+    .unwrap()
+    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+    .find(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("project_my_grass") && name.ends_with(".mat"))
+    })
+    .expect("a cut-out material is made around your image");
     let text = std::fs::read_to_string(wrapped).unwrap();
     assert!(
         text.contains("my_grass.png") && text.contains("alpha_mode"),
         "{text}"
+    );
+    assert!(
+        text.contains("wind_strength 0.25") && text.contains("translucency 0.45"),
+        "blades sway and are translucent: {text}"
     );
     std::fs::remove_dir_all(root).ok();
 }
@@ -5195,9 +5217,17 @@ fn photoreal_rock_places_with_a_generated_texture_set() {
         status.starts_with("Placed ") && !status.contains("problems"),
         "{status}"
     );
-    let materials = root.join("nature/materials");
-    let names: Vec<String> = std::fs::read_dir(&materials)
-        .unwrap()
+    let materials = crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureMaterials,
+    );
+    let textures = crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureTextures,
+    );
+    let names: Vec<String> = [&materials, &textures]
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).unwrap())
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .collect();
     for suffix in ["_albedo.png", "_normal.png", "_orm.png", ".mat"] {
@@ -5623,5 +5653,500 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
         graph.build(65).unwrap(),
         harness.app().terraingen.graph.build(65).unwrap()
     );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn foliage_profiles_keep_leaves_attached_to_their_branches() {
+    use super::naturegen::Foliage;
+    let trunk = Foliage::for_part("trunk");
+    let leaves = Foliage::for_part("leaves");
+    let blades = Foliage::for_part("blades");
+    // Trunk and crown sway by the same amount (leaves flutter on top of it), rocks stay still.
+    assert!(trunk.sway > 0.0 && trunk.flutter == 0.0 && trunk.translucency == 0.0);
+    assert_eq!(trunk.sway, leaves.sway);
+    assert!(leaves.flutter > 0.0 && leaves.translucency > 0.0);
+    // Low plants move more per metre of height than trees.
+    assert!(blades.sway > leaves.sway);
+    for still in ["rock", "moss", "ground", "body"] {
+        assert_eq!(Foliage::for_part(still).sway, 0.0, "{still}");
+        assert_eq!(Foliage::for_part(still).translucency, 0.0, "{still}");
+    }
+}
+
+#[test]
+fn scattered_parts_are_placed_as_instances_sharing_one_mesh() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-instances");
+    harness.app.asset_root_override = Some(root.clone());
+    let preset = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Mossy Rock")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(preset)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(
+        status.starts_with("Placed ") && !status.contains("problems"),
+        "{status}"
+    );
+    // One template mesh on disk; many entities use it.
+    let templates: Vec<_> = std::fs::read_dir(root.join("Models/Nature"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with("_instance.obj"))
+        .collect();
+    assert_eq!(templates.len(), 1, "{templates:?}");
+    let copies = harness
+        .app()
+        .entities
+        .iter()
+        .filter(|e| e.name.starts_with("Mossy Rock moss "))
+        .count();
+    assert!(copies > 3, "{copies} instanced moss entities");
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn texture_node_picker_lists_project_images_and_sets_the_node_image() {
+    use crate::uikit::panels::nature_generator as ng;
+    let mut harness = Harness::empty();
+    harness.dispatch(Message::ShowNatureGenerator);
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "bark.png".into(),
+        relative_path: "textures/bark.png".into(),
+        kind: "image".into(),
+        size_bytes: 1,
+        is_directory: false,
+    });
+    harness.dispatch(Message::NatureGen(ng::Edit::AddNode("texture")));
+    let node = harness
+        .app()
+        .nature
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "texture")
+        .expect("the Texture node is in the palette and is added")
+        .id;
+    harness.dispatch(Message::NatureGen(ng::Edit::Select(Some(node))));
+    // The panel shows a picker of the project's images and a path field for the node's image.
+    for widget in ["slot_0_image", "path_0_image"] {
+        assert!(
+            harness.has(Id::from(id::naturegen_param(widget))),
+            "missing {widget}"
+        );
+    }
+    // Clicking the slot opens the picker with previews; picking an image sets the node.
+    harness.dispatch(Message::NatureGen(ng::Edit::OpenPicker(
+        node,
+        0,
+        ng::PickKind::Image,
+    )));
+    assert!(harness.app().nature.picker.is_some());
+    assert!(
+        harness.has(Id::from(id::NATUREGEN_PICKER)),
+        "the picker overlay is drawn"
+    );
+    harness.dispatch(Message::NatureGen(ng::Edit::PickerPick(
+        "textures/bark.png".to_owned(),
+    )));
+    assert!(harness.app().nature.picker.is_none());
+    assert_eq!(
+        harness.app().nature.graph.node(node).unwrap().strings[0],
+        "textures/bark.png"
+    );
+    // Clearing empties the slot.
+    harness.dispatch(Message::NatureGen(ng::Edit::SetString(
+        node,
+        0,
+        String::new(),
+    )));
+    // Dragging an image from the Assets pane and releasing it on the slot assigns it; a material
+    // is refused by an image slot.
+    harness.app.assets.push(doppio_engine::AssetInfo {
+        name: "wet.mat".into(),
+        relative_path: "materials/wet.mat".into(),
+        kind: "material".into(),
+        size_bytes: 1,
+        is_directory: false,
+    });
+    harness.app.asset_drag = Some(1);
+    harness.dispatch(Message::NatureGen(ng::Edit::DropAsset(
+        node,
+        0,
+        ng::PickKind::Image,
+    )));
+    assert_eq!(
+        harness.app().nature.graph.node(node).unwrap().strings[0],
+        ""
+    );
+    harness.app.asset_drag = Some(0);
+    harness.dispatch(Message::NatureGen(ng::Edit::DropAsset(
+        node,
+        0,
+        ng::PickKind::Image,
+    )));
+    assert_eq!(
+        harness.app().nature.graph.node(node).unwrap().strings[0],
+        "textures/bark.png"
+    );
+    // The Material node has a base-material slot that takes .mat files only.
+    harness.dispatch(Message::NatureGen(ng::Edit::AddNode("material")));
+    let material = harness
+        .app()
+        .nature
+        .graph
+        .nodes
+        .iter()
+        .find(|n| n.op == "material")
+        .unwrap()
+        .id;
+    harness.dispatch(Message::NatureGen(ng::Edit::Select(Some(material))));
+    assert!(harness.has(Id::from(id::naturegen_param("slot_0_material"))));
+    harness.app.asset_drag = Some(1);
+    harness.dispatch(Message::NatureGen(ng::Edit::DropAsset(
+        material,
+        0,
+        ng::PickKind::Material,
+    )));
+    assert_eq!(
+        harness.app().nature.graph.node(material).unwrap().strings[0],
+        "materials/wet.mat"
+    );
+}
+
+#[test]
+fn texture_nodes_are_summed_into_baked_maps_when_placed() {
+    use crate::uikit::nature::NatureGraph;
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-texture");
+    std::fs::create_dir_all(root.join("textures")).unwrap();
+    image::save_buffer(
+        root.join("textures/bark.png"),
+        &[120u8, 90, 60, 255].repeat(16 * 16),
+        16,
+        16,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+    harness.app.asset_root_override = Some(root.clone());
+    let mut g = NatureGraph::new();
+    let ico = g.add("icosphere", iced::Point::new(0.0, 0.0));
+    let tex = g.add("texture", iced::Point::new(1.0, 0.0));
+    g.set_string(tex, 0, "textures/bark.png".to_owned());
+    let part = g.add("part", iced::Point::new(2.0, 0.0));
+    let out = g.add("output", iced::Point::new(3.0, 0.0));
+    assert!(g.connect(ico, 0, tex, 0) && g.connect(tex, 0, part, 0) && g.connect(part, 0, out, 0));
+    harness.app.nature.graph = g;
+    harness.app.nature.refresh();
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(
+        status.starts_with("Placed ") && !status.contains("problems"),
+        "{status}"
+    );
+    let materials = crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureMaterials,
+    );
+    let names: Vec<String> = std::fs::read_dir(&materials)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let textures = crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureTextures,
+    );
+    assert!(
+        textures
+            .read_dir()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("custom_") && n.ends_with("_albedo.png")
+            }),
+        "the baked maps go to Textures/Nature"
+    );
+    let mat = names
+        .iter()
+        .find(|n| n.starts_with("custom_") && n.ends_with(".mat"))
+        .unwrap();
+    let text = std::fs::read_to_string(materials.join(mat)).unwrap();
+    assert!(
+        text.contains("albedo_map") && text.contains("_albedo.png"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn material_node_starts_from_a_project_material_and_keeps_its_maps() {
+    use crate::uikit::nature::NatureGraph;
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-base-material");
+    std::fs::create_dir_all(root.join("materials")).unwrap();
+    harness.app.asset_root_override = Some(root.clone());
+    {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        let mut base = engine.new_material().unwrap();
+        base.roughness = 0.37;
+        base.albedo_map = "textures/base.png".to_owned();
+        engine
+            .save_material(&root.join("materials/wet.mat").to_string_lossy(), &base)
+            .unwrap();
+    }
+    let mut g = NatureGraph::new();
+    let ico = g.add("icosphere", iced::Point::new(0.0, 0.0));
+    let material = g.add_with("material", iced::Point::new(1.0, 0.0), &[("sway", 0.02)]);
+    g.set_string(
+        material,
+        0,
+        root.join("materials/wet.mat").display().to_string(),
+    );
+    let part = g.add("part", iced::Point::new(2.0, 0.0));
+    let out = g.add("output", iced::Point::new(3.0, 0.0));
+    assert!(
+        g.connect(ico, 0, material, 0)
+            && g.connect(material, 0, part, 0)
+            && g.connect(part, 0, out, 0)
+    );
+    harness.app.nature.graph = g;
+    harness.app.nature.refresh();
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(
+        status.starts_with("Placed ") && !status.contains("problems"),
+        "{status}"
+    );
+    let mat = std::fs::read_dir(crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureMaterials,
+    ))
+    .unwrap()
+    .filter_map(|e| e.ok())
+    .map(|e| e.path())
+    .find(|p| p.extension().is_some_and(|x| x == "mat"))
+    .expect("a material was written");
+    let text = std::fs::read_to_string(mat).unwrap();
+    assert!(
+        text.contains("roughness 0.37"),
+        "base settings kept: {text}"
+    );
+    assert!(text.contains("textures/base.png"), "base maps kept: {text}");
+    assert!(
+        text.contains("wind_strength 0.02"),
+        "node wind added: {text}"
+    );
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn assets_pane_creates_renames_moves_and_trashes_files() {
+    use crate::uikit::panels::assetmanager::FileAction;
+    let root = test_temp_root("assets-files");
+    std::fs::create_dir_all(root.join("Textures")).unwrap();
+    std::fs::write(root.join("bark.png"), b"png").unwrap();
+    let mut harness = Harness::empty();
+    harness.app.asset_root_override = Some(root.clone());
+    let asset = |name: &str, directory: bool| doppio_engine::AssetInfo {
+        name: name.into(),
+        relative_path: name.into(),
+        kind: if directory { "folder" } else { "image" }.into(),
+        size_bytes: 1,
+        is_directory: directory,
+    };
+    harness.app.assets = vec![asset("bark.png", false), asset("Textures", true)];
+    assert!(harness.has(Id::from(id::ASSET_NEW_FOLDER)));
+    // Rename and delete only appear with something selected.
+    assert!(!harness.has(Id::from(id::ASSET_RENAME)));
+    harness.dispatch(Message::AssetPressed(0));
+    harness.app.asset_drag = None;
+    assert!(harness.has(Id::from(id::ASSET_RENAME)) && harness.has(Id::from(id::ASSET_DELETE)));
+
+    // New folder: type a name, OK.
+    harness.dispatch(Message::AssetFile(FileAction::NewFolder));
+    assert!(harness.has(Id::from(id::ASSET_EDIT_NAME)));
+    harness.dispatch(Message::AssetFile(FileAction::Text("Moss".into())));
+    harness.dispatch(Message::AssetFile(FileAction::Commit));
+    assert!(root.join("Moss").is_dir());
+    assert!(harness.app().asset_edit.is_none());
+
+    // A bad name keeps the editor open and changes nothing.
+    harness.dispatch(Message::AssetFile(FileAction::NewFolder));
+    harness.dispatch(Message::AssetFile(FileAction::Text("a/b".into())));
+    harness.dispatch(Message::AssetFile(FileAction::Commit));
+    assert!(harness.app().asset_edit.is_some());
+    harness.dispatch(Message::AssetFile(FileAction::Cancel));
+
+    // Rename the selected file.
+    harness.app.assets = vec![asset("bark.png", false), asset("Textures", true)];
+    harness.dispatch(Message::AssetPressed(0));
+    harness.app.asset_drag = None;
+    harness.dispatch(Message::AssetFile(FileAction::Rename));
+    harness.dispatch(Message::AssetFile(FileAction::Text("oak.png".into())));
+    harness.dispatch(Message::AssetFile(FileAction::Commit));
+    assert!(root.join("oak.png").is_file() && !root.join("bark.png").exists());
+
+    // Dragging a file onto a folder moves it.
+    harness.app.assets = vec![asset("oak.png", false), asset("Textures", true)];
+    harness.app.asset_drag = Some(0);
+    harness.dispatch(Message::AssetReleased(1));
+    assert!(root.join("Textures/oak.png").is_file() && !root.join("oak.png").exists());
+
+    // Delete asks first, then moves to the hidden trash.
+    harness.app.assets = vec![asset("Textures", true)];
+    harness.dispatch(Message::AssetPressed(0));
+    harness.app.asset_drag = None;
+    harness.dispatch(Message::AssetFile(FileAction::Delete));
+    assert!(harness.has(Id::from(id::ASSET_DELETE_CONFIRM)));
+    assert!(
+        root.join("Textures").exists(),
+        "nothing is deleted before confirming"
+    );
+    harness.dispatch(Message::AssetFile(FileAction::ConfirmDelete));
+    assert!(!root.join("Textures").exists());
+    assert!(root.join(".trash/Textures/oak.png").is_file());
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn mesh_renderer_modifiers_change_how_the_same_material_renders() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_rotation(id, [-60.0, 30.0, 0.0]).unwrap();
+    }
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("modifiers");
+    std::fs::create_dir_all(&root).unwrap();
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+    engine.set_scale(id, [6.0, 1.0, 6.0]).unwrap();
+    // A mid-grey material: the modifiers change how this very material renders.
+    let material = doppio_engine::Material {
+        albedo: [0.4, 0.4, 0.4, 1.0],
+        roughness: 0.8,
+        ..doppio_engine::Material::default()
+    };
+    let mat = root.join("grey.mat");
+    engine
+        .save_material(&mat.to_string_lossy(), &material)
+        .unwrap();
+    engine.apply_material(id, &mat.to_string_lossy()).unwrap();
+    let renderer = add_component(engine, id, "Mesh Renderer").expect("Mesh Renderer");
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.6,
+            pitch: 1.2,
+            distance: 5.0,
+            focus: [0.0, 0.0, 0.0],
+        })
+        .unwrap();
+    let mean = |pixels: &[u8]| -> [f32; 3] {
+        let n = (pixels.len() / 4) as f32;
+        let mut sum = [0.0f32; 3];
+        for p in pixels.chunks(4) {
+            for (total, value) in sum.iter_mut().zip(p) {
+                *total += *value as f32;
+            }
+        }
+        [sum[0] / n, sum[1] / n, sum[2] / n]
+    };
+    let render = |engine: &mut doppio_engine::Engine| mean(&render_entity_view(engine));
+    let set = |engine: &mut doppio_engine::Engine, field: &str, value| {
+        set_component_field(engine, id, renderer, field, value).expect(field);
+    };
+    let _ = render(engine); // let the scene settle
+    let base = render(engine);
+
+    // Snow covers the faces turned up: the cube gets brighter.
+    set(engine, "Snow", doppio_engine::FieldValue::F32(1.0));
+    let snowy = render(engine);
+    assert!(
+        snowy.iter().sum::<f32>() > base.iter().sum::<f32>() + 3.0,
+        "snow {snowy:?} vs {base:?}"
+    );
+    set(engine, "Snow", doppio_engine::FieldValue::F32(0.0));
+
+    // A red tint removes green and blue.
+    set(
+        engine,
+        "Tint",
+        doppio_engine::FieldValue::Color([1.0, 0.0, 0.0, 1.0]),
+    );
+    let red = render(engine);
+    assert!(red[1] < base[1] - 2.0, "tint {red:?} vs {base:?}");
+    set(
+        engine,
+        "Tint",
+        doppio_engine::FieldValue::Color([1.0, 1.0, 1.0, 1.0]),
+    );
+
+    // Wet darkens the albedo.
+    set(engine, "Wetness", doppio_engine::FieldValue::F32(1.0));
+    let wet = render(engine);
+    assert!(
+        wet.iter().sum::<f32>() < base.iter().sum::<f32>() - 1.0,
+        "wet {wet:?} vs {base:?}"
+    );
+    // Back to neutral: the original look returns, so nothing was baked into the material.
+    set(engine, "Wetness", doppio_engine::FieldValue::F32(0.0));
+    let dry = render(engine);
+    assert!((dry.iter().sum::<f32>() - base.iter().sum::<f32>()).abs() < 1.0);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn material_modifiers_round_trip_through_the_engine_and_a_material_modifier_renders() {
+    let Some(harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert!(engine.capi_version() >= 10, "modifiers need C ABI v10");
+    let root = test_temp_root("modifier-material");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut material = engine.new_material().unwrap();
+    assert_eq!(material.mod_tint, [1.0; 3]);
+    material.mod_tint = [0.9, 0.8, 0.7];
+    material.mod_wetness = 0.4;
+    material.mod_snow = 0.5;
+    material.mod_age = 0.6;
+    let path = root.join("m.mat");
+    engine
+        .save_material(&path.to_string_lossy(), &material)
+        .unwrap();
+    let loaded = engine.load_material(&path.to_string_lossy()).unwrap();
+    assert_eq!(loaded.mod_tint, [0.9, 0.8, 0.7]);
+    assert!((loaded.mod_wetness - 0.4).abs() < 1e-5);
+    assert!((loaded.mod_snow - 0.5).abs() < 1e-5);
+    assert!((loaded.mod_age - 0.6).abs() < 1e-5);
     std::fs::remove_dir_all(root).ok();
 }

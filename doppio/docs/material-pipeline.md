@@ -229,6 +229,11 @@ depth.
       per-map resolution/missing-file badges.
 - [x] C ABI version bumped to **2** with `caffeine_capi_version()` and a status
       bar badge; C API tests cover it.
+- [x] **Foliage** (C ABI **9**): `wind_strength` (sway per metre of height above the object's origin),
+      `wind_speed`, `wind_flutter` and `translucency` in the `.mat`, the C ABI, the Material panel and the
+      renderer. Wind is a vertex offset applied identically in the colour, instanced and shadow vertex
+      shaders (shadows sway with the leaves); translucency adds light through thin surfaces on the face
+      turned away from the sun. See the Nature guide for the numbers the generator writes.
 
 ## Procedural library and presets (no third-party assets needed)
 
@@ -346,6 +351,12 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
 - [x] Software 3D preview, `.obj` export (one file per part) and `.nature` recipes, **Place in scene** as a
       group with one entity per part and baked materials (library presets, Texture Generator cards).
 - [x] Engine fix: `propagateTransforms` no longer crashes on children without a world matrix.
-- [ ] Material slots per submesh (ABI), vertex colour, wind mask, leaf atlas, LOD / impostors, `.glb` writer.
+- [x] Wind (vertex sway + leaf flutter, also in the shadow pass), leaf translucency, generated bark sets,
+      leaf-card normal maps and crown-interior shading (see the guide, section 4c).
+- [x] **Run-time modifiers** (C ABI **10**): tint, wetness, snow, age on the material and on the Mesh Renderer, applied in
+      `scene_lit.frag` without re-baking; see `runtime-modifiers.md`.
+- [x] Alpha-tested shadows for cut-out cards, per-vertex colour (occlusion tint + painted flutter weight, read
+      from OBJ `v x y z r g b a` into a second vertex stream) and GPU-instanced scatter placement.
+- [ ] Material slots per submesh (ABI), LOD / impostors, `.glb` writer.
 - [ ] Scatter over terrain and biomes (belongs to the terrain generator).
 

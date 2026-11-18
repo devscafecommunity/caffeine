@@ -1,5 +1,6 @@
 #pragma once
 #include "core/Types.hpp"
+#include "math/Vec4.hpp"
 #include <string>
 
 namespace Caffeine::ECS {
@@ -10,6 +11,12 @@ struct MeshRendererComponent {
     std::string materialPath;
     bool castShadows = true;
     bool receiveShadows = true;
+    /// Run-time material modifiers, changeable from scripts (fields Tint, Wetness, Snow, Age).
+    /// They combine with the material's own: tint multiplies, the amounts add and clamp to 0..1.
+    Vec4 modTint = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    f32  modWetness = 0.0f;
+    f32  modSnow = 0.0f;
+    f32  modAge = 0.0f;
 };
 
 struct SkinnedMeshRendererComponent {

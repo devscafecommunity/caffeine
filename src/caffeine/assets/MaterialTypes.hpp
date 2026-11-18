@@ -71,6 +71,26 @@ struct MaterialSurface {
     Vec3 sheenColor{0.0f, 0.0f, 0.0f};
     f32  sheenRoughness = 0.5f;
 
+    /// Foliage. `windStrength` is the sway per metre of height above the object's origin
+    /// (0 = static): 0.03 moves a 6 m crown by ~18 cm in a gust. `windSpeed` scales time,
+    /// `windFlutter` (0..1) adds fast per-vertex leaf flutter. The same offset is applied in
+    /// the shadow pass, so shadows move with the foliage.
+    f32  windStrength = 0.0f;
+    f32  windSpeed = 1.0f;
+    f32  windFlutter = 0.0f;
+    /// Light that passes through thin leaves and petals (0..1): back-lit faces glow in the
+    /// leaf colour instead of going black, and the sun shows through the crown.
+    f32  translucency = 0.0f;
+
+    /// Run-time modifiers: the same material reacts to the world without re-baking its maps.
+    /// They can also be driven per entity (Mesh Renderer: Tint, Wetness, Snow, Age), so a script
+    /// can wet a rock when it rains or age a wall; the renderer combines both (tint multiplies,
+    /// the amounts add and clamp to 0..1).
+    Vec3 modTint{1.0f, 1.0f, 1.0f}; ///< multiplies the albedo (season shift, team colour)
+    f32  modWetness = 0.0f;         ///< darker albedo, glossy: 0 dry .. 1 soaked
+    f32  modSnow = 0.0f;            ///< covers upward-facing surfaces: 0 none .. 1 everything facing up
+    f32  modAge = 0.0f;             ///< desaturates, darkens and roughens: 0 new .. 1 old
+
     /// Thin-film interference (soap bubbles, oil, holographic foil). Thickness in nanometres.
     f32  iridescence = 0.0f;
     f32  iridescenceThickness = 400.0f;

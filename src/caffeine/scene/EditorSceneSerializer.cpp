@@ -248,7 +248,9 @@ void SceneSerializer::collectMeshRendererComponents(
         u8 castShadows = mr.castShadows ? 1 : 0;
         u8 receiveShadows = mr.receiveShadows ? 1 : 0;
         
-        std::vector<u8> data(4 + meshLen + 4 + matLen + 2);
+        // Older scenes stop after receiveShadows; the run-time modifiers (tint rgb, wetness, snow,
+        // age: six floats) follow it when present.
+        std::vector<u8> data(4 + meshLen + 4 + matLen + 2 + 6 * 4);
         u32 offset = 0;
         memcpy(data.data() + offset, &meshLen, 4); offset += 4;
         if (meshLen > 0) {
@@ -261,7 +263,10 @@ void SceneSerializer::collectMeshRendererComponents(
             offset += matLen;
         }
         memcpy(data.data() + offset, &castShadows, 1); offset += 1;
-        memcpy(data.data() + offset, &receiveShadows, 1);
+        memcpy(data.data() + offset, &receiveShadows, 1); offset += 1;
+        const f32 modifiers[6] = {mr.modTint.x, mr.modTint.y, mr.modTint.z,
+                                  mr.modWetness, mr.modSnow, mr.modAge};
+        memcpy(data.data() + offset, modifiers, sizeof(modifiers));
         
         entries.push_back({e.id(), std::move(data)});
     });
@@ -2066,9 +2071,15 @@ bool SceneSerializer::applyMeshRendererComponent(ECS::Entity e, const u8* data, 
     
     u8 castShadows, receiveShadows;
     memcpy(&castShadows, data + offset, 1); offset += 1;
-    memcpy(&receiveShadows, data + offset, 1);
+    memcpy(&receiveShadows, data + offset, 1); offset += 1;
+    f32 modifiers[6] = {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+    if (size >= offset + sizeof(modifiers)) memcpy(modifiers, data + offset, sizeof(modifiers));
     
     auto& mr = m_world.add<ECS::MeshRendererComponent>(e);
+    mr.modTint = Vec4(modifiers[0], modifiers[1], modifiers[2], 1.0f);
+    mr.modWetness = modifiers[3];
+    mr.modSnow = modifiers[4];
+    mr.modAge = modifiers[5];
     mr.meshPath = std::move(meshPath);
     mr.materialPath = std::move(matPath);
     mr.castShadows = (castShadows != 0);

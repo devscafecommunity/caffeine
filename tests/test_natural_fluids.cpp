@@ -66,14 +66,47 @@ TEST_CASE("Natural fluids surface system generates a live smooth mesh", "[natura
     }
     REQUIRE(unitNormals);
 
+    // Analytic waves are displaced on the GPU: the grid is flat, uploaded once and never rebuilt,
+    // while the wave data the vertex shader reads advances with time.
+    Scene::GpuWaterWaves first;
+    REQUIRE(Scene::naturalFluidGpuWaves(world, entity.id(), first));
+    REQUIRE(first.count > 0);
+    const u32 revision = geometry->revision;
     const Vec3 before = geometry->positions[expectedVertices / 2];
     for (int frame = 0; frame < 10; ++frame) {
         Scene::tickNaturalFluids(world, 1.0f / 60.0f, true);
     }
     geometry = world.get<MeshGeometryComponent>(entity);
     REQUIRE(geometry != nullptr);
-    REQUIRE((geometry->positions[expectedVertices / 2] - before).lengthSquared() > 0.0f);
+    REQUIRE(geometry->revision == revision);
+    REQUIRE((geometry->positions[expectedVertices / 2] - before).lengthSquared() == Approx(0.0f));
+    // Culling still covers the waves.
+    REQUIRE(geometry->boundsPadding.y > 0.0f);
+    Scene::GpuWaterWaves later;
+    REQUIRE(Scene::naturalFluidGpuWaves(world, entity.id(), later));
+    REQUIRE(later.time > first.time);
 
+    Scene::resetNaturalFluidRuntime();
+}
+
+TEST_CASE("Natural fluids with shallow-water physics keep the CPU surface", "[naturalfluids][scene]") {
+    Scene::resetNaturalFluidRuntime();
+    World world;
+    NaturalFluidComponent component = realisticWater(24, 32.0f);
+    component.shallowPhysics = 1;
+    Entity entity = addFluidEntity(world, component);
+    Scene::tickNaturalFluids(world, 1.0f / 60.0f, true);
+    Scene::GpuWaterWaves waves;
+    REQUIRE_FALSE(Scene::naturalFluidGpuWaves(world, entity.id(), waves));
+    MeshGeometryComponent* geometry = world.get<MeshGeometryComponent>(entity);
+    REQUIRE(geometry != nullptr);
+    const size_t middle = geometry->positions.size() / 2;
+    const Vec3 before = geometry->positions[middle];
+    for (int frame = 0; frame < 10; ++frame) {
+        Scene::tickNaturalFluids(world, 1.0f / 60.0f, true);
+    }
+    geometry = world.get<MeshGeometryComponent>(entity);
+    REQUIRE((geometry->positions[middle] - before).lengthSquared() > 0.0f);
     Scene::resetNaturalFluidRuntime();
 }
 
@@ -233,4 +266,38 @@ TEST_CASE("Custom waves survive the component prefix serialisation", "[fluid][wa
     NaturalFluidComponent old;
     std::memcpy(&old, &component, offsetof(NaturalFluidComponent, customWaveCount));
     CHECK(old.customWaveCount == 0);
+}
+
+TEST_CASE("Mesh Renderer modifiers survive a scene round trip and old scenes still load", "[scene]") {
+    const std::filesystem::path scenePath =
+        std::filesystem::temp_directory_path() / "caffeine_modifiers_scene_test.caf";
+    {
+        World world;
+        Entity entity = world.create("Wall");
+        auto& renderer = world.add<MeshRendererComponent>(entity);
+        renderer.meshPath = "Models/wall.obj";
+        renderer.materialPath = "Materials/brick.mat";
+        renderer.modTint = Vec4(0.5f, 0.6f, 0.7f, 1.0f);
+        renderer.modWetness = 0.3f;
+        renderer.modSnow = 0.8f;
+        renderer.modAge = 0.1f;
+        Editor::SceneSerializer serializer(world);
+        REQUIRE(serializer.serialize(scenePath.string()));
+    }
+    World loaded;
+    Editor::SceneSerializer serializer(loaded);
+    REQUIRE(serializer.deserialize(scenePath.string()));
+    bool found = false;
+    ComponentQuery query;
+    query.with<MeshRendererComponent>();
+    loaded.forEach<MeshRendererComponent>(query, [&](Entity, MeshRendererComponent& renderer) {
+        found = true;
+        REQUIRE(renderer.materialPath == "Materials/brick.mat");
+        REQUIRE(renderer.modTint.y == Approx(0.6f));
+        REQUIRE(renderer.modWetness == Approx(0.3f));
+        REQUIRE(renderer.modSnow == Approx(0.8f));
+        REQUIRE(renderer.modAge == Approx(0.1f));
+    });
+    REQUIRE(found);
+    std::filesystem::remove(scenePath);
 }

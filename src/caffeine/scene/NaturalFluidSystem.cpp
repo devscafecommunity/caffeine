@@ -30,6 +30,9 @@ struct FluidRuntime {
     u64 settingsHash = 0;
     u32 meshRevision = 0;
     bool initialized = false;
+    /// The surface is a flat grid waved by the GPU (see naturalFluidGpuWaves).
+    bool gpuSurface = false;
+    u64 surfaceKey = 0;
 };
 
 std::unordered_map<u32, FluidRuntime> g_runtime;
@@ -130,8 +133,78 @@ ECS::MeshGeometryComponent& ensureGeometry(ECS::World& world, ECS::Entity entity
     return world.add<ECS::MeshGeometryComponent>(entity);
 }
 
+bool wavesOnGpu(const FluidRuntime& runtime) {
+    const auto& waves = runtime.fluid.waves().waves();
+    return !runtime.fluid.settings().simulateShallowWater && !waves.empty() && waves.size() <= 16;
+}
+
+/// A flat grid, uploaded once: the vertex shader adds the waves, so nothing is rebuilt per frame.
+void updateFlatSurface(ECS::World& world, ECS::Entity entity,
+                       const ECS::NaturalFluidComponent& component, FluidRuntime& runtime) {
+    const int resolution = std::clamp(static_cast<int>(component.surfaceResolution), 8, 256);
+    f32 padY = 0.0f;
+    f32 padXZ = 0.0f;
+    for (const auto& wave : runtime.fluid.waves().waves()) {
+        padY += wave.amplitude;
+        padXZ += wave.steepness * wave.amplitude;
+    }
+    u64 key = 1469598103934665603ull;
+    auto mix = [&key](f32 value) {
+        u32 bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        key = (key ^ bits) * 1099511628211ull;
+    };
+    mix(static_cast<f32>(resolution));
+    mix(component.sizeX);
+    mix(component.sizeZ);
+    mix(component.waterLevel);
+    mix(padY);
+    mix(padXZ);
+    if (runtime.gpuSurface && key == runtime.surfaceKey && world.has<ECS::MeshGeometryComponent>(entity)) {
+        return;
+    }
+    ECS::MeshGeometryComponent& geometry = ensureGeometry(world, entity);
+    const int stride = resolution + 1;
+    geometry.positions.resize(static_cast<size_t>(stride) * stride);
+    geometry.normals.assign(geometry.positions.size(), Vec3(0.0f, 1.0f, 0.0f));
+    geometry.texcoords.resize(geometry.positions.size());
+    for (int j = 0; j <= resolution; ++j) {
+        for (int i = 0; i <= resolution; ++i) {
+            const f32 u = static_cast<f32>(i) / static_cast<f32>(resolution);
+            const f32 v = static_cast<f32>(j) / static_cast<f32>(resolution);
+            const size_t index = static_cast<size_t>(j) * stride + i;
+            geometry.positions[index] =
+                Vec3((u - 0.5f) * component.sizeX, component.waterLevel, (v - 0.5f) * component.sizeZ);
+            geometry.texcoords[index] = Vec2(u, v);
+        }
+    }
+    geometry.indices.clear();
+    geometry.indices.reserve(static_cast<size_t>(resolution) * resolution * 6);
+    for (int j = 0; j < resolution; ++j) {
+        for (int i = 0; i < resolution; ++i) {
+            const u32 i0 = static_cast<u32>(j * stride + i);
+            const u32 i1 = i0 + 1;
+            const u32 i2 = i0 + static_cast<u32>(stride);
+            const u32 i3 = i2 + 1;
+            geometry.indices.insert(geometry.indices.end(), {i0, i2, i1, i1, i2, i3});
+        }
+    }
+    geometry.boundsPadding = Vec3(padXZ, padY, padXZ);
+    geometry.revision = ++runtime.meshRevision;
+    runtime.gpuSurface = true;
+    runtime.surfaceKey = key;
+}
+
 void updateSurfaceMesh(ECS::World& world, ECS::Entity entity,
                        const ECS::NaturalFluidComponent& component, FluidRuntime& runtime) {
+    if (wavesOnGpu(runtime)) {
+        updateFlatSurface(world, entity, component, runtime);
+        return;
+    }
+    runtime.gpuSurface = false;
+    runtime.surfaceKey = 0;
+    ECS::MeshGeometryComponent* existing = world.get<ECS::MeshGeometryComponent>(entity);
+    if (existing) existing->boundsPadding = Vec3(0.0f, 0.0f, 0.0f);
     SurfaceMesh mesh;
     const int resolution = std::clamp(static_cast<int>(component.surfaceResolution), 8, 256);
     runtime.fluid.buildSurfaceMesh(resolution, component.sizeX, component.sizeZ, mesh);
@@ -333,6 +406,26 @@ void tickNaturalFluids(ECS::World& world, f32 dt, bool editorPreview) {
             ++it;
         }
     }
+}
+
+bool naturalFluidGpuWaves(ECS::World& world, u32 entityId, GpuWaterWaves& out) {
+    (void)world;
+    auto it = g_runtime.find(entityId);
+    if (it == g_runtime.end() || !it->second.gpuSurface) return false;
+    const FluidRuntime& runtime = it->second;
+    const auto& waves = runtime.fluid.waves().waves();
+    if (waves.empty() || waves.size() > 16) return false;
+    out.count = static_cast<u32>(waves.size());
+    out.time = runtime.fluid.time();
+    out.foamThreshold = runtime.fluid.settings().waves.foamThreshold;
+    for (size_t i = 0; i < waves.size(); ++i) {
+        const auto& wave = waves[i];
+        const f32 k = Math::TAU / std::max(wave.wavelength, 0.05f);
+        const f32 values[8] = {wave.direction.x, wave.direction.y, k, wave.omega,
+                               wave.amplitude, wave.steepness, wave.phase, 0.0f};
+        std::memcpy(out.packed[i], values, sizeof(values));
+    }
+    return true;
 }
 
 const Fluids::FluidWorld* naturalFluidWorldFor(ECS::World& world, u32 entityId) {

@@ -1,4 +1,6 @@
 use crate::history::{self, History};
+use crate::uikit::asset_files;
+use crate::uikit::asset_folders;
 use crate::uikit::asset_wizard;
 use crate::uikit::behaviour;
 use crate::uikit::components::{
@@ -458,6 +460,8 @@ enum Message {
     ScriptDetach,
     AssetNavigate(String),
     AssetUp,
+    /// The Assets pane's file bar: new folder, rename, delete.
+    AssetFile(panels::assetmanager::FileAction),
     AssetRoot,
     AssetRefresh,
     AssetViewMode(panels::assetmanager::ViewMode),
@@ -576,6 +580,7 @@ struct App {
     /// Asset root used instead of the engine's (tests, offline fixtures).
     asset_root_override: Option<std::path::PathBuf>,
     asset_selected: Option<usize>,
+    asset_edit: Option<panels::assetmanager::FileEdit>,
     project: project_manager::State,
     project_recent_file: std::path::PathBuf,
     script: script::State,
@@ -927,6 +932,7 @@ impl App {
             pack_job: None,
             asset_root_override: None,
             asset_selected: None,
+            asset_edit: None,
             project: project_manager::State::new(
                 project::default_projects_directory().display().to_string(),
             ),
@@ -2033,10 +2039,109 @@ impl App {
         }
     }
 
+    /// Moves the dragged asset into the folder it was released on.
+    fn move_asset_into_folder(&mut self, source: usize, folder: usize) {
+        let (Some(from), Some(to)) = (self.assets.get(source), self.assets.get(folder)) else {
+            return;
+        };
+        if !to.is_directory {
+            return;
+        }
+        let (from, to) = (from.relative_path.clone(), to.relative_path.clone());
+        let Some(root) = self.asset_root_dir() else {
+            return;
+        };
+        match asset_files::move_into(&root, &from, &to) {
+            Ok(path) => {
+                self.log(
+                    LogLevel::Action,
+                    format!("Moved {from} to {path} (references to it are not rewritten)"),
+                );
+                self.asset_selected = None;
+                self.refresh_assets();
+            }
+            Err(error) => self.log(LogLevel::Error, format!("Move failed: {error}")),
+        }
+    }
+
+    /// The Assets pane's file bar: new folder, rename and delete (to the trash).
+    fn asset_file_action(&mut self, action: panels::assetmanager::FileAction) {
+        use panels::assetmanager::{FileAction, FileEdit};
+        let selected = self
+            .asset_selected
+            .and_then(|index| self.assets.get(index))
+            .map(|asset| (asset.relative_path.clone(), asset.name.clone()));
+        match action {
+            FileAction::NewFolder => self.asset_edit = Some(FileEdit::NewFolder(String::new())),
+            FileAction::Rename => {
+                if let Some((path, name)) = selected {
+                    self.asset_edit = Some(FileEdit::Rename(path, name));
+                }
+            }
+            FileAction::Delete => {
+                if let Some((_, name)) = selected {
+                    self.asset_edit = Some(FileEdit::ConfirmDelete(name));
+                }
+            }
+            FileAction::Text(text) => {
+                if let Some(FileEdit::NewFolder(value) | FileEdit::Rename(_, value)) =
+                    self.asset_edit.as_mut()
+                {
+                    *value = text;
+                }
+            }
+            FileAction::Cancel => self.asset_edit = None,
+            FileAction::Commit | FileAction::ConfirmDelete => {
+                let Some(root) = self.asset_root_dir() else {
+                    self.log(LogLevel::Error, "Open a project first");
+                    return;
+                };
+                let Some(edit) = self.asset_edit.clone() else {
+                    return;
+                };
+                let directory = panels::assetmanager::normalize_directory(&self.asset_directory);
+                let result = match (&edit, &action) {
+                    (FileEdit::NewFolder(name), FileAction::Commit) => {
+                        asset_files::create_folder(&root, &directory, name)
+                            .map(|path| format!("Created folder {path}"))
+                    }
+                    (FileEdit::Rename(path, name), FileAction::Commit) => {
+                        asset_files::rename(&root, path, name).map(|new| {
+                            format!("Renamed {path} to {new} (references to it are not rewritten)")
+                        })
+                    }
+                    (FileEdit::ConfirmDelete(_), FileAction::ConfirmDelete) => selected
+                        .ok_or_else(|| "Nothing is selected".to_owned())
+                        .and_then(|(path, _)| {
+                            asset_files::trash(&root, &path)
+                                .map(|moved| format!("Moved {path} to {moved}"))
+                        }),
+                    _ => return,
+                };
+                match result {
+                    Ok(message) => {
+                        self.log(LogLevel::Action, message);
+                        self.asset_edit = None;
+                        self.asset_selected = None;
+                        self.refresh_assets();
+                    }
+                    // The editor stays open so the name can be fixed.
+                    Err(error) => self.log(LogLevel::Error, error),
+                }
+            }
+        }
+    }
+
     fn refresh_assets(&mut self) {
+        self.nature.thumb_cache.borrow_mut().clear();
         if let Some(engine) = self.engine.as_mut() {
             let _ = engine.refresh_assets();
             self.assets = engine.assets();
+            // Deleted assets wait in the hidden trash folder: not part of the project listing.
+            self.assets.retain(|asset| {
+                asset.relative_path != asset_files::TRASH
+                    && !asset.relative_path.starts_with(".trash/")
+            });
         }
         if self
             .asset_selected
@@ -3005,6 +3110,9 @@ impl App {
     }
 
     fn apply_texture_set_to_selected(&mut self) {
+        let sets_folder = self
+            .asset_root_dir()
+            .map(|root| asset_folders::resolve(&root, asset_folders::AssetFolder::TextureSets));
         let Some(engine) = self.engine.as_mut() else {
             return;
         };
@@ -3019,12 +3127,7 @@ impl App {
             .texture_set_path
             .as_ref()
             .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
-            .or_else(|| {
-                engine
-                    .asset_path("texture_sets")
-                    .ok()
-                    .map(std::path::PathBuf::from)
-            })
+            .or(sets_folder)
             .unwrap_or_default();
         if std::fs::create_dir_all(&directory).is_err() {
             return;
@@ -3353,12 +3456,11 @@ impl App {
                 .as_ref()
                 .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
                 .or_else(|| {
-                    self.engine
-                        .as_ref()
-                        .and_then(|engine| engine.asset_path("texture_sets").ok())
-                        .map(std::path::PathBuf::from)
+                    self.asset_root_dir().map(|root| {
+                        asset_folders::resolve(&root, asset_folders::AssetFolder::TextureSets)
+                    })
                 })
-                .unwrap_or_else(|| std::path::PathBuf::from("texture_sets"))
+                .unwrap_or_else(|| std::path::PathBuf::from("Textures/Sets"))
                 .join("export")
         };
         let stem = sanitize_material_name(&set.name);
@@ -4803,10 +4905,10 @@ impl App {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("imported");
-        let directory = engine
-            .asset_path("materials")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("materials"));
+        let directory = self
+            .asset_root_dir()
+            .map(|root| asset_folders::resolve(&root, asset_folders::AssetFolder::Materials))
+            .unwrap_or_else(|| std::path::PathBuf::from("Materials"));
         if std::fs::create_dir_all(&directory).is_err() {
             self.log(LogLevel::Error, "Could not create materials directory");
             return;
@@ -5507,6 +5609,38 @@ impl App {
                 }
                 material::Edit::SheenRoughness(value) => {
                     surface.sheen_roughness = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::WindStrength(value) => {
+                    surface.wind_strength = value.clamp(0.0, 0.5);
+                    changed = true;
+                }
+                material::Edit::WindSpeed(value) => {
+                    surface.wind_speed = value.clamp(0.0, 8.0);
+                    changed = true;
+                }
+                material::Edit::WindFlutter(value) => {
+                    surface.wind_flutter = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::ModTint(axis, value) => {
+                    surface.mod_tint[axis.min(2)] = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::ModWetness(value) => {
+                    surface.mod_wetness = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::ModSnow(value) => {
+                    surface.mod_snow = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::ModAge(value) => {
+                    surface.mod_age = value.clamp(0.0, 1.0);
+                    changed = true;
+                }
+                material::Edit::Translucency(value) => {
+                    surface.translucency = value.clamp(0.0, 1.0);
                     changed = true;
                 }
                 material::Edit::Iridescence(value) => {
@@ -6718,10 +6852,16 @@ impl App {
                 self.asset_selected = Some(index);
                 self.asset_drag = Some(index);
             }
-            Message::AssetReleased(_index) => {
-                // A single click only selects; opening needs a double click.
-                self.asset_drag = None;
+            Message::AssetReleased(index) => {
+                // A single click only selects; opening needs a double click. Releasing a dragged
+                // asset on a folder moves it there.
+                if let Some(source) = self.asset_drag.take() {
+                    if source != index {
+                        self.move_asset_into_folder(source, index);
+                    }
+                }
             }
+            Message::AssetFile(action) => self.asset_file_action(action),
             Message::AssetDoubleClick(index) => {
                 self.asset_double_clicked(index);
             }
@@ -7196,6 +7336,7 @@ impl App {
                 self.pump_viewport();
                 self.pump_generator_bake();
                 self.pump_generator_preview();
+                self.pump_texgen_export(false);
                 self.update_material_preview();
             }
             Message::ViewportHover(hovered) => {
@@ -7789,6 +7930,71 @@ impl App {
             )
             .on_press(Message::GeneratorTextureClose);
             iced::widget::stack([base, overlay.into()]).into()
+        } else if let Some((_, _, kind)) = self.nature.picker {
+            let search = self.nature.picker_search.to_lowercase();
+            let items: Vec<crate::uikit::components::asset_picker::Item> = self
+                .assets
+                .iter()
+                .filter(|asset| !asset.is_directory && asset.kind == kind.asset_kind())
+                .filter(|asset| search.is_empty() || asset.name.to_lowercase().contains(&search))
+                .take(200)
+                .map(|asset| crate::uikit::components::asset_picker::Item {
+                    key: asset.relative_path.clone(),
+                    label: asset.name.clone(),
+                    detail: asset.relative_path.clone(),
+                    thumbnail: (kind == nature_generator_panel::PickKind::Image)
+                        .then(|| self.nature_thumbnail(&asset.relative_path))
+                        .flatten(),
+                })
+                .collect();
+            let (title, placeholder, empty) = match kind {
+                nature_generator_panel::PickKind::Image => (
+                    "Pick an image",
+                    "Search images…",
+                    "No images in the project: export one from the Texture Generator or import it.",
+                ),
+                nature_generator_panel::PickKind::Material => (
+                    "Pick a material",
+                    "Search materials…",
+                    "No materials in the project yet.",
+                ),
+            };
+            let picker = crate::uikit::components::asset_picker::view_labeled(
+                title,
+                items,
+                &self.nature.picker_search,
+                crate::uikit::components::asset_picker::Callbacks {
+                    ids: crate::uikit::components::asset_picker::Ids {
+                        root: id::NATUREGEN_PICKER,
+                        close: id::NATUREGEN_PICKER_CLOSE,
+                        search: id::NATUREGEN_PICKER_SEARCH,
+                        item: id::naturegen_picker_item,
+                    },
+                    on_search: Box::new(|text| {
+                        Message::NatureGen(nature_generator_panel::Edit::PickerSearch(text))
+                    }),
+                    on_pick: Box::new(|path| {
+                        Message::NatureGen(nature_generator_panel::Edit::PickerPick(path))
+                    }),
+                    on_close: Message::NatureGen(nature_generator_panel::Edit::PickerClose),
+                },
+                crate::uikit::components::asset_picker::Labels {
+                    placeholder,
+                    badge: kind.badge(),
+                    empty,
+                    footer: None,
+                },
+            );
+            let overlay = iced::widget::mouse_area(
+                container(picker)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::NatureGen(
+                nature_generator_panel::Edit::PickerClose,
+            ));
+            iced::widget::stack([base, overlay.into()]).into()
         } else if self.behaviour_picker {
             let catalog = behaviour::catalog(&self.component_types, &self.components, &self.assets);
             let mut sections: Vec<behaviour_picker::Section<Message>> = Vec::new();
@@ -8225,6 +8431,7 @@ impl App {
                             directory: &self.asset_directory,
                             mode: self.asset_view_mode,
                             selected: self.asset_selected,
+                            edit: self.asset_edit.as_ref(),
                             collapsed: &self.asset_tree_collapsed,
                             tree_open: self.asset_tree_open,
                         },
@@ -8248,6 +8455,7 @@ impl App {
                             on_tree_toggle: Box::new(Message::AssetTreeToggle),
                             on_noop: Message::Noop,
                             on_tree_panel: Message::AssetTreePanel,
+                            on_file: Box::new(Message::AssetFile),
                         },
                     ),
                 )
@@ -8513,7 +8721,21 @@ impl App {
                 {
                     let (materials, textures) = self.nature_assets();
                     nature_generator_panel::view(
-                        self.nature.view_state(materials, textures),
+                        self.nature.view_state(materials, textures, {
+                            let mut thumbnails = std::collections::HashMap::new();
+                            if let Some(node) = self
+                                .nature
+                                .selected
+                                .and_then(|id| self.nature.graph.node(id))
+                            {
+                                for path in node.strings.iter().filter(|p| !p.is_empty()) {
+                                    if let Some(handle) = self.nature_thumbnail(path) {
+                                        thumbnails.insert(path.clone(), handle);
+                                    }
+                                }
+                            }
+                            thumbnails
+                        }),
                         Message::NatureGen,
                     )
                 },

@@ -25,6 +25,8 @@ layout(location = 2) out vec2 v_texCoord;
 layout(location = 3) out vec3 v_tangent;
 layout(location = 4) out vec3 v_bitangent;
 layout(location = 5) out vec2 v_uvScale;
+layout(location = 6) out vec4 v_color;
+layout(location = 7) out float v_foam;
 
 // World length of the mesh's tangent / bitangent per object-space unit: how much the model
 // matrix stretches the U and V directions. Multiplying the UVs by it keeps the texture's
@@ -68,6 +70,8 @@ void main() {
     v_normal = Nd;
     v_tangent = Td;
     v_bitangent = Bd;
+    v_color = vec4(1.0);
+    v_foam = 0.0;
     v_texCoord = aTexCoord;
     v_uvScale = uvScale;
     gl_Position = ubo.uMVP * vec4(localPos, 1.0);

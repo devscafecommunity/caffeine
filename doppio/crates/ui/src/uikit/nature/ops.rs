@@ -23,6 +23,8 @@ enum Source {
     Custom,
     ProjectMaterial,
     ProjectTexture,
+    /// Keep the material a Material node upstream gave the mesh.
+    FromNode,
 }
 
 /// `(label, source, stylised colour)`.
@@ -153,6 +155,11 @@ const MATERIALS: &[(&str, Source, [f32; 3])] = &[
         Source::Cards("Atlas · Autumn"),
         [0.80, 0.42, 0.10],
     ),
+    (
+        "From nodes (Material / Texture)",
+        Source::FromNode,
+        [0.5, 0.5, 0.5],
+    ),
 ];
 
 const MATERIAL_LABELS: &[&str] = &[
@@ -182,6 +189,7 @@ const MATERIAL_LABELS: &[&str] = &[
     "Your texture (cut-out PNG)",
     "Leaves · Broadleaf Mix (atlas)",
     "Leaves · Autumn Mix (atlas)",
+    "From nodes (Material / Texture)",
 ];
 
 /// True when the label table the editor shows matches the material table graphs index into.
@@ -233,10 +241,12 @@ fn material_for(
         // Your own assets are always used as they are, whatever the quality.
         Source::ProjectMaterial if !path.is_empty() => MaterialSpec::Project(path.to_owned()),
         Source::ProjectTexture if !path.is_empty() => MaterialSpec::ProjectTexture(path.to_owned()),
-        Source::ProjectMaterial | Source::ProjectTexture => MaterialSpec::Solid {
-            rgb: stylised,
-            roughness: 0.85,
-        },
+        Source::ProjectMaterial | Source::ProjectTexture | Source::FromNode => {
+            MaterialSpec::Solid {
+                rgb: stylised,
+                roughness: 0.85,
+            }
+        }
     }
 }
 
@@ -769,6 +779,7 @@ fn eval_leaves(a: &Args) -> Vec<Value> {
             fold: a.f(7),
             droop: a.f(8),
             rows,
+            shade_cell: if a.u(6) == 1 { Some(4) } else { None },
         },
         seed,
     ))
@@ -995,6 +1006,7 @@ fn eval_instance(a: &Args) -> Vec<Value> {
     let height = (hi[1] - lo[1]).max(1e-4);
     let mut rng = rng_for(a, a.f(4));
     let mut out = Part::new(&template.name, template.material.clone(), template.preview);
+    let mut transforms = Vec::new();
     for point in points {
         if out.indices.len() + template.indices.len() > budget {
             break;
@@ -1002,6 +1014,17 @@ fn eval_instance(a: &Args) -> Vec<Value> {
         let jitter = add(point.normal, mul(rng.direction(), a.f(1)));
         let dir = normalize(lerp([0.0, 1.0, 0.0], normalize(jitter), a.f(0)));
         let base = out.positions.len() as u32;
+        let offset = mul(point.normal, -a.f(2) * height * point.scale);
+        let turn = |v: V3| rotate_up_to(rotate_y(v, point.yaw), dir);
+        transforms.push(super::mesh::InstanceTransform {
+            position: add(point.position, offset),
+            euler_degrees: super::mesh::euler_from_columns(
+                turn([1.0, 0.0, 0.0]),
+                turn([0.0, 1.0, 0.0]),
+                turn([0.0, 0.0, 1.0]),
+            ),
+            scale: point.scale,
+        });
         for i in 0..template.positions.len() {
             let local = rotate_y(mul(template.positions[i], point.scale), point.yaw);
             let placed = add(
@@ -1017,6 +1040,14 @@ fn eval_instance(a: &Args) -> Vec<Value> {
         out.indices
             .extend(template.indices.iter().map(|i| i + base));
     }
+    // The merged geometry above stays for the preview and export; the copies let the scene
+    // placement instance the template instead.
+    let mut single = template.clone();
+    single.instances = None;
+    out.instances = Some(super::mesh::Instances {
+        template: Box::new(single),
+        transforms,
+    });
     mesh_out(out)
 }
 
@@ -1030,7 +1061,7 @@ const PART_STRINGS: &[StringSpec] = &[StringSpec {
 }];
 const PART_P: &[crate::uikit::procedural::ParamSpec] = &[
     choice("name", "Part name", PART_NAMES, 0),
-    choice("material", "Material", MATERIAL_LABELS, 6),
+    choice("material", "Material", MATERIAL_LABELS, 26),
     float("r", "Colour R", 0.0, 1.0, 0.5, 0.01),
     float("g", "Colour G", 0.0, 1.0, 0.5, 0.01),
     float("b", "Colour B", 0.0, 1.0, 0.5, 0.01),
@@ -1043,10 +1074,140 @@ fn eval_part(a: &Args) -> Vec<Value> {
     };
     let mut part = mesh.clone();
     part.name = PART_NAMES[a.u(0).min(PART_NAMES.len() as u32 - 1) as usize].to_owned();
+    // "From nodes" keeps whatever material the Material / Texture nodes upstream gave the mesh.
+    if a.u(1) as usize == MATERIALS.len() - 1 {
+        return mesh_out(part);
+    }
     let rgb = [a.f(2), a.f(3), a.f(4)];
     let path = a.strings.first().map(String::as_str).unwrap_or("");
     part.material = material_for(a.u(1) as usize, rgb, a.f(5), path, a.quality);
     part.preview = preview_colour(&part.material, part.preview);
+    mesh_out(part)
+}
+
+const MATERIAL_STRINGS: &[StringSpec] = &[StringSpec {
+    key: "base",
+    label: "Base material (.mat)",
+}];
+const MATERIAL_P: &[crate::uikit::procedural::ParamSpec] = &[
+    float("r", "Colour R", 0.0, 1.0, 0.5, 0.01),
+    float("g", "Colour G", 0.0, 1.0, 0.5, 0.01),
+    float("b", "Colour B", 0.0, 1.0, 0.5, 0.01),
+    float("roughness", "Roughness", 0.0, 1.0, 0.8, 0.01),
+    float("metallic", "Metallic", 0.0, 1.0, 0.0, 0.01),
+    choice("alpha", "Transparency", &["Opaque", "Cut-out"], 0),
+    float("cutoff", "Cut-out threshold", 0.05, 0.95, 0.45, 0.01),
+    float("normal_strength", "Normal strength", 0.0, 3.0, 1.0, 0.01),
+    float("translucency", "Translucency", 0.0, 1.0, 0.0, 0.01),
+    float("sway", "Wind sway (per m)", 0.0, 0.5, 0.0, 0.001),
+    float("flutter", "Leaf flutter", 0.0, 1.0, 0.0, 0.01),
+];
+
+/// The custom material a mesh already carries, or a plain one made from its current material.
+fn custom_of(part: &Part) -> CustomMaterial {
+    match &part.material {
+        MaterialSpec::Custom(c) => c.clone(),
+        MaterialSpec::Solid { rgb, roughness } => CustomMaterial::plain(*rgb, *roughness),
+        _ => CustomMaterial::plain(part.preview, 0.8),
+    }
+}
+
+/// A **Material node**: the surface settings of the mesh wired in (colour, roughness, metallic,
+/// cut-out, translucency, wind). Textures come from **Texture nodes**, before or after it: the
+/// layers they added stay. Wire it into a Part that keeps "From nodes".
+fn eval_material(a: &Args) -> Vec<Value> {
+    let Some(mesh) = a.mesh(0) else {
+        return mesh_out(empty());
+    };
+    let mut part = mesh.clone();
+    let mut c = custom_of(&part);
+    c.base = a.strings.first().cloned().unwrap_or_default();
+    c.rgb = [a.f(0), a.f(1), a.f(2)];
+    c.roughness = a.f(3);
+    c.metallic = a.f(4);
+    c.cutout = a.u(5) == 1;
+    c.cutoff = a.f(6);
+    c.normal_strength = a.f(7);
+    c.translucency = a.f(8);
+    c.sway = a.f(9);
+    c.flutter = a.f(10);
+    part.preview = c.rgb;
+    part.material = MaterialSpec::Custom(c);
+    mesh_out(part)
+}
+
+const TEXTURE_STRINGS: &[StringSpec] = &[StringSpec {
+    key: "image",
+    label: "Image",
+}];
+const TEXTURE_P: &[crate::uikit::procedural::ParamSpec] = &[
+    choice(
+        "slot",
+        "Map",
+        &["Albedo (colour)", "Normal", "Occlusion / Roughness / Metal"],
+        0,
+    ),
+    choice(
+        "blend",
+        "Blend with the layers below",
+        &["Replace", "Add", "Multiply", "Overlay"],
+        0,
+    ),
+    float("strength", "Strength", 0.0, 2.0, 1.0, 0.01),
+    float("tile_u", "Repeats U", 0.1, 32.0, 1.0, 0.1),
+    float("tile_v", "Repeats V", 0.1, 32.0, 1.0, 0.1),
+    float("r", "Tint R", 0.0, 1.0, 1.0, 0.01),
+    float("g", "Tint G", 0.0, 1.0, 1.0, 0.01),
+    float("b", "Tint B", 0.0, 1.0, 1.0, 0.01),
+    choice(
+        "mapping",
+        "Fit to the object",
+        &["Keep mesh UVs", "Fit to object", "Per metre"],
+        0,
+    ),
+    float(
+        "uv_scale",
+        "Repeats (object / metre)",
+        0.05,
+        16.0,
+        1.0,
+        0.05,
+    ),
+];
+
+/// A **Texture node**: puts an image on the mesh wired in. Several Texture nodes in a row are
+/// **summed** (per map, in order, with their blend modes) into one material. *Fit to the object*
+/// re-projects the UVs from the part's own size, so the texture adapts to the object: once across
+/// it, or a number of repeats per metre.
+fn eval_texture(a: &Args) -> Vec<Value> {
+    let Some(mesh) = a.mesh(0) else {
+        return mesh_out(empty());
+    };
+    let mut part = match a.u(8) {
+        1 => {
+            let (lo, hi) = mesh.bounds();
+            let size = (hi[0] - lo[0])
+                .max(hi[1] - lo[1])
+                .max(hi[2] - lo[2])
+                .max(1e-3);
+            rock::box_uv_unweld(mesh, a.f(9) / size)
+        }
+        2 => rock::box_uv_unweld(mesh, a.f(9)),
+        _ => mesh.clone(),
+    };
+    let mut c = custom_of(&part);
+    let path = a.strings.first().cloned().unwrap_or_default();
+    if !path.is_empty() {
+        c.layers.push(TextureLayer {
+            slot: TextureSlot::ALL[a.u(0).min(2) as usize],
+            path,
+            blend: LayerBlend::ALL[a.u(1).min(3) as usize],
+            strength: a.f(2),
+            tiling: [a.f(3), a.f(4)],
+            tint: [a.f(5), a.f(6), a.f(7)],
+        });
+    }
+    part.material = MaterialSpec::Custom(c);
     mesh_out(part)
 }
 
@@ -1288,6 +1449,26 @@ pub static NODES: &[NodeDef] = &[
         INSTANCE_P,
         eval_instance
     ),
+    NodeDef {
+        id: "material",
+        title: "Material",
+        category: "Output",
+        inputs: PART_IN,
+        outputs: MESH_OUT,
+        params: MATERIAL_P,
+        strings: MATERIAL_STRINGS,
+        eval: eval_material,
+    },
+    NodeDef {
+        id: "texture",
+        title: "Texture",
+        category: "Output",
+        inputs: PART_IN,
+        outputs: MESH_OUT,
+        params: TEXTURE_P,
+        strings: TEXTURE_STRINGS,
+        eval: eval_texture,
+    },
     NodeDef {
         id: "part",
         title: "Part",

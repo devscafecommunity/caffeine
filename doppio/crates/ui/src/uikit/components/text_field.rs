@@ -60,6 +60,26 @@ pub fn search<'a, Message: Clone + 'a>(
         .into()
 }
 
+/// A full-width field with an Enter handler, for inline rename/new-name bars.
+pub fn submit<'a, Message: Clone + 'a>(
+    id: impl Into<iced::widget::Id>,
+    placeholder: impl Into<String>,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+    on_submit: Message,
+) -> Element<'a, Message> {
+    let placeholder = placeholder.into();
+    text_input(placeholder.as_str(), value)
+        .id(id)
+        .width(Length::Fill)
+        .size(12)
+        .padding([4, 7])
+        .on_input(on_input)
+        .on_submit(on_submit)
+        .style(theme::input)
+        .into()
+}
+
 /// Small field used by vector rows: coloured axis label inline with the value.
 pub fn axis<'a, Message: Clone + 'a>(
     id: impl Into<iced::widget::Id>,

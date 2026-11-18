@@ -72,6 +72,12 @@ struct MeshSurfaceMaterial {
 struct Mesh3D {
     std::vector<Vertex3D> vertices;
     std::vector<VertexSkin> skin;
+    /// Optional per-vertex colour, parallel to `vertices` (empty = none, ignored when the sizes
+    /// differ). rgb tints the albedo (baked occlusion, per-leaf variation); alpha is the painted
+    /// flutter weight: 0 keeps the vertex from shimmering (a leaf's stalk), 1 lets it flutter
+    /// fully (its tip). The lean with the wind always follows the object. Loaded from
+    /// OBJ files that write `v x y z r g b [a]`.
+    std::vector<Vec4> vertexColors;
     std::vector<u32> indices;
     std::vector<SubMesh> subMeshes;
     std::vector<MeshSurfaceMaterial> materials;
@@ -91,6 +97,7 @@ struct Mesh3D {
 #ifdef CF_HAS_SDL3
     RHI::Buffer* vertexBuffer = nullptr;
     RHI::Buffer* indexBuffer = nullptr;
+    RHI::Buffer* colorBuffer = nullptr; ///< `vertexColors` on the GPU (second vertex stream)
 #endif
 };
 

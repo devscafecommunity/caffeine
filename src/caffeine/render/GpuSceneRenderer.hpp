@@ -208,6 +208,21 @@ private:
         f32  ior = 1.5f;
         f32  clearcoat = 0.0f;
         f32  clearcoatRoughness = 0.03f;
+        f32  windStrength = 0.0f;  ///< sway per metre of height (0 = static)
+        f32  windSpeed = 1.0f;
+        f32  windFlutter = 0.0f;
+        f32  translucency = 0.0f;  ///< light through thin leaves
+        /// Run-time modifiers (material's combined with the Mesh Renderer's).
+        Vec3 modTint{1.0f, 1.0f, 1.0f};
+        bool isWater = false;        ///< a water surface: ripple detail, depth colour, foam
+        bool gpuWater = false;       ///< waves are displaced in the vertex shader
+        u32  waveCount = 0;
+        f32  waterTime = 0.0f;
+        f32  waterFoamThreshold = 0.72f;
+        f32  waveData[16 * 8] = {};  ///< (dirX, dirZ, k, omega, amplitude, steepness, phase, 0) per wave
+        f32  modWetness = 0.0f;
+        f32  modSnow = 0.0f;
+        f32  modAge = 0.0f;
         Vec3 sheenColor{0.0f, 0.0f, 0.0f};
         f32  sheenRoughness = 0.5f;
         f32  iridescence = 0.0f;
@@ -343,6 +358,8 @@ private:
                       const GpuSceneCamera& camera, const std::string& projectRoot,
                       const GpuSceneRenderOptions& options);
     void releaseProbe(ReflectionProbe& probe);
+    /// Foliage wind for a vertex uniform block: strength, speed, flutter, time in seconds.
+    void setWind(float* out, const MeshDraw& draw) const;
     void pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw, const Mat4& mvp,
                         const Vec3& lightPos, int mode, u32 indexCount, u32 firstIndex = 0);
     void pushShadowDrawsForMesh(RHI::CommandBuffer* cmd, const MeshDraw& draw, const Mat4& mvp,
@@ -368,10 +385,24 @@ private:
     RHI::Shader* m_terrainFrag = nullptr;
     RHI::Shader* m_shadowVert = nullptr;
     RHI::Shader* m_shadowFrag = nullptr;
+    RHI::Shader* m_shadowCutoutFrag = nullptr;
+    RHI::Shader* m_foliageVert = nullptr;        ///< scene_foliage.vert (per-vertex colour stream)
+    RHI::Shader* m_shadowFoliageVert = nullptr;
+    RHI::Shader* m_waterVert = nullptr;   ///< water.vert: Gerstner waves on the GPU
+    RHI::Shader* m_foliageInstancedVert = nullptr;
     RHI::Pipeline* m_scenePipeline = nullptr;
     RHI::Pipeline* m_wireframePipeline = nullptr;
     RHI::Pipeline* m_terrainPipeline = nullptr;
     RHI::Pipeline* m_shadowPipeline = nullptr;
+    RHI::Pipeline* m_shadowCutoutPipeline = nullptr; ///< alpha-tested shadows for cut-out cards
+    RHI::Pipeline* m_foliagePipeline = nullptr;      ///< meshes with per-vertex colour / wind weight
+    RHI::Pipeline* m_shadowFoliagePipeline = nullptr;
+    RHI::Pipeline* m_waterPipeline = nullptr;       ///< transmissive pass (depth write)
+    RHI::Pipeline* m_waterBlendPipeline = nullptr;  ///< blended pass
+    RHI::Pipeline* m_foliageInstancedPipeline = nullptr; ///< instanced + colour stream
+    RHI::Pipeline* m_shadowFoliageCutoutPipeline = nullptr;
+    std::string m_shadowProjectRoot;
+    TextureQualitySettings m_shadowTextureQuality{};
     // Geometric displacement (vertex-stage height sampler).
     RHI::Shader* m_displaceVert = nullptr;
     RHI::Shader* m_shadowDisplaceVert = nullptr;

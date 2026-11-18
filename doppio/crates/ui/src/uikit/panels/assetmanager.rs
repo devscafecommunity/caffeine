@@ -22,7 +22,31 @@ pub enum ViewMode {
     List,
 }
 
+/// The inline editor under the toolbar.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileEdit {
+    /// A new folder in the browsed directory, with the name typed so far.
+    NewFolder(String),
+    /// Renaming the asset at this path, with the name typed so far.
+    Rename(String, String),
+    /// Asking before moving this asset (a display name) to the trash.
+    ConfirmDelete(String),
+}
+
+/// What the file bar can do.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileAction {
+    NewFolder,
+    Rename,
+    Delete,
+    Text(String),
+    Commit,
+    Cancel,
+    ConfirmDelete,
+}
+
 pub struct View<'a> {
+    pub edit: Option<&'a FileEdit>,
     pub assets: &'a [AssetInfo],
     pub thumbnails: &'a [Option<iced::widget::image::Handle>],
     pub tints: &'a [Option<iced::Color>],
@@ -51,6 +75,7 @@ pub struct Callbacks<'a, Message> {
     pub on_tree_toggle: Box<dyn Fn(String) -> Message + 'a>,
     pub on_noop: Message,
     pub on_tree_panel: Message,
+    pub on_file: Box<dyn Fn(FileAction) -> Message + 'a>,
 }
 
 /// Canonical relative directory: no leading/trailing slashes, `/` separators.
@@ -281,6 +306,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_tree_toggle,
         on_noop,
         on_tree_panel,
+        on_file,
     } = callbacks;
     let on_press_box = on_press;
     let on_release_box = on_release;
@@ -485,7 +511,82 @@ pub fn view<'a, Message: Clone + 'a>(
             .style(theme::surface)
     };
 
-    let files = column![navigation, search, actions, content]
+    let on_file: Rc<dyn Fn(FileAction) -> Message + 'a> = Rc::from(on_file);
+    let file_bar: Element<'a, Message> = match view.edit {
+        None => {
+            let mut bar = Row::new().push(button::toolbar(
+                id::ASSET_NEW_FOLDER,
+                "New folder",
+                (on_file)(FileAction::NewFolder),
+            ));
+            if view.selected.is_some() {
+                bar = bar
+                    .push(button::toolbar(
+                        id::ASSET_RENAME,
+                        "Rename",
+                        (on_file)(FileAction::Rename),
+                    ))
+                    .push(button::toolbar(
+                        id::ASSET_DELETE,
+                        "Delete",
+                        (on_file)(FileAction::Delete),
+                    ));
+            }
+            bar.spacing(4).align_y(iced::Alignment::Center).into()
+        }
+        Some(FileEdit::ConfirmDelete(label)) => Row::new()
+            .push(
+                text(format!("Move “{label}” to the trash?"))
+                    .size(11)
+                    .color(theme::TEXT),
+            )
+            .push(iced::widget::space::horizontal())
+            .push(button::danger(
+                id::ASSET_DELETE_CONFIRM,
+                "Delete",
+                (on_file)(FileAction::ConfirmDelete),
+            ))
+            .push(button::toolbar(
+                id::ASSET_EDIT_CANCEL,
+                "Cancel",
+                (on_file)(FileAction::Cancel),
+            ))
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+            .into(),
+        Some(edit) => {
+            let (placeholder, value) = match edit {
+                FileEdit::NewFolder(value) => ("New folder name…", value.as_str()),
+                FileEdit::Rename(_, value) => ("New name…", value.as_str()),
+                FileEdit::ConfirmDelete(_) => ("", ""),
+            };
+            let typed = on_file.clone();
+            let submit = on_file.clone();
+            Row::new()
+                .push(text_field::submit(
+                    id::ASSET_EDIT_NAME,
+                    placeholder,
+                    value,
+                    move |text| (typed)(FileAction::Text(text)),
+                    (submit)(FileAction::Commit),
+                ))
+                .push(button::primary(
+                    id::ASSET_EDIT_OK,
+                    "OK",
+                    (on_file)(FileAction::Commit),
+                ))
+                .push(button::toolbar(
+                    id::ASSET_EDIT_CANCEL,
+                    "Cancel",
+                    (on_file)(FileAction::Cancel),
+                ))
+                .spacing(4)
+                .align_y(iced::Alignment::Center)
+                .into()
+        }
+    };
+
+    let files = column![navigation, file_bar, search, actions, content]
         .spacing(4)
         .width(Length::Fill)
         .height(Length::Fill);

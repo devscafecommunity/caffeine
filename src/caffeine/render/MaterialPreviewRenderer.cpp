@@ -87,6 +87,14 @@ u64 hashPreviewInputs(const Assets::MaterialSurface& s, u32 pixelSize,
     f.value(s.clearcoatRoughness);
     f.value(s.sheenColor);
     f.value(s.sheenRoughness);
+    f.value(s.windStrength);
+    f.value(s.windSpeed);
+    f.value(s.windFlutter);
+    f.value(s.translucency);
+    f.value(s.modTint);
+    f.value(s.modWetness);
+    f.value(s.modSnow);
+    f.value(s.modAge);
     f.value(s.iridescence);
     f.value(s.iridescenceThickness);
     f.value(s.iridescenceIor);
