@@ -166,8 +166,9 @@ impl TerrainGen {
         }
     }
 
-    pub fn view_state(&self) -> panel::View<'_> {
+    pub fn view_state(&self, textures: Vec<String>) -> panel::View<'_> {
         panel::View {
+            project_textures: textures,
             graph: &self.graph,
             selected: self.selected,
             selected_link: self.link,
@@ -226,7 +227,7 @@ impl App {
         }
     }
 
-    fn terrain_dir(&self) -> Option<PathBuf> {
+    pub(super) fn terrain_dir(&self) -> Option<PathBuf> {
         self.asset_root_dir().map(|root| root.join("terrain"))
     }
 
@@ -356,7 +357,16 @@ impl App {
                     self.terraingen.name = preset.name.to_owned();
                     self.terraingen.load(graph);
                     self.terraingen.dirty = false;
+                    // A preset is only a mould: its layer pictures become project assets now.
+                    if let Err(error) = self.materialize_terrain_assets() {
+                        self.terraingen.status = Some(error);
+                    }
                 }
+            }
+            Edit::SetString(id, index, text) => {
+                self.terraingen.graph.set_string(id, index, text);
+                self.terraingen.push(Some(format!("string:{id}:{index}")));
+                self.terraingen.refresh();
             }
             Edit::SetName(name) => self.terraingen.name = name,
             Edit::New => {
@@ -425,8 +435,94 @@ impl App {
         });
     }
 
+    /// Golden rule: the terrain's layer pictures are project assets. Empty slots on the Output node
+    /// are filled by baking material-library pictures into `terrain/layers/`; existing files and
+    /// paths you chose are never touched.
+    pub(super) fn materialize_terrain_assets(&mut self) -> Result<(), String> {
+        let Some(dir) = self.terrain_dir() else {
+            return Ok(());
+        };
+        let Some(output) = self.terraingen.graph.output_node() else {
+            return Ok(());
+        };
+        // Ground, rock, dirt and mud, from the material library.
+        const SOURCES: [(&str, &str); 4] = [
+            ("ground", "Ground · Lawn Grass"),
+            ("rock", "Rock · Cliff Granite"),
+            ("dirt", "Rock · Sandstone"),
+            ("mud", "Ground · Pine Needles"),
+        ];
+        let layers = self.terraingen.graph.layer_paths();
+        for (i, (slug, label)) in SOURCES.iter().enumerate() {
+            if layers.get(i).is_some_and(|p| !p.is_empty()) {
+                continue;
+            }
+            let crate::uikit::nature::mesh::MaterialSpec::Preset(preset) =
+                crate::uikit::nature::ops::spec_for_label(
+                    label,
+                    crate::uikit::nature::Quality::Balanced,
+                )
+            else {
+                continue;
+            };
+            let folder = dir.join("layers");
+            std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+            let file = folder.join(format!("{slug}.png"));
+            if !file.exists() {
+                let preset = crate::uikit::material_library::presets()
+                    .iter()
+                    .find(|p| p.name == preset)
+                    .ok_or_else(|| format!("unknown material preset `{preset}`"))?;
+                let mut graph =
+                    preset.build(&crate::uikit::material_library::PresetParams::default());
+                graph.resolution = 512;
+                let baked = graph.bake().map_err(|e| format!("{slug}: {e}"))?;
+                image::save_buffer(&file, &baked.base, 512, 512, image::ColorType::Rgba8)
+                    .map_err(|e| e.to_string())?;
+            }
+            let rooted = self
+                .engine
+                .as_ref()
+                .and_then(|e| e.asset_path("").ok())
+                .is_some_and(|root| !root.is_empty());
+            // The slot holds a material: the layer's `.mat`, with its picture as the albedo map.
+            let mat_file = folder.join(format!("{slug}.mat"));
+            if !mat_file.exists() {
+                let engine = self.engine.as_ref().ok_or("The engine is not available")?;
+                let mut material = engine.new_material().map_err(|e| format!("{e:?}"))?;
+                material.name = format!("{slug} terrain layer");
+                material.albedo_map = if rooted {
+                    engine
+                        .asset_project_path(&format!("terrain/layers/{slug}.png"))
+                        .unwrap_or_else(|_| format!("terrain/layers/{slug}.png"))
+                } else {
+                    file.display().to_string()
+                };
+                material.roughness = 0.9;
+                material.uv_object_scale = false;
+                engine
+                    .save_material(&mat_file.to_string_lossy(), &material)
+                    .map_err(|e| format!("{e:?}"))?;
+            }
+            let path = if rooted {
+                format!("terrain/layers/{slug}.mat")
+            } else {
+                mat_file.display().to_string()
+            };
+            self.terraingen.graph.set_string(output, i, path);
+            self.terraingen.dirty = true;
+        }
+        Ok(())
+    }
+
     /// Builds the terrain at the Output node's resolution and places it as an engine terrain.
     pub(super) fn place_terrain(&mut self) {
+        if let Err(error) = self.materialize_terrain_assets() {
+            self.terraingen.status = Some(error);
+            return;
+        }
+        let layers = self.terraingen.graph.layer_paths();
+        let layer_root = self.asset_root_dir();
         let res = self.terraingen.graph.output_resolution();
         let model = match self.terraingen.graph.build(res) {
             Ok(model) => model,
@@ -463,6 +559,34 @@ impl App {
                 "Could not create the terrain ({error:?}): the engine library needs C ABI v8"
             ));
             return;
+        }
+        // The four layer pictures are the project's textures, written from the Output node.
+        if let Some(type_id) = super::component_type_id(engine, "Terrain") {
+            for (i, path) in layers.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+                // A slot is a material (its albedo map paints the layer) or, as before, a picture.
+                let picture = if path.ends_with(".mat") {
+                    let file = layer_root
+                        .as_ref()
+                        .map(|root| root.join(path))
+                        .unwrap_or_else(|| std::path::PathBuf::from(path));
+                    match engine.load_material(&file.to_string_lossy()) {
+                        Ok(material) if !material.albedo_map.is_empty() => material.albedo_map,
+                        _ => continue,
+                    }
+                } else {
+                    path.clone()
+                };
+                let resolved = engine
+                    .asset_project_path(&picture)
+                    .unwrap_or_else(|_| picture.clone());
+                let _ = super::set_component_field(
+                    engine,
+                    id,
+                    type_id,
+                    &format!("Splat Layer Paths {}", i + 1),
+                    doppio_engine::FieldValue::String(resolved),
+                );
+            }
         }
         self.entities = super::projectloader::read_entities(engine);
         if let Some(index) = self.entities.iter().position(|entity| entity.id == id) {

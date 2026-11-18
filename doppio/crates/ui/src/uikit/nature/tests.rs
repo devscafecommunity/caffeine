@@ -242,17 +242,17 @@ fn graphs_round_trip_through_text_including_your_own_assets() {
     // A part that uses one of your own materials keeps the path (with spaces) through save and load.
     let mut graph = preset("Boulder").graph();
     let part_id = graph.nodes.iter().find(|n| n.op == "part").unwrap().id;
-    graph.set(
+    swap_material(
+        &mut graph,
         part_id,
-        "material",
-        ops::material_index("Your material (.mat)"),
+        "mat_project",
+        "my project/materials/Wet Moss.mat",
     );
-    graph.set_string(part_id, 0, "my project/materials/Wet Moss.mat".to_owned());
     let (_, back, _) = from_text(&to_text("x", &graph, Quality::Balanced)).unwrap();
     let model = back.build(Quality::Stylized).unwrap();
     assert_eq!(
         model.parts[0].material,
-        MaterialSpec::Project("my project/materials/Wet Moss.mat".to_owned()),
+        MaterialSpec::Project("my project/materials/Wet Moss.mat".to_owned(), (1, 1)),
         "your assets stay as they are, even stylised"
     );
     assert!(from_text("CAFMGRAPH2\n").is_none());
@@ -262,23 +262,31 @@ fn graphs_round_trip_through_text_including_your_own_assets() {
 fn your_own_textures_become_cutout_card_parts() {
     let mut graph = preset("Grass Clump").graph();
     let part_id = graph.nodes.iter().find(|n| n.op == "part").unwrap().id;
-    graph.set(
-        part_id,
-        "material",
-        ops::material_index("Your texture (cut-out PNG)"),
-    );
-    graph.set_string(part_id, 0, "textures/my_grass.png".to_owned());
+    let node = swap_material(&mut graph, part_id, "mat_texture", "textures/my_grass.png");
     let model = graph.build(Quality::Balanced).unwrap();
     assert_eq!(
         model.parts[0].material,
-        MaterialSpec::ProjectTexture("textures/my_grass.png".to_owned())
+        MaterialSpec::ProjectTexture("textures/my_grass.png".to_owned(), (1, 1))
     );
-    // Without a path it falls back to a plain colour instead of failing.
-    graph.set_string(part_id, 0, String::new());
-    assert!(matches!(
-        graph.build(Quality::Balanced).unwrap().parts[0].material,
-        MaterialSpec::Solid { .. }
-    ));
+    // Without a path there is no material, and the part says so instead of guessing one.
+    graph.set_string(node, 0, String::new());
+    let error = graph.build(Quality::Balanced).unwrap_err();
+    assert!(error.contains("no material"), "{error}");
+}
+
+/// Replaces the material node feeding a part with a new one of `op` holding `path`.
+fn swap_material(graph: &mut NatureGraph, part: NodeId, op: &'static str, path: &str) -> NodeId {
+    let old = graph
+        .links
+        .iter()
+        .find(|l| l.to == part && l.input == 1)
+        .map(|l| l.from)
+        .expect("the part has a material node");
+    graph.remove(old);
+    let node = graph.add(op, Point::new(0.0, 0.0));
+    graph.set_string(node, 0, path.to_owned());
+    assert!(graph.connect(node, 0, part, 1));
+    node
 }
 
 #[test]
@@ -340,11 +348,20 @@ fn nodes_can_be_mixed_freely() {
     let part = g.add_with(
         "part",
         Point::new(0.0, 0.0),
-        &[
-            ("name", ops::part_name_index("rock")),
-            ("material", ops::material_index("Bark · Oak")),
-        ],
+        &[("name", ops::part_name_index("rock"))],
     );
+    let bark = g.add_with(
+        "mat_library",
+        Point::new(0.0, 0.0),
+        &[(
+            "preset",
+            ops::LIBRARY_LABELS
+                .iter()
+                .position(|l| *l == "Bark · Oak")
+                .unwrap() as f32,
+        )],
+    );
+    assert!(g.connect(bark, 0, part, 1));
     let out = g.add("output", Point::new(0.0, 0.0));
     assert!(
         g.connect(ico, 0, lump, 0)
@@ -496,10 +513,15 @@ fn baked_masks_and_rock_surface_describe_the_geometry() {
 fn leaf_atlas_gives_varied_folded_drooping_leaves() {
     use super::tree;
     let graph = preset("Oak").graph();
-    assert!(graph
-        .nodes
+    // The texture wired into the Leaves node is the atlas.
+    let leaves_node = graph.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    let texture = graph
+        .links
         .iter()
-        .any(|n| n.op == "leaves" && graph.get(n.id, "shapes") == Some(1.0)));
+        .find(|l| l.to == leaves_node && l.input == 1)
+        .unwrap()
+        .from;
+    assert_eq!(graph.node(texture).unwrap().op, "mat_cards");
     let model = graph.build(Quality::Balanced).unwrap();
     let leaves = model
         .parts
@@ -557,4 +579,167 @@ fn leaf_atlas_gives_varied_folded_drooping_leaves() {
     }
     assert_eq!(seen.len(), 8, "every cell is a different leaf");
     assert!(crate::uikit::texture_graph::atlas("Atlas · Nothing").is_none());
+}
+
+#[test]
+fn nothing_is_hidden_inside_a_part_every_material_is_a_node() {
+    for p in presets() {
+        let graph = p.graph();
+        for part in graph.nodes.iter().filter(|n| n.op == "part") {
+            let wired = graph.links.iter().find(|l| l.to == part.id && l.input == 1);
+            let source = wired.and_then(|l| graph.node(l.from));
+            assert!(
+                source.is_some_and(|n| n.def().category == "Materials")
+                    || preset_has_surface(&graph),
+                "{}: a part without a material node",
+                p.name
+            );
+        }
+    }
+    // A part with nothing wired in refuses to build and names the part.
+    let mut g = preset("Oak").graph();
+    let trunk = g
+        .nodes
+        .iter()
+        .find(|n| n.op == "part" && g.get(n.id, "name") == Some(ops::part_name_index("trunk")))
+        .unwrap()
+        .id;
+    let material = g
+        .links
+        .iter()
+        .find(|l| l.to == trunk && l.input == 1)
+        .unwrap()
+        .from;
+    g.remove(material);
+    let error = g.build(Quality::Balanced).unwrap_err();
+    assert!(error.contains("trunk part has no material"), "{error}");
+}
+
+fn preset_has_surface(graph: &NatureGraph) -> bool {
+    graph.nodes.iter().any(|n| n.op == "surface")
+}
+
+#[test]
+fn leaf_size_scales_with_the_tree_and_the_texture_sets_the_atlas() {
+    let mut graph = preset("Oak").graph();
+    let size_of = |g: &NatureGraph| {
+        let model = g.build(Quality::Balanced).unwrap();
+        let leaves = model.parts.iter().find(|p| p.name == "leaves").unwrap();
+        let (lo, hi) = leaves.bounds();
+        ((hi[0] - lo[0]).max(hi[2] - lo[2]), leaves.triangle_count())
+    };
+    let leaves = graph.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    let (_, _) = size_of(&graph);
+    // A leaf is a share of the tree: tripling the share makes each leaf (and the crown) larger.
+    let base = graph.get(leaves, "size").unwrap();
+    assert!(
+        base > 1.0 && base < 15.0,
+        "a sensible default share: {base} %"
+    );
+    let height_of = |g: &NatureGraph| {
+        let grow = g.nodes.iter().find(|n| n.op == "grow").unwrap().id;
+        match g.evaluate(grow, Quality::Balanced).unwrap().remove(0) {
+            super::graph::Value::Skeleton(s) => s.height,
+            _ => unreachable!(),
+        }
+    };
+    let tall = height_of(&graph);
+    graph.set(leaves, "size", base * 3.0);
+    let bigger = size_of(&graph).0;
+    graph.set(leaves, "size", base);
+    assert!(bigger > size_of(&graph).0);
+    assert!(tall > 1.0);
+    // The Leaves node reads the atlas from the texture wired into it.
+    let texture = graph
+        .links
+        .iter()
+        .find(|l| l.to == leaves && l.input == 1)
+        .map(|l| l.from)
+        .unwrap();
+    assert_eq!(graph.node(texture).unwrap().op, "mat_cards");
+    let triangles = |g: &NatureGraph| size_of(g).1;
+    let with_atlas = triangles(&graph);
+    let single = graph.nodes.iter().find(|n| n.op == "mat_cards").unwrap().id;
+    graph.set(single, "card", 0.0); // a single leaf picture
+    assert!(
+        triangles(&graph) < with_atlas,
+        "single-leaf cards are fewer than atlas cards"
+    );
+}
+
+/// Rewrites a current graph's text the way version 1 stored it: no material nodes, the material
+/// chosen inside the Part node, and leaf size in metres with a `shapes` choice.
+fn as_version_one(text: &str) -> String {
+    let mut material_nodes = std::collections::HashSet::new();
+    for line in text.lines() {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        if w.first() == Some(&"node") && w[4].starts_with("mat_") {
+            material_nodes.insert(w[1].to_owned());
+        }
+    }
+    let mut out = String::from("NATUREGRAPH1\n");
+    for line in text.lines().skip(1) {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        match w.first().copied() {
+            Some("node") if material_nodes.contains(w[1]) => {}
+            Some("link") if material_nodes.contains(w[1]) => {}
+            Some("node") if w[4] == "part" => {
+                // name, material (Bark · Oak = 6, Leaves · Green = 11), r, g, b, roughness
+                let material = if w[6] == "3" { 11 } else { 6 };
+                out.push_str(&format!(
+                    "node {} {} {} part 6 {} {material} 0.5 0.5 0.5 0.8 1 %00\n",
+                    w[1], w[2], w[3], w[6]
+                ));
+            }
+            Some("node") if w[4] == "leaves" => {
+                // style density size(m) inner budget seed shapes fold droop
+                out.push_str(&format!(
+                    "node {} {} {} leaves 9 0 12 0.75 0.45 9000 1 0 0.2 0.6 0\n",
+                    w[1], w[2], w[3]
+                ));
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn version_one_graphs_gain_material_nodes_and_keep_their_look() {
+    let current = preset("Oak").graph();
+    let old = as_version_one(&current.to_text());
+    let migrated = NatureGraph::from_text(&old).expect("version 1 loads");
+    // Every part now has an explicit material node, so the graph builds again.
+    let parts = migrated.nodes.iter().filter(|n| n.op == "part").count();
+    assert!(parts >= 2);
+    let wired = migrated
+        .links
+        .iter()
+        .filter(|l| {
+            migrated.node(l.to).is_some_and(|n| n.op == "part")
+                && migrated
+                    .node(l.from)
+                    .is_some_and(|n| n.op.starts_with("mat_"))
+        })
+        .count();
+    assert_eq!(wired, parts);
+    // The leaf part keeps its leaf texture, shared with the Leaves node, and the folds survive.
+    let leaves = migrated.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    assert!(migrated
+        .links
+        .iter()
+        .any(|l| l.to == leaves && l.input == 1));
+    assert_eq!(migrated.get(leaves, "fold"), Some(0.2));
+    assert_eq!(migrated.get(leaves, "droop"), Some(0.6));
+    // 0.75 m on this tree is a share of its height, not 0.75 %.
+    let size = migrated.get(leaves, "size").unwrap();
+    assert!(size > 1.0 && size < 30.0, "{size}");
+    assert!(migrated.build(Quality::Balanced).is_ok());
+    // Saving writes the new format, which loads without migrating again.
+    assert!(migrated.to_text().starts_with("NATUREGRAPH2"));
+    let again = NatureGraph::from_text(&migrated.to_text()).unwrap();
+    assert_eq!(again.nodes.len(), migrated.nodes.len());
 }

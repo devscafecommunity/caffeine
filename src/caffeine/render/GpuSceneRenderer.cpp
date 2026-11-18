@@ -1962,10 +1962,13 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         if (const ECS::NaturalFluidComponent* fluid =
                 world.get<ECS::NaturalFluidComponent>(entity)) {
             if (fluid->enabled) {
-                if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
-                    // Water surface: physically-based transparent liquid with a
-                    // sharp clearcoat so reflections read as water even before a
-                    // dedicated water shader exists.
+                if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume) &&
+                    draw.hasAuthoredMaterial) {
+                    // The entity has its own material (a .mat, for example one written by the
+                    // Water Generator): it is the water's material, as for any mesh.
+                } else if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
+                    // No material assigned: a physically-based transparent liquid with a sharp
+                    // clearcoat, so reflections read as water.
                     const Vec3 albedo =
                         srgbToLinear(Vec3(fluid->albedoR, fluid->albedoG, fluid->albedoB));
                     draw.albedo = Vec4(albedo.x, albedo.y, albedo.z,

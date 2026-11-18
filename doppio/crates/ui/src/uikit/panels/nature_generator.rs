@@ -95,6 +95,7 @@ fn accent(category: &str) -> iced::Color {
         "Trees" => theme::SUCCESS,
         "Plants" => theme::ICON_TEAL,
         "Scatter" => theme::ICON_ORANGE,
+        "Materials" => theme::ICON_PINK,
         "Combine" => theme::TEXT_MUTED,
         _ => theme::WARNING,
     }
@@ -105,6 +106,7 @@ fn port_kind(kind: Kind) -> node_canvas::PortKind {
         Kind::Mesh => node_canvas::PortKind::Mesh,
         Kind::Skeleton => node_canvas::PortKind::Skeleton,
         Kind::Points => node_canvas::PortKind::Points,
+        Kind::Material => node_canvas::PortKind::Material,
     }
 }
 
@@ -478,15 +480,7 @@ fn properties<'a, Message: Clone + 'a>(
             .size(8)
             .color(theme::TEXT_MUTED),
     );
-    let material_choice = node.op == "part";
     for (index, spec) in def.params.iter().enumerate() {
-        // The custom colour only matters for "Solid · Custom colour".
-        if material_choice
-            && matches!(spec.key, "r" | "g" | "b" | "roughness")
-            && node.params[1].round() as usize != 21
-        {
-            continue;
-        }
         let value = node.params[index];
         let param_emit = emit.clone();
         match spec.kind {
@@ -530,13 +524,11 @@ fn properties<'a, Message: Clone + 'a>(
             }
         }
     }
-    // The parts material choice is a plain dropdown in the node table (`material`), so it is above;
-    // "your own" assets add a picker for the matching project files.
-    if material_choice {
-        let choice = node.params[1].round() as usize;
-        let (options, label): (&[String], &str) = match choice {
-            22 => (&view.project_materials, "Your .mat"),
-            23 => (&view.project_textures, "Your image"),
+    // Material nodes that point at your own project assets list the matching files.
+    {
+        let (options, label): (&[String], &str) = match node.op {
+            "mat_project" => (&view.project_materials, "Your .mat"),
+            "mat_texture" => (&view.project_textures, "Your image"),
             _ => (&[], ""),
         };
         if !label.is_empty() {

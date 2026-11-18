@@ -2143,6 +2143,15 @@ CaffeineResult caffeine_session_set_water(CaffeineSession* session, CaffeineEnti
     if (!session || !water) return CAFFEINE_INVALID_ARGUMENT;
     if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
     const Caffeine::ECS::Entity entity = entityOf(*session, entityId);
+    // The renderer draws water from the mesh-filter pass, and a material assigned to the entity
+    // (a .mat) is the water's material: give the entity the components that carry them.
+    if (!session->world.get<Caffeine::ECS::MeshFilterComponent>(entity)) {
+        session->world.add<Caffeine::ECS::MeshFilterComponent>(entity).primitive =
+            Caffeine::ECS::MeshPrimitive::Custom;
+    }
+    if (!session->world.get<Caffeine::ECS::MeshRendererComponent>(entity)) {
+        session->world.add<Caffeine::ECS::MeshRendererComponent>(entity);
+    }
     auto* fluid = session->world.get<Caffeine::ECS::NaturalFluidComponent>(entity);
     if (!fluid) fluid = &session->world.add<Caffeine::ECS::NaturalFluidComponent>(entity);
     fluid->enabled = water->enabled ? 1 : 0;

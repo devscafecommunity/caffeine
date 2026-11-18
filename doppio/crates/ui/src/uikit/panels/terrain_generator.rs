@@ -44,6 +44,8 @@ pub enum Edit {
     DeleteNode(NodeId),
     /// Node, parameter index, value.
     SetParam(NodeId, usize, f32),
+    /// Node, string index, text (a texture path).
+    SetString(NodeId, usize, String),
     Undo,
     Redo,
     Fit,
@@ -64,6 +66,7 @@ pub enum Edit {
 }
 
 pub struct View<'a> {
+    pub project_textures: Vec<String>,
     pub graph: &'a TerrainGraph,
     pub selected: Option<NodeId>,
     pub selected_link: Option<(NodeId, usize)>,
@@ -483,6 +486,24 @@ fn properties<'a, Message: Clone + 'a>(
                 ));
             }
         }
+    }
+    for (index, label) in def.strings.iter().enumerate() {
+        let current = node.strings.get(index).cloned().unwrap_or_default();
+        let pick_emit = emit.clone();
+        body = body.push(dropdown::property(
+            id::terraingen_param(&format!("layer{index}")),
+            *label,
+            view.project_textures.clone(),
+            Some(current.clone()).filter(|c| !c.is_empty()),
+            move |choice| pick_emit(Edit::SetString(node_id, index, choice)),
+        ));
+        let text_emit = emit.clone();
+        body = body.push(text_field::property(
+            id::terraingen_param(&format!("layer{index}_path")),
+            "Path",
+            &current,
+            move |value| text_emit(Edit::SetString(node_id, index, value)),
+        ));
     }
     container(body)
         .width(Length::Fill)

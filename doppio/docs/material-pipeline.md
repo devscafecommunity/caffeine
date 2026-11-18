@@ -1,11 +1,27 @@
 # Material, texture and generator pipeline — backlog
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--reference">Reference</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/material-pipeline.md"><code>material-pipeline.md</code></a></span>
+</div>
+
+<p class="doc-lede">The living checklist for materials, textures, map baking,
+node generators and texture sets, kept current so the next change starts from the
+real foundation instead of the history.</p>
+
+<figure class="doc-figure">
+  <img src="images/material/ui/generator-red-brick.png" alt="Material Generator baking a red brick graph into a PBR material" loading="lazy">
+  <figcaption>The atomic graph baked to base colour, height, roughness, metallic, AO and packed maps, then assigned to the selected material.</figcaption>
+</figure>
+
 Living checklist for the Doppio material stack. Update the checkboxes as work
 lands; keep the **current foundation** section accurate so a future agent can
 continue without re-reading the whole history.
 
 Clean-room rule: MaterialCraft, TextureCraft and MistyEngine under
-`references/` are read for public behaviour, formats and UI conventions only.
+`reference/` are read for public behaviour, formats and UI conventions only.
 Do not copy source, shader text, node definitions or bundled assets.
 
 ## Current foundation (done)

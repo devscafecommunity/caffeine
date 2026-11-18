@@ -32,6 +32,8 @@ pub enum PortKind {
     Look,
     /// Terrain Generator: a field (a grid of 0-1 values: a height map or a mask).
     Height,
+    /// Nature Generator: a material (library, card, colour or your own asset).
+    Material,
 }
 
 impl PortKind {
@@ -46,6 +48,7 @@ impl PortKind {
             PortKind::Waves => theme::ICON_CYAN,
             PortKind::Look => theme::WARNING,
             PortKind::Height => theme::ICON_ORANGE,
+            PortKind::Material => theme::ICON_PINK,
         }
     }
 
@@ -60,6 +63,7 @@ impl PortKind {
             PortKind::Waves => "waves",
             PortKind::Look => "look",
             PortKind::Height => "field",
+            PortKind::Material => "material",
         }
     }
 

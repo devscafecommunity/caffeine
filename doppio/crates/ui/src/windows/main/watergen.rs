@@ -173,7 +173,7 @@ impl WaterGen {
         }
     }
 
-    pub fn view_state(&self) -> panel::View<'_> {
+    pub fn view_state(&self, materials: Vec<String>) -> panel::View<'_> {
         panel::View {
             graph: &self.graph,
             selected: self.selected,
@@ -190,8 +190,55 @@ impl WaterGen {
             stats: &self.stats,
             status: self.status.as_deref(),
             dirty: self.dirty,
+            project_materials: materials,
         }
     }
+}
+
+/// Writes the Water Material node's colour, opacity and roughness as a `.mat` in the project and
+/// returns the path to assign (asset-root relative when the project has one).
+fn write_water_material(
+    engine: &doppio_engine::Engine,
+    dir: &std::path::Path,
+    name: &str,
+    albedo: [f32; 4],
+    roughness: f32,
+) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let slug = crate::uikit::nature::slug(name);
+    let file = dir.join(format!("{slug}.mat"));
+    let relative = format!("water/{slug}.mat");
+    let rooted = engine
+        .asset_path("")
+        .map(|root| !root.is_empty())
+        .unwrap_or(false);
+    let path = if rooted {
+        relative
+    } else {
+        file.display().to_string()
+    };
+    // An existing material is the user's now: it is never overwritten.
+    if file.exists() {
+        return Ok(path);
+    }
+    let mut material = engine.new_material().map_err(|e| format!("{e:?}"))?;
+    material.name = format!("{name} water");
+    material.albedo = albedo;
+    material.roughness = roughness;
+    material.metallic = 0.0;
+    // Water: a low base reflectance (the Fresnel term does the rest), a thin sharp coat for the sky
+    // reflection, see-through, and the index of refraction of water.
+    material.reflectance = 0.5;
+    material.alpha_mode = doppio_engine::MaterialAlphaMode::Blend;
+    material.transmission = 0.12;
+    material.ior = 1.333;
+    material.clearcoat = 0.35;
+    material.clearcoat_roughness = 0.03;
+    material.uv_object_scale = false;
+    engine
+        .save_material(&file.to_string_lossy(), &material)
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(path)
 }
 
 fn snap_position(point: Point, snap: bool) -> Point {
@@ -206,6 +253,42 @@ fn snap_position(point: Point, snap: bool) -> Point {
 }
 
 impl App {
+    /// Golden rule: the water's material is a real asset. The Water Material node is only a mould:
+    /// this writes its `.mat` into the project (once; an existing file is never overwritten) and
+    /// turns the node into **Your Water Material** pointing at it.
+    pub(super) fn materialize_water_assets(&mut self) -> Result<(), String> {
+        let Some(dir) = self.water_dir() else {
+            return Ok(());
+        };
+        let name = self.watergen.name.clone();
+        let jobs: Vec<(crate::uikit::water::NodeId, [f32; 4], f32)> = self
+            .watergen
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| n.op == "look")
+            .map(|n| {
+                (
+                    n.id,
+                    [n.params[0], n.params[1], n.params[2], n.params[3]],
+                    n.params[4],
+                )
+            })
+            .collect();
+        for (id, albedo, roughness) in jobs {
+            let engine = self.engine.as_ref().ok_or("The engine is not available")?;
+            let path = write_water_material(engine, &dir, &name, albedo, roughness)
+                .map_err(|e| format!("Could not write the water material: {e}"))?;
+            if let Some(node) = self.watergen.graph.node_mut(id) {
+                node.op = "look_asset";
+                node.params.clear();
+                node.strings = vec![path];
+            }
+            self.watergen.dirty = true;
+        }
+        Ok(())
+    }
+
     pub(super) fn show_water_pane(&mut self) {
         self.panes.restore();
         let mut target = None;
@@ -372,6 +455,11 @@ impl App {
                 self.watergen.push(Some(format!("param:{id}:{index}")));
                 self.watergen.refresh();
             }
+            Edit::SetString(id, index, text) => {
+                self.watergen.graph.set_string(id, index, text);
+                self.watergen.push(Some(format!("string:{id}:{index}")));
+                self.watergen.refresh();
+            }
             Edit::Undo => {
                 if self.watergen.cursor > 0 {
                     self.watergen.cursor -= 1;
@@ -400,6 +488,10 @@ impl App {
                     self.watergen.name = preset.name.to_owned();
                     self.watergen.load(graph);
                     self.watergen.dirty = false;
+                    // A preset is only a mould: its material becomes a project asset right away.
+                    if let Err(error) = self.materialize_water_assets() {
+                        self.watergen.status = Some(error);
+                    }
                 }
             }
             Edit::SetName(name) => self.watergen.name = name,
@@ -438,12 +530,19 @@ impl App {
 
     /// Creates the water body in the scene as an animated engine water surface.
     pub(super) fn place_water(&mut self) {
+        if let Err(error) = self.materialize_water_assets() {
+            self.watergen.status = Some(error);
+            return;
+        }
+        self.watergen.refresh();
         let Some(water) = self.watergen.water.clone() else {
             self.watergen.status = Some("Graph: nothing to place".to_owned());
             return;
         };
+        let material_path = self.watergen.graph.look_asset();
         let name = self.watergen.name.clone();
         let focus = self.camera.focus;
+        let water_dir = self.water_dir();
         let Some(engine) = self.engine.as_mut() else {
             self.watergen.status = Some("The engine is not available".to_owned());
             return;
@@ -463,6 +562,19 @@ impl App {
             self.watergen.status = Some(format!(
                 "Could not create the water ({error:?}): the engine library needs C ABI v7"
             ));
+            return;
+        }
+        // The water's material is a real project asset (`water/<name>.mat`), assigned to the
+        // entity: open it in the Material tab to change it.
+        let _ = water_dir;
+        let Some(path) = material_path else {
+            self.watergen.status = Some(
+                "Open a project first: the water material is saved in its assets folder".to_owned(),
+            );
+            return;
+        };
+        if let Err(error) = engine.apply_material(id, &path) {
+            self.watergen.status = Some(format!("Could not assign the water material: {error:?}"));
             return;
         }
         self.entities = super::projectloader::read_entities(engine);

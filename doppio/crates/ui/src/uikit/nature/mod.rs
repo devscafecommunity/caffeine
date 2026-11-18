@@ -149,15 +149,170 @@ fn chain(g: &mut NatureGraph, ids: &[NodeId]) {
     }
 }
 
-fn part(g: &mut NatureGraph, col: f32, row: f32, name: &str, material: &str) -> NodeId {
+/// Adds the node that gives a material from a table label (a library preset, a card texture or a solid
+/// colour) and returns it. Presets use this so every part has an explicit material node.
+fn material_node(g: &mut NatureGraph, label: &str, col: f32, row: f32) -> NodeId {
+    material_node_at(g, label, at(col, row))
+}
+
+fn material_node_at(g: &mut NatureGraph, label: &str, position: Point) -> NodeId {
+    if let Some(i) = ops::LIBRARY_LABELS.iter().position(|l| *l == label) {
+        return g.add_with("mat_library", position, &[("preset", i as f32)]);
+    }
+    if let Some(i) = ops::CARD_LABELS.iter().position(|l| *l == label) {
+        return g.add_with("mat_cards", position, &[("card", i as f32)]);
+    }
+    let rgb = ops::solid_rgb(label);
     g.add_with(
+        "mat_solid",
+        position,
+        &[("r", rgb[0]), ("g", rgb[1]), ("b", rgb[2])],
+    )
+}
+
+/// The material labels version 1 files indexed by (the Part node's old `material` choice).
+const LEGACY_LABELS: [&str; 26] = [
+    "Rock · Cliff Granite",
+    "Rock · Basalt",
+    "Rock · Limestone",
+    "Rock · Sandstone",
+    "Rock · Mossy Boulder",
+    "Rock · Lichen Granite",
+    "Bark · Oak",
+    "Bark · Pine",
+    "Bark · Birch",
+    "Ground · Lawn Grass",
+    "Ground · Pine Needles",
+    "Leaves · Green",
+    "Leaves · Autumn",
+    "Leaves · Willow (narrow)",
+    "Petals · Pink",
+    "Petals · White",
+    "Petals · Yellow",
+    "Solid · Green",
+    "Solid · Brown",
+    "Solid · Grey",
+    "Solid · Yellow",
+    "Solid · Custom colour",
+    "Your material (.mat)",
+    "Your texture (cut-out PNG)",
+    "Leaves · Broadleaf Mix (atlas)",
+    "Leaves · Autumn Mix (atlas)",
+];
+
+/// Brings a version 1 graph (material chosen inside the Part node, leaf size in metres, leaf shapes
+/// as a choice) to the node-based one: every part gets the material node its old choice meant,
+/// every Leaves node reads the atlas from its leaf part's texture, and leaf sizes become a share
+/// of the tree height.
+pub(super) fn migrate_legacy(
+    g: &mut NatureGraph,
+    old: &[(NodeId, &'static str, Vec<f32>, Vec<String>)],
+) {
+    for (id, op, raw, strings) in old {
+        if *op != "part" {
+            continue;
+        }
+        let index = raw.get(1).copied().unwrap_or(6.0).max(0.0) as usize;
+        let label = LEGACY_LABELS[index.min(LEGACY_LABELS.len() - 1)];
+        let path = strings.first().cloned().unwrap_or_default();
+        let (col, row) = g
+            .node(*id)
+            .map(|n| (n.position.x, n.position.y))
+            .unwrap_or((0.0, 0.0));
+        let position = Point::new(col, row - 120.0);
+        let node = match label {
+            "Your material (.mat)" if !path.is_empty() => {
+                let n = g.add("mat_project", position);
+                g.set_string(n, 0, path);
+                n
+            }
+            "Your texture (cut-out PNG)" if !path.is_empty() => {
+                let n = g.add("mat_texture", position);
+                g.set_string(n, 0, path);
+                n
+            }
+            "Solid · Custom colour" => g.add_with(
+                "mat_solid",
+                position,
+                &[
+                    ("r", raw.get(2).copied().unwrap_or(0.4)),
+                    ("g", raw.get(3).copied().unwrap_or(0.4)),
+                    ("b", raw.get(4).copied().unwrap_or(0.4)),
+                    ("roughness", raw.get(5).copied().unwrap_or(0.8)),
+                ],
+            ),
+            "Your material (.mat)" | "Your texture (cut-out PNG)" => g.add_with(
+                "mat_solid",
+                position,
+                &[("r", 0.3), ("g", 0.45), ("b", 0.2)],
+            ),
+            _ => material_node_at(g, label, position),
+        };
+        if !g.connect(node, 0, *id, 1) {
+            g.remove(node);
+        }
+    }
+    // Leaves: the wired texture gives the atlas, and the size becomes a share of the height.
+    for (id, op, raw, _) in old {
+        if *op != "leaves" {
+            continue;
+        }
+        let part = g.links.iter().find(|l| l.from == *id).map(|l| l.to);
+        let texture = part.and_then(|part| {
+            g.links
+                .iter()
+                .find(|l| l.to == part && l.input == 1)
+                .map(|l| l.from)
+        });
+        if let Some(texture) = texture {
+            let _ = g.connect(texture, 0, *id, 1);
+        }
+        let skeleton = g
+            .links
+            .iter()
+            .find(|l| l.to == *id && l.input == 0)
+            .map(|l| l.from);
+        let height = skeleton
+            .and_then(|from| g.evaluate(from, Quality::Balanced).ok())
+            .and_then(|values| {
+                values.into_iter().find_map(|v| match v {
+                    graph::Value::Skeleton(s) => Some(s.height),
+                    _ => None,
+                })
+            });
+        let size = match (raw.get(2), height) {
+            (Some(metres), Some(h)) if h > 0.1 => (metres / h * 100.0).clamp(0.5, 40.0),
+            _ => 7.0,
+        };
+        g.set(*id, "size", size);
+        g.set(*id, "fold", raw.get(7).copied().unwrap_or(0.35));
+        g.set(*id, "droop", raw.get(8).copied().unwrap_or(0.3));
+    }
+}
+
+/// A part with its own material node wired in.
+fn part(g: &mut NatureGraph, col: f32, row: f32, name: &str, material: &str) -> NodeId {
+    let p = g.add_with(
         "part",
         at(col, row),
-        &[
-            ("name", ops::part_name_index(name)),
-            ("material", ops::material_index(material)),
-        ],
-    )
+        &[("name", ops::part_name_index(name))],
+    );
+    let m = material_node(g, material, col, row - 0.75);
+    assert!(g.connect(m, 0, p, 1), "material cannot feed the part");
+    p
+}
+
+/// Feeds the texture wired into a part to the Leaves node too, so it knows the atlas layout.
+fn share_texture(g: &mut NatureGraph, leaves: NodeId, leaf_part: NodeId) {
+    let Some(link) = g
+        .links
+        .iter()
+        .find(|l| l.to == leaf_part && l.input == 1)
+        .copied()
+    else {
+        return;
+    };
+    assert!(g.connect(link.from, 0, leaves, 1));
 }
 
 fn finish(g: &mut NatureGraph, col: f32, parts: &[NodeId]) {
@@ -429,12 +584,13 @@ fn tree(
             at(1.0, 2.0),
             &[
                 ("density", leaf_density),
-                ("size", leaf_size),
+                // Given in metres by the recipes; the node takes a share of the tree's height.
+                ("size", leaf_size / height * 100.0),
                 ("seed", seed),
-                ("shapes", if foliage.contains("Mix") { 1.0 } else { 0.0 }),
             ],
         );
         let leaf_part = part(&mut g, 2.0, 2.0, "leaves", foliage);
+        share_texture(&mut g, leaves, leaf_part);
         chain(&mut g, &[grow, leaves, leaf_part]);
         parts.push(leaf_part);
     }
@@ -462,12 +618,12 @@ fn ancient_oak() -> NatureGraph {
         at(2.0, 2.0),
         &[
             ("density", 14.0),
-            ("size", 0.75),
+            ("size", 0.75 / 7.5 * 100.0),
             ("seed", 12.0),
-            ("shapes", 1.0),
         ],
     );
     let leaf_part = part(&mut g, 3.0, 2.0, "leaves", "Leaves · Broadleaf Mix (atlas)");
+    share_texture(&mut g, leaves, leaf_part);
     assert!(g.connect(grow, 0, leaves, 0));
     assert!(g.connect(leaves, 0, leaf_part, 0));
     // Moss on the trunk and the roots (only the up-facing, lower parts get it).
