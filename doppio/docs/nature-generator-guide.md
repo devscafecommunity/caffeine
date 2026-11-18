@@ -21,7 +21,9 @@ cycle (the status line says why a link was refused):
 | **Points** | positions, orientations and scales produced by *Scatter Points* |
 
 Every mesh that should end up in the model goes through a **Part** node into the **Output** node (one input
-per part). A part carries a name and a material; the engine gives one material per mesh, so each part
+per part). A Part is a mesh **and its material, both wired in**: its *Material* port takes a node from the
+**Materials** category, and nothing is chosen inside the Part. A part with no material refuses to build ("The
+trunk part has no material: wire a material node..."). The engine gives one material per mesh, so each part
 becomes its own entity when placed.
 
 Interaction: add nodes from the left palette (search box, categories) or drag from it; drag nodes by their
@@ -39,6 +41,7 @@ Everything is deterministic: the same graph, quality and seeds always build the 
 | Trees | **Grow Branches** (skeleton), **Roots**, **Branch Tubes**, **Leaves** (folded, drooping cards with a leaf-shape atlas, or blobs) |
 | Plants | **Grass Blades**, **Fern Fronds**, **Leafy Bush**, **Stem**, **Petals** |
 | Scatter | **Scatter Points**, **Instance on Points** (moss, pebbles, small leaves on any mesh) |
+| Materials | **Library Material** (rock, bark, ground presets), **Leaf / Petal Texture** (cards and atlases), **Solid Colour**, **Your Material (.mat)**, **Your Texture (PNG)** |
 | Output | **Part**, **Output** |
 
 Rocks are `Icosphere → Noise Displace → Cut Planes → Noise Displace (grain) → Flat Base → Transform → Place
@@ -70,22 +73,30 @@ the graph is for: **Mossy Rock** (moss cards scattered over the rock), **Ancient
 branches and a dense crown) and **Fern Patch** (a scatter of fern clumps). Low-poly presets: Low-poly Rock,
 Low-poly Tree and Low-poly Pine.
 
-## 4. Your own materials and textures
+## 4. Materials are nodes, and they are real assets
 
-The **Part** node has a *Material* choice:
+Nothing about a material is hidden inside a generated object. Every part has a **material node** wired into its
+Part, and the preset graphs show them (a bark node feeding the trunk, a leaf texture feeding the leaves):
 
-| Choice | Meaning |
+| Node | Gives |
 |---|---|
-| Library presets (rock, bark, moss, ...) | baked once from the PBR library into `nature/materials/` |
-| Texture Generator cards | a procedural cut-out card (leaf, blade, petal) baked to RGBA |
-| **Leaf atlases** (*Broadleaf Mix*, *Autumn Mix*) | one image with **eight different leaf shapes and tints** (4 x 2); pair it with the Leaves node's *Leaf shapes: Atlas 4x2* |
-| Solid colours / custom colour | only a `.mat`, ideal for low poly |
-| **Your material (.mat)** | pick any `.mat` of the project; it is applied **as it is**, never copied or rebaked |
-| **Your texture (cut-out PNG)** | pick a PNG with alpha; a **Cutout** material is made around it (`nature/materials/project_<name>.mat`) |
+| **Library Material** | a preset from the PBR library (rock, bark, ground), baked once into `nature/materials/` |
+| **Leaf / Petal Texture** | a procedural cut-out card (leaf, petal) or an **atlas** (*Broadleaf Mix*, *Autumn Mix*: eight leaf shapes and tints in one image) baked to RGBA |
+| **Solid Colour** | a plain colour and roughness, ideal for low poly |
+| **Your Material (.mat)** | any `.mat` of the project, used **as it is**, never copied or rebaked |
+| **Your Texture (PNG)** | a PNG with alpha; a **Cutout** material is made around it (`nature/materials/project_<name>.mat`) |
 
-The pickers list the project's materials and textures. Project assets are never replaced when the quality
-is Stylized, so a hand-painted bark stays on a low-poly trunk. UVs come from the nodes (UV Box for rocks,
-tube UVs for trunks, card UVs for leaves) so your textures tile as expected.
+When you **Place in scene**, each part's material is written to the project as a normal asset and assigned to
+the entity: open it in the **Material** tab or the Texture Generator and change it. Swap a node (a Solid Colour
+for your own `.mat`) to change what the whole model uses. Low poly (*Stylized*) turns library and card
+materials into solid colours, but **your own assets are never replaced**.
+
+The **Leaves** node also takes the leaf texture on its *Texture* port (the same node that feeds the leaves'
+Part), which is how it knows the atlas layout, and sizes the leaves as a **percentage of the tree's height**
+(*Leaf size*, default 7 %), so the proportions follow the tree instead of being a number in metres.
+
+UVs come from the nodes (UV Box for rocks, tube UVs for trunks, card UVs for leaves) so your textures tile as
+expected. Saved `.nature` files from before this change have no material nodes and need one wired in.
 
 ## 4b. Generated surfaces: a texture set baked from the model itself
 
@@ -205,3 +216,13 @@ oak crown with varied, curved leaves.
 ./scripts/render-nature-docs.sh       # the three preview sheets (software renderer, no engine)
 ./scripts/capture-nature-docs.sh      # headless screenshots of the tab and the placed scene (needs libcaffeine-capi)
 ```
+
+## Golden rule: every material is an asset
+
+The Library Material, Leaf / Petal Texture and Solid Colour nodes (and every preset) are only
+**moulds**. Applying a preset, or placing a model, writes each material's picture and `.mat` into
+`nature/materials/` in your project and turns the node into **Your Material (.mat)** pointing at
+them. Nothing stays hidden in the menu: open the `.mat` in the Material tab, repaint the PNG, or
+point the node at another file. A material is only written once, so your edits to it are kept.
+Your Material and Your Texture carry *Shapes across / down*, the atlas layout of the picture, which
+the Leaves node reads to know how many leaf shapes it holds.

@@ -411,6 +411,11 @@ impl App {
                     self.nature.load(graph.0);
                     self.nature.dirty = true;
                     self.nature.status = None;
+                    // A preset is only a mould: its materials become project assets right away.
+                    if let Err(error) = self.materialize_nature_assets() {
+                        self.nature.status =
+                            Some(format!("Could not write the materials: {error}"));
+                    }
                     let name = self.nature.name.clone();
                     self.log(LogLevel::Action, format!("Nature preset: {name}"));
                 }
@@ -465,6 +470,10 @@ impl App {
                 Some("Open a project first: models are written to its assets folder".to_owned());
             return;
         };
+        if let Err(error) = self.materialize_nature_assets() {
+            self.nature.status = Some(format!("Could not write the materials: {error}"));
+            return;
+        }
         let name = self.nature.name.clone();
         let model = match self.nature.graph.build(self.nature.quality) {
             Ok(model) => model,
@@ -560,13 +569,82 @@ impl App {
         })
     }
 
+    /// Golden rule: every material in the graph is a real asset. The library, texture and colour
+    /// nodes are only moulds: this writes each one's picture and `.mat` into the project and turns
+    /// the node into **Your Material** pointing at them, so nothing is left hidden in the UI and
+    /// the user can open and change the files (or point the node somewhere else) at will.
+    pub(super) fn materialize_nature_assets(&mut self) -> Result<usize, String> {
+        let Some(dir) = self.nature_dir() else {
+            return Ok(0);
+        };
+        let graph = &self.nature.graph;
+        let mut jobs: Vec<(NodeId, MaterialSpec)> = Vec::new();
+        for node in &graph.nodes {
+            let spec = match node.op {
+                "mat_library" | "mat_cards" => {
+                    let (labels, key) = if node.op == "mat_library" {
+                        (nature::ops::LIBRARY_LABELS, "preset")
+                    } else {
+                        (nature::ops::CARD_LABELS, "card")
+                    };
+                    let i = graph.get(node.id, key).unwrap_or(0.0).max(0.0) as usize;
+                    // The real material, whatever the quality: low poly only changes the model.
+                    nature::ops::spec_for_label(
+                        labels[i.min(labels.len() - 1)],
+                        nature::Quality::Balanced,
+                    )
+                }
+                "mat_solid" => MaterialSpec::Solid {
+                    rgb: [
+                        graph.get(node.id, "r").unwrap_or(0.4),
+                        graph.get(node.id, "g").unwrap_or(0.4),
+                        graph.get(node.id, "b").unwrap_or(0.4),
+                    ],
+                    roughness: graph.get(node.id, "roughness").unwrap_or(0.8),
+                },
+                _ => continue,
+            };
+            jobs.push((node.id, spec));
+        }
+        let count = jobs.len();
+        for (id, spec) in jobs {
+            let path = self.ensure_nature_material(&spec, &dir)?;
+            let atlas = nature::ops::atlas_of(&spec);
+            if let Some(node) = self.nature.graph.node_mut(id) {
+                node.op = "mat_project";
+                node.params = vec![atlas.0 as f32, atlas.1 as f32];
+                node.strings = vec![path];
+            }
+        }
+        if count > 0 {
+            self.nature.dirty = true;
+        }
+        Ok(count)
+    }
+
+    /// True when a part's material cuts its shape out of a picture (leaves, petals, blades).
+    fn material_is_cutout(&self, spec: &MaterialSpec) -> bool {
+        match spec {
+            MaterialSpec::Cards(_) | MaterialSpec::ProjectTexture(..) => true,
+            MaterialSpec::Project(path, atlas) => {
+                *atlas != (1, 1)
+                    || self.asset_root_dir().is_some_and(|root| {
+                        std::fs::read_to_string(root.join(path))
+                            .map(|text| text.to_lowercase().contains("cutout"))
+                            .unwrap_or(false)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
         dir: &Path,
     ) -> Result<String, String> {
         // Your own material is used exactly as it is.
-        if let MaterialSpec::Project(path) = spec {
+        if let MaterialSpec::Project(path, _) = spec {
             return Ok(path.clone());
         }
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
@@ -637,7 +715,7 @@ impl App {
                     material.uv_object_scale = false;
                 }
             }
-            MaterialSpec::ProjectTexture(path) => {
+            MaterialSpec::ProjectTexture(path, _) => {
                 // A cut-out material around your image, referencing it where it is.
                 material.albedo_map = engine
                     .asset_project_path(path)
@@ -652,7 +730,7 @@ impl App {
                 material.albedo = [rgb[0], rgb[1], rgb[2], 1.0];
                 material.roughness = *roughness;
             }
-            MaterialSpec::Project(_) => unreachable!("handled above"),
+            MaterialSpec::Project(..) => unreachable!("handled above"),
         }
         if write {
             engine
@@ -791,6 +869,11 @@ impl App {
             .as_ref()
             .and_then(|e| e.asset_path("").ok())
             .is_some_and(|root| !root.is_empty());
+        let cutouts: Vec<bool> = model
+            .parts
+            .iter()
+            .map(|part| self.material_is_cutout(&part.material))
+            .collect();
         let engine = self.engine.as_mut().expect("checked above");
         let group = match engine.create_entity(&name) {
             Ok(id) => id,
@@ -801,7 +884,13 @@ impl App {
         };
         let _ = engine.set_position(group, [focus[0], 0.0, focus[2]]);
         let mut problems = Vec::new();
-        for ((part, file), material) in model.parts.iter().zip(files.iter()).zip(materials.iter()) {
+        for (((part, file), material), cutout) in model
+            .parts
+            .iter()
+            .zip(files.iter())
+            .zip(materials.iter())
+            .zip(cutouts.iter())
+        {
             let Ok(child) = engine.create_entity(&format!("{name} {}", part.name)) else {
                 continue;
             };
@@ -838,10 +927,7 @@ impl App {
                 Ok(renderer) => {
                     // Cut-out cards (leaves, petals, blades) would only shadow each other: let the
                     // sun fall through them and keep the shadows for trunks, rocks and moss.
-                    if matches!(
-                        part.material,
-                        MaterialSpec::Cards(_) | MaterialSpec::ProjectTexture(_)
-                    ) {
+                    if *cutout {
                         let _ = set_component_field(
                             engine,
                             child,

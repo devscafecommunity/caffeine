@@ -8522,7 +8522,13 @@ impl App {
                 id::PANE_WATER_GENERATOR,
                 "Water Generator",
                 Some(format!("{} · {}", self.watergen.name, self.watergen.stats)),
-                water_generator_panel::view(self.watergen.view_state(), Message::WaterGen),
+                {
+                    let (materials, _) = self.nature_assets();
+                    water_generator_panel::view(
+                        self.watergen.view_state(materials),
+                        Message::WaterGen,
+                    )
+                },
             ),
             PaneKind::TerrainGenerator => (
                 id::PANE_TERRAIN_GENERATOR,

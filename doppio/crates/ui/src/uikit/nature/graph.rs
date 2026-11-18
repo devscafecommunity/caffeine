@@ -28,6 +28,8 @@ pub enum Kind {
     Mesh,
     Skeleton,
     Points,
+    /// A material (library preset, card, solid colour or one of your own assets).
+    Material,
 }
 
 impl Kind {
@@ -36,6 +38,7 @@ impl Kind {
             Kind::Mesh => "mesh",
             Kind::Skeleton => "skeleton",
             Kind::Points => "points",
+            Kind::Material => "material",
         }
     }
 }
@@ -70,6 +73,7 @@ pub enum Value {
     Mesh(Part),
     Skeleton(super::tree::Skeleton),
     Points(Vec<PointInst>),
+    Material(MaterialSpec),
 }
 
 /// What an op sees: its parameters, its inputs and the quality level.
@@ -101,6 +105,12 @@ impl<'a> Args<'a> {
     pub fn skeleton(&self, i: usize) -> Option<&'a super::tree::Skeleton> {
         match self.inputs.get(i).copied().flatten() {
             Some(Value::Skeleton(s)) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn material(&self, i: usize) -> Option<&'a MaterialSpec> {
+        match self.inputs.get(i).copied().flatten() {
+            Some(Value::Material(m)) => Some(m),
             _ => None,
         }
     }
@@ -363,6 +373,21 @@ impl NatureGraph {
             };
             if part.is_empty() {
                 continue;
+            }
+            // Nothing is chosen inside a Part: the material has to arrive on its port (a generated
+            // surface counts, it brings its own).
+            if self.node(link.from).is_some_and(|n| n.op == "part") && part.surface.is_none() {
+                let wired = self
+                    .links
+                    .iter()
+                    .find(|l| l.to == link.from && l.input == 1)
+                    .and_then(|l| memo.get(&l.from).and_then(|v| v.get(l.output)));
+                if !matches!(wired, Some(Value::Material(_))) {
+                    return Err(format!(
+                        "The {} part has no material: wire a material node (Materials category) into its Material port",
+                        part.name
+                    ));
+                }
             }
             match model
                 .parts

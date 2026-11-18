@@ -33,6 +33,7 @@ pub const OVERLAY_SPHERE_EDGE: Color = Color::from_rgba(0.85, 0.88, 1.0, 0.22);
 pub const OVERLAY_WHITE: Color = Color::from_rgb(1.0, 1.0, 1.0);
 pub const OVERLAY_PLATE: Color = Color::from_rgba(0.06, 0.07, 0.09, 0.62);
 pub const ICON_ORANGE: Color = Color::from_rgba8(0xf0, 0x9a, 0x4a, 1.0);
+pub const ICON_PINK: Color = Color::from_rgba8(0xe8, 0x7f, 0xb4, 1.0);
 
 pub fn background(_theme: &Theme) -> container::Style {
     container::Style {

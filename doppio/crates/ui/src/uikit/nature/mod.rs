@@ -149,15 +149,46 @@ fn chain(g: &mut NatureGraph, ids: &[NodeId]) {
     }
 }
 
-fn part(g: &mut NatureGraph, col: f32, row: f32, name: &str, material: &str) -> NodeId {
+/// Adds the node that gives a material from a table label (a library preset, a card texture or a solid
+/// colour) and returns it. Presets use this so every part has an explicit material node.
+fn material_node(g: &mut NatureGraph, label: &str, col: f32, row: f32) -> NodeId {
+    if let Some(i) = ops::LIBRARY_LABELS.iter().position(|l| *l == label) {
+        return g.add_with("mat_library", at(col, row), &[("preset", i as f32)]);
+    }
+    if let Some(i) = ops::CARD_LABELS.iter().position(|l| *l == label) {
+        return g.add_with("mat_cards", at(col, row), &[("card", i as f32)]);
+    }
+    let rgb = ops::solid_rgb(label);
     g.add_with(
+        "mat_solid",
+        at(col, row),
+        &[("r", rgb[0]), ("g", rgb[1]), ("b", rgb[2])],
+    )
+}
+
+/// A part with its own material node wired in.
+fn part(g: &mut NatureGraph, col: f32, row: f32, name: &str, material: &str) -> NodeId {
+    let p = g.add_with(
         "part",
         at(col, row),
-        &[
-            ("name", ops::part_name_index(name)),
-            ("material", ops::material_index(material)),
-        ],
-    )
+        &[("name", ops::part_name_index(name))],
+    );
+    let m = material_node(g, material, col, row - 0.75);
+    assert!(g.connect(m, 0, p, 1), "material cannot feed the part");
+    p
+}
+
+/// Feeds the texture wired into a part to the Leaves node too, so it knows the atlas layout.
+fn share_texture(g: &mut NatureGraph, leaves: NodeId, leaf_part: NodeId) {
+    let Some(link) = g
+        .links
+        .iter()
+        .find(|l| l.to == leaf_part && l.input == 1)
+        .copied()
+    else {
+        return;
+    };
+    assert!(g.connect(link.from, 0, leaves, 1));
 }
 
 fn finish(g: &mut NatureGraph, col: f32, parts: &[NodeId]) {
@@ -429,12 +460,13 @@ fn tree(
             at(1.0, 2.0),
             &[
                 ("density", leaf_density),
-                ("size", leaf_size),
+                // Given in metres by the recipes; the node takes a share of the tree's height.
+                ("size", leaf_size / height * 100.0),
                 ("seed", seed),
-                ("shapes", if foliage.contains("Mix") { 1.0 } else { 0.0 }),
             ],
         );
         let leaf_part = part(&mut g, 2.0, 2.0, "leaves", foliage);
+        share_texture(&mut g, leaves, leaf_part);
         chain(&mut g, &[grow, leaves, leaf_part]);
         parts.push(leaf_part);
     }
@@ -462,12 +494,12 @@ fn ancient_oak() -> NatureGraph {
         at(2.0, 2.0),
         &[
             ("density", 14.0),
-            ("size", 0.75),
+            ("size", 0.75 / 7.5 * 100.0),
             ("seed", 12.0),
-            ("shapes", 1.0),
         ],
     );
     let leaf_part = part(&mut g, 3.0, 2.0, "leaves", "Leaves · Broadleaf Mix (atlas)");
+    share_texture(&mut g, leaves, leaf_part);
     assert!(g.connect(grow, 0, leaves, 0));
     assert!(g.connect(leaves, 0, leaf_part, 0));
     // Moss on the trunk and the roots (only the up-facing, lower parts get it).

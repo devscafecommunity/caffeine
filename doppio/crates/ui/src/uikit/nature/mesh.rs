@@ -51,10 +51,10 @@ pub enum MaterialSpec {
     /// A plain colour and roughness (stylised models, flower centres).
     Solid { rgb: [f32; 3], roughness: f32 },
     /// One of **your own** materials: an asset path to an existing `.mat` (used as it is).
-    Project(String),
+    Project(String, (u32, u32)),
     /// One of your own images with transparency (a PNG leaf, petal, grass blade...): turned into a
     /// cut-out card material.
-    ProjectTexture(String),
+    ProjectTexture(String, (u32, u32)),
 }
 
 impl MaterialSpec {
@@ -66,7 +66,7 @@ impl MaterialSpec {
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect(),
-            MaterialSpec::Project(path) | MaterialSpec::ProjectTexture(path) => {
+            MaterialSpec::Project(path, _) | MaterialSpec::ProjectTexture(path, _) => {
                 let stem = std::path::Path::new(path)
                     .file_stem()
                     .and_then(|s| s.to_str())
