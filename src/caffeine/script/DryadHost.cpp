@@ -26,6 +26,7 @@ void bindRuntimeNatives(dryad::Interpreter& interp, ECS::World** worldPtr,
                         Input::InputManager** inputPtr);
 void bindWorldApiNatives(dryad::Interpreter& interp, ECS::World** worldPtr);
 void bindPhysics3DNatives(dryad::Interpreter& interp, Physics3D::PhysicsWorld3D** physicsPtr);
+void bindAudioSceneNatives(dryad::Interpreter& interp, Audio::AudioService** audioPtr, SceneRequests* scenes);
 
 namespace {
 
@@ -126,6 +127,8 @@ struct DryadHost::Impl {
     ECS::World* world = nullptr;
     Input::InputManager* input = nullptr;
     Physics3D::PhysicsWorld3D* physics3d = nullptr;
+    Audio::AudioService* audio = nullptr;
+    SceneRequests* scenes = nullptr;
     std::string searchRoot;
     std::unordered_map<std::string, Session> sessions;
 
@@ -207,6 +210,7 @@ struct DryadHost::Impl {
         bindRuntimeNatives(interp, worldPtr, &input);
         bindWorldApiNatives(interp, worldPtr);
         bindPhysics3DNatives(interp, &physics3d);
+        bindAudioSceneNatives(interp, &audio, scenes);
         interp.set_network_allowed(false);
         if (const char* stdlib = std::getenv("DRYAD_STDLIB_DIR")) {
             interp.set_stdlib_root(stdlib);
@@ -228,6 +232,10 @@ void DryadHost::setWorld(ECS::World* world) { m_impl->world = world; }
 void DryadHost::setInput(Input::InputManager* input) { m_impl->input = input; }
 
 void DryadHost::setPhysics3D(Physics3D::PhysicsWorld3D* physics) { m_impl->physics3d = physics; }
+
+void DryadHost::setAudio(Audio::AudioService* audio) { m_impl->audio = audio; }
+
+void DryadHost::setSceneRequests(SceneRequests* scenes) { m_impl->scenes = scenes; }
 
 void DryadHost::setSearchRoot(const std::string& root) { m_impl->searchRoot = root; }
 

@@ -10,6 +10,7 @@
 namespace Caffeine::ECS { class World; }
 namespace Caffeine::Input { class InputManager; }
 namespace Caffeine::Physics3D { class PhysicsWorld3D; }
+namespace Caffeine::Audio { class AudioService; }
 
 namespace Caffeine::Script {
 
@@ -27,6 +28,9 @@ public:
     void setInput(Input::InputManager* input);
     /// Optional; enables the `caffeine_physics3d_*` natives.
     void setPhysics3D(Physics3D::PhysicsWorld3D* physics);
+    /// Optional; enables `caffeine_audio_*`, and `caffeine_scene_*` when `scenes` is set.
+    void setAudio(Audio::AudioService* audio);
+    void setSceneRequests(SceneRequests* scenes);
 
     /// Project root used to resolve relative script paths (for example
     /// `scripts/player.dyd`). Relative paths that already exist from the

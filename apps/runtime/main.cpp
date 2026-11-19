@@ -6,6 +6,7 @@
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
 #include "physics/PhysicsSystem2D.hpp"
+#include "audio/AudioService.hpp"
 #include "physics/PhysicsSystem3D.hpp"
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptSystem.hpp"
@@ -463,6 +464,9 @@ int main(int argc, char** argv) {
     Caffeine::Events::EventBus eventBus;
     Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
     Caffeine::Physics3D::PhysicsSystem3D physics3d;
+    Caffeine::Audio::AudioService audio;
+    audio.setSearchRoot(buildRoot.string());
+    if (!audio.init()) std::fprintf(stderr, "caffeine-runtime: no audio device, sound disabled\n");
     Caffeine::Animation::AnimationSystem animation;
     Caffeine::UI::UISystem uiSystem(&eventBus);
     Caffeine::Script::ScriptEngine scriptEngine;
@@ -472,8 +476,10 @@ int main(int argc, char** argv) {
     scriptParams.events = &eventBus;
     scriptParams.ui = &uiSystem;
     scriptParams.physics3d = &physics3d.world();
+    scriptParams.audio = &audio;
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
+    scriptEngine.sceneRequests().setCurrent(config.LastScene);
     Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
     if (!config.RootPath.empty()) {
         scriptSystem.setProjectRoot(config.RootPath.string());
@@ -557,7 +563,36 @@ int main(int argc, char** argv) {
                 scriptEngine.setWorld(&world);
                 scriptEngine.setInput(&input);
                 scriptSystem.onUpdate(world, dt);
+
+                // A script asked for another scene: swap it now, between frames' scripts.
+                auto& sceneRequests = scriptEngine.sceneRequests();
+                if (sceneRequests.hasPending()) {
+                    const std::string requested = sceneRequests.take();
+                    std::filesystem::path next(requested);
+                    if (!std::filesystem::exists(next)) next = buildRoot / requested;
+                    if (std::filesystem::exists(next)) {
+                        physics3d.reset();
+                        Caffeine::Editor::SceneSerializer serializer(world);
+                        if (serializer.deserialize(next.string())) {
+                            Caffeine::Scene::resetNaturalFluidRuntime();
+                            scriptSystem.resetPlayState();
+                            audio.stopAll();
+                            sceneRequests.setCurrent(requested);
+                            scenePath = next;
+                            sceneLoaded = true;
+#ifdef CF_HAS_IMGUI
+                            editorCtx.currentScenePath = scenePath.string();
+#endif
+                            std::printf("Loaded scene: %s\n", next.string().c_str());
+                        } else {
+                            std::fprintf(stderr, "caffeine-runtime: scene failed to load: %s\n", next.string().c_str());
+                        }
+                    } else {
+                        std::fprintf(stderr, "caffeine-runtime: scene not found: %s\n", requested.c_str());
+                    }
+                }
             }
+            audio.update(dt);
             Caffeine::Procedural::ProceduralWorldSystem::update(world);
             uiSystem.onUpdate(world, dt);
         }

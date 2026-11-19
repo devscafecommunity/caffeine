@@ -2,6 +2,7 @@
 
 #include "core/Types.hpp"
 #include "ecs/Entity.hpp"
+#include "script/ScriptHostServices.hpp"
 
 #include <memory>
 #include <string>
@@ -11,6 +12,7 @@ namespace Caffeine { namespace Input { class InputManager; } }
 namespace Caffeine { namespace Events { class EventBus; } }
 namespace Caffeine { namespace UI { class UISystem; } }
 namespace Caffeine { namespace Physics3D { class PhysicsWorld3D; } }
+namespace Caffeine { namespace Audio { class AudioService; } }
 
 namespace Caffeine::Script {
 
@@ -29,6 +31,8 @@ public:
         UI::UISystem* ui = nullptr;
         /// Optional: enables `caffeine.physics3d` (raycast, forces, velocity).
         Physics3D::PhysicsWorld3D* physics3d = nullptr;
+        /// Optional: enables `caffeine.audio`.
+        Audio::AudioService* audio = nullptr;
     };
 
     bool init(const InitParams& params);
@@ -38,6 +42,10 @@ public:
     Input::InputManager* input() const;
     void setPhysics3D(Physics3D::PhysicsWorld3D* physics);
     Physics3D::PhysicsWorld3D* physics3d() const;
+    void setAudio(Audio::AudioService* audio);
+    Audio::AudioService* audio() const;
+    /// Scene changes requested by scripts; the host polls `hasPending()` after each frame.
+    SceneRequests& sceneRequests();
     void setSearchRoot(const std::string& root);
 
     struct ExposedVar {

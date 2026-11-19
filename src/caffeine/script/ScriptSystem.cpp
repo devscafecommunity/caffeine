@@ -141,6 +141,8 @@ void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
     if (m_engine) {
         m_dryad->setInput(m_engine->input());
         m_dryad->setPhysics3D(m_engine->physics3d());
+        m_dryad->setAudio(m_engine->audio());
+        m_dryad->setSceneRequests(&m_engine->sceneRequests());
     }
     if (!m_projectRoot.empty()) m_dryad->setSearchRoot(m_projectRoot);
 

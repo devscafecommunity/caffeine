@@ -35,6 +35,7 @@ void registerNavigationScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerComponentScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerWorldApiBindings(sol::state& lua, ECS::World** worldPtr);
 void registerPhysics3DBindings(sol::state& lua, Physics3D::PhysicsWorld3D** physicsPtr);
+void registerAudioSceneBindings(sol::state& lua, Audio::AudioService** audioPtr, SceneRequests* scenes);
 sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
@@ -49,6 +50,8 @@ struct ScriptEngine::Impl {
     Events::EventBus* m_events = nullptr;
     UI::UISystem* m_ui = nullptr;
     Physics3D::PhysicsWorld3D* m_physics3d = nullptr;
+    Audio::AudioService* m_audio = nullptr;
+    SceneRequests m_scenes;
 
     HashMap<std::string, sol::environment> m_envs;
     std::string m_searchRoot;
@@ -665,6 +668,7 @@ bool ScriptEngine::init(const InitParams& params) {
     m_impl->m_events = params.events;
     m_impl->m_ui = params.ui;
     m_impl->m_physics3d = params.physics3d;
+    m_impl->m_audio = params.audio;
 
     auto& lua = m_impl->m_lua;
 
@@ -756,6 +760,7 @@ bool ScriptEngine::init(const InitParams& params) {
     registerComponentScriptBindings(lua, &m_impl->m_world);
     registerWorldApiBindings(lua, &m_impl->m_world);
     registerPhysics3DBindings(lua, &m_impl->m_physics3d);
+    registerAudioSceneBindings(lua, &m_impl->m_audio, &m_impl->m_scenes);
 
     registerRuntimeScriptBindings(
         lua, &m_impl->m_world, &m_impl->m_input, &m_impl->m_ui, &m_impl->m_assetText,
@@ -843,6 +848,12 @@ Input::InputManager* ScriptEngine::input() const { return m_impl->m_input; }
 void ScriptEngine::setPhysics3D(Physics3D::PhysicsWorld3D* physics) { m_impl->m_physics3d = physics; }
 
 Physics3D::PhysicsWorld3D* ScriptEngine::physics3d() const { return m_impl->m_physics3d; }
+
+void ScriptEngine::setAudio(Audio::AudioService* audio) { m_impl->m_audio = audio; }
+
+Audio::AudioService* ScriptEngine::audio() const { return m_impl->m_audio; }
+
+SceneRequests& ScriptEngine::sceneRequests() { return m_impl->m_scenes; }
 
 void ScriptEngine::setInput(Input::InputManager* input) {
     m_impl->m_input = input;

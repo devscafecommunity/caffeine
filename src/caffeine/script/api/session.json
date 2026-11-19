@@ -1,0 +1,117 @@
+{
+  "namespace": "session",
+  "group": "Game",
+  "lua": "caffeine.session",
+  "dryad_prefix": "caffeine_session_",
+  "title": {
+    "en": "Session",
+    "pt": "Sessão"
+  },
+  "summary": {
+    "en": "A key-value store that survives scene changes for as long as the game runs (score, settings, choices). Values are numbers, booleans or text. It is not saved to disk.",
+    "pt": "Um armazenamento chave-valor que sobrevive às mudanças de cena enquanto o jogo corre (pontuação, definições, escolhas). Os valores são números, booleanos ou texto. Não é gravado em disco."
+  },
+  "functions": [
+    {
+      "name": "set",
+      "lua": "caffeine.session.set",
+      "dryad": "caffeine_session_set",
+      "signature": "set(key, value)",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "en": "Name of the value.",
+          "pt": "Nome do valor."
+        },
+        {
+          "name": "value",
+          "type": "number | boolean | string | nil",
+          "en": "The value to keep; nil removes the key.",
+          "pt": "O valor a guardar; nil remove a chave."
+        }
+      ],
+      "returns": null,
+      "en": "Stores a value.",
+      "pt": "Guarda um valor.",
+      "example": "caffeine.session.set(\"coins\", 12)"
+    },
+    {
+      "name": "get",
+      "lua": "caffeine.session.get",
+      "dryad": "caffeine_session_get",
+      "signature": "get(key) -> any",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "en": "Name of the value.",
+          "pt": "Nome do valor."
+        }
+      ],
+      "returns": {
+        "type": "number | boolean | string | nil",
+        "en": "The stored value, or nil when the key does not exist.",
+        "pt": "O valor guardado, ou nil quando a chave não existe."
+      },
+      "en": "Reads a value.",
+      "pt": "Lê um valor.",
+      "example": "local coins = caffeine.session.get(\"coins\") or 0"
+    },
+    {
+      "name": "has",
+      "lua": "caffeine.session.has",
+      "dryad": "caffeine_session_has",
+      "signature": "has(key) -> boolean",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "en": "Name of the value.",
+          "pt": "Nome do valor."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the key exists.",
+        "pt": "true quando a chave existe."
+      },
+      "en": "Tells whether a key exists.",
+      "pt": "Indica se uma chave existe.",
+      "example": "if caffeine.session.has(\"checkpoint\") then end"
+    },
+    {
+      "name": "remove",
+      "lua": "caffeine.session.remove",
+      "dryad": "caffeine_session_remove",
+      "signature": "remove(key) -> boolean",
+      "params": [
+        {
+          "name": "key",
+          "type": "string",
+          "en": "Name of the value.",
+          "pt": "Nome do valor."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the key existed.",
+        "pt": "true quando a chave existia."
+      },
+      "en": "Deletes a key.",
+      "pt": "Apaga uma chave.",
+      "example": "caffeine.session.remove(\"checkpoint\")"
+    },
+    {
+      "name": "clear",
+      "lua": "caffeine.session.clear",
+      "dryad": "caffeine_session_clear",
+      "signature": "clear()",
+      "params": [],
+      "returns": null,
+      "en": "Deletes every key.",
+      "pt": "Apaga todas as chaves.",
+      "example": "caffeine.session.clear() -- new game"
+    }
+  ]
+}

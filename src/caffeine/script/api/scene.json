@@ -1,0 +1,75 @@
+{
+  "namespace": "scene",
+  "group": "Game",
+  "lua": "caffeine.scene",
+  "dryad_prefix": "caffeine_scene_",
+  "title": {
+    "en": "Scene",
+    "pt": "Cena"
+  },
+  "summary": {
+    "en": "Switching between scenes. A request is deferred: the world is replaced after the current frame's scripts finish, so call it freely from any hook. The runtime app handles requests; other hosts may not. A scene change removes every entity, so keep data you need in `caffeine.session`.",
+    "pt": "Mudança entre cenas. O pedido é diferido: o mundo é substituído depois dos scripts do frame atual, por isso pode chamá-lo de qualquer hook. A aplicação runtime trata os pedidos; outros hosts podem não tratar. Uma mudança de cena remove todas as entidades, por isso guarde em `caffeine.session` os dados de que precisa."
+  },
+  "functions": [
+    {
+      "name": "load",
+      "lua": "caffeine.scene.load",
+      "dryad": "caffeine_scene_load",
+      "signature": "load(path)",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Scene file, relative to the project root or absolute.",
+          "pt": "Ficheiro de cena, relativo à raiz do projeto ou absoluto."
+        }
+      ],
+      "returns": null,
+      "en": "Asks the host to load a scene, replacing the current one. A missing or unreadable file is reported and the current scene stays.",
+      "pt": "Pede ao host para carregar uma cena, substituindo a atual. Um ficheiro em falta ou ilegível é reportado e a cena atual mantém-se.",
+      "example": "if caffeine.session.get(\"coins\") >= 10 then caffeine.scene.load(\"scenes/win.scene\") end"
+    },
+    {
+      "name": "reload",
+      "lua": "caffeine.scene.reload",
+      "dryad": "caffeine_scene_reload",
+      "signature": "reload()",
+      "params": [],
+      "returns": null,
+      "en": "Reloads the current scene from disk, resetting it to its saved state.",
+      "pt": "Recarrega a cena atual do disco, repondo o seu estado guardado.",
+      "example": "caffeine.scene.reload() -- restart the level"
+    },
+    {
+      "name": "current",
+      "lua": "caffeine.scene.current",
+      "dryad": "caffeine_scene_current",
+      "signature": "current() -> string",
+      "params": [],
+      "returns": {
+        "type": "string",
+        "en": "The path of the loaded scene as given to the host (empty when unknown).",
+        "pt": "O caminho da cena carregada tal como foi dado ao host (vazio se desconhecido)."
+      },
+      "en": "Returns the loaded scene.",
+      "pt": "Devolve a cena carregada.",
+      "example": "caffeine.debug.log(caffeine.scene.current())"
+    },
+    {
+      "name": "isLoading",
+      "lua": "caffeine.scene.isLoading",
+      "dryad": "caffeine_scene_is_loading",
+      "signature": "isLoading() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "true after load or reload was requested and before the host handled it.",
+        "pt": "true depois de load ou reload serem pedidos e antes de o host os tratar."
+      },
+      "en": "Tells whether a scene change is waiting to happen.",
+      "pt": "Indica se há uma mudança de cena à espera de acontecer.",
+      "example": "if caffeine.scene.isLoading() then return end"
+    }
+  ]
+}

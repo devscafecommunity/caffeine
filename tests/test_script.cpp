@@ -8,6 +8,7 @@
 #include "../src/caffeine/script/ScriptCatalog.hpp"
 #include "../src/caffeine/script/DryadHost.hpp"
 #include "../src/caffeine/physics/PhysicsWorld3D.hpp"
+#include "../src/caffeine/audio/AudioService.hpp"
 #include "../src/caffeine/scene/EditorSceneSerializer.hpp"
 #include "../src/caffeine/script/ScriptTypes.hpp"
 #include "../src/caffeine/ecs/World.hpp"
@@ -627,6 +628,64 @@ TEST_CASE("physics3d queries and forces work from Lua", "[script][physics3d]") {
     auto entity = fix.world.create("Test");
     REQUIRE(fix.engine.callOnCreate("phys3d.lua", entity));
     REQUIRE(entity.get<ECS::Transform>()->position.x == Approx(1111.0f));
+}
+
+static void writeTestWav(const std::string& path, int samples, int rate) {
+    std::ofstream f(path, std::ios::binary);
+    auto u32le = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto u16le = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    const uint32_t dataBytes = static_cast<uint32_t>(samples) * 2;
+    f.write("RIFF", 4); u32le(36 + dataBytes); f.write("WAVEfmt ", 8);
+    u32le(16); u16le(1); u16le(1); u32le(static_cast<uint32_t>(rate)); u32le(static_cast<uint32_t>(rate) * 2); u16le(2); u16le(16);
+    f.write("data", 4); u32le(dataBytes);
+    for (int i = 0; i < samples; ++i) u16le(static_cast<uint16_t>((i % 100) * 100));
+}
+
+TEST_CASE("AudioService decodes WAV and is a safe no-op without a device", "[script][audio]") {
+    writeTestWav("audio_test.wav", 800, 8000);
+    Audio::AudioService audio;
+    std::string error;
+    REQUIRE(audio.preload("audio_test.wav", &error));
+    REQUIRE(audio.duration("audio_test.wav") == Approx(0.1f));
+    REQUIRE_FALSE(audio.preload("missing.wav"));
+    if (!audio.init()) {  // no device (CI): nothing plays, nothing crashes
+        REQUIRE(audio.play("audio_test.wav") == 0);
+        REQUIRE_FALSE(audio.stop(1));
+    }
+    std::remove("audio_test.wav");
+}
+
+TEST_CASE("audio, scene and session APIs work from Lua", "[script][audio][scene]") {
+    ScriptTestFixture fix;
+    Audio::AudioService audio;  // not initialised: the API must still answer
+    fix.engine.setAudio(&audio);
+    fix.engine.sceneRequests().setCurrent("scenes/start.scene");
+    const char* code = R"(
+        function onCreate(eid)
+            local score = 0
+            if caffeine.audio.isAvailable() == false then score = score + 1 end
+            if caffeine.audio.play("nope.wav") == 0 then score = score + 10 end
+            caffeine.session.set("coins", 7)
+            caffeine.session.set("name", "Ana")
+            caffeine.session.set("hard", true)
+            if caffeine.session.get("coins") == 7 and caffeine.session.get("name") == "Ana"
+               and caffeine.session.get("hard") == true and caffeine.session.get("zzz") == nil then score = score + 100 end
+            caffeine.session.remove("coins")
+            if not caffeine.session.has("coins") then score = score + 1000 end
+            if caffeine.scene.current() == "scenes/start.scene" and not caffeine.scene.isLoading() then score = score + 10000 end
+            caffeine.scene.load("scenes/level2.scene")
+            if caffeine.scene.isLoading() then score = score + 100000 end
+            caffeine.world.setTransform(eid, {x = score, y = 0})
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "audio_scene.lua"));
+    auto entity = fix.world.create("Test");
+    REQUIRE(fix.engine.callOnCreate("audio_scene.lua", entity));
+    REQUIRE(entity.get<ECS::Transform>()->position.x == Approx(111111.0f));
+    REQUIRE(fix.engine.sceneRequests().hasPending());
+    REQUIRE(fix.engine.sceneRequests().take() == "scenes/level2.scene");
+    REQUIRE_FALSE(fix.engine.sceneRequests().hasPending());
+    Script::SessionStore::instance().clear();
 }
 
 // ============================================================================

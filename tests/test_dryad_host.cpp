@@ -281,4 +281,34 @@ TEST_CASE("Dryad natives cover names, hierarchy and random", "[dryad][world]") {
     std::remove(path.c_str());
 }
 
+TEST_CASE("Dryad natives cover scenes, session and audio", "[dryad][scene][audio]") {
+    const std::string path = "dryad_scene_api.dyd";
+    {
+        std::ofstream out(path);
+        out << "function onUpdate(entity, dt) {\n"
+            << "  let score = 0;\n"
+            << "  caffeine_session_set(\"lives\", 3);\n"
+            << "  if (caffeine_session_get(\"lives\") == 3) { score = score + 1; }\n"
+            << "  if (!caffeine_session_has(\"nope\")) { score = score + 10; }\n"
+            << "  if (caffeine_audio_play(\"x.wav\") == 0) { score = score + 100; }\n"
+            << "  caffeine_scene_load(\"scenes/two.scene\");\n"
+            << "  if (caffeine_scene_is_loading()) { score = score + 1000; }\n"
+            << "  caffeine_set_position(entity, score, 0, 0);\n}\n";
+    }
+    ECS::World world;
+    SceneRequests scenes;
+    DryadHost host;
+    host.setWorld(&world);
+    host.setSceneRequests(&scenes);
+    ECS::Entity entity = world.create("DryadScene");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(0, 0, 0);
+    REQUIRE(host.load(path));
+    std::string err;
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f, &err));
+    REQUIRE(entity.get<ECS::Position3D>()->position.x == 1111.0f);
+    REQUIRE(scenes.take() == "scenes/two.scene");
+    SessionStore::instance().clear();
+    std::remove(path.c_str());
+}
+
 #endif

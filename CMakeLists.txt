@@ -464,6 +464,8 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/caffeine/script/NativeModuleHost.cpp
         src/caffeine/script/WorldApiBindings.cpp
         src/caffeine/script/Physics3DBindings.cpp
+        src/caffeine/script/AudioSceneBindings.cpp
+        src/caffeine/audio/AudioService.cpp
     )
     if(DRYAD_AVAILABLE)
         target_sources(caffeine-core PRIVATE
@@ -472,6 +474,7 @@ if(CAFFEINE_ENABLE_SCRIPTING)
             src/caffeine/script/DryadRuntimeBindings.cpp
             src/caffeine/script/DryadWorldBindings.cpp
             src/caffeine/script/DryadPhysics3DBindings.cpp
+            src/caffeine/script/DryadAudioSceneBindings.cpp
             src/caffeine/script/nodes/NodeGraph.cpp
             src/caffeine/script/nodes/NodeCatalog.cpp
             src/caffeine/script/nodes/NodeEmitter.cpp
