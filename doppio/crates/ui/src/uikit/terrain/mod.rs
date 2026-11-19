@@ -66,6 +66,8 @@ pub struct NodeDef {
     pub inputs: &'static [PortDef],
     pub outputs: &'static [PortDef],
     pub params: &'static [ParamSpec],
+    /// Labels of the text fields the node has (asset paths).
+    pub strings: &'static [&'static str],
     pub eval: fn(&Args) -> Vec<Field>,
 }
 
@@ -419,6 +421,15 @@ fn eval_hydraulic(a: &Args) -> Vec<Field> {
 // ------------------------------------------------------------------ output
 
 const RESOLUTIONS: &[&str] = &["129", "257", "513"];
+/// The four splat layers the terrain is painted with: project materials (their albedo map is the
+/// layer's picture), not built-ins.
+pub const LAYER_LABELS: &[&str] = &[
+    "Ground material (.mat)",
+    "Rock material (.mat)",
+    "Dirt material (.mat)",
+    "Mud material (.mat)",
+];
+
 const OUTPUT_IN: &[PortDef] = &[port("Height")];
 const OUTPUT_P: &[ParamSpec] = &[
     float("size_x", "Size X (m)", 50.0, 8000.0, 1000.0, 10.0),
@@ -443,6 +454,7 @@ macro_rules! node {
             inputs: $in,
             outputs: $out,
             params: $params,
+            strings: &[],
             eval: $eval,
         }
     };
@@ -596,15 +608,16 @@ pub static NODES: &[NodeDef] = &[
         HYDRO_P,
         eval_hydraulic
     ),
-    node!(
-        "output",
-        "Output",
-        "Output",
-        OUTPUT_IN,
-        NONE,
-        OUTPUT_P,
-        eval_output
-    ),
+    NodeDef {
+        id: "output",
+        title: "Output",
+        category: "Output",
+        inputs: OUTPUT_IN,
+        outputs: NONE,
+        params: OUTPUT_P,
+        strings: LAYER_LABELS,
+        eval: eval_output,
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static NodeDef> {
@@ -618,6 +631,7 @@ pub struct TerrainNode {
     pub id: NodeId,
     pub op: &'static str,
     pub params: Vec<f32>,
+    pub strings: Vec<String>,
     pub position: Point,
 }
 
@@ -663,6 +677,7 @@ impl TerrainGraph {
             id,
             op: def.id,
             params: def.params.iter().map(|p| p.default).collect(),
+            strings: def.strings.iter().map(|_| String::new()).collect(),
             position,
         });
         id
@@ -711,6 +726,23 @@ impl TerrainGraph {
     pub fn remove(&mut self, id: NodeId) {
         self.nodes.retain(|n| n.id != id);
         self.links.retain(|l| l.from != id && l.to != id);
+    }
+
+    pub fn set_string(&mut self, id: NodeId, index: usize, text: String) {
+        if let Some(slot) = self
+            .node_mut(id)
+            .and_then(|node| node.strings.get_mut(index))
+        {
+            *slot = text;
+        }
+    }
+
+    /// The four layer texture paths on the Output node (empty until they are written).
+    pub fn layer_paths(&self) -> Vec<String> {
+        self.output_node()
+            .and_then(|id| self.node(id))
+            .map(|n| n.strings.clone())
+            .unwrap_or_default()
     }
 
     pub fn output_node(&self) -> Option<NodeId> {
@@ -844,6 +876,17 @@ impl TerrainGraph {
             for v in &node.params {
                 text.push_str(&format!(" {v}"));
             }
+            if !node.strings.is_empty() {
+                text.push_str(&format!(" {}", node.strings.len()));
+                for s in &node.strings {
+                    text.push(' ');
+                    if s.is_empty() {
+                        text.push_str("%00");
+                    } else {
+                        text.push_str(&s.replace('%', "%25").replace(' ', "%20"));
+                    }
+                }
+            }
             text.push('\n');
         }
         for l in &self.links {
@@ -875,11 +918,25 @@ impl TerrainGraph {
                             *slot = word.parse().ok()?;
                         }
                     }
+                    let mut strings: Vec<String> =
+                        def.strings.iter().map(|_| String::new()).collect();
+                    if let Some(count) = w.get(6 + n).and_then(|c| c.parse::<usize>().ok()) {
+                        for (i, word) in w.get(7 + n..7 + n + count)?.iter().enumerate() {
+                            if let Some(slot) = strings.get_mut(i) {
+                                *slot = if *word == "%00" {
+                                    String::new()
+                                } else {
+                                    word.replace("%20", " ").replace("%25", "%")
+                                };
+                            }
+                        }
+                    }
                     graph.next_id = graph.next_id.max(id + 1);
                     graph.nodes.push(TerrainNode {
                         id,
                         op: def.id,
                         params,
+                        strings,
                         position,
                     });
                 }

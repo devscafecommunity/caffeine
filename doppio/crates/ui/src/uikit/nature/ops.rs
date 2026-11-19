@@ -138,12 +138,12 @@ const MATERIALS: &[(&str, Source, [f32; 3])] = &[
     (
         "Your material (.mat)",
         Source::ProjectMaterial,
-        [0.5, 0.5, 0.5],
+        [0.5, 0.4, 0.3],
     ),
     (
         "Your texture (cut-out PNG)",
         Source::ProjectTexture,
-        [0.3, 0.5, 0.2],
+        [0.5, 0.5, 0.5],
     ),
     (
         "Leaves · Broadleaf Mix (atlas)",
@@ -211,12 +211,91 @@ pub fn material_index(label: &str) -> f32 {
     MATERIALS.iter().position(|m| m.0 == label).unwrap_or(0) as f32
 }
 
+/// True when a Part's material choice is "From nodes" (keep what upstream produced).
+pub fn is_from_nodes_choice(index: usize) -> bool {
+    index == MATERIAL_LABELS.len() - 1
+}
+
 const PART_NAMES: &[&str] = &[
     "trunk", "branches", "roots", "leaves", "rock", "moss", "stem", "petals", "center", "blades",
     "fronds", "ground", "body",
 ];
 
-/// The material a Part node gives its mesh at a quality level.
+/// The material for a table label at a quality level (low poly falls back to a solid colour).
+pub fn spec_for_label(label: &str, quality: super::Quality) -> MaterialSpec {
+    let (_, source, stylised) = MATERIALS
+        .iter()
+        .find(|m| m.0 == label)
+        .copied()
+        .unwrap_or(MATERIALS[0]);
+    match source {
+        Source::Library(_) | Source::Cards(_) if quality == super::Quality::Stylized => {
+            MaterialSpec::Solid {
+                rgb: stylised,
+                roughness: 0.85,
+            }
+        }
+        Source::Library(name) => MaterialSpec::Preset(name),
+        Source::Cards(name) => MaterialSpec::Cards(name),
+        Source::Solid(rgb) => MaterialSpec::Solid {
+            rgb,
+            roughness: 0.8,
+        },
+        Source::Custom | Source::ProjectMaterial | Source::ProjectTexture | Source::FromNode => {
+            MaterialSpec::Solid {
+                rgb: stylised,
+                roughness: 0.85,
+            }
+        }
+    }
+}
+
+/// The colour of a `Solid · ...` label.
+pub fn solid_rgb(label: &str) -> [f32; 3] {
+    MATERIALS
+        .iter()
+        .find_map(|m| match m.1 {
+            Source::Solid(rgb) if m.0 == label => Some(rgb),
+            _ => None,
+        })
+        .unwrap_or([0.4, 0.4, 0.4])
+}
+
+/// Labels the material nodes offer, by kind.
+pub const LIBRARY_LABELS: &[&str] = &[
+    "Rock · Cliff Granite",
+    "Rock · Basalt",
+    "Rock · Limestone",
+    "Rock · Sandstone",
+    "Rock · Mossy Boulder",
+    "Rock · Lichen Granite",
+    "Bark · Oak",
+    "Bark · Pine",
+    "Bark · Birch",
+    "Ground · Lawn Grass",
+    "Ground · Pine Needles",
+];
+pub const CARD_LABELS: &[&str] = &[
+    "Leaves · Green",
+    "Leaves · Autumn",
+    "Leaves · Willow (narrow)",
+    "Leaves · Broadleaf Mix (atlas)",
+    "Leaves · Autumn Mix (atlas)",
+    "Petals · Pink",
+    "Petals · White",
+    "Petals · Yellow",
+];
+
+/// Atlas columns and rows of a card material (1 x 1 = one picture).
+pub fn atlas_of(spec: &MaterialSpec) -> (u32, u32) {
+    match spec {
+        MaterialSpec::Cards(name) if name.starts_with("Atlas") => (4, 2),
+        MaterialSpec::Project(_, atlas) | MaterialSpec::ProjectTexture(_, atlas) => *atlas,
+        _ => (1, 1),
+    }
+}
+
+/// The material a Part node gives its mesh when no material is wired into its port.
 fn material_for(
     index: usize,
     rgb: [f32; 3],
@@ -239,8 +318,12 @@ fn material_for(
         },
         Source::Custom => MaterialSpec::Solid { rgb, roughness },
         // Your own assets are always used as they are, whatever the quality.
-        Source::ProjectMaterial if !path.is_empty() => MaterialSpec::Project(path.to_owned()),
-        Source::ProjectTexture if !path.is_empty() => MaterialSpec::ProjectTexture(path.to_owned()),
+        Source::ProjectMaterial if !path.is_empty() => {
+            MaterialSpec::Project(path.to_owned(), (1, 1))
+        }
+        Source::ProjectTexture if !path.is_empty() => {
+            MaterialSpec::ProjectTexture(path.to_owned(), (1, 1))
+        }
         Source::ProjectMaterial | Source::ProjectTexture | Source::FromNode => {
             MaterialSpec::Solid {
                 rgb: stylised,
@@ -730,19 +813,17 @@ fn eval_tubes(a: &Args) -> Vec<Value> {
     mesh_out(part)
 }
 
+const LEAVES_IN: &[PortDef] = &[
+    port("Skeleton", Kind::Skeleton),
+    port("Texture", Kind::Material),
+];
 const LEAVES_P: &[crate::uikit::procedural::ParamSpec] = &[
     choice("style", "Style", &["Cards", "Blobs"], 0),
     float("density", "Leaves per metre", 0.0, 30.0, 12.0, 0.5),
-    float("size", "Leaf size (m)", 0.05, 3.0, 0.7, 0.01),
+    float("size", "Leaf size (% of tree height)", 0.5, 40.0, 7.0, 0.1),
     float("inner", "Inner limbs", 0.0, 1.0, 0.45, 0.01),
     int("budget", "Triangle budget", 200, 30000, 9000),
     int("seed", "Seed", 0, 9999, 1),
-    choice(
-        "shapes",
-        "Leaf shapes",
-        &["Single leaf", "Atlas 4x2 (8 shapes)"],
-        0,
-    ),
     float("fold", "Fold along the midrib", 0.0, 1.0, 0.35, 0.01),
     float("droop", "Droop", 0.0, 1.0, 0.3, 0.01),
 ];
@@ -752,10 +833,12 @@ fn eval_leaves(a: &Args) -> Vec<Value> {
         return mesh_out(empty());
     };
     let seed = a.u(5).wrapping_add(a.salt);
+    // The leaf size is a share of the tree's height, so it scales with the tree.
+    let leaf = a.f(2) / 100.0 * skeleton.height.max(0.1);
     if a.u(0) == 1 || a.stylized() {
         let mut part = tree::leaf_blobs(
             skeleton,
-            a.f(2).max(if a.stylized() { 0.9 } else { 0.0 }),
+            leaf.max(if a.stylized() { 0.9 } else { 0.0 }),
             1,
             seed,
         );
@@ -767,19 +850,21 @@ fn eval_leaves(a: &Args) -> Vec<Value> {
         super::Quality::Balanced => 2,
         super::Quality::Detailed => 4,
     };
+    // The texture wired into the node tells it how many leaf shapes its atlas holds.
+    let atlas = a.material(1).map_or((1, 1), atlas_of);
     mesh_out(tree::leaf_cards(
         skeleton,
         tree::LeafCards {
             // Atlas leaves are drawn smaller and sparser per card: more of them fill the crown.
-            density: a.q(a.f(1)) * if a.u(6) == 1 { 1.5 } else { 1.0 },
-            size: a.f(2),
+            density: a.q(a.f(1)) * if atlas != (1, 1) { 1.5 } else { 1.0 },
+            size: leaf,
             inner_share: a.f(3),
             max_triangles: a.u(4) as usize,
-            atlas: if a.u(6) == 1 { (4, 2) } else { (1, 1) },
-            fold: a.f(7),
-            droop: a.f(8),
+            atlas,
+            fold: a.f(6),
+            droop: a.f(7),
             rows,
-            shade_cell: if a.u(6) == 1 { Some(4) } else { None },
+            shade_cell: (atlas.0 * atlas.1 > 1).then_some(4),
         },
         seed,
     ))
@@ -1059,6 +1144,10 @@ const PART_STRINGS: &[StringSpec] = &[StringSpec {
     key: "path",
     label: "Your asset (.mat or .png)",
 }];
+const MAT_OUT: &[PortDef] = &[port("Material", Kind::Material)];
+/// A part is a mesh and its material: the material can be wired into its port or picked on the
+/// node (the Texture / Material nodes upstream still keep their layers when "From nodes" is used).
+const PART_NODE_IN: &[PortDef] = &[port("Mesh", Kind::Mesh), port("Material", Kind::Material)];
 const PART_P: &[crate::uikit::procedural::ParamSpec] = &[
     choice("name", "Part name", PART_NAMES, 0),
     choice("material", "Material", MATERIAL_LABELS, 26),
@@ -1074,15 +1163,96 @@ fn eval_part(a: &Args) -> Vec<Value> {
     };
     let mut part = mesh.clone();
     part.name = PART_NAMES[a.u(0).min(PART_NAMES.len() as u32 - 1) as usize].to_owned();
-    // "From nodes" keeps whatever material the Material / Texture nodes upstream gave the mesh.
-    if a.u(1) as usize == MATERIALS.len() - 1 {
-        return mesh_out(part);
+    // The material preferably arrives on its port; otherwise the node's own pick is used
+    // ("From nodes" keeps whatever the Texture / Material nodes upstream gave the mesh).
+    if let Some(material) = a.material(1) {
+        part.material = material.clone();
+    } else if !is_from_nodes_choice(a.u(1) as usize) {
+        let rgb = [a.f(2), a.f(3), a.f(4)];
+        let path = a.strings.first().map(String::as_str).unwrap_or("");
+        part.material = material_for(a.u(1) as usize, rgb, a.f(5), path, a.quality);
     }
-    let rgb = [a.f(2), a.f(3), a.f(4)];
-    let path = a.strings.first().map(String::as_str).unwrap_or("");
-    part.material = material_for(a.u(1) as usize, rgb, a.f(5), path, a.quality);
     part.preview = preview_colour(&part.material, part.preview);
     mesh_out(part)
+}
+
+// ------------------------------------------------------------ material nodes
+
+const LIBRARY_P: &[crate::uikit::procedural::ParamSpec] =
+    &[choice("preset", "Material", LIBRARY_LABELS, 6)];
+fn eval_mat_library(a: &Args) -> Vec<Value> {
+    let label = LIBRARY_LABELS[(a.u(0) as usize).min(LIBRARY_LABELS.len() - 1)];
+    vec![Value::Material(spec_for_label(label, a.quality))]
+}
+
+const CARDS_P: &[crate::uikit::procedural::ParamSpec] =
+    &[choice("card", "Texture", CARD_LABELS, 0)];
+fn eval_mat_cards(a: &Args) -> Vec<Value> {
+    let label = CARD_LABELS[(a.u(0) as usize).min(CARD_LABELS.len() - 1)];
+    vec![Value::Material(spec_for_label(label, a.quality))]
+}
+
+const SOLID_P: &[crate::uikit::procedural::ParamSpec] = &[
+    float("r", "Red", 0.0, 1.0, 0.3, 0.01),
+    float("g", "Green", 0.0, 1.0, 0.45, 0.01),
+    float("b", "Blue", 0.0, 1.0, 0.2, 0.01),
+    float("roughness", "Roughness", 0.0, 1.0, 0.8, 0.01),
+];
+fn eval_mat_solid(a: &Args) -> Vec<Value> {
+    vec![Value::Material(MaterialSpec::Solid {
+        rgb: [a.f(0), a.f(1), a.f(2)],
+        roughness: a.f(3),
+    })]
+}
+
+/// Leaf shapes across and down the picture of your material (1 x 1 = one picture).
+const ATLAS_P: &[crate::uikit::procedural::ParamSpec] = &[
+    float("columns", "Shapes across", 1.0, 8.0, 1.0, 1.0),
+    float("rows", "Shapes down", 1.0, 8.0, 1.0, 1.0),
+];
+fn atlas_args(a: &Args) -> (u32, u32) {
+    (
+        a.f(0).round().max(1.0) as u32,
+        a.f(1).round().max(1.0) as u32,
+    )
+}
+
+const PROJECT_MAT_STRINGS: &[StringSpec] = &[StringSpec {
+    key: "path",
+    label: "Your material (.mat)",
+}];
+const PROJECT_TEX_STRINGS: &[StringSpec] = &[StringSpec {
+    key: "path",
+    label: "Your image (cut-out PNG)",
+}];
+/// Your own `.mat`, used exactly as it is. With no path it gives no material (the Part reports it).
+fn eval_mat_project(a: &Args) -> Vec<Value> {
+    match a
+        .strings
+        .first()
+        .map(String::as_str)
+        .filter(|p| !p.is_empty())
+    {
+        Some(path) => vec![Value::Material(MaterialSpec::Project(
+            path.to_owned(),
+            atlas_args(a),
+        ))],
+        None => Vec::new(),
+    }
+}
+fn eval_mat_texture(a: &Args) -> Vec<Value> {
+    match a
+        .strings
+        .first()
+        .map(String::as_str)
+        .filter(|p| !p.is_empty())
+    {
+        Some(path) => vec![Value::Material(MaterialSpec::ProjectTexture(
+            path.to_owned(),
+            atlas_args(a),
+        ))],
+        None => Vec::new(),
+    }
 }
 
 const MATERIAL_STRINGS: &[StringSpec] = &[StringSpec {
@@ -1246,7 +1416,8 @@ macro_rules! node {
     };
 }
 
-pub const CATEGORIES: [&str; 8] = [
+pub const CATEGORIES: [&str; 9] = [
+    "Materials",
     "Surface",
     "Shapes",
     "Modifiers",
@@ -1389,7 +1560,7 @@ pub static NODES: &[NodeDef] = &[
         "leaves",
         "Leaves",
         "Trees",
-        SKEL_IN,
+        LEAVES_IN,
         MESH_OUT,
         LEAVES_P,
         eval_leaves
@@ -1473,11 +1644,58 @@ pub static NODES: &[NodeDef] = &[
         id: "part",
         title: "Part",
         category: "Output",
-        inputs: PART_IN,
+        inputs: PART_NODE_IN,
         outputs: MESH_OUT,
         params: PART_P,
         strings: PART_STRINGS,
         eval: eval_part,
+    },
+    node!(
+        "mat_library",
+        "Library Material",
+        "Materials",
+        NONE,
+        MAT_OUT,
+        LIBRARY_P,
+        eval_mat_library
+    ),
+    node!(
+        "mat_cards",
+        "Leaf / Petal Texture",
+        "Materials",
+        NONE,
+        MAT_OUT,
+        CARDS_P,
+        eval_mat_cards
+    ),
+    node!(
+        "mat_solid",
+        "Solid Colour",
+        "Materials",
+        NONE,
+        MAT_OUT,
+        SOLID_P,
+        eval_mat_solid
+    ),
+    NodeDef {
+        id: "mat_project",
+        title: "Your Material (.mat)",
+        category: "Materials",
+        inputs: NONE,
+        outputs: MAT_OUT,
+        params: ATLAS_P,
+        strings: PROJECT_MAT_STRINGS,
+        eval: eval_mat_project,
+    },
+    NodeDef {
+        id: "mat_texture",
+        title: "Your Texture (PNG)",
+        category: "Materials",
+        inputs: NONE,
+        outputs: MAT_OUT,
+        params: ATLAS_P,
+        strings: PROJECT_TEX_STRINGS,
+        eval: eval_mat_texture,
     },
     node!(
         "output",

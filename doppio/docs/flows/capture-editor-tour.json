@@ -1,0 +1,20 @@
+{
+  "name": "Doppio workspace tour for documentation",
+  "description": "Records a short MP4 (and a GIF when ffmpeg is available) showing the Scene and View menus and a hierarchy selection. Run through scripts/capture-editor-tour.sh.",
+  "fixture": "scene3d",
+  "size": [1280, 720],
+  "steps": [
+    { "action": "wait", "ms": 1800, "real_time": true },
+    { "action": "record_start", "name": "doppio-tour", "format": "mp4", "fps": 12, "width": 960 },
+    { "action": "wait", "ms": 400, "real_time": true },
+    { "action": "click", "target": "id:editor.menu.scene" },
+    { "action": "wait", "ms": 700, "real_time": true },
+    { "action": "key", "key": "Escape" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "wait", "ms": 700, "real_time": true },
+    { "action": "key", "key": "Escape" },
+    { "action": "click", "target": "id:hierarchy.list.entity_row.1" },
+    { "action": "wait", "ms": 900, "real_time": true },
+    { "action": "record_stop" }
+  ]
+}

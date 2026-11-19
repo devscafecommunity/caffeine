@@ -1,10 +1,29 @@
 # Headless UI testing for Doppio (`doppio-headless`)
 
-Drive the real Doppio editor UI **without opening a window**: click, drag,
-type, press shortcuts, read the screen and take screenshots — all from a
-command line that speaks plain JSON. Built so that *any* agent, model, CI job
-or human can use it the same way; there is no MCP server, SDK or special
-client to install.
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span class="doc-badge">Tooling</span>
+  <span>Last verified: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/crates/ui/src/windows/main/headless/"><code>windows/main/headless/</code></a></span>
+</div>
+
+<p class="doc-lede">Drive the real Doppio editor UI without opening a window: click,
+drag, type, press shortcuts, read the screen, take screenshots and record GIF or
+MP4. One binary, one JSON protocol, no SDK.</p>
+
+<video class="doc-video" autoplay loop muted playsinline width="960"
+       poster="images/editor/workspace-scene.png">
+  <source src="images/editor/doppio-tour.mp4" type="video/mp4">
+  <a href="images/editor/doppio-tour.gif">Watch the interaction (GIF)</a>
+</video>
+
+<p class="doc-caption">Recorded by <code>doppio-headless</code> itself: open the Scene
+and View menus, then select a hierarchy row. The same script can produce a GIF, MP4
+or WebM for a guide or a pull request.</p>
+
+Built so that *any* agent, model, CI job or human can use it the same way; there is
+no MCP server, SDK or special client to install.
 
 ## Why this exists
 
@@ -330,9 +349,53 @@ assert step(action="click", target="id:editor.menu.scene")["ok"]
 print(step(action="state", path="/menu")["data"])   # "Scene"
 ```
 
-**Capture a screenshot for docs**: use `target` + `annotate` + `scale: 2`.
-(`scripts/generate-doppio-ui-docs.sh` remains the tool that publishes the UI
-reference; this driver is for development and verification.)
+## Documentation captures
+
+The docs use this driver instead of desktop screenshots. Capture flows live in
+`doppio/docs/flows/capture-*.json`; the shell wrappers only strip the numeric prefix
+so image names stay stable:
+
+```bash
+./scripts/capture-editor-docs.sh    # workspace, panes, menus, generators
+./scripts/capture-editor-tour.sh    # short MP4/GIF tour (ffmpeg for GIF)
+./scripts/capture-material-docs.sh
+./scripts/capture-nature-docs.sh
+./scripts/capture-terrain-docs.sh
+./scripts/capture-texture-docs.sh
+./scripts/capture-water-docs.sh
+./scripts/capture-gizmo-docs.sh
+```
+
+A capture flow is a normal flow plus `screenshot` steps:
+
+```json
+{ "action": "screenshot", "name": "pane-inspector",
+  "target": "id:editor.pane.inspector", "padding": 4 }
+```
+
+Use `target` to crop to a pane, `padding` to breathe, `scale: 2` for retina-like
+detail and `annotate` when the point is to teach ids. Keep captures as artifacts,
+not baselines, unless the visuals are the regression.
+
+For motion, record the flow itself:
+
+```json
+{ "steps": [
+  { "action": "record_start", "name": "tour", "format": "mp4", "fps": 12, "width": 960 },
+  { "action": "click", "target": "id:editor.menu.scene" },
+  { "action": "wait", "ms": 700, "real_time": true },
+  { "action": "key", "key": "Escape" },
+  { "action": "record_stop" }
+] }
+```
+
+`format` accepts `gif`, `mp4` and `webm`. A GIF is the most portable fallback;
+MP4 is smaller and sharper for modern pages. Use `width` to keep the file small and
+`keep_frames` only when you need the intermediate PNGs.
+
+The UI reference is generated separately:
+`./scripts/generate-doppio-ui-docs.sh --publish` captures every catalogued widget
+from `ui-captions.json`. Never hand-edit `editor/ui-reference.md`.
 
 ## Extending the driver
 

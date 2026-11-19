@@ -25,7 +25,7 @@ documentation lives in the **`caffeine-website`** submodule, not here.
 | `cmake/`, `assets/` | CMake modules; sample content (no `node_modules` in git) |
 | `caf-pack/` | Asset packer CLI + `.caf` / `.cap` pipeline (submodule) |
 | `doppio-plugins/` | Official/community Doppio plugins (submodule, legacy C++/ImGui SDK) |
-| `caffeine-website/` | Docs site (Svelte/HTML), TeX/PDF, docs MCP |
+| `caffeine-website/` | Docs content (HTML-first Markdown, EN/PT), TeX/PDF, docs MCP |
 | `caffeine-launcher/` | Desktop hub — launch apps, plugins, updates (Rust/Iced) |
 
 Do not add a root `docs/`, `planning/`, or `.planning/` back to this repo.
@@ -63,7 +63,7 @@ Vulkan / D3D12 / Metal
 
 ## Doppio UI architecture
 
-- **One window, five panes.** `windows/main.rs` owns `App` and the `PaneGrid` layout
+- **One window, five core panels.** `windows/main.rs` owns `App` and the `PaneGrid` layout
   (Hierarchy / Assets / Viewport / Inspector / Console). Panes host tabbed panels; the
   free title-bar area beside the tabs is the pane drag handle. Individual tabs can be dragged
   between panes or split into a new pane. Layout presets live in the View menu and menu
@@ -126,7 +126,7 @@ All sibling repos live under [devscafecommunity](https://github.com/devscafecomm
 |------|------------|------|--------------------------|------------------|
 | *(this repo)* | `caffeine` | C++ engine, **Doppio** editor (`doppio/`, Rust/Iced), `libcaffeine-capi`, runtime, tests | yes (`caffeine-runtime`, `caffeine-capi`, …); Rust UI via `cargo` | `doppio`, `runtime` |
 | `caf-pack/` | [caf-pack](https://github.com/devscafecommunity/caf-pack) | Raw assets → `.caf`, pack `.cap`; shared `CafTypes` with engine | linked into `CaffeineTest`/tools when submodule present | — |
-| `caffeine-website/` | [caffeine-website](https://github.com/devscafecommunity/caffeine-website) | Public docs, i18n site, PDFs, **caffeine-docs** MCP | no (Node/npm) | — |
+| `caffeine-website/` | [caffeine-website](https://github.com/devscafecommunity/caffeine-website) | Public docs content, EN/PT mirror, PDFs, **caffeine-docs** MCP | no (content only) | — |
 | `caffeine-launcher/` | [caffeine-launcher](https://github.com/devscafecommunity/caffeine-launcher) | Hub UI; discovers `doppio/target/<profile>/doppio`, `~/.local/share/caffeine/apps/` | `cargo build` / `scripts/build-launcher.sh` | hosts all apps |
 | `doppio-plugins/` | [doppio-plugins](https://github.com/devscafecommunity/doppio-plugins) | Official/community Doppio plugins (terrain, procedural, git, post-processing, AI, VC&M) | yes, by default (`CAFFEINE_BUILD_DOPPIO_PLUGINS=ON`) into `build/plugins`; loading is opt-in | — |
 
@@ -146,6 +146,28 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
 
 ## Documentation policy
 
+- **HTML-first Markdown.** Every documentation page is a Markdown file whose
+  structure and rich content use HTML: `<div class="doc-meta">` status badges,
+  `<figure>`/`<figcaption>` screenshots, callout blocks, `<details>` reference
+  sections and HTML tables with merged cells. Markdown remains the format for
+  headings, prose, lists, inline code and fenced code. The complete standard,
+  with copyable examples, is [`caffeine-website/DOCS_STYLE.md`](caffeine-website/DOCS_STYLE.md).
+  - Keep Markdown headings (`#`, `##`, `###`) — the site TOC and the translation
+    audit depend on them. Do not use raw `<h1>`/`<h2>`.
+  - Use semantic HTML (`figure`, `details`, `kbd`, `mark`, `dl`, `table`) and the
+    `doc-*` classes from the style guide. Never add `<script>`, `<style>` or
+    inline event handlers.
+  - Every guide or reference page starts with a title, a `doc-meta` strip (status
+    badge, last verified date, source link) and a short `doc-lede`. Historical
+    plans carry the `Historical` badge and may go straight to context.
+  - Link to engine/editor source with absolute GitHub URLs. Relative links must
+    stay inside the documentation tree; `../../src/...` is rejected by
+    `python3 scripts/audit-docs.py`.
+  - Screenshots and recordings come from the **headless driver**, not a desktop
+    screenshot. Capture flows live in `doppio/docs/flows/capture-*.json`; add or
+    update one, then regenerate the images. See `DOCS_STYLE.md` §4.
+  - Before committing, run `python3 scripts/audit-docs.py --include-engine` and
+    `python3 scripts/audit-docs-i18n.py` from `caffeine-website/`. Both must pass.
 - **No general Markdown documentation** in the engine tree (no root `docs/**/*.md`, no
   planning RFCs here).
 - **Exception — Doppio only**: `doppio/docs/*.md` document the IDE architecture, ids,
@@ -249,6 +271,8 @@ Checks and tooling:
 ./scripts/doppio-headless.sh widgets       # headless UI driver: list what is on screen
 ./scripts/doppio-headless.sh run doppio/tests/ui-flows --format text   # run all UI flows
 ./scripts/doppio-headless.sh screenshot --annotate --out /tmp/shots    # annotated PNG
+./scripts/capture-editor-docs.sh           # headless editor images for docs
+./scripts/capture-editor-tour.sh           # short MP4/GIF workspace tour
 ./scripts/render-material-gallery.sh       # engine-rendered material gallery + depth comparisons (docs)
 ./scripts/capture-material-docs.sh         # headless UI screenshots for the materials guide
 ./scripts/doppio-agent.sh                  # ICED_MCP=1 + agent feature
@@ -260,5 +284,7 @@ Checks and tooling:
 Cross-platform helpers: `scripts/build.sh`, `scripts/build.bat`, `scripts/build.fish`,
 `scripts/build-launcher.sh`.
 
-**caffeine-website:** `cd caffeine-website && npm install && npm run dev`. Publish doc
-changes there; bump the submodule pointer in the engine when pinning a new docs revision.
+**caffeine-website:** `cd caffeine-website && python3 scripts/audit-docs.py --include-engine`
+and `python3 scripts/audit-docs-i18n.py`. Regenerate screenshots with the capture
+scripts (for example `./scripts/capture-editor-docs.sh`). Publish doc changes there;
+bump the submodule pointer in the engine when pinning a new docs revision.

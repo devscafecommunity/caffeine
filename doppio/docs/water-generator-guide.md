@@ -1,13 +1,29 @@
 # Water Generator: water bodies built with nodes
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Assemble lakes, rivers, seas and storms from a node graph and place them as an animated engine water surface.</p>
+
 The **Water** tab (View menu, next to Nature) builds lakes, rivers, seas and storms from a **node graph**
 and places them in the scene as an animated engine water surface. It replaces the old fixed wind-wave
 block: waves are now *data* you assemble, and the same waves drive the editor preview, the engine mesh and
 gameplay queries (`water_height`, for floating objects).
 
-![The Water tab with the Storm graph](images/water/ui/water-storm.png)
+<figure class="doc-figure">
+  <img src="images/water/ui/water-storm.png" alt="The Water tab with the Storm graph" loading="lazy">
+  <figcaption>The Water tab with the Storm graph</figcaption>
+</figure>
 
-![The eight presets, rendered by the engine](images/water/water-presets.png)
+
+<figure class="doc-figure">
+  <img src="images/water/water-presets.png" alt="The eight presets, rendered by the engine" loading="lazy">
+  <figcaption>The eight presets, rendered by the engine</figcaption>
+</figure>
+
 
 ## 1. How a graph works
 
@@ -16,13 +32,13 @@ Two typed ports (two colours); a link only connects ports of the same type and n
 | Port | Carries |
 |---|---|
 | **Waves** | a list of Gerstner waves (direction, wavelength, amplitude, steepness, phase) |
-| **Look** | colour, opacity (low = clear), roughness and foam threshold |
+| **Look** | the **Water Material**: colour, opacity (low = clear), roughness and foam threshold |
 
 | Category | Nodes |
 |---|---|
 | Waves | **Gerstner Wave** (one explicit wave), **Wind Sea** (a spectrum from wind speed, direction, spread and choppiness), **Swell** (long regular trains from afar), **Ripples** (short waves from many directions) |
 | Modifiers | **Merge Waves** (up to four sources; keeps the strongest 16), **Scale Waves** (amplitude, wavelength, choppiness, rotation) |
-| Look | **Water Look** |
+| Look | **Water Material** |
 | Output | **Output**: size X/Z, water level, depth, mesh resolution, time scale, seed |
 
 Interaction is the same as the other generators: palette on the left, canvas in the middle, parameters and
@@ -30,6 +46,16 @@ the animated **Surface preview** on the right. Undo/redo cover every edit, *Expo
 `water/<name>.water` (`CAFWATER1` header plus `WATERGRAPH1` node and link lines), **Place in scene** creates
 the entity. The preview is a top-down render of the same Gerstner sum the engine animates (sun-lit slopes, a
 Fresnel sky reflection, foam where crests compress); it is a shape preview, not the final shading.
+
+## 1b. The water always has its material
+
+Water cannot exist without a material: the Output's **Material** port needs a **Water Material** node, and a graph
+without one does not build ("The water has no material: wire a Water Material node..."). **Place in scene** writes
+that node as a real project asset, `water/<name>.mat` (colour and opacity, roughness, a low base reflectance, a thin
+clearcoat, transmission and the refraction index of water, alpha blend), and assigns it to the water entity, so the
+material is visible in the Assets panel and editable in the **Material** tab like any other. The engine renders the
+water with the entity's material whenever it has one (without a material it falls back to a built-in water look).
+Placing again regenerates the `.mat` from the node; keep your edits by assigning your own material afterwards.
 
 ## 2. Why this is modular and cheap
 
@@ -152,3 +178,17 @@ This is the foundation of the rework, not all of it. Honest status:
 ./scripts/capture-water-docs.sh                                   # the tab (headless, no engine)
 DOPPIO_WATER_DUMP=/tmp/water cargo test -p doppio-ui --lib water_presets_render   # engine renders of every preset
 ```
+
+## The material is an asset from the start
+
+The Water Material node is a mould. Applying a preset (or placing) writes `water/<name>.mat` into the
+project and turns the node into **Your Water Material (.mat)** pointing at it. An existing file is
+never overwritten, so repainting it in the Material tab, or pointing the node at your own `.mat`,
+sticks. The terrain's splat layers are still shaded by the engine; making them project materials
+needs an engine change and is on the list.
+
+### Opening old `.water` files
+
+A graph saved before the material was required has no Water Material node. It gets the default one wired
+into the Output when it loads, so it builds again; apply or place to turn it into the project's `.mat`.
+Graphs saved with *Your Water Material* keep their `.mat` path (stored with the graph, spaces escaped).

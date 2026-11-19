@@ -129,6 +129,7 @@ fn accent(category: &str) -> iced::Color {
         "Trees" => theme::SUCCESS,
         "Plants" => theme::ICON_TEAL,
         "Scatter" => theme::ICON_ORANGE,
+        "Materials" => theme::ICON_PINK,
         "Combine" => theme::TEXT_MUTED,
         _ => theme::WARNING,
     }
@@ -139,6 +140,7 @@ fn port_kind(kind: Kind) -> node_canvas::PortKind {
         Kind::Mesh => node_canvas::PortKind::Mesh,
         Kind::Skeleton => node_canvas::PortKind::Skeleton,
         Kind::Points => node_canvas::PortKind::Points,
+        Kind::Material => node_canvas::PortKind::Material,
     }
 }
 
@@ -513,15 +515,7 @@ fn properties<'a, Message: Clone + 'a>(
             .size(8)
             .color(theme::TEXT_MUTED),
     );
-    let material_choice = node.op == "part";
     for (index, spec) in def.params.iter().enumerate() {
-        // The custom colour only matters for "Solid · Custom colour".
-        if material_choice
-            && matches!(spec.key, "r" | "g" | "b" | "roughness")
-            && node.params[1].round() as usize != 21
-        {
-            continue;
-        }
         let value = node.params[index];
         let param_emit = emit.clone();
         match spec.kind {
@@ -565,16 +559,36 @@ fn properties<'a, Message: Clone + 'a>(
             }
         }
     }
-    // Asset slots: a thumbnail, the file name, clear, and drop from the Assets pane; a click opens
-    // the picker with previews. The Part node takes your own .mat / image when asked.
-    let mut slots: Vec<(usize, &'static str, PickKind)> = Vec::new();
-    if material_choice {
-        match node.params[1].round() as usize {
-            22 => slots.push((0, "Your .mat", PickKind::Material)),
-            23 => slots.push((0, "Your image", PickKind::Image)),
-            _ => {}
+    // Material nodes that point at your own project assets list the matching files.
+    {
+        let (options, label): (&[String], &str) = match node.op {
+            "mat_project" => (&view.project_materials, "Your .mat"),
+            "mat_texture" => (&view.project_textures, "Your image"),
+            _ => (&[], ""),
+        };
+        if !label.is_empty() {
+            let current = node.strings.first().cloned().unwrap_or_default();
+            let pick_emit = emit.clone();
+            body = body.push(dropdown::property(
+                id::naturegen_param("asset"),
+                label,
+                options.to_vec(),
+                Some(current.clone()).filter(|c| !c.is_empty()),
+                move |choice| pick_emit(Edit::SetString(node_id, 0, choice)),
+            ));
+            let text_emit = emit.clone();
+            body = body.push(text_field::property(
+                id::naturegen_param("asset_path"),
+                "Path",
+                &current,
+                move |value| text_emit(Edit::SetString(node_id, 0, value)),
+            ));
+            if options.is_empty() {
+                body = body.push(text("No matching assets found in the project: type a path relative to the assets folder.").size(8).color(theme::TEXT_MUTED));
+            }
         }
     }
+    let mut slots: Vec<(usize, &'static str, PickKind)> = Vec::new();
     match node.op {
         "texture" => slots.push((0, "Image", PickKind::Image)),
         "material" => slots.push((0, "Base material (.mat)", PickKind::Material)),

@@ -44,6 +44,8 @@ pub enum Edit {
     DeleteNode(NodeId),
     /// Node, parameter index, value.
     SetParam(NodeId, usize, f32),
+    /// Node, string index, text (an asset path).
+    SetString(NodeId, usize, String),
     Undo,
     Redo,
     Fit,
@@ -76,6 +78,7 @@ pub struct View<'a> {
     pub stats: &'a str,
     pub status: Option<&'a str>,
     pub dirty: bool,
+    pub project_materials: Vec<String>,
 }
 
 fn accent(category: &str) -> iced::Color {
@@ -490,6 +493,24 @@ fn properties<'a, Message: Clone + 'a>(
                 ));
             }
         }
+    }
+    if node.op == "look_asset" {
+        let current = node.strings.first().cloned().unwrap_or_default();
+        let pick_emit = emit.clone();
+        body = body.push(dropdown::property(
+            id::watergen_param("asset"),
+            "Your .mat",
+            view.project_materials.clone(),
+            Some(current.clone()).filter(|c| !c.is_empty()),
+            move |choice| pick_emit(Edit::SetString(node_id, 0, choice)),
+        ));
+        let text_emit = emit.clone();
+        body = body.push(text_field::property(
+            id::watergen_param("asset_path"),
+            "Path",
+            &current,
+            move |value| text_emit(Edit::SetString(node_id, 0, value)),
+        ));
     }
     container(body)
         .width(Length::Fill)

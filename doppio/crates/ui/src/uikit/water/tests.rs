@@ -4,6 +4,13 @@ fn preset(name: &str) -> WaterPreset {
     presets().into_iter().find(|p| p.name == name).expect(name)
 }
 
+/// Gives a hand-built graph the Water Material its Output requires.
+fn with_material(g: &mut WaterGraph) {
+    let out = g.output_node().unwrap();
+    let look = g.add("look", Point::ORIGIN);
+    assert!(g.connect(look, 0, out, 1));
+}
+
 fn peak(water: &Water) -> f32 {
     let mut peak = 0.0f32;
     for i in 0..60 {
@@ -87,6 +94,7 @@ fn wind_raises_taller_longer_waves() {
         let out = g.add("output", Point::ORIGIN);
         let w = g.add_with("wind", Point::ORIGIN, &[("wind", wind)]);
         assert!(g.connect(w, 0, out, 0));
+        with_material(&mut g);
         g.build().unwrap()
     };
     let (calm, gale) = (height(4.0), height(20.0));
@@ -140,6 +148,7 @@ fn merge_keeps_the_strongest_sixteen_and_scale_modifies() {
         assert!(g.connect(w, 0, merge, i));
     }
     assert!(g.connect(merge, 0, out, 0));
+    with_material(&mut g);
     let water = g.build().unwrap();
     assert_eq!(water.waves.len(), MAX_WATER_WAVES);
     let min = water
@@ -213,6 +222,7 @@ fn waves_finer_than_the_mesh_fade_out_instead_of_aliasing() {
             ],
         );
         assert!(g.connect(rip, 0, out, 0));
+        with_material(&mut g);
         g.build_report().unwrap()
     };
     // 100 m over 96 cells = 1.04 m per cell: 0.3 m ripples cannot be shown.
@@ -248,4 +258,48 @@ fn presets_keep_every_wave_their_mesh_can_show() {
         );
         assert!(dropped <= 1, "{} drops {dropped} waves", p.name);
     }
+}
+
+#[test]
+fn water_cannot_exist_without_its_material() {
+    let mut g = WaterGraph::new();
+    let out = g.add("output", Point::ORIGIN);
+    let wave = g.add("wave", Point::ORIGIN);
+    assert!(g.connect(wave, 0, out, 0));
+    let error = g.build().unwrap_err();
+    assert!(
+        error.contains("no material") && error.contains("Water Material"),
+        "{error}"
+    );
+    // Wiring the material makes it build, and the colour comes from that node.
+    let look = g.add_with(
+        "look",
+        Point::ORIGIN,
+        &[("r", 0.1), ("g", 0.6), ("b", 0.4), ("opacity", 0.5)],
+    );
+    assert!(g.connect(look, 0, out, 1));
+    let water = g.build().unwrap();
+    assert_eq!(water.albedo, [0.1, 0.6, 0.4, 0.5]);
+    // Every preset wires an explicit Water Material node.
+    for p in presets() {
+        let graph = p.graph();
+        let output = graph.output_node().unwrap();
+        let link = graph
+            .links
+            .iter()
+            .find(|l| l.to == output && l.input == 1)
+            .expect(p.name);
+        assert_eq!(graph.node(link.from).unwrap().op, "look", "{}", p.name);
+    }
+}
+
+#[test]
+fn old_graphs_without_a_material_get_the_default_one() {
+    let mut graph = presets()[0].graph();
+    let look = graph.nodes.iter().find(|n| n.op == "look").unwrap().id;
+    graph.remove(look);
+    assert!(graph.build().is_err(), "no material, no water");
+    let loaded = WaterGraph::from_text(&graph.to_text()).expect("loads");
+    assert!(loaded.nodes.iter().any(|n| n.op == "look"));
+    assert!(loaded.build().is_ok(), "the migrated graph builds again");
 }

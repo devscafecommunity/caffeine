@@ -8744,7 +8744,13 @@ impl App {
                 id::PANE_WATER_GENERATOR,
                 "Water Generator",
                 Some(format!("{} · {}", self.watergen.name, self.watergen.stats)),
-                water_generator_panel::view(self.watergen.view_state(), Message::WaterGen),
+                {
+                    let (materials, _) = self.nature_assets();
+                    water_generator_panel::view(
+                        self.watergen.view_state(materials),
+                        Message::WaterGen,
+                    )
+                },
             ),
             PaneKind::TerrainGenerator => (
                 id::PANE_TERRAIN_GENERATOR,
@@ -8753,7 +8759,14 @@ impl App {
                     "{} · {}",
                     self.terraingen.name, self.terraingen.stats
                 )),
-                terrain_generator_panel::view(self.terraingen.view_state(), Message::TerrainGen),
+                {
+                    let (mut layers, textures) = self.nature_assets();
+                    layers.extend(textures);
+                    terrain_generator_panel::view(
+                        self.terraingen.view_state(layers),
+                        Message::TerrainGen,
+                    )
+                },
             ),
             PaneKind::TextureGenerator => (
                 id::PANE_TEXTURE_GENERATOR,

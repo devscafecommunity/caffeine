@@ -1,5 +1,13 @@
 # Texture Generator: procedural sprites, VFX and packed masks
 
+<div class="doc-meta">
+  <span class="doc-badge doc-badge--stable">Stable</span>
+  <span class="doc-badge">Doppio</span>
+  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+</div>
+
+<p class="doc-lede">Bake one texture at a time — a leaf, a feather, a flame, a packed RGBA mask — with the Texture Generator node graph.</p>
+
 The **Texture Generator** is a node graph that bakes **one texture**: a leaf, a feather, a
 flame, a shock ring, a packed RGBA mask. It is a tool of its own, next to the
 **Material Generator**, because the two jobs differ.
@@ -17,7 +25,11 @@ flame, a shock ring, a packed RGBA mask. It is a tool of its own, next to the
 They can feed each other (bake a flame to a PNG and use it as an emissive map), but a texture
 graph never opens as a material and vice versa: the loaders refuse the other format.
 
-![The Texture Generator tab](images/texture/ui/texgen-leaf.png)
+<figure class="doc-figure">
+  <img src="images/texture/ui/texgen-leaf.png" alt="The Texture Generator tab" loading="lazy">
+  <figcaption>The Texture Generator tab</figcaption>
+</figure>
+
 
 Images are produced headless by the engine tooling; the commands to regenerate them are at the
 end.
@@ -49,7 +61,11 @@ The material palette no longer offers the VFX & Shapes ops, and the texture pale
 Changing the mode drops links to ports that no longer exist. The node cannot be deleted: it is the
 graph's result. Output goes to a PNG of **8 or 16 bits** with straight alpha.
 
-![Four masks packed into R, G, B and A](images/texture/ui/texgen-packed.png)
+<figure class="doc-figure">
+  <img src="images/texture/ui/texgen-packed.png" alt="Four masks packed into R, G, B and A" loading="lazy">
+  <figcaption>Four masks packed into R, G, B and A</figcaption>
+</figure>
+
 
 ## 3. VFX & Shapes nodes
 
@@ -70,13 +86,21 @@ dark halos. Everything is deterministic for a seed.
 | Soft Glow | elliptical falloff | Color, Value | radius, falloff power, intensity, aspect |
 | Colour Ramp (LUT) | 1D gradient along X, Y or radially, four stops | Color, Position | direction, stops B and C, smooth blend |
 
-![All presets over a checkerboard](images/texture/texture-gallery.png)
+<figure class="doc-figure">
+  <img src="images/texture/texture-gallery.png" alt="All presets over a checkerboard" loading="lazy">
+  <figcaption>All presets over a checkerboard</figcaption>
+</figure>
+
 
 The ops combine with everything else in the library: the *Explosion Burst* preset is a burst, a
 ring and a glow added together and mapped through a Gradient Map, with the sum also wired to the
 Alpha port.
 
-![Explosion Burst graph](images/texture/ui/texgen-explosion.png)
+<figure class="doc-figure">
+  <img src="images/texture/ui/texgen-explosion.png" alt="Explosion Burst graph" loading="lazy">
+  <figcaption>Explosion Burst graph</figcaption>
+</figure>
+
 
 ## 4. Library
 
@@ -123,9 +147,17 @@ bakes the graph once per frame, advancing every `phase` parameter in the graph f
 phase parameter gives identical frames. Frames are `size` pixels square, so a 4 x 2 sheet at 128 is
 512 x 256.
 
-![Torch flame, 4 x 2 flipbook](images/texture/flipbook-torch_flame.png)
+<figure class="doc-figure">
+  <img src="images/texture/flipbook-torch_flame.png" alt="Torch flame, 4 x 2 flipbook" loading="lazy">
+  <figcaption>Torch flame, 4 x 2 flipbook</figcaption>
+</figure>
 
-![Smoke puff, 4 x 2 flipbook](images/texture/flipbook-smoke_puff.png)
+
+<figure class="doc-figure">
+  <img src="images/texture/flipbook-smoke_puff.png" alt="Smoke puff, 4 x 2 flipbook" loading="lazy">
+  <figcaption>Smoke puff, 4 x 2 flipbook</figcaption>
+</figure>
+
 
 ## 7. For agents and scripts
 
