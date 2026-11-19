@@ -121,6 +121,8 @@ status:
 * **Tuning.** Preset relief and sea levels were tuned against the software preview and a single engine render;
   expect to adjust them (max height, sea, rock slope) per project.
 
+World-level plan (masks to the engine, scatter, chunk streaming): see [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
+
 ## 6. Agents and scripting
 
 The tab is a pane like the others (`editor.pane.terrain_generator`, `terraingen.*` ids). Headless: fixture

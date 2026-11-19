@@ -2,6 +2,7 @@
 
 #include "core/Types.hpp"
 #include "ecs/Entity.hpp"
+#include "script/ScriptHostServices.hpp"
 
 #include <memory>
 #include <string>
@@ -10,6 +11,8 @@
 namespace Caffeine { namespace Input { class InputManager; } }
 namespace Caffeine { namespace Events { class EventBus; } }
 namespace Caffeine { namespace UI { class UISystem; } }
+namespace Caffeine { namespace Physics3D { class PhysicsWorld3D; } }
+namespace Caffeine { namespace Audio { class AudioService; } }
 
 namespace Caffeine::Script {
 
@@ -26,12 +29,23 @@ public:
         Input::InputManager* input = nullptr;
         Events::EventBus* events = nullptr;
         UI::UISystem* ui = nullptr;
+        /// Optional: enables `caffeine.physics3d` (raycast, forces, velocity).
+        Physics3D::PhysicsWorld3D* physics3d = nullptr;
+        /// Optional: enables `caffeine.audio`.
+        Audio::AudioService* audio = nullptr;
     };
 
     bool init(const InitParams& params);
     void shutdown();
     void setWorld(ECS::World* world);
     void setInput(Input::InputManager* input);
+    Input::InputManager* input() const;
+    void setPhysics3D(Physics3D::PhysicsWorld3D* physics);
+    Physics3D::PhysicsWorld3D* physics3d() const;
+    void setAudio(Audio::AudioService* audio);
+    Audio::AudioService* audio() const;
+    /// Scene changes requested by scripts; the host polls `hasPending()` after each frame.
+    SceneRequests& sceneRequests();
     void setSearchRoot(const std::string& root);
 
     struct ExposedVar {
@@ -44,6 +58,10 @@ public:
     };
     std::vector<ExposedVar> listExposedVars(const std::string& path);
     bool setExposedVar(const std::string& path, const ExposedVar& var);
+
+    /// Dotted names of everything under the `caffeine` table (`caffeine.world.create`, ...),
+    /// sorted, with functions only. Used by the API documentation check.
+    std::vector<std::string> apiNames();
 
     bool loadScript(const std::string& path, std::string* outError = nullptr);
     /// Loads `path` into its own environment stored under `key`, so one file can back

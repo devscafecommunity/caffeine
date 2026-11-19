@@ -1,0 +1,72 @@
+{
+  "namespace": "native",
+  "group": "Game",
+  "lua": "caffeine.native",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Native modules",
+    "pt": "Módulos nativos"
+  },
+  "summary": {
+    "en": "Load and call native modules through JSON.",
+    "pt": "Carregar e chamar módulos nativos através de JSON."
+  },
+  "functions": [
+    {
+      "name": "load",
+      "lua": "caffeine.native.load",
+      "dryad": null,
+      "signature": "load(name) -> boolean",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Native module name.",
+          "pt": "Nome do módulo nativo."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when the module loaded.",
+        "pt": "Verdadeiro se o módulo foi carregado."
+      },
+      "en": "Loads a native module. The load error is not reported to the script.",
+      "pt": "Carrega um módulo nativo. O erro de carregamento não é devolvido ao script.",
+      "example": "caffeine.native.load('mymodule')"
+    },
+    {
+      "name": "call",
+      "lua": "caffeine.native.call",
+      "dryad": null,
+      "signature": "call(module, fn[, argsJson]) -> string",
+      "params": [
+        {
+          "name": "module",
+          "type": "string",
+          "en": "Module name.",
+          "pt": "Nome do módulo."
+        },
+        {
+          "name": "fn",
+          "type": "string",
+          "en": "Function name.",
+          "pt": "Nome da função."
+        },
+        {
+          "name": "argsJson",
+          "type": "string",
+          "en": "JSON arguments (default \"{}\").",
+          "pt": "Argumentos em JSON (por omissão \"{}\")."
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "en": "The result text; on failure the error message is returned instead.",
+        "pt": "O texto do resultado; em caso de falha devolve-se a mensagem de erro."
+      },
+      "en": "Calls a function of a loaded native module with JSON arguments.",
+      "pt": "Chama uma função de um módulo nativo carregado com argumentos JSON.",
+      "example": "local out = caffeine.native.call('mymodule', 'ping', '{}')"
+    }
+  ]
+}

@@ -345,6 +345,11 @@ void SceneSerializer::collectScriptComponents(
     m_world.forEach<Script::ScriptComponent>(q, [&](ECS::Entity e, Script::ScriptComponent& sc) {
         std::vector<u8> data;
         IO::appendString(data, sc.scriptPath);
+        // Trailing fields (absent in older scenes): enabled, order, properties.
+        IO::appendU8(data, sc.enabled ? 1 : 0);
+        IO::appendI32(data, sc.executionOrder);
+        IO::appendString(data, sc.properties);
+        IO::appendU8(data, sc.isolated ? 1 : 0);
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -2176,6 +2181,18 @@ bool SceneSerializer::applyScriptComponent(ECS::Entity e, const u8* data, u32 si
     if (!IO::readString(cursor, end, path)) return false;
     auto& sc = m_world.add<Script::ScriptComponent>(e);
     sc.scriptPath = std::move(path);
+    // Older scenes end here and keep the defaults.
+    u8 enabled = 1;
+    i32 order = 0;
+    std::string properties;
+    if (cursor < end && IO::readU8(cursor, end, enabled) && IO::readI32(cursor, end, order) &&
+        IO::readString(cursor, end, properties)) {
+        sc.enabled = enabled != 0;
+        sc.executionOrder = order;
+        sc.properties = std::move(properties);
+        u8 isolated = 0;
+        if (IO::readU8(cursor, end, isolated)) sc.isolated = isolated != 0;
+    }
     return true;
 }
 

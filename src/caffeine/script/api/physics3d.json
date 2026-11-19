@@ -1,0 +1,237 @@
+{
+  "namespace": "physics3d",
+  "group": "Physics",
+  "lua": "caffeine.physics3d",
+  "dryad_prefix": "caffeine_physics3d_",
+  "title": {
+    "en": "Physics 3D",
+    "pt": "Física 3D"
+  },
+  "summary": {
+    "en": "Ray queries and forces on the Bullet 3D world. Everything is a safe no-op (false or nil) when the host runs without 3D physics. Forces and velocity only affect dynamic bodies.",
+    "pt": "Consultas por raio e forças no mundo 3D Bullet. Tudo é um no-op seguro (false ou nil) quando o host corre sem física 3D. Forças e velocidade só afetam corpos dinâmicos."
+  },
+  "functions": [
+    {
+      "name": "isAvailable",
+      "lua": "caffeine.physics3d.isAvailable",
+      "dryad": "caffeine_physics3d_available",
+      "signature": "isAvailable() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "true when a 3D physics world is attached and the Bullet backend is built in.",
+        "pt": "true quando há um mundo de física 3D e o backend Bullet está compilado."
+      },
+      "en": "Tells whether 3D physics can be used at all.",
+      "pt": "Indica se a física 3D pode ser usada.",
+      "example": "if not caffeine.physics3d.isAvailable() then caffeine.debug.warn(\"no 3D physics\") end"
+    },
+    {
+      "name": "setGravity",
+      "lua": "caffeine.physics3d.setGravity",
+      "dryad": "caffeine_physics3d_set_gravity",
+      "signature": "setGravity(x, y, z)",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X component.",
+          "pt": "Componente X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y component.",
+          "pt": "Componente Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z component.",
+          "pt": "Componente Z."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the gravity vector in metres per second squared (default 0, -9.81, 0).",
+      "pt": "Define o vetor de gravidade em metros por segundo ao quadrado (por omissão 0, -9.81, 0).",
+      "example": "caffeine.physics3d.setGravity(0, -3.7, 0) -- Mars"
+    },
+    {
+      "name": "raycast",
+      "lua": "caffeine.physics3d.raycast",
+      "dryad": "caffeine_physics3d_raycast",
+      "signature": "raycast(ox, oy, oz, dx, dy, dz, maxDistance) -> table | nil",
+      "params": [
+        {
+          "name": "ox, oy, oz",
+          "type": "number",
+          "en": "Ray origin in world space.",
+          "pt": "Origem do raio no espaço do mundo."
+        },
+        {
+          "name": "dx, dy, dz",
+          "type": "number",
+          "en": "Direction; it does not need to be normalised.",
+          "pt": "Direção; não precisa de estar normalizada."
+        },
+        {
+          "name": "maxDistance",
+          "type": "number",
+          "en": "Maximum length in metres.",
+          "pt": "Comprimento máximo em metros."
+        }
+      ],
+      "returns": {
+        "type": "table | nil",
+        "en": "{ entity, x, y, z, nx, ny, nz, distance } for the nearest body hit, or nil. Triggers are ignored.",
+        "pt": "{ entity, x, y, z, nx, ny, nz, distance } para o corpo mais próximo atingido, ou nil. Os triggers são ignorados."
+      },
+      "en": "Casts a ray and returns the first solid body it hits, with the hit point and surface normal.",
+      "pt": "Lança um raio e devolve o primeiro corpo sólido que atinge, com o ponto de impacto e a normal da superfície.",
+      "example": "local hit = caffeine.physics3d.raycast(0, 10, 0, 0, -1, 0, 100)\nif hit then caffeine.debug.log(hit.entity .. \" at \" .. hit.distance) end"
+    },
+    {
+      "name": "addForce",
+      "lua": "caffeine.physics3d.addForce",
+      "dryad": "caffeine_physics3d_add_force",
+      "signature": "addForce(entity, x, y, z) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "A body with a RigidBody3D and Collider3D.",
+          "pt": "Um corpo com RigidBody3D e Collider3D."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X component.",
+          "pt": "Componente X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y component.",
+          "pt": "Componente Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z component.",
+          "pt": "Componente Z."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false for an unknown or non-dynamic body.",
+        "pt": "false para um corpo desconhecido ou não dinâmico."
+      },
+      "en": "Applies a force (newtons) at the centre of mass for the next physics step.",
+      "pt": "Aplica uma força (newtons) no centro de massa no próximo passo de física.",
+      "example": "caffeine.physics3d.addForce(eid, 0, 50, 0)"
+    },
+    {
+      "name": "addImpulse",
+      "lua": "caffeine.physics3d.addImpulse",
+      "dryad": "caffeine_physics3d_add_impulse",
+      "signature": "addImpulse(entity, x, y, z) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "A body with a RigidBody3D and Collider3D.",
+          "pt": "Um corpo com RigidBody3D e Collider3D."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X component.",
+          "pt": "Componente X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y component.",
+          "pt": "Componente Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z component.",
+          "pt": "Componente Z."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false for an unknown or non-dynamic body.",
+        "pt": "false para um corpo desconhecido ou não dinâmico."
+      },
+      "en": "Applies an instant change of momentum (newton-seconds) at the centre of mass, e.g. a jump.",
+      "pt": "Aplica uma mudança instantânea de momento (newton-segundos) no centro de massa, por exemplo um salto.",
+      "example": "caffeine.physics3d.addImpulse(eid, 0, 6, 0)"
+    },
+    {
+      "name": "setVelocity",
+      "lua": "caffeine.physics3d.setVelocity",
+      "dryad": "caffeine_physics3d_set_velocity",
+      "signature": "setVelocity(entity, x, y, z) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "A body with a RigidBody3D and Collider3D.",
+          "pt": "Um corpo com RigidBody3D e Collider3D."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X component.",
+          "pt": "Componente X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y component.",
+          "pt": "Componente Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z component.",
+          "pt": "Componente Z."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false for an unknown or non-dynamic body.",
+        "pt": "false para um corpo desconhecido ou não dinâmico."
+      },
+      "en": "Sets the linear velocity in metres per second.",
+      "pt": "Define a velocidade linear em metros por segundo.",
+      "example": "caffeine.physics3d.setVelocity(eid, 4, 0, 0)"
+    },
+    {
+      "name": "velocity",
+      "lua": "caffeine.physics3d.velocity",
+      "dryad": "caffeine_physics3d_velocity",
+      "signature": "velocity(entity) -> table | nil",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "A body with a RigidBody3D and Collider3D.",
+          "pt": "Um corpo com RigidBody3D e Collider3D."
+        }
+      ],
+      "returns": {
+        "type": "table | nil",
+        "en": "{ x, y, z } in metres per second, or nil for an unknown or non-dynamic body.",
+        "pt": "{ x, y, z } em metros por segundo, ou nil para um corpo desconhecido ou não dinâmico."
+      },
+      "en": "Reads the linear velocity of a body.",
+      "pt": "Lê a velocidade linear de um corpo.",
+      "example": "local v = caffeine.physics3d.velocity(eid)"
+    }
+  ]
+}

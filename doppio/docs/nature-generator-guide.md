@@ -315,6 +315,8 @@ oak crown with varied, curved leaves.
 * `.obj` only (no `.glb` writer yet).
 * Scattering over terrain, biomes and density maps belong to the terrain generator, which is separate.
 
+Scatter, LOD and impostors are planned in [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
+
 ## 9. Regenerating the images
 
 ```bash
