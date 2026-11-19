@@ -1,0 +1,799 @@
+{
+  "namespace": "postprocess",
+  "group": "Rendering",
+  "lua": "caffeine.postprocess",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Post-process",
+    "pt": "Pós-processamento"
+  },
+  "summary": {
+    "en": "Per-entity post-process effects such as bloom, vignette, colour grading and fog, with presets and path-based field access.",
+    "pt": "Efeitos de pós-processamento por entidade, como bloom, vinheta, correção de cor e nevoeiro, com presets e acesso a campos por caminho."
+  },
+  "functions": [
+    {
+      "name": "has",
+      "lua": "caffeine.postprocess.has",
+      "dryad": null,
+      "signature": "has(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true if the entity has a post-process component.",
+        "pt": "true se a entidade tiver um componente de pós-processamento."
+      },
+      "en": "Checks whether the entity has a post-process component.",
+      "pt": "Verifica se a entidade tem um componente de pós-processamento.",
+      "example": "if caffeine.postprocess.has(cam) then print('ok') end"
+    },
+    {
+      "name": "add",
+      "lua": "caffeine.postprocess.add",
+      "dryad": null,
+      "signature": "add(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false if the entity is not alive.",
+        "pt": "false se a entidade não estiver viva."
+      },
+      "en": "Adds a post-process component to the entity if it does not have one.",
+      "pt": "Adiciona um componente de pós-processamento à entidade, se ainda não tiver.",
+      "example": "caffeine.postprocess.add(cam)"
+    },
+    {
+      "name": "remove",
+      "lua": "caffeine.postprocess.remove",
+      "dryad": null,
+      "signature": "remove(entity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": null,
+      "en": "Removes the post-process component from the entity, if present.",
+      "pt": "Remove o componente de pós-processamento da entidade, se existir.",
+      "example": "caffeine.postprocess.remove(cam)"
+    },
+    {
+      "name": "get",
+      "lua": "caffeine.postprocess.get",
+      "dryad": null,
+      "signature": "get(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "A table of effect groups (for example `bloom`, `vignette`) with their fields, plus `enabled`, `customEffectScript` and the flat aliases `exposure`, `vignetteIntensity`, `bloomIntensity`. Empty if the entity has no component.",
+        "pt": "Uma tabela com grupos de efeitos (por exemplo `bloom`, `vignette`) e os seus campos, mais `enabled`, `customEffectScript` e os aliases `exposure`, `vignetteIntensity`, `bloomIntensity`. Vazia se a entidade não tiver o componente."
+      },
+      "en": "Returns a snapshot of the whole post-process state as a table.",
+      "pt": "Devolve uma tabela com o estado completo de pós-processamento.",
+      "example": "local s = caffeine.postprocess.get(cam)\nprint(s.bloom.intensity)"
+    },
+    {
+      "name": "set",
+      "lua": "caffeine.postprocess.set",
+      "dryad": null,
+      "signature": "set(entity, values) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "values",
+          "type": "table",
+          "en": "Table shaped like the result of `get`; only the keys present are applied.",
+          "pt": "Tabela com o formato do resultado de `get`; só as chaves presentes são aplicadas."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false if the entity has no component.",
+        "pt": "false se a entidade não tiver o componente."
+      },
+      "en": "Merges a table of values into the post-process state.",
+      "pt": "Aplica uma tabela de valores ao estado de pós-processamento.",
+      "example": "caffeine.postprocess.set(cam, { bloom = { intensity = 0.8 } })"
+    },
+    {
+      "name": "getValue",
+      "lua": "caffeine.postprocess.getValue",
+      "dryad": null,
+      "signature": "getValue(entity, path) -> number|boolean|nil",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Field path such as \"bloom.intensity\".",
+          "pt": "Caminho do campo, por exemplo \"bloom.intensity\"."
+        }
+      ],
+      "returns": {
+        "type": "number|boolean|nil",
+        "en": "The field value, or nil if the entity or field is unknown.",
+        "pt": "O valor do campo, ou nil se a entidade ou o campo não existirem."
+      },
+      "en": "Reads one field by path.",
+      "pt": "Lê um campo pelo seu caminho.",
+      "example": "print(caffeine.postprocess.getValue(cam, 'bloom.intensity'))"
+    },
+    {
+      "name": "setValue",
+      "lua": "caffeine.postprocess.setValue",
+      "dryad": null,
+      "signature": "setValue(entity, path, value) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Field path such as \"bloom.intensity\".",
+          "pt": "Caminho do campo, por exemplo \"bloom.intensity\"."
+        },
+        {
+          "name": "value",
+          "type": "number|boolean",
+          "en": "New value.",
+          "pt": "Novo valor."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true if the field was set.",
+        "pt": "true se o campo foi alterado."
+      },
+      "en": "Writes one field by path.",
+      "pt": "Escreve um campo pelo seu caminho.",
+      "example": "caffeine.postprocess.setValue(cam, 'bloom.threshold', 1.0)"
+    },
+    {
+      "name": "effects",
+      "lua": "caffeine.postprocess.effects",
+      "dryad": null,
+      "signature": "effects() -> table",
+      "params": [],
+      "returns": {
+        "type": "table",
+        "en": "List of effect names.",
+        "pt": "Lista de nomes de efeitos."
+      },
+      "en": "Lists the names of the available post-process effects.",
+      "pt": "Lista os nomes dos efeitos de pós-processamento disponíveis.",
+      "example": "for _, name in ipairs(caffeine.postprocess.effects()) do print(name) end"
+    },
+    {
+      "name": "fields",
+      "lua": "caffeine.postprocess.fields",
+      "dryad": null,
+      "signature": "fields(effect) -> table",
+      "params": [
+        {
+          "name": "effect",
+          "type": "string",
+          "en": "Effect name such as \"bloom\".",
+          "pt": "Nome do efeito, por exemplo \"bloom\"."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "List of tables with `name`, `min`, `max` and `type` (\"bool\", \"int\" or \"number\").",
+        "pt": "Lista de tabelas com `name`, `min`, `max` e `type` (\"bool\", \"int\" ou \"number\")."
+      },
+      "en": "Lists the fields of one effect with their ranges and types.",
+      "pt": "Lista os campos de um efeito com os respetivos intervalos e tipos.",
+      "example": "for _, f in ipairs(caffeine.postprocess.fields('bloom')) do print(f.name, f.min, f.max) end"
+    },
+    {
+      "name": "setEnabled",
+      "lua": "caffeine.postprocess.setEnabled",
+      "dryad": null,
+      "signature": "setEnabled(entity, enabled)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Master switch.",
+          "pt": "Interruptor geral."
+        }
+      ],
+      "returns": null,
+      "en": "Turns the whole post-process component on or off.",
+      "pt": "Liga ou desliga todo o componente de pós-processamento.",
+      "example": "caffeine.postprocess.setEnabled(cam, false)"
+    },
+    {
+      "name": "enableEffect",
+      "lua": "caffeine.postprocess.enableEffect",
+      "dryad": null,
+      "signature": "enableEffect(entity, effect, enabled) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "effect",
+          "type": "string",
+          "en": "Effect name such as \"bloom\".",
+          "pt": "Nome do efeito, por exemplo \"bloom\"."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Whether the effect is on.",
+          "pt": "Se o efeito fica ligado."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true if the effect exists.",
+        "pt": "true se o efeito existir."
+      },
+      "en": "Turns a single effect on or off.",
+      "pt": "Liga ou desliga um único efeito.",
+      "example": "caffeine.postprocess.enableEffect(cam, 'bloom', true)"
+    },
+    {
+      "name": "isEffectEnabled",
+      "lua": "caffeine.postprocess.isEffectEnabled",
+      "dryad": null,
+      "signature": "isEffectEnabled(entity, effect) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "effect",
+          "type": "string",
+          "en": "Effect name such as \"bloom\".",
+          "pt": "Nome do efeito, por exemplo \"bloom\"."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true if the effect is on; false if off or unknown.",
+        "pt": "true se o efeito estiver ligado; false se estiver desligado ou for desconhecido."
+      },
+      "en": "Checks whether an effect is enabled.",
+      "pt": "Verifica se um efeito está ligado.",
+      "example": "print(caffeine.postprocess.isEffectEnabled(cam, 'bloom'))"
+    },
+    {
+      "name": "applyPreset",
+      "lua": "caffeine.postprocess.applyPreset",
+      "dryad": null,
+      "signature": "applyPreset(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "One of \"cinematic\", \"horror\", \"arcade\", \"reset\" (or \"default\").",
+          "pt": "Um de \"cinematic\", \"horror\", \"arcade\", \"reset\" (ou \"default\")."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false for an unknown preset or missing component.",
+        "pt": "false para um preset desconhecido ou componente em falta."
+      },
+      "en": "Applies a built-in post-process preset.",
+      "pt": "Aplica um preset de pós-processamento incluído.",
+      "example": "caffeine.postprocess.applyPreset(cam, 'cinematic')"
+    },
+    {
+      "name": "blend",
+      "lua": "caffeine.postprocess.blend",
+      "dryad": null,
+      "signature": "blend(entity, from, to, t) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "from",
+          "type": "table",
+          "en": "Table of values for the start state.",
+          "pt": "Tabela de valores para o estado inicial."
+        },
+        {
+          "name": "to",
+          "type": "table",
+          "en": "Table of values for the end state.",
+          "pt": "Tabela de valores para o estado final."
+        },
+        {
+          "name": "t",
+          "type": "number",
+          "en": "Blend factor, clamped to 0..1.",
+          "pt": "Fator de mistura, limitado a 0..1."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false if the entity has no component.",
+        "pt": "false se a entidade não tiver o componente."
+      },
+      "en": "Interpolates between two tables of values (each applied on top of the current state) and stores the result.",
+      "pt": "Interpola entre duas tabelas de valores (cada uma aplicada sobre o estado atual) e guarda o resultado.",
+      "example": "caffeine.postprocess.blend(cam, { bloom = { intensity = 0 } }, { bloom = { intensity = 1 } }, 0.5)"
+    },
+    {
+      "name": "setExposure",
+      "lua": "caffeine.postprocess.setExposure",
+      "dryad": null,
+      "signature": "setExposure(entity, exposure)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "exposure",
+          "type": "number",
+          "en": "Exposure value.",
+          "pt": "Valor de exposição."
+        }
+      ],
+      "returns": null,
+      "en": "Sets colour-grading exposure and enables colour grading.",
+      "pt": "Define a exposição da correção de cor e ativa-a.",
+      "example": "caffeine.postprocess.setExposure(cam, 1.2)"
+    },
+    {
+      "name": "setColorGrading",
+      "lua": "caffeine.postprocess.setColorGrading",
+      "dryad": null,
+      "signature": "setColorGrading(entity, contrast, saturation, temperature, tint)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "contrast",
+          "type": "number",
+          "en": "Contrast.",
+          "pt": "Contraste."
+        },
+        {
+          "name": "saturation",
+          "type": "number",
+          "en": "Saturation.",
+          "pt": "Saturação."
+        },
+        {
+          "name": "temperature",
+          "type": "number",
+          "en": "Colour temperature. Optional.",
+          "pt": "Temperatura de cor. Opcional."
+        },
+        {
+          "name": "tint",
+          "type": "number",
+          "en": "Tint. Optional.",
+          "pt": "Matiz. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Sets colour-grading values and enables colour grading.",
+      "pt": "Define valores de correção de cor e ativa-a.",
+      "example": "caffeine.postprocess.setColorGrading(cam, 1.1, 0.9)"
+    },
+    {
+      "name": "setBloom",
+      "lua": "caffeine.postprocess.setBloom",
+      "dryad": null,
+      "signature": "setBloom(entity, intensity, threshold)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Bloom intensity; the effect is enabled when above 0.001.",
+          "pt": "Intensidade do bloom; o efeito fica ativo acima de 0.001."
+        },
+        {
+          "name": "threshold",
+          "type": "number",
+          "en": "Brightness threshold. Optional.",
+          "pt": "Limiar de brilho. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Sets bloom intensity and optionally the threshold.",
+      "pt": "Define a intensidade do bloom e, opcionalmente, o limiar.",
+      "example": "caffeine.postprocess.setBloom(cam, 0.6, 1.0)"
+    },
+    {
+      "name": "setVignette",
+      "lua": "caffeine.postprocess.setVignette",
+      "dryad": null,
+      "signature": "setVignette(entity, intensity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when above 0.001.",
+          "pt": "Intensidade; ativo acima de 0.001."
+        }
+      ],
+      "returns": null,
+      "en": "Sets vignette intensity.",
+      "pt": "Define a intensidade da vinheta.",
+      "example": "caffeine.postprocess.setVignette(cam, 0.4)"
+    },
+    {
+      "name": "setChromaticAberration",
+      "lua": "caffeine.postprocess.setChromaticAberration",
+      "dryad": null,
+      "signature": "setChromaticAberration(entity, intensity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when above 0.001.",
+          "pt": "Intensidade; ativo acima de 0.001."
+        }
+      ],
+      "returns": null,
+      "en": "Sets chromatic aberration intensity.",
+      "pt": "Define a intensidade da aberração cromática.",
+      "example": "caffeine.postprocess.setChromaticAberration(cam, 0.2)"
+    },
+    {
+      "name": "setGrain",
+      "lua": "caffeine.postprocess.setGrain",
+      "dryad": null,
+      "signature": "setGrain(entity, intensity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when above 0.001.",
+          "pt": "Intensidade; ativo acima de 0.001."
+        }
+      ],
+      "returns": null,
+      "en": "Sets film grain intensity.",
+      "pt": "Define a intensidade do grão de película.",
+      "example": "caffeine.postprocess.setGrain(cam, 0.1)"
+    },
+    {
+      "name": "setLensDistortion",
+      "lua": "caffeine.postprocess.setLensDistortion",
+      "dryad": null,
+      "signature": "setLensDistortion(entity, intensity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when its absolute value is above 0.001.",
+          "pt": "Intensidade; ativo quando o valor absoluto é superior a 0.001."
+        }
+      ],
+      "returns": null,
+      "en": "Sets lens distortion intensity.",
+      "pt": "Define a intensidade da distorção de lente.",
+      "example": "caffeine.postprocess.setLensDistortion(cam, -0.1)"
+    },
+    {
+      "name": "setMotionBlur",
+      "lua": "caffeine.postprocess.setMotionBlur",
+      "dryad": null,
+      "signature": "setMotionBlur(entity, intensity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when above 0.001.",
+          "pt": "Intensidade; ativo acima de 0.001."
+        }
+      ],
+      "returns": null,
+      "en": "Sets motion blur intensity.",
+      "pt": "Define a intensidade do desfoque de movimento.",
+      "example": "caffeine.postprocess.setMotionBlur(cam, 0.5)"
+    },
+    {
+      "name": "setDepthOfField",
+      "lua": "caffeine.postprocess.setDepthOfField",
+      "dryad": null,
+      "signature": "setDepthOfField(entity, focusDistance, aperture)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "focusDistance",
+          "type": "number",
+          "en": "Focus distance.",
+          "pt": "Distância de foco."
+        },
+        {
+          "name": "aperture",
+          "type": "number",
+          "en": "Aperture.",
+          "pt": "Abertura."
+        }
+      ],
+      "returns": null,
+      "en": "Sets depth-of-field focus and aperture and enables the effect.",
+      "pt": "Define o foco e a abertura da profundidade de campo e ativa o efeito.",
+      "example": "caffeine.postprocess.setDepthOfField(cam, 10, 2.8)"
+    },
+    {
+      "name": "setFog",
+      "lua": "caffeine.postprocess.setFog",
+      "dryad": null,
+      "signature": "setFog(entity, density, r, g, b)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "density",
+          "type": "number",
+          "en": "Fog density; enabled when above 0.001.",
+          "pt": "Densidade do nevoeiro; ativo acima de 0.001."
+        },
+        {
+          "name": "r",
+          "type": "number",
+          "en": "Red; the colour is applied only if r, g and b are all given. Optional.",
+          "pt": "Vermelho; a cor só é aplicada se r, g e b forem todos indicados. Opcional."
+        },
+        {
+          "name": "g",
+          "type": "number",
+          "en": "Green. Optional.",
+          "pt": "Verde. Opcional."
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "en": "Blue. Optional.",
+          "pt": "Azul. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the deferred fog density and optionally its colour.",
+      "pt": "Define a densidade do nevoeiro diferido e, opcionalmente, a cor.",
+      "example": "caffeine.postprocess.setFog(cam, 0.02, 0.6, 0.7, 0.8)"
+    },
+    {
+      "name": "setAmbientOcclusion",
+      "lua": "caffeine.postprocess.setAmbientOcclusion",
+      "dryad": null,
+      "signature": "setAmbientOcclusion(entity, intensity, radius)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "intensity",
+          "type": "number",
+          "en": "Intensity; enabled when above 0.001.",
+          "pt": "Intensidade; ativo acima de 0.001."
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "en": "Sampling radius. Optional.",
+          "pt": "Raio de amostragem. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Sets ambient occlusion intensity and optionally the radius.",
+      "pt": "Define a intensidade da oclusão ambiente e, opcionalmente, o raio.",
+      "example": "caffeine.postprocess.setAmbientOcclusion(cam, 1.0, 0.5)"
+    },
+    {
+      "name": "setAntiAliasing",
+      "lua": "caffeine.postprocess.setAntiAliasing",
+      "dryad": null,
+      "signature": "setAntiAliasing(entity, mode)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "mode",
+          "type": "string",
+          "en": "\"fxaa\", \"off\" or \"none\"; any other value selects the non-FXAA mode.",
+          "pt": "\"fxaa\", \"off\" ou \"none\"; qualquer outro valor seleciona o modo que não é FXAA."
+        }
+      ],
+      "returns": null,
+      "en": "Selects the anti-aliasing mode; \"off\" and \"none\" disable it.",
+      "pt": "Seleciona o modo de anti-aliasing; \"off\" e \"none\" desativam-no.",
+      "example": "caffeine.postprocess.setAntiAliasing(cam, 'fxaa')"
+    },
+    {
+      "name": "setAutoExposure",
+      "lua": "caffeine.postprocess.setAutoExposure",
+      "dryad": null,
+      "signature": "setAutoExposure(entity, enabled, compensation)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns auto exposure on or off.",
+          "pt": "Liga ou desliga a exposição automática."
+        },
+        {
+          "name": "compensation",
+          "type": "number",
+          "en": "Exposure compensation. Optional.",
+          "pt": "Compensação de exposição. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Toggles auto exposure and optionally sets its compensation.",
+      "pt": "Liga ou desliga a exposição automática e, opcionalmente, define a compensação.",
+      "example": "caffeine.postprocess.setAutoExposure(cam, true, 0.5)"
+    },
+    {
+      "name": "setCustomScript",
+      "lua": "caffeine.postprocess.setCustomScript",
+      "dryad": null,
+      "signature": "setCustomScript(entity, path)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Path of the custom effect script.",
+          "pt": "Caminho do script de efeito personalizado."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the custom effect script of the entity.",
+      "pt": "Define o script de efeito personalizado da entidade.",
+      "example": "caffeine.postprocess.setCustomScript(cam, 'scripts/fx.lua')"
+    },
+    {
+      "name": "handle",
+      "lua": "caffeine.postprocess.handle",
+      "dryad": null,
+      "signature": "handle(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Table with `entity`, `get`, `set`, `enable`, `isEnabled`, `snapshot`, `apply` and `preset`, all bound to the entity.",
+        "pt": "Tabela com `entity`, `get`, `set`, `enable`, `isEnabled`, `snapshot`, `apply` e `preset`, todas ligadas à entidade."
+      },
+      "en": "Returns a per-entity handle, the same kind passed to `onPostProcess`, so calls need no entity id.",
+      "pt": "Devolve um handle por entidade, do mesmo tipo passado a `onPostProcess`, para que as chamadas não precisem do id.",
+      "example": "local h = caffeine.postprocess.handle(cam)\nh.set('bloom.intensity', 0.5)"
+    }
+  ]
+}

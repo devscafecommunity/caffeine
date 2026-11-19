@@ -229,4 +229,56 @@ TEST_CASE("Dryad natives read input, time and the world", "[dryad][runtime]") {
     std::remove(path.c_str());
 }
 
+TEST_CASE("Dryad properties override script globals", "[dryad][component]") {
+    const std::string path = "dryad_props.dyd";
+    {
+        std::ofstream out(path);
+        out << "let speed = 1;\n"
+            << "function onUpdate(entity, dt) {\n  caffeine_set_position(entity, speed, 0, 0);\n}\n";
+    }
+    ECS::World world;
+    DryadHost host;
+    host.setWorld(&world);
+    ECS::Entity entity = world.create("DryadProps");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(0, 0, 0);
+    REQUIRE(host.load(path));
+    ScriptEngine::ExposedVar var;
+    var.name = "speed";
+    var.kind = ScriptEngine::ExposedVar::Kind::Number;
+    var.number = 9.0;
+    REQUIRE(host.setProperty(path, var));
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f));
+    REQUIRE(entity.get<ECS::Position3D>()->position.x == 9.0f);
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Dryad natives cover names, hierarchy and random", "[dryad][world]") {
+    const std::string path = "dryad_world_api.dyd";
+    {
+        std::ofstream out(path);
+        out << "function onUpdate(entity, dt) {\n"
+            << "  let a = caffeine_world_create(\"A\");\n"
+            << "  let b = caffeine_world_create(\"B\");\n"
+            << "  caffeine_entity_set_name(a, \"Boss\");\n"
+            << "  caffeine_entity_set_name(b, \"Minion\");\n"
+            << "  let score = 0;\n"
+            << "  if (caffeine_hierarchy_set_parent(b, a)) { score = score + 1; }\n"
+            << "  if (!caffeine_hierarchy_set_parent(a, b)) { score = score + 10; }\n"
+            << "  if (caffeine_hierarchy_child_count(a) == 1 && caffeine_entity_find(\"Minion\") == b) { score = score + 100; }\n"
+            << "  caffeine_random_set_seed(7);\n  let r1 = caffeine_random_value();\n"
+            << "  caffeine_random_set_seed(7);\n  if (r1 == caffeine_random_value()) { score = score + 1000; }\n"
+            << "  caffeine_set_position(entity, score, 0, 0);\n}\n";
+    }
+    ECS::World world;
+    DryadHost host;
+    host.setWorld(&world);
+    ECS::Entity entity = world.create("DryadWorld");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(0, 0, 0);
+    REQUIRE(host.load(path));
+    std::string err;
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f, &err));
+    REQUIRE(entity.get<ECS::Position3D>()->position.x == 1111.0f);
+    std::remove(path.c_str());
+}
+
 #endif

@@ -1,0 +1,154 @@
+{
+  "namespace": "hierarchy",
+  "group": "Core",
+  "lua": "caffeine.hierarchy",
+  "dryad_prefix": "caffeine_hierarchy_",
+  "title": {
+    "en": "Hierarchy",
+    "pt": "Hierarquia"
+  },
+  "summary": {
+    "en": "Parent and child links between entities. A child's transform is composed with its parent's.",
+    "pt": "Ligações pai e filho entre entidades. O transform do filho compõe-se com o do pai."
+  },
+  "functions": [
+    {
+      "name": "parent",
+      "lua": "caffeine.hierarchy.parent",
+      "dryad": "caffeine_hierarchy_parent",
+      "signature": "parent(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "The parent id, or 0 when it has none.",
+        "pt": "O id do pai, ou 0 se não tiver."
+      },
+      "en": "Returns the parent of an entity.",
+      "pt": "Devolve o pai de uma entidade.",
+      "example": "local p = caffeine.hierarchy.parent(eid)"
+    },
+    {
+      "name": "setParent",
+      "lua": "caffeine.hierarchy.setParent",
+      "dryad": "caffeine_hierarchy_set_parent",
+      "signature": "setParent(entity, parent) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The child.",
+          "pt": "O filho."
+        },
+        {
+          "name": "parent",
+          "type": "number",
+          "en": "The new parent; 0 detaches.",
+          "pt": "O novo pai; 0 desliga."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when either entity is dead, the parent is the entity itself, or the link would create a cycle.",
+        "pt": "false se uma das entidades estiver morta, o pai for a própria entidade ou a ligação criar um ciclo."
+      },
+      "en": "Attaches an entity under another.",
+      "pt": "Liga uma entidade por baixo de outra.",
+      "example": "caffeine.hierarchy.setParent(wheel, car)"
+    },
+    {
+      "name": "detach",
+      "lua": "caffeine.hierarchy.detach",
+      "dryad": "caffeine_hierarchy_detach",
+      "signature": "detach(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the entity is dead.",
+        "pt": "false se a entidade estiver morta."
+      },
+      "en": "Removes the parent link.",
+      "pt": "Remove a ligação ao pai.",
+      "example": "caffeine.hierarchy.detach(wheel)"
+    },
+    {
+      "name": "children",
+      "lua": "caffeine.hierarchy.children",
+      "dryad": "caffeine_hierarchy_children",
+      "signature": "children(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Array of direct child ids, ascending.",
+        "pt": "Array de ids dos filhos diretos, por ordem crescente."
+      },
+      "en": "Lists the direct children of an entity.",
+      "pt": "Lista os filhos diretos de uma entidade.",
+      "example": "for _, c in ipairs(caffeine.hierarchy.children(car)) do end"
+    },
+    {
+      "name": "childCount",
+      "lua": "caffeine.hierarchy.childCount",
+      "dryad": "caffeine_hierarchy_child_count",
+      "signature": "childCount(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Number of direct children.",
+        "pt": "Número de filhos diretos."
+      },
+      "en": "Counts the direct children.",
+      "pt": "Conta os filhos diretos.",
+      "example": "local n = caffeine.hierarchy.childCount(car)"
+    },
+    {
+      "name": "root",
+      "lua": "caffeine.hierarchy.root",
+      "dryad": "caffeine_hierarchy_root",
+      "signature": "root(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "The topmost ancestor (the entity itself when it has no parent).",
+        "pt": "O antepassado de topo (a própria entidade se não tiver pai)."
+      },
+      "en": "Walks up to the top of the hierarchy.",
+      "pt": "Sobe até ao topo da hierarquia.",
+      "example": "local top = caffeine.hierarchy.root(wheel)"
+    }
+  ]
+}

@@ -64,6 +64,7 @@ if(CAF_PACK_AVAILABLE)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_CAF_PACK=1)
 endif()
 
+target_compile_definitions(CaffeineTest PRIVATE CF_SCRIPT_API_DIR="${CMAKE_SOURCE_DIR}/src/caffeine/script/api")
 target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2 ${CMAKE_SOURCE_DIR}/caf-pack/include)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)

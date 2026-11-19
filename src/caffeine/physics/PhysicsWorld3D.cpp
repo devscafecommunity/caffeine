@@ -234,6 +234,59 @@ bool PhysicsWorld3D::stateOf(u32 entityId, BodyState& out) const {
 
 bool PhysicsWorld3D::isAvailable() const { return true; }
 
+PhysicsWorld3D::RayHit PhysicsWorld3D::raycast(const Vec3& origin, const Vec3& direction,
+                                               f32 maxDistance) const {
+    RayHit out;
+    const f32 len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+    if (len < 1e-6f || maxDistance <= 0.0f) return out;
+    const btVector3 from(origin.x, origin.y, origin.z);
+    const btVector3 to = from + btVector3(direction.x, direction.y, direction.z) * (maxDistance / len);
+    btCollisionWorld::ClosestRayResultCallback cb(from, to);
+    m_impl->world->rayTest(from, to, cb);
+    if (!cb.hasHit()) return out;
+    const auto* body = btRigidBody::upcast(cb.m_collisionObject);
+    if (!body) return out;
+    if (body->getCollisionFlags() & btCollisionObject::CF_NO_CONTACT_RESPONSE) return out;  // trigger
+    out.hit = true;
+    out.entityId = static_cast<u32>(body->getUserIndex());
+    out.point = Vec3(cb.m_hitPointWorld.x(), cb.m_hitPointWorld.y(), cb.m_hitPointWorld.z());
+    out.normal = Vec3(cb.m_hitNormalWorld.x(), cb.m_hitNormalWorld.y(), cb.m_hitNormalWorld.z());
+    out.distance = cb.m_closestHitFraction * maxDistance;
+    return out;
+}
+
+bool PhysicsWorld3D::addForce(u32 entityId, const Vec3& force) {
+    auto it = m_impl->bodies.find(entityId);
+    if (it == m_impl->bodies.end() || it->second.type != BodyType3D::Dynamic) return false;
+    it->second.body->activate(true);
+    it->second.body->applyCentralForce(btVector3(force.x, force.y, force.z));
+    return true;
+}
+
+bool PhysicsWorld3D::addImpulse(u32 entityId, const Vec3& impulse) {
+    auto it = m_impl->bodies.find(entityId);
+    if (it == m_impl->bodies.end() || it->second.type != BodyType3D::Dynamic) return false;
+    it->second.body->activate(true);
+    it->second.body->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
+    return true;
+}
+
+bool PhysicsWorld3D::setLinearVelocity(u32 entityId, const Vec3& velocity) {
+    auto it = m_impl->bodies.find(entityId);
+    if (it == m_impl->bodies.end() || it->second.type != BodyType3D::Dynamic) return false;
+    it->second.body->activate(true);
+    it->second.body->setLinearVelocity(btVector3(velocity.x, velocity.y, velocity.z));
+    return true;
+}
+
+bool PhysicsWorld3D::linearVelocity(u32 entityId, Vec3& out) const {
+    auto it = m_impl->bodies.find(entityId);
+    if (it == m_impl->bodies.end() || it->second.type != BodyType3D::Dynamic) return false;
+    const btVector3 v = it->second.body->getLinearVelocity();
+    out = Vec3(v.x(), v.y(), v.z());
+    return true;
+}
+
 #else
 
 struct PhysicsWorld3D::Impl {};
@@ -248,6 +301,11 @@ void PhysicsWorld3D::removeMissing(const std::vector<u32>&) {}
 void PhysicsWorld3D::step(f32) {}
 bool PhysicsWorld3D::stateOf(u32, BodyState&) const { return false; }
 bool PhysicsWorld3D::isAvailable() const { return false; }
+PhysicsWorld3D::RayHit PhysicsWorld3D::raycast(const Vec3&, const Vec3&, f32) const { return {}; }
+bool PhysicsWorld3D::addForce(u32, const Vec3&) { return false; }
+bool PhysicsWorld3D::addImpulse(u32, const Vec3&) { return false; }
+bool PhysicsWorld3D::setLinearVelocity(u32, const Vec3&) { return false; }
+bool PhysicsWorld3D::linearVelocity(u32, Vec3&) const { return false; }
 
 #endif
 

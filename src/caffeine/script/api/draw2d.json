@@ -1,0 +1,195 @@
+{
+  "namespace": "draw2d",
+  "group": "UI",
+  "lua": "caffeine.draw2d",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Draw 2D",
+    "pt": "Desenho 2D"
+  },
+  "summary": {
+    "en": "Immediate-mode 2D overlay shapes (lines, circles, rectangles, polylines) in world or screen space.",
+    "pt": "Formas 2D de sobreposição em modo imediato (linhas, círculos, retângulos, polilinhas) em espaço de mundo ou de ecrã."
+  },
+  "functions": [
+    {
+      "name": "beginFrame",
+      "lua": "caffeine.draw2d.beginFrame",
+      "dryad": null,
+      "signature": "beginFrame()",
+      "params": [],
+      "returns": null,
+      "en": "Starts a new overlay frame, clearing previous draw2d shapes. Call it once at the start of drawing.",
+      "pt": "Inicia um novo frame de sobreposição, limpando as formas draw2d anteriores. Chame-o uma vez no início do desenho.",
+      "example": "caffeine.draw2d.beginFrame()"
+    },
+    {
+      "name": "line",
+      "lua": "caffeine.draw2d.line",
+      "dryad": null,
+      "signature": "line(a, b, color[, thickness[, space]])",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Start {x, y}.",
+          "pt": "Início {x, y}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "End {x, y}.",
+          "pt": "Fim {x, y}."
+        },
+        {
+          "name": "color",
+          "type": "table",
+          "en": "{r, g, b, a} in 0..1 (each defaults to 1).",
+          "pt": "{r, g, b, a} em 0..1 (cada um com 1 por omissão)."
+        },
+        {
+          "name": "thickness",
+          "type": "number",
+          "en": "Line thickness (default 1).",
+          "pt": "Espessura da linha (por omissão 1)."
+        },
+        {
+          "name": "space",
+          "type": "string",
+          "en": "\"world\" (default) or \"screen\".",
+          "pt": "\"world\" (por omissão) ou \"screen\"."
+        }
+      ],
+      "returns": null,
+      "en": "Draws a line in the 2D overlay.",
+      "pt": "Desenha uma linha na sobreposição 2D.",
+      "example": "caffeine.draw2d.line({x=0,y=0},{x=5,y=5},{r=1,g=0,b=0,a=1}, 2)"
+    },
+    {
+      "name": "circle",
+      "lua": "caffeine.draw2d.circle",
+      "dryad": null,
+      "signature": "circle(center, radius, color[, thickness[, space]])",
+      "params": [
+        {
+          "name": "center",
+          "type": "table",
+          "en": "Center {x, y}.",
+          "pt": "Centro {x, y}."
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "en": "Radius.",
+          "pt": "Raio."
+        },
+        {
+          "name": "color",
+          "type": "table",
+          "en": "{r, g, b, a} in 0..1 (each defaults to 1).",
+          "pt": "{r, g, b, a} em 0..1 (cada um com 1 por omissão)."
+        },
+        {
+          "name": "thickness",
+          "type": "number",
+          "en": "Line thickness (default 1).",
+          "pt": "Espessura da linha (por omissão 1)."
+        },
+        {
+          "name": "space",
+          "type": "string",
+          "en": "\"world\" (default) or \"screen\".",
+          "pt": "\"world\" (por omissão) ou \"screen\"."
+        }
+      ],
+      "returns": null,
+      "en": "Draws a circle outline (32 segments).",
+      "pt": "Desenha o contorno de um círculo (32 segmentos).",
+      "example": "caffeine.draw2d.circle({x=0,y=0}, 3, {r=0,g=1,b=0,a=1})"
+    },
+    {
+      "name": "rect",
+      "lua": "caffeine.draw2d.rect",
+      "dryad": null,
+      "signature": "rect(min, max, color[, thickness[, space]])",
+      "params": [
+        {
+          "name": "min",
+          "type": "table",
+          "en": "Corner {x, y}.",
+          "pt": "Canto {x, y}."
+        },
+        {
+          "name": "max",
+          "type": "table",
+          "en": "Opposite corner {x, y}.",
+          "pt": "Canto oposto {x, y}."
+        },
+        {
+          "name": "color",
+          "type": "table",
+          "en": "{r, g, b, a} in 0..1 (each defaults to 1).",
+          "pt": "{r, g, b, a} em 0..1 (cada um com 1 por omissão)."
+        },
+        {
+          "name": "thickness",
+          "type": "number",
+          "en": "Line thickness (default 1).",
+          "pt": "Espessura da linha (por omissão 1)."
+        },
+        {
+          "name": "space",
+          "type": "string",
+          "en": "\"world\" (default) or \"screen\".",
+          "pt": "\"world\" (por omissão) ou \"screen\"."
+        }
+      ],
+      "returns": null,
+      "en": "Draws a rectangle outline.",
+      "pt": "Desenha o contorno de um retângulo.",
+      "example": "caffeine.draw2d.rect({x=-1,y=-1},{x=1,y=1},{r=1,g=1,b=0,a=1})"
+    },
+    {
+      "name": "poly",
+      "lua": "caffeine.draw2d.poly",
+      "dryad": null,
+      "signature": "poly(points, color[, closed[, thickness[, space]]])",
+      "params": [
+        {
+          "name": "points",
+          "type": "table",
+          "en": "Array of {x, y}; at least 2 points or nothing is drawn.",
+          "pt": "Lista de {x, y}; pelo menos 2 pontos, senão nada é desenhado."
+        },
+        {
+          "name": "color",
+          "type": "table",
+          "en": "{r, g, b, a} in 0..1 (each defaults to 1).",
+          "pt": "{r, g, b, a} em 0..1 (cada um com 1 por omissão)."
+        },
+        {
+          "name": "closed",
+          "type": "boolean",
+          "en": "Close the shape (default false).",
+          "pt": "Fechar a forma (por omissão false)."
+        },
+        {
+          "name": "thickness",
+          "type": "number",
+          "en": "Line thickness (default 1).",
+          "pt": "Espessura da linha (por omissão 1)."
+        },
+        {
+          "name": "space",
+          "type": "string",
+          "en": "\"world\" (default) or \"screen\".",
+          "pt": "\"world\" (por omissão) ou \"screen\"."
+        }
+      ],
+      "returns": null,
+      "en": "Draws a polyline or polygon outline.",
+      "pt": "Desenha uma polilinha ou o contorno de um polígono.",
+      "example": "caffeine.draw2d.poly({{x=0,y=0},{x=2,y=0},{x=1,y=2}}, {r=1,g=1,b=1,a=1}, true)"
+    }
+  ]
+}

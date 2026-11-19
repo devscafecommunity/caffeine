@@ -7,9 +7,12 @@
 #include "ecs/World.hpp"
 
 #include "dryad/common/utils.h"
+#include "script/DryadNatives.hpp"
+#include "physics/PhysicsWorld3D.hpp"
 #include "dryad/compiler/interpreter.h"
 #include "dryad/runtime/value.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -21,6 +24,8 @@ namespace Caffeine::Script {
 void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr);
 void bindRuntimeNatives(dryad::Interpreter& interp, ECS::World** worldPtr,
                         Input::InputManager** inputPtr);
+void bindWorldApiNatives(dryad::Interpreter& interp, ECS::World** worldPtr);
+void bindPhysics3DNatives(dryad::Interpreter& interp, Physics3D::PhysicsWorld3D** physicsPtr);
 
 namespace {
 
@@ -120,6 +125,7 @@ struct DryadHost::Impl {
 
     ECS::World* world = nullptr;
     Input::InputManager* input = nullptr;
+    Physics3D::PhysicsWorld3D* physics3d = nullptr;
     std::string searchRoot;
     std::unordered_map<std::string, Session> sessions;
 
@@ -133,7 +139,7 @@ struct DryadHost::Impl {
             return dryad::Value(static_cast<double>(v));
         };
 
-        interp.define_native("caffeine_set_position",
+        defineNative(interp, "caffeine_set_position",
             [worldPtr](const std::vector<dryad::Value>& args) -> dryad::Value {
                 if (args.size() < 4) return dryad::Value();
                 const auto id = static_cast<u32>(asNumber(args[0]));
@@ -143,7 +149,7 @@ struct DryadHost::Impl {
                                    static_cast<f32>(asNumber(args[3]))));
                 return dryad::Value();
             });
-        interp.define_native("caffeine_translate",
+        defineNative(interp, "caffeine_translate",
             [worldPtr](const std::vector<dryad::Value>& args) -> dryad::Value {
                 if (args.size() < 4) return dryad::Value();
                 const auto id = static_cast<u32>(asNumber(args[0]));
@@ -154,13 +160,13 @@ struct DryadHost::Impl {
                 writePosition(*worldPtr, id, position);
                 return dryad::Value();
             });
-        interp.define_native("caffeine_get_position_x",
+        defineNative(interp, "caffeine_get_position_x",
             [readAxis](const std::vector<dryad::Value>& args) -> dryad::Value { return readAxis(args, 0); });
-        interp.define_native("caffeine_get_position_y",
+        defineNative(interp, "caffeine_get_position_y",
             [readAxis](const std::vector<dryad::Value>& args) -> dryad::Value { return readAxis(args, 1); });
-        interp.define_native("caffeine_get_position_z",
+        defineNative(interp, "caffeine_get_position_z",
             [readAxis](const std::vector<dryad::Value>& args) -> dryad::Value { return readAxis(args, 2); });
-        interp.define_native("caffeine_set_scale",
+        defineNative(interp, "caffeine_set_scale",
             [worldPtr](const std::vector<dryad::Value>& args) -> dryad::Value {
                 if (args.size() < 4) return dryad::Value();
                 const auto id = static_cast<u32>(asNumber(args[0]));
@@ -178,19 +184,19 @@ struct DryadHost::Impl {
             const f32 v = axis == 0 ? scale.x : (axis == 1 ? scale.y : scale.z);
             return dryad::Value(static_cast<double>(v));
         };
-        interp.define_native("caffeine_get_scale_x",
+        defineNative(interp, "caffeine_get_scale_x",
             [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
                 return readScaleAxis(args, 0);
             });
-        interp.define_native("caffeine_get_scale_y",
+        defineNative(interp, "caffeine_get_scale_y",
             [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
                 return readScaleAxis(args, 1);
             });
-        interp.define_native("caffeine_get_scale_z",
+        defineNative(interp, "caffeine_get_scale_z",
             [readScaleAxis](const std::vector<dryad::Value>& args) -> dryad::Value {
                 return readScaleAxis(args, 2);
             });
-        interp.define_native("caffeine_log",
+        defineNative(interp, "caffeine_log",
             [](const std::vector<dryad::Value>& args) -> dryad::Value {
                 if (!args.empty()) {
                     CF_INFO("Dryad", "%s", args[0].to_string().c_str());
@@ -199,6 +205,8 @@ struct DryadHost::Impl {
             });
         bindComponentNatives(interp, worldPtr);
         bindRuntimeNatives(interp, worldPtr, &input);
+        bindWorldApiNatives(interp, worldPtr);
+        bindPhysics3DNatives(interp, &physics3d);
         interp.set_network_allowed(false);
         if (const char* stdlib = std::getenv("DRYAD_STDLIB_DIR")) {
             interp.set_stdlib_root(stdlib);
@@ -218,6 +226,8 @@ DryadHost::~DryadHost() { delete m_impl; }
 void DryadHost::setWorld(ECS::World* world) { m_impl->world = world; }
 
 void DryadHost::setInput(Input::InputManager* input) { m_impl->input = input; }
+
+void DryadHost::setPhysics3D(Physics3D::PhysicsWorld3D* physics) { m_impl->physics3d = physics; }
 
 void DryadHost::setSearchRoot(const std::string& root) { m_impl->searchRoot = root; }
 
@@ -271,6 +281,35 @@ bool DryadHost::load(const std::string& path, std::string* outError) {
         if (outError) *outError = ex.what();
         return false;
     }
+}
+
+std::vector<std::string> DryadHost::nativeNames() {
+    std::vector<std::string> names;
+    dryadNativeRecorder() = &names;
+    {
+        DryadHost host;
+        dryad::Interpreter interp;
+        host.m_impl->bindHost(interp);
+    }
+    dryadNativeRecorder() = nullptr;
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
+}
+
+bool DryadHost::setProperty(const std::string& path, const ScriptEngine::ExposedVar& var) {
+    auto it = m_impl->sessions.find(resolvePath(path));
+    if (it == m_impl->sessions.end()) return false;
+    dryad::Value value;
+    switch (var.kind) {
+        case ScriptEngine::ExposedVar::Kind::Boolean: value = dryad::Value(var.boolean); break;
+        case ScriptEngine::ExposedVar::Kind::Number: value = dryad::Value(var.number); break;
+        case ScriptEngine::ExposedVar::Kind::String: value = dryad::Value(var.string); break;
+    }
+    auto env = it->second.interp->global_env();
+    if (env->has(var.name)) env->set(var.name, value);
+    else env->define(var.name, value);
+    return true;
 }
 
 bool DryadHost::reloadIfChanged(const std::string& path, std::string* outError) {

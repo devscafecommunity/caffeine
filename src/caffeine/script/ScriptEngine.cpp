@@ -1,5 +1,6 @@
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptInputNames.hpp"
+#include "physics/PhysicsWorld3D.hpp"
 #include "script/NativeModuleHost.hpp"
 #include "events/Events.hpp"
 #include "script/ScriptTypes.hpp"
@@ -19,7 +20,9 @@
 #include "containers/Vector.hpp"
 
 #include <sol/sol.hpp>
+#include <algorithm>
 #include <filesystem>
+#include <functional>
 
 namespace Caffeine::Script {
 
@@ -30,6 +33,8 @@ void registerAnimationScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerEffectScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerNavigationScriptBindings(sol::state& lua, ECS::World** worldPtr);
 void registerComponentScriptBindings(sol::state& lua, ECS::World** worldPtr);
+void registerWorldApiBindings(sol::state& lua, ECS::World** worldPtr);
+void registerPhysics3DBindings(sol::state& lua, Physics3D::PhysicsWorld3D** physicsPtr);
 sol::table makePostProcessScriptHandle(sol::state_view lua, ECS::World** worldPtr, u32 entityId);
 
 // ============================================================================
@@ -43,6 +48,7 @@ struct ScriptEngine::Impl {
     Input::InputManager* m_input = nullptr;
     Events::EventBus* m_events = nullptr;
     UI::UISystem* m_ui = nullptr;
+    Physics3D::PhysicsWorld3D* m_physics3d = nullptr;
 
     HashMap<std::string, sol::environment> m_envs;
     std::string m_searchRoot;
@@ -658,6 +664,7 @@ bool ScriptEngine::init(const InitParams& params) {
     m_impl->m_input = params.input;
     m_impl->m_events = params.events;
     m_impl->m_ui = params.ui;
+    m_impl->m_physics3d = params.physics3d;
 
     auto& lua = m_impl->m_lua;
 
@@ -747,6 +754,8 @@ bool ScriptEngine::init(const InitParams& params) {
     registerEffectScriptBindings(lua, &m_impl->m_world);
     registerNavigationScriptBindings(lua, &m_impl->m_world);
     registerComponentScriptBindings(lua, &m_impl->m_world);
+    registerWorldApiBindings(lua, &m_impl->m_world);
+    registerPhysics3DBindings(lua, &m_impl->m_physics3d);
 
     registerRuntimeScriptBindings(
         lua, &m_impl->m_world, &m_impl->m_input, &m_impl->m_ui, &m_impl->m_assetText,
@@ -831,6 +840,10 @@ void ScriptEngine::setWorld(ECS::World* world) {
 
 Input::InputManager* ScriptEngine::input() const { return m_impl->m_input; }
 
+void ScriptEngine::setPhysics3D(Physics3D::PhysicsWorld3D* physics) { m_impl->m_physics3d = physics; }
+
+Physics3D::PhysicsWorld3D* ScriptEngine::physics3d() const { return m_impl->m_physics3d; }
+
 void ScriptEngine::setInput(Input::InputManager* input) {
     m_impl->m_input = input;
 }
@@ -892,6 +905,24 @@ bool ScriptEngine::setExposedVar(const std::string& path, const ExposedVar& var)
             break;
     }
     return true;
+}
+
+std::vector<std::string> ScriptEngine::apiNames() {
+    std::vector<std::string> out;
+    std::function<void(const sol::table&, const std::string&, int)> walk =
+        [&](const sol::table& t, const std::string& prefix, int depth) {
+            if (depth > 4) return;
+            t.for_each([&](const sol::object& k, const sol::object& v) {
+                if (!k.is<std::string>()) return;
+                const std::string name = prefix + "." + k.as<std::string>();
+                if (v.is<sol::function>()) out.push_back(name);
+                else if (v.is<sol::table>()) walk(v.as<sol::table>(), name, depth + 1);
+            });
+        };
+    sol::table root = m_impl->m_lua["caffeine"];
+    walk(root, "caffeine", 0);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 bool ScriptEngine::loadScript(const std::string& path, std::string* outError) {

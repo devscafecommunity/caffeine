@@ -6,6 +6,7 @@
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
 #include "physics/PhysicsSystem2D.hpp"
+#include "physics/PhysicsSystem3D.hpp"
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptSystem.hpp"
 #include "scene/NaturalFluidSystem.hpp"
@@ -461,6 +462,7 @@ int main(int argc, char** argv) {
     Caffeine::Input::InputManager input;
     Caffeine::Events::EventBus eventBus;
     Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
+    Caffeine::Physics3D::PhysicsSystem3D physics3d;
     Caffeine::Animation::AnimationSystem animation;
     Caffeine::UI::UISystem uiSystem(&eventBus);
     Caffeine::Script::ScriptEngine scriptEngine;
@@ -469,6 +471,7 @@ int main(int argc, char** argv) {
     scriptParams.input = &input;
     scriptParams.events = &eventBus;
     scriptParams.ui = &uiSystem;
+    scriptParams.physics3d = &physics3d.world();
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
     Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
@@ -549,6 +552,7 @@ int main(int argc, char** argv) {
             Caffeine::Scene::tickNaturalFluids(world, dt, false);
             Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
+            physics3d.onUpdate(world, dt);
             if (scriptsReady) {
                 scriptEngine.setWorld(&world);
                 scriptEngine.setInput(&input);

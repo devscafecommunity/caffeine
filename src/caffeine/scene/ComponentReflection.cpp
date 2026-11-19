@@ -424,7 +424,11 @@ const std::vector<ComponentDesc>& componentRegistry() {
              stringField<ECS::MeshFilterComponent>("Material", &ECS::MeshFilterComponent::customMaterialPath),
              f32Field<ECS::MeshFilterComponent>("Shininess", &ECS::MeshFilterComponent::shininess, 0.0f, 1024.0f, 1.0f)}),
         component<Caffeine::Script::ScriptComponent>(12, "Script",
-            {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath)}),
+            {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath),
+             boolField<Caffeine::Script::ScriptComponent>("Enabled", &Caffeine::Script::ScriptComponent::enabled),
+             i32Field<Caffeine::Script::ScriptComponent>("Order", &Caffeine::Script::ScriptComponent::executionOrder, -1000.0f, 1000.0f),
+             stringField<Caffeine::Script::ScriptComponent>("Properties", &Caffeine::Script::ScriptComponent::properties),
+             boolField<Caffeine::Script::ScriptComponent>("Isolated", &Caffeine::Script::ScriptComponent::isolated)}),
 #include "scene/ComponentReflectionGenerated.entries.inc"
     };
     return registry;

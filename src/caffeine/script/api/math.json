@@ -1,0 +1,678 @@
+{
+  "namespace": "math",
+  "group": "Core",
+  "lua": "caffeine.math",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Math",
+    "pt": "Matemática"
+  },
+  "summary": {
+    "en": "Vector tables ({x, y[, z]}), scalar helpers and angle conversion. Also defines the constants caffeine.math.pi and caffeine.math.epsilon (1e-5).",
+    "pt": "Tabelas de vetor ({x, y[, z]}), auxiliares escalares e conversão de ângulos. Define também as constantes caffeine.math.pi e caffeine.math.epsilon (1e-5)."
+  },
+  "functions": [
+    {
+      "name": "vec2",
+      "lua": "caffeine.math.vec2",
+      "dryad": null,
+      "signature": "vec2(x, y) -> table",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X.",
+          "pt": "X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y.",
+          "pt": "Y."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y}",
+        "pt": "{x, y}"
+      },
+      "en": "Creates a 2D vector table.",
+      "pt": "Cria uma tabela de vetor 2D.",
+      "example": "local v = caffeine.math.vec2(1, 2)"
+    },
+    {
+      "name": "vec3",
+      "lua": "caffeine.math.vec3",
+      "dryad": null,
+      "signature": "vec3(x, y, z) -> table",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X.",
+          "pt": "X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y.",
+          "pt": "Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z.",
+          "pt": "Z."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y, z}",
+        "pt": "{x, y, z}"
+      },
+      "en": "Creates a 3D vector table.",
+      "pt": "Cria uma tabela de vetor 3D.",
+      "example": "local v = caffeine.math.vec3(1, 2, 3)"
+    },
+    {
+      "name": "add",
+      "lua": "caffeine.math.add",
+      "dryad": null,
+      "signature": "add(a, b) -> table",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Vector table; has z only when an operand has z.",
+        "pt": "Tabela de vetor; só tem z se um operando tiver z."
+      },
+      "en": "Component-wise sum of two vectors.",
+      "pt": "Soma componente a componente de dois vetores.",
+      "example": "local p = caffeine.math.add(a, b)"
+    },
+    {
+      "name": "sub",
+      "lua": "caffeine.math.sub",
+      "dryad": null,
+      "signature": "sub(a, b) -> table",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Vector table; has z only when an operand has z.",
+        "pt": "Tabela de vetor; só tem z se um operando tiver z."
+      },
+      "en": "Component-wise difference a - b.",
+      "pt": "Diferença componente a componente a - b.",
+      "example": "local d = caffeine.math.sub(a, b)"
+    },
+    {
+      "name": "mul",
+      "lua": "caffeine.math.mul",
+      "dryad": null,
+      "signature": "mul(a, b) -> table",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Vector table; has z only when an operand has z.",
+        "pt": "Tabela de vetor; só tem z se um operando tiver z."
+      },
+      "en": "Component-wise product of two vectors (not a dot product).",
+      "pt": "Produto componente a componente de dois vetores (não é o produto escalar).",
+      "example": "local m = caffeine.math.mul(a, b)"
+    },
+    {
+      "name": "scale",
+      "lua": "caffeine.math.scale",
+      "dryad": null,
+      "signature": "scale(v, s) -> table",
+      "params": [
+        {
+          "name": "v",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "s",
+          "type": "number",
+          "en": "Scalar factor.",
+          "pt": "Fator escalar."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Scaled vector.",
+        "pt": "Vetor escalado."
+      },
+      "en": "Multiplies a vector by a scalar.",
+      "pt": "Multiplica um vetor por um escalar.",
+      "example": "local v2 = caffeine.math.scale(v, 2)"
+    },
+    {
+      "name": "dot",
+      "lua": "caffeine.math.dot",
+      "dryad": null,
+      "signature": "dot(a, b) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Dot product.",
+        "pt": "Produto escalar."
+      },
+      "en": "Dot product of two vectors; a missing z counts as 0.",
+      "pt": "Produto escalar de dois vetores; um z em falta conta como 0.",
+      "example": "local d = caffeine.math.dot(a, b)"
+    },
+    {
+      "name": "cross",
+      "lua": "caffeine.math.cross",
+      "dryad": null,
+      "signature": "cross(a, b) -> table",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y, z} vector.",
+        "pt": "Vetor {x, y, z}."
+      },
+      "en": "Cross product; the result is always 3D.",
+      "pt": "Produto vetorial; o resultado é sempre 3D.",
+      "example": "local n = caffeine.math.cross(a, b)"
+    },
+    {
+      "name": "length",
+      "lua": "caffeine.math.length",
+      "dryad": null,
+      "signature": "length(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Vector length.",
+        "pt": "Comprimento do vetor."
+      },
+      "en": "Length of a vector.",
+      "pt": "Comprimento de um vetor.",
+      "example": "local l = caffeine.math.length(v)"
+    },
+    {
+      "name": "lengthSquared",
+      "lua": "caffeine.math.lengthSquared",
+      "dryad": null,
+      "signature": "lengthSquared(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Squared length.",
+        "pt": "Comprimento ao quadrado."
+      },
+      "en": "Squared length of a vector, without the square root.",
+      "pt": "Comprimento ao quadrado de um vetor, sem a raiz quadrada.",
+      "example": "local l2 = caffeine.math.lengthSquared(v)"
+    },
+    {
+      "name": "distance",
+      "lua": "caffeine.math.distance",
+      "dryad": null,
+      "signature": "distance(a, b) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Distance between the points.",
+        "pt": "Distância entre os pontos."
+      },
+      "en": "Distance between two points.",
+      "pt": "Distância entre dois pontos.",
+      "example": "local d = caffeine.math.distance(a, b)"
+    },
+    {
+      "name": "normalize",
+      "lua": "caffeine.math.normalize",
+      "dryad": null,
+      "signature": "normalize(v) -> table",
+      "params": [
+        {
+          "name": "v",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Unit vector, or zeros when the length is at most 0.0001.",
+        "pt": "Vetor unitário, ou zeros se o comprimento for no máximo 0.0001."
+      },
+      "en": "Returns the vector scaled to length 1.",
+      "pt": "Devolve o vetor escalado para comprimento 1.",
+      "example": "local dir = caffeine.math.normalize(caffeine.math.sub(b, a))"
+    },
+    {
+      "name": "lerpVec",
+      "lua": "caffeine.math.lerpVec",
+      "dryad": null,
+      "signature": "lerpVec(a, b, t) -> table",
+      "params": [
+        {
+          "name": "a",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "b",
+          "type": "table",
+          "en": "Vector table {x, y[, z]}.",
+          "pt": "Tabela de vetor {x, y[, z]}."
+        },
+        {
+          "name": "t",
+          "type": "number",
+          "en": "Blend factor; not clamped.",
+          "pt": "Fator de mistura; não é limitado."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Vector table; has z only when an operand has z.",
+        "pt": "Tabela de vetor; só tem z se um operando tiver z."
+      },
+      "en": "Linear interpolation between two vectors.",
+      "pt": "Interpolação linear entre dois vetores.",
+      "example": "local mid = caffeine.math.lerpVec(a, b, 0.5)"
+    },
+    {
+      "name": "clamp",
+      "lua": "caffeine.math.clamp",
+      "dryad": null,
+      "signature": "clamp(v, lo, hi) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        },
+        {
+          "name": "lo",
+          "type": "number",
+          "en": "Lower bound.",
+          "pt": "Limite inferior."
+        },
+        {
+          "name": "hi",
+          "type": "number",
+          "en": "Upper bound.",
+          "pt": "Limite superior."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Clamped value.",
+        "pt": "Valor limitado."
+      },
+      "en": "Limits a value to a range; swapped bounds are accepted.",
+      "pt": "Limita um valor a um intervalo; limites trocados são aceites.",
+      "example": "local hp = caffeine.math.clamp(hp, 0, 100)"
+    },
+    {
+      "name": "clamp01",
+      "lua": "caffeine.math.clamp01",
+      "dryad": null,
+      "signature": "clamp01(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Value limited to 0..1.",
+        "pt": "Valor limitado a 0..1."
+      },
+      "en": "Limits a value to 0..1.",
+      "pt": "Limita um valor a 0..1.",
+      "example": "local t = caffeine.math.clamp01(t)"
+    },
+    {
+      "name": "lerp",
+      "lua": "caffeine.math.lerp",
+      "dryad": null,
+      "signature": "lerp(a, b, t) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "number",
+          "en": "Start.",
+          "pt": "Início."
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "en": "End.",
+          "pt": "Fim."
+        },
+        {
+          "name": "t",
+          "type": "number",
+          "en": "Blend factor; not clamped.",
+          "pt": "Fator de mistura; não é limitado."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "a + (b - a) * t",
+        "pt": "a + (b - a) * t"
+      },
+      "en": "Linear interpolation between two numbers.",
+      "pt": "Interpolação linear entre dois números.",
+      "example": "local x = caffeine.math.lerp(0, 10, 0.25)"
+    },
+    {
+      "name": "inverseLerp",
+      "lua": "caffeine.math.inverseLerp",
+      "dryad": null,
+      "signature": "inverseLerp(a, b, v) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "number",
+          "en": "Start.",
+          "pt": "Início."
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "en": "End.",
+          "pt": "Fim."
+        },
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Position of v between a and b; 0 when a and b are equal.",
+        "pt": "Posição de v entre a e b; 0 se a e b forem iguais."
+      },
+      "en": "The inverse of lerp; the result is not clamped.",
+      "pt": "O inverso de lerp; o resultado não é limitado.",
+      "example": "local t = caffeine.math.inverseLerp(0, 10, 5)"
+    },
+    {
+      "name": "remap",
+      "lua": "caffeine.math.remap",
+      "dryad": null,
+      "signature": "remap(v, inLo, inHi, outLo, outHi) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        },
+        {
+          "name": "inLo",
+          "type": "number",
+          "en": "Input range start.",
+          "pt": "Início do intervalo de entrada."
+        },
+        {
+          "name": "inHi",
+          "type": "number",
+          "en": "Input range end.",
+          "pt": "Fim do intervalo de entrada."
+        },
+        {
+          "name": "outLo",
+          "type": "number",
+          "en": "Output range start.",
+          "pt": "Início do intervalo de saída."
+        },
+        {
+          "name": "outHi",
+          "type": "number",
+          "en": "Output range end.",
+          "pt": "Fim do intervalo de saída."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Remapped value (not clamped).",
+        "pt": "Valor remapeado (não limitado)."
+      },
+      "en": "Maps a value from one range to another.",
+      "pt": "Mapeia um valor de um intervalo para outro.",
+      "example": "local pct = caffeine.math.remap(hp, 0, 100, 0, 1)"
+    },
+    {
+      "name": "smoothstep",
+      "lua": "caffeine.math.smoothstep",
+      "dryad": null,
+      "signature": "smoothstep(e0, e1, v) -> number",
+      "params": [
+        {
+          "name": "e0",
+          "type": "number",
+          "en": "Lower edge.",
+          "pt": "Limite inferior."
+        },
+        {
+          "name": "e1",
+          "type": "number",
+          "en": "Upper edge.",
+          "pt": "Limite superior."
+        },
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Smooth value in 0..1.",
+        "pt": "Valor suave entre 0 e 1."
+      },
+      "en": "Smooth Hermite interpolation between two edges.",
+      "pt": "Interpolação suave de Hermite entre dois limites.",
+      "example": "local s = caffeine.math.smoothstep(0, 1, t)"
+    },
+    {
+      "name": "approach",
+      "lua": "caffeine.math.approach",
+      "dryad": null,
+      "signature": "approach(cur, target, step) -> number",
+      "params": [
+        {
+          "name": "cur",
+          "type": "number",
+          "en": "Current value.",
+          "pt": "Valor atual."
+        },
+        {
+          "name": "target",
+          "type": "number",
+          "en": "Target value.",
+          "pt": "Valor alvo."
+        },
+        {
+          "name": "step",
+          "type": "number",
+          "en": "Maximum change; its absolute value is used.",
+          "pt": "Mudança máxima; usa-se o valor absoluto."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "New value, never past the target.",
+        "pt": "Novo valor, nunca além do alvo."
+      },
+      "en": "Moves a value toward a target by at most step.",
+      "pt": "Move um valor para um alvo em no máximo step.",
+      "example": "speed = caffeine.math.approach(speed, 0, 20 * caffeine.time.delta())"
+    },
+    {
+      "name": "sign",
+      "lua": "caffeine.math.sign",
+      "dryad": null,
+      "signature": "sign(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "Value.",
+          "pt": "Valor."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "-1, 0 or 1.",
+        "pt": "-1, 0 ou 1."
+      },
+      "en": "Sign of a number.",
+      "pt": "Sinal de um número.",
+      "example": "local s = caffeine.math.sign(-3)"
+    },
+    {
+      "name": "radians",
+      "lua": "caffeine.math.radians",
+      "dryad": null,
+      "signature": "radians(deg) -> number",
+      "params": [
+        {
+          "name": "deg",
+          "type": "number",
+          "en": "Degrees.",
+          "pt": "Graus."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Radians.",
+        "pt": "Radianos."
+      },
+      "en": "Converts degrees to radians.",
+      "pt": "Converte graus em radianos.",
+      "example": "local r = caffeine.math.radians(90)"
+    },
+    {
+      "name": "degrees",
+      "lua": "caffeine.math.degrees",
+      "dryad": null,
+      "signature": "degrees(rad) -> number",
+      "params": [
+        {
+          "name": "rad",
+          "type": "number",
+          "en": "Radians.",
+          "pt": "Radianos."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Degrees.",
+        "pt": "Graus."
+      },
+      "en": "Converts radians to degrees.",
+      "pt": "Converte radianos em graus.",
+      "example": "local d = caffeine.math.degrees(caffeine.math.pi)"
+    }
+  ]
+}

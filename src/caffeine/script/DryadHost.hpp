@@ -1,12 +1,15 @@
 #pragma once
 
 #include "core/Types.hpp"
+#include "script/ScriptEngine.hpp"
 #include "ecs/Entity.hpp"
 
 #include <string>
+#include <vector>
 
 namespace Caffeine::ECS { class World; }
 namespace Caffeine::Input { class InputManager; }
+namespace Caffeine::Physics3D { class PhysicsWorld3D; }
 
 namespace Caffeine::Script {
 
@@ -22,6 +25,8 @@ public:
     void setWorld(ECS::World* world);
     /// Optional; without it the `caffeine_input_*` natives report no input.
     void setInput(Input::InputManager* input);
+    /// Optional; enables the `caffeine_physics3d_*` natives.
+    void setPhysics3D(Physics3D::PhysicsWorld3D* physics);
 
     /// Project root used to resolve relative script paths (for example
     /// `scripts/player.dyd`). Relative paths that already exist from the
@@ -32,12 +37,19 @@ public:
     /// Resolves a project-relative `.dyd` path to a filesystem path.
     std::string resolvePath(const std::string& path) const;
 
+    /// Every native the host defines, sorted. Used by the API documentation check.
+    static std::vector<std::string> nativeNames();
+
     bool load(const std::string& path, std::string* outError = nullptr);
     bool isLoaded(const std::string& path) const;
 
     /// Recompiles the script when its modification time changed.
     /// Returns true when the script was reloaded.
     bool reloadIfChanged(const std::string& path, std::string* outError = nullptr);
+
+    /// Sets (or defines) a global of the loaded script, used for `ScriptComponent::properties`.
+    /// Returns false when the script is not loaded.
+    bool setProperty(const std::string& path, const ScriptEngine::ExposedVar& var);
 
     /// Missing hook functions are a no-op and return true.
     bool call(const std::string& path, const char* function, ECS::Entity entity, f32 dt,

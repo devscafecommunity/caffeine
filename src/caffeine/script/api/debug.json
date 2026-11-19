@@ -1,0 +1,70 @@
+{
+  "namespace": "debug",
+  "group": "Core",
+  "lua": "caffeine.debug",
+  "dryad_prefix": "caffeine_log",
+  "title": {
+    "en": "Debug",
+    "pt": "Depuração"
+  },
+  "summary": {
+    "en": "Logging to the engine console.",
+    "pt": "Registo na consola do motor."
+  },
+  "functions": [
+    {
+      "name": "log",
+      "lua": "caffeine.debug.log",
+      "dryad": "caffeine_log",
+      "signature": "log(msg)",
+      "params": [
+        {
+          "name": "msg",
+          "type": "string",
+          "en": "Message text.",
+          "pt": "Texto da mensagem."
+        }
+      ],
+      "returns": null,
+      "en": "Writes an info message to the engine log (source \"Lua\"). In Dryad `caffeine_log(value)` logs the first argument as text under \"Dryad\".",
+      "pt": "Escreve uma mensagem informativa no registo do motor (origem \"Lua\"). Em Dryad `caffeine_log(valor)` regista o primeiro argumento como texto sob \"Dryad\".",
+      "example": "caffeine.debug.log('hello')"
+    },
+    {
+      "name": "warn",
+      "lua": "caffeine.debug.warn",
+      "dryad": null,
+      "signature": "warn(msg)",
+      "params": [
+        {
+          "name": "msg",
+          "type": "string",
+          "en": "Message text.",
+          "pt": "Texto da mensagem."
+        }
+      ],
+      "returns": null,
+      "en": "Writes a warning to the engine log.",
+      "pt": "Escreve um aviso no registo do motor.",
+      "example": "caffeine.debug.warn('low health')"
+    },
+    {
+      "name": "error",
+      "lua": "caffeine.debug.error",
+      "dryad": null,
+      "signature": "error(msg)",
+      "params": [
+        {
+          "name": "msg",
+          "type": "string",
+          "en": "Message text.",
+          "pt": "Texto da mensagem."
+        }
+      ],
+      "returns": null,
+      "en": "Writes an error message to the engine log. It does not stop the script.",
+      "pt": "Escreve uma mensagem de erro no registo do motor. Não interrompe o script.",
+      "example": "caffeine.debug.error('missing target')"
+    }
+  ]
+}

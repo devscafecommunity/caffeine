@@ -1,0 +1,94 @@
+{
+  "namespace": "gameState",
+  "group": "Game",
+  "lua": "caffeine.gameState",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Game state",
+    "pt": "Estado de jogo"
+  },
+  "summary": {
+    "en": "An optional push/pop stack of named game states.",
+    "pt": "Uma pilha opcional de estados de jogo nomeados."
+  },
+  "functions": [
+    {
+      "name": "push",
+      "lua": "caffeine.gameState.push",
+      "dryad": null,
+      "signature": "push(id)",
+      "params": [
+        {
+          "name": "id",
+          "type": "string",
+          "en": "State id.",
+          "pt": "Id do estado."
+        }
+      ],
+      "returns": null,
+      "en": "Pushes a game state onto the stack.",
+      "pt": "Empilha um estado de jogo.",
+      "example": "caffeine.gameState.push('pause_menu')"
+    },
+    {
+      "name": "pop",
+      "lua": "caffeine.gameState.pop",
+      "dryad": null,
+      "signature": "pop() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "The result of the stack pop (see GameStateStack::pop).",
+        "pt": "O resultado da remoção do topo (ver GameStateStack::pop)."
+      },
+      "en": "Pops the top game state.",
+      "pt": "Remove o estado de jogo do topo.",
+      "example": "caffeine.gameState.pop()"
+    },
+    {
+      "name": "top",
+      "lua": "caffeine.gameState.top",
+      "dryad": null,
+      "signature": "top() -> string",
+      "params": [],
+      "returns": {
+        "type": "string",
+        "en": "Id of the top state.",
+        "pt": "Id do estado do topo."
+      },
+      "en": "Returns the id of the top game state.",
+      "pt": "Devolve o id do estado de jogo do topo.",
+      "example": "local id = caffeine.gameState.top()"
+    },
+    {
+      "name": "pause",
+      "lua": "caffeine.gameState.pause",
+      "dryad": null,
+      "signature": "pause() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "Result of pausing the top state.",
+        "pt": "Resultado de pausar o estado do topo."
+      },
+      "en": "Pauses the top game state.",
+      "pt": "Pausa o estado de jogo do topo.",
+      "example": "caffeine.gameState.pause()"
+    },
+    {
+      "name": "resume",
+      "lua": "caffeine.gameState.resume",
+      "dryad": null,
+      "signature": "resume() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "Result of resuming the top state.",
+        "pt": "Resultado de retomar o estado do topo."
+      },
+      "en": "Resumes the top game state.",
+      "pt": "Retoma o estado de jogo do topo.",
+      "example": "caffeine.gameState.resume()"
+    }
+  ]
+}

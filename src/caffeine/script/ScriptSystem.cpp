@@ -1,5 +1,8 @@
 #include "script/ScriptSystem.hpp"
 #include "script/DryadHost.hpp"
+#include "script/ScriptProperties.hpp"
+
+#include <algorithm>
 #include "script/ScriptTypes.hpp"
 #include "script/CppScript.hpp"
 #include "ecs/World.hpp"
@@ -65,14 +68,19 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
     struct ScriptEntry {
         u32 entityId;
         std::string scriptPath;
+        i32 order;
+        std::string properties;
+        bool isolated;
     };
     Vector<ScriptEntry> entries;
 
     world.forEach<ScriptComponent>(q,
         [&entries](ECS::Entity entity, ScriptComponent& sc) {
-            if (sc.scriptPath.empty() || isDryadScriptPath(sc.scriptPath)) return;
-            entries.pushBack({entity.id(), sc.scriptPath});
+            if (!sc.enabled || sc.scriptPath.empty() || isDryadScriptPath(sc.scriptPath)) return;
+            entries.pushBack({entity.id(), sc.scriptPath, sc.executionOrder, sc.properties, sc.isolated});
         });
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const ScriptEntry& a, const ScriptEntry& b) { return a.order < b.order; });
 
     if (entries.empty()) {
         if (!m_warnedNoLua) {
@@ -86,13 +94,16 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
         ECS::Entity entity(entry.entityId, &world);
         if (!entity.isValid()) continue;
 
-        const std::string& path = entry.scriptPath;
+        // An isolated entity runs its own copy of the script (private globals).
+        const std::string& filePath = entry.scriptPath;
+        const std::string path =
+            entry.isolated ? filePath + "#" + std::to_string(entity.id()) : filePath;
 
         if (!m_engine->isLoaded(path)) {
             std::string err;
-            if (!m_engine->loadScript(path, &err)) {
+            if (!m_engine->loadScriptAs(path, filePath, &err)) {
                 CF_ERROR("Script", "Failed to load %s: %s",
-                         path.c_str(), err.c_str());
+                         filePath.c_str(), err.c_str());
                 continue;
             }
         }
@@ -103,6 +114,10 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
                 isNew = false;
                 break;
             }
+        }
+
+        for (const auto& var : parseScriptProperties(entry.properties)) {
+            m_engine->setExposedVar(path, var);
         }
 
         if (isNew) {
@@ -123,7 +138,10 @@ void ScriptSystem::processLuaScripts(ECS::World& world, f32 dt) {
 void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
     if (!m_dryad) return;
     m_dryad->setWorld(&world);
-    if (m_engine) m_dryad->setInput(m_engine->input());
+    if (m_engine) {
+        m_dryad->setInput(m_engine->input());
+        m_dryad->setPhysics3D(m_engine->physics3d());
+    }
     if (!m_projectRoot.empty()) m_dryad->setSearchRoot(m_projectRoot);
 
     ECS::ComponentQuery q;
@@ -132,14 +150,18 @@ void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
     struct ScriptEntry {
         u32 entityId;
         std::string scriptPath;
+        i32 order;
+        std::string properties;
     };
     Vector<ScriptEntry> entries;
 
     world.forEach<ScriptComponent>(q,
         [&entries](ECS::Entity entity, ScriptComponent& sc) {
-            if (!isDryadScriptPath(sc.scriptPath)) return;
-            entries.pushBack({entity.id(), sc.scriptPath});
+            if (!sc.enabled || !isDryadScriptPath(sc.scriptPath)) return;
+            entries.pushBack({entity.id(), sc.scriptPath, sc.executionOrder, sc.properties});
         });
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const ScriptEntry& a, const ScriptEntry& b) { return a.order < b.order; });
 
     for (auto& entry : entries) {
         ECS::Entity entity(entry.entityId, &world);
@@ -156,6 +178,10 @@ void ScriptSystem::processDryadScripts(ECS::World& world, f32 dt) {
                 CF_ERROR("Dryad", "Failed to load %s: %s", path.c_str(), loadError.c_str());
                 continue;
             }
+        }
+
+        for (const auto& var : parseScriptProperties(entry.properties)) {
+            m_dryad->setProperty(path, var);
         }
 
         bool alreadyInitialized = false;

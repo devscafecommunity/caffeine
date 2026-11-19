@@ -4,6 +4,11 @@
 
 #include "../src/caffeine/script/ScriptEngine.hpp"
 #include "../src/caffeine/script/ScriptSystem.hpp"
+#include "../src/caffeine/script/ScriptProperties.hpp"
+#include "../src/caffeine/script/ScriptCatalog.hpp"
+#include "../src/caffeine/script/DryadHost.hpp"
+#include "../src/caffeine/physics/PhysicsWorld3D.hpp"
+#include "../src/caffeine/scene/EditorSceneSerializer.hpp"
 #include "../src/caffeine/script/ScriptTypes.hpp"
 #include "../src/caffeine/ecs/World.hpp"
 #include "../src/caffeine/ecs/Components.hpp"
@@ -11,6 +16,11 @@
 #include "../src/caffeine/events/EventBus.hpp"
 #include "../src/caffeine/debug/LogSystem.hpp"
 
+#include <fstream>
+#include <algorithm>
+#include <set>
+#include <sstream>
+#include <filesystem>
 #include <string>
 
 using namespace Caffeine;
@@ -366,6 +376,257 @@ TEST_CASE("Math supports 3D vectors and scalar helpers", "[script][math]") {
     REQUIRE(t->position.x == Approx(8.0f));
     REQUIRE(t->position.y == Approx(153.0f));
     REQUIRE(t->position.z == Approx(1.0f));
+}
+
+// ============================================================================
+// ScriptComponent: enabled, order and per-entity properties
+// ============================================================================
+
+TEST_CASE("ScriptComponent properties parse into typed exposed variables", "[script][component]") {
+    const auto vars = parseScriptProperties("speed = 4.5; god=true\nlabel=hello world;broken;=x");
+    REQUIRE(vars.size() == 3);
+    REQUIRE(vars[0].name == "speed");
+    REQUIRE(vars[0].kind == ScriptEngine::ExposedVar::Kind::Number);
+    REQUIRE(vars[0].number == Approx(4.5));
+    REQUIRE(vars[1].kind == ScriptEngine::ExposedVar::Kind::Boolean);
+    REQUIRE(vars[1].boolean);
+    REQUIRE(vars[2].kind == ScriptEngine::ExposedVar::Kind::String);
+    REQUIRE(vars[2].string == "hello world");
+}
+
+TEST_CASE("ScriptSystem honours enabled, order and properties", "[script][component]") {
+    ScriptTestFixture fix;
+    REQUIRE(fix.engine.loadString(R"(
+        speed = 1
+        function onUpdate(eid, dt)
+            local t = caffeine.world.getTransform(eid)
+            caffeine.world.setTransform(eid, {x = speed, y = t.y})
+        end
+    )", "props.lua"));
+
+    ScriptSystem system(&fix.engine);
+    auto on = fix.createEntity("props.lua");
+    on.get<ScriptComponent>()->properties = "speed=7";
+    auto off = fix.createEntity("props.lua");
+    off.get<ScriptComponent>()->enabled = false;
+    off.add<ECS::Transform>(transformAt(0, 0));
+    on.add<ECS::Transform>(transformAt(0, 0));
+
+    system.onUpdate(fix.world, 0.016f);
+
+    REQUIRE(on.get<ECS::Transform>()->position.x == Approx(7.0f));
+    REQUIRE(off.get<ECS::Transform>()->position.x == Approx(0.0f));  // disabled: never ran
+}
+
+TEST_CASE("ScriptComponent fields survive a scene round trip", "[script][component][scene]") {
+    ECS::World world;
+    auto e = world.create("Scripted");
+    ScriptComponent sc;
+    sc.scriptPath = "scripts/a.lua";
+    sc.enabled = false;
+    sc.executionOrder = -5;
+    sc.properties = "speed=2";
+    e.add<ScriptComponent>(std::move(sc));
+
+    std::vector<u8> bytes;
+    Editor::SceneSerializer out(world);
+    REQUIRE(out.serializeToMemory(bytes));
+
+    ECS::World restored;
+    Editor::SceneSerializer in(restored);
+    REQUIRE(in.deserializeFromMemory(bytes));
+
+    bool found = false;
+    ECS::ComponentQuery q;
+    q.with<ScriptComponent>();
+    restored.forEach<ScriptComponent>(q, [&](ECS::Entity, ScriptComponent& r) {
+        found = true;
+        REQUIRE(r.scriptPath == "scripts/a.lua");
+        REQUIRE_FALSE(r.enabled);
+        REQUIRE(r.executionOrder == -5);
+        REQUIRE(r.properties == "speed=2");
+    });
+    REQUIRE(found);
+}
+
+TEST_CASE("Isolated scripts keep private state per entity", "[script][component]") {
+    ScriptTestFixture fix;
+    REQUIRE(fix.engine.loadString("", "unused.lua"));
+    {
+        std::ofstream f("iso_test.lua");
+        f << "count = 0\nfunction onUpdate(eid, dt)\n  count = count + 1\n"
+             "  caffeine.world.setTransform(eid, {x = count, y = 0})\nend\n";
+    }
+    ScriptSystem system(&fix.engine);
+    auto a = fix.createEntity("iso_test.lua");
+    auto b = fix.createEntity("iso_test.lua");
+    a.add<ECS::Transform>(transformAt(0, 0));
+    b.add<ECS::Transform>(transformAt(0, 0));
+    a.get<ScriptComponent>()->isolated = true;
+    b.get<ScriptComponent>()->isolated = true;
+    system.onUpdate(fix.world, 0.016f);
+    system.onUpdate(fix.world, 0.016f);
+    // Shared state would give 2 and 4; private state gives 2 and 2.
+    REQUIRE(a.get<ECS::Transform>()->position.x == Approx(2.0f));
+    REQUIRE(b.get<ECS::Transform>()->position.x == Approx(2.0f));
+    std::remove("iso_test.lua");
+}
+
+TEST_CASE("Script catalog groups scripts by header tag or folder", "[script][catalog]") {
+    const auto tagged = parseScriptMeta("scripts/x.lua",
+        "-- @group Gameplay/Combat/Melee\n-- @name Sword\n-- @tags weapon, player\n-- @description Hits.\nfoo=1\n");
+    REQUIRE(tagged.group == std::vector<std::string>{"Gameplay", "Combat", "Melee"});
+    REQUIRE(tagged.name == "Sword");
+    REQUIRE(tagged.tags.size() == 2);
+    REQUIRE(tagged.description == "Hits.");
+
+    const auto byFolder = parseScriptMeta("scripts/AI/Patrol/walk.dyd", "// plain\n");
+    REQUIRE(byFolder.group == std::vector<std::string>{"AI", "Patrol"});
+    REQUIRE(byFolder.name == "walk");
+
+    const auto loose = parseScriptMeta("scripts/solo.lua", "");
+    REQUIRE(loose.group.empty());
+
+    const auto tree = buildScriptTree({tagged, byFolder, loose});
+    REQUIRE(tree.find("Gameplay/Combat/Melee")->scripts.size() == 1);
+    REQUIRE(tree.find("Gameplay")->totalScripts() == 1);
+    REQUIRE(tree.find("AI/Patrol")->scripts[0].name == "walk");
+    REQUIRE(tree.find("Ungrouped")->scripts.size() == 1);
+    REQUIRE(tree.find("Nope") == nullptr);
+}
+
+TEST_CASE("Dump script API names", "[.apidump]") {
+    ScriptTestFixture fix;
+    std::ofstream out("/tmp/lua_api.txt");
+    for (const auto& n : fix.engine.apiNames()) out << n << "\n";
+#ifdef CF_HAS_DRYAD
+    std::ofstream d("/tmp/dryad_api.txt");
+    for (const auto& n : DryadHost::nativeNames()) d << n << "\n";
+#endif
+}
+
+TEST_CASE("Entity names, hierarchy and random work from Lua", "[script][world]") {
+    ScriptTestFixture fix;
+    const char* code = R"(
+        function onCreate(eid)
+            local a = caffeine.world.create()
+            local b = caffeine.world.create()
+            caffeine.entity.setName(a, "Boss")
+            caffeine.entity.setName(b, "Minion")
+            local ok = caffeine.hierarchy.setParent(b, a)
+            local cycle = caffeine.hierarchy.setParent(a, b)          -- refused: cycle
+            local kids = caffeine.hierarchy.children(a)
+            local found = caffeine.entity.find("Minion")
+            caffeine.random.setSeed(42)
+            local r1 = caffeine.random.range(0, 1)
+            caffeine.random.setSeed(42)
+            local r2 = caffeine.random.range(0, 1)
+            local n = caffeine.random.int(3, 3)
+            local score = 0
+            if ok then score = score + 1 end
+            if not cycle then score = score + 10 end
+            if #kids == 1 and kids[1] == b and found == b then score = score + 100 end
+            if r1 == r2 then score = score + 1000 end
+            if caffeine.hierarchy.root(b) == a and n == 3 then score = score + 10000 end
+            caffeine.world.setTransform(eid, {x = score, y = 0})
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "world_api.lua"));
+    auto entity = fix.world.create("Test");
+    REQUIRE(fix.engine.callOnCreate("world_api.lua", entity));
+    REQUIRE(entity.get<ECS::Transform>()->position.x == Approx(11111.0f));
+}
+
+// ----------------------------------------------------------------------------
+// Every scriptable function must be documented, and every documented function must exist.
+// The reference lives in src/caffeine/script/api/*.json (see scripts/generate-script-api-docs.py).
+// ----------------------------------------------------------------------------
+
+static std::set<std::string> registryNames(const char* key) {
+    namespace fs = std::filesystem;
+    std::set<std::string> names;
+    const std::string needle = std::string("\"") + key + "\": \"";
+    for (const auto& file : fs::directory_iterator(CF_SCRIPT_API_DIR)) {
+        if (file.path().extension() != ".json") continue;
+        std::ifstream in(file.path());
+        std::stringstream ss;
+        ss << in.rdbuf();
+        const std::string text = ss.str();
+        for (size_t pos = text.find(needle); pos != std::string::npos; pos = text.find(needle, pos + 1)) {
+            const size_t start = pos + needle.size();
+            names.insert(text.substr(start, text.find('"', start) - start));
+        }
+    }
+    // A namespace header ("lua": "caffeine.world") is a prefix of its functions, not a function.
+    for (auto it = names.begin(); it != names.end();) {
+        const std::string prefix = *it + ".";
+        const bool isNamespace = std::any_of(names.begin(), names.end(), [&](const std::string& other) {
+            return other.size() > prefix.size() && other.compare(0, prefix.size(), prefix) == 0;
+        });
+        it = isNamespace ? names.erase(it) : std::next(it);
+    }
+    return names;
+}
+
+TEST_CASE("Lua API is fully documented", "[script][api-docs]") {
+    ScriptTestFixture fix;
+    const auto documented = registryNames("lua");
+    std::set<std::string> actual;
+    for (const auto& n : fix.engine.apiNames()) actual.insert(n);
+    for (const auto& n : actual) { INFO("undocumented Lua function: " << n); CHECK(documented.count(n) == 1); }
+    for (const auto& n : documented) { INFO("documented but missing in Lua: " << n); CHECK(actual.count(n) == 1); }
+}
+
+#ifdef CF_HAS_DRYAD
+TEST_CASE("Dryad natives are fully documented", "[dryad][api-docs]") {
+    const auto documented = registryNames("dryad");
+    std::set<std::string> actual;
+    for (const auto& n : DryadHost::nativeNames()) actual.insert(n);
+    for (const auto& n : actual) { INFO("undocumented Dryad native: " << n); CHECK(documented.count(n) == 1); }
+    for (const auto& n : documented) { INFO("documented but missing in Dryad: " << n); CHECK(actual.count(n) == 1); }
+}
+#endif
+
+TEST_CASE("physics3d queries and forces work from Lua", "[script][physics3d]") {
+    ScriptTestFixture fix;
+    Physics3D::PhysicsWorld3D physics;
+    if (!physics.isAvailable()) { WARN("Bullet3 not enabled in this build"); return; }
+    fix.engine.setPhysics3D(&physics);
+
+    Physics3D::BodyDesc ground;
+    ground.entityId = 1;
+    ground.shape = Physics3D::ColliderShape3D::Box;
+    ground.halfExtents = Vec3(5.0f, 0.5f, 5.0f);
+    ground.bodyType = Physics3D::BodyType3D::Static;
+    ground.mass = 0.0f;
+    physics.upsertBody(ground);
+    Physics3D::BodyDesc ball;
+    ball.entityId = 2;
+    ball.position = Vec3(0.0f, 3.0f, 0.0f);
+    ball.shape = Physics3D::ColliderShape3D::Sphere;
+    ball.halfExtents = Vec3(0.5f, 0.5f, 0.5f);
+    physics.upsertBody(ball);
+    physics.step(1.0f / 60.0f);
+
+    const char* code = R"(
+        function onCreate(eid)
+            local hit = caffeine.physics3d.raycast(0, 10, 0, 0, -1, 0, 50)    -- hits the ball first
+            local miss = caffeine.physics3d.raycast(0, 10, 0, 0, 1, 0, 50)    -- nothing above
+            local ok = caffeine.physics3d.setVelocity(2, 4, 0, 0)
+            local v = caffeine.physics3d.velocity(2)
+            local nope = caffeine.physics3d.addForce(1, 0, 10, 0)              -- static: refused
+            local score = 0
+            if hit and hit.entity == 2 and hit.distance > 6 and hit.distance < 7.5 then score = score + 1 end
+            if miss == nil then score = score + 10 end
+            if ok and v and v.x > 3.9 then score = score + 100 end
+            if not nope then score = score + 1000 end
+            caffeine.world.setTransform(eid, {x = score, y = 0})
+        end
+    )";
+    REQUIRE(fix.engine.loadString(code, "phys3d.lua"));
+    auto entity = fix.world.create("Test");
+    REQUIRE(fix.engine.callOnCreate("phys3d.lua", entity));
+    REQUIRE(entity.get<ECS::Transform>()->position.x == Approx(1111.0f));
 }
 
 // ============================================================================
