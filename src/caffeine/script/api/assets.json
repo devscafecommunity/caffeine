@@ -1,0 +1,38 @@
+{
+  "namespace": "assets",
+  "group": "Game",
+  "lua": "caffeine.assets",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Assets",
+    "pt": "Recursos"
+  },
+  "summary": {
+    "en": "Read project assets from scripts.",
+    "pt": "Ler recursos do projeto a partir de scripts."
+  },
+  "functions": [
+    {
+      "name": "loadText",
+      "lua": "caffeine.assets.loadText",
+      "dryad": null,
+      "signature": "loadText(path) -> string",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Asset path; also searched under the project root, assets/, data/ and data/assets/.",
+          "pt": "Caminho do recurso; também é procurado na raiz do projeto, em assets/, data/ e data/assets/."
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "en": "The file text (cached); on failure the error message; nil without a loader.",
+        "pt": "O texto do ficheiro (em cache); em caso de falha a mensagem de erro; nil sem carregador."
+      },
+      "en": "Loads a text file. A failure returns the error text rather than raising, so check what you get back.",
+      "pt": "Carrega um ficheiro de texto. Uma falha devolve o texto do erro em vez de lançar erro, por isso verifique o que recebe.",
+      "example": "local json = caffeine.assets.loadText('data/items.json')"
+    }
+  ]
+}

@@ -234,6 +234,8 @@ pub enum Edit {
     Undo,
     Redo,
     Fit,
+    /// New random seeds for every node that has one (a variation of the same graph).
+    Reseed,
     SetSnap(bool),
     SetSearch(String),
     TogglePaletteGroup(String),
@@ -358,6 +360,7 @@ pub fn view<'a, Message: Clone + 'a>(
             button::compact(id::GENERATOR_UNDO, "↶", emit(Edit::Undo)),
             button::compact(id::GENERATOR_REDO, "↷", emit(Edit::Redo)),
             button::compact(id::GENERATOR_FIT, "Fit", emit(Edit::Fit)),
+            button::compact(id::GENERATOR_RESEED, "Reseed", emit(Edit::Reseed)),
             container(resolution).width(Length::Fixed(138.0)),
             button::compact(
                 id::GENERATOR_OPEN_MATERIAL,

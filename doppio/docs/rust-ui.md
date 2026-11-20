@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last verified: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last verified: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/tree/main/doppio"><code>doppio/</code></a></span>
 </div>
 
@@ -251,8 +251,8 @@ precedent.
   `last_scene` and shows the active-project chip instead of the startup dialog.
 - The manager has **Create New**, **Open Recent** and **Browse Projects** tabs,
   mirroring the archived startup dialog. Create validates the name, creates
-  `assets/raw/{Animations,Models,Materials,Textures,Audio,Prefabs,Sky}`, `assets/processed`,
-  `scripts`, `scenes` and `build`, writes `project.caffeine`
+  `Assets/Raw/{Animations,Audio,Generators,Materials,Models,Prefabs,Sky,TextureSets,Textures}`, `Assets/Processed`, `Scripts`,
+  `scenes`, `materials`, `texture_sets` and `build`, writes `project.caffeine`
   and opens the project. Browse recursively scans a folder up to six levels for
   `project.caffeine`, and Recent reads `~/.config/caffeine/recent.txt`
   (`$CAFFEINE_RECENT_PROJECTS` overrides the file for tests and portable runs).
@@ -295,9 +295,19 @@ precedent.
   module matches the C++ `NodeEmitter`/`NodeGraphIO`/`NodeRoundTrip` formats
   byte-for-byte: deterministic `// @node` markers, sorted JSON ids/edges and
   `%.17g` numbers. It supports OnUpdate, Set/Get Position, Set/Get Scale,
-  Translate, DeltaTime, Constant, Branch and Log, with typed exec/data ports,
-  connection validation, inline input fallbacks, Add motion and Sync from
-  `.dyd`.
+  Translate, DeltaTime, Constant, Branch and Log, plus the runtime nodes Key
+  Down, Action Down, Input Axis (name in the properties panel), Total Time and
+  Destroy Self, with typed exec/data ports, connection validation, inline
+  input fallbacks, Add motion and Sync from `.dyd`. The new nodes exist in the
+  Rust catalog only; the C++ `NodeCatalog` (archived editor) still lists the
+  original ten.
+- **Reference tooltip.** Hovering a name in the Script pane shows its signature
+  and description in a floating card. `uikit/script_reference.rs` holds one
+  table per language (Lua `caffeine.*`, Dryad `caffeine_*`); a test reads the
+  C++ binding sources and fails when a Dryad native is missing from the table.
+  `.dyd` files use the JavaScript grammar for colouring (Dryad is a brace
+  language); colouring of the engine API names themselves is not available
+  because `iced-code-editor` does not take a custom grammar.
 - **Attach** and **Run once** reuse the script component and the C ABI
   `caffeine_session_run_dryad` preview (onCreate + one onUpdate). Saving the
   graph writes both files; opening a `.dyd` also stages its source in the
@@ -578,6 +588,7 @@ anchors to the newest entry.
 | `Ctrl+R` | render viewport now |
 | `G` (over the viewport) | toggle the reference grid |
 | `1` / `2` / `3` (over the viewport) | move / rotate / scale gizmo |
+| `X` (over the viewport) | gizmo snapping on / off (0.25 m, 15°, 0.1) |
 | `W` / `A` / `S` / `D` | fly along the view / strafe |
 | `Q` / `E` | fly down / up |
 | `Shift` | boost flight speed |
@@ -749,6 +760,7 @@ registers scene-level queries and actions:
 | action | `cancel_generator_bake` | cancels the running bake |
 | action | `open_prefab_palette` | opens the create-entity palette |
 | action | `set_gizmo_mode` | `{ "mode": "move"\|"rotate"\|"scale" }` |
+| action | `toggle_gizmo_snap` | turns gizmo snapping on or off; the `gizmo` query reports `snap` |
 | action | `set_viewport` | `{ "grid"?, "anti_aliasing"?, "render_scale"? }` |
 | action | `set_entity_parent` | `{ "entity_id", "parent_id"?: number \| null }` |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
@@ -850,3 +862,42 @@ small device instead of crashing the host.
 - Prefer snapshots/arrays over per-field FFI calls.
 - Keep the Rust frontend out of the CMake build; `scripts/check-rust-ui.sh`
   builds the C ABI first and then the workspace.
+
+## Script reference card
+
+The hover card shows module, signature, parameters, return type, an example and related functions.
+**Ctrl+click** on an API name opens its reference page: the `caffeine-website` checkout when found
+(`CAFFEINE_ENGINE_ROOT` or a parent of the executable or working directory), otherwise the public URL is logged.
+A test checks that every documented entry has a page in the website tree.
+
+## Generator recipes
+
+Generators save `generator.*` recipe files next to what they bake and reopen them on double-click.
+Other generators reference recipes through `uikit/recipe_ref.rs` (slots, seeded cached variants, shared SplitMix64
+hashing with the engine's `core/Hash.hpp`); caf-pack skips recipes as editor-only sources.
+See [`generator-recipes.md`](generator-recipes.md). The generator headers have a **Reseed** button
+(`generator.toolbar.reseed`, `texturegen.toolbar.reseed`): new seeds for every seeded node, one undo step.
+
+## Script editor assistance
+
+Hover and Ctrl+click resolve the whole dotted name (`caffeine.time.delta` from any segment) and also
+cover language words, lifecycle hooks (`onUpdate`...) and functions or variables declared in the file.
+Ctrl+click on a declared name jumps to its declaration; on an API name it opens the reference.
+Typing offers completions from the API, keywords and the file's own symbols (Up/Down to move, Enter or Tab to accept).
+The editor also has bracket matching and colours, auto-close and auto-indent, indent guides, folding, sticky scroll,
+search/replace (Ctrl+F / Ctrl+H), go to line (Ctrl+G), the command palette, multi-cursor (Alt+click), move and
+duplicate line and comment toggle. All of it is in-process; there is no language server.
+
+## Dryad node catalog
+
+58 nodes. Beyond events, transform, time, input and world: Language / Math (Add, Subtract, Multiply, Divide, Negate,
+Min, Max, Abs, Floor, Ceil, Round, Square Root, Power, Sign, Clamp, Clamp 0..1, Lerp, Inverse Lerp, Smoothstep),
+Trigonometry (Sine, Cosine, degrees/radians), Compare (Less, Greater, Equal), Logic (And, Or, Not), Engine / Random
+(Value, Range, Int, Chance), Engine / Input (Mouse X/Y/Delta X/Delta Y, Mouse Button), Engine / Time (Fixed Delta, Frame
+Count) and Engine / World (This Entity, Is Alive, Distance).
+
+Operators are written fully parenthesised, so the importer reads them back unambiguously. Every native-call node is one
+row of `NATIVE_NODES` in `uikit/dryad.rs` (type, labels, native, argument count, bool output); the pins, emitter, importer
+and catalog follow from the row. The engine side is 20 new `caffeine_math_*` natives (`DryadRuntimeBindings.cpp`, documented
+in `script/api/math.json`, tested in `tests/test_dryad_host.cpp`). Not done: variables and loops (they need exec nodes that
+own a scope, so the emitter and importer must change) and exec nodes for audio, physics and scene natives.

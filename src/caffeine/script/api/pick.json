@@ -1,0 +1,211 @@
+{
+  "namespace": "pick",
+  "group": "Input",
+  "lua": "caffeine.pick",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Pick",
+    "pt": "Seleção"
+  },
+  "summary": {
+    "en": "Find the entity under a point, a screen position, the mouse or a 3D ray, and register custom pickers.",
+    "pt": "Encontrar a entidade sob um ponto, uma posição do ecrã, o rato ou um raio 3D, e registar seletores personalizados."
+  },
+  "functions": [
+    {
+      "name": "world",
+      "lua": "caffeine.pick.world",
+      "dryad": null,
+      "signature": "world(wx, wy) -> integer",
+      "params": [
+        {
+          "name": "wx",
+          "type": "number",
+          "en": "World x.",
+          "pt": "x do mundo."
+        },
+        {
+          "name": "wy",
+          "type": "number",
+          "en": "World y.",
+          "pt": "y do mundo."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Entity id, or 0 when nothing is hit.",
+        "pt": "Id da entidade, ou 0 se nada for atingido."
+      },
+      "en": "Picks the entity under a 2D world position.",
+      "pt": "Escolhe a entidade sob uma posição 2D do mundo.",
+      "example": "local e = caffeine.pick.world(3, 4)"
+    },
+    {
+      "name": "screen",
+      "lua": "caffeine.pick.screen",
+      "dryad": null,
+      "signature": "screen(sx, sy) -> integer",
+      "params": [
+        {
+          "name": "sx",
+          "type": "number",
+          "en": "Screen x.",
+          "pt": "x do ecrã."
+        },
+        {
+          "name": "sy",
+          "type": "number",
+          "en": "Screen y.",
+          "pt": "y do ecrã."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Entity id, or 0 when nothing is hit.",
+        "pt": "Id da entidade, ou 0 se nada for atingido."
+      },
+      "en": "Converts a screen position to the world using the play-mode camera and picks the entity there.",
+      "pt": "Converte uma posição do ecrã para o mundo usando a câmara do modo de jogo e escolhe a entidade aí.",
+      "example": "local e = caffeine.pick.screen(400, 300)"
+    },
+    {
+      "name": "atMouse",
+      "lua": "caffeine.pick.atMouse",
+      "dryad": null,
+      "signature": "atMouse() -> integer",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "en": "Entity id, or 0 when nothing is hit.",
+        "pt": "Id da entidade, ou 0 se nada for atingido."
+      },
+      "en": "Picks the entity under the mouse cursor; 0 without a world or input.",
+      "pt": "Escolhe a entidade sob o cursor do rato; 0 sem mundo ou entrada.",
+      "example": "local e = caffeine.pick.atMouse()"
+    },
+    {
+      "name": "screenToWorld",
+      "lua": "caffeine.pick.screenToWorld",
+      "dryad": null,
+      "signature": "screenToWorld(sx, sy) -> table",
+      "params": [
+        {
+          "name": "sx",
+          "type": "number",
+          "en": "Screen x.",
+          "pt": "x do ecrã."
+        },
+        {
+          "name": "sy",
+          "type": "number",
+          "en": "Screen y.",
+          "pt": "y do ecrã."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y} in world units.",
+        "pt": "{x, y} em unidades do mundo."
+      },
+      "en": "Converts a screen position to a 2D world position.",
+      "pt": "Converte uma posição do ecrã numa posição 2D do mundo.",
+      "example": "local w = caffeine.pick.screenToWorld(400, 300)"
+    },
+    {
+      "name": "register",
+      "lua": "caffeine.pick.register",
+      "dryad": null,
+      "signature": "register(fn) -> integer",
+      "params": [
+        {
+          "name": "fn",
+          "type": "function",
+          "en": "Called as fn(worldX, worldY); return an entity id (above 0) for a hit, or false/nil for none.",
+          "pt": "Chamada como fn(worldX, worldY); devolva um id de entidade (maior que 0) para um acerto, ou false/nil para nenhum."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Handle for unregister.",
+        "pt": "Handle para unregister."
+      },
+      "en": "Registers a custom picker consulted by pick queries.",
+      "pt": "Regista um seletor personalizado consultado pelas pesquisas de seleção.",
+      "example": "local h = caffeine.pick.register(function(x, y) return 0 end)"
+    },
+    {
+      "name": "unregister",
+      "lua": "caffeine.pick.unregister",
+      "dryad": null,
+      "signature": "unregister(handle)",
+      "params": [
+        {
+          "name": "handle",
+          "type": "integer",
+          "en": "Handle from register.",
+          "pt": "Handle devolvido por register."
+        }
+      ],
+      "returns": null,
+      "en": "Removes a custom picker.",
+      "pt": "Remove um seletor personalizado.",
+      "example": "caffeine.pick.unregister(h)"
+    },
+    {
+      "name": "query",
+      "lua": "caffeine.pick.query",
+      "dryad": null,
+      "signature": "query(wx, wy) -> table",
+      "params": [
+        {
+          "name": "wx",
+          "type": "number",
+          "en": "World x.",
+          "pt": "x do mundo."
+        },
+        {
+          "name": "wy",
+          "type": "number",
+          "en": "World y.",
+          "pt": "y do mundo."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{kind = \"entity\", entityId}, {kind = \"custom\", customId} or {kind = \"none\"}; empty without a world.",
+        "pt": "{kind = \"entity\", entityId}, {kind = \"custom\", customId} ou {kind = \"none\"}; vazia sem mundo."
+      },
+      "en": "Full pick query at a world position, including custom pickers.",
+      "pt": "Pesquisa de seleção completa numa posição do mundo, incluindo seletores personalizados.",
+      "example": "local hit = caffeine.pick.query(3, 4)\nif hit.kind == 'entity' then caffeine.debug.log(hit.entityId) end"
+    },
+    {
+      "name": "raycast",
+      "lua": "caffeine.pick.raycast",
+      "dryad": null,
+      "signature": "raycast(origin, dir) -> integer",
+      "params": [
+        {
+          "name": "origin",
+          "type": "table",
+          "en": "{x, y, z}; missing parts are 0.",
+          "pt": "{x, y, z}; partes em falta são 0."
+        },
+        {
+          "name": "dir",
+          "type": "table",
+          "en": "{x, y, z} direction; normalised for you (default z = 1).",
+          "pt": "Direção {x, y, z}; é normalizada por si (z = 1 por omissão)."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Entity id, or 0 when nothing is hit.",
+        "pt": "Id da entidade, ou 0 se nada for atingido."
+      },
+      "en": "Casts a 3D ray and returns the entity hit.",
+      "pt": "Lança um raio 3D e devolve a entidade atingida.",
+      "example": "local e = caffeine.pick.raycast({x=0,y=1,z=0}, {x=0,y=0,z=1})"
+    }
+  ]
+}

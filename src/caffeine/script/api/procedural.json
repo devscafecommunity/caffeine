@@ -1,0 +1,467 @@
+{
+  "namespace": "procedural",
+  "group": "World",
+  "lua": "caffeine.procedural",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Procedural",
+    "pt": "Procedural"
+  },
+  "summary": {
+    "en": "Deterministic noise, chunk streaming and terrain generation helpers for procedural worlds.",
+    "pt": "Auxiliares de ruído determinístico, streaming de chunks e geração de terreno para mundos procedurais."
+  },
+  "functions": [
+    {
+      "name": "hash",
+      "lua": "caffeine.procedural.hash",
+      "dryad": null,
+      "signature": "hash(x, z, seed, salt) -> number",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "Integer X.",
+          "pt": "X inteiro."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Integer Z.",
+          "pt": "Z inteiro."
+        },
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Seed.",
+          "pt": "Semente."
+        },
+        {
+          "name": "salt",
+          "type": "number",
+          "en": "Extra salt.",
+          "pt": "Sal adicional."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Hash value (named hash01 in the engine).",
+        "pt": "Valor de hash (chamado hash01 no motor)."
+      },
+      "en": "Deterministic hash of a cell, seed and salt.",
+      "pt": "Hash determinístico de uma célula, semente e sal.",
+      "example": "local r = caffeine.procedural.hash(3, 4, 42, 0)"
+    },
+    {
+      "name": "noise2d",
+      "lua": "caffeine.procedural.noise2d",
+      "dryad": null,
+      "signature": "noise2d(x, z, seed) -> number",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X coordinate.",
+          "pt": "Coordenada X."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z coordinate.",
+          "pt": "Coordenada Z."
+        },
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Seed.",
+          "pt": "Semente."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Noise value.",
+        "pt": "Valor de ruído."
+      },
+      "en": "2D value noise.",
+      "pt": "Ruído de valor 2D.",
+      "example": "local n = caffeine.procedural.noise2d(1.5, 2.5, 42)"
+    },
+    {
+      "name": "fbm2d",
+      "lua": "caffeine.procedural.fbm2d",
+      "dryad": null,
+      "signature": "fbm2d(x, z, seed, octaves, lacunarity, persistence) -> number",
+      "params": [
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X coordinate.",
+          "pt": "Coordenada X."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z coordinate.",
+          "pt": "Coordenada Z."
+        },
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Seed.",
+          "pt": "Semente."
+        },
+        {
+          "name": "octaves",
+          "type": "number",
+          "en": "Octave count.",
+          "pt": "Número de oitavas."
+        },
+        {
+          "name": "lacunarity",
+          "type": "number",
+          "en": "Frequency multiplier per octave.",
+          "pt": "Multiplicador de frequência por oitava."
+        },
+        {
+          "name": "persistence",
+          "type": "number",
+          "en": "Amplitude multiplier per octave.",
+          "pt": "Multiplicador de amplitude por oitava."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Noise value.",
+        "pt": "Valor de ruído."
+      },
+      "en": "2D fractal Brownian motion noise.",
+      "pt": "Ruído fractal Brownian motion 2D.",
+      "example": "local h = caffeine.procedural.fbm2d(x * 0.02, z * 0.02, 42, 5, 2.0, 0.5)"
+    },
+    {
+      "name": "worldToChunk",
+      "lua": "caffeine.procedural.worldToChunk",
+      "dryad": null,
+      "signature": "worldToChunk(worldCoord, chunkSize) -> number",
+      "params": [
+        {
+          "name": "worldCoord",
+          "type": "number",
+          "en": "World coordinate.",
+          "pt": "Coordenada do mundo."
+        },
+        {
+          "name": "chunkSize",
+          "type": "number",
+          "en": "Chunk size in world units.",
+          "pt": "Tamanho do chunk em unidades do mundo."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Chunk index.",
+        "pt": "Índice do chunk."
+      },
+      "en": "Converts a world coordinate to a chunk index.",
+      "pt": "Converte uma coordenada do mundo num índice de chunk.",
+      "example": "local cx = caffeine.procedural.worldToChunk(pos.x, 64)"
+    },
+    {
+      "name": "findTerrain",
+      "lua": "caffeine.procedural.findTerrain",
+      "dryad": null,
+      "signature": "findTerrain() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Terrain entity id, or 0 if none.",
+        "pt": "Id da entidade de terreno, ou 0 se não houver."
+      },
+      "en": "Finds the terrain entity.",
+      "pt": "Procura a entidade de terreno.",
+      "example": "local t = caffeine.procedural.findTerrain()"
+    },
+    {
+      "name": "getFocusChunk",
+      "lua": "caffeine.procedural.getFocusChunk",
+      "dryad": null,
+      "signature": "getFocusChunk(directorId, chunkSize, focusId) -> table",
+      "params": [
+        {
+          "name": "directorId",
+          "type": "number",
+          "en": "Entity id of the procedural world director.",
+          "pt": "Id da entidade diretora do mundo procedural."
+        },
+        {
+          "name": "chunkSize",
+          "type": "number",
+          "en": "Chunk size, used if the director has no procedural settings.",
+          "pt": "Tamanho do chunk, usado se o diretor não tiver definições procedurais."
+        },
+        {
+          "name": "focusId",
+          "type": "number",
+          "en": "Focus entity id. Optional.",
+          "pt": "Id da entidade de foco. Opcional."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Table with `cx` and `cz` (0, 0 if unavailable).",
+        "pt": "Tabela com `cx` e `cz` (0, 0 se indisponível)."
+      },
+      "en": "Returns the chunk the focus entity is in.",
+      "pt": "Devolve o chunk onde está a entidade de foco.",
+      "example": "local c = caffeine.procedural.getFocusChunk(dir, 64, player)\nprint(c.cx, c.cz)"
+    },
+    {
+      "name": "isChunkLoaded",
+      "lua": "caffeine.procedural.isChunkLoaded",
+      "dryad": null,
+      "signature": "isChunkLoaded(directorId, cx, cz) -> boolean",
+      "params": [
+        {
+          "name": "directorId",
+          "type": "number",
+          "en": "Entity id of the procedural world director.",
+          "pt": "Id da entidade diretora do mundo procedural."
+        },
+        {
+          "name": "cx",
+          "type": "number",
+          "en": "Chunk X index.",
+          "pt": "Índice X do chunk."
+        },
+        {
+          "name": "cz",
+          "type": "number",
+          "en": "Chunk Z index.",
+          "pt": "Índice Z do chunk."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true if the chunk is loaded.",
+        "pt": "true se o chunk estiver carregado."
+      },
+      "en": "Checks whether a chunk is loaded for the director.",
+      "pt": "Verifica se um chunk está carregado para o diretor.",
+      "example": "print(caffeine.procedural.isChunkLoaded(dir, 0, 0))"
+    },
+    {
+      "name": "unloadChunk",
+      "lua": "caffeine.procedural.unloadChunk",
+      "dryad": null,
+      "signature": "unloadChunk(directorId, cx, cz)",
+      "params": [
+        {
+          "name": "directorId",
+          "type": "number",
+          "en": "Entity id of the procedural world director.",
+          "pt": "Id da entidade diretora do mundo procedural."
+        },
+        {
+          "name": "cx",
+          "type": "number",
+          "en": "Chunk X index.",
+          "pt": "Índice X do chunk."
+        },
+        {
+          "name": "cz",
+          "type": "number",
+          "en": "Chunk Z index.",
+          "pt": "Índice Z do chunk."
+        }
+      ],
+      "returns": null,
+      "en": "Unloads a chunk of the director.",
+      "pt": "Descarrega um chunk do diretor.",
+      "example": "caffeine.procedural.unloadChunk(dir, 0, 0)"
+    },
+    {
+      "name": "stream",
+      "lua": "caffeine.procedural.stream",
+      "dryad": null,
+      "signature": "stream(directorId, terrainId, cx, cz, preset)",
+      "params": [
+        {
+          "name": "directorId",
+          "type": "number",
+          "en": "Entity id of the procedural world director.",
+          "pt": "Id da entidade diretora do mundo procedural."
+        },
+        {
+          "name": "terrainId",
+          "type": "number",
+          "en": "Terrain entity id. Optional.",
+          "pt": "Id da entidade de terreno. Opcional."
+        },
+        {
+          "name": "cx",
+          "type": "number",
+          "en": "Chunk X index.",
+          "pt": "Índice X do chunk."
+        },
+        {
+          "name": "cz",
+          "type": "number",
+          "en": "Chunk Z index.",
+          "pt": "Índice Z do chunk."
+        },
+        {
+          "name": "preset",
+          "type": "string",
+          "en": "Preset name. Optional.",
+          "pt": "Nome do preset. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Streams chunks around the given chunk, adding procedural settings to the director if needed.",
+      "pt": "Faz streaming de chunks em redor do chunk indicado, adicionando definições procedurais ao diretor se necessário.",
+      "example": "caffeine.procedural.stream(dir, caffeine.procedural.findTerrain(), 0, 0)"
+    },
+    {
+      "name": "generateTerrainChunk",
+      "lua": "caffeine.procedural.generateTerrainChunk",
+      "dryad": null,
+      "signature": "generateTerrainChunk(terrainId, cx, cz, seed, preset)",
+      "params": [
+        {
+          "name": "terrainId",
+          "type": "number",
+          "en": "Terrain entity id.",
+          "pt": "Id da entidade de terreno."
+        },
+        {
+          "name": "cx",
+          "type": "number",
+          "en": "Chunk X index.",
+          "pt": "Índice X do chunk."
+        },
+        {
+          "name": "cz",
+          "type": "number",
+          "en": "Chunk Z index.",
+          "pt": "Índice Z do chunk."
+        },
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Seed.",
+          "pt": "Semente."
+        },
+        {
+          "name": "preset",
+          "type": "string",
+          "en": "Preset name. Optional.",
+          "pt": "Nome do preset. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Generates one terrain chunk.",
+      "pt": "Gera um chunk de terreno.",
+      "example": "caffeine.procedural.generateTerrainChunk(terrain, 0, 0, 42)"
+    },
+    {
+      "name": "spawnCube",
+      "lua": "caffeine.procedural.spawnCube",
+      "dryad": null,
+      "signature": "spawnCube(directorId, cx, cz, x, y, z, sx, sy, sz) -> number",
+      "params": [
+        {
+          "name": "directorId",
+          "type": "number",
+          "en": "Entity id of the procedural world director.",
+          "pt": "Id da entidade diretora do mundo procedural."
+        },
+        {
+          "name": "cx",
+          "type": "number",
+          "en": "Chunk X index.",
+          "pt": "Índice X do chunk."
+        },
+        {
+          "name": "cz",
+          "type": "number",
+          "en": "Chunk Z index.",
+          "pt": "Índice Z do chunk."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "World X.",
+          "pt": "X no mundo."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "World Y.",
+          "pt": "Y no mundo."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "World Z.",
+          "pt": "Z no mundo."
+        },
+        {
+          "name": "sx",
+          "type": "number",
+          "en": "Scale X.",
+          "pt": "Escala X."
+        },
+        {
+          "name": "sy",
+          "type": "number",
+          "en": "Scale Y.",
+          "pt": "Escala Y."
+        },
+        {
+          "name": "sz",
+          "type": "number",
+          "en": "Scale Z.",
+          "pt": "Escala Z."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Id of the new entity, or 0 if no world.",
+        "pt": "Id da nova entidade, ou 0 se não houver mundo."
+      },
+      "en": "Spawns a cube entity tagged with the director and chunk.",
+      "pt": "Cria uma entidade cubo marcada com o diretor e o chunk.",
+      "example": "local c = caffeine.procedural.spawnCube(dir, 0, 0, 1, 0.5, 1, 1, 1, 1)"
+    },
+    {
+      "name": "fillTerrainNoise",
+      "lua": "caffeine.procedural.fillTerrainNoise",
+      "dryad": null,
+      "signature": "fillTerrainNoise(terrainId, seed, amplitude)",
+      "params": [
+        {
+          "name": "terrainId",
+          "type": "number",
+          "en": "Terrain entity id.",
+          "pt": "Id da entidade de terreno."
+        },
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Seed.",
+          "pt": "Semente."
+        },
+        {
+          "name": "amplitude",
+          "type": "number",
+          "en": "Height multiplier; results are clamped to 0..1.",
+          "pt": "Multiplicador de altura; os resultados são limitados a 0..1."
+        }
+      ],
+      "returns": null,
+      "en": "Fills the terrain heightmap with fractal noise.",
+      "pt": "Preenche o heightmap do terreno com ruído fractal.",
+      "example": "caffeine.procedural.fillTerrainNoise(terrain, 42, 1.0)"
+    }
+  ]
+}

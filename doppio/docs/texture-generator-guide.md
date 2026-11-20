@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
 </div>
 
 <p class="doc-lede">Bake one texture at a time — a leaf, a feather, a flame, a packed RGBA mask — with the Texture Generator node graph.</p>
@@ -18,7 +18,7 @@ flame, a shock ring, a packed RGBA mask. It is a tool of its own, next to the
 | Result node | `Output` (Color, Roughness, Metallic, Height, AO, Emissive, Opacity, Normal) | `Texture Output` (Colour + alpha, or packed R, G, B, A) |
 | Tiling | seamless | optional: an object sits in the image with a transparent margin |
 | Preview | engine sphere or plane with real lighting | checkerboard, plus single-channel views |
-| File | `<material>.mgraph` beside the `.mat` | `<name>.texgraph` in `Textures/`, with the `.png` |
+| File | `<material>.generator.material` beside the `.mat` | `<name>.generator.texture` in `Textures/`, with the `.png` |
 | Library | 85 materials | 21 textures: foliage, organic, fire and smoke, effects, procedural, data |
 | Accent colour | cyan | orange (title bar and the Texture Output node) |
 
@@ -185,7 +185,7 @@ Headless driver: fixture `texture` shows the tab, with `preset` naming a texture
   2048 px sheet).
 * PNG only: float / EXR output for heightmaps and LUTs is not implemented.
 * The Texture Generator has no image-reader node yet, so it cannot read project bitmaps.
-* Presets do not expose a seed or colour variation in the UI; change them in the node properties.
+* The **Reseed** button gives every seeded node a new seed (a variation of the preset, one undo step); colour variation is still edited in the node properties.
 * A tiled export mode (seamless textures) is not offered: use the Material Generator for tiles.
 
 ## 9. Regenerating the images

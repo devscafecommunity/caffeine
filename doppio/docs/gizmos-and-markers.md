@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
 </div>
 
 <p class="doc-lede">Move, rotate and scale handles for the selected entity, plus icons and frusta for lights, cameras, colliders and empties.</p>
@@ -29,7 +29,8 @@ to the scene (orbit and mesh picking).
 ## 1. Transform gizmo
 
 Switch tools with `1` (Move), `2` (Rotate), `3` (Scale) while the pointer is over the viewport, or
-from the View menu. The handle under the cursor lights up before you press it, and the one you are
+from the View menu. `X` over the viewport (or **View > Snapping**) turns snapping on: Move snaps to 0.25 m, Rotate to
+15 degrees and Scale to 0.1, on the axis or plane being dragged only. The handle under the cursor lights up before you press it, and the one you are
 dragging turns yellow. Every drag is one undo step per handle.
 
 ### Move (`1`)
@@ -94,6 +95,9 @@ The gizmo never calls the engine: it emits absolute edits and the app applies th
 | `Scale { axis, scale }` | local scale | `gizmo:scale:<id>:<axis>` |
 | `ScaleUniform { scale }` | local scale | `gizmo:scale:<id>:uniform` |
 
+With snapping on, `Edit::snapped(SnapSteps)` rounds the edit before it is applied (the handle's own coordinates only, never
+negative zero, scale never below one step), so history keys and undo steps are unchanged.
+
 ## 2. Scene markers
 
 Lights, cameras and colliders are invisible in the render, so each gets a marker. Every marker has a
@@ -155,7 +159,8 @@ that lacks them. Covered by `entities_with_both_transform_and_split_components_r
 
 * Query `markers`: whether they are visible and, per marker, the entity id, name, kind and world
   position.
-* Actions `toggle_scene_markers` and `select_marker { id }` (the same as clicking the icon).
+* Actions `toggle_scene_markers`, `select_marker { id }` (the same as clicking the icon) and `toggle_gizmo_snap`; the
+  `gizmo` query reports `snap`.
 * Gizmo edits are ordinary `Message`s, so an agent can do no more than the UI.
 * Headless driver: fixture `scene3d` builds a small engine-backed scene (floor, cubes, sun, point
   and spot light, camera) and needs `libcaffeine-capi`; see [headless-testing.md](headless-testing.md).
@@ -165,7 +170,7 @@ that lacks them. Covered by `entities_with_both_transform_and_split_components_r
 * The overlays use a 60° field of view and the orbit camera, like the viewport; a play-mode camera
   is not drawn through them.
 * Move is world-space only (no local / world toggle yet), Rotate adds to the Euler angles (it can
-  hit gimbal lock), and there is no snapping.
+  hit gimbal lock). Snapping uses fixed steps (0.25 m, 15 degrees, 0.1); the steps are not editable in the UI yet.
 * Markers show a light's *shape*, not its colour or intensity numerically.
 * Orientation ignores parent rotation (see above).
 * Click-selection works on the icon only, not on the wire shapes.

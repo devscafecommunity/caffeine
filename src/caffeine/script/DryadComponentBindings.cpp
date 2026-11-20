@@ -21,6 +21,7 @@
 #include "scene/ComponentAccess.hpp"
 #include "scene/ComponentReflection.hpp"
 
+#include "script/DryadNatives.hpp"
 #include "dryad/compiler/interpreter.h"
 #include "dryad/runtime/value.h"
 
@@ -124,7 +125,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return true;
     };
 
-    interp.define_native("caffeine_component_list", [](const Args&) -> dryad::Value {
+    defineNative(interp, "caffeine_component_list", [](const Args&) -> dryad::Value {
         dryad::Value result = dryad::Value::create_array();
         for (const R::ComponentDesc& desc : R::registry()) {
             result.array_push(dryad::Value(std::string(desc.name)));
@@ -132,7 +133,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return result;
     });
 
-    interp.define_native("caffeine_component_names", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_names", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         dryad::Value result = dryad::Value::create_array();
         if (!entityOf(args, entity)) return result;
@@ -142,7 +143,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return result;
     });
 
-    interp.define_native("caffeine_component_has", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_has", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value(false);
         std::string error;
@@ -151,7 +152,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(has);
     });
 
-    interp.define_native("caffeine_component_add", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_add", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value(false);
         std::string error;
@@ -160,7 +161,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(ok);
     });
 
-    interp.define_native("caffeine_component_remove", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_remove", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value(false);
         std::string error;
@@ -169,7 +170,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(ok);
     });
 
-    interp.define_native("caffeine_component_get", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_get", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         dryad::Value result;
         if (!entityOf(args, entity)) return result;
@@ -187,7 +188,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return result;
     });
 
-    interp.define_native("caffeine_component_get_field", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_get_field", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value();
         const R::ComponentDesc* desc = R::findByName(textOf(args, 1));
@@ -227,7 +228,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return true;
     };
 
-    interp.define_native("caffeine_component_set_field", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_set_field", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity) || args.size() < 4) return dryad::Value(false);
         const R::ComponentDesc* desc = R::findByName(textOf(args, 1));
@@ -247,7 +248,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(write(entity, *desc, *field, args[3]));
     });
 
-    interp.define_native("caffeine_component_get_number", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_get_number", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value();
         double out = 0.0;
@@ -271,7 +272,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(out);
     });
 
-    interp.define_native("caffeine_component_set_number", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_set_number", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity) || args.size() < 4) return dryad::Value(false);
         std::string error;
@@ -285,7 +286,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(ok);
     });
 
-    interp.define_native("caffeine_component_set_vec", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_set_vec", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity) || args.size() < 5) return dryad::Value(false);
         bool ok = true;
@@ -298,7 +299,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(ok);
     });
 
-    interp.define_native("caffeine_component_get_text", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_get_text", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity)) return dryad::Value();
         std::string out, error;
@@ -309,7 +310,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(out);
     });
 
-    interp.define_native("caffeine_component_set_text", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_set_text", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity) || args.size() < 4) return dryad::Value(false);
         std::string error;
@@ -318,7 +319,7 @@ void bindComponentNatives(dryad::Interpreter& interp, ECS::World** worldPtr) {
         return dryad::Value(ok);
     });
 
-    interp.define_native("caffeine_component_set", [=](const Args& args) -> dryad::Value {
+    defineNative(interp, "caffeine_component_set", [=](const Args& args) -> dryad::Value {
         ECS::Entity entity;
         if (!entityOf(args, entity) || args.size() < 3 || !args[2].is_object()) return dryad::Value(false);
         const R::ComponentDesc* desc = R::findByName(textOf(args, 1));

@@ -12,6 +12,8 @@ use crate::uikit::material_library;
 use crate::uikit::nature::mesh::MaterialSpec;
 use crate::uikit::nature::{self, preview, NatureGraph, NodeId, Quality};
 use crate::uikit::panels::nature_generator::{self as panel, Edit};
+use crate::uikit::recipe;
+use crate::uikit::recipe_ref;
 use crate::uikit::texture_graph;
 use iced::widget::image::Handle;
 use iced::{Point, Vector};
@@ -166,7 +168,7 @@ impl NatureGen {
     }
 
     /// Replaces the graph (preset or new) and starts a fresh history.
-    fn load(&mut self, graph: NatureGraph) {
+    pub(super) fn load(&mut self, graph: NatureGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -627,11 +629,19 @@ impl App {
         };
         match nature::write_obj_files(&model, &dir, &name) {
             Ok(files) => {
-                let recipe = dir.join(format!("{}.{}", nature::slug(&name), nature::EXTENSION));
-                let _ = std::fs::write(
-                    &recipe,
-                    nature::to_text(&name, &self.nature.graph, self.nature.quality),
-                );
+                let slug = nature::slug(&name);
+                let graph = nature::to_text(&name, &self.nature.graph, self.nature.quality);
+                let product = files.first().cloned().unwrap_or_default();
+                if let Err(error) = self.write_recipe(
+                    &dir,
+                    crate::uikit::recipe::Kind::Nature,
+                    &slug,
+                    &name,
+                    &product,
+                    graph,
+                ) {
+                    self.log(LogLevel::Error, format!("Nature recipe: {error}"));
+                }
                 self.nature.dirty = false;
                 self.nature.status = Some(format!(
                     "Exported {} file(s) to {}",
@@ -786,15 +796,31 @@ impl App {
         }
     }
 
+    /// The file a material or texture slot uses: a plain path as it is, a recipe path resolved
+    /// to the product it bakes (`uikit::recipe_ref`).
+    fn slot_product(&self, path: &str, wanted: recipe::Kind) -> Result<String, String> {
+        match self.asset_root_dir() {
+            Some(root) => recipe_ref::resolve_product(&root, path, wanted),
+            None => Ok(path.to_owned()),
+        }
+    }
+
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
         foliage: Foliage,
     ) -> Result<String, String> {
-        // Your own material is used exactly as it is.
+        // Your own material is used exactly as it is; a `generator.material` recipe stands for
+        // the material it baked.
         if let MaterialSpec::Project(path, _) = spec {
-            return Ok(path.clone());
+            return self.slot_product(path, recipe::Kind::Material);
         }
+        let resolved_texture = match spec {
+            MaterialSpec::ProjectTexture(path, _) => {
+                self.slot_product(path, recipe::Kind::Texture)?
+            }
+            _ => String::new(),
+        };
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
         let root = self.asset_root_dir().ok_or("No project is open")?;
         let mat_folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureMaterials)
@@ -914,8 +940,10 @@ impl App {
                     material.uv_object_scale = false;
                 }
             }
-            MaterialSpec::ProjectTexture(path, _) => {
-                // A cut-out material around your image, referencing it where it is.
+            MaterialSpec::ProjectTexture(..) => {
+                // A cut-out material around your image (or around what a `generator.texture`
+                // recipe bakes), referencing it where it is.
+                let path = &resolved_texture;
                 material.albedo_map = engine
                     .asset_project_path(path)
                     .unwrap_or_else(|_| path.clone());

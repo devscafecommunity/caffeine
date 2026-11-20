@@ -554,12 +554,18 @@ fn properties_panel<'a, Message: Clone + 'a>(
                     .color(theme::TEXT_MUTED),
             );
         }
-        NodeKind::Log => {
+        NodeKind::Log | NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis => {
             let emit = emit_text.clone();
             let id = node_id.clone();
+            let label = match kind {
+                NodeKind::KeyDown => "Key",
+                NodeKind::ActionDown => "Action",
+                NodeKind::Axis => "Axis",
+                _ => "Message",
+            };
             body = body.push(text_field::property(
                 (ids.property)("text"),
-                "Message",
+                label,
                 &node.text_value,
                 move |value| emit(id.clone(), value),
             ));
@@ -574,7 +580,14 @@ fn properties_panel<'a, Message: Clone + 'a>(
                 body = body.push(status::chip("No exec link yet", theme::ChipTone::Warning));
             }
         }
-        NodeKind::GetPosition | NodeKind::GetScale | NodeKind::DeltaTime => {
+        NodeKind::DestroySelf => {
+            body = body.push(
+                text("Removes the entity when this exec chain reaches it.")
+                    .size(9)
+                    .color(theme::TEXT_MUTED),
+            );
+        }
+        _ => {
             body = body.push(
                 text("Read-only data node: drag one of its pins into an input.")
                     .size(9)
@@ -652,6 +665,27 @@ fn accent(kind: NodeKind) -> iced::Color {
         NodeKind::Log => theme::TEXT_MUTED,
         NodeKind::Constant => theme::BORDER_STRONG,
         NodeKind::Branch => theme::WARNING,
+        NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis => theme::ICON_CYAN,
+        NodeKind::TotalTime => theme::ICON_PURPLE,
+        NodeKind::DestroySelf => theme::DANGER,
+        NodeKind::Add
+        | NodeKind::Subtract
+        | NodeKind::Multiply
+        | NodeKind::Divide
+        | NodeKind::Negate => theme::ICON_TEAL,
+        NodeKind::Less | NodeKind::Greater | NodeKind::Equal => theme::WARNING,
+        NodeKind::And | NodeKind::Or | NodeKind::Not => theme::ICON_PURPLE,
+        NodeKind::SelfEntity | NodeKind::IsAlive | NodeKind::Distance => theme::DANGER,
+        other => {
+            let category = other.category();
+            if category.contains("Input") {
+                theme::ICON_CYAN
+            } else if category.contains("Random") || category.contains("Time") {
+                theme::ICON_PURPLE
+            } else {
+                theme::ICON_TEAL
+            }
+        }
     }
 }
 

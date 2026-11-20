@@ -1,0 +1,86 @@
+{
+  "namespace": "events",
+  "group": "Game",
+  "lua": "caffeine.events",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Events",
+    "pt": "Eventos"
+  },
+  "summary": {
+    "en": "A simple named-event bus: subscribe, emit and unsubscribe.",
+    "pt": "Um barramento simples de eventos nomeados: subscrever, emitir e cancelar a subscrição."
+  },
+  "functions": [
+    {
+      "name": "on",
+      "lua": "caffeine.events.on",
+      "dryad": null,
+      "signature": "on(eventName, callback) -> integer",
+      "params": [
+        {
+          "name": "eventName",
+          "type": "string",
+          "en": "Event name.",
+          "pt": "Nome do evento."
+        },
+        {
+          "name": "callback",
+          "type": "function",
+          "en": "Called with the arguments given to emit.",
+          "pt": "Chamada com os argumentos passados a emit."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Handler handle for off.",
+        "pt": "Handle do handler para off."
+      },
+      "en": "Subscribes a callback to a named event.",
+      "pt": "Subscreve um callback a um evento nomeado.",
+      "example": "local h = caffeine.events.on('hit', function(dmg) end)"
+    },
+    {
+      "name": "emit",
+      "lua": "caffeine.events.emit",
+      "dryad": null,
+      "signature": "emit(eventName, ...)",
+      "params": [
+        {
+          "name": "eventName",
+          "type": "string",
+          "en": "Event name.",
+          "pt": "Nome do evento."
+        },
+        {
+          "name": "...",
+          "type": "any",
+          "en": "Arguments passed to each handler.",
+          "pt": "Argumentos passados a cada handler."
+        }
+      ],
+      "returns": null,
+      "en": "Calls every handler of the event in registration order. A handler error is logged and does not stop the others.",
+      "pt": "Chama todos os handlers do evento por ordem de registo. Um erro num handler é registado e não impede os outros.",
+      "example": "caffeine.events.emit('hit', 10)"
+    },
+    {
+      "name": "off",
+      "lua": "caffeine.events.off",
+      "dryad": null,
+      "signature": "off(handle)",
+      "params": [
+        {
+          "name": "handle",
+          "type": "integer",
+          "en": "Handle returned by on.",
+          "pt": "Handle devolvido por on."
+        }
+      ],
+      "returns": null,
+      "en": "Removes a handler.",
+      "pt": "Remove um handler.",
+      "example": "caffeine.events.off(h)"
+    }
+  ]
+}

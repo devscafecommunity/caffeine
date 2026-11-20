@@ -5,6 +5,7 @@ set(CAFFEINE_TEST_SOURCES
     test_containers.cpp
     test_math.cpp
     test_core.cpp
+    test_hash.cpp
     test_timer.cpp
     test_gameloop.cpp
     test_input.cpp
@@ -56,6 +57,10 @@ if(DRYAD_AVAILABLE)
     list(APPEND CAFFEINE_TEST_SOURCES test_dryad_host.cpp test_node_emitter.cpp)
 endif()
 
+if(CAF_PACK_AVAILABLE)
+    list(APPEND CAFFEINE_TEST_SOURCES test_cafpack_editor_only.cpp)
+endif()
+
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})
 
 target_link_libraries(CaffeineTest PRIVATE caffeine-core)
@@ -64,6 +69,7 @@ if(CAF_PACK_AVAILABLE)
     target_compile_definitions(CaffeineTest PRIVATE CF_HAS_CAF_PACK=1)
 endif()
 
+target_compile_definitions(CaffeineTest PRIVATE CF_SCRIPT_API_DIR="${CMAKE_SOURCE_DIR}/src/caffeine/script/api")
 target_include_directories(CaffeineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Catch2 ${CMAKE_SOURCE_DIR}/caf-pack/include)
 if(MSVC)
     target_compile_options(CaffeineTest PRIVATE /W4 /WX-)

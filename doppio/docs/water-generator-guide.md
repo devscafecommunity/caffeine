@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
 </div>
 
 <p class="doc-lede">Assemble lakes, rivers, seas and storms from a node graph and place them as an animated engine water surface.</p>
@@ -43,7 +43,7 @@ Two typed ports (two colours); a link only connects ports of the same type and n
 
 Interaction is the same as the other generators: palette on the left, canvas in the middle, parameters and
 the animated **Surface preview** on the right. Undo/redo cover every edit, *Export* writes
-`water/<name>.water` (`CAFWATER1` header plus `WATERGRAPH1` node and link lines), **Place in scene** creates
+`Water/<name>.generator.water` (a recipe wrapping the `CAFWATER1` / `WATERGRAPH1` text), **Place in scene** creates
 the entity. The preview is a top-down render of the same Gerstner sum the engine animates (sun-lit slopes, a
 Fresnel sky reflection, foam where crests compress); it is a shape preview, not the final shading.
 
@@ -51,7 +51,7 @@ Fresnel sky reflection, foam where crests compress); it is a shape preview, not 
 
 Water cannot exist without a material: the Output's **Material** port needs a **Water Material** node, and a graph
 without one does not build ("The water has no material: wire a Water Material node..."). **Place in scene** writes
-that node as a real project asset, `water/<name>.mat` (colour and opacity, roughness, a low base reflectance, a thin
+that node as a real project asset, `Water/<name>.mat` (colour and opacity, roughness, a low base reflectance, a thin
 clearcoat, transmission and the refraction index of water, alpha blend), and assigns it to the water entity, so the
 material is visible in the Assets panel and editable in the **Material** tab like any other. The engine renders the
 water with the entity's material whenever it has one (without a material it falls back to a built-in water look).
@@ -181,7 +181,7 @@ DOPPIO_WATER_DUMP=/tmp/water cargo test -p doppio-ui --lib water_presets_render 
 
 ## The material is an asset from the start
 
-The Water Material node is a mould. Applying a preset (or placing) writes `water/<name>.mat` into the
+The Water Material node is a mould. Applying a preset (or placing) writes `Water/<name>.mat` into the
 project and turns the node into **Your Water Material (.mat)** pointing at it. An existing file is
 never overwritten, so repainting it in the Material tab, or pointing the node at your own `.mat`,
 sticks. The terrain's splat layers are still shaded by the engine; making them project materials

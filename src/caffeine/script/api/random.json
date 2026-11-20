@@ -1,0 +1,127 @@
+{
+  "namespace": "random",
+  "group": "Core",
+  "lua": "caffeine.random",
+  "dryad_prefix": "caffeine_random_",
+  "title": {
+    "en": "Random",
+    "pt": "Aleatório"
+  },
+  "summary": {
+    "en": "A deterministic generator: the same seed always gives the same sequence, on every platform.",
+    "pt": "Um gerador determinístico: a mesma semente dá sempre a mesma sequência, em todas as plataformas."
+  },
+  "functions": [
+    {
+      "name": "setSeed",
+      "lua": "caffeine.random.setSeed",
+      "dryad": "caffeine_random_set_seed",
+      "signature": "setSeed(seed)",
+      "params": [
+        {
+          "name": "seed",
+          "type": "number",
+          "en": "Any whole number; 0 is replaced by a fixed value.",
+          "pt": "Qualquer inteiro; 0 é substituído por um valor fixo."
+        }
+      ],
+      "returns": null,
+      "en": "Restarts the sequence.",
+      "pt": "Reinicia a sequência.",
+      "example": "caffeine.random.setSeed(1234)"
+    },
+    {
+      "name": "value",
+      "lua": "caffeine.random.value",
+      "dryad": "caffeine_random_value",
+      "signature": "value() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "A number in [0, 1).",
+        "pt": "Um número em [0, 1)."
+      },
+      "en": "Next random number.",
+      "pt": "Próximo número aleatório.",
+      "example": "local r = caffeine.random.value()"
+    },
+    {
+      "name": "range",
+      "lua": "caffeine.random.range",
+      "dryad": "caffeine_random_range",
+      "signature": "range(min, max) -> number",
+      "params": [
+        {
+          "name": "min",
+          "type": "number",
+          "en": "Lower bound (inclusive).",
+          "pt": "Limite inferior (inclusivo)."
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "en": "Upper bound (exclusive).",
+          "pt": "Limite superior (exclusivo)."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "A number in [min, max).",
+        "pt": "Um número em [min, max)."
+      },
+      "en": "A random number in a range.",
+      "pt": "Um número aleatório num intervalo.",
+      "example": "local x = caffeine.random.range(-5, 5)"
+    },
+    {
+      "name": "int",
+      "lua": "caffeine.random.int",
+      "dryad": "caffeine_random_int",
+      "signature": "int(min, max) -> number",
+      "params": [
+        {
+          "name": "min",
+          "type": "number",
+          "en": "Lower bound (inclusive).",
+          "pt": "Limite inferior (inclusivo)."
+        },
+        {
+          "name": "max",
+          "type": "number",
+          "en": "Upper bound (inclusive); reversed bounds are swapped.",
+          "pt": "Limite superior (inclusivo); limites invertidos são trocados."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "A whole number in [min, max].",
+        "pt": "Um inteiro em [min, max]."
+      },
+      "en": "A random whole number, both ends included.",
+      "pt": "Um inteiro aleatório, com os dois extremos incluídos.",
+      "example": "local roll = caffeine.random.int(1, 6)"
+    },
+    {
+      "name": "chance",
+      "lua": "caffeine.random.chance",
+      "dryad": "caffeine_random_chance",
+      "signature": "chance(p) -> boolean",
+      "params": [
+        {
+          "name": "p",
+          "type": "number",
+          "en": "Probability from 0 to 1.",
+          "pt": "Probabilidade de 0 a 1."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true with probability p.",
+        "pt": "true com probabilidade p."
+      },
+      "en": "A weighted coin flip.",
+      "pt": "Um cara ou coroa com pesos.",
+      "example": "if caffeine.random.chance(0.25) then end"
+    }
+  ]
+}

@@ -1,0 +1,483 @@
+{
+  "namespace": "component",
+  "group": "Core",
+  "lua": "caffeine.component",
+  "dryad_prefix": "caffeine_component_",
+  "title": {
+    "en": "Component",
+    "pt": "Componente"
+  },
+  "summary": {
+    "en": "Generic access to every component the reflection registry describes: list, add, remove, read and write fields by name.",
+    "pt": "Acesso genérico a todos os componentes descritos no registo de reflexão: listar, adicionar, remover, ler e escrever campos pelo nome."
+  },
+  "functions": [
+    {
+      "name": "list",
+      "lua": "caffeine.component.list",
+      "dryad": "caffeine_component_list",
+      "signature": "list() -> table",
+      "params": [],
+      "returns": {
+        "type": "table",
+        "en": "Array of {name, id, fields}; each field has name, kind, min, max and options (enums).",
+        "pt": "Lista de {name, id, fields}; cada campo tem name, kind, min, max e options (enums)."
+      },
+      "en": "Lists every component type the reflection registry describes, with its fields. In Dryad it returns only the names.",
+      "pt": "Lista todos os tipos de componente descritos no registo de reflexão, com os campos. Em Dryad devolve apenas os nomes.",
+      "example": "for _, c in ipairs(caffeine.component.list()) do caffeine.debug.log(c.name) end"
+    },
+    {
+      "name": "names",
+      "lua": "caffeine.component.names",
+      "dryad": "caffeine_component_names",
+      "signature": "names(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Array of component names.",
+        "pt": "Lista de nomes de componentes."
+      },
+      "en": "Lists the components the entity has. Errors when the entity does not exist.",
+      "pt": "Lista os componentes que a entidade tem. Dá erro se a entidade não existir.",
+      "example": "local names = caffeine.component.names(e)"
+    },
+    {
+      "name": "has",
+      "lua": "caffeine.component.has",
+      "dryad": "caffeine_component_has",
+      "signature": "has(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when the entity has the component.",
+        "pt": "Verdadeiro se a entidade tiver o componente."
+      },
+      "en": "Checks whether an entity has a component. Errors on an unknown component name.",
+      "pt": "Verifica se uma entidade tem um componente. Dá erro para um nome de componente desconhecido.",
+      "example": "if caffeine.component.has(e, 'Rigid Body 3D') then end"
+    },
+    {
+      "name": "add",
+      "lua": "caffeine.component.add",
+      "dryad": "caffeine_component_add",
+      "signature": "add(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Adds a component with default values; does nothing if the entity already has it. In Dryad it returns false and logs an error on failure.",
+      "pt": "Adiciona um componente com valores por omissão; não faz nada se a entidade já o tiver. Em Dryad devolve false e regista um erro em caso de falha.",
+      "example": "caffeine.component.add(e, 'Rigid Body 3D')"
+    },
+    {
+      "name": "remove",
+      "lua": "caffeine.component.remove",
+      "dryad": "caffeine_component_remove",
+      "signature": "remove(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when the component was removed, false when the entity did not have it.",
+        "pt": "Verdadeiro se o componente foi removido, falso se a entidade não o tinha."
+      },
+      "en": "Removes a component from an entity.",
+      "pt": "Remove um componente de uma entidade.",
+      "example": "caffeine.component.remove(e, 'Rigid Body 3D')"
+    },
+    {
+      "name": "get",
+      "lua": "caffeine.component.get",
+      "dryad": "caffeine_component_get",
+      "signature": "get(entity, name) -> table|nil",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Table of every field, or nil when the entity lacks the component.",
+        "pt": "Tabela com todos os campos, ou nil se a entidade não tiver o componente."
+      },
+      "en": "Reads all fields of a component. Vectors are {x, y, z}; colours and 4D vectors also carry r, g, b, a; enums are option names.",
+      "pt": "Lê todos os campos de um componente. Os vetores são {x, y, z}; cores e vetores 4D também têm r, g, b, a; os enums são nomes de opção.",
+      "example": "local rb = caffeine.component.get(e, 'Rigid Body 3D')"
+    },
+    {
+      "name": "getField",
+      "lua": "caffeine.component.getField",
+      "dryad": "caffeine_component_get_field",
+      "signature": "getField(entity, name, field) -> any",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        }
+      ],
+      "returns": {
+        "type": "any",
+        "en": "The field value.",
+        "pt": "O valor do campo."
+      },
+      "en": "Reads one field. Errors on an unknown component or field, or when the entity lacks the component (Dryad logs the error and returns null).",
+      "pt": "Lê um campo. Dá erro para componente ou campo desconhecido, ou se a entidade não tiver o componente (o Dryad regista o erro e devolve null).",
+      "example": "local mass = caffeine.component.getField(e, 'Rigid Body 3D', 'Mass')"
+    },
+    {
+      "name": "setField",
+      "lua": "caffeine.component.setField",
+      "dryad": "caffeine_component_set_field",
+      "signature": "setField(entity, name, field, value)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        },
+        {
+          "name": "value",
+          "type": "any",
+          "en": "New value: number, boolean, text, enum option name or index, or a vector table.",
+          "pt": "Novo valor: número, booleano, texto, nome ou índice de opção de enum, ou tabela de vetor."
+        }
+      ],
+      "returns": null,
+      "en": "Writes one field. The entity must already have the component (use `caffeine.component.add`); a wrong value type raises an error.",
+      "pt": "Escreve um campo. A entidade já tem de ter o componente (use `caffeine.component.add`); um tipo de valor errado provoca erro.",
+      "example": "caffeine.component.setField(e, 'Rigid Body 3D', 'Mass', 7.5)"
+    },
+    {
+      "name": "set",
+      "lua": "caffeine.component.set",
+      "dryad": "caffeine_component_set",
+      "signature": "set(entity, name, values)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "values",
+          "type": "table",
+          "en": "Map of field name to value; omitted fields keep their value.",
+          "pt": "Mapa de nome de campo para valor; os campos omitidos mantêm o valor."
+        }
+      ],
+      "returns": null,
+      "en": "Adds the component when missing and writes the given fields.",
+      "pt": "Adiciona o componente se não existir e escreve os campos indicados.",
+      "example": "caffeine.component.set(e, 'Rigid Body 3D', { Mass = 3 })"
+    },
+    {
+      "name": "caffeine_component_get_number",
+      "lua": null,
+      "dryad": "caffeine_component_get_number",
+      "signature": "caffeine_component_get_number(entity, name, field[, index]) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "en": "Vector part (0 = x); default 0.",
+          "pt": "Parte do vetor (0 = x); por omissão 0."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Number; integers, enum indices and bools come back as integer/boolean. null on error.",
+        "pt": "Número; inteiros, índices de enum e booleanos voltam como inteiro/booleano. null em caso de erro."
+      },
+      "en": "Dryad only: reads a numeric, boolean or enum field, or one part of a vector.",
+      "pt": "Apenas Dryad: lê um campo numérico, booleano ou de enum, ou uma parte de um vetor.",
+      "example": "let mass = caffeine_component_get_number(entity, \"Rigid Body 3D\", \"Mass\");"
+    },
+    {
+      "name": "caffeine_component_set_number",
+      "lua": null,
+      "dryad": "caffeine_component_set_number",
+      "signature": "caffeine_component_set_number(entity, name, field, value[, index]) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "en": "Number (or boolean).",
+          "pt": "Número (ou booleano)."
+        },
+        {
+          "name": "index",
+          "type": "integer",
+          "en": "Vector part (0 = x); default 0.",
+          "pt": "Parte do vetor (0 = x); por omissão 0."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True on success.",
+        "pt": "Verdadeiro em caso de sucesso."
+      },
+      "en": "Dryad only: writes a numeric, boolean or enum-index field, or one part of a vector.",
+      "pt": "Apenas Dryad: escreve um campo numérico, booleano ou índice de enum, ou uma parte de um vetor.",
+      "example": "caffeine_component_set_number(entity, \"Rigid Body 3D\", \"Mass\", 7.5);"
+    },
+    {
+      "name": "caffeine_component_set_vec",
+      "lua": null,
+      "dryad": "caffeine_component_set_vec",
+      "signature": "caffeine_component_set_vec(entity, name, field, x, y[, z[, w]]) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "First part.",
+          "pt": "Primeira parte."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Second part.",
+          "pt": "Segunda parte."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Third part (optional).",
+          "pt": "Terceira parte (opcional)."
+        },
+        {
+          "name": "w",
+          "type": "number",
+          "en": "Fourth part (optional).",
+          "pt": "Quarta parte (opcional)."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when every part was written.",
+        "pt": "Verdadeiro se todas as partes foram escritas."
+      },
+      "en": "Dryad only: writes a whole vector or colour field from its parts.",
+      "pt": "Apenas Dryad: escreve um campo inteiro de vetor ou cor a partir das suas partes.",
+      "example": "caffeine_component_set_vec(entity, \"Position 3D\", \"Position\", 4, 5, 6);"
+    },
+    {
+      "name": "caffeine_component_get_text",
+      "lua": null,
+      "dryad": "caffeine_component_get_text",
+      "signature": "caffeine_component_get_text(entity, name, field) -> string",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "en": "Text or enum label; null on error.",
+        "pt": "Texto ou rótulo de enum; null em caso de erro."
+      },
+      "en": "Dryad only: reads a string field or an enum option name.",
+      "pt": "Apenas Dryad: lê um campo de texto ou o nome de uma opção de enum.",
+      "example": "let kind = caffeine_component_get_text(entity, \"Mesh Filter\", \"Primitive\");"
+    },
+    {
+      "name": "caffeine_component_set_text",
+      "lua": null,
+      "dryad": "caffeine_component_set_text",
+      "signature": "caffeine_component_set_text(entity, name, field, text) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Component name as listed by `caffeine.component.list()`.",
+          "pt": "Nome do componente, como listado por `caffeine.component.list()`."
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "en": "Field name.",
+          "pt": "Nome do campo."
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "en": "Text or enum option name.",
+          "pt": "Texto ou nome de opção de enum."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True on success.",
+        "pt": "Verdadeiro em caso de sucesso."
+      },
+      "en": "Dryad only: writes a string field or sets an enum by option name.",
+      "pt": "Apenas Dryad: escreve um campo de texto ou define um enum pelo nome da opção.",
+      "example": "caffeine_component_set_text(entity, \"Mesh Filter\", \"Primitive\", \"Cone\");"
+    }
+  ]
+}

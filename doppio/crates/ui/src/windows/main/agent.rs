@@ -248,6 +248,7 @@ pub fn run() -> iced::Result {
                 }));
                 Ok(json!({
                     "mode": app.gizmo_mode.label(),
+                    "snap": app.gizmo_snap,
                     "target": target,
                 }))
             },
@@ -782,6 +783,11 @@ pub fn run() -> iced::Result {
             "toggle_scene_markers",
             "Shows or hides the scene markers (light rays, camera frustums, colliders, locators) over the viewport.",
             |_| Ok(Message::ToggleMarkers),
+        )
+        .action(
+            "toggle_gizmo_snap",
+            "Turns gizmo snapping on or off (0.25 m, 15 degrees, 0.1 scale).",
+            |_| Ok(Message::ToggleGizmoSnap),
         )
         .action(
             "select_marker",

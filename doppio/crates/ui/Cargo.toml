@@ -23,7 +23,7 @@ roxmltree = "0.20"
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
-iced-code-editor = "0.5.3"
+iced-code-editor = { version = "0.5.3", features = ["lsp-process"] }
 iced_test = { workspace = true, optional = true }
 fontdue = { version = "0.9", optional = true }
 

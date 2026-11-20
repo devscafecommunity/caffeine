@@ -670,6 +670,47 @@ fn gizmo_move_edit_updates_the_entity_and_history() {
 }
 
 #[test]
+fn gizmo_snapping_rounds_edits_and_toggles_from_the_menu_and_shortcut() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    assert!(!harness.app().gizmo_snap);
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [2.13, 1.0, 0.0],
+    })));
+    let selected = harness.app().selected;
+    assert_eq!(harness.app().entities[selected].position[0], 2.13);
+
+    harness.app.viewport_hovered = true;
+    harness.dispatch(Message::GizmoShortcut(4));
+    assert!(
+        harness.app().gizmo_snap,
+        "X toggles snapping over the viewport"
+    );
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [2.13, 1.0, 0.0],
+    })));
+    assert_eq!(harness.app().entities[selected].position[0], 2.25);
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(
+        gizmo::Edit::Rotate {
+            axis: gizmo::Axis::Y,
+            rotation: [0.0, 37.0, 0.0],
+        },
+    )));
+    assert_eq!(harness.app().entities[selected].rotation[1], 30.0);
+
+    harness.app.viewport_hovered = false;
+    harness.dispatch(Message::GizmoShortcut(4));
+    assert!(
+        harness.app().gizmo_snap,
+        "the shortcut only works over the viewport"
+    );
+    harness.dispatch(Message::ToggleGizmoSnap);
+    assert!(!harness.app().gizmo_snap);
+}
+
+#[test]
 fn gizmo_move_uses_world_position_for_a_parented_child() {
     let Some(mut harness) = engine_harness() else {
         return;
@@ -2209,7 +2250,10 @@ fn materialcraft_portable_round_trip_through_the_engine() {
     )
     .expect("import");
     assert!(imported.material_path.exists());
-    assert!(imported.material_path.with_extension("mgraph").exists());
+    assert!(
+        crate::uikit::recipe::recipe_for_product(&imported.material_path).is_some(),
+        "a MaterialCraft archive carries its graph, so the import keeps a recipe"
+    );
     assert!(imported
         .source_path
         .as_ref()
@@ -2957,8 +3001,8 @@ fn project_manager_creates_a_project_and_reopens_it() {
     assert_eq!(active.name, "Demo");
     assert_eq!(active.template, "3D");
     assert!(active.root.join(project::PROJECT_FILE).exists());
-    assert!(active.root.join("assets/raw/Textures").is_dir());
-    assert!(active.root.join("scenes").is_dir());
+    assert!(active.root.join("Assets/Raw/Textures").is_dir());
+    assert!(active.root.join("Scenes").is_dir());
     let recents = project::recent_projects_at(&harness.app.project_recent_file);
     assert_eq!(recents.len(), 1);
     assert_eq!(recents[0].name, "Demo");
@@ -3057,7 +3101,7 @@ fn saving_a_material_inside_a_project_makes_it_an_asset() {
     let asset_path = document.asset_path.clone().expect("material should save");
     assert!(asset_path.ends_with("brick.mat"));
     assert!(
-        project.root.join("assets/raw").join(&asset_path).is_file(),
+        project.root.join("Assets/Raw").join(&asset_path).is_file(),
         "saved material should live under the project asset root: {asset_path}"
     );
     assert!(
@@ -3099,7 +3143,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         harness.app.entities.is_empty(),
         "new project should start empty"
     );
-    let scene = project.root.join("scenes").join("main.caf");
+    let scene = project.root.join("Scenes").join("main.caf");
     assert!(scene.is_file(), "new project should get a default scene");
     let engine = harness.app.engine.as_ref().expect("engine");
     assert!(engine
@@ -3110,10 +3154,10 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         .iter()
         .any(|asset| asset.name == "Notes.txt"));
     let reloaded = project::load_project(&project.root).expect("reload project");
-    assert_eq!(reloaded.last_scene, "scenes/main.caf");
+    assert_eq!(reloaded.last_scene, "Scenes/main.caf");
 
     // Saving a renamed scene updates last_scene in the manifest.
-    let other = project.root.join("scenes").join("other.caf");
+    let other = project.root.join("Scenes").join("other.caf");
     harness
         .app
         .engine
@@ -3123,7 +3167,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         .expect("save other scene");
     harness.dispatch(Message::SaveScene);
     let reloaded = project::load_project(&project.root).expect("reload project");
-    assert_eq!(reloaded.last_scene, "scenes/other.caf");
+    assert_eq!(reloaded.last_scene, "Scenes/other.caf");
     assert_eq!(
         harness
             .app
@@ -3131,7 +3175,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
             .active
             .as_ref()
             .map(|project| project.last_scene.as_str()),
-        Some("scenes/other.caf")
+        Some("Scenes/other.caf")
     );
     std::fs::remove_dir_all(root).ok();
 }
@@ -3294,6 +3338,89 @@ fn asset_double_click_opens_a_script_in_the_editor() {
         Some("enemy.lua")
     );
     assert!(harness.has(iced::widget::Id::from(id::PANE_SCRIPT)));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn reseed_gives_a_texture_graph_new_seeds_and_is_one_undo_step() {
+    use crate::uikit::panels::{material_generator as n, texture_generator as tg};
+    let mut harness = Harness::empty();
+    let preset = crate::uikit::texture_graph::presets()
+        .iter()
+        .position(|preset| preset.name == "Wave Function Collapse Bricks")
+        .or(Some(0))
+        .unwrap_or(0);
+    harness.dispatch(Message::TextureGen(tg::Edit::ApplyPreset(preset)));
+    let before = crate::uikit::texture_graph::to_text(&harness.app().texgen.graph);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Reseed)));
+    let after = crate::uikit::texture_graph::to_text(&harness.app().texgen.graph);
+    assert_ne!(before, after, "seeds moved");
+    assert!(harness.app().texgen.dirty);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Undo)));
+    assert_eq!(
+        crate::uikit::texture_graph::to_text(&harness.app().texgen.graph),
+        before,
+        "one undo restores the old seeds"
+    );
+    // The same graph reseeds to the same result.
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Reseed)));
+    assert_eq!(
+        crate::uikit::texture_graph::to_text(&harness.app().texgen.graph),
+        after
+    );
+}
+
+#[test]
+fn double_clicking_a_baked_asset_or_its_recipe_reopens_the_generator_graph() {
+    use crate::uikit::panels::texture_generator as tg;
+    let root = test_temp_root("recipe-open");
+    let mut harness = Harness::empty();
+    harness.app.asset_root_override = Some(root.clone());
+    harness.dispatch(Message::TextureGen(tg::Edit::SetName("Bark".to_owned())));
+    harness.dispatch(Message::TextureGen(tg::Edit::Export));
+    harness.app.pump_texgen_export(true);
+    let png = root.join("Textures/bark.png");
+    let recipe = root.join("Textures/bark.generator.texture");
+    assert!(png.is_file() && recipe.is_file());
+
+    // An imported picture has no recipe: double-click must not open a generator.
+    let imported = root.join("Textures/photo.png");
+    std::fs::copy(&png, &imported).expect("copy");
+
+    let entry = |name: &str, kind: &str, path: &std::path::Path| {
+        (
+            doppio_engine::AssetInfo {
+                name: name.to_owned(),
+                relative_path: format!("Textures/{name}"),
+                kind: kind.to_owned(),
+                size_bytes: 1,
+                is_directory: false,
+            },
+            path.display().to_string(),
+        )
+    };
+    for (info, path) in [
+        entry("bark.png", "image", &png),
+        entry("bark.generator.texture", "generator", &recipe),
+        entry("photo.png", "image", &imported),
+    ] {
+        harness.app.assets.push(info);
+        harness.app.asset_paths.push(path);
+    }
+    assert!(harness.app.asset_recipe(0).is_some());
+    assert!(harness.app.asset_recipe(1).is_some());
+    assert!(
+        harness.app.asset_recipe(2).is_none(),
+        "imports have no recipe"
+    );
+
+    for index in [0, 1] {
+        harness.dispatch(Message::TextureGen(tg::Edit::SetName("Other".to_owned())));
+        harness.dispatch(Message::AssetDoubleClick(index));
+        assert_eq!(harness.app().texgen.name, "Bark", "asset {index}");
+        assert_eq!(harness.app().texgen.path.as_deref(), Some(recipe.as_path()));
+        assert!(!harness.app().texgen.dirty);
+    }
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -4236,7 +4363,7 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     harness.dispatch(Message::TextureGen(tg::Edit::Export));
     harness.app.pump_texgen_export(true);
     let png = root.join("Textures/maple_leaf.png");
-    let graph = root.join("Textures/maple_leaf.texgraph");
+    let graph = root.join("Textures/maple_leaf.generator.texture");
     assert!(
         png.is_file(),
         "png missing: {:?}",
@@ -4257,7 +4384,8 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     assert_eq!(sheet.height(), 2 * 512);
 
     // The saved graph reopens as a texture graph, never as a material.
-    let loaded = crate::uikit::texture_graph::load(&graph).expect("load");
+    let recipe = crate::uikit::recipe::read(&graph).expect("recipe");
+    let loaded = crate::uikit::texture_graph::from_text(&recipe.graph).expect("load");
     assert!(crate::uikit::texture_graph::is_texture_graph(&loaded));
     std::fs::remove_dir_all(root).ok();
 }
@@ -4939,8 +5067,9 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
         harness.app().nature.status
     );
     assert!(root.join("Models/Nature/oak_leaves.obj").is_file());
-    let recipe =
-        std::fs::read_to_string(root.join("Models/Nature/oak.nature")).expect("recipe file");
+    let recipe = crate::uikit::recipe::read(&root.join("Models/Nature/oak.generator.nature"))
+        .expect("recipe file")
+        .graph;
     assert!(
         crate::uikit::nature::from_text(&recipe).is_some(),
         "the .nature file holds the graph"
@@ -5454,12 +5583,12 @@ fn water_presets_write_their_material_and_keep_your_edits() {
         .unwrap();
     harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(lake)));
     // The material exists as a file as soon as the preset is applied, before anything is placed.
-    let file = root.join("water/calm_lake.mat");
+    let file = root.join("Water/calm_lake.mat");
     assert!(file.is_file());
     let graph = &harness.app().watergen.graph;
     assert!(graph
         .look_asset()
-        .is_some_and(|p| p.ends_with("water/calm_lake.mat")));
+        .is_some_and(|p| p.ends_with("Water/calm_lake.mat")));
     // Your edits to the file survive applying the preset again.
     std::fs::write(&file, "edited by the user").unwrap();
     harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(lake)));
@@ -5521,8 +5650,8 @@ fn placing_water_creates_an_animated_engine_surface() {
     // The water's material is a real project asset assigned to the entity, written from the
     // Water Material node: it is not hidden in the surface.
     let material = engine.entity_material(id).expect("a material");
-    assert!(material.ends_with("water/open_sea.mat"), "{material}");
-    let file = root.join("water/open_sea.mat");
+    assert!(material.ends_with("Water/open_sea.mat"), "{material}");
+    let file = root.join("Water/open_sea.mat");
     let text = std::fs::read_to_string(&file).expect("the .mat exists");
     assert!(
         text.contains("clearcoat") || text.contains("transmission"),
@@ -5547,8 +5676,8 @@ fn placing_water_creates_an_animated_engine_surface() {
 
     // Saving writes the graph, which reloads to the same water.
     harness.dispatch(Message::WaterGen(wg::Edit::Export));
-    let file = root.join("water/open_sea.water");
-    let text = std::fs::read_to_string(&file).expect("saved");
+    let file = root.join("Water/open_sea.generator.water");
+    let text = crate::uikit::recipe::read(&file).expect("saved").graph;
     let (name, graph) = crate::uikit::water::from_text(&text).expect("parses");
     assert_eq!(name, "Open Sea");
     assert_eq!(
@@ -5734,11 +5863,11 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
     assert_eq!(layers.len(), 4);
     for path in &layers {
         assert!(!path.is_empty() && path.ends_with(".mat"), "{path}");
-        assert!(root.join("terrain/layers").is_dir());
+        assert!(root.join("Terrain/Layers").is_dir());
     }
     for name in ["ground", "rock", "dirt", "mud"] {
-        assert!(root.join(format!("terrain/layers/{name}.png")).is_file());
-        assert!(root.join(format!("terrain/layers/{name}.mat")).is_file());
+        assert!(root.join(format!("Terrain/Layers/{name}.png")).is_file());
+        assert!(root.join(format!("Terrain/Layers/{name}.mat")).is_file());
     }
     // The engine paints each layer with its material's albedo map.
     let id = harness.app().entities[harness.app().selected].id;
@@ -5749,7 +5878,7 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
         .component_values(id, terrain)
         .iter()
         .filter(
-            |v| matches!(v, doppio_engine::FieldValue::String(t) if t.contains("terrain/layers/")),
+            |v| matches!(v, doppio_engine::FieldValue::String(t) if t.contains("Terrain/Layers/")),
         )
         .count();
     assert_eq!(painted, 4);
@@ -5789,9 +5918,13 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
     }
 
     harness.dispatch(Message::TerrainGen(tg::Edit::Export));
-    assert!(root.join("terrain/alpine_range.terrain-graph").is_file());
-    assert!(root.join("terrain/alpine_range_height.png").is_file());
-    let text = std::fs::read_to_string(root.join("terrain/alpine_range.terrain-graph")).unwrap();
+    assert!(root
+        .join("Terrain/alpine_range.generator.terrain")
+        .is_file());
+    assert!(root.join("Terrain/alpine_range_height.png").is_file());
+    let text = crate::uikit::recipe::read(&root.join("Terrain/alpine_range.generator.terrain"))
+        .unwrap()
+        .graph;
     let (name, graph) = crate::uikit::terrain::from_text(&text).expect("parses");
     assert_eq!(name, "Alpine Range");
     assert_eq!(

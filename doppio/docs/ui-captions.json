@@ -275,7 +275,10 @@
     "naturegen.toolbar.new": "Starts an empty graph with an Output node.",
     "naturegen.search": "Filters the node palette.",
     "naturegen.snap": "Snaps node positions to a 16 px grid.",
-    "naturegen.delete_node": "Deletes the selected node."
+    "naturegen.delete_node": "Deletes the selected node.",
+    "editor.view.toggle_snap": "Snaps gizmo edits to a grid: 0.25 m for Move, 15 degrees for Rotate, 0.1 for Scale.",
+    "generator.toolbar.reseed": "Gives every seeded node a new seed: a variation of the same material graph.",
+    "texturegen.toolbar.reseed": "Gives every seeded node a new seed: a variation of the same texture graph."
   },
   "pt": {
     "editor.toolbar.add_entity": "Cria uma entidade nova na cena atual e seleciona-a.",
@@ -553,6 +556,9 @@
     "naturegen.toolbar.new": "Começa um grafo vazio com um nó Output.",
     "naturegen.search": "Filtra a paleta de nós.",
     "naturegen.snap": "Alinha os nós a uma grelha de 16 px.",
-    "naturegen.delete_node": "Apaga o nó selecionado."
+    "naturegen.delete_node": "Apaga o nó selecionado.",
+    "editor.view.toggle_snap": "Alinha as edições do gizmo a uma grelha: 0,25 m ao mover, 15 graus ao rodar, 0,1 na escala.",
+    "generator.toolbar.reseed": "Dá uma semente nova a cada nó com semente: uma variação do mesmo grafo de material.",
+    "texturegen.toolbar.reseed": "Dá uma semente nova a cada nó com semente: uma variação do mesmo grafo de textura."
   }
 }

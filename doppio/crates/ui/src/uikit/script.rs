@@ -6,8 +6,59 @@
 //! and lives in `windows/main.rs`; this module only reports the active
 //! document so the window can bind it.
 
-use iced_code_editor::CodeEditor;
+use crate::uikit::script_assist;
+use crate::uikit::script_reference::{self, Language};
+use iced_code_editor::{
+    ArrowDirection, CodeEditor, IndentStyle, LspClient, LspDocument, LspOverlayMessage,
+    LspOverlayState, LspPosition, LspRange, LspTextChange,
+};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+/// In-process hover provider: the editor reports where the pointer rests and the
+/// document answers from the scripting reference (no language server involved).
+/// How long the reference card stays after the pointer leaves the word.
+const HOVER_GRACE: std::time::Duration = std::time::Duration::from_millis(450);
+
+struct HoverClient {
+    pending: Arc<Mutex<Option<LspPosition>>>,
+}
+
+impl LspClient for HoverClient {
+    fn request_hover(&mut self, _document: &LspDocument, position: LspPosition) {
+        if let Ok(mut slot) = self.pending.lock() {
+            *slot = Some(position);
+        }
+    }
+}
+
+fn build_editor(
+    content: &str,
+    syntax: &str,
+    path: &Path,
+    pending: &Arc<Mutex<Option<LspPosition>>>,
+) -> CodeEditor {
+    let mut editor = CodeEditor::new(content, syntax);
+    // Everything a modern editor offers that does not need a language server.
+    editor.set_line_numbers_enabled(true);
+    editor.set_bracket_match_highlight_enabled(true);
+    editor.set_bracket_pair_colorization_enabled(true);
+    editor.set_auto_close_brackets(true);
+    editor.set_auto_indent_enabled(true);
+    editor.set_show_indent_guides(true);
+    editor.set_folding_enabled(true);
+    editor.set_sticky_scroll_enabled(true);
+    editor.set_search_replace_enabled(true);
+    editor.set_command_palette_enabled(true);
+    editor.set_indent_style(IndentStyle::Spaces(4));
+    editor.attach_lsp(
+        Box::new(HoverClient {
+            pending: Arc::clone(pending),
+        }),
+        LspDocument::new(format!("file://{}", path.display()), syntax),
+    );
+    editor
+}
 
 /// One open script file.
 pub struct ScriptDocument {
@@ -23,6 +74,165 @@ pub struct ScriptDocument {
     pub original: String,
     /// Syntax name passed to the highlighter.
     syntax: &'static str,
+    /// Which reference table hover lookups use.
+    pub language: Language,
+    /// Reference card state for the code editor.
+    pub overlay: LspOverlayState,
+    pending_hover: Arc<Mutex<Option<LspPosition>>>,
+    /// Name of the entry currently shown, to avoid re-parsing the card on every move.
+    hover_entry: Option<String>,
+    /// When the pointer left the hovered word; the card lingers briefly so the pointer can reach it.
+    hover_left: Option<std::time::Instant>,
+    /// Line and start column of the word a completion will replace.
+    completion_start: Option<(usize, usize)>,
+}
+
+impl ScriptDocument {
+    /// Resolve the pointer position reported by the editor into a reference card.
+    /// Where the pointer rests, as a document position.
+    fn position_at(&mut self, point: iced::Point) -> Option<LspPosition> {
+        self.editor.lsp_request_hover_at(point);
+        self.pending_hover
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+    }
+
+    fn line_at(&self, line: u32) -> String {
+        self.editor
+            .content()
+            .lines()
+            .nth(line as usize)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// The documented API entry at a position.
+    fn entry_at(&mut self, point: iced::Point) -> Option<&'static script_reference::Entry> {
+        let position = self.position_at(point)?;
+        let line = self.line_at(position.line);
+        script_reference::lookup(self.language, &line, position.character as usize)
+    }
+
+    /// A symbol declared in this file, with the line it jumps to.
+    fn local_definition_at(&mut self, point: iced::Point) -> Option<script_assist::Definition> {
+        let position = self.position_at(point)?;
+        let line = self.line_at(position.line);
+        let name = script_reference::token_at(&line, position.character as usize)?;
+        let text = self.editor.content();
+        let definitions = script_assist::definitions(self.language, &text);
+        script_assist::find_definition(&definitions, &name, position.line as usize).cloned()
+    }
+
+    fn refresh_hover(&mut self, point: iced::Point) {
+        self.hover_left = None;
+        if let Some(entry) = self.entry_at(point) {
+            if self.hover_entry.as_deref() != Some(entry.name) {
+                self.overlay
+                    .show_hover(script_reference::hover_markdown(entry));
+                self.hover_entry = Some(entry.name.to_owned());
+            }
+            self.overlay.set_hover_position(point);
+            return;
+        }
+        if let Some(definition) = self.local_definition_at(point) {
+            let key = format!("local:{}:{}", definition.name, definition.line);
+            if self.hover_entry.as_deref() != Some(key.as_str()) {
+                let kind = if definition.is_function {
+                    "function"
+                } else {
+                    "variable"
+                };
+                self.overlay.show_hover(format!(
+                    "**{}** · {kind} declared in this file\n\n`{}`\n\nLine {}\n\n*Ctrl+click jumps to the declaration*",
+                    definition.name,
+                    definition.signature,
+                    definition.line + 1
+                ));
+                self.hover_entry = Some(key);
+            }
+            self.overlay.set_hover_position(point);
+            return;
+        }
+        self.linger_hover();
+    }
+
+    /// The pointer is off any documented word: keep the card for a moment (it may be
+    /// travelling to it), unless the pointer is already on the card.
+    fn linger_hover(&mut self) {
+        if !self.overlay.hover_visible {
+            self.clear_hover();
+            return;
+        }
+        if self.overlay.hover_interactive {
+            return;
+        }
+        let since = *self.hover_left.get_or_insert_with(std::time::Instant::now);
+        if since.elapsed() > HOVER_GRACE {
+            self.clear_hover();
+        }
+    }
+
+    fn clear_hover(&mut self) {
+        self.hover_left = None;
+        if self.hover_entry.is_some() || self.overlay.hover_visible {
+            self.overlay.clear_hover();
+            self.hover_entry = None;
+        }
+    }
+
+    /// Offer completions for the word before the cursor.
+    fn refresh_completions(&mut self) {
+        let (line, column) = self.editor.cursor_position();
+        let text = self.editor.content();
+        match script_assist::completions(self.language, &text, line, column) {
+            Some(found) => {
+                let mut point = self.editor.cursor_screen_position().unwrap_or_default();
+                point.y += 20.0;
+                self.overlay.set_completions(found.items, point);
+                self.completion_start = Some((line, found.start));
+            }
+            None => self.clear_completions(),
+        }
+    }
+
+    fn clear_completions(&mut self) {
+        if self.overlay.completion_visible || self.completion_start.is_some() {
+            self.overlay.clear_completions();
+            self.completion_start = None;
+        }
+    }
+
+    /// Replace the typed word with the highlighted candidate.
+    fn accept_completion(&mut self) -> bool {
+        let Some(item) = self.overlay.selected_item().map(str::to_owned) else {
+            return false;
+        };
+        let Some((line, start)) = self.completion_start else {
+            return false;
+        };
+        let (_, column) = self.editor.cursor_position();
+        let edit = LspTextChange {
+            range: LspRange {
+                start: LspPosition {
+                    line: line as u32,
+                    character: start as u32,
+                },
+                end: LspPosition {
+                    line: line as u32,
+                    character: column as u32,
+                },
+            },
+            text: item.clone(),
+        };
+        let applied = self.editor.apply_lsp_text_edits(&[edit]);
+        let _ = self.editor.update(&iced_code_editor::Message::GotoPosition(
+            line,
+            start + item.chars().count(),
+        ));
+        self.clear_completions();
+        applied
+    }
 }
 
 impl ScriptDocument {
@@ -43,9 +253,15 @@ pub struct State {
     pub documents: Vec<ScriptDocument>,
     pub active: Option<usize>,
     pub status: Option<String>,
+    pending_reference: Option<&'static script_reference::Entry>,
 }
 
 impl State {
+    /// The API entry a Ctrl+click asked to jump to, once.
+    pub fn take_reference(&mut self) -> Option<&'static script_reference::Entry> {
+        self.pending_reference.take()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -83,13 +299,20 @@ impl State {
         let title = document_title(&path);
         let relative_path = relative.unwrap_or_else(|| path.display().to_string());
         let syntax = syntax_for(&path);
+        let pending_hover = Arc::new(Mutex::new(None));
         self.documents.push(ScriptDocument {
+            editor: build_editor(&content, syntax, &path, &pending_hover),
             path,
             relative_path,
             title: title.clone(),
-            editor: CodeEditor::new(&content, syntax),
             original: content,
             syntax,
+            language: language_for(syntax),
+            overlay: LspOverlayState::new(),
+            pending_hover,
+            hover_entry: None,
+            hover_left: None,
+            completion_start: None,
         });
 
         let index = self.documents.len() - 1;
@@ -101,7 +324,9 @@ impl State {
     /// Make the document at `index` the active tab. Out-of-range indices are
     /// ignored so stale agent commands cannot break the pane.
     pub fn select(&mut self, index: usize) {
-        if index < self.documents.len() {
+        if let Some(document) = self.documents.get(index) {
+            // Typing goes to the tab you just switched to without a click first.
+            document.editor.request_focus();
             self.active = Some(index);
         }
     }
@@ -153,7 +378,13 @@ impl State {
             return Err(message);
         };
 
-        document.editor = CodeEditor::new(&document.original, document.syntax);
+        document.editor = build_editor(
+            &document.original,
+            document.syntax,
+            &document.path,
+            &document.pending_hover,
+        );
+        document.clear_hover();
         self.status = Some(format!("Reverted {}", document.title));
         Ok(())
     }
@@ -176,15 +407,102 @@ impl State {
             .map_err(|error| format!("Could not reload {}: {error}", path.display()))?;
         let document = &mut self.documents[index];
         document.original = content.clone();
-        document.editor = CodeEditor::new(&content, document.syntax);
+        document.editor = build_editor(
+            &content,
+            document.syntax,
+            &document.path,
+            &document.pending_hover,
+        );
+        document.clear_hover();
         self.status = Some(format!("Reloaded {}", document.title));
         Ok(true)
     }
 
     /// Apply a code-editor message to the active buffer.
     pub fn update(&mut self, message: iced_code_editor::Message) {
-        if let Some(document) = self.active.and_then(|index| self.documents.get_mut(index)) {
-            let _ = document.editor.update(&message);
+        use iced_code_editor::Message as M;
+        let Some(document) = self.active.and_then(|index| self.documents.get_mut(index)) else {
+            return;
+        };
+        // While the completion list is open, navigation keys drive it.
+        if document.overlay.completion_visible {
+            match &message {
+                M::ArrowKey(ArrowDirection::Up, false) => {
+                    document.overlay.navigate(-1);
+                    return;
+                }
+                M::ArrowKey(ArrowDirection::Down, false) => {
+                    document.overlay.navigate(1);
+                    return;
+                }
+                M::Enter | M::Tab if document.accept_completion() => return,
+                _ => {}
+            }
+        }
+        // Ctrl+click: jump to the reference of an API name, or to a local declaration.
+        if let M::JumpClick(point) = &message {
+            document.clear_hover();
+            document.clear_completions();
+            if let Some(entry) = document.entry_at(*point) {
+                self.pending_reference = Some(entry);
+            } else if let Some(definition) = document.local_definition_at(*point) {
+                let _ = document
+                    .editor
+                    .update(&M::GotoPosition(definition.line, definition.column));
+            }
+            return;
+        }
+        let hover = match &message {
+            M::MouseHover(point) => Some(*point),
+            _ => None,
+        };
+        let typing = matches!(
+            message,
+            M::CharacterInput(_) | M::Backspace | M::Delete | M::DeleteWordBack
+        );
+        let passive = matches!(
+            message,
+            M::MouseHover(_)
+                | M::Tick
+                | M::Scrolled(_)
+                | M::HorizontalScrolled(_)
+                | M::CanvasFocusGained
+                | M::CanvasFocusLost
+        );
+        let _ = document.editor.update(&message);
+        match hover {
+            Some(point) => document.refresh_hover(point),
+            None if passive => {}
+            None => document.clear_hover(),
+        }
+        if typing {
+            document.refresh_completions();
+        } else if !passive {
+            document.clear_completions();
+        }
+    }
+
+    /// Route a completion or reference-card message.
+    pub fn overlay_message(&mut self, message: LspOverlayMessage) {
+        let Some(document) = self.active.and_then(|index| self.documents.get_mut(index)) else {
+            return;
+        };
+        match message {
+            LspOverlayMessage::HoverEntered => document.overlay.hover_interactive = true,
+            LspOverlayMessage::HoverExited => {
+                document.overlay.hover_interactive = false;
+                document.clear_hover();
+            }
+            LspOverlayMessage::CompletionSelected(index) => {
+                document.overlay.completion_selected = index;
+                document.accept_completion();
+            }
+            LspOverlayMessage::CompletionConfirm => {
+                document.accept_completion();
+            }
+            LspOverlayMessage::CompletionClosed => document.clear_completions(),
+            LspOverlayMessage::CompletionNavigateUp => document.overlay.navigate(-1),
+            LspOverlayMessage::CompletionNavigateDown => document.overlay.navigate(1),
         }
     }
 
@@ -206,8 +524,18 @@ fn syntax_for(path: &Path) -> &'static str {
         .as_str()
     {
         "lua" => "lua",
-        "dyd" => "lua",
+        // Dryad is a brace language with `//` comments, `let` and `function`: the
+        // JavaScript grammar highlights it correctly where the Lua one does not.
+        "dyd" => "js",
         _ => "txt",
+    }
+}
+
+fn language_for(syntax: &str) -> Language {
+    if syntax == "js" {
+        Language::Dryad
+    } else {
+        Language::Lua
     }
 }
 
@@ -273,6 +601,129 @@ mod tests {
 
     fn insert(state: &mut State, text: &str) {
         state.update(EditorMessage::Paste(text.to_owned()));
+    }
+
+    #[test]
+    fn hovering_a_documented_name_shows_the_card() {
+        let dir = TempDir::new();
+        let path = dir.file("a.lua", "caffeine.time.delta()\n");
+        let mut state = State::new();
+        state.open(&path, None).expect("open");
+        {
+            let document = state.documents.get_mut(0).expect("doc");
+            for _ in 0..10 {
+                let _ = document.editor.update(&iced_code_editor::Message::ArrowKey(
+                    iced_code_editor::ArrowDirection::Right,
+                    false,
+                ));
+            }
+        }
+        let point = state
+            .current()
+            .and_then(|document| document.editor.cursor_screen_position())
+            .expect("cursor point");
+        state.update(iced_code_editor::Message::MouseHover(point));
+        let document = state.current().expect("doc");
+        assert!(document.overlay.hover_visible, "card shows at {point:?}");
+    }
+
+    #[test]
+    fn card_lingers_until_the_pointer_reaches_it() {
+        let dir = TempDir::new();
+        let path = dir.file("a.lua", "caffeine.time.delta()\n\n\n\n");
+        let mut state = State::new();
+        state.open(&path, None).expect("open");
+        {
+            let document = state.documents.get_mut(0).expect("doc");
+            for _ in 0..10 {
+                let _ = document.editor.update(&iced_code_editor::Message::ArrowKey(
+                    iced_code_editor::ArrowDirection::Right,
+                    false,
+                ));
+            }
+        }
+        let on_word = state
+            .current()
+            .and_then(|document| document.editor.cursor_screen_position())
+            .expect("cursor point");
+        state.update(iced_code_editor::Message::MouseHover(on_word));
+        let away = iced::Point::new(on_word.x, on_word.y + 60.0);
+        state.update(iced_code_editor::Message::MouseHover(away));
+        assert!(
+            state.current().expect("doc").overlay.hover_visible,
+            "grace keeps it"
+        );
+        // The pointer lands on the card: it must stay, even for a later move elsewhere.
+        state.overlay_message(LspOverlayMessage::HoverEntered);
+        state.update(iced_code_editor::Message::Tick);
+        assert!(state.current().expect("doc").overlay.hover_visible);
+        state.overlay_message(LspOverlayMessage::HoverExited);
+        assert!(!state.current().expect("doc").overlay.hover_visible);
+    }
+
+    fn doc_with(text: &str, name: &str) -> (TempDir, State) {
+        let dir = TempDir::new();
+        let path = dir.file(name, text);
+        let mut state = State::new();
+        state.open(&path, None).expect("open");
+        (dir, state)
+    }
+
+    fn move_to(state: &mut State, line: usize, column: usize) {
+        let document = state.documents.get_mut(0).expect("doc");
+        let _ = document
+            .editor
+            .update(&iced_code_editor::Message::GotoPosition(line, column));
+    }
+
+    #[test]
+    fn ctrl_click_opens_the_reference_of_an_api_name() {
+        let (_dir, mut state) = doc_with("caffeine.time.delta()\n", "a.lua");
+        move_to(&mut state, 0, 12);
+        let point = state
+            .current()
+            .and_then(|d| d.editor.cursor_screen_position())
+            .expect("point");
+        state.update(iced_code_editor::Message::JumpClick(point));
+        let entry = state.take_reference().expect("reference requested");
+        assert_eq!(entry.name, "caffeine.time.delta");
+        assert!(state.take_reference().is_none());
+    }
+
+    #[test]
+    fn ctrl_click_jumps_to_a_local_declaration() {
+        let (_dir, mut state) = doc_with("local function helper() end\n\n\nhelper()\n", "a.lua");
+        move_to(&mut state, 3, 2);
+        let point = state
+            .current()
+            .and_then(|d| d.editor.cursor_screen_position())
+            .expect("point");
+        state.update(iced_code_editor::Message::JumpClick(point));
+        assert!(state.take_reference().is_none());
+        let (line, _) = state.current().unwrap().editor.cursor_position();
+        assert_eq!(line, 0, "cursor moved to the declaration");
+    }
+
+    #[test]
+    fn typing_offers_completions_and_enter_accepts_the_choice() {
+        let (_dir, mut state) = doc_with("", "a.lua");
+        // The editor crate has one process-wide focused editor; take it explicitly.
+        state.documents[0].editor.request_focus();
+        state.update(iced_code_editor::Message::CanvasFocusGained);
+        for character in "caffeine.time.de".chars() {
+            state.update(iced_code_editor::Message::CharacterInput(character));
+        }
+        let document = state.current().unwrap();
+        assert!(document.overlay.completion_visible, "list is open");
+        assert_eq!(
+            document.overlay.selected_item(),
+            Some("caffeine.time.delta")
+        );
+        state.update(iced_code_editor::Message::Enter);
+        let document = state.current().unwrap();
+        assert_eq!(document.text(), "caffeine.time.delta");
+        assert!(!document.overlay.completion_visible);
+        assert_eq!(document.editor.cursor_position(), (0, 19));
     }
 
     #[test]
@@ -447,5 +898,24 @@ mod tests {
         assert!(error.contains("Could not save"));
         assert_eq!(state.status.as_deref(), Some(error.as_str()));
         assert!(state.current().expect("active").is_dirty());
+    }
+
+    #[test]
+    fn dryad_scripts_use_the_brace_grammar_and_their_own_reference() {
+        let dir = std::env::temp_dir().join(format!("doppio-script-lang-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dyd = dir.join("move.dyd");
+        let lua = dir.join("move.lua");
+        std::fs::write(&dyd, "function onUpdate(entity, dt) {}\n").unwrap();
+        std::fs::write(&lua, "function onUpdate(eid, dt) end\n").unwrap();
+
+        let mut state = State::new();
+        let a = state.open(&dyd, None).unwrap();
+        let b = state.open(&lua, None).unwrap();
+        assert_eq!(state.documents[a].editor.syntax(), "js");
+        assert_eq!(state.documents[a].language, Language::Dryad);
+        assert_eq!(state.documents[b].editor.syntax(), "lua");
+        assert_eq!(state.documents[b].language, Language::Lua);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

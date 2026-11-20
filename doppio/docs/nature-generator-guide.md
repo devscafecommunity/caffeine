@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
 </div>
 
 <p class="doc-lede">Build rocks, trees and low vegetation from a node graph, choose a quality level and place the result in the scene.</p>
@@ -108,11 +108,11 @@ Part, and the preset graphs show them (a bark node feeding the trunk, a leaf tex
 
 | Node | Gives |
 |---|---|
-| **Library Material** | a preset from the PBR library (rock, bark, ground), baked once into `nature/materials/` |
+| **Library Material** | a preset from the PBR library (rock, bark, ground), baked once into `Nature/Materials/` |
 | **Leaf / Petal Texture** | a procedural cut-out card (leaf, petal) or an **atlas** (*Broadleaf Mix*, *Autumn Mix*: eight leaf shapes and tints in one image) baked to RGBA |
 | **Solid Colour** | a plain colour and roughness, ideal for low poly |
 | **Your Material (.mat)** | any `.mat` of the project, used **as it is**, never copied or rebaked |
-| **Your Texture (PNG)** | a PNG with alpha; a **Cutout** material is made around it (`nature/materials/project_<name>.mat`) |
+| **Your Texture (PNG)** | a PNG with alpha; a **Cutout** material is made around it (`Nature/Materials/project_<name>.mat`) |
 
 When you **Place in scene**, each part's material is written to the project as a normal asset and assigned to
 the entity: open it in the **Material** tab or the Texture Generator and change it. Swap a node (a Solid Colour
@@ -226,13 +226,13 @@ when there is none:
 | Nature `.mat` files | `Materials/Nature/` |
 | Baked maps of those materials | `Textures/Nature/` |
 | Texture Generator `.png` + `.texgraph` | `Textures/` |
-| Texture Set projects | `Textures/Sets/` |
+| Texture Set projects | `TextureSets/` |
 | Material Generator output | `Materials/` |
 
 ## 5. Placing models in the scene
 
-**Export** writes `Models/Nature/<name>_<part>.obj` (one per part) and the editable
-`Models/Nature/<name>.nature` into the project's assets folder (see *Asset folders* below). **Place in scene** does that and builds the model as a **group entity** with one
+**Export** writes `Models/Nature/<name>_<part>.obj` (one per part) and the editable recipe
+`Models/Nature/<name>.generator.nature` into the project's assets folder (see *Asset folders* below). **Place in scene** does that and builds the model as a **group entity** with one
 child per part:
 
 * the mesh goes on a **Mesh Filter** (primitive Custom) plus a Mesh Renderer;
@@ -255,6 +255,14 @@ MCP (`--features agent`): query `nature` (graph, nodes, parameters, presets); ac
 { name }`, `nature_add_node { op }`, `nature_connect { from, output, to, input }`, `nature_set { node, param,
 value | string, quality, name }`, `nature_export` and `nature_place`. Headless: fixture `nature` builds an
 engine-backed scene of generated models (`reset` accepts a `preset`).
+
+### Variants from a recipe
+
+The saved recipe is also an input for other tools. `doppio-material variants Oak.generator.nature --out DIR --count 8 --seed 3`
+bakes eight deterministic variants: every node's `seed` is moved by a hash of the variant seed, and the OBJ parts go into
+`DIR/<name>_<key>/`, where the key hashes the recipe's graph, its `generator_version`, the seed and the quality. Running
+it again reuses the folders; editing the recipe changes the key. A scatter or vegetation generator is meant to call the same
+function (`uikit::recipe_ref::nature_variants`). See [`generator-recipes.md`](generator-recipes.md).
 
 ## 7. Engine fixes found while building this
 
@@ -315,6 +323,8 @@ oak crown with varied, curved leaves.
 * `.obj` only (no `.glb` writer yet).
 * Scattering over terrain, biomes and density maps belong to the terrain generator, which is separate.
 
+Scatter, LOD and impostors are planned in [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
+
 ## 9. Regenerating the images
 
 ```bash
@@ -326,7 +336,7 @@ oak crown with varied, curved leaves.
 
 The Library Material, Leaf / Petal Texture and Solid Colour nodes (and every preset) are only
 **moulds**. Applying a preset, or placing a model, writes each material's picture and `.mat` into
-`nature/materials/` in your project and turns the node into **Your Material (.mat)** pointing at
+`Nature/Materials/` in your project and turns the node into **Your Material (.mat)** pointing at
 them. Nothing stays hidden in the menu: open the `.mat` in the Material tab, repaint the PNG, or
 point the node at another file. A material is only written once, so your edits to it are kept.
 Your Material and Your Texture carry *Shapes across / down*, the atlas layout of the picture, which

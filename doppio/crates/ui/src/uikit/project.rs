@@ -1,8 +1,9 @@
 //! Project manifest and recent-project storage.
 //!
 //! The format matches the existing `project.caffeine` convention: a small JSON
-//! file at the project root plus `assets/raw`, `assets/processed`, `scripts`,
-//! `scenes`, `materials`, `texture_sets` and `build` folders.
+//! file at the project root plus `Assets/Raw`, `Assets/Processed`, `Scripts`,
+//! `Scenes` and `Build` folders. Folders the editor creates are capitalised
+//! (`Materials`, `Textures`, `Generators`); a user may rename them freely.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -30,15 +31,15 @@ impl Default for ProjectPaths {
 }
 
 fn default_assets_raw() -> String {
-    "assets/raw".to_owned()
+    "Assets/Raw".to_owned()
 }
 
 fn default_assets_processed() -> String {
-    "assets/processed".to_owned()
+    "Assets/Processed".to_owned()
 }
 
 fn default_scripts() -> String {
-    "scripts".to_owned()
+    "Scripts".to_owned()
 }
 
 fn default_engine_version() -> String {
@@ -88,7 +89,7 @@ impl ProjectInfo {
 
     pub fn scene_path(&self) -> Option<PathBuf> {
         if self.last_scene.is_empty() {
-            let default = self.root.join("scenes").join("main.caf");
+            let default = scenes_dir(&self.root).join("main.caf");
             return default.exists().then_some(default);
         }
         let relative = Path::new(&self.last_scene);
@@ -98,6 +99,16 @@ impl ProjectInfo {
             self.root.join(relative)
         };
         scene.exists().then_some(scene)
+    }
+}
+
+/// Scene folder of a project: `Scenes`, or a legacy lowercase `scenes` that already exists.
+pub fn scenes_dir(root: &Path) -> PathBuf {
+    let legacy = root.join("scenes");
+    if legacy.is_dir() && !root.join("Scenes").is_dir() {
+        legacy
+    } else {
+        root.join("Scenes")
     }
 }
 
@@ -164,18 +175,20 @@ pub fn create_project(location: &Path, name: &str, template: &str) -> Result<Pro
     }
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     for folder in [
-        "assets/raw",
-        "assets/raw/Animations",
-        "assets/raw/Models",
-        "assets/raw/Materials",
-        "assets/raw/Textures",
-        "assets/raw/Audio",
-        "assets/raw/Prefabs",
-        "assets/raw/Sky",
-        "assets/processed",
-        "scripts",
-        "scenes",
-        "build",
+        "Assets/Raw",
+        "Assets/Raw/Animations",
+        "Assets/Raw/Audio",
+        "Assets/Raw/Generators",
+        "Assets/Raw/Materials",
+        "Assets/Raw/Models",
+        "Assets/Raw/Prefabs",
+        "Assets/Raw/Sky",
+        "Assets/Raw/TextureSets",
+        "Assets/Raw/Textures",
+        "Assets/Processed",
+        "Scripts",
+        "Scenes",
+        "Build",
     ] {
         std::fs::create_dir_all(root.join(folder)).map_err(|error| error.to_string())?;
     }
@@ -420,18 +433,20 @@ mod tests {
         std::fs::create_dir_all(&root).expect("temp dir");
         let project = create_project(&root, "Demo", "3D").expect("create");
         assert!(project.root.join(PROJECT_FILE).exists());
-        assert!(project.root.join("assets/raw/Textures").is_dir());
-        assert_eq!(project.asset_root(), project.root.join("assets/raw"));
+        assert!(project.root.join("Assets/Raw/Textures").is_dir());
+        assert!(project.root.join("Assets/Raw/Generators").is_dir());
+        assert!(!project.root.join("Assets/Raw/materials").exists());
+        assert_eq!(project.asset_root(), project.root.join("Assets/Raw"));
 
         let loaded = load_project(&project.root).expect("load");
         assert_eq!(loaded.name, "Demo");
         assert_eq!(loaded.template, "3D");
-        assert_eq!(loaded.paths.assets_raw, "assets/raw");
+        assert_eq!(loaded.paths.assets_raw, "Assets/Raw");
 
         update_last_scene(&project.root, "scenes/main.caf").expect("scene");
         let updated = load_project(&project.root).expect("reload");
         assert_eq!(updated.last_scene, "scenes/main.caf");
-        assert_eq!(updated.paths.assets_raw, "assets/raw");
+        assert_eq!(updated.paths.assets_raw, "Assets/Raw");
 
         let scanned = scan_projects(&root);
         assert!(scanned.iter().any(|entry| entry.name == "Demo"));

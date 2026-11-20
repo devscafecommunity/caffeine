@@ -1,0 +1,190 @@
+{
+  "namespace": "time",
+  "group": "Core",
+  "lua": "caffeine.time",
+  "dryad_prefix": "caffeine_time_",
+  "title": {
+    "en": "Time",
+    "pt": "Tempo"
+  },
+  "summary": {
+    "en": "The play clock: scaled and unscaled frame time, the fixed step, pause and the deterministic random seed.",
+    "pt": "O relógio de jogo: tempo de frame com e sem escala, o passo fixo, pausa e a semente aleatória determinística."
+  },
+  "functions": [
+    {
+      "name": "delta",
+      "lua": "caffeine.time.delta",
+      "dryad": "caffeine_time_delta",
+      "signature": "delta() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Seconds since the previous frame, multiplied by the time scale (0 while paused).",
+        "pt": "Segundos desde o frame anterior, multiplicados pela escala de tempo (0 em pausa)."
+      },
+      "en": "Frame time to use for movement and timers in `onUpdate`.",
+      "pt": "Tempo de frame a usar para movimento e temporizadores em `onUpdate`.",
+      "example": "local speed = 5\nfunction onUpdate(e, dt)\n  local t = caffeine.world.getTransform(e)\n  caffeine.world.setTransform(e, { x = t.x + speed * caffeine.time.delta(), y = t.y })\nend"
+    },
+    {
+      "name": "setTimeScale",
+      "lua": "caffeine.time.setTimeScale",
+      "dryad": "caffeine_time_set_scale",
+      "signature": "setTimeScale(scale)",
+      "params": [
+        {
+          "name": "scale",
+          "type": "number",
+          "en": "1 = normal, 0.5 = half speed, 0 = frozen.",
+          "pt": "1 = normal, 0.5 = metade da velocidade, 0 = parado."
+        }
+      ],
+      "returns": null,
+      "en": "Changes how fast scaled time advances. Unscaled time and the UI are not affected.",
+      "pt": "Altera a velocidade do tempo escalado. O tempo sem escala e a UI não são afetados.",
+      "example": "caffeine.time.setTimeScale(0.25) -- slow motion"
+    },
+    {
+      "name": "unscaledDelta",
+      "lua": "caffeine.time.unscaledDelta",
+      "dryad": "caffeine_time_unscaled_delta",
+      "signature": "unscaledDelta() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Seconds since the previous frame, ignoring the time scale.",
+        "pt": "Segundos desde o frame anterior, ignorando a escala de tempo."
+      },
+      "en": "Real frame time, unaffected by the time scale or pause. Use it for UI and effects that must keep running.",
+      "pt": "Tempo real de frame, não afetado pela escala de tempo nem pela pausa. Use-o para UI e efeitos que devem continuar a correr.",
+      "example": "local real = caffeine.time.unscaledDelta()"
+    },
+    {
+      "name": "time",
+      "lua": "caffeine.time.time",
+      "dryad": "caffeine_time_total",
+      "signature": "time() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Scaled play time in seconds.",
+        "pt": "Tempo de jogo escalado em segundos."
+      },
+      "en": "Total play time accumulated by the play clock.",
+      "pt": "Tempo de jogo total acumulado pelo relógio de jogo.",
+      "example": "caffeine.debug.log('t=' .. caffeine.time.time())"
+    },
+    {
+      "name": "fixedDelta",
+      "lua": "caffeine.time.fixedDelta",
+      "dryad": "caffeine_time_fixed_delta",
+      "signature": "fixedDelta() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "The fixed step in seconds (1/60 by default).",
+        "pt": "O passo fixo em segundos (1/60 por omissão)."
+      },
+      "en": "The fixed simulation step of the play clock.",
+      "pt": "O passo fixo de simulação do relógio de jogo.",
+      "example": "local step = caffeine.time.fixedDelta()"
+    },
+    {
+      "name": "timeScale",
+      "lua": "caffeine.time.timeScale",
+      "dryad": "caffeine_time_scale",
+      "signature": "timeScale() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Current time scale.",
+        "pt": "Escala de tempo atual."
+      },
+      "en": "Returns the current time scale (1 is normal speed).",
+      "pt": "Devolve a escala de tempo atual (1 é a velocidade normal).",
+      "example": "local s = caffeine.time.timeScale()"
+    },
+    {
+      "name": "paused",
+      "lua": "caffeine.time.paused",
+      "dryad": "caffeine_time_paused",
+      "signature": "paused() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "True while the play clock is paused.",
+        "pt": "Verdadeiro enquanto o relógio de jogo está em pausa."
+      },
+      "en": "Tells whether the play clock is paused.",
+      "pt": "Indica se o relógio de jogo está em pausa.",
+      "example": "if caffeine.time.paused() then return end"
+    },
+    {
+      "name": "setPaused",
+      "lua": "caffeine.time.setPaused",
+      "dryad": "caffeine_time_set_paused",
+      "signature": "setPaused(paused)",
+      "params": [
+        {
+          "name": "paused",
+          "type": "boolean",
+          "en": "True to pause, false to resume.",
+          "pt": "Verdadeiro para pausar, falso para retomar."
+        }
+      ],
+      "returns": null,
+      "en": "Pauses or resumes the play clock; scaled delta is 0 while paused.",
+      "pt": "Pausa ou retoma o relógio de jogo; o delta escalado é 0 em pausa.",
+      "example": "caffeine.time.setPaused(true)"
+    },
+    {
+      "name": "frame",
+      "lua": "caffeine.time.frame",
+      "dryad": "caffeine_time_frame",
+      "signature": "frame() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Frame counter of the play clock.",
+        "pt": "Contador de frames do relógio de jogo."
+      },
+      "en": "Returns the number of frames advanced by the play clock.",
+      "pt": "Devolve o número de frames avançados pelo relógio de jogo.",
+      "example": "local n = caffeine.time.frame()"
+    },
+    {
+      "name": "seed",
+      "lua": "caffeine.time.seed",
+      "dryad": null,
+      "signature": "seed() -> integer",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "en": "Current random seed.",
+        "pt": "Semente aleatória atual."
+      },
+      "en": "Returns the deterministic random seed of the play clock.",
+      "pt": "Devolve a semente aleatória determinística do relógio de jogo.",
+      "example": "local s = caffeine.time.seed()"
+    },
+    {
+      "name": "setSeed",
+      "lua": "caffeine.time.setSeed",
+      "dryad": null,
+      "signature": "setSeed(seed)",
+      "params": [
+        {
+          "name": "seed",
+          "type": "integer",
+          "en": "New seed.",
+          "pt": "Nova semente."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the deterministic random seed of the play clock.",
+      "pt": "Define a semente aleatória determinística do relógio de jogo.",
+      "example": "caffeine.time.setSeed(1234)"
+    }
+  ]
+}

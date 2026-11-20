@@ -922,6 +922,43 @@ impl Default for MaterialGraph {
 }
 
 impl MaterialGraph {
+    /// Gives every node that has a seed a new one derived from `seed`, so the same graph makes a
+    /// different but equally valid pattern. Returns how many nodes changed. Deterministic: the
+    /// same graph and `seed` always give the same result.
+    pub fn reseed(&mut self, seed: u32) -> usize {
+        let mut changed = 0;
+        for node in &mut self.nodes {
+            let next = |old: i32| {
+                let mix = crate::uikit::recipe_ref::derive_seed(
+                    u64::from(seed),
+                    0x5EED,
+                    node.id as i32,
+                    old,
+                );
+                (mix % 9_999) as i32 + 1
+            };
+            match &mut node.kind {
+                NodeKind::Noise { seed, .. }
+                | NodeKind::Voronoi { seed, .. }
+                | NodeKind::Warp { seed, .. } => {
+                    *seed = next(*seed);
+                    changed += 1;
+                }
+                NodeKind::Proc { op, params, .. } => {
+                    let def = op.def();
+                    if let Some(index) = def.params.iter().position(|spec| spec.key == "seed") {
+                        if let Some(value) = params.get_mut(index) {
+                            *value = next(*value as i32) as f32;
+                            changed += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
     pub fn add_node(&mut self, kind: NodeKind, position: Point) -> NodeId {
         let id = self.next_id;
         self.next_id += 1;

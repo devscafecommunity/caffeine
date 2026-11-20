@@ -101,6 +101,7 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                         "1" => Some(1),
                         "2" => Some(2),
                         "3" => Some(3),
+                        "x" | "X" => Some(4),
                         _ => None,
                     } {
                         return Some(Message::GizmoShortcut(key));
@@ -377,6 +378,7 @@ enum Message {
     ViewportGridShortcut,
     ToggleGrid,
     ToggleMarkers,
+    ToggleGizmoSnap,
     MarkerSelected(u32),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SetViewportSettings {
@@ -453,6 +455,7 @@ enum Message {
     ScriptSelect(usize),
     ScriptTabClose(usize),
     ScriptAction(iced_code_editor::Message),
+    ScriptOverlay(iced_code_editor::LspOverlayMessage),
     ScriptSave,
     ScriptRevert,
     ScriptClose,
@@ -718,6 +721,8 @@ struct App {
     /// Scene markers (lights, cameras, colliders, empties) drawn over the viewport.
     markers: Vec<scene_markers::Marker>,
     show_markers: bool,
+    /// Gizmo edits snap to `gizmo::SnapSteps` while on.
+    gizmo_snap: bool,
     markers_dirty: bool,
     texture_set: Option<texture_set::TextureSet>,
     texture_set_history: texture_set::TileHistory,
@@ -1074,6 +1079,7 @@ impl App {
             terraingen: terraingen::TerrainGen::new(),
             markers: Vec::new(),
             show_markers: true,
+            gizmo_snap: false,
             markers_dirty: true,
             texture_set: None,
             texture_set_history: texture_set::TileHistory::default(),
@@ -2361,7 +2367,7 @@ impl App {
                 for id in ids {
                     let _ = engine.destroy_entity(id);
                 }
-                let scene = info.root.join("scenes").join("main.caf");
+                let scene = project::scenes_dir(&info.root).join("main.caf");
                 if let Some(parent) = scene.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -2725,6 +2731,38 @@ impl App {
                 self.log(LogLevel::Action, format!("Opened script {title}"));
             }
             Err(error) => self.log(LogLevel::Error, error),
+        }
+    }
+
+    /// Jump to the reference page of a scripting API entry: the local website checkout
+    /// when there is one, otherwise the public URL is logged.
+    fn open_script_reference(&mut self, entry: &'static crate::uikit::script_reference::Entry) {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(root) = std::env::var_os("CAFFEINE_ENGINE_ROOT") {
+            roots.push(root.into());
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            roots.extend(exe.ancestors().map(std::path::Path::to_path_buf));
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            roots.extend(cwd.ancestors().map(std::path::Path::to_path_buf));
+        }
+        let found = roots
+            .iter()
+            .find_map(|root| crate::uikit::script_reference::reference_file(entry, root));
+        match found {
+            Some(file) => {
+                self.log(LogLevel::Action, format!("Reference for {}", entry.name));
+                self.open_script_file(&file, None);
+            }
+            None => self.log(
+                LogLevel::Action,
+                format!(
+                    "Reference for {}: {}",
+                    entry.name,
+                    crate::uikit::script_reference::reference_url(entry)
+                ),
+            ),
         }
     }
 
@@ -3460,7 +3498,7 @@ impl App {
                         asset_folders::resolve(&root, asset_folders::AssetFolder::TextureSets)
                     })
                 })
-                .unwrap_or_else(|| std::path::PathBuf::from("Textures/Sets"))
+                .unwrap_or_else(|| std::path::PathBuf::from("TextureSets"))
                 .join("export")
         };
         let stem = sanitize_material_name(&set.name);
@@ -3563,10 +3601,7 @@ impl App {
         };
         self.material_directx = surface.normal_directx;
         let generator =
-            std::fs::read_to_string(std::path::Path::new(&absolute).with_extension("mgraph"))
-                .ok()
-                .and_then(|text| MaterialGraph::from_text(&text))
-                .unwrap_or_default();
+            Self::material_recipe_graph(std::path::Path::new(&absolute)).unwrap_or_default();
         self.material = Some(MaterialDocument {
             surface,
             asset_path: Some(asset.relative_path.clone()),
@@ -3599,6 +3634,9 @@ impl App {
             self.asset_directory = panels::assetmanager::normalize_directory(&path);
             self.asset_search.clear();
             self.asset_selected = None;
+        } else if let Some(recipe) = self.asset_recipe(index) {
+            // A recipe, or an asset a generator baked: reopen the graph that made it.
+            self.open_recipe_file(&recipe);
         } else if asset.kind == "script"
             && !asset.relative_path.to_ascii_lowercase().ends_with(".dyd")
         {
@@ -3609,10 +3647,27 @@ impl App {
         }
     }
 
+    /// The generator recipe behind an asset: the asset itself when it is a `generator.*`
+    /// file, otherwise the recipe stored beside it. Imported assets have none.
+    fn asset_recipe(&self, index: usize) -> Option<std::path::PathBuf> {
+        let asset = self.assets.get(index)?;
+        let absolute = std::path::PathBuf::from(self.asset_paths.get(index)?);
+        if crate::uikit::recipe::is_recipe(std::path::Path::new(&asset.relative_path)) {
+            return Some(absolute);
+        }
+        crate::uikit::recipe::recipe_for_product(&absolute)
+    }
+
     fn asset_pressed(&mut self, index: usize) {
         let Some(asset) = self.assets.get(index) else {
             return;
         };
+        if crate::uikit::recipe::is_recipe(std::path::Path::new(&asset.relative_path)) {
+            if let Some(recipe) = self.asset_recipe(index) {
+                self.open_recipe_file(&recipe);
+            }
+            return;
+        }
         match asset.kind.as_str() {
             "material" => self.open_material_asset(index),
             "image" => self.new_material_from_texture(index),
@@ -3653,12 +3708,8 @@ impl App {
                     Some(path.to_owned())
                 };
                 self.material_directx = surface.normal_directx;
-                let generator = std::fs::read_to_string(
-                    std::path::Path::new(&absolute).with_extension("mgraph"),
-                )
-                .ok()
-                .and_then(|text| MaterialGraph::from_text(&text))
-                .unwrap_or_default();
+                let generator = Self::material_recipe_graph(std::path::Path::new(&absolute))
+                    .unwrap_or_default();
                 self.material = Some(MaterialDocument {
                     surface,
                     asset_path,
@@ -3749,7 +3800,7 @@ impl App {
             )
         } else {
             let file_name = format!("{}.mat", sanitize_material_name(&document.surface.name));
-            let relative = format!("materials/{file_name}");
+            let relative = format!("Materials/{file_name}");
             let absolute = engine
                 .asset_path(&relative)
                 .unwrap_or_else(|_| relative.clone());
@@ -3764,14 +3815,8 @@ impl App {
                     document.dirty = false;
                     document.preview_dirty = true;
                 }
-                let graph_path = std::path::Path::new(&absolute).with_extension("mgraph");
-                if let Some(document) = self.material.as_ref() {
-                    if std::fs::write(&graph_path, document.generator.to_text()).is_err() {
-                        self.log(
-                            LogLevel::Error,
-                            format!("Could not save generator graph {}", graph_path.display()),
-                        );
-                    }
+                if let Some(graph) = self.material.as_ref().map(|d| d.generator.clone()) {
+                    self.write_material_recipe(std::path::Path::new(&absolute), &graph);
                 }
                 self.material_last_preview = None;
                 self.refresh_assets();
@@ -3944,6 +3989,13 @@ impl App {
         self.generator_preview_version = self.generator_preview_version.wrapping_add(1);
     }
 
+    /// A seed for the next Reseed: a hash of the graph as it is now, so repeating the action on a
+    /// changed graph gives a new variation and the same graph always gives the same one.
+    fn next_reseed(&self, text: Option<String>) -> u32 {
+        let hash = crate::uikit::recipe_ref::content_hash(text.unwrap_or_default().as_bytes());
+        (hash % 100_000) as u32 + 1
+    }
+
     fn push_generator_history(&mut self, name: impl Into<String>, key: Option<String>) {
         if let Some(document) = self.material.as_mut() {
             document.dirty = true;
@@ -4043,6 +4095,22 @@ impl App {
             material_generator::Edit::Fit => {
                 self.fit_generator_view();
                 self.generator_status = Some("Framed the graph".to_owned());
+            }
+            material_generator::Edit::Reseed => {
+                let seed = self.next_reseed(self.material.as_ref().map(|d| d.generator.to_text()));
+                let changed = self
+                    .material
+                    .as_mut()
+                    .map(|document| document.generator.reseed(seed))
+                    .unwrap_or(0);
+                if changed > 0 {
+                    self.push_generator_history("Reseed", None);
+                }
+                self.generator_status = Some(match changed {
+                    0 => "No node in this graph has a seed".to_owned(),
+                    1 => "Reseeded 1 node".to_owned(),
+                    n => format!("Reseeded {n} nodes"),
+                });
             }
             material_generator::Edit::SetSnap(value) => {
                 self.generator_snap = value;
@@ -4970,18 +5038,7 @@ impl App {
                 .save_material(&file.to_string_lossy(), &surface)
                 .is_ok()
             {
-                let mut graph = MaterialGraph::default();
-                if !definition.albedo_map.is_empty() {
-                    graph.nodes[0].kind = generators::NodeKind::Image {
-                        path: definition.albedo_map.clone(),
-                        projection: generators::Projection::Uv,
-                        tiling: definition.uv_tiling,
-                        offset: definition.uv_offset,
-                        filter: generators::ImageFilter::Linear,
-                        wrap: generators::WrapMode::Repeat,
-                    };
-                }
-                let _ = std::fs::write(file.with_extension("mgraph"), graph.to_text());
+                // Imported materials have no recipe: there is no graph that made them.
                 written += 1;
             }
         }
@@ -6357,6 +6414,11 @@ impl App {
         let Some(id) = self.entities.get(self.selected).map(|entity| entity.id) else {
             return;
         };
+        let edit = if self.gizmo_snap {
+            edit.snapped(gizmo::SnapSteps::default())
+        } else {
+            edit
+        };
         let (name, key) = (edit.label(), edit.history_key(id));
         match edit {
             gizmo::Edit::Move { position, .. } | gizmo::Edit::MovePlane { position, .. } => {
@@ -6891,6 +6953,12 @@ impl App {
             }
             Message::ScriptAction(action) => {
                 self.script.update(action);
+                if let Some(entry) = self.script.take_reference() {
+                    self.open_script_reference(entry);
+                }
+            }
+            Message::ScriptOverlay(message) => {
+                self.script.overlay_message(message);
             }
             Message::ScriptSave => {
                 if let Some(index) = self.script.current_index() {
@@ -7274,6 +7342,9 @@ impl App {
                 self.set_gizmo_mode(mode);
             }
             Message::GizmoShortcut(key) => {
+                if self.viewport_hovered && key == 4 {
+                    return self.update(Message::ToggleGizmoSnap);
+                }
                 if self.viewport_hovered {
                     let mode = match key {
                         1 => gizmo::Mode::Translate,
@@ -7369,6 +7440,11 @@ impl App {
                 self.show_markers = !self.show_markers;
                 let state = if self.show_markers { "on" } else { "off" };
                 self.log(LogLevel::Action, format!("Scene markers {state}"));
+            }
+            Message::ToggleGizmoSnap => {
+                self.gizmo_snap = !self.gizmo_snap;
+                let state = if self.gizmo_snap { "on" } else { "off" };
+                self.log(LogLevel::Action, format!("Gizmo snapping {state}"));
             }
             Message::MarkerSelected(id) => {
                 if let Some(index) = self.entities.iter().position(|entity| entity.id == id) {
@@ -7650,6 +7726,16 @@ impl App {
                         label: "Render Now",
                         shortcut: Some("Ctrl+R"),
                         message: Message::RenderViewport,
+                    },
+                    menu::Item {
+                        id: id::TOGGLE_SNAP,
+                        label: if self.gizmo_snap {
+                            "Snapping: On"
+                        } else {
+                            "Snapping: Off"
+                        },
+                        shortcut: Some("X"),
+                        message: Message::ToggleGizmoSnap,
                     },
                     menu::Item {
                         id: id::TOGGLE_MARKERS,
@@ -8864,6 +8950,7 @@ impl App {
                             on_select: Box::new(Message::ScriptSelect),
                             on_tab_close: Box::new(Message::ScriptTabClose),
                             on_action: Box::new(Message::ScriptAction),
+                            on_overlay: Box::new(Message::ScriptOverlay),
                             on_save: Message::ScriptSave,
                             on_revert: Message::ScriptRevert,
                             on_close: Message::ScriptClose,
@@ -9479,6 +9566,7 @@ fn format_transform_number(value: f32) -> String {
 }
 
 mod naturegen;
+mod recipes;
 mod terraingen;
 mod texturegen;
 mod watergen;

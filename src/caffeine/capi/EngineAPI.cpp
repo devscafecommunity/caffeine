@@ -71,6 +71,15 @@ std::string assetKind(const std::filesystem::path& path, bool isDirectory) {
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // `Rock.generator.material`: the editable recipe of a generator, not a material.
+    std::string stem = path.stem().string();
+    std::transform(stem.begin(), stem.end(), stem.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::string marker = ".generator";
+    if (stem.size() > marker.size() &&
+        stem.compare(stem.size() - marker.size(), marker.size(), marker) == 0) {
+        return "generator";
+    }
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gif" ||
         ext == ".hdr" || ext == ".exr") {
         return "image";

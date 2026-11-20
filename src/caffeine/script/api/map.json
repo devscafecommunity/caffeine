@@ -1,0 +1,38 @@
+{
+  "namespace": "map",
+  "group": "World",
+  "lua": "caffeine.map",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Map",
+    "pt": "Mapa"
+  },
+  "summary": {
+    "en": "Hooks for map surface chunk requests.",
+    "pt": "Ganchos para pedidos de chunks de superfícies de mapa."
+  },
+  "functions": [
+    {
+      "name": "onChunkRequest",
+      "lua": "caffeine.map.onChunkRequest",
+      "dryad": null,
+      "signature": "onChunkRequest(callback) -> number",
+      "params": [
+        {
+          "name": "callback",
+          "type": "function",
+          "en": "Called with a payload table: `surfaceEntityId`, `chunkX`, `chunkY`, `worldMinX`, `worldMinY`, `chunkSize`.",
+          "pt": "Chamada com uma tabela: `surfaceEntityId`, `chunkX`, `chunkY`, `worldMinX`, `worldMinY`, `chunkSize`."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Event handler handle.",
+        "pt": "Handle do handler de evento."
+      },
+      "en": "Registers a handler for the `mapChunkRequest` event raised when a map surface requests a chunk.",
+      "pt": "Regista um handler para o evento `mapChunkRequest`, gerado quando uma superfície de mapa pede um chunk.",
+      "example": "caffeine.map.onChunkRequest(function(req)\n  print(req.chunkX, req.chunkY)\nend)"
+    }
+  ]
+}

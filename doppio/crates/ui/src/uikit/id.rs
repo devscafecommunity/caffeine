@@ -198,6 +198,7 @@ pub const DRYAD_EMPTY: UiId = UiId::fixed("dryad.nodes.empty");
 pub const PANE_VIEWPORT: UiId = UiId::fixed("editor.pane.viewport");
 pub const VIEWPORT_MARKERS: UiId = UiId::fixed("viewport.canvas.markers");
 pub const TOGGLE_MARKERS: UiId = UiId::fixed("editor.view.toggle_markers");
+pub const TOGGLE_SNAP: UiId = UiId::fixed("editor.view.toggle_snap");
 pub const VIEWPORT_GIZMO: UiId = UiId::fixed("viewport.canvas.gizmo");
 pub const PANE_INSPECTOR: UiId = UiId::fixed("editor.pane.inspector");
 pub const PANE_MATERIAL: UiId = UiId::fixed("editor.pane.material");
@@ -211,6 +212,7 @@ pub const TEXTUREGEN_SIZE: UiId = UiId::fixed("texturegen.size");
 pub const TEXTUREGEN_UNDO: UiId = UiId::fixed("texturegen.toolbar.undo");
 pub const TEXTUREGEN_REDO: UiId = UiId::fixed("texturegen.toolbar.redo");
 pub const TEXTUREGEN_FIT: UiId = UiId::fixed("texturegen.toolbar.fit");
+pub const TEXTUREGEN_RESEED: UiId = UiId::fixed("texturegen.toolbar.reseed");
 pub const TEXTUREGEN_SAVE: UiId = UiId::fixed("texturegen.toolbar.save");
 pub const TEXTUREGEN_EXPORT: UiId = UiId::fixed("texturegen.toolbar.export");
 pub const TEXTUREGEN_SEARCH: UiId = UiId::fixed("texturegen.search");
@@ -394,6 +396,7 @@ pub fn generator_channel(label: &str) -> UiId {
 pub const GENERATOR_UNDO: UiId = UiId::fixed("generator.toolbar.undo");
 pub const GENERATOR_REDO: UiId = UiId::fixed("generator.toolbar.redo");
 pub const GENERATOR_FIT: UiId = UiId::fixed("generator.toolbar.fit");
+pub const GENERATOR_RESEED: UiId = UiId::fixed("generator.toolbar.reseed");
 pub const GENERATOR_SNAP: UiId = UiId::fixed("generator.toolbar.snap");
 pub const GENERATOR_SEARCH: UiId = UiId::fixed("generator.toolbar.search");
 pub const GENERATOR_DELETE_LINK: UiId = UiId::fixed("generator.link.delete");
@@ -947,6 +950,11 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "canvas",
     },
     UiMeta {
+        id: TOGGLE_SNAP,
+        description: "Snaps gizmo edits to a grid: 0.25 m for Move, 15 degrees for Rotate, 0.1 for Scale.",
+        kind: "menu_item",
+    },
+    UiMeta {
         id: TOGGLE_MARKERS,
         description: "Shows or hides the scene markers (lights, cameras, colliders, empties).",
         kind: "menu_item",
@@ -994,6 +1002,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: TEXTUREGEN_REDO,
         description: "Redoes the last undone graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TEXTUREGEN_RESEED,
+        description: "Gives every seeded node a new seed: a variation of the same texture graph.",
         kind: "button",
     },
     UiMeta {
@@ -1839,6 +1852,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: GENERATOR_REDO,
         description: "Redoes the last undone material graph edit.",
+        kind: "button",
+    },
+    UiMeta {
+        id: GENERATOR_RESEED,
+        description: "Gives every seeded node a new seed: a variation of the same material graph.",
         kind: "button",
     },
     UiMeta {

@@ -1,0 +1,40 @@
+{
+  "namespace": "particles",
+  "group": "Rendering",
+  "lua": "caffeine.particles",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Particles",
+    "pt": "Partículas"
+  },
+  "summary": {
+    "en": "Manual particle emission on entities that have a particle emitter.",
+    "pt": "Emissão manual de partículas em entidades com um emissor de partículas."
+  },
+  "functions": [
+    {
+      "name": "emit",
+      "lua": "caffeine.particles.emit",
+      "dryad": null,
+      "signature": "emit(entity, count)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "count",
+          "type": "number",
+          "en": "Number of particles to spawn; stops at the emitter's maximum.",
+          "pt": "Número de partículas a criar; pára no máximo do emissor."
+        }
+      ],
+      "returns": null,
+      "en": "Spawns particles immediately at the entity position with random velocities. Does nothing if the entity has no emitter.",
+      "pt": "Cria partículas de imediato na posição da entidade com velocidades aleatórias. Não faz nada se a entidade não tiver emissor.",
+      "example": "caffeine.particles.emit(e, 20)"
+    }
+  ]
+}
