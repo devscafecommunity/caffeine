@@ -99,6 +99,7 @@ fn keyboard_event_message(event: iced::keyboard::Event) -> Option<Message> {
                         "1" => Some(1),
                         "2" => Some(2),
                         "3" => Some(3),
+                        "x" | "X" => Some(4),
                         _ => None,
                     } {
                         return Some(Message::GizmoShortcut(key));
@@ -375,6 +376,7 @@ enum Message {
     ViewportGridShortcut,
     ToggleGrid,
     ToggleMarkers,
+    ToggleGizmoSnap,
     MarkerSelected(u32),
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SetViewportSettings {
@@ -714,6 +716,8 @@ struct App {
     /// Scene markers (lights, cameras, colliders, empties) drawn over the viewport.
     markers: Vec<scene_markers::Marker>,
     show_markers: bool,
+    /// Gizmo edits snap to `gizmo::SnapSteps` while on.
+    gizmo_snap: bool,
     markers_dirty: bool,
     texture_set: Option<texture_set::TextureSet>,
     texture_set_history: texture_set::TileHistory,
@@ -1069,6 +1073,7 @@ impl App {
             terraingen: terraingen::TerrainGen::new(),
             markers: Vec::new(),
             show_markers: true,
+            gizmo_snap: false,
             markers_dirty: true,
             texture_set: None,
             texture_set_history: texture_set::TileHistory::default(),
@@ -3882,6 +3887,13 @@ impl App {
         self.generator_preview_version = self.generator_preview_version.wrapping_add(1);
     }
 
+    /// A seed for the next Reseed: a hash of the graph as it is now, so repeating the action on a
+    /// changed graph gives a new variation and the same graph always gives the same one.
+    fn next_reseed(&self, text: Option<String>) -> u32 {
+        let hash = crate::uikit::recipe_ref::content_hash(text.unwrap_or_default().as_bytes());
+        (hash % 100_000) as u32 + 1
+    }
+
     fn push_generator_history(&mut self, name: impl Into<String>, key: Option<String>) {
         if let Some(document) = self.material.as_mut() {
             document.dirty = true;
@@ -3981,6 +3993,22 @@ impl App {
             material_generator::Edit::Fit => {
                 self.fit_generator_view();
                 self.generator_status = Some("Framed the graph".to_owned());
+            }
+            material_generator::Edit::Reseed => {
+                let seed = self.next_reseed(self.material.as_ref().map(|d| d.generator.to_text()));
+                let changed = self
+                    .material
+                    .as_mut()
+                    .map(|document| document.generator.reseed(seed))
+                    .unwrap_or(0);
+                if changed > 0 {
+                    self.push_generator_history("Reseed", None);
+                }
+                self.generator_status = Some(match changed {
+                    0 => "No node in this graph has a seed".to_owned(),
+                    1 => "Reseeded 1 node".to_owned(),
+                    n => format!("Reseeded {n} nodes"),
+                });
             }
             material_generator::Edit::SetSnap(value) => {
                 self.generator_snap = value;
@@ -6252,6 +6280,11 @@ impl App {
         let Some(id) = self.entities.get(self.selected).map(|entity| entity.id) else {
             return;
         };
+        let edit = if self.gizmo_snap {
+            edit.snapped(gizmo::SnapSteps::default())
+        } else {
+            edit
+        };
         let (name, key) = (edit.label(), edit.history_key(id));
         match edit {
             gizmo::Edit::Move { position, .. } | gizmo::Edit::MovePlane { position, .. } => {
@@ -7169,6 +7202,9 @@ impl App {
                 self.set_gizmo_mode(mode);
             }
             Message::GizmoShortcut(key) => {
+                if self.viewport_hovered && key == 4 {
+                    return self.update(Message::ToggleGizmoSnap);
+                }
                 if self.viewport_hovered {
                     let mode = match key {
                         1 => gizmo::Mode::Translate,
@@ -7263,6 +7299,11 @@ impl App {
                 self.show_markers = !self.show_markers;
                 let state = if self.show_markers { "on" } else { "off" };
                 self.log(LogLevel::Action, format!("Scene markers {state}"));
+            }
+            Message::ToggleGizmoSnap => {
+                self.gizmo_snap = !self.gizmo_snap;
+                let state = if self.gizmo_snap { "on" } else { "off" };
+                self.log(LogLevel::Action, format!("Gizmo snapping {state}"));
             }
             Message::MarkerSelected(id) => {
                 if let Some(index) = self.entities.iter().position(|entity| entity.id == id) {
@@ -7544,6 +7585,16 @@ impl App {
                         label: "Render Now",
                         shortcut: Some("Ctrl+R"),
                         message: Message::RenderViewport,
+                    },
+                    menu::Item {
+                        id: id::TOGGLE_SNAP,
+                        label: if self.gizmo_snap {
+                            "Snapping: On"
+                        } else {
+                            "Snapping: Off"
+                        },
+                        shortcut: Some("X"),
+                        message: Message::ToggleGizmoSnap,
                     },
                     menu::Item {
                         id: id::TOGGLE_MARKERS,

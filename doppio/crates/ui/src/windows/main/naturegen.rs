@@ -11,6 +11,8 @@ use crate::uikit::material_library;
 use crate::uikit::nature::mesh::MaterialSpec;
 use crate::uikit::nature::{self, preview, NatureGraph, NodeId, Quality};
 use crate::uikit::panels::nature_generator::{self as panel, Edit};
+use crate::uikit::recipe;
+use crate::uikit::recipe_ref;
 use crate::uikit::texture_graph;
 use iced::widget::image::Handle;
 use iced::{Point, Vector};
@@ -646,15 +648,31 @@ impl App {
         }
     }
 
+    /// The file a material or texture slot uses: a plain path as it is, a recipe path resolved
+    /// to the product it bakes (`uikit::recipe_ref`).
+    fn slot_product(&self, path: &str, wanted: recipe::Kind) -> Result<String, String> {
+        match self.asset_root_dir() {
+            Some(root) => recipe_ref::resolve_product(&root, path, wanted),
+            None => Ok(path.to_owned()),
+        }
+    }
+
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
         dir: &Path,
     ) -> Result<String, String> {
-        // Your own material is used exactly as it is.
+        // Your own material is used exactly as it is; a `generator.material` recipe stands for
+        // the material it baked.
         if let MaterialSpec::Project(path, _) = spec {
-            return Ok(path.clone());
+            return self.slot_product(path, recipe::Kind::Material);
         }
+        let resolved_texture = match spec {
+            MaterialSpec::ProjectTexture(path, _) => {
+                self.slot_product(path, recipe::Kind::Texture)?
+            }
+            _ => String::new(),
+        };
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
         let folder = dir.join("Materials");
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -723,8 +741,10 @@ impl App {
                     material.uv_object_scale = false;
                 }
             }
-            MaterialSpec::ProjectTexture(path, _) => {
-                // A cut-out material around your image, referencing it where it is.
+            MaterialSpec::ProjectTexture(..) => {
+                // A cut-out material around your image (or around what a `generator.texture`
+                // recipe bakes), referencing it where it is.
+                let path = &resolved_texture;
                 material.albedo_map = engine
                     .asset_project_path(path)
                     .unwrap_or_else(|_| path.clone());

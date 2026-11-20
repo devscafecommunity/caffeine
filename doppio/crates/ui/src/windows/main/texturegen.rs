@@ -451,6 +451,18 @@ impl App {
                 self.texgen.fit();
                 self.texgen.status = Some("Framed the graph".to_owned());
             }
+            N::Reseed => {
+                let seed = self.next_reseed(Some(texture_graph::to_text(&self.texgen.graph)));
+                let count = self.texgen.graph.reseed(seed);
+                if count > 0 {
+                    changed = Some(("Reseed".to_owned(), None));
+                }
+                self.texgen.status = Some(match count {
+                    0 => "No node in this graph has a seed".to_owned(),
+                    1 => "Reseeded 1 node".to_owned(),
+                    n => format!("Reseeded {n} nodes"),
+                });
+            }
             N::SetSnap(value) => self.texgen.snap = value,
             N::SetSearch(value) => self.texgen.search = value,
             N::TogglePaletteGroup(name) => {

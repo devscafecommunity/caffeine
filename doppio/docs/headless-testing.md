@@ -4,7 +4,7 @@
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
   <span class="doc-badge">Tooling</span>
-  <span>Last verified: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last verified: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/crates/ui/src/windows/main/headless/"><code>windows/main/headless/</code></a></span>
 </div>
 
@@ -303,7 +303,8 @@ in the report.
 Flows are scripts committed under `doppio/tests/ui-flows/*.json`. The Rust test
 `every_shipped_flow_passes` runs all of them on every `cargo test`, and
 `scripts/check-rust-ui.sh` does too. To add one: copy a flow, change the steps,
-run it with `--format text`, commit it. A good flow
+run it with `--format text`, commit it. Shipped flows cover the asset wizard, docking, generator libraries, inspector sections, menus and hover, the texture
+generator and gizmo snapping (`gizmo-snapping.json`). A good flow
 
 * names the behaviour in `name`/`description` (and the bug it guards, if any);
 * starts from a fixture and only uses ids/texts a user could see;

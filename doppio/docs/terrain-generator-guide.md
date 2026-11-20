@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
 </div>
 
 <p class="doc-lede">Build heightfields from a node graph and place them as engine terrain with ground, rock, dirt and mud splat layers.</p>
@@ -91,7 +91,7 @@ two resolutions shows the same landscape, and that seeds change the result.
   and gives the entity the mesh components the renderer looks for.
 * The terrain mesh is **centred on its entity**; `terrain_height(x, z)` measures from the corner.
 * Placing is one undo step, selects the entity and reports the sea level; **Export** writes
-  `terrain/<name>.terrain-graph` (`CAFTERRAIN1` header plus `TERRAINGRAPH1` lines) and a **16-bit height map
+  `Terrain/<name>.generator.terrain` (a recipe wrapping the `CAFTERRAIN1` / `TERRAINGRAPH1` text) and a **16-bit height map
   PNG** for other tools.
 
 ## 5. Limits and roadmap
@@ -140,8 +140,8 @@ DOPPIO_TERRAIN_DUMP=/tmp/terrain cargo test -p doppio-ui --lib placing_a_terrain
 ## The layers are project materials
 
 The Output node holds four material slots (ground, rock, dirt, mud). Applying a preset, or placing,
-fills empty slots by baking a material-library picture into `terrain/layers/<layer>.png` and writing a
-`terrain/layers/<layer>.mat` whose albedo map is that picture. The slot holds the `.mat`; placing
+fills empty slots by baking a material-library picture into `Terrain/Layers/<layer>.png` and writing a
+`Terrain/Layers/<layer>.mat` whose albedo map is that picture. The slot holds the `.mat`; placing
 paints the engine's `Splat Layer Paths 1..4` with each material's albedo map. A slot that already has a
 path, or a file that already exists, is never touched: repaint the PNG, edit the `.mat`, or pick another
 material from the node's list. A slot holding a plain picture (older graphs) still works.

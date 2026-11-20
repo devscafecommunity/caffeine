@@ -160,6 +160,11 @@ pub fn view<'a, Message: Clone + 'a>(
                 "Fit",
                 emit(Edit::Node(nodes_panel::Edit::Fit))
             ),
+            button::compact(
+                id::TEXTUREGEN_RESEED,
+                "Reseed",
+                emit(Edit::Node(nodes_panel::Edit::Reseed))
+            ),
             container(size).width(Length::Fixed(138.0)),
             button::compact(id::TEXTUREGEN_SAVE, "Save", emit(Edit::Save)),
             button::primary(id::TEXTUREGEN_EXPORT, "Export PNG", emit(Edit::Export)),

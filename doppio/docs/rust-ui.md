@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last verified: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last verified: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/tree/main/doppio"><code>doppio/</code></a></span>
 </div>
 
@@ -251,7 +251,7 @@ precedent.
   `last_scene` and shows the active-project chip instead of the startup dialog.
 - The manager has **Create New**, **Open Recent** and **Browse Projects** tabs,
   mirroring the archived startup dialog. Create validates the name, creates
-  `assets/raw/{Models,Textures,Materials,materials,...}`, `assets/processed`, `scripts`,
+  `Assets/Raw/{Animations,Audio,Generators,Materials,Models,Prefabs,Sky,TextureSets,Textures}`, `Assets/Processed`, `Scripts`,
   `scenes`, `materials`, `texture_sets` and `build`, writes `project.caffeine`
   and opens the project. Browse recursively scans a folder up to six levels for
   `project.caffeine`, and Recent reads `~/.config/caffeine/recent.txt`
@@ -588,6 +588,7 @@ anchors to the newest entry.
 | `Ctrl+R` | render viewport now |
 | `G` (over the viewport) | toggle the reference grid |
 | `1` / `2` / `3` (over the viewport) | move / rotate / scale gizmo |
+| `X` (over the viewport) | gizmo snapping on / off (0.25 m, 15°, 0.1) |
 | `W` / `A` / `S` / `D` | fly along the view / strafe |
 | `Q` / `E` | fly down / up |
 | `Shift` | boost flight speed |
@@ -759,6 +760,7 @@ registers scene-level queries and actions:
 | action | `cancel_generator_bake` | cancels the running bake |
 | action | `open_prefab_palette` | opens the create-entity palette |
 | action | `set_gizmo_mode` | `{ "mode": "move"\|"rotate"\|"scale" }` |
+| action | `toggle_gizmo_snap` | turns gizmo snapping on or off; the `gizmo` query reports `snap` |
 | action | `set_viewport` | `{ "grid"?, "anti_aliasing"?, "render_scale"? }` |
 | action | `set_entity_parent` | `{ "entity_id", "parent_id"?: number \| null }` |
 | query | `ui_catalog` | every documented widget id with group, kind and description |
@@ -871,7 +873,10 @@ A test checks that every documented entry has a page in the website tree.
 ## Generator recipes
 
 Generators save `generator.*` recipe files next to what they bake and reopen them on double-click.
-See [`generator-recipes.md`](generator-recipes.md).
+Other generators reference recipes through `uikit/recipe_ref.rs` (slots, seeded cached variants, shared SplitMix64
+hashing with the engine's `core/Hash.hpp`); caf-pack skips recipes as editor-only sources.
+See [`generator-recipes.md`](generator-recipes.md). The generator headers have a **Reseed** button
+(`generator.toolbar.reseed`, `texturegen.toolbar.reseed`): new seeds for every seeded node, one undo step.
 
 ## Script editor assistance
 
@@ -885,7 +890,14 @@ duplicate line and comment toggle. All of it is in-process; there is no language
 
 ## Dryad node catalog
 
-29 nodes. Beyond events, transform, time, input and world: Language / Math (Add, Subtract, Multiply, Divide,
-Negate), Compare (Less, Greater, Equal), Logic (And, Or, Not) and Engine / World (This Entity, Is Alive, Distance).
-Operators are written fully parenthesised, so the importer reads them back unambiguously. Not done: Min, Max, Abs,
-Clamp, trigonometry, random, variables and loops. They need math natives in the engine first.
+58 nodes. Beyond events, transform, time, input and world: Language / Math (Add, Subtract, Multiply, Divide, Negate,
+Min, Max, Abs, Floor, Ceil, Round, Square Root, Power, Sign, Clamp, Clamp 0..1, Lerp, Inverse Lerp, Smoothstep),
+Trigonometry (Sine, Cosine, degrees/radians), Compare (Less, Greater, Equal), Logic (And, Or, Not), Engine / Random
+(Value, Range, Int, Chance), Engine / Input (Mouse X/Y/Delta X/Delta Y, Mouse Button), Engine / Time (Fixed Delta, Frame
+Count) and Engine / World (This Entity, Is Alive, Distance).
+
+Operators are written fully parenthesised, so the importer reads them back unambiguously. Every native-call node is one
+row of `NATIVE_NODES` in `uikit/dryad.rs` (type, labels, native, argument count, bool output); the pins, emitter, importer
+and catalog follow from the row. The engine side is 20 new `caffeine_math_*` natives (`DryadRuntimeBindings.cpp`, documented
+in `script/api/math.json`, tested in `tests/test_dryad_host.cpp`). Not done: variables and loops (they need exec nodes that
+own a scope, so the emitter and importer must change) and exec nodes for audio, physics and scene natives.

@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/photoreal-world-roadmap.md"><code>photoreal-world-roadmap.md</code></a></span>
 </div>
 
@@ -102,11 +102,14 @@ independent of renderer work.
 
 ### Phase 0 — Determinism foundation
 
-- [ ] `core/Hash` with an integer hash and `derive_seed(parent, salt, x, z)`; a golden test that pins
-      outputs for fixed inputs on all supported platforms.
-- [ ] Replace `hash01` use in the streamer with it; keep the old path under a `generator_version`.
-- [ ] `generator_version` field in `.nature`, `.mat`, terrain and water graphs and in the world file.
-- [ ] Test: generate the same chunk on 1 and on N threads and compare byte-for-byte.
+- [x] `core/Hash.hpp`: SplitMix64 `deriveSeed(parent, salt, x, z)`, `toUnit`, `GENERATOR_VERSION`; golden test
+      `tests/test_hash.cpp` pins outputs, `recipe_ref.rs` pins the same numbers in Rust.
+- [ ] Replace `hash01` use in the streamer with it; keep the old path under a `generator_version` (`hash01` is already 32-bit
+      integer arithmetic, so it is stable; switching changes existing worlds, hence the version).
+- [x] `generator_version` field in every `generator.*` recipe (nature, material, texture, terrain, water).
+- [ ] The same field in bare `.mat` files and in the world file (there is no world file yet).
+- [x] Test: derived seeds for a block of cells are identical on 1 and on 7 threads (`tests/test_hash.cpp`).
+- [ ] The same test for whole generated chunks, once the streamer uses the new hash.
 
 ### Phase 1 — Terrain masks exported to the engine
 
@@ -130,7 +133,8 @@ independent of renderer work.
 - [ ] **Vertex colour** and a **wind mask** in the Nature mesh output (needs a C ABI version).
 - [ ] **Material slots per submesh** (already the next engine step in the Nature guide).
 - [ ] Base deformation: root flare and rock skirt from a ground height callback at bake time.
-- [ ] Variants: N seeds per `.nature` rule baked into a variant set; per-instance tint and scale range.
+- [x] Variants: N seeds per nature recipe baked into a cached variant set (`recipe_ref::nature_variants`, `doppio-material variants`).
+- [ ] Per-instance tint and scale range.
 - [ ] Ground-contact blend in the shader (rock/trunk to ground colour using vertex colour).
 
 ### Phase 4 — Rendering at scale

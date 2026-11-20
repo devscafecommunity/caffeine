@@ -22,8 +22,9 @@ next to the product, so the source of a texture, material, tree, lake or terrain
 | `Lake.generator.water` | Water Generator | `lake.mat` |
 | `Alpine.generator.terrain` | Terrain Generator | `alpine_height.png` |
 
-The file is JSON: `format` (`caffeine-generator`), `version`, `kind`, `name`, `product` and `graph`,
-the generator's own text form. Each generator still owns its graph format; the recipe only wraps it.
+The file is JSON: `format` (`caffeine-generator`), `version`, `kind`, `name`, `product`, `graph` (the generator's own text form)
+and `generator_version`, the algorithm version the recipe was authored with (files without it read as 1; new files write 2,
+the same number as `Caffeine::Core::GENERATOR_VERSION`). Each generator still owns its graph format; the recipe only wraps it.
 A file written by a newer Doppio is refused with a message instead of being misread.
 The engine lists these files with asset kind `generator`.
 
@@ -45,16 +46,27 @@ Existing projects keep their own names; renaming is the user's choice.
 
 ## 4. caf-pack
 
-`.generator.*` files are **sources**, not assets to pack: caf-pack selects processors by extension
-(`.png`, `.obj`, `.wav`) and no processor claims them, so they are skipped today. Making that an explicit
-rule (ignore and list them as editor-only) is a change in the `caf-pack` repository and is still open.
+`.generator.*` files are **sources**, not assets to pack. caf-pack now has an explicit rule
+(`Registry::isEditorOnly`): recipes and the older graph sidecars (`.mgraph`, `.texgraph`, `.nature`, `.water`,
+`.terrain-graph`) are skipped and listed (`Skipped editor-only source: ...`) instead of failing the package with
+"No processor registered". `Packer::getSkipped()` returns the list. Covered by `tests/test_cafpack_editor_only.cpp`
+(the change lives in the `caf-pack` submodule).
 
-## 5. Referencing recipes (not done)
+## 5. Referencing recipes
 
-Generators should point at recipes, not at finished models: a vegetation generator reruns an `Oak` recipe for
-variants and adapts the result to the terrain. Planned steps:
+Generators point at recipes, not at finished models: a vegetation generator reruns an `Oak` recipe for
+variants and adapts the result to the terrain. The resolver is `uikit/recipe_ref.rs`.
 
-- [ ] Material and texture slots in Nature, Terrain and Water accept a `generator.material` / `generator.texture` path.
-- [ ] A resolver bakes the recipe on demand and caches the product by `(recipe hash, seed, quality)`.
-- [ ] A scatter or vegetation generator takes `generator.nature` plus a seed and variant count.
-- [ ] Recipes carry `generator_version` (see `photoreal-world-roadmap.md`, phase 0).
+- [x] **Slots.** The Nature *Your Material (.mat)* and *Your Texture (PNG)* nodes and the Terrain layer slots accept a
+      `generator.material` / `generator.texture` path. A texture recipe is baked beside itself when its PNG is missing;
+      a material recipe must have been baked once (the error says so). A recipe of the wrong kind is refused with a message.
+- [x] **Variants, cached.** `bake_nature_variant(recipe, seed, quality, cache_dir)` reseeds every node's `seed` from the
+      variant seed and writes the OBJ parts into `<cache>/<name>_<key>/`; the key hashes the recipe's graph, its
+      `generator_version`, the seed and the quality, so editing the recipe invalidates the cache. Seed 0 keeps the authored
+      seeds. `nature_variants` derives N seeds from a base seed. CLI: `doppio-material variants Oak.generator.nature --out DIR --count 8 --seed 3`.
+- [x] **Same numbers in both languages.** `derive_seed`/`unit` are SplitMix64, bit for bit `Caffeine::Core::deriveSeed`/`toUnit`;
+      the golden tests in `tests/test_hash.cpp` and `recipe_ref.rs` pin the same values.
+- [x] `generator_version` in every recipe.
+- [ ] Water: its material comes from the Water Material node, which already writes `Water/<name>.mat`; a recipe slot is not wired.
+- [ ] On-demand bake of a **material** recipe (needs the engine session the Material Generator uses).
+- [ ] A scatter or vegetation *generator* that consumes `nature_variants` and places the results on a terrain.

@@ -141,7 +141,7 @@ pub struct Target {
     pub scale: [f32; 3],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Edit {
     Move {
         axis: Axis,
@@ -186,6 +186,73 @@ impl Edit {
             Edit::Rotate { axis, .. } => format!("gizmo:rotate:{entity}:{}", axis.label()),
             Edit::Scale { axis, .. } => format!("gizmo:scale:{entity}:{}", axis.label()),
             Edit::ScaleUniform { .. } => format!("gizmo:scale:{entity}:uniform"),
+        }
+    }
+}
+
+/// Grid steps used when snapping is on: metres, degrees and a scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapSteps {
+    pub translate: f32,
+    pub rotate: f32,
+    pub scale: f32,
+}
+
+impl Default for SnapSteps {
+    fn default() -> Self {
+        Self {
+            translate: 0.25,
+            rotate: 15.0,
+            scale: 0.1,
+        }
+    }
+}
+
+fn round_to(value: f32, step: f32) -> f32 {
+    if step <= 0.0 {
+        value
+    } else {
+        // `+ 0.0` turns a negative zero into zero so history keys and text stay clean.
+        (value / step).round() * step + 0.0
+    }
+}
+
+impl Edit {
+    /// The same edit with the handle's own values moved onto the grid. Only the coordinates the
+    /// handle controls are snapped, so dragging X never nudges Y or Z.
+    pub fn snapped(&self, steps: SnapSteps) -> Edit {
+        match *self {
+            Edit::Move { axis, mut position } => {
+                let i = axis.index();
+                position[i] = round_to(position[i], steps.translate);
+                Edit::Move { axis, position }
+            }
+            Edit::MovePlane {
+                plane,
+                mut position,
+            } => {
+                let (a, b) = plane.spans();
+                for axis in [a, b] {
+                    position[axis.index()] = round_to(position[axis.index()], steps.translate);
+                }
+                Edit::MovePlane { plane, position }
+            }
+            Edit::Rotate { axis, mut rotation } => {
+                let i = axis.index();
+                rotation[i] = round_to(rotation[i], steps.rotate);
+                Edit::Rotate { axis, rotation }
+            }
+            Edit::Scale { axis, mut scale } => {
+                let i = axis.index();
+                scale[i] = round_to(scale[i], steps.scale).max(steps.scale.max(0.01));
+                Edit::Scale { axis, scale }
+            }
+            Edit::ScaleUniform { scale } => {
+                let value = round_to(scale[0], steps.scale).max(steps.scale.max(0.01));
+                Edit::ScaleUniform {
+                    scale: [value, value, value],
+                }
+            }
         }
     }
 }
@@ -1368,5 +1435,80 @@ mod tests {
             Edit::ScaleUniform { scale: [1.0; 3] }.history_key(7),
             "gizmo:scale:7:uniform"
         );
+    }
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+
+    #[test]
+    fn moving_one_axis_only_snaps_that_axis() {
+        let edit = Edit::Move {
+            axis: Axis::X,
+            position: [1.13, 2.37, -0.61],
+        };
+        let Edit::Move { position, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a move");
+        };
+        assert_eq!(position, [1.25, 2.37, -0.61]);
+    }
+
+    #[test]
+    fn plane_moves_snap_both_coordinates_of_the_plane() {
+        let edit = Edit::MovePlane {
+            plane: Plane::XZ,
+            position: [0.9, 5.55, -1.1],
+        };
+        let Edit::MovePlane { position, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a plane move");
+        };
+        assert_eq!(position, [1.0, 5.55, -1.0]);
+    }
+
+    #[test]
+    fn rotation_snaps_to_degrees_and_never_leaves_negative_zero() {
+        let edit = Edit::Rotate {
+            axis: Axis::Y,
+            rotation: [3.0, 37.4, -2.0],
+        };
+        let Edit::Rotate { rotation, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a rotation");
+        };
+        assert_eq!(rotation, [3.0, 30.0, -2.0]);
+        assert!(round_to(-0.01, 15.0).is_sign_positive());
+    }
+
+    #[test]
+    fn scale_snaps_and_never_reaches_zero() {
+        let Edit::ScaleUniform { scale } = (Edit::ScaleUniform {
+            scale: [0.012, 0.012, 0.012],
+        })
+        .snapped(SnapSteps::default()) else {
+            panic!("still uniform");
+        };
+        assert_eq!(scale, [0.1, 0.1, 0.1]);
+        let Edit::Scale { scale, .. } = (Edit::Scale {
+            axis: Axis::Z,
+            scale: [1.0, 1.0, 2.46],
+        })
+        .snapped(SnapSteps::default()) else {
+            panic!("still a scale");
+        };
+        assert_eq!(scale, [1.0, 1.0, 2.5]);
+    }
+
+    #[test]
+    fn a_zero_step_leaves_values_alone() {
+        let steps = SnapSteps {
+            translate: 0.0,
+            rotate: 0.0,
+            scale: 0.0,
+        };
+        let edit = Edit::Move {
+            axis: Axis::Z,
+            position: [0.1, 0.2, 0.3],
+        };
+        assert_eq!(edit.snapped(steps), edit);
     }
 }

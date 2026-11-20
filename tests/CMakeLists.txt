@@ -5,6 +5,7 @@ set(CAFFEINE_TEST_SOURCES
     test_containers.cpp
     test_math.cpp
     test_core.cpp
+    test_hash.cpp
     test_timer.cpp
     test_gameloop.cpp
     test_input.cpp
@@ -54,6 +55,10 @@ endif()
 
 if(DRYAD_AVAILABLE)
     list(APPEND CAFFEINE_TEST_SOURCES test_dryad_host.cpp test_node_emitter.cpp)
+endif()
+
+if(CAF_PACK_AVAILABLE)
+    list(APPEND CAFFEINE_TEST_SOURCES test_cafpack_editor_only.cpp)
 endif()
 
 add_executable(CaffeineTest ${CAFFEINE_TEST_SOURCES})

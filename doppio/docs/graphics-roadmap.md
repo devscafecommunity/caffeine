@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Engine</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/graphics-roadmap.md"><code>graphics-roadmap.md</code></a></span>
 </div>
 
@@ -16,6 +16,10 @@ No code, shader text or data layout is taken from other engines; the public lite
 radiance cascades, voxel clipmaps, visibility buffers) is the only reference. This page is the graphics
 companion of [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md), which feeds it with terrain, nature and
 materials.
+
+> **Status (2026-11-20):** no phase of this roadmap has started. The items need GPU work (indirect draws, storage buffers,
+> culling and voxelisation shaders) that cannot be validated in the headless test setup, so they are not marked done.
+> The deterministic-world foundation they share with the world roadmap (`core/Hash.hpp`) is.
 
 ## 1. Verdict
 

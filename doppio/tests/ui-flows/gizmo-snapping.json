@@ -1,0 +1,15 @@
+{
+  "name": "Gizmo snapping is a View menu toggle",
+  "description": "The View menu shows the snapping state and flips it with one click.",
+  "fixture": "entities",
+  "size": [1280, 720],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "expect", "exists": ["id:editor.view.toggle_snap", "text:Snapping: Off"] },
+    { "action": "click", "target": "id:editor.view.toggle_snap", "label": "turn snapping on" },
+    { "action": "click", "target": "id:editor.menu.view" },
+    { "action": "expect", "shows": "Snapping: On", "label": "the menu reflects the new state" },
+    { "action": "key", "key": "Escape" },
+    { "action": "expect", "state": { "/menu": null } }
+  ]
+}

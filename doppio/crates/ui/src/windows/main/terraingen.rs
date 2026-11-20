@@ -568,6 +568,22 @@ impl App {
         // The four layer pictures are the project's textures, written from the Output node.
         if let Some(type_id) = super::component_type_id(engine, "Terrain") {
             for (i, path) in layers.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+                // A `generator.material` / `generator.texture` recipe stands for what it baked.
+                let recipe_kind = layer_root
+                    .as_ref()
+                    .and_then(|root| crate::uikit::recipe::kind_of(&root.join(path)));
+                let path = &match (recipe_kind, layer_root.as_ref()) {
+                    (Some(kind), Some(root)) => {
+                        match crate::uikit::recipe_ref::resolve_product(root, path, kind) {
+                            Ok(product) => product,
+                            Err(error) => {
+                                self.terraingen.status = Some(error);
+                                continue;
+                            }
+                        }
+                    }
+                    _ => path.clone(),
+                };
                 // A slot is a material (its albedo map paints the layer) or, as before, a picture.
                 let picture = if path.ends_with(".mat") {
                     let file = layer_root

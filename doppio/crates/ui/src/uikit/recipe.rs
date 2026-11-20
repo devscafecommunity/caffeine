@@ -24,6 +24,13 @@ use serde::{Deserialize, Serialize};
 /// Magic string and current version of the file.
 pub const FORMAT: &str = "caffeine-generator";
 pub const VERSION: u32 = 1;
+/// Version of the algorithm a recipe was authored with (hashing and placement). Recipes written
+/// before the field existed read as 1; the core `Caffeine::Core::GENERATOR_VERSION` is 2.
+pub const GENERATOR_VERSION: u32 = 2;
+
+fn legacy_generator_version() -> u32 {
+    1
+}
 
 /// Which generator a recipe belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -94,6 +101,9 @@ pub struct Recipe {
     pub product: String,
     /// The generator's own text form of the graph.
     pub graph: String,
+    /// Algorithm version the recipe was authored with (1 when the file predates the field).
+    #[serde(default = "legacy_generator_version")]
+    pub generator_version: u32,
 }
 
 impl Recipe {
@@ -105,6 +115,7 @@ impl Recipe {
             name: name.to_owned(),
             product: product.to_owned(),
             graph,
+            generator_version: GENERATOR_VERSION,
         }
     }
 

@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-18">2026-11-18</time></span>
+  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/material-pipeline.md"><code>material-pipeline.md</code></a></span>
 </div>
 
@@ -270,7 +270,9 @@ User guide with rendered images: [materials-guide.md](materials-guide.md).
 - [x] Output preview channel switcher (Base, Normal, Height, Roughness, Metal,
       AO, Emissive, Opacity). Each node card shows a live 72 px thumbnail (96 px evaluated) of its
       own evaluated output, refreshed with the same debounced worker pass.
-- [ ] Preset parameters (seed / scale / wear) are not yet exposed in the UI.
+- [x] **Reseed** button in the generator header: every seeded node (Noise, Voronoi, Warp and every procedural op with a `seed`
+      parameter) gets a new seed derived from the graph; one undo step, deterministic for a given graph.
+- [ ] Preset scale / wear are not yet exposed in the UI.
 
 World-scale plan (seed, scatter, streaming): [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
 
@@ -340,7 +342,7 @@ World-scale plan (seed, scatter, streaming): [`photoreal-world-roadmap.md`](phot
 - [ ] Variation: simple-tiled WFC with an explicit tile set and adjacency rules; WFC constraints
       (fixed cells, region masks); Diamond-Square with an erosion pass.
 - [ ] Expand culling bounds by the displacement depth; distance-adaptive subdivision.
-- [ ] Preset seed / scale / wear in the UI.
+- [x] Preset seed in the UI (the **Reseed** button); scale and wear remain.
 
 ## Texture Generator (separate tool, see `texture-generator-guide.md`)
 
@@ -365,5 +367,6 @@ World-scale plan (seed, scatter, streaming): [`photoreal-world-roadmap.md`](phot
       group with one entity per part and baked materials (library presets, Texture Generator cards).
 - [x] Engine fix: `propagateTransforms` no longer crashes on children without a world matrix.
 - [ ] Material slots per submesh (ABI), vertex colour, wind mask, leaf atlas, LOD / impostors, `.glb` writer.
+- [x] Seeded, cached variants of a nature recipe (`doppio-material variants`, `uikit/recipe_ref.rs`).
 - [ ] Scatter over terrain and biomes (belongs to the terrain generator).
 

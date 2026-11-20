@@ -670,6 +670,47 @@ fn gizmo_move_edit_updates_the_entity_and_history() {
 }
 
 #[test]
+fn gizmo_snapping_rounds_edits_and_toggles_from_the_menu_and_shortcut() {
+    let mut harness = Harness::with_entities();
+    harness.rebase_history();
+    assert!(!harness.app().gizmo_snap);
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [2.13, 1.0, 0.0],
+    })));
+    let selected = harness.app().selected;
+    assert_eq!(harness.app().entities[selected].position[0], 2.13);
+
+    harness.app.viewport_hovered = true;
+    harness.dispatch(Message::GizmoShortcut(4));
+    assert!(
+        harness.app().gizmo_snap,
+        "X toggles snapping over the viewport"
+    );
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(gizmo::Edit::Move {
+        axis: gizmo::Axis::X,
+        position: [2.13, 1.0, 0.0],
+    })));
+    assert_eq!(harness.app().entities[selected].position[0], 2.25);
+    harness.dispatch(Message::Gizmo(gizmo::Message::Changed(
+        gizmo::Edit::Rotate {
+            axis: gizmo::Axis::Y,
+            rotation: [0.0, 37.0, 0.0],
+        },
+    )));
+    assert_eq!(harness.app().entities[selected].rotation[1], 30.0);
+
+    harness.app.viewport_hovered = false;
+    harness.dispatch(Message::GizmoShortcut(4));
+    assert!(
+        harness.app().gizmo_snap,
+        "the shortcut only works over the viewport"
+    );
+    harness.dispatch(Message::ToggleGizmoSnap);
+    assert!(!harness.app().gizmo_snap);
+}
+
+#[test]
 fn gizmo_move_uses_world_position_for_a_parented_child() {
     let Some(mut harness) = engine_harness() else {
         return;
@@ -3298,6 +3339,35 @@ fn asset_double_click_opens_a_script_in_the_editor() {
     );
     assert!(harness.has(iced::widget::Id::from(id::PANE_SCRIPT)));
     std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn reseed_gives_a_texture_graph_new_seeds_and_is_one_undo_step() {
+    use crate::uikit::panels::{material_generator as n, texture_generator as tg};
+    let mut harness = Harness::empty();
+    let preset = crate::uikit::texture_graph::presets()
+        .iter()
+        .position(|preset| preset.name == "Wave Function Collapse Bricks")
+        .or(Some(0))
+        .unwrap_or(0);
+    harness.dispatch(Message::TextureGen(tg::Edit::ApplyPreset(preset)));
+    let before = crate::uikit::texture_graph::to_text(&harness.app().texgen.graph);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Reseed)));
+    let after = crate::uikit::texture_graph::to_text(&harness.app().texgen.graph);
+    assert_ne!(before, after, "seeds moved");
+    assert!(harness.app().texgen.dirty);
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Undo)));
+    assert_eq!(
+        crate::uikit::texture_graph::to_text(&harness.app().texgen.graph),
+        before,
+        "one undo restores the old seeds"
+    );
+    // The same graph reseeds to the same result.
+    harness.dispatch(Message::TextureGen(tg::Edit::Node(n::Edit::Reseed)));
+    assert_eq!(
+        crate::uikit::texture_graph::to_text(&harness.app().texgen.graph),
+        after
+    );
 }
 
 #[test]
