@@ -116,6 +116,7 @@ fn entry_icon(kind: &str, is_directory: bool) -> Icon {
         "script" => Icon::Script,
         "asset" => Icon::Scene,
         "animation" => Icon::Player,
+        "generator" => Icon::Generic,
         _ => Icon::File,
     }
 }

@@ -82,7 +82,7 @@ impl WaterGen {
         state
     }
 
-    fn load(&mut self, graph: WaterGraph) {
+    pub(super) fn load(&mut self, graph: WaterGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -207,7 +207,7 @@ fn write_water_material(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let slug = crate::uikit::nature::slug(name);
     let file = dir.join(format!("{slug}.mat"));
-    let relative = format!("water/{slug}.mat");
+    let relative = format!("Water/{slug}.mat");
     let rooted = engine
         .asset_path("")
         .map(|root| !root.is_empty())
@@ -354,7 +354,7 @@ impl App {
     }
 
     fn water_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("water"))
+        self.asset_root_dir().map(|root| root.join("Water"))
     }
 
     pub(super) fn edit_water(&mut self, edit: Edit) {
@@ -516,14 +516,18 @@ impl App {
             return;
         };
         let slug = crate::uikit::nature::slug(&self.watergen.name);
-        let result = std::fs::create_dir_all(&dir).and_then(|_| {
-            std::fs::write(
-                dir.join(format!("{slug}.water")),
-                water::to_text(&self.watergen.name, &self.watergen.graph),
-            )
-        });
+        let name = self.watergen.name.clone();
+        let graph = water::to_text(&name, &self.watergen.graph);
+        let result = self.write_recipe(
+            &dir,
+            crate::uikit::recipe::Kind::Water,
+            &slug,
+            &name,
+            &format!("{slug}.mat"),
+            graph,
+        );
         self.watergen.status = Some(match result {
-            Ok(()) => format!("Saved water/{slug}.water"),
+            Ok(_) => format!("Saved Water/{slug}.generator.water"),
             Err(error) => format!("Could not save: {error}"),
         });
     }

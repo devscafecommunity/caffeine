@@ -2209,7 +2209,10 @@ fn materialcraft_portable_round_trip_through_the_engine() {
     )
     .expect("import");
     assert!(imported.material_path.exists());
-    assert!(imported.material_path.with_extension("mgraph").exists());
+    assert!(
+        crate::uikit::recipe::recipe_for_product(&imported.material_path).is_some(),
+        "a MaterialCraft archive carries its graph, so the import keeps a recipe"
+    );
     assert!(imported
         .source_path
         .as_ref()
@@ -2957,8 +2960,8 @@ fn project_manager_creates_a_project_and_reopens_it() {
     assert_eq!(active.name, "Demo");
     assert_eq!(active.template, "3D");
     assert!(active.root.join(project::PROJECT_FILE).exists());
-    assert!(active.root.join("assets/raw/Textures").is_dir());
-    assert!(active.root.join("scenes").is_dir());
+    assert!(active.root.join("Assets/Raw/Textures").is_dir());
+    assert!(active.root.join("Scenes").is_dir());
     let recents = project::recent_projects_at(&harness.app.project_recent_file);
     assert_eq!(recents.len(), 1);
     assert_eq!(recents[0].name, "Demo");
@@ -3057,7 +3060,7 @@ fn saving_a_material_inside_a_project_makes_it_an_asset() {
     let asset_path = document.asset_path.clone().expect("material should save");
     assert!(asset_path.ends_with("brick.mat"));
     assert!(
-        project.root.join("assets/raw").join(&asset_path).is_file(),
+        project.root.join("Assets/Raw").join(&asset_path).is_file(),
         "saved material should live under the project asset root: {asset_path}"
     );
     assert!(
@@ -3099,7 +3102,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         harness.app.entities.is_empty(),
         "new project should start empty"
     );
-    let scene = project.root.join("scenes").join("main.caf");
+    let scene = project.root.join("Scenes").join("main.caf");
     assert!(scene.is_file(), "new project should get a default scene");
     let engine = harness.app.engine.as_ref().expect("engine");
     assert!(engine
@@ -3110,10 +3113,10 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         .iter()
         .any(|asset| asset.name == "Notes.txt"));
     let reloaded = project::load_project(&project.root).expect("reload project");
-    assert_eq!(reloaded.last_scene, "scenes/main.caf");
+    assert_eq!(reloaded.last_scene, "Scenes/main.caf");
 
     // Saving a renamed scene updates last_scene in the manifest.
-    let other = project.root.join("scenes").join("other.caf");
+    let other = project.root.join("Scenes").join("other.caf");
     harness
         .app
         .engine
@@ -3123,7 +3126,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
         .expect("save other scene");
     harness.dispatch(Message::SaveScene);
     let reloaded = project::load_project(&project.root).expect("reload project");
-    assert_eq!(reloaded.last_scene, "scenes/other.caf");
+    assert_eq!(reloaded.last_scene, "Scenes/other.caf");
     assert_eq!(
         harness
             .app
@@ -3131,7 +3134,7 @@ fn opening_a_project_creates_its_scene_and_asset_root() {
             .active
             .as_ref()
             .map(|project| project.last_scene.as_str()),
-        Some("scenes/other.caf")
+        Some("Scenes/other.caf")
     );
     std::fs::remove_dir_all(root).ok();
 }
@@ -3294,6 +3297,59 @@ fn asset_double_click_opens_a_script_in_the_editor() {
         Some("enemy.lua")
     );
     assert!(harness.has(iced::widget::Id::from(id::PANE_SCRIPT)));
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn double_clicking_a_baked_asset_or_its_recipe_reopens_the_generator_graph() {
+    use crate::uikit::panels::texture_generator as tg;
+    let root = test_temp_root("recipe-open");
+    let mut harness = Harness::empty();
+    harness.app.asset_root_override = Some(root.clone());
+    harness.dispatch(Message::TextureGen(tg::Edit::SetName("Bark".to_owned())));
+    harness.dispatch(Message::TextureGen(tg::Edit::Export));
+    let png = root.join("Textures/bark.png");
+    let recipe = root.join("Textures/bark.generator.texture");
+    assert!(png.is_file() && recipe.is_file());
+
+    // An imported picture has no recipe: double-click must not open a generator.
+    let imported = root.join("Textures/photo.png");
+    std::fs::copy(&png, &imported).expect("copy");
+
+    let entry = |name: &str, kind: &str, path: &std::path::Path| {
+        (
+            doppio_engine::AssetInfo {
+                name: name.to_owned(),
+                relative_path: format!("Textures/{name}"),
+                kind: kind.to_owned(),
+                size_bytes: 1,
+                is_directory: false,
+            },
+            path.display().to_string(),
+        )
+    };
+    for (info, path) in [
+        entry("bark.png", "image", &png),
+        entry("bark.generator.texture", "generator", &recipe),
+        entry("photo.png", "image", &imported),
+    ] {
+        harness.app.assets.push(info);
+        harness.app.asset_paths.push(path);
+    }
+    assert!(harness.app.asset_recipe(0).is_some());
+    assert!(harness.app.asset_recipe(1).is_some());
+    assert!(
+        harness.app.asset_recipe(2).is_none(),
+        "imports have no recipe"
+    );
+
+    for index in [0, 1] {
+        harness.dispatch(Message::TextureGen(tg::Edit::SetName("Other".to_owned())));
+        harness.dispatch(Message::AssetDoubleClick(index));
+        assert_eq!(harness.app().texgen.name, "Bark", "asset {index}");
+        assert_eq!(harness.app().texgen.path.as_deref(), Some(recipe.as_path()));
+        assert!(!harness.app().texgen.dirty);
+    }
     std::fs::remove_dir_all(root).ok();
 }
 
@@ -4234,8 +4290,8 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     )));
     harness.dispatch(Message::TextureGen(tg::Edit::SetBits(16)));
     harness.dispatch(Message::TextureGen(tg::Edit::Export));
-    let png = root.join("textures/maple_leaf.png");
-    let graph = root.join("textures/maple_leaf.texgraph");
+    let png = root.join("Textures/maple_leaf.png");
+    let graph = root.join("Textures/maple_leaf.generator.texture");
     assert!(
         png.is_file(),
         "png missing: {:?}",
@@ -4249,13 +4305,14 @@ fn texture_generator_saves_and_exports_into_the_project_textures_folder() {
     // A flipbook is one wide sheet.
     harness.dispatch(Message::TextureGen(tg::Edit::SetFlipbook(2, 2)));
     harness.dispatch(Message::TextureGen(tg::Edit::ExportFlipbook));
-    let sheet = root.join("textures/maple_leaf_flipbook_2x2.png");
+    let sheet = root.join("Textures/maple_leaf_flipbook_2x2.png");
     let sheet = image::open(sheet).expect("sheet");
     assert_eq!(sheet.width(), 2 * 512);
     assert_eq!(sheet.height(), 2 * 512);
 
     // The saved graph reopens as a texture graph, never as a material.
-    let loaded = crate::uikit::texture_graph::load(&graph).expect("load");
+    let recipe = crate::uikit::recipe::read(&graph).expect("recipe");
+    let loaded = crate::uikit::texture_graph::from_text(&recipe.graph).expect("load");
     assert!(crate::uikit::texture_graph::is_texture_graph(&loaded));
     std::fs::remove_dir_all(root).ok();
 }
@@ -4932,12 +4989,14 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
     harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(oak)));
     harness.dispatch(Message::NatureGen(ng::Edit::Export));
     assert!(
-        root.join("nature/oak_trunk.obj").is_file(),
+        root.join("Nature/oak_trunk.obj").is_file(),
         "{:?}",
         harness.app().nature.status
     );
-    assert!(root.join("nature/oak_leaves.obj").is_file());
-    let recipe = std::fs::read_to_string(root.join("nature/oak.nature")).expect("recipe file");
+    assert!(root.join("Nature/oak_leaves.obj").is_file());
+    let recipe = crate::uikit::recipe::read(&root.join("Nature/oak.generator.nature"))
+        .expect("recipe file")
+        .graph;
     assert!(
         crate::uikit::nature::from_text(&recipe).is_some(),
         "the .nature file holds the graph"
@@ -4977,7 +5036,7 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
     assert!(
         materials
             .iter()
-            .all(|m| m.contains("nature/materials") || m.contains("materials/")),
+            .all(|m| m.contains("Nature/Materials") || m.contains("materials/")),
         "{materials:?}"
     );
     assert_ne!(
@@ -4985,7 +5044,7 @@ fn nature_models_export_and_place_in_the_scene_with_their_own_materials() {
         "trunk and leaves get different materials"
     );
     assert!(
-        root.join("nature/materials").read_dir().unwrap().count() >= 3,
+        root.join("Nature/Materials").read_dir().unwrap().count() >= 3,
         "maps and .mat files were written"
     );
 
@@ -5081,7 +5140,7 @@ fn nature_presets_write_their_materials_as_project_assets() {
     }
     // The leaf picture stays an atlas and the picture is a real PNG beside its .mat.
     assert!(materials.iter().any(|n| n.params == vec![4.0, 2.0]));
-    assert!(std::fs::read_dir(root.join("nature/materials"))
+    assert!(std::fs::read_dir(root.join("Nature/Materials"))
         .unwrap()
         .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "png")));
     assert!(harness
@@ -5154,7 +5213,7 @@ fn nature_parts_can_use_your_own_materials_and_textures() {
     );
     assert!(
         !root
-            .join("nature/materials")
+            .join("Nature/Materials")
             .join("project_my_wet_stone.mat")
             .exists(),
         "your material is never copied or rebaked"
@@ -5184,7 +5243,7 @@ fn nature_parts_can_use_your_own_materials_and_textures() {
         status.starts_with("Placed Grass Clump") && !status.contains("problems"),
         "{status}"
     );
-    let wrapped = root.join("nature/materials/project_my_grass.mat");
+    let wrapped = root.join("Nature/Materials/project_my_grass.mat");
     assert!(
         wrapped.is_file(),
         "a cut-out material is made around your image"
@@ -5242,7 +5301,7 @@ fn photoreal_rock_places_with_a_generated_texture_set() {
         status.starts_with("Placed ") && !status.contains("problems"),
         "{status}"
     );
-    let materials = root.join("nature/materials");
+    let materials = root.join("Nature/Materials");
     let names: Vec<String> = std::fs::read_dir(&materials)
         .unwrap()
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
@@ -5418,12 +5477,12 @@ fn water_presets_write_their_material_and_keep_your_edits() {
         .unwrap();
     harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(lake)));
     // The material exists as a file as soon as the preset is applied, before anything is placed.
-    let file = root.join("water/calm_lake.mat");
+    let file = root.join("Water/calm_lake.mat");
     assert!(file.is_file());
     let graph = &harness.app().watergen.graph;
     assert!(graph
         .look_asset()
-        .is_some_and(|p| p.ends_with("water/calm_lake.mat")));
+        .is_some_and(|p| p.ends_with("Water/calm_lake.mat")));
     // Your edits to the file survive applying the preset again.
     std::fs::write(&file, "edited by the user").unwrap();
     harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(lake)));
@@ -5485,8 +5544,8 @@ fn placing_water_creates_an_animated_engine_surface() {
     // The water's material is a real project asset assigned to the entity, written from the
     // Water Material node: it is not hidden in the surface.
     let material = engine.entity_material(id).expect("a material");
-    assert!(material.ends_with("water/open_sea.mat"), "{material}");
-    let file = root.join("water/open_sea.mat");
+    assert!(material.ends_with("Water/open_sea.mat"), "{material}");
+    let file = root.join("Water/open_sea.mat");
     let text = std::fs::read_to_string(&file).expect("the .mat exists");
     assert!(
         text.contains("clearcoat") || text.contains("transmission"),
@@ -5511,8 +5570,8 @@ fn placing_water_creates_an_animated_engine_surface() {
 
     // Saving writes the graph, which reloads to the same water.
     harness.dispatch(Message::WaterGen(wg::Edit::Export));
-    let file = root.join("water/open_sea.water");
-    let text = std::fs::read_to_string(&file).expect("saved");
+    let file = root.join("Water/open_sea.generator.water");
+    let text = crate::uikit::recipe::read(&file).expect("saved").graph;
     let (name, graph) = crate::uikit::water::from_text(&text).expect("parses");
     assert_eq!(name, "Open Sea");
     assert_eq!(
@@ -5698,11 +5757,11 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
     assert_eq!(layers.len(), 4);
     for path in &layers {
         assert!(!path.is_empty() && path.ends_with(".mat"), "{path}");
-        assert!(root.join("terrain/layers").is_dir());
+        assert!(root.join("Terrain/Layers").is_dir());
     }
     for name in ["ground", "rock", "dirt", "mud"] {
-        assert!(root.join(format!("terrain/layers/{name}.png")).is_file());
-        assert!(root.join(format!("terrain/layers/{name}.mat")).is_file());
+        assert!(root.join(format!("Terrain/Layers/{name}.png")).is_file());
+        assert!(root.join(format!("Terrain/Layers/{name}.mat")).is_file());
     }
     // The engine paints each layer with its material's albedo map.
     let id = harness.app().entities[harness.app().selected].id;
@@ -5713,7 +5772,7 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
         .component_values(id, terrain)
         .iter()
         .filter(
-            |v| matches!(v, doppio_engine::FieldValue::String(t) if t.contains("terrain/layers/")),
+            |v| matches!(v, doppio_engine::FieldValue::String(t) if t.contains("Terrain/Layers/")),
         )
         .count();
     assert_eq!(painted, 4);
@@ -5753,9 +5812,13 @@ fn placing_a_terrain_creates_an_engine_terrain_with_splat_layers() {
     }
 
     harness.dispatch(Message::TerrainGen(tg::Edit::Export));
-    assert!(root.join("terrain/alpine_range.terrain-graph").is_file());
-    assert!(root.join("terrain/alpine_range_height.png").is_file());
-    let text = std::fs::read_to_string(root.join("terrain/alpine_range.terrain-graph")).unwrap();
+    assert!(root
+        .join("Terrain/alpine_range.generator.terrain")
+        .is_file());
+    assert!(root.join("Terrain/alpine_range_height.png").is_file());
+    let text = crate::uikit::recipe::read(&root.join("Terrain/alpine_range.generator.terrain"))
+        .unwrap()
+        .graph;
     let (name, graph) = crate::uikit::terrain::from_text(&text).expect("parses");
     assert_eq!(name, "Alpine Range");
     assert_eq!(

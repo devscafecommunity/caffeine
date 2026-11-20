@@ -79,7 +79,7 @@ impl TerrainGen {
         state
     }
 
-    fn load(&mut self, graph: TerrainGraph) {
+    pub(super) fn load(&mut self, graph: TerrainGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -228,7 +228,7 @@ impl App {
     }
 
     pub(super) fn terrain_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("terrain"))
+        self.asset_root_dir().map(|root| root.join("Terrain"))
     }
 
     pub(super) fn edit_terrain(&mut self, edit: Edit) {
@@ -410,11 +410,16 @@ impl App {
         let res = self.terraingen.graph.output_resolution();
         let result = self.terraingen.graph.build(res).and_then(|model| {
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            std::fs::write(
-                dir.join(format!("{slug}.terrain-graph")),
-                terrain::to_text(&self.terraingen.name, &self.terraingen.graph),
-            )
-            .map_err(|e| e.to_string())?;
+            let name = self.terraingen.name.clone();
+            let graph = terrain::to_text(&name, &self.terraingen.graph);
+            self.write_recipe(
+                &dir,
+                crate::uikit::recipe::Kind::Terrain,
+                &slug,
+                &name,
+                &format!("{slug}_height.png"),
+                graph,
+            )?;
             // A 16-bit height map, ready for any other tool.
             let pixels: Vec<u16> = model
                 .height
@@ -430,13 +435,13 @@ impl App {
             .map_err(|e| e.to_string())
         });
         self.terraingen.status = Some(match result {
-            Ok(()) => format!("Saved terrain/{slug}.terrain-graph and {slug}_height.png"),
+            Ok(()) => format!("Saved Terrain/{slug}.generator.terrain and {slug}_height.png"),
             Err(error) => format!("Could not save: {error}"),
         });
     }
 
     /// Golden rule: the terrain's layer pictures are project assets. Empty slots on the Output node
-    /// are filled by baking material-library pictures into `terrain/layers/`; existing files and
+    /// are filled by baking material-library pictures into `Terrain/Layers/`; existing files and
     /// paths you chose are never touched.
     pub(super) fn materialize_terrain_assets(&mut self) -> Result<(), String> {
         let Some(dir) = self.terrain_dir() else {
@@ -465,7 +470,7 @@ impl App {
             else {
                 continue;
             };
-            let folder = dir.join("layers");
+            let folder = dir.join("Layers");
             std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
             let file = folder.join(format!("{slug}.png"));
             if !file.exists() {
@@ -493,8 +498,8 @@ impl App {
                 material.name = format!("{slug} terrain layer");
                 material.albedo_map = if rooted {
                     engine
-                        .asset_project_path(&format!("terrain/layers/{slug}.png"))
-                        .unwrap_or_else(|_| format!("terrain/layers/{slug}.png"))
+                        .asset_project_path(&format!("Terrain/Layers/{slug}.png"))
+                        .unwrap_or_else(|_| format!("Terrain/Layers/{slug}.png"))
                 } else {
                     file.display().to_string()
                 };
@@ -505,7 +510,7 @@ impl App {
                     .map_err(|e| format!("{e:?}"))?;
             }
             let path = if rooted {
-                format!("terrain/layers/{slug}.mat")
+                format!("Terrain/Layers/{slug}.mat")
             } else {
                 mat_file.display().to_string()
             };

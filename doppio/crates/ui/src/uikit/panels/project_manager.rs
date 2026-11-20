@@ -318,12 +318,7 @@ pub fn view<'a, Message: Clone + 'a>(
                 ));
             }
             column![
-                text_field::stacked(
-                    id::PROJECT_NAME,
-                    "Project name",
-                    &state.name,
-                    on_name,
-                ),
+                text_field::stacked(id::PROJECT_NAME, "Project name", &state.name, on_name,),
                 row![location, default_location]
                     .spacing(4)
                     .align_y(iced::Alignment::End),
@@ -335,10 +330,11 @@ pub fn view<'a, Message: Clone + 'a>(
                 space().height(Length::Fixed(8.0)),
                 button::primary(id::PROJECT_CREATE, "Create & Open", on_create),
                 text(if state.name.trim().is_empty() {
-                    "Enter a name to create project.caffeine with assets/raw, scenes, materials and texture_sets.".to_owned()
+                    "Enter a name to create project.caffeine with Assets, Scripts and Scenes."
+                        .to_owned()
                 } else {
                     format!(
-                        "Creates {}/{}/project.caffeine with assets/raw, scenes, materials and texture_sets.",
+                        "Creates {}/{}/project.caffeine with Assets, Scripts and Scenes.",
                         state.location.trim_end_matches(['/', '\\']),
                         state.name.trim()
                     )

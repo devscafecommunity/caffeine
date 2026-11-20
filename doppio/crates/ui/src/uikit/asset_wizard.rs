@@ -4,7 +4,7 @@
 //! be tested with temp directories and never touches the engine. The wizard
 //! panel and `App` only translate messages into these calls.
 //!
-//! Raw assets live under the project asset root (`assets/raw`). The engine
+//! Raw assets live under the project asset root (`Assets/Raw`). The engine
 //! recognises them by extension (see `assetKind` in the C ABI); `caf-pack`
 //! turns that raw tree into the `.cap` archive shipped with a game.
 

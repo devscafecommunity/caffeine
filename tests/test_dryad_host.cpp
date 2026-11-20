@@ -229,6 +229,33 @@ TEST_CASE("Dryad natives read input, time and the world", "[dryad][runtime]") {
     std::remove(path.c_str());
 }
 
+TEST_CASE("Dryad math natives match Lua and fill the operator gaps", "[dryad][math]") {
+    const std::string path = "dryad_math.dyd";
+    {
+        std::ofstream out(path);
+        out << "function onUpdate(entity, dt) {\n"
+            << "  let a = caffeine_math_clamp(15, 0, 10) + caffeine_math_min(3, 4) + caffeine_math_abs(-2);\n"
+            << "  let b = caffeine_math_lerp(0, 10, 0.5) + caffeine_math_floor(2.9) + caffeine_math_round(2.5);\n"
+            << "  let c = caffeine_math_sqrt(-4) + caffeine_math_pow(2, 3) + caffeine_math_max(1, 7);\n"
+            << "  caffeine_set_position(entity, a, b, c);\n"
+            << "}\n";
+    }
+    ECS::World world;
+    DryadHost host;
+    host.setWorld(&world);
+    ECS::Entity entity = world.create("DryadMath");
+    entity.getOrAdd<ECS::Position3D>().position = Vec3(0, 0, 0);
+    REQUIRE(host.load(path));
+    std::string err;
+    REQUIRE(host.call(path, "onUpdate", entity, 0.016f, &err));
+    auto* pos = entity.get<ECS::Position3D>();
+    REQUIRE(pos != nullptr);
+    REQUIRE(pos->position.x == 15.0f);  // 10 + 3 + 2
+    REQUIRE(pos->position.y == 10.0f);  // 5 + 2 + 3
+    REQUIRE(pos->position.z == 15.0f);  // 0 + 8 + 7
+    std::remove(path.c_str());
+}
+
 TEST_CASE("Dryad properties override script globals", "[dryad][component]") {
     const std::string path = "dryad_props.dyd";
     {

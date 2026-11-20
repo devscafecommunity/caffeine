@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Caffeine VERSION 0.1.0 LANGUAGES CXX C)
 
+# Third-party static libs (Bullet, Lua, ...) end up inside libcaffeine-capi.so, so every
+# object must be position independent.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

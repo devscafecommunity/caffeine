@@ -373,7 +373,7 @@
     {
       "name": "clamp",
       "lua": "caffeine.math.clamp",
-      "dryad": null,
+      "dryad": "caffeine_math_clamp",
       "signature": "clamp(v, lo, hi) -> number",
       "params": [
         {
@@ -407,7 +407,7 @@
     {
       "name": "clamp01",
       "lua": "caffeine.math.clamp01",
-      "dryad": null,
+      "dryad": "caffeine_math_clamp01",
       "signature": "clamp01(v) -> number",
       "params": [
         {
@@ -429,7 +429,7 @@
     {
       "name": "lerp",
       "lua": "caffeine.math.lerp",
-      "dryad": null,
+      "dryad": "caffeine_math_lerp",
       "signature": "lerp(a, b, t) -> number",
       "params": [
         {
@@ -463,7 +463,7 @@
     {
       "name": "inverseLerp",
       "lua": "caffeine.math.inverseLerp",
-      "dryad": null,
+      "dryad": "caffeine_math_inverse_lerp",
       "signature": "inverseLerp(a, b, v) -> number",
       "params": [
         {
@@ -497,7 +497,7 @@
     {
       "name": "remap",
       "lua": "caffeine.math.remap",
-      "dryad": null,
+      "dryad": "caffeine_math_remap",
       "signature": "remap(v, inLo, inHi, outLo, outHi) -> number",
       "params": [
         {
@@ -543,7 +543,7 @@
     {
       "name": "smoothstep",
       "lua": "caffeine.math.smoothstep",
-      "dryad": null,
+      "dryad": "caffeine_math_smoothstep",
       "signature": "smoothstep(e0, e1, v) -> number",
       "params": [
         {
@@ -577,7 +577,7 @@
     {
       "name": "approach",
       "lua": "caffeine.math.approach",
-      "dryad": null,
+      "dryad": "caffeine_math_approach",
       "signature": "approach(cur, target, step) -> number",
       "params": [
         {
@@ -611,7 +611,7 @@
     {
       "name": "sign",
       "lua": "caffeine.math.sign",
-      "dryad": null,
+      "dryad": "caffeine_math_sign",
       "signature": "sign(v) -> number",
       "params": [
         {
@@ -633,7 +633,7 @@
     {
       "name": "radians",
       "lua": "caffeine.math.radians",
-      "dryad": null,
+      "dryad": "caffeine_math_radians",
       "signature": "radians(deg) -> number",
       "params": [
         {
@@ -655,7 +655,7 @@
     {
       "name": "degrees",
       "lua": "caffeine.math.degrees",
-      "dryad": null,
+      "dryad": "caffeine_math_degrees",
       "signature": "degrees(rad) -> number",
       "params": [
         {
@@ -673,6 +673,244 @@
       "en": "Converts radians to degrees.",
       "pt": "Converte radianos em graus.",
       "example": "local d = caffeine.math.degrees(caffeine.math.pi)"
+    },
+    {
+      "name": "min",
+      "lua": null,
+      "dryad": "caffeine_math_min",
+      "signature": "min(a, b) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "number",
+          "en": "a.",
+          "pt": "a."
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "en": "b.",
+          "pt": "b."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Smaller of two numbers.",
+        "pt": "O menor de dois números."
+      },
+      "en": "Smaller of two numbers. Dryad only; in Lua use the standard math library.",
+      "pt": "O menor de dois números. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_min(1, 1);"
+    },
+    {
+      "name": "max",
+      "lua": null,
+      "dryad": "caffeine_math_max",
+      "signature": "max(a, b) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "number",
+          "en": "a.",
+          "pt": "a."
+        },
+        {
+          "name": "b",
+          "type": "number",
+          "en": "b.",
+          "pt": "b."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Larger of two numbers.",
+        "pt": "O maior de dois números."
+      },
+      "en": "Larger of two numbers. Dryad only; in Lua use the standard math library.",
+      "pt": "O maior de dois números. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_max(1, 1);"
+    },
+    {
+      "name": "abs",
+      "lua": null,
+      "dryad": "caffeine_math_abs",
+      "signature": "abs(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "v.",
+          "pt": "v."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Absolute value.",
+        "pt": "Valor absoluto."
+      },
+      "en": "Absolute value. Dryad only; in Lua use the standard math library.",
+      "pt": "Valor absoluto. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_abs(1);"
+    },
+    {
+      "name": "floor",
+      "lua": null,
+      "dryad": "caffeine_math_floor",
+      "signature": "floor(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "v.",
+          "pt": "v."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Rounds down to a whole number.",
+        "pt": "Arredonda para baixo."
+      },
+      "en": "Rounds down to a whole number. Dryad only; in Lua use the standard math library.",
+      "pt": "Arredonda para baixo. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_floor(1);"
+    },
+    {
+      "name": "ceil",
+      "lua": null,
+      "dryad": "caffeine_math_ceil",
+      "signature": "ceil(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "v.",
+          "pt": "v."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Rounds up to a whole number.",
+        "pt": "Arredonda para cima."
+      },
+      "en": "Rounds up to a whole number. Dryad only; in Lua use the standard math library.",
+      "pt": "Arredonda para cima. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_ceil(1);"
+    },
+    {
+      "name": "round",
+      "lua": null,
+      "dryad": "caffeine_math_round",
+      "signature": "round(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "v.",
+          "pt": "v."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Rounds to the nearest whole number.",
+        "pt": "Arredonda para o inteiro mais próximo."
+      },
+      "en": "Rounds to the nearest whole number. Dryad only; in Lua use the standard math library.",
+      "pt": "Arredonda para o inteiro mais próximo. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_round(1);"
+    },
+    {
+      "name": "sqrt",
+      "lua": null,
+      "dryad": "caffeine_math_sqrt",
+      "signature": "sqrt(v) -> number",
+      "params": [
+        {
+          "name": "v",
+          "type": "number",
+          "en": "v.",
+          "pt": "v."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Square root; negative input gives 0.",
+        "pt": "Raiz quadrada; entrada negativa dá 0."
+      },
+      "en": "Square root; negative input gives 0. Dryad only; in Lua use the standard math library.",
+      "pt": "Raiz quadrada; entrada negativa dá 0. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_sqrt(1);"
+    },
+    {
+      "name": "sin",
+      "lua": null,
+      "dryad": "caffeine_math_sin",
+      "signature": "sin(rad) -> number",
+      "params": [
+        {
+          "name": "rad",
+          "type": "number",
+          "en": "rad.",
+          "pt": "rad."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Sine of an angle in radians.",
+        "pt": "Seno de um ângulo em radianos."
+      },
+      "en": "Sine of an angle in radians. Dryad only; in Lua use the standard math library.",
+      "pt": "Seno de um ângulo em radianos. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_sin(1);"
+    },
+    {
+      "name": "cos",
+      "lua": null,
+      "dryad": "caffeine_math_cos",
+      "signature": "cos(rad) -> number",
+      "params": [
+        {
+          "name": "rad",
+          "type": "number",
+          "en": "rad.",
+          "pt": "rad."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Cosine of an angle in radians.",
+        "pt": "Cosseno de um ângulo em radianos."
+      },
+      "en": "Cosine of an angle in radians. Dryad only; in Lua use the standard math library.",
+      "pt": "Cosseno de um ângulo em radianos. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_cos(1);"
+    },
+    {
+      "name": "pow",
+      "lua": null,
+      "dryad": "caffeine_math_pow",
+      "signature": "pow(base, exponent) -> number",
+      "params": [
+        {
+          "name": "base",
+          "type": "number",
+          "en": "base.",
+          "pt": "base."
+        },
+        {
+          "name": "exponent",
+          "type": "number",
+          "en": "exponent.",
+          "pt": "exponent."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Raises a number to a power.",
+        "pt": "Eleva um número a uma potência."
+      },
+      "en": "Raises a number to a power. Dryad only; in Lua use the standard math library.",
+      "pt": "Eleva um número a uma potência. Só em Dryad; em Lua use a biblioteca math padrão.",
+      "example": "var r = caffeine_math_pow(1, 1);"
     }
   ]
 }

@@ -295,9 +295,19 @@ precedent.
   module matches the C++ `NodeEmitter`/`NodeGraphIO`/`NodeRoundTrip` formats
   byte-for-byte: deterministic `// @node` markers, sorted JSON ids/edges and
   `%.17g` numbers. It supports OnUpdate, Set/Get Position, Set/Get Scale,
-  Translate, DeltaTime, Constant, Branch and Log, with typed exec/data ports,
-  connection validation, inline input fallbacks, Add motion and Sync from
-  `.dyd`.
+  Translate, DeltaTime, Constant, Branch and Log, plus the runtime nodes Key
+  Down, Action Down, Input Axis (name in the properties panel), Total Time and
+  Destroy Self, with typed exec/data ports, connection validation, inline
+  input fallbacks, Add motion and Sync from `.dyd`. The new nodes exist in the
+  Rust catalog only; the C++ `NodeCatalog` (archived editor) still lists the
+  original ten.
+- **Reference tooltip.** Hovering a name in the Script pane shows its signature
+  and description in a floating card. `uikit/script_reference.rs` holds one
+  table per language (Lua `caffeine.*`, Dryad `caffeine_*`); a test reads the
+  C++ binding sources and fails when a Dryad native is missing from the table.
+  `.dyd` files use the JavaScript grammar for colouring (Dryad is a brace
+  language); colouring of the engine API names themselves is not available
+  because `iced-code-editor` does not take a custom grammar.
 - **Attach** and **Run once** reuse the script component and the C ABI
   `caffeine_session_run_dryad` preview (onCreate + one onUpdate). Saving the
   graph writes both files; opening a `.dyd` also stages its source in the
@@ -850,3 +860,32 @@ small device instead of crashing the host.
 - Prefer snapshots/arrays over per-field FFI calls.
 - Keep the Rust frontend out of the CMake build; `scripts/check-rust-ui.sh`
   builds the C ABI first and then the workspace.
+
+## Script reference card
+
+The hover card shows module, signature, parameters, return type, an example and related functions.
+**Ctrl+click** on an API name opens its reference page: the `caffeine-website` checkout when found
+(`CAFFEINE_ENGINE_ROOT` or a parent of the executable or working directory), otherwise the public URL is logged.
+A test checks that every documented entry has a page in the website tree.
+
+## Generator recipes
+
+Generators save `generator.*` recipe files next to what they bake and reopen them on double-click.
+See [`generator-recipes.md`](generator-recipes.md).
+
+## Script editor assistance
+
+Hover and Ctrl+click resolve the whole dotted name (`caffeine.time.delta` from any segment) and also
+cover language words, lifecycle hooks (`onUpdate`...) and functions or variables declared in the file.
+Ctrl+click on a declared name jumps to its declaration; on an API name it opens the reference.
+Typing offers completions from the API, keywords and the file's own symbols (Up/Down to move, Enter or Tab to accept).
+The editor also has bracket matching and colours, auto-close and auto-indent, indent guides, folding, sticky scroll,
+search/replace (Ctrl+F / Ctrl+H), go to line (Ctrl+G), the command palette, multi-cursor (Alt+click), move and
+duplicate line and comment toggle. All of it is in-process; there is no language server.
+
+## Dryad node catalog
+
+29 nodes. Beyond events, transform, time, input and world: Language / Math (Add, Subtract, Multiply, Divide,
+Negate), Compare (Less, Greater, Equal), Logic (And, Or, Not) and Engine / World (This Entity, Is Alive, Distance).
+Operators are written fully parenthesised, so the importer reads them back unambiguously. Not done: Min, Max, Abs,
+Clamp, trigonometry, random, variables and loops. They need math natives in the engine first.

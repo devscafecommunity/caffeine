@@ -79,7 +79,7 @@ impl NatureGen {
     }
 
     /// Replaces the graph (preset or new) and starts a fresh history.
-    fn load(&mut self, graph: NatureGraph) {
+    pub(super) fn load(&mut self, graph: NatureGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -461,7 +461,7 @@ impl App {
     }
 
     fn nature_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("nature"))
+        self.asset_root_dir().map(|root| root.join("Nature"))
     }
 
     fn export_nature(&mut self) {
@@ -484,11 +484,19 @@ impl App {
         };
         match nature::write_obj_files(&model, &dir, &name) {
             Ok(files) => {
-                let recipe = dir.join(format!("{}.{}", nature::slug(&name), nature::EXTENSION));
-                let _ = std::fs::write(
-                    &recipe,
-                    nature::to_text(&name, &self.nature.graph, self.nature.quality),
-                );
+                let slug = nature::slug(&name);
+                let graph = nature::to_text(&name, &self.nature.graph, self.nature.quality);
+                let product = files.first().cloned().unwrap_or_default();
+                if let Err(error) = self.write_recipe(
+                    &dir,
+                    crate::uikit::recipe::Kind::Nature,
+                    &slug,
+                    &name,
+                    &product,
+                    graph,
+                ) {
+                    self.log(LogLevel::Error, format!("Nature recipe: {error}"));
+                }
                 self.nature.dirty = false;
                 self.nature.status = Some(format!(
                     "Exported {} file(s) to {}",
@@ -510,7 +518,7 @@ impl App {
         dir: &Path,
     ) -> Result<String, String> {
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
-        let folder = dir.join("materials");
+        let folder = dir.join("Materials");
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
         let slug = format!(
             "{}_{}",
@@ -518,7 +526,7 @@ impl App {
             spec.slug()
         );
         let mat_file = folder.join(format!("{slug}.mat"));
-        let relative = |file: &str| format!("nature/materials/{file}");
+        let relative = |file: &str| format!("Nature/Materials/{file}");
         let absolute_ok = engine
             .asset_path("")
             .map(|root| !root.is_empty())
@@ -648,11 +656,11 @@ impl App {
             return Ok(path.clone());
         }
         let engine = self.engine.as_ref().ok_or("The engine is not available")?;
-        let folder = dir.join("materials");
+        let folder = dir.join("Materials");
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
         let slug = spec.slug();
         let mat_file = folder.join(format!("{slug}.mat"));
-        let relative = |file: &str| format!("nature/materials/{file}");
+        let relative = |file: &str| format!("Nature/Materials/{file}");
         let absolute_ok = engine
             .asset_path("")
             .map(|root| !root.is_empty())
@@ -791,7 +799,7 @@ impl App {
                 let _ = engine.set_position(id, [0.0, 0.0, 0.0]);
                 let _ = engine.set_scale(id, [30.0, 1.0, 30.0]);
                 if let (Some(dir), Ok(mut material)) = (ground_dir.clone(), engine.new_material()) {
-                    let path = dir.join("nature").join("ground.mat");
+                    let path = dir.join("Nature").join("ground.mat");
                     let _ = std::fs::create_dir_all(path.parent().unwrap());
                     material.albedo = [0.22, 0.34, 0.15, 1.0];
                     material.roughness = 0.95;
@@ -896,7 +904,7 @@ impl App {
             };
             let _ = engine.set_entity_parent(child, Some(group));
             let mesh_ref = if absolute_ok {
-                format!("nature/{file}")
+                format!("Nature/{file}")
             } else {
                 dir.join(file).display().to_string()
             };
