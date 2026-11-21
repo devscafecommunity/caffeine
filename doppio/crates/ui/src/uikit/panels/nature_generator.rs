@@ -59,6 +59,8 @@ pub enum Edit {
     Redo,
     Fit,
     SetSnap(bool),
+    SetMergeParts(bool),
+    SetMicromesh(bool),
     SetSearch(String),
     TogglePaletteGroup(String),
     /// Index into the preset list.
@@ -68,6 +70,8 @@ pub enum Edit {
     New,
     Export,
     Place,
+    /// Writes the model as a class of the default scatter plan.
+    AddToScatter,
     Noop,
     PreviewPress,
     PreviewMove(Point),
@@ -106,6 +110,8 @@ pub struct View<'a> {
     pub pan: Vector,
     pub zoom: f32,
     pub snap: bool,
+    pub merge_parts: bool,
+    pub micromesh: bool,
     pub search: &'a str,
     pub collapsed_groups: &'a HashSet<String>,
     pub quality: Quality,
@@ -230,7 +236,7 @@ pub fn view<'a, Message: Clone + 'a>(
         id::NATUREGEN_PRESET,
         "Preset",
         view.presets.to_vec(),
-        None,
+        dropdown::current_option(view.presets, view.name),
         move |choice| {
             preset_emit(Edit::ApplyPreset(
                 preset_lookup.iter().position(|p| *p == choice).unwrap_or(0),
@@ -265,6 +271,24 @@ pub fn view<'a, Message: Clone + 'a>(
             button::compact(id::NATUREGEN_FIT, "Fit", emit(Edit::Fit)),
             button::compact(id::NATUREGEN_NEW, "New", emit(Edit::New)),
             button::compact(id::NATUREGEN_EXPORT, "Export", emit(Edit::Export)),
+            checkbox::inline(
+                id::NATUREGEN_MERGE_PARTS,
+                "Merge parts",
+                view.merge_parts,
+                {
+                    let emit = emit.clone();
+                    move |value| emit(Edit::SetMergeParts(value))
+                }
+            ),
+            checkbox::inline(id::NATUREGEN_MICROMESH, "Micromesh", view.micromesh, {
+                let emit = emit.clone();
+                move |value| emit(Edit::SetMicromesh(value))
+            }),
+            button::compact(
+                id::NATUREGEN_SCATTER,
+                "Add to scatter plan",
+                emit(Edit::AddToScatter)
+            ),
             button::primary(id::NATUREGEN_PLACE, "Place in scene", emit(Edit::Place)),
         ]
         .spacing(6)
@@ -445,11 +469,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(theme::surface),
     );
     if let Some(note) = view.status {
-        right = right.push(
-            container(text(note).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(note));
     }
 
     let body = row![

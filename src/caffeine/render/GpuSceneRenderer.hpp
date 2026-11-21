@@ -220,6 +220,8 @@ private:
         f32 roughness = 0.5f;
         f32 reflectance = 0.04f;
         f32 shininess = 32.0f;
+        /// Draw only this sub-mesh (material slots: one draw per sub-mesh, each with its own material); -1 = all.
+        i32 onlySubMesh = -1;
         std::string meshPath;
         std::string customTexturePath;
         std::string customNormalPath;

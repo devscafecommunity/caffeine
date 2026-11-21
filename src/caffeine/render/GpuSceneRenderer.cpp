@@ -1103,8 +1103,11 @@ void GpuSceneRenderer::pushShadowDrawsForMesh(RHI::CommandBuffer* cmd, const Mes
     if (!draw.mesh || draw.mesh->indices.empty()) return;
 
     if (draw.mesh->subMeshes.size() > 1) {
+        u32 index = 0;
         for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
+            const u32 current = index++;
             if (submesh.indexCount == 0) continue;
+            if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != current) continue;
             pushShadowDraw(cmd, draw, mvp, lightPos, mode, submesh.indexCount, submesh.indexOffset);
         }
         return;
@@ -1119,6 +1122,16 @@ bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
 
     const u64 vertexBytes = mesh->vertices.size() * sizeof(Assets::Vertex3D);
     const u64 indexBytes = mesh->indices.size() * sizeof(u32);
+
+    // Buffers of another device (a mesh from a process-wide cache that outlived its device) are not ours to use or
+    // free: forget them and upload again.
+    if (mesh->gpuDeviceSerial != m_device->serial()) {
+        mesh->vertexBuffer = nullptr;
+        mesh->indexBuffer = nullptr;
+        mesh->colorBuffer = nullptr;
+        mesh->uploadedRevision = 0;
+        mesh->gpuDeviceSerial = m_device->serial();
+    }
 
     if (mesh->vertexBuffer && mesh->indexBuffer &&
         mesh->uploadedRevision == mesh->geometryRevision) {
@@ -1918,7 +1931,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
 
         if (draw.mesh->subMeshes.size() > 1) {
             u32 partIndex = 0;
+            u32 subIndex = 0;
             for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
+                const u32 current = subIndex++;
+                if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != current) continue;
                 drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex, partIndex++);
             }
         } else {
@@ -2054,6 +2070,7 @@ void GpuSceneRenderer::beginMicromeshFrame(RHI::CommandBuffer* cmd, const std::v
         };
         if (mesh->subMeshes.size() > 1) {
             for (u32 s = 0; s < mesh->subMeshes.size() && ok; ++s) {
+                if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != s) continue;
                 addPart(s, mesh->subMeshes[s].indexOffset, mesh->subMeshes[s].indexCount);
             }
         } else {
@@ -2401,7 +2418,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         const f32 scale = std::max(sx, std::max(sy, sz));
         const f32 lodDistance = viewerDistanceFor(meshWorldCenter(worldMatrix, mesh)) / std::max(scale, 0.001f);
 
+        // One draw per material slot (see MeshFilterComponent::slotMaterials), or one for the whole mesh.
+        auto buildDraw = [&](const std::string& materialPath, i32 onlySubMesh) {
         MeshDraw draw;
+        draw.onlySubMesh = onlySubMesh;
         draw.entity = entity;
         draw.mesh = selectMeshLod(mesh, entity, lodDistance);
         if (const std::vector<Assets::Vertex3D>* posed = Animation::skinnedVerticesFor(entity.id())) {
@@ -2411,6 +2431,12 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             }
         }
         draw.worldMatrix = worldMatrix;
+        // A lower LOD may have fewer sub-mesh ranges than the slots: slot 0 then draws the whole of it, the rest nothing.
+        if (draw.mesh && draw.onlySubMesh >= 0 &&
+            static_cast<usize>(draw.onlySubMesh) >= draw.mesh->subMeshes.size()) {
+            if (draw.onlySubMesh > 0) return;
+            draw.onlySubMesh = -1;
+        }
         draw.castShadows = Scene::meshCastsShadows(world, entity);
         draw.receiveShadows = Scene::meshReceivesShadows(world, entity);
         if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
@@ -2438,9 +2464,9 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.alphaMode = mode;
             draw.alphaCutoff = cutoff;
         }
-        if (!filter.customMaterialPath.empty()) {
+        if (!materialPath.empty()) {
             const Assets::MaterialSurface surface =
-                Assets::MaterialCache::instance().resolve(filter.customMaterialPath, projectRoot);
+                Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
             if (surface.valid) {
                 draw.hasAuthoredMaterial = true;
                 const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
@@ -2650,6 +2676,21 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                               (flat && options.features.reflections == ReflectionMode::Planar &&
                                std::abs(worldY - options.features.reflectionPlaneY) < 0.4f);
         draws.push_back(draw);
+        };
+        // The Mesh Filter's material wins; the Mesh Renderer's is the fallback (a scene or script may only set that one).
+        const ECS::MeshRendererComponent* rendererForMaterial = world.get<ECS::MeshRendererComponent>(entity);
+        const std::string& baseMaterial =
+            !filter.customMaterialPath.empty() || !rendererForMaterial ? filter.customMaterialPath
+                                                                        : rendererForMaterial->materialPath;
+        const std::vector<std::string> slots = ECS::splitMaterialSlots(filter.slotMaterials);
+        if (slots.empty() || mesh->subMeshes.size() < 2) {
+            buildDraw(baseMaterial, -1);
+        } else {
+            for (u32 s = 0; s < mesh->subMeshes.size(); ++s) {
+                const bool own = s < slots.size() && !slots[s].empty();
+                buildDraw(own ? slots[s] : baseMaterial, static_cast<i32>(s));
+            }
+        }
     });
 
     return draws;
@@ -2695,7 +2736,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
     std::vector<InstanceBatchItem> items(draws.size());
     for (u32 i = 0; i < draws.size(); ++i) {
         const MeshDraw& draw = draws[i];
-        const bool singleSubmesh = draw.mesh && draw.mesh->subMeshes.size() <= 1;
+        const bool singleSubmesh = draw.mesh && (draw.mesh->subMeshes.size() <= 1 || draw.onlySubMesh >= 0);
         // Probed and translucent draws need per-object data (cube map, sort order).
         const bool hasColours = draw.mesh && !draw.mesh->vertexColors.empty() &&
                                 draw.mesh->vertexColors.size() == draw.mesh->vertices.size();
@@ -2753,6 +2794,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         mixFloat(draw.modSnow);
         mixFloat(draw.modAge);
         key = key * 131u + draw.alphaMode;
+        key = key * 131u + static_cast<u32>(draw.onlySubMesh + 1);
         if (draw.receiveShadows) key ^= 0x9e3779b97f4a7c15ull;
         items[i].key = key == 0 ? 1 : key;
     }

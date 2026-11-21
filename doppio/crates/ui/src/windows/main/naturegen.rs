@@ -111,6 +111,10 @@ pub(super) struct NatureGen {
     pub pan: Vector,
     pub zoom: f32,
     pub snap: bool,
+    /// Place the parts that share a kind of surface (solid or cut-out) as one entity with a material slot each.
+    pub merge_parts: bool,
+    /// Switch Micromesh on for the dense solid parts (rocks, trunks).
+    pub micromesh: bool,
     pub search: String,
     pub collapsed: HashSet<String>,
     pub presets: Vec<nature::NaturePreset>,
@@ -148,6 +152,8 @@ impl NatureGen {
             pan: Vector::new(0.0, 0.0),
             zoom: 1.0,
             snap: false,
+            merge_parts: true,
+            micromesh: true,
             search: String::new(),
             collapsed: HashSet::new(),
             presets,
@@ -208,9 +214,9 @@ impl NatureGen {
         let min_y = nodes.iter().map(|n| n.position.y).fold(f32::MAX, f32::min);
         let max_x = nodes.iter().map(|n| n.position.x).fold(f32::MIN, f32::max) + 170.0;
         let max_y = nodes.iter().map(|n| n.position.y).fold(f32::MIN, f32::max) + 130.0;
-        let zoom = (620.0 / (max_x - min_x).max(1.0))
-            .min(380.0 / (max_y - min_y).max(1.0))
-            .clamp(0.3, 1.0);
+        let zoom = (780.0 / (max_x - min_x).max(1.0))
+            .min(470.0 / (max_y - min_y).max(1.0))
+            .clamp(0.3, 1.4);
         self.zoom = zoom;
         self.pan = Vector::new(24.0 - min_x * zoom, 24.0 - min_y * zoom);
     }
@@ -257,6 +263,8 @@ impl NatureGen {
             pan: self.pan,
             zoom: self.zoom,
             snap: self.snap,
+            merge_parts: self.merge_parts,
+            micromesh: self.micromesh,
             search: &self.search,
             collapsed_groups: &self.collapsed,
             quality: self.quality,
@@ -537,6 +545,8 @@ impl App {
             }
             Edit::Fit => self.nature.fit(),
             Edit::SetSnap(value) => self.nature.snap = value,
+            Edit::SetMergeParts(value) => self.nature.merge_parts = value,
+            Edit::SetMicromesh(value) => self.nature.micromesh = value,
             Edit::SetSearch(value) => self.nature.search = value,
             Edit::TogglePaletteGroup(name) => {
                 if !self.nature.collapsed.remove(&name) {
@@ -582,6 +592,7 @@ impl App {
             }
             Edit::Export => self.export_nature(),
             Edit::Place => self.place_nature(),
+            Edit::AddToScatter => self.add_nature_to_scatter_plan(),
             Edit::Noop => {}
             Edit::PreviewPress => self.nature.orbit = Some(Point::ORIGIN),
             Edit::PreviewMove(point) => {
@@ -610,6 +621,7 @@ impl App {
     }
 
     fn export_nature(&mut self) {
+        self.ensure_workspace();
         let Some(dir) = self.nature_dir() else {
             self.nature.status =
                 Some("Open a project first: models are written to its assets folder".to_owned());
@@ -1203,8 +1215,155 @@ impl App {
         self.nature.status = None;
     }
 
+    /// Writes the model as a **composite scatter class** into the project's default plan: the solid parts and the
+    /// cut-out parts become two merged meshes with their material slots, and the class places both on every instance.
+    /// Spacing and size come from the model's footprint; the terms (where) start as gentle slopes and are the
+    /// plan's to edit.
+    pub(super) fn add_nature_to_scatter_plan(&mut self) {
+        if self.engine.is_none() {
+            self.nature.status = Some("The engine is not available".to_owned());
+            return;
+        }
+        self.ensure_workspace();
+        let Some(dir) = self.nature_dir() else {
+            self.nature.status =
+                Some("Open a project first: models are written to its assets folder".to_owned());
+            return;
+        };
+        if let Err(error) = self.materialize_nature_assets() {
+            self.nature.status = Some(format!("Could not write the materials: {error}"));
+            return;
+        }
+        let name = self.nature.name.clone();
+        let model = match self.nature.graph.build(self.nature.quality) {
+            Ok(model) => model,
+            Err(error) => {
+                self.nature.status = Some(format!("Graph: {error}"));
+                return;
+            }
+        };
+        let root = self.asset_root_dir();
+        let relative_dir = root
+            .as_ref()
+            .map(|root| asset_folders::relative(root, &dir))
+            .unwrap_or_default();
+        let as_project_path = |path: &str| -> String {
+            match &root {
+                Some(root) => asset_folders::relative(root, std::path::Path::new(path)),
+                None => path.to_owned(),
+            }
+        };
+        let mut parts_lines = Vec::new();
+        for (label, want_cutout) in [("solid", false), ("foliage", true)] {
+            let members: Vec<usize> = (0..model.parts.len())
+                .filter(|&i| {
+                    let part = &model.parts[i];
+                    !part.is_empty()
+                        && part
+                            .instances
+                            .as_ref()
+                            .is_none_or(|set| set.transforms.is_empty())
+                        && self.material_is_cutout(&part.material) == want_cutout
+                })
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            let file = format!("{}_{label}.obj", nature::slug(&name));
+            if let Err(error) = std::fs::create_dir_all(&dir).and_then(|_| {
+                std::fs::write(
+                    dir.join(&file),
+                    model.merged_obj(&members, &format!("{name} {label}")),
+                )
+            }) {
+                self.nature.status = Some(format!("Could not write the meshes: {error}"));
+                return;
+            }
+            let slots: Vec<String> = members
+                .iter()
+                .map(|&i| {
+                    let part = &model.parts[i];
+                    let made = match &part.surface {
+                        Some(spec) => self.ensure_surface_material(part, spec),
+                        None => self.ensure_nature_material(
+                            &part.material,
+                            Foliage::for_spec(&part.name, &part.material),
+                        ),
+                    };
+                    made.map(|path| as_project_path(&path)).unwrap_or_default()
+                })
+                .collect();
+            let triangles: usize = members
+                .iter()
+                .map(|&i| model.parts[i].triangle_count())
+                .sum();
+            let micromesh =
+                self.nature.micromesh && !want_cutout && triangles >= MICROMESH_MIN_TRIANGLES;
+            parts_lines.push(format!(
+                "  part mesh {relative_dir}/{file} slots {}{}{}",
+                slots.join(";"),
+                if micromesh { " micromesh on" } else { "" },
+                if want_cutout { " cutout on" } else { "" },
+            ));
+        }
+        if parts_lines.is_empty() {
+            self.nature.status = Some("The model has no parts to scatter".to_owned());
+            return;
+        }
+        let (plan_file, text) = match self.default_scatter_plan() {
+            Ok(found) => found,
+            Err(error) => {
+                self.nature.status = Some(format!("Could not read the scatter plan: {error}"));
+                return;
+            }
+        };
+        let next_id = text
+            .lines()
+            .filter_map(|line| {
+                let words: Vec<&str> = line.split('#').next()?.split_whitespace().collect();
+                (words.first() == Some(&"class")).then(|| words.get(1)?.parse::<u32>().ok())?
+            })
+            .max()
+            .map_or(1, |id| id + 1);
+        // The footprint decides the spacing: a crown of 6 m wants about 3 m of room each side.
+        let (lo, hi) = model.bounds();
+        let radius = (0.4 * (hi[0] - lo[0]).max(hi[2] - lo[2])).clamp(0.4, 12.0);
+        let class_name = nature::slug(&name);
+        let mut block = format!(
+            "\n# Added from the Nature generator ({name})\nclass {next_id} name {class_name} cell {:.1} radius {radius:.1} density 0.8 priority 20 scale 0.8 1.3 tilt 0.1 tint 0.08\n",
+            (radius * 3.0).max(2.0)
+        );
+        for line in &parts_lines {
+            block.push_str(line);
+            block.push('\n');
+        }
+        block.push_str("  slope 0.00 0.00 0.15 0.35\n");
+        let mut updated = text;
+        if !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(&block);
+        if crate::uikit::scatter::ScatterPlan::from_text(&updated).is_err() {
+            self.nature.status =
+                Some("The scatter plan did not parse after the addition".to_owned());
+            return;
+        }
+        if let Err(error) = std::fs::write(&plan_file, updated) {
+            self.nature.status = Some(format!("Could not write the scatter plan: {error}"));
+            return;
+        }
+        self.nature.status = Some(format!(
+            "Added class {next_id} ({class_name}) to Scatter/default.scatter: use Scatter in the Terrain tab, or edit the plan"
+        ));
+        if let Some(engine) = self.engine.as_mut() {
+            let _ = engine.refresh_assets();
+            self.assets = engine.assets();
+        }
+    }
+
     /// Creates the model in the scene: a group entity with one child per part.
     pub(super) fn place_nature(&mut self) {
+        self.ensure_workspace();
         let Some(dir) = self.nature_dir() else {
             self.nature.status =
                 Some("Open a project first: models are written to its assets folder".to_owned());
@@ -1265,20 +1424,88 @@ impl App {
         };
         let _ = engine.set_position(group, [focus[0], 0.0, focus[2]]);
         let mut problems = Vec::new();
-        for (((part, file), material), cutout) in model
+        let mesh_path = |file: &str| {
+            if absolute_ok {
+                format!("{models_rel}/{file}")
+            } else {
+                dir.join(file).display().to_string()
+            }
+        };
+        // Parts that are not copies of a small mesh and share a kind of surface (solid, or cut-out cards) become one
+        // entity: one OBJ with a group per part, and a Material slot for each, so a tree is a trunk entity and a
+        // foliage entity instead of a pile of parts.
+        let mut merged = vec![false; model.parts.len()];
+        if self.nature.merge_parts {
+            for (label, want_cutout) in [("solid", false), ("foliage", true)] {
+                let members: Vec<usize> = (0..model.parts.len())
+                    .filter(|&i| {
+                        let part = &model.parts[i];
+                        !part.is_empty()
+                            && part
+                                .instances
+                                .as_ref()
+                                .is_none_or(|set| set.transforms.is_empty())
+                            && cutouts[i] == want_cutout
+                    })
+                    .collect();
+                if members.len() < 2 {
+                    continue;
+                }
+                let file = format!("{}_{label}.obj", nature::slug(&name));
+                if let Err(error) = std::fs::write(
+                    dir.join(&file),
+                    model.merged_obj(&members, &format!("{name} {label}")),
+                ) {
+                    problems.push(format!("{label}: {error}"));
+                    continue;
+                }
+                let Ok(child) = engine.create_entity(&format!("{name} {label}")) else {
+                    continue;
+                };
+                let _ = engine.set_entity_parent(child, Some(group));
+                let triangles: usize = members
+                    .iter()
+                    .map(|&i| model.parts[i].triangle_count())
+                    .sum();
+                let slots: Vec<&Result<String, String>> =
+                    members.iter().map(|&i| &materials[i]).collect();
+                let names: Vec<&str> = members
+                    .iter()
+                    .map(|&i| model.parts[i].name.as_str())
+                    .collect();
+                build_merged_entity(
+                    engine,
+                    child,
+                    MeshLook {
+                        cutout: want_cutout,
+                        micromesh: self.nature.micromesh
+                            && !want_cutout
+                            && triangles >= MICROMESH_MIN_TRIANGLES,
+                    },
+                    &mesh_path(&file),
+                    &slots,
+                    &names,
+                    &mut problems,
+                );
+                for i in members {
+                    merged[i] = true;
+                }
+            }
+        }
+        for ((((index, part), file), material), cutout) in model
             .parts
             .iter()
+            .enumerate()
             .zip(files.iter())
             .zip(materials.iter())
             .zip(cutouts.iter())
         {
-            let mesh_path = |file: &str| {
-                if absolute_ok {
-                    format!("{models_rel}/{file}")
-                } else {
-                    dir.join(file).display().to_string()
-                }
-            };
+            if merged[index] {
+                continue;
+            }
+            let micromesh = self.nature.micromesh
+                && !*cutout
+                && part.triangle_count() >= MICROMESH_MIN_TRIANGLES;
             match &part.instances {
                 // Copies of one small mesh: write the template once and make one entity per copy.
                 // They share mesh and material, so the renderer batches them into one instanced
@@ -1311,7 +1538,10 @@ impl App {
                         build_part_entity(
                             engine,
                             child,
-                            *cutout,
+                            MeshLook {
+                                cutout: *cutout,
+                                micromesh: false,
+                            },
                             &mesh_ref,
                             material,
                             &part.name,
@@ -1327,7 +1557,10 @@ impl App {
                     build_part_entity(
                         engine,
                         child,
-                        *cutout,
+                        MeshLook {
+                            cutout: *cutout,
+                            micromesh,
+                        },
                         &mesh_path(file),
                         material,
                         &part.name,
@@ -1361,21 +1594,35 @@ impl App {
 #[allow(dead_code)]
 fn _vector_is_used(_: Vector) {}
 
-/// Gives an entity its mesh (Mesh Filter, primitive Custom) and its material. Cut-out cards cast
-/// alpha-tested shadows: the engine reads the albedo's alpha, so nothing special is needed here.
-fn build_part_entity(
+/// A solid part below this many triangles is not worth a cluster hierarchy (see `micromeshes.md`).
+const MICROMESH_MIN_TRIANGLES: usize = 3000;
+
+/// How a placed mesh draws: cut-out cards (no shadows of their own) and Micromesh (cluster LOD).
+#[derive(Clone, Copy)]
+struct MeshLook {
+    cutout: bool,
+    micromesh: bool,
+}
+
+/// The longest text the engine's field transport carries.
+const MAX_SLOT_TEXT: usize = 250;
+
+/// Adds the Mesh Filter (primitive Custom, the file) and the Mesh Renderer (shadows, Micromesh) to an entity.
+/// Returns the component type ids of the filter, for the callers that set more on it.
+fn add_mesh_components(
     engine: &mut doppio_engine::Engine,
     child: u32,
-    cutout: bool,
+    look: MeshLook,
     mesh_ref: &str,
-    material: &Result<String, String>,
-    part_name: &str,
     problems: &mut Vec<String>,
-) {
+) -> Option<u32> {
+    let MeshLook { cutout, micromesh } = look;
     // The renderer draws a custom mesh from the Mesh Filter (primitive Custom + path); the Mesh
-    // Renderer carries the shadow flags and is where materials are read from.
+    // Renderer carries the shadow flags and the Micromesh switch.
+    let mut filter_type = None;
     match add_component(engine, child, "Mesh Filter") {
         Ok(filter) => {
+            filter_type = Some(filter);
             let outcome = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom")
                 .and_then(|value| set_component_field(engine, child, filter, "Primitive", value))
                 .and_then(|_| {
@@ -1406,9 +1653,33 @@ fn build_part_entity(
                     doppio_engine::FieldValue::Bool(false),
                 );
             }
+            if micromesh {
+                let _ = set_component_field(
+                    engine,
+                    child,
+                    renderer,
+                    "Micromesh",
+                    doppio_engine::FieldValue::Bool(true),
+                );
+            }
         }
         Err(error) => problems.push(error),
     }
+    filter_type
+}
+
+/// Gives an entity its mesh and its material. Cut-out cards cast alpha-tested shadows: the engine reads
+/// the albedo's alpha, so nothing special is needed here.
+fn build_part_entity(
+    engine: &mut doppio_engine::Engine,
+    child: u32,
+    look: MeshLook,
+    mesh_ref: &str,
+    material: &Result<String, String>,
+    part_name: &str,
+    problems: &mut Vec<String>,
+) {
+    add_mesh_components(engine, child, look, mesh_ref, problems);
     match material {
         Ok(path) => {
             if let Err(error) = engine.apply_material(child, path) {
@@ -1416,5 +1687,74 @@ fn build_part_entity(
             }
         }
         Err(error) => problems.push(format!("{part_name}: {error}")),
+    }
+}
+
+/// One entity for several parts (`NatureModel::merged_obj`): the mesh has a sub-mesh per part and the Mesh
+/// Filter's **Material slots** give each its own material, in the same order. The first usable material is also the
+/// entity's own, which an empty slot falls back to.
+fn build_merged_entity(
+    engine: &mut doppio_engine::Engine,
+    child: u32,
+    look: MeshLook,
+    mesh_ref: &str,
+    materials: &[&Result<String, String>],
+    part_names: &[&str],
+    problems: &mut Vec<String>,
+) {
+    let filter = add_mesh_components(engine, child, look, mesh_ref, problems);
+    // Applying a material stores it as a project path; read each back so the slots hold the same form.
+    let mut slots = Vec::new();
+    let mut first = None;
+    for (material, part) in materials.iter().zip(part_names) {
+        match material {
+            Ok(path) => match engine
+                .apply_material(child, path)
+                .and_then(|_| engine.entity_material(child))
+            {
+                Ok(stored) => {
+                    first.get_or_insert_with(|| stored.clone());
+                    slots.push(stored);
+                }
+                Err(error) => {
+                    problems.push(format!("{part}: {error:?}"));
+                    slots.push(String::new());
+                }
+            },
+            Err(error) => {
+                problems.push(format!("{part}: {error}"));
+                slots.push(String::new());
+            }
+        }
+    }
+    if let Some(first) = first {
+        let _ = engine.apply_material(child, &first);
+    }
+    // A text field holds 255 bytes: keep the slots that fit whole, say so for the rest (they use the entity's own).
+    let mut joined = String::new();
+    for (index, slot) in slots.iter().enumerate() {
+        let extra = slot.len() + usize::from(index > 0);
+        if joined.len() + extra > MAX_SLOT_TEXT {
+            problems.push(format!(
+                "{} parts did not fit the material slot list",
+                slots.len() - index
+            ));
+            break;
+        }
+        if index > 0 {
+            joined.push(';');
+        }
+        joined.push_str(slot);
+    }
+    if let Some(filter) = filter {
+        if let Err(error) = set_component_field(
+            engine,
+            child,
+            filter,
+            "Material slots",
+            doppio_engine::FieldValue::String(joined),
+        ) {
+            problems.push(error);
+        }
     }
 }

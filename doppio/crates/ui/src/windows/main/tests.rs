@@ -6292,6 +6292,616 @@ fn micromesh_handles_non_uniform_scale_submeshes_and_vertex_colours() {
     }
 }
 
+/// Placing a Nature model with Merge parts on: the parts that share a kind of surface become one entity with a mesh
+/// that has a sub-mesh per part and the Mesh Filter's Material slots in the same order; off, every part is its own
+/// entity. Micromesh is switched on for a dense solid part and not for cut-out cards.
+#[test]
+fn nature_places_parts_as_one_entity_with_material_slots_and_micromesh() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-slots");
+    harness.app.asset_root_override = Some(root.clone());
+    let preset = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Pink Flower")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(preset)));
+    let count_children = |harness: &mut Harness| {
+        let group = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        let kids: Vec<u32> = (0..engine.entity_count())
+            .filter_map(|i| engine.entity_at(i).ok())
+            .filter(|info| engine.entity_parent(info.id).ok().flatten() == Some(group))
+            .map(|info| info.id)
+            .collect();
+        kids
+    };
+    let slots_of = |engine: &doppio_engine::Engine, id: u32| -> String {
+        let data = engine.entity_component_data(id);
+        let filter = data
+            .iter()
+            .find(|c| c.info.name == "Mesh Filter")
+            .expect("filter");
+        // Primitive, Mesh, Texture, Normal map, Material, Material slots, Shininess.
+        match filter.values.get(5) {
+            Some(doppio_engine::FieldValue::String(text)) => text.clone(),
+            other => panic!("Material slots is the filter's sixth field, got {other:?}"),
+        }
+    };
+
+    harness.dispatch(Message::NatureGen(ng::Edit::SetMergeParts(false)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let separate = count_children(&mut harness);
+    assert!(
+        separate.len() >= 3,
+        "a flower has several parts: {}",
+        separate.len()
+    );
+
+    harness.dispatch(Message::NatureGen(ng::Edit::SetMergeParts(true)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let merged = count_children(&mut harness);
+    assert!(
+        merged.len() < separate.len(),
+        "merged {} vs separate {}: {:?}",
+        merged.len(),
+        separate.len(),
+        harness.app().nature.status
+    );
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let with_slots: Vec<String> = merged
+        .iter()
+        .map(|&id| slots_of(engine, id))
+        .filter(|text| text.contains(';'))
+        .collect();
+    assert!(
+        !with_slots.is_empty(),
+        "a merged entity lists a material per part: {:?}",
+        merged
+            .iter()
+            .map(|&id| slots_of(engine, id))
+            .collect::<Vec<_>>()
+    );
+    for text in &with_slots {
+        assert!(
+            text.split(';').all(|slot| slot.ends_with(".mat")),
+            "every slot is a material: {text}"
+        );
+    }
+    // The merged mesh is on disk with one group per slot.
+    let models = crate::uikit::asset_folders::resolve(
+        &root,
+        crate::uikit::asset_folders::AssetFolder::NatureModels,
+    );
+    let merged_files: Vec<String> = std::fs::read_dir(&models)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with("_solid.obj") || n.ends_with("_foliage.obj"))
+        .collect();
+    assert!(!merged_files.is_empty(), "{merged_files:?}");
+    let groups: usize = merged_files
+        .iter()
+        .map(|n| {
+            std::fs::read_to_string(models.join(n))
+                .unwrap()
+                .lines()
+                .filter(|l| l.starts_with("usemtl "))
+                .count()
+        })
+        .sum();
+    assert_eq!(
+        groups,
+        with_slots
+            .iter()
+            .map(|t| t.split(';').count())
+            .sum::<usize>()
+    );
+}
+
+/// Micromesh on placing: a dense solid part (a detailed boulder) gets the Mesh Renderer's Micromesh switch, a small one
+/// and the switch off do not.
+#[test]
+fn nature_switches_micromesh_on_for_dense_solid_parts() {
+    use crate::uikit::nature::Quality;
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    harness.app.asset_root_override = Some(test_temp_root("nature-micromesh"));
+    let boulder = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Boulder")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(boulder)));
+    harness.dispatch(Message::NatureGen(ng::Edit::SetQuality(
+        Quality::ALL
+            .iter()
+            .position(|q| *q == Quality::Detailed)
+            .unwrap(),
+    )));
+    let triangles = harness
+        .app()
+        .nature
+        .graph
+        .build(Quality::Detailed)
+        .unwrap()
+        .triangles();
+    assert!(
+        triangles >= 3000,
+        "the detailed boulder is dense: {triangles}"
+    );
+    let micromesh_of_first_part = |harness: &mut Harness| -> bool {
+        let group = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_ref().expect("engine");
+        let part = (0..engine.entity_count())
+            .filter_map(|i| engine.entity_at(i).ok())
+            .find(|info| engine.entity_parent(info.id).ok().flatten() == Some(group))
+            .expect("a part")
+            .id;
+        let data = engine.entity_component_data(part);
+        let renderer = data
+            .iter()
+            .find(|c| c.info.name == "Mesh Renderer")
+            .expect("renderer");
+        // Mesh, Material, Cast shadows, Receive shadows, Tint, Wetness, Snow, Age, Micromesh.
+        matches!(
+            renderer.values.get(8),
+            Some(doppio_engine::FieldValue::Bool(true))
+        )
+    };
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    assert!(
+        micromesh_of_first_part(&mut harness),
+        "dense rock: Micromesh on"
+    );
+    harness.dispatch(Message::NatureGen(ng::Edit::SetMicromesh(false)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    assert!(
+        !micromesh_of_first_part(&mut harness),
+        "switch off: no Micromesh"
+    );
+}
+
+/// Documentation media of the material slots (env-gated: `DOPPIO_SLOTS_DOCS=<dir>`; see
+/// `scripts/render-material-slots-docs.sh`): one two-group rock drawn with its slots in both orders, and a Nature model
+/// placed with Merge parts off and on (entity counts and a lit picture of the merged one).
+#[test]
+fn material_slots_pictures_for_docs() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Ok(dir) = std::env::var("DOPPIO_SLOTS_DOCS") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    harness.dispatch(Message::CreatePrefab(light));
+    let fill_id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("material-slots-docs");
+    std::fs::create_dir_all(&root).unwrap();
+    harness.app.asset_root_override = Some(root.clone());
+    let obj = root.join("rock_two.obj");
+    write_rock_obj_with(&obj, 160, 100, true, false);
+    {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_rotation(light_id, [-48.0, 35.0, 0.0]).unwrap();
+        engine.set_rotation(fill_id, [-20.0, 215.0, 0.0]).unwrap();
+        if let Some(light_type) = component_type_id(engine, "Light") {
+            let _ = set_component_field(
+                engine,
+                fill_id,
+                light_type,
+                "Intensity",
+                doppio_engine::FieldValue::F32(0.4),
+            );
+        }
+        let mut settings = engine.viewport_settings().unwrap();
+        settings.show_grid = false;
+        engine.set_viewport_settings(settings).unwrap();
+    }
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let save =
+        |engine: &mut doppio_engine::Engine, name: &str, albedo: [f32; 4], roughness: f32| {
+            let path = root.join(name);
+            let material = doppio_engine::Material {
+                albedo,
+                roughness,
+                ..doppio_engine::Material::default()
+            };
+            engine
+                .save_material(&path.to_string_lossy(), &material)
+                .unwrap();
+            path.to_string_lossy().into_owned()
+        };
+    let moss = save(engine, "moss.mat", [0.18, 0.36, 0.12, 1.0], 0.95);
+    let stone = save(engine, "stone.mat", [0.46, 0.44, 0.41, 1.0], 0.7);
+    let (rock, _) = place_rock(engine, &obj.to_string_lossy(), &stone, [0.0; 3], 1.0, false);
+    let filter = component_type_id(engine, "Mesh Filter").expect("Mesh Filter");
+    for (name, slots) in [
+        ("rock_moss_north", format!("{moss};{stone}")),
+        ("rock_moss_south", format!("{stone};{moss}")),
+    ] {
+        set_component_field(
+            engine,
+            rock,
+            filter,
+            "Material slots",
+            doppio_engine::FieldValue::String(slots),
+        )
+        .unwrap();
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.6,
+                pitch: 0.55,
+                distance: 4.0,
+                focus: [0.0, 0.0, 0.0],
+            })
+            .unwrap();
+        let _ = render_entity_view_sized(engine, 480, 360);
+        let frame = render_entity_view_sized(engine, 480, 360);
+        image::save_buffer(
+            format!("{dir}/{name}.png"),
+            &frame,
+            480,
+            360,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+    engine.destroy_entity(rock).ok();
+
+    // A Nature model, placed twice: every part its own entity, then merged.
+    let preset = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Pink Flower")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(preset)));
+    let children = |harness: &mut Harness| {
+        let group = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_ref().expect("engine");
+        (0..engine.entity_count())
+            .filter_map(|i| engine.entity_at(i).ok())
+            .filter(|info| engine.entity_parent(info.id).ok().flatten() == Some(group))
+            .map(|info| info.id)
+            .collect::<Vec<u32>>()
+    };
+    harness.dispatch(Message::NatureGen(ng::Edit::SetMergeParts(false)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let separate = children(&mut harness).len();
+    let first_group = harness.app().entities[harness.app().selected].id;
+    harness
+        .app
+        .engine
+        .as_mut()
+        .unwrap()
+        .destroy_entity(first_group)
+        .ok();
+    harness.dispatch(Message::NatureGen(ng::Edit::SetMergeParts(true)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let merged_ids = children(&mut harness);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let mut rows = String::new();
+    for &id in &merged_ids {
+        let data = engine.entity_component_data(id);
+        if let Some(filter) = data.iter().find(|c| c.info.name == "Mesh Filter") {
+            if let Some(doppio_engine::FieldValue::String(slots)) = filter.values.get(5) {
+                rows.push_str(&format!(
+                    "{}\t{}\n",
+                    engine.entity_name(id).unwrap_or_default(),
+                    slots
+                ));
+            }
+        }
+    }
+    std::fs::write(
+        format!("{dir}/nature.txt"),
+        format!("separate\t{separate}\nmerged\t{}\n{rows}", merged_ids.len()),
+    )
+    .unwrap();
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.7,
+            pitch: 0.3,
+            distance: 1.7,
+            focus: [0.0, 0.42, 0.0],
+        })
+        .unwrap();
+    let _ = render_entity_view_sized(engine, 480, 360);
+    let frame = render_entity_view_sized(engine, 480, 360);
+    image::save_buffer(
+        format!("{dir}/nature_merged.png"),
+        &frame,
+        480,
+        360,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+}
+
+/// Generators work without a project: the first action that needs files gives the engine a scratch project, says so
+/// in a notice, and the model is placed. Every status line a generator sets becomes a notice (and a Console entry).
+#[test]
+fn generators_work_without_a_project_and_say_what_happened() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    assert!(
+        harness.app().asset_root_dir().is_none(),
+        "the harness starts without a project"
+    );
+    let scratch = harness.app().scratch_root();
+    let _ = std::fs::remove_dir_all(&scratch);
+    let before = harness.app().entities.len();
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    assert!(
+        harness.app().entities.len() > before,
+        "Place worked: {:?}",
+        harness.app().nature.status
+    );
+    assert!(
+        scratch.join("Models/Nature").is_dir() || scratch.join("MODELS/Nature").is_dir(),
+        "the model files are in the scratch project"
+    );
+    assert_eq!(
+        harness.app().asset_root_dir().as_deref(),
+        Some(scratch.as_path()),
+        "the scratch project is now the asset root"
+    );
+    let notice = harness.app().notice.clone().expect("a notice");
+    assert!(
+        notice.text.starts_with("Placed Oak"),
+        "the last word is the placement: {notice:?}"
+    );
+    assert_eq!(notice.tone, crate::uikit::theme::ChipTone::Success);
+    let console: Vec<String> = harness
+        .app()
+        .log
+        .iter()
+        .map(|entry| entry.text.clone())
+        .collect();
+    assert!(
+        console.iter().any(|t| t.contains("scratch folder")),
+        "the Console says where the files went: {console:?}"
+    );
+    // A failing action warns: Scatter on something that is not a terrain.
+    harness.dispatch(Message::ScatterOnTerrain(scatter::ScatterRequest::default()));
+    let notice = harness.app().notice.clone().expect("a notice");
+    assert_eq!(
+        notice.tone,
+        crate::uikit::theme::ChipTone::Danger,
+        "{notice:?}"
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// The generators talk to each other: *Add to scatter plan* in the Nature tab writes the model as a composite class
+/// (a solid and a foliage mesh with their material slots), and *Scatter* in the Terrain tab plants it, every instance
+/// an entity with one child per part.
+#[test]
+fn nature_models_scatter_from_the_terrain_tab_as_composite_instances() {
+    use crate::uikit::panels::nature_generator as ng;
+    use crate::uikit::panels::terrain_generator as tg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 16 {
+        return;
+    }
+    let root = test_temp_root("nature-to-scatter");
+    harness.app.asset_root_override = Some(root.clone());
+    let oak = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Oak")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(oak)));
+    harness.dispatch(Message::NatureGen(ng::Edit::AddToScatter));
+    let status = harness.app().nature.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Added class 4 (oak)"), "{status}");
+    let plan_path = root.join("Scatter/default.scatter");
+    let text = std::fs::read_to_string(&plan_path).unwrap();
+    let plan = crate::uikit::scatter::ScatterPlan::from_text(&text).expect("the plan parses");
+    let class = plan.class(4).expect("the new class");
+    assert_eq!(class.parts.len(), 2, "solid and foliage: {:?}", class.parts);
+    assert!(class.parts[0].mesh.ends_with("oak_solid.obj"));
+    assert!(class.parts[1].mesh.ends_with("oak_foliage.obj") && class.parts[1].cutout);
+    assert!(
+        class.parts.iter().all(|p| !p.slots.is_empty()),
+        "every part names its materials"
+    );
+    // Plant only the oak (the built-in classes would make the test slow), seeded.
+    let oak_block = &text[text.find("class 4").unwrap()..];
+    std::fs::write(&plan_path, format!("seed 3\n{oak_block}")).unwrap();
+
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let terrain = harness.app().terraingen.placed.expect("the placed terrain");
+    // Deselect: the tab falls back to the terrain it placed.
+    harness.dispatch(Message::SelectEntity(0));
+    harness.dispatch(Message::TerrainGen(tg::Edit::Scatter));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    assert!(status.starts_with("Scattered "), "{status}");
+    let names: Vec<&str> = harness
+        .app()
+        .entities
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    let trees = names
+        .iter()
+        .filter(|n| n.starts_with("oak ") && !n.contains("part"))
+        .count();
+    let first_parts = names.iter().filter(|n| n.ends_with(" part 1")).count();
+    let second_parts = names.iter().filter(|n| n.ends_with(" part 2")).count();
+    assert!(trees > 5, "an oak forest grew: {trees} ({status})");
+    assert_eq!((first_parts, second_parts), (trees, trees));
+    assert!(harness
+        .app()
+        .engine
+        .as_ref()
+        .is_some_and(|e| e.terrain(terrain).is_ok()));
+    let notice = harness.app().notice.clone().expect("a notice");
+    assert!(notice.text.starts_with("Scattered "), "{notice:?}");
+}
+
+/// The mean colour of the middle of a frame (a rock seen close fills it).
+fn centre_colour(pixels: &[u8], width: usize, height: usize) -> [f32; 3] {
+    let (x0, x1, y0, y1) = (width * 2 / 5, width * 3 / 5, height * 2 / 5, height * 3 / 5);
+    let mut sum = [0.0f32; 3];
+    let mut count = 0.0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = (y * width + x) * 4;
+            for k in 0..3 {
+                sum[k] += pixels[at + k] as f32;
+            }
+            count += 1.0;
+        }
+    }
+    sum.map(|v| v / count)
+}
+
+/// Material slots: an OBJ with two `usemtl` groups is two sub-meshes, `Material slots` gives each its own `.mat`
+/// (red for the northern half, blue for the southern), and it holds with Micromesh on too. Without slots the mesh
+/// keeps one material, and a material set only on the Mesh Renderer is drawn (the renderer's fallback).
+#[test]
+fn material_slots_give_each_submesh_its_own_material() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    // A second light from below, so the southern half is lit as well.
+    harness.dispatch(Message::CreatePrefab(light));
+    let under_id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("material-slots");
+    std::fs::create_dir_all(&root).unwrap();
+    let obj = root.join("rock_two.obj");
+    write_rock_obj_with(&obj, 96, 64, true, false);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-90.0, 0.0, 0.0]).unwrap();
+    engine.set_rotation(under_id, [90.0, 0.0, 0.0]).unwrap();
+    let save = |engine: &mut doppio_engine::Engine, name: &str, albedo: [f32; 4]| {
+        let path = root.join(name);
+        let material = doppio_engine::Material {
+            albedo,
+            roughness: 0.8,
+            ..doppio_engine::Material::default()
+        };
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let red = save(engine, "red.mat", [0.9, 0.05, 0.05, 1.0]);
+    let blue = save(engine, "blue.mat", [0.05, 0.05, 0.9, 1.0]);
+    let grey = save(engine, "grey.mat", [0.5, 0.5, 0.5, 1.0]);
+    let (id, renderer) = place_rock(engine, &obj.to_string_lossy(), &grey, [0.0; 3], 1.0, false);
+    let filter = component_type_id(engine, "Mesh Filter").expect("Mesh Filter");
+    let look = |engine: &mut doppio_engine::Engine, pitch: f32| {
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.3,
+                pitch,
+                distance: 3.2,
+                focus: [0.0, 0.0, 0.0],
+            })
+            .unwrap();
+        let _ = render_entity_view_sized(engine, 400, 300);
+        render_entity_view_sized(engine, 400, 300)
+    };
+    let colour = |engine: &mut doppio_engine::Engine, pitch: f32| {
+        let frame = look(engine, pitch);
+        centre_colour(&frame, 400, 300)
+    };
+    // 1. The Mesh Renderer's material alone is drawn (grey: neither red nor blue dominates).
+    let (above, below) = (colour(engine, 1.2), colour(engine, -1.2));
+    assert!(
+        (above[0] - above[2]).abs() < 12.0 && (below[0] - below[2]).abs() < 12.0,
+        "one grey material: {above:?} {below:?}"
+    );
+    // 2. Slots: red above, blue below, with or without Micromesh.
+    set_component_field(
+        engine,
+        id,
+        filter,
+        "Material slots",
+        doppio_engine::FieldValue::String(format!("{red};{blue}")),
+    )
+    .unwrap();
+    for micromesh in [false, true] {
+        set_component_field(
+            engine,
+            id,
+            renderer,
+            "Micromesh",
+            doppio_engine::FieldValue::Bool(micromesh),
+        )
+        .unwrap();
+        let (above, below) = (colour(engine, 1.2), colour(engine, -1.2));
+        assert!(
+            above[0] > above[2] + 40.0,
+            "micromesh {micromesh}: northern half should be red, got {above:?}"
+        );
+        assert!(
+            below[2] > below[0] + 40.0,
+            "micromesh {micromesh}: southern half should be blue, got {below:?}"
+        );
+        if micromesh {
+            assert!(
+                engine.render_stats().unwrap().micromesh_draws >= 2,
+                "each slot draws as its own Micromesh"
+            );
+        }
+    }
+    // 3. An empty slot falls back to the mesh's own material: slot 0 red, slot 1 empty -> the grey one.
+    set_component_field(
+        engine,
+        id,
+        filter,
+        "Material slots",
+        doppio_engine::FieldValue::String(format!("{red};")),
+    )
+    .unwrap();
+    let (above, below) = (colour(engine, 1.2), colour(engine, -1.2));
+    assert!(above[0] > above[2] + 40.0, "slot 0 stays red: {above:?}");
+    assert!(
+        (below[0] - below[2]).abs() < 12.0,
+        "the empty slot uses the fallback: {below:?}"
+    );
+}
+
 /// Micromesh occlusion: last frame's depth, reduced to a farthest-depth pyramid, hides the clusters behind a wall.
 /// Six rocks stand on either side of a big wall seen from one side; with the switch on the camera's cut drops the
 /// rocks the wall hides and the picture stays the same.

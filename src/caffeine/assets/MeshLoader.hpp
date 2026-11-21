@@ -7,6 +7,8 @@
 #include "ecs/Components3D.hpp"
 #include <vector>
 #include <cstdio>
+#include <cstring>
+#include <string>
 #include <cmath>
 #include <algorithm>
 
@@ -60,6 +62,11 @@ public:
         bool hasColors = false;
         std::vector<Vertex3D> vertices;
         std::vector<u32> indices;
+        // `usemtl NAME` groups the faces after it: one sub-mesh per name, numbered in order of first use.
+        std::vector<std::string> slotNames;
+        std::vector<u32> triangleSlot;
+        std::string currentMaterial;
+        i32 currentSlot = -1;
         
         const char* line = src;
         const char* end = src + srcLen;
@@ -92,6 +99,15 @@ public:
                 if (read >= 6) hasColors = true;
                 positions.push_back(p);
                 positionColors.push_back(c);
+            }
+            else if (std::strncmp(line, "usemtl", 6) == 0 && (line[6] == ' ' || line[6] == '\t')) {
+                const char* name = line + 6;
+                while (name < end && (*name == ' ' || *name == '\t')) ++name;
+                const char* nameEnd = name;
+                while (nameEnd < end && *nameEnd != '\n' && *nameEnd != '\r') ++nameEnd;
+                while (nameEnd > name && (nameEnd[-1] == ' ' || nameEnd[-1] == '\t')) --nameEnd;
+                currentMaterial.assign(name, nameEnd);
+                currentSlot = -1;
             }
             else if (line[0] == 'f' && (line[1] == ' ' || line[1] == '\t')) {
                 std::vector<Vertex3D> faceVerts;
@@ -141,7 +157,17 @@ public:
                     while (fp < end && *fp != ' ' && *fp != '\t' && *fp != '\n' && *fp != '\r') ++fp;
                 }
                 
+                if (faceVerts.size() >= 3 && currentSlot < 0) {
+                    for (usize n = 0; n < slotNames.size() && currentSlot < 0; ++n) {
+                        if (slotNames[n] == currentMaterial) currentSlot = static_cast<i32>(n);
+                    }
+                    if (currentSlot < 0) {
+                        currentSlot = static_cast<i32>(slotNames.size());
+                        slotNames.push_back(currentMaterial);
+                    }
+                }
                 for (usize i = 1; i + 1 < faceVerts.size(); ++i) {
+                    triangleSlot.push_back(static_cast<u32>(std::max(currentSlot, 0)));
                     vertices.push_back(faceVerts[0]);
                     vertices.push_back(faceVerts[i]);
                     vertices.push_back(faceVerts[i + 1]);
@@ -156,6 +182,32 @@ public:
         }
         
         if (vertices.empty()) return nullptr;
+
+        // Several materials: put each one's triangles together (stable), one sub-mesh per material.
+        std::vector<SubMesh> groups;
+        if (slotNames.size() > 1 && triangleSlot.size() * 3 == vertices.size()) {
+            std::vector<Vertex3D> sorted;
+            std::vector<Vec4> sortedColors;
+            sorted.reserve(vertices.size());
+            if (hasColors) sortedColors.reserve(vertices.size());
+            for (u32 slot = 0; slot < slotNames.size(); ++slot) {
+                SubMesh group;
+                group.indexOffset = static_cast<u32>(sorted.size());
+                group.materialIndex = slot;
+                group.name = FixedString<64>(slotNames[slot].c_str());
+                for (usize t = 0; t < triangleSlot.size(); ++t) {
+                    if (triangleSlot[t] != slot) continue;
+                    for (usize k = 0; k < 3; ++k) {
+                        sorted.push_back(vertices[t * 3 + k]);
+                        if (hasColors) sortedColors.push_back(vertexColors[t * 3 + k]);
+                    }
+                }
+                group.indexCount = static_cast<u32>(sorted.size()) - group.indexOffset;
+                groups.push_back(group);
+            }
+            vertices.swap(sorted);
+            if (hasColors) vertexColors.swap(sortedColors);
+        }
         
         Mesh3D* mesh = new Mesh3D();
         mesh->vertices = vertices;
@@ -165,11 +217,16 @@ public:
             mesh->indices[i] = (u32)i;
         }
         
-        SubMesh submesh;
-        submesh.indexOffset = 0;
-        submesh.indexCount = (u32)mesh->indices.size();
-        submesh.materialIndex = 0;
-        mesh->subMeshes.push_back(submesh);
+        if (groups.empty()) {
+            SubMesh submesh;
+            submesh.indexOffset = 0;
+            submesh.indexCount = (u32)mesh->indices.size();
+            submesh.materialIndex = 0;
+            if (!slotNames.empty()) submesh.name = FixedString<64>(slotNames[0].c_str());
+            mesh->subMeshes.push_back(submesh);
+        } else {
+            mesh->subMeshes = std::move(groups);
+        }
         
         computeMeshTangents(*mesh);
         computeBounds(*mesh);

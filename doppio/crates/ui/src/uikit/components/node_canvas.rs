@@ -705,7 +705,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
             let header = Path::rectangle(top_left, Size::new(size.width, header_height));
             frame.fill(&header, node.accent);
 
-            let title_size = 11.0 * self.zoom;
+            let title_size = 12.0 * self.zoom;
             frame.fill_text(Text {
                 content: node.title.clone(),
                 position: Point::new(
@@ -717,7 +717,14 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                 align_y: iced::alignment::Vertical::Center,
                 ..Text::default()
             });
-            if !node.subtitle.is_empty() {
+            // The parameter summary shares the header with the title: show it only when both fit (the inspector
+            // always shows it), so long titles ("Hydraulic Erosion") do not print over it.
+            let glyph = 0.58;
+            let used = (node.title.chars().count() as f32 * 12.0
+                + node.subtitle.chars().count() as f32 * 9.0)
+                * glyph
+                + 24.0;
+            if !node.subtitle.is_empty() && used <= NODE_WIDTH {
                 frame.fill_text(Text {
                     content: node.subtitle.clone(),
                     position: Point::new(
@@ -728,7 +735,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                         a: 0.85,
                         ..theme::TEXT
                     },
-                    size: (8.5 * self.zoom).into(),
+                    size: (9.0 * self.zoom).into(),
                     align_x: iced::alignment::Horizontal::Right.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
@@ -745,7 +752,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     content: port.label.clone(),
                     position: Point::new(position.x + 8.0 * self.zoom, position.y),
                     color: theme::TEXT_MUTED,
-                    size: (8.5 * self.zoom).into(),
+                    size: (9.5 * self.zoom).into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()
                 });
@@ -760,7 +767,7 @@ impl<'a, Message: Clone + 'a> canvas::Program<Message> for Program<'a, Message> 
                     content: port.label.clone(),
                     position: Point::new(position.x - 8.0 * self.zoom, position.y),
                     color: theme::TEXT_MUTED,
-                    size: (8.5 * self.zoom).into(),
+                    size: (9.5 * self.zoom).into(),
                     align_x: iced::alignment::Horizontal::Right.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..Text::default()

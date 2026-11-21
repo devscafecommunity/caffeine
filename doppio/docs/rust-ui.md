@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last verified: <time datetime="2026-11-20">2026-11-20</time></span>
+  <span>Last verified: <time datetime="2026-11-21">2026-11-21</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/tree/main/doppio"><code>doppio/</code></a></span>
 </div>
 
@@ -566,6 +566,23 @@ precedent.
   (`Ctrl+F` focus, `Ctrl+0` reset, `Ctrl+R` render) drive it.
 
 The viewport shows the real C++ scene (terrain, rocks, sky) in Iced.
+
+### Generators: a workspace and a notice
+
+The Nature, Water, Terrain and Texture tabs (and the Scatter action) share two services (`windows/main/workspace.rs`):
+
+* **A workspace without a project.** Generators write meshes, materials, terrains and plans as project assets. With no project open,
+  `App::ensure_workspace` gives the engine a **scratch project** (`$CAFFEINE_SCRATCH`, else `<data dir>/caffeine/doppio/scratch`) the first time an
+  action needs files, and says so; the files show in the Assets pane. The top bar shows a *No project* chip meanwhile. (Before this, *Place in scene*
+  with no project answered with one small line in a side panel, and the Texture tab wrote to a `Textures` folder relative to the working directory.)
+* **A notice anyone can see.** Every change of a generator's `status` line (and of the Scatter action's) becomes a chip in the top bar for 12 seconds and an
+  entry in the Console, coloured by how it went (`status::tone_for_text`: success, warning for "placed with problems", danger for failures). The
+  panels show the same line under their inspector, wrapped and coloured, through `status::note`.
+
+Also in the generator tabs: the preset dropdown shows the preset in use (it used to read *Choose…* even with Oak loaded), graphs that load fit the canvas
+up to 1.4x, node titles and ports are larger and a parameter summary that would overlap a long title is left to the inspector, checkboxes put their label next to the box
+(`checkbox::property`, and `checkbox::inline` for toolbars), and the Place/Scatter controls live in the toolbar where a selected node's long parameter list cannot push them
+out of view. Tested by `generators_work_without_a_project_and_say_what_happened`, `status_lines_get_a_tone_from_what_they_say` and the flow `generators-interconnect.json`.
 
 ### Console
 

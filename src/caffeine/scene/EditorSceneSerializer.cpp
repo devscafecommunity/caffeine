@@ -206,8 +206,10 @@ void SceneSerializer::collectMeshFilterComponents(
         u32 texturePathLen = static_cast<u32>(mf.customTexturePath.size());
         u32 materialPathLen = static_cast<u32>(mf.customMaterialPath.size());
         u32 normalPathLen = static_cast<u32>(mf.customNormalPath.size());
+        const u32 slotsLen = static_cast<u32>(mf.slotMaterials.size());
+        // The material slots follow the shininess (older scenes end there).
         std::vector<u8> data(17 + meshPathLen + texturePathLen + materialPathLen + normalPathLen +
-                              sizeof(f32));
+                              sizeof(f32) + 4 + slotsLen);
         u32 offset = 0;
         memcpy(data.data() + offset, &prim, 1); offset += 1;
         memcpy(data.data() + offset, &meshPathLen, 4); offset += 4;
@@ -232,6 +234,10 @@ void SceneSerializer::collectMeshFilterComponents(
             offset += normalPathLen;
         }
         memcpy(data.data() + offset, &mf.shininess, sizeof(f32));
+        offset += sizeof(f32);
+        memcpy(data.data() + offset, &slotsLen, 4);
+        offset += 4;
+        if (slotsLen > 0) memcpy(data.data() + offset, mf.slotMaterials.data(), slotsLen);
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -250,7 +256,8 @@ void SceneSerializer::collectMeshRendererComponents(
         
         // Older scenes stop after receiveShadows; the run-time modifiers (tint rgb, wetness, snow,
         // age: six floats) follow it when present.
-        std::vector<u8> data(4 + meshLen + 4 + matLen + 2 + 6 * 4);
+        // Then, in newer scenes, the Micromesh settings: on (1), occlusion (1), error in pixels (4).
+        std::vector<u8> data(4 + meshLen + 4 + matLen + 2 + 6 * 4 + 2 + 4);
         u32 offset = 0;
         memcpy(data.data() + offset, &meshLen, 4); offset += 4;
         if (meshLen > 0) {
@@ -267,7 +274,13 @@ void SceneSerializer::collectMeshRendererComponents(
         const f32 modifiers[6] = {mr.modTint.x, mr.modTint.y, mr.modTint.z,
                                   mr.modWetness, mr.modSnow, mr.modAge};
         memcpy(data.data() + offset, modifiers, sizeof(modifiers));
-        
+        offset += sizeof(modifiers);
+        const u8 micromesh[2] = {static_cast<u8>(mr.micromesh ? 1 : 0),
+                                 static_cast<u8>(mr.micromeshOcclusion ? 1 : 0)};
+        memcpy(data.data() + offset, micromesh, sizeof(micromesh));
+        offset += sizeof(micromesh);
+        memcpy(data.data() + offset, &mr.micromeshPixels, sizeof(f32));
+
         entries.push_back({e.id(), std::move(data)});
     });
 }
@@ -2050,6 +2063,14 @@ bool SceneSerializer::applyMeshFilterComponent(ECS::Entity e, const u8* data, u3
         if (shininessOffset + sizeof(f32) <= size) {
             memcpy(&mf.shininess, data + shininessOffset, sizeof(f32));
         }
+        const u32 slotsOffset = shininessOffset + sizeof(f32);
+        if (slotsOffset + 4 <= size) {
+            u32 slotsLen = 0;
+            memcpy(&slotsLen, data + slotsOffset, 4);
+            if (slotsLen > 0 && slotsOffset + 4 + slotsLen <= size) {
+                mf.slotMaterials.assign(reinterpret_cast<const char*>(data + slotsOffset + 4), slotsLen);
+            }
+        }
     }
     return true;
 }
@@ -2078,13 +2099,27 @@ bool SceneSerializer::applyMeshRendererComponent(ECS::Entity e, const u8* data, 
     memcpy(&castShadows, data + offset, 1); offset += 1;
     memcpy(&receiveShadows, data + offset, 1); offset += 1;
     f32 modifiers[6] = {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f};
-    if (size >= offset + sizeof(modifiers)) memcpy(modifiers, data + offset, sizeof(modifiers));
+    const bool hasModifiers = size >= offset + sizeof(modifiers);
+    if (hasModifiers) memcpy(modifiers, data + offset, sizeof(modifiers));
+    u8 micromesh[2] = {0, 0};
+    f32 micromeshPixels = 1.5f;
+    const u32 micromeshOffset = offset + static_cast<u32>(sizeof(modifiers));
+    const bool hasMicromesh = hasModifiers && size >= micromeshOffset + sizeof(micromesh) + sizeof(f32);
+    if (hasMicromesh) {
+        memcpy(micromesh, data + micromeshOffset, sizeof(micromesh));
+        memcpy(&micromeshPixels, data + micromeshOffset + sizeof(micromesh), sizeof(f32));
+    }
     
     auto& mr = m_world.add<ECS::MeshRendererComponent>(e);
     mr.modTint = Vec4(modifiers[0], modifiers[1], modifiers[2], 1.0f);
     mr.modWetness = modifiers[3];
     mr.modSnow = modifiers[4];
     mr.modAge = modifiers[5];
+    if (hasMicromesh) {
+        mr.micromesh = micromesh[0] != 0;
+        mr.micromeshOcclusion = micromesh[1] != 0;
+        mr.micromeshPixels = micromeshPixels;
+    }
     mr.meshPath = std::move(meshPath);
     mr.materialPath = std::move(matPath);
     mr.castShadows = (castShadows != 0);

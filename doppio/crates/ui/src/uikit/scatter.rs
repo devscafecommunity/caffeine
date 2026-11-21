@@ -14,6 +14,11 @@
 //!   slope   0.30 0.45 1.00 1.00
 //! ```
 //!
+//! A class can place a **composite** instead of one shape: indented `part` lines, one per entity of the instance
+//! (a generated tree is a solid part and a cut-out foliage part). Each is `part mesh <path> [slots a.mat;b.mat]
+//! [micromesh on|off] [cutout on|off]`; the instance becomes an empty entity with one child per part (the
+//! Nature generator writes these lines for you: *Add to scatter plan*).
+//!
 //! Properties: `name`; the shape, either `primitive <cube|sphere|cone|cylinder|capsule|pyramid|torus>` or
 //! `mesh <path>` (a `{v}` in the path stands for the variant number); `material <path>`; `color r g b` (multiplies the
 //! tint); `size x y z` (the base size of the shape in metres, 1 1 1 by default); `cell`, `radius`, `density`,
@@ -41,6 +46,7 @@ const KEYS: &[&str] = &[
     "variants",
     "micromesh",
     "base",
+    "part",
 ];
 
 const PRIMITIVES: &[&str] = &[
@@ -62,6 +68,17 @@ pub struct Term {
     pub edges: [f32; 4],
 }
 
+/// One entity of a composite instance (see the module docs).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanPart {
+    pub mesh: String,
+    /// Material slots (`a.mat;b.mat`), one per sub-mesh; empty = the mesh's own.
+    pub slots: String,
+    pub micromesh: bool,
+    /// Cut-out cards (leaves): they cast no shadow of their own.
+    pub cutout: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanClass {
     pub name: String,
@@ -73,6 +90,8 @@ pub struct PlanClass {
     pub micromesh: bool,
     pub base: f32,
     pub terms: Vec<Term>,
+    /// A composite instance: when not empty, `shape` is not used and every instance is these parts.
+    pub parts: Vec<PlanPart>,
     /// The engine's class (id, spacing, radius, density, scale range, tilt, sink, tint jitter, variants).
     pub engine: ScatterClass,
 }
@@ -114,6 +133,12 @@ impl ScatterPlan {
                     }
                     plan.classes
                         .push(parse_class(id, &words[2..]).map_err(fail)?);
+                }
+                "part" => {
+                    let class = plan.classes.last_mut().ok_or_else(|| {
+                        fail("a `part` must come after a `class` line".to_owned())
+                    })?;
+                    class.parts.push(parse_part(&words[1..]).map_err(fail)?);
                 }
                 mask => {
                     let class = plan
@@ -178,6 +203,39 @@ impl ScatterPlan {
     }
 }
 
+fn parse_part(words: &[&str]) -> Result<PlanPart, String> {
+    let mut part = PlanPart {
+        mesh: String::new(),
+        slots: String::new(),
+        micromesh: false,
+        cutout: false,
+    };
+    let mut at = 0;
+    let flag = |word: Option<&&str>, key: &str| -> Result<bool, String> {
+        match word.copied() {
+            Some("on") => Ok(true),
+            Some("off") => Ok(false),
+            _ => Err(format!("`{key}` is `on` or `off`")),
+        }
+    };
+    while at < words.len() {
+        let key = words[at];
+        at += 1;
+        match key {
+            "mesh" => part.mesh = words.get(at).ok_or("`mesh` needs a path")?.to_string(),
+            "slots" => part.slots = words.get(at).ok_or("`slots` needs a list")?.to_string(),
+            "micromesh" => part.micromesh = flag(words.get(at), "micromesh")?,
+            "cutout" => part.cutout = flag(words.get(at), "cutout")?,
+            other => return Err(format!("`{other}` is not a property of a part")),
+        }
+        at += 1;
+    }
+    if part.mesh.is_empty() {
+        return Err("a `part` needs `mesh <path>`".to_owned());
+    }
+    Ok(part)
+}
+
 fn parse_class(id: u32, words: &[&str]) -> Result<PlanClass, String> {
     let mut class = PlanClass {
         name: format!("class{id}"),
@@ -188,6 +246,7 @@ fn parse_class(id: u32, words: &[&str]) -> Result<PlanClass, String> {
         micromesh: false,
         base: 1.0,
         terms: Vec::new(),
+        parts: Vec::new(),
         engine: ScatterClass {
             id,
             ..ScatterClass::default()
@@ -340,6 +399,23 @@ class 3 name tuft primitive pyramid color 0.30 0.50 0.18 size 0.5 0.6 0.5 cell 3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parts_make_a_composite_class() {
+        let plan = ScatterPlan::from_text(
+            "class 4 name oak cell 12 radius 3 scale 0.8 1.3\n  part mesh Models/Nature/oak_solid.obj slots A.mat;B.mat micromesh on\n  part mesh Models/Nature/oak_foliage.obj slots C.mat cutout on\n  slope 0 0 0.2 0.4\n",
+        )
+        .unwrap();
+        let oak = plan.class(4).unwrap();
+        assert_eq!(oak.parts.len(), 2);
+        assert_eq!(oak.parts[0].slots, "A.mat;B.mat");
+        assert!(oak.parts[0].micromesh && !oak.parts[0].cutout);
+        assert!(oak.parts[1].cutout);
+        assert_eq!(oak.terms.len(), 1, "terms still follow");
+        assert!(ScatterPlan::from_text("class 1\n  part slots x.mat\n").is_err());
+        assert!(ScatterPlan::from_text("part mesh a.obj\n").is_err());
+        assert!(ScatterPlan::from_text("class 1\n  part mesh a.obj cutout maybe\n").is_err());
+    }
 
     #[test]
     fn the_default_plan_parses_and_becomes_a_biome_table() {

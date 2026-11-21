@@ -58,6 +58,10 @@ pub enum Edit {
     New,
     Export,
     Place,
+    /// Scatters the default plan on the terrain (the selected one, else the last placed).
+    Scatter,
+    /// Opens the default scatter plan in the script editor.
+    EditScatterPlan,
     Noop,
     PreviewPress,
     PreviewMove(Point),
@@ -180,7 +184,7 @@ pub fn view<'a, Message: Clone + 'a>(
         id::TERRAINGEN_PRESET,
         "Preset",
         view.presets.to_vec(),
-        None,
+        dropdown::current_option(view.presets, view.name),
         move |choice| {
             preset_emit(Edit::ApplyPreset(
                 preset_lookup.iter().position(|p| *p == choice).unwrap_or(0),
@@ -198,6 +202,12 @@ pub fn view<'a, Message: Clone + 'a>(
             button::compact(id::TERRAINGEN_NEW, "New", emit(Edit::New)),
             button::compact(id::TERRAINGEN_EXPORT, "Export", emit(Edit::Export)),
             button::primary(id::TERRAINGEN_PLACE, "Place in scene", emit(Edit::Place)),
+            button::compact(id::TERRAINGEN_SCATTER, "Scatter", emit(Edit::Scatter)),
+            button::compact(
+                id::TERRAINGEN_SCATTER_PLAN,
+                "Edit scatter plan",
+                emit(Edit::EditScatterPlan)
+            ),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)
@@ -374,11 +384,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(theme::surface),
     );
     if let Some(note) = view.status {
-        right = right.push(
-            container(text(note).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(note));
     }
 
     let body = row![

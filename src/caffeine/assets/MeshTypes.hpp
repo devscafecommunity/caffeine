@@ -95,6 +95,9 @@ struct Mesh3D {
     bool flipTextureV = true;
     
 #ifdef CF_HAS_SDL3
+    /// Which GPU device the buffers below belong to (RenderDevice::serial()); 0 = none. A mesh cached in a process-wide
+    /// cache outlives a device: buffers of another device are dropped, never used.
+    u64 gpuDeviceSerial = 0;
     RHI::Buffer* vertexBuffer = nullptr;
     RHI::Buffer* indexBuffer = nullptr;
     RHI::Buffer* colorBuffer = nullptr; ///< `vertexColors` on the GPU (second vertex stream)

@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Engine</span>
-  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
+  <span>Last updated: <time datetime="2026-11-21">2026-11-21</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/graphics-roadmap.md"><code>graphics-roadmap.md</code></a></span>
 </div>
 
@@ -246,8 +246,8 @@ Each phase ships alone and keeps the old path as a fallback behind a flag.
       carried. The editor viewport renders without shadow maps unless `ViewportSettings::shadows` is on (C ABI v14).
 - [ ] Point and spot shadow maps draw their own coarser cut too (only the sun's cascades do).
 - [ ] Terrain tiles and Nature rocks/trunks are first adopters; foliage stays instanced. (Rocks and trunks can opt in through the Mesh
-      Renderer today; the Nature generator does not switch it on for what it places, and terrain has no cluster path: its baseline is in
-      the benchmark set.)
+      Renderer, and the Nature generator switches it on for the solid parts it places (3 000 triangles or more); terrain has no cluster path:
+      its baseline is in the benchmark set.)
 
 ### Phase M-3 — Streaming and memory
 
@@ -267,8 +267,8 @@ Each phase ships alone and keeps the old path as a fallback behind a flag.
 
 - [x] Inspector toggle "Micromesh" on a Mesh Renderer (reflection exposes `Micromesh` and `Micromesh error (px)`); still open: a stats panel and a debug view (cluster colours,
       error cut, culled clusters), `UiId` catalogue entries for the toggle and MCP actions.
-- [ ] Nature, Terrain and Water generators export through the cluster build; Nature gets a
-      **cluster LOD** option replacing the old billboard-only plan for non-foliage parts.
+- [ ] Nature, Terrain and Water generators export through the cluster build. **Nature is done**: its *Micromesh* option places solid parts of
+      3 000 triangles or more with Micromesh on, and *Merge parts* gives a tree one mesh with a material slot per part. Terrain and Water are open.
 - [ ] Docs and headless captures (cluster debug view) in the site.
 
 ## 6. Shared items
@@ -297,7 +297,7 @@ Done: **M-0**, **M-1** and **M-2** (Micromeshes, up to single-phase occlusion). 
 
 1. **P-A** (correct Photon): the conservative voxeliser first, then motion vectors, then real direct light and the regression scenes.
    Nothing of Photon is done, and every Micromesh and world item that wants GI waits on it.
-2. **M-5**, the cheap part: the Nature, Terrain and Water generators switching Micromesh on, stats panel and debug view, `UiId`s, site
+2. **M-5**, the cheap part: the Terrain and Water generators switching Micromesh on (Nature does), stats panel and debug view, `UiId`s, site
    captures. Also the `.micromesh` section in `.caf` (a cache for the first-frame build) and a terrain cluster path to beat the benchmark.
 3. **P-B**, then **M-3** (streaming and compression) tied to the world chunks of the world roadmap.
 4. **P-C**, two-phase occlusion and point/spot shadow cuts, and **M-4** only if profiling asks for it.

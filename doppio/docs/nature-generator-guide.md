@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--stable">Stable</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
+  <span>Last updated: <time datetime="2026-11-21">2026-11-21</time></span>
 </div>
 
 <p class="doc-lede">Build rocks, trees and low vegetation from a node graph, choose a quality level and place the result in the scene.</p>
@@ -247,6 +247,38 @@ child per part:
 * scattered parts become a holder entity with one child per copy (see 4c, GPU-instanced scatter);
 * the group appears at the viewport's focus, is selected, and the placement is one undo step.
 
+### Merge parts: one entity, a material slot per part
+
+With **Merge parts** on (the default, a checkbox in the toolbar next to *Place in scene*; agent action `nature_merge_parts`) the parts that are not scattered copies
+are placed as **at most two entities**: one for the solid parts (trunk, branches, roots, rocks) and one for the cut-out parts (leaves, petals,
+blades; they keep their no-shadow setting). Each merged entity has **one mesh with a sub-mesh per part**: Place writes
+`<name>_solid.obj` / `<name>_foliage.obj` with a `usemtl <part>` group per part (the engine turns every group into a sub-mesh), and fills the
+Mesh Filter's **Material slots** with each part's `.mat`, in the same order (`a.mat;b.mat`, an empty slot uses the entity's own material).
+Material slots are an engine feature, not a Nature trick: any OBJ with `usemtl` groups or a glTF with several primitives takes them (see
+`micromeshes.md` and the roadmap). Switch Merge parts off to get one entity per part again.
+
+### Micromesh on placing
+
+With **Micromesh** on (also in the toolbar; agent action `nature_micromesh`) a solid part of **3 000 triangles or more** is placed with the Mesh
+Renderer's Micromesh switch on, so dense rocks and trunks draw as a GPU-selected cluster cut (see `micromeshes.md`). Cut-out cards and
+scattered copies never get it (alpha-tested and instanced paths stay as they are); a part with wind sway falls back to a plain draw by itself.
+
+### Add to scatter plan: from one tree to a forest
+
+**Add to scatter plan** (toolbar; agent action `nature_add_to_scatter`) writes the model into the project's `Scatter/default.scatter` as a **composite
+class**: the solid and the foliage meshes are written as merged OBJs with their material slots, and the class lists them as `part` lines, so every
+instance the scatter action places is an empty entity with one child per part. Spacing comes from the model's footprint (a 6 m crown gets about 2.4 m of
+radius and 7 m between cells), the scale range is 0.8 to 1.3, and *where* starts as gentle slopes; edit the plan to change any of it
+(*Terrain* tab > *Edit scatter plan*). See *Scatter on a terrain* in `terrain-generator-guide.md`. Tested end to end: an Oak added from the Nature tab
+is planted by the Terrain tab's *Scatter* as a forest of two-part trees (`nature_models_scatter_from_the_terrain_tab_as_composite_instances`).
+
+<figure class="doc-figure">
+  <img src="images/nature/material-slots.png" alt="One rock with two sub-meshes drawn with the slots moss;stone and stone;moss, and a Pink Flower placed merged">
+  <figcaption>Material slots in the engine. Left and middle: the same two-group rock, <code>Material slots</code> = <code>moss;stone</code> and
+  <code>stone;moss</code>. Right: the Pink Flower placed with Merge parts, 4 entities become 2 (stem and leaf share one, petals and centre the
+  other), each with its own slot list. Regenerate with <code>scripts/render-material-slots-docs.sh</code>.</figcaption>
+</figure>
+
 ## 6. Files, scripting and agents
 
 `.nature` is text: the header `CAFNATURE2`, the name and quality, then the `NATUREGRAPH1` node and link lines
@@ -320,9 +352,9 @@ References for the target: a photoreal mossy stump with ferns, clover and leaf l
 oak crown with varied, curved leaves.
 
 * The Rock Surface node covers **rock only** for now; bark, grass-card and soil surfaces use the same bake with other layers. Steep faces of a very lumpy rock still stretch a little in the cube atlas (a seam-aware unwrap would fix it).
-* Next for hi-fi vegetation: material slots per submesh.
-* One material per mesh: parts are separate entities. **Material slots per submesh** is the next engine step
-  and needs a C ABI version.
+* Material slots exist now (see *Merge parts*); what is left for hi-fi vegetation is the root flare and the ground-contact blend.
+* The slot list is one text field of at most ~250 bytes: about seven slots with project-relative paths. Placement keeps the slots that fit whole
+  and reports the rest.
 * The Low-poly Pine preset is still a stack of blobs rather than tiered cones; a cone-tier node is wanted.
 * Painted colour exists only on leaf cards and blades (trunks and rocks are white), there is no LOD chain or
   billboard impostor for distant trees.
@@ -396,12 +428,12 @@ combine them, then an honest list of what is still short of a close-up photograp
   <ul>
     <li><strong>Leaves are cards, not meshes.</strong> At a metre the silhouette is a card with an alpha edge; real 3D leaf meshes for the nearest leaves are planned (section 8, <em>Real 3D leaf meshes</em>).</li>
     <li><strong>Bark is tiled in UV space.</strong> No knots, peeling plates, broken stubs or moss that follows the shady side: the mesh bake that drives the Rock Surface could do it (<em>Bark from the mesh bake</em>).</li>
-    <li><strong>One material per mesh.</strong> A trunk and its branches share one bark; material slots per submesh need a C ABI version.</li>
+    <li><strong>One material per kind of surface.</strong> A merged entity has a material slot per part (trunk, branches, roots, each with its own bark), but solid and cut-out parts stay two entities because shadows are per entity.</li>
     <li><strong>No subsurface scattering model.</strong> Translucency is a back-lit term, not light diffusing inside a leaf or bark.</li>
     <li><strong>No LOD chain or impostors.</strong> A hero tree is expensive and a forest of them is not possible yet (<a href="photoreal-world-roadmap.md">photoreal-world-roadmap.md</a>, phase 4).</li>
     <li><strong>Nothing places trees over terrain on its own.</strong> The scatter core exists and is tested, but no editor tool or terrain mask feeds it yet (phases 1, 2 and 6).</li>
     <li><strong>Global illumination is screen-space for direct light.</strong> Light bouncing under a crown is approximate until Photon injects the real lights (<a href="graphics-roadmap.md">graphics-roadmap.md</a>, phase P-A).</li>
-    <li><strong>Dense geometry.</strong> A 100k-triangle trunk with real bark geometry needs the cluster renderer, and it exists: turn on <strong>Micromesh</strong> in the Mesh Renderer of a placed opaque part (rocks, trunks, boulders) and it draws as a GPU-selected cluster cut with shadows, vertex colours and sub-meshes (see <a href="micromeshes.md">micromeshes.md</a>; 6x fewer triangles on dense rocks, 3x on a dense forest). The generator does not switch it on for the parts it places yet, and alpha-tested foliage cards and wind-animated parts stay on the instanced path by design.</li>
+    <li><strong>Dense geometry.</strong> A 100k-triangle trunk with real bark geometry needs the cluster renderer, and it exists: turn on <strong>Micromesh</strong> in the Mesh Renderer of a placed opaque part (rocks, trunks, boulders) and it draws as a GPU-selected cluster cut with shadows, vertex colours and sub-meshes (see <a href="micromeshes.md">micromeshes.md</a>; 6x fewer triangles on dense rocks, 3x on a dense forest). Placing switches it on for solid parts of 3 000 triangles or more (the <strong>Micromesh</strong> checkbox), and alpha-tested foliage cards and wind-animated parts stay on the instanced path by design.</li>
   </ul>
 </details>
 

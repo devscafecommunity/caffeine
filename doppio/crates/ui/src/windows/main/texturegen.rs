@@ -283,6 +283,7 @@ impl App {
 
     fn save_texgen(&mut self) {
         let stem = file_stem(&self.texgen.name);
+        self.ensure_workspace();
         let directory = self.texgen_dir();
         let name = self.texgen.name.clone();
         let graph = texture_graph::to_text(&self.texgen.graph);
@@ -318,6 +319,7 @@ impl App {
             return;
         }
         let stem = file_stem(&self.texgen.name);
+        self.ensure_workspace();
         let directory = self.texgen_dir();
         let depth = if self.texgen.bits == 16 {
             BitDepth::Sixteen

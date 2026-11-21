@@ -439,6 +439,7 @@ const std::vector<ComponentDesc>& componentRegistry() {
              stringField<ECS::MeshFilterComponent>("Texture", &ECS::MeshFilterComponent::customTexturePath),
              stringField<ECS::MeshFilterComponent>("Normal map", &ECS::MeshFilterComponent::customNormalPath),
              stringField<ECS::MeshFilterComponent>("Material", &ECS::MeshFilterComponent::customMaterialPath),
+             stringField<ECS::MeshFilterComponent>("Material slots", &ECS::MeshFilterComponent::slotMaterials),
              f32Field<ECS::MeshFilterComponent>("Shininess", &ECS::MeshFilterComponent::shininess, 0.0f, 1024.0f, 1.0f)}),
         component<Caffeine::Script::ScriptComponent>(12, "Script",
             {stringField<Caffeine::Script::ScriptComponent>("Script", &Caffeine::Script::ScriptComponent::scriptPath),

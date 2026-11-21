@@ -148,7 +148,9 @@ independent of renderer work.
 
 - [x] **Vertex colour** and a **painted flutter weight** in the Nature mesh output: OBJ `v x y z r g b a`, read by the engine into a
       second vertex stream (no ABI change); wind sway, flutter and translucency are material fields (C ABI v9).
-- [ ] **Material slots per submesh** (already the next engine step in the Nature guide).
+- [x] **Material slots per submesh**: OBJ `usemtl` groups load as sub-meshes, the Mesh Filter's `Material slots` (`a.mat;b.mat`) give each its own
+      authored material (one draw per slot, so shadows, alpha and Micromesh follow the slot), no ABI change; the Nature generator's *Merge parts*
+      places a model as a solid and a cut-out entity with a slot per part. Tested in `tests/test_material_slots.cpp` and engine-backed in Doppio.
 - [ ] Base deformation: root flare and rock skirt from a ground height callback at bake time.
 - [x] Variants: N seeds per nature recipe baked into a cached variant set (`recipe_ref::nature_variants`, `doppio-material variants`).
 - [x] Per-instance tint and scale range (`ScatterClass::tintJitter`, `minScale`/`maxScale`). Applying the tint through the Mesh Renderer
@@ -164,7 +166,7 @@ independent of renderer work.
       forest: 6.1x and 3.3x fewer triangles (`micromeshes.md`, `./scripts/benchmark-micromesh.sh`).
 - [ ] LOD chain from the same graph for what Micromesh does not take (alpha-tested foliage cards, wind-animated parts): simplified
       cards and a **billboard impostor atlas** baked per variant, distance and screen-size switching with dithered cross-fade. Also open:
-      the Nature generator does not switch Micromesh on for the parts it places (roadmap M-5, "cluster LOD" option).
+      the Nature generator now switches Micromesh on for solid parts of 3 000 triangles or more (the Nature *Micromesh* option); terrain and water do not.
 - [ ] Culling by chunk, then by instance, on the CPU first; GPU culling only if profiling asks for it. (Per-instance frustum culling
       exists and is counted in the frame stats; there are no chunks yet; Micromesh culls clusters on the GPU, with occlusion against last
       frame's depth, for the meshes that opt in.)
@@ -205,7 +207,7 @@ independent of renderer work.
 
 ### Where it stands (2026-11-20)
 
-21 items done, 18 open. The finished work is the **foundation and the rendering side**; what is missing is the **world layer** that
+22 items done, 17 open. The finished work is the **foundation and the rendering side**; what is missing is the **world layer** that
 connects the generators, which this page called the missing piece from the start.
 
 | Phase | Done | Open | State |
@@ -213,7 +215,7 @@ connects the generators, which this page called the missing piece from the start
 | 0 Determinism | 5 | 1 | complete for what exists (hash, versions, thread-count tests); the world file does not exist yet |
 | 1 Terrain masks | 3 | 1 | **done** (7 masks, C ABI v15, biome table); painted masks and bands open |
 | 2 Scatter engine | 4 | 0 | **done**: core, C ABI v16 and the Scatter action place plans by the terrain's masks |
-| 3 Scatterable nature | 3 | 3 | vertex colour, variants, tint/scale done; material slots, root flare and ground blend open |
+| 3 Scatterable nature | 4 | 2 | vertex colour, variants, tint/scale and **material slots** done; root flare and ground blend open |
 | 4 Rendering at scale | 2 | 3 | wind/translucency/shadows and **Micromesh cluster LOD** done; foliage LOD and impostors, chunk instance buffers open |
 | 5 Streaming and caching | 1 | 4 | engine accepts big terrains; no chunk jobs, no bake cache, no edit layer |
 | 6 Editor integration | 0 | 4 | **not started** (no World tab) |
@@ -225,8 +227,9 @@ connects the generators, which this page called the missing piece from the start
    now read masks.
 2. ~~Phase 2, the Scatter action~~ **done**: the finished scatter core, the biome table, the variants, the tint and the Micromesh/instanced draw paths
    now show up in a scene (*Scene > Scatter on Terrain*). Its limit is scale: every instance is an entity, which is what phase 4's per-chunk buffers fix.
-3. **Phase 3, material slots per submesh** (the renderer already draws sub-meshes and Micromesh handles them; the Nature output and the
-   authored-material path still give one material to a mesh) and the Nature generator switching **Micromesh** on for rocks and trunks.
+3. ~~Phase 3, material slots per submesh~~ **done**, with the Nature generator switching **Micromesh** on for dense solid parts. What is left of
+   phase 3 is the base deformation (root flare, rock skirt) and the ground-contact blend in the shader; both want the terrain height at bake
+   time, which the scatter action now has.
 4. **Phase 4, foliage**: simplified cards and a billboard impostor atlas, then per-chunk instance buffers and chunk culling.
 5. **Phase 5**: chunk jobs with a time budget, the bake cache, then the edit layer (design the delta format before the editor exists).
 6. **Phase 6**: the World tab, once 1 to 5 give it something to drive. Phase 7's image baselines can start now: a scatter scene exists to render
@@ -242,7 +245,7 @@ layers and delta format before phase 5.
 | Float differences change placement across machines | integer hash, versioned algorithm, golden tests (phase 0) |
 | Chunk-border duplicates or gaps | cell ownership and read-only margin (phase 2) |
 | Generation hitches while moving | time-budgeted jobs, cache, prefetch ring (phase 5) |
-| Many materials per tree break batching | slots per submesh, atlas variants, impostors (phases 3, 4) |
+| Many materials per tree break batching | slots per submesh (done: one entity, one draw per slot, instanced batches keep working per slot), atlas variants, impostors (phases 3, 4) |
 | User edits break determinism | sparse delta layer from day one (phase 5) |
 | Scope: seven generators in one world | each phase ships alone and is useful without the next |
 

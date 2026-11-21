@@ -183,7 +183,7 @@ pub fn view<'a, Message: Clone + 'a>(
         id::WATERGEN_PRESET,
         "Preset",
         view.presets.to_vec(),
-        None,
+        dropdown::current_option(view.presets, view.name),
         move |choice| {
             preset_emit(Edit::ApplyPreset(
                 preset_lookup.iter().position(|p| *p == choice).unwrap_or(0),
@@ -195,7 +195,7 @@ pub fn view<'a, Message: Clone + 'a>(
             title,
             iced::widget::space::horizontal(),
             container(preset).width(Length::Fixed(240.0)),
-            checkbox::property(id::WATERGEN_PLAY, "Animate", view.playing, {
+            checkbox::inline(id::WATERGEN_PLAY, "Animate", view.playing, {
                 let emit = emit.clone();
                 move |on| emit(Edit::TogglePlay(on))
             }),
@@ -381,11 +381,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(theme::surface),
     );
     if let Some(note) = view.status {
-        right = right.push(
-            container(text(note).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(note));
     }
 
     let body = row![

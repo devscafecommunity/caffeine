@@ -15,6 +15,7 @@ use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
 use crate::uikit::panels::nature_generator;
 use crate::uikit::panels::project_manager;
+use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::texture_generator;
 use crate::uikit::panels::texture_set as texture_set_panel;
 use serde_json::{json, Value};
@@ -771,6 +772,37 @@ pub fn run() -> iced::Result {
                     .position(|preset| preset.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| format!("unknown nature preset `{name}`"))?;
                 Ok(Message::NatureGen(nature_generator::Edit::ApplyPreset(index)))
+            },
+        )
+        .action(
+            "nature_merge_parts",
+            "Nature placement: put the solid parts, and the cut-out parts, in one entity each with a Material slot per part. args: { \"enabled\": bool }",
+            |args| {
+                let enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                Ok(Message::NatureGen(nature_generator::Edit::SetMergeParts(enabled)))
+            },
+        )
+        .action(
+            "nature_add_to_scatter",
+            "Writes the Nature model as a class of Scatter/default.scatter (solid and foliage meshes with their material slots), so scatter_on_terrain plants it. args: {}",
+            |_| Ok(Message::NatureGen(nature_generator::Edit::AddToScatter)),
+        )
+        .action(
+            "terrain_scatter",
+            "The Terrain tab's Scatter button: scatters the default plan on the selected terrain, else on the last placed one. args: {}",
+            |_| Ok(Message::TerrainGen(terrain_generator::Edit::Scatter)),
+        )
+        .action(
+            "terrain_edit_scatter_plan",
+            "Opens Scatter/default.scatter in the script editor. args: {}",
+            |_| Ok(Message::TerrainGen(terrain_generator::Edit::EditScatterPlan)),
+        )
+        .action(
+            "nature_micromesh",
+            "Nature placement: turn Micromesh on for dense solid parts (rocks, trunks). args: { \"enabled\": bool }",
+            |args| {
+                let enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                Ok(Message::NatureGen(nature_generator::Edit::SetMicromesh(enabled)))
             },
         )
         .action(

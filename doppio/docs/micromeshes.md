@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Engine</span>
-  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
+  <span>Last updated: <time datetime="2026-11-21">2026-11-21</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/micromeshes.md"><code>micromeshes.md</code></a></span>
 </div>
 
@@ -75,7 +75,9 @@ Details worth knowing:
   16 MB and grows by itself (doubling, up to 256 MB) when a counter read-back every 15 frames shows it was too small; a cut that
   does not fit is **not drawn that frame** (`overflowed` in the stats), so growth shows as a few frames of missing shadows or
   rocks, never as a corrupt draw. The camera is cut first, so it is the last to lose.
-* **Sub-meshes, scale, colours.** A mesh with several materials gets one hierarchy per sub-mesh, drawn with its material.
+* **Sub-meshes, scale, colours.** A mesh with several materials gets one hierarchy per sub-mesh, drawn with its material. An OBJ's `usemtl` groups are
+  sub-meshes, and the Mesh Filter's **Material slots** (`a.mat;b.mat`) give each an authored material: the renderer then makes one draw per slot, so
+  a slot can be alpha-tested or have wind (it draws plain) while the others stay Micromeshes.
   A non-uniform scale is handled: errors and bounds use the largest scale (conservative) and the back-face test is skipped for
   such an instance. Vertex colours are carried through the build (averaged at a collapse). This also fixed the plain
   scene shaders, which transformed normals by the model matrix and shaded a stretched mesh wrongly (now the inverse transpose).

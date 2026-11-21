@@ -39,6 +39,63 @@ impl App {
         }
     }
 
+    /// The project's default plan (`Scatter/default.scatter`), written from the built-in one if it is missing.
+    /// Returns its path and text.
+    pub(super) fn default_scatter_plan(&mut self) -> Result<(std::path::PathBuf, String), String> {
+        self.ensure_workspace();
+        let root = self
+            .asset_root_dir()
+            .ok_or("open a project first: plans live in its Scatter folder")?;
+        let file = root.join("Scatter").join("default.scatter");
+        if !file.exists() {
+            std::fs::create_dir_all(file.parent().unwrap_or(&root))
+                .map_err(|e| format!("could not create the Scatter folder: {e}"))?;
+            std::fs::write(&file, DEFAULT_PLAN)
+                .map_err(|e| format!("could not write Scatter/default.scatter: {e}"))?;
+        }
+        let text = std::fs::read_to_string(&file)
+            .map_err(|e| format!("could not read Scatter/default.scatter: {e}"))?;
+        Ok((file, text))
+    }
+
+    /// The Terrain tab's Scatter button: the selected entity when it is a terrain, else the terrain Place made last.
+    pub(super) fn scatter_from_terrain_tab(&mut self) {
+        let selected = self.entities.get(self.selected).map(|e| e.id);
+        let is_terrain = |app: &App, id: u32| {
+            app.engine
+                .as_ref()
+                .is_some_and(|engine| engine.terrain(id).is_ok())
+        };
+        let terrain = selected
+            .filter(|id| is_terrain(self, *id))
+            .or(self.terraingen.placed.filter(|id| is_terrain(self, *id)));
+        match terrain {
+            Some(id) => self.scatter_on_terrain(ScatterRequest {
+                terrain: Some(id),
+                ..ScatterRequest::default()
+            }),
+            None => {
+                self.scatter_status = Some(
+                    "Scatter: place a terrain first (Place in scene), or select one in the Hierarchy"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+
+    /// Opens the default plan in the script editor, so it can be edited in the app.
+    pub(super) fn edit_scatter_plan(&mut self) {
+        match self.default_scatter_plan() {
+            Ok((file, _)) => {
+                let path = file.to_string_lossy().into_owned();
+                self.open_script_path(&path);
+            }
+            Err(error) => {
+                self.scatter_status = Some(format!("Scatter: {error}"));
+            }
+        }
+    }
+
     fn run_scatter(&mut self, request: &ScatterRequest) -> Result<String, String> {
         // The terrain: the one named, or the selection.
         let terrain_id = request
@@ -46,6 +103,7 @@ impl App {
             .or_else(|| self.entities.get(self.selected).map(|e| e.id))
             .ok_or("select a terrain first")?;
         let plan_name;
+        self.ensure_workspace();
         let text = match (&request.plan_text, self.asset_root_dir()) {
             (Some(text), _) => {
                 plan_name = "plan".to_owned();
@@ -169,6 +227,78 @@ fn place_instance(
             [class.size[0] * s, class.size[1] * s, class.size[2] * s],
         )
         .map_err(|e| format!("scale: {e:?}"))?;
+
+    if !class.parts.is_empty() {
+        let tint = [
+            class.color[0] * instance.tint[0],
+            class.color[1] * instance.tint[1],
+            class.color[2] * instance.tint[2],
+            1.0,
+        ];
+        for (number, part) in class.parts.iter().enumerate() {
+            let child = engine
+                .create_entity(&format!("{} {index} part {}", class.name, number + 1))
+                .map_err(|e| format!("create part: {e:?}"))?;
+            engine
+                .set_entity_parent(child, Some(id))
+                .map_err(|e| format!("parent part: {e:?}"))?;
+            let filter = super::add_component(engine, child, "Mesh Filter")?;
+            let value = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom")?;
+            super::set_component_field(engine, child, filter, "Primitive", value)?;
+            super::set_component_field(
+                engine,
+                child,
+                filter,
+                "Mesh",
+                doppio_engine::FieldValue::String(
+                    part.mesh.replace("{v}", &instance.variant.to_string()),
+                ),
+            )?;
+            let renderer = super::add_component(engine, child, "Mesh Renderer")?;
+            // The first slot is also the part's own material (what a one-sub-mesh part draws with), the list
+            // gives each sub-mesh its own.
+            if let Some(first) = part.slots.split(';').map(str::trim).find(|s| !s.is_empty()) {
+                engine
+                    .apply_material(child, first)
+                    .map_err(|e| format!("material: {e:?}"))?;
+            }
+            if part.slots.contains(';') {
+                super::set_component_field(
+                    engine,
+                    child,
+                    filter,
+                    "Material slots",
+                    doppio_engine::FieldValue::String(part.slots.clone()),
+                )?;
+            }
+            super::set_component_field(
+                engine,
+                child,
+                renderer,
+                "Tint",
+                doppio_engine::FieldValue::Color(tint),
+            )?;
+            if part.cutout {
+                super::set_component_field(
+                    engine,
+                    child,
+                    renderer,
+                    "Cast shadows",
+                    doppio_engine::FieldValue::Bool(false),
+                )?;
+            }
+            if part.micromesh {
+                super::set_component_field(
+                    engine,
+                    child,
+                    renderer,
+                    "Micromesh",
+                    doppio_engine::FieldValue::Bool(true),
+                )?;
+            }
+        }
+        return Ok(());
+    }
 
     let filter = super::add_component(engine, id, "Mesh Filter")?;
     match &class.shape {

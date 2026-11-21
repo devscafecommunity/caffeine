@@ -722,6 +722,10 @@ struct App {
     terraingen: terraingen::TerrainGen,
     /// What the last Scatter action said (placed counts, or why it could not).
     scatter_status: Option<String>,
+    /// The latest message to the user, shown in the top bar for a few seconds.
+    notice: Option<workspace::Notice>,
+    /// Where the scratch project lives when no project is open (tests point it at a temp folder).
+    scratch_override: Option<std::path::PathBuf>,
     /// Scene markers (lights, cameras, colliders, empties) drawn over the viewport.
     markers: Vec<scene_markers::Marker>,
     show_markers: bool,
@@ -1082,6 +1086,12 @@ impl App {
             watergen: watergen::WaterGen::new(),
             terraingen: terraingen::TerrainGen::new(),
             scatter_status: None,
+            notice: None,
+            scratch_override: if cfg!(test) {
+                Some(std::env::temp_dir().join(format!("doppio-scratch-{}", std::process::id())))
+            } else {
+                None
+            },
             markers: Vec::new(),
             show_markers: true,
             gizmo_snap: false,
@@ -6708,7 +6718,19 @@ impl App {
                 | Message::PointerReleased
                 | Message::ViewportResized(_, _)
         );
+        let generator_message = matches!(
+            &message,
+            Message::NatureGen(_)
+                | Message::WaterGen(_)
+                | Message::TerrainGen(_)
+                | Message::TextureGen(_)
+                | Message::ScatterOnTerrain(_)
+        );
+        let status_before = generator_message.then(|| self.generator_status());
         self.update_inner(message);
+        if let Some(before) = status_before {
+            self.announce_generator_status(&before);
+        }
         if !noisy {
             self.markers_dirty = true;
         }
@@ -7869,7 +7891,18 @@ impl App {
         } else {
             status::chip("Stopped", theme::ChipTone::Neutral)
         };
-        let mut status_row = row![engine_status].spacing(6);
+        let mut status_row = row![].spacing(6);
+        if let Some(notice) = self.notice.as_ref().filter(|notice| notice.fresh()) {
+            let mut text = notice.text.clone();
+            if text.chars().count() > 96 {
+                text = text.chars().take(95).collect::<String>() + "…";
+            }
+            status_row = status_row.push(status::chip(text, notice.tone));
+        }
+        status_row = status_row.push(engine_status);
+        if self.project.active.is_none() && self.engine.is_some() {
+            status_row = status_row.push(status::chip("No project", theme::ChipTone::Warning));
+        }
         if let Some(active) = self.project.active.as_ref() {
             status_row = status_row.push(status::chip(
                 format!("◈ {}", active.name),
@@ -9620,6 +9653,7 @@ mod scatter;
 mod terraingen;
 mod texturegen;
 mod watergen;
+mod workspace;
 
 #[cfg(test)]
 mod tests;

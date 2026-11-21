@@ -121,9 +121,9 @@ impl WaterGen {
         let min_y = nodes.iter().map(|n| n.position.y).fold(f32::MAX, f32::min);
         let max_x = nodes.iter().map(|n| n.position.x).fold(f32::MIN, f32::max) + 170.0;
         let max_y = nodes.iter().map(|n| n.position.y).fold(f32::MIN, f32::max) + 130.0;
-        let zoom = (620.0 / (max_x - min_x).max(1.0))
-            .min(380.0 / (max_y - min_y).max(1.0))
-            .clamp(0.3, 1.0);
+        let zoom = (780.0 / (max_x - min_x).max(1.0))
+            .min(470.0 / (max_y - min_y).max(1.0))
+            .clamp(0.3, 1.4);
         self.zoom = zoom;
         self.pan = Vector::new(24.0 - min_x * zoom, 24.0 - min_y * zoom);
     }
@@ -257,6 +257,7 @@ impl App {
     /// this writes its `.mat` into the project (once; an existing file is never overwritten) and
     /// turns the node into **Your Water Material** pointing at it.
     pub(super) fn materialize_water_assets(&mut self) -> Result<(), String> {
+        self.ensure_workspace();
         let Some(dir) = self.water_dir() else {
             return Ok(());
         };
@@ -509,6 +510,7 @@ impl App {
     }
 
     fn export_water(&mut self) {
+        self.ensure_workspace();
         let Some(dir) = self.water_dir() else {
             self.watergen.status = Some(
                 "Open a project first: water graphs are written to its assets folder".to_owned(),
@@ -546,6 +548,7 @@ impl App {
         let material_path = self.watergen.graph.look_asset();
         let name = self.watergen.name.clone();
         let focus = self.camera.focus;
+        self.ensure_workspace();
         let water_dir = self.water_dir();
         let Some(engine) = self.engine.as_mut() else {
             self.watergen.status = Some("The engine is not available".to_owned());

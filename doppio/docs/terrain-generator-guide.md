@@ -146,7 +146,7 @@ ridge. The editor reads a table through the scatter plan below; a World tab that
 
 ### Scatter on a terrain (C ABI v16)
 
-**Scene > Scatter on Terrain** (id `editor.menu.scene.scatter_terrain`) places a whole plan of vegetation and rocks on the selected terrain in one
+**Scene > Scatter on Terrain** (id `editor.menu.scene.scatter_terrain`), or the **Scatter** button in this tab's toolbar (next to *Place in scene*; it scatters the selected terrain, else the one you placed last), places a whole plan of vegetation and rocks on the selected terrain in one
 undo step. The plan is a project text file, `Scatter/default.scatter`, written from a built-in plan the first time; edit it and run the action
 again. A `class` line says *what* (shape, size, spacing, scale, tilt, sink, tint, variants, Micromesh), and the lines under it are the biome
 terms that say *where*, the same trapezoids as above:
@@ -160,6 +160,10 @@ class 2 name pine primitive cone color 0.12 0.32 0.15 size 1.8 6 1.8 cell 8 radi
   wetness 0.00 0.00 0.30 0.60
   height  0.12 0.20 0.70 0.85
 ```
+
+**Edit scatter plan** (toolbar) opens the plan in the script editor. A class can also be a **composite**: indented `part mesh <path> [slots a.mat;b.mat]
+[micromesh on|off] [cutout on|off]` lines make every instance an empty entity with one child per part (a generated tree is a solid and a foliage mesh);
+the Nature tab's *Add to scatter plan* writes them for you.
 
 A shape is `primitive <cube|sphere|cone|cylinder|capsule|pyramid|torus>` or `mesh <path>` (a `{v}` in the path is the variant number, so a
 `.nature` rock set scatters as variants); `material <path>` and `color r g b` set the look. The plan is validated before anything is placed:
@@ -221,7 +225,7 @@ The tab is a pane like the others (`editor.pane.terrain_generator`, `terraingen.
 `terrain` (`reset` takes a `preset`, e.g. `Badlands`); no engine is needed for the graph and preview. Placement
 and rendering are covered by engine-backed tests.
 
-Agents place a scatter with the MCP action `scatter_on_terrain` (`plan_text` or `plan_file`, `seed`, `max_instances`, `terrain_id`); it sends the same
+The toolbar buttons are the MCP actions `terrain_scatter` and `terrain_edit_scatter_plan` (and the Nature tab's `nature_add_to_scatter`). Agents place a scatter with the MCP action `scatter_on_terrain` (`plan_text` or `plan_file`, `seed`, `max_instances`, `terrain_id`); it sends the same
 message as the menu, so it is one undo step too. Tests: `scatter_on_terrain_places_the_plan_by_the_terrains_masks` (engine-backed).
 
 ## 7. Regenerating the images

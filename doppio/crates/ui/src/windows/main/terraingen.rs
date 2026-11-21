@@ -33,6 +33,8 @@ pub(super) struct TerrainGen {
     pub preview: Option<Handle>,
     pub stats: String,
     pub status: Option<String>,
+    /// The terrain entity Place made last: what the Scatter card scatters on (the selection wins when it is a terrain).
+    pub placed: Option<u32>,
     pub dirty: bool,
     pub view: preview::View,
     orbit: Option<Point>,
@@ -69,6 +71,7 @@ impl TerrainGen {
             preview: None,
             stats: String::new(),
             status: None,
+            placed: None,
             dirty: false,
             view: preview::View::default(),
             orbit: None,
@@ -118,9 +121,9 @@ impl TerrainGen {
         let min_y = nodes.iter().map(|n| n.position.y).fold(f32::MAX, f32::min);
         let max_x = nodes.iter().map(|n| n.position.x).fold(f32::MIN, f32::max) + 170.0;
         let max_y = nodes.iter().map(|n| n.position.y).fold(f32::MIN, f32::max) + 130.0;
-        let zoom = (620.0 / (max_x - min_x).max(1.0))
-            .min(380.0 / (max_y - min_y).max(1.0))
-            .clamp(0.3, 1.0);
+        let zoom = (780.0 / (max_x - min_x).max(1.0))
+            .min(470.0 / (max_y - min_y).max(1.0))
+            .clamp(0.3, 1.4);
         self.zoom = zoom;
         self.pan = Vector::new(24.0 - min_x * zoom, 24.0 - min_y * zoom);
     }
@@ -369,6 +372,8 @@ impl App {
                 self.terraingen.refresh();
             }
             Edit::SetName(name) => self.terraingen.name = name,
+            Edit::Scatter => self.scatter_from_terrain_tab(),
+            Edit::EditScatterPlan => self.edit_scatter_plan(),
             Edit::New => {
                 let mut graph = TerrainGraph::new();
                 graph.add("output", Point::new(400.0, 80.0));
@@ -401,6 +406,7 @@ impl App {
     }
 
     fn export_terrain(&mut self) {
+        self.ensure_workspace();
         let Some(dir) = self.terrain_dir() else {
             self.terraingen.status =
                 Some("Open a project first: terrains are written to its assets folder".to_owned());
@@ -444,6 +450,7 @@ impl App {
     /// are filled by baking material-library pictures into `Terrain/Layers/`; existing files and
     /// paths you chose are never touched.
     pub(super) fn materialize_terrain_assets(&mut self) -> Result<(), String> {
+        self.ensure_workspace();
         let Some(dir) = self.terrain_dir() else {
             return Ok(());
         };
@@ -551,6 +558,7 @@ impl App {
         };
         // The terrain mesh is centred on its entity: put it under the camera focus.
         let _ = engine.set_position(id, [focus[0], 0.0, focus[2]]);
+        self.terraingen.placed = Some(id);
         let settings = doppio_engine::Terrain {
             resolution: [res as u32, res as u32],
             size: model.size,

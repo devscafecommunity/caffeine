@@ -277,6 +277,11 @@ pub const NATUREGEN_FIT: UiId = UiId::fixed("naturegen.toolbar.fit");
 pub const NATUREGEN_NEW: UiId = UiId::fixed("naturegen.toolbar.new");
 pub const NATUREGEN_SEARCH: UiId = UiId::fixed("naturegen.search");
 pub const NATUREGEN_SNAP: UiId = UiId::fixed("naturegen.snap");
+pub const NATUREGEN_MERGE_PARTS: UiId = UiId::fixed("naturegen.merge_parts");
+pub const NATUREGEN_MICROMESH: UiId = UiId::fixed("naturegen.micromesh");
+pub const NATUREGEN_SCATTER: UiId = UiId::fixed("naturegen.scatter");
+pub const TERRAINGEN_SCATTER: UiId = UiId::fixed("terraingen.scatter");
+pub const TERRAINGEN_SCATTER_PLAN: UiId = UiId::fixed("terraingen.scatter_plan");
 pub const NATUREGEN_DELETE_NODE: UiId = UiId::fixed("naturegen.delete_node");
 pub const PANE_GENERATOR: UiId = UiId::fixed("editor.pane.generator");
 pub const PANE_SCRIPT: UiId = UiId::fixed("editor.pane.script");
@@ -714,6 +719,31 @@ pub const CATALOG: &[UiMeta] = &[
         id: NATUREGEN_SNAP,
         description: "Snaps node positions to a 16 px grid.",
         kind: "checkbox",
+    },
+    UiMeta {
+        id: NATUREGEN_MERGE_PARTS,
+        description: "Places the solid parts, and the cut-out parts, as one entity each, with a material slot per part.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: NATUREGEN_MICROMESH,
+        description: "Turns Micromesh (GPU cluster LOD) on for the dense solid parts, rocks and trunks, when placing.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: TERRAINGEN_SCATTER,
+        description: "Plants the project's scatter plan on the terrain (the selected one, else the last placed): trees, boulders and grass by slope, wetness and height.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TERRAINGEN_SCATTER_PLAN,
+        description: "Opens Scatter/default.scatter in the script editor.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_SCATTER,
+        description: "Writes the model into Scatter/default.scatter as a class that places every part, so the Scatter action can plant it on a terrain.",
+        kind: "button",
     },
     UiMeta {
         id: NATUREGEN_DELETE_NODE,

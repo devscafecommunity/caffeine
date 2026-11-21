@@ -5,6 +5,7 @@
 // ============================================================================
 #pragma once
 
+#include <atomic>
 #include <vector>
 
 #include "../core/Types.hpp"
@@ -345,6 +346,9 @@ public:
     RenderDevice(RenderDevice&&) = delete;
     RenderDevice& operator=(RenderDevice&&) = delete;
 
+    /// A number unique to this device in the process (never reused), to tell GPU objects of one device from another's.
+    u64 serial() const { return m_serial; }
+
     bool init(SDL_Window* window, const RenderConfig& config = {});
     /// Headless/offscreen device: no swapchain, only beginOffscreen()/readTexture().
     bool initOffscreen(const RenderConfig& config = {});
@@ -403,6 +407,11 @@ public:
     const RenderConfig& config() const { return m_config; }
 
 private:
+    static u64 nextSerial() {
+        static std::atomic<u64> counter{0};
+        return ++counter;
+    }
+    u64 m_serial = nextSerial();
     SDL_GPUDevice* m_device     = nullptr;
     SDL_Window*    m_window     = nullptr;
     RenderConfig   m_config;

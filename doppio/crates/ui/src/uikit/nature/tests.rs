@@ -1060,3 +1060,47 @@ fn version_one_graphs_gain_material_nodes_and_keep_their_look() {
     let again = NatureGraph::from_text(&migrated.to_text()).unwrap();
     assert_eq!(again.nodes.len(), migrated.nodes.len());
 }
+
+#[test]
+fn merged_obj_writes_one_usemtl_group_per_part_with_global_indices() {
+    let model = preset("Pink Flower")
+        .graph()
+        .build(Quality::Balanced)
+        .unwrap();
+    let parts: Vec<usize> = (0..model.parts.len())
+        .filter(|&i| !model.parts[i].is_empty())
+        .collect();
+    assert!(parts.len() >= 2, "the flower has several parts");
+    let obj = model.merged_obj(&parts, "flower");
+    let groups: Vec<&str> = obj
+        .lines()
+        .filter_map(|l| l.strip_prefix("usemtl "))
+        .collect();
+    let expected: Vec<String> = parts.iter().map(|&i| model.parts[i].name.clone()).collect();
+    assert_eq!(groups, expected, "groups follow the part order");
+    let vertices = obj.lines().filter(|l| l.starts_with("v ")).count();
+    assert_eq!(
+        vertices,
+        parts
+            .iter()
+            .map(|&i| model.parts[i].positions.len())
+            .sum::<usize>()
+    );
+    let faces = obj.lines().filter(|l| l.starts_with("f ")).count();
+    assert_eq!(
+        faces,
+        parts
+            .iter()
+            .map(|&i| model.parts[i].triangle_count())
+            .sum::<usize>()
+    );
+    // Every face index points into the merged vertex list (the second part is offset past the first).
+    let biggest = obj
+        .lines()
+        .filter_map(|l| l.strip_prefix("f "))
+        .flat_map(|l| l.split(' '))
+        .filter_map(|corner| corner.split('/').next()?.parse::<usize>().ok())
+        .max()
+        .unwrap();
+    assert_eq!(biggest, vertices);
+}

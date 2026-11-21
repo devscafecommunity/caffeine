@@ -548,6 +548,57 @@ impl NatureModel {
         self.parts.iter().map(|p| p.positions.len()).sum()
     }
 
+    /// One Wavefront OBJ holding the listed parts, each as its own `usemtl <part name>` group. The engine turns every
+    /// group into a **sub-mesh**, so the parts keep their own materials (`Material slots` on the Mesh Filter, in the
+    /// order of `parts`) while they place as one entity. Vertex colours are kept: parts without painted ones are white.
+    pub fn merged_obj(&self, parts: &[usize], name: &str) -> String {
+        let chosen: Vec<&Part> = parts.iter().filter_map(|i| self.parts.get(*i)).collect();
+        let painted = chosen.iter().any(|p| p.painted_colors().is_some());
+        let mut text = format!("# Caffeine Nature Generator\no {name}\n");
+        for part in &chosen {
+            let colors = part.painted_colors();
+            for (i, p) in part.positions.iter().enumerate() {
+                if painted {
+                    let c = colors.map_or([1.0; 4], |c| c[i]);
+                    text.push_str(&format!(
+                        "v {:.5} {:.5} {:.5} {:.4} {:.4} {:.4} {:.4}\n",
+                        p[0], p[1], p[2], c[0], c[1], c[2], c[3]
+                    ));
+                } else {
+                    text.push_str(&format!("v {:.5} {:.5} {:.5}\n", p[0], p[1], p[2]));
+                }
+            }
+        }
+        for part in &chosen {
+            for t in &part.uvs {
+                text.push_str(&format!("vt {:.5} {:.5}\n", t[0], t[1]));
+            }
+        }
+        for part in &chosen {
+            for n in &part.normals {
+                text.push_str(&format!("vn {:.4} {:.4} {:.4}\n", n[0], n[1], n[2]));
+            }
+        }
+        let mut base = 0u32;
+        for part in &chosen {
+            text.push_str(&format!(
+                "usemtl {}\n",
+                part.name.replace(char::is_whitespace, "_")
+            ));
+            for tri in part.indices.chunks_exact(3) {
+                let i = |k: usize| tri[k] + base + 1;
+                text.push_str(&format!(
+                    "f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}\n",
+                    a = i(0),
+                    b = i(1),
+                    c = i(2)
+                ));
+            }
+            base += part.positions.len() as u32;
+        }
+        text
+    }
+
     /// Bounds of the whole model.
     pub fn bounds(&self) -> (V3, V3) {
         let mut lo = [f32::MAX; 3];
