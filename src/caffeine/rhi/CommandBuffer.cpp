@@ -244,6 +244,61 @@ void CommandBuffer::drawIndexedInstanced(u32 indexCount, u32 instanceCount, u32 
                                  firstInstance);
 }
 
+void CommandBuffer::drawIndirect(Buffer* args, u32 offset, u32 drawCount) {
+    if (!m_renderPass || !args || !args->handle || drawCount == 0) return;
+    SDL_DrawGPUPrimitivesIndirect(m_renderPass, args->handle, offset, drawCount);
+}
+
+void CommandBuffer::drawIndexedIndirect(Buffer* args, u32 offset, u32 drawCount) {
+    if (!m_renderPass || !args || !args->handle || drawCount == 0) return;
+    SDL_DrawGPUIndexedPrimitivesIndirect(m_renderPass, args->handle, offset, drawCount);
+}
+
+void CommandBuffer::bindVertexStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count) {
+    if (!m_renderPass || !buffers || count == 0) return;
+    std::vector<SDL_GPUBuffer*> handles;
+    for (u32 i = 0; i < count; ++i) handles.push_back(buffers[i] ? buffers[i]->handle : nullptr);
+    SDL_BindGPUVertexStorageBuffers(m_renderPass, firstSlot, handles.data(), count);
+}
+
+void CommandBuffer::bindFragmentStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count) {
+    if (!m_renderPass || !buffers || count == 0) return;
+    std::vector<SDL_GPUBuffer*> handles;
+    for (u32 i = 0; i < count; ++i) handles.push_back(buffers[i] ? buffers[i]->handle : nullptr);
+    SDL_BindGPUFragmentStorageBuffers(m_renderPass, firstSlot, handles.data(), count);
+}
+
+void CommandBuffer::beginComputePass(Texture* const* storageTextures, u32 textureCount,
+                                     Buffer* const* storageBuffers, u32 bufferCount) {
+    if (!m_cmdBuffer || m_inRenderPass || m_inComputePass) return;
+    std::vector<SDL_GPUStorageTextureReadWriteBinding> textures;
+    for (u32 i = 0; i < textureCount; ++i) {
+        if (!storageTextures || !storageTextures[i] || !storageTextures[i]->handle) return;
+        SDL_GPUStorageTextureReadWriteBinding binding{};
+        binding.texture = storageTextures[i]->handle;
+        binding.cycle = true;
+        textures.push_back(binding);
+    }
+    std::vector<SDL_GPUStorageBufferReadWriteBinding> buffers;
+    for (u32 i = 0; i < bufferCount; ++i) {
+        if (!storageBuffers || !storageBuffers[i] || !storageBuffers[i]->handle) return;
+        SDL_GPUStorageBufferReadWriteBinding binding{};
+        binding.buffer = storageBuffers[i]->handle;
+        // Keep the contents: culling passes accumulate into lists they cleared themselves.
+        binding.cycle = false;
+        buffers.push_back(binding);
+    }
+    m_computePass = SDL_BeginGPUComputePass(m_cmdBuffer, textures.empty() ? nullptr : textures.data(),
+                                            textureCount, buffers.empty() ? nullptr : buffers.data(),
+                                            bufferCount);
+    m_inComputePass = m_computePass != nullptr;
+}
+
+void CommandBuffer::dispatchIndirect(Buffer* args, u32 offset) {
+    if (!m_computePass || !args || !args->handle) return;
+    SDL_DispatchGPUComputeIndirect(m_computePass, args->handle, offset);
+}
+
 void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
                                    u32 firstVertex, u32 firstInstance) {
     if (!m_renderPass) {

@@ -12,6 +12,7 @@
 
 pub mod erosion;
 pub mod field;
+pub mod masks;
 pub mod preview;
 #[cfg(test)]
 mod tests;
@@ -430,7 +431,8 @@ pub const LAYER_LABELS: &[&str] = &[
     "Mud material (.mat)",
 ];
 
-const OUTPUT_IN: &[PortDef] = &[port("Height")];
+// Wear and Deposit are optional: wire the erosion outputs to export them as masks.
+const OUTPUT_IN: &[PortDef] = &[port("Height"), port("Wear"), port("Deposit")];
 const OUTPUT_P: &[ParamSpec] = &[
     float("size_x", "Size X (m)", 50.0, 8000.0, 1000.0, 10.0),
     float("size_z", "Size Z (m)", 50.0, 8000.0, 1000.0, 10.0),
@@ -651,6 +653,9 @@ pub struct TerrainModel {
     pub max_height: f32,
     /// Sea level in metres (for placing a water body).
     pub sea_metres: f32,
+    /// Named 0..1 masks on the height's grid, as 8 bits, for the engine's terrain masks: `flow` and `wetness`
+    /// always, `wear` and `deposit` when the erosion outputs are wired to the Output node.
+    pub masks: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -851,12 +856,35 @@ impl TerrainGraph {
             .map(|v| v.clamp(0.0, 1.0));
         let p = &node.params;
         let splat = splat_weights(&height, p[0].max(p[1]), p[2], p[4], p[5], p[6], p[7]);
+        // Optional erosion outputs, then the masks derived from the height.
+        let wired = |input: usize| {
+            self.links
+                .iter()
+                .find(|l| l.to == output && l.input == input)
+                .and_then(|l| memo.get(&l.from).and_then(|v| v.get(l.output)))
+                .cloned()
+        };
+        let mut masks = Vec::new();
+        if let Some(wear) = wired(1) {
+            masks.push(("wear".to_owned(), masks::normalised_bytes(&wear)));
+        }
+        if let Some(deposit) = wired(2) {
+            masks.push(("deposit".to_owned(), masks::normalised_bytes(&deposit)));
+        }
+        let flow = masks::flow_accumulation(&height);
+        let slope = height.slope(p[2] / p[0].max(p[1]).max(1.0));
+        masks.push(("flow".to_owned(), masks::to_bytes(&flow)));
+        masks.push((
+            "wetness".to_owned(),
+            masks::to_bytes(&masks::wetness(&height, &flow, &slope, p[4], p[5])),
+        ));
         Ok(TerrainModel {
             height,
             splat,
             size: [p[0], p[1]],
             max_height: p[2],
             sea_metres: p[4] * p[2],
+            masks,
         })
     }
 
@@ -1052,6 +1080,11 @@ fn chain(
 fn finish(g: &mut TerrainGraph, last: NodeId, col: f32, row: f32, set: &[(&str, f32)]) {
     let out = g.add_with("output", at(col, row), set);
     assert!(g.connect(last, 0, out, 0));
+    // What erosion took and left becomes the `wear` and `deposit` masks.
+    if let Some(erosion) = g.nodes.iter().find(|n| n.op == "hydraulic").map(|n| n.id) {
+        assert!(g.connect(erosion, 1, out, 1));
+        assert!(g.connect(erosion, 2, out, 2));
+    }
 }
 
 pub fn presets() -> Vec<TerrainPreset> {

@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 10
+#define CAFFEINE_CAPI_VERSION 16
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -189,6 +189,7 @@ typedef struct CaffeineViewportSettings {
     int show_grid;
     int anti_aliasing;
     float render_scale;
+    int shadows;  /**< 1 renders the lights' shadow maps in the viewport (off by default, as in the editor; v14) */
 } CaffeineViewportSettings;
 
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_viewport_settings(
@@ -518,6 +519,72 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_water_height(const CaffeineSes
                                                                CaffeineEntity entity, float x,
                                                                float z, float* out_height);
 
+/**
+ * What the last rendered frame drew and cost, and what the GPU can do (v11). Times are CPU-side
+ * (encoding): SDL3 GPU has no portable GPU timestamps. All zero before the first render.
+ */
+typedef struct CaffeineRenderStats {
+    uint64_t triangles;           /**< submitted, counting every instance */
+    uint32_t meshes;              /**< draws that survived culling */
+    uint32_t frustum_culled;
+    uint32_t draw_calls;          /**< an instanced batch is one call */
+    uint32_t instanced_draw_calls;
+    float gather_ms;
+    float shadows_ms;
+    float opaque_ms;
+    float translucent_ms;
+    float total_ms;
+    int32_t indirect_draw;        /**< 1 when the device supports indirect draws */
+    int32_t graphics_storage_buffers;
+    int32_t compute_storage_write;
+    int32_t mesh_shaders;         /**< always 0 on SDL3 GPU */
+    uint32_t gpu_water_draws;     /**< water surfaces waved in the vertex shader (v13) */
+    uint32_t micromesh_draws;     /**< meshes drawn as a GPU-selected Micromesh cut (v14; was `reserved`) */
+} CaffeineRenderStats;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_stats(const CaffeineSession* session,
+                                                               CaffeineRenderStats* out);
+
+/**
+ * What the last frame's Micromesh draws kept (v14). Reading it copies the GPU's draw arguments back and
+ * waits for the GPU: for tools and tests, not for every frame. All zero without Micromesh draws.
+ */
+typedef struct CaffeineMicromeshFrameStats {
+    uint32_t draws;               /**< entities drawn as a cluster cut */
+    uint32_t clusters;            /**< clusters the cut selected, over every draw */
+    uint64_t triangles;           /**< triangles of the camera's cut */
+    uint64_t source_triangles;    /**< triangles those meshes have in full */
+    uint32_t views;               /**< views cut this frame: the camera and each shadow cascade */
+    uint32_t arena_used;          /**< indices every view's cut took from the shared index arena */
+    uint32_t arena_capacity;
+    uint32_t overflowed;          /**< cuts that did not fit in the arena and were not drawn this frame */
+    uint32_t occlusion;           /**< 1 when the camera's cut was tested against last frame's depth */
+    uint32_t reserved;
+} CaffeineMicromeshFrameStats;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_micromesh_stats(const CaffeineSession* session,
+                                                                  CaffeineMicromeshFrameStats* out);
+
+/** Result summary of caffeine_micromesh_build (v12). */
+typedef struct CaffeineMicromeshStats {
+    uint32_t source_triangles;
+    uint32_t clusters;
+    uint32_t levels;
+    uint32_t root_clusters;
+    uint32_t max_cluster_triangles;
+    float max_error;          /**< largest simplification error, in the mesh's units */
+} CaffeineMicromeshStats;
+/**
+ * Builds the cluster hierarchy (Micromeshes) of an indexed triangle mesh: clusters of at most 128
+ * triangles, simplified levels with crack-free cuts. `positions` is `vertex_count` x 3 floats.
+ * `out_bytes` is the versioned `.micromesh` section (free it with caffeine_session_free).
+ * Deterministic: the same mesh gives the same bytes. Offline work: do not call it per frame.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_micromesh_build(const float* positions,
+                                                          uint32_t vertex_count,
+                                                          const uint32_t* indices,
+                                                          uint32_t index_count,
+                                                          CaffeineMicromeshStats* out_stats,
+                                                          uint8_t** out_bytes, size_t* out_size);
+
 /** Terrain settings of an entity (POD). Heights are normalised 0..1 and scaled by max_height. */
 typedef struct CaffeineTerrain {
     uint32_t resolution_x;
@@ -545,6 +612,106 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain(const CaffeineSession*
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,
                                                                  CaffeineEntity entity, float x,
                                                                  float z, float* out_height);
+
+/**
+ * Terrain masks (v15): named 0..1 fields over a terrain, for placing things by what the terrain is (steep, high,
+ * wet). Coordinates are metres from the terrain's corner, like `caffeine_session_terrain_height`; a point
+ * outside the terrain reads the nearest edge.
+ *
+ * Built-in masks the engine derives from the heightfield (nothing stored): "height" (normalised height),
+ * "slope" (angle from the horizontal, 0 flat .. 1 = 90 degrees) and "curvature" (0.5 on flat ground, towards 1 in
+ * a valley, towards 0 on a ridge; +-0.125 per metre is the full range). Stored masks (up to 16) come from a
+ * generator: 8 bits per texel on a grid of their own (any size >= 2 x 2), sampled bilinearly. Names are 1 to 31
+ * letters, digits, '_' or '-'. Stored masks are saved with the terrain file.
+ */
+#define CAFFEINE_TERRAIN_MASK_NAME_MAX 32
+typedef struct CaffeineTerrainMaskInfo {
+    char name[CAFFEINE_TERRAIN_MASK_NAME_MAX];
+    uint32_t resolution_x;  /**< 0 for a built-in mask */
+    uint32_t resolution_z;
+    int builtin;
+} CaffeineTerrainMaskInfo;
+
+/** Stores or replaces a mask; `data` NULL removes a stored one. `data` holds resolution_x * resolution_z bytes, row-major, z rows. INVALID_ARGUMENT for a bad or built-in name, a grid under 2 x 2 or a 17th mask. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_terrain_mask(CaffeineSession* session,
+                                                                   CaffeineEntity entity, const char* name,
+                                                                   uint32_t resolution_x,
+                                                                   uint32_t resolution_z,
+                                                                   const uint8_t* data);
+/** Masks of a terrain: the three built-ins first, then the stored ones in the order they were first set. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_count(const CaffeineSession* session,
+                                                                     CaffeineEntity entity, uint32_t* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_at(const CaffeineSession* session,
+                                                                  CaffeineEntity entity, uint32_t index,
+                                                                  CaffeineTerrainMaskInfo* out);
+/** One mask at (x, z): 0..1. NOT_FOUND for an unknown mask. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask(const CaffeineSession* session,
+                                                               CaffeineEntity entity, const char* name, float x,
+                                                               float z, float* out_value);
+/** A rectangle (x0, z0)-(x1, z1) in metres resampled to width x height bytes (texel centres, row 0 at z0), `out` holds width * height bytes. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_mask_rect(const CaffeineSession* session,
+                                                                    CaffeineEntity entity, const char* name,
+                                                                    float x0, float z0, float x1, float z1,
+                                                                    uint32_t width, uint32_t height,
+                                                                    uint8_t* out);
+/** The unit surface normal (x, y, z) at (x, z) metres from the corner. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_normal(const CaffeineSession* session,
+                                                                 CaffeineEntity entity, float x, float z,
+                                                                 float out_normal[3]);
+
+/**
+ * Scatter on a terrain (v16): deterministic placement of instances (trees, rocks, grass) by what the terrain is. The
+ * engine computes WHERE; the caller creates the entities (Doppio's Scatter action does).
+ *
+ * Each class is a kind of thing with a spacing and an exclusion radius; a candidate per grid cell is kept with a
+ * chance of `density` times the biome table's density at that point, and a point yields to any closer, higher
+ * priority one, so nothing overlaps, also across the chunks the work is cut into. The result is a pure function of
+ * (seed, terrain, masks, table, classes): the same call gives the same instances on any machine, for any region
+ * split, in the same order.
+ */
+typedef struct CaffeineScatterClass {
+    uint32_t id;
+    int32_t priority;       /**< higher wins a conflict (rocks, then trees, then grass) */
+    float cell_size;        /**< candidate grid spacing in metres */
+    float radius;           /**< exclusion radius in metres */
+    float density;          /**< 0..1 chance, times the biome density */
+    float min_scale;
+    float max_scale;
+    float tilt_to_normal;   /**< 0 keeps up, 1 follows the terrain normal */
+    float sink;             /**< metres the base sinks, per unit of scale */
+    float tint_jitter;      /**< the tint is 1 +- this, per channel */
+    uint32_t variants;      /**< baked variants to choose from (>= 1) */
+} CaffeineScatterClass;
+
+typedef struct CaffeineScatterInstance {
+    uint32_t class_id;
+    uint32_t variant;
+    float position[3];          /**< scene space: the terrain entity's transform applied */
+    float up[3];                /**< unit up axis (terrain normal blended with world up) */
+    float rotation_degrees[3];  /**< the same orientation, with the yaw, as Euler degrees for set_entity_rotation */
+    float scale;
+    float tint[3];
+    uint64_t seed;              /**< for per-instance variation (wind phase, a recipe seed) */
+} CaffeineScatterInstance;
+
+/**
+ * Scatters over the terrain of `entity`. `biome_text` is the biome table (see terrain/TerrainBiome.hpp; NULL or "" for
+ * none). `region` is (x0, z0, x1, z1) in metres from the terrain's corner, or NULL for the whole terrain. At most
+ * `capacity` instances are written to `out` (which may be NULL to only count); `out_total` receives how many the region
+ * holds, up to 200000. INVALID_ARGUMENT for a biome table that does not parse (see caffeine_biome_check), no classes
+ * or a class with cell_size or radius <= 0; NOT_FOUND without a terrain. The terrain entity is assumed not rotated.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_scatter_terrain(const CaffeineSession* session,
+                                                                  CaffeineEntity entity, uint64_t seed,
+                                                                  const CaffeineScatterClass* classes,
+                                                                  uint32_t class_count,
+                                                                  const char* biome_text,
+                                                                  const float* region,
+                                                                  CaffeineScatterInstance* out,
+                                                                  uint32_t capacity, uint32_t* out_total);
+/** Parses a biome table without a session: OK, or INVALID_ARGUMENT with the reason (line number included) in `error`. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_biome_check(const char* biome_text, char* error,
+                                                      uint32_t error_size);
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 CAFFEINE_CAPI_API void caffeine_session_tick(CaffeineSession* session, float delta_time);

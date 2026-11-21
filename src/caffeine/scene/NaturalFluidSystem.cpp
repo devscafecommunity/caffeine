@@ -28,7 +28,6 @@ using Fluids::WaterQuality;
 struct FluidRuntime {
     FluidWorld fluid;
     u64 settingsHash = 0;
-    u32 meshRevision = 0;
     bool initialized = false;
     /// The surface is a flat grid waved by the GPU (see naturalFluidGpuWaves).
     bool gpuSurface = false;
@@ -36,6 +35,12 @@ struct FluidRuntime {
 };
 
 std::unordered_map<u32, FluidRuntime> g_runtime;
+
+/// Geometry revisions are **global** and only grow: the mesh cache is keyed by entity id, and ids are
+/// reused, so a per-entity counter would hand a new water surface the revision of a deleted one and
+/// show its stale mesh (a flat grid never changes after the first revision).
+u32 g_meshRevision = 0;
+u32 nextMeshRevision() { return ++g_meshRevision; }
 
 u64 hashComponent(const ECS::NaturalFluidComponent& component) {
     const u8* bytes = reinterpret_cast<const u8*>(&component);
@@ -190,7 +195,7 @@ void updateFlatSurface(ECS::World& world, ECS::Entity entity,
         }
     }
     geometry.boundsPadding = Vec3(padXZ, padY, padXZ);
-    geometry.revision = ++runtime.meshRevision;
+    geometry.revision = nextMeshRevision();
     runtime.gpuSurface = true;
     runtime.surfaceKey = key;
 }
@@ -215,7 +220,7 @@ void updateSurfaceMesh(ECS::World& world, ECS::Entity entity,
     geometry.normals = std::move(mesh.normals);
     geometry.texcoords = std::move(mesh.texcoords);
     geometry.indices = std::move(mesh.indices);
-    geometry.revision = ++runtime.meshRevision;
+    geometry.revision = nextMeshRevision();
 }
 
 void addCube(std::vector<Vec3>& positions, std::vector<Vec3>& normals,
@@ -294,7 +299,7 @@ void updateVolumeMesh(ECS::World& world, ECS::Entity entity,
             }
         }
     }
-    geometry.revision = ++runtime.meshRevision;
+    geometry.revision = nextMeshRevision();
 }
 
 void clearMesh(ECS::World& world, ECS::Entity entity) {

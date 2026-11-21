@@ -322,6 +322,16 @@ const TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) const {
     return it != m_entries.end() ? &it->second.splatmap : nullptr;
 }
 
+TerrainMasks* TerrainCache::masksFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.masks : nullptr;
+}
+
+const TerrainMasks* TerrainCache::masksFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.masks : nullptr;
+}
+
 Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
@@ -348,7 +358,8 @@ bool TerrainCache::saveTerrainFile(ECS::Entity entity, const std::filesystem::pa
                                    bool includeSplat) const {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end()) return false;
-    return TerrainSerializer::save(path, it->second.heightmap, it->second.splatmap, includeSplat);
+    return TerrainSerializer::save(path, it->second.heightmap, it->second.splatmap, includeSplat,
+                                   &it->second.masks);
 }
 
 bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
@@ -358,7 +369,7 @@ bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
     repairTexturePaths(terrain);
     TerrainEntry& entry = ensureEntry(entity);
     bool hadSplat = false;
-    if (!TerrainSerializer::load(path, entry.heightmap, entry.splatmap, &hadSplat)) {
+    if (!TerrainSerializer::load(path, entry.heightmap, entry.splatmap, &hadSplat, &entry.masks)) {
         return false;
     }
 

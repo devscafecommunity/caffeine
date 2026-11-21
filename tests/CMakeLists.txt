@@ -6,6 +6,11 @@ set(CAFFEINE_TEST_SOURCES
     test_math.cpp
     test_core.cpp
     test_hash.cpp
+    test_scatter.cpp
+    test_micromesh.cpp
+    test_micromesh_gpu.cpp
+    test_micromesh_docs.cpp
+    test_rhi_indirect.cpp
     test_timer.cpp
     test_gameloop.cpp
     test_input.cpp
@@ -31,6 +36,7 @@ set(CAFFEINE_TEST_SOURCES
     test_effects.cpp
     test_mesh.cpp
     test_terrain.cpp
+    test_terrain_masks.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
     test_pipeline.cpp

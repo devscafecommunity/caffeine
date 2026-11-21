@@ -33,6 +33,10 @@ struct ProceduralWorldComponent {
     char customScriptPath[256] = "scripts/procedural/custom_director.lua";
 
     bool enabled = true;
+
+    /// Placement algorithm (see `placementHash`): 1 = legacy, 2 = integer SplitMix64 (the same on
+    /// every platform and thread count). New worlds should use `Core::GENERATOR_VERSION`.
+    u32 generatorVersion = 1;
 };
 
 }  // namespace Caffeine::ECS

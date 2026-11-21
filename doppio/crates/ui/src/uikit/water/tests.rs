@@ -47,7 +47,11 @@ fn every_preset_builds_valid_water() {
             .iter()
             .map(|w| w.steepness * std::f32::consts::TAU / w.wavelength * w.amplitude)
             .sum();
-        assert!(q <= 1.3, "{}: sum(Q k A) = {q}", p.name);
+        assert!(
+            q <= MAX_TOTAL_STEEPNESS + 1e-3,
+            "{}: sum(Q k A) = {q}",
+            p.name
+        );
         assert!(find("output").is_some());
     }
 }

@@ -19,6 +19,7 @@ pub mod procedural;
 pub mod project;
 pub mod recipe;
 pub mod recipe_ref;
+pub mod scatter;
 pub mod script;
 pub mod script_assist;
 pub mod script_reference;

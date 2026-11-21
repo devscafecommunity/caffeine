@@ -6,6 +6,7 @@
 #include "ecs/World.hpp"
 #include "terrain/TerrainHeightmap.hpp"
 #include "terrain/TerrainLodSystem.hpp"
+#include "terrain/TerrainMasks.hpp"
 #include "terrain/TerrainSplatmap.hpp"
 
 #ifdef CF_HAS_SDL3
@@ -34,6 +35,9 @@ public:
     const TerrainHeightmap* heightmapFor(ECS::Entity entity) const;
     TerrainSplatmap* splatmapFor(ECS::Entity entity);
     const TerrainSplatmap* splatmapFor(ECS::Entity entity) const;
+    /// The terrain's stored masks (the built-ins need no storage). Null for an entity without a terrain.
+    TerrainMasks* masksFor(ECS::Entity entity);
+    const TerrainMasks* masksFor(ECS::Entity entity) const;
     Assets::Mesh3D* meshFor(ECS::Entity entity);
 
     void rebuildRegion(ECS::Entity entity, const ECS::TerrainComponent& settings,
@@ -83,6 +87,7 @@ private:
     struct TerrainEntry {
         TerrainHeightmap heightmap;
         TerrainSplatmap splatmap;
+        TerrainMasks masks;
         std::unique_ptr<Assets::Mesh3D> mesh;
         std::unique_ptr<Assets::Mesh3D> collisionMesh;
         std::vector<TerrainChunk> chunks;

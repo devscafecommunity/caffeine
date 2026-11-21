@@ -108,10 +108,15 @@ add_library(caffeine-core
     src/caffeine/terrain/TerrainSplatmap.cpp
     src/caffeine/terrain/TerrainSplatPainter.cpp
     src/caffeine/terrain/TerrainSerializer.cpp
+    src/caffeine/terrain/TerrainMasks.cpp
+    src/caffeine/terrain/TerrainBiome.cpp
     src/caffeine/terrain/TerrainGpuTextures.cpp
     src/caffeine/terrain/TerrainHeightmapImporter.cpp
     src/caffeine/terrain/TerrainCollisionMeshBuilder.cpp
     src/caffeine/procedural/ProceduralNoise.cpp
+    src/caffeine/scatter/Scatter.cpp
+    src/caffeine/scatter/TerrainScatter.cpp
+    src/caffeine/micromesh/Micromesh.cpp
     src/caffeine/procedural/ProceduralProfiles.cpp
     src/caffeine/procedural/ProceduralGenerator.cpp
     src/caffeine/procedural/ProceduralStreamer.cpp
@@ -239,6 +244,12 @@ else()
                 "photon_inject|compute|photon_inject.comp"
                 "photon_probe|compute|photon_probe.comp"
                 "photon_bake_ao|compute|photon_bake_ao.comp"
+                "micromesh_cull|compute|micromesh_cull.comp"
+                "scene_micromesh_vert|vertex|scene_micromesh.vert"
+                "shadow_micromesh_vert|vertex|shadow_micromesh.vert"
+                "micromesh_compact|compute|micromesh_compact.comp"
+                "micromesh_reset|compute|micromesh_reset.comp"
+                "micromesh_hzb|compute|micromesh_hzb.comp"
             )
             set(_caffeine_shader_headers)
             set(_caffeine_shader_cat_commands)
@@ -274,6 +285,7 @@ else()
             src/caffeine/render/PostProcessStack.cpp
             src/caffeine/render/MinZPyramid.cpp
             src/caffeine/render/PhotonCascades.cpp
+            src/caffeine/render/MicromeshGpu.cpp
             src/caffeine/render/PhotonGpuBake.cpp
             src/caffeine/render/PhotonAOBake.cpp
             src/caffeine/render/GpuEnvironmentMap.cpp

@@ -22,9 +22,12 @@
 #include "scene/TerrainSystem.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "terrain/TerrainCache.hpp"
+#include "terrain/TerrainBiome.hpp"
+#include "scatter/TerrainScatter.hpp"
 #include "caffeine/environment/NaturalFluids.hpp"
 #include "scene/SceneComponents.hpp"
 #include "assets/MaterialCache.hpp"
+#include "micromesh/Micromesh.hpp"
 #include "assets/MaterialFile.hpp"
 #include "assets/MaterialPresets.hpp"
 #include "assets/MeshCache.hpp"
@@ -108,7 +111,7 @@ struct CaffeineSession {
     uint32_t renderHeight = 0;
     CaffeineCamera camera{0.65f, 0.35f, 10.0f, {0.0f, 0.0f, 0.0f}};
     bool cameraInitialized = false;
-    CaffeineViewportSettings viewportSettings{1, 1, 1.5f};
+    CaffeineViewportSettings viewportSettings{1, 1, 1.5f, 0};
     std::string assetRoot;
     std::vector<AssetEntry> assets;
 
@@ -1236,7 +1239,7 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
     camera.farClip = farClip;
 
     Caffeine::Render::GpuSceneRenderOptions options;
-    options.enableShadows = false;
+    options.enableShadows = session.viewportSettings.shadows != 0;
     options.renderScale =
         std::clamp(session.viewportSettings.render_scale, 0.5f, 2.0f);
     options.deltaTime = 1.0f / 60.0f;
@@ -2260,7 +2263,278 @@ CaffeineResult caffeine_session_water_height(const CaffeineSession* session,
     return CAFFEINE_OK;
 }
 
+CaffeineResult caffeine_micromesh_build(const float* positions, uint32_t vertex_count,
+                                        const uint32_t* indices, uint32_t index_count,
+                                        CaffeineMicromeshStats* out_stats, uint8_t** out_bytes,
+                                        size_t* out_size) {
+    if (!positions || !indices || !out_bytes || !out_size || vertex_count == 0 || index_count < 3) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    std::vector<Caffeine::Vec3> points(vertex_count);
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+        points[i] = Caffeine::Vec3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+    }
+    const std::vector<uint32_t> triangles(indices, indices + index_count);
+    const Caffeine::Micromesh::Data data = Caffeine::Micromesh::build(points, triangles);
+    if (data.clusters.empty()) return CAFFEINE_ERROR;
+    const std::vector<uint8_t> bytes = Caffeine::Micromesh::serialize(data);
+    auto* copy = new (std::nothrow) uint8_t[bytes.size()];
+    if (!copy) return CAFFEINE_ERROR;
+    std::memcpy(copy, bytes.data(), bytes.size());
+    *out_bytes = copy;
+    *out_size = bytes.size();
+    if (out_stats) {
+        *out_stats = CaffeineMicromeshStats{};
+        out_stats->source_triangles = data.sourceTriangles;
+        out_stats->clusters = static_cast<uint32_t>(data.clusters.size());
+        out_stats->levels = data.levelCount;
+        for (const auto& c : data.clusters) {
+            if (c.parentError >= Caffeine::Micromesh::kRootError) ++out_stats->root_clusters;
+            out_stats->max_cluster_triangles = std::max(out_stats->max_cluster_triangles, c.triangleCount);
+            out_stats->max_error = std::max(out_stats->max_error, c.error);
+        }
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_render_stats(const CaffeineSession* session,
+                                             CaffeineRenderStats* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineRenderStats{};
+    if (!session->sceneRenderer) return CAFFEINE_OK;
+    const auto& stats = session->sceneRenderer->lastFrameStats();
+    out->triangles = stats.triangles;
+    out->meshes = stats.meshesGathered;
+    out->frustum_culled = stats.frustumCulled;
+    out->draw_calls = stats.drawCalls;
+    out->instanced_draw_calls = stats.instancedDrawCalls;
+    out->gather_ms = stats.gatherMs;
+    out->shadows_ms = stats.shadowsMs;
+    out->opaque_ms = stats.opaqueMs;
+    out->translucent_ms = stats.translucentMs;
+    out->total_ms = stats.totalMs;
+    out->gpu_water_draws = stats.gpuWaterDraws;
+    out->micromesh_draws = stats.micromeshDraws;
+    if (session->renderDevice) {
+        const auto caps = session->renderDevice->capabilities();
+        out->indirect_draw = caps.indirectDraw ? 1 : 0;
+        out->graphics_storage_buffers = caps.graphicsStorageBuffers ? 1 : 0;
+        out->compute_storage_write = caps.computeStorageWrite ? 1 : 0;
+        out->mesh_shaders = caps.meshShaders ? 1 : 0;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_micromesh_stats(const CaffeineSession* session,
+                                                CaffeineMicromeshFrameStats* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineMicromeshFrameStats{};
+    if (!session->sceneRenderer) return CAFFEINE_OK;
+    const auto stats = session->sceneRenderer->readMicromeshStats();
+    out->draws = stats.draws;
+    out->clusters = stats.clusters;
+    out->triangles = stats.triangles;
+    out->source_triangles = stats.sourceTriangles;
+    out->views = stats.views;
+    out->arena_used = stats.arenaUsed;
+    out->arena_capacity = stats.arenaCapacity;
+    out->overflowed = stats.overflowed;
+    out->occlusion = stats.occlusionActive ? 1u : 0u;
+    return CAFFEINE_OK;
+}
+
 // -------------------------------------------------------------------------------- terrain
+
+namespace {
+
+/// What a terrain mask read needs: the terrain component, its heightmap and its masks.
+struct TerrainMaskView {
+    const Caffeine::ECS::TerrainComponent* component = nullptr;
+    const Caffeine::Terrain::TerrainHeightmap* map = nullptr;
+    Caffeine::Terrain::TerrainMasks* masks = nullptr;
+    Caffeine::Terrain::TerrainFrame frame;
+};
+
+CaffeineResult terrainMaskView(const CaffeineSession* session, CaffeineEntity entityId, TerrainMaskView& out) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const Caffeine::ECS::Entity entity = entityOf(mutableSession, entityId);
+    auto& cache = Caffeine::Terrain::TerrainCache::instance();
+    out.component = mutableSession.world.get<Caffeine::ECS::TerrainComponent>(entity);
+    out.map = cache.heightmapFor(entity);
+    out.masks = cache.masksFor(entity);
+    if (!out.component || !out.map || out.map->empty() || !out.masks) return CAFFEINE_NOT_FOUND;
+    out.frame.heightmap = out.map;
+    out.frame.sizeX = out.component->worldSizeX;
+    out.frame.sizeZ = out.component->worldSizeZ;
+    out.frame.maxHeight = out.component->maxHeight;
+    return CAFFEINE_OK;
+}
+
+}  // namespace
+
+CaffeineResult caffeine_session_set_terrain_mask(CaffeineSession* session, CaffeineEntity entityId,
+                                                 const char* name, uint32_t resolution_x,
+                                                 uint32_t resolution_z, const uint8_t* data) {
+    if (!name) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    const std::string key(name);
+    if (!data) return view.masks->remove(key) ? CAFFEINE_OK : CAFFEINE_NOT_FOUND;
+    if (!view.masks->set(key, resolution_x, resolution_z, data)) return CAFFEINE_INVALID_ARGUMENT;
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask_count(const CaffeineSession* session, CaffeineEntity entityId,
+                                                   uint32_t* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    *out = view.masks->count();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask_at(const CaffeineSession* session, CaffeineEntity entityId,
+                                                uint32_t index, CaffeineTerrainMaskInfo* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    if (index >= view.masks->count()) return CAFFEINE_NOT_FOUND;
+    *out = CaffeineTerrainMaskInfo{};
+    const std::string name = view.masks->nameAt(index);
+    std::snprintf(out->name, sizeof(out->name), "%s", name.c_str());
+    out->resolution_x = view.masks->resolutionX(name);
+    out->resolution_z = view.masks->resolutionZ(name);
+    out->builtin = Caffeine::Terrain::TerrainMasks::isBuiltin(name) ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_mask(const CaffeineSession* session, CaffeineEntity entityId,
+                                             const char* name, float x, float z, float* out_value) {
+    if (!name || !out_value) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    return view.masks->sample(view.frame, name, x, z, *out_value) ? CAFFEINE_OK : CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_terrain_mask_rect(const CaffeineSession* session, CaffeineEntity entityId,
+                                                  const char* name, float x0, float z0, float x1, float z1,
+                                                  uint32_t width, uint32_t height, uint8_t* out) {
+    if (!name || !out || width == 0 || height == 0) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    return view.masks->rect(view.frame, name, x0, z0, x1, z1, width, height, out) ? CAFFEINE_OK
+                                                                                : CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_terrain_normal(const CaffeineSession* session, CaffeineEntity entityId, float x,
+                                               float z, float out_normal[3]) {
+    if (!out_normal) return CAFFEINE_INVALID_ARGUMENT;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    const Caffeine::Vec3 n = Caffeine::Terrain::TerrainMasks::normalAt(view.frame, x, z);
+    out_normal[0] = n.x;
+    out_normal[1] = n.y;
+    out_normal[2] = n.z;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_biome_check(const char* biome_text, char* error, uint32_t error_size) {
+    Caffeine::Terrain::BiomeTable table;
+    std::string why;
+    if (Caffeine::Terrain::BiomeTable::fromText(biome_text ? biome_text : "", table, &why)) {
+        if (error && error_size > 0) error[0] = '\0';
+        return CAFFEINE_OK;
+    }
+    if (error && error_size > 0) std::snprintf(error, error_size, "%s", why.c_str());
+    return CAFFEINE_INVALID_ARGUMENT;
+}
+
+CaffeineResult caffeine_session_scatter_terrain(const CaffeineSession* session, CaffeineEntity entityId,
+                                                uint64_t seed, const CaffeineScatterClass* classes,
+                                                uint32_t class_count, const char* biome_text,
+                                                const float* region, CaffeineScatterInstance* out,
+                                                uint32_t capacity, uint32_t* out_total) {
+    using namespace Caffeine;
+    if (!classes || class_count == 0 || !out_total || (!out && capacity > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    *out_total = 0;
+    TerrainMaskView view;
+    if (CaffeineResult r = terrainMaskView(session, entityId, view); r != CAFFEINE_OK) return r;
+    Terrain::BiomeTable biome;
+    if (biome_text && !Terrain::BiomeTable::fromText(biome_text, biome)) return CAFFEINE_INVALID_ARGUMENT;
+
+    Scatter::TerrainScatterRequest request;
+    request.seed = seed;
+    request.frame = view.frame;
+    request.masks = view.masks;
+    request.biome = &biome;
+    for (uint32_t i = 0; i < class_count; ++i) {
+        const CaffeineScatterClass& c = classes[i];
+        if (!(c.cell_size > 0.0f) || !(c.radius > 0.0f) || c.variants == 0) return CAFFEINE_INVALID_ARGUMENT;
+        Scatter::ScatterClass sc;
+        sc.id = c.id;
+        sc.priority = c.priority;
+        sc.cellSize = c.cell_size;
+        sc.radius = c.radius;
+        sc.density = std::clamp(c.density, 0.0f, 1.0f);
+        sc.minScale = c.min_scale;
+        sc.maxScale = std::max(c.max_scale, c.min_scale);
+        sc.tiltToNormal = std::clamp(c.tilt_to_normal, 0.0f, 1.0f);
+        sc.sink = c.sink;
+        sc.tintJitter = std::max(c.tint_jitter, 0.0f);
+        sc.variants = c.variants;
+        request.classes.push_back(sc);
+    }
+    if (region) {
+        request.x0 = region[0];
+        request.z0 = region[1];
+        request.x1 = region[2];
+        request.z1 = region[3];
+    }
+    // The classes' cell size bounds the work: refuse a request that would walk millions of cells.
+    request.maxInstances = 200000;
+    const Scatter::TerrainScatterResult result = Scatter::scatterTerrain(request);
+    *out_total = result.total;
+
+    // Terrain-local metres to scene space: the mesh is centred on its entity (see caffeine_session_terrain_height).
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    const Mat4 world = Scene::computeWorldMatrix(mutableSession.world, entityOf(mutableSession, entityId));
+    const f32 halfX = view.frame.sizeX * 0.5f, halfZ = view.frame.sizeZ * 0.5f;
+    const uint32_t count = std::min<uint32_t>(capacity, static_cast<uint32_t>(result.instances.size()));
+    for (uint32_t i = 0; i < count; ++i) {
+        const Scatter::Instance& in = result.instances[i];
+        CaffeineScatterInstance& o = out[i];
+        const Vec3 p = world.transformPoint(Vec3(in.position.x - halfX, in.position.y, in.position.z - halfZ));
+        // Orientation: the yaw about the object's own up, then up taken to `in.up` by the shortest turn.
+        const Vec3 up = in.up.normalized();
+        Quat align = Quat::identity();
+        const Vec3 axis = Vec3(0.0f, 1.0f, 0.0f).cross(up);
+        if (axis.length() > 1e-5f) {
+            align = Quat::fromAxisAngle(axis.normalized(), std::acos(std::clamp(up.y, -1.0f, 1.0f)));
+        }
+        const Quat q = (align * Quat::fromAxisAngle(Vec3(0.0f, 1.0f, 0.0f), in.yaw)).normalized();
+        const Vec3 euler = q.toEuler();
+        o.class_id = in.classId;
+        o.variant = in.variant;
+        o.position[0] = p.x;
+        o.position[1] = p.y;
+        o.position[2] = p.z;
+        o.up[0] = up.x;
+        o.up[1] = up.y;
+        o.up[2] = up.z;
+        o.rotation_degrees[0] = euler.x * 57.29577951308232f;
+        o.rotation_degrees[1] = euler.y * 57.29577951308232f;
+        o.rotation_degrees[2] = euler.z * 57.29577951308232f;
+        o.scale = in.scale;
+        o.tint[0] = in.tint.x;
+        o.tint[1] = in.tint.y;
+        o.tint[2] = in.tint.z;
+        o.seed = in.seed;
+    }
+    return CAFFEINE_OK;
+}
 
 CaffeineResult caffeine_session_set_terrain(CaffeineSession* session, CaffeineEntity entityId,
                                             const CaffeineTerrain* terrain, const float* heights,

@@ -486,6 +486,8 @@ enum Message {
     ShowWaterGenerator,
     TerrainGen(terrain_generator_panel::Edit),
     ShowTerrainGenerator,
+    /// Scatters a plan on a terrain (`Scene > Scatter on Terrain`, the `scatter_on_terrain` agent action).
+    ScatterOnTerrain(scatter::ScatterRequest),
     Generator(material_generator::Edit),
     GeneratorTextureSearch(String),
     GeneratorTexturePick(String),
@@ -718,6 +720,8 @@ struct App {
     nature: naturegen::NatureGen,
     watergen: watergen::WaterGen,
     terraingen: terraingen::TerrainGen,
+    /// What the last Scatter action said (placed counts, or why it could not).
+    scatter_status: Option<String>,
     /// Scene markers (lights, cameras, colliders, empties) drawn over the viewport.
     markers: Vec<scene_markers::Marker>,
     show_markers: bool,
@@ -1077,6 +1081,7 @@ impl App {
             nature: naturegen::NatureGen::new(),
             watergen: watergen::WaterGen::new(),
             terraingen: terraingen::TerrainGen::new(),
+            scatter_status: None,
             markers: Vec::new(),
             show_markers: true,
             gizmo_snap: false,
@@ -1415,6 +1420,13 @@ impl App {
 
     fn edit_component_enum(&mut self, component: usize, field: usize, index: i32) {
         self.write_component_field(component, field, doppio_engine::FieldValue::Enum(index));
+    }
+
+    fn viewport_render_stats_label(&self) -> String {
+        self.engine
+            .as_ref()
+            .map(render_stats_label)
+            .unwrap_or_default()
     }
 
     fn add_component(&mut self, type_id: u32) {
@@ -7131,6 +7143,7 @@ impl App {
             Message::ShowWaterGenerator => self.show_water_pane(),
             Message::TerrainGen(edit) => self.edit_terrain(edit),
             Message::ShowTerrainGenerator => self.show_terrain_pane(),
+            Message::ScatterOnTerrain(request) => self.scatter_on_terrain(request),
             Message::OpenGenerator => {
                 self.show_generator_pane();
             }
@@ -7638,6 +7651,12 @@ impl App {
                         label: "Script Editor…",
                         shortcut: Some("Ctrl+Shift+E"),
                         message: Message::OpenScriptEditor,
+                    },
+                    menu::Item {
+                        id: id::SCATTER_TERRAIN_MENU,
+                        label: "Scatter on Terrain",
+                        shortcut: None,
+                        message: Message::ScatterOnTerrain(scatter::ScatterRequest::default()),
                     },
                     menu::Item {
                         id: id::DRYAD_NODES_MENU,
@@ -8564,7 +8583,7 @@ impl App {
                     doppio_engine::AntiAliasing::Taa => "TAA",
                 };
                 let status_line = format!(
-                    "{}×{} · {} · {} · {} · {:.0} ms · {:.0} FPS",
+                    "{}×{} · {} · {} · {} · {:.0} ms · {:.0} FPS{}",
                     self.viewport_render_size.0,
                     self.viewport_render_size.1,
                     grid,
@@ -8572,6 +8591,7 @@ impl App {
                     self.gizmo_mode.label(),
                     self.viewport_hud_latency_ms,
                     self.viewport_fps,
+                    self.viewport_render_stats_label(),
                 );
                 let hint = self
                     .entities
@@ -9326,6 +9346,35 @@ fn component_type_id(engine: &doppio_engine::Engine, name: &str) -> Option<u32> 
         .map(|kind| kind.id)
 }
 
+/// What the last frame drew, for the viewport HUD: triangles submitted, draws, and how many meshes were drawn
+/// as a Micromesh cut. Reads the cheap counters (no GPU read-back); empty before the first render.
+fn render_stats_label(engine: &doppio_engine::Engine) -> String {
+    let Ok(stats) = engine.render_stats() else {
+        return String::new();
+    };
+    if stats.draw_calls == 0 {
+        return String::new();
+    }
+    let mut label = format!(
+        " · {} tris · {} draws",
+        compact_count(stats.triangles),
+        stats.draw_calls
+    );
+    if stats.micromesh_draws > 0 {
+        label.push_str(&format!(" · {} micromesh", stats.micromesh_draws));
+    }
+    label
+}
+
+/// 1 234 -> "1.2k", 5 600 000 -> "5.6M": a count that fits in the HUD.
+fn compact_count(value: u64) -> String {
+    match value {
+        0..=999 => value.to_string(),
+        1_000..=999_999 => format!("{:.1}k", value as f64 / 1_000.0),
+        _ => format!("{:.1}M", value as f64 / 1_000_000.0),
+    }
+}
+
 fn add_component(
     engine: &mut doppio_engine::Engine,
     entity: u32,
@@ -9567,6 +9616,7 @@ fn format_transform_number(value: f32) -> String {
 
 mod naturegen;
 mod recipes;
+mod scatter;
 mod terraingen;
 mod texturegen;
 mod watergen;

@@ -17,9 +17,23 @@ radiance cascades, voxel clipmaps, visibility buffers) is the only reference. Th
 companion of [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md), which feeds it with terrain, nature and
 materials.
 
-> **Status (2026-11-20):** no phase of this roadmap has started. The items need GPU work (indirect draws, storage buffers,
-> culling and voxelisation shaders) that cannot be validated in the headless test setup, so they are not marked done.
-> The deterministic-world foundation they share with the world roadmap (`core/Hash.hpp`) is.
+> **Status (2026-11-20):** **Micromeshes M-0, M-1 and M-2 are done** (occlusion is single-phase), tested on the GPU and drawn through the real scene
+> renderer (see [`micromeshes.md`](micromeshes.md)): RHI indirect draws and storage buffers, render stats and a HUD readout, the offline
+> cluster hierarchy with normals, UVs, tangents and vertex colours, the GPU cut with per-instance transforms, the lit G-buffer draw and
+> the sun cascades' own coarser cut into a shared index arena, and a single-phase occlusion test against last frame's depth. **Open in
+> M-2:** two-phase occlusion and point and spot shadow cuts. **Photon has not started** (P-A: the conservative voxeliser first, because the direct-light injection cannot be verified
+> before it; then motion vectors, then real direct light). Independent GPU work done meanwhile is **not** part of these phases:
+> vegetation shading and wind, alpha-tested shadows, run-time material modifiers and GPU-displaced water (see the Nature and Water
+> guides). The deterministic-world foundation shared with the world roadmap (`core/Hash.hpp`, the scatter core) is done.
+>
+> **M-0 is complete.** **Next, in order:** P-A, whose first item is the conservative voxeliser. Micromesh's next phases (M-3 streaming, the
+> `.micromesh` section in `.caf`, a terrain cluster path to beat the benchmark's baseline) follow once the content pipeline needs them.
+
+<figure class="doc-figure">
+  <img src="images/micromesh/micromesh-cuts.png" alt="One rock drawn at four error budgets, coloured by cluster" loading="lazy">
+  <figcaption>Phase M-1 and M-2 as they run today: one rock, four error budgets, every colour a cluster (details in
+  <a href="micromeshes.md">micromeshes.md</a>).</figcaption>
+</figure>
 
 ## 1. Verdict
 
@@ -27,14 +41,34 @@ materials.
 far field and multi-bounce feedback (`PhotonCascades.hpp`). The proposal to "build a GI" is mostly
 done; the work left is quality, validation and the world-space accuracy items its own header lists.
 
-**Micromeshes: not started, feasible in stages, with one hard limit.** There are no clusters, GPU culling or
-indirect draws today. SDL3 GPU has indirect draw calls, storage buffers and compute passes, but **no mesh
-shaders and no portable 64-bit atomics**. So the plan is a hardware-raster cluster renderer first (large
-win, low risk) and a compute software rasteriser only for sub-pixel triangles later, using 32-bit atomics.
+**Micromeshes: built and drawing in the scene, with one hard limit that shaped it.** The cluster hierarchy, the GPU cut with
+per-instance transforms, the lit G-buffer draw, shadow cascades, occlusion and the benchmark set exist (`micromeshes.md`). SDL3 GPU
+has indirect draws, storage buffers and compute passes, but **no mesh shaders, no portable 64-bit atomics and no indirect-count draw**,
+so the cut is compacted into one index arena and drawn with one hardware draw per instance (large win, low risk, as planned). A
+compute software rasteriser for sub-pixel triangles stays optional (M-4), using 32-bit atomics.
 
 **Dropped as written:** an SDF-based GI (Photon already uses radiance cascades plus voxels; a second GI
 would double the maintenance), and "trillions of triangles". The realistic target is **tens of millions of
 source triangles in view with a frame-bound cost**, which is what clusters deliver.
+
+### Where it stands (2026-11-20)
+
+17 items done, 28 open. **Micromeshes are largely done; Photon has not started**, so the next real
+work on this page is Photon P-A (see section 8 for the order).
+
+| Phase | Done | Open | State |
+|---|---|---|---|
+| P-A Photon: make it correct | 0 | 4 | not started: the voxeliser, motion vectors, real direct light, regression scenes |
+| P-B Photon: quality | 0 | 5 | not started |
+| P-C Photon: scale and cost | 0 | 4 | not started |
+| M-0 RHI and tooling | 4 | 0 | done: indirect draws, storage buffers, stats, the HUD readout, the benchmark set (Profiler entries still to add) |
+| M-1 Cluster build | 4 | 1 | done; the `.micromesh` section in `.caf` and the packer live in a separate repo and are open |
+| M-2 GPU cull and draw | 8 | 3 | done except two-phase occlusion, point/spot shadow cuts and adopting terrain |
+| M-3 Streaming and memory | 0 | 3 | not started |
+| M-4 Small triangles | 0 | 2 | optional, not started |
+| M-5 Editor integration | 1 | 2 | the Inspector toggle is done; stats panel, debug view, generator export, site captures open |
+| Shared items (section 6) | 0 | 4 | none started |
+
 
 ## 2. What exists (verified in the tree)
 
@@ -47,12 +81,12 @@ source triangles in view with a frame-bound cost**, which is what clusters deliv
 | Direct light into GI | **Gap**: injection uses a hemispherical sky term, not the real lights and shadows | header "KNOWN GAPS" |
 | Voxelisation | **Gap**: screen depth-accumulation fallback, so off-screen and back faces are missing | header "KNOWN GAPS" |
 | Motion vectors | **Gap**: history reprojects with the previous matrix only | header P5 |
-| Geometry LOD | **Partial**: 3 clustered-vertex LODs per mesh, terrain chunk LODs, CPU frustum cull | `MeshLOD.cpp`, `TerrainLodSystem.cpp` |
-| Occlusion | **Partial**: coarse CPU AABB occluders (max 16), Min-Z pyramid for GI only | `CoarseOcclusion.hpp`, `MinZPyramid.cpp` |
+| Geometry LOD | **Done for opaque meshes that opt in** (Micromesh cluster cut); **partial** for the rest: 3 clustered-vertex LODs per mesh, terrain chunk LODs, CPU frustum cull | `micromesh/`, `MicromeshGpu.cpp`, `MeshLOD.cpp`, `TerrainLodSystem.cpp` |
+| Occlusion | **Partial**: coarse CPU AABB occluders (max 16), Min-Z pyramid for GI, and for Micromesh a single-phase farthest-depth pyramid of last frame's depth | `CoarseOcclusion.hpp`, `MinZPyramid.cpp`, `MicromeshGpu.cpp` |
 | Instancing | **Done, CPU-grouped**: batches of up to 256 by key | `InstanceBatch.hpp` |
 | Shadows | **Done**: 4 directional cascades at 2048, point and spot maps | `GpuDirectionalShadowMap.hpp` |
 | Post | **Done**: TAA, ACES, bloom, DOF, SSAO, motion blur, auto exposure | `PostProcessStack.cpp` |
-| Compute and indirect in the RHI | **Compute yes, indirect no**: SDL3 exposes it, `CommandBuffer` does not wrap it | `rhi/CommandBuffer.hpp` |
+| Compute and indirect in the RHI | **Done (M-0)**: indirect draws and dispatch, storage buffers, read-write compute buffers, capabilities, `readBuffer` | `rhi/CommandBuffer.hpp`, `tests/test_rhi_indirect.cpp` |
 | Website page for Photon | **Stale**: says v0.1, no probe field, single bounce; the code is past that | `caffeine-website/.../editor/photon.md` |
 
 ## 3. Review of the proposal
@@ -93,6 +127,14 @@ Photon first: it is closest to done, benefits every scene now, and Micromeshes w
 
 ### Phase P-A — Make it correct
 
+> **Finding (2026-11-20):** a prototype injected the sun into the far-field radiance (a voxel march toward the light instead of
+> shadow maps, in `photon_inject.comp`) and was **reverted**: in a red-wall-and-floor scene the result was identical with and
+> without it, because the screen-space cascades dominate every visible pixel and the far field only fills what leaves the
+> screen, where the screen-depth voxel fill has no geometry. The direct light cannot be tested, and so is not worth its cost,
+> until the conservative voxeliser (third item) provides geometry the screen does not see. Order accordingly. The Photon GI
+> component is now reflected (Inspector, scenes, scripts: `Photon GI`, with `Debug view`), which the next attempt needs; note
+> that `Debug view` did not change the image on the `ComputeC0` path in that test, worth checking.
+
 - [ ] Inject **real direct light** (sun, point, spot, with the shadow term) into the voxel/probe radiance
       instead of the hemispherical sky term. Test: a red wall lit by the sun tints a nearby white floor.
 - [ ] **Motion vectors** pass (per object matrices, previous frame), used by Photon history, TAA and motion
@@ -126,32 +168,86 @@ Each phase ships alone and keeps the old path as a fallback behind a flag.
 
 ### Phase M-0 — RHI and tooling prerequisites
 
-- [ ] Wrap `SDL_DrawGPUIndexedPrimitivesIndirect` and graphics/compute **storage buffers** in
-      `rhi/CommandBuffer` with device capability checks and a fallback when unsupported.
-- [ ] GPU timestamp or CPU-side pass timers per stage, visible in the Profiler; a stats overlay
-      (clusters in, culled, drawn, triangles, pixels).
-- [ ] A reproducible benchmark set (dense rock field, forest, terrain) using `assets/benchmarks`.
+- [x] `rhi/CommandBuffer` wraps indirect draws (`drawIndirect`, `drawIndexedIndirect`, multi-draw count), indirect dispatch,
+      graphics **storage buffers** for the vertex and fragment stages and compute passes with read-write storage
+      **buffers**; `BufferUsage::{Indirect, IndirectWrite, GraphicsStorage, GraphicsStorageWrite}`;
+      `RenderDevice::capabilities()` (indirect draw and dispatch, storage, no mesh shaders, no 64-bit atomics) and
+      `readBuffer`. Tested on the GPU in `tests/test_rhi_indirect.cpp`: indirect arguments decide what is drawn, and a
+      compute pass writes the draw arguments (a miniature of GPU culling). The tests skip without a GPU or `glslc`.
+- [x] CPU-side pass timers per stage (gather, shadows, opaque, translucent, total) and counters (meshes, frustum culled,
+      draw calls, instanced draw calls, triangles) in `GpuSceneRenderer::lastFrameStats()`; C ABI **v11**
+      `caffeine_session_render_stats`, the Rust `Engine::render_stats()` and the agent query `render_stats`.
+      SDL3 GPU has no portable GPU timestamps, so the times are encoding time, not GPU time.
+- [x] The viewport HUD shows the last frame's triangles, draws and Micromesh draws (cheap counters, no read-back). Still open: Profiler entries and a panel with the cluster counters.
+- [x] **The reproducible benchmark set** (`./scripts/benchmark-micromesh.sh`): a dense rock field, a forest of 300 dense trees and a terrain at two grid
+      sizes, fixed camera paths, content generated in code (no assets, byte-identical every run, tested), every renderer path that applies.
+      Triangle and draw counts reproduce exactly; wall time is a whole frame including read-back, encode time the CPU's. Results in
+      [`micromeshes.md`](micromeshes.md): Micromesh draws 6.1x (rocks) and 3.3x (forest) fewer triangles and a median frame of 0.56 and
+      0.75 of the instanced one, but the forest costs more CPU (one draw per tree); the terrain baseline is 0.2 to 0.8 M triangles in 100 to
+      400 draws. The old `assets/benchmarks` (an unused 43 KB scene) is not part of it.
 
 ### Phase M-1 — Cluster build (offline, core)
 
-- [ ] `micromesh` module: split a mesh into clusters of at most 128 triangles (spatial locality, meshopt-style
-      greedy, our own implementation), with bounding sphere, normal cone and local vertex remap.
-- [ ] Build a **hierarchy**: group clusters, simplify groups by edge collapse with a quadric error and
-      locked boundaries, split again, repeat to a single root. Store per-group error and monotonic
-      parent error.
-- [ ] `.micromesh` section in `.caf` (versioned, POD) and a CLI in `caf-pack`; deterministic output.
-- [ ] Tests: crack-free cuts at random error thresholds, watertightness preserved, triangle count per
-      level, byte-identical rebuilds.
+- [x] `micromesh` module (`src/caffeine/micromesh/Micromesh.hpp`): clusters of at most 128 triangles and 128 vertices along a Morton
+      curve (our own, simpler than a greedy adjacency split), each with a tight bounding sphere, a back-face normal cone and a
+      local vertex remap (one byte per index).
+- [x] **Hierarchy**: clusters are grouped (4 at a time, widened when a group cannot shrink), each group is merged, simplified by
+      **quadric edge collapse with its boundary locked** (and non-manifold edges), and split again, up to one root. A group's
+      error is the larger of its collapse error and its children's, plus an epsilon, so it is **strictly** monotonic; its
+      sphere contains the children's. A cut is "own error <= threshold < parent error" (optionally divided by the distance to
+      the sphere for a projected error).
+- [x] Versioned POD bytes: `serialize` / `deserialize` (bounds-checked), byte-identical rebuilds. C ABI **v12**
+      `caffeine_micromesh_build` (positions, indices, stats, bytes) and the Rust `Engine::micromesh_build`, so generators and a
+      packer can bake. **Not done:** the `.micromesh` section inside `.caf` and a `caf-pack` CLI (a separate submodule repo).
+- [x] Tests (`tests/test_micromesh.cpp`, 9 cases): limits per cluster, every level coarser, one root on closed meshes, monotonic
+      errors and sphere containment, **every cut of a sphere and a torus is closed and manifold (each edge in exactly two
+      triangles) at 12 thresholds**, view-dependent cuts are crack-free and coarser far away, an open grid keeps its boundary and
+      terminates, back-face cones never hide a facing cluster, degenerate input, byte-identical rebuilds and the ABI.
+- [ ] Known limits: groups are neighbours on a Morton curve, not an adjacency graph, so a level removes about half the
+      triangles on compact meshes and less on thin or branching ones; open meshes stop where their locked boundary pins
+      everything (several roots); a collapse picks the best of the two endpoints and the midpoint (no optimal position);
+      measured on meshes up to 82 k triangles (about a second to build 80 000); locked UV seams limit how far a mesh with many islands
+      reduces. (Normals, UVs, tangents and vertex colours are carried now.)
 
 ### Phase M-2 — GPU culling and hardware draw
 
-- [ ] Upload cluster pages to GPU buffers; per-instance transform buffer (reuse the instance path).
-- [ ] Compute pass 1: frustum + normal-cone + screen-space error test against the hierarchy, writing an
-      indirect draw list. Compute pass 2: Min-Z occlusion against the pyramid built from pass 1's depth.
-- [ ] Draw visible clusters through indirect indexed draws into the existing G-buffer targets, so
-      Photon, SSAO, TAA and post keep working unchanged.
-- [ ] Shadow cascades draw their own coarser cut; no cracks between the two (same hierarchy).
-- [ ] Terrain tiles and Nature rocks/trunks are first adopters; foliage stays instanced.
+- [x] Upload to GPU buffers (`render/MicromeshGpu`): one storage buffer of cluster records (bounds, error spheres, cone, index range),
+      one position buffer, one index buffer with every cluster's global indices, and an indirect-argument buffer.
+- [x] Per-instance transforms: `MicromeshGpu::setInstances`, cull index `instance * clusterCount + cluster`, per-instance cut, frustum
+  and cone, one dispatch and one indirect draw for the whole field (196 rocks, 16 M source triangles: 0.15 to 0.5 M drawn per frame, 10x
+  fewer than the exact mesh on average). Images and GIF in [`micromeshes.md`](micromeshes.md). Still one hierarchy per object and a uniform scale per instance.
+- [x] Compute pass 1 (`shaders/micromesh_cull.comp`): per cluster, the cut test (own error within the threshold, parent's not,
+      optionally projected by distance), frustum test and back-face cone; it writes one indexed-draw argument set per cluster
+      with `indexCount` 0 when culled, so the CPU issues the same `drawIndexedIndirect(args, 0, clusterCount)` every frame
+      with no read-back and no atomics.
+- [x] **Occlusion, single-phase**: each frame the previous depth buffer becomes a farthest-depth pyramid (`MicromeshHzb`, one storage
+      buffer) and the camera's compacting cull drops clusters whose sphere is behind it (Mesh Renderer -> Micromesh occlusion, off by
+      default). Behind a wall: 1.5x to 2.5x fewer triangles (2.1x mean), picture difference 0.11 / 255 mean; a cluster that becomes
+      visible shows one frame late at silhouette edges. Images in [`micromeshes.md`](micromeshes.md).
+- [ ] **Two-phase occlusion** (draw last frame's visible clusters, rebuild the pyramid from that depth, test the rest): removes the
+      one-frame lag; needs the opaque pass split in two.
+- [x] The indirect draw works on the GPU: `MicromeshGpu::draw` binds the buffers and issues one multi-draw over every cluster.
+      **Tested on the GPU** (`tests/test_micromesh_gpu.cpp`): the cut the compute pass selects **equals the CPU's `selectCut`**
+      at 4 distances x 3 thresholds, the cone filter equals `isBackFacing`, the frustum test equals the same sphere-plane test on
+      the CPU, a farther camera picks a coarser cut, and a rendered cut covers the sphere's disc (fine and coarse alike).
+- [x] Prerequisite for it: **shading normals** carried through every collapse and drawn with `MicromeshGpu::drawLit`; a coarse cut shades
+  within 1.6 to 10 / 255 of the exact mesh (facets: 2.9 to 13). **UVs** are carried too (seams stay locked): a bump map and a UV
+  checker stay within 1.2 to 11.7 / 255 of the exact render across the cuts. Images in [`micromeshes.md`](micromeshes.md). Tangents,
+  vertex colours and a second UV set are still missing.
+- [x] **Draw the visible clusters into the existing G-buffer targets through the scene pipeline** (Photon, SSAO, TAA and post keep
+      working unchanged): Mesh Renderer -> **Micromesh** (+ error in px) draws the mesh as a cut through `scene_lit.frag`, one indexed
+      draw per instance (the cull pass compacts the cut: SDL3 GPU has no indirect-count draw). 81 lit, shadowed rocks: 5.3x to 7.1x
+      fewer triangles per frame for the camera, 10.8x from the air, picture difference 1.5 / 255. Details, the benchmark table and the
+      limits in [`micromeshes.md`](micromeshes.md). Also fixed on the way: a dense mesh without materials re-read its file on
+      every draw of every frame (4 to 8 ms of CPU per draw).
+- [x] **Shadow cascades draw their own coarser cut** (same hierarchy, so no cracks): the sun's cascades are cut at four shadow texels by
+      `shadow_micromesh.vert`, into a **shared index arena** that grows by itself (32 MB for 81 rocks instead of one full-size index buffer
+      per rock). Point and spot shadows still draw the full mesh. Also: non-uniform scale, one hierarchy per sub-mesh, vertex colours
+      carried. The editor viewport renders without shadow maps unless `ViewportSettings::shadows` is on (C ABI v14).
+- [ ] Point and spot shadow maps draw their own coarser cut too (only the sun's cascades do).
+- [ ] Terrain tiles and Nature rocks/trunks are first adopters; foliage stays instanced. (Rocks and trunks can opt in through the Mesh
+      Renderer today; the Nature generator does not switch it on for what it places, and terrain has no cluster path: its baseline is in
+      the benchmark set.)
 
 ### Phase M-3 — Streaming and memory
 
@@ -169,8 +265,8 @@ Each phase ships alone and keeps the old path as a fallback behind a flag.
 
 ### Phase M-5 — Editor integration
 
-- [ ] Inspector toggle "Micromesh" on a Mesh Filter, a stats panel and a debug view (cluster colours,
-      error cut, culled clusters), `UiId` catalogue entries and MCP actions.
+- [x] Inspector toggle "Micromesh" on a Mesh Renderer (reflection exposes `Micromesh` and `Micromesh error (px)`); still open: a stats panel and a debug view (cluster colours,
+      error cut, culled clusters), `UiId` catalogue entries for the toggle and MCP actions.
 - [ ] Nature, Terrain and Water generators export through the cluster build; Nature gets a
       **cluster LOD** option replacing the old billboard-only plan for non-foliage parts.
 - [ ] Docs and headless captures (cluster debug view) in the site.
@@ -197,13 +293,18 @@ Each phase ships alone and keeps the old path as a fallback behind a flag.
 
 ## 8. Suggested order
 
-1. **P-A** (correct Photon: real lights, motion vectors, voxeliser) and **M-0** (RHI indirect, stats), in parallel.
-2. **M-1** cluster build, then **M-2** GPU culling on terrain and rocks.
-3. **P-B**, then **M-3** streaming tied to the world chunks.
-4. **P-C**, **M-5**, and **M-4** only if profiling asks for it.
+Done: **M-0**, **M-1** and **M-2** (Micromeshes, up to single-phase occlusion). From here:
+
+1. **P-A** (correct Photon): the conservative voxeliser first, then motion vectors, then real direct light and the regression scenes.
+   Nothing of Photon is done, and every Micromesh and world item that wants GI waits on it.
+2. **M-5**, the cheap part: the Nature, Terrain and Water generators switching Micromesh on, stats panel and debug view, `UiId`s, site
+   captures. Also the `.micromesh` section in `.caf` (a cache for the first-frame build) and a terrain cluster path to beat the benchmark.
+3. **P-B**, then **M-3** (streaming and compression) tied to the world chunks of the world roadmap.
+4. **P-C**, two-phase occlusion and point/spot shadow cuts, and **M-4** only if profiling asks for it.
 
 ## 9. Related
 
+- [`micromeshes.md`](micromeshes.md): what is built of Micromeshes, with renders from the GPU path.
 - [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md): the content generated for this renderer.
 - [`material-pipeline.md`](material-pipeline.md): POM, displacement and height-derived AO.
 - [`nature-generator-guide.md`](nature-generator-guide.md): vegetation LOD and instancing gaps.

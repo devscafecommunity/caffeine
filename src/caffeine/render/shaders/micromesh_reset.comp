@@ -1,0 +1,9 @@
+#version 450
+
+// Resets the Micromesh index arena: its allocation counter lives in arena[0], so indices start at 1.
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(std430, set = 1, binding = 0) buffer Arena { uint arena[]; };
+
+void main() {
+    arena[0] = 1u;
+}

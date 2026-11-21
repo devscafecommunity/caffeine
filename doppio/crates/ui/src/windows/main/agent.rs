@@ -206,6 +206,34 @@ pub fn run() -> iced::Result {
             }))
         })
         .query(
+            "render_stats",
+            "What the last rendered frame drew and cost (draw calls, triangles, culling, CPU pass times) and GPU capabilities.",
+            |app, _| {
+                let stats = app
+                    .engine
+                    .as_ref()
+                    .and_then(|engine| engine.render_stats().ok())
+                    .unwrap_or_default();
+                Ok(json!({
+                    "triangles": stats.triangles,
+                    "meshes": stats.meshes,
+                    "frustum_culled": stats.frustum_culled,
+                    "draw_calls": stats.draw_calls,
+                    "instanced_draw_calls": stats.instanced_draw_calls,
+                    "gather_ms": stats.gather_ms,
+                    "shadows_ms": stats.shadows_ms,
+                    "opaque_ms": stats.opaque_ms,
+                    "translucent_ms": stats.translucent_ms,
+                    "total_ms": stats.total_ms,
+                    "indirect_draw": stats.indirect_draw,
+                    "graphics_storage_buffers": stats.graphics_storage_buffers,
+                    "compute_storage_write": stats.compute_storage_write,
+                    "mesh_shaders": stats.mesh_shaders,
+                    "gpu_water_draws": stats.gpu_water_draws,
+                }))
+            },
+        )
+        .query(
             "material",
             "The open material: surface, maps, path and dirty state.",
             |app, _| Ok(material_json(app)),
@@ -624,6 +652,31 @@ pub fn run() -> iced::Result {
                     .position(|prefab| prefab.key == key)
                     .ok_or_else(|| format!("unknown prefab \"{key}\""))?;
                 Ok(Message::CreatePrefab(index))
+            },
+        )
+        .action(
+            "scatter_on_terrain",
+            "Scatters a plan on a terrain: pines, boulders, grass... placed by the terrain's slope, wetness and height, one undo step, deterministic for a seed. args: { \"plan_text\"?: string (a scatter plan; else the project file), \"plan_file\"?: string (project-relative, default \"Scatter/default.scatter\", written from the built-in plan if missing), \"seed\"?: number, \"max_instances\"?: number, \"terrain_id\"?: number (default: the selected entity) }",
+            |args| {
+                Ok(Message::ScatterOnTerrain(super::scatter::ScatterRequest {
+                    plan_text: args
+                        .get("plan_text")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    plan_file: args
+                        .get("plan_file")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    seed: args.get("seed").and_then(Value::as_u64),
+                    max_instances: args
+                        .get("max_instances")
+                        .and_then(Value::as_u64)
+                        .map(|n| n.min(u64::from(u32::MAX)) as u32),
+                    terrain: args
+                        .get("terrain_id")
+                        .and_then(Value::as_u64)
+                        .map(|n| n as u32),
+                }))
             },
         )
         .action("open_prefab_palette", "Opens the create-entity palette. No args.", |_| {

@@ -192,6 +192,13 @@ the AO scaled by the material's AO strength; the bake follows both.
 
 Placing a model now writes materials that do more than carry one flat texture.
 
+<figure class="doc-figure">
+  <img src="images/nature/nature-oak-wind.gif" alt="A placed oak swaying in a gust: the crown leans and the leaves shimmer, the trunk base stays still" loading="lazy">
+  <figcaption>A placed oak in the engine, in a steady gust. The crown leans more than the trunk base (sway grows with the height
+  above the origin), the leaf cards shimmer on top of that, and the shadow moves with them. Rendered by
+  <code>./scripts/render-world-docs.sh</code>.</figcaption>
+</figure>
+
 | What | How |
 |---|---|
 | **Bark** | The *Oak*, *Pine* and *Birch* bark choices are **generated**, not the flat library bake: a tileable albedo, a normal map with the height in its alpha (parallax and micro self-shadowing in the furrows) and an occlusion/roughness map. Oak has deep meandering furrows with a little moss in the cracks, pine large plates cut by horizontal cracks, birch smooth pale bark with dark lenticels. One repeat covers the trunk once around. |
@@ -324,6 +331,90 @@ oak crown with varied, curved leaves.
 * Scattering over terrain, biomes and density maps belong to the terrain generator, which is separate.
 
 Scatter, LOD and impostors are planned in [`photoreal-world-roadmap.md`](photoreal-world-roadmap.md).
+
+## 8b. Near-photoreal trees with what exists today
+
+A photoreal tree is not one feature: it is a **silhouette** that is irregular, **bark** with real relief, a crown
+whose leaves differ and shade each other, **light that goes through the leaves**, **motion**, and above all
+**variety** (no two trees alike). The tool already has an answer for most of these; this section is the recipe to
+combine them, then an honest list of what is still short of a close-up photograph.
+
+<table class="doc-table">
+  <thead><tr><th>Ingredient</th><th>Status</th><th>How to get it now</th></tr></thead>
+  <tbody>
+    <tr><td>Irregular skeleton</td><td>Done</td><td><strong>Grow Branches</strong>: <em>Gnarl</em>, <em>Droop</em>, 3-4 levels, <em>Branches start at</em> 0.3-0.4, a high segment budget, different seeds</td></tr>
+    <tr><td>Bark relief and colour</td><td>Done (UV-space)</td><td>generated oak, pine or birch bark: parallax furrows, occlusion in the cracks, moss in oak crevices; stack your own scans with <strong>Texture</strong> nodes</td></tr>
+    <tr><td>Roots and trunk base</td><td>Partial</td><td><strong>Roots</strong> node (flare is geometry, not a blended skirt)</td></tr>
+    <tr><td>Varied leaves</td><td>Done</td><td>4 x 2 leaf atlas, folded and drooping cards, 0.55-1.35x sizes, dark inner leaves</td></tr>
+    <tr><td>Leaf shading</td><td>Done</td><td>baked crown occlusion in the vertex colour, normal map from the card, alpha-tested shadows, <em>translucency</em></td></tr>
+    <tr><td>Motion</td><td>Done</td><td>wind sway shared by trunk and crown, painted flutter on the leaf tips, phase per tree</td></tr>
+    <tr><td>Variety across a forest</td><td>Done in the tool, not yet in the world</td><td>seeded variants (<code>doppio-material variants</code>) and the scatter core (tint, scale, variant per instance)</td></tr>
+    <tr><td>Season, rain, snow, age</td><td>Done</td><td>run-time modifiers on the Mesh Renderer or the material: tint, wetness, snow, age</td></tr>
+    <tr><td>Mass of trees</td><td>Partial</td><td>batched instanced copies; no LOD chain or impostors yet</td></tr>
+  </tbody>
+</table>
+
+### The recipe (a mature broadleaf, about 12 m)
+
+1. **Quality: Detailed.** It adds segments, rounder trunks and the roots; keep the preview on Balanced while you edit.
+2. **Skeleton.** *Grow Branches*: Height 12, Trunk radius 0.35-0.45, Branch levels 4, Branches per limb 4-5, Branch angle
+   40-55, Child length 0.55-0.65, Taper 0.85, **Gnarl 0.4-0.55**, **Droop 0.2-0.3**, Branches start at 0.35, Segment budget
+   4000-6000. Gnarl and droop are what separate a tree from a diagram; change only the seed to get a sibling.
+3. **Trunk.** *Branch Tubes* with ~10-12 sides, then a **Roots** node (6-9 roots, Dive below ground 0.4) merged into the same
+   part so the base flares. Add a *Texture* node after it (see below) instead of one flat bark preset.
+4. **Bark material.** A *Library Material* for the generated oak bark gives relief and occlusion. For a close-up, wire
+   *Texture* nodes in this order into the trunk: **Albedo** (your bark scan, *Per metre* 0.5), **Normal** (the scan's
+   normal map, *Add*), **ORM** (its roughness and occlusion), then a second **Albedo** with a moss or lichen image
+   (*Multiply*, strength 0.4, tint toward green) so the shady lower trunk is not the same colour as the upper limbs.
+   *Per metre* keeps the same texel density on a 12 m trunk and on a 2 m branch.
+5. **Leaves.** *Leaves* on the outer limbs and ~0.45 on the inner ones, **Leaf shapes: Atlas**, Leaf size about 5-7 % of
+   the tree height, Fold 0.35, Droop 0.3, triangle budget 15000-30000. The atlas gives eight shapes and tints; the inner
+   leaves automatically use the dark cell and carry baked occlusion, which is most of the "depth" in the crown.
+6. **Leaf material.** A *Leaf / Petal Texture* with the broadleaf atlas, or your own PNG with alpha through a *Texture*
+   node (it becomes cut-out and casts shadows through its alpha). Add a *Material* node: **Translucency 0.5-0.6, Wind sway
+   0.012 (the same as the trunk), Leaf flutter 0.5-0.7**. The sway must match the trunk's or the leaves detach from the
+   branches.
+7. **Ground contact.** Put the tree on the terrain with *Place on Ground*; scatter *Instance on Points* moss, fern and
+   leaf-litter parts around the base (they place as batched copies with their own wind phase).
+8. **Variants.** Save the recipe and bake eight to sixteen seeds (`doppio-material variants Oak.generator.nature --count 12`)
+   so a stand of trees is not twelve copies. Scale (0.8-1.25) and a tint jitter of a few percent per channel are the second
+   half of the variety; the scatter core generates both per instance.
+
+### Lighting and rendering settings that matter
+
+* A **directional light with cascaded shadows** and the environment sky: leaves look right only when light reaches them
+  from behind. Translucency is what stops a back-lit crown from going black.
+* Keep **alpha-tested shadows** on (default): the crown shades itself and the trunk.
+* Leave **Photon** or ambient occlusion on for contact darkening between the trunk and the ground.
+* Use the **run-time modifiers** instead of re-baking: *Age* 0.2-0.4 on an old tree, *Wetness* after rain (darker bark,
+  glossy leaves), *Snow* by season, a warm *Tint* for autumn.
+
+### What is still short of a close-up photograph
+
+<details>
+  <summary>Honest list, and which roadmap closes each item</summary>
+  <ul>
+    <li><strong>Leaves are cards, not meshes.</strong> At a metre the silhouette is a card with an alpha edge; real 3D leaf meshes for the nearest leaves are planned (section 8, <em>Real 3D leaf meshes</em>).</li>
+    <li><strong>Bark is tiled in UV space.</strong> No knots, peeling plates, broken stubs or moss that follows the shady side: the mesh bake that drives the Rock Surface could do it (<em>Bark from the mesh bake</em>).</li>
+    <li><strong>One material per mesh.</strong> A trunk and its branches share one bark; material slots per submesh need a C ABI version.</li>
+    <li><strong>No subsurface scattering model.</strong> Translucency is a back-lit term, not light diffusing inside a leaf or bark.</li>
+    <li><strong>No LOD chain or impostors.</strong> A hero tree is expensive and a forest of them is not possible yet (<a href="photoreal-world-roadmap.md">photoreal-world-roadmap.md</a>, phase 4).</li>
+    <li><strong>Nothing places trees over terrain on its own.</strong> The scatter core exists and is tested, but no editor tool or terrain mask feeds it yet (phases 1, 2 and 6).</li>
+    <li><strong>Global illumination is screen-space for direct light.</strong> Light bouncing under a crown is approximate until Photon injects the real lights (<a href="graphics-roadmap.md">graphics-roadmap.md</a>, phase P-A).</li>
+    <li><strong>Dense geometry.</strong> A 100k-triangle trunk with real bark geometry needs the cluster renderer, and it exists: turn on <strong>Micromesh</strong> in the Mesh Renderer of a placed opaque part (rocks, trunks, boulders) and it draws as a GPU-selected cluster cut with shadows, vertex colours and sub-meshes (see <a href="micromeshes.md">micromeshes.md</a>; 6x fewer triangles on dense rocks, 3x on a dense forest). The generator does not switch it on for the parts it places yet, and alpha-tested foliage cards and wind-animated parts stay on the instanced path by design.</li>
+  </ul>
+</details>
+
+### Quality checklist before you place a hero tree
+
+| Check | Target |
+|---|---|
+| Triangles | 40-120 k for a hero tree at Detailed, 8-20 k at Balanced, under 2 k at Stylized |
+| Silhouette | no two limbs parallel, taper and gnarl visible from 30 m |
+| Bark | relief visible in grazing light, at least two colour layers, no visible tiling from 5 m |
+| Crown | dark interior, bright rim, sun glowing through leaves from behind |
+| Motion | trunk and crown sway together, only the tips flutter |
+| Forest | 8+ variants, per-instance scale and tint, wetness or age set by the world, not baked |
 
 ## 9. Regenerating the images
 

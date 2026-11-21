@@ -50,6 +50,15 @@ public:
     void drawInstanced(u32 vertexCount, u32 instanceCount,
                        u32 firstVertex = 0, u32 firstInstance = 0);
 
+    /// Draws from arguments stored in `args` (a `BufferUsage::Indirect`/`IndirectWrite` buffer):
+    /// `drawCount` consecutive `IndirectDrawArgs` / `IndirectIndexedDrawArgs` starting at `offset`.
+    void drawIndirect(Buffer* args, u32 offset = 0, u32 drawCount = 1);
+    void drawIndexedIndirect(Buffer* args, u32 offset = 0, u32 drawCount = 1);
+    /// Read-only storage buffers for the vertex / fragment stage (`BufferUsage::GraphicsStorage*`),
+    /// bound at set 0 next to the samplers of that stage.
+    void bindVertexStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+    void bindFragmentStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+
     void pushUniformData(ShaderStage stage, u32 slot, const void* data, u32 size);
 
     // Compute. `beginComputePass` accepts one or more read-write storage
@@ -59,6 +68,12 @@ public:
     void beginComputePass(Texture* storageTexture = nullptr, u32 mipLevel = 0, u32 layer = 0);
     /// Multiple read-write storage textures (slots 0..count-1), mip 0/layer 0.
     void beginComputePass(Texture* const* storageTextures, u32 count);
+    /// Compute pass with read-write storage **buffers** (and optionally textures): the pass that
+    /// builds draw arguments and visible lists. Buffers need a `StorageWrite`-capable usage.
+    void beginComputePass(Texture* const* storageTextures, u32 textureCount,
+                          Buffer* const* storageBuffers, u32 bufferCount);
+    /// Dispatch with group counts read from `args` (a `BufferUsage::Indirect*` buffer).
+    void dispatchIndirect(Buffer* args, u32 offset = 0);
     void endComputePass();
     void bindComputePipeline(ComputePipeline* pipeline);
     void bindComputeStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);

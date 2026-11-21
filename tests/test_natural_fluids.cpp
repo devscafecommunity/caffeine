@@ -221,6 +221,43 @@ TEST_CASE("Natural fluids core runs the four product levels", "[naturalfluids][s
     REQUIRE(fluid.volume().temperatureCenterOfMass().z > 2.0f);
 }
 
+TEST_CASE("Authored waves that would fold the surface are scaled back", "[fluid][water]") {
+    // Eight steep waves heading the same way: sum(Q k A) is about 3, far past the point where the
+    // surface folds over itself (negative Jacobian, flipped normals, dark patches).
+    WaveSettings settings;
+    settings.quality = WaterQuality::Realistic;
+    for (int i = 0; i < 8; ++i) {
+        GerstnerWave wave;
+        wave.direction = Vec2(1.0f, 0.1f * static_cast<f32>(i)).normalized();
+        wave.wavelength = 6.0f + 1.5f * static_cast<f32>(i);
+        wave.amplitude = 0.45f;
+        wave.steepness = 1.0f;
+        wave.phase = 0.7f * static_cast<f32>(i);
+        settings.explicitWaves.push_back(wave);
+    }
+    WaveField field;
+    field.configure(settings);
+    REQUIRE(field.waves().size() == 8);
+    f32 total = 0.0f;
+    for (const GerstnerWave& wave : field.waves()) {
+        total += wave.steepness * (6.28318530718f / wave.wavelength) * wave.amplitude;
+    }
+    CHECK(total <= 0.951f);
+    // No fold anywhere: the surface keeps its orientation (positive Jacobian, upward normal).
+    f32 minJacobian = 1e9f;
+    f32 minNormalY = 1e9f;
+    for (int ix = 0; ix < 60; ++ix) {
+        for (int iz = 0; iz < 60; ++iz) {
+            const WaveSample sample =
+                field.sample(static_cast<f32>(ix) * 0.7f, static_cast<f32>(iz) * 0.7f, 2.0f);
+            minJacobian = std::min(minJacobian, sample.jacobian);
+            minNormalY = std::min(minNormalY, sample.normal.y);
+        }
+    }
+    CHECK(minJacobian > 0.0f);
+    CHECK(minNormalY > 0.0f);
+}
+
 TEST_CASE("Authored Gerstner waves replace the generated spectrum", "[fluid][water]") {
     WaveSettings settings;
     settings.quality = WaterQuality::Realistic;
@@ -300,4 +337,21 @@ TEST_CASE("Mesh Renderer modifiers survive a scene round trip and old scenes sti
     });
     REQUIRE(found);
     std::filesystem::remove(scenePath);
+}
+
+TEST_CASE("Natural fluids: a new surface never reuses the geometry revision of a deleted one", "[naturalfluids][scene]") {
+    Scene::resetNaturalFluidRuntime();
+    World world;
+    Entity first = addFluidEntity(world, realisticWater(24, 32.0f));
+    Scene::tickNaturalFluids(world, 1.0f / 60.0f, true);
+    const u32 firstRevision = world.get<MeshGeometryComponent>(first)->revision;
+    Scene::resetNaturalFluidRuntime();
+    // The mesh cache is keyed by entity id and ids are reused: the second surface must not look
+    // "already uploaded" because its revision matches the first one's.
+    World other;
+    Entity second = addFluidEntity(other, realisticWater(24, 32.0f));
+    Scene::tickNaturalFluids(other, 1.0f / 60.0f, true);
+    const u32 secondRevision = other.get<MeshGeometryComponent>(second)->revision;
+    CHECK(secondRevision > firstRevision);
+    Scene::resetNaturalFluidRuntime();
 }

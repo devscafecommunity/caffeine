@@ -15,7 +15,7 @@ mod water;
 pub use material::{Material, MaterialAlphaMode, MaterialPreset};
 use material::{RawMaterial, RawMaterialPresetInfo};
 use terrain::RawTerrain;
-pub use terrain::Terrain;
+pub use terrain::{ScatterClass, ScatterInstance, ScatterResult, Terrain, TerrainMaskInfo};
 use water::RawWater;
 pub use water::{Water, WaterWave, MAX_WATER_WAVES};
 
@@ -87,6 +87,8 @@ pub struct ViewportSettings {
     pub anti_aliasing: AntiAliasing,
     /// Internal supersampling factor, clamped by the engine to [0.5, 2.0].
     pub render_scale: f32,
+    /// Render the lights' shadow maps in the viewport (off by default, as in the editor; C ABI v14).
+    pub shadows: bool,
 }
 
 impl Default for ViewportSettings {
@@ -95,8 +97,110 @@ impl Default for ViewportSettings {
             show_grid: true,
             anti_aliasing: AntiAliasing::Fxaa,
             render_scale: 1.5,
+            shadows: false,
         }
     }
+}
+
+/// The Micromesh hierarchy of a mesh as bytes (the `.micromesh` section) with a summary.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MicromeshBake {
+    pub bytes: Vec<u8>,
+    pub source_triangles: u32,
+    pub clusters: u32,
+    pub levels: u32,
+    pub root_clusters: u32,
+    pub max_cluster_triangles: u32,
+    pub max_error: f32,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawMicromeshStats {
+    source_triangles: u32,
+    clusters: u32,
+    levels: u32,
+    root_clusters: u32,
+    max_cluster_triangles: u32,
+    max_error: f32,
+}
+
+/// What the last rendered frame drew and cost (times are CPU-side), and GPU capabilities.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RenderStats {
+    pub triangles: u64,
+    pub meshes: u32,
+    pub frustum_culled: u32,
+    pub draw_calls: u32,
+    pub instanced_draw_calls: u32,
+    pub gather_ms: f32,
+    pub shadows_ms: f32,
+    pub opaque_ms: f32,
+    pub translucent_ms: f32,
+    pub total_ms: f32,
+    pub indirect_draw: bool,
+    pub graphics_storage_buffers: bool,
+    pub compute_storage_write: bool,
+    pub mesh_shaders: bool,
+    /// Water surfaces whose waves run in the vertex shader (C ABI v13).
+    pub gpu_water_draws: u32,
+    /// Meshes drawn as a GPU-selected Micromesh cut (C ABI v14).
+    pub micromesh_draws: u32,
+}
+
+/// What the last frame's Micromesh draws kept (C ABI v14). Reading it waits for the GPU.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MicromeshFrameStats {
+    pub draws: u32,
+    pub clusters: u32,
+    /// Triangles of the camera's cut.
+    pub triangles: u64,
+    pub source_triangles: u64,
+    /// Views cut this frame: the camera and each shadow cascade.
+    pub views: u32,
+    /// Indices every view's cut took from the shared index arena, and its size.
+    pub arena_used: u32,
+    pub arena_capacity: u32,
+    /// Cuts that did not fit in the arena and were not drawn this frame.
+    pub overflowed: u32,
+    /// The camera's cut was tested against last frame's depth (occlusion culling).
+    pub occlusion: bool,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawMicromeshFrameStats {
+    draws: u32,
+    clusters: u32,
+    triangles: u64,
+    source_triangles: u64,
+    views: u32,
+    arena_used: u32,
+    arena_capacity: u32,
+    overflowed: u32,
+    occlusion: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawRenderStats {
+    triangles: u64,
+    meshes: u32,
+    frustum_culled: u32,
+    draw_calls: u32,
+    instanced_draw_calls: u32,
+    gather_ms: f32,
+    shadows_ms: f32,
+    opaque_ms: f32,
+    translucent_ms: f32,
+    total_ms: f32,
+    indirect_draw: i32,
+    graphics_storage_buffers: i32,
+    compute_storage_write: i32,
+    mesh_shaders: i32,
+    gpu_water_draws: u32,
+    micromesh_draws: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +428,7 @@ struct RawViewportSettings {
     show_grid: i32,
     anti_aliasing: i32,
     render_scale: f32,
+    shadows: i32,
 }
 
 impl From<RawViewportSettings> for ViewportSettings {
@@ -332,6 +437,7 @@ impl From<RawViewportSettings> for ViewportSettings {
             show_grid: raw.show_grid != 0,
             anti_aliasing: AntiAliasing::from_raw(raw.anti_aliasing),
             render_scale: raw.render_scale,
+            shadows: raw.shadows != 0,
         }
     }
 }
@@ -342,6 +448,7 @@ impl From<ViewportSettings> for RawViewportSettings {
             show_grid: i32::from(settings.show_grid),
             anti_aliasing: settings.anti_aliasing.raw(),
             render_scale: settings.render_scale,
+            shadows: i32::from(settings.shadows),
         }
     }
 }
@@ -463,9 +570,90 @@ type SetTerrainFn =
     unsafe extern "C" fn(*mut c_void, u32, *const RawTerrain, *const f32, *const u8) -> i32;
 type GetTerrainFn = unsafe extern "C" fn(*const c_void, u32, *mut RawTerrain) -> i32;
 type TerrainHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
+type SetTerrainMaskFn =
+    unsafe extern "C" fn(*mut c_void, u32, *const c_char, u32, u32, *const u8) -> i32;
+type TerrainMaskCountFn = unsafe extern "C" fn(*const c_void, u32, *mut u32) -> i32;
+type TerrainMaskAtFn =
+    unsafe extern "C" fn(*const c_void, u32, u32, *mut RawTerrainMaskInfo) -> i32;
+type TerrainMaskFn =
+    unsafe extern "C" fn(*const c_void, u32, *const c_char, f32, f32, *mut f32) -> i32;
+type TerrainMaskRectFn = unsafe extern "C" fn(
+    *const c_void,
+    u32,
+    *const c_char,
+    f32,
+    f32,
+    f32,
+    f32,
+    u32,
+    u32,
+    *mut u8,
+) -> i32;
+type TerrainNormalFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
+type ScatterTerrainFn = unsafe extern "C" fn(
+    *const c_void,
+    u32,
+    u64,
+    *const RawScatterClass,
+    u32,
+    *const c_char,
+    *const f32,
+    *mut RawScatterInstance,
+    u32,
+    *mut u32,
+) -> i32;
+type BiomeCheckFn = unsafe extern "C" fn(*const c_char, *mut c_char, u32) -> i32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawScatterClass {
+    id: u32,
+    priority: i32,
+    cell_size: f32,
+    radius: f32,
+    density: f32,
+    min_scale: f32,
+    max_scale: f32,
+    tilt_to_normal: f32,
+    sink: f32,
+    tint_jitter: f32,
+    variants: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawScatterInstance {
+    class_id: u32,
+    variant: u32,
+    position: [f32; 3],
+    up: [f32; 3],
+    rotation_degrees: [f32; 3],
+    scale: f32,
+    tint: [f32; 3],
+    seed: u64,
+}
+
+#[repr(C)]
+struct RawTerrainMaskInfo {
+    name: [c_char; 32],
+    resolution_x: u32,
+    resolution_z: u32,
+    builtin: i32,
+}
 type SetWaterFn = unsafe extern "C" fn(*mut c_void, u32, *const RawWater) -> i32;
 type GetWaterFn = unsafe extern "C" fn(*const c_void, u32, *mut RawWater) -> i32;
 type WaterHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
+type RenderStatsFn = unsafe extern "C" fn(*const c_void, *mut RawRenderStats) -> i32;
+type MicromeshStatsFn = unsafe extern "C" fn(*const c_void, *mut RawMicromeshFrameStats) -> i32;
+type MicromeshBuildFn = unsafe extern "C" fn(
+    *const f32,
+    u32,
+    *const u32,
+    u32,
+    *mut RawMicromeshStats,
+    *mut *mut u8,
+    *mut usize,
+) -> i32;
 type PreviewLightFn = unsafe extern "C" fn(*mut c_void, f32, f32, f32, i32) -> i32;
 type PreviewPollFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> i32;
 type DryadAvailableFn = unsafe extern "C" fn() -> i32;
@@ -583,8 +771,19 @@ struct Functions {
     set_terrain: Option<SetTerrainFn>,
     get_terrain: Option<GetTerrainFn>,
     terrain_height: Option<TerrainHeightFn>,
+    set_terrain_mask: Option<SetTerrainMaskFn>,
+    terrain_mask_count: Option<TerrainMaskCountFn>,
+    terrain_mask_at: Option<TerrainMaskAtFn>,
+    terrain_mask: Option<TerrainMaskFn>,
+    terrain_mask_rect: Option<TerrainMaskRectFn>,
+    terrain_normal: Option<TerrainNormalFn>,
+    scatter_terrain: Option<ScatterTerrainFn>,
+    biome_check: Option<BiomeCheckFn>,
     get_water: Option<GetWaterFn>,
     water_height: Option<WaterHeightFn>,
+    render_stats: Option<RenderStatsFn>,
+    micromesh_stats: Option<MicromeshStatsFn>,
+    micromesh_build: Option<MicromeshBuildFn>,
     dryad_available: Option<DryadAvailableFn>,
     run_dryad: Option<RunDryadFn>,
 }
@@ -770,9 +969,26 @@ impl Engine {
             set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
             get_terrain: unsafe { load_symbol(library, b"caffeine_session_terrain\0") },
             terrain_height: unsafe { load_symbol(library, b"caffeine_session_terrain_height\0") },
+            set_terrain_mask: unsafe {
+                load_symbol(library, b"caffeine_session_set_terrain_mask\0")
+            },
+            terrain_mask_count: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_mask_count\0")
+            },
+            terrain_mask_at: unsafe { load_symbol(library, b"caffeine_session_terrain_mask_at\0") },
+            terrain_mask: unsafe { load_symbol(library, b"caffeine_session_terrain_mask\0") },
+            terrain_mask_rect: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_mask_rect\0")
+            },
+            terrain_normal: unsafe { load_symbol(library, b"caffeine_session_terrain_normal\0") },
+            scatter_terrain: unsafe { load_symbol(library, b"caffeine_session_scatter_terrain\0") },
+            biome_check: unsafe { load_symbol(library, b"caffeine_biome_check\0") },
             set_water: unsafe { load_symbol(library, b"caffeine_session_set_water\0") },
             get_water: unsafe { load_symbol(library, b"caffeine_session_water\0") },
             water_height: unsafe { load_symbol(library, b"caffeine_session_water_height\0") },
+            render_stats: unsafe { load_symbol(library, b"caffeine_session_render_stats\0") },
+            micromesh_stats: unsafe { load_symbol(library, b"caffeine_session_micromesh_stats\0") },
+            micromesh_build: unsafe { load_symbol(library, b"caffeine_micromesh_build\0") },
             dryad_available: unsafe { load_symbol(library, b"caffeine_dryad_available\0") },
             run_dryad: unsafe { load_symbol(library, b"caffeine_session_run_dryad\0") },
         };
@@ -1420,6 +1636,216 @@ impl Engine {
     }
 
     /// World-space height of a terrain at local (x, z) metres from its corner.
+    /// Stores or replaces a terrain mask: `data` is `resolution[0] * resolution[1]` bytes, row-major (z rows),
+    /// 0..255 for 0..1, on a grid of its own (C ABI v15). Names are 1 to 31 letters, digits, `_` or `-`; the built-in
+    /// names (`height`, `slope`, `curvature`) are taken.
+    pub fn set_terrain_mask(
+        &mut self,
+        entity: u32,
+        name: &str,
+        resolution: [u32; 2],
+        data: &[u8],
+    ) -> EngineResult<()> {
+        let set = self.functions.set_terrain_mask.ok_or(EngineError::Error)?;
+        if data.len() != resolution[0] as usize * resolution[1] as usize {
+            return Err(EngineError::InvalidArgument);
+        }
+        let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe {
+            set(
+                self.session,
+                entity,
+                name.as_ptr(),
+                resolution[0],
+                resolution[1],
+                data.as_ptr(),
+            )
+        })
+    }
+
+    /// Removes a stored mask.
+    pub fn remove_terrain_mask(&mut self, entity: u32, name: &str) -> EngineResult<()> {
+        let set = self.functions.set_terrain_mask.ok_or(EngineError::Error)?;
+        let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
+        result(unsafe { set(self.session, entity, name.as_ptr(), 0, 0, std::ptr::null()) })
+    }
+
+    /// The masks of a terrain: the three built-ins first, then the stored ones.
+    pub fn terrain_masks(&self, entity: u32) -> EngineResult<Vec<TerrainMaskInfo>> {
+        let count = self
+            .functions
+            .terrain_mask_count
+            .ok_or(EngineError::Error)?;
+        let at = self.functions.terrain_mask_at.ok_or(EngineError::Error)?;
+        let mut n = 0u32;
+        result(unsafe { count(self.session, entity, &mut n) })?;
+        let mut masks = Vec::with_capacity(n as usize);
+        for index in 0..n {
+            let mut raw = RawTerrainMaskInfo {
+                name: [0; 32],
+                resolution_x: 0,
+                resolution_z: 0,
+                builtin: 0,
+            };
+            result(unsafe { at(self.session, entity, index, &mut raw) })?;
+            let name = unsafe { CStr::from_ptr(raw.name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            masks.push(TerrainMaskInfo {
+                name,
+                resolution: [raw.resolution_x, raw.resolution_z],
+                builtin: raw.builtin != 0,
+            });
+        }
+        Ok(masks)
+    }
+
+    /// One mask at (x, z) metres from the terrain's corner, 0..1.
+    pub fn terrain_mask(&self, entity: u32, name: &str, x: f32, z: f32) -> EngineResult<f32> {
+        let sample = self.functions.terrain_mask.ok_or(EngineError::Error)?;
+        let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
+        let mut value = 0.0f32;
+        result(unsafe { sample(self.session, entity, name.as_ptr(), x, z, &mut value) })?;
+        Ok(value)
+    }
+
+    /// A rectangle `[x0, z0, x1, z1]` (metres from the corner) resampled to `size[0] x size[1]` bytes, row-major,
+    /// row 0 at z0.
+    pub fn terrain_mask_rect(
+        &self,
+        entity: u32,
+        name: &str,
+        rect: [f32; 4],
+        size: [u32; 2],
+    ) -> EngineResult<Vec<u8>> {
+        let sample = self.functions.terrain_mask_rect.ok_or(EngineError::Error)?;
+        let name = CString::new(name).map_err(|_| EngineError::InvalidArgument)?;
+        let mut out = vec![0u8; size[0] as usize * size[1] as usize];
+        result(unsafe {
+            sample(
+                self.session,
+                entity,
+                name.as_ptr(),
+                rect[0],
+                rect[1],
+                rect[2],
+                rect[3],
+                size[0],
+                size[1],
+                out.as_mut_ptr(),
+            )
+        })?;
+        Ok(out)
+    }
+
+    /// Scatters `classes` over the terrain of `entity` (C ABI v16): where to put trees, rocks, grass, by the terrain's
+    /// height, normal and masks and the biome table `biome_text` (empty for none; see `biome_check`). `region` is
+    /// `[x0, z0, x1, z1]` in metres from the corner (`None` for all of it); at most `max` instances are returned,
+    /// `total` says how many the region holds. Deterministic: the same seed gives the same instances.
+    pub fn scatter_terrain(
+        &self,
+        entity: u32,
+        seed: u64,
+        classes: &[ScatterClass],
+        biome_text: &str,
+        region: Option<[f32; 4]>,
+        max: u32,
+    ) -> EngineResult<ScatterResult> {
+        let scatter = self.functions.scatter_terrain.ok_or(EngineError::Error)?;
+        let raw_classes: Vec<RawScatterClass> = classes
+            .iter()
+            .map(|c| RawScatterClass {
+                id: c.id,
+                priority: c.priority,
+                cell_size: c.cell_size,
+                radius: c.radius,
+                density: c.density,
+                min_scale: c.min_scale,
+                max_scale: c.max_scale,
+                tilt_to_normal: c.tilt_to_normal,
+                sink: c.sink,
+                tint_jitter: c.tint_jitter,
+                variants: c.variants,
+            })
+            .collect();
+        let biome = CString::new(biome_text).map_err(|_| EngineError::InvalidArgument)?;
+        let region_ptr = region.as_ref().map_or(std::ptr::null(), |r| r.as_ptr());
+        let mut total = 0u32;
+        // First count, then fill exactly (the count is cheap next to the entities made from it).
+        result(unsafe {
+            scatter(
+                self.session,
+                entity,
+                seed,
+                raw_classes.as_ptr(),
+                raw_classes.len() as u32,
+                biome.as_ptr(),
+                region_ptr,
+                std::ptr::null_mut(),
+                0,
+                &mut total,
+            )
+        })?;
+        let want = total.min(max);
+        let mut raw = vec![RawScatterInstance::default(); want as usize];
+        let mut again = 0u32;
+        result(unsafe {
+            scatter(
+                self.session,
+                entity,
+                seed,
+                raw_classes.as_ptr(),
+                raw_classes.len() as u32,
+                biome.as_ptr(),
+                region_ptr,
+                raw.as_mut_ptr(),
+                want,
+                &mut again,
+            )
+        })?;
+        Ok(ScatterResult {
+            instances: raw
+                .iter()
+                .map(|r| ScatterInstance {
+                    class_id: r.class_id,
+                    variant: r.variant,
+                    position: r.position,
+                    up: r.up,
+                    rotation_degrees: r.rotation_degrees,
+                    scale: r.scale,
+                    tint: r.tint,
+                    seed: r.seed,
+                })
+                .collect(),
+            total,
+        })
+    }
+
+    /// Checks a biome table: `Ok`, or the reason (with the line number).
+    pub fn biome_check(&self, text: &str) -> Result<(), String> {
+        let check = self
+            .functions
+            .biome_check
+            .ok_or_else(|| "the engine library needs C ABI v16".to_owned())?;
+        let text = CString::new(text).map_err(|_| "the text contains a NUL".to_owned())?;
+        let mut error = [0 as c_char; 256];
+        let code = unsafe { check(text.as_ptr(), error.as_mut_ptr(), error.len() as u32) };
+        if code == 0 {
+            return Ok(());
+        }
+        Err(unsafe { CStr::from_ptr(error.as_ptr()) }
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    /// The unit surface normal of a terrain at (x, z) metres from its corner.
+    pub fn terrain_normal(&self, entity: u32, x: f32, z: f32) -> EngineResult<[f32; 3]> {
+        let sample = self.functions.terrain_normal.ok_or(EngineError::Error)?;
+        let mut normal = [0.0f32; 3];
+        result(unsafe { sample(self.session, entity, x, z, normal.as_mut_ptr()) })?;
+        Ok(normal)
+    }
+
     pub fn terrain_height(&self, entity: u32, x: f32, z: f32) -> EngineResult<f32> {
         let sample = self.functions.terrain_height.ok_or(EngineError::Error)?;
         let mut height = 0.0f32;
@@ -1442,6 +1868,92 @@ impl Engine {
     }
 
     /// Surface height of a water entity at a rest position, as the engine simulates it.
+    /// Builds the Micromesh cluster hierarchy of an indexed triangle mesh (C ABI v12): clusters of at
+    /// most 128 triangles, simplified levels, crack-free cuts. Deterministic and offline work: call it
+    /// from a bake, not per frame.
+    pub fn micromesh_build(
+        &self,
+        positions: &[[f32; 3]],
+        indices: &[u32],
+    ) -> EngineResult<MicromeshBake> {
+        let build = self.functions.micromesh_build.ok_or(EngineError::Error)?;
+        let mut stats = RawMicromeshStats::default();
+        let mut bytes: *mut u8 = std::ptr::null_mut();
+        let mut size = 0usize;
+        result(unsafe {
+            build(
+                positions.as_ptr().cast(),
+                positions.len() as u32,
+                indices.as_ptr(),
+                indices.len() as u32,
+                &mut stats,
+                &mut bytes,
+                &mut size,
+            )
+        })?;
+        let data = if bytes.is_null() || size == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(bytes, size) }.to_vec()
+        };
+        if !bytes.is_null() {
+            unsafe { (self.functions.free_bytes)(bytes.cast()) };
+        }
+        Ok(MicromeshBake {
+            bytes: data,
+            source_triangles: stats.source_triangles,
+            clusters: stats.clusters,
+            levels: stats.levels,
+            root_clusters: stats.root_clusters,
+            max_cluster_triangles: stats.max_cluster_triangles,
+            max_error: stats.max_error,
+        })
+    }
+
+    /// What the last rendered frame drew and cost, and what the GPU supports (C ABI v11).
+    pub fn render_stats(&self) -> EngineResult<RenderStats> {
+        let query = self.functions.render_stats.ok_or(EngineError::Error)?;
+        let mut raw = RawRenderStats::default();
+        result(unsafe { query(self.session, &mut raw) })?;
+        Ok(RenderStats {
+            triangles: raw.triangles,
+            meshes: raw.meshes,
+            frustum_culled: raw.frustum_culled,
+            draw_calls: raw.draw_calls,
+            instanced_draw_calls: raw.instanced_draw_calls,
+            gather_ms: raw.gather_ms,
+            shadows_ms: raw.shadows_ms,
+            opaque_ms: raw.opaque_ms,
+            translucent_ms: raw.translucent_ms,
+            total_ms: raw.total_ms,
+            indirect_draw: raw.indirect_draw != 0,
+            graphics_storage_buffers: raw.graphics_storage_buffers != 0,
+            compute_storage_write: raw.compute_storage_write != 0,
+            mesh_shaders: raw.mesh_shaders != 0,
+            gpu_water_draws: raw.gpu_water_draws,
+            micromesh_draws: raw.micromesh_draws,
+        })
+    }
+
+    /// What the last frame's Micromesh draws kept (C ABI v14). Blocks until the GPU is done: for tools and
+    /// tests, not for every frame.
+    pub fn micromesh_frame_stats(&self) -> EngineResult<MicromeshFrameStats> {
+        let query = self.functions.micromesh_stats.ok_or(EngineError::Error)?;
+        let mut raw = RawMicromeshFrameStats::default();
+        result(unsafe { query(self.session, &mut raw) })?;
+        Ok(MicromeshFrameStats {
+            draws: raw.draws,
+            clusters: raw.clusters,
+            triangles: raw.triangles,
+            source_triangles: raw.source_triangles,
+            views: raw.views,
+            arena_used: raw.arena_used,
+            arena_capacity: raw.arena_capacity,
+            overflowed: raw.overflowed,
+            occlusion: raw.occlusion != 0,
+        })
+    }
+
     pub fn water_height(&self, entity: u32, x: f32, z: f32) -> EngineResult<f32> {
         let sample = self.functions.water_height.ok_or(EngineError::Error)?;
         let mut height = 0.0f32;
@@ -1947,12 +2459,15 @@ mod tests {
                 show_grid: false,
                 anti_aliasing: AntiAliasing::Taa,
                 render_scale: 9.0,
+                shadows: true,
             })
             .unwrap();
         let clamped = engine.viewport_settings().unwrap();
         assert!(!clamped.show_grid);
         assert_eq!(clamped.anti_aliasing, AntiAliasing::Taa);
         assert!(clamped.render_scale <= 2.0);
+        assert!(clamped.shadows);
+        assert!(!defaults.shadows);
         engine.set_viewport_settings(defaults).unwrap();
 
         let path = std::env::temp_dir().join("caffeine_capi_rust_roundtrip.caf");

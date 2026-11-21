@@ -565,6 +565,18 @@ impl App {
             ));
             return;
         }
+        // The masks the graph makes (flow, wetness, erosion wear and deposit) go with the terrain, so scatter and
+        // the biome table can place by them. An engine without C ABI v15 just has none.
+        let sent: Vec<String> = model
+            .masks
+            .iter()
+            .filter(|(name, bytes)| {
+                engine
+                    .set_terrain_mask(id, name, [res as u32, res as u32], bytes)
+                    .is_ok()
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         // The four layer pictures are the project's textures, written from the Output node.
         if let Some(type_id) = super::component_type_id(engine, "Terrain") {
             for (i, path) in layers.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
@@ -615,8 +627,9 @@ impl App {
         }
         self.terraingen.dirty = false;
         self.terraingen.status = Some(format!(
-            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there",
-            model.sea_metres
+            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there. Masks: height, slope, curvature{}",
+            model.sea_metres,
+            sent.iter().map(|n| format!(", {n}")).collect::<String>()
         ));
         self.refresh_components();
         self.commit("Place terrain", None);

@@ -1,0 +1,191 @@
+#version 450
+
+// Micromeshes in the scene: the compacted cut of every instance of one mesh, for one view (the camera or one
+// shadow cascade). The same cluster tests as micromesh_cull.comp (cut error, frustum, back-face cone), but a
+// selected cluster appends its indices to a shared index ARENA, so every instance is ONE indexed draw and the
+// memory is the visible cut's, not the whole mesh's per object. (SDL3 GPU has no indirect-count draw, and a
+// multi-draw of ~1000 clusters costs more CPU than the triangles it saves.)
+//
+// One dispatch per mode, in this order (each is its own compute pass, which is the barrier between them):
+//   3 reset   : thread = instance. Writes the slot's draw command {0, 1, 0, 0, instance} and its counters.
+//   0 count   : thread = instance * clusterCount + cluster. Adds the selected cluster's index count to the slot.
+//   1 reserve : thread = instance. Takes `count` indices from the arena (atomic); too big for what is left:
+//               the slot draws nothing this frame.
+//   2 copy    : like count, but copies the indices to arena[firstIndex + cursor].
+// Slot layout (8 uints, the first five are the indirect draw command): 0 indexCount, 1 instanceCount,
+// 2 firstIndex, 3 vertexOffset, 4 firstInstance (= the instance, for the vertex shader's gl_InstanceIndex),
+// 5 selected clusters, 6 copy cursor, 7 overflow flag. arena[0] is the arena's allocation counter.
+// Flags (params.y): 1 frustum, 2 cone, 4 view-dependent error, 8 occlusion against the previous frame's HZB.
+//
+// Keep the cluster layout in sync with render/MicromeshGpu.cpp and micromesh/Micromesh.cpp::selectCut.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Five vec4 per cluster:
+//   0 bounds sphere (xyz, r)         1 own lod sphere (xyz, r)       2 parent lod sphere (xyz, r)
+//   3 cone (axis xyz, cutoff)        4 (error, parentError, firstIndex, indexCount) as bits
+layout(std430, set = 0, binding = 0) readonly buffer Clusters { vec4 clusters[]; };
+// Four vec4 per instance: the first three rows of the object-to-world matrix, then (largest scale,
+// 1 when the scale is uniform else 0, 0, 0).
+layout(std430, set = 0, binding = 1) readonly buffer Instances { vec4 instances[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Source { uint sourceIndices[]; };
+layout(std430, set = 0, binding = 3) readonly buffer Hzb { float hzb[]; };   // farthest-depth pyramid of last frame
+layout(std430, set = 1, binding = 0) buffer Args { uint args[]; };    // 8 uints per slot
+layout(std430, set = 1, binding = 1) buffer Arena { uint arena[]; };
+
+layout(set = 2, binding = 0) uniform CullUBO {
+    vec4 planes[6];  // inside is dot(n, p) + w >= 0
+    vec4 camera;     // xyz position, w error threshold
+    uvec4 params;    // x cluster count, y flags: 1 frustum, 2 cone, 4 view-dependent error, z instance count, w mode
+    uvec4 slots;     // x first slot of this view, y arena capacity in indices
+    mat4 prevView;   // last frame's view matrix (occlusion)
+    vec4 prevProj;   // last frame's P00, P11, P22, P23
+    uvec4 hzbInfo;   // x width, y height, z levels
+    uvec4 hzbOffsets[4];  // offset of each level in the pyramid, 16 levels
+} u;
+
+const float kRootError = 3.0e38;
+
+uint hzbOffset(uint level) { return u.hzbOffsets[level >> 2u][level & 3u]; }
+
+// True when the world-space sphere is hidden behind what last frame's depth buffer shows: its nearest depth is
+// beyond the farthest depth of every texel it covers. Anything that cannot be decided says "visible": a sphere
+// near or behind the camera, one that reaches past the screen edge, or one whose footprint is off the image.
+bool occluded(vec3 center, float radius) {
+    vec3 v = (u.prevView * vec4(center, 1.0)).xyz;
+    float w = -v.z;
+    float nearest = w - radius;
+    if (nearest <= 0.15) return false;
+    float span = sqrt(max(w * w - radius * radius, 1.0e-4));
+    vec2 ndc = vec2(u.prevProj.x * v.x, u.prevProj.y * v.y) / w;
+    vec2 extent = vec2(u.prevProj.x, u.prevProj.y) * radius / span;
+    vec2 uvMin = vec2(ndc.x - extent.x, -(ndc.y + extent.y)) * 0.5 + 0.5;
+    vec2 uvMax = vec2(ndc.x + extent.x, -(ndc.y - extent.y)) * 0.5 + 0.5;
+    vec2 size = vec2(u.hzbInfo.xy);
+    vec2 pad = vec2(1.5) / size;   // TAA jitter and rounding
+    uvMin -= pad;
+    uvMax += pad;
+    if (uvMin.x < 0.0 || uvMin.y < 0.0 || uvMax.x > 1.0 || uvMax.y > 1.0) return false;
+    vec2 pxMin = uvMin * size;
+    vec2 pxMax = uvMax * size;
+    float widest = max(pxMax.x - pxMin.x, pxMax.y - pxMin.y);
+    uint level = min(uint(ceil(log2(max(widest, 1.0)))), u.hzbInfo.z - 1u);
+    // Texel size of this level, in level-0 texels: the footprint now spans at most two texels each way.
+    float scale = float(1u << level);
+    ivec2 lo = ivec2(floor(pxMin / scale));
+    ivec2 hi = ivec2(floor(pxMax / scale));
+    uvec2 levelSize = max(uvec2(1u), uvec2((u.hzbInfo.xy + (1u << level) - 1u) >> level));
+    lo = clamp(lo, ivec2(0), ivec2(levelSize) - 1);
+    hi = clamp(hi, ivec2(0), ivec2(levelSize) - 1);
+    float farthest = 0.0;
+    uint base = hzbOffset(level);
+    for (int y = lo.y; y <= hi.y; ++y) {
+        for (int x = lo.x; x <= hi.x; ++x) {
+            farthest = max(farthest, hzb[base + uint(y) * levelSize.x + uint(x)]);
+        }
+    }
+    // The sphere's nearest depth in the same 0..1 convention as the depth buffer.
+    float zNdc = (-u.prevProj.z * nearest + u.prevProj.w) / nearest;
+    return zNdc > farthest + 0.0005;
+}
+
+float projected(float error, vec4 sphere) {
+    if (error >= kRootError) return error;
+    if ((u.params.y & 4u) == 0u) return error;
+    float dist = max(length(sphere.xyz - u.camera.xyz) - sphere.w, 1.0e-4);
+    return error / dist;
+}
+
+vec3 toWorld(vec3 p, vec4 r0, vec4 r1, vec4 r2) {
+    return vec3(dot(r0.xyz, p) + r0.w, dot(r1.xyz, p) + r1.w, dot(r2.xyz, p) + r2.w);
+}
+
+void main() {
+    uint mode = u.params.w;
+    uint g = gl_GlobalInvocationID.x;
+    if (mode == 3u) {
+        if (g >= u.params.z) return;
+        uint s = (u.slots.x + g) * 8u;
+        args[s + 0u] = 0u;
+        args[s + 1u] = 1u;
+        args[s + 2u] = 0u;
+        args[s + 3u] = 0u;
+        args[s + 4u] = g;
+        args[s + 5u] = 0u;
+        args[s + 6u] = 0u;
+        args[s + 7u] = 0u;
+        return;
+    }
+    if (mode == 1u) {
+        if (g >= u.params.z) return;
+        uint s = (u.slots.x + g) * 8u;
+        uint total = args[s + 0u];
+        uint base = atomicAdd(arena[0], total);
+        if (base + total > u.slots.y) {
+            args[s + 0u] = 0u;
+            args[s + 7u] = 1u;
+        } else {
+            args[s + 2u] = base;
+        }
+        return;
+    }
+    if (g >= u.params.x * u.params.z) return;
+    uint i = g % u.params.x;
+    uint inst = g / u.params.x;
+    uint slot = (u.slots.x + inst) * 8u;
+
+    vec4 r0 = instances[inst * 4u + 0u];
+    vec4 r1 = instances[inst * 4u + 1u];
+    vec4 r2 = instances[inst * 4u + 2u];
+    float scale = instances[inst * 4u + 3u].x;
+
+    vec4 bounds = clusters[i * 5u + 0u];
+    vec4 lod = clusters[i * 5u + 1u];
+    vec4 parentLod = clusters[i * 5u + 2u];
+    vec4 cone = clusters[i * 5u + 3u];
+    vec4 meta = clusters[i * 5u + 4u];
+
+    bounds = vec4(toWorld(bounds.xyz, r0, r1, r2), bounds.w * scale);
+    lod = vec4(toWorld(lod.xyz, r0, r1, r2), lod.w * scale);
+    parentLod = vec4(toWorld(parentLod.xyz, r0, r1, r2), parentLod.w * scale);
+    // Rotation only (the rows carry the scale): divide it back out.
+    cone.xyz = vec3(dot(r0.xyz, cone.xyz), dot(r1.xyz, cone.xyz), dot(r2.xyz, cone.xyz)) / max(scale, 1.0e-12);
+    float error = meta.x >= kRootError ? meta.x : meta.x * scale;
+    float parentError = meta.y >= kRootError ? meta.y : meta.y * scale;
+
+    float threshold = u.camera.w;
+    bool selected = projected(error, lod) <= threshold && projected(parentError, parentLod) > threshold;
+
+    if (selected && (u.params.y & 1u) != 0u) {
+        for (int p = 0; p < 6; ++p) {
+            if (dot(u.planes[p].xyz, bounds.xyz) + u.planes[p].w < -bounds.w) {
+                selected = false;
+                break;
+            }
+        }
+    }
+    // Occlusion (the camera view only; instances opt in): hidden behind last frame's depth.
+    if (selected && (u.params.y & 8u) != 0u && instances[inst * 4u + 3u].z > 0.5 && occluded(bounds.xyz, bounds.w)) {
+        selected = false;
+    }
+    if (selected && (u.params.y & 2u) != 0u && cone.w > 0.0 && instances[inst * 4u + 3u].y > 0.5) {
+        vec3 toCamera = normalize(u.camera.xyz - bounds.xyz);
+        float sine = sqrt(max(0.0, 1.0 - cone.w * cone.w));
+        if (dot(toCamera, cone.xyz) < -sine) selected = false;
+    }
+
+    if (!selected) return;
+    uint firstIndex = floatBitsToUint(meta.z);
+    uint indexCount = floatBitsToUint(meta.w);
+    if (mode == 0u) {
+        atomicAdd(args[slot + 0u], indexCount);
+        atomicAdd(args[slot + 5u], 1u);
+        return;
+    }
+    // mode 2: copy (a slot that did not fit has indexCount 0 and flag 7 set: skip it)
+    if (args[slot + 7u] != 0u) return;
+    uint offset = args[slot + 2u] + atomicAdd(args[slot + 6u], indexCount);
+    for (uint k = 0u; k < indexCount; ++k) {
+        arena[offset + k] = sourceIndices[firstIndex + k];
+    }
+}

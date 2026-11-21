@@ -90,6 +90,7 @@ pub const PROJECT_MANAGER_MENU: UiId = UiId::fixed("editor.menu.project.manager"
 pub const PROJECT_REFRESH_ASSETS: UiId = UiId::fixed("editor.menu.project.refresh_assets");
 pub const SCRIPT_EDITOR_MENU: UiId = UiId::fixed("editor.menu.scene.script_editor");
 pub const DRYAD_NODES_MENU: UiId = UiId::fixed("editor.menu.scene.dryad_nodes");
+pub const SCATTER_TERRAIN_MENU: UiId = UiId::fixed("editor.menu.scene.scatter_terrain");
 pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
 pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
 pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
@@ -1097,6 +1098,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: DRYAD_NODES_MENU,
         description: "Opens the Dryad Nodes pane.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: SCATTER_TERRAIN_MENU,
+        description: "Scatters the project's plan (Scatter/default.scatter: pines, boulders, grass by slope, wetness and height) on the selected terrain, as one undo step.",
         kind: "menu_item",
     },
     UiMeta {

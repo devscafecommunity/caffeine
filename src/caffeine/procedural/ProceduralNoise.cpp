@@ -1,5 +1,7 @@
 #include "procedural/ProceduralNoise.hpp"
 
+#include "core/Hash.hpp"
+
 #include <cmath>
 
 namespace Caffeine::Procedural {
@@ -10,6 +12,11 @@ f32 hash01(i32 x, i32 z, u32 seed, u32 salt) {
     n = (n ^ (n >> 13u)) * 1274126177u;
     n ^= n >> 16u;
     return static_cast<f32>(n & 0xFFFFu) / 65535.0f;
+}
+
+f32 placementHash(u32 version, i32 x, i32 z, u32 seed, u32 salt) {
+    if (version < 2) return hash01(x, z, seed, salt);
+    return static_cast<f32>(Core::toUnit(Core::deriveSeed(seed, salt, x, z)));
 }
 
 f32 valueNoise2D(f32 x, f32 z, u32 seed) {

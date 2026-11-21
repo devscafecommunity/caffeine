@@ -7,6 +7,7 @@
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
 #include "render/InstanceBatch.hpp"
+#include "micromesh/Micromesh.hpp"
 #include "render/ForwardRenderFeatures.hpp"
 #include "debug/Profiler.hpp"
 #include "render/ShaderBytecode.hpp"
@@ -43,10 +44,23 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <chrono>
 #include <cstring>
 
 namespace Caffeine::Render {
 namespace {
+
+using StatsClock = std::chrono::steady_clock;
+
+/// Adds the milliseconds of its scope to `out`.
+struct ScopedMs {
+    f32& out;
+    StatsClock::time_point start = StatsClock::now();
+    explicit ScopedMs(f32& target) : out(target) {}
+    ~ScopedMs() {
+        out += std::chrono::duration<f32, std::milli>(StatsClock::now() - start).count();
+    }
+};
 
 constexpr u32 kVertexStride = sizeof(Assets::Vertex3D);
 
@@ -373,6 +387,27 @@ Vec3 meshWorldCenter(const Mat4& worldMatrix, const Assets::Mesh3D* mesh) {
     return worldMatrix.transformPoint(localCenter);
 }
 
+/// The external texture files a mesh file names. Reading and scanning the whole mesh file for every
+/// draw of every frame cost milliseconds per object on a dense OBJ without materials, so the answer is
+/// remembered until the file's modification time changes.
+const std::vector<std::string>& externalMeshUris(const std::string& meshPath) {
+    struct Entry {
+        std::filesystem::file_time_type stamp{};
+        std::vector<std::string> uris;
+    };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(meshPath, ec);
+    auto it = cache.find(meshPath);
+    if (it == cache.end() || (!ec && it->second.stamp != stamp)) {
+        Entry entry;
+        if (!ec) entry.stamp = stamp;
+        entry.uris = Assets::MeshImportValidator::listGltfExternalUris(meshPath);
+        it = cache.insert_or_assign(meshPath, std::move(entry)).first;
+    }
+    return it->second.uris;
+}
+
 ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Mesh3D* mesh,
                                      const std::string& meshPath, const std::string& projectRoot,
                                      const std::string& customTexturePath, u32 materialIndex,
@@ -414,7 +449,7 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
         result.texture = cache.acquire(device, pngPath, projectRoot, qualityTier, true);
         if (result.texture) return result;
 
-        for (const std::string& uri : Assets::MeshImportValidator::listGltfExternalUris(meshPath)) {
+        for (const std::string& uri : externalMeshUris(meshPath)) {
             const std::string texPath =
                 (std::filesystem::path(meshPath).parent_path() / uri).string();
             result.texture = cache.acquire(device, texPath, projectRoot, qualityTier, true);
@@ -635,6 +670,11 @@ void GpuSceneRenderer::shutdown() {
         if (m_shadowCutoutFrag) m_device->destroyShader(m_shadowCutoutFrag);
         if (m_shadowCutoutPipeline) m_device->destroyPipeline(m_shadowCutoutPipeline);
         if (m_foliageVert) m_device->destroyShader(m_foliageVert);
+        releaseMicromeshes();
+        if (m_micromeshVert) m_device->destroyShader(m_micromeshVert);
+        if (m_micromeshPipeline) m_device->destroyPipeline(m_micromeshPipeline);
+        if (m_shadowMicromeshVert) m_device->destroyShader(m_shadowMicromeshVert);
+        if (m_shadowMicromeshPipeline) m_device->destroyPipeline(m_shadowMicromeshPipeline);
         if (m_waterVert) m_device->destroyShader(m_waterVert);
         if (m_waterPipeline) m_device->destroyPipeline(m_waterPipeline);
         if (m_waterBlendPipeline) m_device->destroyPipeline(m_waterBlendPipeline);
@@ -685,6 +725,10 @@ void GpuSceneRenderer::shutdown() {
     m_shadowCutoutFrag = nullptr;
     m_shadowCutoutPipeline = nullptr;
     m_foliageVert = nullptr;
+    m_micromeshVert = nullptr;
+    m_micromeshPipeline = nullptr;
+    m_shadowMicromeshVert = nullptr;
+    m_shadowMicromeshPipeline = nullptr;
     m_waterVert = nullptr;
     m_waterPipeline = nullptr;
     m_waterBlendPipeline = nullptr;
@@ -851,6 +895,56 @@ bool GpuSceneRenderer::createPipelines() {
     if (m_waterVert) {
         m_waterPipeline = m_device->createGraphicsPipeline(m_waterVert, m_sceneFrag, sceneDesc);
         m_waterBlendPipeline = m_device->createGraphicsPipeline(m_waterVert, m_sceneFrag, blendDesc);
+    }
+
+    // Micromeshes: the cluster buffers (positions, normals, UVs, tangents) and the instance matrix from a
+    // storage buffer, into the same G-buffer through scene_lit.frag. Optional: without it (a backend
+    // other than SPIR-V, or no storage buffers) a Micromesh entity just draws as a normal mesh.
+    {
+        const RHI::DeviceCapabilities caps = m_device->capabilities();
+        if (caps.indirectDraw && caps.graphicsStorageBuffers && caps.computeStorageWrite &&
+            format == RHI::ShaderBytecodeFormat::SPIRV) {
+            m_micromeshVert = createBuiltinShader(m_device, BuiltinShader::SceneMicromeshVertex,
+                                                  RHI::ShaderStage::Vertex, 1, 0, 1);
+        }
+        if (m_micromeshVert) {
+            RHI::VertexBufferLayoutDesc microLayouts[5]{};
+            RHI::VertexAttributeDesc microAttrs[5]{};
+            microLayouts[0] = {0, static_cast<u32>(sizeof(float) * 3), false};
+            microLayouts[1] = {1, static_cast<u32>(sizeof(float) * 3), false};
+            microLayouts[2] = {2, static_cast<u32>(sizeof(float) * 2), false};
+            microLayouts[3] = {3, static_cast<u32>(sizeof(float) * 4), false};
+            microAttrs[0] = {0, 0, RHI::VertexFormat::Float3, 0};
+            microAttrs[1] = {1, 1, RHI::VertexFormat::Float3, 0};
+            microAttrs[2] = {2, 2, RHI::VertexFormat::Float2, 0};
+            microAttrs[3] = {3, 3, RHI::VertexFormat::Float4, 0};
+            microLayouts[4] = {4, static_cast<u32>(sizeof(float) * 4), false};
+            microAttrs[4] = {4, 4, RHI::VertexFormat::Float4, 0};
+            RHI::GraphicsPipelineDesc microDesc = sceneDesc;
+            microDesc.vertexBuffers = microLayouts;
+            microDesc.numVertexBuffers = 5;
+            microDesc.attributes = microAttrs;
+            microDesc.numAttributes = 5;
+            m_micromeshPipeline = m_device->createGraphicsPipeline(m_micromeshVert, m_sceneFrag, microDesc);
+        }
+        // The directional shadow cascades of Micromesh objects: positions only, the same colour-only target.
+        if (m_micromeshPipeline && caps.graphicsStorageBuffers) {
+            m_shadowMicromeshVert = createBuiltinShader(m_device, BuiltinShader::ShadowMicromeshVertex,
+                                                        RHI::ShaderStage::Vertex, 1, 0, 1);
+        }
+        if (m_shadowMicromeshVert) {
+            RHI::VertexBufferLayoutDesc posLayout{0, static_cast<u32>(sizeof(float) * 3), false};
+            RHI::VertexAttributeDesc posAttr{0, 0, RHI::VertexFormat::Float3, 0};
+            RHI::GraphicsPipelineDesc posDesc{};
+            fillMeshPipelineDesc(posDesc, layout, attrs, RHI::TextureFormat::R16_FLOAT, false, false);
+            posDesc.blendMode = RHI::BlendMode::Min;
+            posDesc.vertexBuffers = &posLayout;
+            posDesc.numVertexBuffers = 1;
+            posDesc.attributes = &posAttr;
+            posDesc.numAttributes = 1;
+            m_shadowMicromeshPipeline =
+                m_device->createGraphicsPipeline(m_shadowMicromeshVert, m_shadowFrag, posDesc);
+        }
     }
 
     // Meshes with per-vertex colour read it from a second vertex stream (never instanced).
@@ -1131,6 +1225,26 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
                                  cascadeVPs, splits);
         m_directionalShadows.setCascadeData(shadowSlot, cascadeCount, cascadeVPs, splits, true);
 
+        // Micromesh objects cast their own coarser cut into each cascade: a compute pass per cascade, before
+        // the render pass. The error budget is four shadow texels (view independent: the cascade is ortho).
+        u32 microViews[GpuDirectionalShadowMap::kMaxCascades];
+        for (u32 cascade = 0; cascade < GpuDirectionalShadowMap::kMaxCascades; ++cascade) microViews[cascade] = ~0u;
+        if (!m_micromeshDraws.empty() && m_shadowMicromeshPipeline) {
+            for (u32 cascade = 0; cascade < cascadeCount; ++cascade) {
+                const Mat4& vp = cascadeVPs[cascade];
+                const f32 scaleX = Vec3(vp(0, 0), vp(0, 1), vp(0, 2)).length();
+                const f32 texels = cascadeCount > 1 ? cascadeSize : atlasSize;
+                MicromeshCullParams params;
+                params.planes = planesFromViewProj(vp);
+                params.camera = camera.position;
+                params.threshold = scaleX > 1e-9f ? (2.0f / scaleX) / texels * 4.0f : 0.0f;
+                params.frustum = true;
+                params.cone = false;
+                params.viewDependent = false;
+                microViews[cascade] = cullMicromeshView(cmd, params);
+            }
+        }
+
         RHI::RenderPassDesc pass;
         pass.colorTarget = map;
         pass.clearColor[0] = 1.0f;
@@ -1148,6 +1262,19 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
 
             for (const auto& draw : draws) {
                 if (!draw.castShadows || !draw.mesh || !ensureMeshUploaded(draw.mesh)) continue;
+                const MicromeshDrawRef* microRef = nullptr;
+                if (microViews[cascade] != ~0u && microDrawParts(&draw, microRef)) {
+                    cmd->bindPipeline(m_shadowMicromeshPipeline);
+                    float viewProj[16];
+                    std::memcpy(viewProj, cascadeVPs[cascade].data(), sizeof(viewProj));
+                    cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, viewProj, sizeof(viewProj));
+                    for (const auto& part : microRef->parts) {
+                        RHI::Buffer* storage[1] = {part.first->gpu.instanceBuffer()};
+                        cmd->bindVertexStorageBuffers(storage, 0, 1);
+                        part.first->gpu.drawSceneSlotPositions(cmd, m_micromeshArena, microViews[cascade], part.second);
+                    }
+                    continue;
+                }
                 pushShadowDrawsForMesh(cmd, draw, cascadeVPs[cascade] * draw.worldMatrix,
                                        camera.focus, 1);
             }
@@ -1484,6 +1611,13 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         const bool gpuWater = draw.gpuWater && !wireframe && m_waterPipeline && m_waterBlendPipeline &&
                               (blendedPass || basePipeline == m_scenePipeline);
         if (gpuWater) pipeline = blendedPass ? m_waterBlendPipeline : m_waterPipeline;
+        // A Micromesh draw: its cull pass ran before this render pass (see beginMicromeshFrame).
+        const MicromeshDrawRef* microRef = nullptr;
+        if (!wireframe && !draw.isTerrain && !gpuWater && m_micromeshMainView != ~0u && !m_inReflectionPass) {
+            microDrawParts(drawPtr, microRef);
+        }
+        const bool micro = microRef != nullptr;
+        if (micro) pipeline = m_micromeshPipeline;
         cmd->bindPipeline(pipeline);
 
         LightingUBO lights = base;
@@ -1641,6 +1775,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             wubo.params[2] = draw.waterFoamThreshold;
             std::memcpy(wubo.waves, draw.waveData, sizeof(wubo.waves));
             cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &wubo, sizeof(wubo));
+        } else if (micro) {
+            float viewProj[16];
+            std::memcpy(viewProj, pass.viewProj.data(), sizeof(viewProj));
+            cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, viewProj, sizeof(viewProj));
         } else {
             VertexUBO vubo{};
             std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
@@ -1661,6 +1799,9 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &lights, sizeof(lights));
             cmd->drawIndexed(static_cast<u32>(draw.mesh->indices.size()));
+            // (Terrain used to skip the frame counters: it showed as 0 triangles and 0 draws.)
+            ++m_building.drawCalls;
+            m_building.triangles += draw.mesh->indices.size() / 3;
             continue;
         }
 
@@ -1709,7 +1850,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         if (ormTex) cmd->bindTexture(ormTex, 10, m_repeatSampler);
         if (emissionTex) cmd->bindTexture(emissionTex, 14, m_repeatSampler);
 
-        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex) {
+        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex, u32 partIndex) {
             if (indexCount == 0) return;
             LightingUBO rangeLights = lights;
             RHI::Texture* albedoTex = whiteTex;
@@ -1739,6 +1880,18 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
+            if (micro) {
+                // One indexed draw of this instance's compacted cut (sub-mesh `partIndex`'s asset).
+                if (partIndex < microRef->parts.size()) {
+                    MicromeshAsset* asset = microRef->parts[partIndex].first;
+                    RHI::Buffer* storage[1] = {asset->gpu.instanceBuffer()};
+                    cmd->bindVertexStorageBuffers(storage, 0, 1);
+                    asset->gpu.drawSceneSlot(cmd, m_micromeshArena, m_micromeshMainView,
+                                             microRef->parts[partIndex].second);
+                    ++m_building.drawCalls;
+                }
+                return;
+            }
             const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instanceBuffer &&
                                    (coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
             if (instanced) {
@@ -1752,21 +1905,237 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 2);
                 cmd->bindIndexBuffer(draw.mesh->indexBuffer);
                 cmd->drawIndexedInstanced(indexCount, draw.batchCount, firstIndex, 0, 0);
+                ++m_building.drawCalls;
+                ++m_building.instancedDrawCalls;
+                m_building.triangles += static_cast<u64>(indexCount / 3) * draw.batchCount;
             } else {
                 cmd->drawIndexed(indexCount, firstIndex, 0);
+                ++m_building.drawCalls;
+                m_building.triangles += indexCount / 3;
             }
+            if (gpuWater) ++m_building.gpuWaterDraws;
         };
 
         if (draw.mesh->subMeshes.size() > 1) {
+            u32 partIndex = 0;
             for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
-                drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex);
+                drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex, partIndex++);
             }
         } else {
             const u32 materialIndex =
                 draw.mesh->subMeshes.empty() ? 0u : draw.mesh->subMeshes[0].materialIndex;
-            drawMeshRange(0, static_cast<u32>(draw.mesh->indices.size()), materialIndex);
+            drawMeshRange(0, static_cast<u32>(draw.mesh->indices.size()), materialIndex, 0u);
         }
     }
+}
+
+GpuSceneRenderer::MicromeshAsset* GpuSceneRenderer::micromeshAssetFor(Assets::Mesh3D* mesh, u32 subMesh,
+                                                                        u32 firstIndex, u32 indexCount) {
+    if (!mesh || !m_device) return nullptr;
+    std::unique_ptr<MicromeshAsset>& slot = m_micromeshAssets[{mesh, subMesh}];
+    if (slot && slot->revision == mesh->geometryRevision) return slot->ready ? slot.get() : nullptr;
+    // (Re)build: once per mesh asset, sub-mesh and geometry revision. It is baking work: a mesh of ~80 000
+    // triangles takes about a second on the first frame it is seen (an offline `.micromesh` section in
+    // the `.caf` is the planned way to not pay it at run time).
+    slot = std::make_unique<MicromeshAsset>();
+    slot->revision = mesh->geometryRevision;
+    const size_t total = mesh->indices.size();
+    if (mesh->vertices.empty() || firstIndex >= total || indexCount < 3) return nullptr;
+    const size_t last = std::min<size_t>(total, static_cast<size_t>(firstIndex) + indexCount);
+    // Meshes are often stored unindexed (three vertices per triangle) or with a vertex per face corner: weld
+    // the vertices that agree on position, normal and UV, or no edge would be shared and every edge would
+    // look like a boundary (nothing could be simplified). A UV seam or a hard edge differs in UV or normal,
+    // so it stays split, and stays locked. Only the vertices this sub-mesh uses are kept.
+    struct WeldKey {
+        float v[8];
+        bool operator==(const WeldKey& o) const { return std::memcmp(v, o.v, sizeof(v)) == 0; }
+    };
+    struct WeldHash {
+        size_t operator()(const WeldKey& k) const {
+            u64 h = 1469598103934665603ull;
+            for (float f : k.v) {
+                u32 bits;
+                std::memcpy(&bits, &f, sizeof(bits));
+                h = (h ^ bits) * 1099511628211ull;
+            }
+            return static_cast<size_t>(h);
+        }
+    };
+    std::unordered_map<WeldKey, u32, WeldHash> welded;
+    std::vector<Vec3> positions, normals;
+    std::vector<Vec2> uvs;
+    std::vector<Vec4> tangents;
+    std::vector<Vec4> colors;
+    const bool coloured = mesh->vertexColors.size() == mesh->vertices.size();
+    std::vector<u32> indices;
+    indices.reserve(last - firstIndex);
+    for (size_t k = firstIndex; k < last; ++k) {
+        const u32 original = mesh->indices[k];
+        if (original >= mesh->vertices.size()) return nullptr;
+        const Assets::Vertex3D& v = mesh->vertices[original];
+        const WeldKey key{{v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z,
+                           v.texcoord.x, v.texcoord.y}};
+        const auto [it, inserted] = welded.emplace(key, static_cast<u32>(positions.size()));
+        if (inserted) {
+            positions.push_back(v.position);
+            normals.push_back(v.normal);
+            uvs.push_back(v.texcoord);
+            tangents.push_back(v.tangent);
+            colors.push_back(coloured ? mesh->vertexColors[original] : Vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        } else {
+            // The same vertex seen again (another face): average the tangents.
+            Vec4& t = tangents[it->second];
+            const Vec3 sum(t.x + v.tangent.x, t.y + v.tangent.y, t.z + v.tangent.z);
+            const f32 len = sum.length();
+            if (len > 1e-6f) t = Vec4(sum.x / len, sum.y / len, sum.z / len, t.w);
+        }
+        indices.push_back(it->second);
+    }
+    Micromesh::Attributes attributes;
+    attributes.normals = &normals;
+    attributes.uvs = &uvs;
+    attributes.tangents = &tangents;
+    attributes.colors = &colors;
+    const Micromesh::Data data = Micromesh::build(positions, indices, attributes);
+    // A mesh that reduces to one level has nothing to cut: draw it as a normal mesh.
+    if (data.clusters.empty() || data.levelCount < 2) return nullptr;
+    if (!slot->gpu.init(m_device) || !slot->gpu.upload(data) || !slot->gpu.hasSceneAttributes()) return nullptr;
+    slot->ready = true;
+    return slot.get();
+}
+
+void GpuSceneRenderer::beginMicromeshFrame(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws) {
+    m_micromeshDraws.clear();
+    m_micromeshNextView = 0;
+    m_micromeshMainView = ~0u;
+    ++m_micromeshFrame;
+    for (auto& entry : m_micromeshAssets) {
+        if (entry.second) {
+            entry.second->users.clear();
+            entry.second->viewsUsed = 0;
+        }
+    }
+    if (!m_micromeshPipeline || !cmd) return;
+    bool any = false;
+    for (const MeshDraw& draw : draws) any = any || draw.micromeshPixels > 0.0f;
+    if (!any) return;
+    if (!m_micromeshArena.ready() && !m_micromeshArena.init(m_device, kMicromeshArenaStart)) return;
+    // The arena grows to what the scene needs: every few frames, read back last frame's allocation counter (it
+    // counts what was asked for, also past the capacity). A cut that did not fit was not drawn that frame, so
+    // growth shows within a few frames.
+    if (m_micromeshFrame % 15 == 0) {
+        const u32 asked = m_micromeshArena.readUsed();
+        const u32 capacity = m_micromeshArena.capacity();
+        if (asked + asked / 8u > capacity && capacity < kMicromeshArenaMax) {
+            u32 grown = capacity;
+            while (grown < kMicromeshArenaMax && asked + asked / 8u > grown) grown *= 2u;
+            m_micromeshArena.init(m_device, std::min(grown, kMicromeshArenaMax));
+        }
+    }
+
+    // Group by asset: every entity of a mesh (and sub-mesh) is one instance of its asset.
+    for (const MeshDraw& draw : draws) {
+        if (draw.micromeshPixels <= 0.0f || draw.skipColorDraw || !draw.mesh || draw.isTerrain || draw.displaced ||
+            draw.isWater || draw.skinnedVertices || draw.windStrength > 0.0f || draw.windFlutter > 0.0f ||
+            draw.isTranslucent() || draw.alphaMode == 1 || !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer) {
+            continue;
+        }
+        Assets::Mesh3D* mesh = draw.mesh;
+        MicromeshDrawRef ref;
+        bool ok = true;
+        auto addPart = [&](u32 subMesh, u32 firstIndex, u32 indexCount) {
+            MicromeshAsset* asset = micromeshAssetFor(mesh, subMesh, firstIndex, indexCount);
+            if (!asset) {
+                ok = false;
+                return;
+            }
+            ref.parts.emplace_back(asset, static_cast<u32>(asset->users.size()));
+            asset->users.push_back(&draw);
+        };
+        if (mesh->subMeshes.size() > 1) {
+            for (u32 s = 0; s < mesh->subMeshes.size() && ok; ++s) {
+                addPart(s, mesh->subMeshes[s].indexOffset, mesh->subMeshes[s].indexCount);
+            }
+        } else {
+            addPart(0u, 0u, static_cast<u32>(mesh->indices.size()));
+        }
+        if (!ok) {
+            // A sub-mesh that cannot be cut (too small, build failure): the whole entity draws plain. Undo
+            // the parts already added.
+            for (auto& part : ref.parts) {
+                if (!part.first->users.empty() && part.first->users.back() == &draw) part.first->users.pop_back();
+            }
+            continue;
+        }
+        m_micromeshDraws[&draw] = std::move(ref);
+    }
+    // Upload every asset's matrices (one buffer per asset, once per frame) and the arena reset.
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        std::vector<Mat4> transforms;
+        std::vector<u8> occlusion;
+        transforms.reserve(asset->users.size());
+        for (const MeshDraw* user : asset->users) {
+            transforms.push_back(user->worldMatrix);
+            occlusion.push_back(user->micromeshOcclusion ? 1u : 0u);
+        }
+        if (!asset->gpu.setSceneInstances(transforms, kMicromeshViews, occlusion)) {
+            // Could not size its buffers: drop its users from the frame (they draw plain).
+            for (const MeshDraw* user : asset->users) m_micromeshDraws.erase(user);
+            asset->users.clear();
+        }
+    }
+    m_building.micromeshDraws = static_cast<u32>(m_micromeshDraws.size());
+    m_micromeshArena.beginFrame(cmd);
+}
+
+u32 GpuSceneRenderer::cullMicromeshView(RHI::CommandBuffer* cmd, const MicromeshCullParams& params) {
+    if (!cmd || m_micromeshDraws.empty() || m_micromeshNextView >= kMicromeshViews) return ~0u;
+    const u32 view = m_micromeshNextView++;
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        if (asset->gpu.cullScene(cmd, params, m_micromeshArena, view)) asset->viewsUsed = view + 1;
+    }
+    return view;
+}
+
+bool GpuSceneRenderer::microDrawParts(const MeshDraw* draw, const MicromeshDrawRef*& out) const {
+    const auto it = m_micromeshDraws.find(draw);
+    if (it == m_micromeshDraws.end()) return false;
+    out = &it->second;
+    return true;
+}
+
+GpuSceneRenderer::MicromeshFrameStats GpuSceneRenderer::readMicromeshStats() {
+    MicromeshFrameStats total;
+    if (m_micromeshMainView == ~0u) return total;
+    total.draws = static_cast<u32>(m_micromeshDraws.size());
+    total.views = m_micromeshNextView;
+    total.occlusionActive = m_micromeshOcclusionActive;
+    total.arenaUsed = m_micromeshArena.readUsed();
+    total.arenaCapacity = m_micromeshArena.capacity();
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        for (u32 view = 0; view < asset->viewsUsed; ++view) {
+            const MicromeshGpu::SceneViewStats stats = asset->gpu.readSceneView(view);
+            total.overflowed += stats.overflowed;
+            if (view != m_micromeshMainView) continue;
+            total.clusters += stats.visibleClusters;
+            total.triangles += stats.triangles;
+        }
+        total.sourceTriangles += static_cast<u64>(asset->gpu.sourceTriangles()) * asset->users.size();
+    }
+    return total;
+}
+
+void GpuSceneRenderer::releaseMicromeshes() {
+    m_micromeshDraws.clear();
+    m_micromeshAssets.clear();
+    m_micromeshArena.shutdown();
+    m_micromeshHzb.shutdown();
 }
 
 u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws,
@@ -1852,6 +2221,8 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
 
     {
         CF_PROFILE_SCOPE("GpuSceneRenderer::opaque");
+        ScopedMs timer(m_building.opaqueMs);
+        // Micromesh cull passes are compute: they run before the render pass opens.
         cmd->beginRenderPass(rp);
         cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
         cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
@@ -1864,6 +2235,7 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
 
     if (!translucent.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::translucent");
+        ScopedMs timer(m_building.translucentMs);
         auto distanceSq = [&](const MeshDraw* d) {
             const Vec3 center = d->hasAabb ? (d->aabbMin + d->aabbMax) * 0.5f
                                            : d->worldMatrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
@@ -2017,7 +2389,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 }
             }
             hasAabb = true;
-            if (!frustum.intersects(aabb)) return;
+            if (!frustum.intersects(aabb)) {
+                ++m_building.frustumCulled;
+                return;
+            }
         }
 
         const f32 sx = Vec3(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0)).length();
@@ -2045,6 +2420,8 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.modWetness = renderer->modWetness;
             draw.modSnow = renderer->modSnow;
             draw.modAge = renderer->modAge;
+            if (renderer->micromesh) draw.micromeshPixels = std::max(renderer->micromeshPixels, 0.05f);
+            draw.micromeshOcclusion = renderer->micromesh && renderer->micromeshOcclusion;
         }
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
@@ -2170,7 +2547,20 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume) &&
                     draw.hasAuthoredMaterial) {
                     // The entity has its own material (a .mat, for example one written by the
-                    // Water Generator): it is the water's material, as for any mesh.
+                    // Water Generator): it is the water's material, as for any mesh. The waves
+                    // and the water look (ripples, foam) still come from the water surface.
+                    draw.isWater = true;
+                    Scene::GpuWaterWaves waves;
+                    if (Scene::naturalFluidGpuWaves(world, entity.id(), waves)) {
+                        draw.gpuWater = true;
+                        draw.waveCount = waves.count;
+                        draw.waterTime = waves.time;
+                        draw.waterFoamThreshold = waves.foamThreshold;
+                        std::memcpy(draw.waveData, waves.packed, sizeof(draw.waveData));
+                    } else if (const Fluids::FluidWorld* surface =
+                                   Scene::naturalFluidWorldFor(world, entity.id())) {
+                        draw.waterTime = surface->time();
+                    }
                 } else if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
                     // No material assigned: a physically-based transparent liquid with a sharp
                     // clearcoat, so reflections read as water.
@@ -2310,6 +2700,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         const bool hasColours = draw.mesh && !draw.mesh->vertexColors.empty() &&
                                 draw.mesh->vertexColors.size() == draw.mesh->vertices.size();
         items[i].allow = singleSubmesh && !draw.isTerrain && !draw.displaced && draw.probeIndex < 0 &&
+                         draw.micromeshPixels <= 0.0f &&
                          !draw.isTranslucent() && (!hasColours || m_foliageInstancedPipeline);
         u64 key = static_cast<u64>(reinterpret_cast<uintptr_t>(draw.mesh));
         auto mixBytes = [&](const std::string& text) {
@@ -2738,9 +3129,31 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         camera.position, camera.focus, Vec3(0.0f, 1.0f, 0.0f), camera.fovRad, aspect,
         camera.nearClip, camera.farClip);
 
+    // Stats belong to the outermost scene pass; reflection passes add to the same frame.
+    struct FrameStats {
+        RenderStats& building;
+        RenderStats& committed;
+        bool top;
+        StatsClock::time_point start = StatsClock::now();
+        ~FrameStats() {
+            if (!top) return;
+            building.totalMs =
+                std::chrono::duration<f32, std::milli>(StatsClock::now() - start).count();
+            committed = building;
+        }
+    } frameStats{m_building, m_stats, !m_inReflectionPass};
+    if (frameStats.top) {
+        m_building = RenderStats{};
+        // The Micromesh draw references point into last frame's draw list: forget them before anything
+        // (a planar reflection, a probe) can match a reused address.
+        m_micromeshDraws.clear();
+        m_micromeshMainView = ~0u;
+    }
+
     std::vector<MeshDraw> draws;
     {
         CF_PROFILE_SCOPE("GpuSceneRenderer::gather");
+        ScopedMs timer(m_building.gatherMs);
         draws = gatherMeshDraws(world, camera.position, frustum, projectRoot, opts);
     }
     // Upload GPU buffers before any render pass. Creating/uploading buffers
@@ -2751,6 +3164,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                                           !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer;
                                }),
                 draws.end());
+    m_building.meshesGathered += static_cast<u32>(draws.size());
     applyCoarseOcclusion(draws, camera, opts);
 
         if (pass.view) {
@@ -2778,6 +3192,47 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     if (!instanceMatrices.empty() && m_instanceBuffer) {
         m_device->uploadBuffer(m_instanceBuffer, instanceMatrices.data(),
                                instanceMatrices.size() * sizeof(float));
+    }
+
+    if (!m_inReflectionPass) beginMicromeshFrame(cmd, draws);
+    if (!m_micromeshDraws.empty() && !opts.wireframeMeshes) {
+        // The camera's cut comes first: it is the one that must always fit in the arena (the shadow
+        // cascades' cuts take what is left).
+        f32 pixels = 1.5f;
+        for (const auto& entry : m_micromeshDraws) {
+            pixels = entry.first->micromeshPixels;
+            break;
+        }
+        const f32 proj11 = std::max(std::abs(camera.proj(1, 1)), 1e-4f);
+        MicromeshCullParams params;
+        params.planes = planesFromViewProj(pass.viewProj);
+        params.camera = camera.position;
+        // Error in pixels -> world units per metre of distance: one pixel spans 2 / (proj11 * height).
+        params.threshold = pixels * 2.0f / (proj11 * static_cast<f32>(std::max(height, 1u)));
+        params.frustum = true;
+        params.cone = true;
+        params.viewDependent = true;
+        // Occlusion: last frame's depth, reduced to a farthest-depth pyramid, tests the clusters of the
+        // instances that opted in. Needs a previous frame of this view at the same size.
+        MicromeshOcclusion occlusion;
+        bool wantsOcclusion = false;
+        for (const auto& entry : m_micromeshDraws) wantsOcclusion = wantsOcclusion || entry.first->micromeshOcclusion;
+        m_micromeshOcclusionActive = false;
+        if (wantsOcclusion && pass.view && pass.view->hasPrevious && !m_inReflectionPass) {
+            RHI::Texture* previousDepth = pass.view->depth[pass.view->current ^ 1u];
+            if (previousDepth && m_micromeshHzb.init(m_device, pass.view->width, pass.view->height) &&
+                m_micromeshHzb.build(cmd, previousDepth, m_pointSampler)) {
+                occlusion.hzb = &m_micromeshHzb;
+                occlusion.prevView = pass.view->prevView;
+                occlusion.p00 = pass.view->prevProj(0, 0);
+                occlusion.p11 = pass.view->prevProj(1, 1);
+                occlusion.p22 = pass.view->prevProj(2, 2);
+                occlusion.p23 = pass.view->prevProj(2, 3);
+                params.occlusion = &occlusion;
+                m_micromeshOcclusionActive = true;
+            }
+        }
+        m_micromeshMainView = cullMicromeshView(cmd, params);
     }
 
     Scene::SceneLighting lighting;
@@ -2838,6 +3293,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     m_shadowTextureQuality = opts.textureQuality;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
         CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
+        ScopedMs timer(m_building.shadowsMs);
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);

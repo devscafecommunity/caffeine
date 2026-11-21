@@ -3,7 +3,7 @@
 <div class="doc-meta">
   <span class="doc-badge doc-badge--reference">Reference</span>
   <span class="doc-badge">Doppio</span>
-  <span>Last updated: <time datetime="2026-11-20">2026-11-20</time></span>
+  <span>Last updated: <time datetime="2026-11-21">2026-11-21</time></span>
   <span>Source: <a href="https://github.com/devscafecommunity/caffeine/blob/main/doppio/docs/photoreal-world-roadmap.md"><code>photoreal-world-roadmap.md</code></a></span>
 </div>
 
@@ -26,8 +26,8 @@ The idea has four parts. Their status in the repository:
 | Depth: parallax, micro-shadows, AO, IBL | **Done** | POM with self-shadow, geometric displacement, height-derived AO, env map + probe IBL (`scene_lit.frag`) |
 | Rules as files (`.nature`, `.mat`, terrain/water graphs) | **Done per tool**, not linked | each generator saves its own graph and places assets |
 | Seed → deterministic world, streamed by chunk | **Partial** | `ProceduralStreamer` + `hash01(cx, cz, seed)` exist, but use a built-in fbm terrain and props, not the generators |
-| Vegetation/rocks adapted to terrain, scattered by masks | **Missing** | "Scatter over terrain" is listed as not done in both guides |
-| Instancing, LOD, impostors for mass vegetation | **Partial** | instanced draws and `MeshLOD` exist; vegetation is merged meshes, no impostors |
+| Vegetation/rocks adapted to terrain, scattered by masks | **Partial** | scatter core + biome table + **Scene > Scatter on Terrain** (C ABI v16) place plans by slope, wetness and height (`terrain-generator-guide.md`); streaming by chunk and the generators' output as scatter content are still open |
+| Instancing, LOD, impostors for mass vegetation | **Partial** | instanced draws (also with painted vertex colour), wind, translucency and alpha-tested shadows exist; **Micromesh cluster LOD** now draws dense opaque parts (rocks, trunks) through the scene renderer (`micromeshes.md`); foliage cards still have no LOD chain or impostors |
 
 ## 2. Review of the claims in the original discussion
 
@@ -104,48 +104,72 @@ independent of renderer work.
 
 - [x] `core/Hash.hpp`: SplitMix64 `deriveSeed(parent, salt, x, z)`, `toUnit`, `GENERATOR_VERSION`; golden test
       `tests/test_hash.cpp` pins outputs, `recipe_ref.rs` pins the same numbers in Rust.
-- [ ] Replace `hash01` use in the streamer with it; keep the old path under a `generator_version` (`hash01` is already 32-bit
-      integer arithmetic, so it is stable; switching changes existing worlds, hence the version).
+- [x] The streamer's placement decisions go through `placementHash(version, ...)`: version 1 is the legacy `hash01`, version 2 the
+      SplitMix64 of `core/Hash.hpp`. `ProceduralWorldComponent::generatorVersion` stores the choice and **defaults to 1**, so
+      existing worlds do not move; new worlds should set `Core::GENERATOR_VERSION`. Tested in `tests/test_scatter.cpp`.
 - [x] `generator_version` field in every `generator.*` recipe (nature, material, texture, terrain, water).
 - [ ] The same field in bare `.mat` files and in the world file (there is no world file yet).
 - [x] Test: derived seeds for a block of cells are identical on 1 and on 7 threads (`tests/test_hash.cpp`).
-- [ ] The same test for whole generated chunks, once the streamer uses the new hash.
+- [x] The same test for whole generated scatter chunks: 1 and 7 threads give identical results, and cutting the world into
+      32 m, 48 m or 96 m chunks gives the same instances (`tests/test_scatter.cpp`). Whole streamer chunks (cubes) still to do.
 
 ### Phase 1 — Terrain masks exported to the engine
 
-- [ ] Output node exposes named **masks** (slope, height band, wear, deposit, flow, wetness, curvature) as
-      engine-readable 8/16-bit fields, not only the four splat layers.
-- [ ] C ABI: read a mask at `(x, z)` and over a rectangle; terrain normal at `(x, z)` (versioned,
-      POD structs, tests on both sides as the rules require).
-- [ ] Biome layer: a small graph (or table) that turns masks into per-class density maps.
+- [x] The terrain exposes named **masks** as engine-readable fields: `height`, `slope` and `curvature` derived by the engine from the
+      heightfield (exact, nothing stored), and `flow` (D8 drainage), `wetness`, `wear` and `deposit` (erosion) sent by the generator as 8-bit
+      masks, saved with the terrain file (version 3). The Output node gained optional Wear and Deposit inputs (the presets with erosion wire
+      them). 8 bits is the one precision; 16-bit masks were dropped as unneeded for weights. Picture in `terrain-generator-guide.md`.
+- [x] C ABI v15: `set_terrain_mask`, `terrain_mask_count/at`, `terrain_mask` at a point, `terrain_mask_rect` over a rectangle,
+      `terrain_normal` at a point (POD info struct); the Rust crate wraps them. Tested on both sides: `tests/test_terrain_masks.cpp`,
+      `tests/test_capi.cpp`, and an engine-backed Doppio test that places the Alpine Range and checks every mask against the heights.
+- [x] **Biome table** (`terrain/TerrainBiome`): per scatter class, `base x` a product of trapezoid terms over masks, as plain text, plugged into
+      the scatter module's density callback; an unknown mask places nothing and is listed by `missingMasks`. Tested with the scatter module
+      (trees never on steep or wet ground, rocks only on the ridge). Not yet read or written by the editor: that is the World tab (phase 6).
+- [ ] Masks still to make: height *bands* as named masks (`height` covers the raw value; a band is a biome term today), a `wear` mask for
+      terrains that did not use hydraulic erosion, and masks painted in the editor.
 
 ### Phase 2 — Scatter engine (core, no UI)
 
-- [ ] `scatter` module in `src/caffeine`: jittered-grid / Poisson placement per class, density from
-      the biome maps, exclusion radii, priority order, cell ownership and margin for chunk borders.
-- [ ] Output: instance list `(transform, variant id, sub-seed, tint)`; conform to height and normal with
-      per-class rules (tree: slight tilt; rock: sink by footprint minimum; grass: follow normal).
-- [ ] Tests: no overlap inside and across chunk borders; same result for any chunk load order; density
-      matches the mask statistically.
+- [x] `scatter` module (`src/caffeine/scatter/Scatter.hpp`): jittered grid per class, density from a callback (the biome maps will
+      plug in there), exclusion radii, priority order, ownership by position and a margin for chunk borders. Conflicts use a
+      **non-recursive rule** (a point yields to any closer point with a higher key, whether or not that one survives), so a chunk
+      needs only a margin of two radii and never depends on its neighbours or on load order.
+- [x] Output: instance list `(position, up, yaw, scale, variant, sub-seed, tint)`; conformed to height and normal with per-class
+      rules (`tiltToNormal`, `sink` per scale, tint jitter, scale range). Rock sink by footprint minimum is still a single
+      sample at the centre.
+- [x] Tests: no overlap inside and across chunk borders (all pairs over 3 x 3 chunks); same result for any chunking and load order;
+      density follows the mask; priority classes are unaffected by lower ones.
+- [x] **C ABI v16 and the Doppio *Scatter* action**: `scatterTerrain` (region, chunk-size independent) behind `caffeine_session_scatter_terrain` and
+      `caffeine_biome_check`; *Scene > Scatter on Terrain* and the agent action `scatter_on_terrain` place a text plan (`Scatter/*.scatter`) as entities in
+      one undo step, with the biome table as density. Tested in `tests/test_scatter.cpp`, `tests/test_capi.cpp` and engine-backed in Doppio
+      (`terrain-generator-guide.md`).
 
 ### Phase 3 — Nature assets that can be scattered
 
-- [ ] **Vertex colour** and a **wind mask** in the Nature mesh output (needs a C ABI version).
+- [x] **Vertex colour** and a **painted flutter weight** in the Nature mesh output: OBJ `v x y z r g b a`, read by the engine into a
+      second vertex stream (no ABI change); wind sway, flutter and translucency are material fields (C ABI v9).
 - [ ] **Material slots per submesh** (already the next engine step in the Nature guide).
 - [ ] Base deformation: root flare and rock skirt from a ground height callback at bake time.
 - [x] Variants: N seeds per nature recipe baked into a cached variant set (`recipe_ref::nature_variants`, `doppio-material variants`).
-- [ ] Per-instance tint and scale range.
+- [x] Per-instance tint and scale range (`ScatterClass::tintJitter`, `minScale`/`maxScale`). Applying the tint through the Mesh Renderer
+      modifier (C ABI v10) is the missing last step of the scatter integration.
 - [ ] Ground-contact blend in the shader (rock/trunk to ground colour using vertex colour).
 
 ### Phase 4 — Rendering at scale
 
-- [ ] GPU-instanced vegetation with per-chunk instance buffers (the instanced path exists, with a
-      256-per-batch limit; lift it for scatter).
-- [ ] LOD chain from the same graph (full, simplified, impostor), distance and screen-size switching with
-      dithered cross-fade; billboard impostor atlas baked per variant.
-- [ ] Culling by chunk, then by instance, on the CPU first; GPU culling only if profiling asks for it.
-- [ ] Wind (vertex stage), leaf translucency and a normal map on leaf cards (listed as missing in the Nature
-      guide).
+- [ ] GPU-instanced vegetation with per-chunk instance buffers. The instanced path now also covers meshes with a painted
+      colour stream (nature scatter parts are placed as batched copies); the 256-per-batch limit and per-chunk buffers remain.
+- [x] **Cluster LOD for opaque parts** (rocks, trunks, boulders): Mesh Renderer -> Micromesh draws a mesh as a GPU-selected cluster cut,
+      crack-free, with shadow cascades, vertex colours and sub-meshes, and optional occlusion. Measured on 81 dense rocks and a 300-tree
+      forest: 6.1x and 3.3x fewer triangles (`micromeshes.md`, `./scripts/benchmark-micromesh.sh`).
+- [ ] LOD chain from the same graph for what Micromesh does not take (alpha-tested foliage cards, wind-animated parts): simplified
+      cards and a **billboard impostor atlas** baked per variant, distance and screen-size switching with dithered cross-fade. Also open:
+      the Nature generator does not switch Micromesh on for the parts it places (roadmap M-5, "cluster LOD" option).
+- [ ] Culling by chunk, then by instance, on the CPU first; GPU culling only if profiling asks for it. (Per-instance frustum culling
+      exists and is counted in the frame stats; there are no chunks yet; Micromesh culls clusters on the GPU, with occlusion against last
+      frame's depth, for the meshes that opt in.)
+- [x] Wind (vertex stage, also in the shadow pass), leaf translucency, a normal map on leaf cards and alpha-tested shadows for
+      cut-out cards.
 
 ### Phase 5 — Streaming and caching
 
@@ -154,7 +178,10 @@ independent of renderer work.
 - [ ] Persistent bake cache keyed by `(seed, chunk, rule hashes, generator_version)`; invalidation when a
       rule file changes.
 - [ ] Edit layer: sparse deltas for sculpt, moved or removed instances; applied after generation.
-- [ ] Terrain tiling and bigger-than-513 heightfields (the terrain guide already lists a tiled or GPU path).
+- [x] Engine side of bigger heightfields: the C ABI accepts terrains up to 4097 x 4097 and the chunked LOD draws them; a 1025 x 1025 terrain
+      (2.1 M triangles) submits about 0.84 M in about 410 draws (benchmark set). Measured, not just allowed.
+- [ ] The terrain generator still outputs 129, 257 or 513 only, and there is no tiling or streaming of a terrain larger than one heightfield
+      (the terrain guide still says 513 and lists a tiled or GPU path; its limit text predates the 1025 measurement).
 
 ### Phase 6 — Editor integration
 
@@ -166,10 +193,47 @@ independent of renderer work.
 
 ### Phase 7 — Visual quality pass (parallel track)
 
-- [ ] Prefiltered environment cubemap + BRDF LUT (split-sum); keep the current path as fallback.
-- [ ] Per-instance wetness, dust and seasonal tint driven by the same masks.
-- [ ] Bark, grass and soil surfaces from the Rock Surface bake (Nature guide).
-- [ ] Reference scenes with fixed seeds, rendered headless, used as visual regression baselines.
+- [ ] Prefiltered environment cubemap + BRDF LUT (split-sum); keep the current path as fallback. (Today: the equirectangular sky with mips,
+      per-object probes and an analytic split-sum approximation of the BRDF term in `scene_lit.frag`.)
+- [x] Run-time modifiers (C ABI v10): tint, wetness, snow, age on the Mesh Renderer and the material; scripts can drive them per
+      entity. Driving them from terrain masks is open.
+- [x] Water on the GPU: Gerstner waves in the vertex shader (no per-frame mesh rebuild), ripple detail, depth colour and foam.
+- [x] Generated bark sets (oak, pine, birch) with parallax relief; grass and soil surfaces from the Rock Surface bake are still open.
+- [ ] Reference scenes with fixed seeds, rendered headless, used as visual regression baselines. (The benchmark set already
+      generates its content by hashes, byte-identically, and its triangle and draw counts reproduce exactly, but nothing compares
+      pictures against a stored baseline yet; the water-dark-patch and Micromesh scene tests compare two renders of one run.)
+
+### Where it stands (2026-11-20)
+
+21 items done, 18 open. The finished work is the **foundation and the rendering side**; what is missing is the **world layer** that
+connects the generators, which this page called the missing piece from the start.
+
+| Phase | Done | Open | State |
+|---|---|---|---|
+| 0 Determinism | 5 | 1 | complete for what exists (hash, versions, thread-count tests); the world file does not exist yet |
+| 1 Terrain masks | 3 | 1 | **done** (7 masks, C ABI v15, biome table); painted masks and bands open |
+| 2 Scatter engine | 4 | 0 | **done**: core, C ABI v16 and the Scatter action place plans by the terrain's masks |
+| 3 Scatterable nature | 3 | 3 | vertex colour, variants, tint/scale done; material slots, root flare and ground blend open |
+| 4 Rendering at scale | 2 | 3 | wind/translucency/shadows and **Micromesh cluster LOD** done; foliage LOD and impostors, chunk instance buffers open |
+| 5 Streaming and caching | 1 | 4 | engine accepts big terrains; no chunk jobs, no bake cache, no edit layer |
+| 6 Editor integration | 0 | 4 | **not started** (no World tab) |
+| 7 Visual quality | 3 | 2 | modifiers, GPU water, bark done; prefiltered cubemap and image baselines open |
+
+**What is left, in the order that unblocks the most** (each item ships alone):
+
+1. ~~Phase 1, masks to the engine~~ **done**: the scatter module's density callback, the run-time modifiers and the splat/material blend can
+   now read masks.
+2. ~~Phase 2, the Scatter action~~ **done**: the finished scatter core, the biome table, the variants, the tint and the Micromesh/instanced draw paths
+   now show up in a scene (*Scene > Scatter on Terrain*). Its limit is scale: every instance is an entity, which is what phase 4's per-chunk buffers fix.
+3. **Phase 3, material slots per submesh** (the renderer already draws sub-meshes and Micromesh handles them; the Nature output and the
+   authored-material path still give one material to a mesh) and the Nature generator switching **Micromesh** on for rocks and trunks.
+4. **Phase 4, foliage**: simplified cards and a billboard impostor atlas, then per-chunk instance buffers and chunk culling.
+5. **Phase 5**: chunk jobs with a time budget, the bake cache, then the edit layer (design the delta format before the editor exists).
+6. **Phase 6**: the World tab, once 1 to 5 give it something to drive. Phase 7's image baselines can start now: a scatter scene exists to render
+   (`scripts/render-scatter-docs.sh`).
+
+The one decision that is not engineering: **the world file** (`world.cworld`) has no owner yet. Phases 0, 5 and 6 each need it; define its
+layers and delta format before phase 5.
 
 ## 5. Risks
 
@@ -189,3 +253,4 @@ independent of renderer work.
 - [`terrain-generator-guide.md`](terrain-generator-guide.md): masks, splat layers, limits.
 - [`water-generator-guide.md`](water-generator-guide.md): water surface and `water_height`.
 - [`graphics-roadmap.md`](graphics-roadmap.md): the renderer side (Micromeshes, Photon).
+- [`micromeshes.md`](micromeshes.md): the cluster hierarchy and GPU cut that dense trunks and rocks use now, with the benchmark set.

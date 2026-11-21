@@ -1,4 +1,6 @@
 #include "catch.hpp"
+
+#include "../src/caffeine/math/Quat.hpp"
 #include "caffeine/capi/EngineAPI.h"
 
 #include <cstdio>
@@ -748,5 +750,194 @@ TEST_CASE("C API builds a terrain from generated heights and splat weights", "[c
           CAFFEINE_INVALID_ARGUMENT);
     CHECK(caffeine_session_set_terrain(session, 9999u, &terrain, heights.data(), nullptr) ==
           CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain masks: built-ins from the heightfield, stored masks, the normal, a rectangle",
+          "[capi][terrain][masks]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineEntity bare = caffeine_session_create_entity(session, "No terrain");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 65;
+    terrain.resolution_z = 65;
+    terrain.size_x = 64.0f;
+    terrain.size_z = 64.0f;
+    terrain.max_height = 20.0f;
+    std::vector<float> heights(65 * 65);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 0; x < 65; ++x) heights[z * 65 + x] = std::min(1.0f, static_cast<float>(x) / 64.0f);  // 0.3125 m/m
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // The three built-ins come first.
+    uint32_t count = 0;
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &count) == CAFFEINE_OK);
+    CHECK(count == 3u);
+    CaffeineTerrainMaskInfo info{};
+    REQUIRE(caffeine_session_terrain_mask_at(session, entity, 1, &info) == CAFFEINE_OK);
+    CHECK(std::strcmp(info.name, "slope") == 0);
+    CHECK(info.builtin == 1);
+    CHECK(info.resolution_x == 0u);
+    CHECK(caffeine_session_terrain_mask_at(session, entity, 3, &info) == CAFFEINE_NOT_FOUND);
+
+    float value = -1.0f;
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "height", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.5f).margin(0.01f));
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "slope", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(std::atan(20.0f / 64.0f) / 1.57079632679f).margin(0.01f));
+    float normal[3] = {};
+    REQUIRE(caffeine_session_terrain_normal(session, entity, 32.0f, 10.0f, normal) == CAFFEINE_OK);
+    const float slope = 20.0f / 64.0f;
+    CHECK(normal[0] == Approx(-slope / std::sqrt(1.0f + slope * slope)).margin(0.01f));
+    CHECK(normal[1] == Approx(1.0f / std::sqrt(1.0f + slope * slope)).margin(0.01f));
+
+    // A stored mask: set, listed after the built-ins, read, saved with its name, removed.
+    const std::vector<uint8_t> wet = {0, 255, 0, 255};  // 2 x 2 (z rows): dry on the left, wet on the right
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 2, 2, wet.data()) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &count) == CAFFEINE_OK);
+    CHECK(count == 4u);
+    REQUIRE(caffeine_session_terrain_mask_at(session, entity, 3, &info) == CAFFEINE_OK);
+    CHECK(std::strcmp(info.name, "wetness") == 0);
+    CHECK(info.builtin == 0);
+    CHECK(info.resolution_x == 2u);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wetness", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.5f).margin(0.01f));
+    uint8_t grid[4 * 2] = {};
+    REQUIRE(caffeine_session_terrain_mask_rect(session, entity, "wetness", 0.0f, 0.0f, 64.0f, 64.0f, 4, 2, grid) ==
+            CAFFEINE_OK);
+    CHECK(grid[0] < grid[3]);  // left to right
+    CHECK(grid[3] > 200);
+    CHECK(grid[0] < 60);
+
+    // Errors: unknown mask, bad names, built-in names, no terrain, a missing entity.
+    CHECK(caffeine_session_terrain_mask(session, entity, "nope", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "slope", 2, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "bad name", 2, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "tiny", 1, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_mask(session, bare, "height", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_mask(session, 9999u, "height", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_mask(session, entity, nullptr, 1.0f, 1.0f, &value) == CAFFEINE_INVALID_ARGUMENT);
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 0, 0, nullptr) == CAFFEINE_OK);
+    CHECK(caffeine_session_terrain_mask(session, entity, "wetness", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "wetness", 0, 0, nullptr) == CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API scatter on a terrain: placement by the terrain, the biome table, orientation, errors",
+          "[capi][terrain][scatter]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineEntity bare = caffeine_session_create_entity(session, "No terrain");
+    REQUIRE(caffeine_session_set_entity_position(session, entity, CaffeineVec3{100.0f, 5.0f, -50.0f}) == CAFFEINE_OK);
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 65;
+    terrain.resolution_z = 65;
+    terrain.size_x = 120.0f;
+    terrain.size_z = 120.0f;
+    terrain.max_height = 20.0f;
+    std::vector<float> heights(65 * 65);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 0; x < 65; ++x) heights[z * 65 + x] = 0.3f + 0.2f * std::sin(static_cast<float>(x) * 0.12f);
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    // The right half of the terrain (x > 60 m) is wet.
+    std::vector<uint8_t> wet(64 * 2);
+    for (int z = 0; z < 2; ++z) {
+        for (int x = 0; x < 64; ++x) wet[z * 64 + x] = x >= 32 ? 255 : 0;
+    }
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 64, 2, wet.data()) == CAFFEINE_OK);
+
+    CaffeineScatterClass tree{};
+    tree.id = 2; tree.priority = 20; tree.cell_size = 6.0f; tree.radius = 2.0f; tree.density = 0.9f;
+    tree.min_scale = 0.8f; tree.max_scale = 1.3f; tree.tilt_to_normal = 0.5f; tree.sink = 0.1f; tree.tint_jitter = 0.05f;
+    tree.variants = 3;
+    CaffeineScatterClass grass = tree;
+    grass.id = 3; grass.priority = 5; grass.cell_size = 3.0f; grass.radius = 0.5f; grass.tilt_to_normal = 1.0f; grass.sink = 0.0f;
+    const CaffeineScatterClass classes[2] = {tree, grass};
+    const char* biome = "class 2\n  wetness 0 0 0.3 0.6\n";  // trees stay out of the wet half
+
+    uint32_t total = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, nullptr, 0, &total) ==
+            CAFFEINE_OK);
+    REQUIRE(total > 200u);
+    std::vector<CaffeineScatterInstance> list(total);
+    uint32_t again = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, list.data(),
+                                             static_cast<uint32_t>(list.size()), &again) == CAFFEINE_OK);
+    CHECK(again == total);
+
+    size_t trees = 0, grasses = 0;
+    for (const CaffeineScatterInstance& i : list) {
+        // Scene space: inside the terrain, which is centred on its entity at (100, 5, -50).
+        CHECK(i.position[0] >= 100.0f - 60.0f - 0.01f);
+        CHECK(i.position[0] <= 100.0f + 60.0f + 0.01f);
+        CHECK(i.position[2] >= -50.0f - 60.0f - 0.01f);
+        CHECK(i.position[2] <= -50.0f + 60.0f + 0.01f);
+        // On the surface (the entity's height added, the tree's sink taken off).
+        float ground = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, i.position[0] - 100.0f + 60.0f,
+                                                i.position[2] + 50.0f + 60.0f, &ground) == CAFFEINE_OK);
+        const float sink = i.class_id == 2 ? 0.1f * i.scale : 0.0f;
+        CHECK(i.position[1] == Approx(5.0f + ground - sink).margin(0.05f));
+        CHECK(i.scale >= 0.79f);
+        CHECK(i.scale <= 1.31f);
+        CHECK(i.variant < 3u);
+        // The Euler angles carry +Y onto `up`.
+        const Caffeine::Quat q = Caffeine::Quat::fromEuler(i.rotation_degrees[0] * 0.017453292f,
+                                                            i.rotation_degrees[1] * 0.017453292f,
+                                                            i.rotation_degrees[2] * 0.017453292f);
+        const Caffeine::Vec3 axis = q.rotate(Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+        CHECK(axis.x == Approx(i.up[0]).margin(2e-3f));
+        CHECK(axis.y == Approx(i.up[1]).margin(2e-3f));
+        CHECK(axis.z == Approx(i.up[2]).margin(2e-3f));
+        if (i.class_id == 2) {
+            ++trees;
+            CHECK(i.position[0] < 100.0f + 5.0f);  // x < 60 m from the corner, with the mask's soft edge: the dry half
+        } else {
+            ++grasses;
+        }
+    }
+    CHECK(trees > 20u);
+    CHECK(grasses > trees);
+
+    // A smaller buffer is filled and the total still says how many there are. A region restricts the scatter.
+    std::vector<CaffeineScatterInstance> few(10);
+    uint32_t t2 = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, few.data(), 10, &t2) ==
+            CAFFEINE_OK);
+    CHECK(t2 == total);
+    CHECK(few[3].position[0] == list[3].position[0]);
+    const float region[4] = {0.0f, 0.0f, 30.0f, 120.0f};
+    uint32_t part = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, region, nullptr, 0, &part) ==
+            CAFFEINE_OK);
+    CHECK(part > 0u);
+    CHECK(part < total / 2);
+    // Another seed, another forest.
+    std::vector<CaffeineScatterInstance> reseeded(total + 100);
+    uint32_t t3 = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 8, classes, 2, biome, nullptr, reseeded.data(),
+                                             static_cast<uint32_t>(reseeded.size()), &t3) == CAFFEINE_OK);
+    CHECK(reseeded[0].position[0] != list[0].position[0]);
+
+    // Errors.
+    uint32_t n = 0;
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, "class x\n", nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CaffeineScatterClass broken = tree;
+    broken.radius = 0.0f;
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, &broken, 1, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, classes, 0, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_scatter_terrain(session, bare, 7, classes, 2, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_NOT_FOUND);
+    char why[128] = {};
+    CHECK(caffeine_biome_check("class 2\n  slope 0 0 0.2 0.5\n", why, sizeof(why)) == CAFFEINE_OK);
+    CHECK(caffeine_biome_check("class 2\n  slope 0.5 0.2 1 1\n", why, sizeof(why)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::strstr(why, "line 2") != nullptr);
     caffeine_session_destroy(session);
 }

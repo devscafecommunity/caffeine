@@ -9,12 +9,14 @@ namespace Caffeine::Terrain {
 bool TerrainSerializer::save(const std::filesystem::path& path,
                              const TerrainHeightmap& heightmap,
                              const TerrainSplatmap& splatmap,
-                             bool includeSplat) {
+                             bool includeSplat,
+                             const TerrainMasks* masks) {
     if (heightmap.empty()) return false;
 
     const u32 resX = heightmap.resolutionX();
     const u32 resZ = heightmap.resolutionZ();
-    const u32 flags = includeSplat && !splatmap.empty() ? kFlagHasSplat : 0u;
+    const bool hasMasks = masks && !masks->empty();
+    const u32 flags = (includeSplat && !splatmap.empty() ? kFlagHasSplat : 0u) | (hasMasks ? kFlagHasMasks : 0u);
 
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
@@ -23,7 +25,7 @@ bool TerrainSerializer::save(const std::filesystem::path& path,
     if (!out.is_open()) return false;
 
     const u32 signature = kSignature;
-    const u32 version = kVersion;
+    const u32 version = hasMasks ? kVersion : 2u;
     out.write(reinterpret_cast<const char*>(&signature), sizeof(signature));
     out.write(reinterpret_cast<const char*>(&version), sizeof(version));
     out.write(reinterpret_cast<const char*>(&resX), sizeof(resX));
@@ -44,14 +46,29 @@ bool TerrainSerializer::save(const std::filesystem::path& path,
                   static_cast<std::streamsize>(weights.size() * sizeof(Vec4)));
     }
 
+    if (hasMasks) {
+        const u32 count = static_cast<u32>(masks->stored().size());
+        out.write(reinterpret_cast<const char*>(&count), sizeof(count));
+        for (const TerrainMasks::Stored& mask : masks->stored()) {
+            const u32 nameLength = static_cast<u32>(mask.name.size());
+            out.write(reinterpret_cast<const char*>(&nameLength), sizeof(nameLength));
+            out.write(mask.name.data(), static_cast<std::streamsize>(nameLength));
+            out.write(reinterpret_cast<const char*>(&mask.resolutionX), sizeof(mask.resolutionX));
+            out.write(reinterpret_cast<const char*>(&mask.resolutionZ), sizeof(mask.resolutionZ));
+            out.write(reinterpret_cast<const char*>(mask.data.data()), static_cast<std::streamsize>(mask.data.size()));
+        }
+    }
+
     return static_cast<bool>(out);
 }
 
 bool TerrainSerializer::load(const std::filesystem::path& path,
                              TerrainHeightmap& heightmap,
                              TerrainSplatmap& splatmap,
-                             bool* hadSplat) {
+                             bool* hadSplat,
+                             TerrainMasks* masks) {
     if (hadSplat) *hadSplat = false;
+    if (masks) masks->clear();
 
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in.is_open()) return false;
@@ -71,7 +88,7 @@ bool TerrainSerializer::load(const std::filesystem::path& path,
     in.read(reinterpret_cast<char*>(&resZ), sizeof(resZ));
     in.read(reinterpret_cast<char*>(&flags), sizeof(flags));
 
-    if (!in || signature != kSignature || (version != 1 && version != kVersion)) return false;
+    if (!in || signature != kSignature || version < 1 || version > kVersion) return false;
     if (resX < 2 || resZ < 2) return false;
 
     const usize heightCount = static_cast<usize>(resX) * static_cast<usize>(resZ);
@@ -109,6 +126,27 @@ bool TerrainSerializer::load(const std::filesystem::path& path,
     } else {
         splatmap.resize(resX, resZ);
         splatmap.fillLayer(0, 1.0f);
+    }
+
+    if ((flags & kFlagHasMasks) && version >= 3) {
+        u32 count = 0;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+        if (!in || count > TerrainMasks::kMaxStoredMasks) return false;
+        for (u32 i = 0; i < count; ++i) {
+            u32 nameLength = 0;
+            in.read(reinterpret_cast<char*>(&nameLength), sizeof(nameLength));
+            if (!in || nameLength == 0 || nameLength > TerrainMasks::kMaxNameLength) return false;
+            std::string name(nameLength, '\0');
+            in.read(name.data(), static_cast<std::streamsize>(nameLength));
+            u32 maskX = 0, maskZ = 0;
+            in.read(reinterpret_cast<char*>(&maskX), sizeof(maskX));
+            in.read(reinterpret_cast<char*>(&maskZ), sizeof(maskZ));
+            if (!in || maskX < 2 || maskZ < 2 || static_cast<u64>(maskX) * maskZ > (1u << 26)) return false;
+            std::vector<u8> data(static_cast<size_t>(maskX) * maskZ);
+            in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+            if (!in) return false;
+            if (masks && !masks->set(name, maskX, maskZ, data.data())) return false;
+        }
     }
 
     return true;

@@ -54,23 +54,23 @@ ECS::Entity spawnCube(ECS::World& world, const char* name, f32 x, f32 y, f32 z,
 }
 
 void spawnExplorationProps(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 chunkSize,
-                           u32 seed) {
+                           u32 seed, u32 version) {
     const f32 baseX = static_cast<f32>(cx) * chunkSize;
     const f32 baseZ = static_cast<f32>(cz) * chunkSize;
-    const int count = 4 + static_cast<int>(hash01(cx, cz, seed, 7) * 6.0f);
+    const int count = 4 + static_cast<int>(placementHash(version, cx, cz, seed, 7) * 6.0f);
     for (int i = 0; i < count; ++i) {
-        const f32 rx = hash01(cx + i, cz, seed, 11 + i);
-        const f32 rz = hash01(cx, cz + i, seed, 23 + i);
+        const f32 rx = placementHash(version, cx + i, cz, seed, 11 + i);
+        const f32 rz = placementHash(version, cx, cz + i, seed, 23 + i);
         if (rx < 0.25f) continue;
         const f32 x = baseX + rx * chunkSize;
         const f32 z = baseZ + rz * chunkSize;
-        const f32 h = 2.0f + hash01(i, cx, seed, 31) * 5.0f;
+        const f32 h = 2.0f + placementHash(version, i, cx, seed, 31) * 5.0f;
         spawnCube(world, "ExplorationMarker", x, h * 0.5f, z, 1.2f, h, 1.2f, directorId, cx, cz);
     }
 }
 
 void spawnBackroomsChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 chunkSize,
-                         u32 seed) {
+                         u32 seed, u32 version) {
     const f32 baseX = static_cast<f32>(cx) * chunkSize;
     const f32 baseZ = static_cast<f32>(cz) * chunkSize;
     const f32 roomW = 12.0f;
@@ -86,7 +86,7 @@ void spawnBackroomsChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 
         for (int rx = 0; rx < roomsX; ++rx) {
             const f32 cx0 = baseX + static_cast<f32>(rx) * roomW;
             const f32 cz0 = baseZ + static_cast<f32>(rz) * roomW;
-            const f32 roll = hash01(cx + rx, cz + rz, seed, 101);
+            const f32 roll = placementHash(version, cx + rx, cz + rz, seed, 101);
             if (roll < 0.12f) continue;
 
             spawnCube(world, "BackroomsWallN", cx0 + roomW * 0.5f, wallH * 0.5f, cz0 + 0.1f,
@@ -98,7 +98,7 @@ void spawnBackroomsChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 
             spawnCube(world, "BackroomsWallE", cx0 + roomW - 0.1f, wallH * 0.5f,
                       cz0 + roomW * 0.5f, 0.2f, wallH, roomW, directorId, cx, cz);
 
-            if (hash01(rx, rz, seed, 202) > 0.7f) {
+            if (placementHash(version, rx, rz, seed, 202) > 0.7f) {
                 spawnCube(world, "BackroomsPillar", cx0 + roomW * 0.5f, wallH * 0.5f,
                           cz0 + roomW * 0.5f, 0.8f, wallH, 0.8f, directorId, cx, cz);
             }
@@ -107,7 +107,7 @@ void spawnBackroomsChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 
 }
 
 void spawnEndlessRaceChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f32 chunkSize,
-                           u32 seed) {
+                           u32 seed, u32 version) {
     const f32 baseX = static_cast<f32>(cx) * chunkSize;
     const f32 baseZ = static_cast<f32>(cz) * chunkSize;
     const f32 trackW = chunkSize * 0.45f;
@@ -117,15 +117,15 @@ void spawnEndlessRaceChunk(ECS::World& world, u32 directorId, i32 cx, i32 cz, f3
               directorId, cx, cz);
 
     const f32 wallOffset = trackW * 0.5f + 0.5f;
-    const f32 curve = (hash01(cx, cz, seed, 303) - 0.5f) * chunkSize * 0.15f;
+    const f32 curve = (placementHash(version, cx, cz, seed, 303) - 0.5f) * chunkSize * 0.15f;
     spawnCube(world, "RaceWallL", centerX - wallOffset + curve, 1.5f, baseZ + chunkSize * 0.5f,
               0.4f, 3.0f, chunkSize, directorId, cx, cz);
     spawnCube(world, "RaceWallR", centerX + wallOffset + curve, 1.5f, baseZ + chunkSize * 0.5f,
               0.4f, 3.0f, chunkSize, directorId, cx, cz);
 
-    if (hash01(cx, cz, seed, 404) > 0.65f) {
+    if (placementHash(version, cx, cz, seed, 404) > 0.65f) {
         spawnCube(world, "RaceObstacle", centerX + curve, 0.75f,
-                  baseZ + chunkSize * (0.3f + hash01(cx, cz, seed, 505) * 0.4f), 2.0f, 1.5f, 2.0f,
+                  baseZ + chunkSize * (0.3f + placementHash(version, cx, cz, seed, 505) * 0.4f), 2.0f, 1.5f, 2.0f,
                   directorId, cx, cz);
     }
 }
@@ -189,11 +189,14 @@ std::vector<u32> ProceduralGenerator::generateStructureChunk(ECS::World& world,
 
     const char* structure = effectiveStructureProfile(settings);
     if (profileIs(structure, "rooms")) {
-        spawnBackroomsChunk(world, directorId, chunkX, chunkZ, chunkSize, settings.seed);
+        spawnBackroomsChunk(world, directorId, chunkX, chunkZ, chunkSize, settings.seed,
+                            settings.generatorVersion);
     } else if (profileIs(structure, "track")) {
-        spawnEndlessRaceChunk(world, directorId, chunkX, chunkZ, chunkSize, settings.seed);
+        spawnEndlessRaceChunk(world, directorId, chunkX, chunkZ, chunkSize, settings.seed,
+                            settings.generatorVersion);
     } else if (profileIs(structure, "markers")) {
-        spawnExplorationProps(world, directorId, chunkX, chunkZ, chunkSize, settings.seed);
+        spawnExplorationProps(world, directorId, chunkX, chunkZ, chunkSize, settings.seed,
+                            settings.generatorVersion);
     }
 
     ECS::ComponentQuery q;

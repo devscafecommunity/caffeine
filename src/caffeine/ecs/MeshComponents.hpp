@@ -17,6 +17,14 @@ struct MeshRendererComponent {
     f32  modWetness = 0.0f;
     f32  modSnow = 0.0f;
     f32  modAge = 0.0f;
+    /// Micromesh: draw the mesh as a cluster hierarchy cut on the GPU every frame (see
+    /// doppio/docs/micromeshes.md). Needs one material and no vertex colours; other meshes draw normally.
+    bool micromesh = false;
+    /// The error the cut may have, in screen pixels at the object's distance.
+    f32  micromeshPixels = 1.5f;
+    /// Micromesh occlusion: also hide the clusters that last frame's depth buffer shows to be behind something.
+    /// Single-phase (last frame's picture): a cluster at a new silhouette edge can show one frame late.
+    bool micromeshOcclusion = false;
 };
 
 struct SkinnedMeshRendererComponent {

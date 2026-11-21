@@ -77,7 +77,56 @@ enum class BufferUsage : u8 {
     StorageWrite,
     StorageReadWrite,
     TransferSrc,
-    TransferDst
+    TransferDst,
+    /// Draw / dispatch arguments written by the CPU (`IndirectDrawArgs`, `IndirectIndexedDrawArgs`,
+    /// `IndirectDispatchArgs`).
+    Indirect,
+    /// Arguments built by a compute pass (GPU culling): indirect + compute storage write.
+    IndirectWrite,
+    /// An index buffer a compute pass fills (compacted Micromesh cuts): index + compute storage write.
+    IndexWrite,
+    /// Read-only storage buffer for the vertex and fragment stages (instance and cluster data).
+    GraphicsStorage,
+    /// Graphics storage buffer that a compute pass also fills (visible-instance lists).
+    GraphicsStorageWrite
+};
+
+/// Arguments of `CommandBuffer::drawIndirect` (same layout as `SDL_GPUIndirectDrawCommand`).
+struct IndirectDrawArgs {
+    u32 vertexCount = 0;
+    u32 instanceCount = 1;
+    u32 firstVertex = 0;
+    u32 firstInstance = 0;
+};
+
+/// Arguments of `CommandBuffer::drawIndexedIndirect` (same layout as `SDL_GPUIndexedIndirectDrawCommand`).
+struct IndirectIndexedDrawArgs {
+    u32 indexCount = 0;
+    u32 instanceCount = 1;
+    u32 firstIndex = 0;
+    i32 vertexOffset = 0;
+    u32 firstInstance = 0;
+};
+
+/// Arguments of `CommandBuffer::dispatchIndirect`.
+struct IndirectDispatchArgs {
+    u32 x = 1;
+    u32 y = 1;
+    u32 z = 1;
+};
+
+/// What the device can do beyond plain draws: the features GPU-driven rendering needs. SDL3 GPU
+/// has indirect draws, graphics storage buffers and compute on Vulkan, D3D12 and Metal; it has no
+/// mesh shaders and no portable 64-bit atomics (see doppio/docs/graphics-roadmap.md).
+struct DeviceCapabilities {
+    bool indirectDraw = false;
+    bool indirectDispatch = false;
+    bool graphicsStorageBuffers = false;
+    bool computeStorageWrite = false;
+    bool meshShaders = false;
+    bool atomics64 = false;
+    /// Most draws one indirect call can carry (1 where the backend has no multi-draw).
+    u32 maxIndirectDrawCount = 1;
 };
 
 enum class ShaderStage : u8 {
@@ -315,6 +364,11 @@ public:
     void           releaseOffscreenResources();
     /// Reads mip 0 of a 4-byte-per-pixel colour texture back to the CPU. Blocks.
     bool readTexture(Texture* texture, std::vector<u8>& outPixels);
+    /// Reads a buffer back to the CPU (blocks). For tests, tools and GPU-driven debugging.
+    /// Copies the buffer (or its first `bytes` bytes) back to the CPU and waits for it.
+    bool readBuffer(Buffer* buffer, std::vector<u8>& out, u64 bytes = 0);
+    /// What GPU-driven rendering can rely on (all false before `init`).
+    DeviceCapabilities capabilities() const;
 
     Texture* createTexture(const TextureDesc& desc);
     Shader*  createShader(const ShaderDesc& desc);

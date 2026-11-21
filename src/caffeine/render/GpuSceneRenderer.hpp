@@ -15,6 +15,7 @@
 #include "render/GpuDirectionalShadowMap.hpp"
 #include "render/GpuSpotShadowMap.hpp"
 #include "render/GpuEnvironmentMap.hpp"
+#include "render/MicromeshGpu.hpp"
 #include "render/PostProcessStack.hpp"
 #include "render/PhotonCascades.hpp"
 #include "render/TextureQuality.hpp"
@@ -23,7 +24,9 @@
 #include "spatial/Octree.hpp"
 
 #include <string>
+#include <memory>
 #include <unordered_map>
+#include <array>
 #include <vector>
 
 namespace Caffeine::Editor {
@@ -164,6 +167,42 @@ public:
     /// waiting for capture). Callers that redraw on demand should keep drawing.
     bool needsAnotherFrame() const { return m_needsAnotherFrame; }
 
+    /// What the last scene frame cost and drew: the numbers a GPU-driven renderer is tuned with.
+    /// Times are CPU-side (encoding); SDL3 GPU has no portable GPU timestamps.
+    struct RenderStats {
+        u32 meshesGathered = 0;   ///< draws that survived frustum culling and upload
+        u32 frustumCulled = 0;
+        u32 drawCalls = 0;        ///< indexed draws issued (an instanced batch is one)
+        u32 instancedDrawCalls = 0;
+        u64 triangles = 0;        ///< submitted, counting every instance
+        u32 gpuWaterDraws = 0;    ///< water surfaces whose waves run in the vertex shader
+        u32 micromeshDraws = 0;   ///< meshes drawn as a GPU-selected cluster cut
+        f32 gatherMs = 0.0f;
+        f32 shadowsMs = 0.0f;
+        f32 opaqueMs = 0.0f;
+        f32 translucentMs = 0.0f;
+        f32 totalMs = 0.0f;
+    };
+    const RenderStats& lastFrameStats() const { return m_stats; }
+
+    /// What the last frame's Micromesh draws kept, summed over every entity. Reads the GPU
+    /// arguments back (blocking): for tools and tests, never call it per frame.
+    struct MicromeshFrameStats {
+        u32 draws = 0;
+        u32 clusters = 0;
+        u64 triangles = 0;        ///< triangles of the selected clusters
+        u64 sourceTriangles = 0;  ///< triangles those meshes have in full (no culling, no cut)
+        u32 views = 0;            ///< views cut this frame: the camera and each shadow cascade
+        u32 arenaUsed = 0;        ///< indices the cuts of all views took from the arena
+        u32 arenaCapacity = 0;
+        u32 overflowed = 0;       ///< (view, instance) cuts that did not fit and were not drawn
+        bool occlusionActive = false;  ///< the camera cut tested against last frame's depth
+    };
+    MicromeshFrameStats readMicromeshStats();
+    /// The index arena's allocations this frame (blocking read-back; tools and tests).
+    u32 micromeshArenaUsed() { return m_micromeshArena.readUsed(); }
+    u32 micromeshArenaCapacity() const { return m_micromeshArena.capacity(); }
+
     /// Effective post-processing for a camera: its component, the scene's, or the defaults.
     static ECS::PostProcessComponent resolvePostProcess(ECS::World& world, ECS::Entity camera,
                                                         const ECS::PostProcessComponent& fallback);
@@ -253,6 +292,8 @@ private:
         Vec3 aabbMax{};
         bool hasAabb = false;
         f32  viewerDistance = 0.0f;
+        f32  micromeshPixels = 0.0f;  ///< > 0: draw as a Micromesh cut with this error in pixels
+        bool micromeshOcclusion = false;  ///< also cull against last frame's depth
 
         bool isTranslucent() const { return transmission > 0.0f || alphaMode == 2; }
         bool isGlossy() const {
@@ -388,7 +429,48 @@ private:
     RHI::Shader* m_shadowCutoutFrag = nullptr;
     RHI::Shader* m_foliageVert = nullptr;        ///< scene_foliage.vert (per-vertex colour stream)
     RHI::Shader* m_shadowFoliageVert = nullptr;
+    RenderStats m_stats;     ///< the last finished frame
+    RenderStats m_building;  ///< the frame being recorded
     RHI::Shader* m_waterVert = nullptr;   ///< water.vert: Gerstner waves on the GPU
+
+    // Micromeshes (doppio/docs/micromeshes.md): a mesh whose Mesh Renderer has "Micromesh" on is cut into
+    // clusters once (per mesh asset and sub-mesh), and every frame compute passes pick the cut of every instance
+    // of it, for the camera and for each shadow cascade, into a shared index arena; each instance is then one
+    // indexed draw through scene_lit.frag into the same G-buffer.
+    struct MicromeshAsset {
+        MicromeshGpu gpu;
+        u32 revision = 0;
+        bool ready = false;
+        std::vector<const MeshDraw*> users;  ///< this frame: the draws of this asset, in instance order
+        u32 viewsUsed = 0;
+    };
+    /// The micromesh asset and instance a draw's sub-mesh is, this frame.
+    struct MicromeshDrawRef {
+        std::vector<std::pair<MicromeshAsset*, u32>> parts;  ///< (asset, instance) per sub-mesh
+    };
+    static constexpr u32 kMicromeshViews = 12;  ///< camera + shadow cascades + reflection passes per frame
+    static constexpr u32 kMicromeshArenaStart = 4u * 1024u * 1024u;  ///< 16 MB; grows by itself up to the max
+    static constexpr u32 kMicromeshArenaMax = 64u * 1024u * 1024u;   ///< 256 MB
+    RHI::Shader* m_micromeshVert = nullptr;
+    RHI::Shader* m_shadowMicromeshVert = nullptr;
+    RHI::Pipeline* m_micromeshPipeline = nullptr;
+    RHI::Pipeline* m_shadowMicromeshPipeline = nullptr;
+    MicromeshArena m_micromeshArena;
+    MicromeshHzb m_micromeshHzb;  ///< last frame's depth, farthest-depth pyramid
+    std::map<std::pair<const Assets::Mesh3D*, u32>, std::unique_ptr<MicromeshAsset>> m_micromeshAssets;
+    std::unordered_map<const MeshDraw*, MicromeshDrawRef> m_micromeshDraws;  ///< valid for the frame
+    u32 m_micromeshNextView = 0;       ///< views handed out this frame
+    u32 m_micromeshMainView = ~0u;
+    u32 m_micromeshFrame = 0;
+    bool m_micromeshOcclusionActive = false;
+    MicromeshAsset* micromeshAssetFor(Assets::Mesh3D* mesh, u32 subMesh, u32 firstIndex, u32 indexCount);
+    /// Once per frame, after the draws are final and before any pass: resets the arena, groups the draws that
+    /// use Micromesh by asset and uploads their matrices.
+    void beginMicromeshFrame(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws);
+    /// Compute: the cut of every Micromesh instance for one view. Returns the view index or ~0u (none left).
+    u32 cullMicromeshView(RHI::CommandBuffer* cmd, const MicromeshCullParams& params);
+    bool microDrawParts(const MeshDraw* draw, const MicromeshDrawRef*& out) const;
+    void releaseMicromeshes();
     RHI::Shader* m_foliageInstancedVert = nullptr;
     RHI::Pipeline* m_scenePipeline = nullptr;
     RHI::Pipeline* m_wireframePipeline = nullptr;

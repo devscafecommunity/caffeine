@@ -223,6 +223,59 @@ bool RenderDevice::readTexture(Texture* texture, std::vector<u8>& outPixels) {
     return true;
 }
 
+bool RenderDevice::readBuffer(Buffer* buffer, std::vector<u8>& out, u64 bytes) {
+    if (!m_device || !buffer || !buffer->handle || buffer->size == 0) return false;
+    const u64 size = bytes == 0 ? buffer->size : std::min<u64>(bytes, buffer->size);
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    info.size = static_cast<Uint32>(size);
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(m_device, &info);
+    if (!transfer) return false;
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    if (!cmd) {
+        SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+        return false;
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUBufferRegion region{};
+    region.buffer = buffer->handle;
+    region.size = static_cast<Uint32>(size);
+    SDL_GPUTransferBufferLocation location{};
+    location.transfer_buffer = transfer;
+    SDL_DownloadFromGPUBuffer(copy, &region, &location);
+    SDL_EndGPUCopyPass(copy);
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (fence) {
+        SDL_WaitForGPUFences(m_device, true, &fence, 1);
+        SDL_ReleaseGPUFence(m_device, fence);
+    } else {
+        SDL_WaitForGPUIdle(m_device);
+    }
+    const void* mapped = SDL_MapGPUTransferBuffer(m_device, transfer, false);
+    if (!mapped) {
+        SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    std::memcpy(out.data(), mapped, out.size());
+    SDL_UnmapGPUTransferBuffer(m_device, transfer);
+    SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+    return true;
+}
+
+DeviceCapabilities RenderDevice::capabilities() const {
+    DeviceCapabilities caps;
+    if (!m_device) return caps;
+    // SDL3 GPU exposes these on every backend it supports; it has no mesh shaders and no portable
+    // 64-bit atomics, so Micromeshes use hardware indirect draws and 32-bit atomics only.
+    caps.indirectDraw = true;
+    caps.indirectDispatch = true;
+    caps.graphicsStorageBuffers = true;
+    caps.computeStorageWrite = true;
+    caps.maxIndirectDrawCount = 65535;
+    return caps;
+}
+
 void RenderDevice::endFrame(CommandBuffer* cmd) {
     if (!cmd) {
         return;
@@ -347,6 +400,14 @@ static SDL_GPUBufferUsageFlags toSDLBufferUsage(BufferUsage usage) {
         case BufferUsage::StorageReadWrite:
             return SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
                    SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
+        case BufferUsage::IndexWrite:
+            return SDL_GPU_BUFFERUSAGE_INDEX | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
+        case BufferUsage::Indirect: return SDL_GPU_BUFFERUSAGE_INDIRECT;
+        case BufferUsage::IndirectWrite:
+            return SDL_GPU_BUFFERUSAGE_INDIRECT | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
+        case BufferUsage::GraphicsStorage: return SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+        case BufferUsage::GraphicsStorageWrite:
+            return SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
         default:                   return SDL_GPU_BUFFERUSAGE_VERTEX;
     }
 }
@@ -431,8 +492,8 @@ Pipeline* RenderDevice::createGraphicsPipeline(Shader* vertexShader, Shader* fra
         return nullptr;
     }
 
-    SDL_GPUVertexBufferDescription sdlVertexBuffers[4]{};
-    const u32 vbCount = desc.numVertexBuffers > 4 ? 4 : desc.numVertexBuffers;
+    SDL_GPUVertexBufferDescription sdlVertexBuffers[8]{};
+    const u32 vbCount = desc.numVertexBuffers > 8 ? 8 : desc.numVertexBuffers;
     for (u32 i = 0; i < vbCount; ++i) {
         sdlVertexBuffers[i].slot = desc.vertexBuffers[i].slot;
         sdlVertexBuffers[i].pitch = desc.vertexBuffers[i].stride;

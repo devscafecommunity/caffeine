@@ -5748,6 +5748,1607 @@ fn water_presets_render_in_the_engine() {
     }
 }
 
+/// The stormy sea used to show large smooth black patches with hard edges: its screen-space
+/// reflection hit stale pixels (water writes no depth). The darkest 5 % of the lower half of the
+/// frame must stay close to the median brightness.
+#[test]
+fn storm_water_has_no_dark_reflection_patches() {
+    use crate::uikit::panels::water_generator as wg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 7 {
+        return;
+    }
+    let root = test_temp_root("water-dark-patches");
+    harness.app.asset_root_override = Some(root.clone());
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 8.0, 0.0]).unwrap();
+        engine.set_rotation(id, [-35.0, 140.0, 0.0]).unwrap();
+    }
+    // The open sea first, then the storm: the reflection trace reads the previous frame, which
+    // here shows the other water.
+    let mut frame = Vec::new();
+    for name in ["Open Sea", "Storm"] {
+        let index = harness
+            .app()
+            .watergen
+            .presets
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap();
+        harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(index)));
+        harness.dispatch(Message::WaterGen(wg::Edit::Place));
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 1.0, 0.0]).unwrap();
+        for _ in 0..30 {
+            engine.tick(0.05);
+        }
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.5,
+                pitch: 0.3,
+                distance: 46.0,
+                focus: [0.0, 1.0, 0.0],
+            })
+            .unwrap();
+        frame = render_entity_view_sized(engine, 960, 540);
+        engine.destroy_entity(id).ok();
+        harness.app.has_water = false;
+    }
+    let mut lumas: Vec<f32> = frame
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .skip(960 * 300)
+        .map(|p| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32)
+        .collect();
+    lumas.sort_by(|a, b| a.total_cmp(b));
+    let median = lumas[lumas.len() / 2];
+    let p5 = lumas[lumas.len() / 20];
+    assert!(median > 30.0, "the sea should be lit, median {median}");
+    assert!(
+        p5 / median > 0.72,
+        "dark patches on the water: p5 {p5} vs median {median}"
+    );
+}
+
+/// A dense rock for the Micromesh tests: a latitude / longitude sphere pushed in and out by layered
+/// noise, written as an OBJ with normals and UVs (the first and last column are duplicated, a real UV
+/// seam). Returns the triangle count.
+fn write_rock_obj(path: &std::path::Path, segments: usize, rings: usize) -> usize {
+    write_rock_obj_with(path, segments, rings, false, false)
+}
+
+/// The same rock, optionally with two materials (`usemtl`: the northern and the southern half) and a vertex
+/// colour (`v x y z r g b a`: a tint that fades with latitude).
+fn write_rock_obj_with(
+    path: &std::path::Path,
+    segments: usize,
+    rings: usize,
+    two_materials: bool,
+    colours: bool,
+) -> usize {
+    fn hash(x: i32, y: i32, z: i32) -> f32 {
+        let mut h = (x as u32)
+            .wrapping_mul(374_761_393)
+            .wrapping_add((y as u32).wrapping_mul(668_265_263))
+            .wrapping_add((z as u32).wrapping_mul(2_147_483_647));
+        h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+        ((h ^ (h >> 16)) & 0xFFFF) as f32 / 65_535.0
+    }
+    fn noise(p: [f32; 3]) -> f32 {
+        let [x, y, z] = p;
+        let (xi, yi, zi) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
+        let (fx, fy, fz) = (x - xi as f32, y - yi as f32, z - zi as f32);
+        let s = |t: f32| t * t * (3.0 - 2.0 * t);
+        let (sx, sy, sz) = (s(fx), s(fy), s(fz));
+        let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+        let mut c = [[0.0f32; 2]; 2];
+        for (dy, row) in c.iter_mut().enumerate() {
+            for (dz, cell) in row.iter_mut().enumerate() {
+                let (yy, zz) = (yi + dy as i32, zi + dz as i32);
+                *cell = mix(hash(xi, yy, zz), hash(xi + 1, yy, zz), sx);
+            }
+        }
+        mix(mix(c[0][0], c[1][0], sy), mix(c[0][1], c[1][1], sy), sz)
+    }
+    let tau = std::f32::consts::TAU;
+    let point = |i: usize, j: usize| -> [f32; 3] {
+        let phi = (i % segments) as f32 / segments as f32 * tau;
+        let theta = j as f32 / rings as f32 * std::f32::consts::PI;
+        let d = [
+            theta.sin() * phi.cos(),
+            theta.cos(),
+            theta.sin() * phi.sin(),
+        ];
+        let n = noise([d[0] * 1.6, d[1] * 1.6, d[2] * 1.6]) * 0.55
+            + noise([d[0] * 3.7, d[1] * 3.7, d[2] * 3.7]) * 0.28
+            + noise([d[0] * 9.0, d[1] * 9.0, d[2] * 9.0]) * 0.12;
+        let r = 0.75 + n * 0.5;
+        [d[0] * r, d[1] * r, d[2] * r]
+    };
+    let columns = segments + 1;
+    let index = |i: usize, j: usize| j * columns + i;
+    let mut positions = Vec::with_capacity(columns * (rings + 1));
+    for j in 0..=rings {
+        for i in 0..=segments {
+            positions.push(point(i, j));
+        }
+    }
+    // Smooth normals: accumulate the face normals of every triangle on the wrapped grid.
+    let mut normals = vec![[0.0f32; 3]; positions.len()];
+    let mut triangles: Vec<[usize; 3]> = Vec::new();
+    for j in 0..rings {
+        for i in 0..segments {
+            triangles.push([index(i, j), index(i + 1, j), index(i, j + 1)]);
+            triangles.push([index(i + 1, j), index(i + 1, j + 1), index(i, j + 1)]);
+        }
+    }
+    let wrap = |v: usize| -> usize {
+        let (i, j) = (v % columns, v / columns);
+        index(i % segments, j)
+    };
+    let mut accumulated = vec![[0.0f32; 3]; positions.len()];
+    for t in &triangles {
+        let (a, b, c) = (positions[t[0]], positions[t[1]], positions[t[2]]);
+        let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        for &v in t {
+            let w = wrap(v);
+            for k in 0..3 {
+                accumulated[w][k] += n[k];
+            }
+        }
+    }
+    for (v, normal) in normals.iter_mut().enumerate() {
+        let a = accumulated[wrap(v)];
+        let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-9);
+        *normal = [a[0] / l, a[1] / l, a[2] / l];
+        // Pole rows: every vertex is the same point.
+        let j = v / columns;
+        if j == 0 {
+            *normal = [0.0, 1.0, 0.0];
+        } else if j == rings {
+            *normal = [0.0, -1.0, 0.0];
+        }
+    }
+    let mut obj = String::from("# rock\n");
+    for (v, p) in positions.iter().enumerate() {
+        if colours {
+            let latitude = (v / columns) as f32 / rings as f32;
+            obj.push_str(&format!(
+                "v {} {} {} {} {} {} 1\n",
+                p[0],
+                p[1],
+                p[2],
+                1.0 - 0.6 * latitude,
+                0.5 + 0.4 * latitude,
+                0.9 - 0.5 * latitude
+            ));
+        } else {
+            obj.push_str(&format!("v {} {} {}\n", p[0], p[1], p[2]));
+        }
+    }
+    for j in 0..=rings {
+        for i in 0..=segments {
+            obj.push_str(&format!(
+                "vt {} {}\n",
+                i as f32 / segments as f32,
+                1.0 - j as f32 / rings as f32
+            ));
+        }
+    }
+    for n in &normals {
+        obj.push_str(&format!("vn {} {} {}\n", n[0], n[1], n[2]));
+    }
+    let mut count = 0;
+    let mut material = 0;
+    if two_materials {
+        obj.push_str("usemtl north\n");
+    }
+    for t in &triangles {
+        // The two triangles touching a pole row have a zero-area edge: skip the degenerate ones.
+        let (a, b, c) = (positions[t[0]], positions[t[1]], positions[t[2]]);
+        let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] < 1e-14 {
+            continue;
+        }
+        if two_materials && material == 0 && t[0] / columns >= rings / 2 {
+            obj.push_str("usemtl south\n");
+            material = 1;
+        }
+        obj.push_str(&format!(
+            "f {0}/{0}/{0} {1}/{1}/{1} {2}/{2}/{2}\n",
+            t[0] + 1,
+            t[1] + 1,
+            t[2] + 1
+        ));
+        count += 1;
+    }
+    std::fs::write(path, obj).unwrap();
+    count
+}
+
+/// Places a rock entity (Mesh Filter with the OBJ, Mesh Renderer with the material and, optionally, the
+/// Micromesh switch on).
+fn place_rock(
+    engine: &mut doppio_engine::Engine,
+    mesh: &str,
+    material: &str,
+    position: [f32; 3],
+    scale: f32,
+    micromesh: bool,
+) -> (u32, u32) {
+    let id = engine.create_entity("Rock").expect("entity");
+    engine.set_position(id, position).unwrap();
+    engine.set_scale(id, [scale, scale, scale]).unwrap();
+    let filter = add_component(engine, id, "Mesh Filter").expect("Mesh Filter");
+    let primitive = super::enum_field(engine, "Mesh Filter", "Primitive", "Custom").expect("enum");
+    set_component_field(engine, id, filter, "Primitive", primitive).expect("primitive");
+    set_component_field(
+        engine,
+        id,
+        filter,
+        "Mesh",
+        doppio_engine::FieldValue::String(mesh.to_owned()),
+    )
+    .expect("mesh");
+    let renderer = add_component(engine, id, "Mesh Renderer").expect("Mesh Renderer");
+    set_component_field(
+        engine,
+        id,
+        renderer,
+        "Material",
+        doppio_engine::FieldValue::String(material.to_owned()),
+    )
+    .expect("material");
+    if micromesh {
+        set_component_field(
+            engine,
+            id,
+            renderer,
+            "Micromesh",
+            doppio_engine::FieldValue::Bool(true),
+        )
+        .expect("micromesh");
+    }
+    (id, renderer)
+}
+
+/// The scene renderer draws a mesh through the Micromesh path (cluster cut selected on the GPU, drawn
+/// into the same G-buffer through the lit shader) and the picture matches the plain mesh's.
+#[test]
+fn micromesh_draw_matches_the_plain_mesh_and_submits_fewer_triangles() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    {
+        let engine = harness.app.engine.as_ref().expect("engine");
+        if engine.capi_version() < 14 {
+            return;
+        }
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-scene");
+    std::fs::create_dir_all(&root).unwrap();
+    let mesh = root.join("rock.obj");
+    let source = write_rock_obj(&mesh, 192, 120);
+    assert!(source > 40_000, "a dense rock, got {source} triangles");
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-50.0, 35.0, 0.0]).unwrap();
+    let material = doppio_engine::Material {
+        albedo: [0.5, 0.46, 0.4, 1.0],
+        roughness: 0.85,
+        ..doppio_engine::Material::default()
+    };
+    let mat = root.join("rock.mat");
+    engine
+        .save_material(&mat.to_string_lossy(), &material)
+        .unwrap();
+    let (rock, renderer) = place_rock(
+        engine,
+        &mesh.to_string_lossy(),
+        &mat.to_string_lossy(),
+        [0.0, 0.0, 0.0],
+        1.0,
+        false,
+    );
+    // A floor under it, so the sun's shadow of the rock is part of the picture (and of the comparison).
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let floor = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(floor, [0.0, -0.9, 0.0]).unwrap();
+    engine.set_scale(floor, [8.0, 1.0, 8.0]).unwrap();
+    engine
+        .apply_material(floor, &mat.to_string_lossy())
+        .unwrap();
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.7,
+            pitch: 0.6,
+            distance: 6.5,
+            focus: [0.0, -0.4, 0.0],
+        })
+        .unwrap();
+    // The viewport renders without shadow maps unless asked: ask.
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.shadows = true;
+    engine.set_viewport_settings(settings).unwrap();
+    let _ = render_entity_view_sized(engine, 480, 360); // settle
+    let plain = render_entity_view_sized(engine, 480, 360);
+    let plain_stats = engine.render_stats().unwrap();
+    if !(plain_stats.indirect_draw
+        && plain_stats.graphics_storage_buffers
+        && plain_stats.compute_storage_write)
+    {
+        return; // no GPU path for it
+    }
+    assert_eq!(plain_stats.micromesh_draws, 0);
+    assert!(plain_stats.triangles as usize >= source);
+
+    set_component_field(
+        engine,
+        rock,
+        renderer,
+        "Micromesh",
+        doppio_engine::FieldValue::Bool(true),
+    )
+    .unwrap();
+    let _ = render_entity_view_sized(engine, 480, 360); // builds the cluster hierarchy
+    let micro = render_entity_view_sized(engine, 480, 360);
+    let micro_stats = engine.render_stats().unwrap();
+    assert_eq!(
+        micro_stats.micromesh_draws, 1,
+        "the rock draws as a Micromesh"
+    );
+    let frame = engine.micromesh_frame_stats().unwrap();
+    assert_eq!(frame.draws, 1);
+    assert!(frame.triangles > 0);
+    // The camera and at least one shadow cascade were cut, into one arena, and everything fit.
+    assert!(frame.views >= 2, "views {}", frame.views);
+    assert!(frame.arena_used > 1 && frame.arena_used <= frame.arena_capacity);
+    assert_eq!(frame.overflowed, 0);
+    assert!(
+        frame.triangles * 2 < frame.source_triangles,
+        "the cut keeps {} of {} triangles",
+        frame.triangles,
+        frame.source_triangles
+    );
+    // The viewport HUD says so: triangles, draws and the Micromesh draws.
+    let label = render_stats_label(engine);
+    assert!(
+        label.contains("tris") && label.contains("1 micromesh"),
+        "HUD: {label:?}"
+    );
+    // The same picture: mean absolute difference per channel stays small.
+    let mut sum = 0u64;
+    let mut covered = 0u64;
+    for (a, b) in plain
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(micro.as_chunks::<4>().0.iter())
+    {
+        let d = (0..3)
+            .map(|k| (a[k] as i32 - b[k] as i32).unsigned_abs() as u64)
+            .sum::<u64>();
+        sum += d;
+        covered += 1;
+    }
+    let mean = sum as f64 / (3.0 * covered as f64);
+    assert!(
+        mean < 2.5,
+        "micromesh vs plain: mean difference {mean} / 255"
+    );
+    // Switching it off draws the plain mesh again.
+    set_component_field(
+        engine,
+        rock,
+        renderer,
+        "Micromesh",
+        doppio_engine::FieldValue::Bool(false),
+    )
+    .unwrap();
+    let _ = render_entity_view_sized(engine, 480, 360);
+    assert_eq!(engine.render_stats().unwrap().micromesh_draws, 0);
+    assert!(!render_stats_label(engine).contains("micromesh"));
+}
+
+#[test]
+fn hud_counts_are_compact() {
+    assert_eq!(compact_count(0), "0");
+    assert_eq!(compact_count(999), "999");
+    assert_eq!(compact_count(1_234), "1.2k");
+    assert_eq!(compact_count(610_337), "610.3k");
+    assert_eq!(compact_count(5_600_000), "5.6M");
+}
+
+/// What the scene path adds beyond a plain rock: a non-uniform scale (normals use the inverse transpose, the
+/// cull uses the largest scale), a mesh with two materials (one hierarchy per sub-mesh) and a vertex colour.
+/// Each draws like its plain mesh does.
+#[test]
+fn micromesh_handles_non_uniform_scale_submeshes_and_vertex_colours() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 14 {
+        return;
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-variants");
+    std::fs::create_dir_all(&root).unwrap();
+    let plain_obj = root.join("rock.obj");
+    let two_obj = root.join("rock_two.obj");
+    let coloured_obj = root.join("rock_coloured.obj");
+    write_rock_obj(&plain_obj, 160, 100);
+    write_rock_obj_with(&two_obj, 160, 100, true, false);
+    write_rock_obj_with(&coloured_obj, 160, 100, false, true);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-50.0, 35.0, 0.0]).unwrap();
+    let material = doppio_engine::Material {
+        albedo: [0.55, 0.5, 0.45, 1.0],
+        roughness: 0.8,
+        ..doppio_engine::Material::default()
+    };
+    let mat = root.join("rock.mat");
+    engine
+        .save_material(&mat.to_string_lossy(), &material)
+        .unwrap();
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.6,
+            pitch: 0.3,
+            distance: 4.2,
+            focus: [0.0, 0.0, 0.0],
+        })
+        .unwrap();
+    let _ = render_entity_view_sized(engine, 400, 300); // settle the device
+    let cases: [(&str, &std::path::Path, [f32; 3]); 3] = [
+        ("non-uniform scale", &plain_obj, [1.0, 1.5, 0.7]),
+        ("two materials", &two_obj, [1.0, 1.0, 1.0]),
+        ("vertex colours", &coloured_obj, [1.0, 1.0, 1.0]),
+    ];
+    for (label, obj, scale) in cases {
+        let (id, renderer) = place_rock(
+            engine,
+            &obj.to_string_lossy(),
+            &mat.to_string_lossy(),
+            [0.0, 0.0, 0.0],
+            1.0,
+            false,
+        );
+        engine.set_scale(id, scale).unwrap();
+        let _ = render_entity_view_sized(engine, 400, 300);
+        let plain = render_entity_view_sized(engine, 400, 300);
+        set_component_field(
+            engine,
+            id,
+            renderer,
+            "Micromesh",
+            doppio_engine::FieldValue::Bool(true),
+        )
+        .unwrap();
+        let _ = render_entity_view_sized(engine, 400, 300); // builds the hierarchy
+        let micro = render_entity_view_sized(engine, 400, 300);
+        let stats = engine.render_stats().unwrap();
+        let frame = engine.micromesh_frame_stats().unwrap();
+        assert_eq!(stats.micromesh_draws, 1, "{label}: drawn as a Micromesh");
+        assert!(
+            frame.triangles > 0 && frame.triangles < frame.source_triangles,
+            "{label}: {frame:?}"
+        );
+        assert_eq!(frame.overflowed, 0, "{label}");
+        let mut sum = 0u64;
+        for (a, b) in plain
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(micro.as_chunks::<4>().0.iter())
+        {
+            sum += (0..3)
+                .map(|k| (a[k] as i32 - b[k] as i32).unsigned_abs() as u64)
+                .sum::<u64>();
+        }
+        let mean = sum as f64 / (3.0 * (plain.len() / 4) as f64);
+        assert!(
+            mean < 3.0,
+            "{label}: micromesh vs plain, mean difference {mean} / 255"
+        );
+        engine.destroy_entity(id).ok();
+    }
+}
+
+/// Micromesh occlusion: last frame's depth, reduced to a farthest-depth pyramid, hides the clusters behind a wall.
+/// Six rocks stand on either side of a big wall seen from one side; with the switch on the camera's cut drops the
+/// rocks the wall hides and the picture stays the same.
+#[test]
+fn micromesh_occlusion_hides_what_last_frames_depth_shows_behind_a_wall() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 14 {
+        return;
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Cube")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(cube));
+    let wall = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-occlusion");
+    std::fs::create_dir_all(&root).unwrap();
+    let mesh = root.join("rock.obj");
+    write_rock_obj(&mesh, 160, 100);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-50.0, 35.0, 0.0]).unwrap();
+    let material = doppio_engine::Material {
+        albedo: [0.5, 0.46, 0.4, 1.0],
+        roughness: 0.85,
+        ..doppio_engine::Material::default()
+    };
+    let mat = root.join("rock.mat");
+    engine
+        .save_material(&mat.to_string_lossy(), &material)
+        .unwrap();
+    engine.apply_material(wall, &mat.to_string_lossy()).unwrap();
+    engine.set_position(wall, [0.0, 0.0, 0.0]).unwrap();
+    engine.set_scale(wall, [16.0, 16.0, 0.5]).unwrap();
+    let mut rocks = Vec::new();
+    for z in [-3.5f32, 3.5] {
+        for x in [-2.5f32, 0.0, 2.5] {
+            rocks.push(place_rock(
+                engine,
+                &mesh.to_string_lossy(),
+                &mat.to_string_lossy(),
+                [x, 0.0, z],
+                1.0,
+                true,
+            ));
+        }
+    }
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 0.02,
+            distance: 12.0,
+            focus: [0.0, 0.0, 0.0],
+        })
+        .unwrap();
+    let measure = |engine: &mut doppio_engine::Engine| {
+        let mut pixels = Vec::new();
+        for _ in 0..4 {
+            pixels = render_entity_view_sized(engine, 480, 360);
+        }
+        (pixels, engine.micromesh_frame_stats().unwrap())
+    };
+    let (open, open_stats) = measure(engine);
+    assert!(!open_stats.occlusion);
+    assert_eq!(open_stats.draws, 6);
+    for &(id, renderer) in &rocks {
+        set_component_field(
+            engine,
+            id,
+            renderer,
+            "Micromesh occlusion",
+            doppio_engine::FieldValue::Bool(true),
+        )
+        .unwrap();
+    }
+    let (culled, culled_stats) = measure(engine);
+    assert!(
+        culled_stats.occlusion,
+        "the cut was tested against last frame's depth"
+    );
+    assert_eq!(culled_stats.overflowed, 0);
+    // About half of the rocks are behind the wall: their clusters go.
+    assert!(
+        culled_stats.triangles * 4 < open_stats.triangles * 3,
+        "culled {} vs open {}",
+        culled_stats.triangles,
+        open_stats.triangles
+    );
+    assert!(
+        culled_stats.triangles * 4 > open_stats.triangles,
+        "the visible rocks stay: culled {} vs open {}",
+        culled_stats.triangles,
+        open_stats.triangles
+    );
+    // And the picture is the same.
+    let mut sum = 0u64;
+    for (a, b) in open
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(culled.as_chunks::<4>().0.iter())
+    {
+        sum += (0..3)
+            .map(|k| (a[k] as i32 - b[k] as i32).unsigned_abs() as u64)
+            .sum::<u64>();
+    }
+    let mean = sum as f64 / (3.0 * (open.len() / 4) as f64);
+    assert!(mean < 1.5, "occlusion changed the picture: {mean} / 255");
+}
+
+// ------------------------------------------------------------------------------------------ benchmarks
+
+/// One mesh under construction: positions with a vertex colour, UVs and indexed triangles, smooth normals added
+/// by `write` (grids that close on themselves share their seam's normals).
+#[derive(Default)]
+struct ObjBuilder {
+    positions: Vec<[f32; 3]>,
+    colours: Vec<[f32; 4]>,
+    uvs: Vec<[f32; 2]>,
+    weld: Vec<usize>,
+    triangles: Vec<[usize; 3]>,
+}
+
+impl ObjBuilder {
+    /// A `cols x rows` grid of quads (`cols + 1` by `rows + 1` vertices; the last column repeats the first
+    /// when `closed`). `shape(u, v)` gives the position and the colour at (u, v) in 0..1.
+    fn grid(
+        &mut self,
+        cols: usize,
+        rows: usize,
+        closed: bool,
+        shape: &dyn Fn(f32, f32) -> ([f32; 3], [f32; 4]),
+    ) {
+        let first = self.positions.len();
+        let columns = cols + 1;
+        for j in 0..=rows {
+            for i in 0..=cols {
+                let (u, v) = (i as f32 / cols as f32, j as f32 / rows as f32);
+                let (position, colour) = shape(u, v);
+                self.positions.push(position);
+                self.colours.push(colour);
+                self.uvs.push([u, 1.0 - v]);
+                let canonical = if closed && i == cols { 0 } else { i };
+                self.weld.push(first + j * columns + canonical);
+            }
+        }
+        for j in 0..rows {
+            for i in 0..cols {
+                let at = |i: usize, j: usize| first + j * columns + i;
+                self.triangles.push([at(i, j), at(i + 1, j), at(i, j + 1)]);
+                self.triangles
+                    .push([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+    }
+
+    /// Writes the OBJ (degenerate triangles skipped) and returns its triangle count.
+    fn write(&self, path: &std::path::Path) -> usize {
+        let cross = |t: &[usize; 3]| {
+            let (a, b, c) = (
+                self.positions[t[0]],
+                self.positions[t[1]],
+                self.positions[t[2]],
+            );
+            let (e1, e2) = (
+                [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+            );
+            [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ]
+        };
+        let mut accumulated = vec![[0.0f32; 3]; self.positions.len()];
+        for t in &self.triangles {
+            let n = cross(t);
+            for &v in t {
+                for (k, value) in n.iter().enumerate() {
+                    accumulated[self.weld[v]][k] += value;
+                }
+            }
+        }
+        let mut obj = String::from("# benchmark mesh\n");
+        for (p, c) in self.positions.iter().zip(&self.colours) {
+            obj.push_str(&format!(
+                "v {} {} {} {} {} {} {}\n",
+                p[0], p[1], p[2], c[0], c[1], c[2], c[3]
+            ));
+        }
+        for uv in &self.uvs {
+            obj.push_str(&format!("vt {} {}\n", uv[0], uv[1]));
+        }
+        for v in 0..self.positions.len() {
+            let a = accumulated[self.weld[v]];
+            let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-9);
+            obj.push_str(&format!("vn {} {} {}\n", a[0] / l, a[1] / l, a[2] / l));
+        }
+        let mut count = 0;
+        for t in &self.triangles {
+            let n = cross(t);
+            if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] < 1e-14 {
+                continue;
+            }
+            obj.push_str(&format!(
+                "f {0}/{0}/{0} {1}/{1}/{1} {2}/{2}/{2}\n",
+                t[0] + 1,
+                t[1] + 1,
+                t[2] + 1
+            ));
+            count += 1;
+        }
+        std::fs::write(path, obj).unwrap();
+        count
+    }
+}
+
+/// Deterministic value noise in 3D (a hash, no randomness): the benchmark content must be the same every run.
+fn bench_noise(x: f32, y: f32, z: f32) -> f32 {
+    fn hash(x: i32, y: i32, z: i32) -> f32 {
+        let mut h = (x as u32)
+            .wrapping_mul(374_761_393)
+            .wrapping_add((y as u32).wrapping_mul(668_265_263))
+            .wrapping_add((z as u32).wrapping_mul(2_147_483_647));
+        h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+        ((h ^ (h >> 16)) & 0xFFFF) as f32 / 65_535.0
+    }
+    let (xi, yi, zi) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
+    let (fx, fy, fz) = (x - xi as f32, y - yi as f32, z - zi as f32);
+    let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+    let (sx, sy, sz) = (smooth(fx), smooth(fy), smooth(fz));
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let mut c = [[0.0f32; 2]; 2];
+    for (dy, row) in c.iter_mut().enumerate() {
+        for (dz, cell) in row.iter_mut().enumerate() {
+            let (yy, zz) = (yi + dy as i32, zi + dz as i32);
+            *cell = mix(hash(xi, yy, zz), hash(xi + 1, yy, zz), sx);
+        }
+    }
+    mix(mix(c[0][0], c[1][0], sy), mix(c[0][1], c[1][1], sy), sz)
+}
+
+/// A dense tree: a barky trunk and three lumpy crowns (about 48 000 triangles), brown and green vertex colours.
+fn write_tree_obj(path: &std::path::Path) -> usize {
+    let tau = std::f32::consts::TAU;
+    let mut tree = ObjBuilder::default();
+    tree.grid(48, 120, true, &|u, v| {
+        let (a, y) = (u * tau, v * 3.4);
+        let bark = bench_noise(a.cos() * 3.0, y * 4.0, a.sin() * 3.0);
+        let r = (0.26 - 0.07 * v) * (1.0 + 0.35 * (bark - 0.5));
+        (
+            [r * a.cos(), y, r * a.sin()],
+            [0.42 + 0.1 * bark, 0.29, 0.18, 1.0],
+        )
+    });
+    for (centre, radius) in [
+        ([0.0f32, 3.6, 0.0], 1.5f32),
+        ([0.5, 4.7, -0.3], 1.15),
+        ([-0.3, 5.5, 0.3], 0.85),
+    ] {
+        tree.grid(96, 64, true, &|u, v| {
+            let (a, t) = (u * tau, v * std::f32::consts::PI);
+            let d = [t.sin() * a.cos(), t.cos(), t.sin() * a.sin()];
+            let n = bench_noise(d[0] * 2.5 + centre[0], d[1] * 2.5 + centre[1], d[2] * 2.5) * 0.6
+                + bench_noise(d[0] * 7.0, d[1] * 7.0 + centre[1], d[2] * 7.0) * 0.4;
+            let r = radius * (0.8 + 0.4 * n);
+            (
+                [
+                    centre[0] + d[0] * r,
+                    centre[1] + d[1] * r * 0.85,
+                    centre[2] + d[2] * r,
+                ],
+                [0.18 + 0.2 * n, 0.42 + 0.3 * n, 0.12 + 0.1 * n, 1.0],
+            )
+        });
+    }
+    tree.write(path)
+}
+
+/// One frame's numbers: encoding time, wall time of render + readback, and the renderer's counters.
+#[derive(Clone, Default)]
+struct BenchFrame {
+    wall_ms: f64,
+    cpu_ms: f32,
+    triangles: u64,
+    draw_calls: u32,
+    instanced: u32,
+    meshes: u32,
+    culled: u32,
+    micro_draws: u32,
+    micro_triangles: u64,
+    micro_clusters: u32,
+}
+
+/// Renders one frame and returns the pixels and its wall-clock time (render + readback, polled finely).
+fn render_timed(engine: &mut doppio_engine::Engine, w: u32, h: u32) -> (Vec<u8>, f64) {
+    let started = std::time::Instant::now();
+    engine.render_begin(w, h).expect("begin");
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for _ in 0..40_000 {
+        if let doppio_engine::RenderState::Ready = engine.render_poll(&mut pixels).expect("poll") {
+            return (pixels, started.elapsed().as_secs_f64() * 1000.0);
+        }
+        std::thread::sleep(std::time::Duration::from_micros(200));
+    }
+    panic!("render did not finish");
+}
+
+/// A fixed flight: `camera_at(a)` for `frames` values of `a` in 0..1 after `warmup` frames at the start.
+fn bench_flight(
+    engine: &mut doppio_engine::Engine,
+    camera_at: &dyn Fn(f32) -> doppio_engine::Camera,
+    frames: usize,
+    warmup: usize,
+    micromesh: bool,
+) -> Vec<BenchFrame> {
+    let (w, h) = (640u32, 360u32);
+    engine.set_camera(camera_at(0.0)).unwrap();
+    for _ in 0..warmup {
+        let _ = render_timed(engine, w, h);
+    }
+    let mut rows = Vec::new();
+    for i in 0..frames {
+        engine
+            .set_camera(camera_at(i as f32 / (frames - 1) as f32))
+            .unwrap();
+        let (_, wall_ms) = render_timed(engine, w, h);
+        let stats = engine.render_stats().unwrap();
+        let mut row = BenchFrame {
+            wall_ms,
+            cpu_ms: stats.total_ms,
+            triangles: stats.triangles,
+            draw_calls: stats.draw_calls,
+            instanced: stats.instanced_draw_calls,
+            meshes: stats.meshes,
+            culled: stats.frustum_culled,
+            ..BenchFrame::default()
+        };
+        if micromesh {
+            let m = engine.micromesh_frame_stats().unwrap();
+            row.micro_draws = m.draws;
+            row.micro_triangles = m.triangles;
+            row.micro_clusters = m.clusters;
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// The benchmark content is the same every run: byte-identical OBJ files, fixed triangle counts.
+#[test]
+fn benchmark_content_is_deterministic() {
+    let root = test_temp_root("bench-content");
+    std::fs::create_dir_all(&root).unwrap();
+    let (a, b) = (root.join("tree_a.obj"), root.join("tree_b.obj"));
+    let count_a = write_tree_obj(&a);
+    let count_b = write_tree_obj(&b);
+    assert_eq!(count_a, count_b);
+    assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+    assert_eq!(count_a, 47_808, "the forest benchmark's tree");
+    let (c, d) = (root.join("rock_a.obj"), root.join("rock_b.obj"));
+    let rock_a = write_rock_obj(&c, 256, 160);
+    assert_eq!(rock_a, write_rock_obj(&d, 256, 160));
+    assert_eq!(std::fs::read(&c).unwrap(), std::fs::read(&d).unwrap());
+    assert_eq!(rock_a, 81_408, "the rock field benchmark's rock");
+}
+
+/// The reproducible benchmark set (env-gated: `DOPPIO_BENCH_DIR=<dir>`, run by
+/// `scripts/benchmark-micromesh.sh`): a dense rock field, a forest of dense trees and a terrain, each flown by a
+/// fixed camera at 640x360 with the sun's shadows on, with every renderer path that applies. Content is
+/// generated in code by hashes: no assets, the same triangles every run. Writes `benchmarks.json`.
+#[test]
+fn micromesh_benchmark_set() {
+    let Ok(dir) = std::env::var("DOPPIO_BENCH_DIR") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 14 {
+        return;
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let ground = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-bench");
+    std::fs::create_dir_all(&root).unwrap();
+    let rock_obj = root.join("rock.obj");
+    let tree_obj = root.join("tree.obj");
+    let rock_triangles = write_rock_obj(&rock_obj, 256, 160);
+    let tree_triangles = write_tree_obj(&tree_obj);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-42.0, 30.0, 0.0]).unwrap();
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.shadows = true;
+    settings.show_grid = false;
+    engine.set_viewport_settings(settings).unwrap();
+    let save = |engine: &mut doppio_engine::Engine, name: &str, albedo: [f32; 4]| {
+        let path = root.join(name);
+        let material = doppio_engine::Material {
+            albedo,
+            roughness: 0.85,
+            ..doppio_engine::Material::default()
+        };
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let rock_mat = save(engine, "rock.mat", [0.26, 0.24, 0.21, 1.0]);
+    let tree_mat = save(engine, "tree.mat", [1.0, 1.0, 1.0, 1.0]); // the vertex colours do the colouring
+    let dirt = save(engine, "dirt.mat", [0.42, 0.37, 0.28, 1.0]);
+    engine.apply_material(ground, &dirt).unwrap();
+    engine.set_position(ground, [0.0, 0.0, 0.0]).unwrap();
+    engine.set_scale(ground, [400.0, 1.0, 400.0]).unwrap();
+    let hash = |x: usize, z: usize, k: usize| {
+        let mut v = (x * 73_856_093) ^ (z * 19_349_663) ^ (k * 83_492_791);
+        v = (v ^ (v >> 13)).wrapping_mul(1_274_126_177);
+        ((v ^ (v >> 16)) & 0xFFFF) as f32 / 65_535.0
+    };
+
+    struct Config {
+        name: &'static str,
+        frames: Vec<BenchFrame>,
+    }
+    struct Scene {
+        name: &'static str,
+        description: String,
+        instances: usize,
+        source_triangles: usize,
+        configs: Vec<Config>,
+    }
+    let mut scenes: Vec<Scene> = Vec::new();
+    let frames = 40usize;
+    let toggle = |engine: &mut doppio_engine::Engine, entities: &[(u32, u32)], on: bool| {
+        for &(id, renderer) in entities {
+            set_component_field(
+                engine,
+                id,
+                renderer,
+                "Micromesh",
+                doppio_engine::FieldValue::Bool(on),
+            )
+            .unwrap();
+        }
+    };
+
+    // ---- 1. the dense rock field: 81 rocks of 81 408 triangles
+    let mut rocks = Vec::new();
+    for ix in 0..9usize {
+        for iz in 0..9usize {
+            let scale = 0.85 + 0.9 * hash(ix, iz, 1);
+            let x = (ix as f32 - 4.0) * 4.4 + (hash(ix, iz, 2) - 0.5) * 2.4;
+            let z = (iz as f32 - 4.0) * 4.4 + (hash(ix, iz, 3) - 0.5) * 2.4;
+            let (id, renderer) = place_rock(
+                engine,
+                &rock_obj.to_string_lossy(),
+                &rock_mat,
+                [x, 0.5 * scale, z],
+                scale,
+                false,
+            );
+            engine
+                .set_rotation(id, [0.0, hash(ix, iz, 4) * 360.0, 0.0])
+                .unwrap();
+            rocks.push((id, renderer));
+        }
+    }
+    let rock_camera = |a: f32| doppio_engine::Camera {
+        yaw: 0.25 + 0.5 * (a * std::f32::consts::TAU).sin(),
+        pitch: 0.2 + 0.05 * (a * std::f32::consts::TAU * 2.0).sin(),
+        distance: 7.5,
+        focus: [
+            3.0 * (a * std::f32::consts::TAU * 1.5).sin(),
+            1.0,
+            15.0 - 30.0 * a,
+        ],
+    };
+    toggle(engine, &rocks, false);
+    let plain = bench_flight(engine, &rock_camera, frames, 3, false);
+    toggle(engine, &rocks, true);
+    let micro = bench_flight(engine, &rock_camera, frames, 3, true);
+    scenes.push(Scene {
+        name: "Rock field",
+        description: format!("81 rocks x {rock_triangles} triangles, a low flight over the field"),
+        instances: rocks.len(),
+        source_triangles: rocks.len() * rock_triangles,
+        configs: vec![
+            Config {
+                name: "plain meshes (instanced)",
+                frames: plain,
+            },
+            Config {
+                name: "Micromesh",
+                frames: micro,
+            },
+        ],
+    });
+    for &(id, _) in &rocks {
+        engine.destroy_entity(id).ok();
+    }
+
+    // ---- 2. the forest: 300 trees of ~48 000 triangles with vertex colours
+    let mut trees = Vec::new();
+    for ix in 0..20usize {
+        for iz in 0..15usize {
+            let scale = 0.8 + 0.5 * hash(ix, iz, 5);
+            let x = (ix as f32 - 9.5) * 5.0 + (hash(ix, iz, 6) - 0.5) * 3.5;
+            let z = (iz as f32 - 7.0) * 5.0 + (hash(ix, iz, 7) - 0.5) * 3.5;
+            let (id, renderer) = place_rock(
+                engine,
+                &tree_obj.to_string_lossy(),
+                &tree_mat,
+                [x, 0.0, z],
+                scale,
+                false,
+            );
+            engine
+                .set_rotation(id, [0.0, hash(ix, iz, 8) * 360.0, 0.0])
+                .unwrap();
+            trees.push((id, renderer));
+        }
+    }
+    let forest_camera = |a: f32| doppio_engine::Camera {
+        yaw: 0.35 * (a * std::f32::consts::TAU).sin(),
+        pitch: 0.14,
+        distance: 9.0,
+        focus: [
+            3.0 * (a * std::f32::consts::TAU).sin(),
+            3.0,
+            30.0 - 60.0 * a,
+        ],
+    };
+    toggle(engine, &trees, false);
+    let plain = bench_flight(engine, &forest_camera, frames, 3, false);
+    toggle(engine, &trees, true);
+    let micro = bench_flight(engine, &forest_camera, frames, 3, true);
+    scenes.push(Scene {
+        name: "Forest",
+        description: format!("300 trees x {tree_triangles} triangles (trunk and three crowns, vertex colours), a flight between them"),
+        instances: trees.len(),
+        source_triangles: trees.len() * tree_triangles,
+        configs: vec![
+            Config { name: "plain meshes (instanced)", frames: plain },
+            Config { name: "Micromesh", frames: micro },
+        ],
+    });
+    for &(id, _) in &trees {
+        engine.destroy_entity(id).ok();
+    }
+
+    // ---- 3. the terrain: two sizes of the engine's terrain path (Micromesh does not draw terrain yet)
+    engine.set_position(ground, [0.0, -500.0, 0.0]).unwrap(); // out of the way
+    let mut terrain_configs = Vec::new();
+    let mut terrain_triangles = 0usize;
+    for (name, resolution) in [("513 x 513", 513u32), ("1025 x 1025", 1025u32)] {
+        let entity = engine.create_entity("Terrain").expect("terrain entity");
+        let cells = (resolution * resolution) as usize;
+        let mut heights = Vec::with_capacity(cells);
+        for z in 0..resolution {
+            for x in 0..resolution {
+                let (fx, fz) = (
+                    x as f32 / resolution as f32 * 6.0,
+                    z as f32 / resolution as f32 * 6.0,
+                );
+                let h = bench_noise(fx, 0.0, fz) * 0.55
+                    + bench_noise(fx * 2.3, 1.0, fz * 2.3) * 0.3
+                    + bench_noise(fx * 5.1, 2.0, fz * 5.1) * 0.15;
+                heights.push(h);
+            }
+        }
+        let terrain = doppio_engine::Terrain {
+            resolution: [resolution, resolution],
+            size: [800.0, 800.0],
+            max_height: 90.0,
+            cast_shadows: true,
+        };
+        engine
+            .set_terrain(entity, &terrain, &heights, None)
+            .unwrap();
+        engine.set_position(entity, [0.0, 0.0, 0.0]).unwrap();
+        terrain_triangles = 2 * (resolution as usize - 1) * (resolution as usize - 1);
+        let terrain_camera = |a: f32| doppio_engine::Camera {
+            yaw: 0.8 + 1.2 * a,
+            pitch: 0.32,
+            distance: 160.0 - 60.0 * (a * std::f32::consts::PI).sin(),
+            focus: [-100.0 + 200.0 * a, 40.0, 0.0],
+        };
+        let rows = bench_flight(engine, &terrain_camera, frames, 3, false);
+        terrain_configs.push(Config {
+            name: if resolution == 513 {
+                "513 x 513"
+            } else {
+                "1025 x 1025"
+            },
+            frames: rows,
+        });
+        let _ = name;
+        engine.destroy_entity(entity).ok();
+    }
+    scenes.push(Scene {
+        name: "Terrain",
+        description: "an 800 m terrain at two grid sizes (the engine's chunked terrain path), a flight over it".to_owned(),
+        instances: 1,
+        source_triangles: terrain_triangles,
+        configs: terrain_configs,
+    });
+
+    // ---- the report
+    let mut json =
+        String::from("{\n  \"resolution\": [640, 360],\n  \"frames\": 40,\n  \"scenes\": [\n");
+    for (si, scene) in scenes.iter().enumerate() {
+        json.push_str(&format!(
+            "{}    {{\"name\": \"{}\", \"description\": \"{}\", \"instances\": {}, \"sourceTriangles\": {}, \"configs\": [\n",
+            if si == 0 { "" } else { ",\n" },
+            scene.name,
+            scene.description,
+            scene.instances,
+            scene.source_triangles
+        ));
+        for (ci, config) in scene.configs.iter().enumerate() {
+            json.push_str(&format!(
+                "{}      {{\"name\": \"{}\", \"frames\": [\n",
+                if ci == 0 { "" } else { ",\n" },
+                config.name
+            ));
+            for (fi, f) in config.frames.iter().enumerate() {
+                json.push_str(&format!(
+                    "{}        {{\"wallMs\": {}, \"cpuMs\": {}, \"triangles\": {}, \"drawCalls\": {}, \"instancedDrawCalls\": {}, \"meshes\": {}, \"culled\": {}, \"microDraws\": {}, \"microTriangles\": {}, \"microClusters\": {}}}",
+                    if fi == 0 { "" } else { ",\n" },
+                    f.wall_ms, f.cpu_ms, f.triangles, f.draw_calls, f.instanced, f.meshes, f.culled,
+                    f.micro_draws, f.micro_triangles, f.micro_clusters
+                ));
+            }
+            json.push_str("\n      ]}");
+        }
+        json.push_str("\n    ]}");
+    }
+    json.push_str("\n  ]\n}\n");
+    std::fs::write(format!("{dir}/benchmarks.json"), json).unwrap();
+}
+
+/// Documentation media of Micromesh occlusion (env-gated: `DOPPIO_MICROMESH_OCCLUSION=<dir>`; see
+/// `scripts/render-micromesh-scene-docs.sh`): the camera swings around a wall with rocks behind it. Every
+/// frame is drawn twice from the same camera, with and without occlusion culling, to count the triangles and to
+/// measure how much the picture differs (the single-phase test uses last frame's depth).
+#[test]
+fn micromesh_occlusion_frames_for_docs() {
+    let Ok(dir) = std::env::var("DOPPIO_MICROMESH_OCCLUSION") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 14 {
+        return;
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Cube")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(cube));
+    let wall = harness.app().entities[harness.app().selected].id;
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let ground = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-occlusion-docs");
+    std::fs::create_dir_all(&root).unwrap();
+    let mesh = root.join("rock.obj");
+    let source = write_rock_obj(&mesh, 192, 120);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-42.0, 30.0, 0.0]).unwrap();
+    let save = |engine: &mut doppio_engine::Engine, name: &str, albedo: [f32; 4]| {
+        let path = root.join(name);
+        let material = doppio_engine::Material {
+            albedo,
+            roughness: 0.85,
+            ..doppio_engine::Material::default()
+        };
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let rock_mat = save(engine, "rock.mat", [0.26, 0.24, 0.21, 1.0]);
+    let wall_mat = save(engine, "wall.mat", [0.45, 0.2, 0.15, 1.0]);
+    let dirt = save(engine, "dirt.mat", [0.42, 0.37, 0.28, 1.0]);
+    engine.apply_material(wall, &wall_mat).unwrap();
+    engine.set_position(wall, [0.0, 1.6, 2.5]).unwrap();
+    engine.set_scale(wall, [10.0, 3.2, 0.5]).unwrap();
+    engine.apply_material(ground, &dirt).unwrap();
+    engine.set_scale(ground, [60.0, 1.0, 60.0]).unwrap();
+    engine.set_position(ground, [0.0, 0.0, 0.0]).unwrap();
+    let mut rocks = Vec::new();
+    for (row, z) in [0.0f32, -2.4, -4.8, 5.0].into_iter().enumerate() {
+        for i in 0..6 {
+            let x = (i as f32 - 2.5) * 2.4 + if row % 2 == 0 { 0.0 } else { 1.0 };
+            rocks.push(place_rock(
+                engine,
+                &mesh.to_string_lossy(),
+                &rock_mat,
+                [x, 0.55, z],
+                1.0,
+                true,
+            ));
+        }
+    }
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.shadows = true;
+    engine.set_viewport_settings(settings).unwrap();
+    let set_all = |engine: &mut doppio_engine::Engine, on: bool| {
+        for &(id, renderer) in &rocks {
+            set_component_field(
+                engine,
+                id,
+                renderer,
+                "Micromesh occlusion",
+                doppio_engine::FieldValue::Bool(on),
+            )
+            .unwrap();
+        }
+    };
+    let camera_at = |a: f32| doppio_engine::Camera {
+        yaw: std::f32::consts::PI - 0.9 + 1.8 * a,
+        pitch: 0.22,
+        distance: 9.5,
+        focus: [0.0, 1.0, 0.0],
+    };
+    let (w, h) = (640u32, 360u32);
+    set_all(engine, false);
+    engine.set_camera(camera_at(0.0)).unwrap();
+    for _ in 0..3 {
+        let _ = render_entity_view_sized(engine, w, h);
+    }
+    let frames = 60usize;
+    let mut rows = Vec::new();
+    for i in 0..frames {
+        engine
+            .set_camera(camera_at(i as f32 / (frames - 1) as f32))
+            .unwrap();
+        set_all(engine, true);
+        let on = render_entity_view_sized(engine, w, h);
+        let on_stats = engine.micromesh_frame_stats().unwrap();
+        set_all(engine, false);
+        let off = render_entity_view_sized(engine, w, h);
+        let off_stats = engine.micromesh_frame_stats().unwrap();
+        image::save_buffer(
+            format!("{dir}/occ_{i:03}.png"),
+            &on,
+            w,
+            h,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+        if i == frames / 2 || i == 0 {
+            image::save_buffer(
+                format!("{dir}/occ_off_{i:03}.png"),
+                &off,
+                w,
+                h,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+        let mut sum = 0u64;
+        let mut worst = 0u64;
+        for (a, b) in on
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(off.as_chunks::<4>().0.iter())
+        {
+            let d = (0..3)
+                .map(|k| (a[k] as i32 - b[k] as i32).unsigned_abs() as u64)
+                .sum::<u64>();
+            sum += d;
+            worst = worst.max(d);
+        }
+        let mean = sum as f64 / (3.0 * (on.len() / 4) as f64);
+        rows.push((
+            on_stats.triangles,
+            off_stats.triangles,
+            on_stats.clusters,
+            off_stats.clusters,
+            mean,
+            worst,
+            on_stats.occlusion,
+        ));
+    }
+    let mut json = format!(
+        "{{\n  \"rocks\": {},\n  \"rockTriangles\": {},\n  \"frames\": [\n",
+        rocks.len(),
+        source
+    );
+    for (i, r) in rows.iter().enumerate() {
+        json.push_str(&format!(
+            "{}    {{\"occTriangles\": {}, \"openTriangles\": {}, \"occClusters\": {}, \"openClusters\": {}, \"meanDifference\": {}, \"worstPixel\": {}, \"active\": {}}}",
+            if i == 0 { "" } else { ",\n" },
+            r.0, r.1, r.2, r.3, r.4, r.5, r.6
+        ));
+    }
+    json.push_str("\n  ]\n}\n");
+    std::fs::write(format!("{dir}/occlusion.json"), json).unwrap();
+}
+
+/// Documentation media of the Micromesh scene path (env-gated: `DOPPIO_MICROMESH_ANIM=<dir>`; see
+/// `scripts/render-micromesh-scene-docs.sh`): a flight over a field of dense rocks drawn through the real
+/// scene renderer (lit shader, sun shadows, G-buffer), with the cut on and off, and the triangle counts.
+#[test]
+fn micromesh_scene_frames_for_docs() {
+    let Ok(dir) = std::env::var("DOPPIO_MICROMESH_ANIM") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 14 {
+        return;
+    }
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    let light_id = harness.app().entities[harness.app().selected].id;
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let ground = harness.app().entities[harness.app().selected].id;
+    // A weaker light from the other side, so the shaded faces are not black.
+    harness.dispatch(Message::CreatePrefab(light));
+    let fill_id = harness.app().entities[harness.app().selected].id;
+    let root = test_temp_root("micromesh-scene-docs");
+    std::fs::create_dir_all(&root).unwrap();
+    let mesh = root.join("rock.obj");
+    let source = write_rock_obj(&mesh, 256, 160);
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_rotation(light_id, [-38.0, 40.0, 0.0]).unwrap();
+    engine.set_rotation(fill_id, [-25.0, 215.0, 0.0]).unwrap();
+    if let Some(light_type) = component_type_id(engine, "Light") {
+        let _ = set_component_field(
+            engine,
+            fill_id,
+            light_type,
+            "Intensity",
+            doppio_engine::FieldValue::F32(0.35),
+        );
+    }
+    engine.set_position(ground, [0.0, 0.0, 0.0]).unwrap();
+    engine.set_scale(ground, [90.0, 1.0, 90.0]).unwrap();
+    let save =
+        |engine: &mut doppio_engine::Engine, name: &str, albedo: [f32; 4], roughness: f32| {
+            let path = root.join(name);
+            let material = doppio_engine::Material {
+                albedo,
+                roughness,
+                ..doppio_engine::Material::default()
+            };
+            engine
+                .save_material(&path.to_string_lossy(), &material)
+                .unwrap();
+            path.to_string_lossy().into_owned()
+        };
+    let dirt = save(engine, "dirt.mat", [0.42, 0.37, 0.28, 1.0], 0.95);
+    engine.apply_material(ground, &dirt).unwrap();
+    let materials = [
+        save(engine, "rock_a.mat", [0.26, 0.24, 0.21, 1.0], 0.85),
+        save(engine, "rock_b.mat", [0.32, 0.28, 0.22, 1.0], 0.8),
+        save(engine, "rock_c.mat", [0.20, 0.20, 0.21, 1.0], 0.9),
+    ];
+    let mut rocks: Vec<(u32, u32)> = Vec::new();
+    let n = 9usize;
+    for ix in 0..n {
+        for iz in 0..n {
+            let h = |k: usize| {
+                let mut v = (ix * 73856093) ^ (iz * 19349663) ^ (k * 83492791);
+                v = (v ^ (v >> 13)).wrapping_mul(1274126177);
+                ((v ^ (v >> 16)) & 0xFFFF) as f32 / 65535.0
+            };
+            let scale = 0.85 + 0.9 * h(1);
+            let x = (ix as f32 - (n as f32 - 1.0) * 0.5) * 4.4 + (h(2) - 0.5) * 2.4;
+            let z = (iz as f32 - (n as f32 - 1.0) * 0.5) * 4.4 + (h(3) - 0.5) * 2.4;
+            let (id, renderer) = place_rock(
+                engine,
+                &mesh.to_string_lossy(),
+                &materials[(ix + iz) % 3],
+                [x, 0.5 * scale, z],
+                scale,
+                true,
+            );
+            engine.set_rotation(id, [0.0, h(4) * 360.0, 0.0]).unwrap();
+            rocks.push((id, renderer));
+        }
+    }
+    let set_all = |engine: &mut doppio_engine::Engine, on: bool| {
+        for &(id, renderer) in &rocks {
+            set_component_field(
+                engine,
+                id,
+                renderer,
+                "Micromesh",
+                doppio_engine::FieldValue::Bool(on),
+            )
+            .unwrap();
+        }
+    };
+    let camera_at = |a: f32| doppio_engine::Camera {
+        yaw: 0.25 + 0.5 * (a * std::f32::consts::TAU).sin(),
+        pitch: 0.2 + 0.05 * (a * std::f32::consts::TAU * 2.0).sin(),
+        distance: 7.5,
+        focus: [
+            3.0 * (a * std::f32::consts::TAU * 1.5).sin(),
+            1.0,
+            15.0 - 30.0 * a,
+        ],
+    };
+    let frames = 72usize;
+    let (w, h) = (640u32, 360u32);
+    // The viewport renders without shadow maps unless asked: ask (the cascades get their own coarser cut).
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.shadows = true;
+    engine.set_viewport_settings(settings).unwrap();
+    // Build the hierarchy and settle shadows before the first recorded frame.
+    set_all(engine, true);
+    engine.set_camera(camera_at(0.0)).unwrap();
+    let _ = render_entity_view_sized(engine, w, h);
+    let _ = render_entity_view_sized(engine, w, h);
+
+    let mut micro_rows = Vec::new();
+    for i in 0..frames {
+        engine
+            .set_camera(camera_at(i as f32 / (frames - 1) as f32))
+            .unwrap();
+        let pixels = render_entity_view_sized(engine, w, h);
+        let stats = engine.render_stats().unwrap();
+        let frame = engine.micromesh_frame_stats().unwrap();
+        image::save_buffer(
+            format!("{dir}/scene_{i:03}.png"),
+            &pixels,
+            w,
+            h,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+        micro_rows.push((
+            frame.draws,
+            frame.clusters,
+            frame.triangles,
+            frame.source_triangles,
+            stats.total_ms,
+            stats.triangles,
+            frame.views,
+            frame.arena_used,
+            frame.arena_capacity,
+            frame.overflowed,
+        ));
+    }
+    // The same flight with the plain mesh (instanced draws): triangles submitted and CPU encoding time.
+    set_all(engine, false);
+    let _ = render_entity_view_sized(engine, w, h);
+    let mut plain_rows = Vec::new();
+    for i in 0..frames {
+        engine
+            .set_camera(camera_at(i as f32 / (frames - 1) as f32))
+            .unwrap();
+        let _ = render_entity_view_sized(engine, w, h);
+        let stats = engine.render_stats().unwrap();
+        plain_rows.push((stats.triangles, stats.total_ms, stats.draw_calls));
+    }
+    // One aerial view, both ways, to compare the pictures.
+    let aerial = doppio_engine::Camera {
+        yaw: 0.6,
+        pitch: 0.75,
+        distance: 42.0,
+        focus: [0.0, 0.0, 0.0],
+    };
+    engine.set_camera(aerial).unwrap();
+    let _ = render_entity_view_sized(engine, w, h);
+    let off = render_entity_view_sized(engine, w, h);
+    image::save_buffer(
+        format!("{dir}/still_off.png"),
+        &off,
+        w,
+        h,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+    set_all(engine, true);
+    let _ = render_entity_view_sized(engine, w, h);
+    let on = render_entity_view_sized(engine, w, h);
+    image::save_buffer(
+        format!("{dir}/still_on.png"),
+        &on,
+        w,
+        h,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+    let aerial_stats = engine.micromesh_frame_stats().unwrap();
+    let mut diff = 0u64;
+    for (a, b) in off
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(on.as_chunks::<4>().0.iter())
+    {
+        diff += (0..3)
+            .map(|k| (a[k] as i32 - b[k] as i32).unsigned_abs() as u64)
+            .sum::<u64>();
+    }
+    let mean = diff as f64 / (3.0 * (off.len() / 4) as f64);
+    let mut json = format!(
+        "{{\n  \"rocks\": {},\n  \"rockTriangles\": {},\n  \"aerial\": {{\"triangles\": {}, \"source\": {}, \"meanDifference\": {}}},\n  \"frames\": [\n",
+        rocks.len(),
+        source,
+        aerial_stats.triangles,
+        aerial_stats.source_triangles,
+        mean
+    );
+    for (i, (m, p)) in micro_rows.iter().zip(&plain_rows).enumerate() {
+        json.push_str(&format!(
+            "{}    {{\"draws\": {}, \"clusters\": {}, \"triangles\": {}, \"source\": {}, \"microMs\": {}, \"plainTriangles\": {}, \"plainMs\": {}, \"plainDraws\": {}, \"views\": {}, \"arenaUsed\": {}, \"arenaCapacity\": {}, \"overflowed\": {}}}",
+            if i == 0 { "" } else { ",\n" },
+            m.0, m.1, m.2, m.3, m.4, p.0, p.1, p.2, m.6, m.7, m.8, m.9
+        ));
+    }
+    json.push_str("\n  ]\n}\n");
+    std::fs::write(format!("{dir}/scene.json"), json).unwrap();
+}
+
 #[test]
 fn terrain_generator_is_a_node_graph_tab_with_a_3d_preview() {
     use crate::uikit::panels::terrain_generator as tg;
@@ -5821,6 +7422,527 @@ fn terrain_generator_is_a_node_graph_tab_with_a_3d_preview() {
     )));
     harness.dispatch(Message::TerrainGen(tg::Edit::PreviewRelease));
     assert_ne!(first, format!("{:?}", harness.app().terraingen.preview));
+}
+
+/// Documentation media of the terrain masks (env-gated: `DOPPIO_TERRAIN_MASKS=<dir>`; see
+/// `scripts/render-terrain-mask-docs.sh`): the Alpine Range placed in the engine, every mask read back through the
+/// C ABI as a 256 x 256 picture, and a lit view of the terrain.
+#[test]
+fn terrain_mask_pictures_for_docs() {
+    use crate::uikit::panels::terrain_generator as tg;
+    let Ok(dir) = std::env::var("DOPPIO_TERRAIN_MASKS") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 15 {
+        return;
+    }
+    harness.app.asset_root_override = Some(test_temp_root("terrain-mask-docs"));
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let lid = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(lid, [0.0, 300.0, 0.0]).unwrap();
+        engine.set_rotation(lid, [-38.0, 140.0, 0.0]).unwrap();
+    }
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let terrain = engine.terrain(id).unwrap();
+    for info in engine.terrain_masks(id).unwrap() {
+        let grid = engine
+            .terrain_mask_rect(
+                id,
+                &info.name,
+                [0.0, 0.0, terrain.size[0], terrain.size[1]],
+                [256, 256],
+            )
+            .unwrap();
+        let mut rgba = Vec::with_capacity(grid.len() * 4);
+        for v in &grid {
+            rgba.extend_from_slice(&[*v, *v, *v, 255]);
+        }
+        image::save_buffer(
+            format!("{dir}/mask_{}.png", info.name),
+            &rgba,
+            256,
+            256,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.show_grid = false;
+    settings.shadows = true;
+    engine.set_viewport_settings(settings).unwrap();
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.9,
+            pitch: 0.75,
+            distance: terrain.size[0] * 1.5,
+            focus: [0.0, terrain.max_height * 0.25, 0.0],
+        })
+        .unwrap();
+    let _ = render_entity_view_sized(engine, 512, 512);
+    let frame = render_entity_view_sized(engine, 512, 512);
+    image::save_buffer(
+        format!("{dir}/terrain.png"),
+        &frame,
+        512,
+        512,
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
+}
+
+/// Documentation media of the Scatter action (env-gated: `DOPPIO_SCATTER_DOCS=<dir>`; see
+/// `scripts/render-scatter-docs.sh`): the Alpine Range scattered with the default plan, a lit view of it, and where
+/// each class landed over the masks it reads.
+#[test]
+fn scatter_pictures_for_docs() {
+    use crate::uikit::panels::terrain_generator as tg;
+    use scatter::ScatterRequest;
+    let Ok(dir) = std::env::var("DOPPIO_SCATTER_DOCS") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 16 {
+        return;
+    }
+    harness.app.asset_root_override = Some(test_temp_root("scatter-docs"));
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let lid = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(lid, [0.0, 300.0, 0.0]).unwrap();
+        engine.set_rotation(lid, [-42.0, 35.0, 0.0]).unwrap();
+    }
+    // A weaker light from the other side, so the shaded faces are not black.
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let fid = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(fid, [0.0, 300.0, 0.0]).unwrap();
+        engine.set_rotation(fid, [-30.0, 215.0, 0.0]).unwrap();
+        if let Some(light_type) = component_type_id(engine, "Light") {
+            let _ = set_component_field(
+                engine,
+                fid,
+                light_type,
+                "Intensity",
+                doppio_engine::FieldValue::F32(0.45),
+            );
+        }
+    }
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let terrain = harness.app().entities[harness.app().selected].id;
+    harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+        terrain: Some(terrain),
+        max_instances: Some(20_000),
+        ..ScatterRequest::default()
+    }));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    let holder = harness.app().entities[harness.app().selected].id;
+    let children: Vec<(u32, String)> = harness
+        .app()
+        .entities
+        .iter()
+        .filter(|e| e.parent == Some(holder))
+        .map(|e| (e.id, e.name.clone()))
+        .collect();
+    let engine = harness.app.engine.as_mut().expect("engine");
+    let info = engine.terrain(terrain).unwrap();
+    let centre = engine.world_position(terrain).unwrap();
+    for mask in ["slope", "wetness", "height"] {
+        let grid = engine
+            .terrain_mask_rect(
+                terrain,
+                mask,
+                [0.0, 0.0, info.size[0], info.size[1]],
+                [256, 256],
+            )
+            .unwrap();
+        let mut rgba = Vec::new();
+        for v in &grid {
+            rgba.extend_from_slice(&[*v, *v, *v, 255]);
+        }
+        image::save_buffer(
+            format!("{dir}/mask_{mask}.png"),
+            &rgba,
+            256,
+            256,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+    let mut points = String::from("{\n  \"status\": \"");
+    points.push_str(&status.replace('"', "'"));
+    points.push_str("\",\n  \"instances\": [\n");
+    let mut first = true;
+    for (id, name) in &children {
+        let p = engine.world_position(*id).unwrap();
+        let (x, z) = (
+            p[0] - centre[0] + info.size[0] * 0.5,
+            p[2] - centre[2] + info.size[1] * 0.5,
+        );
+        let class = name.split(' ').next().unwrap_or("");
+        points.push_str(&format!(
+            "{}    {{\"class\": \"{class}\", \"u\": {}, \"v\": {}}}",
+            if first { "" } else { ",\n" },
+            x / info.size[0],
+            z / info.size[1]
+        ));
+        first = false;
+    }
+    points.push_str("\n  ]\n}\n");
+    std::fs::write(format!("{dir}/scatter.json"), points).unwrap();
+    let mut settings = engine.viewport_settings().unwrap();
+    settings.show_grid = false;
+    settings.shadows = true;
+    engine.set_viewport_settings(settings).unwrap();
+    for (name, yaw, pitch, distance, focus_y) in [
+        ("aerial", 2.4f32, 0.6f32, info.size[0] * 0.8, 0.2f32),
+        ("close", 2.4, 0.38, info.size[0] * 0.3, 0.3),
+    ] {
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw,
+                pitch,
+                distance,
+                focus: [
+                    -info.size[0] * 0.12,
+                    info.max_height * focus_y,
+                    info.size[1] * 0.1,
+                ],
+            })
+            .unwrap();
+        let _ = render_entity_view_sized(engine, 640, 400);
+        let frame = render_entity_view_sized(engine, 640, 400);
+        image::save_buffer(
+            format!("{dir}/view_{name}.png"),
+            &frame,
+            640,
+            400,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+}
+
+/// The Scatter action on a placed terrain: entities per instance under one holder, put where the plan's masks allow,
+/// the same for the same seed, one undo step, errors that say what is wrong.
+#[test]
+fn scatter_on_terrain_places_the_plan_by_the_terrains_masks() {
+    use crate::uikit::panels::terrain_generator as tg;
+    use scatter::ScatterRequest;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 16 {
+        return;
+    }
+    let root = test_temp_root("scatter-action");
+    harness.app.asset_root_override = Some(root.clone());
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let terrain = harness.app().entities[harness.app().selected].id;
+    let before = harness.app().entities.len();
+
+    // Nothing selected that is a terrain: it says so and creates nothing.
+    harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+        terrain: Some(harness.app().entities[0].id),
+        ..ScatterRequest::default()
+    }));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    assert!(status.contains("not a terrain"), "{status}");
+    assert_eq!(harness.app().entities.len(), before);
+    // A plan that does not parse names its line.
+    harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+        plan_text: Some("seed 1\nclass 1 cell 0\n".to_owned()),
+        terrain: Some(terrain),
+        ..ScatterRequest::default()
+    }));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    assert!(status.contains("line 2"), "{status}");
+    // A biome term the engine rejects (a decreasing trapezoid cannot reach it: the parser stops it first).
+    assert_eq!(harness.app().entities.len(), before);
+
+    // The default plan (written to the project the first time).
+    harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+        terrain: Some(terrain),
+        ..ScatterRequest::default()
+    }));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    assert!(status.starts_with("Scattered "), "{status}");
+    assert!(root.join("Scatter/default.scatter").is_file());
+    let holder = harness.app().entities[harness.app().selected].id;
+    assert!(harness
+        .app()
+        .entities
+        .iter()
+        .any(|e| e.id == holder && e.name == "Scatter default"));
+    let children: Vec<(u32, String)> = harness
+        .app()
+        .entities
+        .iter()
+        .filter(|e| e.parent == Some(holder))
+        .map(|e| (e.id, e.name.clone()))
+        .collect();
+    assert!(
+        children.len() > 150,
+        "{} instances: {status}",
+        children.len()
+    );
+    assert_eq!(harness.app().entities.len(), before + 1 + children.len());
+    let count = |prefix: &str| {
+        children
+            .iter()
+            .filter(|(_, n)| n.starts_with(prefix))
+            .count()
+    };
+    assert!(count("pine ") > 20 && count("tuft ") > 20, "{status}");
+
+    // Each instance stands where its class's masks allow: read the masks back at its position.
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let info = engine.terrain(terrain).unwrap();
+    let centre = engine.world_position(terrain).unwrap();
+    let mut positions = Vec::new();
+    for (id, name) in &children {
+        let p = engine.world_position(*id).unwrap();
+        let (x, z) = (
+            p[0] - centre[0] + info.size[0] * 0.5,
+            p[2] - centre[2] + info.size[1] * 0.5,
+        );
+        assert!(
+            (0.0..=info.size[0]).contains(&x) && (0.0..=info.size[1]).contains(&z),
+            "{name} at {x}, {z}"
+        );
+        let mask = |m: &str| engine.terrain_mask(terrain, m, x, z).unwrap();
+        let ground = engine.terrain_height(terrain, x, z).unwrap() + centre[1];
+        assert!(
+            (p[1] - ground).abs() < 0.8 + 0.3 * 1.6,
+            "{name}: y {} vs ground {ground}",
+            p[1]
+        );
+        if name.starts_with("pine ") {
+            assert!(
+                mask("slope") < 0.45,
+                "a pine on a slope of {}",
+                mask("slope")
+            );
+            assert!(
+                mask("wetness") < 0.7,
+                "a pine in wetness {}",
+                mask("wetness")
+            );
+        } else if name.starts_with("boulder ") {
+            assert!(
+                mask("slope") > 0.25,
+                "a boulder on a slope of {}",
+                mask("slope")
+            );
+        }
+        positions.push([p[0], p[1], p[2]]);
+    }
+    // A boulder is drawn as a Micromesh when its class says so; the tint was set from the class colour.
+    let boulder = children
+        .iter()
+        .find(|(_, n)| n.starts_with("boulder "))
+        .map(|(id, _)| *id);
+    if let Some(id) = boulder {
+        let types = engine.entity_components(id);
+        assert!(types.iter().any(|c| c.name == "Mesh Renderer"));
+    }
+
+    // One undo step takes the holder and every instance away.
+    harness.dispatch(Message::Undo);
+    assert_eq!(harness.app().entities.len(), before);
+
+    // The same seed again gives the same forest; another seed does not.
+    let run = |harness: &mut Harness, seed: u64| -> Vec<[f32; 3]> {
+        harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+            terrain: Some(terrain),
+            seed: Some(seed),
+            ..ScatterRequest::default()
+        }));
+        let holder = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_ref().expect("engine");
+        let mut out: Vec<[f32; 3]> = harness
+            .app()
+            .entities
+            .iter()
+            .filter(|e| e.parent == Some(holder))
+            .map(|e| engine.world_position(e.id).unwrap())
+            .collect();
+        out.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[2].total_cmp(&b[2])));
+        harness.dispatch(Message::Undo);
+        out
+    };
+    let first = run(&mut harness, 7);
+    let second = run(&mut harness, 7);
+    let other = run(&mut harness, 8);
+    assert!(first.len() > 150);
+    assert_eq!(first, second, "the same seed gives the same instances");
+    assert_ne!(first, other, "another seed gives another forest");
+
+    // A limit places only the first ones and says so.
+    harness.dispatch(Message::ScatterOnTerrain(ScatterRequest {
+        terrain: Some(terrain),
+        max_instances: Some(40),
+        ..ScatterRequest::default()
+    }));
+    let status = harness.app().scatter_status.clone().unwrap_or_default();
+    assert!(status.contains("only the first 40"), "{status}");
+    let holder = harness.app().entities[harness.app().selected].id;
+    assert_eq!(
+        harness
+            .app()
+            .entities
+            .iter()
+            .filter(|e| e.parent == Some(holder))
+            .count(),
+        40
+    );
+    assert_eq!(positions.len(), children.len());
+}
+
+/// A placed terrain carries its masks into the engine: the three built-ins, the generator's flow and wetness, and
+/// the erosion's wear and deposit; the engine's slope mask and normal agree with the height it was given.
+#[test]
+fn placing_a_terrain_exports_its_masks_to_the_engine() {
+    use crate::uikit::panels::terrain_generator as tg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    if harness.app.engine.as_ref().expect("engine").capi_version() < 15 {
+        return;
+    }
+    harness.app.asset_root_override = Some(test_temp_root("terrain-masks"));
+    let alpine = harness
+        .app()
+        .terraingen
+        .presets
+        .iter()
+        .position(|p| p.name == "Alpine Range")
+        .unwrap();
+    harness.dispatch(Message::TerrainGen(tg::Edit::ApplyPreset(alpine)));
+    harness.dispatch(Message::TerrainGen(tg::Edit::Place));
+    let status = harness.app().terraingen.status.clone().unwrap_or_default();
+    assert!(status.starts_with("Placed Alpine Range"), "{status}");
+    assert!(
+        status.contains("flow") && status.contains("wear"),
+        "{status}"
+    );
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_ref().expect("engine");
+    let masks = engine.terrain_masks(id).unwrap();
+    let names: Vec<&str> = masks.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "height",
+            "slope",
+            "curvature",
+            "wear",
+            "deposit",
+            "flow",
+            "wetness"
+        ]
+    );
+    assert!(masks[0].builtin && !masks[3].builtin);
+    let terrain = engine.terrain(id).unwrap();
+    assert_eq!(masks[5].resolution, terrain.resolution);
+
+    // Scan the terrain on a grid: every mask stays in 0..1, flow and wetness vary, and the engine's slope
+    // mask agrees with the heights the engine reports (steeper where the height changes faster).
+    let (sx, sz) = (terrain.size[0], terrain.size[1]);
+    let mut flows = Vec::new();
+    let mut steep = Vec::new();
+    for j in 1..24 {
+        for i in 1..24 {
+            let (x, z) = (sx * i as f32 / 24.0, sz * j as f32 / 24.0);
+            for name in [
+                "height",
+                "slope",
+                "curvature",
+                "wear",
+                "deposit",
+                "flow",
+                "wetness",
+            ] {
+                let v = engine.terrain_mask(id, name, x, z).unwrap();
+                assert!((0.0..=1.0).contains(&v), "{name} at ({x}, {z}) = {v}");
+            }
+            flows.push(engine.terrain_mask(id, "flow", x, z).unwrap());
+            let d = 4.0;
+            let rise = (engine.terrain_height(id, x + d, z).unwrap()
+                - engine.terrain_height(id, x - d, z).unwrap())
+            .abs()
+                / (2.0 * d);
+            steep.push((rise, engine.terrain_mask(id, "slope", x, z).unwrap()));
+            let n = engine.terrain_normal(id, x, z).unwrap();
+            assert!((n.iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() < 1e-3);
+            assert!(n[1] > 0.0);
+        }
+    }
+    let (lo, hi) = flows
+        .iter()
+        .fold((1.0f32, 0.0f32), |(l, h), v| (l.min(*v), h.max(*v)));
+    assert!(hi - lo > 0.3, "flow varies across the terrain: {lo}..{hi}");
+    // The slope mask is monotonic in the measured rise: the steepest quarter beats the flattest quarter.
+    steep.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let quarter = steep.len() / 4;
+    let flat: f32 = steep[..quarter].iter().map(|s| s.1).sum::<f32>() / quarter as f32;
+    let steepest: f32 = steep[steep.len() - quarter..]
+        .iter()
+        .map(|s| s.1)
+        .sum::<f32>()
+        / quarter as f32;
+    assert!(
+        steepest > flat + 0.1,
+        "slope mask: flat {flat}, steep {steepest}"
+    );
+    // A rectangle over the whole terrain is the same data resampled.
+    let grid = engine
+        .terrain_mask_rect(id, "wetness", [0.0, 0.0, sx, sz], [32, 32])
+        .unwrap();
+    assert_eq!(grid.len(), 32 * 32);
+    assert!(grid.iter().any(|&b| b > 200) && grid.iter().any(|&b| b < 50));
 }
 
 #[test]
@@ -6426,5 +8548,352 @@ fn material_modifiers_round_trip_through_the_engine_and_a_material_modifier_rend
     assert!((loaded.mod_wetness - 0.4).abs() < 1e-5);
     assert!((loaded.mod_snow - 0.5).abs() < 1e-5);
     assert!((loaded.mod_age - 0.6).abs() < 1e-5);
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn render_stats_count_draws_and_report_gpu_capabilities() {
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert!(engine.capi_version() >= 11, "render stats need C ABI v11");
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    let cube = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Cube")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let id = harness.app().entities[harness.app().selected].id;
+    harness.dispatch(Message::CreatePrefab(cube));
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 0.0, 0.0]).unwrap();
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.6,
+            pitch: 1.0,
+            distance: 6.0,
+            focus: [0.0, 0.0, 0.0],
+        })
+        .unwrap();
+    let _ = render_entity_view(engine);
+    let stats = engine.render_stats().expect("stats");
+    assert!(stats.draw_calls >= 1, "{stats:?}");
+    assert!(stats.triangles >= 2, "{stats:?}");
+    assert!(stats.meshes >= 1);
+    assert!(stats.total_ms > 0.0 && stats.total_ms >= stats.opaque_ms);
+    // The device reports what GPU-driven rendering can use; SDL3 GPU has no mesh shaders.
+    assert!(stats.indirect_draw && stats.graphics_storage_buffers && stats.compute_storage_write);
+    assert!(!stats.mesh_shaders);
+}
+
+#[test]
+fn micromesh_bake_through_the_engine_is_deterministic_and_bounded() {
+    let Some(harness) = engine_harness() else {
+        return;
+    };
+    let engine = harness.app.engine.as_ref().expect("engine");
+    assert!(engine.capi_version() >= 12, "micromesh needs C ABI v12");
+    // A rock mesh from the Nature generator: icosphere of 20480 triangles.
+    let (directions, faces) = crate::uikit::nature::rock::icosphere(5);
+    let positions: Vec<[f32; 3]> = directions.iter().map(|d| [d[0], d[1], d[2]]).collect();
+    let indices: Vec<u32> = faces.iter().flat_map(|f| [f[0], f[1], f[2]]).collect();
+    let bake = engine.micromesh_build(&positions, &indices).expect("bake");
+    assert_eq!(bake.source_triangles as usize, faces.len());
+    assert!(bake.clusters > faces.len() as u32 / 128, "{bake:?}");
+    assert!(bake.levels >= 5);
+    assert_eq!(bake.root_clusters, 1, "a closed mesh ends in one root");
+    assert!(bake.max_cluster_triangles <= 128);
+    assert!(bake.max_error > 0.0);
+    assert!(!bake.bytes.is_empty());
+    // Offline work must be reproducible: same mesh, same bytes.
+    let again = engine.micromesh_build(&positions, &indices).expect("bake");
+    assert_eq!(bake.bytes, again.bytes);
+    // Garbage is refused.
+    assert!(engine.micromesh_build(&positions, &[0, 1]).is_err());
+}
+
+/// Frames of an animated Storm for the documentation (`DOPPIO_WATER_ANIM=<dir>`).
+#[test]
+fn water_animation_frames_for_docs() {
+    use crate::uikit::panels::water_generator as wg;
+    let Ok(dir) = std::env::var("DOPPIO_WATER_ANIM") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("water-anim");
+    harness.app.asset_root_override = Some(root.clone());
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 8.0, 0.0]).unwrap();
+        engine.set_rotation(id, [-35.0, 140.0, 0.0]).unwrap();
+    }
+    let storm = harness
+        .app()
+        .watergen
+        .presets
+        .iter()
+        .position(|p| p.name == "Storm")
+        .unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(storm)));
+    harness.dispatch(Message::WaterGen(wg::Edit::Place));
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine.set_position(id, [0.0, 1.0, 0.0]).unwrap();
+    for _ in 0..30 {
+        engine.tick(0.05);
+    }
+    for i in 0..48 {
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.5 + i as f32 * 0.004,
+                pitch: 0.3,
+                distance: 46.0,
+                focus: [0.0, 1.0, 0.0],
+            })
+            .unwrap();
+        engine.tick(0.09);
+        let frame = render_entity_view_sized(engine, 640, 360);
+        image::save_buffer(
+            format!("{dir}/storm_{i:03}.png"),
+            &frame,
+            640,
+            360,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+}
+
+/// Frames of an oak in the wind for the documentation (`DOPPIO_NATURE_ANIM=<dir>`). The wind is time
+/// based and advances one step per rendered frame, so most frames are rendered small and thrown
+/// away: the GIF is a time-lapse.
+#[test]
+fn nature_wind_frames_for_docs() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Ok(dir) = std::env::var("DOPPIO_NATURE_ANIM") else {
+        return;
+    };
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-wind");
+    harness.app.asset_root_override = Some(root.clone());
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_position(id, [0.0, 8.0, 0.0]).unwrap();
+        engine.set_rotation(id, [-38.0, 130.0, 0.0]).unwrap();
+    }
+    let plane = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Plane")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(plane));
+    let ground = harness.app().entities[harness.app().selected].id;
+    {
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_scale(ground, [30.0, 1.0, 30.0]).unwrap();
+        let mut material = engine.new_material().unwrap();
+        material.albedo = [0.22, 0.34, 0.15, 1.0];
+        material.roughness = 0.95;
+        material.uv_object_scale = false;
+        let path = root.join("ground.mat");
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        engine
+            .apply_material(ground, &path.to_string_lossy())
+            .unwrap();
+    }
+    let oak = harness
+        .app()
+        .nature
+        .presets
+        .iter()
+        .position(|p| p.name == "Oak")
+        .unwrap();
+    harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(oak)));
+    harness.dispatch(Message::NatureGen(ng::Edit::Place));
+    let engine = harness.app.engine.as_mut().expect("engine");
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.8,
+            pitch: 0.25,
+            distance: 9.0,
+            focus: [0.0, 3.4, 0.0],
+        })
+        .unwrap();
+    let _ = render_entity_view_sized(engine, 640, 360);
+    for i in 0..60 {
+        for _ in 0..8 {
+            let _ = render_entity_view_sized(engine, 16, 9);
+        }
+        let frame = render_entity_view_sized(engine, 640, 360);
+        image::save_buffer(
+            format!("{dir}/oak_{i:03}.png"),
+            &frame,
+            640,
+            360,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+}
+
+/// Regression: a water surface whose entity has an authored material (the Water Generator writes
+/// one) must still be waved. A flat-looking sea once shipped because the authored-material branch
+/// skipped the GPU wave setup.
+#[test]
+fn placed_water_with_its_material_is_still_waved() {
+    use crate::uikit::panels::water_generator as wg;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("water-waved");
+    harness.app.asset_root_override = Some(root.clone());
+    let light = crate::uikit::prefabs::PREFABS
+        .iter()
+        .position(|p| p.label == "Directional Light")
+        .unwrap();
+    harness.dispatch(Message::CreatePrefab(light));
+    {
+        let id = harness.app().entities[harness.app().selected].id;
+        let engine = harness.app.engine.as_mut().expect("engine");
+        engine.set_rotation(id, [-35.0, 140.0, 0.0]).unwrap();
+    }
+    let storm = harness
+        .app()
+        .watergen
+        .presets
+        .iter()
+        .position(|p| p.name == "Storm")
+        .unwrap();
+    harness.dispatch(Message::WaterGen(wg::Edit::ApplyPreset(storm)));
+    harness.dispatch(Message::WaterGen(wg::Edit::Place));
+    let id = harness.app().entities[harness.app().selected].id;
+    let engine = harness.app.engine.as_mut().expect("engine");
+    assert!(
+        !engine.entity_material(id).unwrap_or_default().is_empty(),
+        "the generator gives the water its own material"
+    );
+    engine.set_position(id, [0.0, 1.0, 0.0]).unwrap();
+    for _ in 0..30 {
+        engine.tick(0.05);
+    }
+    engine
+        .set_camera(doppio_engine::Camera {
+            yaw: 0.5,
+            pitch: 0.3,
+            distance: 46.0,
+            focus: [0.0, 1.0, 0.0],
+        })
+        .unwrap();
+    let frame = render_entity_view_sized(engine, 480, 270);
+    // The waves must run in the vertex shader (the flat grid is only a carrier).
+    let stats = engine.render_stats().expect("stats");
+    assert!(
+        stats.gpu_water_draws >= 1,
+        "the water is not waved: {stats:?}"
+    );
+    // Mean luminance change between neighbouring pixels over the sea (the lower 60 %): flat water is
+    // a smooth gradient, waves, ripples and foam are not.
+    let luma = |x: usize, y: usize| {
+        let i = (y * 480 + x) * 4;
+        0.3 * frame[i] as f32 + 0.59 * frame[i + 1] as f32 + 0.11 * frame[i + 2] as f32
+    };
+    let (mut sum, mut n) = (0.0f32, 0.0f32);
+    for y in 108..269 {
+        for x in 0..479 {
+            sum += (luma(x + 1, y) - luma(x, y)).abs() + (luma(x, y + 1) - luma(x, y)).abs();
+            n += 2.0;
+        }
+    }
+    let roughness = sum / n;
+    assert!(roughness > 1.5, "the sea looks flat: {roughness:.2}");
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// Regression: vegetation must keep its wind and translucency now that preset materials are project
+/// assets (nodes pointing at `.mat` files). Leaves and trunks get derived copies; rocks stay still.
+#[test]
+fn placed_vegetation_keeps_wind_and_translucency_while_rocks_stay_still() {
+    use crate::uikit::panels::nature_generator as ng;
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
+    let root = test_temp_root("nature-foliage");
+    harness.app.asset_root_override = Some(root.clone());
+    let read_material = |harness: &Harness, entity: u32| -> String {
+        let engine = harness.app.engine.as_ref().expect("engine");
+        let path = engine.entity_material(entity).unwrap_or_default();
+        let resolved = engine
+            .resolve_path(&path)
+            .ok()
+            .filter(|p| std::path::Path::new(p).exists())
+            .or_else(|| engine.asset_path(&path).ok())
+            .unwrap_or(path);
+        std::fs::read_to_string(&resolved).unwrap_or_else(|e| format!("unreadable {resolved}: {e}"))
+    };
+    let place = |harness: &mut Harness, name: &str| -> Vec<(String, String)> {
+        let index = harness
+            .app()
+            .nature
+            .presets
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap();
+        harness.dispatch(Message::NatureGen(ng::Edit::ApplyPreset(index)));
+        harness.dispatch(Message::NatureGen(ng::Edit::Place));
+        let group = harness.app().entities[harness.app().selected].id;
+        let children: Vec<(u32, String)> = harness
+            .app()
+            .entities
+            .iter()
+            .filter(|e| e.parent == Some(group))
+            .map(|e| (e.id, e.name.clone()))
+            .collect();
+        children
+            .into_iter()
+            .map(|(id, name)| (name, read_material(harness, id)))
+            .collect()
+    };
+    let oak = place(&mut harness, "Oak");
+    let leaves = oak
+        .iter()
+        .find(|(n, _)| n.ends_with("leaves"))
+        .expect("leaves");
+    let trunk = oak
+        .iter()
+        .find(|(n, _)| n.ends_with("trunk"))
+        .expect("trunk");
+    assert!(leaves.1.contains("wind_strength 0.012"), "{}", leaves.1);
+    assert!(leaves.1.contains("wind_flutter 0.6"), "{}", leaves.1);
+    assert!(leaves.1.contains("translucency 0.55"), "{}", leaves.1);
+    assert!(trunk.1.contains("wind_strength 0.012"), "{}", trunk.1);
+    assert!(trunk.1.contains("wind_flutter 0"), "{}", trunk.1);
+    let rock = place(&mut harness, "Boulder");
+    for (name, text) in &rock {
+        assert!(
+            text.contains("wind_strength 0\n") && text.contains("translucency 0\n"),
+            "{name} must stay still: {text}"
+        );
+    }
     std::fs::remove_dir_all(root).ok();
 }

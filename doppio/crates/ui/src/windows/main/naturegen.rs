@@ -805,6 +805,62 @@ impl App {
         }
     }
 
+    /// A vegetation part (leaves, grass, petals, trunks) that uses a project `.mat` which carries no
+    /// wind or translucency of its own gets a **derived copy** with the part's profile, named like
+    /// `oak_leaves_w12f60t55.mat` beside the nature materials: the source is never modified. A `.mat`
+    /// where you set wind or translucency yourself is used exactly as it is, and so is every part that
+    /// does not move (rocks, ground).
+    fn with_foliage(&self, product: String, foliage: Foliage) -> Result<String, String> {
+        if foliage == Foliage::STILL {
+            return Ok(product);
+        }
+        let engine = self.engine.as_ref().ok_or("The engine is not available")?;
+        let source = engine
+            .resolve_path(&product)
+            .ok()
+            .filter(|resolved| Path::new(resolved).exists())
+            .or_else(|| engine.asset_path(&product).ok())
+            .ok_or_else(|| format!("material `{product}` not found"))?;
+        let mut material = engine
+            .load_material(&source)
+            .map_err(|e| format!("{e:?}"))?;
+        if material.wind_strength > 0.0
+            || material.wind_flutter > 0.0
+            || material.translucency > 0.0
+        {
+            return Ok(product);
+        }
+        let root = self.asset_root_dir().ok_or("No project is open")?;
+        let folder = asset_folders::ensure(&root, asset_folders::AssetFolder::NatureMaterials)
+            .map_err(|e| e.to_string())?;
+        let stem = Path::new(&product)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("material");
+        let file = format!("{stem}{}.mat", foliage.suffix());
+        let target = folder.join(&file);
+        if !target.exists() {
+            material.name = format!("{stem}{}", foliage.suffix());
+            material.wind_strength = foliage.sway;
+            material.wind_speed = 1.0;
+            material.wind_flutter = foliage.flutter;
+            material.translucency = foliage.translucency;
+            engine
+                .save_material(&target.to_string_lossy(), &material)
+                .map_err(|e| format!("{e:?}"))?;
+        }
+        let absolute_ok = engine
+            .asset_path("")
+            .map(|root| !root.is_empty())
+            .unwrap_or(false);
+        let relative = asset_folders::relative(&root, &target);
+        Ok(if absolute_ok {
+            relative
+        } else {
+            target.display().to_string()
+        })
+    }
+
     fn ensure_nature_material(
         &mut self,
         spec: &MaterialSpec,
@@ -813,7 +869,8 @@ impl App {
         // Your own material is used exactly as it is; a `generator.material` recipe stands for
         // the material it baked.
         if let MaterialSpec::Project(path, _) = spec {
-            return self.slot_product(path, recipe::Kind::Material);
+            let product = self.slot_product(path, recipe::Kind::Material)?;
+            return self.with_foliage(product, foliage);
         }
         let resolved_texture = match spec {
             MaterialSpec::ProjectTexture(path, _) => {

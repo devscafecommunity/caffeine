@@ -24,6 +24,13 @@ gameplay queries (`water_height`, for floating objects).
   <figcaption>The eight presets, rendered by the engine</figcaption>
 </figure>
 
+<figure class="doc-figure">
+  <img src="images/water/water-storm.gif" alt="The Storm preset in motion: tall steep waves moving across the surface" loading="lazy">
+  <figcaption>The Storm preset in motion. The waves are displaced on the GPU (<code>water.vert</code>) from the wave list, so the
+  surface is one flat grid and the frame rate does not depend on how many waves the graph has (up to 16). Rendered by
+  <code>./scripts/render-world-docs.sh</code>.</figcaption>
+</figure>
+
 
 ## 1. How a graph works
 
@@ -107,6 +114,31 @@ the waves, and no preset contains a wave its mesh cannot show.
   wave Jacobian (crests that compress), broken up by noise, and sun glints from the ripples on the glossy
   surface. The body is still the PBR transparent path with the retuned low F0 and thin clearcoat.
 
+### Artefacts that were fixed (and why they cannot come back)
+
+<table class="doc-table">
+  <thead><tr><th>What you saw</th><th>Cause</th><th>Fix and guard</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Thin straight bright lines forming a grid across the water</td>
+      <td>The ripple normals came from <em>value</em> noise with a smooth blend. Its slope is exactly zero along every lattice line, so each line is a flat, mirror-bright stripe in a field of tilted ripples.</td>
+      <td>Ripples are now <strong>gradient (Perlin) noise</strong> with an integer hash, every octave rotated so no two lattices line up. There is no slope-free line left.</td>
+    </tr>
+    <tr>
+      <td>Large smooth black patches with hard, scalloped edges (very visible in the Storm)</td>
+      <td>The screen-space reflection trace of the water read last frame's depth and colour. Water writes no depth, so the trace hit stale or black pixels, and the patch edge followed the screen border.</td>
+      <td>Water takes <strong>no screen-space reflection</strong>: it reflects the sky/probe only. The mirror direction is also kept above the horizon (<code>R.y = abs(R.y)</code>) so a tilted ripple never samples the dark ground half of the environment. Guard: <code>storm_water_has_no_dark_reflection_patches</code> renders the sea then the storm and checks that the darkest 5&nbsp;% of the frame stays within 72&nbsp;% of the median (it was 64&nbsp;% before the fix, 81&nbsp;% after).</td>
+    </tr>
+    <tr>
+      <td>Crests that fold over themselves</td>
+      <td><code>Scale</code> (choppiness above 1) and <code>Merge</code> can push <code>sum(Q&nbsp;k&nbsp;A)</code> past 1.</td>
+      <td>The final wave list is scaled so <code>sum(Q&nbsp;k&nbsp;A) &le; 0.95</code>, both in the editor (<code>limit_total_steepness</code>) and in the engine for authored waves (<code>WaveField::configure</code>). Guard: a C++ test with eight over-steep waves checks the Jacobian and the normal stay positive on a grid of points.</td>
+    </tr>
+  </tbody>
+</table>
+
+The trade-off: because water takes no screen-space reflection, objects standing in the water are not mirrored in it yet. A planar reflection pass for water is the way to get them (listed below).
+
 ## 5. Agents and scripting
 
 The tab is a pane like the others (`editor.pane.water_generator`, `watergen.*` ids). Headless: fixture
@@ -160,8 +192,9 @@ This is the foundation of the rework, not all of it. Honest status:
 * **The water shading is a mode of the lit shader, not a full water shader.** Done: ripple detail, depth-ish
   colour from the view angle, whitecaps, GPU waves. Still missing: **true depth-based absorption** (it needs
   the floor depth), **refraction** with a floor, **shoreline foam**, **caustics**, **god rays**, and the
-  **Look node's colour does not yet vary over depth**. The editor grid shows through the water (it is part of
-  the refracted scene).
+  **Look node's colour does not yet vary over depth**, and **no reflection of objects** (see the table
+  above: the screen-space trace is off for water, a planar reflection pass is the fix). The editor grid shows
+  through clear water (it is part of the refracted scene).
 * **Vertex-displaced grid**, up to 256 x 256 cells (a few thousand quads cost nothing now; the grid is no longer
   rebuilt). A **clipmap/LOD mesh** around the camera is what lets an ocean reach the horizon with the detail
   near you; waves are already plain data for it.

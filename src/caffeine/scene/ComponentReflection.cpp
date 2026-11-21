@@ -6,6 +6,7 @@
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/World.hpp"
+#include "caffeine/photon/Photon.hpp"
 #include "physics/PhysicsComponents2D.hpp"
 #include "physics/PhysicsComponents3D.hpp"
 #include "script/ScriptTypes.hpp"
@@ -380,7 +381,19 @@ const std::vector<ComponentDesc>& componentRegistry() {
              colorField<ECS::MeshRendererComponent>("Tint", &ECS::MeshRendererComponent::modTint),
              f32Field<ECS::MeshRendererComponent>("Wetness", &ECS::MeshRendererComponent::modWetness, 0.0f, 1.0f, 0.01f),
              f32Field<ECS::MeshRendererComponent>("Snow", &ECS::MeshRendererComponent::modSnow, 0.0f, 1.0f, 0.01f),
-             f32Field<ECS::MeshRendererComponent>("Age", &ECS::MeshRendererComponent::modAge, 0.0f, 1.0f, 0.01f)}),
+             f32Field<ECS::MeshRendererComponent>("Age", &ECS::MeshRendererComponent::modAge, 0.0f, 1.0f, 0.01f),
+             boolField<ECS::MeshRendererComponent>("Micromesh", &ECS::MeshRendererComponent::micromesh),
+             f32Field<ECS::MeshRendererComponent>("Micromesh error (px)", &ECS::MeshRendererComponent::micromeshPixels, 0.1f, 16.0f, 0.1f),
+             boolField<ECS::MeshRendererComponent>("Micromesh occlusion", &ECS::MeshRendererComponent::micromeshOcclusion)}),
+        component<ECS::PhotonGIComponent>(60, "Photon GI",
+            {boolField<ECS::PhotonGIComponent>("Enabled", &ECS::PhotonGIComponent::enabled),
+             enumField<ECS::PhotonGIComponent, ECS::PhotonQuality>("Quality", &ECS::PhotonGIComponent::quality, {"Off", "Low", "Balanced", "High", "Eco"}),
+             enumField<ECS::PhotonGIComponent, ECS::PhotonPath>("Path", &ECS::PhotonGIComponent::path, {"Screen fallback", "Compute"}),
+             f32Field<ECS::PhotonGIComponent>("Intensity", &ECS::PhotonGIComponent::intensity, 0.0f, 4.0f, 0.05f),
+             f32Field<ECS::PhotonGIComponent>("Radius", &ECS::PhotonGIComponent::radius, 1.0f, 200.0f, 0.5f),
+             f32Field<ECS::PhotonGIComponent>("Sky intensity", &ECS::PhotonGIComponent::skyIntensity, 0.0f, 4.0f, 0.05f),
+             f32Field<ECS::PhotonGIComponent>("Ambient", &ECS::PhotonGIComponent::ambientIntensity, 0.0f, 2.0f, 0.05f),
+             enumField<ECS::PhotonGIComponent, Caffeine::u8>("Debug view", &ECS::PhotonGIComponent::debugView, {"Lit scene", "GI only", "Fallback only"})}),
         component<Physics3D::RigidBody3D>(8, "Rigid Body 3D",
             {f32Field<Physics3D::RigidBody3D>("Mass", &Physics3D::RigidBody3D::mass, 0.0f, 100000.0f, 0.1f),
              f32Field<Physics3D::RigidBody3D>("Linear damping", &Physics3D::RigidBody3D::linearDamping, 0.0f, 10.0f, 0.01f),

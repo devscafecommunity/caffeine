@@ -544,7 +544,11 @@ vec3 sampleProbeOrSky(vec3 dir, float roughness) {
 
 vec3 specularRadiance(vec3 R, float roughness) {
     vec3 radiance = sampleProbeOrSky(R, roughness);
-    vec4 ssr = traceScreenSpace(v_worldPos + normalize(v_normal) * 0.02, R, roughness);
+    // Water takes no screen-space reflection: it writes no depth, so the trace (last frame's depth
+    // and colour) hit stale or black pixels and left large dark patches with hard edges.
+    vec4 ssr = lights.uWater.x > 0.5
+                   ? vec4(0.0)
+                   : traceScreenSpace(v_worldPos + normalize(v_normal) * 0.02, R, roughness);
     radiance = mix(radiance, ssr.rgb, ssr.a);
     if (lights.uReflectQuality.x > 0.5 && lights.uReflectExtra.z >= 0.5) {
         vec3 bounceDir = normalize(reflect(R, vec3(0.0, 1.0, 0.0)));
@@ -566,6 +570,11 @@ void applyIbl(Surface s, inout vec3 diffuseOut, inout vec3 specularOut) {
 
     float NoV = max(dot(s.n, s.v), 1e-4);
     vec3 R = reflect(-s.v, s.n);
+    // A rippled water normal can tilt the mirror direction below the horizon, into the dark ground
+    // half of the environment: smooth black patches with hard edges. The ray would really hit the
+    // next wave, so reflect it back up instead.
+    const bool onWater = lights.uWater.x > 0.5;
+    if (onWater) R.y = abs(R.y);
     vec3 specWeight = iridescentWeight(s, envBrdfApprox(s.F0, s.roughness, NoV));
     vec3 kd = (1.0 - specWeight) * (1.0 - s.metallic) * (1.0 - s.transmission);
 
@@ -586,6 +595,7 @@ void applyIbl(Surface s, inout vec3 diffuseOut, inout vec3 specularOut) {
         if (s.clearcoat > 0.0) {
             float Fc = (0.04 + 0.96 * pow(1.0 - NoV, 5.0)) * s.clearcoat;
             vec3 Rc = reflect(-s.v, normalize(v_normal));
+            if (onWater) Rc.y = abs(Rc.y);
             diffuse *= 1.0 - Fc;
             spec = spec * (1.0 - Fc) + Fc * specularRadiance(Rc, s.clearcoatRoughness) * specAmt *
                                            specOcclusion;
@@ -755,16 +765,56 @@ float waterFbm(vec2 p) {
     return waterNoise(p) * 0.55 + waterNoise(p * 2.07 + 17.0) * 0.3 + waterNoise(p * 4.3 + 41.0) * 0.15;
 }
 
+// Ripple noise: gradient (Perlin) noise with a PCG integer hash. Value noise with a smooth blend has a
+// zero slope along every lattice line, which showed as thin flat, mirror-bright lines in a regular grid
+// across the water; gradient noise has a slope everywhere, and every octave is rotated so no two
+// lattices line up.
+uint waterPcg(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+vec2 waterGrad(ivec2 cell) {
+    uint h = waterPcg(uint(cell.x) + waterPcg(uint(cell.y) + 0x9e3779b9u));
+    float a = float(h & 0xffffu) * (6.2831853 / 65536.0);
+    return vec2(cos(a), sin(a));
+}
+
+float waterPerlin(vec2 p) {
+    ivec2 i = ivec2(floor(p));
+    vec2 f = p - vec2(i);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(waterGrad(i), f);
+    float b = dot(waterGrad(i + ivec2(1, 0)), f - vec2(1.0, 0.0));
+    float c = dot(waterGrad(i + ivec2(0, 1)), f - vec2(0.0, 1.0));
+    float d = dot(waterGrad(i + ivec2(1, 1)), f - vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float waterRippleHeight(vec2 p) {
+    const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+    float h = waterPerlin(p) * 0.55;
+    p = rot * p * 2.07 + 17.0;
+    h += waterPerlin(p) * 0.3;
+    p = rot * p * 2.07 + 41.0;
+    h += waterPerlin(p) * 0.15;
+    return h;
+}
+
 // Slope of two ripple layers drifting in different directions.
 vec2 waterRipples(vec2 p, float t) {
     vec2 a = p * 0.4 + vec2(t * 0.04, t * 0.025);
-    vec2 b = p * 1.05 + vec2(-t * 0.03, t * 0.05);
-    const float e = 0.03;
-    float ca = waterFbm(a);
-    float cb = waterFbm(b);
-    vec2 ga = vec2(waterFbm(a + vec2(e, 0.0)) - ca, waterFbm(a + vec2(0.0, e)) - ca) / e;
-    vec2 gb = vec2(waterFbm(b + vec2(e, 0.0)) - cb, waterFbm(b + vec2(0.0, e)) - cb) / e;
-    return ga * 0.7 + gb * 0.3;
+    mat2 turn = mat2(0.6, -0.8, 0.8, 0.6);
+    vec2 b = turn * p * 1.05 + vec2(-t * 0.03, t * 0.05);
+    const float e = 0.02;
+    float ca = waterRippleHeight(a);
+    float cb = waterRippleHeight(b);
+    vec2 ga = vec2(waterRippleHeight(a + vec2(e, 0.0)) - ca, waterRippleHeight(a + vec2(0.0, e)) - ca) / e;
+    vec2 gb = vec2(waterRippleHeight(b + vec2(e, 0.0)) - cb, waterRippleHeight(b + vec2(0.0, e)) - cb) / e;
+    // The second layer's slope is in its own rotated frame: bring it back to world axes.
+    gb = transpose(turn) * gb;
+    return ga * 0.4 + gb * 0.25;
 }
 
 void main() {
