@@ -608,6 +608,16 @@ pub fn run() -> iced::Result {
             },
         )
         .action(
+            "place_prefab",
+            "Places a saved .prefab (a tree, say) in the scene at the camera focus and selects it. args: { \"path\": string } relative to the assets root, e.g. Prefabs/oak.prefab",
+            |args| Ok(Message::PlacePrefab(required_str(args, "path")?.to_owned())),
+        )
+        .action(
+            "open_generator",
+            "Reopens the generator graph behind an asset: a .generator.* recipe, a .prefab, or anything a generator baked (a model, material or texture). args: { \"path\": string } relative to the assets root",
+            |args| Ok(Message::OpenGeneratorFor(required_str(args, "path")?.to_owned())),
+        )
+        .action(
             "asset_navigate",
             "Opens an asset-browser folder (relative to the asset root). args: { \"path\": string }",
             |args| {
@@ -812,6 +822,17 @@ pub fn run() -> iced::Result {
                 let op = args.get("op").and_then(Value::as_str).ok_or_else(|| "expected \"op\"".to_owned())?;
                 let def = crate::uikit::nature::ops::find(op).ok_or_else(|| format!("unknown node `{op}`"))?;
                 Ok(Message::NatureGen(nature_generator::Edit::AddNode(def.id)))
+            },
+        )
+        .action(
+            "nature_edit_material",
+            "Adds an Edit Library Material node after a Library Material / Leaf-Petal Texture node, wired in place, and selects it (set its sliders with nature_set). args: { \"node\": id }",
+            |args| {
+                let node = args
+                    .get("node")
+                    .and_then(Value::as_u64)
+                    .ok_or("expected numeric \"node\"")?;
+                Ok(Message::NatureGen(nature_generator::Edit::EditMaterial(node)))
             },
         )
         .action(

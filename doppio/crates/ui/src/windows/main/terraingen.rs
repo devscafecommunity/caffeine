@@ -405,6 +405,25 @@ impl App {
         }
     }
 
+    /// Writes `<slug>.generator.terrain` beside the height map the terrain exports.
+    fn save_terrain_recipe(&mut self) -> Result<std::path::PathBuf, String> {
+        self.ensure_workspace();
+        let dir = self
+            .terrain_dir()
+            .ok_or("Open a project first: terrains are written to its assets folder")?;
+        let slug = crate::uikit::nature::slug(&self.terraingen.name);
+        let name = self.terraingen.name.clone();
+        let graph = terrain::to_text(&name, &self.terraingen.graph);
+        self.write_recipe(
+            &dir,
+            crate::uikit::recipe::Kind::Terrain,
+            &slug,
+            &name,
+            &format!("{slug}_height.png"),
+            graph,
+        )
+    }
+
     fn export_terrain(&mut self) {
         self.ensure_workspace();
         let Some(dir) = self.terrain_dir() else {
@@ -533,13 +552,21 @@ impl App {
             self.terraingen.status = Some(error);
             return;
         }
+        // The recipe goes first: whatever happens to the scene below, the graph is never lost.
+        let saved = match self.save_terrain_recipe() {
+            Ok(_) => format!(
+                ". Recipe: {}.generator.terrain",
+                crate::uikit::nature::slug(&self.terraingen.name)
+            ),
+            Err(error) => format!(". The recipe was not saved ({error})"),
+        };
         let layers = self.terraingen.graph.layer_paths();
         let layer_root = self.asset_root_dir();
         let res = self.terraingen.graph.output_resolution();
         let model = match self.terraingen.graph.build(res) {
             Ok(model) => model,
             Err(error) => {
-                self.terraingen.status = Some(format!("Graph: {error}"));
+                self.terraingen.status = Some(format!("Graph: {error}{saved}"));
                 return;
             }
         };
@@ -635,7 +662,7 @@ impl App {
         }
         self.terraingen.dirty = false;
         self.terraingen.status = Some(format!(
-            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there. Masks: height, slope, curvature{}",
+            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there. Masks: height, slope, curvature{}{saved}",
             model.sea_metres,
             sent.iter().map(|n| format!(", {n}")).collect::<String>()
         ));

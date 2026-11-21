@@ -104,6 +104,10 @@ pub struct Recipe {
     /// Algorithm version the recipe was authored with (1 when the file predates the field).
     #[serde(default = "legacy_generator_version")]
     pub generator_version: u32,
+    /// Every file this recipe wrote besides `product` (models, materials, textures, the prefab), relative to the
+    /// assets root. Empty for generators that write a single file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub products: Vec<String>,
 }
 
 impl Recipe {
@@ -116,7 +120,14 @@ impl Recipe {
             product: product.to_owned(),
             graph,
             generator_version: GENERATOR_VERSION,
+            products: Vec::new(),
         }
+    }
+
+    /// The same recipe, listing every file it wrote.
+    pub fn with_products(mut self, products: Vec<String>) -> Self {
+        self.products = products;
+        self
     }
 
     pub fn kind(&self) -> Option<Kind> {

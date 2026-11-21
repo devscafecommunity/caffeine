@@ -7,7 +7,7 @@
 #   scripts/doppio-headless.sh run doppio/tests/ui-flows --format text
 #   scripts/doppio-headless.sh session
 #
-# Docs: doppio/docs/headless-testing.md
+# Docs: caffeine-website/content/en/docs/doppio/headless-testing.md
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

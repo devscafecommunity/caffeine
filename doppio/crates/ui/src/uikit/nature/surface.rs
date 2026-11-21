@@ -437,7 +437,8 @@ pub fn bark(kind: BarkKind, res: usize, seed: u32) -> SurfaceMaps {
 /// A tangent-space normal map for a leaf / petal card image (RGBA8, `width` x `height`), derived
 /// from the card itself: veins and texture detail from the luminance, a soft rounded profile from
 /// the alpha edge, so a flat card catches light like a leaf with a midrib and a curved blade.
-/// Alpha is 255 (no parallax).
+/// Alpha holds the **height** (veins stand proud of the blade, the blade rises from its edge), so
+/// the leaf has depth for parallax and self-shadowing, like the bark's.
 pub fn card_normal(albedo: &[u8], width: usize, height: usize) -> Vec<u8> {
     let luma = |x: i32, y: i32| {
         let x = x.clamp(0, width as i32 - 1) as usize;
@@ -472,6 +473,14 @@ pub fn card_normal(albedo: &[u8], width: usize, height: usize) -> Vec<u8> {
             out[o] = enc(nv[0]);
             out[o + 1] = enc(nv[1]);
             out[o + 2] = enc(nv[2]);
+            // Height: luminance relief (veins) over a dome that is highest away from the cut edge.
+            let mut dome = 0.0;
+            for (ox, oy) in [(-6, 0), (6, 0), (0, -6), (0, 6), (0, 0)] {
+                dome += alpha(x + ox, y + oy);
+            }
+            let relief = ((luma(x, y) - 0.5) * 1.4 + 0.5).clamp(0.0, 1.0);
+            let height = relief * 0.6 + (dome / 5.0) * 0.4;
+            out[o + 3] = (height.clamp(0.0, 1.0) * 255.0).round() as u8;
         }
     }
     out

@@ -283,6 +283,7 @@ pub const NATUREGEN_SCATTER: UiId = UiId::fixed("naturegen.scatter");
 pub const TERRAINGEN_SCATTER: UiId = UiId::fixed("terraingen.scatter");
 pub const TERRAINGEN_SCATTER_PLAN: UiId = UiId::fixed("terraingen.scatter_plan");
 pub const NATUREGEN_DELETE_NODE: UiId = UiId::fixed("naturegen.delete_node");
+pub const NATUREGEN_EDIT_MATERIAL: UiId = UiId::fixed("naturegen.edit_material");
 pub const PANE_GENERATOR: UiId = UiId::fixed("editor.pane.generator");
 pub const PANE_SCRIPT: UiId = UiId::fixed("editor.pane.script");
 pub const PANE_DRYAD_NODES: UiId = UiId::fixed("editor.pane.dryad_nodes");
@@ -743,6 +744,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: NATUREGEN_SCATTER,
         description: "Writes the model into Scatter/default.scatter as a class that places every part, so the Scatter action can plant it on a terrain.",
+        kind: "button",
+    },
+    UiMeta {
+        id: NATUREGEN_EDIT_MATERIAL,
+        description: "Adds an Edit Library Material node after the selected library material or leaf texture, wired in place, so its colours, surface and wind can be changed.",
         kind: "button",
     },
     UiMeta {

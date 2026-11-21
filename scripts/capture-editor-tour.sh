@@ -3,13 +3,13 @@
 # Writes doppio-tour.mp4 and, when ffmpeg is available, doppio-tour.gif.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${root}/doppio/docs/images/editor"
+out="${root}/caffeine-website/content/en/docs/images/doppio/editor"
 mkdir -p "${out}"
 if [ -d "${root}/build" ]; then
     export LD_LIBRARY_PATH="${root}/build:${LD_LIBRARY_PATH:-}"
     export DYLD_LIBRARY_PATH="${root}/build:${DYLD_LIBRARY_PATH:-}"
 fi
-"${root}/scripts/doppio-headless.sh" run "${root}/doppio/docs/flows/capture-editor-tour.json" \
+"${root}/scripts/doppio-headless.sh" run "${root}/caffeine-website/captures/flows/capture-editor-tour.json" \
     --out "${out}" --format text
 if command -v ffmpeg >/dev/null 2>&1; then
     ffmpeg -y -i "${out}/doppio-tour.mp4" \
@@ -17,3 +17,5 @@ if command -v ffmpeg >/dev/null 2>&1; then
         "${out}/doppio-tour.gif" >/dev/null 2>&1 || true
 fi
 echo "wrote ${out}/doppio-tour.mp4"
+
+"${root}/scripts/mirror-doppio-images.sh"

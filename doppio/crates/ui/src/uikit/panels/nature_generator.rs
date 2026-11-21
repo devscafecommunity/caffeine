@@ -63,6 +63,9 @@ pub enum Edit {
     SetMicromesh(bool),
     SetSearch(String),
     TogglePaletteGroup(String),
+    /// Puts an Edit Library Material node after a library material node, wired between it and
+    /// whatever used it, so the library asset can be changed.
+    EditMaterial(NodeId),
     /// Index into the preset list.
     ApplyPreset(usize),
     SetQuality(usize),
@@ -578,6 +581,22 @@ fn properties<'a, Message: Clone + 'a>(
                 ));
             }
         }
+    }
+    // A library material is a fixed asset: this adds the node that edits it.
+    if matches!(node.op, "mat_library" | "mat_cards")
+        || node.op == "mat_project" && crate::uikit::nature::graph::is_library_node(node)
+    {
+        let edit_emit = emit.clone();
+        body = body.push(
+            text("The library material is read-only. Add an edit node to change its colours, surface and wind; it keeps the library asset and writes a copy.")
+                .size(8)
+                .color(theme::TEXT_MUTED),
+        );
+        body = body.push(button::compact(
+            id::NATUREGEN_EDIT_MATERIAL,
+            "Edit this material",
+            edit_emit(Edit::EditMaterial(node_id)),
+        ));
     }
     // Material nodes that point at your own project assets list the matching files.
     {

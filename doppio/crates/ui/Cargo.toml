@@ -30,7 +30,7 @@ fontdue = { version = "0.9", optional = true }
 [features]
 agent = ["dep:iced-mcp"]
 # Headless UI driver (`doppio-headless`): scripted, human-like actions and
-# screenshots without opening a window. See doppio/docs/headless-testing.md.
+# screenshots without opening a window. See caffeine-website/content/en/docs/doppio/headless-testing.md.
 headless = ["dep:iced_test", "dep:fontdue"]
 
 [dev-dependencies]

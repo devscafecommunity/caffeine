@@ -47,7 +47,7 @@ OPTIONS (run, session, widgets, screenshot)
   --annotate            Annotate the `screenshot` with widget ids
 
 Scripts may set `fixture`, `size`, `assets` and `asset_root` themselves; the
-options above only provide defaults. See doppio/docs/headless-testing.md.
+options above only provide defaults. See caffeine-website/content/en/docs/doppio/headless-testing.md.
 Set ICED_TEST_BACKEND=tiny-skia to force the CPU renderer (CI without a GPU).
 ";
 

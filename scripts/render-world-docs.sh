@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders the water and vegetation documentation media on the GPU (env-gated Rust tests) and composes
-# them into doppio/docs/images/{water,nature}/: the preset sheet, the animated storm, the oak in the
+# them into caffeine-website/content/en/docs/images/doppio/{water,nature}/: the preset sheet, the animated storm, the oak in the
 # wind. Needs libcaffeine-capi built, a GPU, Pillow and ffmpeg.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,5 +15,7 @@ DOPPIO_WATER_DUMP="${tmp}/presets" cargo test -p doppio-ui --lib water_presets_r
 DOPPIO_WATER_ANIM="${tmp}/storm" cargo test -p doppio-ui --lib water_animation_frames_for_docs
 DOPPIO_NATURE_ANIM="${tmp}/oak" cargo test -p doppio-ui --lib nature_wind_frames_for_docs
 cd "${root}"
-python3 "${root}/scripts/compose_world_media.py" "${tmp}" "${root}/doppio/docs/images"
+python3 "${root}/scripts/compose_world_media.py" "${tmp}" "${root}/caffeine-website/content/en/docs/images/doppio"
 echo "wrote water-presets.png, water-storm.gif, nature-oak-wind.gif"
+
+"${root}/scripts/mirror-doppio-images.sh"

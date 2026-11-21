@@ -490,6 +490,49 @@ std::string assetToProjectPath(const CaffeineSession& session, const std::string
     return input.lexically_normal().generic_string();
 }
 
+
+/// The child of `dir` named `name` ignoring case (`Assets` for "assets"); empty when there is none.
+std::filesystem::path existingDirIgnoringCase(const std::filesystem::path& dir,
+                                              const std::string& name) {
+    std::error_code ec;
+    const std::filesystem::path exact = dir / name;
+    if (std::filesystem::is_directory(exact, ec)) return exact;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (ec) break;
+        if (!entry.is_directory(ec)) continue;
+        std::string candidate = entry.path().filename().string();
+        if (candidate.size() != name.size()) continue;
+        bool same = true;
+        for (size_t i = 0; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(candidate[i])) !=
+                std::tolower(static_cast<unsigned char>(name[i]))) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return entry.path();
+    }
+    return {};
+}
+
+/// The project a scene file belongs to: the nearest folder above it (up to four levels) holding a
+/// `project.caffeine`; else the folder above a `scenes` / `Scenes` folder; else the scene's own folder.
+std::filesystem::path projectRootForScene(const std::filesystem::path& sceneFile) {
+    std::error_code ec;
+    const std::filesystem::path parent = sceneFile.parent_path();
+    std::filesystem::path probe = parent;
+    for (int level = 0; level < 4 && !probe.empty(); ++level) {
+        if (std::filesystem::exists(probe / "project.caffeine", ec)) return probe;
+        const std::filesystem::path up = probe.parent_path();
+        if (up == probe) break;
+        probe = up;
+    }
+    std::string folder = parent.filename().string();
+    std::transform(folder.begin(), folder.end(), folder.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (folder == "scenes" && parent.has_parent_path()) return parent.parent_path();
+    return parent;
+}
 }  // namespace
 
 namespace {
@@ -667,22 +710,17 @@ CaffeineResult caffeine_session_load_scene(CaffeineSession* session, const char*
 
     session->scenePath = path;
     session->context.currentScenePath = path;
-    const std::filesystem::path sceneFile(path);
-    const std::filesystem::path parent = sceneFile.parent_path();
-    const std::filesystem::path root =
-        (parent.filename() == "scenes" && parent.has_parent_path())
-            ? parent.parent_path()
-            : parent;
+    const std::filesystem::path root = projectRootForScene(std::filesystem::path(path));
     session->context.projectRootPath = root.string();
     session->context.isDirty = false;
     session->cameraInitialized = false;
 
-    std::error_code assetEc;
-    const std::filesystem::path assetsDir = root / "assets";
-    const std::filesystem::path rawDir = assetsDir / "raw";
-    if (std::filesystem::exists(rawDir, assetEc)) {
+    const std::filesystem::path assetsDir = existingDirIgnoringCase(root, "assets");
+    const std::filesystem::path rawDir =
+        assetsDir.empty() ? std::filesystem::path() : existingDirIgnoringCase(assetsDir, "raw");
+    if (!rawDir.empty()) {
         session->assetRoot = rawDir.string();
-    } else if (std::filesystem::exists(assetsDir, assetEc)) {
+    } else if (!assetsDir.empty()) {
         session->assetRoot = assetsDir.string();
     } else {
         session->assetRoot.clear();
@@ -1421,7 +1459,14 @@ CaffeineResult caffeine_session_get_viewport_settings(
 
 CaffeineResult caffeine_session_set_asset_root(CaffeineSession* session, const char* path) {
     if (!session || !path) return CAFFEINE_INVALID_ARGUMENT;
+    const bool rootWasAssetRoot = session->context.projectRootPath.empty() ||
+                                  session->context.projectRootPath == session->assetRoot;
     session->assetRoot = path;
+    // Without a loaded project the asset root is the only folder there is: relative asset paths (a mesh at
+    // "Models/Nature/oak.obj") resolve against the project root, so it stands in until a scene sets the real one.
+    if (rootWasAssetRoot) {
+        session->context.projectRootPath = path;
+    }
     session->scanAssets();
     return CAFFEINE_OK;
 }

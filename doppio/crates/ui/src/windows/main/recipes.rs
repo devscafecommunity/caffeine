@@ -23,6 +23,8 @@ impl App {
     ) -> Result<PathBuf, String> {
         let path = directory.join(recipe::file_name(stem, kind));
         recipe::write(&path, &Recipe::new(kind, name, product, graph))?;
+        // The file is new to the Assets pane until the engine rescans the folder.
+        self.refresh_assets();
         Ok(path)
     }
 

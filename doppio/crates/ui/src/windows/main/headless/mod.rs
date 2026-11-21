@@ -1,7 +1,7 @@
 //! Headless UI driver for Doppio: scripted, human-like actions and
 //! screenshots without opening a window.
 //!
-//! Start with `doppio/docs/headless-testing.md`. In short:
+//! Start with `caffeine-website/content/en/docs/doppio/headless-testing.md`. In short:
 //!
 //! ```text
 //! cargo run -p doppio-ui --features headless --bin doppio-headless -- run flow.json

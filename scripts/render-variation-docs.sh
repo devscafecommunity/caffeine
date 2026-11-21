@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the images of the Variation node class used by doppio/docs/materials-guide.md:
+# Builds the images of the Variation node class used by caffeine-website/content/en/docs/doppio/materials-guide.md:
 #   variation-ops.png      each Variation op applied to the same brick input
 #   variation-presets.png  the "Varied" material presets next to the plain Red Brick
 # Needs ImageMagick (magick, montage) and a release doppio-material.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${root}/doppio/docs/images/material"
+out="${root}/caffeine-website/content/en/docs/images/doppio/material"
 bin="${root}/doppio/target/release/doppio-material"
 [ -x "$bin" ] || (cd "${root}/doppio" && cargo build --release -p doppio-ui --bin doppio-material)
 work="$(mktemp -d)"
@@ -37,3 +37,5 @@ for name in "Red Brick" "Varied Brick Wall" "Varied Cobblestone" "Varied Planks"
 done
 montage "$work"/p_*.png -tile 4x2 -geometry +3+3 -background '#222' "$out/variation-presets.png"
 echo "wrote $out/variation-ops.png and $out/variation-presets.png"
+
+"${root}/scripts/mirror-doppio-images.sh"

@@ -14,6 +14,7 @@ pub mod materialcraft_io;
 pub mod mesh_material_import;
 pub mod nature;
 pub mod panels;
+pub mod prefab_file;
 pub mod prefabs;
 pub mod procedural;
 pub mod project;

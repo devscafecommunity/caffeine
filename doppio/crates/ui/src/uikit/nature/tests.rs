@@ -512,9 +512,11 @@ fn baked_masks_and_rock_surface_describe_the_geometry() {
 #[test]
 fn leaf_atlas_gives_varied_folded_drooping_leaves() {
     use super::tree;
-    let graph = preset("Oak").graph();
+    let mut graph = preset("Oak").graph();
     // The texture wired into the Leaves node is the atlas.
     let leaves_node = graph.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    // A sparser crown, so the triangle budget does not cap every quality at the same count.
+    graph.set(leaves_node, "density", 6.0);
     let texture = graph
         .links
         .iter()
@@ -648,6 +650,39 @@ fn leaf_card_normals_follow_veins_and_stay_flat_on_plain_cards() {
     let right = n[(16 * w + 17) * 4];
     assert!(left != right, "{left} {right}");
     assert!(left.abs_diff(128) > 4 || right.abs_diff(128) > 4);
+}
+
+#[test]
+fn leaf_cards_carry_a_height_map_in_the_normal_alpha() {
+    use super::surface::card_normal;
+    let (w, h) = (64usize, 64usize);
+    // An opaque round leaf on a transparent card, with a lighter vein down the middle.
+    let mut card = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+            if dx * dx + dy * dy < 26.0 * 26.0 {
+                let i = (y * w + x) * 4;
+                let vein = (x as i32 - 32).abs() < 2;
+                let rgb = if vein {
+                    [150u8, 200, 90]
+                } else {
+                    [60, 110, 40]
+                };
+                card[i..i + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+    }
+    let n = card_normal(&card, w, h);
+    let height = |x: usize, y: usize| n[(y * w + x) * 4 + 3];
+    assert!(
+        height(32, 32) > height(32, 8) && height(32, 8) > height(2, 2),
+        "the vein stands above the blade and the blade above the outside: {} {} {}",
+        height(32, 32),
+        height(32, 8),
+        height(2, 2)
+    );
+    assert!(height(32, 20) > height(20, 20), "vein above blade");
 }
 
 #[test]
@@ -946,6 +981,8 @@ fn leaf_size_scales_with_the_tree_and_the_texture_sets_the_atlas() {
         ((hi[0] - lo[0]).max(hi[2] - lo[2]), leaves.triangle_count())
     };
     let leaves = graph.nodes.iter().find(|n| n.op == "leaves").unwrap().id;
+    // A sparser crown, so the triangle budget does not cap both counts at the same number.
+    graph.set(leaves, "density", 6.0);
     let (_, _) = size_of(&graph);
     // A leaf is a share of the tree: tripling the share makes each leaf (and the crown) larger.
     let base = graph.get(leaves, "size").unwrap();
@@ -1103,4 +1140,155 @@ fn merged_obj_writes_one_usemtl_group_per_part_with_global_indices() {
         .max()
         .unwrap();
     assert_eq!(biggest, vertices);
+}
+
+#[test]
+fn an_edit_node_only_takes_a_library_material_and_edits_it() {
+    use super::mesh::{MaterialEdit, MaterialSpec};
+    let mut graph = preset("Oak").graph();
+    // The Oak's own wiring: a library material and a leaf texture feed their parts.
+    let library = graph.add("mat_library", Point::new(0.0, 300.0));
+    let cards = graph.add("mat_cards", Point::new(0.0, 360.0));
+    let solid = graph.add("mat_solid", Point::new(0.0, 420.0));
+    let edit = graph.add("mat_edit", Point::new(200.0, 300.0));
+    assert!(graph.connect(library, 0, edit, 0), "library -> edit");
+    assert!(graph.connect(cards, 0, edit, 0), "leaf texture -> edit");
+    assert!(
+        !graph.connect(solid, 0, edit, 0),
+        "a solid colour is not a library asset"
+    );
+    // Chains of edits are fine; the source must still end at a library node.
+    let second = graph.add("mat_edit", Point::new(400.0, 300.0));
+    assert!(graph.connect(edit, 0, second, 0), "edit -> edit");
+    let project = graph.add("mat_project", Point::new(0.0, 480.0));
+    assert!(!graph.connect(project, 0, edit, 0), "your own material");
+
+    // The edit passes the library material on with the changes on top.
+    let mut graph = NatureGraph::new();
+    let library = graph.add_with("mat_cards", Point::new(0.0, 0.0), &[("card", 0.0)]);
+    let edit = graph.add_with(
+        "mat_edit",
+        Point::new(200.0, 0.0),
+        &[("hue", 40.0), ("brightness", 1.5), ("tiling", 2.0)],
+    );
+    assert!(graph.connect(library, 0, edit, 0));
+    let values = graph.evaluate(edit, Quality::Balanced).expect("evaluates");
+    let Some(Value::Material(MaterialSpec::Edited(inner, changes))) = values.into_iter().next()
+    else {
+        panic!("not an edited material");
+    };
+    assert!(matches!(*inner, MaterialSpec::Cards(_)));
+    assert_eq!(changes.hue, 40.0);
+    assert_eq!(changes.brightness, 1.5);
+    assert_eq!(changes.tiling, 2.0);
+    assert!(!changes.grade_is_neutral());
+    assert!(MaterialEdit::default().grade_is_neutral());
+}
+
+#[test]
+fn the_colour_grade_moves_colours_the_way_its_sliders_say() {
+    use super::mesh::MaterialEdit;
+    let leaf = [0.20, 0.45, 0.12];
+    let neutral = MaterialEdit::default();
+    assert_eq!(neutral.grade(leaf), leaf);
+    let brighter = MaterialEdit {
+        brightness: 1.5,
+        ..Default::default()
+    };
+    assert!(brighter.grade(leaf)[1] > leaf[1]);
+    let grey = MaterialEdit {
+        saturation: 0.0,
+        ..Default::default()
+    };
+    let g = grey.grade(leaf);
+    assert!(
+        (g[0] - g[1]).abs() < 1e-4 && (g[1] - g[2]).abs() < 1e-4,
+        "{g:?}"
+    );
+    // Rotating a green leaf's hue by 120 degrees turns the green into blue.
+    let turned = MaterialEdit {
+        hue: 120.0,
+        ..Default::default()
+    };
+    let t = turned.grade(leaf);
+    assert!(t[2] > t[0] && t[2] > leaf[2], "{t:?}");
+    let tinted = MaterialEdit {
+        tint: [1.0, 0.5, 0.5],
+        ..Default::default()
+    };
+    assert!(tinted.grade(leaf)[1] < leaf[1]);
+    // Pictures: alpha stays.
+    let mut px = vec![60u8, 110, 40, 77];
+    brighter.grade_pixels(&mut px);
+    assert_eq!(px[3], 77);
+    assert!(px[1] > 110);
+    // Different edits give different file names; the same edit gives the same one.
+    assert_ne!(brighter.key(), neutral.key());
+    assert_eq!(brighter.key(), brighter.clone().key());
+}
+
+#[test]
+fn the_oak_has_a_round_crown_of_many_main_limbs_and_other_trees_are_unchanged() {
+    use super::tree::{grow, GrowParams, TreeStyle};
+    let level_one = |graph: &NatureGraph| -> usize {
+        let model_skeleton = graph
+            .evaluate(
+                graph.nodes.iter().find(|n| n.op == "grow").unwrap().id,
+                Quality::Balanced,
+            )
+            .expect("grows");
+        match model_skeleton.into_iter().next() {
+            Some(Value::Skeleton(skeleton)) => skeleton
+                .branches
+                .iter()
+                .filter(|b| b.level == 1 && b.kind == 0)
+                .count(),
+            _ => panic!("no skeleton"),
+        }
+    };
+    let oak = level_one(&preset("Oak").graph());
+    let birch = level_one(&preset("Birch").graph());
+    assert!(oak >= 8, "the oak has {oak} main limbs");
+    assert!(birch <= 4, "the birch keeps its {birch}");
+
+    // The new parameters are neutral at 0: a skeleton without them is the one made before they existed.
+    let base = GrowParams {
+        style: TreeStyle::Broadleaf,
+        height: 5.0,
+        trunk_radius: 0.24,
+        levels: 3,
+        branches: 4,
+        branch_angle: 48.0,
+        length_ratio: 0.62,
+        radius_ratio: 0.55,
+        taper: 0.85,
+        gnarl: 0.35,
+        droop: 0.15,
+        start: 0.35,
+        max_segments: 1800,
+        seed: 1,
+        scaffold: 0,
+        lift: 0.0,
+    };
+    let plain = grow(&base);
+    let again = grow(&base);
+    assert_eq!(plain.branches.len(), again.branches.len());
+    let with = grow(&GrowParams {
+        scaffold: 4,
+        lift: 0.5,
+        ..base
+    });
+    assert!(with.branches.len() > plain.branches.len());
+    // Lifted limbs end higher than limbs that are not.
+    let mean_tip = |s: &super::tree::Skeleton| {
+        let tips: Vec<f32> = s
+            .branches
+            .iter()
+            .filter(|b| b.level == 1)
+            .map(|b| b.points.last().unwrap()[1])
+            .collect();
+        tips.iter().sum::<f32>() / tips.len() as f32
+    };
+    let lifted = grow(&GrowParams { lift: 0.8, ..base });
+    assert!(mean_tip(&lifted) > mean_tip(&plain));
 }

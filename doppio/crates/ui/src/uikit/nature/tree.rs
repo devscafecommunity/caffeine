@@ -46,6 +46,10 @@ pub struct GrowParams {
     pub start: f32,
     pub max_segments: u32,
     pub seed: u32,
+    /// Extra main limbs on the trunk (a broadleaf's scaffold), spread evenly round it. 0 = none.
+    pub scaffold: u32,
+    /// How much the first limbs sweep upward as they leave the trunk (a round crown). 0 = none.
+    pub lift: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +107,13 @@ impl Grower<'_> {
                 noise3(mul(add(at, [0.0, p.seed as f32, 0.0]), 1.7), p.seed + 7) - 0.5,
                 noise3(mul(add(at, [0.0, 0.0, p.seed as f32]), 1.7), p.seed + 13) - 0.5,
             ];
-            let up = if level == 0 { 0.06 } else { 0.0 };
+            let up = if level == 0 {
+                0.06
+            } else if level == 1 {
+                p.lift * 0.14
+            } else {
+                0.0
+            };
             dir = normalize(add(
                 add(dir, mul(bend, p.gnarl * 1.6)),
                 [
@@ -132,21 +142,27 @@ impl Grower<'_> {
             return;
         }
         let conifer_trunk = p.style == TreeStyle::Conifer && level == 0;
+        // Scaffold limbs: extra, evenly spread main limbs on a broadleaf's trunk.
+        let scaffold = level == 0 && !conifer_trunk && p.scaffold > 0;
         let count = if conifer_trunk {
             (p.branches * 4).clamp(6, 40)
+        } else if scaffold {
+            p.branches.max(1) + p.scaffold
         } else {
             p.branches.max(1)
         };
         for k in 0..count {
             let t = if conifer_trunk {
                 p.start + (1.0 - p.start) * (k as f32 / count as f32)
+            } else if scaffold {
+                p.start + (1.0 - p.start) * ((k as f32 + self.rng.range(0.2, 0.8)) / count as f32)
             } else {
                 p.start + (1.0 - p.start) * self.rng.range(0.0, 1.0)
             };
             let index = ((t * steps as f32) as usize).min(steps);
             let (origin, parent_dir) = (points[index], directions[index]);
             let (u, v) = frame_around(parent_dir);
-            let azimuth = if conifer_trunk {
+            let azimuth = if conifer_trunk || scaffold {
                 k as f32 * 2.399 + self.rng.range(-0.3, 0.3)
             } else {
                 self.rng.range(0.0, std::f32::consts::TAU)
@@ -157,7 +173,11 @@ impl Grower<'_> {
                 (p.branch_angle + self.rng.range(-12.0, 12.0)).to_radians()
             };
             let spread = add(mul(u, azimuth.cos()), mul(v, azimuth.sin()));
-            let child_dir = normalize(add(mul(parent_dir, angle.cos()), mul(spread, angle.sin())));
+            let mut child_dir =
+                normalize(add(mul(parent_dir, angle.cos()), mul(spread, angle.sin())));
+            if level == 0 && p.lift > 0.0 && !conifer_trunk {
+                child_dir = normalize(add(child_dir, [0.0, p.lift * 0.5, 0.0]));
+            }
             let mut child_length = length * p.length_ratio * self.rng.range(0.75, 1.1);
             if conifer_trunk {
                 child_length = p.height * 0.45 * (1.0 - t).powf(0.85) + p.height * 0.05;
@@ -213,7 +233,12 @@ pub fn tubes(
         let points = &branch.points;
         let base = part.positions.len() as u32;
         let mut frame_u = frame_around(normalize(sub(points[1], points[0]))).0;
-        let mut travelled = branch.uv_start / bark_scale.max(0.01);
+        // The bark picture goes round the limb a whole number of times and its length follows the
+        // limb's own girth, so the texels stay square: a twig is not a stretched trunk. (U repeats are
+        // fixed per limb from its base, V accumulates with the girth along the way.)
+        let base_girth = std::f32::consts::TAU * branch.radii[0].max(0.005);
+        let u_repeats = (base_girth * bark_scale).round().max(1.0);
+        let mut v = branch.uv_start;
         for (i, point) in points.iter().enumerate() {
             let tangent = if i + 1 < points.len() {
                 normalize(sub(points[i + 1], *point))
@@ -223,7 +248,9 @@ pub fn tubes(
             frame_u = normalize(sub(frame_u, mul(tangent, dot(frame_u, tangent))));
             let frame_v = cross(tangent, frame_u);
             if i > 0 {
-                travelled += length(sub(*point, points[i - 1]));
+                let girth = std::f32::consts::TAU * branch.radii[i].max(0.005);
+                let tile = (girth / u_repeats).max(0.02);
+                v += length(sub(*point, points[i - 1])) / tile;
             }
             for k in 0..=sides {
                 let a = k as f32 / sides as f32 * std::f32::consts::TAU;
@@ -231,7 +258,7 @@ pub fn tubes(
                 part.vertex(
                     add(*point, mul(normal, branch.radii[i])),
                     normal,
-                    [k as f32 / sides as f32, travelled * bark_scale],
+                    [k as f32 / sides as f32 * u_repeats, v],
                 );
             }
         }
@@ -290,23 +317,46 @@ pub fn leaf_cards(skeleton: &Skeleton, p: LeafCards, seed: u32) -> Part {
         .map(|p| length(sub(*p, skeleton.crown_center)))
         .fold(0.0f32, f32::max)
         .max(0.1);
-    for branch in skeleton.branches.iter().filter(|b| b.kind == 0) {
-        let share = if branch.terminal || skeleton.conifer && branch.level > 0 {
+    // How many cards a branch gets before the budget is applied.
+    let share_of = |branch: &Branch| {
+        if branch.terminal || skeleton.conifer && branch.level > 0 {
             1.0
         } else if branch.level > 0 && !skeleton.conifer {
             p.inner_share
         } else {
             0.0
-        };
+        }
+    };
+    let wanted = |branch: &Branch, share: f32| -> f32 {
+        let branch_length: f32 = branch
+            .points
+            .windows(2)
+            .map(|w| length(sub(w[1], w[0])))
+            .sum();
+        branch_length * p.density * share * if skeleton.conifer { 1.6 } else { 1.0 }
+    };
+    // When the crown wants more cards than the triangle budget holds, every branch gives up the same
+    // share (instead of the first branches taking all of it and leaving the rest bare).
+    let total_wanted: f32 = skeleton
+        .branches
+        .iter()
+        .filter(|b| b.kind == 0)
+        .map(|b| wanted(b, share_of(b)).clamp(0.0, 400.0))
+        .sum();
+    let card_budget = p.max_triangles as f32 / (rows as f32 * 4.0);
+    let fit = if total_wanted > card_budget {
+        card_budget / total_wanted
+    } else {
+        1.0
+    };
+    for branch in skeleton.branches.iter().filter(|b| b.kind == 0) {
+        let share = share_of(branch);
         if share <= 0.0 {
             continue;
         }
         let points = &branch.points;
         let tip = *points.last().unwrap();
-        let branch_length: f32 = points.windows(2).map(|w| length(sub(w[1], w[0]))).sum();
-        let count = ((branch_length * p.density * share * if skeleton.conifer { 1.6 } else { 1.0 })
-            .ceil() as usize)
-            .clamp(2, 60);
+        let count = ((wanted(branch, share) * fit).ceil() as usize).clamp(2, 400);
         for _ in 0..count {
             if part.triangle_count() >= p.max_triangles {
                 part.pad_colors();

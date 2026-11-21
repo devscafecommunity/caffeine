@@ -415,6 +415,10 @@ enum Message {
     AssetPressed(usize),
     AssetReleased(usize),
     AssetDoubleClick(usize),
+    /// Places a `.prefab` (a path relative to the assets root, or absolute) in the scene.
+    PlacePrefab(String),
+    /// Reopens the generator behind an asset (recipe, prefab or baked product): path relative to the assets root.
+    OpenGeneratorFor(String),
     AssetSearch(String),
     AssetTreeToggle(String),
     AssetTreePanel,
@@ -3656,6 +3660,11 @@ impl App {
             self.asset_directory = panels::assetmanager::normalize_directory(&path);
             self.asset_search.clear();
             self.asset_selected = None;
+        } else if crate::uikit::prefab_file::is_prefab(std::path::Path::new(&asset.relative_path)) {
+            // A prefab: drop a fresh copy of the saved tree into the scene.
+            if let Some(path) = self.asset_paths.get(index).map(std::path::PathBuf::from) {
+                self.place_prefab_file(&path);
+            }
         } else if let Some(recipe) = self.asset_recipe(index) {
             // A recipe, or an asset a generator baked: reopen the graph that made it.
             self.open_recipe_file(&recipe);
@@ -6961,6 +6970,22 @@ impl App {
             Message::AssetDoubleClick(index) => {
                 self.asset_double_clicked(index);
             }
+            Message::PlacePrefab(path) => {
+                let file = std::path::PathBuf::from(&path);
+                let file = match self.asset_root_dir() {
+                    Some(root) if file.is_relative() => root.join(file),
+                    _ => file,
+                };
+                self.place_prefab_file(&file);
+            }
+            Message::OpenGeneratorFor(path) => {
+                let file = std::path::PathBuf::from(&path);
+                let file = match self.asset_root_dir() {
+                    Some(root) if file.is_relative() => root.join(file),
+                    _ => file,
+                };
+                self.open_generator_for(&file);
+            }
             Message::AssetSearch(text) => {
                 self.asset_search = text;
             }
@@ -9648,6 +9673,7 @@ fn format_transform_number(value: f32) -> String {
 }
 
 mod naturegen;
+mod prefab_assets;
 mod recipes;
 mod scatter;
 mod terraingen;

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Bakes every Texture Generator preset (and two flipbooks) and builds the contact sheets used by
-# doppio/docs/texture-generator-guide.md. Needs ImageMagick (`montage`, `convert`).
+# caffeine-website/content/en/docs/doppio/texture-generator-guide.md. Needs ImageMagick (`montage`, `convert`).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${root}/doppio/docs/images/texture"
+out="${root}/caffeine-website/content/en/docs/images/doppio/texture"
 bin="${root}/doppio/target/release/doppio-material"
 [ -x "$bin" ] || (cd "${root}/doppio" && cargo build --release -p doppio-ui --bin doppio-material)
 work="$(mktemp -d)"
@@ -33,3 +33,5 @@ for preset in "Torch Flame" "Smoke Puff"; do
         "$out/flipbook-${slug}.png"
 done
 echo "wrote $out/texture-gallery.png and the flipbooks"
+
+"${root}/scripts/mirror-doppio-images.sh"

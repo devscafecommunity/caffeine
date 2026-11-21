@@ -26,6 +26,7 @@ pub enum AssetFolder {
     NatureModels,
     NatureMaterials,
     NatureTextures,
+    Prefabs,
 }
 
 impl AssetFolder {
@@ -39,6 +40,7 @@ impl AssetFolder {
             AssetFolder::NatureModels => "Models/Nature",
             AssetFolder::NatureMaterials => "Materials/Nature",
             AssetFolder::NatureTextures => "Textures/Nature",
+            AssetFolder::Prefabs => "Prefabs",
         }
     }
 }

@@ -1002,6 +1002,10 @@ void main() {
     // height cavity so crevices stay dark even under pure sky light.
     diffuse = diffuseBeforeIbl + (diffuse - diffuseBeforeIbl) * microAo;
     specular = specularBeforeIbl + (specular - specularBeforeIbl) * microAo;
+    if (s.translucency > 0.0) {
+        // Foliage scatters the sky's light: the shaded side of a crown reads dark green, not black.
+        diffuse += s.albedo * s.translucency * vec3(0.55, 0.65, 0.8) * s.ao * microAo;
+    }
 
     if (s.transmission > 0.0) {
         float NoV = max(dot(s.n, s.v), 1e-4);

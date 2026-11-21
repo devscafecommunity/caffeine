@@ -171,6 +171,49 @@ TEST_CASE("C API lists project assets", "[capi]") {
     REQUIRE(foundMesh);
     REQUIRE(foundDirectory);
 
+    // With no project loaded the asset root is also where relative asset paths resolve: a generator that
+    // writes "meshes/tree.obj" there and applies it by that path must find it again.
+    char resolved[512] = {};
+    REQUIRE(caffeine_session_resolve_path(session, "meshes/tree.obj", resolved, sizeof(resolved)) ==
+            CAFFEINE_OK);
+    REQUIRE(std::filesystem::equivalent(resolved, root / "meshes" / "tree.obj"));
+
+    caffeine_session_destroy(session);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("C API takes the folder with project.caffeine as the project root", "[capi]") {
+    // The layout Doppio creates: project.caffeine, Scenes/ (capital S) and Assets/Raw/.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "caffeine_capi_project_root_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "Scenes", ec);
+    std::filesystem::create_directories(root / "Assets" / "Raw" / "Models", ec);
+    {
+        std::ofstream manifest(root / "project.caffeine");
+        manifest << "{}";
+        std::ofstream mesh(root / "Assets" / "Raw" / "Models" / "tree.obj");
+        mesh << "v 0 0 0";
+    }
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_load_scene(session, scene.c_str()) == CAFFEINE_OK);
+
+    // The asset root is found whatever the case of "Assets/Raw"...
+    char buffer[512] = {};
+    REQUIRE(caffeine_session_asset_path(session, "", buffer, sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::filesystem::equivalent(buffer, root / "Assets" / "Raw"));
+    // ...and a project path resolves from the manifest's folder, not from Scenes/.
+    REQUIRE(caffeine_session_asset_project_path(session, "Models/tree.obj", buffer,
+                                                sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::string(buffer) == "Assets/Raw/Models/tree.obj");
+    REQUIRE(caffeine_session_resolve_path(session, buffer, buffer, sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::filesystem::equivalent(buffer, root / "Assets" / "Raw" / "Models" / "tree.obj"));
+
     caffeine_session_destroy(session);
     std::filesystem::remove_all(root, ec);
 }

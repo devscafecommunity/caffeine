@@ -587,6 +587,12 @@ fn tree(
                 ("density", leaf_density),
                 // Given in metres by the recipes; the node takes a share of the tree's height.
                 ("size", leaf_size / height * 100.0),
+                // Smaller leaves need more of them to fill the crown, on the inner limbs too.
+                ("budget", 36000.0),
+                ("inner", 0.9),
+                // Leaves that cup and arch rather than lie flat.
+                ("fold", if style < 0.5 { 0.55 } else { 0.35 }),
+                ("droop", if style < 0.5 { 0.4 } else { 0.3 }),
                 ("seed", seed),
             ],
         );
@@ -596,6 +602,17 @@ fn tree(
         parts.push(leaf_part);
     }
     finish(&mut g, 3.0, &parts);
+    g
+}
+
+/// Gives a broadleaf the main limbs of a round crown: more of them, spread evenly round the trunk and
+/// sweeping up and out, so the crown fills out instead of being a few spindly arms.
+fn round_crown(mut g: NatureGraph) -> NatureGraph {
+    if let Some(grow) = g.nodes.iter().find(|n| n.op == "grow").map(|n| n.id) {
+        g.set(grow, "scaffold", 4.0);
+        g.set(grow, "lift", 0.5);
+        g.set(grow, "start", 0.42);
+    }
     g
 }
 
@@ -618,8 +635,9 @@ fn ancient_oak() -> NatureGraph {
         "leaves",
         at(2.0, 2.0),
         &[
-            ("density", 14.0),
-            ("size", 0.75 / 7.5 * 100.0),
+            ("density", 20.0),
+            ("size", 0.4 / 7.5 * 100.0),
+            ("budget", 40000.0),
             ("seed", 12.0),
         ],
     );
@@ -878,11 +896,11 @@ pub fn presets() -> Vec<NaturePreset> {
             "A broad tree with a rounded crown.",
             Quality::Balanced,
             || {
-                tree(
+                round_crown(tree(
                     0.0,
                     5.0,
                     0.24,
-                    3.0,
+                    4.0,
                     4.0,
                     48.0,
                     0.62,
@@ -890,12 +908,12 @@ pub fn presets() -> Vec<NaturePreset> {
                     0.35,
                     0.15,
                     0.35,
-                    12.0,
-                    0.7,
+                    36.0,
+                    0.3,
                     "Bark · Oak",
                     "Leaves · Broadleaf Mix (atlas)",
                     1.0,
-                )
+                ))
             },
         ),
         p(
@@ -942,8 +960,8 @@ pub fn presets() -> Vec<NaturePreset> {
                     0.2,
                     0.2,
                     0.35,
-                    12.0,
-                    0.5,
+                    18.0,
+                    0.28,
                     "Bark · Birch",
                     "Leaves · Broadleaf Mix (atlas)",
                     5.0,
@@ -968,8 +986,8 @@ pub fn presets() -> Vec<NaturePreset> {
                     0.35,
                     0.15,
                     0.35,
-                    12.0,
-                    0.75,
+                    18.0,
+                    0.38,
                     "Bark · Oak",
                     "Leaves · Autumn Mix (atlas)",
                     8.0,
