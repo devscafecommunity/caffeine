@@ -4,6 +4,10 @@
 
 namespace Caffeine::ECS {
 
+/// The radiance Photon uses where a ray finds no surface (linear RGB, before `skyIntensity`).
+/// The compute passes, the screen-space fallback and the weather coupling share these three numbers.
+inline constexpr f32 kPhotonSkyRadiance[3] = {0.48f, 0.60f, 0.82f};
+
 /// Photon quality tiers (spec §13 / §14.4).
 ///
 /// The component is serialised as raw POD bytes, so the legacy numbering
@@ -123,6 +127,17 @@ struct PhotonGIComponent {
     /// March steps used by the interim C0 kernel (1..32).
     u8 computeSteps = 16;
     u8 _pad2[1] = {};
+    // ---- Appended after the first scenes were written: a scene without them keeps these defaults.
+    /// Scales the light the voxels hold (the sun, the lights and the sky ambient injected into them), so
+    /// the bounce between surfaces can be strengthened without touching the direct light or `intensity`.
+    f32 bounceGain = 1.0f;
+    /// Which geometry the triangle voxeliser puts in the material volume (opaque meshes always are).
+    bool voxelSkinned = true;   ///< skinned meshes, in their current pose (revoxelised where they move)
+    bool voxelCutout = false;   ///< cut-out meshes (foliage cards) as solid: they then shade like solid blocks
+    bool voxelTerrain = true;   ///< terrain, from its mesh
+    /// Rebuild every level whenever anything changes, instead of only the voxels around what moved
+    /// (a diagnostic: the result is the same, the cost is not).
+    bool fullRebuild = false;
 };
 
 }  // namespace Caffeine::ECS

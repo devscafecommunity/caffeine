@@ -1,0 +1,20 @@
+{
+  "name": "File browser: Import → Browse opens Doppio's own file picker over the assistant and closes cleanly",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "asset_root": "temp",
+  "steps": [
+    { "action": "click", "target": "id:assets.toolbar.new", "label": "open the assistant" },
+    { "action": "click", "target": "id:assets.wizard.tab.import", "label": "the Import tab" },
+    { "action": "expect", "exists": "id:assets.wizard.import.browse", "label": "Browse… sits beside Add" },
+    { "action": "click", "target": "id:assets.wizard.import.browse" },
+    { "action": "expect", "exists": ["id:filebrowser.window.root", "id:filebrowser.nav.path", "id:filebrowser.places.place.0", "id:filebrowser.action.confirm"], "label": "the browser opens over the assistant" },
+    { "action": "type", "target": "id:filebrowser.nav.path", "text": "/", "clear": true, "label": "type a path" },
+    { "action": "key", "key": "Enter" },
+    { "action": "screenshot", "name": "file-browser", "target": "id:filebrowser.window.root" },
+    { "action": "click", "target": "id:filebrowser.window.root", "label": "a click that misses every button keeps it open" },
+    { "action": "expect", "exists": "id:filebrowser.window.root" },
+    { "action": "click", "target": "id:filebrowser.action.cancel" },
+    { "action": "expect", "missing": "id:filebrowser.window.root", "exists": "id:assets.wizard", "label": "cancel returns to the assistant" }
+  ]
+}

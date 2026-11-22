@@ -1,0 +1,14 @@
+{
+  "name": "Environment: the tab opens and offers to add the components when the scene has none",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.environment", "label": "open the Environment tab" },
+    { "action": "expect", "exists": "id:editor.pane.environment" },
+    { "action": "expect", "exists": "id:environment.setup.add", "label": "no weather yet: Add is offered" },
+    { "action": "expect", "missing": "id:environment.clouds.enabled" },
+    { "action": "expect", "missing": "id:environment.fog.enabled" },
+    { "action": "screenshot", "name": "environment-empty" }
+  ]
+}

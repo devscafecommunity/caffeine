@@ -1859,17 +1859,10 @@ impl Drop for Driver {
 }
 
 fn kind_from_extension(path: &str) -> String {
-    match crate::uikit::asset_wizard::classify(Path::new(path)) {
-        Some(crate::uikit::asset_wizard::ImportKind::Texture) => "image",
-        Some(crate::uikit::asset_wizard::ImportKind::Mesh) => "mesh",
-        Some(crate::uikit::asset_wizard::ImportKind::Audio) => "audio",
-        Some(crate::uikit::asset_wizard::ImportKind::Script) => "script",
-        Some(crate::uikit::asset_wizard::ImportKind::Material) => "material",
-        Some(crate::uikit::asset_wizard::ImportKind::Packed) => "asset",
-        Some(crate::uikit::asset_wizard::ImportKind::Animation) => "animation",
-        _ => "file",
-    }
-    .to_owned()
+    crate::uikit::asset_kind::classify(Path::new(path))
+        .map(|kind| kind.key())
+        .unwrap_or("file")
+        .to_owned()
 }
 
 fn sanitize_file_stem(name: &str) -> String {

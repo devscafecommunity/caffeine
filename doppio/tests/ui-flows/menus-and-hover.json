@@ -7,7 +7,7 @@
     { "action": "click", "target": "id:editor.menu.scene", "label": "open the Scene menu" },
     { "action": "expect", "state": { "/menu": "Scene" }, "exists": "text:Add Entity" },
     { "action": "move", "target": "text:Entity 1", "label": "hover a hierarchy row behind the menu" },
-    { "action": "move", "target": "id:editor.pane.tab.viewport" },
+    { "action": "move", "target": "id:editor.pane.tab.assets" },
     { "action": "expect", "state": { "/menu": "Scene" }, "label": "menu is still open" },
     { "action": "key", "key": "Escape" },
     { "action": "expect", "state": { "/menu": null }, "missing": "text:Add Entity" },

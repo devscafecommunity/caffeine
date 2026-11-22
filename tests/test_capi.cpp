@@ -1,13 +1,19 @@
 #include "catch.hpp"
 
+#include "../src/caffeine/debug/Profiler.hpp"
+#include "../src/caffeine/debug/SystemMetrics.hpp"
 #include "../src/caffeine/math/Quat.hpp"
 #include "caffeine/capi/EngineAPI.h"
+#include "../src/caffeine/animation/Rig2DAsset.hpp"
+#include <stb/stb_image_write.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
@@ -498,6 +504,285 @@ TEST_CASE("C API reports its version", "[capi]") {
     CHECK(caffeine_capi_version() >= 2);
 }
 
+TEST_CASE("C API sessions simulate by default and an editor can pause them", "[capi][simulation]") {
+    CHECK(caffeine_capi_version() >= 21);
+    CHECK(caffeine_session_simulating(nullptr) == 0);
+    caffeine_session_set_simulating(nullptr, 1);  // nothing to set: must not crash
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    // The runtime and every existing caller simulate unless they ask otherwise.
+    CHECK(caffeine_session_simulating(session) == 1);
+    caffeine_session_set_simulating(session, 0);
+    CHECK(caffeine_session_simulating(session) == 0);
+    caffeine_session_set_simulating(session, 7);  // any non-zero is on
+    CHECK(caffeine_session_simulating(session) == 1);
+    caffeine_session_destroy(session);
+}
+
+namespace {
+uint32_t typeIdByName(const char* wanted) {
+    const uint32_t count = caffeine_component_type_count();
+    for (uint32_t i = 0; i < count; ++i) {
+        CaffeineComponentTypeInfo info{};
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && std::strcmp(info.name, wanted) == 0) return info.id;
+    }
+    return UINT32_MAX;
+}
+}  // namespace
+
+TEST_CASE("C API scene views look through the scene's cameras", "[capi][views]") {
+    CHECK(caffeine_capi_version() >= 23);
+    uint32_t entity = 0;
+    float fov = 0.0f;
+    CHECK(caffeine_session_scene_camera(nullptr, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_INVALID_ARGUMENT);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CHECK(caffeine_session_scene_camera(session, 5, &entity, &fov) == CAFFEINE_INVALID_ARGUMENT);
+    // No camera: there is no scene view.
+    CHECK(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_ERROR);
+
+    const uint32_t cameraType = typeIdByName("Camera 3D");
+    REQUIRE(cameraType != UINT32_MAX);
+    const CaffeineEntity first = caffeine_session_create_entity(session, "Camera A");
+    const CaffeineEntity second = caffeine_session_create_entity(session, "Camera B");
+    REQUIRE(caffeine_session_add_component(session, first, cameraType) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_add_component(session, second, cameraType) == CAFFEINE_OK);
+
+    // With no active camera the first one is the game's; the preview follows unless a camera is chosen.
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_OK);
+    CHECK(entity == first);
+    CHECK(fov > 1.0f);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    CHECK(caffeine_session_set_preview_camera(session, second) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == second);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    // A chosen camera that no longer exists falls back to the others.
+    CHECK(caffeine_session_set_preview_camera(session, 99999) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API game clock follows the game's ticks, once, whichever view draws", "[capi][game][simulation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const uint32_t cameraType = typeIdByName("Camera 3D");
+    REQUIRE(cameraType != UINT32_MAX);
+    const CaffeineEntity camera = caffeine_session_create_entity(session, "Camera");
+    REQUIRE(caffeine_session_add_component(session, camera, cameraType) == CAFFEINE_OK);
+
+    const uint32_t w = 64, h = 48;
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4u);
+    auto clock = [&]() {
+        CaffeineWeatherState state{};
+        REQUIRE(caffeine_session_weather_state(session, &state) == CAFFEINE_OK);
+        return state.clock_s;
+    };
+    auto drawEditor = [&]() { REQUIRE(caffeine_session_render(session, w, h, pixels.data(), pixels.size()) == CAFFEINE_OK); };
+    auto drawGame = [&]() {
+        REQUIRE(caffeine_session_view_render_begin(session, CAFFEINE_VIEW_GAME, w, h) == CAFFEINE_OK);
+        for (int i = 0; i < 400; ++i) {
+            if (caffeine_session_view_render_poll(session, CAFFEINE_VIEW_GAME, pixels.data(), pixels.size()) ==
+                CAFFEINE_RENDER_READY) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        FAIL("the game view did not finish");
+    };
+
+    // Stopped: nothing steps the clock.
+    caffeine_session_set_simulating(session, 0);
+    drawEditor();
+    const float stopped = clock();
+    drawEditor();
+    CHECK(clock() == stopped);
+
+    // Playing: the clock moves by the game's ticks, no more, no less.
+    caffeine_session_set_simulating(session, 1);
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    drawEditor();
+    CHECK(clock() == stopped);  // no tick yet, nothing to show
+    REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawEditor();  // the editor viewport takes the step...
+    CHECK(clock() == Approx(stopped + 0.05f).margin(1e-4));
+    drawGame();  // ...and the game view, in the same tick, takes none
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.05f).margin(1e-4));
+    // With only the game view on screen it takes the step instead.
+    REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawGame();
+    CHECK(clock() == Approx(stopped + 0.10f).margin(1e-4));
+    // Ticks nobody saw add up, up to a quarter of a second.
+    for (int i = 0; i < 20; ++i) REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.10f + 0.25f).margin(1e-3));
+    // Paused (not simulating): pictures stand still again.
+    caffeine_session_set_simulating(session, 0);
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.35f).margin(1e-3));
+    caffeine_session_game_stop(session);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API runs the game: start, tick, keys and stop", "[capi][game]") {
+    CAFFEINE_GAME_CHECK_NULLS:
+    CHECK(caffeine_session_game_running(nullptr) == 0);
+    CHECK(caffeine_session_game_tick(nullptr, 0.016f) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineGameState state{};
+    CHECK(caffeine_session_game_state(nullptr, &state) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_game_key(nullptr, 4, 1);  // must not crash
+    caffeine_session_game_stop(nullptr);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CHECK(caffeine_session_game_running(session) == 0);
+    CHECK(caffeine_session_game_tick(session, 0.016f) == CAFFEINE_INVALID_ARGUMENT);  // not started
+
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    CHECK(caffeine_session_game_running(session) == 1);
+    for (int i = 0; i < 5; ++i) REQUIRE(caffeine_session_game_tick(session, 1.0f / 60.0f) == CAFFEINE_OK);
+    caffeine_session_game_key(session, 4, 1);
+    caffeine_session_game_key(session, 4, 0);
+    caffeine_session_game_mouse(session, 10.0f, 20.0f, 1, 1);
+    caffeine_session_game_release_keys(session);
+    REQUIRE(caffeine_session_game_state(session, &state) == CAFFEINE_OK);
+    CHECK(state.running == 1);
+    CHECK(state.frames == 5);
+    CHECK(state.time_s == Approx(5.0f / 60.0f).epsilon(0.01));
+
+    // The editor's own tick leaves the scene to the game.
+    const uint64_t before = state.frames;
+    caffeine_session_tick(session, 0.5f);
+    caffeine_session_game_state(session, &state);
+    CHECK(state.frames == before);
+
+    caffeine_session_game_stop(session);
+    CHECK(caffeine_session_game_running(session) == 0);
+    CHECK(caffeine_session_game_tick(session, 0.016f) == CAFFEINE_INVALID_ARGUMENT);
+    // Starting again begins a fresh run.
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    caffeine_session_game_state(session, &state);
+    CHECK(state.frames == 0);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API reports Photon's voxel stats and takes a rebuild request", "[capi][photon]") {
+    CHECK(caffeine_capi_version() >= 17);
+    CHECK(caffeine_session_photon_stats(nullptr, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_photon_rebuild(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeinePhotonStats stats{};
+    stats.objects = 99;
+    // No frame was rendered: every counter is zero and nothing is over budget.
+    CHECK(caffeine_session_photon_stats(session, &stats) == CAFFEINE_OK);
+    CHECK(stats.objects == 0);
+    CHECK(stats.triangles == 0);
+    CHECK(stats.over_budget == 0);
+    CHECK(caffeine_session_photon_rebuild(session) == CAFFEINE_OK);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API reports the scope profiler and switches GPU timing", "[capi][profiler]") {
+    CHECK(caffeine_capi_version() >= 18);
+    uint32_t count = 0;
+    CHECK(caffeine_profiler_report(nullptr, 0, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_profiler_report(nullptr, 4, &count) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_profiler_gpu_timing(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+    CHECK(caffeine_profiler_report(nullptr, 0, &count) == CAFFEINE_OK);
+    CHECK(count == 0);
+    {
+        CF_PROFILE_SCOPE("capi_outer");
+        for (int i = 0; i < 3; ++i) {
+            CF_PROFILE_SCOPE("capi_inner");
+        }
+    }
+    // The count is reported even when the buffer is too small, and the scopes come outer first.
+    CHECK(caffeine_profiler_report(nullptr, 0, &count) == CAFFEINE_OK);
+    REQUIRE(count == 2);
+    CaffeineProfileScope scopes[4]{};
+    CHECK(caffeine_profiler_report(scopes, 1, &count) == CAFFEINE_OK);
+    CHECK(count == 2);
+    CHECK(std::strcmp(scopes[0].name, "capi_outer") == 0);
+    CHECK(scopes[0].depth == 0);
+    CHECK(scopes[1].calls == 0);  // not copied: capacity 1
+    CHECK(caffeine_profiler_report(scopes, 4, &count) == CAFFEINE_OK);
+    CHECK(std::strcmp(scopes[1].name, "capi_inner") == 0);
+    CHECK(scopes[1].depth == 1);
+    CHECK(scopes[1].calls == 3);
+    CHECK(scopes[0].calls == 1);
+    CHECK(scopes[0].avg_ms >= scopes[1].avg_ms);
+    CHECK(scopes[0].max_ms >= scopes[0].last_ms);
+
+    // The recent figures cover the latest calls only: a slow start leaves them, the cumulative average keeps it.
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+    for (int i = 0; i < 10; ++i) {
+        CF_PROFILE_SCOPE("capi_window");
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+    for (int i = 0; i < 130; ++i) {
+        CF_PROFILE_SCOPE("capi_window");
+    }
+    CaffeineProfileScope window[2]{};
+    REQUIRE(caffeine_profiler_report(window, 2, &count) == CAFFEINE_OK);
+    REQUIRE(count == 1);
+    CHECK(window[0].calls == 140);
+    CHECK(window[0].max_ms >= 3.0f);                          // the slow calls are in the whole history
+    CHECK(window[0].recent_max_ms < 1.0f);                    // and gone from the last 120
+    CHECK(window[0].recent_avg_ms < window[0].avg_ms * 0.5f);
+    CHECK(window[0].recent_avg_ms >= 0.0f);
+
+    int32_t on = 1;
+    CHECK(caffeine_profiler_gpu_timing(&on) == CAFFEINE_OK);
+    CHECK(on == 0);
+    CHECK(caffeine_profiler_set_gpu_timing(1) == CAFFEINE_OK);
+    CHECK(caffeine_profiler_gpu_timing(&on) == CAFFEINE_OK);
+    CHECK(on == 1);
+    CHECK(caffeine_profiler_set_gpu_timing(0) == CAFFEINE_OK);
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+}
+
+TEST_CASE("C API reports the machine's CPU cores, memory and GPU", "[capi][profiler]") {
+    CHECK(caffeine_capi_version() >= 19);
+    CHECK(caffeine_system_metrics(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineSystemMetrics first{};
+    CHECK(caffeine_system_metrics(&first) == CAFFEINE_OK);
+    // Burn a little CPU so the second sample has something to measure.
+    volatile double sink = 0.0;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);
+    while (std::chrono::steady_clock::now() < until) sink = sink + 1.0;
+    CaffeineSystemMetrics m{};
+    REQUIRE(caffeine_system_metrics(&m) == CAFFEINE_OK);
+#ifdef __linux__
+    CHECK(m.cpu_core_count >= 1);
+    CHECK(m.cpu_core_count <= CAFFEINE_MAX_CPU_CORES);
+    for (uint32_t i = 0; i < m.cpu_core_count; ++i) {
+        CHECK(m.cpu_core_percent[i] >= 0.0f);
+        CHECK(m.cpu_core_percent[i] <= 100.0f);
+    }
+    CHECK(m.cpu_total_percent >= 0.0f);
+    CHECK(m.cpu_total_percent <= 100.0f);
+    CHECK(m.process_cpu_percent > 0.0f);  // this thread was spinning
+    CHECK(m.ram_total_mib > 0.0f);
+    CHECK(m.ram_used_mib > 0.0f);
+    CHECK(m.ram_used_mib <= m.ram_total_mib);
+    CHECK(m.ram_process_mib > 0.0f);
+    CHECK(m.ram_process_mib <= m.ram_total_mib);
+#endif
+    // Unavailable values are negative, never garbage.
+    CHECK((m.gpu_busy_percent < 0.0f || m.gpu_busy_percent <= 100.0f));
+    CHECK((m.vram_total_mib < 0.0f || m.vram_used_mib <= m.vram_total_mib));
+    // Cores beyond the count stay zero.
+    for (uint32_t i = m.cpu_core_count; i < CAFFEINE_MAX_CPU_CORES; ++i) CHECK(m.cpu_core_percent[i] == 0.0f);
+    (void)first;
+}
+
 TEST_CASE("C API exposes component schemas and values", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
     REQUIRE(session != nullptr);
@@ -982,5 +1267,361 @@ TEST_CASE("C API scatter on a terrain: placement by the terrain, the biome table
     CHECK(caffeine_biome_check("class 2\n  slope 0 0 0.2 0.5\n", why, sizeof(why)) == CAFFEINE_OK);
     CHECK(caffeine_biome_check("class 2\n  slope 0.5 0.2 1 1\n", why, sizeof(why)) == CAFFEINE_INVALID_ARGUMENT);
     CHECK(std::strstr(why, "line 2") != nullptr);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("CPU load is computed the same way from any platform's counters", "[profiler][metrics]") {
+    using namespace Caffeine::Debug;
+    CpuSnapshot a;
+    CpuSnapshot b;
+    a.cores = {{100, 1000}, {500, 1000}, {0, 0}};
+    b.cores = {{150, 1100}, {500, 1200}, {0, 0}};  // core 0: 50 busy of 100, core 1: idle, core 2: no time passed
+    a.all = {600, 2000};
+    b.all = {650, 2300};
+    a.processSeconds = 10.0;
+    b.processSeconds = 11.5;  // 1.5 s of CPU in 1 s of wall time: one and a half cores
+
+    MachineMetrics m;
+    cpuLoadFromSnapshots(a, b, 1.0, m);
+    REQUIRE(m.cpuCoreCount == 3);
+    CHECK(m.cpuCorePercent[0] == Approx(50.0f));
+    CHECK(m.cpuCorePercent[1] == Approx(0.0f));
+    CHECK(m.cpuCorePercent[2] == Approx(0.0f));
+    CHECK(m.cpuTotalPercent == Approx(100.0f * 50.0f / 300.0f));
+    CHECK(m.processCpuPercent == Approx(150.0f));
+
+    // A core that came or went: the count is reported, the percentages have no baseline and stay at zero.
+    CpuSnapshot fewer = a;
+    fewer.cores.pop_back();
+    MachineMetrics changed;
+    cpuLoadFromSnapshots(fewer, b, 1.0, changed);
+    CHECK(changed.cpuCoreCount == 3);
+    CHECK(changed.cpuCorePercent[0] == 0.0f);
+
+    // A counter that went backwards counts as no time; the others still count.
+    CpuSnapshot wrapped = b;
+    wrapped.cores[0] = {10, 50};
+    MachineMetrics back;
+    cpuLoadFromSnapshots(a, wrapped, 1.0, back);
+    CHECK(back.cpuCorePercent[0] == 0.0f);
+    CHECK(back.cpuCorePercent[1] == Approx(0.0f));
+
+    // Busy cannot exceed total, whatever the counters say.
+    CpuSnapshot odd;
+    odd.cores = {{0, 0}};
+    CpuSnapshot odd2;
+    odd2.cores = {{500, 100}};
+    MachineMetrics clamped;
+    cpuLoadFromSnapshots(odd, odd2, 1.0, clamped);
+    CHECK(clamped.cpuCorePercent[0] == Approx(100.0f));
+
+    // More cores than the report holds: the count is capped and nothing is written past the array.
+    CpuSnapshot big;
+    CpuSnapshot big2;
+    big.cores.assign(100, {0, 0});
+    big2.cores.assign(100, {50, 100});
+    MachineMetrics many;
+    cpuLoadFromSnapshots(big, big2, 1.0, many);
+    CHECK(many.cpuCoreCount == kMaxCpuCores);
+    CHECK(many.cpuCorePercent[kMaxCpuCores - 1] == Approx(50.0f));
+
+    // No elapsed time: the process figure stays at zero instead of dividing by it.
+    MachineMetrics none;
+    cpuLoadFromSnapshots(a, b, 0.0, none);
+    CHECK(none.processCpuPercent == 0.0f);
+}
+
+TEST_CASE("C API reads and writes a 2D rig and its PhaseShift parameters", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    // One root bone, one parameter that rotates it, two vertices.
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::Parameter2D bend;
+    bend.name = "Bend";
+    bend.minValue = 0.0f;
+    bend.maxValue = 1.0f;
+    rig.parameters = {bend};
+    Caffeine::Animation::ParamBinding2D turn;
+    turn.parameter = 0;
+    turn.bone = 0;
+    turn.keys = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+    rig.bindings = {turn};
+    Caffeine::Animation::Vertex2D v;
+    v.position = Caffeine::Vec2(1.0f, 0.0f);
+    v.influences = {{0, 1.0f}};
+    rig.vertices = {v, v};
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_capi_hero.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+
+    // Before a rig is attached the entity reports nothing loaded.
+    CaffeineRig2DCounts none{};
+    REQUIRE(caffeine_session_rig2d_counts(session, entity, &none) == CAFFEINE_OK);
+    CHECK(none.loaded == 0);
+
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+    CaffeineRig2DCounts counts{};
+    REQUIRE(caffeine_session_rig2d_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.loaded == 1);
+    CHECK(counts.bones == 1);
+    CHECK(counts.vertices == 2);
+    CHECK(counts.parameters == 1);
+    CHECK(counts.bindings == 1);
+
+    CaffeineRig2DParameter param{};
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(std::strcmp(param.name, "Bend") == 0);
+    CHECK(param.maximum == Approx(1.0f));
+
+    // Setting a rig parameter writes the PhaseShift float with the same name, clamped to the range.
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 4.0f) == CAFFEINE_OK);
+    CaffeinePhaseShiftCounts ps{};
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &ps) == CAFFEINE_OK);
+    CHECK(ps.parameters == 1);
+    CaffeinePhaseShiftParameter psParam{};
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &psParam) == CAFFEINE_OK);
+    CHECK(std::strcmp(psParam.name, "Bend") == 0);
+    CHECK(psParam.kind == 1u);  // float
+    CHECK(psParam.value == Approx(1.0f));
+
+    REQUIRE(caffeine_session_phase_shift_set_smoothing(session, entity, 0, 0.2f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &psParam) == CAFFEINE_OK);
+    CHECK(psParam.smoothing == Approx(0.2f));
+
+    // A tick evaluates the rig, so the parameter now reports the value the rig used.
+    caffeine_session_tick(session, 0.016f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value == Approx(1.0f));
+
+    CHECK(caffeine_session_rig2d_bone(session, entity, 9, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_rig2d_counts(session, 9999u, &counts) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_phase_shift_counts(session, 9999u, &ps) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_rig2d_attach(session, entity, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+
+#ifdef CF_HAS_SDL3
+TEST_CASE("C API draws an attached 2D rig on the GPU over the scene", "[capi][gpu][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    const uint32_t w = 128;
+    const uint32_t h = 128;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+    std::vector<uint8_t> before(bytes), after(bytes);
+    REQUIRE(caffeine_session_render(session, w, h, before.data(), bytes) == CAFFEINE_OK);
+
+    // A large white quad, so it covers a good part of the view wherever the camera looks.
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::buildGridMesh2D(rig, 1, 1);
+    // Rest vertices live in skeleton space, so the size is in the vertices, not the bone's rest scale.
+    for (auto& v : rig.vertices) v.position *= 400.0f;
+    Caffeine::Animation::bindVerticesToBone2D(rig, 0);
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_gpu_quad.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+    caffeine_session_tick(session, 0.016f);  // poses the rig (AnimationSystem)
+
+    REQUIRE(caffeine_session_render(session, w, h, after.data(), bytes) == CAFFEINE_OK);
+
+    size_t changed = 0;
+    size_t whitish = 0;
+    for (size_t i = 0; i < bytes; i += 4) {
+        if (before[i] != after[i] || before[i + 1] != after[i + 1] || before[i + 2] != after[i + 2]) {
+            ++changed;
+            if (after[i] > 200 && after[i + 1] > 200 && after[i + 2] > 200) ++whitish;
+        }
+    }
+    INFO("pixels changed by the rig: " << changed << ", of them near white: " << whitish);
+    CHECK(changed > 50);
+    CHECK(whitish > 50);
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+#endif
+
+#ifdef CF_HAS_SDL3
+static uint32_t componentTypeId(const char* name) {
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        CaffeineComponentTypeInfo info{};
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && std::strcmp(info.name, name) == 0) return info.id;
+    }
+    return 0;
+}
+
+static uint32_t componentFieldIndex(uint32_t type, const char* name) {
+    CaffeineComponentTypeInfo info{};
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && info.id == type) break;
+    }
+    for (uint32_t f = 0; f < 16; ++f) {
+        CaffeineFieldInfo field{};
+        if (caffeine_component_type_field_at(type, f, &field) != CAFFEINE_OK) break;
+        if (std::strcmp(field.name, name) == 0) return f;
+    }
+    return UINT32_MAX;
+}
+
+static uint32_t componentIndexOf(CaffeineSession* session, CaffeineEntity entity, uint32_t type) {
+    const uint32_t count = caffeine_session_entity_component_count(session, entity);
+    for (uint32_t i = 0; i < count; ++i) {
+        CaffeineComponentInfo info{};
+        if (caffeine_session_entity_component_at(session, entity, i, &info) == CAFFEINE_OK && info.type_id == type) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+TEST_CASE("C API draws a textured sprite on the GPU over the scene", "[capi][gpu][sprite]") {
+    const uint32_t w = 128;
+    const uint32_t h = 128;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+
+    // An 8x8 solid red image: any red pixel in the frame came from the sprite's texture.
+    std::vector<uint8_t> redPixels(8 * 8 * 4);
+    for (size_t i = 0; i < redPixels.size(); i += 4) {
+        redPixels[i] = 255;
+        redPixels[i + 1] = 0;
+        redPixels[i + 2] = 0;
+        redPixels[i + 3] = 255;
+    }
+    const auto imagePath = std::filesystem::temp_directory_path() / "caffeine_gpu_red.png";
+    REQUIRE(stbi_write_png(imagePath.string().c_str(), 8, 8, 4, redPixels.data(), 8 * 4) != 0);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Sprite");
+    REQUIRE(caffeine_session_set_entity_position(session, entity, {0.0f, 0.0f, 0.0f}) == CAFFEINE_OK);
+
+    std::vector<uint8_t> before(bytes), after(bytes);
+    REQUIRE(caffeine_session_render(session, w, h, before.data(), bytes) == CAFFEINE_OK);
+
+    // The sprite component: its Name is the image path, and the entity's Transform scales the quad up.
+    const uint32_t spriteType = componentTypeId("Sprite");
+    REQUIRE(spriteType != 0);
+    REQUIRE(caffeine_session_add_component(session, entity, spriteType) == CAFFEINE_OK);
+    const uint32_t spriteIndex = componentIndexOf(session, entity, spriteType);
+    REQUIRE(spriteIndex != UINT32_MAX);
+    const uint32_t nameField = componentFieldIndex(spriteType, "Name");
+    REQUIRE(nameField != UINT32_MAX);
+    CaffeineFieldValue name{};
+    name.kind = CAFFEINE_FIELD_STRING;
+    std::strncpy(name.text, imagePath.string().c_str(), sizeof(name.text) - 1);
+    REQUIRE(caffeine_session_entity_component_field_set(session, entity, spriteIndex, nameField, &name) == CAFFEINE_OK);
+
+    const uint32_t transformType = componentTypeId("Transform");
+    REQUIRE(transformType != 0);
+    const uint32_t transformIndex = componentIndexOf(session, entity, transformType);
+    const uint32_t scaleField = componentFieldIndex(transformType, "Scale");
+    REQUIRE(scaleField != UINT32_MAX);
+    CaffeineFieldValue scale{};
+    scale.kind = CAFFEINE_FIELD_VEC3;
+    scale.vec[0] = 400.0f;
+    scale.vec[1] = 400.0f;
+    scale.vec[2] = 1.0f;
+    REQUIRE(caffeine_session_entity_component_field_set(session, entity, transformIndex, scaleField, &scale) == CAFFEINE_OK);
+
+    REQUIRE(caffeine_session_render(session, w, h, after.data(), bytes) == CAFFEINE_OK);
+
+    size_t changed = 0;
+    size_t red = 0;
+    for (size_t i = 0; i < bytes; i += 4) {
+        if (before[i] != after[i] || before[i + 1] != after[i + 1] || before[i + 2] != after[i + 2]) {
+            ++changed;
+            if (after[i] > 200 && after[i + 1] < 60 && after[i + 2] < 60) ++red;
+        }
+    }
+    INFO("pixels changed by the sprite: " << changed << ", of them red: " << red);
+    CHECK(changed > 50);
+    CHECK(red > 50);
+    std::filesystem::remove(imagePath);
+    caffeine_session_destroy(session);
+}
+#endif
+
+TEST_CASE("C API animation advances only while the scene simulates", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Smoother");
+
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::Parameter2D bend;
+    bend.name = "Bend";
+    bend.minValue = 0.0f;
+    bend.maxValue = 1.0f;
+    rig.parameters = {bend};
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_capi_smooth.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+
+    // Creates the PhaseShift float, smooths it, then asks for 1.0: the spring starts at 0.
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 0.0f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_set_smoothing(session, entity, 0, 0.5f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 1.0f) == CAFFEINE_OK);
+
+    CaffeineRig2DParameter param{};
+    caffeine_session_set_simulating(session, 0);
+    for (int i = 0; i < 120; ++i) caffeine_session_tick(session, 1.0f / 60.0f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value == Approx(0.0f));
+
+    caffeine_session_set_simulating(session, 1);
+    for (int i = 0; i < 120; ++i) caffeine_session_tick(session, 1.0f / 60.0f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value > 0.9f);
+
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API adds a PhaseShift and its parameters from the editor", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    CaffeinePhaseShiftCounts counts{};
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_NOT_FOUND);
+
+    REQUIRE(caffeine_session_phase_shift_add(session, entity) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_add(session, entity) == CAFFEINE_OK);  // no-op when present
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 0);
+
+    REQUIRE(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_add_parameter(session, entity, "grounded", 0) == CAFFEINE_OK);
+    // Duplicate names, unknown kinds and empty or over-long names are refused.
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "bad", 9) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "", 1) == CAFFEINE_INVALID_ARGUMENT);
+    const std::string longName(40, 'x');
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, longName.c_str(), 1) == CAFFEINE_INVALID_ARGUMENT);
+
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 2);
+    CaffeinePhaseShiftParameter first{};
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &first) == CAFFEINE_OK);
+    CHECK(std::strcmp(first.name, "speed") == 0);
+    CHECK(first.kind == 1u);
+
+    REQUIRE(caffeine_session_phase_shift_remove_parameter(session, entity, 0) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 1);
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &first) == CAFFEINE_OK);
+    CHECK(std::strcmp(first.name, "grounded") == 0);
+    CHECK(caffeine_session_phase_shift_remove_parameter(session, entity, 5) == CAFFEINE_NOT_FOUND);
     caffeine_session_destroy(session);
 }

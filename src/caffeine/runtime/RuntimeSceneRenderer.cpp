@@ -10,6 +10,7 @@
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "render/GpuProceduralMeshes.hpp"
+#include "render/Scene2DOverlay.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/SceneComponents.hpp"
 #include "scene/LightingSystem.hpp"
@@ -357,6 +358,8 @@ bool RuntimeSceneRenderer::init(RHI::RenderDevice* device) {
 }
 
 void RuntimeSceneRenderer::shutdown() {
+    // The batch owns GPU objects on the device, so it goes before the device work below.
+    m_rigOverlay.reset();
     if (m_device) {
         if (m_colorTarget) {
             m_device->destroyTexture(m_colorTarget);
@@ -442,6 +445,11 @@ void RuntimeSceneRenderer::render(ECS::World& world, Editor::EditorContext& ctx,
         // scene has no meshes. A zero mesh count is not a failed frame.
         m_gpuRenderer.renderWithCamera(m_frameCmd, world, *gpuCamera, m_colorTarget,
                                        m_depthTarget, w, h, projectRoot, gpuOpts);
+        if (!m_rigOverlay) {
+            m_rigOverlay = std::make_unique<Render::Scene2DOverlay>();
+            m_rigOverlay->attach(m_device, RHI::TextureFormat::R8G8B8A8_UNORM);
+        }
+        m_rigOverlay->draw(m_frameCmd, m_colorTarget, world, gpuCamera->proj * gpuCamera->view, projectRoot);
         if (m_colorTarget && m_colorTarget->handle) {
             dl->AddImage(reinterpret_cast<ImTextureID>(m_colorTarget->handle), origin,
                          ImVec2(origin.x + panelSize.x, origin.y + panelSize.y), ImVec2(0, 0),

@@ -2,7 +2,9 @@
 
 #include "animation/AnimationComponents.hpp"
 #include "animation/AnimationPlayer.hpp"
+#include "animation/Rig2DSystem.hpp"
 #include "animation/SkinLibrary.hpp"
+#include "animation/Smoothing.hpp"
 #include "ecs/World.hpp"
 #include "ecs/Entity.hpp"
 #include "ecs/ISystem.hpp"
@@ -20,15 +22,16 @@ using namespace Caffeine;
 class AnimationSystem : public ECS::ISystem {
 public:
     void onUpdate(ECS::World& world, f32 dt) override {
+        tickParameterSmoothing(world, dt);
         tickAnimationPlayers(world, dt);
         tickSkinnedPoses(world, dt);
 
         ECS::ComponentQuery q;
-        q.with<Animator>();
+        q.with<PhaseShift>();
         q.with<ECS::Sprite>();
 
-        world.forEach<Animator, ECS::Sprite>(q,
-            [dt](ECS::Entity, Animator& anim, ECS::Sprite& sprite) {
+        world.forEach<PhaseShift, ECS::Sprite>(q,
+            [dt](ECS::Entity, PhaseShift& anim, ECS::Sprite& sprite) {
                 if (anim.paused) return;
 
                 evaluateTransitions(anim);
@@ -69,23 +72,25 @@ public:
             });
 
         ECS::ComponentQuery skeletal;
-        skeletal.with<Animator>();
-        world.forEach<Animator>(skeletal, [&world, dt](ECS::Entity entity, Animator& anim) {
+        skeletal.with<PhaseShift>();
+        world.forEach<PhaseShift>(skeletal, [&world, dt](ECS::Entity entity, PhaseShift& anim) {
             if (world.has<ECS::Sprite>(entity) || anim.paused) return;
             const SkinnedPose* pose = world.get<SkinnedPose>(entity);
             const ImportedSkin* skin = pose ? findImportedSkin(pose->meshPath) : nullptr;
-            stepStateMachine(anim, dt, [skin](const AnimatorStateMachine& sm, const FixedString<32>& name) {
+            stepStateMachine(anim, dt, [skin](const PhaseShiftStateMachine& sm, const FixedString<32>& name) {
                 return skeletalStateDuration(skin, sm, name);
             });
         });
+
+        tickRig2DPlayers(world, dt);
     }
 
-    using StateDurationFn = std::function<f32(const AnimatorStateMachine&, const FixedString<32>&)>;
+    using StateDurationFn = std::function<f32(const PhaseShiftStateMachine&, const FixedString<32>&)>;
 
     /// Advances the base graph and every layer. Skeletal poses read the result in tickSkinnedPoses.
-    static void stepStateMachine(Animator& anim, f32 dt, const StateDurationFn& durationOf) {
+    static void stepStateMachine(PhaseShift& anim, f32 dt, const StateDurationFn& durationOf) {
         bool fired = stepLayer(anim, anim, dt, durationOf);
-        for (AnimatorLayer& layer : anim.layers) {
+        for (PhaseShiftLayer& layer : anim.layers) {
             if (layer.isGroup) continue;
             fired = stepLayer(anim, layer, dt, durationOf) || fired;
         }
@@ -93,13 +98,13 @@ public:
     }
 
     /// Single-duration form: every state of the base graph lasts `stateDuration`.
-    static void stepStateMachine(Animator& anim, f32 dt, f32 stateDuration) {
-        stepStateMachine(anim, dt, [stateDuration](const AnimatorStateMachine&, const FixedString<32>&) {
+    static void stepStateMachine(PhaseShift& anim, f32 dt, f32 stateDuration) {
+        stepStateMachine(anim, dt, [stateDuration](const PhaseShiftStateMachine&, const FixedString<32>&) {
             return stateDuration;
         });
     }
 
-    static f32 skeletalStateDuration(const ImportedSkin* skin, const AnimatorStateMachine& sm,
+    static f32 skeletalStateDuration(const ImportedSkin* skin, const PhaseShiftStateMachine& sm,
                                      const FixedString<32>& name) {
         if (!skin || name.empty()) return 0.0f;
         const AnimationState* state = sm.states.get(name);
@@ -109,7 +114,7 @@ public:
     }
 
     /// Moves a graph to `target` with a crossfade. Exit sends it back through Entry to the default state.
-    static void enterState(AnimatorStateMachine& sm, const AnimationTransition& transition,
+    static void enterState(PhaseShiftStateMachine& sm, const AnimationTransition& transition,
                            const StateDurationFn& durationOf) {
         FixedString<32> target = transition.toState;
         if (target == FixedString<32>(kAnimatorExitState)) target = sm.defaultState;
@@ -130,7 +135,7 @@ public:
         sm.timeInState = duration > 0.0f ? std::clamp(transition.offset, 0.0f, 1.0f) * duration : 0.0f;
     }
 
-    static bool stepLayer(Animator& anim, AnimatorStateMachine& sm, f32 dt, const StateDurationFn& durationOf) {
+    static bool stepLayer(PhaseShift& anim, PhaseShiftStateMachine& sm, f32 dt, const StateDurationFn& durationOf) {
         if (sm.currentState.empty()) {
             if (sm.defaultState.empty()) return false;
             sm.currentState = sm.defaultState;
@@ -171,7 +176,7 @@ public:
     }
 
     void play(ECS::World& world, ECS::Entity e, const char* stateName) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (!anim) return;
         anim->previousState = anim->currentState;
         anim->currentState  = stateName;
@@ -180,69 +185,86 @@ public:
     }
 
     void pause(ECS::World& world, ECS::Entity e) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->paused = true;
     }
 
     void resume(ECS::World& world, ECS::Entity e) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->paused = false;
     }
 
     void setSpeed(ECS::World& world, ECS::Entity e, f32 speed) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->playbackScale = speed;
     }
 
     bool isPlaying(ECS::World& world, ECS::Entity e, const char* stateName) const {
-        const Animator* anim = world.get<Animator>(e);
+        const PhaseShift* anim = world.get<PhaseShift>(e);
         if (!anim || anim->paused) return false;
         return anim->currentState == FixedString<32>(stateName);
     }
 
     void addParameter(ECS::World& world, ECS::Entity e, const char* name, ParameterType type) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->addParameter(name, type);
     }
 
     void setBool(ECS::World& world, ECS::Entity e, const char* name, bool value) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->setBool(name, value);
     }
 
     void setFloat(ECS::World& world, ECS::Entity e, const char* name, f32 value) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->setFloat(name, value);
     }
 
     void setInt(ECS::World& world, ECS::Entity e, const char* name, i32 value) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->setInt(name, value);
     }
 
     void setTrigger(ECS::World& world, ECS::Entity e, const char* name) {
-        Animator* anim = world.get<Animator>(e);
+        PhaseShift* anim = world.get<PhaseShift>(e);
         if (anim) anim->setTrigger(name);
     }
 
     bool getBool(ECS::World& world, ECS::Entity e, const char* name) const {
-        const Animator* anim = world.get<Animator>(e);
+        const PhaseShift* anim = world.get<PhaseShift>(e);
         return anim ? anim->getBool(name) : false;
     }
 
     f32 getFloat(ECS::World& world, ECS::Entity e, const char* name) const {
-        const Animator* anim = world.get<Animator>(e);
+        const PhaseShift* anim = world.get<PhaseShift>(e);
         return anim ? anim->getFloat(name) : 0.0f;
     }
 
     i32 getInt(ECS::World& world, ECS::Entity e, const char* name) const {
-        const Animator* anim = world.get<Animator>(e);
+        const PhaseShift* anim = world.get<PhaseShift>(e);
         return anim ? anim->getInt(name) : 0;
     }
 
 private:
-    static bool evaluateCondition(const TransitionCondition& cond, const Animator& anim) {
-        const AnimatorParameter* p = anim.findParameter(cond.parameterName);
+    /// Value conditions read: the smoothed float when smoothing is on, the raw float otherwise.
+    static f32 floatOf(const PhaseShiftParameter& p) {
+        return p.smoothTime > 0.0f ? p.smoothed : p.floatValue;
+    }
+
+    /// Advances the critically damped springs of every smoothed float parameter.
+    static void tickParameterSmoothing(ECS::World& world, f32 dt) {
+        ECS::ComponentQuery q;
+        q.with<PhaseShift>();
+        world.forEach<PhaseShift>(q, [dt](ECS::Entity, PhaseShift& ps) {
+            for (PhaseShiftParameter& p : ps.parameters) {
+                if (p.type != ParameterType::Float || p.smoothTime <= 0.0f) continue;
+                p.smoothed = smoothDamp(p.smoothed, p.floatValue, p.smoothVelocity, p.smoothTime, dt);
+            }
+        });
+    }
+
+    static bool evaluateCondition(const TransitionCondition& cond, const PhaseShift& anim) {
+        const PhaseShiftParameter* p = anim.findParameter(cond.parameterName);
         if (!p) return false;
 
         switch (p->type) {
@@ -256,12 +278,12 @@ private:
 
             case ParameterType::Float:
                 switch (cond.op) {
-                    case ConditionOperator::Greater:        return p->floatValue >  cond.floatValue;
-                    case ConditionOperator::Less:           return p->floatValue <  cond.floatValue;
-                    case ConditionOperator::GreaterOrEqual: return p->floatValue >= cond.floatValue;
-                    case ConditionOperator::LessOrEqual:    return p->floatValue <= cond.floatValue;
-                    case ConditionOperator::Equals:         return p->floatValue == cond.floatValue;
-                    case ConditionOperator::NotEquals:      return p->floatValue != cond.floatValue;
+                    case ConditionOperator::Greater:        return floatOf(*p) >  cond.floatValue;
+                    case ConditionOperator::Less:           return floatOf(*p) <  cond.floatValue;
+                    case ConditionOperator::GreaterOrEqual: return floatOf(*p) >= cond.floatValue;
+                    case ConditionOperator::LessOrEqual:    return floatOf(*p) <= cond.floatValue;
+                    case ConditionOperator::Equals:         return floatOf(*p) == cond.floatValue;
+                    case ConditionOperator::NotEquals:      return floatOf(*p) != cond.floatValue;
                 }
                 break;
 
@@ -279,7 +301,7 @@ private:
         return false;
     }
 
-    static void consumeTriggers(Animator& anim) {
+    static void consumeTriggers(PhaseShift& anim) {
         for (auto& p : anim.parameters) {
             if (p.type == ParameterType::Trigger) {
                 p.triggered = false;
@@ -288,7 +310,7 @@ private:
     }
 
     /// Exit time is normalized: 1 waits for the clip's end. With no conditions the exit time alone fires it.
-    static bool transitionReady(const AnimationTransition& t, const Animator& anim, f32 timeInState, f32 duration) {
+    static bool transitionReady(const AnimationTransition& t, const PhaseShift& anim, f32 timeInState, f32 duration) {
         if (t.hasExitTime && duration > 0.0f) {
             if (timeInState < std::max(t.exitTime, 0.0f) * duration) return false;
         }
@@ -302,7 +324,7 @@ private:
         return t.legacyCondition();
     }
 
-    static void evaluateTransitions(Animator& anim, f32 stateDuration = -1.0f) {
+    static void evaluateTransitions(PhaseShift& anim, f32 stateDuration = -1.0f) {
         const AnimationState* state = anim.states.get(anim.currentState);
         if (!state) return;
 
@@ -318,7 +340,7 @@ private:
         }
     }
 
-    static void checkFrameEvents(Animator& anim, u32 currentFrame) {
+    static void checkFrameEvents(PhaseShift& anim, u32 currentFrame) {
         for (const auto& [frame, eventName] : anim.frameEvents) {
             if (frame == currentFrame) {
                 anim.onFrameEvent(eventName);

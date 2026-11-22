@@ -1,0 +1,13 @@
+{
+  "name": "Photon: the tab opens and offers to add the component when the scene has none",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.photon", "label": "open the Photon tab" },
+    { "action": "expect", "exists": "id:editor.pane.photon" },
+    { "action": "expect", "exists": "id:photon.setup.add", "label": "no Photon GI yet: Add is offered" },
+    { "action": "expect", "missing": "id:photon.lighting.enabled" },
+    { "action": "screenshot", "name": "photon-empty" }
+  ]
+}

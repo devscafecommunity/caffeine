@@ -6,6 +6,12 @@
 #include "ecs/LightComponents.hpp"
 #include "ecs/MeshComponents.hpp"
 #include "ecs/World.hpp"
+#include "animation/AnimationComponents.hpp"
+#include "animation/AnimationSystem.hpp"
+#include "render/Scene2DOverlay.hpp"
+#include "animation/Rig2DAsset.hpp"
+#include "animation/Rig2DSystem.hpp"
+#include "caffeine/animation/AnimationApi.hpp"
 #include "math/Mat4.hpp"
 #include "math/Quat.hpp"
 #include "render/GpuSceneRenderer.hpp"
@@ -19,6 +25,8 @@
 #include "scene/ComponentReflection.hpp"
 #include "scene/HierarchySystem.hpp"
 #include "scene/NaturalFluidSystem.hpp"
+#include "debug/Profiler.hpp"
+#include "debug/SystemMetrics.hpp"
 #include "scene/TerrainSystem.hpp"
 #include "ecs/TerrainComponents.hpp"
 #include "terrain/TerrainCache.hpp"
@@ -26,6 +34,13 @@
 #include "scatter/TerrainScatter.hpp"
 #include "caffeine/environment/NaturalFluids.hpp"
 #include "scene/SceneComponents.hpp"
+#include "audio/AudioService.hpp"
+#include "runtime/GameSimulation.hpp"
+#include "audio/AudioServiceSink.hpp"
+#include "audio/WeatherAudio.hpp"
+#include "audio/VolumetricComponents.hpp"
+#include "audio/volumetric/SceneAudio.hpp"
+#include "audio/volumetric/VolumetricAudio.hpp"
 #include "assets/MaterialCache.hpp"
 #include "micromesh/Micromesh.hpp"
 #include "assets/MaterialFile.hpp"
@@ -40,8 +55,10 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -102,10 +119,40 @@ struct CaffeineSession {
     std::string scenePath;
     float lastDelta = 0.0f;
     uint64_t frameIndex = 0;
+    // Frames advance the simulation (clouds, weather, wind, sound) only while this is set; see caffeine_session_set_simulating.
+    bool simulating = true;
+    // The game is running (Doppio's Play): its view advances the clock and the editor view stands still.
+    bool gameRunning = false;
+    // Seconds the running game has advanced that no picture has shown yet: the first frame any view draws after a
+    // game tick takes them as its clock step (clouds, wind, water, sound), so the simulation follows whichever view is
+    // visible and is never counted twice when several are.
+    float pendingClockStep = 0.0f;
+    std::unique_ptr<Caffeine::Runtime::GameSimulation> game;
+    // Animation (PhaseShift, 2D rigs, skinned poses) advances with the session tick while the scene simulates.
+    Caffeine::Animation::AnimationSystem animation;
 
     std::unique_ptr<Caffeine::RHI::RenderDevice> renderDevice;
+#ifdef CF_HAS_SDL3
+    // Draws sprites and 2D rigs over the scene. Declared after renderDevice, so it is released first.
+    std::unique_ptr<Caffeine::Render::Scene2DOverlay> rigOverlay;
+#endif
     std::unique_ptr<Caffeine::Render::GpuSceneRenderer> sceneRenderer;
     std::unique_ptr<Caffeine::Render::MaterialPreviewRenderer> materialPreview;
+
+    // The weather's sound: opened the first time a scene asks for it (`Weather` > `Audio Enabled`). Thunder that
+    // has arrived waits in `thunderQueue` for caffeine_session_poll_thunder; the sound reads the same events.
+    std::unique_ptr<Caffeine::Audio::AudioService> audio;
+    std::unique_ptr<Caffeine::Audio::AudioServiceSink> audioSink;
+    std::unique_ptr<Caffeine::Audio::WeatherAudio> weatherAudio;
+    bool audioTried = false;
+    std::unique_ptr<Caffeine::Audio::NullAudioSink> nullSink;
+    bool weatherAudioSilent = false;
+    std::unique_ptr<Caffeine::Audio::VolumetricAudio> volumetric;
+    std::unique_ptr<Caffeine::Audio::SceneAudio> volumetricScene;
+    bool volumetricOutput = false;
+    int32_t volumetricDevice = -1;
+    std::chrono::steady_clock::time_point volumetricLastSync = std::chrono::steady_clock::now();
+    std::vector<Caffeine::Scene::ThunderEvent> thunderQueue;
     Caffeine::RHI::Texture* colorTarget = nullptr;
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
@@ -123,6 +170,40 @@ struct CaffeineSession {
     uint32_t readbackWidth = 0;
     uint32_t readbackHeight = 0;
     bool readbackPending = false;
+
+    // Extra render views, drawn from a scene camera instead of the editor's: 0 = the game (the active camera),
+    // 1 = the camera preview (a chosen camera). Each keeps its own target and readback; while one renders, its slot
+    // is swapped into the fields above (`ViewScope`), so the whole begin/poll machinery serves every view.
+    struct ViewSlot {
+        Caffeine::RHI::Texture* colorTarget = nullptr;
+        uint32_t renderWidth = 0;
+        uint32_t renderHeight = 0;
+        SDL_GPUTransferBuffer* readbackTransfer = nullptr;
+        SDL_GPUFence* readbackFence = nullptr;
+        uint32_t readbackCapacity = 0;
+        uint32_t readbackWidth = 0;
+        uint32_t readbackHeight = 0;
+        bool readbackPending = false;
+    };
+    ViewSlot views[2];
+    int32_t activeView = -1;  // -1: the editor camera
+    uint32_t previewCamera = UINT32_MAX;  // the entity of the camera preview; none: the active camera
+
+    // Any frame (the editor's or a scene view's) whose readback is still in flight: releasing the device's upload
+    // buffers while one is would free memory its commands still read.
+    bool anyFramePending() const { return readbackPending || views[0].readbackPending || views[1].readbackPending; }
+
+    void swapView(ViewSlot& v) {
+        std::swap(colorTarget, v.colorTarget);
+        std::swap(renderWidth, v.renderWidth);
+        std::swap(renderHeight, v.renderHeight);
+        std::swap(readbackTransfer, v.readbackTransfer);
+        std::swap(readbackFence, v.readbackFence);
+        std::swap(readbackCapacity, v.readbackCapacity);
+        std::swap(readbackWidth, v.readbackWidth);
+        std::swap(readbackHeight, v.readbackHeight);
+        std::swap(readbackPending, v.readbackPending);
+    }
 
     // Material preview readback, separate from the viewport fence.
     SDL_GPUTransferBuffer* previewTransfer = nullptr;
@@ -191,6 +272,14 @@ struct CaffeineSession {
     ~CaffeineSession() {
         releasePreviewReadback();
         releaseReadback();
+        // The extra views' targets and readbacks: swapped in one at a time so the same release code serves them.
+        for (ViewSlot& slot : views) {
+            swapView(slot);
+            releaseReadback();
+            if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
+            colorTarget = nullptr;
+            swapView(slot);
+        }
         shutdownRender();
     }
 
@@ -221,6 +310,10 @@ struct CaffeineSession {
     }
 
     void shutdownRender() {
+#ifdef CF_HAS_SDL3
+        // The rig overlay owns pipelines on the device, so it goes before the device can be destroyed below.
+        rigOverlay.reset();
+#endif
         if (materialPreview) {
             materialPreview->shutdown();
             materialPreview.reset();
@@ -233,6 +326,9 @@ struct CaffeineSession {
             Caffeine::Render::GpuTextureCache::instance().releaseAll(renderDevice.get());
             Caffeine::Render::GpuProceduralMeshes::releaseGpuResources(renderDevice.get());
             Caffeine::Assets::MeshCache::getInstance().releaseGpuResources(renderDevice.get());
+            // The terrain cache too: it keeps the device it last used and its meshes' buffers, and a later session that
+            // rebuilt a terrain would free them through a device that is gone.
+            Caffeine::Terrain::TerrainCache::instance().releaseGpuResources(renderDevice.get());
         }
         if (renderDevice && colorTarget) renderDevice->destroyTexture(colorTarget);
         colorTarget = nullptr;
@@ -1198,12 +1294,206 @@ CaffeineResult caffeine_session_set_entity_world_position(CaffeineSession* sessi
         session, entityId, {converted.x, converted.y, converted.z});
 }
 
+void caffeine_session_set_simulating(CaffeineSession* session, int32_t simulating) {
+    if (session) session->simulating = simulating != 0;
+}
+
+int32_t caffeine_session_simulating(const CaffeineSession* session) {
+    return session && session->simulating ? 1 : 0;
+}
+
 void caffeine_session_tick(CaffeineSession* session, float delta_time) {
     if (!session) return;
+    // The running game advances the scene by its own tick (caffeine_session_game_tick).
+    if (session->gameRunning) return;
     session->lastDelta = delta_time;
     ++session->frameIndex;
     // Water surfaces animate in the editor too (previewInEditor).
     Caffeine::Scene::tickNaturalFluids(session->world, delta_time, true);
+    // Animation follows the simulation clock: a stopped scene stays where it is (the editor's Play starts it).
+    if (session->simulating) session->animation.onUpdate(session->world, delta_time);
+}
+
+// The scene's volumetric audio: voices from the Audio Emitters, boxes from the Acoustic Obstacles, the camera as the ears.
+static void driveVolumetricAudio(CaffeineSession& session, const Caffeine::Render::GpuSceneCamera& camera) {
+    if (!session.volumetric) {
+        // Nothing is created until a scene asks for it.
+        bool asked = false;
+        Caffeine::ECS::ComponentQuery q;
+        q.with<Caffeine::Audio::VolumetricAudioComponent>();
+        session.world.forEach<Caffeine::Audio::VolumetricAudioComponent>(
+            q, [&](Caffeine::ECS::Entity, Caffeine::Audio::VolumetricAudioComponent& c) { asked = asked || c.enabled; });
+        if (!asked) return;
+        session.volumetric = std::make_unique<Caffeine::Audio::VolumetricAudio>(48000);
+        session.volumetricScene = std::make_unique<Caffeine::Audio::SceneAudio>(*session.volumetric);
+    }
+    std::vector<std::string> roots;
+    if (!session.assetRoot.empty()) {
+        roots.push_back(session.assetRoot);
+        roots.push_back(session.assetRoot + "/Audio");
+    }
+    if (!session.context.projectRootPath.empty()) roots.push_back(session.context.projectRootPath);
+    session.volumetricScene->setSearchRoots(std::move(roots));
+    Caffeine::Vec3 forward = camera.focus - camera.position;
+    // The time the audio has advanced since the last frame: the monitor's fixed step, or the wall clock when a device is
+    // playing (it mixes on its own thread, in real time).
+    float interval = 1.0f / 60.0f;
+    const auto now = std::chrono::steady_clock::now();
+    if (session.volumetric->deviceOpen()) {
+        interval = std::clamp(std::chrono::duration<float>(now - session.volumetricLastSync).count(), 0.004f, 0.1f);
+    }
+    session.volumetricLastSync = now;
+    session.volumetricScene->sync(session.world, camera.position, forward, interval);
+    if (session.volumetricOutput && !session.volumetric->deviceOpen()) session.volumetric->openDevice(session.volumetricDevice);
+    // Without a device the mixer still runs, silently, so Doppler, delay and the debug state keep moving.
+    session.volumetric->monitor(1.0f / 60.0f);
+}
+
+// Takes the thunder that arrived this frame, and drives the weather's sound from the same weather the frame drew.
+static void driveWeatherSound(CaffeineSession& session, const Caffeine::Render::GpuSceneCamera& camera) {
+    if (!session.sceneRenderer) return;
+    Caffeine::Scene::ThunderEvent events[16];
+    const uint32_t arrived = session.sceneRenderer->pollThunder(events, 16);
+    for (uint32_t i = 0; i < arrived; ++i) {
+        if (session.thunderQueue.size() >= 64) session.thunderQueue.erase(session.thunderQueue.begin());
+        session.thunderQueue.push_back(events[i]);
+    }
+    const Caffeine::Scene::WeatherResolved& weather = session.sceneRenderer->weather();
+    // With volumetric audio on the weather is played by that mixer (rain and wind as ambient layers, each clap as a sound
+    // in the sky), so walls muffle it and rooms ring with it; the older player only follows the weather.
+    const bool volumetric = session.volumetricScene && session.volumetricScene->enabled();
+    Caffeine::Audio::WeatherThunder claps[16];
+    for (uint32_t i = 0; i < arrived; ++i) claps[i] = {events[i].distance, events[i].azimuth, events[i].volume};
+    if (session.volumetricScene) {
+        Caffeine::Audio::SceneAudio::WeatherFeed feed;
+        feed.enabled = weather.audio;
+        feed.volume = weather.audioVolume;
+        feed.rain = weather.rain;
+        feed.rainIntensity = weather.rainIntensity;
+        feed.windSpeed = weather.rainWindSpeed;
+        feed.gust = session.sceneRenderer->weatherWindGust();
+        Caffeine::Audio::SceneAudio::ThunderClap sky[16];
+        for (uint32_t i = 0; i < arrived; ++i) sky[i] = {events[i].distance, events[i].azimuth, events[i].volume};
+        session.volumetricScene->feedWeather(feed, sky, arrived, 1.0f / 60.0f);
+    }
+    if (!weather.audio) {
+        if (session.weatherAudio) session.weatherAudio->stop();
+        return;
+    }
+    // A player made on the silent device cannot play when the volumetric audio goes off: make it again then.
+    if (session.weatherAudio && session.weatherAudioSilent && !volumetric) {
+        session.weatherAudio.reset();
+        session.weatherAudioSilent = false;
+    }
+    if (volumetric && !session.weatherAudio) {
+        session.nullSink = std::make_unique<Caffeine::Audio::NullAudioSink>();
+        session.weatherAudio = std::make_unique<Caffeine::Audio::WeatherAudio>(*session.nullSink);
+        session.weatherAudioSilent = true;
+    }
+    if (!volumetric && !session.audio && !session.audioTried) {
+        session.audioTried = true;
+        auto service = std::make_unique<Caffeine::Audio::AudioService>();
+        if (!service->init()) std::fprintf(stderr, "caffeine: no audio device, the weather's sound is off\n");
+        session.audio = std::move(service);
+        session.audioSink = std::make_unique<Caffeine::Audio::AudioServiceSink>(*session.audio);
+    }
+    if (!volumetric && !session.weatherAudio && session.audioSink) {
+        session.weatherAudio = std::make_unique<Caffeine::Audio::WeatherAudio>(*session.audioSink);
+    }
+    if (!session.weatherAudio) return;
+    session.weatherAudio->setMuted(volumetric);
+    Caffeine::Audio::WeatherAudio::Frame frame;
+    frame.weather.rain = weather.rain;
+    frame.weather.rainIntensity = weather.rainIntensity;
+    frame.weather.windSpeed = weather.rainWindSpeed;
+    frame.weather.gust = session.sceneRenderer->weatherWindGust();
+    const Caffeine::Vec3 forward = camera.focus - camera.position;
+    frame.listenerYaw = std::atan2(forward.x, forward.z);
+    frame.thunder = claps;
+    frame.thunderCount = arrived;
+    frame.dt = 1.0f / 60.0f;
+    session.weatherAudio->setVolume(weather.audioVolume);
+    session.weatherAudio->update(frame);
+    if (session.audio) session.audio->update(frame.dt);
+}
+
+// The camera a scene view looks through: the camera preview's chosen entity, else the active Camera 3D, else the first one.
+static bool findSceneCamera(CaffeineSession& session, int32_t view, Caffeine::ECS::Entity& out) {
+    auto& world = session.world;
+    if (view == 1 && session.previewCamera != UINT32_MAX) {
+        Caffeine::ECS::Entity chosen(session.previewCamera, &world);
+        if (chosen.isValid() && world.isEntityAlive(chosen) && world.has<Caffeine::ECS::Camera3DComponent>(chosen)) {
+            out = chosen;
+            return true;
+        }
+    }
+    bool found = false;
+    Caffeine::ECS::ComponentQuery activeQuery;
+    activeQuery.with<Caffeine::ECS::Camera3DComponent>();
+    activeQuery.with<Caffeine::ECS::CameraActiveComponent>();
+    world.forEach<Caffeine::ECS::Camera3DComponent, Caffeine::ECS::CameraActiveComponent>(
+        activeQuery, [&](Caffeine::ECS::Entity entity, Caffeine::ECS::Camera3DComponent&,
+                         Caffeine::ECS::CameraActiveComponent&) {
+            if (!found) {
+                out = entity;
+                found = true;
+            }
+        });
+    if (found) return true;
+    Caffeine::ECS::ComponentQuery anyQuery;
+    anyQuery.with<Caffeine::ECS::Camera3DComponent>();
+    world.forEach<Caffeine::ECS::Camera3DComponent>(
+        anyQuery, [&](Caffeine::ECS::Entity entity, Caffeine::ECS::Camera3DComponent&) {
+            if (!found) {
+                out = entity;
+                found = true;
+            }
+        });
+    return found;
+}
+
+// Builds the render camera of a Camera 3D entity from its world matrix (the same convention as caffeine-runtime).
+static bool buildSceneCamera(CaffeineSession& session, Caffeine::ECS::Entity entity, float aspect,
+                             Caffeine::Render::GpuSceneCamera& camera) {
+    auto& world = session.world;
+    const auto* component = world.get<Caffeine::ECS::Camera3DComponent>(entity);
+    if (!component) return false;
+    // A camera that was never placed sits at the origin looking down -Z.
+    const auto* transform = world.get<Caffeine::Scene::WorldTransform>(entity);
+    const Caffeine::Mat4 m = transform ? transform->matrix : Caffeine::Mat4::identity();
+    auto axis = [&](int column, const Caffeine::Vec3& fallback) {
+        Caffeine::Vec3 a(m(0, column), m(1, column), m(2, column));
+        const float lengthSquared = a.lengthSquared();
+        return lengthSquared > 0.000001f ? a / std::sqrt(lengthSquared) : fallback;
+    };
+    const Caffeine::Vec3 position = m.transformPoint(Caffeine::Vec3(0.0f, 0.0f, 0.0f));
+    const Caffeine::Vec3 right = axis(0, Caffeine::Vec3(1.0f, 0.0f, 0.0f));
+    const Caffeine::Vec3 up = axis(1, Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+    const Caffeine::Vec3 forward = (-1.0f * axis(2, Caffeine::Vec3(0.0f, 0.0f, -1.0f))).normalized();
+    Caffeine::Mat4 view = Caffeine::Mat4::identity();
+    view(0, 0) = right.x;
+    view(0, 1) = right.y;
+    view(0, 2) = right.z;
+    view(1, 0) = up.x;
+    view(1, 1) = up.y;
+    view(1, 2) = up.z;
+    view(2, 0) = -forward.x;
+    view(2, 1) = -forward.y;
+    view(2, 2) = -forward.z;
+    view(0, 3) = -right.dot(position);
+    view(1, 3) = -up.dot(position);
+    view(2, 3) = forward.dot(position);
+    const float fov = std::clamp(component->fov, 5.0f, 150.0f) * 3.14159265f / 180.0f;
+    const float nearClip = std::max(component->nearClip, 0.01f);
+    const float farClip = std::max(component->farClip, nearClip + 1.0f);
+    camera.position = position;
+    camera.focus = position + forward;
+    camera.view = view;
+    camera.proj = Caffeine::Mat4::perspective(fov, aspect, nearClip, farClip);
+    camera.fovRad = fov;
+    camera.nearClip = nearClip;
+    camera.farClip = farClip;
+    return true;
 }
 
 static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t height) {
@@ -1276,12 +1566,36 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
     camera.nearClip = nearClip;
     camera.farClip = farClip;
 
+    // A scene view looks through a Camera 3D of the scene instead of the editor's orbit camera.
+    const bool sceneView = session.activeView >= 0;
+    if (sceneView) {
+        Caffeine::ECS::Entity sceneCamera;
+        if (!findSceneCamera(session, session.activeView, sceneCamera) ||
+            !buildSceneCamera(session, sceneCamera, aspect, camera)) {
+            return false;
+        }
+    }
+
     Caffeine::Render::GpuSceneRenderOptions options;
     options.enableShadows = session.viewportSettings.shadows != 0;
     options.renderScale =
         std::clamp(session.viewportSettings.render_scale, 0.5f, 2.0f);
-    options.deltaTime = 1.0f / 60.0f;
-    options.viewId = 1;
+    // The clock (clouds, weather, wind, water, sound) advances once per step of the simulation, by whichever view
+    // draws first. Playing the game, a step is a game tick (the editor viewport, Gameplay and Camera tabs all show
+    // it, whichever are on screen); otherwise only the editor viewport steps, by 1/60 s a frame. No view on screen,
+    // no step: the game's physics and scripts go on, only the picture-bound parts wait.
+    float clockStep = 0.0f;
+    if (session.simulating) {
+        if (session.gameRunning) {
+            clockStep = session.pendingClockStep;
+            session.pendingClockStep = 0.0f;
+        } else if (session.activeView == -1) {
+            clockStep = 1.0f / 60.0f;
+        }
+    }
+    const bool clockView = clockStep > 0.0f;
+    options.deltaTime = clockStep;
+    options.viewId = session.activeView == -1 ? 1u : 2u + static_cast<uint32_t>(session.activeView);
     options.resolveFeaturesFromScene = true;
     options.resolveEnvironmentFromScene = true;
     options.resolvePostProcessFromScene = false;
@@ -1291,7 +1605,7 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
         session.viewportSettings.anti_aliasing == 2 ? 1u : 0u;
     options.postProcess.antiAliasing.sharpness = 0.5f;
 
-    if (session.viewportSettings.show_grid) {
+    if (session.viewportSettings.show_grid && !sceneView) {
         float spacing = 1.0f;
         while (visibleRange / spacing > 40.0f) spacing *= 2.0f;
         while (visibleRange / spacing < 8.0f && spacing > 0.25f) spacing *= 0.5f;
@@ -1311,7 +1625,22 @@ static bool renderFrame(CaffeineSession& session, uint32_t width, uint32_t heigh
     session.sceneRenderer->renderWithCamera(
         command, session.world, camera, session.colorTarget, nullptr, width, height,
         session.context.projectRootPath, options);
+#ifdef CF_HAS_SDL3
+    if (!session.rigOverlay) {
+        session.rigOverlay = std::make_unique<Caffeine::Render::Scene2DOverlay>();
+        session.rigOverlay->attach(session.renderDevice.get(), Caffeine::RHI::TextureFormat::R8G8B8A8_UNORM);
+    }
+    session.rigOverlay->draw(command, session.colorTarget, session.world, camera.proj * camera.view,
+                             session.context.projectRootPath);
+#endif
     session.renderDevice->endOffscreen(command);
+    // Sound is part of the simulation: a paused scene is silent (the device closes and reopens on Play).
+    if (session.simulating && clockView) {
+        driveVolumetricAudio(session, camera);
+        driveWeatherSound(session, camera);
+    } else if (!session.simulating && session.volumetric && session.volumetric->deviceOpen()) {
+        session.volumetric->closeDevice();
+    }
     return true;
 }
 
@@ -1396,6 +1725,117 @@ CaffeineResult caffeine_session_render_begin(CaffeineSession* session, uint32_t 
     return CAFFEINE_OK;
 }
 
+// The game (v23): the scene's simulation run as the compiled game runs it.
+CaffeineResult caffeine_session_game_start(CaffeineSession* session) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!session->game) session->game = std::make_unique<Caffeine::Runtime::GameSimulation>();
+    Caffeine::Scene::propagateTransforms(session->world);
+    // Scripts failing to start (no Lua) still leaves the physics and the rest running.
+    session->game->start(session->world, session->context.projectRootPath, session->scenePath);
+    session->gameRunning = true;
+    return CAFFEINE_OK;
+}
+
+void caffeine_session_game_stop(CaffeineSession* session) {
+    if (!session) return;
+    if (session->game) session->game->stop();
+    session->gameRunning = false;
+}
+
+int32_t caffeine_session_game_running(const CaffeineSession* session) {
+    return session && session->gameRunning ? 1 : 0;
+}
+
+CaffeineResult caffeine_session_game_tick(CaffeineSession* session, float delta_time) {
+    if (!session || !session->gameRunning || !session->game) return CAFFEINE_INVALID_ARGUMENT;
+    session->lastDelta = delta_time;
+    ++session->frameIndex;
+    {
+        CF_PROFILE_SCOPE("Game::tick");
+        session->game->update(session->world, delta_time);
+    }
+    // A hidden game has nothing to catch up on: a quarter of a second is the most a view takes at once.
+    session->pendingClockStep = std::min(session->pendingClockStep + std::clamp(delta_time, 0.0f, 0.1f), 0.25f);
+    return CAFFEINE_OK;
+}
+
+void caffeine_session_game_key(CaffeineSession* session, uint32_t scancode, int32_t down) {
+    if (!session || !session->game || !session->gameRunning) return;
+    if (down) session->game->keyDown(scancode);
+    else session->game->keyUp(scancode);
+}
+
+void caffeine_session_game_release_keys(CaffeineSession* session) {
+    if (session && session->game && session->gameRunning) session->game->releaseAllKeys();
+}
+
+void caffeine_session_game_mouse(CaffeineSession* session, float x, float y, uint32_t button, int32_t down) {
+    if (!session || !session->game || !session->gameRunning) return;
+    session->game->mouseMove(x, y);
+    if (button != 0) session->game->mouseButton(button, down != 0);
+}
+
+CaffeineResult caffeine_session_game_state(const CaffeineSession* session, CaffeineGameState* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    out->running = session->gameRunning ? 1 : 0;
+    out->scripts_running = session->game && session->game->scriptsRunning() ? 1 : 0;
+    out->frames = session->game ? session->game->frames() : 0;
+    out->time_s = session->game ? session->game->time() : 0.0f;
+    return CAFFEINE_OK;
+}
+
+// Scene views (v23).
+namespace {
+struct ViewScope {
+    CaffeineSession& session;
+    int32_t index;
+    ViewScope(CaffeineSession& s, int32_t i) : session(s), index(i) {
+        if (index >= 0) session.swapView(session.views[index]);
+        session.activeView = index;
+    }
+    ~ViewScope() {
+        if (index >= 0) session.swapView(session.views[index]);
+        session.activeView = -1;
+    }
+};
+bool validView(int32_t view) { return view == 0 || view == 1; }
+}  // namespace
+
+CaffeineResult caffeine_session_scene_camera(const CaffeineSession* session, int32_t view, uint32_t* entity,
+                                             float* fov_degrees) {
+    if (!session || !validView(view)) return CAFFEINE_INVALID_ARGUMENT;
+    auto* mutableSession = const_cast<CaffeineSession*>(session);
+    Caffeine::ECS::Entity found;
+    if (!findSceneCamera(*mutableSession, view, found)) return CAFFEINE_ERROR;
+    if (entity) *entity = found.id();
+    if (fov_degrees) {
+        const auto* component = mutableSession->world.get<Caffeine::ECS::Camera3DComponent>(found);
+        *fov_degrees = component ? component->fov : 60.0f;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_preview_camera(CaffeineSession* session, uint32_t entity) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->previewCamera = entity;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_view_render_begin(CaffeineSession* session, int32_t view, uint32_t width,
+                                                  uint32_t height) {
+    if (!session || !validView(view)) return CAFFEINE_INVALID_ARGUMENT;
+    CF_PROFILE_SCOPE(view == 0 ? "SceneView::game" : "SceneView::camera");
+    ViewScope scope(*session, view);
+    return caffeine_session_render_begin(session, width, height);
+}
+
+CaffeineRenderState caffeine_session_view_render_poll(CaffeineSession* session, int32_t view, uint8_t* pixels,
+                                                      size_t pixel_bytes) {
+    if (!session || !validView(view)) return CAFFEINE_RENDER_FAILED;
+    ViewScope scope(*session, view);
+    return caffeine_session_render_poll(session, pixels, pixel_bytes);
+}
+
 CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session, uint8_t* pixels,
                                                 size_t pixel_bytes) {
     if (!session || !session->readbackPending) return CAFFEINE_RENDER_IDLE;
@@ -1413,7 +1853,7 @@ CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session, uint8
     const void* mapped = SDL_MapGPUTransferBuffer(device, session->readbackTransfer, false);
     if (!mapped) {
         session->releaseReadback();
-        session->renderDevice->releaseOffscreenResources();
+        if (!session->anyFramePending()) session->renderDevice->releaseOffscreenResources();
         return CAFFEINE_RENDER_FAILED;
     }
     std::memcpy(pixels, mapped, required);
@@ -1422,7 +1862,7 @@ CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session, uint8
     session->readbackPending = false;
     session->readbackWidth = 0;
     session->readbackHeight = 0;
-    session->renderDevice->releaseOffscreenResources();
+    if (!session->anyFramePending()) session->renderDevice->releaseOffscreenResources();
     return CAFFEINE_RENDER_READY;
 }
 
@@ -2308,6 +2748,301 @@ CaffeineResult caffeine_session_water_height(const CaffeineSession* session,
     return CAFFEINE_OK;
 }
 
+namespace {
+
+template <size_t N>
+void copyCName(char (&dst)[N], const char* src) {
+    std::strncpy(dst, src ? src : "", N - 1);
+    dst[N - 1] = '\0';
+}
+
+Caffeine::Animation::PhaseShift* phaseShiftFor(CaffeineSession& session, CaffeineEntity entity) {
+    if (!entityAlive(session, entity)) return nullptr;
+    return session.world.get<Caffeine::Animation::PhaseShift>(Caffeine::ECS::Entity(entity, &session.world));
+}
+
+Caffeine::Animation::Rig2DPlayer* rigFor(CaffeineSession& session, CaffeineEntity entity) {
+    if (!entityAlive(session, entity)) return nullptr;
+    auto* player = session.world.get<Caffeine::Animation::Rig2DPlayer>(Caffeine::ECS::Entity(entity, &session.world));
+    if (!player) return nullptr;
+    Caffeine::Animation::ensureRig2DLoaded(*player);
+    return player;
+}
+
+struct TransitionRef {
+    Caffeine::FixedString<32> from;
+    const Caffeine::Animation::AnimationTransition* transition;
+};
+
+/// Any-state transitions first, then each state's transitions in map order. Layers are not included.
+std::vector<TransitionRef> collectTransitions(const Caffeine::Animation::PhaseShift& ps) {
+    std::vector<TransitionRef> out;
+    for (const auto& t : ps.anyStateTransitions) {
+        out.push_back({Caffeine::FixedString<32>("Any State"), &t});
+    }
+    for (const auto& [name, state] : ps.states) {
+        for (const auto& t : state.transitions) {
+            out.push_back({name, &t});
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+CaffeineResult caffeine_session_phase_shift_counts(const CaffeineSession* session, CaffeineEntity entity,
+                                                   CaffeinePhaseShiftCounts* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    out->parameters = static_cast<uint32_t>(ps->parameters.size());
+    out->states = static_cast<uint32_t>(ps->states.size());
+    out->transitions = static_cast<uint32_t>(collectTransitions(*ps).size());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_parameter(const CaffeineSession* session, CaffeineEntity entity,
+                                                      uint32_t index, CaffeinePhaseShiftParameter* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    if (index >= ps->parameters.size()) return CAFFEINE_NOT_FOUND;
+    const auto& p = ps->parameters[index];
+    copyCName(out->name, p.name.cStr());
+    out->kind = static_cast<uint32_t>(p.type);
+    switch (p.type) {
+        case Caffeine::Animation::ParameterType::Bool:    out->value = p.boolValue ? 1.0f : 0.0f; break;
+        case Caffeine::Animation::ParameterType::Float:   out->value = p.floatValue; break;
+        case Caffeine::Animation::ParameterType::Int:     out->value = static_cast<float>(p.intValue); break;
+        case Caffeine::Animation::ParameterType::Trigger: out->value = p.triggered ? 1.0f : 0.0f; break;
+    }
+    out->smoothing = p.type == Caffeine::Animation::ParameterType::Float ? p.smoothTime : 0.0f;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_state(const CaffeineSession* session, CaffeineEntity entity,
+                                                  uint32_t index, CaffeinePhaseShiftState* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    uint32_t i = 0;
+    for (const auto& [name, state] : ps->states) {
+        if (i++ != index) continue;
+        copyCName(out->name, name.cStr());
+        const char* clip = "";
+        if (!state.motion.empty()) {
+            clip = state.motion.cStr();
+        } else if (state.clip) {
+            clip = state.clip->name.cStr();
+        }
+        copyCName(out->clip, clip);
+        out->speed = state.speed;
+        out->is_current = ps->currentState == name ? 1u : 0u;
+        return CAFFEINE_OK;
+    }
+    return CAFFEINE_NOT_FOUND;
+}
+
+CaffeineResult caffeine_session_phase_shift_transition(const CaffeineSession* session, CaffeineEntity entity,
+                                                       uint32_t index, CaffeinePhaseShiftTransition* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    const auto refs = collectTransitions(*ps);
+    if (index >= refs.size()) return CAFFEINE_NOT_FOUND;
+    const TransitionRef& ref = refs[index];
+    copyCName(out->from, ref.from.cStr());
+    copyCName(out->to, ref.transition->toState.cStr());
+    out->blend_time = ref.transition->blendTime;
+    out->has_exit_time = ref.transition->hasExitTime ? 1u : 0u;
+    out->condition_count = static_cast<uint32_t>(ref.transition->conditions.size());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_condition(const CaffeineSession* session, CaffeineEntity entity,
+                                                      uint32_t transition_index, uint32_t index,
+                                                      CaffeinePhaseShiftCondition* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    const auto refs = collectTransitions(*ps);
+    if (transition_index >= refs.size()) return CAFFEINE_NOT_FOUND;
+    const auto& conditions = refs[transition_index].transition->conditions;
+    if (index >= conditions.size()) return CAFFEINE_NOT_FOUND;
+    const auto& c = conditions[index];
+    copyCName(out->parameter, c.parameterName.cStr());
+    out->op = static_cast<uint32_t>(c.op);
+    // Condition values share a union: read the one the parameter type uses.
+    const auto* p = ps->findParameter(c.parameterName);
+    const bool isFloat = p && p->type == Caffeine::Animation::ParameterType::Float;
+    out->value = isFloat ? c.floatValue : static_cast<float>(c.intValue);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_set_float(CaffeineSession* session, CaffeineEntity entity,
+                                                      uint32_t index, float value) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(*session, entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    if (index >= ps->parameters.size()) return CAFFEINE_NOT_FOUND;
+    if (ps->parameters[index].type != Caffeine::Animation::ParameterType::Float) return CAFFEINE_INVALID_ARGUMENT;
+    ps->setFloat(ps->parameters[index].name.cStr(), value);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_set_smoothing(CaffeineSession* session, CaffeineEntity entity,
+                                                          uint32_t index, float seconds) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(*session, entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    if (index >= ps->parameters.size()) return CAFFEINE_NOT_FOUND;
+    if (ps->parameters[index].type != Caffeine::Animation::ParameterType::Float) return CAFFEINE_INVALID_ARGUMENT;
+    ps->setSmoothing(ps->parameters[index].name.cStr(), seconds);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_add(CaffeineSession* session, CaffeineEntity entity) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entity)) return CAFFEINE_NOT_FOUND;
+    const auto ecsEntity = Caffeine::ECS::Entity(entity, &session->world);
+    if (!session->world.has<Caffeine::Animation::PhaseShift>(ecsEntity)) {
+        session->world.add<Caffeine::Animation::PhaseShift>(ecsEntity, Caffeine::Animation::PhaseShift{});
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_add_parameter(CaffeineSession* session, CaffeineEntity entity,
+                                                          const char* name, uint32_t kind) {
+    if (!session || !name) return CAFFEINE_INVALID_ARGUMENT;
+    const std::string text(name);
+    if (text.empty() || text.size() > 31 || kind > 3) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(*session, entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    if (ps->findParameter(Caffeine::FixedString<32>(text.c_str()))) return CAFFEINE_INVALID_ARGUMENT;
+    ps->addParameter(text.c_str(), static_cast<Caffeine::Animation::ParameterType>(kind));
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_phase_shift_remove_parameter(CaffeineSession* session, CaffeineEntity entity,
+                                                             uint32_t index) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    auto* ps = phaseShiftFor(*session, entity);
+    if (!ps) return CAFFEINE_NOT_FOUND;
+    if (index >= ps->parameters.size()) return CAFFEINE_NOT_FOUND;
+    ps->parameters.erase(ps->parameters.begin() + static_cast<std::ptrdiff_t>(index));
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_attach(CaffeineSession* session, CaffeineEntity entity, const char* rig_path) {
+    if (!session || !rig_path) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entity)) return CAFFEINE_NOT_FOUND;
+    const bool ok = Caffeine::Animation::attachRig2D(session->world,
+                                                     Caffeine::ECS::Entity(entity, &session->world), rig_path);
+    return ok ? CAFFEINE_OK : CAFFEINE_INVALID_ARGUMENT;
+}
+
+CaffeineResult caffeine_session_rig2d_counts(const CaffeineSession* session, CaffeineEntity entity,
+                                             CaffeineRig2DCounts* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entity)) return CAFFEINE_NOT_FOUND;
+    *out = CaffeineRig2DCounts{};
+    // No rig attached (or it failed to load) is a valid answer: every count stays zero.
+    auto* player = rigFor(mutableSession, entity);
+    if (!player || !player->rigValid) return CAFFEINE_OK;
+    out->bones = player->rig.skeleton.boneCount();
+    out->vertices = static_cast<uint32_t>(player->rig.vertices.size());
+    out->triangles = static_cast<uint32_t>(player->rig.indices.size() / 3);
+    out->parameters = static_cast<uint32_t>(player->rig.parameters.size());
+    out->bindings = static_cast<uint32_t>(player->rig.bindings.size());
+    out->loaded = 1;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_bone(const CaffeineSession* session, CaffeineEntity entity, uint32_t index,
+                                           CaffeineRig2DBone* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* player = rigFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!player || !player->rigValid) return CAFFEINE_NOT_FOUND;
+    if (index >= player->rig.skeleton.boneCount()) return CAFFEINE_NOT_FOUND;
+    const auto& bone = player->rig.skeleton.bones[index];
+    copyCName(out->name, bone.name.cStr());
+    out->parent = bone.parentIndex;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_parameter(const CaffeineSession* session, CaffeineEntity entity,
+                                                uint32_t index, CaffeineRig2DParameter* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* player = rigFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!player || !player->rigValid) return CAFFEINE_NOT_FOUND;
+    if (index >= player->rig.parameters.size()) return CAFFEINE_NOT_FOUND;
+    const auto& p = player->rig.parameters[index];
+    copyCName(out->name, p.name.cStr());
+    out->minimum = p.minValue;
+    out->default_value = p.defaultValue;
+    out->maximum = p.maxValue;
+    // The value of the last tick; before the first tick, the default.
+    out->value = index < player->values.size() ? player->values[index] : p.defaultValue;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_vertex(const CaffeineSession* session, CaffeineEntity entity, uint32_t index,
+                                             CaffeineRig2DVertex* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* player = rigFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!player || !player->rigValid) return CAFFEINE_NOT_FOUND;
+    if (index >= player->rig.vertices.size()) return CAFFEINE_NOT_FOUND;
+    *out = CaffeineRig2DVertex{};
+    const auto& influences = player->rig.vertices[index].influences;
+    out->influence_count = static_cast<uint32_t>(std::min<size_t>(influences.size(), 4));
+    for (uint32_t i = 0; i < out->influence_count; ++i) {
+        out->bones[i] = influences[i].bone;
+        out->weights[i] = influences[i].weight;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_binding(const CaffeineSession* session, CaffeineEntity entity, uint32_t index,
+                                              CaffeineRig2DBinding* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    auto* player = rigFor(const_cast<CaffeineSession&>(*session), entity);
+    if (!player || !player->rigValid) return CAFFEINE_NOT_FOUND;
+    if (index >= player->rig.bindings.size()) return CAFFEINE_NOT_FOUND;
+    const auto& b = player->rig.bindings[index];
+    out->parameter = b.parameter;
+    out->bone = b.bone;
+    out->channel = static_cast<uint32_t>(b.channel);
+    out->key_count = static_cast<uint32_t>(b.keys.size());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_rig2d_set_parameter(CaffeineSession* session, CaffeineEntity entity, uint32_t index,
+                                                    float value) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    auto* player = rigFor(*session, entity);
+    if (!player || !player->rigValid) return CAFFEINE_NOT_FOUND;
+    if (index >= player->rig.parameters.size()) return CAFFEINE_NOT_FOUND;
+    // Copy what is needed before adding a component: that can move storage and invalidate `player`.
+    const std::string name = player->rig.parameters[index].name.cStr();
+    const float minimum = player->rig.parameters[index].minValue;
+    const float maximum = player->rig.parameters[index].maxValue;
+    const float clamped = std::min(std::max(value, minimum), maximum);
+    player = nullptr;
+
+    const auto ecsEntity = Caffeine::ECS::Entity(entity, &session->world);
+    if (!session->world.has<Caffeine::Animation::PhaseShift>(ecsEntity)) {
+        session->world.add<Caffeine::Animation::PhaseShift>(ecsEntity, Caffeine::Animation::PhaseShift{});
+    }
+    auto* ps = session->world.get<Caffeine::Animation::PhaseShift>(ecsEntity);
+    if (!ps) return CAFFEINE_ERROR;
+    const auto* existing = ps->findParameter(Caffeine::FixedString<32>(name.c_str()));
+    if (existing && existing->type != Caffeine::Animation::ParameterType::Float) return CAFFEINE_INVALID_ARGUMENT;
+    if (!existing) ps->addParameter(name.c_str(), Caffeine::Animation::ParameterType::Float);
+    ps->setFloat(name.c_str(), clamped);
+    return CAFFEINE_OK;
+}
+
 CaffeineResult caffeine_micromesh_build(const float* positions, uint32_t vertex_count,
                                         const uint32_t* indices, uint32_t index_count,
                                         CaffeineMicromeshStats* out_stats, uint8_t** out_bytes,
@@ -2360,6 +3095,8 @@ CaffeineResult caffeine_session_render_stats(const CaffeineSession* session,
     out->total_ms = stats.totalMs;
     out->gpu_water_draws = stats.gpuWaterDraws;
     out->micromesh_draws = stats.micromeshDraws;
+    out->shadow_draws = stats.shadowDraws;
+    out->shadow_draws_culled = stats.shadowDrawsCulled;
     if (session->renderDevice) {
         const auto caps = session->renderDevice->capabilities();
         out->indirect_draw = caps.indirectDraw ? 1 : 0;
@@ -2385,6 +3122,258 @@ CaffeineResult caffeine_session_micromesh_stats(const CaffeineSession* session,
     out->arena_capacity = stats.arenaCapacity;
     out->overflowed = stats.overflowed;
     out->occlusion = stats.occlusionActive ? 1u : 0u;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_photon_stats(const CaffeineSession* session, CaffeinePhotonStats* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeinePhotonStats{};
+    if (!session->sceneRenderer) return CAFFEINE_OK;
+    const auto stats = session->sceneRenderer->photonStats();
+    out->objects = stats.objects;
+    out->triangles = stats.triangles;
+    out->over_budget = stats.overBudget;
+    out->far_enabled = stats.farEnabled;
+    out->full_rebuilds = stats.fullRebuilds;
+    out->region_rebuilds = stats.regionRebuilds;
+    out->last_level_mask = stats.lastLevelMask;
+    out->last_regions = stats.lastRegions;
+    out->last_update_ms = stats.lastUpdateMs;
+    out->target_rebuilds = stats.targetRebuilds;
+    out->far_skipped = stats.farSkipped;
+    out->far_half_rate = stats.farHalfRate;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_photon_rebuild(CaffeineSession* session) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (session->sceneRenderer) session->sceneRenderer->requestPhotonRebuild();
+    return CAFFEINE_OK;
+}
+
+// -------------------------------------------------------------------------------- profiler
+
+namespace {
+
+void collectProfileScopes(const Caffeine::Vector<Caffeine::Debug::Profiler::ScopeStats>& all, uint32_t index,
+                          uint32_t depth, std::vector<std::pair<uint32_t, uint32_t>>& order) {
+    std::vector<uint32_t> children;
+    for (uint32_t child = all[index].firstChildIndex; child != Caffeine::Debug::Profiler::kInvalidNode;
+         child = all[child].nextSiblingIndex) {
+        children.push_back(child);
+    }
+    // Siblings are linked newest first; the report reads in the order the scopes first ran.
+    std::sort(children.begin(), children.end());
+    for (uint32_t child : children) {
+        order.emplace_back(child, depth);
+        collectProfileScopes(all, child, depth + 1, order);
+    }
+}
+
+}  // namespace
+
+CaffeineResult caffeine_profiler_report(CaffeineProfileScope* out, uint32_t capacity, uint32_t* out_count) {
+    if (!out_count || (!out && capacity > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    Caffeine::Vector<Caffeine::Debug::Profiler::ScopeStats> all;
+    Caffeine::Debug::Profiler::instance().report(all);
+    std::vector<std::pair<uint32_t, uint32_t>> order;
+    if (all.size() > 0) collectProfileScopes(all, 0, 0, order);
+    *out_count = static_cast<uint32_t>(order.size());
+    for (uint32_t i = 0; i < capacity && i < order.size(); ++i) {
+        const auto& stats = all[order[i].first];
+        CaffeineProfileScope& scope = out[i];
+        scope = CaffeineProfileScope{};
+        std::strncpy(scope.name, stats.name ? stats.name : "", sizeof(scope.name) - 1);
+        scope.depth = order[i].second;
+        scope.calls = static_cast<uint32_t>(std::min<uint64_t>(stats.callCount, 0xFFFFFFFFull));
+        scope.last_ms = static_cast<float>(stats.lastMs);
+        scope.avg_ms = static_cast<float>(stats.avgMs);
+        scope.max_ms = static_cast<float>(stats.maxMs);
+        scope.self_ms = static_cast<float>(stats.avgSelfMs);
+        scope.recent_avg_ms = static_cast<float>(stats.recentAvgMs);
+        scope.recent_max_ms = static_cast<float>(stats.recentMaxMs);
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_profiler_reset(void) {
+    Caffeine::Debug::Profiler::instance().reset();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_profiler_set_gpu_timing(int32_t enabled) {
+    Caffeine::Debug::Profiler::instance().setGpuTiming(enabled != 0);
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_profiler_gpu_timing(int32_t* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = Caffeine::Debug::Profiler::instance().gpuTiming() ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_system_metrics(CaffeineSystemMetrics* out) {
+    if (!out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineSystemMetrics{};
+    const Caffeine::Debug::MachineMetrics m = Caffeine::Debug::sampleMachineMetrics();
+    out->cpu_core_count = m.cpuCoreCount;
+    for (uint32_t i = 0; i < m.cpuCoreCount && i < CAFFEINE_MAX_CPU_CORES; ++i) {
+        out->cpu_core_percent[i] = m.cpuCorePercent[i];
+    }
+    out->cpu_total_percent = m.cpuTotalPercent;
+    out->process_cpu_percent = m.processCpuPercent;
+    out->ram_process_mib = m.ramProcessMiB;
+    out->ram_used_mib = m.ramUsedMiB;
+    out->ram_total_mib = m.ramTotalMiB;
+    out->gpu_busy_percent = m.gpuBusyPercent;
+    out->vram_used_mib = m.vramUsedMiB;
+    out->vram_total_mib = m.vramTotalMiB;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_weather_state(const CaffeineSession* session, CaffeineWeatherState* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineWeatherState{};
+    if (!session->sceneRenderer) return CAFFEINE_OK;
+    const auto& lightning = session->sceneRenderer->lightning();
+    out->flash = lightning.flash;
+    out->bolt = lightning.bolt;
+    out->gust = session->sceneRenderer->weatherWindGust();
+    out->clock_s = session->sceneRenderer->weatherClock();
+    out->lightning_active = session->sceneRenderer->lightningActive() ? 1 : 0;
+    out->strike_distance_m = lightning.strike.distance;
+    out->strike_azimuth_rad = lightning.strike.azimuth;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_poll_thunder(CaffeineSession* session, CaffeineThunderEvent* out, uint32_t capacity,
+                                             uint32_t* out_count) {
+    if (!session || !out_count || (!out && capacity > 0)) return CAFFEINE_INVALID_ARGUMENT;
+    *out_count = 0;
+    if (!session->sceneRenderer) return CAFFEINE_OK;
+    // The renderer hands its thunder to the session each frame (the weather's sound reads it too): this drains what
+    // has waited since the last call.
+    const uint32_t found = static_cast<uint32_t>(std::min<size_t>(capacity, session->thunderQueue.size()));
+    for (uint32_t i = 0; i < found; ++i) {
+        const auto& event = session->thunderQueue[i];
+        out[i].distance_m = event.distance;
+        out[i].azimuth_rad = event.azimuth;
+        out[i].volume = event.volume;
+        out[i].arrival_s = event.arrival;
+    }
+    session->thunderQueue.erase(session->thunderQueue.begin(), session->thunderQueue.begin() + found);
+    *out_count = found;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_audio_state(const CaffeineSession* session, CaffeineAudioState* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineAudioState{};
+    if (session->sceneRenderer) {
+        out->enabled = session->sceneRenderer->weather().audio ? 1 : 0;
+        out->volume = session->sceneRenderer->weather().audioVolume;
+    }
+    if (session->audio) out->device_ready = session->audio->ready() ? 1 : 0;
+    if (session->weatherAudio) {
+        out->rain_level = session->weatherAudio->rainLevel();
+        out->wind_level = session->weatherAudio->windLevel();
+        out->rain_playing = session->weatherAudio->rainPlaying() ? 1 : 0;
+        out->wind_playing = session->weatherAudio->windPlaying() ? 1 : 0;
+        out->thunder_heard = session->weatherAudio->thunderHeard();
+        out->thunder_played = session->weatherAudio->thunderPlayed();
+    }
+    // Played by the volumetric mixer: its device, its beds, its claps.
+    if (session->volumetricScene && session->volumetricScene->enabled() && session->volumetric) {
+        out->device_ready = session->volumetric->deviceOpen() ? 1 : 0;
+        out->rain_playing = session->volumetricScene->weatherRainPlaying() ? 1 : 0;
+        out->wind_playing = session->volumetricScene->weatherWindPlaying() ? 1 : 0;
+        out->thunder_played = session->volumetricScene->thunderPlayed();
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_volumetric_state(const CaffeineSession* session, CaffeineVolumetricState* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineVolumetricState{};
+    if (!session->volumetric || !session->volumetricScene) return CAFFEINE_OK;
+    const auto& scene = *session->volumetricScene;
+    out->enabled = scene.enabled() ? 1 : 0;
+    out->device_open = session->volumetric->deviceOpen() ? 1 : 0;
+    out->voices = static_cast<uint32_t>(scene.voices().size());
+    out->obstacles = scene.obstacleCount();
+    out->clips_missing = scene.missingClips();
+    const Caffeine::Audio::RoomEstimate room = scene.room();
+    out->openness = room.openness;
+    out->sky_exposure = room.skyExposure;
+    out->rt60_s = room.rt60;
+    out->wet = room.wet;
+    out->echoes = room.echoCount;
+    out->time_s = static_cast<float>(session->volumetric->lock()->time());
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_volumetric_voice(const CaffeineSession* session, uint32_t index, CaffeineVolumetricVoice* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    *out = CaffeineVolumetricVoice{};
+    if (!session->volumetricScene) return CAFFEINE_INVALID_ARGUMENT;
+    const auto voices = session->volumetricScene->voices();
+    if (index >= voices.size()) return CAFFEINE_INVALID_ARGUMENT;
+    const auto& v = voices[index];
+    out->entity = v.entity;
+    out->layer = static_cast<int32_t>(v.layer);
+    out->loaded = v.loaded ? 1 : 0;
+    out->playing = v.playing ? 1 : 0;
+    out->distance_m = v.debug.distance;
+    out->delay_s = v.debug.delaySeconds;
+    out->pitch_ratio = v.debug.pitchRatio;
+    out->gain_db = 20.0f * std::log10(std::max(v.debug.gain, 1e-5f));
+    out->cutoff_hz = v.debug.cutoffHz;
+    out->blocked = v.debug.blocked ? 1 : 0;
+    out->diffracted = v.debug.diffracted ? 1 : 0;
+    out->dir_x = v.debug.apparentDirection.x;
+    out->dir_y = v.debug.apparentDirection.y;
+    out->dir_z = v.debug.apparentDirection.z;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_audio_output(CaffeineSession* session, int32_t on) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->volumetricOutput = on != 0;
+    if (!session->volumetric) return CAFFEINE_OK;  // opened with the first frame that finds a Volumetric Audio component
+    if (on) return session->volumetric->openDevice(session->volumetricDevice) ? CAFFEINE_OK : CAFFEINE_ERROR;
+    session->volumetric->closeDevice();
+    return CAFFEINE_OK;
+}
+
+int32_t caffeine_audio_output_device_count(void) {
+    return static_cast<int32_t>(Caffeine::Audio::VolumetricAudio::outputDevices().size());
+}
+
+CaffeineResult caffeine_audio_output_device_name(int32_t index, char* buffer, size_t capacity) {
+    if (!buffer || capacity == 0) return CAFFEINE_INVALID_ARGUMENT;
+    const auto names = Caffeine::Audio::VolumetricAudio::outputDevices();
+    if (index < 0 || static_cast<size_t>(index) >= names.size()) return CAFFEINE_INVALID_ARGUMENT;
+    const std::string& name = names[static_cast<size_t>(index)];
+    const size_t n = std::min(name.size(), capacity - 1);
+    std::memcpy(buffer, name.data(), n);
+    buffer[n] = '\0';
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_set_audio_output_device(CaffeineSession* session, int32_t index) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    session->volumetricDevice = index < 0 ? -1 : index;
+    if (session->volumetric && session->volumetric->deviceOpen()) {
+        return session->volumetric->openDevice(session->volumetricDevice) ? CAFFEINE_OK : CAFFEINE_ERROR;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_volumetric_render(CaffeineSession* session, float* out_stereo, uint32_t frames, uint32_t* written) {
+    if (!session || !out_stereo || !written) return CAFFEINE_INVALID_ARGUMENT;
+    *written = 0;
+    if (!session->volumetric) return CAFFEINE_OK;
+    *written = session->volumetric->renderOffline(out_stereo, frames);
     return CAFFEINE_OK;
 }
 

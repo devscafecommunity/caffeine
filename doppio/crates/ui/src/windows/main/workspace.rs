@@ -91,6 +91,7 @@ impl App {
         }
         let _ = engine.refresh_assets();
         self.assets = engine.assets();
+        crate::uikit::asset_kind::refine(&mut self.assets);
         self.notify(
             ChipTone::Accent,
             format!(

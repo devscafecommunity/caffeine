@@ -1,0 +1,13 @@
+{
+  "name": "Audio: the tab opens and offers to add the volumetric audio when the scene has none",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.audio", "label": "open the Audio tab" },
+    { "action": "expect", "exists": "id:editor.pane.audio" },
+    { "action": "expect", "exists": "id:audio.setup.add", "label": "no volumetric audio yet: Add is offered" },
+    { "action": "expect", "missing": "id:audio.mixer.enabled" },
+    { "action": "screenshot", "name": "audio-empty" }
+  ]
+}

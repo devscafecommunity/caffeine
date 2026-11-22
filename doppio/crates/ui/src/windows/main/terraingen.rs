@@ -371,6 +371,20 @@ impl App {
                 self.terraingen.push(Some(format!("string:{id}:{index}")));
                 self.terraingen.refresh();
             }
+            Edit::PickAsset(id, index) => {
+                let current = self
+                    .terraingen
+                    .graph
+                    .node(id)
+                    .and_then(|node| node.strings.get(index).cloned())
+                    .unwrap_or_default();
+                self.open_asset_pick(
+                    super::assetpick::PickTarget::TerrainString { node: id, index },
+                    vec![crate::uikit::asset_kind::AssetKind::Image],
+                    "Terrain layer picture".to_owned(),
+                    current,
+                );
+            }
             Edit::SetName(name) => self.terraingen.name = name,
             Edit::Scatter => self.scatter_from_terrain_tab(),
             Edit::EditScatterPlan => self.edit_scatter_plan(),

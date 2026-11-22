@@ -7,6 +7,8 @@
 #include <SDL3/SDL.h>
 #endif
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <unordered_map>
 #include <vector>
@@ -81,6 +83,15 @@ struct AudioService::Impl {
         return raw;
     }
 
+    struct Spatial {
+        Vec3 position;
+        f32 refDistance = 1.0f;
+        f32 maxDistance = 100.0f;
+        f32 volume = 1.0f;
+    };
+    Listener3D listener;
+    std::unordered_map<u32, Spatial> spatial;
+
     u32 track(AudioSource* source) {
         if (!source) return 0;
         // Drop handles whose sound ended so the table stays small.
@@ -106,6 +117,7 @@ bool AudioService::init() { return m_impl->system.init(); }
 void AudioService::shutdown() {
     if (!m_impl) return;
     m_impl->handles.clear();
+    m_impl->spatial.clear();
     m_impl->system.shutdown();
 }
 bool AudioService::ready() const { return m_impl->system.isInitialized(); }
@@ -140,6 +152,56 @@ u32 AudioService::playAt(const std::string& path, f32 x, f32 y, f32 maxDistance,
     return m_impl->track(source);
 }
 
+bool AudioService::registerSamples(const std::string& name, const std::vector<f32>& samples, u32 sampleRate,
+                                   u32 channels) {
+    if (name.empty() || samples.empty() || sampleRate == 0 || channels == 0) return false;
+    // A name registered once stays: a looping source reads its clip's memory as it plays.
+    if (m_impl->clips.count(name)) return true;
+    auto loaded = std::make_unique<Impl::Loaded>();
+    loaded->pcm.resize(samples.size() * 2);
+    for (usize i = 0; i < samples.size(); ++i) {
+        const i16 v = static_cast<i16>(std::lround(std::clamp(samples[i], -1.0f, 1.0f) * 32767.0f));
+        loaded->pcm[i * 2] = static_cast<u8>(static_cast<u16>(v) & 0xFFu);
+        loaded->pcm[i * 2 + 1] = static_cast<u8>(static_cast<u16>(v) >> 8);
+    }
+    loaded->clip.data = loaded->pcm.data();
+    loaded->clip.size = loaded->pcm.size();
+    loaded->clip.sampleRate = sampleRate;
+    loaded->clip.channels = static_cast<u16>(channels);
+    loaded->clip.bitsPerSample = 16;
+    loaded->clip.duration = static_cast<f32>(samples.size() / channels) / static_cast<f32>(sampleRate);
+    m_impl->clips.emplace(name, std::move(loaded));
+    return true;
+}
+
+void AudioService::setListener3D(const Listener3D& listener) { m_impl->listener = listener; }
+
+u32 AudioService::playAt3D(const std::string& path, const Vec3& position, f32 refDistance, f32 maxDistance,
+                           f32 volume, bool loop) {
+    if (!ready()) return 0;
+    std::string error;
+    Impl::Loaded* clip = m_impl->load(path, &error);
+    if (!clip) { CF_WARN("Audio", "%s", error.c_str()); return 0; }
+    const SpatialParams p = spatialize(m_impl->listener, position, refDistance, maxDistance);
+    AudioSource* source = m_impl->system.playSFX(&clip->clip, p.gain * volume, p.pan);
+    if (!source) return 0;
+    source->setLoop(loop);
+    const u32 handle = m_impl->track(source);
+    m_impl->spatial[handle] = Impl::Spatial{position, refDistance, maxDistance, volume};
+    return handle;
+}
+
+bool AudioService::setSourcePosition3D(u32 handle, const Vec3& position) {
+    auto* source = m_impl->find(handle);
+    auto it = m_impl->spatial.find(handle);
+    if (!source || it == m_impl->spatial.end()) return false;
+    it->second.position = position;
+    const SpatialParams p = spatialize(m_impl->listener, position, it->second.refDistance, it->second.maxDistance);
+    source->setVolume(p.gain * it->second.volume);
+    source->setPan(p.pan);
+    return true;
+}
+
 bool AudioService::stop(u32 h) { auto* s = m_impl->find(h); if (!s) return false; s->stop(); return true; }
 bool AudioService::pause(u32 h) { auto* s = m_impl->find(h); if (!s) return false; s->pause(); return true; }
 bool AudioService::resume(u32 h) { auto* s = m_impl->find(h); if (!s) return false; s->play(); return true; }
@@ -150,6 +212,7 @@ bool AudioService::isPlaying(u32 h) const { auto* s = m_impl->find(h); return s 
 void AudioService::stopAll() {
     for (auto& [_, s] : m_impl->handles) if (!s->isFree()) s->stop();
     m_impl->handles.clear();
+    m_impl->spatial.clear();
 }
 
 void AudioService::setMasterVolume(f32 v) { m_impl->system.setMasterVolume(v); }
@@ -170,6 +233,10 @@ bool AudioService::preload(const std::string&, std::string* error) { if (error) 
 f32 AudioService::duration(const std::string&) const { return 0.0f; }
 u32 AudioService::play(const std::string&, f32, f32, bool) { return 0; }
 u32 AudioService::playAt(const std::string&, f32, f32, f32, f32) { return 0; }
+bool AudioService::registerSamples(const std::string&, const std::vector<f32>&, u32, u32) { return false; }
+void AudioService::setListener3D(const Listener3D&) {}
+u32 AudioService::playAt3D(const std::string&, const Vec3&, f32, f32, f32, bool) { return 0; }
+bool AudioService::setSourcePosition3D(u32, const Vec3&) { return false; }
 bool AudioService::stop(u32) { return false; }
 bool AudioService::pause(u32) { return false; }
 bool AudioService::resume(u32) { return false; }

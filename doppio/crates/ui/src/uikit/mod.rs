@@ -1,9 +1,11 @@
 pub mod asset_files;
 pub mod asset_folders;
+pub mod asset_kind;
 pub mod asset_wizard;
 pub mod behaviour;
 pub mod components;
 pub mod dryad;
+pub mod file_browser;
 pub mod generators;
 pub mod height_pack;
 pub mod icons;

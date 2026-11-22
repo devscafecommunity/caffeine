@@ -494,6 +494,8 @@ void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     for (auto& [_, entry] : m_entries) {
         releaseEntryGpu(entry);
     }
+    // Nothing of this device is kept: a later call that reaches for the device must not find it (it is about to go).
+    if (m_gpuDevice == device) m_gpuDevice = nullptr;
 }
 #endif
 

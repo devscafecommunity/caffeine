@@ -9,9 +9,15 @@ use std::path::{Path, PathBuf};
 
 use libloading::Library;
 
+mod animation;
 mod material;
 mod terrain;
 mod water;
+pub use animation::{
+    ConditionOp, PhaseShiftCondition, PhaseShiftKind, PhaseShiftParameter, PhaseShiftSnapshot,
+    PhaseShiftState, PhaseShiftTransition, Rig2dBinding, Rig2dBone, Rig2dParameter, Rig2dSnapshot,
+    Rig2dVertex, RigChannel,
+};
 pub use material::{Material, MaterialAlphaMode, MaterialPreset};
 use material::{RawMaterial, RawMaterialPresetInfo};
 use terrain::RawTerrain;
@@ -146,6 +152,310 @@ pub struct RenderStats {
     pub gpu_water_draws: u32,
     /// Meshes drawn as a GPU-selected Micromesh cut (C ABI v14).
     pub micromesh_draws: u32,
+    /// Caster submissions into the sun's shadow cascades (a mesh counts once per cascade) and the casters
+    /// skipped because they lie outside a cascade (C ABI v19).
+    pub shadow_draws: u32,
+    pub shadow_draws_culled: u32,
+}
+
+/// What Photon's voxel far field holds and what its latest update cost (C ABI v17).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PhotonStats {
+    /// Solid objects in the triangle volume.
+    pub objects: u32,
+    /// Triangles voxelised (0 while over budget).
+    pub triangles: u32,
+    /// The scene passed the 1M-triangle cap: only the screen fill remains.
+    pub over_budget: bool,
+    /// The far field ran in the latest frame.
+    pub far_enabled: bool,
+    /// Clipmap levels rebuilt whole since the session began.
+    pub full_rebuilds: u32,
+    /// Dirty boxes revoxelised since the session began.
+    pub region_rebuilds: u32,
+    /// Levels rebuilt whole in the latest update (one bit per level).
+    pub last_level_mask: u32,
+    /// Dirty boxes revoxelised in the latest update.
+    pub last_regions: u32,
+    /// CPU time to encode the latest voxel update.
+    pub last_update_ms: f32,
+    /// Times the per-size targets were created again: a second view of another size makes it climb.
+    pub target_rebuilds: u32,
+    /// Frames the far field was left as it was because nothing it depends on changed.
+    pub far_skipped: u32,
+    /// Frames it was skipped because the camera only turned in a calm scene.
+    pub far_half_rate: u32,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawPhotonStats {
+    objects: u32,
+    triangles: u32,
+    over_budget: u32,
+    far_enabled: u32,
+    full_rebuilds: u32,
+    region_rebuilds: u32,
+    last_level_mask: u32,
+    last_regions: u32,
+    last_update_ms: f32,
+    target_rebuilds: u32,
+    far_skipped: u32,
+    far_half_rate: u32,
+}
+
+/// The most logical CPU cores [`SystemMetrics`] reports.
+pub const MAX_CPU_CORES: usize = 64;
+
+/// The machine as the profiler's graphs show it (C ABI v19). Percentages cover the time since the previous call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SystemMetrics {
+    /// Busy share of each logical core, 0..100 (empty where the platform cannot say).
+    pub cpu_cores: Vec<f32>,
+    /// The whole machine, 0..100.
+    pub cpu_total: f32,
+    /// This process, in percent of one core (can exceed 100).
+    pub process_cpu: f32,
+    /// Resident memory of this process, MiB.
+    pub ram_process_mib: Option<f32>,
+    /// Memory in use on the whole machine, and its size, MiB.
+    pub ram_used_mib: Option<f32>,
+    pub ram_total_mib: Option<f32>,
+    /// GPU busy share, 0..100, and video memory in use and its size (MiB); `None` when unavailable.
+    pub gpu_busy: Option<f32>,
+    pub vram_used_mib: Option<f32>,
+    pub vram_total_mib: Option<f32>,
+}
+
+#[repr(C)]
+struct RawSystemMetrics {
+    cpu_core_count: u32,
+    cpu_core_percent: [f32; MAX_CPU_CORES],
+    cpu_total_percent: f32,
+    process_cpu_percent: f32,
+    ram_process_mib: f32,
+    ram_used_mib: f32,
+    ram_total_mib: f32,
+    gpu_busy_percent: f32,
+    vram_used_mib: f32,
+    vram_total_mib: f32,
+}
+
+/// The weather's moving parts at the latest frame (C ABI v19): the lightning lighting the scene and the wind's surge.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct WeatherState {
+    /// 0 none, about 1 at a full return stroke (more for a close strike).
+    pub flash: f32,
+    /// 0..1: how visible the bolt in the sky is.
+    pub bolt: f32,
+    /// The wind's strength relative to its mean (1 = mean).
+    pub gust: f32,
+    /// The clock the strikes and the thunder are timed on, seconds.
+    pub clock_s: f32,
+    /// Whether the scene has lightning running.
+    pub lightning_active: bool,
+    /// Of the strike being shown: metres and direction around +Y.
+    pub strike_distance_m: f32,
+    pub strike_azimuth_rad: f32,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawGameState {
+    running: i32,
+    scripts_running: i32,
+    frames: u64,
+    time_s: f32,
+}
+
+/// What the running game reports (C ABI v23).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GameState {
+    pub running: bool,
+    /// The script engine started: Lua and Dryad scripts run.
+    pub scripts_running: bool,
+    pub frames: u64,
+    pub time_s: f32,
+}
+
+/// A scene view: the scene through one of its cameras instead of the editor's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneView {
+    /// The active camera: what the compiled game shows.
+    Game,
+    /// A chosen camera (see `set_preview_camera`), else the active one.
+    Camera,
+}
+
+impl SceneView {
+    fn raw(self) -> i32 {
+        match self {
+            SceneView::Game => 0,
+            SceneView::Camera => 1,
+        }
+    }
+}
+
+#[repr(C)]
+struct RawWeatherState {
+    flash: f32,
+    bolt: f32,
+    gust: f32,
+    clock_s: f32,
+    lightning_active: i32,
+    strike_distance_m: f32,
+    strike_azimuth_rad: f32,
+}
+
+/// What the weather's sound is doing (C ABI v19). The session makes the sound itself, from noise, when the scene's
+/// `Weather` component has `Audio Enabled`; without an audio device the levels still follow the weather.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AudioState {
+    /// The scene asks for the weather's sound.
+    pub enabled: bool,
+    /// An audio device is open.
+    pub device_ready: bool,
+    pub volume: f32,
+    /// The loudness (0..1) each bed is heading for.
+    pub rain_level: f32,
+    pub wind_level: f32,
+    /// The bed is running on the device.
+    pub rain_playing: bool,
+    pub wind_playing: bool,
+    /// Claps handed to the player since the session began, and the ones that started on a device.
+    pub thunder_heard: u32,
+    pub thunder_played: u32,
+}
+
+#[repr(C)]
+struct RawAudioState {
+    enabled: i32,
+    device_ready: i32,
+    volume: f32,
+    rain_level: f32,
+    wind_level: f32,
+    rain_playing: i32,
+    wind_playing: i32,
+    thunder_heard: u32,
+    thunder_played: u32,
+}
+
+/// The scene's volumetric audio (C ABI v20): emitters travelling through the scene's acoustic obstacles.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct VolumetricState {
+    /// An enabled `Volumetric Audio` component is in the scene.
+    pub enabled: bool,
+    /// The mixer plays on a sound device (otherwise it mixes silently so this state keeps moving).
+    pub device_open: bool,
+    pub voices: u32,
+    pub obstacles: u32,
+    pub clips_missing: u32,
+    /// The room round the listener: 0 shut in .. 1 open; 0 under a roof .. 1 open sky; the reverb tail; its level.
+    pub openness: f32,
+    pub sky_exposure: f32,
+    pub rt60_s: f32,
+    pub wet: f32,
+    pub echoes: u32,
+    pub time_s: f32,
+}
+
+#[repr(C)]
+struct RawVolumetricState {
+    enabled: i32,
+    device_open: i32,
+    voices: u32,
+    obstacles: u32,
+    clips_missing: u32,
+    openness: f32,
+    sky_exposure: f32,
+    rt60_s: f32,
+    wet: f32,
+    echoes: u32,
+    time_s: f32,
+}
+
+/// What the mixer decided for one emitter (C ABI v20).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct VolumetricVoice {
+    pub entity: u32,
+    /// 0 World, 1 Ambient, 2 Music, 3 Ui.
+    pub layer: i32,
+    pub loaded: bool,
+    pub playing: bool,
+    pub distance_m: f32,
+    pub delay_s: f32,
+    /// The Doppler shift: above 1 while it approaches.
+    pub pitch_ratio: f32,
+    pub gain_db: f32,
+    pub cutoff_hz: f32,
+    pub blocked: bool,
+    pub diffracted: bool,
+    /// Where it seems to come from, in the world.
+    pub direction: [f32; 3],
+}
+
+#[repr(C)]
+struct RawVolumetricVoice {
+    entity: u32,
+    layer: i32,
+    loaded: i32,
+    playing: i32,
+    distance_m: f32,
+    delay_s: f32,
+    pitch_ratio: f32,
+    gain_db: f32,
+    cutoff_hz: f32,
+    blocked: i32,
+    diffracted: i32,
+    dir_x: f32,
+    dir_y: f32,
+    dir_z: f32,
+}
+
+/// A clap of thunder that has reached the listener (C ABI v19). The engine makes no sound: a player does.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[repr(C)]
+pub struct ThunderEvent {
+    /// Of the strike, metres (the sound took distance / 343 s to arrive).
+    pub distance_m: f32,
+    /// Direction of the strike around +Y.
+    pub azimuth_rad: f32,
+    /// 0..1, falling with the distance.
+    pub volume: f32,
+    /// On the clock [`WeatherState::clock_s`] reports.
+    pub arrival_s: f32,
+}
+
+/// One scope of the engine's profiler (C ABI v18), in depth-first order.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ProfileScope {
+    pub name: String,
+    /// 0 for the top scopes.
+    pub depth: u32,
+    pub calls: u32,
+    /// Milliseconds: the most recent call, the average and the worst since the last reset, and the average
+    /// time not spent in child scopes.
+    pub last_ms: f32,
+    pub avg_ms: f32,
+    pub max_ms: f32,
+    pub self_ms: f32,
+    /// Mean and worst of the latest 120 calls: what the scene does now (C ABI v19).
+    pub recent_avg_ms: f32,
+    pub recent_max_ms: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawProfileScope {
+    name: [u8; 48],
+    depth: u32,
+    calls: u32,
+    last_ms: f32,
+    avg_ms: f32,
+    max_ms: f32,
+    self_ms: f32,
+    recent_avg_ms: f32,
+    recent_max_ms: f32,
 }
 
 /// What the last frame's Micromesh draws kept (C ABI v14). Reading it waits for the GPU.
@@ -201,6 +511,8 @@ struct RawRenderStats {
     mesh_shaders: i32,
     gpu_water_draws: u32,
     micromesh_draws: u32,
+    shadow_draws: u32,
+    shadow_draws_culled: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -640,10 +952,41 @@ struct RawTerrainMaskInfo {
     resolution_z: u32,
     builtin: i32,
 }
+type SceneCameraFn = unsafe extern "C" fn(*const c_void, i32, *mut u32, *mut f32) -> i32;
+type SetPreviewCameraFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
+type ViewRenderBeginFn = unsafe extern "C" fn(*mut c_void, i32, u32, u32) -> i32;
+type ViewRenderPollFn = unsafe extern "C" fn(*mut c_void, i32, *mut u8, usize) -> i32;
+type GameStartFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type GameStopFn = unsafe extern "C" fn(*mut c_void);
+type GameRunningFn = unsafe extern "C" fn(*const c_void) -> i32;
+type GameTickFn = unsafe extern "C" fn(*mut c_void, f32) -> i32;
+type GameStateFn = unsafe extern "C" fn(*const c_void, *mut RawGameState) -> i32;
+type GameKeyFn = unsafe extern "C" fn(*mut c_void, u32, i32);
+type GameReleaseKeysFn = unsafe extern "C" fn(*mut c_void);
+type GameMouseFn = unsafe extern "C" fn(*mut c_void, f32, f32, u32, i32);
+type SetSimulatingFn = unsafe extern "C" fn(*mut c_void, i32);
+type SimulatingFn = unsafe extern "C" fn(*const c_void) -> i32;
 type SetWaterFn = unsafe extern "C" fn(*mut c_void, u32, *const RawWater) -> i32;
 type GetWaterFn = unsafe extern "C" fn(*const c_void, u32, *mut RawWater) -> i32;
 type WaterHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
 type RenderStatsFn = unsafe extern "C" fn(*const c_void, *mut RawRenderStats) -> i32;
+type PhotonStatsFn = unsafe extern "C" fn(*const c_void, *mut RawPhotonStats) -> i32;
+type PhotonRebuildFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type ProfilerReportFn = unsafe extern "C" fn(*mut RawProfileScope, u32, *mut u32) -> i32;
+type ProfilerResetFn = unsafe extern "C" fn() -> i32;
+type ProfilerSetGpuFn = unsafe extern "C" fn(i32) -> i32;
+type ProfilerGpuFn = unsafe extern "C" fn(*mut i32) -> i32;
+type SystemMetricsFn = unsafe extern "C" fn(*mut RawSystemMetrics) -> i32;
+type WeatherStateFn = unsafe extern "C" fn(*const c_void, *mut RawWeatherState) -> i32;
+type VolumetricStateFn = unsafe extern "C" fn(*const c_void, *mut RawVolumetricState) -> i32;
+type VolumetricVoiceFn = unsafe extern "C" fn(*const c_void, u32, *mut RawVolumetricVoice) -> i32;
+type SetAudioOutputFn = unsafe extern "C" fn(*mut c_void, i32) -> i32;
+type AudioDeviceCountFn = unsafe extern "C" fn() -> i32;
+type AudioDeviceNameFn = unsafe extern "C" fn(i32, *mut u8, usize) -> i32;
+type SetAudioDeviceFn = unsafe extern "C" fn(*mut c_void, i32) -> i32;
+type VolumetricRenderFn = unsafe extern "C" fn(*mut c_void, *mut f32, u32, *mut u32) -> i32;
+type AudioStateFn = unsafe extern "C" fn(*const c_void, *mut RawAudioState) -> i32;
+type PollThunderFn = unsafe extern "C" fn(*mut c_void, *mut ThunderEvent, u32, *mut u32) -> i32;
 type MicromeshStatsFn = unsafe extern "C" fn(*const c_void, *mut RawMicromeshFrameStats) -> i32;
 type MicromeshBuildFn = unsafe extern "C" fn(
     *const f32,
@@ -767,6 +1110,20 @@ struct Functions {
     material_preview_begin: PreviewBeginFn,
     material_preview_poll: PreviewPollFn,
     preview_light: Option<PreviewLightFn>,
+    scene_camera: Option<SceneCameraFn>,
+    set_preview_camera: Option<SetPreviewCameraFn>,
+    view_render_begin: Option<ViewRenderBeginFn>,
+    view_render_poll: Option<ViewRenderPollFn>,
+    game_start: Option<GameStartFn>,
+    game_stop: Option<GameStopFn>,
+    game_running: Option<GameRunningFn>,
+    game_tick: Option<GameTickFn>,
+    game_state: Option<GameStateFn>,
+    game_key: Option<GameKeyFn>,
+    game_release_keys: Option<GameReleaseKeysFn>,
+    game_mouse: Option<GameMouseFn>,
+    set_simulating: Option<SetSimulatingFn>,
+    simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
     set_terrain: Option<SetTerrainFn>,
     get_terrain: Option<GetTerrainFn>,
@@ -781,8 +1138,42 @@ struct Functions {
     biome_check: Option<BiomeCheckFn>,
     get_water: Option<GetWaterFn>,
     water_height: Option<WaterHeightFn>,
+    phase_shift_counts: Option<animation::PhaseShiftCountsFn>,
+    phase_shift_parameter: Option<animation::PhaseShiftParameterFn>,
+    phase_shift_state: Option<animation::PhaseShiftStateFn>,
+    phase_shift_transition: Option<animation::PhaseShiftTransitionFn>,
+    phase_shift_condition: Option<animation::PhaseShiftConditionFn>,
+    phase_shift_set_float: Option<animation::PhaseShiftSetFloatFn>,
+    phase_shift_set_smoothing: Option<animation::PhaseShiftSetSmoothingFn>,
+    rig2d_attach: Option<animation::Rig2dAttachFn>,
+    rig2d_counts: Option<animation::Rig2dCountsFn>,
+    rig2d_bone: Option<animation::Rig2dBoneFn>,
+    rig2d_parameter: Option<animation::Rig2dParameterFn>,
+    rig2d_vertex: Option<animation::Rig2dVertexFn>,
+    rig2d_binding: Option<animation::Rig2dBindingFn>,
+    rig2d_set_parameter: Option<animation::Rig2dSetParameterFn>,
+    phase_shift_add: Option<animation::PhaseShiftAddFn>,
+    phase_shift_add_parameter: Option<animation::PhaseShiftAddParameterFn>,
+    phase_shift_remove_parameter: Option<animation::PhaseShiftRemoveParameterFn>,
     render_stats: Option<RenderStatsFn>,
     micromesh_stats: Option<MicromeshStatsFn>,
+    photon_stats: Option<PhotonStatsFn>,
+    photon_rebuild: Option<PhotonRebuildFn>,
+    profiler_report: Option<ProfilerReportFn>,
+    profiler_reset: Option<ProfilerResetFn>,
+    profiler_set_gpu_timing: Option<ProfilerSetGpuFn>,
+    profiler_gpu_timing: Option<ProfilerGpuFn>,
+    system_metrics: Option<SystemMetricsFn>,
+    weather_state: Option<WeatherStateFn>,
+    poll_thunder: Option<PollThunderFn>,
+    audio_state: Option<AudioStateFn>,
+    volumetric_state: Option<VolumetricStateFn>,
+    volumetric_voice: Option<VolumetricVoiceFn>,
+    set_audio_output: Option<SetAudioOutputFn>,
+    volumetric_render: Option<VolumetricRenderFn>,
+    audio_device_count: Option<AudioDeviceCountFn>,
+    audio_device_name: Option<AudioDeviceNameFn>,
+    set_audio_device: Option<SetAudioDeviceFn>,
     micromesh_build: Option<MicromeshBuildFn>,
     dryad_available: Option<DryadAvailableFn>,
     run_dryad: Option<RunDryadFn>,
@@ -983,11 +1374,103 @@ impl Engine {
             terrain_normal: unsafe { load_symbol(library, b"caffeine_session_terrain_normal\0") },
             scatter_terrain: unsafe { load_symbol(library, b"caffeine_session_scatter_terrain\0") },
             biome_check: unsafe { load_symbol(library, b"caffeine_biome_check\0") },
+            scene_camera: unsafe { load_symbol(library, b"caffeine_session_scene_camera\0") },
+            set_preview_camera: unsafe {
+                load_symbol(library, b"caffeine_session_set_preview_camera\0")
+            },
+            view_render_begin: unsafe {
+                load_symbol(library, b"caffeine_session_view_render_begin\0")
+            },
+            view_render_poll: unsafe {
+                load_symbol(library, b"caffeine_session_view_render_poll\0")
+            },
+            game_start: unsafe { load_symbol(library, b"caffeine_session_game_start\0") },
+            game_stop: unsafe { load_symbol(library, b"caffeine_session_game_stop\0") },
+            game_running: unsafe { load_symbol(library, b"caffeine_session_game_running\0") },
+            game_tick: unsafe { load_symbol(library, b"caffeine_session_game_tick\0") },
+            game_state: unsafe { load_symbol(library, b"caffeine_session_game_state\0") },
+            game_key: unsafe { load_symbol(library, b"caffeine_session_game_key\0") },
+            game_release_keys: unsafe {
+                load_symbol(library, b"caffeine_session_game_release_keys\0")
+            },
+            game_mouse: unsafe { load_symbol(library, b"caffeine_session_game_mouse\0") },
+            set_simulating: unsafe { load_symbol(library, b"caffeine_session_set_simulating\0") },
+            simulating: unsafe { load_symbol(library, b"caffeine_session_simulating\0") },
             set_water: unsafe { load_symbol(library, b"caffeine_session_set_water\0") },
             get_water: unsafe { load_symbol(library, b"caffeine_session_water\0") },
             water_height: unsafe { load_symbol(library, b"caffeine_session_water_height\0") },
+            phase_shift_counts: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_counts\0")
+            },
+            phase_shift_parameter: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_parameter\0")
+            },
+            phase_shift_state: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_state\0")
+            },
+            phase_shift_transition: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_transition\0")
+            },
+            phase_shift_condition: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_condition\0")
+            },
+            phase_shift_set_float: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_set_float\0")
+            },
+            phase_shift_set_smoothing: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_set_smoothing\0")
+            },
+            rig2d_attach: unsafe { load_symbol(library, b"caffeine_session_rig2d_attach\0") },
+            rig2d_counts: unsafe { load_symbol(library, b"caffeine_session_rig2d_counts\0") },
+            rig2d_bone: unsafe { load_symbol(library, b"caffeine_session_rig2d_bone\0") },
+            rig2d_parameter: unsafe { load_symbol(library, b"caffeine_session_rig2d_parameter\0") },
+            rig2d_vertex: unsafe { load_symbol(library, b"caffeine_session_rig2d_vertex\0") },
+            rig2d_binding: unsafe { load_symbol(library, b"caffeine_session_rig2d_binding\0") },
+            rig2d_set_parameter: unsafe {
+                load_symbol(library, b"caffeine_session_rig2d_set_parameter\0")
+            },
+            phase_shift_add: unsafe { load_symbol(library, b"caffeine_session_phase_shift_add\0") },
+            phase_shift_add_parameter: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_add_parameter\0")
+            },
+            phase_shift_remove_parameter: unsafe {
+                load_symbol(library, b"caffeine_session_phase_shift_remove_parameter\0")
+            },
             render_stats: unsafe { load_symbol(library, b"caffeine_session_render_stats\0") },
             micromesh_stats: unsafe { load_symbol(library, b"caffeine_session_micromesh_stats\0") },
+            photon_stats: unsafe { load_symbol(library, b"caffeine_session_photon_stats\0") },
+            photon_rebuild: unsafe { load_symbol(library, b"caffeine_session_photon_rebuild\0") },
+            profiler_report: unsafe { load_symbol(library, b"caffeine_profiler_report\0") },
+            profiler_reset: unsafe { load_symbol(library, b"caffeine_profiler_reset\0") },
+            profiler_set_gpu_timing: unsafe {
+                load_symbol(library, b"caffeine_profiler_set_gpu_timing\0")
+            },
+            profiler_gpu_timing: unsafe { load_symbol(library, b"caffeine_profiler_gpu_timing\0") },
+            system_metrics: unsafe { load_symbol(library, b"caffeine_system_metrics\0") },
+            weather_state: unsafe { load_symbol(library, b"caffeine_session_weather_state\0") },
+            poll_thunder: unsafe { load_symbol(library, b"caffeine_session_poll_thunder\0") },
+            audio_state: unsafe { load_symbol(library, b"caffeine_session_audio_state\0") },
+            volumetric_state: unsafe {
+                load_symbol(library, b"caffeine_session_volumetric_state\0")
+            },
+            volumetric_voice: unsafe {
+                load_symbol(library, b"caffeine_session_volumetric_voice\0")
+            },
+            set_audio_output: unsafe {
+                load_symbol(library, b"caffeine_session_set_audio_output\0")
+            },
+            volumetric_render: unsafe {
+                load_symbol(library, b"caffeine_session_volumetric_render\0")
+            },
+            audio_device_count: unsafe {
+                load_symbol(library, b"caffeine_audio_output_device_count\0")
+            },
+            audio_device_name: unsafe {
+                load_symbol(library, b"caffeine_audio_output_device_name\0")
+            },
+            set_audio_device: unsafe {
+                load_symbol(library, b"caffeine_session_set_audio_output_device\0")
+            },
             micromesh_build: unsafe { load_symbol(library, b"caffeine_micromesh_build\0") },
             dryad_available: unsafe { load_symbol(library, b"caffeine_dryad_available\0") },
             run_dryad: unsafe { load_symbol(library, b"caffeine_session_run_dryad\0") },
@@ -1932,6 +2415,8 @@ impl Engine {
             mesh_shaders: raw.mesh_shaders != 0,
             gpu_water_draws: raw.gpu_water_draws,
             micromesh_draws: raw.micromesh_draws,
+            shadow_draws: raw.shadow_draws,
+            shadow_draws_culled: raw.shadow_draws_culled,
         })
     }
 
@@ -1952,6 +2437,309 @@ impl Engine {
             overflowed: raw.overflowed,
             occlusion: raw.occlusion != 0,
         })
+    }
+
+    /// What Photon's voxel far field holds and what its latest update cost (C ABI v17).
+    pub fn photon_stats(&self) -> EngineResult<PhotonStats> {
+        let query = self.functions.photon_stats.ok_or(EngineError::Error)?;
+        let mut raw = RawPhotonStats::default();
+        result(unsafe { query(self.session, &mut raw) })?;
+        Ok(PhotonStats {
+            objects: raw.objects,
+            triangles: raw.triangles,
+            over_budget: raw.over_budget != 0,
+            far_enabled: raw.far_enabled != 0,
+            full_rebuilds: raw.full_rebuilds,
+            region_rebuilds: raw.region_rebuilds,
+            last_level_mask: raw.last_level_mask,
+            last_regions: raw.last_regions,
+            last_update_ms: raw.last_update_ms,
+            target_rebuilds: raw.target_rebuilds,
+            far_skipped: raw.far_skipped,
+            far_half_rate: raw.far_half_rate,
+        })
+    }
+
+    /// Throws Photon's triangle volume away; the next frame voxelises the scene again (C ABI v17).
+    pub fn photon_rebuild(&mut self) -> EngineResult<()> {
+        let rebuild = self.functions.photon_rebuild.ok_or(EngineError::Error)?;
+        result(unsafe { rebuild(self.session) })
+    }
+
+    /// The profiler's scopes in depth-first order (C ABI v18). The profiler is process-wide.
+    pub fn profiler_scopes(&self) -> EngineResult<Vec<ProfileScope>> {
+        let report = self.functions.profiler_report.ok_or(EngineError::Error)?;
+        let mut count = 0u32;
+        result(unsafe { report(std::ptr::null_mut(), 0, &mut count) })?;
+        let mut raw = vec![
+            RawProfileScope {
+                name: [0; 48],
+                depth: 0,
+                calls: 0,
+                last_ms: 0.0,
+                avg_ms: 0.0,
+                max_ms: 0.0,
+                self_ms: 0.0,
+                recent_avg_ms: 0.0,
+                recent_max_ms: 0.0,
+            };
+            count as usize
+        ];
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut total = 0u32;
+        result(unsafe { report(raw.as_mut_ptr(), count, &mut total) })?;
+        raw.truncate((total as usize).min(raw.len()));
+        Ok(raw
+            .into_iter()
+            .map(|scope| {
+                let end = scope.name.iter().position(|b| *b == 0).unwrap_or(48);
+                ProfileScope {
+                    name: String::from_utf8_lossy(&scope.name[..end]).into_owned(),
+                    depth: scope.depth,
+                    calls: scope.calls,
+                    last_ms: scope.last_ms,
+                    avg_ms: scope.avg_ms,
+                    max_ms: scope.max_ms,
+                    self_ms: scope.self_ms,
+                    recent_avg_ms: scope.recent_avg_ms,
+                    recent_max_ms: scope.recent_max_ms,
+                }
+            })
+            .collect())
+    }
+
+    /// The machine's CPU cores, memory and GPU (C ABI v19). Call it at a steady rate: the percentages cover the
+    /// time since the previous call, and the first call reports zeros.
+    pub fn system_metrics(&self) -> EngineResult<SystemMetrics> {
+        let sample = self.functions.system_metrics.ok_or(EngineError::Error)?;
+        let mut raw = RawSystemMetrics {
+            cpu_core_count: 0,
+            cpu_core_percent: [0.0; MAX_CPU_CORES],
+            cpu_total_percent: 0.0,
+            process_cpu_percent: 0.0,
+            ram_process_mib: -1.0,
+            ram_used_mib: -1.0,
+            ram_total_mib: -1.0,
+            gpu_busy_percent: -1.0,
+            vram_used_mib: -1.0,
+            vram_total_mib: -1.0,
+        };
+        result(unsafe { sample(&mut raw) })?;
+        let known = |value: f32| (value >= 0.0).then_some(value);
+        let cores = (raw.cpu_core_count as usize).min(MAX_CPU_CORES);
+        Ok(SystemMetrics {
+            cpu_cores: raw.cpu_core_percent[..cores].to_vec(),
+            cpu_total: raw.cpu_total_percent,
+            process_cpu: raw.process_cpu_percent,
+            ram_process_mib: known(raw.ram_process_mib),
+            ram_used_mib: known(raw.ram_used_mib),
+            ram_total_mib: known(raw.ram_total_mib),
+            gpu_busy: known(raw.gpu_busy_percent),
+            vram_used_mib: known(raw.vram_used_mib),
+            vram_total_mib: known(raw.vram_total_mib),
+        })
+    }
+
+    /// The lightning and the wind's surge at the latest frame (C ABI v19).
+    pub fn weather_state(&self) -> EngineResult<WeatherState> {
+        let get = self.functions.weather_state.ok_or(EngineError::Error)?;
+        let mut raw = RawWeatherState {
+            flash: 0.0,
+            bolt: 0.0,
+            gust: 1.0,
+            clock_s: 0.0,
+            lightning_active: 0,
+            strike_distance_m: 0.0,
+            strike_azimuth_rad: 0.0,
+        };
+        result(unsafe { get(self.session, &mut raw) })?;
+        Ok(WeatherState {
+            flash: raw.flash,
+            bolt: raw.bolt,
+            gust: raw.gust,
+            clock_s: raw.clock_s,
+            lightning_active: raw.lightning_active != 0,
+            strike_distance_m: raw.strike_distance_m,
+            strike_azimuth_rad: raw.strike_azimuth_rad,
+        })
+    }
+
+    /// The scene's volumetric audio (C ABI v20).
+    pub fn volumetric_state(&self) -> EngineResult<VolumetricState> {
+        let get = self.functions.volumetric_state.ok_or(EngineError::Error)?;
+        let mut raw = RawVolumetricState {
+            enabled: 0,
+            device_open: 0,
+            voices: 0,
+            obstacles: 0,
+            clips_missing: 0,
+            openness: 0.0,
+            sky_exposure: 0.0,
+            rt60_s: 0.0,
+            wet: 0.0,
+            echoes: 0,
+            time_s: 0.0,
+        };
+        result(unsafe { get(self.session, &mut raw) })?;
+        Ok(VolumetricState {
+            enabled: raw.enabled != 0,
+            device_open: raw.device_open != 0,
+            voices: raw.voices,
+            obstacles: raw.obstacles,
+            clips_missing: raw.clips_missing,
+            openness: raw.openness,
+            sky_exposure: raw.sky_exposure,
+            rt60_s: raw.rt60_s,
+            wet: raw.wet,
+            echoes: raw.echoes,
+            time_s: raw.time_s,
+        })
+    }
+
+    /// One emitter's state, `index` below [`VolumetricState::voices`] (C ABI v20).
+    pub fn volumetric_voice(&self, index: u32) -> EngineResult<VolumetricVoice> {
+        let get = self.functions.volumetric_voice.ok_or(EngineError::Error)?;
+        let mut raw = RawVolumetricVoice {
+            entity: 0,
+            layer: 0,
+            loaded: 0,
+            playing: 0,
+            distance_m: 0.0,
+            delay_s: 0.0,
+            pitch_ratio: 1.0,
+            gain_db: 0.0,
+            cutoff_hz: 0.0,
+            blocked: 0,
+            diffracted: 0,
+            dir_x: 0.0,
+            dir_y: 0.0,
+            dir_z: 0.0,
+        };
+        result(unsafe { get(self.session, index, &mut raw) })?;
+        Ok(VolumetricVoice {
+            entity: raw.entity,
+            layer: raw.layer,
+            loaded: raw.loaded != 0,
+            playing: raw.playing != 0,
+            distance_m: raw.distance_m,
+            delay_s: raw.delay_s,
+            pitch_ratio: raw.pitch_ratio,
+            gain_db: raw.gain_db,
+            cutoff_hz: raw.cutoff_hz,
+            blocked: raw.blocked != 0,
+            diffracted: raw.diffracted != 0,
+            direction: [raw.dir_x, raw.dir_y, raw.dir_z],
+        })
+    }
+
+    /// The names of the sound devices that can play (C ABI v20).
+    pub fn audio_output_devices(&self) -> Vec<String> {
+        let (Some(count), Some(name)) = (
+            self.functions.audio_device_count,
+            self.functions.audio_device_name,
+        ) else {
+            return Vec::new();
+        };
+        let n = unsafe { count() };
+        (0..n.max(0))
+            .filter_map(|index| {
+                let mut buffer = [0u8; 256];
+                if unsafe { name(index, buffer.as_mut_ptr(), buffer.len()) } != 0 {
+                    return None;
+                }
+                let end = buffer.iter().position(|b| *b == 0).unwrap_or(buffer.len());
+                Some(String::from_utf8_lossy(&buffer[..end]).into_owned())
+            })
+            .collect()
+    }
+
+    /// Chooses the device the volumetric mixer plays on: an index of [`Engine::audio_output_devices`], or `None` for the
+    /// system default (C ABI v20).
+    pub fn set_audio_output_device(&mut self, index: Option<usize>) -> EngineResult<()> {
+        let set = self.functions.set_audio_device.ok_or(EngineError::Error)?;
+        result(unsafe { set(self.session, index.map_or(-1, |i| i as i32)) })
+    }
+
+    /// Opens or closes the sound device the volumetric mixer plays on (C ABI v20). An error when there is no device.
+    pub fn set_audio_output(&mut self, on: bool) -> EngineResult<()> {
+        let set = self.functions.set_audio_output.ok_or(EngineError::Error)?;
+        result(unsafe { set(self.session, i32::from(on)) })
+    }
+
+    /// Mixes `frames` stereo frames (interleaved) for tests and captures; only while no device is open (C ABI v20).
+    pub fn volumetric_render(&mut self, frames: u32) -> EngineResult<Vec<f32>> {
+        let render = self.functions.volumetric_render.ok_or(EngineError::Error)?;
+        let mut out = vec![0.0f32; frames as usize * 2];
+        let mut written = 0u32;
+        result(unsafe { render(self.session, out.as_mut_ptr(), frames, &mut written) })?;
+        out.truncate(written as usize * 2);
+        Ok(out)
+    }
+
+    /// What the weather's sound is doing (C ABI v19).
+    pub fn audio_state(&self) -> EngineResult<AudioState> {
+        let get = self.functions.audio_state.ok_or(EngineError::Error)?;
+        let mut raw = RawAudioState {
+            enabled: 0,
+            device_ready: 0,
+            volume: 0.0,
+            rain_level: 0.0,
+            wind_level: 0.0,
+            rain_playing: 0,
+            wind_playing: 0,
+            thunder_heard: 0,
+            thunder_played: 0,
+        };
+        result(unsafe { get(self.session, &mut raw) })?;
+        Ok(AudioState {
+            enabled: raw.enabled != 0,
+            device_ready: raw.device_ready != 0,
+            volume: raw.volume,
+            rain_level: raw.rain_level,
+            wind_level: raw.wind_level,
+            rain_playing: raw.rain_playing != 0,
+            wind_playing: raw.wind_playing != 0,
+            thunder_heard: raw.thunder_heard,
+            thunder_played: raw.thunder_played,
+        })
+    }
+
+    /// The thunder that has reached the listener since the last call (C ABI v19).
+    pub fn poll_thunder(&mut self) -> EngineResult<Vec<ThunderEvent>> {
+        let poll = self.functions.poll_thunder.ok_or(EngineError::Error)?;
+        let mut events = [ThunderEvent::default(); 16];
+        let mut count = 0u32;
+        result(unsafe { poll(self.session, events.as_mut_ptr(), 16, &mut count) })?;
+        Ok(events[..(count as usize).min(16)].to_vec())
+    }
+
+    /// Forgets every profiler scope and sample (C ABI v18).
+    pub fn profiler_reset(&self) -> EngineResult<()> {
+        let reset = self.functions.profiler_reset.ok_or(EngineError::Error)?;
+        result(unsafe { reset() })
+    }
+
+    /// Turns the profiler's GPU timing on or off: the GPU passes then wait for the GPU, so frames are slower
+    /// while it is on (C ABI v18).
+    pub fn set_profiler_gpu_timing(&self, on: bool) -> EngineResult<()> {
+        let set = self
+            .functions
+            .profiler_set_gpu_timing
+            .ok_or(EngineError::Error)?;
+        result(unsafe { set(i32::from(on)) })
+    }
+
+    /// Whether the profiler's GPU timing is on (C ABI v18).
+    pub fn profiler_gpu_timing(&self) -> EngineResult<bool> {
+        let get = self
+            .functions
+            .profiler_gpu_timing
+            .ok_or(EngineError::Error)?;
+        let mut on = 0i32;
+        result(unsafe { get(&mut on) })?;
+        Ok(on != 0)
     }
 
     pub fn water_height(&self, entity: u32, x: f32, z: f32) -> EngineResult<f32> {
@@ -2202,6 +2990,132 @@ impl Engine {
             unsafe { (self.functions.free_bytes)(pixels.cast()) };
         }
         Ok((width, height, data))
+    }
+
+    /// The camera a scene view would use and its field of view in degrees; `None` when the scene has no
+    /// Camera 3D (or the library predates C ABI v23).
+    pub fn scene_camera(&self, view: SceneView) -> Option<(u32, f32)> {
+        let get = self.functions.scene_camera?;
+        let mut entity = 0u32;
+        let mut fov = 0.0f32;
+        let code = unsafe { get(self.session, view.raw(), &mut entity, &mut fov) };
+        (code == 0).then_some((entity, fov))
+    }
+
+    /// Chooses the camera of the camera preview; `None` follows the active camera.
+    pub fn set_preview_camera(&mut self, entity: Option<u32>) {
+        if let Some(set) = self.functions.set_preview_camera {
+            unsafe { set(self.session, entity.unwrap_or(u32::MAX)) };
+        }
+    }
+
+    pub fn view_render_begin(
+        &mut self,
+        view: SceneView,
+        width: u32,
+        height: u32,
+    ) -> EngineResult<()> {
+        let begin = self.functions.view_render_begin.ok_or(EngineError::Error)?;
+        result(unsafe { begin(self.session, view.raw(), width, height) })
+    }
+
+    pub fn view_render_poll(
+        &mut self,
+        view: SceneView,
+        pixels: &mut [u8],
+    ) -> EngineResult<RenderState> {
+        let poll = self.functions.view_render_poll.ok_or(EngineError::Error)?;
+        let state = unsafe { poll(self.session, view.raw(), pixels.as_mut_ptr(), pixels.len()) };
+        match state {
+            0 => Ok(RenderState::Idle),
+            1 => Ok(RenderState::Pending),
+            2 => Ok(RenderState::Ready),
+            _ => Ok(RenderState::Failed),
+        }
+    }
+
+    /// Begins the game: the scene's simulation as the compiled game runs it. False when the library cannot.
+    pub fn game_start(&mut self) -> bool {
+        match self.functions.game_start {
+            Some(start) => unsafe { start(self.session) == 0 },
+            None => false,
+        }
+    }
+
+    pub fn game_stop(&mut self) {
+        if let Some(stop) = self.functions.game_stop {
+            unsafe { stop(self.session) };
+        }
+    }
+
+    pub fn game_running(&self) -> bool {
+        self.functions
+            .game_running
+            .is_some_and(|running| unsafe { running(self.session) != 0 })
+    }
+
+    /// One frame of the running game.
+    pub fn game_tick(&mut self, delta_time: f32) -> bool {
+        match self.functions.game_tick {
+            Some(tick) => unsafe { tick(self.session, delta_time) == 0 },
+            None => false,
+        }
+    }
+
+    pub fn game_state(&self) -> GameState {
+        let Some(get) = self.functions.game_state else {
+            return GameState::default();
+        };
+        let mut raw = RawGameState::default();
+        if unsafe { get(self.session, &mut raw) } != 0 {
+            return GameState::default();
+        }
+        GameState {
+            running: raw.running != 0,
+            scripts_running: raw.scripts_running != 0,
+            frames: raw.frames,
+            time_s: raw.time_s,
+        }
+    }
+
+    /// A key the game's scripts read; `scancode` is the USB HID / SDL scancode.
+    pub fn game_key(&mut self, scancode: u32, down: bool) {
+        if let Some(key) = self.functions.game_key {
+            unsafe { key(self.session, scancode, i32::from(down)) };
+        }
+    }
+
+    pub fn game_release_keys(&mut self) {
+        if let Some(release) = self.functions.game_release_keys {
+            unsafe { release(self.session) };
+        }
+    }
+
+    /// The pointer over the game view; `button` 1 left, 2 middle, 3 right, 0 for a plain move.
+    pub fn game_mouse(&mut self, x: f32, y: f32, button: u32, down: bool) {
+        if let Some(mouse) = self.functions.game_mouse {
+            unsafe { mouse(self.session, x, y, button, i32::from(down)) };
+        }
+    }
+
+    /// Whether the scene advances while it renders (clouds, weather, wind, water, sound). Off, a frame stands
+    /// still. A library older than C ABI v21 cannot pause: it keeps simulating and this reports it.
+    pub fn set_simulating(&mut self, simulating: bool) -> bool {
+        match self.functions.set_simulating {
+            Some(set) => {
+                unsafe { set(self.session, i32::from(simulating)) };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the scene is simulating (true for a library that cannot pause).
+    pub fn simulating(&self) -> bool {
+        match self.functions.simulating {
+            Some(get) => unsafe { get(self.session) != 0 },
+            None => true,
+        }
     }
 
     pub fn tick(&mut self, delta_time: f32) {

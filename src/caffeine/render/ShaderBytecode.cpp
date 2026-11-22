@@ -55,9 +55,12 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::PostPhotonFragment:  return {Shaders::post_photon_frag_spirv, Shaders::post_photon_frag_spirvSize};
         case BuiltinShader::PostPhotonResolveFragment: return {Shaders::post_photon_resolve_frag_spirv, Shaders::post_photon_resolve_frag_spirvSize};
         case BuiltinShader::MinZDownsampleFragment: return {Shaders::minz_downsample_frag_spirv, Shaders::minz_downsample_frag_spirvSize};
+        case BuiltinShader::Batch2DVertex: return {Shaders::batch2d_vert_spirv, Shaders::batch2d_vert_spirvSize};
+        case BuiltinShader::Batch2DFragment: return {Shaders::batch2d_frag_spirv, Shaders::batch2d_frag_spirvSize};
         case BuiltinShader::PhotonCascade:       return {Shaders::photon_cascade_spirv, Shaders::photon_cascade_spirvSize};
         case BuiltinShader::PhotonC0:            return {Shaders::photon_c0_spirv, Shaders::photon_c0_spirvSize};
         case BuiltinShader::PhotonVoxelize:      return {Shaders::photon_voxelize_spirv, Shaders::photon_voxelize_spirvSize};
+        case BuiltinShader::PhotonVoxelizeTri:   return {Shaders::photon_voxelize_tri_spirv, Shaders::photon_voxelize_tri_spirvSize};
         case BuiltinShader::PhotonInject:        return {Shaders::photon_inject_spirv, Shaders::photon_inject_spirvSize};
         case BuiltinShader::PhotonProbe:         return {Shaders::photon_probe_spirv, Shaders::photon_probe_spirvSize};
         case BuiltinShader::PhotonBakeAO:        return {Shaders::photon_bake_ao_spirv, Shaders::photon_bake_ao_spirvSize};

@@ -40,9 +40,18 @@ set(CAFFEINE_TEST_SOURCES
     test_terrain_masks.cpp
     test_octree.cpp
     test_skeletal_animation.cpp
+    test_skeleton2d.cpp
     test_pipeline.cpp
     test_photon_bake.cpp
     test_photon_farfield.cpp
+    test_photon_voxelizer.cpp
+    test_weather.cpp
+    test_weather_gpu.cpp
+    test_weather_audio.cpp
+    test_volumetric_audio.cpp
+    test_scene_audio.cpp
+    test_texture_cache.cpp
+    test_shadow_culling.cpp
     test_vegetation_kit.cpp
     test_capi.cpp
     test_phase2_3.cpp

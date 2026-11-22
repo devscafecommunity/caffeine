@@ -4,7 +4,7 @@
 //
 // Dispatched once per level. Each probe traces the 64 interior directions with
 // a 3D DDA against its level's material volume, shades hits with the
-// anisotropic face radiance, blends with the previous frame (h = 0.85), and
+// anisotropic face radiance, blends with the previous frame (h: 0.4 while the scene changes, 0.92 when it is still), and
 // writes the radiance tile, distance moments (validity in .b) and SH-L1.
 //
 // Level l owns:
@@ -33,11 +33,16 @@ layout(set = 2, binding = 0) uniform ProbeUBO {
     vec4 uProbe;    // xyz probe origin, w probe spacing
     vec4 uParams;   // x extent, y DDA steps, z frame, w cells per axis
     vec4 uSky;      // rgb sky radiance
-    vec4 uJitter;   // xy Halton jitter
-    ivec4 uDims;    // probes per axis (16), tile stride (10)
+    vec4 uJitter;   // xy Halton jitter, z weight of the previous frame (hysteresis), w frames a probe may go untraced
+                    // before its history is dropped
+    ivec4 uDims;    // probes per axis (16), tile stride (10), z: 1 = carry the whole level over (not traced this
+                    // frame), w: 1 = skip probes outside the camera's frustum
     ivec4 uOffsets; // material base, radiance base, probe base, SH base
+    vec4 uPlanes[4]; // the camera frustum's side planes (normalised, inside is positive)
 } pb;
 
+// The probe tile is 10 texels (8 of directions and a border): the cache of this frame's results is sized for it.
+const int kMaxSide = 8;
 const float kPi = 3.14159265359;
 const float kY00 = 0.282095;
 const float kY1 = 0.488603;
@@ -135,6 +140,16 @@ vec4 traceRay(vec3 Q, vec3 dir, out float outDistance) {
     return vec4(pb.uSky.rgb, 1.0);
 }
 
+// Whether a probe is too far outside the camera's view to matter. A surface the camera sees reads the probes around
+// it (within about one spacing), so a probe more than 1.8 spacings outside the frustum has no reader on screen.
+bool outsideView(vec3 Q) {
+    float margin = pb.uProbe.w * 1.8;
+    for (int i = 0; i < 4; ++i) {
+        if (dot(pb.uPlanes[i].xyz, Q) + pb.uPlanes[i].w < -margin) return true;
+    }
+    return false;
+}
+
 void writeSH(int index, vec3 c00, vec3 c1x, vec3 c1y, vec3 c1z, float v00, vec3 v1) {
     int n = pb.uDims.x;
     ivec2 base = ivec2(pb.uOffsets.w + (index % n) * 2, (index / n) * 2);
@@ -142,6 +157,21 @@ void writeSH(int index, vec3 c00, vec3 c1x, vec3 c1y, vec3 c1z, float v00, vec3 
     imageStore(uProbeSH, base + ivec2(1, 0), vec4(c1x, v1.x));
     imageStore(uProbeSH, base + ivec2(0, 1), vec4(c1y, v1.y));
     imageStore(uProbeSH, base + ivec2(1, 1), vec4(c1z, v1.z));
+}
+
+
+// The frame's direction jitter, rotated by a fixed per-probe offset (a Cranley-Patterson rotation): every probe
+// still gets a low-discrepancy sequence over time, but the probes no longer move their samples together, so the
+// frame-to-frame noise does not brighten and darken a whole surface at once.
+vec2 probeJitter(vec2 frameJitter, ivec2 id, int salt) {
+    uint n = uint(id.x) * 73856093u ^ uint(id.y) * 19349663u ^ uint(salt) * 83492791u;
+    n ^= n >> 16u;
+    n *= 0x7feb352du;
+    n ^= n >> 15u;
+    n *= 0x846ca68bu;
+    n ^= n >> 16u;
+    vec2 h = vec2(float(n & 0xFFFFu), float(n >> 16u)) / 65536.0;
+    return fract(frameJitter + 0.5 + h) - 0.5;
 }
 
 void main() {
@@ -153,9 +183,29 @@ void main() {
     vec3 Q = pb.uProbe.xyz + (vec3(q) + 0.5) * pb.uProbe.w;
 
     const int tile = pb.uDims.y;
-    const int side = tile - 2;
+    const int side = min(tile - 2, kMaxSide);
+    const vec2 jit = probeJitter(pb.uJitter.xy, ivec2(q.x + q.z * n, q.y), 0);
     int baseX = pb.uOffsets.z + q.x * tile;
     int baseY = (q.z * n + q.y) * tile;
+
+    // A probe nobody is looking at (or the whole level, on a frame it is not traced) keeps what its last trace left:
+    // the tiles are carried over from the previous buffer, the SH image is not touched.
+    if (pb.uDims.z != 0 || (pb.uDims.w != 0 && outsideView(Q))) {
+        for (int ty = 0; ty < tile; ++ty) {
+            for (int tx = 0; tx < tile; ++tx) {
+                ivec2 t = ivec2(baseX + tx, baseY + ty);
+                imageStore(uRadiance, t, texelFetch(uPrevRadiance, t, 0));
+                imageStore(uMoments, t, texelFetch(uPrevMoments, t, 0));
+            }
+        }
+        return;
+    }
+    // How long ago this probe was last traced (stamped in the moments' alpha): a probe coming back into view after
+    // a long time starts from the fresh trace instead of blending with a stale one.
+    float stamp = mod(pb.uParams.z, 1024.0);
+    float lastTraced = texelFetch(uPrevMoments, ivec2(baseX + 1, baseY + 1), 0).a;
+    float age = mod(stamp - lastTraced + 1024.0, 1024.0);
+    float hyst = age > pb.uJitter.w ? 0.0 : pb.uJitter.z;
 
     // Probes inside solid voxels are invalid: zero radiance, validity 0.
     ivec3 probeCell = clamp(ivec3(floor((Q - pb.uClip.xyz) / pb.uClip.w)),
@@ -180,22 +230,29 @@ void main() {
     float v00 = 0.0;
     vec3 v1 = vec3(0.0);
 
+    // What the interior texels hold after this frame: the border texels repeat the nearest of them, so they need
+    // no rays of their own (the border used to be 36 more traces per probe, a third of the pass).
+    vec4 tileRadiance[kMaxSide * kMaxSide];
+    vec2 tileMoments[kMaxSide * kMaxSide];
+
     for (int iy = 0; iy < side; ++iy) {
         for (int ix = 0; ix < side; ++ix) {
-            vec2 duv = (vec2(float(ix), float(iy)) + 0.5 + pb.uJitter.xy) / float(side);
+            vec2 duv = (vec2(float(ix), float(iy)) + 0.5 + jit) / float(side);
             duv = clamp(duv, 0.0, 1.0);
-            vec3 dir = octDecode(duv * 2.0 - 1.0);
+            vec3 dir = octDecode(duv);  // octDecode takes [0,1] (the far query encodes with the inverse)
 
             float distance;
             vec4 radiance = traceRay(Q, dir, distance);
             float d = clamp(distance, 0.0, 1.5 * pb.uProbe.w);
 
             ivec2 target = ivec2(baseX + 1 + ix, baseY + 1 + iy);
-            radiance = mix(radiance, texelFetch(uPrevRadiance, target, 0), 0.85);
-            vec2 moments = mix(vec2(d, d * d), texelFetch(uPrevMoments, target, 0).rg, 0.85);
+            radiance = mix(radiance, texelFetch(uPrevRadiance, target, 0), hyst);
+            vec2 moments = mix(vec2(d, d * d), texelFetch(uPrevMoments, target, 0).rg, hyst);
 
             imageStore(uRadiance, target, radiance);
-            imageStore(uMoments, target, vec4(moments, 1.0, 0.0));
+            imageStore(uMoments, target, vec4(moments, 1.0, stamp));
+            tileRadiance[iy * kMaxSide + ix] = radiance;
+            tileMoments[iy * kMaxSide + ix] = moments;
 
             vec3 y1 = kY1 * dir;
             c00 += radiance.rgb * kY00 * dOmega;
@@ -212,17 +269,9 @@ void main() {
             if (tx != 0 && tx != tile - 1 && ty != 0 && ty != tile - 1) continue;
             int ix = clamp(tx, 1, side) - 1;
             int iy = clamp(ty, 1, side) - 1;
-            vec2 duv = (vec2(float(ix), float(iy)) + 0.5 + pb.uJitter.xy) / float(side);
-            duv = clamp(duv, 0.0, 1.0);
-            vec3 dir = octDecode(duv * 2.0 - 1.0);
-            float distance;
-            vec4 radiance = traceRay(Q, dir, distance);
-            float d = clamp(distance, 0.0, 1.5 * pb.uProbe.w);
             ivec2 target = ivec2(baseX + tx, baseY + ty);
-            radiance = mix(radiance, texelFetch(uPrevRadiance, target, 0), 0.85);
-            vec2 moments = mix(vec2(d, d * d), texelFetch(uPrevMoments, target, 0).rg, 0.85);
-            imageStore(uRadiance, target, radiance);
-            imageStore(uMoments, target, vec4(moments, 1.0, 0.0));
+            imageStore(uRadiance, target, tileRadiance[iy * kMaxSide + ix]);
+            imageStore(uMoments, target, vec4(tileMoments[iy * kMaxSide + ix], 1.0, stamp));
         }
     }
 

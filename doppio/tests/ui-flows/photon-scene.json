@@ -1,0 +1,18 @@
+{
+  "name": "Photon: adding the component to an engine scene shows the settings and the voxel statistics",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.photon", "label": "open the Photon tab" },
+    { "action": "expect", "exists": "id:photon.setup.add" },
+    { "action": "click", "target": "id:photon.setup.add", "label": "add Photon GI" },
+    { "action": "expect", "exists": "id:photon.lighting.enabled", "label": "the settings are there" },
+    { "action": "expect", "exists": "id:photon.lighting.bounce_gain" },
+    { "action": "expect", "exists": "id:photon.voxels.rebuild" },
+    { "action": "expect", "missing": "id:photon.setup.add", "label": "Add is gone once the scene has one" },
+    { "action": "click", "target": "id:photon.voxels.cutout", "offset": [-115, 0], "label": "cut-out meshes as solid (the box is at the row's left end)" },
+    { "action": "click", "target": "id:photon.voxels.rebuild" },
+    { "action": "screenshot", "name": "photon-settings" }
+  ]
+}

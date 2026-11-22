@@ -26,6 +26,10 @@ pub enum Icon {
     Material,
     Texture,
     Generic,
+    Prefab,
+    Nature,
+    Font,
+    Data,
 }
 
 impl Icon {
@@ -48,6 +52,10 @@ impl Icon {
             Icon::Material => "◐",
             Icon::Texture => "▦",
             Icon::Generic => "▢",
+            Icon::Prefab => "◫",
+            Icon::Nature => "◭",
+            Icon::Font => "Aa",
+            Icon::Data => "▥",
         }
     }
 
@@ -70,6 +78,10 @@ impl Icon {
             Icon::Material => theme::ICON_PURPLE,
             Icon::Texture => theme::ICON_TEAL,
             Icon::Generic => theme::TEXT_MUTED,
+            Icon::Prefab => theme::ACCENT,
+            Icon::Nature => theme::SUCCESS,
+            Icon::Font => theme::ICON_PURPLE,
+            Icon::Data => theme::ICON_CYAN,
         }
     }
 }

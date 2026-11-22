@@ -38,7 +38,7 @@ enum class ParameterType : u8 {
     Trigger
 };
 
-struct AnimatorParameter {
+struct PhaseShiftParameter {
     FixedString<32> name;
     ParameterType   type = ParameterType::Bool;
 
@@ -49,6 +49,12 @@ struct AnimatorParameter {
     };
 
     bool triggered = false;
+
+    /// Float only. When > 0, conditions read `smoothed`, which chases floatValue with a
+    /// critically damped spring of this duration (seconds). Zero reads floatValue directly.
+    f32 smoothTime     = 0.0f;
+    f32 smoothed       = 0.0f;
+    f32 smoothVelocity = 0.0f;
 };
 
 enum class ConditionOperator : u8 {
@@ -118,8 +124,8 @@ struct AnimationState {
     bool                             hasEditorPosition = false;
 };
 
-/// One state graph. The Animator is the base layer; extra layers carry their own graph.
-struct AnimatorStateMachine {
+/// One state graph. The PhaseShift is the base layer; extra layers carry their own graph.
+struct PhaseShiftStateMachine {
     HashMap<FixedString<32>, AnimationState>     states;
     FixedString<32>                              currentState;
     FixedString<32>                              previousState;
@@ -148,7 +154,7 @@ enum class LayerBlendMode : u8 {
     Additive
 };
 
-/// Body regions a layer mask can include. Bits of AnimatorLayer::mask.
+/// Body regions a layer mask can include. Bits of PhaseShiftLayer::mask.
 enum class BodyMask : u32 {
     Root = 1u << 0,
     Body = 1u << 1,
@@ -160,7 +166,7 @@ enum class BodyMask : u32 {
     All = 0x7Fu
 };
 
-struct AnimatorLayer : AnimatorStateMachine {
+struct PhaseShiftLayer : PhaseShiftStateMachine {
     FixedString<32> name;
     /// Group this layer sits under in the layer tree. Empty is the top level.
     FixedString<32> parentGroup;
@@ -173,21 +179,21 @@ struct AnimatorLayer : AnimatorStateMachine {
     u32             mask     = static_cast<u32>(BodyMask::All);
 };
 
-struct Animator : AnimatorStateMachine {
+struct PhaseShift : PhaseShiftStateMachine {
     // Clip storage for deserialized scenes (state.clip may point here).
     std::vector<AnimationClip>                   embeddedClips;
     /// Layers above the base graph, in evaluation order.
-    std::vector<AnimatorLayer>                   layers;
+    std::vector<PhaseShiftLayer>                   layers;
     f32                                          blendWeight   = 1.0f;
     f32                                          playbackScale = 1.0f;
     bool                                         paused        = false;
-    std::vector<AnimatorParameter>               parameters;
+    std::vector<PhaseShiftParameter>               parameters;
     std::vector<std::pair<u32, FixedString<32>>> frameEvents;
     std::function<void(const FixedString<32>&)>  onFrameEvent;
 
     void addParameter(const char* name, ParameterType type) {
         if (findParameter(FixedString<32>(name))) return;
-        AnimatorParameter p;
+        PhaseShiftParameter p;
         p.name = name;
         p.type = type;
         parameters.push_back(p);
@@ -227,19 +233,36 @@ struct Animator : AnimatorStateMachine {
         return p ? p->floatValue : 0.0f;
     }
 
+    /// Value conditions see: the smoothed value when smoothing is on, the raw value otherwise.
+    f32 getSmoothedFloat(const char* name) const {
+        const auto* p = findParameter(FixedString<32>(name));
+        if (!p) return 0.0f;
+        return p->smoothTime > 0.0f ? p->smoothed : p->floatValue;
+    }
+
+    /// Turns smoothing on for a float parameter. A duration of zero turns it off.
+    void setSmoothing(const char* name, f32 smoothTime) {
+        if (auto* p = findParameter(FixedString<32>(name))) {
+            if (p->type != ParameterType::Float) return;
+            p->smoothTime     = smoothTime > 0.0f ? smoothTime : 0.0f;
+            p->smoothed       = p->floatValue;
+            p->smoothVelocity = 0.0f;
+        }
+    }
+
     i32 getInt(const char* name) const {
         const auto* p = findParameter(FixedString<32>(name));
         return p ? p->intValue : 0;
     }
 
-    AnimatorParameter* findParameter(const FixedString<32>& name) {
+    PhaseShiftParameter* findParameter(const FixedString<32>& name) {
         for (auto& p : parameters) {
             if (p.name == name) return &p;
         }
         return nullptr;
     }
 
-    const AnimatorParameter* findParameter(const FixedString<32>& name) const {
+    const PhaseShiftParameter* findParameter(const FixedString<32>& name) const {
         for (const auto& p : parameters) {
             if (p.name == name) return &p;
         }

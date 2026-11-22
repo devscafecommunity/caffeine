@@ -5,15 +5,23 @@
 //! scene-level operations that the widget tree cannot describe precisely:
 //! entity inspection, camera control and the editor commands.
 
+use super::assetpick;
 use super::{App, Message};
+use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::components::gizmo;
 use crate::uikit::generators;
 use crate::uikit::id;
 use crate::uikit::panels;
+use crate::uikit::panels::audio as audio_panel;
 use crate::uikit::panels::dryad_nodes;
+use crate::uikit::panels::environment as environment_panel;
+use crate::uikit::panels::file_browser as file_browser_panel;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
 use crate::uikit::panels::nature_generator;
+use crate::uikit::panels::performance as performance_panel;
+use crate::uikit::panels::photon as photon_panel;
+use crate::uikit::panels::profiler as profiler_panel;
 use crate::uikit::panels::project_manager;
 use crate::uikit::panels::terrain_generator;
 use crate::uikit::panels::texture_generator;
@@ -199,6 +207,315 @@ pub fn run() -> iced::Result {
                         .collect::<Vec<_>>(),
                 }))
             },
+        )
+        .query(
+            "photon",
+            "Photon global illumination: whether the scene has the component, its settings and the voxel far-field statistics.",
+            |app, _| Ok(photon_json(app)),
+        )
+        .action(
+            "show_photon",
+            "Brings the Photon tab to the front. args: {}",
+            |_| Ok(Message::ShowPhoton),
+        )
+        .action(
+            "photon_add",
+            "Adds the Photon GI component on a new entity when the scene has none (on, compute path, High). args: {}",
+            |_| Ok(Message::Photon(photon_panel::Edit::Add)),
+        )
+        .action(
+            "photon_set",
+            "Sets one Photon setting by its field name: Enabled, Voxel skinned meshes, Voxel cut-out meshes, Voxel terrain, Full rebuilds (bool); Intensity, Bounce gain, Sky intensity, Ambient, Radius (number); Path, Quality, Debug view (option name or index). args: { \"field\": string, \"value\": bool | number | string }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
+                photon_edit(field, value).map(Message::Photon)
+            },
+        )
+        .action(
+            "photon_preset",
+            "Applies a Photon preset by name (Balanced, Interior (strong bounce), Outdoor, Fast (Eco), Diagnostic (GI only)). args: { \"name\": string }",
+            |args| {
+                let name = required_str(args, "name")?;
+                photon_panel::presets()
+                    .iter()
+                    .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                    .map(|index| Message::Photon(photon_panel::Edit::Preset(index)))
+                    .ok_or_else(|| format!("no Photon preset named \"{name}\""))
+            },
+        )
+        .action(
+            "photon_rebuild",
+            "Throws Photon's voxel volume away; the next frame voxelises the whole scene again. args: {}",
+            |_| Ok(Message::Photon(photon_panel::Edit::Rebuild)),
+        )
+        .query(
+            "environment",
+            "The scene's environment (clouds, fog, rain): whether the scene has the components, every setting by its key, and the preset names.",
+            |app, _| Ok(environment_json(app)),
+        )
+        .action(
+            "show_environment",
+            "Brings the Environment tab to the front. args: {}",
+            |_| Ok(Message::ShowEnvironment),
+        )
+        .action(
+            "environment_add",
+            "Adds the Weather and Volumetric Clouds components on a new entity when the scene has none (starts from the Clear sky preset). args: {}",
+            |_| Ok(Message::Environment(environment_panel::Edit::Add)),
+        )
+        .action(
+            "environment_set",
+            "Sets one environment setting by its key (see the `environment` query): switches (clouds_enabled, clouds_dim_sun, weather_enabled, link_sky, fog_enabled, rain_enabled) take a bool; numbers (coverage, cloud_density, fog_density, rain_intensity, ...) take a number; clouds_quality takes Off, Low, Medium, High or 0..3; cloud_tint and fog_color take [r, g, b] in 0..1. args: { \"field\": string, \"value\": bool | number | string | [number] }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
+                environment_edit(field, value).map(Message::Environment)
+            },
+        )
+        .action(
+            "environment_preset",
+            "Applies an environment preset by name (Off, Clear sky, Cloudy, Fog, Light rain, Storm). args: { \"name\": string }",
+            |args| {
+                let name = required_str(args, "name")?;
+                environment_panel::presets()
+                    .iter()
+                    .position(|preset| preset.name.eq_ignore_ascii_case(name))
+                    .map(|index| Message::Environment(environment_panel::Edit::Preset(index)))
+                    .ok_or_else(|| format!("no environment preset named \"{name}\""))
+            },
+        )
+        .query(
+            "performance",
+            "The render options: whether the scene has the Forward Render Features component, every setting by its key (instancing, occlusion, reflections, volumetrics, ibl and their numbers), and the editor viewport's render scale, anti-aliasing, shadows and grid.",
+            |app, _| Ok(performance_json(app)),
+        )
+        .action(
+            "show_performance",
+            "Brings the Performance tab to the front. args: {}",
+            |_| Ok(Message::ShowPerformance),
+        )
+        .action(
+            "performance_add",
+            "Adds the Forward Render Features component on a new entity when the scene has none. args: {}",
+            |_| Ok(Message::Performance(performance_panel::Edit::Add)),
+        )
+        .action(
+            "performance_set",
+            "Sets one render option by its key (see the `performance` query): switches (enabled, instancing, occlusion, reflections, reflections_ssr, reflections_settled, volumetrics, ibl) take a bool; numbers (instancing_batch, occluders, occluder_radius, reflection_strength, reflection_scale, probe_resolution, max_probes, ssr_steps, fog_density) take a number. The viewport's own options: render_scale (0.5, 0.75, 1, 1.25, 1.5 or 2), anti_aliasing (off, fxaa or taa), shadows and grid. args: { \"field\": string, \"value\": bool | number | string }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
+                performance_edit(field, value).map(Message::Performance)
+            },
+        )
+        .query(
+            "audio",
+            "The scene's volumetric audio: whether the scene has the component, every setting by its key, the room round the listener (open, sky, reverb, echoes), the obstacle count and one row per Audio Emitter (distance, level, low-pass, Doppler pitch, blocked, diffracted). Reads what the Audio tab last read.",
+            |app, _| Ok(audio_json(app)),
+        )
+        .action(
+            "show_audio",
+            "Brings the Audio tab to the front. args: {}",
+            |_| Ok(Message::ShowAudio),
+        )
+        .action(
+            "audio_add",
+            "Adds the Volumetric Audio component on a new entity when the scene has none. args: {}",
+            |_| Ok(Message::Audio(audio_panel::Edit::Add)),
+        )
+        .action(
+            "audio_set",
+            "Sets one volumetric audio setting by its key (see the `audio` query): switches (enabled, occlusion, diffraction, reverb, air_absorption, propagation_delay) take a bool; numbers (master_volume, world_volume, ambient_volume, music_volume, doppler_scale, speed_of_sound) take a number. args: { \"field\": string, \"value\": bool | number }",
+            |args| {
+                let field = required_str(args, "field")?;
+                let value = args.get("value").ok_or_else(|| "missing \"value\"".to_owned())?;
+                audio_edit(field, value).map(Message::Audio)
+            },
+        )
+        .action(
+            "audio_output",
+            "Plays the volumetric mixer on this computer's sound device (true) or only monitors it silently (false). args: { \"on\": bool }",
+            |args| {
+                let on = args.get("on").and_then(Value::as_bool).ok_or_else(|| "missing \"on\"".to_owned())?;
+                Ok(Message::Audio(audio_panel::Edit::Output(on)))
+            },
+        )
+        .action(
+            "audio_device",
+            "Chooses the sound device the volumetric mixer plays on: 0 is the system default, n the nth device of the `audio` query's `devices` list. args: { \"index\": number }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or_else(|| "missing \"index\"".to_owned())?;
+                Ok(Message::Audio(audio_panel::Edit::Device(index as usize)))
+            },
+        )
+        .action(
+            "audio_add_source",
+            "Adds an entity with an Audio Emitter at the viewport's focus. args: {}",
+            |_| Ok(Message::Audio(audio_panel::Edit::AddSource)),
+        )
+        .action(
+            "audio_add_wall",
+            "Adds a 6 x 3 x 0.3 m wall with an Acoustic Obstacle at the viewport's focus. args: {}",
+            |_| Ok(Message::Audio(audio_panel::Edit::AddWall)),
+        )
+        .query(
+            "asset_pick",
+            "The shared asset picker: whether it is open, what it fills, the kinds it accepts, the current value, the search and kind filter, the kinds the project has and the rows it lists (path, name, kind).",
+            |app, _| Ok(asset_pick_json(app)),
+        )
+        .query(
+            "asset_kinds",
+            "Every asset kind the editor knows: its key, label and the file extensions the importer accepts for it.",
+            |_, _| Ok(asset_kinds_json()),
+        )
+        .query(
+            "windows",
+            "The editor's windows: whether detaching is available, and the tabs that are detached into windows of their own.",
+            |app, _| Ok(windows_json(app)),
+        )
+        .action(
+            "detach_tab",
+            "Turns a tab into a window of its own (it leaves the dock; the last tab of the editor cannot be detached). Tab names are the pane titles or keys, e.g. \"Audio\", \"material_generator\". args: { \"tab\": string }",
+            |args| {
+                let name = required_str(args, "tab")?;
+                super::PaneKind::from_name(name)
+                    .map(Message::DetachTab)
+                    .ok_or_else(|| format!("no tab named \"{name}\""))
+            },
+        )
+        .action(
+            "attach_tab",
+            "Docks a detached tab back into the editor and closes its window. args: { \"tab\": string }",
+            |args| {
+                let name = required_str(args, "tab")?;
+                super::PaneKind::from_name(name)
+                    .map(Message::AttachTab)
+                    .ok_or_else(|| format!("no tab named \"{name}\""))
+            },
+        )
+        .query(
+            "file_browser",
+            "The file browser: whether it is open, the folder, the filters, the selection and the entries listed (name, path, folder or file, kind, size).",
+            |app, _| Ok(file_browser_json(app)),
+        )
+        .action(
+            "file_browser_open",
+            "Opens the file browser over the Import assistant (open the assistant first with its Import tab). args: {}",
+            |_| Ok(Message::Wizard(panels::asset_wizard::Edit::ImportBrowse)),
+        )
+        .action(
+            "file_browser_go",
+            "Types a path into the file browser's path box; follow it with `file_browser_enter` to open the folder (or select the file in its folder). `~`, relative paths and quotes work. args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?;
+                Ok(Message::FileBrowser(file_browser_panel::Edit::PathInput(path.to_owned())))
+            },
+        )
+        .action(
+            "file_browser_enter",
+            "Confirms the typed path (the Enter key of the path box). args: {}",
+            |_| Ok(Message::FileBrowser(file_browser_panel::Edit::PathGo)),
+        )
+        .action(
+            "file_browser_toggle",
+            "Toggles the nth listed entry (see the `file_browser` query) in the selection. args: { \"index\": number }",
+            |args| {
+                let index = args.get("index").and_then(Value::as_u64).ok_or_else(|| "missing \"index\"".to_owned())?;
+                Ok(Message::FileBrowser(file_browser_panel::Edit::Press(index as usize)))
+            },
+        )
+        .action(
+            "file_browser_select_all",
+            "Selects every importable file listed in the current folder. args: {}",
+            |_| Ok(Message::FileBrowser(file_browser_panel::Edit::SelectSupported)),
+        )
+        .action(
+            "file_browser_confirm",
+            "Adds the selection to the import queue and closes the browser. args: {}",
+            |_| Ok(Message::FileBrowser(file_browser_panel::Edit::Confirm)),
+        )
+        .action(
+            "file_browser_close",
+            "Closes the file browser without adding anything. args: {}",
+            |_| Ok(Message::FileBrowser(file_browser_panel::Edit::Close)),
+        )
+        .action(
+            "asset_pick_open",
+            "Opens the asset picker for a string field of the selected entity's component (see `components`): only fields that take an asset (Mesh, Material, Texture, Clip Path, Script…) open it. args: { \"component\": number, \"field\": number }",
+            |args| {
+                let component = args.get("component").and_then(Value::as_u64).ok_or_else(|| "missing \"component\"".to_owned())?;
+                let field = args.get("field").and_then(Value::as_u64).ok_or_else(|| "missing \"field\"".to_owned())?;
+                Ok(Message::Inspector(panels::inspector::Edit::PickField { component: component as usize, field: field as usize }))
+            },
+        )
+        .action(
+            "asset_pick_search",
+            "Types into the open asset picker's search box. args: { \"text\": string }",
+            |args| {
+                let text = required_str(args, "text")?;
+                Ok(Message::AssetPick(assetpick::PickEdit::Search(text.to_owned())))
+            },
+        )
+        .action(
+            "asset_pick_filter",
+            "Shows one kind in the open asset picker (a key from `asset_kinds`), or every accepted kind with \"all\". args: { \"kind\": string }",
+            |args| {
+                let kind = required_str(args, "kind")?;
+                let filter = if kind.eq_ignore_ascii_case("all") {
+                    None
+                } else {
+                    match AssetKind::from_key(kind) {
+                        AssetKind::Other => return Err(format!("no asset kind \"{kind}\"")),
+                        known => Some(known),
+                    }
+                };
+                Ok(Message::AssetPick(assetpick::PickEdit::Filter(filter)))
+            },
+        )
+        .action(
+            "asset_pick_choose",
+            "Chooses an asset in the open picker by its relative path: the field is set (one undo step) and the picker closes. args: { \"path\": string }",
+            |args| {
+                let path = required_str(args, "path")?;
+                Ok(Message::AssetPick(assetpick::PickEdit::Pick(path.to_owned())))
+            },
+        )
+        .action(
+            "asset_pick_clear",
+            "Empties the field the open picker was opened for and closes it. args: {}",
+            |_| Ok(Message::AssetPick(assetpick::PickEdit::Clear)),
+        )
+        .action(
+            "asset_pick_close",
+            "Closes the asset picker without changing anything. args: {}",
+            |_| Ok(Message::AssetPick(assetpick::PickEdit::Close)),
+        )
+        .query(
+            "profiler",
+            "The engine's timed scopes (render stages and, with GPU timing, the GPU passes): name, depth, calls, last/average/worst/self milliseconds, plus the frame time they imply. Reads the engine fresh.",
+            |app, _| Ok(profiler_json(app)),
+        )
+        .action(
+            "show_profiler",
+            "Brings the Profiler tab to the front. args: {}",
+            |_| Ok(Message::ShowProfiler),
+        )
+        .action(
+            "profiler_gpu_timing",
+            "Turns GPU timing on or off: every GPU pass then waits for the GPU at its edges so its time is the real cost; frames are slower while it is on. args: { \"enabled\": bool }",
+            |args| {
+                let on = args
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "\"enabled\" takes true or false".to_owned())?;
+                Ok(Message::Profiler(profiler_panel::Edit::Gpu(on)))
+            },
+        )
+        .action(
+            "profiler_reset",
+            "Forgets every profiler sample; the averages start again. args: {}",
+            |_| Ok(Message::Profiler(profiler_panel::Edit::Reset)),
         )
         .query("version", "Engine and C ABI version information.", |app, _| {
             Ok(json!({
@@ -457,9 +774,40 @@ pub fn run() -> iced::Result {
                 )))
             },
         )
-        .action("toggle_play", "Toggles the play/pause state. No args.", |_| {
-            Ok(Message::TogglePlay)
-        })
+        .action(
+            "toggle_play",
+            "Play / Pause: from stopped it starts the game (the scene's simulation as the compiled game runs it, shown in the Gameplay tab); while playing it pauses; while paused it resumes. No args.",
+            |_| Ok(Message::TogglePlay),
+        )
+        .action(
+            "stop_play",
+            "Stops the game and puts the scene back as it was before Play. Does nothing when there is no play session. No args.",
+            |_| Ok(Message::StopPlay),
+        )
+        .action(
+            "show_gameplay",
+            "Brings the Gameplay tab (the scene through its active camera) to the front. No args.",
+            |_| Ok(Message::ShowGameplay),
+        )
+        .action(
+            "show_camera_preview",
+            "Brings the Camera tab (the scene through the selected Camera 3D, or the active one) to the front. No args.",
+            |_| Ok(Message::ShowCameraPreview),
+        )
+        .action(
+            "game_key",
+            "Presses or releases a key for the running game (ignored unless it plays). `scancode` is the USB HID / SDL scancode: A = 4 … Z = 29, 1 = 30, Enter = 40, Space = 44, Right 79, Left 80, Down 81, Up 82. args: { \"scancode\": number, \"down\": bool }",
+            |args| {
+                let scancode = args.get("scancode").and_then(Value::as_u64).ok_or_else(|| "missing \"scancode\"".to_owned())?;
+                let down = args.get("down").and_then(Value::as_bool).ok_or_else(|| "missing \"down\"".to_owned())?;
+                Ok(Message::GameKey(scancode as u32, down))
+            },
+        )
+        .query(
+            "play",
+            "The play state: stopped, playing or paused; whether the engine runs the game with its scripts; the frames and seconds the game has run; and for each scene view (gameplay, camera) whether the scene has a camera for it and how many frames it has drawn.",
+            |app, _| Ok(play_json(app)),
+        )
         .action("save_scene", "Saves the current scene. No args.", |_| {
             Ok(Message::SaveScene)
         })
@@ -1944,4 +2292,506 @@ fn camera_focus(args: &Value, default: [f32; 3]) -> Result<[f32; 3], String> {
             .ok_or_else(|| "\"focus\" needs three numbers".to_owned())?;
     }
     Ok(focus)
+}
+
+/// The Photon settings and voxel statistics, for the `photon` query.
+fn photon_json(app: &App) -> Value {
+    let Some(settings) = app.photon.settings.as_ref() else {
+        return json!({ "present": false });
+    };
+    let stats = app.photon_stats();
+    json!({
+        "present": true,
+        "entity": app.photon_entity_name(),
+        "settings": {
+            "enabled": settings.enabled,
+            "path": photon_panel::PATHS.get(settings.path),
+            "quality": photon_panel::QUALITIES.get(settings.quality),
+            "intensity": settings.intensity,
+            "radius": settings.radius,
+            "sky_intensity": settings.sky,
+            "ambient": settings.ambient,
+            "debug_view": photon_panel::DEBUG_VIEWS.get(settings.debug_view),
+            "bounce_gain": settings.bounce_gain,
+            "voxel_skinned": settings.voxel_skinned,
+            "voxel_cutout": settings.voxel_cutout,
+            "voxel_terrain": settings.voxel_terrain,
+            "full_rebuilds": settings.full_rebuilds,
+        },
+        "stats": stats.map(|s| json!({
+            "objects": s.objects,
+            "triangles": s.triangles,
+            "over_budget": s.over_budget,
+            "far_enabled": s.far_enabled,
+            "full_rebuilds": s.full_rebuilds,
+            "region_rebuilds": s.region_rebuilds,
+            "last_level_mask": s.last_level_mask,
+            "last_regions": s.last_regions,
+            "last_update_ms": s.last_update_ms,
+        })),
+    })
+}
+
+/// A Photon edit from a field name and a JSON value.
+pub(super) fn photon_edit(field: &str, value: &Value) -> Result<photon_panel::Edit, String> {
+    use photon_panel::{Amount, Choice, Edit, Flag};
+    let same = |name: &str| name.eq_ignore_ascii_case(field);
+    for which in [
+        Flag::Enabled,
+        Flag::VoxelSkinned,
+        Flag::VoxelCutout,
+        Flag::VoxelTerrain,
+        Flag::FullRebuilds,
+    ] {
+        if same(which.field()) {
+            let on = value
+                .as_bool()
+                .ok_or_else(|| format!("\"{field}\" takes true or false"))?;
+            return Ok(Edit::Flag(which, on));
+        }
+    }
+    for which in [
+        Amount::Intensity,
+        Amount::BounceGain,
+        Amount::Sky,
+        Amount::Ambient,
+        Amount::Radius,
+    ] {
+        if same(which.field()) {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| format!("\"{field}\" takes a number"))?;
+            return Ok(Edit::Amount(which, number as f32));
+        }
+    }
+    for which in [Choice::Path, Choice::Quality, Choice::DebugView] {
+        if same(which.field()) {
+            let options = which.options();
+            let index = match value {
+                Value::Number(n) => n.as_u64().map(|i| i as usize),
+                Value::String(name) => options
+                    .iter()
+                    .position(|option| option.eq_ignore_ascii_case(name)),
+                _ => None,
+            };
+            return index
+                .filter(|i| *i < options.len())
+                .map(|i| Edit::Choice(which, i))
+                .ok_or_else(|| format!("\"{field}\" is one of {}", options.join(", ")));
+        }
+    }
+    Err(format!("no Photon setting named \"{field}\""))
+}
+
+/// The volumetric audio, for the `audio` query.
+fn audio_json(app: &App) -> Value {
+    let Some(settings) = app.audio.settings.as_ref() else {
+        return json!({ "present": false });
+    };
+    let mut values = serde_json::Map::new();
+    for flag in audio_panel::Flag::ALL {
+        let spec = flag.spec();
+        values.insert(spec.key.to_owned(), json!(settings.flag(*flag)));
+    }
+    for amount in audio_panel::Amount::ALL {
+        let spec = amount.spec();
+        values.insert(spec.key.to_owned(), json!(settings.amount(*amount)));
+    }
+    let live = &app.audio.live;
+    let voices: Vec<Value> = live
+        .voices
+        .iter()
+        .map(|v| {
+            json!({
+                "name": v.name, "layer": audio_panel::LAYERS[v.layer.clamp(0, 3) as usize], "loaded": v.loaded,
+                "playing": v.playing, "distance_m": v.distance_m, "gain_db": v.gain_db, "cutoff_hz": v.cutoff_hz,
+                "pitch_ratio": v.pitch_ratio, "blocked": v.blocked, "diffracted": v.diffracted,
+            })
+        })
+        .collect();
+    json!({
+        "present": true,
+        "entity": app.audio_entity_name(),
+        "summary": audio_panel::summary(Some(settings), live),
+        "settings": Value::Object(values),
+        "output_on": app.audio.output_on,
+        "devices": app.audio.devices,
+        "device": app.audio.device,
+        "device_open": live.device_open,
+        "room": { "open": live.openness, "sky": live.sky_exposure, "rt60_s": live.rt60_s, "wet": live.wet, "echoes": live.echoes },
+        "obstacles": live.obstacles,
+        "clips_missing": live.clips_missing,
+        "voices": voices,
+    })
+}
+
+/// The audio edit for a key and a JSON value.
+pub(super) fn audio_edit(field: &str, value: &Value) -> Result<audio_panel::Edit, String> {
+    use audio_panel::{Amount, Edit, Flag};
+    let same = |name: &str| name.eq_ignore_ascii_case(field);
+    for which in Flag::ALL {
+        if same(which.spec().key) {
+            let on = value
+                .as_bool()
+                .ok_or_else(|| format!("\"{field}\" takes true or false"))?;
+            return Ok(Edit::Flag(*which, on));
+        }
+    }
+    for which in Amount::ALL {
+        if same(which.spec().key) {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| format!("\"{field}\" takes a number"))?;
+            return Ok(Edit::Amount(*which, number as f32));
+        }
+    }
+    Err(format!("no audio setting named \"{field}\""))
+}
+
+/// The environment settings, for the `environment` query.
+fn environment_json(app: &App) -> Value {
+    let presets: Vec<&str> = environment_panel::presets()
+        .iter()
+        .map(|preset| preset.name)
+        .collect();
+    let Some(settings) = app.environment.settings.as_ref() else {
+        return json!({ "present": false, "presets": presets });
+    };
+    let mut values = serde_json::Map::new();
+    for flag in environment_panel::Flag::ALL {
+        let spec = flag.spec();
+        values.insert(spec.key.to_owned(), json!(settings.flag(*flag)));
+    }
+    for amount in environment_panel::Amount::ALL {
+        let spec = amount.spec();
+        values.insert(spec.key.to_owned(), json!(settings.amount(*amount)));
+    }
+    values.insert(
+        "clouds_quality".to_owned(),
+        json!(environment_panel::QUALITIES.get(settings.quality)),
+    );
+    for tint in environment_panel::Tint::ALL {
+        values.insert(tint.key().to_owned(), json!(settings.tint(tint)));
+    }
+    json!({
+        "present": true,
+        "entity": app.environment_entity_name(),
+        "preset": environment_panel::current_preset(settings),
+        "summary": environment_panel::summary(Some(settings)),
+        "settings": Value::Object(values),
+        "presets": presets,
+    })
+}
+
+/// The environment edit for a key and a JSON value.
+pub(super) fn environment_edit(
+    field: &str,
+    value: &Value,
+) -> Result<environment_panel::Edit, String> {
+    use environment_panel::{Amount, Edit, Flag, Tint, QUALITIES};
+    let same = |name: &str| name.eq_ignore_ascii_case(field);
+    for which in Flag::ALL {
+        let spec = which.spec();
+        if same(spec.key) {
+            let on = value
+                .as_bool()
+                .ok_or_else(|| format!("\"{field}\" takes true or false"))?;
+            return Ok(Edit::Flag(*which, on));
+        }
+    }
+    for which in Amount::ALL {
+        let spec = which.spec();
+        if same(spec.key) {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| format!("\"{field}\" takes a number"))?;
+            return Ok(Edit::Amount(*which, number as f32));
+        }
+    }
+    if same("clouds_quality") {
+        let index = match value {
+            Value::Number(n) => n.as_u64().map(|i| i as usize),
+            Value::String(name) => QUALITIES
+                .iter()
+                .position(|option| option.eq_ignore_ascii_case(name)),
+            _ => None,
+        };
+        return index
+            .filter(|i| *i < QUALITIES.len())
+            .map(Edit::Quality)
+            .ok_or_else(|| format!("\"{field}\" is one of {}", QUALITIES.join(", ")));
+    }
+    for which in Tint::ALL {
+        if same(which.key()) {
+            let channels: Vec<f32> = value
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_f64().map(|n| n as f32))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if channels.len() != 3 {
+                return Err(format!("\"{field}\" takes [r, g, b]"));
+            }
+            return Ok(Edit::Colour(which, [channels[0], channels[1], channels[2]]));
+        }
+    }
+    Err(format!("no environment setting named \"{field}\""))
+}
+
+/// The profiler's scopes, for the `profiler` query.
+pub(super) fn profiler_json(app: &App) -> Value {
+    let Some(engine) = app.engine.as_ref() else {
+        return json!({ "available": false });
+    };
+    let Ok(scopes) = engine.profiler_scopes() else {
+        return json!({ "available": false });
+    };
+    let frame = profiler_panel::frame(&scopes);
+    let history = &app.profiler.history;
+    let last = |series: &[f32]| series.last().copied();
+    json!({
+        "available": true,
+        "history": {
+            "samples": history.fps.len(),
+            "fps": last(&history.fps),
+            "cpu_cores": history.cores.iter().map(|core| last(core)).collect::<Vec<_>>(),
+            "cpu_total": last(&history.cpu_total),
+            "process_cpu": last(&history.process_cpu),
+            "gpu_busy": last(&history.gpu_busy),
+            "vram_used_mib": last(&history.vram_used_mib),
+            "vram_total_mib": history.vram_total_mib,
+            "ram_used_mib": last(&history.ram_used_mib),
+            "ram_process_mib": last(&history.ram_process_mib),
+            "ram_total_mib": history.ram_total_mib,
+        },
+        "gpu_timing": engine.profiler_gpu_timing().unwrap_or(false),
+        "frame_ms": frame.map(|(ms, _)| ms),
+        "fps": frame.map(|(_, fps)| fps),
+        "scopes": scopes
+            .iter()
+            .map(|scope| json!({
+                "name": scope.name,
+                "depth": scope.depth,
+                "calls": scope.calls,
+                "last_ms": scope.last_ms,
+                "avg_ms": scope.avg_ms,
+                "max_ms": scope.max_ms,
+                "self_ms": scope.self_ms,
+                "recent_avg_ms": scope.recent_avg_ms,
+                "recent_max_ms": scope.recent_max_ms,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn asset_pick_json(app: &App) -> Value {
+    let Some(pick) = app.asset_pick.open.as_ref() else {
+        return json!({ "open": false });
+    };
+    let rows: Vec<Value> = app
+        .asset_pick_rows(pick)
+        .into_iter()
+        .map(|row| {
+            json!({
+                "path": row.key,
+                "name": row.label,
+                "kind": AssetKind::from_key(
+                    app.assets
+                        .iter()
+                        .find(|asset| asset.relative_path == row.key)
+                        .map(|asset| asset.kind.as_str())
+                        .unwrap_or("file"),
+                )
+                .key(),
+            })
+        })
+        .collect();
+    json!({
+        "open": true,
+        "title": pick.title,
+        "current": pick.current,
+        "search": pick.search,
+        "filter": pick.filter.map(AssetKind::key),
+        "accepts": pick.kinds.iter().map(|kind| kind.key()).collect::<Vec<_>>(),
+        "present": app
+            .asset_pick_present_kinds(pick)
+            .iter()
+            .map(|kind| kind.key())
+            .collect::<Vec<_>>(),
+        "rows": rows,
+    })
+}
+
+fn asset_kinds_json() -> Value {
+    Value::Array(
+        AssetKind::IMPORTABLE
+            .iter()
+            .map(|kind| {
+                json!({
+                    "key": kind.key(),
+                    "label": kind.label(),
+                    "extensions": kind.extensions(),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn file_browser_json(app: &App) -> Value {
+    let Some(browser) = app.file_browser.as_ref() else {
+        return json!({ "open": false });
+    };
+    json!({
+        "open": true,
+        "dir": browser.dir.display().to_string(),
+        "path_input": browser.path_input,
+        "search": browser.search,
+        "show_hidden": browser.show_hidden,
+        "only_supported": browser.only_supported,
+        "error": browser.error,
+        "selected": browser.selected.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+        "places": browser.places.iter().map(|place| place.label.clone()).collect::<Vec<_>>(),
+        "entries": browser.entries.iter().enumerate().map(|(index, entry)| json!({
+            "index": index,
+            "name": entry.name,
+            "path": entry.path.display().to_string(),
+            "is_dir": entry.is_dir,
+            "kind": entry.kind.map(|kind| kind.key()),
+            "size": entry.size,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn windows_json(app: &App) -> Value {
+    json!({
+        "detach_available": app.detach.supported,
+        "detached": app
+            .detach
+            .windows
+            .iter()
+            .map(|(_, kind)| json!({ "tab": kind.key(), "title": kind.title() }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn play_json(app: &App) -> Value {
+    use doppio_engine::SceneView;
+    let state = match app.transport_state() {
+        crate::uikit::components::transport::State::Playing => "playing",
+        crate::uikit::components::transport::State::Paused => "paused",
+        crate::uikit::components::transport::State::Stopped => "stopped",
+    };
+    let game = app
+        .engine
+        .as_ref()
+        .map(|engine| engine.game_state())
+        .unwrap_or_default();
+    let view = |view: SceneView| {
+        let feed = app.feed(view);
+        json!({
+            "has_camera": !feed.missing_camera,
+            "frames_drawn": feed.requests,
+            "has_picture": feed.frame.is_some(),
+            "camera_entity": app.engine.as_ref().and_then(|engine| engine.scene_camera(view)).map(|(entity, _)| entity),
+        })
+    };
+    json!({
+        "state": state,
+        "game_running": game.running,
+        "scripts_running": game.scripts_running,
+        "game_frames": game.frames,
+        "game_seconds": game.time_s,
+        "gameplay": view(SceneView::Game),
+        "camera": view(SceneView::Camera),
+    })
+}
+
+pub(super) fn performance_edit(
+    field: &str,
+    value: &Value,
+) -> Result<performance_panel::Edit, String> {
+    use performance_panel::{Amount, Edit, Flag};
+    let same = |name: &str| name.eq_ignore_ascii_case(field);
+    for which in Flag::ALL {
+        if same(which.spec().key) {
+            let on = value
+                .as_bool()
+                .ok_or_else(|| format!("\"{field}\" takes true or false"))?;
+            return Ok(Edit::Flag(*which, on));
+        }
+    }
+    for which in Amount::ALL {
+        if same(which.spec().key) {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| format!("\"{field}\" takes a number"))?;
+            return Ok(Edit::Amount(*which, number as f32));
+        }
+    }
+    match field.to_ascii_lowercase().as_str() {
+        "render_scale" => {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| "\"render_scale\" takes a number".to_owned())?;
+            Ok(Edit::RenderScale(performance_panel::scale_index(
+                number as f32,
+            )))
+        }
+        "anti_aliasing" => {
+            let name = value
+                .as_str()
+                .ok_or_else(|| "\"anti_aliasing\" takes off, fxaa or taa".to_owned())?;
+            match name.to_ascii_lowercase().as_str() {
+                "off" => Ok(Edit::AntiAliasing(0)),
+                "fxaa" => Ok(Edit::AntiAliasing(1)),
+                "taa" => Ok(Edit::AntiAliasing(2)),
+                _ => Err("\"anti_aliasing\" takes off, fxaa or taa".to_owned()),
+            }
+        }
+        "shadows" => value
+            .as_bool()
+            .map(Edit::Shadows)
+            .ok_or_else(|| "\"shadows\" takes true or false".to_owned()),
+        "grid" => value
+            .as_bool()
+            .map(Edit::Grid)
+            .ok_or_else(|| "\"grid\" takes true or false".to_owned()),
+        _ => Err(format!("no performance option named \"{field}\"")),
+    }
+}
+
+fn performance_json(app: &App) -> Value {
+    let viewport = app.viewport_settings;
+    let viewport_json = json!({
+        "render_scale": viewport.render_scale,
+        "anti_aliasing": match viewport.anti_aliasing {
+            doppio_engine::AntiAliasing::Off => "off",
+            doppio_engine::AntiAliasing::Fxaa => "fxaa",
+            doppio_engine::AntiAliasing::Taa => "taa",
+        },
+        "shadows": viewport.shadows,
+        "grid": viewport.show_grid,
+    });
+    let Some(settings) = app.performance.settings.as_ref() else {
+        return json!({ "present": false, "viewport": viewport_json });
+    };
+    let mut values = serde_json::Map::new();
+    for flag in performance_panel::Flag::ALL {
+        let spec = flag.spec();
+        values.insert(spec.key.to_owned(), json!(settings.flag(*flag)));
+    }
+    for amount in performance_panel::Amount::ALL {
+        let spec = amount.spec();
+        values.insert(spec.key.to_owned(), json!(settings.amount(*amount)));
+    }
+    json!({
+        "present": true,
+        "entity": app.performance_entity_name(),
+        "summary": performance_panel::summary(Some(settings)),
+        "settings": Value::Object(values),
+        "viewport": viewport_json,
+    })
 }

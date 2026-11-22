@@ -59,6 +59,10 @@ add_library(caffeine-core
     src/caffeine/debug/LogSystem.cpp
     src/caffeine/debug/CrashHandler.cpp
     src/caffeine/debug/Profiler.cpp
+    src/caffeine/audio/AudioService.cpp
+    src/caffeine/audio/volumetric/VolumetricMixer.cpp
+    src/caffeine/audio/volumetric/VolumetricAudio.cpp
+    src/caffeine/audio/volumetric/SceneAudio.cpp
     src/caffeine/debug/SystemMetrics.cpp
     src/caffeine/threading/JobSystem.cpp
     src/caffeine/ecs/CommandBuffer.cpp
@@ -87,6 +91,7 @@ add_library(caffeine-core
     src/caffeine/render/StbImageWrite.cpp
     src/caffeine/runtime/PlayClock.cpp
     src/caffeine/runtime/GameStateStack.cpp
+    src/caffeine/runtime/GameSimulation.cpp
     src/caffeine/scene/EnvironmentSystem.cpp
     src/caffeine/scene/CpuDirectionalShadowMap.cpp
     src/caffeine/scene/LightingSystem.cpp
@@ -238,9 +243,12 @@ else()
                 "post_photon_frag|fragment|post_photon.frag"
                 "post_photon_resolve_frag|fragment|post_photon_resolve.frag"
                 "minz_downsample_frag|fragment|minz_downsample.frag"
+                "batch2d_vert|vertex|batch2d.vert"
+                "batch2d_frag|fragment|batch2d.frag"
                 "photon_cascade|compute|photon_cascade.comp"
                 "photon_c0|compute|photon_c0.comp"
                 "photon_voxelize|compute|photon_voxelize.comp"
+                "photon_voxelize_tri|compute|photon_voxelize_tri.comp"
                 "photon_inject|compute|photon_inject.comp"
                 "photon_probe|compute|photon_probe.comp"
                 "photon_bake_ao|compute|photon_bake_ao.comp"
@@ -486,7 +494,6 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/caffeine/script/WorldApiBindings.cpp
         src/caffeine/script/Physics3DBindings.cpp
         src/caffeine/script/AudioSceneBindings.cpp
-        src/caffeine/audio/AudioService.cpp
     )
     if(DRYAD_AVAILABLE)
         target_sources(caffeine-core PRIVATE
@@ -524,8 +531,34 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         GIT_TAG        docking
         GIT_SHALLOW    TRUE
     )
+    # imnodes is the node-graph widget the composable UI kit (NodeCanvas.hpp) includes. It is fetched here so the
+    # plugin SDK finds it under build/_deps/imnodes-src (see doppio-plugins/cmake/DoppioPlugin.cmake).
+    FetchContent_Declare(
+        imnodes
+        GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
+        GIT_TAG        v0.5
+        GIT_SHALLOW    TRUE
+    )
     set(FETCHCONTENT_QUIET OFF)
-    FetchContent_MakeAvailable(imgui)
+    FetchContent_MakeAvailable(imgui imnodes)
+
+    # imnodes v0.5 predates the TexRef texture API of ImGui docking.
+    file(WRITE "${CMAKE_BINARY_DIR}/patch_imnodes.py"
+"import sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+content = content.replace(
+    'draw_list->_TextureIdStack.back()',
+    'draw_list->_TextureStack.back()._TexID'
+)
+content = content.replace(
+    'draw_cmd.TextureId',
+    'draw_cmd.TexRef._TexID'
+)
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+")
+    execute_process(COMMAND python3 "${CMAKE_BINARY_DIR}/patch_imnodes.py" "${imnodes_SOURCE_DIR}/imnodes.cpp")
 
     add_library(ImGui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
@@ -615,6 +648,10 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
 endif()
 
 # ── caf-encode CLI tool (legacy — prefer caf-pack CLI) ─────────
+add_executable(caffeine-audio-demo tools/audio-demo/main.cpp)
+target_link_libraries(caffeine-audio-demo PRIVATE caffeine-core)
+target_compile_features(caffeine-audio-demo PRIVATE cxx_std_20)
+
 add_executable(caf-encode tools/caf-encode/main.cpp)
 target_link_libraries(caf-encode PRIVATE caffeine-core)
 target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

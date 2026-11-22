@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 16
+#define CAFFEINE_CAPI_VERSION 23
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -175,6 +175,48 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_begin(CaffeineSession* 
 CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_render_poll(CaffeineSession* session,
                                                  uint8_t* pixels,
                                                  size_t pixel_bytes);
+
+/**
+ * Scene views (v23): the scene seen through one of its Camera 3D entities rather than the editor camera, each with
+ * its own target and readback, used the same way as render_begin / render_poll. View 0 is the game (the active
+ * camera), view 1 the camera preview (the camera chosen with `caffeine_session_set_preview_camera`, else the active
+ * one). Neither draws the editor grid. A scene without a Camera 3D has no scene view.
+ */
+#define CAFFEINE_VIEW_GAME 0
+#define CAFFEINE_VIEW_CAMERA 1
+/** The camera a scene view would use and its field of view; CAFFEINE_ERROR when the scene has no Camera 3D. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_scene_camera(const CaffeineSession* session, int32_t view,
+                                                               uint32_t* entity, float* fov_degrees);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_preview_camera(CaffeineSession* session, uint32_t entity);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_view_render_begin(CaffeineSession* session, int32_t view,
+                                                                    uint32_t width, uint32_t height);
+CAFFEINE_CAPI_API CaffeineRenderState caffeine_session_view_render_poll(CaffeineSession* session, int32_t view,
+                                                                        uint8_t* pixels, size_t pixel_bytes);
+
+/**
+ * The game (v23): Play. `game_start` begins the scene's simulation the way the compiled game runs it (animation,
+ * effects, fluids, navigation, 2D and 3D physics, Lua and Dryad scripts, procedural worlds, UI) on the session's own
+ * world; `game_tick` runs one frame of it; the caller renders the game view and, on Stop, restores the scene it
+ * snapshotted before Play (`caffeine_session_snapshot` / `caffeine_session_restore`). While the game runs the
+ * editor's own `caffeine_session_tick` does nothing, so the scene is never advanced twice.
+ */
+typedef struct CaffeineGameState {
+    int32_t running;
+    int32_t scripts_running;  /**< 1 when the script engine started (a build without scripting runs none) */
+    uint64_t frames;
+    float time_s;
+} CaffeineGameState;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_game_start(CaffeineSession* session);
+CAFFEINE_CAPI_API void caffeine_session_game_stop(CaffeineSession* session);
+CAFFEINE_CAPI_API int32_t caffeine_session_game_running(const CaffeineSession* session);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_game_tick(CaffeineSession* session, float delta_time);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_game_state(const CaffeineSession* session, CaffeineGameState* out);
+/** A key the scripts read: `scancode` is the USB HID / SDL scancode (A = 4, Space = 44, arrows 79..82). */
+CAFFEINE_CAPI_API void caffeine_session_game_key(CaffeineSession* session, uint32_t scancode, int32_t down);
+CAFFEINE_CAPI_API void caffeine_session_game_release_keys(CaffeineSession* session);
+/** The pointer over the game view, in its pixels; `button` 1 left, 2 middle, 3 right (0: only a move). */
+CAFFEINE_CAPI_API void caffeine_session_game_mouse(CaffeineSession* session, float x, float y, uint32_t button,
+                                                   int32_t down);
 /** Viewport camera (radians for yaw/pitch, world units for distance). */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_camera(CaffeineSession* session, CaffeineCamera camera);
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_get_camera(const CaffeineSession* session, CaffeineCamera* out);
@@ -520,6 +562,153 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_water_height(const CaffeineSes
                                                                float z, float* out_height);
 
 /**
+ * Animation (C ABI v22). The PhaseShift is the entity's state machine (formerly
+ * "Animator"). These calls read and write its parameters, states and base-layer transitions; layers
+ * are not exposed yet. Names are NUL-terminated and at most 31 characters.
+ */
+typedef struct CaffeinePhaseShiftCounts {
+    uint32_t parameters;
+    uint32_t states;
+    uint32_t transitions;  /* any-state transitions first, then each state's, in state order */
+} CaffeinePhaseShiftCounts;
+
+/** kind: 0 bool, 1 float, 2 int, 3 trigger. value is the float, int or 0/1 bool value. */
+typedef struct CaffeinePhaseShiftParameter {
+    char     name[32];
+    uint32_t kind;
+    float    value;
+    float    smoothing;  /* seconds; zero when the float is not smoothed */
+} CaffeinePhaseShiftParameter;
+
+typedef struct CaffeinePhaseShiftState {
+    char     name[32];
+    char     clip[260];  /* motion name, or the clip name when the state has no motion */
+    float    speed;
+    uint32_t is_current;
+} CaffeinePhaseShiftState;
+
+/** op: 0 equals, 1 not equals, 2 greater, 3 less, 4 greater or equal, 5 less or equal. */
+typedef struct CaffeinePhaseShiftCondition {
+    char     parameter[32];
+    uint32_t op;
+    float    value;
+} CaffeinePhaseShiftCondition;
+
+typedef struct CaffeinePhaseShiftTransition {
+    char     from[32];  /* "Any State" for any-state transitions */
+    char     to[32];
+    float    blend_time;
+    uint32_t has_exit_time;
+    uint32_t condition_count;
+} CaffeinePhaseShiftTransition;
+
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_counts(const CaffeineSession* session,
+                                                                     CaffeineEntity entity,
+                                                                     CaffeinePhaseShiftCounts* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_parameter(const CaffeineSession* session,
+                                                                        CaffeineEntity entity,
+                                                                        uint32_t index,
+                                                                        CaffeinePhaseShiftParameter* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_state(const CaffeineSession* session,
+                                                                    CaffeineEntity entity,
+                                                                    uint32_t index,
+                                                                    CaffeinePhaseShiftState* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_transition(const CaffeineSession* session,
+                                                                         CaffeineEntity entity,
+                                                                         uint32_t index,
+                                                                         CaffeinePhaseShiftTransition* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_condition(const CaffeineSession* session,
+                                                                        CaffeineEntity entity,
+                                                                        uint32_t transition_index,
+                                                                        uint32_t index,
+                                                                        CaffeinePhaseShiftCondition* out);
+/** Sets a float parameter. Bool, int and trigger parameters return CAFFEINE_INVALID_ARGUMENT. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_set_float(CaffeineSession* session,
+                                                                        CaffeineEntity entity,
+                                                                        uint32_t index, float value);
+/** Smooths a float parameter over `seconds`. Zero turns smoothing off. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_set_smoothing(CaffeineSession* session,
+                                                                            CaffeineEntity entity,
+                                                                            uint32_t index,
+                                                                            float seconds);
+/** Adds a PhaseShift to the entity (no-op when it has one). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_add(CaffeineSession* session, CaffeineEntity entity);
+/**
+ * Adds a parameter to the entity's PhaseShift. kind: 0 bool, 1 float, 2 int, 3 trigger. The name must be non-empty,
+ * at most 31 characters, and unused. INVALID_ARGUMENT for a bad name or kind, NOT_FOUND without a PhaseShift.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_add_parameter(CaffeineSession* session,
+                                                                            CaffeineEntity entity,
+                                                                            const char* name, uint32_t kind);
+/** Removes a parameter by index. Later indices shift down. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_phase_shift_remove_parameter(CaffeineSession* session,
+                                                                               CaffeineEntity entity,
+                                                                               uint32_t index);
+
+/** Counts of the 2D rig attached to an entity. Zero everywhere when no rig is attached or it failed to load. */
+typedef struct CaffeineRig2DCounts {
+    uint32_t bones;
+    uint32_t vertices;
+    uint32_t triangles;
+    uint32_t parameters;
+    uint32_t bindings;
+    uint32_t loaded;  /* 1 when the rig file loaded */
+} CaffeineRig2DCounts;
+
+typedef struct CaffeineRig2DBone {
+    char    name[32];
+    int32_t parent;  /* -1 for a root */
+} CaffeineRig2DBone;
+
+/** value is the parameter as the last tick evaluated it (PhaseShift value when one is set, else the clip, else the default). */
+typedef struct CaffeineRig2DParameter {
+    char  name[32];
+    float minimum;
+    float default_value;
+    float maximum;
+    float value;
+} CaffeineRig2DParameter;
+
+typedef struct CaffeineRig2DVertex {
+    uint32_t influence_count;  /* up to 4 */
+    uint32_t bones[4];
+    float    weights[4];
+} CaffeineRig2DVertex;
+
+/** channel: 0 rotation, 1 translate x, 2 translate y, 3 scale x, 4 scale y. */
+typedef struct CaffeineRig2DBinding {
+    uint32_t parameter;
+    uint32_t bone;
+    uint32_t channel;
+    uint32_t key_count;
+} CaffeineRig2DBinding;
+
+/** Attaches a .rig2d file to the entity, adding the Rig 2D player when needed. The rig loads on the next access. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_attach(CaffeineSession* session,
+                                                               CaffeineEntity entity,
+                                                               const char* rig_path);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_counts(const CaffeineSession* session,
+                                                               CaffeineEntity entity,
+                                                               CaffeineRig2DCounts* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_bone(const CaffeineSession* session,
+                                                             CaffeineEntity entity, uint32_t index,
+                                                             CaffeineRig2DBone* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_parameter(const CaffeineSession* session,
+                                                                  CaffeineEntity entity,
+                                                                  uint32_t index,
+                                                                  CaffeineRig2DParameter* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_vertex(const CaffeineSession* session,
+                                                               CaffeineEntity entity, uint32_t index,
+                                                               CaffeineRig2DVertex* out);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_binding(const CaffeineSession* session,
+                                                                CaffeineEntity entity, uint32_t index,
+                                                                CaffeineRig2DBinding* out);
+/** Sets the rig parameter by writing the PhaseShift float with the same name (added when missing), clamped to its range. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_rig2d_set_parameter(CaffeineSession* session,
+                                                                      CaffeineEntity entity,
+                                                                      uint32_t index, float value);
+
+/**
  * What the last rendered frame drew and cost, and what the GPU can do (v11). Times are CPU-side
  * (encoding): SDL3 GPU has no portable GPU timestamps. All zero before the first render.
  */
@@ -540,6 +729,8 @@ typedef struct CaffeineRenderStats {
     int32_t mesh_shaders;         /**< always 0 on SDL3 GPU */
     uint32_t gpu_water_draws;     /**< water surfaces waved in the vertex shader (v13) */
     uint32_t micromesh_draws;     /**< meshes drawn as a GPU-selected Micromesh cut (v14; was `reserved`) */
+    uint32_t shadow_draws;        /**< caster submissions into the sun's cascades, one per mesh and cascade (v19) */
+    uint32_t shadow_draws_culled; /**< casters skipped because they lie outside a cascade (v19) */
 } CaffeineRenderStats;
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_render_stats(const CaffeineSession* session,
                                                                CaffeineRenderStats* out);
@@ -562,6 +753,181 @@ typedef struct CaffeineMicromeshFrameStats {
 } CaffeineMicromeshFrameStats;
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_micromesh_stats(const CaffeineSession* session,
                                                                   CaffeineMicromeshFrameStats* out);
+
+/** What Photon's voxel far field holds and cost in the latest frame (v17). */
+typedef struct CaffeinePhotonStats {
+    uint32_t objects;          /**< solid objects in the triangle volume */
+    uint32_t triangles;        /**< triangles voxelised (0 when over budget) */
+    uint32_t over_budget;      /**< 1 when the scene exceeded the 1M-triangle cap: only the screen fill remains */
+    uint32_t far_enabled;      /**< 1 when the far field ran in the latest frame */
+    uint32_t full_rebuilds;    /**< clipmap levels rebuilt whole since the session began */
+    uint32_t region_rebuilds;  /**< dirty boxes revoxelised since the session began */
+    uint32_t last_level_mask;  /**< levels rebuilt whole in the latest update (bit per level) */
+    uint32_t last_regions;     /**< dirty boxes revoxelised in the latest update */
+    float last_update_ms;      /**< CPU time to encode the latest voxel update */
+    uint32_t target_rebuilds;  /**< times the per-size targets were created again (a view of another size makes it climb) */
+    uint32_t far_skipped;      /**< frames the far field was left as it was because nothing it depends on changed (v23) */
+    uint32_t far_half_rate;    /**< frames it was skipped because the camera only turned in a calm scene (v23) */
+} CaffeinePhotonStats;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_photon_stats(const CaffeineSession* session,
+                                                               CaffeinePhotonStats* out);
+/** Discards Photon's triangle volume; the next frame revoxelises the whole scene (v17). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_photon_rebuild(CaffeineSession* session);
+
+/**
+ * The engine's scope profiler (v18). One process-wide tree of timed scopes (CPU time of the renderer's stages,
+ * and of the GPU passes when GPU timing is on). Scopes come in depth-first order; `depth` 0 are the top ones.
+ * Times are milliseconds. With GPU timing on, the GPU passes wait for the GPU at their edges so their time is
+ * the real cost; that serialises CPU and GPU, so frames get slower while it is on: a measuring mode.
+ */
+typedef struct CaffeineProfileScope {
+    char name[48];
+    uint32_t depth;
+    uint32_t calls;
+    float last_ms;      /**< the most recent call */
+    float avg_ms;       /**< over every call since the last reset */
+    float max_ms;
+    float self_ms;      /**< average time not spent in child scopes */
+    float recent_avg_ms;  /**< mean of the latest 120 calls (v19): follows what the scene does now */
+    float recent_max_ms;  /**< worst of the latest 120 calls (v19) */
+} CaffeineProfileScope;
+/** Copies up to `capacity` scopes into `out` and sets `*out_count` to how many exist (it may exceed `capacity`). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_profiler_report(CaffeineProfileScope* out, uint32_t capacity,
+                                                          uint32_t* out_count);
+/** Forgets every scope and sample. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_profiler_reset(void);
+/** Turns GPU timing on or off (see above); `enabled` 0 or 1. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_profiler_set_gpu_timing(int32_t enabled);
+/** Whether GPU timing is on (`*out` is 0 or 1). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_profiler_gpu_timing(int32_t* out);
+
+/**
+ * The machine as the profiler's graphs show it (v19). Percentages cover the time since the previous call (the first
+ * call reports zeros), so call it at a steady rate. What a platform cannot provide is reported as unavailable:
+ * `cpu_core_count` 0, the GPU and VRAM fields -1. Linux reads /proc, NVML and sysfs; other platforms report nothing yet.
+ */
+#define CAFFEINE_MAX_CPU_CORES 64
+typedef struct CaffeineSystemMetrics {
+    uint32_t cpu_core_count;                         /**< logical cores reported (at most 64) */
+    float cpu_core_percent[CAFFEINE_MAX_CPU_CORES];  /**< busy share of each logical core, 0..100 */
+    float cpu_total_percent;                         /**< the whole machine, 0..100 */
+    float process_cpu_percent;                       /**< this process, percent of ONE core (can exceed 100) */
+    float ram_process_mib;                           /**< resident memory of this process (-1 unavailable) */
+    float ram_used_mib;                              /**< memory in use on the whole machine (-1 unavailable) */
+    float ram_total_mib;
+    float gpu_busy_percent;                          /**< -1 unavailable */
+    float vram_used_mib;                             /**< -1 unavailable */
+    float vram_total_mib;
+} CaffeineSystemMetrics;
+CAFFEINE_CAPI_API CaffeineResult caffeine_system_metrics(CaffeineSystemMetrics* out);
+
+/**
+ * The weather's moving parts at the latest frame (v19): the lightning that is lighting the scene and the wind's
+ * surge. All zero before the first render or when the scene has no lightning.
+ */
+typedef struct CaffeineWeatherState {
+    float flash;                 /**< 0 none, about 1 at a full return stroke (more for a close strike) */
+    float bolt;                  /**< 0..1: how visible the bolt in the sky is */
+    float gust;                  /**< the wind's strength relative to its mean (1 = mean) */
+    float clock_s;               /**< the clock the strikes use, seconds */
+    int32_t lightning_active;    /**< 1 when the scene has lightning running */
+    float strike_distance_m;     /**< of the strike being shown */
+    float strike_azimuth_rad;
+} CaffeineWeatherState;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_weather_state(const CaffeineSession* session,
+                                                                CaffeineWeatherState* out);
+
+/** A clap of thunder that has reached the listener (v19). */
+typedef struct CaffeineThunderEvent {
+    float distance_m;     /**< of the strike (the sound took distance / 343 s to arrive) */
+    float azimuth_rad;    /**< direction of the strike around +Y */
+    float volume;         /**< 0..1, falling with the distance */
+    float arrival_s;      /**< on the clock `caffeine_session_weather_state` reports */
+} CaffeineThunderEvent;
+/**
+ * Hands out the thunder that has arrived since the last call (at most `capacity`; `*out_count` is how many were
+ * written). The engine makes no sound: a player (a game, a script) turns each event into one.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_poll_thunder(CaffeineSession* session, CaffeineThunderEvent* out,
+                                                               uint32_t capacity, uint32_t* out_count);
+
+/**
+ * What the weather's sound is doing (v19). The sound is made from noise by the session itself (no files) when the
+ * scene's `Weather` component has `Audio Enabled`; without an audio device the levels still follow the weather and
+ * `device_ready` is 0.
+ */
+typedef struct CaffeineAudioState {
+    int32_t enabled;         /**< the scene asks for the weather's sound */
+    int32_t device_ready;    /**< an audio device is open */
+    float volume;            /**< 0..1, the weather's master volume */
+    float rain_level;        /**< 0..1 loudness the rain bed is heading for */
+    float wind_level;
+    int32_t rain_playing;    /**< the rain bed is running on the device */
+    int32_t wind_playing;
+    uint32_t thunder_heard;  /**< claps handed to the player since the session began */
+    uint32_t thunder_played; /**< the ones that actually started on a device */
+} CaffeineAudioState;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_audio_state(const CaffeineSession* session, CaffeineAudioState* out);
+
+/**
+ * Volumetric audio (v20): the scene's `Audio Emitter` entities become voices that travel through the scene's `Acoustic
+ * Obstacle` boxes (delay, Doppler, occlusion, diffraction, the room's reverb and echoes), set by the `Volumetric Audio`
+ * component. Without that component nothing is mixed. The session mixes silently ("monitors") while no sound device is
+ * open, so the state below keeps moving; `caffeine_session_set_audio_output` opens the device.
+ */
+typedef struct CaffeineVolumetricState {
+    int32_t enabled;         /**< an enabled `Volumetric Audio` component is in the scene */
+    int32_t device_open;     /**< the mixer is playing on a sound device */
+    uint32_t voices;         /**< emitters tracked (see caffeine_session_volumetric_voice) */
+    uint32_t obstacles;      /**< `Acoustic Obstacle` boxes in the world */
+    uint32_t clips_missing;  /**< emitters whose clip could not be found or decoded */
+    float openness;          /**< the room round the listener: 0 shut in .. 1 open */
+    float sky_exposure;      /**< 0 under a roof .. 1 open sky */
+    float rt60_s;            /**< reverb tail */
+    float wet;               /**< how much reverb the room adds */
+    uint32_t echoes;         /**< distinct echoes from far surfaces */
+    float time_s;            /**< the mixer's clock */
+} CaffeineVolumetricState;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_volumetric_state(const CaffeineSession* session,
+                                                                   CaffeineVolumetricState* out);
+
+/** What the mixer decided for one emitter (v20). */
+typedef struct CaffeineVolumetricVoice {
+    uint32_t entity;
+    int32_t layer;           /**< 0 World, 1 Ambient, 2 Music, 3 Ui */
+    int32_t loaded;          /**< the clip was found */
+    int32_t playing;
+    float distance_m;
+    float delay_s;           /**< the sound's travel time */
+    float pitch_ratio;       /**< the Doppler shift: > 1 while approaching */
+    float gain_db;           /**< direct path, after distance and what the walls keep */
+    float cutoff_hz;         /**< the low-pass the air and the walls leave */
+    int32_t blocked;
+    int32_t diffracted;
+    float dir_x, dir_y, dir_z;  /**< where it seems to come from, in the world */
+} CaffeineVolumetricVoice;
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_volumetric_voice(const CaffeineSession* session, uint32_t index,
+                                                                   CaffeineVolumetricVoice* out);
+
+/** Opens (1) or closes (0) the sound device the volumetric mixer plays on. CAFFEINE_ERROR when there is none. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_audio_output(CaffeineSession* session, int32_t on);
+
+/** How many sound devices can play (v20). */
+CAFFEINE_CAPI_API int32_t caffeine_audio_output_device_count(void);
+/** The name of device `index` (UTF-8, truncated to `capacity - 1`); CAFFEINE_INVALID_ARGUMENT for a bad index (v20). */
+CAFFEINE_CAPI_API CaffeineResult caffeine_audio_output_device_name(int32_t index, char* buffer, size_t capacity);
+/**
+ * Chooses the device the volumetric mixer plays on: `index` into the list above, or -1 for the system default. When the
+ * speakers are on the mixer moves there at once (v20).
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_audio_output_device(CaffeineSession* session, int32_t index);
+
+/**
+ * Mixes `frames` stereo frames (interleaved float) for the caller, for tests and captures. Only while no device is
+ * open; `*written` is how many were mixed.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_volumetric_render(CaffeineSession* session, float* out_stereo,
+                                                                    uint32_t frames, uint32_t* written);
 
 /** Result summary of caffeine_micromesh_build (v12). */
 typedef struct CaffeineMicromeshStats {
@@ -715,6 +1081,13 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_biome_check(const char* biome_text, ch
 
 /** Advance frame bookkeeping; systems will be wired here incrementally. */
 CAFFEINE_CAPI_API void caffeine_session_tick(CaffeineSession* session, float delta_time);
+/**
+ * Whether the scene is simulating (v21). Off, a rendered frame stands still: clouds, weather, wind on foliage and
+ * water do not advance and the scene's sound is not driven; on, every frame advances them by 1/60 s. A new session
+ * simulates (the previous behaviour); an editor turns it off and switches it on for its Play mode.
+ */
+CAFFEINE_CAPI_API void caffeine_session_set_simulating(CaffeineSession* session, int32_t simulating);
+CAFFEINE_CAPI_API int32_t caffeine_session_simulating(const CaffeineSession* session);
 CAFFEINE_CAPI_API void caffeine_session_frame_stats(const CaffeineSession* session, CaffeineFrameStats* out);
 
 #ifdef __cplusplus

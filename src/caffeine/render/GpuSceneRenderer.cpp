@@ -1,6 +1,8 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "render/GpuProfile.hpp"
+#include "render/ShadowCulling.hpp"
 #include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "effects/EffectSystem.hpp"
@@ -39,6 +41,7 @@
 #include "debug/CrashHandler.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -141,6 +144,9 @@ struct LightingUBO {
     float modifiers[4]; // x wetness, y snow, z age
     float modTint[4];   // rgb albedo tint
     float water[4];     // x water surface, y foam scale, z ripple detail, w time
+    float cloudShadowA[4];  // x strength (0 = off), y coverage, z density
+    float cloudShadowB[4];  // xyz wind offset of the cloud noise, w base altitude
+    float cloudShadowC[4];  // xyz direction toward the sun, w top altitude
 };
 
 static_assert(offsetof(LightingUBO, iblColor) == 608, "LightingUBO.iblColor must match GLSL std140");
@@ -162,6 +168,10 @@ struct SkyUBO {
     float cloudC[4];
     float sunDir[4];
     float sunColor[4];
+    float cloudD[4];
+    float cloudE[4];
+    float boltA[4];
+    float boltB[4];
 };
 
 struct GridUBO {
@@ -553,7 +563,6 @@ bool GpuSceneRenderer::init(RHI::RenderDevice* device) {
     m_fallbackCube = m_device->createTexture(cubeDesc);
     m_views.reserve(kMaxViewTargets);
     m_post.init(device);
-    m_photonCascades.init(device);
     m_ready = m_sampler && m_repeatSampler && m_pointSampler && m_post.ready();
     return m_ready;
 }
@@ -704,7 +713,9 @@ void GpuSceneRenderer::shutdown() {
         if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
         if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
         destroyGBufferTargets(m_device, m_reflectionGbuffer);
-        m_photonCascades.shutdown(m_device);
+        for (auto& entry : m_photonViews) entry.second->cascades.shutdown(m_device);
+        m_photonViews.clear();
+        m_pv = nullptr;
         if (m_fallbackCube) m_device->destroyTexture(m_fallbackCube);
         m_environment.release(m_device);
         if (m_sampler) m_device->destroySampler(m_sampler);
@@ -1027,10 +1038,15 @@ bool GpuSceneRenderer::createPipelines() {
 }
 
 void GpuSceneRenderer::setWind(float* out, const MeshDraw& draw) const {
-    out[0] = draw.windStrength;
+    // A weather wind sways foliage harder the stronger it blows, in gusts (0 leaves the material as authored).
+    const f32 windScale =
+        m_weather.windFoliage > 0.0f
+            ? 1.0f + m_weather.windFoliage * (m_weather.rainWindSpeed / 8.0f) * m_gust
+            : 1.0f;
+    out[0] = draw.windStrength * windScale;
     out[1] = draw.windSpeed;
     out[2] = draw.windFlutter;
-    out[3] = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
+    out[3] = m_simTime;
 }
 
 void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw,
@@ -1273,8 +1289,20 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
             const f32 viewportH = cascadeCount > 1 ? cascadeSize : atlasSize;
             cmd->setViewport(offsetX, offsetY, viewportW, viewportH);
 
+            // A cascade is a box round one slice of the view: what lies outside its sides is not drawn into it
+            // (a caster in the far cascade's range used to be submitted to all four).
+            const std::array<Vec4, 6> sides = planesFromViewProj(cascadeVPs[cascade]);
             for (const auto& draw : draws) {
                 if (!draw.castShadows || !draw.mesh || !ensureMeshUploaded(draw.mesh)) continue;
+                // Wind, displacement and waves move vertices off the box the draw was gathered with.
+                if (draw.hasAabb && !draw.displaced && !draw.gpuWater) {
+                    const Vec3 margin(0.5f, 0.5f, 0.5f);
+                    if (outsideCascadeSides(sides, draw.aabbMin - margin, draw.aabbMax + margin)) {
+                        ++m_building.shadowDrawsCulled;
+                        continue;
+                    }
+                }
+                ++m_building.shadowDraws;
                 const MicromeshDrawRef* microRef = nullptr;
                 if (microViews[cascade] != ~0u && microDrawParts(&draw, microRef)) {
                     cmd->bindPipeline(m_shadowMicromeshPipeline);
@@ -1455,12 +1483,134 @@ void GpuSceneRenderer::drawSky(RHI::CommandBuffer* cmd, const GpuSceneCamera& ca
     setVec4(ubo.sunDir, clouds.sunDirection.x, clouds.sunDirection.y, clouds.sunDirection.z,
             clouds.sunIntensity * clouds.sunScatter);
     setVec4(ubo.sunColor, clouds.sunColor.x, clouds.sunColor.y, clouds.sunColor.z, 1.0f);
+    setVec4(ubo.cloudD, clouds.tint.x, clouds.tint.y, clouds.tint.z, clouds.darkness);
+    setVec4(ubo.cloudE, clouds.skyLight, 0.0f, 0.0f, 0.0f);
+    setVec4(ubo.boltA, m_lightning.strike.azimuth, m_lightning.strike.elevation, m_lightning.bolt,
+            m_lightning.flash);
+    setVec4(ubo.boltB, m_lightning.strike.start, clouds.silverLining, 0.0f, 0.0f);
 
     RHI::Texture* bound = env ? env : GpuTextureCache::instance().whiteTexture(m_device);
     cmd->bindPipeline(m_skyPipeline);
     if (bound) cmd->bindTexture(bound, 0, m_repeatSampler);
     cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &ubo, sizeof(ubo));
     cmd->draw(3);
+}
+
+void GpuSceneRenderer::applyWeatherToLights(Scene::LightingData& lights) const {
+    if (m_weather.sunScale != 1.0f) {
+        for (auto& d : lights.directionals) d.intensity *= m_weather.sunScale;
+    }
+    // A flash lights the scene from where the bolt struck: a cold directional light with no shadow of its own,
+    // seen by the forward shader and by Photon's injection alike (so the bounce flashes too).
+    const f32 flash = m_lightning.flash;
+    if (flash > 0.02f && lights.directionals.size() < 4) {
+        const Scene::LightningStrike& strike = m_lightning.strike;
+        const f32 elevation = strike.elevation * 0.6f;
+        const Vec3 toBolt(std::sin(strike.azimuth) * std::cos(elevation), std::sin(elevation),
+                          std::cos(strike.azimuth) * std::cos(elevation));
+        Scene::DirectionalLightData bolt;
+        bolt.direction = toBolt * -1.0f;
+        bolt.color = Vec4(0.78f, 0.84f, 1.0f, 1.0f);
+        bolt.intensity = flash * 5.0f;
+        bolt.shadowDistance = 0.0f;
+        bolt.castShadows = false;
+        lights.directionals.push_back(bolt);
+    }
+}
+
+void GpuSceneRenderer::updateWeatherDynamics() {
+    m_gust = Scene::windGustFactor(m_cloudTime, m_weather.windGust);
+    m_lightning = {};
+    if (m_weather.lightning) {
+        Scene::LightningSettings settings;
+        settings.rate = m_weather.lightningRate;
+        settings.intensity = m_weather.lightningIntensity;
+        settings.distanceMin = m_weather.lightningDistanceMin;
+        settings.distanceMax = m_weather.lightningDistanceMax;
+        settings.seed = m_weather.lightningSeed;
+        m_lightning = Scene::lightningAt(settings, m_cloudTime);
+    }
+}
+
+u32 GpuSceneRenderer::pollThunder(Scene::ThunderEvent* out, u32 capacity) {
+    if (!m_weather.lightning || !m_weather.thunder) {
+        m_thunderLast = m_cloudTime;
+        return 0;
+    }
+    if (m_cloudTime < m_thunderLast) m_thunderLast = 0.0f;  // the clock wrapped
+    Scene::LightningSettings settings;
+    settings.rate = m_weather.lightningRate;
+    settings.intensity = m_weather.lightningIntensity;
+    settings.distanceMin = m_weather.lightningDistanceMin;
+    settings.distanceMax = m_weather.lightningDistanceMax;
+    settings.seed = m_weather.lightningSeed;
+    const u32 found = Scene::thunderBetween(settings, m_thunderLast, m_cloudTime, out, capacity);
+    m_thunderLast = m_cloudTime;
+    return std::min(found, capacity);
+}
+
+PostWeather GpuSceneRenderer::buildPostWeather(const GpuSceneCamera& camera, u32 width,
+                                               u32 height) const {
+    (void)width;
+    (void)height;
+    PostWeather wx;
+    const Scene::WeatherResolved& w = m_weather;
+    if (w.fog) {
+        wx.fog = true;
+        wx.fogDensity = w.fogDensity;
+        wx.fogHeightFalloff = w.fogHeightFalloff;
+        wx.fogBaseHeight = w.fogBaseHeight;
+        wx.fogStart = w.fogStart;
+        wx.fogMaxOpacity = w.fogMaxOpacity;
+        wx.fogColor = w.fogColor;
+        wx.fogSkyBlend = w.fogSkyBlend;
+        wx.fogSunScatter = w.fogSunScatter;
+        wx.fogSunExponent = w.fogSunExponent;
+        wx.sunDirection = m_weatherSunDirection;
+        wx.sunColor = m_weatherSunColor * (m_weatherSunIntensity * 0.5f);
+        wx.horizon = Vec3(kSkyHorizon.x * w.skyScale * w.skyTint.x, kSkyHorizon.y * w.skyScale * w.skyTint.y,
+                          kSkyHorizon.z * w.skyScale * w.skyTint.z);
+        RHI::Texture* env = m_environment.texture();
+        if (env && m_environmentExposure > 0.0f) {
+            wx.environment = env;
+            wx.environmentExposure = m_environmentExposure * w.skyScale;
+            const u32 mips = m_environment.mipCount();
+            wx.environmentLod = static_cast<f32>(std::min(mips > 0 ? mips - 1 : 0u, 6u));
+        }
+    }
+    if (m_cloudSettings.enabled && m_cloudSettings.sunShafts > 0.0f) {
+        // The sun's place on the screen (a far point along its direction), and whether it is in front of the camera.
+        const Vec3 toward = m_weatherSunDirection;
+        const Vec4 clip = (camera.proj * camera.view)
+                              .transformVec4(Vec4(camera.position.x + toward.x * 1000.0f,
+                                                  camera.position.y + toward.y * 1000.0f,
+                                                  camera.position.z + toward.z * 1000.0f, 1.0f));
+        if (clip.w > 1e-4f) {
+            wx.sunAhead = true;
+            wx.shaftSun = Vec2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
+            wx.shafts = m_cloudSettings.sunShafts;
+        }
+    }
+    if (m_lightning.flash > 0.0f) {
+        wx.flash = m_lightning.flash;
+        wx.flashColor = Vec3(0.78f, 0.84f, 1.0f);
+    }
+    if (w.rain) {
+        wx.rain = true;
+        wx.rainIntensity = w.rainIntensity;
+        wx.rainDropLength = w.rainDropLength;
+        wx.rainFallSpeed = w.rainSpeed;
+        wx.rainBrightness = w.rainBrightness;
+        // The wind's velocity in the world, surging with the gusts: the shader tilts the whole lattice of drops by it.
+        const f32 angle = w.rainWindDirection * kPi / 180.0f;
+        const f32 speed = w.rainWindSpeed * m_gust;
+        wx.rainWind = Vec3(std::cos(angle) * speed, 0.0f, std::sin(angle) * speed);
+        wx.rainSplashes = w.rainSplashes;
+        const f32 level = std::clamp(0.12f + 0.30f * m_weatherSunIntensity, 0.08f, 0.6f);
+        wx.rainColor = Vec3(0.75f * level * w.skyTint.x, 0.80f * level * w.skyTint.y,
+                            0.92f * level * w.skyTint.z);
+    }
+    return wx;
 }
 
 void GpuSceneRenderer::drawGrid(RHI::CommandBuffer* cmd, const GpuSceneCamera& camera,
@@ -1519,10 +1669,14 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     // Everything that is the same for every draw of the pass.
     LightingUBO base{};
     setVec4(base.cameraPos, camera.position.x, camera.position.y, camera.position.z, 0.0f);
+    // Weather greys and dims the sky light: overcast or fog changes the ambient like it does Photon's sky.
+    const Vec3 weatherSky = m_weather.skyTint * (m_weather.skyScale * (1.0f + 1.2f * m_lightning.flash));
     if (options.overrideAmbient) {
-        setVec4(base.ambient, options.ambientColor.x, options.ambientColor.y, options.ambientColor.z, 0.0f);
+        setVec4(base.ambient, options.ambientColor.x * weatherSky.x, options.ambientColor.y * weatherSky.y,
+                options.ambientColor.z * weatherSky.z, 0.0f);
     } else {
-        setVec4(base.ambient, kFallbackAmbient.x, kFallbackAmbient.y, kFallbackAmbient.z, 0.0f);
+        setVec4(base.ambient, kFallbackAmbient.x * weatherSky.x, kFallbackAmbient.y * weatherSky.y,
+                kFallbackAmbient.z * weatherSky.z, 0.0f);
     }
     base.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
     for (int i = 0; i < base.dirCount; ++i) {
@@ -1530,6 +1684,18 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         const Vec3 c = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
         setVec4(base.dirData + i * 4, d.direction.x, d.direction.y, d.direction.z, d.intensity);
         setVec4(base.dirColor + i * 4, c.x, c.y, c.z, 0.0f);
+    }
+    {
+        // Cloud shadows: the forward shaders read the clouds' noise at the point where the sun's ray crosses the layer.
+        const GpuCloudSettings& cs = m_cloudSettings;
+        const bool shade = cs.enabled && cs.groundShadows && !wireframe;
+        const f32 strength = shade ? std::max(cs.shadowStrength, m_weather.cloudShadowStrength) : 0.0f;
+        const f32 windAngle = cs.windDirection * kPi / 180.0f;
+        const f32 drift = cs.windSpeed * cs.time;
+        setVec4(base.cloudShadowA, strength, cs.coverage, cs.density, 0.0f);
+        setVec4(base.cloudShadowB, std::cos(windAngle) * drift + cs.seed, cs.seed, std::sin(windAngle) * drift + cs.seed,
+                cs.baseAltitude);
+        setVec4(base.cloudShadowC, cs.sunDirection.x, cs.sunDirection.y, cs.sunDirection.z, cs.topAltitude);
     }
     base.pointCount = static_cast<int>(std::min(lighting.lights.points.size(), size_t{4}));
     for (int i = 0; i < base.pointCount; ++i) {
@@ -1550,8 +1716,9 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     }
 
     const bool environmentOn = m_environment.texture() != nullptr && !wireframe;
-    const Vec3 irradiance =
+    Vec3 irradiance =
         environmentOn ? m_environment.averageColor() * m_environmentExposure : kFallbackAmbient;
+    irradiance = Vec3(irradiance.x * weatherSky.x, irradiance.y * weatherSky.y, irradiance.z * weatherSky.z);
     setVec4(base.iblColor, irradiance.x, irradiance.y, irradiance.z, features.iblSpecular);
     base.iblParams[0] = features.iblDiffuse;
     base.iblParams[1] = (features.iblEnabled && !wireframe) ? 1.0f : 0.0f;
@@ -1670,7 +1837,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             setVec4(lights.coat, draw.clearcoat, draw.clearcoatRoughness, draw.ior,
                     draw.transmission);
             setVec4(lights.foliage, draw.translucency, 0.0f, 0.0f, 0.0f);
-            setVec4(lights.modifiers, draw.modWetness, draw.modSnow, draw.modAge, 0.0f);
+            setVec4(lights.modifiers, std::max(draw.modWetness, m_weather.wetness), draw.modSnow, draw.modAge, 0.0f);
             setVec4(lights.modTint, draw.modTint.x, draw.modTint.y, draw.modTint.z, 1.0f);
             setVec4(lights.water, draw.isWater ? 1.0f : 0.0f, draw.gpuWater ? 1.0f : 0.0f, 0.4f,
                     draw.waterTime);
@@ -1697,6 +1864,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         }
 
         if (!wireframe && draw.isTerrain) {
+            CF_PROFILE_SCOPE("terrain::material");
             lights.roughness = 1.0f;
             lights.reflectance = 0.04f;
             TerrainMaterialUBO mat{};
@@ -1721,6 +1889,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
 
             if (draw.entity != lastTerrainTexEntity || texTier != lastTerrainTexTier) {
+                CF_PROFILE_SCOPE("terrain::textures");
                 lastTerrainTexEntity = draw.entity;
                 lastTerrainTexTier = texTier;
                 for (u32 slot = 0; slot < 6; ++slot) {
@@ -1759,7 +1928,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                     if (normalTex) cmd->bindTexture(normalTex, 5, m_repeatSampler);
                 }
             }
-            bindShadowTextures(6, 8, 10);
+            {
+                CF_PROFILE_SCOPE("terrain::shadowBind");
+                bindShadowTextures(6, 8, 10);
+            }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 2, &mat, sizeof(mat));
         }
 
@@ -1804,6 +1976,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
         if (draw.isTerrain) {
+            CF_PROFILE_SCOPE("terrain::submit");
             if (wireframe) {
                 for (u32 slot = 0; slot < 6; ++slot) {
                     if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
@@ -2237,7 +2410,7 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     rp.cycle = pass.cycleTargets;
 
     {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::opaque");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::opaque");
         ScopedMs timer(m_building.opaqueMs);
         // Micromesh cull passes are compute: they run before the render pass opens.
         cmd->beginRenderPass(rp);
@@ -2251,7 +2424,7 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     }
 
     if (!translucent.empty()) {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::translucent");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::translucent");
         ScopedMs timer(m_building.translucentMs);
         auto distanceSq = [&](const MeshDraw* d) {
             const Vec3 center = d->hasAabb ? (d->aabbMin + d->aabbMax) * 0.5f
@@ -2696,6 +2869,342 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
     return draws;
 }
 
+namespace {
+
+/// One run of triangles of an object with one albedo (a material slot, or the whole mesh).
+struct GiPiece {
+    const Assets::Mesh3D* mesh = nullptr;
+    const std::vector<Assets::Vertex3D>* posed = nullptr;  ///< the skinned pose, when the mesh has one
+    Mat4 world = Mat4::identity();
+    Vec3 albedo{1.0f, 1.0f, 1.0f};
+    u32 firstIndex = 0;
+    u32 indexCount = 0;
+};
+
+/// An object's identity, before any triangle is made.
+struct GiSource {
+    u64 key = 0;
+    u64 hash = 0;
+    Vec3 lo{};
+    Vec3 hi{};
+    u32 count = 0;       ///< triangles
+    u32 pieceFirst = 0;
+    u32 pieceCount = 0;
+};
+
+constexpr u32 kMaxGiTriangles = 1u << 20;  ///< what the voxeliser takes (PhotonCascades.cpp: kMaxVoxelTriangles)
+
+void emitGiTriangles(const GiPiece& piece, std::vector<PhotonTriangle>& out) {
+    const Assets::Mesh3D& mesh = *piece.mesh;
+    const std::vector<Assets::Vertex3D>& vertices = piece.posed ? *piece.posed : mesh.vertices;
+    const u32 end = std::min<u32>(piece.firstIndex + piece.indexCount, static_cast<u32>(mesh.indices.size()));
+    for (u32 i = piece.firstIndex; i + 2 < end; i += 3) {
+        const u32 ia = mesh.indices[i];
+        const u32 ib = mesh.indices[i + 1];
+        const u32 ic = mesh.indices[i + 2];
+        if (ia >= vertices.size() || ib >= vertices.size() || ic >= vertices.size()) continue;
+        const Vec3 a = piece.world.transformPoint(vertices[ia].position);
+        const Vec3 b = piece.world.transformPoint(vertices[ib].position);
+        const Vec3 c = piece.world.transformPoint(vertices[ic].position);
+        PhotonTriangle t{};
+        t.p0[0] = a.x; t.p0[1] = a.y; t.p0[2] = a.z;
+        t.p1[0] = b.x; t.p1[1] = b.y; t.p1[2] = b.z;
+        t.p2[0] = c.x; t.p2[1] = c.y; t.p2[2] = c.z;
+        t.albedo[0] = piece.albedo.x; t.albedo[1] = piece.albedo.y; t.albedo[2] = piece.albedo.z;
+        out.push_back(t);
+    }
+}
+
+}  // namespace
+
+GpuSceneRenderer::PhotonView& GpuSceneRenderer::photonViewFor(u64 viewId) {
+    for (auto& entry : m_photonViews) {
+        if (entry.first == viewId) {
+            entry.second->lastUsed = m_frameCounter;
+            return *entry.second;
+        }
+    }
+    // A few views at most (the editor, the game, a camera preview): the least recently used makes room.
+    constexpr usize kMaxPhotonViews = 4;
+    if (m_photonViews.size() >= kMaxPhotonViews) {
+        usize oldest = 0;
+        for (usize i = 1; i < m_photonViews.size(); ++i) {
+            if (m_photonViews[i].second->lastUsed < m_photonViews[oldest].second->lastUsed) oldest = i;
+        }
+        m_photonViews[oldest].second->cascades.shutdown(m_device);
+        m_photonViews.erase(m_photonViews.begin() + static_cast<std::ptrdiff_t>(oldest));
+    }
+    auto view = std::make_unique<PhotonView>();
+    view->cascades.init(m_device);
+    view->lastUsed = m_frameCounter;
+    m_photonViews.emplace_back(viewId, std::move(view));
+    return *m_photonViews.back().second;
+}
+
+bool GpuSceneRenderer::updatePhotonGeometry(ECS::World& world, const std::string& projectRoot,
+                                            const ECS::PhotonGIComponent& settings) {
+    std::vector<GiSource> sources;
+    std::vector<GiPiece> pieces;
+    u64 totalTriangles = 0;
+
+    ECS::ComponentQuery q;
+    q.with<ECS::MeshFilterComponent>();
+    world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        // Water and light volumes are not solid.
+        if (const ECS::NaturalFluidComponent* fluid = world.get<ECS::NaturalFluidComponent>(entity)) {
+            if (fluid->enabled) return;
+        }
+        if (const Effects::EffectComponent* volume = world.get<Effects::EffectComponent>(entity)) {
+            if (volume->enabled &&
+                volume->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+                return;
+            }
+        }
+
+        u64 hash = 1469598103934665603ull;
+        auto mix = [&hash](const void* data, usize bytes) {
+            const u8* p = static_cast<const u8*>(data);
+            for (usize i = 0; i < bytes; ++i) {
+                hash ^= p[i];
+                hash *= 1099511628211ull;
+            }
+        };
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const u32 pieceFirst = static_cast<u32>(pieces.size());
+        u32 triangles = 0;
+        const Assets::Mesh3D* boundsMesh = nullptr;
+        const std::vector<Assets::Vertex3D>* posedForBounds = nullptr;
+        mix(worldMatrix.data(), sizeof(f32) * 16);
+
+        // Terrain: the terrain's own mesh, with an earth colour (its splat layers are not one picture).
+        if (const ECS::TerrainComponent* terrain = world.get<ECS::TerrainComponent>(entity)) {
+            if (!settings.voxelTerrain) return;
+            const Assets::Mesh3D* mesh = Terrain::TerrainCache::instance().meshFor(entity);
+            if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) return;
+            GiPiece piece;
+            piece.mesh = mesh;
+            piece.world = worldMatrix;
+            const Vec3 tint = srgbToLinear(Vec3(terrain->tint.x, terrain->tint.y, terrain->tint.z));
+            piece.albedo = Vec3(tint.x * 0.4f, tint.y * 0.4f, tint.z * 0.4f);
+            piece.indexCount = static_cast<u32>(mesh->indices.size());
+            mix(&mesh, sizeof(mesh));
+            mix(&mesh->geometryRevision, sizeof(mesh->geometryRevision));
+            mix(&piece.albedo, sizeof(piece.albedo));
+            pieces.push_back(piece);
+            triangles = piece.indexCount / 3;
+            boundsMesh = mesh;
+        } else {
+            Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
+            if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
+                if (!filter.customMeshPath.empty()) {
+                    mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
+                }
+                if (!mesh) return;
+            } else if (!mesh) {
+                mesh = GpuProceduralMeshes::get(filter.primitive);
+            }
+            if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) return;
+
+            // A skinned mesh is voxelised in its current pose, and moves with it.
+            const std::vector<Assets::Vertex3D>* posed = Animation::skinnedVerticesFor(entity.id());
+            if (posed && posed->size() != mesh->vertices.size()) posed = nullptr;
+            if (posed) {
+                if (!settings.voxelSkinned) return;
+                // The pose's generation bumps exactly when the posed vertices change: it stands for them. Hashing every
+                // vertex of a 40k-vertex tree byte by byte, for every view, every frame, was the whole cost of this pass.
+                const u64 generation = Animation::skinnedGenerationFor(entity.id());
+                const usize posedCount = posed->size();
+                mix(&generation, sizeof(generation));
+                mix(&posedCount, sizeof(posedCount));
+                posedForBounds = posed;
+            }
+            const ECS::MeshRendererComponent* renderer = world.get<ECS::MeshRendererComponent>(entity);
+            const std::string& baseMaterial =
+                !filter.customMaterialPath.empty() || !renderer ? filter.customMaterialPath
+                                                                : renderer->materialPath;
+            const std::vector<std::string> slots = ECS::splitMaterialSlots(filter.slotMaterials);
+
+            // The albedo a voxel gets: the material's colour times the mean colour of its picture (mid grey
+            // when the picture cannot be read). Blended surfaces are not solid; cut-out ones only when the
+            // Photon component says so.
+            auto albedoOf = [&](const std::string& materialPath, Vec3& albedo) {
+                albedo = Vec3(1.0f, 1.0f, 1.0f);
+                std::string picture = filter.customTexturePath;
+                if (!materialPath.empty()) {
+                    const Assets::MaterialSurface surface =
+                        Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
+                    if (surface.valid) {
+                        if (surface.alphaMode == Assets::MaterialAlphaMode::Blend) return false;
+                        if (surface.alphaMode == Assets::MaterialAlphaMode::Cutout && !settings.voxelCutout) {
+                            return false;
+                        }
+                        albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+                        if (picture.empty()) picture = surface.albedoMap;
+                    }
+                }
+                if (!picture.empty()) {
+                    mix(picture.data(), picture.size());
+                    Vec3 average(0.5f, 0.5f, 0.5f);
+                    GpuTextureCache::instance().averageColor(picture, projectRoot, average);
+                    albedo = Vec3(albedo.x * average.x, albedo.y * average.y, albedo.z * average.z);
+                } else if (!mesh->baseColorTexture.empty() && mesh->textureWidth > 0 &&
+                           mesh->textureHeight > 0 && mesh->textureChannels >= 3) {
+                    // A picture embedded in the mesh (glTF): its mean, from at most about 65k texels.
+                    const size_t channels = static_cast<size_t>(mesh->textureChannels);
+                    const size_t total = static_cast<size_t>(mesh->textureWidth) * mesh->textureHeight;
+                    const size_t stride = std::max<size_t>(1, total / 65536);
+                    Vec3 sum(0.0f, 0.0f, 0.0f);
+                    size_t count = 0;
+                    for (size_t t = 0; t < total && (t + 1) * channels <= mesh->baseColorTexture.size();
+                         t += stride) {
+                        const u8* p = mesh->baseColorTexture.data() + t * channels;
+                        sum = sum + srgbToLinear(Vec3(p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f));
+                        ++count;
+                    }
+                    const f32 inv = count ? 1.0f / static_cast<f32>(count) : 0.0f;
+                    const Vec3 average =
+                        count ? Vec3(sum.x * inv, sum.y * inv, sum.z * inv) : Vec3(0.5f, 0.5f, 0.5f);
+                    albedo = Vec3(albedo.x * average.x, albedo.y * average.y, albedo.z * average.z);
+                }
+                return true;
+            };
+
+            mix(&mesh, sizeof(mesh));
+            mix(&mesh->geometryRevision, sizeof(mesh->geometryRevision));
+            auto addPiece = [&](u32 firstIndex, u32 indexCount, const Vec3& albedo) {
+                GiPiece piece;
+                piece.mesh = mesh;
+                piece.posed = posed;
+                piece.world = worldMatrix;
+                piece.albedo = albedo;
+                piece.firstIndex = firstIndex;
+                piece.indexCount = indexCount;
+                mix(&firstIndex, sizeof(firstIndex));
+                mix(&indexCount, sizeof(indexCount));
+                mix(&albedo, sizeof(albedo));
+                pieces.push_back(piece);
+                triangles += indexCount / 3;
+            };
+            if (slots.empty() || mesh->subMeshes.size() < 2) {
+                Vec3 albedo;
+                if (albedoOf(baseMaterial, albedo)) {
+                    addPiece(0, static_cast<u32>(mesh->indices.size()), albedo);
+                }
+            } else {
+                for (u32 s = 0; s < mesh->subMeshes.size(); ++s) {
+                    const bool own = s < slots.size() && !slots[s].empty();
+                    Vec3 albedo;
+                    if (albedoOf(own ? slots[s] : baseMaterial, albedo)) {
+                        addPiece(mesh->subMeshes[s].indexOffset, mesh->subMeshes[s].indexCount, albedo);
+                    }
+                }
+            }
+            boundsMesh = mesh;
+        }
+        if (pieces.size() == pieceFirst || triangles == 0) return;
+
+        // World bounds: the mesh's (or the pose's) box through the transform.
+        Vec3 lo(1e30f, 1e30f, 1e30f);
+        Vec3 hi(-1e30f, -1e30f, -1e30f);
+        Vec3 boxMin = boundsMesh->bounds.min;
+        Vec3 boxMax = boundsMesh->bounds.max;
+        if (posedForBounds) {
+            boxMin = Vec3(1e30f, 1e30f, 1e30f);
+            boxMax = Vec3(-1e30f, -1e30f, -1e30f);
+            for (const Assets::Vertex3D& v : *posedForBounds) {
+                boxMin = Vec3(std::min(boxMin.x, v.position.x), std::min(boxMin.y, v.position.y),
+                              std::min(boxMin.z, v.position.z));
+                boxMax = Vec3(std::max(boxMax.x, v.position.x), std::max(boxMax.y, v.position.y),
+                              std::max(boxMax.z, v.position.z));
+            }
+        }
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3 c((corner & 1) ? boxMax.x : boxMin.x, (corner & 2) ? boxMax.y : boxMin.y,
+                         (corner & 4) ? boxMax.z : boxMin.z);
+            const Vec3 w = worldMatrix.transformPoint(c);
+            lo = Vec3(std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z));
+            hi = Vec3(std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z));
+        }
+
+        GiSource source;
+        source.key = entity.id();
+        source.hash = hash;
+        source.lo = lo;
+        source.hi = hi;
+        source.count = triangles;
+        source.pieceFirst = pieceFirst;
+        source.pieceCount = static_cast<u32>(pieces.size()) - pieceFirst;
+        sources.push_back(source);
+        totalTriangles += triangles;
+    });
+
+    // Nothing to do while every object is as it was (the common frame: a hash per object and no more).
+    const u32 flags = (settings.voxelSkinned ? 1u : 0u) | (settings.voxelCutout ? 2u : 0u) |
+                      (settings.voxelTerrain ? 4u : 0u);
+    const bool first = flags != m_pv->flags || !m_pv->cascades.hasGeometry();
+    if (!first && sources.size() == m_pv->geometry.objects.size()) {
+        bool same = true;
+        for (usize i = 0; i < sources.size() && same; ++i) {
+            same = sources[i].key == m_pv->geometry.objects[i].key &&
+                   sources[i].hash == m_pv->geometry.objects[i].hash;
+        }
+        if (same) return false;
+    }
+
+    // Something changed: rebuild the list, copying the triangles of what did not.
+    std::unordered_map<u64, usize> before;
+    for (usize i = 0; i < m_pv->geometry.objects.size(); ++i) before[m_pv->geometry.objects[i].key] = i;
+
+    PhotonGeometry next;
+    next.overBudget = totalTriangles > kMaxGiTriangles;
+    std::vector<PhotonBox> dirty;
+    std::vector<bool> kept(m_pv->geometry.objects.size(), false);
+    if (!next.overBudget) next.triangles.reserve(static_cast<usize>(totalTriangles));
+    for (const GiSource& source : sources) {
+        PhotonObject object;
+        object.key = source.key;
+        object.hash = source.hash;
+        object.lo = source.lo;
+        object.hi = source.hi;
+        object.count = source.count;
+        object.first = static_cast<u32>(next.triangles.size());
+        const auto it = before.find(source.key);
+        // An over-budget set holds no triangles to copy from, so nothing in it counts as unchanged.
+        const bool unchanged = it != before.end() && !first && !m_pv->geometry.overBudget &&
+                               m_pv->geometry.objects[it->second].hash == source.hash;
+        if (it != before.end()) kept[it->second] = true;
+        if (!next.overBudget) {
+            if (unchanged) {
+                const PhotonObject& old = m_pv->geometry.objects[it->second];
+                next.triangles.insert(next.triangles.end(), m_pv->geometry.triangles.begin() + old.first,
+                                      m_pv->geometry.triangles.begin() + old.first + old.count);
+            } else {
+                for (u32 k = 0; k < source.pieceCount; ++k) {
+                    emitGiTriangles(pieces[source.pieceFirst + k], next.triangles);
+                }
+            }
+        }
+        if (!unchanged) {
+            dirty.push_back({source.lo, source.hi});
+            if (it != before.end()) {
+                const PhotonObject& old = m_pv->geometry.objects[it->second];
+                dirty.push_back({old.lo, old.hi});
+            }
+        }
+        next.objects.push_back(object);
+    }
+    for (usize i = 0; i < kept.size(); ++i) {
+        if (!kept[i]) dirty.push_back({m_pv->geometry.objects[i].lo, m_pv->geometry.objects[i].hi});
+    }
+
+    const bool full = first || settings.fullRebuild || next.overBudget || m_pv->geometry.overBudget;
+    m_pv->cascades.setGeometry(next, dirty, full);
+    m_pv->geometry = std::move(next);
+    m_pv->flags = flags;
+    return true;
+}
+
 void GpuSceneRenderer::applyCoarseOcclusion(std::vector<MeshDraw>& draws, const GpuSceneCamera& camera,
                                             const GpuSceneRenderOptions& options) const {
     if (options.features.occlusion != OcclusionMode::Coarse || draws.size() < 2) return;
@@ -2876,7 +3385,7 @@ void GpuSceneRenderer::renderPlanarReflection(RHI::CommandBuffer* cmd, ECS::Worl
     inner.resolveEnvironmentFromScene = false;
     inner.colorLayer = 0;
     inner.grid.enabled = false;
-    CF_PROFILE_SCOPE("GpuSceneRenderer::planarReflection");
+    CF_GPU_SCOPE(cmd, "GpuSceneRenderer::planarReflection");
     const bool wasInReflection = m_inReflectionPass;
     m_inReflectionPass = true;
     ScenePassContext innerPass;
@@ -2962,7 +3471,7 @@ bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
     inner.drawSky = true;
     inner.textureQualityViewers.clear();
 
-    CF_PROFILE_SCOPE("GpuSceneRenderer::probe");
+    CF_GPU_SCOPE(cmd, "GpuSceneRenderer::probe");
     const bool wasInReflection = m_inReflectionPass;
     m_inReflectionPass = true;
     for (u32 face = 0; face < 6; ++face) {
@@ -3277,9 +3786,13 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         m_micromeshMainView = cullMicromeshView(cmd, params);
     }
 
+    // Weather first: it scales the sun every later stage of this frame sees (forward shader, clouds, fog, Photon).
+    m_weather = Scene::resolveSceneWeather(world);
+    updateWeatherDynamics();
     Scene::SceneLighting lighting;
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
+    applyWeatherToLights(lighting.lights);
 
     // Resolve the procedural cloud/mist profile for the sky pass.
     m_cloudSettings = {};
@@ -3305,6 +3818,20 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                 settings.mistHeight = std::max(clouds.mistHeight, 1.0f);
                 settings.mistFalloff = clouds.mistFalloff;
                 settings.sunScatter = std::max(clouds.sunScatter, 0.0f);
+                settings.tint = Vec3(std::max(clouds.tint.x, 0.0f), std::max(clouds.tint.y, 0.0f),
+                                     std::max(clouds.tint.z, 0.0f));
+                settings.darkness = std::clamp(clouds.darkness, 0.0f, 1.0f);
+                settings.skyLight = std::max(clouds.skyLight, 0.0f);
+                settings.silverLining = std::clamp(clouds.silverLining, 0.0f, 2.0f);
+                settings.groundShadows = clouds.groundShadows;
+                settings.shadowStrength = std::clamp(clouds.shadowStrength, 0.0f, 1.0f);
+                settings.sunShafts = std::clamp(clouds.sunShafts, 0.0f, 1.0f);
+                // A weather component couples the clouds to the rain (thicker, darker, more cover).
+                if (m_weather.cloudsLinked) {
+                    settings.coverage = std::clamp(m_weather.cloudCoverage, 0.0f, 1.0f);
+                    settings.density = std::max(m_weather.cloudDensity, 0.0f);
+                    settings.darkness = std::clamp(m_weather.cloudDarkness, 0.0f, 1.0f);
+                }
                 settings.time = m_cloudTime;
                 if (!lighting.lights.directionals.empty()) {
                     const auto& d = lighting.lights.directionals[0];
@@ -3315,6 +3842,14 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                 }
                 m_cloudSettings = settings;
             });
+    }
+
+    m_weatherSunIntensity = 0.0f;
+    if (!lighting.lights.directionals.empty()) {
+        const auto& d = lighting.lights.directionals[0];
+        m_weatherSunDirection = (d.direction * -1.0f).normalized();
+        m_weatherSunColor = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
+        m_weatherSunIntensity = std::max(d.intensity, 0.0f);
     }
 
     // Let the cloud mist drive the existing scene volumetric fog so ground
@@ -3334,7 +3869,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     m_shadowProjectRoot = projectRoot;
     m_shadowTextureQuality = opts.textureQuality;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::shadows");
         ScopedMs timer(m_building.shadowsMs);
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
@@ -3404,9 +3939,15 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     m_probesPending = false;
 
     GpuSceneRenderOptions opts = options;
-    m_cloudTime = std::fmod(m_cloudTime + std::clamp(options.deltaTime, 1e-4f, 0.25f), 3600.0f);
+    // The simulation clock: what clouds, weather, wind and foliage animate by. A delta of 0 (the editor while it
+    // is not playing) freezes all of them; the frame counter above keeps counting for the temporal effects.
+    const f32 simStep = std::clamp(options.deltaTime, 0.0f, 0.25f);
+    m_cloudTime = std::fmod(m_cloudTime + simStep, 3600.0f);
+    m_simTime = std::fmod(m_simTime + simStep, 86400.0f);
     if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
     resolveEnvironment(world, projectRoot, opts);
+    m_weather = Scene::resolveSceneWeather(world);
+    updateWeatherDynamics();
     ECS::PostProcessComponent post =
         opts.resolvePostProcessFromScene
             ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
@@ -3420,6 +3961,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
             if (c.enabled) photon = c;
         });
     }
+    // Overcast / fog change the sky light Photon falls back to (same factors as the forward ambient).
+    photon.skyIntensity *= m_weather.skyScale * (1.0f + 2.5f * m_lightning.flash);
     if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
     // Wireframe is a debug view: stale G-buffer data would feed Photon garbage.
     if (opts.wireframeMeshes) photon.enabled = false;
@@ -3476,23 +4019,117 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     u32 photonS0 = 0;
     const bool feedbackValid = view->sValid && view->hasPrevious;
     RHI::Texture* feedbackPrev = feedbackValid ? view->sBuffer[view->sIndex] : nullptr;
-    if (photon.enabled && photon.quality != ECS::PhotonQuality::Off &&
-        photon.path == ECS::PhotonPath::ComputeC0 && !opts.wireframeMeshes &&
-        view->gbuffer.valid() && m_photonCascades.ready()) {
-        if (m_photonCascades.execute(cmd, depth, view->gbuffer.albedo,
+    const bool photonWanted = photon.enabled && photon.quality != ECS::PhotonQuality::Off &&
+                              photon.path == ECS::PhotonPath::ComputeC0 && !opts.wireframeMeshes &&
+                              view->gbuffer.valid();
+    m_pv = photonWanted ? &photonViewFor(viewId) : nullptr;
+    f32 giTemporalWeight = 0.4f;
+    if (photonWanted && m_pv->cascades.ready()) {
+        m_pv->cascades.setSkyTint(m_weather.skyTint);
+        CF_GPU_SCOPE(cmd, "Photon::cascades");
+        // The whole scene's triangles for the voxeliser: hashed every frame (cheap), gathered and
+        // uploaded only when something that shapes them changed.
+        PhotonLights lights;
+        {
+            // The scene's direct lights for the voxel injection (the same radiance the forward pass uses).
+            Scene::SceneLighting gi;
+            gi.clear();
+            Scene::collectSceneLights(world, gi.lights);
+            applyWeatherToLights(gi.lights);
+            for (const auto& d : gi.lights.directionals) {
+                if (lights.directionalCount >= PhotonLights::kMaxDirectional) break;
+                const Vec3 c = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z)) * d.intensity;
+                lights.directionalDir[lights.directionalCount] = Vec4(d.direction.x, d.direction.y, d.direction.z, 0.0f);
+                lights.directionalColor[lights.directionalCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            for (const auto& p : gi.lights.points) {
+                if (lights.pointCount >= PhotonLights::kMaxPoint) break;
+                const Vec3 c = srgbToLinear(Vec3(p.color.x, p.color.y, p.color.z)) * p.intensity;
+                lights.pointPosition[lights.pointCount] = Vec4(p.position.x, p.position.y, p.position.z, p.radius);
+                lights.pointColor[lights.pointCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            for (const auto& sp : gi.lights.spots) {
+                if (lights.spotCount >= PhotonLights::kMaxSpot) break;
+                const Vec3 c = srgbToLinear(Vec3(sp.color.x, sp.color.y, sp.color.z)) * sp.intensity;
+                const f32 halfAngle = std::clamp(sp.angle * kPi / 180.0f * 0.5f, 0.01f, 1.5533f);
+                lights.spotPosition[lights.spotCount] = Vec4(sp.position.x, sp.position.y, sp.position.z, sp.radius);
+                lights.spotDirection[lights.spotCount] = Vec4(sp.direction.x, sp.direction.y, sp.direction.z, std::cos(halfAngle));
+                lights.spotColor[lights.spotCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            {
+                // The clouds' shadow on the sun, so what bounces off the ground follows it (the near field already
+                // does: it reads the forward pass's direct light).
+                const GpuCloudSettings& cs = m_cloudSettings;
+                if (cs.enabled && cs.groundShadows && !opts.wireframeMeshes) {
+                    const f32 windAngle = cs.windDirection * kPi / 180.0f;
+                    const f32 drift = cs.windSpeed * cs.time;
+                    lights.cloudShadow[0] = Vec4(std::max(cs.shadowStrength, m_weather.cloudShadowStrength),
+                                                 cs.coverage, cs.density, 0.0f);
+                    lights.cloudShadow[1] = Vec4(std::cos(windAngle) * drift + cs.seed, cs.seed,
+                                                 std::sin(windAngle) * drift + cs.seed, cs.baseAltitude);
+                    lights.cloudShadow[2] = Vec4(cs.sunDirection.x, cs.sunDirection.y, cs.sunDirection.z,
+                                                 cs.topAltitude);
+                }
+            }
+            m_pv->cascades.setLights(lights);
+        }
+        bool sceneChanged = false;
+        if (m_pv->cascades.hasTriangleVoxelizer()) {
+            CF_PROFILE_SCOPE("Photon::collectGeometry");
+            sceneChanged = updatePhotonGeometry(world, projectRoot, photon);
+        }
+        // The resolve averages frames in time, which makes a moved object or light leave a ghost. While the scene
+        // changes the average follows the present frame closely; it narrows again as the scene stays still.
+        {
+            u64 lightHash = 1469598103934665603ull;
+            auto mix = [&lightHash](const void* data, usize bytes) {
+                const u8* p = static_cast<const u8*>(data);
+                for (usize i = 0; i < bytes; ++i) {
+                    lightHash ^= p[i];
+                    lightHash *= 1099511628211ull;
+                }
+            };
+            mix(&lights.directionalCount, sizeof(u32));
+            mix(&lights.pointCount, sizeof(u32));
+            mix(&lights.spotCount, sizeof(u32));
+            for (u32 i = 0; i < lights.directionalCount; ++i) {
+                mix(&lights.directionalDir[i], sizeof(Vec4));
+                mix(&lights.directionalColor[i], sizeof(Vec4));
+            }
+            for (u32 i = 0; i < lights.pointCount; ++i) {
+                mix(&lights.pointPosition[i], sizeof(Vec4));
+                mix(&lights.pointColor[i], sizeof(Vec4));
+            }
+            for (u32 i = 0; i < lights.spotCount; ++i) {
+                mix(&lights.spotPosition[i], sizeof(Vec4));
+                mix(&lights.spotDirection[i], sizeof(Vec4));
+                mix(&lights.spotColor[i], sizeof(Vec4));
+            }
+            if (lightHash != m_pv->lightHash) sceneChanged = true;
+            m_pv->lightHash = lightHash;
+            m_pv->calmFrames = sceneChanged ? 0u : std::min(m_pv->calmFrames + 1u, 1000u);
+            // 0.4 right after a change, falling to 0.07 within about five calm frames. The resolve also follows a
+            // large difference between history and present quickly, so a slow average cannot keep a stale picture.
+            const f32 settled = 0.07f;
+            m_pv->temporalWeight =
+                std::max(settled, 0.4f * std::pow(0.7f, static_cast<f32>(m_pv->calmFrames)));
+            giTemporalWeight = m_pv->temporalWeight;
+            m_pv->cascades.setTemporalWeight(m_pv->temporalWeight);
+        }
+        if (m_pv->cascades.execute(cmd, depth, view->gbuffer.albedo,
                                      view->gbuffer.normalMaterial, view->gbuffer.direct,
                                      camera.view, camera.proj, sceneW, sceneH, photon,
                                      static_cast<u32>(view->frameIndex), feedbackPrev,
                                      view->prevViewProj, feedbackValid)) {
-            photonSH = m_photonCascades.shAtlas();
-            photonGridW = m_photonCascades.gridWidth();
-            photonGridH = m_photonCascades.gridHeight();
-            photonS0 = m_photonCascades.probeSpacing();
+            photonSH = m_pv->cascades.shAtlas();
+            photonGridW = m_pv->cascades.gridWidth();
+            photonGridH = m_pv->cascades.gridHeight();
+            photonS0 = m_pv->cascades.probeSpacing();
         }
     }
 
     {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::post");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::post");
         PostProcessInputs in;
         in.sceneColor = hdr;
         in.sceneDepth = depth;
@@ -3507,12 +4144,14 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.prevViewProj = view->hasPrevious ? view->prevViewProj : unjitteredViewProj;
         in.cameraPos = camera.position;
         in.deltaTime = std::clamp(opts.deltaTime, 1e-4f, 0.25f);
-        in.time = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
+        in.time = m_simTime;
         in.frameIndex = view->frameIndex;
         in.historyValid = view->hasPrevious && !opts.skipTemporalSettle;
         in.jitterPixels = jitter;
         in.viewId = viewId;
         in.photon = photon;
+        in.weather = buildPostWeather(camera, width, height);
+        in.photonSkyTint = m_weather.skyTint;
         in.gbufferAlbedo = view->gbuffer.albedo;
         in.gbufferNormalMaterial = view->gbuffer.normalMaterial;
         in.gbufferDirect = view->gbuffer.direct;
@@ -3521,6 +4160,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.photonGridH = photonGridH;
         in.photonS0 = photonS0;
         in.photonS = photonSH ? view->sBuffer[view->sIndex ^ 1] : nullptr;
+        in.photonSPrev = photonSH ? feedbackPrev : nullptr;
+        in.photonTemporalWeight = giTemporalWeight;
         m_post.execute(cmd, post, in);
     }
     if (photonSH) {
@@ -3531,6 +4172,20 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     // Keep redrawing until temporal effects converge after anything changes.
     u64 changeHash = pass.sceneHash;
+    {
+        // Weather changes what every pixel shows without touching a draw.
+        const f32 weatherKey[] = {m_weather.fogDensity, m_weather.fogHeightFalloff, m_weather.fogBaseHeight,
+                                  m_weather.fogStart, m_weather.fogMaxOpacity, m_weather.fogColor.x,
+                                  m_weather.fogColor.y, m_weather.fogColor.z, m_weather.fogSkyBlend,
+                                  m_weather.fogSunScatter, m_weather.rainIntensity, m_weather.wetness,
+                                  m_weather.sunScale, m_weather.skyScale, m_weather.cloudCoverage,
+                                  m_weather.cloudDensity, m_weather.cloudDarkness};
+        for (f32 value : weatherKey) {
+            u32 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            changeHash = (changeHash ^ bits) * 1099511628211ull;
+        }
+    }
     for (u32 i = 0; i < 16; ++i) {
         u32 bits = 0;
         std::memcpy(&bits, unjitteredViewProj.data() + i, sizeof(bits));
@@ -3557,7 +4212,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     const bool continuous = post.enabled && (post.autoExposure.enabled ||
                                              (post.grain.enabled && post.grain.intensity > 0.0f));
-    m_needsAnotherFrame = continuous || m_probesPending || view->settleFrames > 0;
+    // Falling rain moves every frame.
+    m_needsAnotherFrame = continuous || m_weather.rain || m_weather.lightning || m_probesPending || view->settleFrames > 0;
     return drawn;
 }
 

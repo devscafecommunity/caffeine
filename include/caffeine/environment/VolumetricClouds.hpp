@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Types.hpp"
+#include "math/Vec3.hpp"
 
 namespace Caffeine::ECS {
 
@@ -34,9 +35,29 @@ struct VolumetricCloudsComponent {
     /// Sun scattering strength multiplier.
     f32 sunScatter = 1.0f;
 
-    u8 castShadows = 1;
+    /// With a WeatherComponent that links the sky: the clouds dim the sun by their cover.
+    bool castShadows = true;
     u8 _pad[3] = {};
     f32 _reserved = 0.0f;
+
+    // ---- Appended later: scenes written before these keep the defaults, which render as before.
+    /// Multiplies the colour of the sun-lit side of the clouds (1,1,1 = the sun's own colour).
+    Vec3 tint{1.0f, 1.0f, 1.0f};
+    /// 0..1: darkens and thickens the clouds towards a storm.
+    f32 darkness = 0.0f;
+    /// Strength of the sky light that fills the shadowed side of the clouds.
+    f32 skyLight = 1.0f;
+
+    // ---- Appended with the cloud shadows and the sun's light through them: a scene written before keeps these.
+    /// The clouds shade the ground: moving patches of shadow on everything the sun reaches (forward shading and
+    /// Photon's bounce follow), from the same noise as the sky's clouds.
+    bool groundShadows = false;
+    u8 _pad2[3] = {};
+    f32 shadowStrength = 0.7f;  ///< 0..1: how dark a fully clouded patch is
+    /// Bright rim where the sun is behind a cloud's edge, 0..2.
+    f32 silverLining = 0.0f;
+    /// Light shafts through the clouds and past the geometry when the sun is in view, 0..1.
+    f32 sunShafts = 0.0f;
 };
 
 }  // namespace Caffeine::ECS

@@ -1,4 +1,5 @@
-use crate::uikit::components::{color_picker, slider, text_field};
+use crate::uikit::asset_kind;
+use crate::uikit::components::{asset_field, color_picker, slider, text_field};
 use doppio_engine::{FieldInfo, FieldKind, FieldValue};
 use iced::widget::{checkbox, pick_list, row, text, Column};
 use iced::{Element, Length};
@@ -8,11 +9,26 @@ use std::rc::Rc;
 /// One edit produced by a field editor.
 #[derive(Debug, Clone)]
 pub enum FieldEdit {
-    Text { axis: usize, value: String },
-    Bool { value: bool },
-    Enum { index: i32 },
-    Number { axis: usize, value: f32 },
-    Color { axis: usize, value: f32 },
+    Text {
+        axis: usize,
+        value: String,
+    },
+    Bool {
+        value: bool,
+    },
+    Enum {
+        index: i32,
+    },
+    Number {
+        axis: usize,
+        value: f32,
+    },
+    Color {
+        axis: usize,
+        value: f32,
+    },
+    /// The field's **…** button: open the asset picker for it.
+    Pick,
 }
 
 pub struct Field<'a> {
@@ -21,6 +37,8 @@ pub struct Field<'a> {
     pub info: &'a FieldInfo,
     pub value: &'a FieldValue,
     pub inputs: &'a HashMap<(usize, usize, usize), String>,
+    /// Thumbnails of project assets by relative path, for asset fields.
+    pub thumbnails: &'a HashMap<String, iced::widget::image::Handle>,
 }
 
 /// Renders one component field (scalar, vector, bool, string or enum).
@@ -123,6 +141,31 @@ pub fn view<'a, Message: Clone + 'a>(
             .spacing(4)
             .align_y(iced::Alignment::Center)
             .into()
+        }
+        (FieldKind::String, FieldValue::String(value))
+            if asset_kind::for_field(&field.info.name).is_some() =>
+        {
+            let kinds = asset_kind::for_field(&field.info.name).unwrap_or_default();
+            let (on_text, on_pick, on_clear) = (emit.clone(), emit.clone(), emit.clone());
+            let current = input(0);
+            let thumbnail = field.thumbnails.get(value);
+            asset_field::view(
+                asset_field::AssetField {
+                    label: &field.info.name,
+                    value: &current,
+                    kinds: &kinds,
+                    thumbnail,
+                    text_id: id_for_axis(0),
+                    pick_id: id_for_axis(1),
+                    clear_id: id_for_axis(2),
+                },
+                move |value| on_text(FieldEdit::Text { axis: 0, value }),
+                on_pick(FieldEdit::Pick),
+                on_clear(FieldEdit::Text {
+                    axis: 0,
+                    value: String::new(),
+                }),
+            )
         }
         _ => {
             let emit = emit.clone();

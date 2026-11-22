@@ -64,6 +64,48 @@ pub fn euler_axes(rotation_degrees: Vec3) -> [Vec3; 3] {
     [x, y, z]
 }
 
+/// Euler angles (degrees, `R = Rz * Ry * Rx`) of the rotation matrix whose columns are `axes`.
+/// At gimbal lock (yaw of +-90 degrees) roll is taken as zero and pitch carries the rest.
+pub fn euler_from_axes(axes: [Vec3; 3]) -> Vec3 {
+    // Row r, column c of R is axes[c][r].
+    let r = |row: usize, column: usize| axes[column][row];
+    let yaw = (-r(2, 0)).clamp(-1.0, 1.0).asin();
+    let (pitch, roll) = if yaw.cos().abs() < 1e-4 {
+        let pitch = if yaw > 0.0 {
+            r(0, 1).atan2(r(0, 2))
+        } else {
+            (-r(0, 1)).atan2(-r(0, 2))
+        };
+        (pitch, 0.0)
+    } else {
+        (r(2, 1).atan2(r(2, 2)), r(1, 0).atan2(r(0, 0)))
+    };
+    [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()]
+}
+
+/// Rotates `vector` by `angle_degrees` about the unit `axis` (right-handed: counter-clockwise looking
+/// down the axis towards the origin).
+pub fn rotate_about(vector: Vec3, axis: Vec3, angle_degrees: f32) -> Vec3 {
+    let (sin, cos) = angle_degrees.to_radians().sin_cos();
+    add(
+        add(scale(vector, cos), scale(cross(axis, vector), sin)),
+        scale(axis, dot(axis, vector) * (1.0 - cos)),
+    )
+}
+
+/// The Euler angles of an object that already has `start_degrees` after it is turned by
+/// `angle_degrees` about a **world** axis, the way a rotation ring is drawn. Adding the angle to one
+/// Euler component only turns about the world axis for the outermost angle (Z); for the others the
+/// object's other angles tilt the axis, so a ring would turn the object against the cursor.
+pub fn turn_euler(start_degrees: Vec3, axis: Vec3, angle_degrees: f32) -> Vec3 {
+    let [x, y, z] = euler_axes(start_degrees);
+    euler_from_axes([
+        rotate_about(x, axis, angle_degrees),
+        rotate_about(y, axis, angle_degrees),
+        rotate_about(z, axis, angle_degrees),
+    ])
+}
+
 /// The direction an object looks along (and a directional light shines along): its -Z axis.
 pub fn forward_from_euler(rotation_degrees: Vec3) -> Vec3 {
     scale(euler_axes(rotation_degrees)[2], -1.0)
@@ -240,5 +282,99 @@ mod tests {
         ];
         assert!(point_in_polygon(Point::new(5.0, 5.0), &square));
         assert!(!point_in_polygon(Point::new(15.0, 5.0), &square));
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    fn same_rotation(a: Vec3, b: Vec3) {
+        for (x, y) in euler_axes(a).iter().zip(euler_axes(b).iter()) {
+            assert!(
+                length(sub(*x, *y)) < 1e-3,
+                "{a:?} and {b:?} are different rotations"
+            );
+        }
+    }
+
+    #[test]
+    fn a_turn_from_nothing_is_just_that_angle_about_the_axis() {
+        assert_eq!(
+            turn_euler([0.0; 3], [0.0, 1.0, 0.0], 30.0).map(|v| v.round()),
+            [0.0, 30.0, 0.0]
+        );
+        assert_eq!(
+            turn_euler([0.0; 3], [1.0, 0.0, 0.0], -45.0).map(|v| v.round()),
+            [-45.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            turn_euler([0.0; 3], [0.0, 0.0, 1.0], 90.0).map(|v| v.round()),
+            [0.0, 0.0, 90.0]
+        );
+    }
+
+    #[test]
+    fn turning_about_a_world_axis_turns_the_object_the_way_the_ring_says_for_any_start() {
+        // A cube already turned about Y by half a turn and tilted: Euler X then points the other way in
+        // the world, which is why adding the angle to Euler X turned it against the cursor.
+        for start in [
+            [0.0, 180.0, 0.0],
+            [20.0, 135.0, -30.0],
+            [-70.0, 10.0, 80.0],
+            [0.0, 0.0, 0.0],
+        ] {
+            for axis in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
+                let [x, y, z] = euler_axes(start);
+                let turned = turn_euler(start, axis, 30.0);
+                let [tx, ty, tz] = euler_axes(turned);
+                // Every object axis moved exactly as a world rotation of 30 degrees moves it.
+                assert!(
+                    length(sub(tx, rotate_about(x, axis, 30.0))) < 1e-3,
+                    "{start:?} {axis:?}"
+                );
+                assert!(
+                    length(sub(ty, rotate_about(y, axis, 30.0))) < 1e-3,
+                    "{start:?} {axis:?}"
+                );
+                assert!(
+                    length(sub(tz, rotate_about(z, axis, 30.0))) < 1e-3,
+                    "{start:?} {axis:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_old_way_turned_a_flipped_object_the_wrong_way() {
+        // Documents the bug: with Y at 180 degrees, +30 on Euler X moves the object about world -X.
+        let start = [0.0, 180.0, 0.0];
+        let old = [30.0, 180.0, 0.0];
+        let new = turn_euler(start, [1.0, 0.0, 0.0], 30.0);
+        let [_, y_old, _] = euler_axes(old);
+        let [_, y_new, _] = euler_axes(new);
+        assert!(
+            y_old[2] * y_new[2] < 0.0,
+            "the two end up on opposite sides: {y_old:?} {y_new:?}"
+        );
+    }
+
+    #[test]
+    fn gimbal_lock_keeps_the_rotation() {
+        for start in [[0.0, 90.0, 0.0], [30.0, -90.0, 0.0]] {
+            let turned = turn_euler(start, [0.0, 0.0, 1.0], 20.0);
+            let expected_axes = {
+                let [x, y, z] = euler_axes(start);
+                [
+                    rotate_about(x, [0.0, 0.0, 1.0], 20.0),
+                    rotate_about(y, [0.0, 0.0, 1.0], 20.0),
+                    rotate_about(z, [0.0, 0.0, 1.0], 20.0),
+                ]
+            };
+            for (a, b) in euler_axes(turned).iter().zip(expected_axes.iter()) {
+                assert!(length(sub(*a, *b)) < 2e-3, "{start:?} -> {turned:?}");
+            }
+        }
+        same_rotation([10.0, 20.0, 30.0], [10.0, 20.0, 30.0]);
     }
 }

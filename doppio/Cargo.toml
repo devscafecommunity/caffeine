@@ -14,3 +14,15 @@ iced-mcp = "0.3.1"
 iced_test = "0.14"
 libloading = "0.8"
 serde_json = "1"
+
+# The editor is an immediate UI that lays out, draws and tessellates the whole window on every tick, and decodes
+# pictures: unoptimised, that is a full core and a GPU that waits for it (a 7 fps editor in a scene the engine draws in
+# 2 ms). Dependencies (iced, wgpu, image, the text shaper) are built optimised even in the dev profile, and our own
+# crates lightly, so `cargo run` is usable. Debug info shrinks to line tables: a 600 MB binary links slowly and
+# nobody steps through iced.
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1077,6 +1077,7 @@ pub fn reference_page(entry: &Entry) -> String {
         "session",
         "audio",
         "hierarchy",
+        "animation",
     ];
     let module = module_of(entry);
     if matches!(module, "language" | "lifecycle") {

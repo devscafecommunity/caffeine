@@ -7,6 +7,8 @@
 #include "input/InputManager.hpp"
 #include "physics/PhysicsSystem2D.hpp"
 #include "audio/AudioService.hpp"
+#include "audio/volumetric/SceneAudio.hpp"
+#include "audio/volumetric/VolumetricAudio.hpp"
 #include "physics/PhysicsSystem3D.hpp"
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptSystem.hpp"
@@ -467,6 +469,12 @@ int main(int argc, char** argv) {
     Caffeine::Audio::AudioService audio;
     audio.setSearchRoot(buildRoot.string());
     if (!audio.init()) std::fprintf(stderr, "caffeine-runtime: no audio device, sound disabled\n");
+    // The volumetric audio (sound that travels through the scene): idle until the scene has a `Volumetric Audio`
+    // component; the sound device is opened the first frame it does.
+    Caffeine::Audio::VolumetricAudio volumetric(48000);
+    Caffeine::Audio::SceneAudio sceneAudio(volumetric);
+    sceneAudio.setSearchRoots({buildRoot.string(), (buildRoot / "Assets" / "Audio").string(), (buildRoot / "Audio").string()});
+    bool volumetricDeviceTried = false;
     Caffeine::Animation::AnimationSystem animation;
     Caffeine::UI::UISystem uiSystem(&eventBus);
     Caffeine::Script::ScriptEngine scriptEngine;
@@ -598,6 +606,35 @@ int main(int argc, char** argv) {
         }
 
         Caffeine::Scene::propagateTransforms(world);
+
+        if (sceneLoaded) {
+            Caffeine::ECS::Entity audioCamera;
+            Caffeine::ECS::Camera3DComponent* audioCam = nullptr;
+            Caffeine::Vec3 ears{};
+            if (findActiveCamera3D(world, audioCamera, audioCam) && tryGetEntityPosition(world, audioCamera, ears)) {
+                sceneAudio.sync(world, ears, entityForward(world, audioCamera).normalized(), dt);
+#if defined(CF_HAS_IMGUI) && defined(CF_HAS_SDL3)
+                // The weather's rain, wind and thunder, played by the same mixer (so walls muffle them).
+                const auto& weather = renderer.weather();
+                Caffeine::Scene::ThunderEvent thunder[16];
+                const uint32_t arrived = renderer.pollThunder(thunder, 16);
+                Caffeine::Audio::SceneAudio::WeatherFeed feed;
+                feed.enabled = weather.audio;
+                feed.volume = weather.audioVolume;
+                feed.rain = weather.rain;
+                feed.rainIntensity = weather.rainIntensity;
+                feed.windSpeed = weather.rainWindSpeed;
+                feed.gust = renderer.weatherWindGust();
+                Caffeine::Audio::SceneAudio::ThunderClap claps[16];
+                for (uint32_t i = 0; i < arrived; ++i) claps[i] = {thunder[i].distance, thunder[i].azimuth, thunder[i].volume};
+                sceneAudio.feedWeather(feed, claps, arrived, dt);
+#endif
+                if (sceneAudio.enabled() && !volumetricDeviceTried) {
+                    volumetricDeviceTried = true;
+                    if (!volumetric.openDevice(-1)) std::fprintf(stderr, "caffeine-runtime: no sound device for the volumetric audio\n");
+                }
+            }
+        }
 
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
         if (cmd) {

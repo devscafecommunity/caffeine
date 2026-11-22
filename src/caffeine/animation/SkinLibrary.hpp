@@ -147,7 +147,7 @@ struct ClipStrip {
     bool reverse = false;
     /// Seconds at the end of each pass that blend back into the first frame, so loops close.
     f32 loopBlend = 0.0f;
-    /// Animator state this strip stands for. Empty when the strip is free.
+    /// PhaseShift state this strip stands for. Empty when the strip is free.
     char state[32] = {};
 };
 
@@ -256,9 +256,9 @@ const std::vector<i32>* jointParentsFor(u32 entityId);
 bool boneEditFrame(const ImportedSkin& skin, const SkinnedPose& pose, i32 bone, Mat4& out,
                    u32 entityId = 0xFFFFFFFFu);
 /// Layer weight after its groups' weights and mute flags.
-f32 effectiveLayerWeight(const Animator& animator, const AnimatorLayer& layer);
+f32 effectiveLayerWeight(const PhaseShift& animator, const PhaseShiftLayer& layer);
 /// Pose layers for the animator's current states and crossfades. Empty when nothing is playing.
-void buildAnimatorMix(const Animator& animator, const ImportedSkin& skin, std::vector<PoseLayerMix>& out);
+void buildAnimatorMix(const PhaseShift& animator, const ImportedSkin& skin, std::vector<PoseLayerMix>& out);
 /// Clip index the animator state plays, or -1. A state's motion name wins over its own name.
 i32 clipForAnimatorState(const ImportedSkin& skin, const char* stateName, const char* motionName);
 /// Editor and runtime pass the project root so `assets/...` paths resolve.

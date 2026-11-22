@@ -1522,6 +1522,7 @@ impl App {
         if let Some(engine) = self.engine.as_mut() {
             let _ = engine.refresh_assets();
             self.assets = engine.assets();
+            crate::uikit::asset_kind::refine(&mut self.assets);
         }
     }
 
@@ -1958,6 +1959,7 @@ impl App {
         if let Some(engine) = self.engine.as_mut() {
             let _ = engine.refresh_assets();
             self.assets = engine.assets();
+            crate::uikit::asset_kind::refine(&mut self.assets);
         }
         Ok(NatureBundle {
             recipe: recipe_relative,

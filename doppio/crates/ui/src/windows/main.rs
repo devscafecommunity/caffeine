@@ -1,11 +1,12 @@
 use crate::history::{self, History};
 use crate::uikit::asset_files;
 use crate::uikit::asset_folders;
+use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::asset_wizard;
 use crate::uikit::behaviour;
 use crate::uikit::components::{
     behaviour_picker, button, dock_overlay, gizmo, menu, panel, prefab_palette, scene_markers,
-    status, tabs, toolbar, viewport_shader,
+    status, tabs, toolbar, transport, viewport_shader,
 };
 use crate::uikit::dryad;
 use crate::uikit::generators::{self, MaterialGraph};
@@ -13,11 +14,17 @@ use crate::uikit::height_pack;
 use crate::uikit::id;
 use crate::uikit::material_library;
 use crate::uikit::panels;
+use crate::uikit::panels::audio as audio_panel;
 use crate::uikit::panels::dryad_nodes;
+use crate::uikit::panels::environment as environment_panel;
 use crate::uikit::panels::material;
 use crate::uikit::panels::material_generator;
 use crate::uikit::panels::nature_generator as nature_generator_panel;
+use crate::uikit::panels::phaseshift as phaseshift_panel;
+use crate::uikit::panels::photon as photon_panel;
+use crate::uikit::panels::profiler as profiler_panel;
 use crate::uikit::panels::project_manager;
+use crate::uikit::panels::rig2d as rig2d_panel;
 use crate::uikit::panels::script as script_panel;
 use crate::uikit::panels::terrain_generator as terrain_generator_panel;
 use crate::uikit::panels::texture_generator as texture_generator_panel;
@@ -51,6 +58,43 @@ const VIEWPORT_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_m
 /// Stop just short of the pole so `lookAt` never degenerates, but let the
 /// editor look almost straight up at clouds. Focus/height is never clamped.
 const PITCH_LIMIT: f32 = 1.5533;
+/// Frames a stopped viewport keeps drawing after the last change, so TAA and Photon's temporal accumulation settle.
+const VIEWPORT_SETTLE_FRAMES: u32 = 24;
+/// The editor viewport's internal render scale at start (the engine's own default is 1.5, for other hosts).
+const EDITOR_RENDER_SCALE: f32 = 1.0;
+
+/// Messages that are bookkeeping, not the user acting: hover and pointer noise, timers and no-ops. They neither
+/// close an open menu nor make the stopped viewport render a new frame.
+fn is_passive(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::ToggleMenu(_)
+                | Message::HierarchyContext(_)
+                | Message::ViewportTick
+                | Message::ViewportHover(_)
+                | Message::ViewportKey(_, _)
+                | Message::ViewportBoost(_)
+                | Message::ViewportResized(_, _)
+                | Message::ViewportMoved(_)
+                | Message::PointerReleased
+                | Message::TabEnter(_, _)
+                | Message::TabExit(_, _)
+                | Message::PaneEnter(_, _)
+                | Message::PaneExit(_, _)
+                // Hover bookkeeping from widgets behind an open menu must not
+                // dismiss it; only deliberate actions (or a click outside,
+                // Escape, choosing an item) close menus.
+                | Message::HierarchyRowEnter(_)
+                | Message::HierarchyRowExit(_)
+                | Message::HierarchyRootEnter
+                | Message::HierarchyRootExit
+                | Message::HierarchyHoverClear
+                // The profiler reads the engine twice a second; that is not the user acting.
+                | Message::ProfilerRefresh
+                | Message::Noop
+                | Message::WindowClosed(_)
+    )
+}
 
 #[cfg(feature = "agent")]
 pub fn run() -> iced::Result {
@@ -59,11 +103,12 @@ pub fn run() -> iced::Result {
 
 #[cfg(not(feature = "agent"))]
 pub fn run() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    // A daemon, not an application: tabs can be detached into windows of their own.
+    iced::daemon(App::boot_windowed, App::update_windowed, App::view_window)
+        .title(App::window_title)
         .subscription(App::subscription)
-        .theme(|_: &App| theme::app_theme())
+        .theme(|_: &App, _: iced::window::Id| theme::app_theme())
         .settings(theme::settings())
-        .window(theme::window())
         .run()
 }
 
@@ -83,6 +128,89 @@ fn global_event_message(event: &iced::Event) -> Option<Message> {
         }
         _ => None,
     }
+}
+
+/// While the game plays in the Gameplay tab, every key is the game's (Escape still closes menus): the editor's own
+/// shortcuts and the fly-camera keys step aside so WASD plays instead of moving the editor camera.
+fn game_keyboard_message(event: iced::keyboard::Event) -> Option<Message> {
+    use iced::keyboard::key::Named;
+    let (physical, down) = match &event {
+        iced::keyboard::Event::KeyPressed { physical_key, .. } => (physical_key, true),
+        iced::keyboard::Event::KeyReleased { physical_key, .. } => (physical_key, false),
+        _ => return None,
+    };
+    if down {
+        if let iced::keyboard::Event::KeyPressed { key, .. } = &event {
+            if matches!(key.as_ref(), iced::keyboard::Key::Named(Named::Escape)) {
+                return Some(Message::CloseMenu);
+            }
+        }
+    }
+    match physical {
+        iced::keyboard::key::Physical::Code(code) => {
+            hid_scancode(*code).map(|scancode| Message::GameKey(scancode, down))
+        }
+        _ => None,
+    }
+}
+
+/// The USB HID / SDL scancode of a physical key, which is what the engine's input maps use.
+fn hid_scancode(code: iced::keyboard::key::Code) -> Option<u32> {
+    use iced::keyboard::key::Code;
+    Some(match code {
+        Code::KeyA => 4,
+        Code::KeyB => 5,
+        Code::KeyC => 6,
+        Code::KeyD => 7,
+        Code::KeyE => 8,
+        Code::KeyF => 9,
+        Code::KeyG => 10,
+        Code::KeyH => 11,
+        Code::KeyI => 12,
+        Code::KeyJ => 13,
+        Code::KeyK => 14,
+        Code::KeyL => 15,
+        Code::KeyM => 16,
+        Code::KeyN => 17,
+        Code::KeyO => 18,
+        Code::KeyP => 19,
+        Code::KeyQ => 20,
+        Code::KeyR => 21,
+        Code::KeyS => 22,
+        Code::KeyT => 23,
+        Code::KeyU => 24,
+        Code::KeyV => 25,
+        Code::KeyW => 26,
+        Code::KeyX => 27,
+        Code::KeyY => 28,
+        Code::KeyZ => 29,
+        Code::Digit1 => 30,
+        Code::Digit2 => 31,
+        Code::Digit3 => 32,
+        Code::Digit4 => 33,
+        Code::Digit5 => 34,
+        Code::Digit6 => 35,
+        Code::Digit7 => 36,
+        Code::Digit8 => 37,
+        Code::Digit9 => 38,
+        Code::Digit0 => 39,
+        Code::Enter => 40,
+        Code::Escape => 41,
+        Code::Backspace => 42,
+        Code::Tab => 43,
+        Code::Space => 44,
+        Code::ArrowRight => 79,
+        Code::ArrowLeft => 80,
+        Code::ArrowDown => 81,
+        Code::ArrowUp => 82,
+        Code::ControlLeft => 224,
+        Code::ShiftLeft => 225,
+        Code::AltLeft => 226,
+        Code::ControlRight => 228,
+        Code::ShiftRight => 229,
+        Code::AltRight => 230,
+        _ => return None,
+    })
 }
 
 /// Keyboard shortcuts and fly-camera keys (events no widget captured).
@@ -313,11 +441,20 @@ enum PaneKind {
     WaterGenerator,
     TerrainGenerator,
     Inspector,
+    Photon,
+    Environment,
+    Audio,
+    Performance,
+    PhaseShift,
+    Rig2d,
+    Profiler,
     Material,
     TextureSet,
     Script,
     DryadNodes,
     Console,
+    Gameplay,
+    CameraPreview,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +480,16 @@ enum Message {
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     SelectEntityByName(String),
     TogglePlay,
+    /// Ends the play session and puts the scene back as it was before Play.
+    StopPlay,
+    ShowGameplay,
+    ShowCameraPreview,
+    /// A key for the running game (USB HID / SDL scancode), down or up.
+    GameKey(u32, bool),
+    /// The pointer over the Gameplay picture: a move (button 0) or a button 1 left / 2 middle / 3 right.
+    GamePointer(f32, f32, u32, bool),
+    /// A scene view's pane changed size.
+    SceneViewResized(doppio_engine::SceneView, Size),
     AddEntity,
     #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     AddEntityNamed(String),
@@ -416,8 +563,10 @@ enum Message {
     AssetReleased(usize),
     AssetDoubleClick(usize),
     /// Places a `.prefab` (a path relative to the assets root, or absolute) in the scene.
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     PlacePrefab(String),
     /// Reopens the generator behind an asset (recipe, prefab or baked product): path relative to the assets root.
+    #[cfg_attr(not(any(test, feature = "agent")), allow(dead_code))]
     OpenGeneratorFor(String),
     AssetSearch(String),
     AssetTreeToggle(String),
@@ -488,6 +637,37 @@ enum Message {
     ShowNatureGenerator,
     WaterGen(water_generator_panel::Edit),
     ShowWaterGenerator,
+    Photon(photon_panel::Edit),
+    ShowPhoton,
+    Environment(environment_panel::Edit),
+    /// The shared asset picker: open for a field, search, filter, choose, clear, close.
+    AssetPick(assetpick::PickEdit),
+    /// The file browser: navigate, select, confirm, close.
+    FileBrowser(crate::uikit::panels::file_browser::Edit),
+    /// Turns a pane's active tab into a window of its own.
+    Detach(pane_grid::Pane),
+    /// Turns a tab (wherever it is docked) into a window of its own: the agent's way to detach.
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    DetachTab(PaneKind),
+    /// Docks a detached window's tab back into the editor.
+    Attach(iced::window::Id),
+    /// Docks a detached tab back by its kind.
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    AttachTab(PaneKind),
+    /// A window closed: the main one quits, a detached one docks its tab back.
+    WindowClosed(iced::window::Id),
+    ShowEnvironment,
+    Audio(audio_panel::Edit),
+    ShowAudio,
+    Performance(crate::uikit::panels::performance::Edit),
+    ShowPerformance,
+    PhaseShift(phaseshift_panel::Edit),
+    ShowPhaseShift,
+    Rig2d(rig2d_panel::Edit),
+    ShowRig2d,
+    Profiler(profiler_panel::Edit),
+    ShowProfiler,
+    ProfilerRefresh,
     TerrainGen(terrain_generator_panel::Edit),
     ShowTerrainGenerator,
     /// Scatters a plan on a terrain (`Scene > Scatter on Terrain`, the `scatter_on_terrain` agent action).
@@ -614,6 +794,20 @@ struct App {
     viewport_latency_ms: f32,
     viewport_hud_latency_ms: f32,
     viewport_fps: f32,
+    /// Play session, Gameplay and Camera pictures.
+    views: sceneview::SceneViews,
+    /// Counts changes to the scene; each scene view redraws when it has not shown the latest.
+    scene_epoch: u64,
+    /// Something the picture shows changed (an edit, the camera, a setting): the stopped viewport renders it.
+    viewport_dirty: bool,
+    /// Frames still to render after the last change, so temporal effects (TAA, Photon) settle.
+    viewport_settle: u32,
+    /// The stopped viewport has nothing new to draw and renders nothing.
+    viewport_idle: bool,
+    /// Frames asked of the engine so far.
+    viewport_requests: u64,
+    /// When the simulation was last advanced while playing.
+    sim_last_tick: Instant,
     viewport_fps_window: Instant,
     viewport_frames: u32,
     viewport_hovered: bool,
@@ -652,6 +846,8 @@ struct App {
     component_types: Vec<doppio_engine::ComponentType>,
     components: Vec<doppio_engine::ComponentData>,
     field_inputs: HashMap<(usize, usize, usize), String>,
+    /// Thumbnails of the assets the selected entity's asset fields point at, by relative path.
+    field_thumbnails: HashMap<String, iced::widget::image::Handle>,
     transform_inputs: HashMap<(usize, usize), String>,
     collapsed_components: HashSet<u32>,
     selected_material: Option<String>,
@@ -723,6 +919,19 @@ struct App {
     texgen: texturegen::TextureGen,
     nature: naturegen::NatureGen,
     watergen: watergen::WaterGen,
+    photon: photon::PhotonState,
+    environment: environment::EnvironmentState,
+    audio: audio::AudioState,
+    performance: performance::PerformanceState,
+    animation: phaseshift::AnimationPanes,
+    asset_pick: assetpick::AssetPickState,
+    /// Detached tabs (windows of their own) and the window requests waiting to become tasks.
+    detach: detach::DetachState,
+    /// The file browser, open over the import assistant while choosing files.
+    file_browser: Option<crate::uikit::file_browser::Browser>,
+    /// The folder the file browser last stood in: the next one opens there.
+    file_browser_last: Option<std::path::PathBuf>,
+    profiler: profiler::ProfilerState,
     terraingen: terraingen::TerrainGen,
     /// What the last Scatter action said (placed counts, or why it could not).
     scatter_status: Option<String>,
@@ -762,11 +971,20 @@ impl PaneKind {
             PaneKind::WaterGenerator => "Water",
             PaneKind::TerrainGenerator => "Terrain",
             PaneKind::Inspector => "Inspector",
+            PaneKind::Photon => "Photon",
+            PaneKind::Environment => "Environment",
+            PaneKind::Audio => "Audio",
+            PaneKind::Performance => "Performance",
+            PaneKind::PhaseShift => "PhaseShift",
+            PaneKind::Rig2d => "Rig 2D",
+            PaneKind::Profiler => "Profiler",
             PaneKind::Material => "Material",
             PaneKind::TextureSet => "Texture Set",
             PaneKind::Script => "Script",
             PaneKind::DryadNodes => "Dryad Nodes",
             PaneKind::Console => "Console",
+            PaneKind::Gameplay => "Gameplay",
+            PaneKind::CameraPreview => "Camera",
         }
     }
 
@@ -781,84 +999,74 @@ impl PaneKind {
             PaneKind::WaterGenerator => id::PANE_TAB_WATER_GENERATOR,
             PaneKind::TerrainGenerator => id::PANE_TAB_TERRAIN_GENERATOR,
             PaneKind::Inspector => id::PANE_TAB_INSPECTOR,
+            PaneKind::Photon => id::PANE_TAB_PHOTON,
+            PaneKind::Environment => id::PANE_TAB_ENVIRONMENT,
+            PaneKind::Audio => id::PANE_TAB_AUDIO,
+            PaneKind::Performance => id::PANE_TAB_PERFORMANCE,
+            PaneKind::PhaseShift => id::PANE_TAB_PHASESHIFT,
+            PaneKind::Rig2d => id::PANE_TAB_RIG2D,
+            PaneKind::Profiler => id::PANE_TAB_PROFILER,
             PaneKind::Material => id::PANE_TAB_MATERIAL,
             PaneKind::TextureSet => id::PANE_TAB_TEXTURE_SET,
             PaneKind::Script => id::PANE_TAB_SCRIPT,
             PaneKind::DryadNodes => id::PANE_TAB_DRYAD_NODES,
             PaneKind::Console => id::PANE_TAB_CONSOLE,
+            PaneKind::Gameplay => id::PANE_TAB_GAMEPLAY,
+            PaneKind::CameraPreview => id::PANE_TAB_CAMERA_PREVIEW,
         }
     }
 }
 
 impl App {
+    /// The two layouts share a shape: Hierarchy on the left, the workspace (the viewport and every editor, tabbed)
+    /// in the middle, and on the right only what stays open while working: Inspector, Profiler, Photon and
+    /// Environment. Material, Nature, Water and Terrain are editors, so they live with the other editors. The
+    /// bottom dock (Assets next to the Console) spans the whole width and takes a good part of the height, which
+    /// keeps the Hierarchy short instead of an empty column.
     fn layout_configuration(preset: LayoutPreset) -> pane_grid::Configuration<PaneGroup> {
         use pane_grid::{Axis, Configuration};
-        match preset {
-            LayoutPreset::Default => Configuration::Split {
-                axis: Axis::Horizontal,
-                ratio: 0.68,
-                a: Box::new(Configuration::Split {
+        let (top, left, right) = match preset {
+            LayoutPreset::Default => (0.60, 0.19, 0.76),
+            LayoutPreset::Viewport => (0.80, 0.14, 0.83),
+        };
+        Configuration::Split {
+            axis: Axis::Horizontal,
+            ratio: top,
+            a: Box::new(Configuration::Split {
+                axis: Axis::Vertical,
+                ratio: left,
+                a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Hierarchy]))),
+                b: Box::new(Configuration::Split {
                     axis: Axis::Vertical,
-                    ratio: 0.19,
-                    a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Hierarchy]))),
-                    b: Box::new(Configuration::Split {
-                        axis: Axis::Vertical,
-                        ratio: 0.74,
-                        a: Box::new(Configuration::Pane(PaneGroup::new(&[
-                            PaneKind::Viewport,
-                            PaneKind::Generator,
-                            PaneKind::TextureGenerator,
-                            PaneKind::TextureSet,
-                            PaneKind::Script,
-                            PaneKind::DryadNodes,
-                        ]))),
-                        b: Box::new(Configuration::Pane(PaneGroup::new(&[
-                            PaneKind::Inspector,
-                            PaneKind::Material,
-                            PaneKind::NatureGenerator,
-                            PaneKind::WaterGenerator,
-                            PaneKind::TerrainGenerator,
-                        ]))),
-                    }),
+                    ratio: right,
+                    a: Box::new(Configuration::Pane(PaneGroup::new(&[
+                        PaneKind::Viewport,
+                        PaneKind::Gameplay,
+                        PaneKind::CameraPreview,
+                        PaneKind::Material,
+                        PaneKind::Generator,
+                        PaneKind::TextureGenerator,
+                        PaneKind::TextureSet,
+                        PaneKind::TerrainGenerator,
+                        PaneKind::WaterGenerator,
+                        PaneKind::NatureGenerator,
+                        PaneKind::Script,
+                        PaneKind::DryadNodes,
+                    ]))),
+                    b: Box::new(Configuration::Pane(PaneGroup::new(&[
+                        PaneKind::Inspector,
+                        PaneKind::Profiler,
+                        PaneKind::Performance,
+                        PaneKind::Photon,
+                        PaneKind::Environment,
+                        PaneKind::Audio,
+                    ]))),
                 }),
-                // Project-style bottom dock: the asset browser next to the console.
-                b: Box::new(Configuration::Pane(PaneGroup::new(&[
-                    PaneKind::Assets,
-                    PaneKind::Console,
-                ]))),
-            },
-            LayoutPreset::Viewport => Configuration::Split {
-                axis: Axis::Horizontal,
-                ratio: 0.82,
-                a: Box::new(Configuration::Split {
-                    axis: Axis::Vertical,
-                    ratio: 0.14,
-                    a: Box::new(Configuration::Pane(PaneGroup::new(&[PaneKind::Hierarchy]))),
-                    b: Box::new(Configuration::Split {
-                        axis: Axis::Vertical,
-                        ratio: 0.82,
-                        a: Box::new(Configuration::Pane(PaneGroup::new(&[
-                            PaneKind::Viewport,
-                            PaneKind::Generator,
-                            PaneKind::TextureGenerator,
-                            PaneKind::TextureSet,
-                            PaneKind::Script,
-                            PaneKind::DryadNodes,
-                        ]))),
-                        b: Box::new(Configuration::Pane(PaneGroup::new(&[
-                            PaneKind::Inspector,
-                            PaneKind::Material,
-                            PaneKind::NatureGenerator,
-                            PaneKind::WaterGenerator,
-                            PaneKind::TerrainGenerator,
-                        ]))),
-                    }),
-                }),
-                b: Box::new(Configuration::Pane(PaneGroup::new(&[
-                    PaneKind::Assets,
-                    PaneKind::Console,
-                ]))),
-            },
+            }),
+            b: Box::new(Configuration::Pane(PaneGroup::new(&[
+                PaneKind::Assets,
+                PaneKind::Console,
+            ]))),
         }
     }
 
@@ -891,7 +1099,20 @@ impl App {
         })
     }
 
-    fn with_project(loaded: projectloader::LoadedProject) -> Self {
+    fn with_project(mut loaded: projectloader::LoadedProject) -> Self {
+        // The editor starts stopped: the scene stands still until Play (see `Message::TogglePlay`).
+        if let Some(engine) = loaded.engine.as_mut() {
+            engine.set_simulating(false);
+            // The viewport already renders at twice its logical size (sharp on a HiDPI screen); the engine's own
+            // 1.5x supersampling on top of that nearly triples the pixels again, for a picture FXAA has smoothed
+            // already. The editor draws at the target size; a higher scale stays one `viewport_settings` away.
+            if let Ok(mut settings) = engine.viewport_settings() {
+                if settings.render_scale > EDITOR_RENDER_SCALE {
+                    settings.render_scale = EDITOR_RENDER_SCALE;
+                    let _ = engine.set_viewport_settings(settings);
+                }
+            }
+        }
         let panes =
             pane_grid::State::with_configuration(Self::layout_configuration(LayoutPreset::Default));
 
@@ -979,6 +1200,13 @@ impl App {
             viewport_latency_ms: 0.0,
             viewport_hud_latency_ms: 0.0,
             viewport_fps: 0.0,
+            views: sceneview::SceneViews::default(),
+            scene_epoch: 0,
+            viewport_dirty: true,
+            viewport_settle: 0,
+            viewport_idle: false,
+            viewport_requests: 0,
+            sim_last_tick: Instant::now(),
             viewport_fps_window: Instant::now(),
             viewport_frames: 0,
             viewport_hovered: false,
@@ -1016,6 +1244,7 @@ impl App {
             component_types: Vec::new(),
             components: Vec::new(),
             field_inputs: HashMap::new(),
+            field_thumbnails: HashMap::new(),
             transform_inputs: HashMap::new(),
             collapsed_components: HashSet::new(),
             selected_material: None,
@@ -1088,6 +1317,16 @@ impl App {
             texgen: texturegen::TextureGen::new(),
             nature: naturegen::NatureGen::new(),
             watergen: watergen::WaterGen::new(),
+            photon: photon::PhotonState::default(),
+            environment: environment::EnvironmentState::default(),
+            audio: audio::AudioState::default(),
+            performance: performance::PerformanceState::default(),
+            animation: phaseshift::AnimationPanes::default(),
+            asset_pick: assetpick::AssetPickState::default(),
+            detach: detach::DetachState::default(),
+            file_browser: None,
+            file_browser_last: None,
+            profiler: profiler::ProfilerState::default(),
             terraingen: terraingen::TerrainGen::new(),
             scatter_status: None,
             notice: None,
@@ -1142,11 +1381,16 @@ impl App {
                 }
             }
         }
+        self.refresh_photon();
+        self.refresh_environment();
+        self.refresh_audio();
+        self.refresh_performance();
         let selected = self.entities.get(self.selected).map(|entity| entity.id);
         self.components = match (self.engine.as_ref(), selected) {
             (Some(engine), Some(id)) => engine.entity_component_data(id),
             _ => Vec::new(),
         };
+        self.refresh_field_thumbnails();
         self.selected_material = match (self.engine.as_ref(), selected) {
             (Some(engine), Some(id)) => engine
                 .entity_material(id)
@@ -1168,6 +1412,41 @@ impl App {
             let icon = projectloader::entity_icon(engine, entity.id, &entity.name);
             if let Some(view) = self.entities.get_mut(self.selected) {
                 view.icon = icon;
+            }
+        }
+    }
+
+    /// Collects the thumbnails of every asset the selected entity's asset fields name, so the
+    /// Inspector can show the picture beside the path.
+    fn refresh_field_thumbnails(&mut self) {
+        self.field_thumbnails.clear();
+        for component in &self.components {
+            let Some(meta) = self
+                .component_types
+                .iter()
+                .find(|kind| kind.id == component.info.type_id)
+            else {
+                continue;
+            };
+            for (index, value) in component.values.iter().enumerate() {
+                let doppio_engine::FieldValue::String(path) = value else {
+                    continue;
+                };
+                let is_asset = meta
+                    .fields
+                    .get(index)
+                    .is_some_and(|info| crate::uikit::asset_kind::for_field(&info.name).is_some());
+                if !is_asset || path.is_empty() {
+                    continue;
+                }
+                let thumbnail = self
+                    .assets
+                    .iter()
+                    .position(|asset| asset.relative_path == *path)
+                    .and_then(|asset| self.asset_thumbnails.get(asset).cloned().flatten());
+                if let Some(handle) = thumbnail {
+                    self.field_thumbnails.insert(path.clone(), handle);
+                }
             }
         }
     }
@@ -1221,6 +1500,9 @@ impl App {
                 self.behaviour_picker = true;
                 self.behaviour_search.clear();
                 self.open_menu = None;
+            }
+            panels::inspector::Edit::PickField { component, field } => {
+                self.open_field_pick(component, field);
             }
             panels::inspector::Edit::OpenMaterialPicker => {
                 self.material_asset_picker = true;
@@ -1514,6 +1796,10 @@ impl App {
 
     /// Records the current editor state as one undo step.
     fn commit(&mut self, name: impl Into<String>, key: Option<String>) {
+        // Play is a rehearsal: what happens during it is undone by Stop, so it leaves no history.
+        if self.views.session {
+            return;
+        }
         let after = self.capture_state();
         self.history.push(after, name, key);
     }
@@ -1684,7 +1970,19 @@ impl App {
         }
     }
 
+    /// Tells the engine whether the scene simulates: only while playing do clouds, weather, wind, water and sound
+    /// advance. Switching either way draws a frame, so the picture matches the state.
+    fn sync_simulation(&mut self) {
+        self.sim_last_tick = Instant::now();
+        self.viewport_dirty = true;
+        self.scene_epoch += 1;
+        if let Some(engine) = self.engine.as_mut() {
+            engine.set_simulating(self.playing);
+        }
+    }
+
     fn apply_camera(&mut self) {
+        self.viewport_dirty = true;
         if let Some(engine) = self.engine.as_mut() {
             let _ = engine.set_camera(self.camera);
         }
@@ -1941,6 +2239,10 @@ impl App {
             return;
         };
         self.prefab_open = false;
+        if matches!(prefab.kind, prefabs::Kind::Environment) {
+            self.create_environment_prefab();
+            return;
+        }
         let offset = (self.entities.len() % 6) as f32 * 1.5;
         let spawn = [
             self.camera.focus[0] + offset,
@@ -2169,6 +2471,8 @@ impl App {
         if let Some(engine) = self.engine.as_mut() {
             let _ = engine.refresh_assets();
             self.assets = engine.assets();
+            // The engine calls prefabs, terrains, fonts… plain files: name them.
+            crate::uikit::asset_kind::refine(&mut self.assets);
             // Deleted assets wait in the hidden trash folder: not part of the project listing.
             self.assets.retain(|asset| {
                 asset.relative_path != asset_files::TRASH
@@ -2350,7 +2654,10 @@ impl App {
             return;
         }
         let location = std::path::PathBuf::from(&location_text);
-        let name = self.project.name.trim().to_owned();
+        let mut name = self.project.name.trim().to_owned();
+        if name.is_empty() && self.project.template == project_manager::Template::Sample {
+            name = project::SAMPLE_PROJECT_NAME.to_owned();
+        }
         match project::create_project(&location, &name, self.project.template.manifest_name()) {
             Ok(info) => {
                 project::record_recent_at(&self.project_recent_file, &info.root);
@@ -2446,6 +2753,7 @@ impl App {
 
         self.entities = entities;
         self.assets = assets;
+        crate::uikit::asset_kind::refine(&mut self.assets);
         self.selected = 0;
         self.name_input = self
             .entities
@@ -5185,6 +5493,7 @@ impl App {
                     self.wizard.sources.remove(index);
                 }
             }
+            Edit::ImportBrowse => self.open_file_browser(),
             Edit::ImportRun => self.wizard_import(),
             Edit::GenerateIds(value) => self.wizard.generate_ids = value,
             Edit::PackRun => self.wizard_pack(),
@@ -5368,21 +5677,38 @@ impl App {
             self.import_mesh_materials(&text);
             return;
         }
-        if matches!(
-            extension.as_str(),
-            "png" | "jpg" | "jpeg" | "tga" | "gif" | "hdr" | "exr"
-        ) {
-            if self.material.is_some() {
-                self.assign_material_texture(material::TextureSlot::Albedo, text);
-            } else {
-                self.log(
-                    LogLevel::Error,
-                    "Drop texture: open a material or create one from the texture first",
-                );
-            }
+        let kind = crate::uikit::asset_kind::classify(&path);
+        if kind == Some(crate::uikit::asset_kind::AssetKind::Image) && self.material.is_some() {
+            self.assign_material_texture(material::TextureSlot::Albedo, text);
+            return;
+        }
+        // Any other file the project can hold lands in the folder being browsed.
+        if kind.is_some() || path.is_dir() {
+            self.import_dropped(path);
             return;
         }
         self.log(LogLevel::Error, format!("Unsupported dropped file: {text}"));
+    }
+
+    /// A file dropped on the window with no wizard open: copy it into the browsed folder.
+    fn import_dropped(&mut self, path: std::path::PathBuf) {
+        let Some(root) = self.asset_root_dir() else {
+            self.log(
+                LogLevel::Error,
+                "Drop: open a project first, there is no asset folder yet",
+            );
+            return;
+        };
+        let directory = self.asset_directory.clone();
+        let report = asset_wizard::import(&root, &directory, std::slice::from_ref(&path));
+        self.refresh_assets();
+        let text = report.summary();
+        let level = if report.imported.is_empty() {
+            LogLevel::Error
+        } else {
+            LogLevel::Action
+        };
+        self.log(level, text);
     }
 
     fn load_thumbnail_info(&self, path: &str) -> Option<(iced::widget::image::Handle, u32, u32)> {
@@ -6465,7 +6791,14 @@ impl App {
                     entity.position = local;
                 }
             }
-            gizmo::Edit::Rotate { rotation, .. } => {
+            gizmo::Edit::Rotate { .. } | gizmo::Edit::Turn { .. } => {
+                let rotation = match edit.turned() {
+                    Some(turned) => turned,
+                    None => match edit {
+                        gizmo::Edit::Rotate { rotation, .. } => rotation,
+                        _ => return,
+                    },
+                };
                 if let Some(engine) = self.engine.as_mut() {
                     let _ = engine.set_rotation(id, rotation);
                 }
@@ -6541,8 +6874,19 @@ impl App {
     fn subscription(&self) -> iced::Subscription<Message> {
         iced::Subscription::batch([
             iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::ViewportTick),
+            iced::time::every(std::time::Duration::from_millis(500))
+                .map(|_| Message::ProfilerRefresh),
             iced::event::listen().filter_map(|event| global_event_message(&event)),
-            iced::keyboard::listen().filter_map(keyboard_event_message),
+            if self.game_has_keyboard() {
+                iced::keyboard::listen().filter_map(game_keyboard_message)
+            } else {
+                iced::keyboard::listen().filter_map(keyboard_event_message)
+            },
+            if self.detach.supported {
+                iced::window::close_events().map(Message::WindowClosed)
+            } else {
+                iced::Subscription::none()
+            },
         ])
     }
 
@@ -6577,6 +6921,7 @@ impl App {
                     .as_ref()
                     .and_then(|engine| engine.camera().ok())
                     .unwrap_or(camera);
+                self.viewport_requests += 1;
                 self.viewport_pending = true;
                 self.viewport_pending_camera = Some(effective);
                 self.viewport_started = Some(Instant::now());
@@ -6641,11 +6986,33 @@ impl App {
             .panes
             .iter()
             .any(|(_, group)| group.active_kind() == PaneKind::Viewport);
-        if !visible {
+        // A frame already asked for is collected even when the tab is hidden (see `pump_feeds`).
+        if !visible && !self.viewport_pending {
             return;
         }
         if !self.viewport_pending {
+            // A scene view's frame is still being read back: the device takes one frame at a time.
+            if self.scene_frame_in_flight() {
+                return;
+            }
+            // A stopped editor draws a frame only when something changed (and a few more while it settles):
+            // clouds, wind and water stand still, so there is nothing to recompute.
+            let resized = self.viewport_desired != self.viewport_render_size;
+            if !(self.playing || self.viewport_dirty || self.viewport_settle > 0 || resized) {
+                self.viewport_idle = true;
+                return;
+            }
+            self.viewport_idle = false;
+            let before = self.viewport_requests;
             self.request_viewport();
+            if self.viewport_requests != before {
+                if self.viewport_dirty {
+                    self.viewport_dirty = false;
+                    self.viewport_settle = VIEWPORT_SETTLE_FRAMES;
+                } else {
+                    self.viewport_settle = self.viewport_settle.saturating_sub(1);
+                }
+            }
             return;
         }
 
@@ -6666,6 +7033,11 @@ impl App {
                     self.viewport_latency_ms = started.elapsed().as_secs_f32() * 1000.0;
                 }
                 self.viewport_frames += 1;
+                // The profiler's history follows the frames (also where no timer runs, as in the headless driver).
+                self.profiler_tick();
+                self.thunder_tick();
+                self.audio_tick();
+                self.animation_tick();
                 let elapsed = self.viewport_fps_window.elapsed().as_secs_f32();
                 if elapsed >= 1.0 {
                     self.viewport_fps = self.viewport_frames as f32 / elapsed;
@@ -6736,6 +7108,11 @@ impl App {
                 | Message::ScatterOnTerrain(_)
         );
         let status_before = generator_message.then(|| self.generator_status());
+        // Anything but bookkeeping may change what the viewport shows: a stopped viewport renders it once.
+        if !is_passive(&message) {
+            self.viewport_dirty = true;
+            self.scene_epoch += 1;
+        }
         self.update_inner(message);
         if let Some(before) = status_before {
             self.announce_generator_status(&before);
@@ -6840,31 +7217,7 @@ impl App {
     }
 
     fn update_inner(&mut self, message: Message) {
-        if !matches!(
-            &message,
-            Message::ToggleMenu(_)
-                | Message::HierarchyContext(_)
-                | Message::ViewportTick
-                | Message::ViewportHover(_)
-                | Message::ViewportKey(_, _)
-                | Message::ViewportBoost(_)
-                | Message::ViewportResized(_, _)
-                | Message::ViewportMoved(_)
-                | Message::PointerReleased
-                | Message::TabEnter(_, _)
-                | Message::TabExit(_, _)
-                | Message::PaneEnter(_, _)
-                | Message::PaneExit(_, _)
-                // Hover bookkeeping from widgets behind an open menu must not
-                // dismiss it; only deliberate actions (or a click outside,
-                // Escape, choosing an item) close menus.
-                | Message::HierarchyRowEnter(_)
-                | Message::HierarchyRowExit(_)
-                | Message::HierarchyRootEnter
-                | Message::HierarchyRootExit
-                | Message::HierarchyHoverClear
-                | Message::Noop
-        ) {
+        if !is_passive(&message) {
             self.open_menu = None;
             self.hierarchy_menu = None;
         }
@@ -7188,6 +7541,36 @@ impl App {
             Message::ShowNatureGenerator => self.show_nature_pane(),
             Message::WaterGen(edit) => self.edit_water(edit),
             Message::ShowWaterGenerator => self.show_water_pane(),
+            Message::Photon(edit) => self.edit_photon(edit),
+            Message::ShowPhoton => self.show_photon_pane(),
+            Message::Environment(edit) => self.edit_environment(edit),
+            Message::AssetPick(edit) => self.edit_asset_pick(edit),
+            Message::FileBrowser(edit) => self.edit_file_browser(edit),
+            Message::Detach(pane) => self.detach_pane(pane),
+            Message::DetachTab(kind) => self.detach_kind(kind),
+            Message::Attach(window) => self.attach_window(window),
+            Message::AttachTab(kind) => {
+                if let Some(window) = self.detach.window_of(kind) {
+                    self.attach_window(window);
+                }
+            }
+            Message::WindowClosed(window) => self.window_closed(window),
+            Message::ShowEnvironment => self.show_environment_pane(),
+            Message::Audio(edit) => self.edit_audio(edit),
+            Message::PhaseShift(edit) => self.edit_phase_shift(edit),
+            Message::Rig2d(edit) => self.edit_rig2d(edit),
+            Message::ShowPhaseShift => self.show_animation_pane(PaneKind::PhaseShift),
+            Message::ShowRig2d => self.show_animation_pane(PaneKind::Rig2d),
+            Message::ShowAudio => self.show_audio_pane(),
+            Message::Performance(edit) => self.edit_performance(edit),
+            Message::ShowPerformance => self.show_performance_pane(),
+            Message::Profiler(edit) => self.edit_profiler(edit),
+            Message::ShowProfiler => self.show_profiler_pane(),
+            Message::ProfilerRefresh => {
+                if self.profiler_visible() {
+                    self.refresh_profiler();
+                }
+            }
             Message::TerrainGen(edit) => self.edit_terrain(edit),
             Message::ShowTerrainGenerator => self.show_terrain_pane(),
             Message::ScatterOnTerrain(request) => self.scatter_on_terrain(request),
@@ -7361,23 +7744,13 @@ impl App {
                     }
                 }
             }
-            Message::TogglePlay => {
-                self.playing = !self.playing;
-                self.log(LogLevel::Action, if self.playing { "Play" } else { "Stop" });
-                if let Some(engine) = self.engine.as_mut() {
-                    engine.tick(0.016);
-                    let stats = engine.frame_stats();
-                    self.log(
-                        LogLevel::Engine,
-                        format!(
-                            "Engine frame {} ({} entities, {:.2} ms)",
-                            stats.frame_index,
-                            stats.entity_count,
-                            stats.delta_time * 1000.0
-                        ),
-                    );
-                }
-            }
+            Message::TogglePlay => self.toggle_play(),
+            Message::StopPlay => self.stop_play(),
+            Message::ShowGameplay => self.show_gameplay_pane(),
+            Message::ShowCameraPreview => self.show_camera_preview_pane(),
+            Message::GameKey(scancode, down) => self.game_key(scancode, down),
+            Message::GamePointer(x, y, button, down) => self.game_pointer(x, y, button, down),
+            Message::SceneViewResized(view, size) => self.feed_resized(view, size),
             Message::AddEntity => {
                 let name = format!("Entity {}", self.entities.len() + 1);
                 self.add_entity_named(name.clone());
@@ -7462,9 +7835,15 @@ impl App {
                 if self.viewport_hovered {
                     self.fly_camera(dt);
                 }
+                self.advance_game();
                 self.pump_water_preview(dt);
                 self.tick_engine_water(dt);
+                // Two rounds: when one picture's frame comes back, the next one's can start in the same tick,
+                // so the editor viewport and the scene views take turns without idling in between.
                 self.pump_viewport();
+                self.pump_feeds();
+                self.pump_viewport();
+                self.pump_feeds();
                 self.pump_generator_bake();
                 self.pump_generator_preview();
                 self.pump_texgen_export(false);
@@ -7606,10 +7985,14 @@ impl App {
                 self.apply_camera();
             }
             Message::Undo => {
-                self.undo();
+                if !self.views.session {
+                    self.undo();
+                }
             }
             Message::Redo => {
-                self.redo();
+                if !self.views.session {
+                    self.redo();
+                }
             }
             Message::CloseScene => {
                 self.engine = None;
@@ -7756,6 +8139,60 @@ impl App {
                         label: "Terrain Generator",
                         shortcut: None,
                         message: Message::ShowTerrainGenerator,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PHOTON,
+                        label: "Photon (Global Illumination)",
+                        shortcut: None,
+                        message: Message::ShowPhoton,
+                    },
+                    menu::Item {
+                        id: id::SHOW_GAMEPLAY,
+                        label: "Gameplay (Run the Game)",
+                        shortcut: None,
+                        message: Message::ShowGameplay,
+                    },
+                    menu::Item {
+                        id: id::SHOW_CAMERA_PREVIEW,
+                        label: "Camera (Preview a Camera)",
+                        shortcut: None,
+                        message: Message::ShowCameraPreview,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PERFORMANCE,
+                        label: "Performance (Render Options)",
+                        shortcut: None,
+                        message: Message::ShowPerformance,
+                    },
+                    menu::Item {
+                        id: id::SHOW_AUDIO,
+                        label: "Audio (Volumetric Sound)",
+                        shortcut: None,
+                        message: Message::ShowAudio,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PHASESHIFT,
+                        label: "PhaseShift (Animator States)",
+                        shortcut: None,
+                        message: Message::ShowPhaseShift,
+                    },
+                    menu::Item {
+                        id: id::SHOW_RIG2D,
+                        label: "Rig 2D (Bones and Parameters)",
+                        shortcut: None,
+                        message: Message::ShowRig2d,
+                    },
+                    menu::Item {
+                        id: id::SHOW_ENVIRONMENT,
+                        label: "Environment (Clouds, Fog, Rain)",
+                        shortcut: None,
+                        message: Message::ShowEnvironment,
+                    },
+                    menu::Item {
+                        id: id::SHOW_PROFILER,
+                        label: "Profiler (Timed Scopes, GPU)",
+                        shortcut: None,
+                        message: Message::ShowProfiler,
                     },
                     menu::Item {
                         id: id::SHOW_WATER_GENERATOR,
@@ -7911,10 +8348,10 @@ impl App {
             format!("{} entities", self.entities.len()),
             theme::ChipTone::Neutral,
         );
-        let play_status = if self.playing {
-            status::chip("Playing", theme::ChipTone::Success)
-        } else {
-            status::chip("Stopped", theme::ChipTone::Neutral)
+        let play_status = match self.transport_state() {
+            transport::State::Playing => status::chip("Playing", theme::ChipTone::Success),
+            transport::State::Paused => status::chip("Paused", theme::ChipTone::Warning),
+            transport::State::Stopped => status::chip("Stopped", theme::ChipTone::Neutral),
         };
         let mut status_row = row![].spacing(6);
         if let Some(notice) = self.notice.as_ref().filter(|notice| notice.fresh()) {
@@ -7944,7 +8381,17 @@ impl App {
             .push(save_status)
             .push(play_status)
             .push(entity_status);
-        let bar = toolbar::view(brand.into(), vec![menu_group], status_row.into());
+        let transport_bar = transport::view(
+            self.transport_state(),
+            Message::TogglePlay,
+            Message::StopPlay,
+        );
+        let bar = toolbar::view(
+            brand.into(),
+            vec![menu_group],
+            Some(transport_bar),
+            status_row.into(),
+        );
 
         let grid = pane_grid(&self.panes, |pane, group, _| self.pane_content(pane, group))
             .on_drag(Message::PaneDragged)
@@ -8004,7 +8451,7 @@ impl App {
                 .height(Length::Fill)
                 .style(theme::scrim);
             let overlay = iced::widget::mouse_area(
-                container(manager)
+                container(iced::widget::mouse_area(manager).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8037,13 +8484,110 @@ impl App {
                 .height(Length::Fill)
                 .style(theme::scrim);
             let overlay = iced::widget::mouse_area(
-                container(wizard)
+                container(iced::widget::mouse_area(wizard).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
             )
             .on_press(Message::Wizard(panels::asset_wizard::Edit::Close));
-            iced::widget::stack([base, scrim.into(), overlay.into()]).into()
+            let mut layers: Vec<Element<'_, Message>> = vec![base, scrim.into(), overlay.into()];
+            if let Some(browser) = self.file_browser.as_ref() {
+                let window = crate::uikit::panels::file_browser::view(
+                    browser,
+                    "Choose files to import",
+                    "Add to import",
+                    Message::FileBrowser,
+                );
+                layers.push(
+                    container(iced::widget::space())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(theme::scrim)
+                        .into(),
+                );
+                layers.push(
+                    iced::widget::mouse_area(
+                        container(iced::widget::mouse_area(window).on_press(Message::Noop))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .center(Length::Fill),
+                    )
+                    .on_press(Message::FileBrowser(
+                        crate::uikit::panels::file_browser::Edit::Close,
+                    ))
+                    .into(),
+                );
+            }
+            iced::widget::stack(layers).into()
+        } else if let Some(pick) = self.asset_pick.open.as_ref() {
+            let rows = self.asset_pick_rows(pick);
+            let present = self.asset_pick_present_kinds(pick);
+            let kind_chips = if present.len() > 1 {
+                let mut chips = vec![crate::uikit::components::asset_picker::KindChip {
+                    id: id::asset_pick_kind(0),
+                    label: "All".to_owned(),
+                    active: pick.filter.is_none(),
+                    color: theme::ACCENT,
+                    message: Message::AssetPick(assetpick::PickEdit::Filter(None)),
+                }];
+                for (position, kind) in present.iter().enumerate() {
+                    chips.push(crate::uikit::components::asset_picker::KindChip {
+                        id: id::asset_pick_kind(position + 1),
+                        label: kind.label().to_owned(),
+                        active: pick.filter == Some(*kind),
+                        color: kind.icon().color(),
+                        message: Message::AssetPick(assetpick::PickEdit::Filter(Some(*kind))),
+                    });
+                }
+                chips
+            } else {
+                Vec::new()
+            };
+            let one_kind = if pick.kinds.len() == 1 {
+                pick.kinds[0]
+            } else {
+                AssetKind::Other
+            };
+            let picker = crate::uikit::components::asset_picker::view_full(
+                &pick.title,
+                rows,
+                &pick.search,
+                crate::uikit::components::asset_picker::Callbacks {
+                    ids: crate::uikit::components::asset_picker::Ids {
+                        root: id::ASSET_PICK,
+                        close: id::ASSET_PICK_CLOSE,
+                        search: id::ASSET_PICK_SEARCH,
+                        item: id::asset_pick_item,
+                    },
+                    on_search: Box::new(|text| {
+                        Message::AssetPick(assetpick::PickEdit::Search(text))
+                    }),
+                    on_pick: Box::new(|path| Message::AssetPick(assetpick::PickEdit::Pick(path))),
+                    on_close: Message::AssetPick(assetpick::PickEdit::Close),
+                },
+                crate::uikit::components::asset_picker::Labels {
+                    placeholder: one_kind.search_hint(),
+                    badge: one_kind.badge(),
+                    empty: one_kind.empty_hint(),
+                    footer: None,
+                },
+                crate::uikit::components::asset_picker::Extras {
+                    current: &pick.current,
+                    clear: Some((
+                        id::ASSET_PICK_NONE,
+                        Message::AssetPick(assetpick::PickEdit::Clear),
+                    )),
+                    kinds: kind_chips,
+                },
+            );
+            let overlay = iced::widget::mouse_area(
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center(Length::Fill),
+            )
+            .on_press(Message::AssetPick(assetpick::PickEdit::Close));
+            iced::widget::stack([base, overlay.into()]).into()
         } else if let Some(menu) = self.open_menu {
             let (x, items) = self.menu_items(menu);
             let overlay =
@@ -8086,7 +8630,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8149,7 +8693,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8198,7 +8742,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8248,7 +8792,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8293,7 +8837,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8337,7 +8881,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8381,7 +8925,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(picker)
+                container(iced::widget::mouse_area(picker).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8418,7 +8962,7 @@ impl App {
                 },
             );
             let overlay = iced::widget::mouse_area(
-                container(palette)
+                container(iced::widget::mouse_area(palette).on_press(Message::Noop))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center(Length::Fill),
@@ -8463,16 +9007,26 @@ impl App {
             )
         });
         let maximized = self.panes.maximized() == Some(pane);
-        let controls = tabs::controls(
-            split,
-            (
-                id::pane_maximize(&format!("{pane:?}")),
-                maximized,
-                Message::ToggleMaximize(pane),
-            ),
-        );
+        let detach = self
+            .detach
+            .supported
+            .then(|| (id::pane_detach(&format!("{pane:?}")), Message::Detach(pane)));
+        let controls = |split| {
+            tabs::controls(
+                detach.clone(),
+                split,
+                (
+                    id::pane_maximize(&format!("{pane:?}")),
+                    maximized,
+                    Message::ToggleMaximize(pane),
+                ),
+            )
+        };
+        // When the tabs and both buttons do not fit, the split button is dropped (not the tabs: iced hides a title that
+        // does not fit next to full controls) and the tab strip scrolls.
+        let compact = controls(None);
         let title_bar = pane_grid::TitleBar::new(tabs::view(tabs, subtitle, None))
-            .controls(controls)
+            .controls(pane_grid::Controls::dynamic(controls(split), compact))
             .always_show_controls()
             .padding([0, 2])
             .style(theme::panel_title);
@@ -8640,15 +9194,24 @@ impl App {
                     doppio_engine::AntiAliasing::Fxaa => "FXAA",
                     doppio_engine::AntiAliasing::Taa => "TAA",
                 };
+                let rate = if self.playing {
+                    format!(
+                        "{:.0} ms · {:.0} FPS",
+                        self.viewport_hud_latency_ms, self.viewport_fps
+                    )
+                } else if self.viewport_idle {
+                    "paused · draws on change".to_owned()
+                } else {
+                    format!("paused · {:.0} ms", self.viewport_hud_latency_ms)
+                };
                 let status_line = format!(
-                    "{}×{} · {} · {} · {} · {:.0} ms · {:.0} FPS{}",
+                    "{}×{} · {} · {} · {} · {}{}",
                     self.viewport_render_size.0,
                     self.viewport_render_size.1,
                     grid,
                     aa,
                     self.gizmo_mode.label(),
-                    self.viewport_hud_latency_ms,
-                    self.viewport_fps,
+                    rate,
                     self.viewport_render_stats_label(),
                 );
                 let hint = self
@@ -8796,6 +9359,7 @@ impl App {
                             components: &self.components,
                             component_types: &self.component_types,
                             field_inputs: &self.field_inputs,
+                            thumbnails: &self.field_thumbnails,
                             transform_inputs: &self.transform_inputs,
                             collapsed_components: &self.collapsed_components,
                             material: self.selected_material.as_deref(),
@@ -8903,6 +9467,112 @@ impl App {
                         Message::NatureGen,
                     )
                 },
+            ),
+            PaneKind::Photon => (
+                id::PANE_PHOTON,
+                "Photon",
+                Some(photon_panel::summary(self.photon.settings.as_ref())),
+                photon_panel::view(
+                    photon_panel::View {
+                        settings: self.photon.settings.as_ref(),
+                        entity: self.photon_entity_name(),
+                        stats: self.photon_stats(),
+                        status: self.photon.status.as_deref(),
+                    },
+                    Message::Photon,
+                ),
+            ),
+            PaneKind::Environment => (
+                id::PANE_ENVIRONMENT,
+                "Environment",
+                Some(environment_panel::summary(
+                    self.environment.settings.as_ref(),
+                )),
+                environment_panel::view(
+                    environment_panel::View {
+                        settings: self.environment.settings.as_ref(),
+                        entity: self.environment_entity_name(),
+                        status: self.environment.status.as_deref(),
+                    },
+                    Message::Environment,
+                ),
+            ),
+            PaneKind::Gameplay => (
+                id::PANE_GAMEPLAY,
+                "Gameplay",
+                Some(match self.transport_state() {
+                    transport::State::Playing => "playing".to_owned(),
+                    transport::State::Paused => "paused".to_owned(),
+                    transport::State::Stopped => "stopped".to_owned(),
+                }),
+                self.gameplay_view(),
+            ),
+            PaneKind::CameraPreview => (
+                id::PANE_CAMERA_PREVIEW,
+                "Camera",
+                None,
+                self.camera_preview_view(),
+            ),
+            PaneKind::Performance => (
+                id::PANE_PERFORMANCE,
+                "Performance",
+                Some(panels::performance::summary(
+                    self.performance.settings.as_ref(),
+                )),
+                panels::performance::view(
+                    panels::performance::View {
+                        settings: self.performance.settings.as_ref(),
+                        entity: self.performance_entity_name(),
+                        status: self.performance.status.as_deref(),
+                        viewport: self.viewport_settings,
+                    },
+                    Message::Performance,
+                ),
+            ),
+            PaneKind::Audio => (
+                id::PANE_AUDIO,
+                "Audio",
+                Some(audio_panel::summary(
+                    self.audio.settings.as_ref(),
+                    &self.audio.live,
+                )),
+                audio_panel::view(
+                    audio_panel::View {
+                        settings: self.audio.settings.as_ref(),
+                        entity: self.audio_entity_name(),
+                        status: self.audio.status.as_deref(),
+                        output_on: self.audio.output_on,
+                        devices: &self.audio.devices,
+                        device: self.audio.device,
+                        live: &self.audio.live,
+                    },
+                    Message::Audio,
+                ),
+            ),
+            PaneKind::PhaseShift => (
+                id::PANE_PHASESHIFT,
+                "PhaseShift",
+                None,
+                self.phase_shift_body(),
+            ),
+            PaneKind::Rig2d => (id::PANE_RIG2D, "Rig 2D", None, self.rig2d_body()),
+            PaneKind::Profiler => (
+                id::PANE_PROFILER,
+                "Profiler",
+                Some(profiler_panel::summary(
+                    &self.profiler.scopes,
+                    self.profiler.gpu_timing,
+                )),
+                profiler_panel::view(
+                    profiler_panel::View {
+                        scopes: &self.profiler.scopes,
+                        history: &self.profiler.history,
+                        gpu_timing: self.profiler.gpu_timing,
+                        available: self.profiler.available,
+                        status: self.profiler.status.as_deref(),
+                    },
+                    Message::Profiler,
+                ),
             ),
             PaneKind::WaterGenerator => (
                 id::PANE_WATER_GENERATOR,
@@ -9382,14 +10052,19 @@ fn prefab_scale(kind: prefabs::Kind) -> [f32; 3] {
 }
 
 fn unique_entity_name(engine: &doppio_engine::Engine, base: &str) -> String {
+    // One pass over the names, then a lookup per suffix: asking the engine for every entity once per suffix made
+    // creating the n-th "Sphere" cost n times the scene (150 spheres took 14 s).
+    let taken: HashSet<String> = (0..engine.entity_count())
+        .filter_map(|index| engine.entity_at(index).ok().map(|info| info.name))
+        .collect();
+    unique_name_among(&taken, base)
+}
+
+/// `base`, or `base 2`, `base 3`, ... : the first name not in `taken`.
+fn unique_name_among(taken: &HashSet<String>, base: &str) -> String {
     let mut name = base.to_owned();
     let mut suffix = 2;
-    while (0..engine.entity_count()).any(|index| {
-        engine
-            .entity_at(index)
-            .map(|info| info.name == name)
-            .unwrap_or(false)
-    }) {
+    while taken.contains(&name) {
         name = format!("{base} {suffix}");
         suffix += 1;
     }
@@ -9607,6 +10282,9 @@ fn create_prefab_entity(
         prefabs::Kind::DuplicateSelection => {
             return Err("duplicate is handled separately".to_owned());
         }
+        prefabs::Kind::Environment => {
+            return Err("the environment is handled by its own tab".to_owned());
+        }
     }
     Ok(id)
 }
@@ -9672,10 +10350,20 @@ fn format_transform_number(value: f32) -> String {
     }
 }
 
+mod assetpick;
+mod audio;
+mod detach;
+mod environment;
+mod filebrowser;
 mod naturegen;
+mod performance;
+mod phaseshift;
+mod photon;
 mod prefab_assets;
+mod profiler;
 mod recipes;
 mod scatter;
+mod sceneview;
 mod terraingen;
 mod texturegen;
 mod watergen;

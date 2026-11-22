@@ -59,6 +59,21 @@ void CommandBuffer::submit() {
     m_acquired = false;
 }
 
+bool CommandBuffer::flushAndWait() {
+    if (!m_device || !m_cmdBuffer || m_inRenderPass || m_inComputePass) return false;
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmdBuffer);
+    m_cmdBuffer = nullptr;
+    if (fence) {
+        SDL_WaitForGPUFences(m_device, true, &fence, 1);
+        SDL_ReleaseGPUFence(m_device, fence);
+    } else {
+        SDL_WaitForGPUIdle(m_device);
+    }
+    m_cmdBuffer = SDL_AcquireGPUCommandBuffer(m_device);
+    m_acquired = (m_cmdBuffer != nullptr);
+    return m_acquired;
+}
+
 void CommandBuffer::reset() {
     m_cmdBuffer = nullptr;
     m_renderPass = nullptr;
@@ -308,14 +323,14 @@ void CommandBuffer::drawInstanced(u32 vertexCount, u32 instanceCount,
                           firstVertex, firstInstance);
 }
 
-void CommandBuffer::beginComputePass(Texture* storageTexture, u32 mipLevel, u32 layer) {
+void CommandBuffer::beginComputePass(Texture* storageTexture, u32 mipLevel, u32 layer, bool cycle) {
     if (!m_cmdBuffer || m_inRenderPass || m_inComputePass) return;
     SDL_GPUStorageTextureReadWriteBinding binding{};
     if (storageTexture && storageTexture->handle) {
         binding.texture = storageTexture->handle;
         binding.mip_level = mipLevel;
         binding.layer = layer;
-        binding.cycle = true;
+        binding.cycle = cycle;
     }
     m_computePass = SDL_BeginGPUComputePass(
         m_cmdBuffer, storageTexture && storageTexture->handle ? &binding : nullptr,

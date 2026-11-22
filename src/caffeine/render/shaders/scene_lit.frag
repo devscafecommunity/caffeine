@@ -64,6 +64,9 @@ layout(set = 3, binding = 0) uniform LightingUBO {
     vec4 uModifiers;      // run-time modifiers: x wetness, y snow, z age
     vec4 uModTint;        // rgb albedo tint
     vec4 uWater;          // x water surface, y foam scale, z ripple detail, w time
+    vec4 uCloudShadowA;   // x strength (0 = off), y coverage, z density
+    vec4 uCloudShadowB;   // xyz wind offset of the noise, w base altitude
+    vec4 uCloudShadowC;   // xyz direction toward the sun, w top altitude
 } lights;
 
 layout(set = 3, binding = 1) uniform ShadowUBO {
@@ -290,6 +293,58 @@ vec2 parallaxUv(vec2 uv) {
 
 // Self-shadowing: march from the point the view ray hit towards the light through the same
 // height field; the crevices of the relief shade themselves. Returns 1 when lit.
+// ---- Cloud shadows: where the sun's ray to this point crosses the cloud layer, how thick is the cloud there. The same
+// noise as the sky's clouds (three octaves, no detail: a shadow is soft), read at two heights of the layer.
+float csHash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float csNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(csHash(i), csHash(i + vec3(1, 0, 0)), f.x),
+                   mix(csHash(i + vec3(0, 1, 0)), csHash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(csHash(i + vec3(0, 0, 1)), csHash(i + vec3(1, 0, 1)), f.x),
+                   mix(csHash(i + vec3(0, 1, 1)), csHash(i + vec3(1, 1, 1)), f.x), f.y),
+               f.z);
+}
+
+float csFbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 3; ++i) {
+        value += amplitude * csNoise(p);
+        p = p * 2.03 + vec3(17.1, 9.2, 13.7);
+        amplitude *= 0.5;
+    }
+    return value / 0.875;
+}
+
+float cloudShadow(vec3 world) {
+    float strength = lights.uCloudShadowA.x;
+    vec3 sun = lights.uCloudShadowC.xyz;
+    if (strength <= 0.0 || sun.y <= 0.03) return 1.0;
+    float base = lights.uCloudShadowB.w;
+    float top = lights.uCloudShadowC.w;
+    float span = max(top - base, 1.0);
+    float optical = 0.0;
+    for (int i = 0; i < 2; ++i) {
+        float altitude = base + span * (i == 0 ? 0.32 : 0.68);
+        float t = (altitude - world.y) / sun.y;
+        if (t <= 0.0) continue;  // the point is above this part of the layer
+        vec3 q = (world + sun * t + lights.uCloudShadowB.xyz) * 0.00125;
+        float shape = csFbm(q);
+        float coverage = lights.uCloudShadowA.y;
+        float cover = smoothstep(1.00 - coverage, 1.12 - coverage, shape);
+        optical += cover * lights.uCloudShadowA.z * span * 0.5 * 0.008;
+    }
+    float transmittance = exp(-optical);
+    return mix(1.0, transmittance, clamp(strength, 0.0, 1.0));
+}
+
 float parallaxSelfShadow(vec3 L) {
     if (!g_pomActive) return 1.0;
     vec3 N = normalize(v_normal);
@@ -936,6 +991,7 @@ void main() {
                 shadow = sampleDirShadow(uShadowMap1, 1, v_worldPos, shadowNormal) * pomShadow;
             }
         }
+        if (i == 0) shadow *= cloudShadow(v_worldPos);
         shadeLight(s, dir, lights.uDirColor[i].rgb * lights.uDirData[i].w * shadow, microAo,
                    diffuse, specular);
     }

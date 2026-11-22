@@ -8,9 +8,10 @@
 //! Parts take their material from the library, from the Texture Generator, or from **your own
 //! project assets**: the Part node lists the project's `.mat` files and images.
 
+use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::components::{
-    button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status, text_field,
-    texture_slot, tree_view,
+    asset_field, button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status,
+    text_field, texture_slot, tree_view,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
@@ -600,31 +601,37 @@ fn properties<'a, Message: Clone + 'a>(
     }
     // Material nodes that point at your own project assets list the matching files.
     {
-        let (options, label): (&[String], &str) = match node.op {
-            "mat_project" => (&view.project_materials, "Your .mat"),
-            "mat_texture" => (&view.project_textures, "Your image"),
-            _ => (&[], ""),
+        let label = match node.op {
+            "mat_project" => "Your .mat",
+            "mat_texture" => "Your image",
+            _ => "",
         };
         if !label.is_empty() {
             let current = node.strings.first().cloned().unwrap_or_default();
-            let pick_emit = emit.clone();
-            body = body.push(dropdown::property(
-                id::naturegen_param("asset"),
-                label,
-                options.to_vec(),
-                Some(current.clone()).filter(|c| !c.is_empty()),
-                move |choice| pick_emit(Edit::SetString(node_id, 0, choice)),
-            ));
-            let text_emit = emit.clone();
-            body = body.push(text_field::property(
-                id::naturegen_param("asset_path"),
-                "Path",
-                &current,
+            let kind = if node.op == "mat_project" {
+                PickKind::Material
+            } else {
+                PickKind::Image
+            };
+            let (text_emit, pick_emit, clear_emit) = (emit.clone(), emit.clone(), emit.clone());
+            body = body.push(asset_field::view(
+                asset_field::AssetField {
+                    label,
+                    value: &current,
+                    kinds: &[if kind == PickKind::Material {
+                        AssetKind::Material
+                    } else {
+                        AssetKind::Image
+                    }],
+                    thumbnail: view.thumbnails.get(current.as_str()),
+                    text_id: id::naturegen_param("asset_path").into(),
+                    pick_id: id::naturegen_param("asset_pick").into(),
+                    clear_id: id::naturegen_param("asset_clear").into(),
+                },
                 move |value| text_emit(Edit::SetString(node_id, 0, value)),
+                pick_emit(Edit::OpenPicker(node_id, 0, kind)),
+                clear_emit(Edit::SetString(node_id, 0, String::new())),
             ));
-            if options.is_empty() {
-                body = body.push(text("No matching assets found in the project: type a path relative to the assets folder.").size(8).color(theme::TEXT_MUTED));
-            }
         }
     }
     let mut slots: Vec<(usize, &'static str, PickKind)> = Vec::new();

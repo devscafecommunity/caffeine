@@ -2,6 +2,8 @@
 #include "caffeine/environment/VolumetricClouds.hpp"
 #include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
+#include "ecs/WeatherComponents.hpp"
+#include "audio/VolumetricComponents.hpp"
 #include "scene/SceneSerializerIO.hpp"
 #include "ecs/Components.hpp"
 #include "ecs/CameraComponents.hpp"
@@ -437,8 +439,8 @@ void SceneSerializer::collectUIWidgetComponents(
 void SceneSerializer::collectAnimatorComponents(
     std::vector<std::pair<u32, std::vector<u8>>>& entries) {
     ECS::ComponentQuery q;
-    q.with<Animation::Animator>();
-    m_world.forEach<Animation::Animator>(q, [&](ECS::Entity e, Animation::Animator& anim) {
+    q.with<Animation::PhaseShift>();
+    m_world.forEach<Animation::PhaseShift>(q, [&](ECS::Entity e, Animation::PhaseShift& anim) {
         std::vector<const Animation::AnimationClip*> clipPtrs;
         auto clipIndex = [&](const Animation::AnimationClip* clip) -> u32 {
             if (!clip) return 0xFFFFFFFFu;
@@ -546,7 +548,7 @@ void SceneSerializer::collectAnimatorComponents(
                 IO::appendI32(data, cond.intValue);
             }
         };
-        auto writeMachine = [&](const Animation::AnimatorStateMachine& sm) {
+        auto writeMachine = [&](const Animation::PhaseShiftStateMachine& sm) {
             IO::appendString(data, sm.defaultState.cStr());
             IO::appendF32(data, sm.entryX);
             IO::appendF32(data, sm.entryY);
@@ -571,7 +573,7 @@ void SceneSerializer::collectAnimatorComponents(
         IO::appendU32(data, kAnimatorGraphMarker);
         writeMachine(anim);
         IO::appendU32(data, static_cast<u32>(anim.layers.size()));
-        for (const Animation::AnimatorLayer& layer : anim.layers) {
+        for (const Animation::PhaseShiftLayer& layer : anim.layers) {
             IO::appendString(data, layer.name.cStr());
             IO::appendString(data, layer.parentGroup.cStr());
             IO::appendU8(data, layer.isGroup ? 1 : 0);
@@ -581,6 +583,22 @@ void SceneSerializer::collectAnimatorComponents(
             IO::appendU8(data, static_cast<u8>(layer.blend));
             IO::appendU32(data, layer.mask);
             if (!layer.isGroup) writeMachine(layer);
+        }
+
+        // Trailing optional section: smoothing per float parameter. Older files end before it.
+        {
+            std::vector<const Animation::PhaseShiftParameter*> smoothed;
+            for (const auto& p : anim.parameters) {
+                if (p.type == Animation::ParameterType::Float && p.smoothTime > 0.0f) smoothed.push_back(&p);
+            }
+            if (!smoothed.empty()) {
+                IO::appendU32(data, kAnimatorSmoothingMarker);
+                IO::appendU32(data, static_cast<u32>(smoothed.size()));
+                for (const auto* p : smoothed) {
+                    IO::appendString(data, p->name.cStr());
+                    IO::appendF32(data, p->smoothTime);
+                }
+            }
         }
 
         entries.push_back({e.id(), std::move(data)});
@@ -1266,6 +1284,9 @@ bool SceneSerializer::serializeToMemory(std::vector<u8>& out, const std::string&
     emitPodComponents<ECS::VolumetricCloudsComponent>(kTypeVolumetricClouds, entityMap);
     emitPodComponents<ECS::NaturalFluidComponent>(kTypeNaturalFluid, entityMap);
     emitPodComponents<ECS::PhotonGIComponent>(kTypePhotonGI, entityMap);
+    emitPodComponents<ECS::WeatherComponent>(kTypeWeather, entityMap);
+    emitPodComponents<Audio::AcousticObstacle>(kTypeAcousticObstacle, entityMap);
+    emitPodComponents<Audio::VolumetricAudioComponent>(kTypeVolumetricAudio, entityMap);
     {
         ECS::ComponentQuery query;
         query.with<Navigation::NavVolume>();
@@ -1886,6 +1907,18 @@ bool SceneSerializer::deserializeFromMemory(const std::vector<u8>& buffer, const
                 applyPODComponent<ECS::PhotonGIComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
                 break;
+            case kTypeWeather:
+                applyPODComponent<ECS::WeatherComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeAcousticObstacle:
+                applyPODComponent<Audio::AcousticObstacle>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
+            case kTypeVolumetricAudio:
+                applyPODComponent<Audio::VolumetricAudioComponent>(
+                    e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
+                break;
             case kTypeNaturalFluid:
                 applyPODComponent<ECS::NaturalFluidComponent>(
                     e, entry.data.data(), static_cast<u32>(entry.data.size()), m_world);
@@ -2318,8 +2351,8 @@ bool SceneSerializer::applyUIWidgetComponent(ECS::Entity e, const u8* data, u32 
 bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 size) {
     const u8* cursor = data;
     const u8* end = data + size;
-    auto& anim = m_world.add<Animation::Animator>(e);
-    anim = Animation::Animator{};
+    auto& anim = m_world.add<Animation::PhaseShift>(e);
+    anim = Animation::PhaseShift{};
     anim.embeddedClips.clear();
 
     u32 clipCount = 0;
@@ -2497,7 +2530,7 @@ bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 
             }
             return true;
         };
-        auto readMachine = [&](Animation::AnimatorStateMachine& sm) -> bool {
+        auto readMachine = [&](Animation::PhaseShiftStateMachine& sm) -> bool {
             std::string defaultState;
             u32 anyCount = 0;
             u32 stateCount = 0;
@@ -2544,7 +2577,7 @@ bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 
             u32 layerCount = 0;
             if (IO::readU32(cursor, end, layerCount) && layerCount < 64) {
                 anim.layers.resize(layerCount);
-                for (Animation::AnimatorLayer& layer : anim.layers) {
+                for (Animation::PhaseShiftLayer& layer : anim.layers) {
                     std::string name;
                     std::string parent;
                     u8 isGroup = 0, muted = 0, expanded = 1, blend = 0;
@@ -2566,6 +2599,21 @@ bool SceneSerializer::applyAnimatorComponent(ECS::Entity e, const u8* data, u32 
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    // Optional trailing smoothing section (absent in files written before it existed).
+    if (cursor != end) {
+        u32 marker = 0;
+        u32 count = 0;
+        if (IO::readU32(cursor, end, marker) && marker == kAnimatorSmoothingMarker &&
+            IO::readU32(cursor, end, count)) {
+            for (u32 i = 0; i < count; ++i) {
+                std::string name;
+                f32 smoothTime = 0.0f;
+                if (!IO::readString(cursor, end, name) || !IO::readF32(cursor, end, smoothTime)) break;
+                anim.setSmoothing(name.c_str(), smoothTime);
             }
         }
     }

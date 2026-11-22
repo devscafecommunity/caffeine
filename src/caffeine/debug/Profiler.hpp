@@ -14,6 +14,8 @@ public:
     void endScope(const char* name);
 
     static constexpr u32 kInvalidNode = static_cast<u32>(-1);
+    /// How many of the latest calls of a scope the "recent" figures cover: about two seconds of a 60 fps scope.
+    static constexpr u32 kRecentWindow = 120;
 
     struct ScopeStats {
         const char* name = nullptr;
@@ -25,6 +27,9 @@ public:
         u64  callCount = 0;
         f64  totalMs   = 0.0;  // inclusive (scope + children)
         f64  selfMs    = 0.0;  // exclusive (scope only)
+        f64  lastMs    = 0.0;  // the most recent call
+        f64  recentAvgMs = 0.0;  // mean of the last kRecentWindow calls
+        f64  recentMaxMs = 0.0;  // worst of the last kRecentWindow calls
         f64  avgMs     = 0.0;
         f64  avgSelfMs = 0.0;
         f64  minMs     = 0.0;
@@ -38,6 +43,11 @@ public:
 
     void setEnabled(bool enabled) { m_enabled = enabled; }
     bool isEnabled() const { return m_enabled; }
+
+    /// GPU timing: the renderer's `CF_GPU_SCOPE`s then wait for the GPU at their edges, so their time is the
+    /// pass's real cost. It serialises CPU and GPU, so a frame is slower while it is on: a measuring mode.
+    void setGpuTiming(bool enabled) { m_gpuTiming = enabled; }
+    bool gpuTiming() const { return m_gpuTiming; }
 
     usize scopeCount() const;
 
@@ -55,6 +65,10 @@ private:
         u64  callCount = 0;
         f64  totalMs = 0.0;
         f64  selfMs = 0.0;
+        f64  lastMs = 0.0;
+        f32  recent[kRecentWindow] = {};  // ring of the latest calls
+        u32  recentCount = 0;
+        u32  recentHead = 0;
         f64  minMs = 1e18;
         f64  maxMs = 0.0;
     };
@@ -69,6 +83,7 @@ private:
     static constexpr usize MAX_SCOPE_DEPTH = 64;
 
     bool m_enabled = true;
+    bool m_gpuTiming = false;
 
     ScopeNode m_nodes[MAX_SCOPE_NODES]{};
     usize m_nodeCount = 0;
@@ -90,5 +105,8 @@ private:
 
 } // namespace Caffeine::Debug
 
+// __LINE__ must be expanded before it is pasted, or every scope gets the same name and two in one block clash.
+#define CF_PROFILE_CAT2(a, b) a##b
+#define CF_PROFILE_CAT(a, b) CF_PROFILE_CAT2(a, b)
 #define CF_PROFILE_SCOPE(name) \
-    Caffeine::Debug::ProfileScope _cfProfileScope_##__LINE__(name)
+    Caffeine::Debug::ProfileScope CF_PROFILE_CAT(_cfProfileScope_, __LINE__)(name)

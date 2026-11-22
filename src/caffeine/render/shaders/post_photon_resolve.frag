@@ -20,7 +20,10 @@ layout(set = 3, binding = 0) uniform PhotonResolveUBO {
     vec4 uTexel;   // xy 1 / scene size, z frame index, w enabled
     vec4 uParams;  // x intensity, y sky intensity, z tau_p, w gamma_n
     mat4 uView;    // world -> view
-    vec4 uSky;     // rgb sky radiance
+    vec4 uSky;     // rgb sky radiance, a debug view (0 lit, 1 GI only, 2 sky fallback only)
+    mat4 uInvView;      // view -> world
+    mat4 uPrevViewProj; // world -> previous frame's clip space (unjittered)
+    vec4 uHistory;      // x 1 when S(t-1) can be used, y weight of the current frame
 } pr;
 
 layout(set = 2, binding = 0) uniform sampler2D uScene;
@@ -28,6 +31,7 @@ layout(set = 2, binding = 1) uniform sampler2D uDepth;
 layout(set = 2, binding = 2) uniform sampler2D uGBufferAlbedo;
 layout(set = 2, binding = 3) uniform sampler2D uGBufferNormal;  // rg of normal+material
 layout(set = 2, binding = 4) uniform sampler2D uProbeSH;
+layout(set = 2, binding = 5) uniform sampler2D uSPrev;  // S(t-1) = indirect irradiance / pi, validity in alpha
 
 const float kY00 = 0.282095;
 const float kY1 = 0.488603;
@@ -102,6 +106,9 @@ void main() {
 
     vec3 accum = vec3(0.0);
     float weightSum = 0.0;
+    // The range of the probes' own values: the history may not leave it by much (disocclusion, a moved light).
+    vec3 lo = vec3(1e9);
+    vec3 hi = vec3(0.0);
 
     for (int oy = 0; oy < 2; ++oy) {
         for (int ox = 0; ox < 2; ++ox) {
@@ -138,15 +145,55 @@ void main() {
             vec3 irradiance = t00.rgb * kY00 +
                               (2.0 / 3.0) * (t10.rgb * y1.x + t01.rgb * y1.y +
                                              t11.rgb * y1.z);
-            accum += w * max(irradiance, vec3(0.0));
+            irradiance = max(irradiance, vec3(0.0));
+            accum += w * irradiance;
             weightSum += w;
+            lo = min(lo, irradiance);
+            hi = max(hi, irradiance);
         }
     }
 
     // Invariant 1: an empty scene under a uniform sky resolves to that sky
     // radiance (S = L_s), independent of the normal.
     vec3 sun = weightSum > 1e-3 ? accum / weightSum : pr.uSky.rgb;
-    vec3 indirect = max(albedoSample.rgb, vec3(0.0)) * sun * pr.uParams.x;
-    outColor = vec4(scene + max(indirect, vec3(0.0)), 1.0);
-    outS = vec4(max(sun, vec3(0.0)) * pr.uParams.x, 1.0);
+    sun = max(sun, vec3(0.0)) * pr.uParams.x;
+
+    // Temporal accumulation. The cascades trace a different set of directions every frame, so a single frame's
+    // irradiance flickers by tens of percent on a small surface. The previous frame's S, reprojected to this
+    // pixel, is blended in (exponential average) and kept within a window around the probes' values, so what
+    // the history gets wrong (a surface that was hidden, a light that moved) cannot linger.
+    if (pr.uHistory.x > 0.5 && weightSum > 1e-3) {
+        vec3 world = (pr.uInvView * vec4(P, 1.0)).xyz;
+        vec4 clip = pr.uPrevViewProj * vec4(world, 1.0);
+        if (clip.w > 1e-4) {
+            vec2 prevUv = vec2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+            if (all(greaterThanEqual(prevUv, vec2(0.0))) && all(lessThanEqual(prevUv, vec2(1.0)))) {
+                vec4 history = textureLod(uSPrev, prevUv, 0.0);
+                if (history.a > 0.5) {
+                    // The probes' values flicker together (every probe traces the same new directions), so the
+                    // window must be wider than that flicker: a history within 2.5x of the probes is kept.
+                    vec3 low = max(lo * pr.uParams.x * 0.4 - 0.02, vec3(0.0));
+                    vec3 high = hi * pr.uParams.x * 2.5 + 0.02;
+                    vec3 kept = clamp(history.rgb, low, high);
+                    // Noise stays within a few tens of percent of the average; a change larger than that (a light that
+                    // moved, a leak that closed, a surface the history had wrong) is followed quickly.
+                    float lc = dot(sun, vec3(1.0 / 3.0));
+                    float lh = dot(kept, vec3(1.0 / 3.0));
+                    float change = abs(lc - lh) / (max(lc, lh) + 0.02);
+                    float weight = mix(clamp(pr.uHistory.y, 0.02, 1.0), 0.5, smoothstep(0.35, 0.7, change));
+                    sun = mix(kept, sun, max(weight, clamp(pr.uHistory.y, 0.02, 1.0)));
+                }
+            }
+        }
+    }
+    vec3 indirect = max(albedoSample.rgb, vec3(0.0)) * sun;
+    int debugView = int(pr.uSky.a + 0.5);
+    if (debugView == 1) {
+        outColor = vec4(max(indirect, vec3(0.0)), 1.0);        // the GI term on its own
+    } else if (debugView == 2) {
+        outColor = vec4(vec3(weightSum > 1e-3 ? 0.0 : 1.0), 1.0);  // white where only the sky stood in
+    } else {
+        outColor = vec4(scene + max(indirect, vec3(0.0)), 1.0);
+    }
+    outS = vec4(max(sun, vec3(0.0)), 1.0);
 }

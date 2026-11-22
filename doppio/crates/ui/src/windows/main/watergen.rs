@@ -456,6 +456,20 @@ impl App {
                 self.watergen.push(Some(format!("param:{id}:{index}")));
                 self.watergen.refresh();
             }
+            Edit::PickAsset(id, index) => {
+                let current = self
+                    .watergen
+                    .graph
+                    .node(id)
+                    .and_then(|node| node.strings.get(index).cloned())
+                    .unwrap_or_default();
+                self.open_asset_pick(
+                    super::assetpick::PickTarget::WaterString { node: id, index },
+                    vec![crate::uikit::asset_kind::AssetKind::Material],
+                    "Water look material".to_owned(),
+                    current,
+                );
+            }
             Edit::SetString(id, index, text) => {
                 self.watergen.graph.set_string(id, index, text);
                 self.watergen.push(Some(format!("string:{id}:{index}")));

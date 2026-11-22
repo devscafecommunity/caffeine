@@ -1,6 +1,7 @@
 #include "render/PostProcessStack.hpp"
 
 #include "debug/Profiler.hpp"
+#include "render/GpuProfile.hpp"
 #include "render/ShaderBytecode.hpp"
 #include "rhi/CommandBuffer.hpp"
 #include "rhi/RenderDevice.hpp"
@@ -75,11 +76,14 @@ struct PhotonResolveUBO {
     Vec4f texel;   // 1/W, 1/H, frame, enabled
     Vec4f params;  // intensity, sky intensity, tau_p, gamma_n
     float view[16];  // world→view
-    Vec4f sky;       // rgb sky radiance
+    Vec4f sky;       // rgb sky radiance, a debug view
+    float invView[16];       // view→world
+    float prevViewProj[16];  // world→previous clip space (unjittered)
+    Vec4f history;           // x 1 when S(t-1) is bound and valid, y weight of the current frame
 };
 
 // std140 contract with post_photon_resolve.frag.
-static_assert(sizeof(PhotonResolveUBO) == 144,
+static_assert(sizeof(PhotonResolveUBO) == 288,
               "PhotonResolveUBO must match the GLSL std140 layout");
 
 struct CompositeUBO {
@@ -97,6 +101,19 @@ struct CompositeUBO {
     Vec4f lens;
     Vec4f grain;
     Vec4f flags;
+    Vec4f wFogA;
+    Vec4f wFogB;
+    Vec4f wFogColor;
+    Vec4f wSunDir;
+    Vec4f wSunColor;
+    Vec4f wSky;
+    Vec4f wHorizon;
+    Vec4f rainA;
+    Vec4f rainB;
+    Vec4f rainColor;
+    Vec4f rainWind;
+    Vec4f flash;
+    Vec4f shafts;
 };
 
 struct FxaaUBO {
@@ -190,8 +207,8 @@ bool PostProcessStack::init(RHI::RenderDevice* device) {
     m_taa = createPass(frag(BuiltinShader::PostTaaFragment, 3), kHdr, false);
     m_photon = createPass(frag(BuiltinShader::PostPhotonFragment, 4), kHdr, false);
     m_photonResolve =
-        createPass(frag(BuiltinShader::PostPhotonResolveFragment, 5), kHdr, false, kHdr);
-    m_composite = createPass(frag(BuiltinShader::PostCompositeFragment, 5), kLdr, false);
+        createPass(frag(BuiltinShader::PostPhotonResolveFragment, 6), kHdr, false, kHdr);
+    m_composite = createPass(frag(BuiltinShader::PostCompositeFragment, 6), kLdr, false);
     m_fxaa = createPass(frag(BuiltinShader::PostFxaaFragment, 1), kLdr, false);
 
     RHI::SamplerDesc linear;
@@ -350,7 +367,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
         inputs.outputHeight == 0) {
         return;
     }
-    CF_PROFILE_SCOPE("PostProcessStack::execute");
+    CF_GPU_SCOPE(cmd, "PostProcessStack::execute");
     ViewResources* view = acquireView(inputs);
     if (!view) return;
 
@@ -384,7 +401,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
             inputs.gbufferAlbedo && inputs.gbufferNormalMaterial && inputs.photonS &&
             m_photonResolve) {
             // P2 compute path: diffuse resolve of the cascade-0 SH atlas.
-            CF_PROFILE_SCOPE("Post::photonResolve");
+            CF_GPU_SCOPE(cmd, "Post::photonResolve");
             RHI::Texture* target = nextTemp();
             if (target) {
                 PhotonResolveUBO ubo{};
@@ -400,21 +417,32 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
                               8.0f};  // gamma_n
                 std::memcpy(ubo.view, inputs.view.data(), sizeof(ubo.view));
                 const f32 sky = std::max(inputs.photon.skyIntensity, 0.0f);
-                ubo.sky = {0.48f * sky, 0.60f * sky, 0.82f * sky, 1.0f};
+                ubo.sky = {ECS::kPhotonSkyRadiance[0] * inputs.photonSkyTint.x * sky,
+                           ECS::kPhotonSkyRadiance[1] * inputs.photonSkyTint.y * sky,
+                           ECS::kPhotonSkyRadiance[2] * inputs.photonSkyTint.z * sky,
+                           static_cast<f32>(std::clamp(static_cast<int>(inputs.photon.debugView), 0, 2))};
 
-                const PassTexture tex[5] = {
+                // The previous frame's S, when there is one: the resolve averages it in (see the shader).
+                const bool history = inputs.photonSPrev && inputs.historyValid;
+                const Mat4 invView = inputs.view.inverted();
+                std::memcpy(ubo.invView, invView.data(), sizeof(ubo.invView));
+                std::memcpy(ubo.prevViewProj, inputs.prevViewProj.data(), sizeof(ubo.prevViewProj));
+                ubo.history = {history ? 1.0f : 0.0f, std::clamp(inputs.photonTemporalWeight, 0.02f, 1.0f), 0.0f, 0.0f};
+
+                const PassTexture tex[6] = {
                     {source, false},
                     {inputs.sceneDepth, true},
                     {inputs.gbufferAlbedo, false},
                     {inputs.gbufferNormalMaterial, false},
                     {inputs.photonSH, true},
+                    {history ? inputs.photonSPrev : inputs.photonSH, false},
                 };
-                runPass(cmd, m_photonResolve, target, w, h, tex, 5, &ubo, sizeof(ubo),
+                runPass(cmd, m_photonResolve, target, w, h, tex, 6, &ubo, sizeof(ubo),
                         false, inputs.photonS);
                 source = target;
             }
         } else if (m_photon) {
-            CF_PROFILE_SCOPE("Post::photon");
+            CF_GPU_SCOPE(cmd, "Post::photon");
             RHI::Texture* target = nextTemp();
             if (target) {
                 PhotonUBO ubo{};
@@ -456,7 +484,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     // Temporal AA resolves the jittered scene against last frame's history.
     if (on && usesTaa(in) && m_taa && ensure(view->history[0], w, h, kHdr) &&
         ensure(view->history[1], w, h, kHdr)) {
-        CF_PROFILE_SCOPE("Post::taa");
+        CF_GPU_SCOPE(cmd, "Post::taa");
         const u32 writeIndex = view->historyIndex ^ 1u;
         TaaUBO ubo{};
         std::memcpy(ubo.invViewProj, invViewProj.data(), sizeof(ubo.invViewProj));
@@ -475,7 +503,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
 
     if (on && in.motionBlur.enabled && in.motionBlur.intensity > 0.0f && m_motionBlur &&
         inputs.historyValid) {
-        CF_PROFILE_SCOPE("Post::motionBlur");
+        CF_GPU_SCOPE(cmd, "Post::motionBlur");
         RHI::Texture* target = nextTemp();
         MotionUBO ubo{};
         std::memcpy(ubo.invViewProj, invViewProj.data(), sizeof(ubo.invViewProj));
@@ -488,7 +516,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     }
 
     if (on && in.depthOfField.enabled && in.depthOfField.maxBlur > 0.0f && m_dof) {
-        CF_PROFILE_SCOPE("Post::depthOfField");
+        CF_GPU_SCOPE(cmd, "Post::depthOfField");
         RHI::Texture* target = nextTemp();
         DofUBO ubo{};
         ubo.proj = projParams(inputs.proj);
@@ -505,7 +533,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     RHI::Texture* aoTexture = nullptr;
     if (on && in.ambientOcclusion.enabled && in.ambientOcclusion.intensity > 0.0f && m_ssao &&
         m_ssaoBlur && ensure(view->ao, w, h, kHdr) && ensure(view->aoBlur, w, h, kHdr)) {
-        CF_PROFILE_SCOPE("Post::ssao");
+        CF_GPU_SCOPE(cmd, "Post::ssao");
         SsaoUBO ubo{};
         ubo.proj = projParams(inputs.proj);
         ubo.texel = texel;
@@ -523,7 +551,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
 
     RHI::Texture* adaptedTexture = nullptr;
     if (on && in.autoExposure.enabled && m_luminance && m_adapt) {
-        CF_PROFILE_SCOPE("Post::autoExposure");
+        CF_GPU_SCOPE(cmd, "Post::autoExposure");
         if (!view->luminance) {
             view->luminanceMips = 1;
             for (u32 s = kLuminanceSize; s > 1; s >>= 1) ++view->luminanceMips;
@@ -557,7 +585,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     RHI::Texture* bloomTexture = nullptr;
     if (on && in.bloom.enabled && in.bloom.intensity > 0.0f && m_bloomPrefilter && m_bloomDown &&
         m_bloomUp) {
-        CF_PROFILE_SCOPE("Post::bloom");
+        CF_GPU_SCOPE(cmd, "Post::bloom");
         if (view->bloom.empty()) {
             u32 bw = std::max(w / 2, 1u);
             u32 bh = std::max(h / 2, 1u);
@@ -604,7 +632,7 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
     RHI::Texture* compositeTarget = fxaa ? view->ldr : inputs.output;
 
     {
-        CF_PROFILE_SCOPE("Post::composite");
+        CF_GPU_SCOPE(cmd, "Post::composite");
         CompositeUBO ubo{};
         std::memcpy(ubo.invViewProj, invViewProj.data(), sizeof(ubo.invViewProj));
         ubo.camera = {inputs.cameraPos.x, inputs.cameraPos.y, inputs.cameraPos.z, inputs.time};
@@ -638,17 +666,42 @@ void PostProcessStack::execute(RHI::CommandBuffer* cmd, const ECS::PostProcessCo
         const f32 sharpen = (on && usesTaa(in)) ? std::clamp(in.antiAliasing.sharpness, 0.0f, 1.0f) : 0.0f;
         ubo.flags = {fxaa ? 1.0f : 0.0f, grading ? 1.0f : 0.0f, sharpen, 0.0f};
 
-        const PassTexture tex[5] = {{source, false},
+        // Weather is a scene property, not a post effect: it applies whatever `on` says.
+        const PostWeather& wx = inputs.weather;
+        if (wx.fog) {
+            ubo.wFogA = {wx.fogDensity, wx.fogHeightFalloff, wx.fogBaseHeight, wx.fogStart};
+            ubo.wFogB = {wx.fogMaxOpacity, wx.fogSkyBlend, wx.fogSunScatter, wx.fogSunExponent};
+            ubo.wFogColor = {wx.fogColor.x, wx.fogColor.y, wx.fogColor.z, 1.0f};
+            ubo.wSunDir = {wx.sunDirection.x, wx.sunDirection.y, wx.sunDirection.z, 0.0f};
+            ubo.wSunColor = {wx.sunColor.x, wx.sunColor.y, wx.sunColor.z, 0.0f};
+            const bool env = wx.environment && wx.environmentExposure > 0.0f;
+            ubo.wSky = {env ? wx.environmentExposure : 0.0f, wx.environmentLod, 0.0f, 0.0f};
+            ubo.wHorizon = {wx.horizon.x, wx.horizon.y, wx.horizon.z, 0.0f};
+        }
+        if (wx.rain && wx.rainIntensity > 0.0f) {
+            ubo.rainA = {std::clamp(wx.rainIntensity, 0.0f, 1.0f), std::clamp(wx.rainDropLength, 0.0f, 1.0f),
+                         std::max(wx.rainFallSpeed, 0.0f), std::clamp(wx.rainSplashes, 0.0f, 1.0f)};
+            ubo.rainWind = {wx.rainWind.x, wx.rainWind.y, wx.rainWind.z, 0.0f};
+            ubo.rainB = {std::max(wx.rainBrightness, 0.0f), 0.0f, 0.0f, 0.0f};
+            ubo.rainColor = {wx.rainColor.x, wx.rainColor.y, wx.rainColor.z, 0.0f};
+        }
+
+        if (wx.flash > 0.0f) ubo.flash = {wx.flashColor.x, wx.flashColor.y, wx.flashColor.z, wx.flash};
+        if (wx.shafts > 0.0f && wx.sunAhead) ubo.shafts = {wx.shaftSun.x, wx.shaftSun.y, wx.shafts, 1.0f};
+
+        const bool weatherEnv = wx.fog && wx.environment && wx.environmentExposure > 0.0f;
+        const PassTexture tex[6] = {{source, false},
                                     {bloomTexture ? bloomTexture : source, false},
                                     {inputs.sceneDepth, true},
                                     {aoTexture ? aoTexture : source, false},
-                                    {adaptedTexture ? adaptedTexture : source, true}};
-        runPass(cmd, m_composite, compositeTarget, inputs.outputWidth, inputs.outputHeight, tex, 5,
+                                    {adaptedTexture ? adaptedTexture : source, true},
+                                    {weatherEnv ? wx.environment : source, false}};
+        runPass(cmd, m_composite, compositeTarget, inputs.outputWidth, inputs.outputHeight, tex, 6,
                 &ubo, sizeof(ubo));
     }
 
     if (fxaa) {
-        CF_PROFILE_SCOPE("Post::fxaa");
+        CF_GPU_SCOPE(cmd, "Post::fxaa");
         FxaaUBO ubo{};
         ubo.texel = {1.0f / static_cast<f32>(inputs.outputWidth),
                      1.0f / static_cast<f32>(inputs.outputHeight), 0.0f, 0.0f};

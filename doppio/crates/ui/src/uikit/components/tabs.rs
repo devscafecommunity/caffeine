@@ -1,3 +1,4 @@
+use crate::uikit::components::scroll;
 use crate::uikit::id::UiId;
 use crate::uikit::theme;
 use iced::widget::{button, container, mouse_area, row, text};
@@ -46,15 +47,28 @@ pub fn view<'a, Message: Clone + 'a>(
             .interaction(iced::mouse::Interaction::Pointer),
         );
     }
-    container(strip).padding([1, 4]).into()
+    container(scroll::tab_strip(strip)).padding([1, 4]).into()
 }
 
-/// Right-aligned pane controls: split the active page out, maximise/restore.
+/// Right-aligned pane controls: detach the active page into its own window, split it out,
+/// maximise/restore.
 pub fn controls<'a, Message: Clone + 'a>(
+    detach: Option<(UiId, Message)>,
     split: Option<(UiId, Message)>,
     maximize: (UiId, bool, Message),
 ) -> Element<'a, Message> {
     let mut bar = row![].spacing(2).align_y(iced::Alignment::Center);
+    if let Some((id, message)) = detach {
+        bar = bar.push(
+            container(
+                button(text("⧉").size(12))
+                    .style(theme::button_text)
+                    .padding([2, 6])
+                    .on_press(message),
+            )
+            .id(id),
+        );
+    }
     if let Some((id, message)) = split {
         bar = bar.push(
             container(

@@ -517,6 +517,21 @@ fn wrap(text: &str, max_chars: usize) -> Vec<String> {
 }
 
 fn engine_harness() -> Option<Harness> {
+    let mut harness = engine_harness_as_started()?;
+    // The picture metrics of the rendering tests were tuned at the engine's own supersampling (1.5); the editor now
+    // starts at 1.0, which `engine_harness_as_started` keeps for the tests about the start.
+    if let Some(engine) = harness.app.engine.as_mut() {
+        if let Ok(mut settings) = engine.viewport_settings() {
+            settings.render_scale = 1.5;
+            let _ = engine.set_viewport_settings(settings);
+            harness.app.viewport_settings = settings;
+        }
+    }
+    Some(harness)
+}
+
+/// The engine harness as the editor leaves it at start (render scale 1.0).
+fn engine_harness_as_started() -> Option<Harness> {
     // Take the UI/GPU lock before creating the engine: two idle devices in the
     // same process make later render_begin calls fail under the full suite.
     let guard = test_guard();
@@ -1052,11 +1067,54 @@ fn layout_presets_keep_every_page() {
         let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
         assert_eq!(state.len(), 4);
         let pages: usize = state.iter().map(|(_, group)| group.pages.len()).sum();
-        assert_eq!(pages, 14);
+        assert_eq!(
+            pages, 21,
+            "the Gameplay and Camera tabs joined the workspace"
+        );
     }
     let mut harness = Harness::with_entities();
     harness.dispatch(Message::Layout(LayoutPreset::Viewport));
     assert_eq!(harness.app().panes.len(), 4);
+}
+
+/// The right column holds what stays open while working (and nothing else); the editors share the workspace with
+/// the viewport; Assets and the Console share the bottom dock.
+#[test]
+fn layouts_keep_the_right_column_for_inspector_profiler_photon_and_environment() {
+    for preset in [LayoutPreset::Default, LayoutPreset::Viewport] {
+        let state = pane_grid::State::with_configuration(App::layout_configuration(preset));
+        let groups: Vec<Vec<PaneKind>> =
+            state.iter().map(|(_, group)| group.pages.clone()).collect();
+        let with = |kind: PaneKind| groups.iter().find(|pages| pages.contains(&kind)).unwrap();
+        assert_eq!(
+            with(PaneKind::Inspector),
+            &vec![
+                PaneKind::Inspector,
+                PaneKind::Profiler,
+                PaneKind::Performance,
+                PaneKind::Photon,
+                PaneKind::Environment,
+                PaneKind::Audio
+            ]
+        );
+        for editor in [
+            PaneKind::Material,
+            PaneKind::NatureGenerator,
+            PaneKind::WaterGenerator,
+            PaneKind::TerrainGenerator,
+        ] {
+            assert_eq!(
+                with(editor)[0],
+                PaneKind::Viewport,
+                "{editor:?} is a workspace editor"
+            );
+        }
+        assert_eq!(with(PaneKind::Hierarchy), &vec![PaneKind::Hierarchy]);
+        assert_eq!(
+            with(PaneKind::Assets),
+            &vec![PaneKind::Assets, PaneKind::Console]
+        );
+    }
 }
 
 #[test]
@@ -1118,7 +1176,10 @@ fn add_entity_updates_hierarchy_and_inspector() {
 
 #[test]
 fn play_pause_toggles_the_status_and_menu() {
-    let mut harness = Harness::with_entities();
+    // Play needs an engine to run the game on; without a library there is nothing to test.
+    let Some(mut harness) = engine_harness() else {
+        return;
+    };
     assert!(!harness.app().playing);
     harness.dispatch(Message::TogglePlay);
     assert!(harness.app().playing);
@@ -1127,6 +1188,11 @@ fn play_pause_toggles_the_status_and_menu() {
     assert!(harness.shows("Pause"));
     harness.dispatch(Message::TogglePlay);
     assert!(!harness.app().playing);
+    assert!(
+        harness.shows("Paused"),
+        "pausing keeps the session: Stop ends it"
+    );
+    harness.dispatch(Message::StopPlay);
     assert!(harness.shows("Stopped"));
 }
 
@@ -10077,4 +10143,5541 @@ fn a_preset_the_project_baked_can_still_be_edited_through_its_library_materials(
         .any(|e| e.file_name().to_string_lossy().contains("_e"));
     assert!(edited, "an edited copy was written");
     std::fs::remove_dir_all(project).ok();
+}
+
+/// Photon GI regression scenes: small rooms built through the engine API and rendered with GI off and on.
+/// The measured quantity is the *difference* between the two renders, so the direct light, the sky and the
+/// materials cancel and what is left is the indirect light Photon adds.
+mod photon_gi {
+    use super::*;
+
+    pub const W: u32 = 480;
+    pub const H: u32 = 320;
+
+    pub struct Room {
+        pub dir: std::path::PathBuf,
+        pub photon: u32,
+        pub photon_type: u32,
+        count: u32,
+    }
+
+    impl Room {
+        pub fn new(name: &str) -> Self {
+            let dir = test_temp_root(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            Room {
+                dir,
+                photon: 0,
+                photon_type: 0,
+                count: 0,
+            }
+        }
+
+        /// An axis-aligned box with a flat matte colour.
+        pub fn block(
+            &mut self,
+            engine: &mut doppio_engine::Engine,
+            position: [f32; 3],
+            scale: [f32; 3],
+            rgb: [f32; 3],
+        ) -> u32 {
+            let cube = prefabs::PREFABS
+                .iter()
+                .find(|p| p.label == "Cube")
+                .expect("Cube prefab");
+            let id = create_prefab_entity(engine, cube, position).expect("cube");
+            engine.set_scale(id, scale).unwrap();
+            let mut material = engine.new_material().unwrap();
+            material.albedo = [rgb[0], rgb[1], rgb[2], 1.0];
+            material.roughness = 1.0;
+            material.metallic = 0.0;
+            self.count += 1;
+            let path = self.dir.join(format!("m{}.mat", self.count));
+            engine
+                .save_material(&path.to_string_lossy(), &material)
+                .unwrap();
+            engine.apply_material(id, &path.to_string_lossy()).unwrap();
+            id
+        }
+
+        /// A directional light; `rotation` is the entity's Euler rotation in degrees.
+        pub fn sun(&mut self, engine: &mut doppio_engine::Engine, rotation: [f32; 3]) {
+            let light = prefabs::PREFABS
+                .iter()
+                .find(|p| p.label == "Directional Light")
+                .expect("light prefab");
+            let id = create_prefab_entity(engine, light, [0.0, 8.0, 0.0]).expect("light");
+            engine.set_rotation(id, rotation).unwrap();
+        }
+
+        /// The Photon component on its own entity, compute path, off until [`Room::gi`] turns it on.
+        pub fn photon(&mut self, engine: &mut doppio_engine::Engine) {
+            let id = engine.create_entity("Photon").unwrap();
+            let kind = add_component(engine, id, "Photon GI").expect("Photon GI component");
+            let path = enum_field(engine, "Photon GI", "Path", "Compute").unwrap();
+            set_component_field(engine, id, kind, "Path", path).unwrap();
+            let quality = enum_field(engine, "Photon GI", "Quality", "High").unwrap();
+            set_component_field(engine, id, kind, "Quality", quality).unwrap();
+            self.photon = id;
+            self.photon_type = kind;
+        }
+
+        /// Takes the sky out of Photon (sky and ambient to 0), so only bounced light is left.
+        pub fn without_sky(&self, engine: &mut doppio_engine::Engine) {
+            for field in ["Sky intensity", "Ambient"] {
+                set_component_field(
+                    engine,
+                    self.photon,
+                    self.photon_type,
+                    field,
+                    doppio_engine::FieldValue::F32(0.0),
+                )
+                .unwrap();
+            }
+        }
+
+        pub fn gi(&self, engine: &mut doppio_engine::Engine, on: bool, debug: &str) {
+            set_component_field(
+                engine,
+                self.photon,
+                self.photon_type,
+                "Enabled",
+                doppio_engine::FieldValue::Bool(on),
+            )
+            .unwrap();
+            let view = enum_field(engine, "Photon GI", "Debug view", debug).unwrap();
+            set_component_field(engine, self.photon, self.photon_type, "Debug view", view).unwrap();
+        }
+    }
+
+    /// A settled frame from `camera` (the history needs a few frames to converge).
+    pub fn frame(engine: &mut doppio_engine::Engine, camera: doppio_engine::Camera) -> Vec<u8> {
+        // Shadows on (a ceiling must shadow the floor), no grid, no filtering: the regions measured are flat.
+        engine
+            .set_viewport_settings(doppio_engine::ViewportSettings {
+                show_grid: false,
+                anti_aliasing: doppio_engine::AntiAliasing::Off,
+                render_scale: 1.0,
+                shadows: true,
+            })
+            .unwrap();
+        // A camera cut first, so no history of an earlier scene (probe feedback, TAA) leaks into this frame.
+        engine
+            .set_camera(doppio_engine::Camera {
+                focus: [500.0, 0.0, 500.0],
+                ..camera
+            })
+            .unwrap();
+        let _ = render_entity_view_sized(engine, W, H);
+        engine.set_camera(camera).unwrap();
+        let frames: usize = std::env::var("PHOTON_FRAMES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        for _ in 0..frames {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        render_entity_view_sized(engine, W, H)
+    }
+
+    pub fn save(name: &str, rgba: &[u8]) {
+        if let Some(dir) = std::env::var_os("PHOTON_SHOTS") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).ok();
+            image::save_buffer(
+                dir.join(format!("{name}.png")),
+                rgba,
+                W,
+                H,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+    }
+
+    /// The Cornell-style scene: open-topped, white floor and back wall, a red wall on the left, a green one on the right.
+    pub fn cornell(engine: &mut doppio_engine::Engine, room: &mut Room) {
+        room.block(engine, [0.0, -0.1, 0.0], [6.0, 0.2, 6.0], [0.8, 0.8, 0.8]);
+        room.block(engine, [0.0, 2.5, -3.0], [6.0, 5.0, 0.2], [0.8, 0.8, 0.8]);
+        room.block(
+            engine,
+            [-3.0, 2.5, 0.0],
+            [0.2, 5.0, 6.0],
+            [0.85, 0.08, 0.06],
+        );
+        room.block(engine, [3.0, 2.5, 0.0], [0.2, 5.0, 6.0], [0.08, 0.7, 0.1]);
+        room.sun(engine, [-55.0, 35.0, 0.0]);
+        room.photon(engine);
+    }
+
+    pub fn camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: std::f32::consts::PI,
+            pitch: 0.35,
+            distance: 11.0,
+            focus: [0.0, 2.0, 0.0],
+        }
+    }
+
+    /// A closed, roofed room (the camera stands inside it): floor, four walls, a ceiling with a slit over
+    /// `x in [slit.0, slit.1]` where a sun pointing straight down gets in, and an optional thin partition.
+    pub fn roofed_room(
+        engine: &mut doppio_engine::Engine,
+        room: &mut Room,
+        slit: (f32, f32),
+        partition: bool,
+    ) {
+        let white = [0.8, 0.8, 0.8];
+        room.block(engine, [0.0, -0.1, 0.0], [6.4, 0.2, 6.0], white);
+        room.block(engine, [0.0, 1.5, -3.1], [6.4, 3.4, 0.2], white);
+        room.block(engine, [-3.1, 1.5, 0.0], [0.2, 3.4, 6.0], white);
+        room.block(engine, [3.1, 1.5, 0.0], [0.2, 3.4, 6.0], white);
+        // Closed on the camera's side too: the camera stands inside, so the only way in for light is the slit.
+        room.block(engine, [0.0, 1.5, 3.1], [6.4, 3.4, 0.2], white);
+        // The ceiling on both sides of the slit.
+        let left = slit.0 + 3.2;
+        room.block(
+            engine,
+            [-3.2 + left * 0.5, 3.1, 0.0],
+            [left, 0.2, 6.0],
+            white,
+        );
+        let right = 3.2 - slit.1;
+        room.block(
+            engine,
+            [slit.1 + right * 0.5, 3.1, 0.0],
+            [right, 0.2, 6.0],
+            white,
+        );
+        if partition {
+            room.block(engine, [0.0, 1.5, 0.0], [0.1, 3.0, 6.0], white);
+        }
+        room.sun(engine, [-90.0, 0.0, 0.0]);
+        room.photon(engine);
+    }
+
+    pub fn room_camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: std::f32::consts::PI,
+            pitch: 0.25,
+            distance: 3.4,
+            focus: [0.0, 1.0, -0.5],
+        }
+    }
+
+    pub fn mean(img: &[u8], x0: u32, x1: u32, y0: u32, y1: u32) -> [f32; 3] {
+        let mut sum = [0f32; 3];
+        let mut n = 0f32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = ((y * W + x) * 4) as usize;
+                for (c, slot) in sum.iter_mut().enumerate() {
+                    *slot += img[i + c] as f32;
+                }
+                n += 1.0;
+            }
+        }
+        [sum[0] / n, sum[1] / n, sum[2] / n]
+    }
+
+    /// The GI-only colour of a region, averaged over many frames: Photon's output flickers by tens of percent from
+    /// one frame to the next (a new ray jitter each time), so a bounce a few units strong needs the mean.
+    pub fn averaged_gi(
+        engine: &mut doppio_engine::Engine,
+        room: &Room,
+        camera: doppio_engine::Camera,
+        region: (u32, u32, u32, u32),
+        frames: usize,
+    ) -> [f32; 3] {
+        room.gi(engine, true, "GI only");
+        let _ = frame(engine, camera); // settle (and cut the history first)
+        let mut sum = [0f32; 3];
+        for _ in 0..frames {
+            let img = render_entity_view_sized(engine, W, H);
+            let m = mean(&img, region.0, region.1, region.2, region.3);
+            for c in 0..3 {
+                sum[c] += m[c];
+            }
+        }
+        [
+            sum[0] / frames as f32,
+            sum[1] / frames as f32,
+            sum[2] / frames as f32,
+        ]
+    }
+
+    /// The camera in the left half of the room, looking along the partition (which stands to its right) at the
+    /// floor and walls of that half: the lit slit is on the other side of it.
+    pub fn left_half_camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: std::f32::consts::PI,
+            pitch: 0.25,
+            distance: 3.4,
+            focus: [-1.6, 1.0, -0.5],
+        }
+    }
+
+    /// A cube with a sun, lit by Photon, from a still camera: the GI must not flicker from one frame to the next.
+    /// The cascades trace new directions every frame, so before the resolve averaged them in time the cube's faces
+    /// swung by 30 to 40 percent (a top face between 82 and 174 of 255, GI only); the averaged result moves by about
+    /// ten units at most once it has settled.
+    #[test]
+    fn a_still_cube_does_not_flicker() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let at = |label: &str| {
+            prefabs::PREFABS
+                .iter()
+                .position(|p| p.label == label)
+                .unwrap()
+        };
+        clear_scene(harness.app.engine.as_mut().unwrap());
+        harness.app.entities.clear();
+        for label in ["Cube", "Directional Light"] {
+            harness.dispatch(Message::CreatePrefab(at(label)));
+        }
+        harness.dispatch(Message::Photon(crate::uikit::panels::photon::Edit::Add));
+        let entity = harness.app().photon.entity.unwrap();
+        let kind = component_type_id(harness.app.engine.as_ref().unwrap(), "Photon GI").unwrap();
+        let engine = harness.app.engine.as_mut().unwrap();
+        let view = enum_field(engine, "Photon GI", "Debug view", "GI only").unwrap();
+        set_component_field(engine, entity, kind, "Debug view", view).unwrap();
+        engine
+            .set_viewport_settings(doppio_engine::ViewportSettings {
+                show_grid: true,
+                anti_aliasing: doppio_engine::AntiAliasing::Fxaa,
+                render_scale: 1.0,
+                shadows: true,
+            })
+            .unwrap();
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.8,
+                pitch: 0.6,
+                distance: 6.0,
+                focus: [0.0, 0.5, 0.0],
+            })
+            .unwrap();
+        // Settle: the average needs a few tens of frames to reach the scene's light.
+        for _ in 0..60 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let frames: Vec<Vec<u8>> = (0..16)
+            .map(|_| render_entity_view_sized(engine, W, H))
+            .collect();
+        for (label, region) in [
+            ("left face", (212, 226, 170, 195)),
+            ("top face", (228, 250, 150, 160)),
+        ] {
+            let lumas: Vec<f32> = frames
+                .iter()
+                .map(|f| luma(mean(f, region.0, region.1, region.2, region.3)))
+                .collect();
+            let low = lumas.iter().cloned().fold(f32::MAX, f32::min);
+            let high = lumas.iter().cloned().fold(f32::MIN, f32::max);
+            assert!(
+                high > 40.0,
+                "the {label} must have GI to be a meaningful test ({high:.0})"
+            );
+            assert!(
+                high - low < 16.0,
+                "the {label} flickers between {low:.0} and {high:.0} of 255: {lumas:?}"
+            );
+        }
+    }
+
+    /// The scene of the ghost tests: a floor, a sun and a cube at `x`, GI only from a high camera.
+    fn ghost_scene(engine: &mut doppio_engine::Engine, x: f32) -> (Room, u32) {
+        clear_scene(engine);
+        let mut room = Room::new("photon-ghost");
+        room.block(engine, [0.0, -0.1, 0.0], [14.0, 0.2, 14.0], [0.6, 0.6, 0.6]);
+        let cube = room.block(engine, [x, 0.75, 0.0], [1.5, 1.5, 1.5], [0.8, 0.8, 0.8]);
+        room.sun(engine, [-50.0, 35.0, 0.0]);
+        room.photon(engine);
+        room.gi(engine, true, "GI only");
+        engine
+            .set_viewport_settings(doppio_engine::ViewportSettings {
+                show_grid: false,
+                anti_aliasing: doppio_engine::AntiAliasing::Fxaa,
+                render_scale: 1.0,
+                shadows: true,
+            })
+            .unwrap();
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.0,
+                pitch: 1.1,
+                distance: 11.0,
+                focus: [0.0, 0.0, 0.0],
+            })
+            .unwrap();
+        (room, cube)
+    }
+
+    fn mean_abs_diff(a: &[u8], b: &[u8]) -> (f32, f32) {
+        let mut sum = 0f32;
+        let mut worst = 0f32;
+        for (pa, pb) in a.chunks(4).zip(b.chunks(4)) {
+            let d = ((pa[0] as f32 - pb[0] as f32).abs()
+                + (pa[1] as f32 - pb[1] as f32).abs()
+                + (pa[2] as f32 - pb[2] as f32).abs())
+                / 3.0;
+            sum += d;
+            worst = worst.max(d);
+        }
+        (sum / (a.len() / 4) as f32, worst)
+    }
+
+    #[test]
+    #[ignore = "diagnostic: how long a moved cube leaves a GI ghost"]
+    fn zz_ghost_of_a_moved_cube() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        // The reference: the cube already at x = 3, settled.
+        let (room, _) = ghost_scene(engine, 3.0);
+        for _ in 0..80 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let reference: Vec<Vec<u8>> = (0..8)
+            .map(|_| render_entity_view_sized(engine, W, H))
+            .collect();
+        let (floor_noise, _) = mean_abs_diff(&reference[0], &reference[1]);
+        eprintln!("settled frame-to-frame difference {floor_noise:.2}");
+        std::fs::remove_dir_all(&room.dir).ok();
+        // The moved cube: settled at x = -3, then moved to x = 3 in one step.
+        let (room, cube) = ghost_scene(engine, -3.0);
+        for _ in 0..80 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        engine.set_position(cube, [3.0, 0.75, 0.0]).unwrap();
+        let mut n = 0;
+        for target in [1, 2, 4, 8, 16, 32, 64] {
+            while n < target {
+                let _ = render_entity_view_sized(engine, W, H);
+                n += 1;
+            }
+            let frame = render_entity_view_sized(engine, W, H);
+            n += 1;
+            let (mean, worst) = mean_abs_diff(&frame, &reference[0]);
+            eprintln!(
+                "frame {n}: difference to the settled scene: mean {mean:.2}, worst {worst:.0}"
+            );
+            if let Some(dir) = std::env::var_os("PHOTON_SHOTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).ok();
+                image::save_buffer(
+                    dir.join(format!("ghost-{n}.png")),
+                    &frame,
+                    W,
+                    H,
+                    image::ColorType::Rgba8,
+                )
+                .unwrap();
+            }
+        }
+        std::fs::remove_dir_all(&room.dir).ok();
+    }
+
+    /// Dragging a cube across a floor: the floor's GI must not pump from one frame to the next. The cascades used
+    /// to move every probe's samples together, so the whole floor brightened and darkened (about 90 to 40 of 255)
+    /// while an object moved; now each probe has its own offset and the floor stays within a few units.
+    #[test]
+    fn dragging_a_cube_does_not_make_the_floor_pump() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        let (room, cube) = ghost_scene(engine, -5.0);
+        for _ in 0..80 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let mut floor = Vec::new();
+        for step in 0..40 {
+            engine
+                .set_position(cube, [-5.0 + step as f32 * 0.25, 0.75, 0.0])
+                .unwrap();
+            let frame = render_entity_view_sized(engine, W, H);
+            if step >= 8 {
+                floor.push(luma(mean(&frame, 100, 380, 200, 300)));
+            }
+        }
+        std::fs::remove_dir_all(&room.dir).ok();
+        let low = floor.iter().cloned().fold(f32::MAX, f32::min);
+        let high = floor.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(high > 20.0, "the floor must have GI ({high:.0})");
+        assert!(
+            high - low < 6.0,
+            "the floor's GI pumps between {low:.0} and {high:.0} of 255 while the cube moves: {floor:?}"
+        );
+    }
+
+    /// A moved cube leaves no lasting ghost: ten frames after it stopped, the floor is the settled scene's, apart
+    /// from the noise of a scene that has only just changed.
+    #[test]
+    fn a_moved_cube_leaves_no_ghost() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        let (room, _) = ghost_scene(engine, 3.0);
+        for _ in 0..80 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let reference = render_entity_view_sized(engine, W, H);
+        std::fs::remove_dir_all(&room.dir).ok();
+        let (room, cube) = ghost_scene(engine, -3.0);
+        for _ in 0..80 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        engine.set_position(cube, [3.0, 0.75, 0.0]).unwrap();
+        for _ in 0..12 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let frame = render_entity_view_sized(engine, W, H);
+        std::fs::remove_dir_all(&room.dir).ok();
+        let (mean_diff, _) = mean_abs_diff(&frame, &reference);
+        assert!(
+            mean_diff < 1.5,
+            "twelve frames after the move the floor still differs from the settled scene by {mean_diff:.2} of 255"
+        );
+    }
+
+    #[test]
+    #[ignore = "diagnostic: how the closed room's GI settles frame by frame"]
+    fn zz_closed_room_settling() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        clear_scene(engine);
+        let mut room = Room::new("photon-closed-settle");
+        roofed_room(engine, &mut room, (3.0, 3.0), false);
+        room.gi(engine, true, "GI only");
+        engine.set_camera(room_camera()).unwrap();
+        let mut values = Vec::new();
+        for _ in 0..60 {
+            let f = render_entity_view_sized(engine, W, H);
+            values.push((luma(mean(&f, 40, 260, 215, 300)) * 10.0).round() / 10.0);
+            if let Some(dir) = std::env::var_os("PHOTON_SHOTS") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).ok();
+                if values.len() <= 12 {
+                    image::save_buffer(
+                        dir.join(format!("closed-{}.png", values.len())),
+                        &f,
+                        W,
+                        H,
+                        image::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        eprintln!("closed room floor per frame: {values:?}");
+    }
+
+    #[test]
+    #[ignore = "writes pictures for a human to look at: PHOTON_SHOTS=/dir"]
+    fn zz_look_at_the_rooms() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        for (name, slit, partition, camera) in [
+            ("closed", (3.0, 3.0), false, room_camera()),
+            ("door", (1.2, 2.9), false, room_camera()),
+            ("left-open", (1.2, 2.9), false, left_half_camera()),
+            ("left-walled", (1.2, 2.9), true, left_half_camera()),
+        ] {
+            let engine = harness.app.engine.as_mut().unwrap();
+            clear_scene(engine);
+            let mut room = Room::new(&format!("photon-{name}"));
+            roofed_room(engine, &mut room, slit, partition);
+            let (off, on) = pair(engine, &room, camera, name);
+            room.gi(engine, true, "GI only");
+            save(&format!("{name}-gi-only"), &frame(engine, camera));
+            for (label, x0, x1, y0, y1) in [
+                ("far floor", 40, 260, 215, 300),
+                ("lit patch", 340, 430, 200, 300),
+                ("back wall", 120, 350, 70, 160),
+                ("side wall", 10, 70, 80, 200),
+            ] {
+                let a = mean(&off, x0, x1, y0, y1);
+                let b = mean(&on, x0, x1, y0, y1);
+                eprintln!(
+                    "{name} {label}: off {:.0} on {:.0} gain {:.1}",
+                    luma(a),
+                    luma(b),
+                    luma(b) - luma(a)
+                );
+            }
+        }
+    }
+
+    pub fn clear_scene(engine: &mut doppio_engine::Engine) {
+        for index in (0..engine.entity_count()).rev() {
+            if let Ok(info) = engine.entity_at(index) {
+                let _ = engine.destroy_entity(info.id);
+            }
+        }
+    }
+
+    pub fn luma(rgb: [f32; 3]) -> f32 {
+        (rgb[0] + rgb[1] + rgb[2]) / 3.0
+    }
+
+    /// Off / on frames of a scene from one camera.
+    pub fn pair(
+        engine: &mut doppio_engine::Engine,
+        room: &Room,
+        camera: doppio_engine::Camera,
+        name: &str,
+    ) -> (Vec<u8>, Vec<u8>) {
+        room.gi(engine, false, "Lit scene");
+        let off = frame(engine, camera);
+        room.gi(engine, true, "Lit scene");
+        let on = frame(engine, camera);
+        save(&format!("{name}-off"), &off);
+        save(&format!("{name}-on"), &on);
+        (off, on)
+    }
+
+    #[test]
+    fn a_white_floor_takes_the_colour_of_the_wall_beside_it() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        clear_scene(engine);
+        let mut room = Room::new("photon-bleed");
+        cornell(engine, &mut room);
+        let (off, on) = pair(engine, &room, camera(), "cornell");
+        let diff = |x0, x1| {
+            let a = mean(&off, x0, x1, 215, 240);
+            let b = mean(&on, x0, x1, 215, 240);
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+        };
+        let (red, middle, green) = (diff(160, 200), diff(220, 260), diff(280, 320));
+        // GI adds light to the floor, redder beside the red wall and greener beside the green one.
+        assert!(luma(middle) > 8.0, "GI adds light to the floor: {middle:?}");
+        assert!(red[0] - red[1] > 4.0, "red bleed {red:?}");
+        assert!(green[1] - green[0] > 3.0, "green bleed {green:?}");
+        assert!(
+            (middle[0] - middle[1]).abs() < 4.0,
+            "neutral in the middle {middle:?}"
+        );
+    }
+
+    #[test]
+    fn the_debug_views_show_the_gi_on_its_own_and_where_the_sky_stood_in() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        clear_scene(engine);
+        let mut room = Room::new("photon-debug");
+        cornell(engine, &mut room);
+        room.gi(engine, true, "Lit scene");
+        let lit = frame(engine, camera());
+        room.gi(engine, true, "GI only");
+        let only = frame(engine, camera());
+        room.gi(engine, true, "Fallback only");
+        let fallback = frame(engine, camera());
+        let differing = |a: &[u8], b: &[u8]| {
+            a.chunks(4)
+                .zip(b.chunks(4))
+                .filter(|(x, y)| x.iter().zip(y.iter()).any(|(p, q)| p.abs_diff(*q) > 12))
+                .count()
+        };
+        // The wall is lit by the sun in the lit view; with GI only that direct light is gone.
+        assert!(differing(&lit, &only) > 3000, "GI only changes the picture");
+        assert!(
+            differing(&lit, &fallback) > 3000,
+            "Fallback only changes the picture"
+        );
+        let direct_lit = mean(&lit, 220, 260, 120, 150);
+        let direct_gi = mean(&only, 220, 260, 120, 150);
+        assert!(
+            luma(direct_gi) < luma(direct_lit),
+            "the GI term alone is dimmer than the lit wall: {direct_gi:?} vs {direct_lit:?}"
+        );
+    }
+
+    /// The luma of a region of a frame.
+    fn region(img: &[u8], x0: u32, x1: u32, y0: u32, y1: u32) -> f32 {
+        luma(mean(img, x0, x1, y0, y1))
+    }
+
+    /// A closed roofed room with a slit in the ceiling: frames with GI off and on from `camera`.
+    fn room_frames(
+        engine: &mut doppio_engine::Engine,
+        name: &str,
+        partition: bool,
+        camera: doppio_engine::Camera,
+    ) -> (Vec<u8>, Vec<u8>) {
+        room_frames_with(engine, name, (1.2, 2.9), partition, camera)
+    }
+
+    fn room_frames_with(
+        engine: &mut doppio_engine::Engine,
+        name: &str,
+        slit: (f32, f32),
+        partition: bool,
+        camera: doppio_engine::Camera,
+    ) -> (Vec<u8>, Vec<u8>) {
+        clear_scene(engine);
+        let mut room = Room::new(&format!("photon-{name}"));
+        roofed_room(engine, &mut room, slit, partition);
+        pair(engine, &room, camera, name)
+    }
+
+    #[test]
+    fn a_room_with_no_opening_stays_dark_and_one_with_a_slit_is_darker_than_its_sunlit_patch() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        // No way in for the sun: only the sky could light it, and the sky cannot see in. It used to read 90 here.
+        let (_, closed) = room_frames_with(engine, "closed", (3.0, 3.0), false, room_camera());
+        let closed_floor = region(&closed, 40, 260, 215, 300);
+        let closed_wall = region(&closed, 120, 350, 70, 160);
+        assert!(
+            closed_floor < 30.0,
+            "the closed room's floor is {closed_floor:.0} of 255"
+        );
+        assert!(
+            closed_wall < 30.0,
+            "the closed room's back wall is {closed_wall:.0} of 255"
+        );
+
+        // With a slit, the sun lights a patch and the rest of the room gets its bounce: clearly less.
+        let (off, on) = room_frames(engine, "slit", false, room_camera());
+        let patch = region(&on, 340, 430, 200, 300);
+        let far_floor = region(&on, 40, 260, 215, 300);
+        assert!(
+            patch > 120.0,
+            "the sun reaches the floor through the slit ({patch:.0})"
+        );
+        assert!(
+            far_floor < patch * 0.8,
+            "the far floor is {far_floor:.0}, the patch {patch:.0}"
+        );
+        // Photon adds something: the shadowed room is not as black as with GI off.
+        assert!(far_floor > region(&off, 40, 260, 215, 300) + 5.0);
+    }
+
+    #[test]
+    fn the_bounce_gain_strengthens_the_bounce_and_zero_removes_it() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        clear_scene(engine);
+        let mut room = Room::new("photon-gain");
+        roofed_room(engine, &mut room, (1.2, 2.9), false);
+        let floor = (40, 260, 215, 300);
+        let measure = |engine: &mut doppio_engine::Engine, gain: f32| {
+            set_component_field(
+                engine,
+                room.photon,
+                room.photon_type,
+                "Bounce gain",
+                doppio_engine::FieldValue::F32(gain),
+            )
+            .unwrap();
+            luma(averaged_gi(engine, &room, room_camera(), floor, 8))
+        };
+        let one = measure(engine, 1.0);
+        let four = measure(engine, 4.0);
+        let none = measure(engine, 0.0);
+        eprintln!("bounce gain 0: {none:.1}, 1: {one:.1}, 4: {four:.1} (GI-only luma of the far floor, of 255)");
+        assert!(one > 2.0, "the bounce is there at gain 1 ({one:.1})");
+        assert!(
+            four - none > (one - none) * 1.5,
+            "gain 4 adds more far-field light than gain 1 ({four:.1} against {one:.1}, {none:.1} without)"
+        );
+        // The gain scales what the voxel far field holds; the screen cascades (what the camera sees bounce) and the
+        // sky fallback are not its to scale, so gain 0 keeps their share.
+        assert!(
+            none < one - 0.8,
+            "gain 0 takes the far field's share away ({none:.1} against {one:.1})"
+        );
+        eprintln!("bounce gain 0: {none:.1}, 1: {one:.1}, 4: {four:.1} (GI-only luma of the far floor, of 255)");
+    }
+
+    #[test]
+    fn a_thin_wall_does_not_let_the_light_through() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        // The camera in the left half; the partition stands to its right with the lit slit behind it.
+        let (open_off, open_on) = room_frames(engine, "left-open", false, left_half_camera());
+        let (wall_off, wall_on) = room_frames(engine, "left-walled", true, left_half_camera());
+        for (label, x0, x1, y0, y1) in [
+            ("floor", 40, 260, 215, 300),
+            ("back wall", 120, 350, 70, 160),
+            ("side wall", 10, 70, 80, 200),
+        ] {
+            let open = region(&open_on, x0, x1, y0, y1) - region(&open_off, x0, x1, y0, y1);
+            let walled = region(&wall_on, x0, x1, y0, y1) - region(&wall_off, x0, x1, y0, y1);
+            assert!(
+                walled <= open - 1.0,
+                "{label}: a partition must shut the slit's bounce out of the far side ({open:.1} without, {walled:.1} with)"
+            );
+        }
+    }
+
+    /// A wall the camera cannot see, lit by the sun: a white cube in front of the camera and the wall behind it.
+    /// The cube's face that looks at the wall is lit by nothing else, so its GI is the wall's bounce.
+    pub fn wall_behind_the_camera(
+        engine: &mut doppio_engine::Engine,
+        room: &mut Room,
+        wall: Option<[f32; 3]>,
+        sun: [f32; 3],
+    ) {
+        room.block(engine, [0.0, 0.5, 0.0], [1.5, 1.0, 1.5], [0.8, 0.8, 0.8]);
+        if let Some(colour) = wall {
+            room.block(engine, [0.0, 2.5, 3.1], [10.0, 5.0, 0.2], colour);
+        }
+        room.sun(engine, sun);
+        room.photon(engine);
+    }
+
+    /// Looks at the cube from in front of the wall (the wall is behind the camera).
+    pub fn floor_camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: std::f32::consts::PI,
+            pitch: 0.5,
+            distance: 2.6,
+            focus: [0.0, 0.0, 0.0],
+        }
+    }
+
+    /// The GI on the cube's face that looks at a wall the camera cannot see, with the sky taken out of Photon.
+    fn bounce_from_a_wall_behind(
+        engine: &mut doppio_engine::Engine,
+        wall: Option<[f32; 3]>,
+    ) -> [f32; 3] {
+        clear_scene(engine);
+        let mut room = Room::new("photon-wall-behind");
+        wall_behind_the_camera(engine, &mut room, wall, [-50.0, 180.0, 0.0]);
+        room.without_sky(engine);
+        averaged_gi(engine, &room, floor_camera(), (150, 330, 90, 190), 32)
+    }
+
+    #[test]
+    fn the_sun_bounces_off_a_wall_the_camera_cannot_see_and_takes_its_colour() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        let none = bounce_from_a_wall_behind(engine, None);
+        let white = bounce_from_a_wall_behind(engine, Some([0.8, 0.8, 0.8]));
+        let red = bounce_from_a_wall_behind(engine, Some([0.85, 0.08, 0.06]));
+        let green = bounce_from_a_wall_behind(engine, Some([0.08, 0.7, 0.1]));
+        // Nothing to bounce off: nothing arrives.
+        assert!(luma(none) < 4.0, "no wall: {none:?}");
+        // A lit white wall lights the cube, neutrally.
+        assert!(luma(white) > 20.0, "white wall: {white:?}");
+        assert!((white[0] - white[1]).abs() < 5.0, "neutral: {white:?}");
+        // A red wall lights it red, a green wall green.
+        assert!(
+            red[0] > 20.0 && red[0] > red[1] * 5.0 && red[0] > red[2] * 5.0,
+            "red wall: {red:?}"
+        );
+        assert!(
+            green[1] > 15.0 && green[1] > green[0] * 5.0 && green[1] > green[2] * 5.0,
+            "green wall: {green:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "writes pictures for a human to look at: PHOTON_SHOTS=/dir"]
+    fn zz_look_at_the_cornell_box() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        for index in (0..engine.entity_count()).rev() {
+            if let Ok(info) = engine.entity_at(index) {
+                let _ = engine.destroy_entity(info.id);
+            }
+        }
+        let mut room = Room::new("photon-cornell");
+        cornell(engine, &mut room);
+        room.gi(engine, false, "Lit scene");
+        save("cornell-off", &frame(engine, camera()));
+        room.gi(engine, true, "Lit scene");
+        save("cornell-on", &frame(engine, camera()));
+        room.gi(engine, true, "GI only");
+        save("cornell-gi-only", &frame(engine, camera()));
+        let off = {
+            room.gi(engine, false, "Lit scene");
+            frame(engine, camera())
+        };
+        let on = {
+            room.gi(engine, true, "Lit scene");
+            frame(engine, camera())
+        };
+        let mean = |img: &[u8], x0: u32, x1: u32, y0: u32, y1: u32| -> [f32; 3] {
+            let mut sum = [0f32; 3];
+            let mut n = 0f32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * W + x) * 4) as usize;
+                    for c in 0..3 {
+                        sum[c] += img[i + c] as f32;
+                    }
+                    n += 1.0;
+                }
+            }
+            [sum[0] / n, sum[1] / n, sum[2] / n]
+        };
+        for (name, x0, x1) in [
+            ("floor near red", 160, 200),
+            ("floor middle", 220, 260),
+            ("floor near green", 280, 320),
+        ] {
+            let a = mean(&off, x0, x1, 215, 240);
+            let b = mean(&on, x0, x1, 215, 240);
+            eprintln!(
+                "{name}: off {a:?} on {b:?} diff [{:.1} {:.1} {:.1}]",
+                b[0] - a[0],
+                b[1] - a[1],
+                b[2] - a[2]
+            );
+        }
+    }
+}
+
+/// The Photon tab: it finds, adds and edits the scene's `Photon GI` component through the engine, undoes its
+/// edits, and shows the voxel statistics the engine reports.
+mod photon_panel {
+    use super::*;
+    use crate::uikit::panels::photon::{self as panel, Amount, Choice, Edit, Flag};
+
+    fn field(engine: &doppio_engine::Engine, entity: u32, name: &str) -> doppio_engine::FieldValue {
+        let kind = engine
+            .component_types()
+            .into_iter()
+            .find(|kind| kind.name == "Photon GI")
+            .expect("Photon GI type");
+        let index = kind
+            .fields
+            .iter()
+            .position(|f| f.name == name)
+            .unwrap_or_else(|| panic!("no field {name}"));
+        let component = engine
+            .entity_components(entity)
+            .iter()
+            .position(|c| c.name == "Photon GI")
+            .expect("component on the entity");
+        engine.component_values(entity, component as u32)[index].clone()
+    }
+
+    #[test]
+    fn the_tab_adds_the_component_edits_it_and_undoes() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.rebase_history();
+        assert!(
+            harness.app().photon.settings.is_none(),
+            "the fixture scene has no Photon"
+        );
+        harness.dispatch(Message::ShowPhoton);
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.pages.contains(&PaneKind::Photon)));
+
+        harness.dispatch(Message::Photon(Edit::Add));
+        let entity = harness.app().photon.entity.expect("the component's entity");
+        let settings = harness.app().photon.settings.clone().expect("settings");
+        assert!(settings.enabled);
+        assert_eq!(settings.path, 1, "compute path");
+        assert_eq!(settings.quality, 3, "High");
+        let engine = harness.app.engine.as_ref().unwrap();
+        assert_eq!(
+            field(engine, entity, "Enabled"),
+            doppio_engine::FieldValue::Bool(true)
+        );
+        // A second Add does nothing: the scene has its Photon.
+        let entities = harness.app().entities.len();
+        harness.dispatch(Message::Photon(Edit::Add));
+        assert_eq!(harness.app().entities.len(), entities);
+
+        harness.dispatch(Message::Photon(Edit::Amount(Amount::BounceGain, 2.5)));
+        harness.dispatch(Message::Photon(Edit::Flag(Flag::VoxelCutout, true)));
+        harness.dispatch(Message::Photon(Edit::Choice(Choice::DebugView, 1)));
+        let s = harness.app().photon.settings.clone().unwrap();
+        assert_eq!(s.bounce_gain, 2.5);
+        assert!(s.voxel_cutout);
+        assert_eq!(s.debug_view, 1);
+        let engine = harness.app.engine.as_ref().unwrap();
+        assert_eq!(
+            field(engine, entity, "Bounce gain"),
+            doppio_engine::FieldValue::F32(2.5)
+        );
+        assert_eq!(
+            field(engine, entity, "Voxel cut-out meshes"),
+            doppio_engine::FieldValue::Bool(true)
+        );
+        // Values outside the range are clamped to what the component accepts.
+        harness.dispatch(Message::Photon(Edit::Amount(Amount::BounceGain, 99.0)));
+        assert_eq!(
+            harness.app().photon.settings.as_ref().unwrap().bounce_gain,
+            8.0
+        );
+        harness.dispatch(Message::Photon(Edit::Amount(Amount::BounceGain, 2.5)));
+
+        // A preset sets everything at once, and the dropdown then shows its name.
+        let interior = panel::presets()
+            .iter()
+            .position(|p| p.name.starts_with("Interior"))
+            .unwrap();
+        harness.dispatch(Message::Photon(Edit::Preset(interior)));
+        let s = harness.app().photon.settings.clone().unwrap();
+        assert_eq!(s.bounce_gain, 2.0);
+        assert_eq!(s.radius, 10.0);
+        assert!(!s.voxel_cutout);
+        assert_eq!(panel::current_preset(&s), Some("Interior (strong bounce)"));
+
+        // One undo step takes the preset back; the panel follows the engine.
+        harness.dispatch(Message::Undo);
+        let s = harness.app().photon.settings.clone().unwrap();
+        assert_eq!(s.bounce_gain, 2.5);
+        assert!(s.voxel_cutout);
+        assert_eq!(s.debug_view, 1);
+        // And the whole Photon setup undoes with the add.
+        for _ in 0..8 {
+            harness.dispatch(Message::Undo);
+        }
+        assert!(harness.app().photon.settings.is_none() || harness.app().photon.entity.is_some());
+    }
+
+    #[test]
+    fn rebuild_and_stats_go_through_the_engine() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_ref().unwrap();
+        assert!(engine.capi_version() >= 17, "Photon stats need C ABI v17");
+        let stats = engine.photon_stats().expect("stats");
+        assert_eq!(stats.objects, 0);
+        assert!(!stats.over_budget);
+        harness.dispatch(Message::Photon(Edit::Add));
+        harness.dispatch(Message::Photon(Edit::Rebuild));
+        let status = harness.app().photon.status.clone().unwrap_or_default();
+        assert!(status.contains("rebuilds"), "{status}");
+    }
+
+    #[test]
+    fn a_moving_object_costs_its_own_region_and_not_the_volume() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        let mut room = photon_gi::Room::new("photon-dirty-region");
+        photon_gi::cornell(engine, &mut room);
+        let mover = room.block(engine, [-1.0, 0.4, 0.5], [0.8, 0.8, 0.8], [0.7, 0.7, 0.7]);
+        room.gi(engine, true, "Lit scene");
+        engine.set_camera(photon_gi::camera()).unwrap();
+        let render = |engine: &mut doppio_engine::Engine| {
+            let _ = render_entity_view_sized(engine, photon_gi::W, photon_gi::H);
+        };
+        // The first frames build every level; then the scene is still and nothing is rebuilt.
+        for _ in 0..4 {
+            render(engine);
+        }
+        let first = engine.photon_stats().expect("stats");
+        assert!(first.far_enabled, "{first:?}");
+        assert!(first.objects >= 5, "{first:?}");
+        assert!(first.triangles >= 5 * 12, "{first:?}");
+        assert!(first.full_rebuilds >= 4, "every level was built: {first:?}");
+        render(engine);
+        let still = engine.photon_stats().unwrap();
+        assert_eq!(still.last_regions, 0, "{still:?}");
+        assert_eq!(still.last_level_mask, 0, "{still:?}");
+
+        // The box moves: its old and new place are revoxelised, no level is rebuilt whole.
+        engine.set_position(mover, [1.0, 0.4, 0.5]).unwrap();
+        render(engine);
+        let moved = engine.photon_stats().unwrap();
+        assert_eq!(moved.last_level_mask, 0, "{moved:?}");
+        assert_eq!(moved.last_regions, 2, "{moved:?}");
+        assert_eq!(moved.full_rebuilds, still.full_rebuilds, "{moved:?}");
+        assert_eq!(
+            moved.region_rebuilds,
+            still.region_rebuilds + 2,
+            "{moved:?}"
+        );
+
+        // The diagnostic switch rebuilds every level on each change instead.
+        let photon = room.photon;
+        let kind = room.photon_type;
+        set_component_field(
+            engine,
+            photon,
+            kind,
+            "Full rebuilds",
+            doppio_engine::FieldValue::Bool(true),
+        )
+        .unwrap();
+        render(engine);
+        engine.set_position(mover, [-1.0, 0.4, 0.5]).unwrap();
+        render(engine);
+        let full = engine.photon_stats().unwrap();
+        assert_eq!(full.last_level_mask, 0xF, "{full:?}");
+        std::fs::remove_dir_all(&room.dir).ok();
+    }
+}
+
+/// Environment (clouds, fog, rain) regression scenes: a long road of blocks seen from a low camera, rendered with
+/// the weather off and on. The weather is switched through the panel's own messages, so the same path the user
+/// takes is the one measured. Rain and Photon move from frame to frame, so every image check averages frames.
+mod environment_weather {
+    use super::photon_gi::{clear_scene, Room};
+    use super::*;
+    use crate::uikit::panels::environment as panel;
+
+    pub const W: u32 = 480;
+    pub const H: u32 = 320;
+
+    /// The index of a preset by name.
+    pub fn preset(name: &str) -> usize {
+        panel::presets()
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap_or_else(|| panic!("preset {name}"))
+    }
+
+    /// A long, flat road with a bright block every twelve metres, left and right in turn, and a sun. The camera
+    /// (yaw 0 looks along +Z) looks down the road.
+    pub fn road(engine: &mut doppio_engine::Engine) -> Room {
+        clear_scene(engine);
+        let mut room = Room::new("environment-road");
+        room.block(
+            engine,
+            [0.0, -0.1, 60.0],
+            [16.0, 0.2, 140.0],
+            [0.35, 0.35, 0.35],
+        );
+        for step in 0..6 {
+            let z = 12.0 * step as f32;
+            let x = if step % 2 == 0 { -3.5 } else { 3.5 };
+            room.block(engine, [x, 1.0, z], [2.0, 2.0, 2.0], [0.9, 0.9, 0.9]);
+        }
+        room.sun(engine, [-40.0, 150.0, 0.0]);
+        engine
+            .set_viewport_settings(doppio_engine::ViewportSettings {
+                show_grid: false,
+                anti_aliasing: doppio_engine::AntiAliasing::Off,
+                render_scale: 1.0,
+                shadows: true,
+            })
+            .unwrap();
+        room
+    }
+
+    /// Down the road from five metres before the first block, a little above the ground.
+    pub fn road_camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 0.12,
+            distance: 9.0,
+            focus: [0.0, 1.5, 4.0],
+        }
+    }
+
+    /// The camera looks at the sky.
+    pub fn sky_camera() -> doppio_engine::Camera {
+        doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: -0.5,
+            distance: 9.0,
+            focus: [0.0, 10.0, 4.0],
+        }
+    }
+
+    pub fn shot(name: &str, rgba: &[u8]) {
+        if let Some(dir) = std::env::var_os("ENV_SHOTS") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).ok();
+            image::save_buffer(
+                dir.join(format!("{name}.png")),
+                rgba,
+                W,
+                H,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+    }
+
+    /// A frame from `camera` after a camera cut and a few settling frames.
+    pub fn frame(engine: &mut doppio_engine::Engine, camera: doppio_engine::Camera) -> Vec<u8> {
+        engine
+            .set_camera(doppio_engine::Camera {
+                focus: [500.0, 0.0, 500.0],
+                ..camera
+            })
+            .unwrap();
+        let _ = render_entity_view_sized(engine, W, H);
+        engine.set_camera(camera).unwrap();
+        for _ in 0..3 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        render_entity_view_sized(engine, W, H)
+    }
+
+    /// The mean of `n` frames, per channel, as floats.
+    pub fn averaged(
+        engine: &mut doppio_engine::Engine,
+        camera: doppio_engine::Camera,
+        n: usize,
+    ) -> Vec<f32> {
+        let first = frame(engine, camera);
+        let mut sum: Vec<f32> = first.iter().map(|v| *v as f32).collect();
+        for _ in 1..n {
+            let next = render_entity_view_sized(engine, W, H);
+            for (s, v) in sum.iter_mut().zip(next.iter()) {
+                *s += *v as f32;
+            }
+        }
+        sum.iter().map(|v| v / n as f32).collect()
+    }
+
+    pub fn mean_of(img: &[f32], x0: u32, x1: u32, y0: u32, y1: u32) -> [f32; 3] {
+        let mut sum = [0f32; 3];
+        let mut n = 0f32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = ((y * W + x) * 4) as usize;
+                for (c, slot) in sum.iter_mut().enumerate() {
+                    *slot += img[i + c];
+                }
+                n += 1.0;
+            }
+        }
+        [sum[0] / n, sum[1] / n, sum[2] / n]
+    }
+
+    pub fn grey(rgb: [f32; 3]) -> f32 {
+        (rgb[0] + rgb[1] + rgb[2]) / 3.0
+    }
+
+    pub fn to_u8(img: &[f32]) -> Vec<u8> {
+        img.iter()
+            .map(|v| v.round().clamp(0.0, 255.0) as u8)
+            .collect()
+    }
+
+    use crate::uikit::panels::environment::{Amount, Edit, Flag, Settings, Tint};
+
+    /// A harness with the road scene and the environment entity (clouds from Clear sky), then Off.
+    fn road_harness() -> Option<Harness> {
+        let mut harness = engine_harness()?;
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let _room = road(engine);
+        }
+        harness.app.entities.clear();
+        harness.dispatch(Message::Environment(Edit::Add));
+        harness.dispatch(Message::Environment(Edit::Preset(preset("Off"))));
+        Some(harness)
+    }
+
+    fn engine_of(harness: &mut Harness) -> &mut doppio_engine::Engine {
+        harness.app.engine.as_mut().unwrap()
+    }
+
+    fn set(harness: &mut Harness, edits: &[Edit]) {
+        for edit in edits {
+            harness.dispatch(Message::Environment(edit.clone()));
+        }
+    }
+
+    /// The scene without any weather component at all, as it was before the Environment tab existed.
+    fn baseline(harness: &mut Harness) -> Vec<u8> {
+        let entity = harness.app().environment.entity.unwrap();
+        let engine = engine_of(harness);
+        let kinds = engine.entity_components(entity);
+        for kind in kinds.iter().rev() {
+            engine.remove_component(entity, kind.type_id).unwrap();
+        }
+        let image = frame(engine, road_camera());
+        // Put the components back, as the panel's Off.
+        for name in [panel::CLOUDS, panel::WEATHER] {
+            add_component(engine, entity, name).unwrap();
+        }
+        image
+    }
+
+    // ---- Regions of the 480 x 320 road image (see `zz_environment_shots`).
+    /// The big block at the right: a sun-lit face.
+    const NEAR_BLOCK: (u32, u32, u32, u32) = (390, 470, 200, 280);
+    /// Road beside the near block.
+    const NEAR_ROAD: (u32, u32, u32, u32) = (40, 200, 290, 315);
+    /// A block far down the road, and the road just in front of it.
+    const FAR_BLOCK: (u32, u32, u32, u32) = (166, 194, 142, 166);
+    const FAR_ROAD: (u32, u32, u32, u32) = (150, 200, 178, 192);
+
+    fn region(img: &[f32], r: (u32, u32, u32, u32)) -> f32 {
+        grey(mean_of(img, r.0, r.1, r.2, r.3))
+    }
+
+    fn floats(img: &[u8]) -> Vec<f32> {
+        img.iter().map(|v| *v as f32).collect()
+    }
+
+    /// Pixels that are at least `by` levels brighter than the same pixel of `base`.
+    fn brighter(img: &[u8], base: &[u8], by: i32) -> usize {
+        img.chunks(4)
+            .zip(base.chunks(4))
+            .filter(|(a, b)| {
+                (a[0] as i32 + a[1] as i32 + a[2] as i32) / 3
+                    - (b[0] as i32 + b[1] as i32 + b[2] as i32) / 3
+                    >= by
+            })
+            .count()
+    }
+
+    #[test]
+    fn the_panel_table_is_consistent() {
+        use std::collections::HashSet;
+        let mut keys = HashSet::new();
+        for flag in Flag::ALL {
+            let spec = flag.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for amount in Amount::ALL {
+            let spec = amount.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(spec.min < spec.max, "{}", spec.key);
+            assert!(
+                spec.range().contains(&spec.default),
+                "{} default {} is outside {:?}",
+                spec.key,
+                spec.default,
+                spec.range()
+            );
+            assert!(
+                spec.step > 0.0 && spec.step <= (spec.max - spec.min),
+                "{}",
+                spec.key
+            );
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for tint in Tint::ALL {
+            assert!(keys.insert(tint.key()), "duplicate key {}", tint.key());
+            for axis in 0..3 {
+                assert!(crate::uikit::id::description(tint.id(axis).key()).is_some());
+            }
+        }
+        for id in [
+            crate::uikit::id::PANE_ENVIRONMENT,
+            crate::uikit::id::PANE_TAB_ENVIRONMENT,
+            crate::uikit::id::SHOW_ENVIRONMENT,
+            crate::uikit::id::ENV_ADD,
+            crate::uikit::id::ENV_PRESET,
+            crate::uikit::id::ENV_CLOUDS_QUALITY,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{}",
+                id.key()
+            );
+        }
+    }
+
+    #[test]
+    fn the_presets_stay_inside_every_range_and_are_distinct() {
+        let presets = panel::presets();
+        let names: Vec<&str> = presets.iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            ["Off", "Clear sky", "Cloudy", "Fog", "Light rain", "Storm"]
+        );
+        assert_eq!(
+            presets[0].settings,
+            Settings::default(),
+            "Off is the engine's defaults"
+        );
+        for (i, a) in presets.iter().enumerate() {
+            for b in &presets[i + 1..] {
+                assert_ne!(a.settings, b.settings, "{} and {}", a.name, b.name);
+            }
+            for amount in Amount::ALL {
+                let spec = amount.spec();
+                assert!(
+                    spec.range().contains(&a.settings.amount(*amount)),
+                    "{}: {} is out of range",
+                    a.name,
+                    spec.key
+                );
+            }
+            assert_eq!(panel::current_preset(&a.settings), Some(a.name));
+        }
+        // What the names promise.
+        let by = |name: &str| {
+            presets
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .settings
+                .clone()
+        };
+        assert!(by("Fog").flag(Flag::FogEnabled) && !by("Fog").flag(Flag::RainEnabled));
+        assert!(by("Storm").flag(Flag::RainEnabled) && by("Storm").flag(Flag::FogEnabled));
+        assert!(
+            by("Storm").amount(Amount::RainIntensity)
+                > by("Light rain").amount(Amount::RainIntensity)
+        );
+        assert!(by("Cloudy").amount(Amount::Coverage) > by("Clear sky").amount(Amount::Coverage));
+        assert!(
+            !by("Clear sky").flag(Flag::RainEnabled) && !by("Clear sky").flag(Flag::FogEnabled)
+        );
+    }
+
+    #[test]
+    fn the_engine_components_start_with_the_panels_defaults() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = engine_of(&mut harness);
+        let entity = engine.create_entity("Weather").unwrap();
+        add_component(engine, entity, panel::CLOUDS).unwrap();
+        add_component(engine, entity, panel::WEATHER).unwrap();
+        let read = super::super::environment::read_settings(engine, entity).unwrap();
+        assert_eq!(read, Settings::default());
+    }
+
+    #[test]
+    fn adding_the_environment_makes_one_entity_and_undo_takes_it_away() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.rebase_history();
+        assert!(harness.app().environment.entity.is_none());
+        let before = harness.app().entities.len();
+        harness.dispatch(Message::Environment(Edit::Add));
+        let settings = harness.app().environment.settings.clone().expect("added");
+        assert!(settings.flag(Flag::CloudsEnabled), "starts from Clear sky");
+        assert_eq!(settings.amount(Amount::Coverage), 0.25);
+        assert_eq!(harness.app().entities.len(), before + 1);
+        // A second Add does nothing: the scene has its environment.
+        harness.dispatch(Message::Environment(Edit::Add));
+        assert_eq!(harness.app().entities.len(), before + 1);
+
+        harness.dispatch(Message::Undo);
+        assert!(
+            harness.app().environment.entity.is_none(),
+            "undo removes the entity"
+        );
+        assert_eq!(harness.app().entities.len(), before);
+    }
+
+    /// The hierarchy's + palette offers the environment: it creates it once and then only selects it.
+    #[test]
+    fn the_prefab_palette_creates_the_environment_once_and_then_selects_it() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let index = prefabs::PREFABS
+            .iter()
+            .position(|p| p.key == "environment")
+            .expect("an Environment prefab");
+        assert_eq!(prefabs::PREFABS[index].label, "Environment");
+        harness.rebase_history();
+        let before = harness.app().entities.len();
+        harness.dispatch(Message::CreatePrefab(index));
+        let id = harness.app().environment.entity.expect("created");
+        assert_eq!(harness.app().entities.len(), before + 1);
+        assert_eq!(harness.app().entities[harness.app().selected].id, id);
+        // Another entity gets the selection; the palette brings it back instead of making a second one.
+        harness.dispatch(Message::SelectEntity(0));
+        harness.dispatch(Message::CreatePrefab(index));
+        assert_eq!(harness.app().entities.len(), before + 1);
+        assert_eq!(harness.app().entities[harness.app().selected].id, id);
+        // The Inspector shows both components of the entity.
+        let names: Vec<String> = harness
+            .app()
+            .components
+            .iter()
+            .map(|c| c.info.name.clone())
+            .collect();
+        assert!(names.contains(&panel::WEATHER.to_owned()), "{names:?}");
+        assert!(names.contains(&panel::CLOUDS.to_owned()), "{names:?}");
+    }
+
+    #[test]
+    fn every_preset_survives_the_engine_and_each_edit_is_one_undo_step() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        harness.rebase_history();
+        for preset in panel::presets() {
+            harness.dispatch(Message::Environment(Edit::Preset(preset_index(
+                preset.name,
+            ))));
+            assert_eq!(
+                harness.app().environment.settings.as_ref(),
+                Some(&preset.settings),
+                "{} did not read back as written",
+                preset.name
+            );
+        }
+        // A slider edit, then undo: the value goes back.
+        harness.dispatch(Message::Environment(Edit::Preset(preset("Fog"))));
+        let before = harness.app().environment.settings.clone().unwrap();
+        set(&mut harness, &[Edit::Amount(Amount::FogDensity, 0.1)]);
+        set(&mut harness, &[Edit::Amount(Amount::FogDensity, 0.15)]);
+        assert_eq!(
+            harness
+                .app()
+                .environment
+                .settings
+                .as_ref()
+                .unwrap()
+                .amount(Amount::FogDensity),
+            0.15
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness
+                .app()
+                .environment
+                .settings
+                .as_ref()
+                .unwrap()
+                .amount(Amount::FogDensity),
+            before.amount(Amount::FogDensity),
+            "one undo step per field, not per value"
+        );
+        // Values outside the range are clamped.
+        set(&mut harness, &[Edit::Amount(Amount::FogDensity, 9.0)]);
+        assert_eq!(
+            harness
+                .app()
+                .environment
+                .settings
+                .as_ref()
+                .unwrap()
+                .amount(Amount::FogDensity),
+            0.2
+        );
+        // A colour channel keeps the others.
+        set(&mut harness, &[Edit::Tint(Tint::Fog, 2, 0.1)]);
+        let fog = harness
+            .app()
+            .environment
+            .settings
+            .as_ref()
+            .unwrap()
+            .fog_color;
+        assert_eq!(fog[2], 0.1);
+        assert_eq!(fog[0], before.fog_color[0]);
+    }
+
+    fn preset_index(name: &str) -> usize {
+        preset(name)
+    }
+
+    #[test]
+    fn the_weather_components_and_their_fields_exist_in_the_engine() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = engine_of(&mut harness);
+        let types = engine.component_types();
+        for flag in Flag::ALL {
+            let spec = flag.spec();
+            let kind = types
+                .iter()
+                .find(|t| t.name == spec.target.component())
+                .unwrap();
+            let field = kind.fields.iter().find(|f| f.name == spec.field);
+            assert!(field.is_some(), "{} has no field {}", kind.name, spec.field);
+        }
+        for amount in Amount::ALL {
+            let spec = amount.spec();
+            let kind = types
+                .iter()
+                .find(|t| t.name == spec.target.component())
+                .unwrap();
+            assert!(
+                kind.fields.iter().any(|f| f.name == spec.field),
+                "{} has no field {}",
+                kind.name,
+                spec.field
+            );
+        }
+        for tint in Tint::ALL {
+            let kind = types
+                .iter()
+                .find(|t| t.name == tint.target().component())
+                .unwrap();
+            assert!(kind.fields.iter().any(|f| f.name == tint.field()));
+        }
+    }
+
+    #[cfg(feature = "agent")]
+    #[test]
+    fn the_agent_maps_keys_and_values_to_edits() {
+        use super::super::agent::environment_edit;
+        use serde_json::json;
+        assert!(matches!(
+            environment_edit("fog_enabled", &json!(true)),
+            Ok(Edit::Flag(Flag::FogEnabled, true))
+        ));
+        assert!(matches!(
+            environment_edit("Rain_Intensity", &json!(0.4)),
+            Ok(Edit::Amount(Amount::RainIntensity, v)) if (v - 0.4).abs() < 1e-6
+        ));
+        assert!(matches!(
+            environment_edit("clouds_quality", &json!("High")),
+            Ok(Edit::Quality(3))
+        ));
+        assert!(matches!(
+            environment_edit("fog_color", &json!([0.1, 0.2, 0.3])),
+            Ok(Edit::Colour(Tint::Fog, c)) if c == [0.1, 0.2, 0.3]
+        ));
+        assert!(environment_edit("fog_enabled", &json!(3)).is_err());
+        assert!(environment_edit("fog_color", &json!([0.1])).is_err());
+        assert!(environment_edit("clouds_quality", &json!("Ultra")).is_err());
+        assert!(environment_edit("nope", &json!(1)).is_err());
+    }
+
+    /// A weather component with every section off draws the image of a scene with no weather at all (within the
+    /// renderer's own frame-to-frame noise).
+    #[test]
+    fn weather_off_renders_the_same_image_as_no_weather() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let without = {
+            let image = baseline(&mut harness);
+            let again = baseline(&mut harness);
+            Reference {
+                noise: mad(&image, &again),
+                image,
+            }
+        };
+        let with = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        shot("road-baseline", &without.image);
+        without.assert_unchanged(
+            &with,
+            "a Weather and a Volumetric Clouds component with everything off",
+        );
+        // The same holds for the master switch off with every section on.
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Storm")),
+                Edit::Flag(Flag::WeatherEnabled, false),
+            ],
+        );
+        set(&mut harness, &[Edit::Flag(Flag::CloudsEnabled, false)]);
+        let master_off = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        without.assert_unchanged(&master_off, "Weather off by its master switch");
+    }
+
+    /// Fog fades what is far into its colour: the far block loses contrast against the road, the near one keeps it.
+    #[test]
+    fn fog_lowers_the_contrast_with_distance() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let off = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 3)
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Flag(Flag::FogEnabled, true),
+                Edit::Amount(Amount::FogDensity, 0.05),
+            ],
+        );
+        let fog = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 3)
+        };
+        shot("road-fog-density-0.05", &to_u8(&fog));
+        let contrast = |img: &[f32], block, road| (region(img, block) - region(img, road)).abs();
+        let far_off = contrast(&off, FAR_BLOCK, FAR_ROAD);
+        let far_fog = contrast(&fog, FAR_BLOCK, FAR_ROAD);
+        let near_off = contrast(&off, NEAR_BLOCK, NEAR_ROAD);
+        let near_fog = contrast(&fog, NEAR_BLOCK, NEAR_ROAD);
+        eprintln!("contrast far {far_off:.1} -> {far_fog:.1}, near {near_off:.1} -> {near_fog:.1}");
+        assert!(
+            far_off > 40.0,
+            "the far block must stand out of the road without fog ({far_off:.1})"
+        );
+        let (far_kept, near_kept) = (far_fog / far_off, near_fog / near_off);
+        assert!(far_kept < 0.5, "far contrast {far_off:.1} -> {far_fog:.1}");
+        assert!(
+            far_kept < near_kept * 0.7,
+            "the far block loses more contrast than the near one: kept {far_kept:.2} against {near_kept:.2}"
+        );
+        // The far road takes the fog's colour and gets brighter.
+        assert!(region(&fog, FAR_ROAD) > region(&off, FAR_ROAD) + 25.0);
+    }
+
+    #[test]
+    fn denser_fog_hides_more_and_a_maximum_opacity_of_zero_hides_nothing() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        set(&mut harness, &[Edit::Flag(Flag::FogEnabled, true)]);
+        let mut far_road = Vec::new();
+        for density in [0.005, 0.02, 0.06] {
+            set(&mut harness, &[Edit::Amount(Amount::FogDensity, density)]);
+            let engine = engine_of(&mut harness);
+            let img = averaged(engine, road_camera(), 2);
+            far_road.push(region(&img, FAR_ROAD));
+        }
+        assert!(
+            far_road[0] < far_road[1] && far_road[1] < far_road[2],
+            "{far_road:?}"
+        );
+        // Max opacity 0: the fog is there but hides nothing.
+        // (Unlinked: a linked fog also hands its hue to the sky light.)
+        let none = {
+            set(
+                &mut harness,
+                &[
+                    Edit::Flag(Flag::LinkSky, false),
+                    Edit::Amount(Amount::FogMaxOpacity, 0.0),
+                ],
+            );
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        let off = {
+            let image = baseline(&mut harness);
+            let again = baseline(&mut harness);
+            Reference {
+                noise: mad(&image, &again),
+                image,
+            }
+        };
+        off.assert_unchanged(&none, "a fog that may hide nothing");
+    }
+
+    /// Rain adds streaks (bright pixels), they fall from one frame to the next, and with the section off nothing is added.
+    #[test]
+    fn rain_adds_streaks_that_move() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        // These watch the scene move or sound: the editor starts stopped, so switch the simulation on.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        let off = baseline(&mut harness);
+        // Rain alone: no link (so the sun and the sky stay put), no wetness, no fog.
+        set(
+            &mut harness,
+            &[
+                Edit::Flag(Flag::LinkSky, false),
+                Edit::Flag(Flag::RainEnabled, true),
+                Edit::Amount(Amount::RainIntensity, 0.8),
+                Edit::Amount(Amount::RainWetness, 0.0),
+            ],
+        );
+        let (first, second) = {
+            let engine = engine_of(&mut harness);
+            let first = frame(engine, road_camera());
+            let second = render_entity_view_sized(engine, W, H);
+            (first, second)
+        };
+        shot("road-rain", &first);
+        let added = brighter(&first, &off, 8);
+        eprintln!("rain adds {added} bright pixels");
+        assert!(
+            added > 800,
+            "rain should add streaks, got {added} brighter pixels"
+        );
+        let moved = changed(&first, &second, 6);
+        eprintln!("frame to frame: moved {moved}");
+        assert!(
+            moved > 400,
+            "the streaks should fall between frames ({moved} pixels differ)"
+        );
+        // More rain, more streaks.
+        set(&mut harness, &[Edit::Amount(Amount::RainIntensity, 0.2)]);
+        let light = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        assert!(
+            brighter(&light, &off, 8) < added,
+            "light rain adds fewer streaks"
+        );
+        // Drops are hidden behind the near block: its face stays free of streaks.
+        let face = grey(mean_of(&floats(&first), 410, 470, 215, 275));
+        let face_off = grey(mean_of(&floats(&off), 410, 470, 215, 275));
+        assert!(
+            (face - face_off).abs() < 6.0,
+            "near block face {face_off:.1} -> {face:.1}"
+        );
+        // Switched off again: the image is the baseline's.
+        set(&mut harness, &[Edit::Flag(Flag::RainEnabled, false)]);
+        let dry = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        let reference = {
+            let again = baseline(&mut harness);
+            Reference {
+                noise: mad(&off, &again),
+                image: off.clone(),
+            }
+        };
+        reference.assert_unchanged(&dry, "rain switched off again");
+    }
+
+    #[test]
+    fn rain_wets_the_surfaces() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Flag(Flag::LinkSky, false),
+                Edit::Flag(Flag::RainEnabled, true),
+                Edit::Amount(Amount::RainIntensity, 0.05),
+                Edit::Amount(Amount::RainBrightness, 0.0),
+                Edit::Amount(Amount::RainWetness, 0.0),
+            ],
+        );
+        let dry = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Amount(Amount::RainIntensity, 1.0),
+                Edit::Amount(Amount::RainWetness, 1.0),
+            ],
+        );
+        let wet = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        shot("road-wet", &to_u8(&wet));
+        let (d, w) = (region(&dry, NEAR_ROAD), region(&wet, NEAR_ROAD));
+        eprintln!("road {d:.1} dry, {w:.1} wet");
+        assert!(w < d - 3.0, "wet road should be darker: {d:.1} -> {w:.1}");
+        // A block's own wetness is not lost: the larger of the two wins.
+        let (bd, bw) = (region(&dry, NEAR_BLOCK), region(&wet, NEAR_BLOCK));
+        assert!(bw < bd - 3.0, "a wet block is darker: {bd:.1} -> {bw:.1}");
+    }
+
+    /// Clouds in the sky: coverage fills it, a tint colours the sun-lit side, a storm darkens it.
+    #[test]
+    fn clouds_show_in_the_sky_and_follow_their_settings() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let sky = (0, 480, 20, 150);
+        let clear = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, sky_camera(), 2)
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Flag(Flag::CloudsEnabled, true),
+                Edit::Flag(Flag::LinkSky, false),
+                Edit::Amount(Amount::Coverage, 0.95),
+                Edit::Amount(Amount::CloudDensity, 0.8),
+                Edit::Amount(Amount::BaseAltitude, 100.0),
+                Edit::Amount(Amount::TopAltitude, 400.0),
+            ],
+        );
+        let white = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, sky_camera(), 2)
+        };
+        shot("sky-clouds-white", &to_u8(&white));
+        let diff: f32 = clear
+            .iter()
+            .zip(white.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / clear.len() as f32;
+        eprintln!("sky changes by {diff:.1} levels with clouds");
+        assert!(diff > 4.0, "clouds should change the sky ({diff:.1})");
+
+        set(
+            &mut harness,
+            &[Edit::Colour(Tint::Clouds, [1.0, 0.25, 0.1])],
+        );
+        let red = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, sky_camera(), 2)
+        };
+        shot("sky-clouds-red", &to_u8(&red));
+        let ratio = |img: &[f32]| {
+            let m = mean_of(img, sky.0, sky.1, sky.2, sky.3);
+            m[0] / m[2].max(1.0)
+        };
+        assert!(
+            ratio(&red) > ratio(&white),
+            "a red tint reddens the clouds: {} -> {}",
+            ratio(&white),
+            ratio(&red)
+        );
+
+        set(
+            &mut harness,
+            &[
+                Edit::Colour(Tint::Clouds, [1.0, 1.0, 1.0]),
+                Edit::Amount(Amount::Darkness, 1.0),
+            ],
+        );
+        let storm = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, sky_camera(), 2)
+        };
+        let lum = |img: &[f32]| grey(mean_of(img, sky.0, sky.1, sky.2, sky.3));
+        assert!(
+            lum(&storm) < lum(&white) - 5.0,
+            "dark clouds: {} -> {}",
+            lum(&white),
+            lum(&storm)
+        );
+    }
+
+    /// The clouds' ground shadows darken what the sun lights, only while they are on.
+    #[test]
+    fn cloud_shadows_darken_the_sunlit_ground_only_when_on() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Cloudy")),
+                Edit::Flag(Flag::LinkSky, false),
+                Edit::Flag(Flag::CloudsDimSun, false),
+                Edit::Amount(Amount::MistDensity, 0.0),
+                Edit::Amount(Amount::Coverage, 0.9),
+                Edit::Amount(Amount::CloudDensity, 1.5),
+                Edit::Amount(Amount::CloudShadowStrength, 0.6),
+                Edit::Flag(Flag::CloudShadows, false),
+            ],
+        );
+        let open = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        set(&mut harness, &[Edit::Flag(Flag::CloudShadows, true)]);
+        let shaded = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        shot("road-cloud-shadows", &to_u8(&shaded));
+        let (o, s) = (region(&open, NEAR_BLOCK), region(&shaded, NEAR_BLOCK));
+        let (or, sr) = (region(&open, NEAR_ROAD), region(&shaded, NEAR_ROAD));
+        eprintln!("block {o:.1} -> {s:.1}, road {or:.1} -> {sr:.1}");
+        assert!(s < o * 0.9, "the lit block is in shadow: {o:.1} -> {s:.1}");
+        assert!(sr < or * 0.95, "the road too: {or:.1} -> {sr:.1}");
+        // A strength of 0 is no shadow at all.
+        set(
+            &mut harness,
+            &[Edit::Amount(Amount::CloudShadowStrength, 0.0)],
+        );
+        let zero = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        assert!(
+            (region(&zero, NEAR_BLOCK) - o).abs() < 3.0,
+            "no strength, no shadow"
+        );
+    }
+
+    /// Wind carries the rain: the same rain with a strong wind falls along other lines.
+    #[test]
+    fn wind_tilts_the_rain() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        set(
+            &mut harness,
+            &[
+                Edit::Flag(Flag::LinkSky, false),
+                Edit::Flag(Flag::RainEnabled, true),
+                Edit::Amount(Amount::RainIntensity, 0.8),
+                Edit::Amount(Amount::RainWetness, 0.0),
+                Edit::Amount(Amount::WindGust, 0.0),
+                Edit::Amount(Amount::RainWindSpeed, 0.0),
+            ],
+        );
+        let calm = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        set(&mut harness, &[Edit::Amount(Amount::RainWindSpeed, 25.0)]);
+        let windy = {
+            let engine = engine_of(&mut harness);
+            frame(engine, road_camera())
+        };
+        let moved = changed(&calm, &windy, 6);
+        eprintln!("wind moves {moved} pixels");
+        assert!(
+            moved > 800,
+            "a wind of 25 m/s should bend the streaks ({moved})"
+        );
+    }
+
+    /// Lightning: strikes flash the scene, the engine raises thunder after the sound's travel time, and nothing
+    /// happens while it is off.
+    #[test]
+    fn lightning_flashes_the_scene_and_raises_thunder() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        // These watch the scene move or sound: the editor starts stopped, so switch the simulation on.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Storm")),
+                Edit::Amount(Amount::LightningRate, 60.0),
+                Edit::Amount(Amount::LightningDistanceMin, 300.0),
+                Edit::Amount(Amount::LightningDistanceMax, 500.0),
+                Edit::Amount(Amount::LightningIntensity, 1.0),
+            ],
+        );
+        let mut calm: Option<Vec<u8>> = None;
+        let mut flashed: Option<(f32, Vec<u8>)> = None;
+        let mut thunder = Vec::new();
+        {
+            let engine = engine_of(&mut harness);
+            engine.set_camera(road_camera()).unwrap();
+            let _ = engine.poll_thunder();
+            // Two and a half seconds of frames at 60 per second: at least two strikes at 60 a minute.
+            for _ in 0..150 {
+                let image = render_entity_view_sized(engine, W, H);
+                let state = engine.weather_state().unwrap();
+                assert!(state.lightning_active, "the storm has lightning");
+                if state.flash < 0.01 && calm.is_none() {
+                    calm = Some(image);
+                } else if flashed.as_ref().is_none_or(|(best, _)| state.flash > *best) {
+                    flashed = Some((state.flash, image));
+                }
+                thunder.extend(engine.poll_thunder().unwrap());
+            }
+        }
+        let calm = calm.expect("a frame without a flash");
+        let (peak, flashed) = flashed.expect("a flash");
+        shot("road-lightning", &flashed);
+        let (c, f) = (
+            region(&floats(&calm), NEAR_BLOCK),
+            region(&floats(&flashed), NEAR_BLOCK),
+        );
+        eprintln!(
+            "flash peak {peak:.2}: block {c:.1} -> {f:.1}, {} thunder",
+            thunder.len()
+        );
+        assert!(
+            peak > 0.3,
+            "a strike a few hundred metres away flashes ({peak})"
+        );
+        assert!(f > c * 1.15, "the flash lights the block: {c:.1} -> {f:.1}");
+        assert!(!thunder.is_empty(), "thunder arrives after the flash");
+        for clap in &thunder {
+            assert!(
+                (299.0..=501.0).contains(&clap.distance_m),
+                "{}",
+                clap.distance_m
+            );
+            assert!(clap.volume > 0.5, "a close strike is loud");
+        }
+        // Off: no flash, no thunder, whatever the clock does.
+        set(&mut harness, &[Edit::Flag(Flag::LightningEnabled, false)]);
+        let engine = engine_of(&mut harness);
+        let _ = engine.poll_thunder();
+        for _ in 0..90 {
+            let _ = render_entity_view_sized(engine, W, H);
+            let state = engine.weather_state().unwrap();
+            assert!(!state.lightning_active);
+            assert_eq!(state.flash, 0.0);
+        }
+        assert!(engine.poll_thunder().unwrap().is_empty());
+    }
+
+    /// The weather's sound is off unless the scene asks for it; asked, the rain and wind beds follow the weather,
+    /// each strike's thunder reaches the player, and a preset leaves the sound as the user set it.
+    /// (The volume stays at 0 so a machine with speakers hears nothing while this runs.)
+    #[test]
+    fn the_weather_sound_follows_the_weather_and_is_off_unless_asked() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        // These watch the scene move or sound: the editor starts stopped, so switch the simulation on.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Storm")),
+                Edit::Amount(Amount::LightningRate, 60.0),
+                Edit::Amount(Amount::LightningDistanceMin, 300.0),
+                Edit::Amount(Amount::LightningDistanceMax, 500.0),
+                Edit::Amount(Amount::AudioVolume, 0.0),
+            ],
+        );
+        let frames = |harness: &mut Harness, n: usize| {
+            let engine = engine_of(harness);
+            engine.set_camera(road_camera()).unwrap();
+            for _ in 0..n {
+                let _ = render_entity_view_sized(engine, W, H);
+            }
+        };
+        // Not asked: no sound, no player.
+        frames(&mut harness, 20);
+        let silent = engine_of(&mut harness).audio_state().unwrap();
+        assert!(!silent.enabled && !silent.rain_playing && silent.rain_level == 0.0);
+        // Asked: the beds follow the storm (rain 0.95, wind 14 m/s) once the smoothing has settled.
+        set(&mut harness, &[Edit::Flag(Flag::AudioEnabled, true)]);
+        frames(&mut harness, 150);
+        let storm = engine_of(&mut harness).audio_state().unwrap();
+        eprintln!("{storm:?}");
+        assert!(storm.enabled);
+        assert!(
+            storm.rain_level > 0.4,
+            "the rain bed follows the rain: {}",
+            storm.rain_level
+        );
+        assert!(
+            storm.wind_level > 0.1,
+            "the wind bed follows the wind: {}",
+            storm.wind_level
+        );
+        assert!(
+            storm.thunder_heard >= 1,
+            "a strike a minute-rate of 60 has thundered"
+        );
+        if storm.device_ready {
+            assert!(
+                storm.rain_playing && storm.wind_playing,
+                "the beds run on the device"
+            );
+            assert_eq!(storm.thunder_played, storm.thunder_heard);
+        }
+        // A preset is a look: the sound stays on.
+        set(&mut harness, &[Edit::Preset(preset("Clear sky"))]);
+        assert!(harness
+            .app()
+            .environment
+            .settings
+            .as_ref()
+            .unwrap()
+            .flag(Flag::AudioEnabled));
+        // The rain has stopped: the bed fades and is stopped (no rain, no sound), the wind with it.
+        frames(&mut harness, 300);
+        let calm = engine_of(&mut harness).audio_state().unwrap();
+        assert!(calm.rain_level < 0.02 && !calm.rain_playing, "{calm:?}");
+        // Switched off: the player stops everything.
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Storm")),
+                Edit::Flag(Flag::AudioEnabled, false),
+            ],
+        );
+        frames(&mut harness, 5);
+        let off = engine_of(&mut harness).audio_state().unwrap();
+        assert!(!off.enabled && !off.rain_playing && !off.wind_playing);
+    }
+
+    /// An overcast sky dims the sun: the lit block gets darker with the link on, and keeps its light with it off.
+    #[test]
+    fn an_overcast_sky_dims_the_sun_only_when_linked() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let clear = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        // (The cloud mist also thickens the forward pass's volumetric fog, and the clouds' ground shadows darken
+        // the sun by themselves: leave both out, this is about the link.)
+        set(
+            &mut harness,
+            &[
+                Edit::Preset(preset("Cloudy")),
+                Edit::Amount(Amount::MistDensity, 0.0),
+                Edit::Flag(Flag::CloudShadows, false),
+            ],
+        );
+        let linked = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        set(&mut harness, &[Edit::Flag(Flag::LinkSky, false)]);
+        let alone = {
+            let engine = engine_of(&mut harness);
+            averaged(engine, road_camera(), 2)
+        };
+        let (c, l, a) = (
+            region(&clear, NEAR_BLOCK),
+            region(&linked, NEAR_BLOCK),
+            region(&alone, NEAR_BLOCK),
+        );
+        eprintln!("near block {c:.1} clear, {l:.1} overcast linked, {a:.1} overcast alone");
+        assert!(l < c * 0.85, "the overcast sun is dimmer: {c:.1} -> {l:.1}");
+        assert!(
+            (a - c).abs() < 2.0,
+            "without the link the sun is untouched: {c:.1} -> {a:.1}"
+        );
+    }
+
+    /// Photon's sky light follows the weather: overcast greys it. The picture shown is Photon's own sky fallback.
+    #[test]
+    fn photon_sky_light_greys_under_an_overcast_sky_and_does_not_flicker() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let room_photon = {
+            let engine = engine_of(&mut harness);
+            let id = engine.create_entity("Photon").unwrap();
+            let kind = add_component(engine, id, "Photon GI").unwrap();
+            let path = enum_field(engine, "Photon GI", "Path", "Compute").unwrap();
+            set_component_field(engine, id, kind, "Path", path).unwrap();
+            let quality = enum_field(engine, "Photon GI", "Quality", "High").unwrap();
+            set_component_field(engine, id, kind, "Quality", quality).unwrap();
+            set_component_field(
+                engine,
+                id,
+                kind,
+                "Enabled",
+                doppio_engine::FieldValue::Bool(true),
+            )
+            .unwrap();
+            let view = enum_field(engine, "Photon GI", "Debug view", "GI only").unwrap();
+            set_component_field(engine, id, kind, "Debug view", view).unwrap();
+            (id, kind)
+        };
+        let _ = room_photon;
+        let settle = |harness: &mut Harness| {
+            let engine = engine_of(harness);
+            let _ = frame(engine, road_camera());
+            for _ in 0..24 {
+                let _ = render_entity_view_sized(engine, W, H);
+            }
+        };
+        let gi = |harness: &mut Harness| {
+            settle(harness);
+            let engine = engine_of(harness);
+            let mut sum = [0f32; 3];
+            let frames = 8;
+            for _ in 0..frames {
+                let img = floats(&render_entity_view_sized(engine, W, H));
+                let m = mean_of(&img, NEAR_ROAD.0, NEAR_ROAD.1, NEAR_ROAD.2, NEAR_ROAD.3);
+                for c in 0..3 {
+                    sum[c] += m[c] / frames as f32;
+                }
+            }
+            sum
+        };
+        let clear = gi(&mut harness);
+        set(&mut harness, &[Edit::Preset(preset("Cloudy"))]);
+        let cloudy = gi(&mut harness);
+        let blue_to_red = |c: [f32; 3]| c[2] / c[0].max(0.5);
+        eprintln!(
+            "Photon GI of the road: clear {clear:?} (b/r {:.2}), cloudy {cloudy:?} (b/r {:.2})",
+            blue_to_red(clear),
+            blue_to_red(cloudy)
+        );
+        assert!(
+            blue_to_red(cloudy) < blue_to_red(clear) - 0.03,
+            "an overcast sky is greyer for Photon: {:.2} -> {:.2}",
+            blue_to_red(clear),
+            blue_to_red(cloudy)
+        );
+
+        // No flicker added: the weather's factors depend on the settings only, so a still camera under fog and
+        // clouds varies between frames as little as without them (plus the fog's softening of the noise).
+        let spread = |harness: &mut Harness| {
+            let engine = engine_of(harness);
+            let lumas: Vec<f32> = (0..16)
+                .map(|_| {
+                    let img = floats(&render_entity_view_sized(engine, W, H));
+                    region(&img, NEAR_ROAD)
+                })
+                .collect();
+            let low = lumas.iter().cloned().fold(f32::MAX, f32::min);
+            let high = lumas.iter().cloned().fold(f32::MIN, f32::max);
+            high - low
+        };
+        set(&mut harness, &[Edit::Preset(preset("Off"))]);
+        settle(&mut harness);
+        let off_spread = spread(&mut harness);
+        set(&mut harness, &[Edit::Preset(preset("Fog"))]);
+        settle(&mut harness);
+        let fog_spread = spread(&mut harness);
+        eprintln!("GI spread over 16 frames: off {off_spread:.2}, fog {fog_spread:.2}");
+        assert!(
+            fog_spread <= off_spread * 1.5 + 1.5,
+            "weather must not add flicker: {off_spread:.2} -> {fog_spread:.2}"
+        );
+    }
+
+    /// Pixels that differ, how many and by how much at most.
+    fn differences(a: &[u8], b: &[u8]) -> (usize, u8) {
+        let mut count = 0;
+        let mut worst = 0u8;
+        for (pa, pb) in a.chunks(4).zip(b.chunks(4)) {
+            let d = (0..4).map(|c| pa[c].abs_diff(pb[c])).max().unwrap();
+            if d > 0 {
+                count += 1;
+                worst = worst.max(d);
+            }
+        }
+        (count, worst)
+    }
+
+    /// Mean absolute difference per channel between two images.
+    fn mad(a: &[u8], b: &[u8]) -> f32 {
+        let sum: u64 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| x.abs_diff(*y) as u64)
+            .sum();
+        sum as f32 / a.len() as f32
+    }
+
+    /// Pixels that differ by at least `by` levels (either way).
+    fn changed(a: &[u8], b: &[u8], by: u8) -> usize {
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .filter(|(pa, pb)| (0..3).any(|c| pa[c].abs_diff(pb[c]) >= by))
+            .count()
+    }
+
+    /// The renderer is not bit-exact from one still frame to the next (ambient occlusion, dithering): two frames
+    /// of the same scene differ by a small, steady amount. A change is "no change" when it stays within that.
+    struct Reference {
+        image: Vec<u8>,
+        noise: f32,
+    }
+
+    impl Reference {
+        fn assert_unchanged(&self, other: &[u8], what: &str) {
+            let delta = mad(&self.image, other);
+            let (_, worst) = differences(&self.image, other);
+            eprintln!(
+                "{what}: {delta:.4} apart (frame noise {:.4}), worst {worst}",
+                self.noise
+            );
+            assert!(
+                delta <= self.noise * 1.5 + 0.05 && worst <= 16,
+                "{what}: {delta:.4} levels apart on average (a still frame varies by {:.4}), worst {worst}",
+                self.noise
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic: is a still frame deterministic?"]
+    fn zz_determinism() {
+        let Some(mut harness) = road_harness() else {
+            return;
+        };
+        let a = baseline(&mut harness);
+        let b = baseline(&mut harness);
+        let engine = engine_of(&mut harness);
+        let c = frame(engine, road_camera());
+        eprintln!(
+            "baseline vs baseline {:?} {:.4}, baseline vs with-components {:?} {:.4}",
+            differences(&a, &b),
+            mad(&a, &b),
+            differences(&a, &c),
+            mad(&a, &c)
+        );
+    }
+
+    #[test]
+    #[ignore = "diagnostic: saves the environment scenes as PNGs in $ENV_SHOTS"]
+    fn zz_environment_shots() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let _room = road(engine);
+        }
+        harness.app.entities.clear();
+        harness.dispatch(Message::Environment(panel::Edit::Add));
+        for name in ["Off", "Clear sky", "Cloudy", "Fog", "Light rain", "Storm"] {
+            harness.dispatch(Message::Environment(panel::Edit::Preset(preset(name))));
+            let engine = harness.app.engine.as_mut().unwrap();
+            let road = averaged(engine, road_camera(), 4);
+            shot(&format!("road-{}", name.replace(' ', "_")), &to_u8(&road));
+            let sky = averaged(engine, sky_camera(), 4);
+            shot(&format!("sky-{}", name.replace(' ', "_")), &to_u8(&sky));
+        }
+        // The same cloudy sky with and without the ground shadows (the preset has them on).
+        harness.dispatch(Message::Environment(panel::Edit::Preset(preset("Cloudy"))));
+        for (name, on) in [
+            ("road-Cloudy_no_shadows", false),
+            ("road-Cloudy_shadows", true),
+        ] {
+            harness.dispatch(Message::Environment(panel::Edit::Flag(
+                Flag::CloudShadows,
+                on,
+            )));
+            let engine = harness.app.engine.as_mut().unwrap();
+            let road = averaged(engine, road_camera(), 4);
+            shot(name, &to_u8(&road));
+        }
+        // A strike at its brightest, in the Storm preset.
+        for edit in [
+            panel::Edit::Preset(preset("Storm")),
+            panel::Edit::Amount(Amount::LightningRate, 60.0),
+            panel::Edit::Amount(Amount::LightningDistanceMin, 300.0),
+            panel::Edit::Amount(Amount::LightningDistanceMax, 500.0),
+        ] {
+            harness.dispatch(Message::Environment(edit));
+        }
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.set_camera(road_camera()).unwrap();
+        let mut best = (0.0f32, Vec::new());
+        for _ in 0..180 {
+            let image = render_entity_view_sized(engine, W, H);
+            let flash = engine.weather_state().unwrap().flash;
+            if flash > best.0 {
+                best = (flash, image);
+            }
+        }
+        shot("road-lightning", &best.1);
+    }
+}
+
+/// The Audio tab and the volumetric audio it drives: the settings component, emitters and walls as the scene's
+/// sounds and obstacles, and what the mixer decides (blocked, Doppler) read back through the C ABI. The speakers
+/// stay off: the session mixes silently and the tests pull the samples themselves.
+mod audio_panel {
+    use super::*;
+    use crate::uikit::panels::audio::{self as panel, Amount, Edit, Flag, Settings};
+
+    fn write_tone(name: &str) -> String {
+        let rate = 22050u32;
+        let samples: Vec<i16> = (0..rate)
+            .map(|i| {
+                ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 12000.0) as i16
+            })
+            .collect();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + samples.len() as u32 * 2).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&rate.to_le_bytes());
+        bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(samples.len() as u32 * 2).to_le_bytes());
+        for s in samples {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path.display().to_string()
+    }
+
+    fn frames(harness: &mut Harness, n: usize) {
+        let engine = harness.app.engine.as_mut().unwrap();
+        for _ in 0..n {
+            let _ = render_entity_view_sized(engine, 64, 48);
+        }
+    }
+
+    fn set_field(
+        harness: &mut Harness,
+        entity: u32,
+        component: &str,
+        field: &str,
+        value: doppio_engine::FieldValue,
+    ) {
+        let engine = harness.app.engine.as_mut().unwrap();
+        let type_id = component_type_id(engine, component).expect("component");
+        set_component_field(engine, entity, type_id, field, value).expect("field");
+    }
+
+    #[test]
+    fn the_audio_table_is_consistent() {
+        use std::collections::HashSet;
+        let mut keys = HashSet::new();
+        for flag in Flag::ALL {
+            let spec = flag.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for amount in Amount::ALL {
+            let spec = amount.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(
+                spec.min <= spec.default && spec.default <= spec.max,
+                "{} default is out of its range",
+                spec.key
+            );
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for id in [
+            id::PANE_AUDIO,
+            id::PANE_TAB_AUDIO,
+            id::SHOW_AUDIO,
+            id::AUDIO_ADD,
+            id::AUDIO_OUTPUT,
+            id::AUDIO_DEVICE,
+            id::AUDIO_ADD_SOURCE,
+            id::AUDIO_ADD_WALL,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{} is not in the CATALOG",
+                id.key()
+            );
+        }
+        // The summary and a voice's line say what the mixer decided.
+        let live = panel::Live::default();
+        assert_eq!(
+            panel::summary(None, &live),
+            "no volumetric audio in the scene"
+        );
+        let mut row = panel::VoiceRow {
+            name: "Radio".into(),
+            layer: 0,
+            loaded: true,
+            playing: true,
+            distance_m: 12.4,
+            gain_db: -31.0,
+            cutoff_hz: 900.0,
+            pitch_ratio: 1.0,
+            blocked: true,
+            diffracted: false,
+        };
+        assert_eq!(
+            panel::voice_line(&row),
+            "Radio · World · 12 m · -31 dB · 0.9 kHz · behind a wall"
+        );
+        row.diffracted = true;
+        row.pitch_ratio = 1.08;
+        assert!(panel::voice_line(&row).ends_with("pitch x1.08 · round a corner"));
+        row.loaded = false;
+        assert_eq!(panel::voice_line(&row), "Radio · clip not found");
+    }
+
+    #[test]
+    fn the_tab_adds_the_component_edits_it_and_undoes() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.rebase_history();
+        assert!(harness.app().audio.settings.is_none());
+        harness.dispatch(Message::ShowAudio);
+        assert!(harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.pages.contains(&PaneKind::Audio)));
+        harness.dispatch(Message::Audio(Edit::Add));
+        assert_eq!(
+            harness.app().audio.settings,
+            Some(Settings::default()),
+            "the engine's defaults are the panel's"
+        );
+        let entities = harness.app().entities.len();
+        harness.dispatch(Message::Audio(Edit::Add));
+        assert_eq!(
+            harness.app().entities.len(),
+            entities,
+            "a second Add does nothing"
+        );
+        harness.dispatch(Message::Audio(Edit::Flag(Flag::Occlusion, false)));
+        harness.dispatch(Message::Audio(Edit::Amount(Amount::Doppler, 2.5)));
+        harness.dispatch(Message::Audio(Edit::Amount(Amount::Master, 99.0)));
+        let s = harness.app().audio.settings.clone().unwrap();
+        assert!(!s.flag(Flag::Occlusion));
+        assert_eq!(s.amount(Amount::Doppler), 2.5);
+        assert_eq!(
+            s.amount(Amount::Master),
+            2.0,
+            "clamped to what the component accepts"
+        );
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness
+                .app()
+                .audio
+                .settings
+                .as_ref()
+                .unwrap()
+                .amount(Amount::Doppler),
+            1.0
+        );
+    }
+
+    /// With volumetric audio in the scene the weather is played by its mixer: the beds are ambient voices and each
+    /// strike's clap a sound in the sky. (The volume stays 0: nothing is heard while this runs.)
+    #[test]
+    fn with_volumetric_audio_the_weather_is_played_by_the_mixer() {
+        use crate::uikit::panels::environment::{
+            self as env, Amount as EnvAmount, Edit as EnvEdit, Flag as EnvFlag,
+        };
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        // These watch the scene move or sound: the editor starts stopped, so switch the simulation on.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        harness.dispatch(Message::Environment(EnvEdit::Add));
+        let storm = env::presets()
+            .iter()
+            .position(|p| p.name == "Storm")
+            .unwrap();
+        for edit in [
+            EnvEdit::Preset(storm),
+            EnvEdit::Amount(EnvAmount::LightningRate, 60.0),
+            EnvEdit::Amount(EnvAmount::LightningDistanceMin, 300.0),
+            EnvEdit::Amount(EnvAmount::LightningDistanceMax, 500.0),
+            EnvEdit::Amount(EnvAmount::AudioVolume, 0.0),
+            EnvEdit::Flag(EnvFlag::AudioEnabled, true),
+        ] {
+            harness.dispatch(Message::Environment(edit));
+        }
+        harness.dispatch(Message::Audio(Edit::Add));
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            engine
+                .set_camera(doppio_engine::Camera {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    distance: 0.5,
+                    focus: [0.0, 1.5, 0.0],
+                })
+                .unwrap();
+        }
+        frames(&mut harness, 200);
+        let state = harness.app.engine.as_ref().unwrap().audio_state().unwrap();
+        assert!(state.enabled);
+        assert!(
+            state.rain_level > 0.3 && state.wind_level > 0.05,
+            "{state:?}"
+        );
+        assert!(
+            state.rain_playing && state.wind_playing,
+            "the beds are voices of the volumetric mixer: {state:?}"
+        );
+        assert!(state.thunder_heard >= 1, "{state:?}");
+        assert_eq!(
+            state.thunder_played, state.thunder_heard,
+            "every clap became a sound in the sky"
+        );
+        // The same weather with the volumetric audio switched off goes back to the plain player (no device needed to count).
+        harness.dispatch(Message::Audio(Edit::Flag(Flag::Enabled, false)));
+        frames(&mut harness, 200);
+        let plain = harness.app.engine.as_ref().unwrap().audio_state().unwrap();
+        assert!(plain.rain_level > 0.3, "{plain:?}");
+    }
+
+    #[test]
+    fn the_device_list_is_read_and_choosing_one_never_breaks_the_tab() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.dispatch(Message::Audio(Edit::Add));
+        harness.dispatch(Message::ShowAudio);
+        let listed = harness.app().audio.devices.clone();
+        let engine_devices = harness.app.engine.as_ref().unwrap().audio_output_devices();
+        assert_eq!(listed, engine_devices, "the list is in a stable order");
+        // 0 is the system default; any index is clamped to the list. The speakers stay off.
+        harness.dispatch(Message::Audio(Edit::Device(0)));
+        assert_eq!(harness.app().audio.device, 0);
+        harness.dispatch(Message::Audio(Edit::Device(99)));
+        assert_eq!(harness.app().audio.device, listed.len());
+        harness.dispatch(Message::Audio(Edit::Device(0)));
+        assert!(!harness.app().audio.output_on);
+    }
+
+    #[test]
+    fn sources_and_walls_become_voices_that_walls_block_and_motion_shifts() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        // These watch the scene move or sound: the editor starts stopped, so switch the simulation on.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        let tone = write_tone("doppio_audio_panel_tone.wav");
+        harness.dispatch(Message::Audio(Edit::Add));
+        // The ears are the viewport camera; look down +Z from the origin.
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            engine
+                .set_camera(doppio_engine::Camera {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    distance: 0.5,
+                    focus: [0.0, 1.5, 0.0],
+                })
+                .unwrap();
+        }
+        harness.dispatch(Message::Audio(Edit::AddSource));
+        let source = harness.app().entities.last().unwrap().id;
+        set_field(
+            &mut harness,
+            source,
+            "Audio Emitter",
+            "Clip Path",
+            doppio_engine::FieldValue::String(tone.clone()),
+        );
+        set_field(
+            &mut harness,
+            source,
+            "Audio Emitter",
+            "Loop",
+            doppio_engine::FieldValue::Bool(true),
+        );
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            engine.set_position(source, [0.0, 1.5, 40.0]).unwrap();
+        }
+        frames(&mut harness, 12);
+        let state = harness
+            .app
+            .engine
+            .as_ref()
+            .unwrap()
+            .volumetric_state()
+            .unwrap();
+        assert!(state.enabled);
+        assert_eq!(state.voices, 1);
+        assert_eq!(state.clips_missing, 0);
+        let clear = harness
+            .app
+            .engine
+            .as_ref()
+            .unwrap()
+            .volumetric_voice(0)
+            .unwrap();
+        assert!(clear.loaded && clear.playing && !clear.blocked, "{clear:?}");
+        assert!((clear.distance_m - 40.0).abs() < 1.5, "{clear:?}");
+        assert!((clear.delay_s - clear.distance_m / 343.0).abs() < 0.01);
+        // Silent session, but the samples can be pulled: the source is heard.
+        let heard = harness
+            .app
+            .engine
+            .as_mut()
+            .unwrap()
+            .volumetric_render(4800)
+            .unwrap();
+        assert!(heard.iter().fold(0.0f32, |m, v| m.max(v.abs())) > 0.001);
+
+        // A wall between them: the mixer says blocked and the level falls.
+        harness.dispatch(Message::Audio(Edit::AddWall));
+        let wall = harness.app().entities.last().unwrap().id;
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            engine.set_position(wall, [0.0, 1.5, 20.0]).unwrap();
+            engine.set_scale(wall, [400.0, 40.0, 0.4]).unwrap();
+        }
+        frames(&mut harness, 12);
+        let blocked = harness
+            .app
+            .engine
+            .as_ref()
+            .unwrap()
+            .volumetric_voice(0)
+            .unwrap();
+        assert!(blocked.blocked, "{blocked:?}");
+        assert!(
+            blocked.gain_db < clear.gain_db - 12.0,
+            "{} -> {}",
+            clear.gain_db,
+            blocked.gain_db
+        );
+        assert!(blocked.cutoff_hz < 1500.0, "muffled: {blocked:?}");
+        assert_eq!(
+            harness
+                .app
+                .engine
+                .as_ref()
+                .unwrap()
+                .volumetric_state()
+                .unwrap()
+                .obstacles,
+            1
+        );
+
+        // Out of the way again: clear.
+        set_field(
+            &mut harness,
+            wall,
+            "Acoustic Obstacle",
+            "Enabled",
+            doppio_engine::FieldValue::Bool(false),
+        );
+        frames(&mut harness, 12);
+        assert!(
+            !harness
+                .app
+                .engine
+                .as_ref()
+                .unwrap()
+                .volumetric_voice(0)
+                .unwrap()
+                .blocked
+        );
+
+        // A source driving towards the listener is Doppler shifted up; away, down.
+        let mut ratios = Vec::new();
+        for z in (0..60).map(|i| 60.0 - i as f32 * 0.35) {
+            harness
+                .app
+                .engine
+                .as_mut()
+                .unwrap()
+                .set_position(source, [0.0, 1.5, z])
+                .unwrap();
+            frames(&mut harness, 1);
+            ratios.push(
+                harness
+                    .app
+                    .engine
+                    .as_ref()
+                    .unwrap()
+                    .volumetric_voice(0)
+                    .unwrap()
+                    .pitch_ratio,
+            );
+        }
+        let approaching = ratios[20..].iter().sum::<f32>() / ratios[20..].len() as f32;
+        // 0.35 m per frame at 60 frames a second is 21 m/s: 1 / (1 - 21/343) = 1.065.
+        assert!(
+            approaching > 1.03 && approaching < 1.10,
+            "approaching pitch {approaching}"
+        );
+        let _ = std::fs::remove_file(tone);
+
+        // The agent sees the same rows.
+        harness.dispatch(Message::ShowAudio);
+        let live = &harness.app().audio.live;
+        assert_eq!(live.voices.len(), 1);
+        assert!(live.voices[0].loaded);
+    }
+}
+
+/// Performance measurements on the benchmark scene. They print numbers (run them with `--ignored --nocapture`):
+/// nothing here fails on speed, because speed depends on the machine; the profiler's own behaviour is tested
+/// in `profiler_scopes`.
+mod perf {
+    use super::*;
+
+    const W: u32 = 1280;
+    const H: u32 = 720;
+
+    fn scene_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../assets/benchmarks/dense_outdoor.caf")
+    }
+
+    /// Mean wall time of a frame in milliseconds, over `n` frames after a warm-up.
+    pub fn frame_ms(engine: &mut doppio_engine::Engine, n: usize) -> f32 {
+        for _ in 0..8 {
+            engine.tick(0.016);
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            engine.tick(0.016);
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        start.elapsed().as_secs_f32() * 1000.0 / n as f32
+    }
+
+    /// The profiler's tree after `n` frames with GPU timing on (each pass waits for the GPU).
+    pub fn profile(
+        engine: &mut doppio_engine::Engine,
+        n: usize,
+    ) -> Vec<doppio_engine::ProfileScope> {
+        engine.set_profiler_gpu_timing(true).unwrap();
+        for _ in 0..8 {
+            engine.tick(0.016);
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        engine.profiler_reset().unwrap();
+        for _ in 0..n {
+            engine.tick(0.016);
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let scopes = engine.profiler_scopes().unwrap();
+        engine.set_profiler_gpu_timing(false).unwrap();
+        scopes
+    }
+
+    pub fn print(title: &str, scopes: &[doppio_engine::ProfileScope]) {
+        eprintln!("--- {title}");
+        for scope in scopes {
+            eprintln!(
+                "{:indent$}{:<34} {:>8.2} ms avg {:>8.2} max {:>8.2} self {:>6} calls",
+                "",
+                scope.name,
+                scope.avg_ms,
+                scope.max_ms,
+                scope.self_ms,
+                scope.calls,
+                indent = (scope.depth * 2) as usize
+            );
+        }
+    }
+
+    pub fn loaded() -> Option<(MutexGuard<'static, ()>, doppio_engine::Engine)> {
+        let guard = test_guard();
+        let mut engine = doppio_engine::Engine::load_default()?;
+        engine.load_scene(&scene_path().to_string_lossy()).ok()?;
+        engine
+            .set_viewport_settings(doppio_engine::ViewportSettings {
+                show_grid: false,
+                anti_aliasing: doppio_engine::AntiAliasing::Off,
+                render_scale: 1.0,
+                shadows: true,
+            })
+            .ok()?;
+        Some((guard, engine))
+    }
+
+    /// The cost of each feature on the benchmark scene: wall time per frame with it on, and the profiler's top scopes.
+    #[test]
+    #[ignore = "measurement: the cost of clouds, fog, rain and Photon on the benchmark scene"]
+    fn zz_profile_features() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            super::photon_gi::clear_scene(engine);
+            engine.load_scene(&scene_path().to_string_lossy()).unwrap();
+            engine
+                .set_viewport_settings(doppio_engine::ViewportSettings {
+                    show_grid: false,
+                    anti_aliasing: doppio_engine::AntiAliasing::Off,
+                    render_scale: 1.0,
+                    shadows: true,
+                })
+                .unwrap();
+        }
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        let report = |harness: &mut Harness, title: &str| {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let ms = frame_ms(engine, 30);
+            eprintln!("{title:<44} {ms:>7.2} ms  {:>4.0} fps", 1000.0 / ms);
+            let scopes = profile(engine, 12);
+            let all = std::env::var_os("PERF_ALL").is_some();
+            for scope in scopes
+                .iter()
+                .filter(|s| all || (s.depth <= 2 && s.avg_ms >= 0.4))
+            {
+                eprintln!(
+                    "    {:indent$}{:<30} {:>6.2} ms",
+                    "",
+                    scope.name,
+                    scope.avg_ms,
+                    indent = (scope.depth * 2) as usize
+                );
+            }
+        };
+        report(&mut harness, "baseline");
+        // After the first frames: the engine frames a freshly loaded scene on its first render.
+        let framing = harness.app.engine.as_ref().unwrap().camera().unwrap();
+        harness.dispatch(Message::Environment(
+            crate::uikit::panels::environment::Edit::Add,
+        ));
+        let presets = crate::uikit::panels::environment::presets();
+        let apply = |harness: &mut Harness, name: &str| {
+            let index = presets.iter().position(|p| p.name == name).unwrap();
+            harness.dispatch(Message::Environment(
+                crate::uikit::panels::environment::Edit::Preset(index),
+            ));
+        };
+        apply(&mut harness, "Off");
+        report(&mut harness, "environment entity present, all off");
+        apply(&mut harness, "Cloudy");
+        report(&mut harness, "clouds (Cloudy), scene view");
+        let up = doppio_engine::Camera {
+            pitch: -0.2,
+            ..framing
+        };
+        harness.app.engine.as_mut().unwrap().set_camera(up).unwrap();
+        report(&mut harness, "clouds (Cloudy), looking at the sky");
+        harness
+            .app
+            .engine
+            .as_mut()
+            .unwrap()
+            .set_camera(framing)
+            .unwrap();
+        apply(&mut harness, "Fog");
+        report(&mut harness, "fog preset, scene view");
+        {
+            use crate::uikit::panels::environment::{Edit, Flag};
+            harness.dispatch(Message::Environment(Edit::Flag(Flag::FogEnabled, false)));
+            report(&mut harness, "fog preset, fog switched off");
+            harness.dispatch(Message::Environment(Edit::Flag(Flag::CloudsEnabled, false)));
+            report(&mut harness, "fog preset, fog and clouds off");
+        }
+        apply(&mut harness, "Storm");
+        report(&mut harness, "storm (rain, fog, clouds), scene view");
+        apply(&mut harness, "Off");
+        let water_entity = {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let id = engine.create_entity("Water").unwrap();
+            engine.set_position(id, framing.focus).unwrap();
+            engine
+                .set_water(
+                    id,
+                    &doppio_engine::Water {
+                        size: [300.0, 300.0],
+                        resolution: 192,
+                        level: 1.0,
+                        ..doppio_engine::Water::default()
+                    },
+                )
+                .unwrap();
+            id
+        };
+        report(&mut harness, "water 300 x 300 m, 192 x 192");
+        harness
+            .app
+            .engine
+            .as_mut()
+            .unwrap()
+            .destroy_entity(water_entity)
+            .unwrap();
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let id = engine.create_entity("Photon").unwrap();
+            let kind = add_component(engine, id, "Photon GI").unwrap();
+            let path = enum_field(engine, "Photon GI", "Path", "Compute").unwrap();
+            set_component_field(engine, id, kind, "Path", path).unwrap();
+            let quality = enum_field(engine, "Photon GI", "Quality", "High").unwrap();
+            set_component_field(engine, id, kind, "Quality", quality).unwrap();
+            set_component_field(
+                engine,
+                id,
+                kind,
+                "Enabled",
+                doppio_engine::FieldValue::Bool(true),
+            )
+            .unwrap();
+        }
+        report(&mut harness, "Photon GI (compute, High)");
+    }
+
+    /// The camera as the engine framed the benchmark scene, after its first frames.
+    fn framed(engine: &mut doppio_engine::Engine) -> doppio_engine::Camera {
+        for _ in 0..4 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        engine.camera().unwrap()
+    }
+
+    /// A sea in front of the camera: above the terrain around the focus, big enough to fill the view.
+    pub fn add_water(engine: &mut doppio_engine::Engine, focus: [f32; 3]) -> u32 {
+        let id = engine.create_entity("Sea").unwrap();
+        engine
+            .set_position(id, [focus[0], focus[1] + 6.0, focus[2]])
+            .unwrap();
+        engine
+            .set_water(
+                id,
+                &doppio_engine::Water {
+                    size: [400.0, 400.0],
+                    resolution: 192,
+                    level: 0.0,
+                    ..doppio_engine::Water::default()
+                },
+            )
+            .unwrap();
+        id
+    }
+
+    /// `count` swaying bushes (one shared foliage material: wind, flutter, translucency) on a grid round `focus`.
+    pub fn add_foliage(
+        engine: &mut doppio_engine::Engine,
+        focus: [f32; 3],
+        count: usize,
+    ) -> Vec<u32> {
+        let sphere = prefabs::PREFABS
+            .iter()
+            .find(|p| p.label == "Sphere")
+            .expect("Sphere prefab");
+        let mut material = engine.new_material().unwrap();
+        material.albedo = [0.15, 0.45, 0.12, 1.0];
+        material.roughness = 0.8;
+        material.wind_strength = 0.03;
+        material.wind_flutter = 0.5;
+        material.translucency = 0.4;
+        let dir = test_temp_root("perf-foliage");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("leaf.mat");
+        engine
+            .save_material(&path.to_string_lossy(), &material)
+            .unwrap();
+        let side = (count as f32).sqrt().ceil() as usize;
+        let mut ids = Vec::new();
+        for i in 0..count {
+            let (x, z) = (
+                (i % side) as f32 - side as f32 / 2.0,
+                (i / side) as f32 - side as f32 / 2.0,
+            );
+            let position = [focus[0] + x * 3.0, focus[1] + 1.0, focus[2] + z * 3.0];
+            let t0 = std::time::Instant::now();
+            let id = create_prefab_entity(engine, sphere, position).unwrap();
+            let t1 = std::time::Instant::now();
+            engine.set_scale(id, [1.6, 2.0, 1.6]).unwrap();
+            let t2 = std::time::Instant::now();
+            engine.apply_material(id, &path.to_string_lossy()).unwrap();
+            let t3 = std::time::Instant::now();
+            if i % 50 == 0 {
+                eprintln!(
+                    "    entity {i}: prefab {:.1} ms, scale {:.1} ms, material {:.1} ms",
+                    (t1 - t0).as_secs_f32() * 1e3,
+                    (t2 - t1).as_secs_f32() * 1e3,
+                    (t3 - t2).as_secs_f32() * 1e3
+                );
+            }
+            ids.push(id);
+            if i % 100 == 99 {
+                eprintln!("    ... {} bushes created", i + 1);
+            }
+        }
+        ids
+    }
+
+    /// Water and foliage on the benchmark scene: what each costs, with the profiler's scopes.
+    #[test]
+    #[ignore = "measurement: the cost of a sea and of swaying bushes (PERF_BUSHES, default 150) on the benchmark scene"]
+    fn zz_profile_world() {
+        let Some((_guard, mut engine)) = loaded() else {
+            return;
+        };
+        let camera = framed(&mut engine);
+        let focus = camera.focus;
+        let report = |engine: &mut doppio_engine::Engine, title: &str| {
+            let ms = frame_ms(engine, 30);
+            eprintln!("{title:<44} {ms:>7.2} ms  {:>4.0} fps", 1000.0 / ms);
+            let scopes = profile(engine, 12);
+            let all = std::env::var_os("PERF_ALL").is_some();
+            for scope in scopes
+                .iter()
+                .filter(|s| all || (s.depth <= 2 && s.avg_ms >= 0.4))
+            {
+                eprintln!(
+                    "    {:indent$}{:<30} {:>6.2} ms",
+                    "",
+                    scope.name,
+                    scope.avg_ms,
+                    indent = (scope.depth * 2) as usize
+                );
+            }
+            if let Ok(stats) = engine.render_stats() {
+                eprintln!(
+                    "    {} draws, {} instanced, {:.0}k triangles",
+                    stats.draw_calls,
+                    stats.instanced_draw_calls,
+                    stats.triangles as f64 / 1000.0
+                );
+            }
+        };
+        report(&mut engine, "benchmark scene");
+        let sea = add_water(&mut engine, focus);
+        report(&mut engine, "+ sea 400 x 400 m, 192 x 192");
+        engine.destroy_entity(sea).unwrap();
+        let count: usize = std::env::var("PERF_BUSHES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(150);
+        let started = std::time::Instant::now();
+        let bushes = add_foliage(&mut engine, focus, count);
+        eprintln!(
+            "    creating {count} bushes took {:.1} s",
+            started.elapsed().as_secs_f32()
+        );
+        report(&mut engine, &format!("+ {count} swaying bushes"));
+        for id in bushes {
+            engine.destroy_entity(id).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement: prints the profiler's tree of the benchmark scene"]
+    fn zz_profile_dense_outdoor() {
+        let Some((_guard, mut engine)) = loaded() else {
+            return;
+        };
+        eprintln!("entities: {}", engine.entity_count());
+        let ms = frame_ms(&mut engine, 30);
+        eprintln!(
+            "wall time per frame (GPU timing off): {ms:.2} ms ({:.0} fps)",
+            1000.0 / ms
+        );
+        let scopes = profile(&mut engine, 20);
+        print("dense_outdoor, GPU timing on", &scopes);
+        if let Ok(stats) = engine.render_stats() {
+            eprintln!("{stats:?}");
+        }
+    }
+}
+
+/// The profiler: the engine's scope tree, the GPU timing switch and the tab that shows them.
+mod profiler_scopes {
+    use super::*;
+    use crate::uikit::panels::profiler::{self as panel, Edit};
+    use doppio_engine::ProfileScope;
+
+    fn scope(name: &str, depth: u32, avg_ms: f32) -> ProfileScope {
+        ProfileScope {
+            name: name.to_owned(),
+            depth,
+            calls: 10,
+            last_ms: avg_ms,
+            avg_ms,
+            max_ms: avg_ms * 2.0,
+            self_ms: avg_ms,
+            recent_avg_ms: avg_ms,
+            recent_max_ms: avg_ms * 2.0,
+        }
+    }
+
+    #[test]
+    fn the_frame_and_the_summary_come_from_the_renderers_top_scope() {
+        let scopes = vec![
+            scope(panel::FRAME_SCOPE, 0, 8.0),
+            scope("GpuSceneRenderer::shadows", 1, 3.0),
+            scope("GpuSceneRenderer::opaque", 1, 2.0),
+            scope("Photon::probes", 2, 9.0),
+        ];
+        let (ms, fps) = panel::frame(&scopes).expect("a frame");
+        assert_eq!(ms, 8.0);
+        assert_eq!(fps, 125.0);
+        assert_eq!(
+            panel::summary(&scopes, false),
+            "CPU scopes · 8.0 ms · 125 fps"
+        );
+        assert_eq!(
+            panel::summary(&scopes, true),
+            "GPU timing · 8.0 ms · 125 fps"
+        );
+        assert_eq!(panel::summary(&[], false), "CPU scopes · no frames yet");
+        // The heaviest of the top two levels, most expensive first.
+        let top: Vec<&str> = panel::heaviest(&scopes, 2)
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(top, [panel::FRAME_SCOPE, "GpuSceneRenderer::shadows"]);
+        assert!(panel::frame(&[scope("other", 0, 1.0)]).is_none());
+        assert!(panel::frame(&[scope(panel::FRAME_SCOPE, 0, 0.0)]).is_none());
+    }
+
+    fn sample(cores: usize, gpu: Option<f32>) -> doppio_engine::SystemMetrics {
+        doppio_engine::SystemMetrics {
+            cpu_cores: (0..cores).map(|i| i as f32 * 10.0).collect(),
+            cpu_total: 25.0,
+            process_cpu: 140.0,
+            ram_process_mib: Some(500.0),
+            ram_used_mib: Some(8000.0),
+            ram_total_mib: Some(16000.0),
+            gpu_busy: gpu,
+            vram_used_mib: gpu.map(|_| 1000.0),
+            vram_total_mib: gpu.map(|_| 4000.0),
+        }
+    }
+
+    #[test]
+    fn the_history_keeps_a_minute_and_a_series_per_core() {
+        let mut history = panel::History::default();
+        for i in 0..300 {
+            history.push(60.0 + (i % 5) as f32, Some(&sample(4, Some(50.0))));
+        }
+        assert_eq!(history.fps.len(), panel::HISTORY_SAMPLES);
+        assert_eq!(history.cores.len(), 4);
+        assert!(history
+            .cores
+            .iter()
+            .all(|c| c.len() == panel::HISTORY_SAMPLES));
+        assert_eq!(history.cores[3].last(), Some(&30.0));
+        assert_eq!(history.cpu_total.len(), panel::HISTORY_SAMPLES);
+        assert_eq!(history.vram_percent.last(), Some(&25.0));
+        assert_eq!(history.vram_total_mib, Some(4000.0));
+        assert_eq!(history.ram_used_mib.last(), Some(&8000.0));
+        let (last, mean, low) = panel::stats(&history.fps).unwrap();
+        assert_eq!(last, 60.0 + (299 % 5) as f32);
+        assert!((60.0..=64.0).contains(&mean) && low == 60.0);
+        assert!(panel::stats(&[]).is_none());
+    }
+
+    #[test]
+    fn a_machine_without_gpu_or_per_core_data_leaves_those_series_empty() {
+        let mut history = panel::History::default();
+        let bare = doppio_engine::SystemMetrics {
+            cpu_cores: Vec::new(),
+            cpu_total: 0.0,
+            process_cpu: 0.0,
+            ram_process_mib: None,
+            ram_used_mib: None,
+            ram_total_mib: None,
+            gpu_busy: None,
+            vram_used_mib: None,
+            vram_total_mib: None,
+        };
+        history.push(30.0, Some(&bare));
+        history.push(31.0, None);
+        assert_eq!(history.fps, [30.0, 31.0]);
+        assert!(history.cores.is_empty() && history.cpu_total.is_empty());
+        assert!(history.gpu_busy.is_empty() && history.vram_percent.is_empty());
+        assert!(history.ram_used_mib.is_empty() && history.ram_process_mib.is_empty());
+        // The core count changing (a CPU taken offline) restarts the per-core series instead of misaligning them.
+        history.push(30.0, Some(&sample(4, None)));
+        history.push(30.0, Some(&sample(2, None)));
+        assert_eq!(history.cores.len(), 2);
+        assert_eq!(history.cores[0].len(), 1);
+        history.clear();
+        assert!(history.fps.is_empty());
+    }
+
+    #[test]
+    fn the_chart_scales_and_positions_are_round_and_clamped() {
+        use crate::uikit::components::line_chart::{nice_max, x_fraction, y_fraction};
+        assert_eq!(nice_max(0.0, 60.0), 100.0);
+        assert_eq!(nice_max(61.0, 60.0), 100.0);
+        assert_eq!(nice_max(144.0, 60.0), 200.0);
+        assert_eq!(nice_max(320.0, 60.0), 500.0);
+        assert_eq!(nice_max(16000.0, 1.0), 20000.0);
+        assert_eq!(nice_max(100.0, 1.0), 100.0);
+        assert_eq!(nice_max(0.3, 0.0), 0.5);
+        // The newest sample is at the right edge, older ones to the left, and a short series starts part-way in.
+        assert_eq!(x_fraction(9, 10, 10), 1.0);
+        assert_eq!(x_fraction(0, 10, 10), 0.0);
+        assert!((x_fraction(0, 5, 10) - (1.0 - 4.0 / 9.0)).abs() < 1e-6);
+        assert_eq!(x_fraction(0, 1, 1), 1.0);
+        assert_eq!(y_fraction(50.0, 0.0, 100.0), 0.5);
+        assert_eq!(y_fraction(-5.0, 0.0, 100.0), 0.0);
+        assert_eq!(y_fraction(500.0, 0.0, 100.0), 1.0);
+        assert_eq!(y_fraction(5.0, 10.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn the_engine_reports_the_machine() {
+        let Some(harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_ref().unwrap();
+        let _ = engine.system_metrics().unwrap(); // primes the percentages
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        let mut sink = 0.0f64;
+        while std::time::Instant::now() < until {
+            sink += 1.0;
+        }
+        std::hint::black_box(sink);
+        let m = engine.system_metrics().unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            assert!(!m.cpu_cores.is_empty());
+            assert!(m.cpu_cores.iter().all(|c| (0.0..=100.0).contains(c)));
+            assert!(m.process_cpu > 0.0, "{m:?}");
+            assert!(m.ram_total_mib.unwrap() >= m.ram_used_mib.unwrap());
+            assert!(m.ram_process_mib.unwrap() > 0.0);
+        }
+        if let (Some(used), Some(total)) = (m.vram_used_mib, m.vram_total_mib) {
+            assert!(used <= total);
+        }
+        if let Some(busy) = m.gpu_busy {
+            assert!((0.0..=100.0).contains(&busy));
+        }
+    }
+
+    #[test]
+    fn the_app_samples_the_history_while_frames_finish() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let past = |ms: u64| std::time::Instant::now() - std::time::Duration::from_millis(ms);
+        let app = &mut harness.app;
+        app.profiler.history.clear();
+        app.profiler.last_sample = None;
+        app.profiler.primed = false;
+        // The first frame only starts the clock.
+        app.profiler_tick();
+        assert!(app.profiler.history.fps.is_empty());
+        // 30 frames in 300 ms: the first sample primes the engine's counters, the second one is recorded.
+        for _ in 0..2 {
+            for _ in 0..30 {
+                app.profiler_tick();
+            }
+            app.profiler.last_sample = Some(past(300));
+            app.profiler_tick();
+        }
+        assert_eq!(
+            app.profiler.history.fps.len(),
+            1,
+            "{:?}",
+            app.profiler.history.fps
+        );
+        let fps = app.profiler.history.fps[0];
+        assert!(
+            (70.0..=140.0).contains(&fps),
+            "30 frames in 0.3 s are about 100 fps, got {fps}"
+        );
+        // Inside the interval nothing is recorded.
+        app.profiler_tick();
+        assert_eq!(app.profiler.history.fps.len(), 1);
+        // Reset forgets the history too.
+        harness.dispatch(Message::Profiler(Edit::Reset));
+        assert!(harness.app().profiler.history.fps.is_empty());
+    }
+
+    #[test]
+    fn a_new_entity_name_is_the_first_free_one() {
+        use std::collections::HashSet;
+        let taken: HashSet<String> = ["Sphere", "Sphere 2", "Sphere 4", "Cube"]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(
+            super::super::unique_name_among(&taken, "Sphere"),
+            "Sphere 3"
+        );
+        assert_eq!(super::super::unique_name_among(&taken, "Cube"), "Cube 2");
+        assert_eq!(super::super::unique_name_among(&taken, "Light"), "Light");
+        assert_eq!(
+            super::super::unique_name_among(&HashSet::new(), "Sphere"),
+            "Sphere"
+        );
+    }
+
+    #[test]
+    fn many_entities_of_one_kind_get_distinct_names() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let sphere = prefabs::PREFABS
+            .iter()
+            .position(|p| p.label == "Sphere")
+            .unwrap();
+        for _ in 0..60 {
+            harness.dispatch(Message::CreatePrefab(sphere));
+        }
+        let names: std::collections::HashSet<&str> = harness
+            .app()
+            .entities
+            .iter()
+            .map(|entity| entity.name.as_str())
+            .collect();
+        assert_eq!(
+            names.len(),
+            harness.app().entities.len(),
+            "every name is distinct"
+        );
+        assert!(
+            names.contains("Sphere 60"),
+            "the sixtieth sphere is Sphere 60"
+        );
+    }
+
+    #[test]
+    fn the_profiler_ids_are_catalogued() {
+        use crate::uikit::id;
+        for key in [
+            id::PANE_PROFILER,
+            id::PANE_TAB_PROFILER,
+            id::SHOW_PROFILER,
+            id::PROFILER_GPU,
+            id::PROFILER_RESET,
+            id::PROFILER_FRAME,
+            id::PROFILER_TABLE,
+            id::PROFILER_CHART_FPS,
+            id::PROFILER_CHART_CPU,
+            id::PROFILER_CHART_GPU,
+            id::PROFILER_CHART_MEMORY,
+        ] {
+            assert!(id::description(key.key()).is_some(), "{}", key.key());
+        }
+        assert!(id::description(id::profiler_row(7).key()).is_some());
+    }
+
+    #[test]
+    fn the_engine_reports_scopes_after_a_frame_and_reset_forgets_them() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.profiler_reset().unwrap();
+        assert!(engine.profiler_scopes().unwrap().is_empty());
+        for _ in 0..3 {
+            let _ = render_entity_view_sized(engine, 160, 120);
+        }
+        let scopes = engine.profiler_scopes().unwrap();
+        let frame = scopes
+            .iter()
+            .find(|scope| scope.name == panel::FRAME_SCOPE)
+            .expect("the renderer's top scope");
+        assert!(frame.calls >= 3, "{frame:?}");
+        assert_eq!(frame.depth, 0);
+        assert!(frame.avg_ms > 0.0 && frame.max_ms >= frame.avg_ms);
+        // The recent window covers at most the latest 120 calls and never exceeds the whole history's worst.
+        assert!(frame.recent_avg_ms > 0.0 && frame.recent_max_ms >= frame.recent_avg_ms);
+        assert!(frame.recent_max_ms <= frame.max_ms * 1.001);
+        // Scopes are listed outer first: every child comes after its parent, one level deeper at most.
+        let mut previous = 0u32;
+        for scope in &scopes {
+            assert!(
+                scope.depth <= previous + 1,
+                "{}: depth {} after {}",
+                scope.name,
+                scope.depth,
+                previous
+            );
+            previous = scope.depth;
+        }
+        engine.profiler_reset().unwrap();
+        assert!(engine.profiler_scopes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn gpu_timing_times_the_gpu_passes_and_switches_back_off() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.dispatch(Message::Profiler(Edit::Gpu(true)));
+        assert!(harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .profiler_gpu_timing()
+            .unwrap());
+        assert!(harness.app().profiler.gpu_timing);
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.profiler_reset().unwrap();
+        for _ in 0..3 {
+            let _ = render_entity_view_sized(engine, 160, 120);
+        }
+        let on = engine.profiler_scopes().unwrap();
+        let names: Vec<&str> = on.iter().map(|scope| scope.name.as_str()).collect();
+        assert!(names.contains(&"GpuSceneRenderer::opaque"), "{names:?}");
+        assert!(names.contains(&"GpuSceneRenderer::post"), "{names:?}");
+
+        harness.dispatch(Message::Profiler(Edit::Gpu(false)));
+        assert!(!harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .profiler_gpu_timing()
+            .unwrap());
+        harness.dispatch(Message::Profiler(Edit::Reset));
+        assert!(harness.app().profiler.scopes.is_empty());
+    }
+
+    #[test]
+    fn the_tab_reads_the_scopes_only_while_it_shows() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.profiler_reset().unwrap();
+        for _ in 0..2 {
+            let _ = render_entity_view_sized(engine, 160, 120);
+        }
+        // Not shown: a refresh does nothing.
+        harness.dispatch(Message::ProfilerRefresh);
+        assert!(harness.app().profiler.scopes.is_empty());
+        harness.dispatch(Message::ShowProfiler);
+        assert!(harness.app().profiler_visible());
+        assert!(harness.app().profiler.available);
+        assert!(
+            !harness.app().profiler.scopes.is_empty(),
+            "showing the tab reads the scopes"
+        );
+        // The table's rows and the controls are on screen.
+        let mut ui = sim(harness.app().view());
+        for key in [
+            "profiler.setup.gpu_timing",
+            "profiler.setup.reset",
+            "profiler.table.scopes",
+            "profiler.table.row.0",
+            "profiler.chart.fps",
+            "profiler.chart.cpu_cores",
+            "profiler.chart.gpu",
+            "profiler.chart.memory",
+        ] {
+            assert!(ui.find(Id::from(key)).is_ok(), "missing {key}");
+        }
+    }
+
+    #[cfg(feature = "agent")]
+    #[test]
+    fn the_agent_turns_gpu_timing_on_and_reads_the_scopes() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let json = super::super::agent::profiler_json(&harness.app);
+        assert_eq!(json["available"], true);
+        assert!(json["scopes"].is_array());
+        harness.dispatch(Message::Profiler(Edit::Gpu(true)));
+        let json = super::super::agent::profiler_json(&harness.app);
+        assert_eq!(json["gpu_timing"], true);
+        harness.dispatch(Message::Profiler(Edit::Gpu(false)));
+    }
+}
+
+mod asset_picker {
+    use super::*;
+    use crate::uikit::asset_kind::AssetKind;
+    use crate::uikit::panels::{
+        terrain_generator as terrain_panel, water_generator as water_panel,
+    };
+    use assetpick::PickEdit;
+    use doppio_engine::{
+        AssetInfo, ComponentData, ComponentInfo, ComponentType, FieldInfo, FieldKind, FieldValue,
+    };
+
+    fn asset(name: &str, path: &str, kind: &str) -> AssetInfo {
+        AssetInfo {
+            name: name.to_owned(),
+            relative_path: path.to_owned(),
+            kind: kind.to_owned(),
+            size_bytes: 1,
+            is_directory: false,
+        }
+    }
+
+    /// A selected entity with a component whose string fields are a mesh, a material, free text
+    /// and "any asset", over a small project.
+    fn fixture() -> Harness {
+        let mut harness = Harness::with_entities();
+        let field = |name: &str| FieldInfo {
+            name: name.to_owned(),
+            kind: FieldKind::String,
+            min: 0.0,
+            max: 0.0,
+            step: 0.0,
+            options: Vec::new(),
+        };
+        harness.app.component_types = vec![ComponentType {
+            id: 7,
+            name: "Mesh Renderer".to_owned(),
+            fields: vec![
+                field("Mesh Path"),
+                field("Material Path"),
+                field("Tag"),
+                field("Custom Path"),
+            ],
+        }];
+        harness.app.components = vec![ComponentData {
+            info: ComponentInfo {
+                type_id: 7,
+                name: "Mesh Renderer".to_owned(),
+                field_count: 4,
+            },
+            values: vec![
+                FieldValue::String(String::new()),
+                FieldValue::String("Materials/old.mat".to_owned()),
+                FieldValue::String("hero".to_owned()),
+                FieldValue::String(String::new()),
+            ],
+        }];
+        harness.app.assets = vec![
+            asset("hero.glb", "Models/hero.glb", "mesh"),
+            asset("old.mat", "Materials/old.mat", "material"),
+            asset("brick.mat", "Materials/brick.mat", "material"),
+            asset("rock.png", "Textures/rock.png", "image"),
+            asset("boom.wav", "Sounds/boom.wav", "audio"),
+            asset("tree.prefab", "Props/tree.prefab", "prefab"),
+        ];
+        harness
+    }
+
+    fn value(harness: &Harness, field: usize) -> String {
+        match &harness.app().components[0].values[field] {
+            FieldValue::String(text) => text.clone(),
+            other => panic!("not a string: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_asset_field_shows_a_picker_button_and_a_plain_field_does_not() {
+        let harness = fixture();
+        for field in [0, 1, 3] {
+            assert!(
+                harness.has(Id::from(id::component_field(0, field, 1))),
+                "field {field} should have a pick button"
+            );
+        }
+        assert!(harness.has(Id::from(id::component_field(0, 2, 0))));
+        assert!(
+            !harness.has(Id::from(id::component_field(0, 2, 1))),
+            "a Tag is text, not an asset"
+        );
+        // Only a filled field offers the clear button.
+        assert!(harness.has(Id::from(id::component_field(0, 1, 2))));
+        assert!(!harness.has(Id::from(id::component_field(0, 0, 2))));
+    }
+
+    #[test]
+    fn the_picker_lists_only_what_the_field_accepts_and_a_choice_is_one_undo_step() {
+        let mut harness = fixture();
+        harness.rebase_history();
+        harness.click(id::component_field(0, 0, 1));
+        assert!(harness.has(Id::from(id::ASSET_PICK)));
+        assert!(harness.shows("hero.glb"));
+        for hidden in ["brick.mat", "rock.png", "boom.wav", "tree.prefab"] {
+            assert!(!harness.shows(hidden), "{hidden} is not a mesh");
+        }
+        harness.click(id::asset_pick_item(0));
+        assert!(!harness.has(Id::from(id::ASSET_PICK)), "a choice closes it");
+        assert_eq!(value(&harness, 0), "Models/hero.glb");
+    }
+
+    #[test]
+    fn a_picked_mesh_is_one_undo_step_in_the_engine() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.app.assets = vec![asset("hero.glb", "Models/hero.glb", "mesh")];
+        let type_id = component_type_id(harness.app.engine.as_ref().unwrap(), "Mesh Renderer")
+            .expect("Mesh Renderer");
+        harness.dispatch(Message::Inspector(panels::inspector::Edit::AddComponent(
+            type_id,
+        )));
+        harness.rebase_history();
+        let component = harness
+            .app()
+            .components
+            .iter()
+            .position(|data| data.info.type_id == type_id)
+            .expect("the component was added");
+        let field = harness
+            .app()
+            .component_types
+            .iter()
+            .find(|kind| kind.id == type_id)
+            .and_then(|kind| kind.fields.iter().position(|field| field.name == "Mesh"))
+            .expect("Mesh");
+        harness.dispatch(Message::Inspector(panels::inspector::Edit::PickField {
+            component,
+            field,
+        }));
+        assert!(harness.app().asset_pick.open.is_some());
+        harness.dispatch(Message::AssetPick(PickEdit::Pick(
+            "Models/hero.glb".to_owned(),
+        )));
+        let read = |harness: &Harness| match &harness.app().components[component].values[field] {
+            FieldValue::String(text) => text.clone(),
+            other => panic!("not a string: {other:?}"),
+        };
+        assert_eq!(read(&harness), "Models/hero.glb");
+        assert_eq!(
+            harness.app().history.undo_name(),
+            Some("Set Mesh"),
+            "the choice is one named step"
+        );
+        harness.dispatch(Message::Undo);
+        assert_eq!(read(&harness), "", "undo puts the field back");
+    }
+
+    #[test]
+    fn the_current_value_comes_first_and_none_empties_the_field() {
+        let mut harness = fixture();
+        harness.click(id::component_field(0, 1, 1));
+        let pick = harness.app().asset_pick.open.clone().expect("open");
+        let rows = harness.app().asset_pick_rows(&pick);
+        assert_eq!(
+            rows[0].key, "Materials/old.mat",
+            "the value being replaced leads"
+        );
+        assert_eq!(rows.len(), 2, "two materials");
+        harness.click(id::ASSET_PICK_NONE);
+        assert_eq!(value(&harness, 1), "");
+        assert!(!harness.has(Id::from(id::ASSET_PICK)));
+    }
+
+    #[test]
+    fn closing_the_picker_changes_nothing() {
+        let mut harness = fixture();
+        harness.click(id::component_field(0, 1, 1));
+        harness.click(id::ASSET_PICK_CLOSE);
+        assert!(!harness.has(Id::from(id::ASSET_PICK)));
+        assert_eq!(value(&harness, 1), "Materials/old.mat");
+    }
+
+    #[test]
+    fn a_field_that_takes_any_asset_filters_by_kind_and_search() {
+        let mut harness = fixture();
+        harness.click(id::component_field(0, 3, 1));
+        let count = |harness: &Harness| {
+            let pick = harness.app().asset_pick.open.clone().expect("open");
+            harness.app().asset_pick_rows(&pick).len()
+        };
+        assert_eq!(count(&harness), 6, "every asset");
+        // Chips only for the kinds the project holds, plus All.
+        assert!(harness.has(Id::from(id::asset_pick_kind(0))));
+        // mesh, material, texture, sound and prefab, plus All: chips 0..=5.
+        assert!(harness.has(Id::from(id::asset_pick_kind(5))));
+        assert!(!harness.has(Id::from(id::asset_pick_kind(6))));
+        harness.dispatch(Message::AssetPick(PickEdit::Filter(Some(AssetKind::Audio))));
+        assert_eq!(count(&harness), 1);
+        harness.dispatch(Message::AssetPick(PickEdit::Filter(None)));
+        harness.type_into(id::ASSET_PICK_SEARCH, "mat");
+        assert_eq!(count(&harness), 2, "search matches the path too");
+        harness.click(id::asset_pick_item(0));
+        assert!(value(&harness, 3).ends_with(".mat"));
+    }
+
+    #[test]
+    fn typing_a_path_still_works() {
+        let mut harness = fixture();
+        harness.type_into(id::component_field(0, 0, 0), "builtin/cube");
+        assert_eq!(value(&harness, 0), "builtin/cube");
+    }
+
+    #[test]
+    fn the_terrain_layer_picks_a_picture_through_the_shared_picker() {
+        let mut harness = Harness::empty();
+        harness.app.assets = vec![
+            asset("grass.png", "Textures/grass.png", "image"),
+            asset("hero.glb", "Models/hero.glb", "mesh"),
+        ];
+        let output = harness
+            .app
+            .terraingen
+            .graph
+            .add("output", iced::Point::new(0.0, 0.0));
+        harness.dispatch(Message::TerrainGen(terrain_panel::Edit::PickAsset(
+            output, 0,
+        )));
+        let pick = harness.app().asset_pick.open.clone().expect("open");
+        assert_eq!(pick.kinds, vec![AssetKind::Image]);
+        assert_eq!(harness.app().asset_pick_rows(&pick).len(), 1);
+        harness.click(id::asset_pick_item(0));
+        let node = harness.app().terraingen.graph.node(output).expect("node");
+        assert_eq!(node.strings[0], "Textures/grass.png");
+    }
+
+    #[test]
+    fn the_water_look_picks_a_material_through_the_shared_picker() {
+        let mut harness = Harness::empty();
+        harness.app.assets = vec![
+            asset("sea.mat", "Materials/sea.mat", "material"),
+            asset("grass.png", "Textures/grass.png", "image"),
+        ];
+        let look = harness
+            .app
+            .watergen
+            .graph
+            .add("look_asset", iced::Point::new(0.0, 0.0));
+        harness.dispatch(Message::WaterGen(water_panel::Edit::PickAsset(look, 0)));
+        let pick = harness.app().asset_pick.open.clone().expect("open");
+        assert_eq!(pick.kinds, vec![AssetKind::Material]);
+        harness.dispatch(Message::AssetPick(PickEdit::Pick(
+            "Materials/sea.mat".to_owned(),
+        )));
+        let node = harness.app().watergen.graph.node(look).expect("node");
+        assert_eq!(node.strings[0], "Materials/sea.mat");
+    }
+
+    #[test]
+    fn a_click_inside_a_modal_that_misses_every_button_keeps_it_open() {
+        let mut harness = fixture();
+        harness.click(id::component_field(0, 1, 1));
+        assert!(harness.has(Id::from(id::ASSET_PICK)));
+        harness.click(id::ASSET_PICK);
+        assert!(
+            harness.has(Id::from(id::ASSET_PICK)),
+            "the picker's own body is not outside it"
+        );
+        harness.dispatch(Message::AssetPick(PickEdit::Close));
+        harness.click(id::ASSET_NEW);
+        assert!(harness.has(Id::from(id::WIZARD)));
+        harness.click(id::WIZARD);
+        assert!(harness.has(Id::from(id::WIZARD)), "nor is the wizard's");
+    }
+
+    #[test]
+    fn an_open_menu_survives_the_profiler_refresh() {
+        let mut harness = Harness::empty();
+        harness.dispatch(Message::ToggleMenu(MenuId::View));
+        assert!(harness.app().open_menu.is_some());
+        for _ in 0..3 {
+            harness.dispatch(Message::ProfilerRefresh);
+            harness.dispatch(Message::ViewportTick);
+        }
+        assert!(
+            harness.app().open_menu.is_some(),
+            "only the user's own actions close a menu"
+        );
+    }
+
+    #[test]
+    fn every_picker_id_is_documented() {
+        for id in [
+            id::ASSET_PICK,
+            id::ASSET_PICK_CLOSE,
+            id::ASSET_PICK_SEARCH,
+            id::ASSET_PICK_NONE,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{} is not in the CATALOG",
+                id.key()
+            );
+        }
+    }
+
+    #[test]
+    fn a_dropped_supported_file_is_imported_into_the_browsed_folder() {
+        let root = std::env::temp_dir().join(format!("doppio-drop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("incoming.ttf");
+        std::fs::write(&source, b"font").unwrap();
+        let report = crate::uikit::asset_wizard::import(&root.join("Assets"), "Fonts", &[source]);
+        assert_eq!(report.imported, vec!["Fonts/incoming.ttf"]);
+        assert!(root.join("Assets/Fonts/incoming.ttf").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+mod file_browser {
+    use super::*;
+    use crate::uikit::panels::file_browser::Edit;
+
+    fn tree(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("doppio-fbui-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        for name in ["rock.png", "hero.glb", "notes.zip"] {
+            std::fs::write(root.join(name), b"x").unwrap();
+        }
+        root
+    }
+
+    fn open(harness: &mut Harness) {
+        harness.click(id::ASSET_NEW);
+        harness.click(id::WIZARD_TAB_IMPORT);
+        harness.click(id::WIZARD_IMPORT_BROWSE);
+    }
+
+    fn go(harness: &mut Harness, dir: &std::path::Path) {
+        harness.dispatch(Message::FileBrowser(Edit::PathInput(
+            dir.display().to_string(),
+        )));
+        harness.dispatch(Message::FileBrowser(Edit::PathGo));
+    }
+
+    #[test]
+    fn browse_opens_the_browser_and_chosen_files_join_the_import_queue() {
+        let root = tree("queue");
+        let mut harness = Harness::empty();
+        open(&mut harness);
+        assert!(harness.has(Id::from(id::FILEBROWSER)));
+        go(&mut harness, &root);
+        // Importable files and the folder are listed; the .zip is filtered out.
+        let names: Vec<String> = harness
+            .app()
+            .file_browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect();
+        assert_eq!(names, ["sub", "hero.glb", "rock.png"]);
+        harness.click(id::file_browser_row(1));
+        harness.click(id::file_browser_row(2));
+        assert_eq!(
+            harness.app().file_browser.as_ref().unwrap().selected.len(),
+            2
+        );
+        harness.click(id::FILEBROWSER_CONFIRM);
+        assert!(
+            !harness.has(Id::from(id::FILEBROWSER)),
+            "confirming closes it"
+        );
+        assert!(harness.has(Id::from(id::WIZARD)), "the assistant stays");
+        assert_eq!(harness.app().wizard.sources.len(), 2);
+        assert!(harness.app().wizard.sources[0].ends_with("hero.glb"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_filters_and_navigation_work() {
+        let root = tree("filters");
+        let mut harness = Harness::empty();
+        open(&mut harness);
+        go(&mut harness, &root);
+        harness.dispatch(Message::FileBrowser(Edit::Supported(false)));
+        assert!(harness
+            .app()
+            .file_browser
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| entry.name == "notes.zip"));
+        harness.type_into(id::FILEBROWSER_SEARCH, "hero");
+        assert_eq!(
+            harness.app().file_browser.as_ref().unwrap().entries.len(),
+            1
+        );
+        // Double-clicking a folder enters it; Up comes back.
+        harness.dispatch(Message::FileBrowser(Edit::Search(String::new())));
+        harness.dispatch(Message::FileBrowser(Edit::Open(0)));
+        assert_eq!(
+            harness.app().file_browser.as_ref().unwrap().dir,
+            root.join("sub")
+        );
+        harness.click(id::FILEBROWSER_UP);
+        assert_eq!(harness.app().file_browser.as_ref().unwrap().dir, root);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clicking_inside_keeps_it_open_and_the_next_browse_opens_where_it_stood() {
+        let root = tree("again");
+        let mut harness = Harness::empty();
+        open(&mut harness);
+        go(&mut harness, &root);
+        harness.click(id::FILEBROWSER);
+        assert!(harness.has(Id::from(id::FILEBROWSER)));
+        harness.click(id::FILEBROWSER_CANCEL);
+        assert!(!harness.has(Id::from(id::FILEBROWSER)));
+        assert!(harness.app().wizard.sources.is_empty());
+        harness.click(id::WIZARD_IMPORT_BROWSE);
+        assert_eq!(harness.app().file_browser.as_ref().unwrap().dir, root);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_double_clicked_file_is_taken_at_once() {
+        let root = tree("take");
+        let mut harness = Harness::empty();
+        open(&mut harness);
+        go(&mut harness, &root);
+        harness.dispatch(Message::FileBrowser(Edit::Open(2)));
+        assert!(harness.app().file_browser.is_none());
+        assert_eq!(harness.app().wizard.sources.len(), 1);
+        assert!(harness.app().wizard.sources[0].ends_with("rock.png"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn every_file_browser_id_is_documented() {
+        for id in [
+            id::FILEBROWSER,
+            id::FILEBROWSER_CLOSE,
+            id::FILEBROWSER_UP,
+            id::FILEBROWSER_REFRESH,
+            id::FILEBROWSER_PATH,
+            id::FILEBROWSER_SEARCH,
+            id::FILEBROWSER_SUPPORTED,
+            id::FILEBROWSER_HIDDEN,
+            id::FILEBROWSER_SELECT_SUPPORTED,
+            id::FILEBROWSER_CLEAR,
+            id::FILEBROWSER_CONFIRM,
+            id::FILEBROWSER_CANCEL,
+            id::WIZARD_IMPORT_BROWSE,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{} is not in the CATALOG",
+                id.key()
+            );
+        }
+    }
+}
+
+mod detach {
+    use super::*;
+
+    fn groups(harness: &Harness) -> Vec<Vec<PaneKind>> {
+        harness
+            .app()
+            .panes
+            .iter()
+            .map(|(_, group)| group.pages.clone())
+            .collect()
+    }
+
+    fn docked(harness: &Harness, kind: PaneKind) -> bool {
+        groups(harness).iter().any(|pages| pages.contains(&kind))
+    }
+
+    fn pane_of(harness: &Harness, kind: PaneKind) -> iced::widget::pane_grid::Pane {
+        harness
+            .app()
+            .panes
+            .iter()
+            .find(|(_, group)| group.pages.contains(&kind))
+            .map(|(pane, _)| *pane)
+            .expect("the tab is docked")
+    }
+
+    fn make_active(harness: &mut Harness, kind: PaneKind) {
+        let pane = pane_of(harness, kind);
+        let group = harness.app.panes.get_mut(pane).unwrap();
+        group.active = group.pages.iter().position(|page| *page == kind).unwrap();
+    }
+
+    #[test]
+    fn a_build_without_windows_refuses_and_keeps_the_dock_whole() {
+        let mut harness = Harness::empty();
+        let before = groups(&harness);
+        make_active(&mut harness, PaneKind::Console);
+        harness.dispatch(Message::DetachTab(PaneKind::Console));
+        assert_eq!(groups(&harness), before);
+        assert!(harness.app.detach.pending_open.is_empty());
+        assert!(!harness.has(Id::from(id::pane_detach(&format!(
+            "{:?}",
+            pane_of(&harness, PaneKind::Console)
+        )))));
+    }
+
+    #[test]
+    fn detaching_a_tab_takes_it_out_of_the_dock_and_asks_for_a_window() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        assert!(docked(&harness, PaneKind::Console));
+        let pane = pane_of(&harness, PaneKind::Console);
+        // The offered button is on the pane.
+        assert!(harness.has(Id::from(id::pane_detach(&format!("{pane:?}")))));
+        make_active(&mut harness, PaneKind::Console);
+        harness.dispatch(Message::Detach(pane));
+        assert!(!docked(&harness, PaneKind::Console));
+        assert_eq!(harness.app.detach.pending_open, vec![PaneKind::Console]);
+        // The other tabs are untouched.
+        assert!(docked(&harness, PaneKind::Assets));
+        assert!(docked(&harness, PaneKind::Viewport));
+    }
+
+    #[test]
+    fn the_windowed_update_opens_the_window_and_remembers_which_tab_it_holds() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let _task = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Audio));
+        assert!(
+            harness.app.detach.pending_open.is_empty(),
+            "the request became a task"
+        );
+        assert_eq!(harness.app.detach.windows.len(), 1);
+        let (window, kind) = harness.app.detach.windows[0];
+        assert_eq!(kind, PaneKind::Audio);
+        assert_eq!(harness.app().window_title(window), "Audio · Doppio");
+        assert!(!docked(&harness, PaneKind::Audio));
+        // Detaching it again just raises the window.
+        let _task = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Audio));
+        assert_eq!(harness.app.detach.windows.len(), 1);
+    }
+
+    #[test]
+    fn a_show_command_cannot_dock_a_detached_tab_a_second_time() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let _ = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Audio));
+        let _ = harness.app.update_windowed(Message::ShowAudio);
+        assert!(!docked(&harness, PaneKind::Audio), "the window wins");
+        assert_eq!(harness.app.detach.windows.len(), 1);
+    }
+
+    #[test]
+    fn docking_back_and_closing_the_window_both_return_the_tab() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let _ = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Photon));
+        let _ = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Profiler));
+        let photon = harness.app.detach.window_of(PaneKind::Photon).unwrap();
+        let profiler = harness.app.detach.window_of(PaneKind::Profiler).unwrap();
+        // The Dock back button.
+        let _ = harness.app.update_windowed(Message::Attach(photon));
+        assert!(docked(&harness, PaneKind::Photon));
+        assert!(harness.app.detach.window_of(PaneKind::Photon).is_none());
+        // The window's own close button.
+        let _ = harness.app.update_windowed(Message::WindowClosed(profiler));
+        assert!(docked(&harness, PaneKind::Profiler));
+        assert!(harness.app.detach.windows.is_empty());
+        assert!(!harness.app.detach.quit);
+    }
+
+    #[test]
+    fn closing_the_main_window_quits() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let main = iced::window::Id::unique();
+        harness.app.detach.main = Some(main);
+        let _ = harness.app.update_windowed(Message::WindowClosed(main));
+        assert!(harness.app.detach.quit);
+    }
+
+    #[test]
+    fn the_last_pane_cannot_leave() {
+        // Collapse the layout to one pane with one tab: it stays docked.
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let panes: Vec<_> = harness.app.panes.iter().map(|(pane, _)| *pane).collect();
+        for pane in panes.iter().skip(1) {
+            harness.app.panes.close(*pane);
+        }
+        let only = harness
+            .app
+            .panes
+            .iter()
+            .next()
+            .map(|(pane, _)| *pane)
+            .unwrap();
+        let group = harness.app.panes.get_mut(only).unwrap();
+        group.pages.truncate(1);
+        group.active = 0;
+        let kind = group.pages[0];
+        harness.dispatch(Message::DetachTab(kind));
+        assert!(docked(&harness, kind));
+        assert!(harness.app.detach.pending_open.is_empty());
+    }
+
+    #[test]
+    fn a_detached_window_draws_its_tab_with_a_dock_back_button() {
+        let mut harness = Harness::empty();
+        harness.app.detach.supported = true;
+        let _ = harness
+            .app
+            .update_windowed(Message::DetachTab(PaneKind::Console));
+        let window = harness.app.detach.window_of(PaneKind::Console).unwrap();
+        let mut ui = sim(harness.app().view_window(window));
+        assert!(ui.find(Id::from(id::window_dock("console"))).is_ok());
+        assert!(ui.find(Id::from(id::window_body("console"))).is_ok());
+        // The main window still draws the editor.
+        let mut main = sim(harness.app().view_window(iced::window::Id::unique()));
+        assert!(main.find(Id::from(id::PANE_VIEWPORT)).is_ok());
+    }
+
+    #[test]
+    fn tab_names_resolve_by_key_and_title() {
+        assert_eq!(PaneKind::from_name("audio"), Some(PaneKind::Audio));
+        assert_eq!(
+            PaneKind::from_name("Material Generator"),
+            Some(PaneKind::Generator)
+        );
+        assert_eq!(
+            PaneKind::from_name("texture_set"),
+            Some(PaneKind::TextureSet)
+        );
+        assert_eq!(PaneKind::from_name("nope"), None);
+    }
+}
+
+mod simulation {
+    use super::*;
+
+    fn clock(harness: &Harness) -> f32 {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.weather_state().ok())
+            .map(|state| state.clock_s)
+            .unwrap_or(-1.0)
+    }
+
+    /// Dispatches viewport ticks, with the real pauses the throttle needs, until `done` or the budget ends.
+    fn tick_until(harness: &mut Harness, mut done: impl FnMut(&Harness) -> bool) -> bool {
+        for _ in 0..600 {
+            harness.dispatch(Message::ViewportTick);
+            if done(harness) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(6));
+        }
+        false
+    }
+
+    fn supported(harness: &Harness) -> bool {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.capi_version() >= 21)
+    }
+
+    #[test]
+    fn only_bookkeeping_messages_are_passive() {
+        assert!(is_passive(&Message::ViewportTick));
+        assert!(is_passive(&Message::ProfilerRefresh));
+        assert!(is_passive(&Message::Noop));
+        assert!(!is_passive(&Message::AddEntity));
+        assert!(!is_passive(&Message::TogglePlay));
+        assert!(!is_passive(&Message::ResetCamera));
+    }
+
+    #[test]
+    fn the_editor_starts_stopped_and_play_switches_the_engine_on_and_off() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        if !supported(&harness) {
+            return;
+        }
+        assert!(!harness.app().playing);
+        assert!(
+            !harness.app().engine.as_ref().unwrap().simulating(),
+            "a new editor does not simulate"
+        );
+        harness.dispatch(Message::TogglePlay);
+        assert!(harness.app().playing);
+        assert!(harness.app().engine.as_ref().unwrap().simulating());
+        harness.dispatch(Message::TogglePlay);
+        assert!(!harness.app().engine.as_ref().unwrap().simulating());
+    }
+
+    #[test]
+    fn a_stopped_scene_stands_still_and_play_moves_it() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        if !supported(&harness) {
+            return;
+        }
+        let render = |harness: &mut Harness, frames: usize| {
+            let engine = harness.app.engine.as_mut().unwrap();
+            for _ in 0..frames {
+                let _ = render_entity_view_sized(engine, 64, 48);
+            }
+        };
+        render(&mut harness, 2);
+        let stopped = clock(&harness);
+        render(&mut harness, 12);
+        assert_eq!(clock(&harness), stopped, "twelve frames, no time passed");
+
+        // The editor view advances the clock only while the scene simulates and no game owns it.
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        render(&mut harness, 12);
+        let playing = clock(&harness);
+        assert!(
+            playing > stopped + 0.15,
+            "twelve frames of play advance the clock: {stopped} -> {playing}"
+        );
+
+        harness.app.engine.as_mut().unwrap().set_simulating(false);
+        render(&mut harness, 2);
+        let paused_at = clock(&harness);
+        render(&mut harness, 12);
+        assert_eq!(clock(&harness), paused_at, "pausing freezes it where it is");
+    }
+
+    #[test]
+    fn a_stopped_viewport_renders_on_change_only() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        // A frame at the size the viewport wants, so a resize does not count as a change.
+        harness.dispatch(Message::ViewportTick);
+        assert!(
+            tick_until(&mut harness, |h| h.app().viewport_idle),
+            "the viewport settles into idle"
+        );
+        let drawn = harness.app().viewport_requests;
+        assert!(drawn > 0, "the first frames were drawn");
+        assert!(harness.app().viewport_settle == 0);
+        for _ in 0..60 {
+            harness.dispatch(Message::ViewportTick);
+            std::thread::sleep(std::time::Duration::from_millis(6));
+        }
+        assert_eq!(
+            harness.app().viewport_requests,
+            drawn,
+            "an idle, stopped viewport asks for no frames"
+        );
+
+        // A change brings frames back, and then it goes idle again.
+        harness.dispatch(Message::ResetCamera);
+        assert!(tick_until(&mut harness, |h| h.app().viewport_requests > drawn));
+        assert!(tick_until(&mut harness, |h| h.app().viewport_idle));
+        let settled = harness.app().viewport_requests;
+        assert!(settled > drawn);
+        assert!(
+            settled - drawn <= super::VIEWPORT_SETTLE_FRAMES as u64 + 2,
+            "a bounded number of frames"
+        );
+
+        // Playing draws continuously; stopping lets it go idle. Play shows the Gameplay tab, so bring the
+        // Viewport back to look at it.
+        harness.dispatch(Message::TogglePlay);
+        harness.click(id::PANE_TAB_VIEWPORT);
+        let before = harness.app().viewport_requests;
+        assert!(tick_until(&mut harness, |h| h.app().viewport_requests >= before + 8));
+        assert!(!harness.app().viewport_idle);
+        harness.dispatch(Message::StopPlay);
+        assert!(tick_until(&mut harness, |h| h.app().viewport_idle));
+    }
+}
+
+mod play {
+    use super::*;
+    use crate::uikit::components::transport::State;
+    use doppio_engine::SceneView;
+
+    fn supported(harness: &Harness) -> bool {
+        harness
+            .app()
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.capi_version() >= 23)
+    }
+
+    /// An engine scene whose first entity is a camera.
+    fn with_camera() -> Option<Harness> {
+        let mut harness = engine_harness()?;
+        if !supported(&harness) {
+            return None;
+        }
+        let first = harness.app.entities[0].id;
+        let engine = harness.app.engine.as_mut().unwrap();
+        add_component(engine, first, "Camera 3D").expect("a camera");
+        harness.app.refresh_components();
+        Some(harness)
+    }
+
+    fn active_tab(harness: &Harness, kind: PaneKind) -> bool {
+        harness
+            .app()
+            .panes
+            .iter()
+            .any(|(_, group)| group.active_kind() == kind)
+    }
+
+    fn tick_until(harness: &mut Harness, mut done: impl FnMut(&Harness) -> bool) -> bool {
+        for _ in 0..600 {
+            harness.dispatch(Message::ViewportTick);
+            if done(harness) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(6));
+        }
+        false
+    }
+
+    #[test]
+    fn the_transport_is_in_the_top_bar_and_play_needs_an_engine() {
+        let mut harness = Harness::empty();
+        assert!(harness.has(Id::from(id::TRANSPORT_PLAY)));
+        assert!(harness.has(Id::from(id::TRANSPORT_STOP)));
+        harness.click(id::TRANSPORT_PLAY);
+        assert_eq!(
+            harness.app().transport_state(),
+            State::Stopped,
+            "no engine, nothing to play"
+        );
+        for id in [
+            id::TRANSPORT_PLAY,
+            id::TRANSPORT_STOP,
+            id::PANE_GAMEPLAY,
+            id::PANE_TAB_GAMEPLAY,
+            id::SHOW_GAMEPLAY,
+            id::GAMEPLAY_VIEW,
+            id::PANE_CAMERA_PREVIEW,
+            id::PANE_TAB_CAMERA_PREVIEW,
+            id::SHOW_CAMERA_PREVIEW,
+            id::CAMERA_PREVIEW_VIEW,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{} is not in the CATALOG",
+                id.key()
+            );
+        }
+    }
+
+    #[test]
+    fn the_gameplay_and_camera_tabs_are_in_the_workspace_and_the_view_menu_shows_them() {
+        let mut harness = Harness::empty();
+        assert!(harness.has(Id::from(id::PANE_TAB_GAMEPLAY)));
+        assert!(harness.has(Id::from(id::PANE_TAB_CAMERA_PREVIEW)));
+        harness.click(id::PANE_TAB_GAMEPLAY);
+        assert!(active_tab(&harness, PaneKind::Gameplay));
+        harness.click(id::PANE_TAB_VIEWPORT);
+        harness.click(id::MENU_VIEW);
+        harness.click(id::SHOW_CAMERA_PREVIEW);
+        assert!(active_tab(&harness, PaneKind::CameraPreview));
+    }
+
+    #[test]
+    fn play_pause_resume_and_stop_walk_the_states() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        assert_eq!(harness.app().transport_state(), State::Stopped);
+        harness.click(id::TRANSPORT_PLAY);
+        assert_eq!(harness.app().transport_state(), State::Playing);
+        assert!(
+            active_tab(&harness, PaneKind::Gameplay),
+            "Play shows the game"
+        );
+        let engine = harness.app().engine.as_ref().unwrap();
+        assert!(engine.game_running());
+        assert!(engine.simulating());
+        harness.click(id::TRANSPORT_PLAY);
+        assert_eq!(harness.app().transport_state(), State::Paused);
+        assert!(
+            !harness.app().engine.as_ref().unwrap().simulating(),
+            "pause freezes the scene"
+        );
+        assert!(
+            harness.app().engine.as_ref().unwrap().game_running(),
+            "the session goes on"
+        );
+        harness.click(id::TRANSPORT_PLAY);
+        assert_eq!(harness.app().transport_state(), State::Playing);
+        harness.click(id::TRANSPORT_STOP);
+        assert_eq!(harness.app().transport_state(), State::Stopped);
+        let engine = harness.app().engine.as_ref().unwrap();
+        assert!(!engine.game_running());
+        assert!(!engine.simulating());
+    }
+
+    #[test]
+    fn stop_puts_the_scene_back_and_play_leaves_no_history() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        harness.rebase_history();
+        let entity = harness.app.entities[0].id;
+        let before = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .position(entity)
+            .unwrap();
+        let entities = harness.app().entities.len();
+        harness.click(id::TRANSPORT_PLAY);
+        // What the game does to the scene (here by hand) and what the user does during Play.
+        harness
+            .app
+            .engine
+            .as_mut()
+            .unwrap()
+            .set_position(entity, [40.0, 50.0, 60.0])
+            .unwrap();
+        harness.dispatch(Message::AddEntity);
+        assert_eq!(harness.app().entities.len(), entities + 1);
+        assert!(!harness.app().history.can_undo(), "Play records no history");
+        harness.dispatch(Message::Undo);
+        assert_eq!(
+            harness.app().entities.len(),
+            entities + 1,
+            "undo waits for Stop"
+        );
+        harness.click(id::TRANSPORT_STOP);
+        assert_eq!(
+            harness.app().entities.len(),
+            entities,
+            "the entity made during Play is gone"
+        );
+        let after = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .position(entity)
+            .unwrap();
+        assert_eq!(after, before, "the position is back where it was");
+        assert!(!harness.app().history.can_undo());
+    }
+
+    #[test]
+    fn the_gameplay_tab_draws_the_scene_through_its_camera_and_idles_when_nothing_changes() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        harness.dispatch(Message::ShowGameplay);
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Game,
+            iced::Size::new(320.0, 200.0),
+        ));
+        assert!(tick_until(&mut harness, |h| h
+            .app()
+            .feed(SceneView::Game)
+            .frame
+            .is_some()));
+        assert!(!harness.app().feed(SceneView::Game).missing_camera);
+        // Stopped and unchanged: it asks for no more frames once it has settled.
+        let (mut last, mut quiet) = (u64::MAX, 0);
+        assert!(tick_until(&mut harness, |h| {
+            let now = h.app().feed(SceneView::Game).requests;
+            quiet = if now == last { quiet + 1 } else { 0 };
+            last = now;
+            quiet >= 25
+        }));
+        let drawn = harness.app().feed(SceneView::Game).requests;
+        for _ in 0..40 {
+            harness.dispatch(Message::ViewportTick);
+            std::thread::sleep(std::time::Duration::from_millis(6));
+        }
+        assert_eq!(harness.app().feed(SceneView::Game).requests, drawn);
+        // Playing draws continuously.
+        harness.click(id::TRANSPORT_PLAY);
+        assert!(tick_until(&mut harness, |h| h
+            .app()
+            .feed(SceneView::Game)
+            .requests
+            >= drawn + 6));
+        harness.click(id::TRANSPORT_STOP);
+    }
+
+    #[test]
+    fn a_scene_without_a_camera_says_so_instead_of_drawing() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        if !supported(&harness) {
+            return;
+        }
+        harness.dispatch(Message::ShowGameplay);
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Game,
+            iced::Size::new(320.0, 200.0),
+        ));
+        for _ in 0..20 {
+            harness.dispatch(Message::ViewportTick);
+        }
+        assert!(harness.app().feed(SceneView::Game).missing_camera);
+        assert!(harness.app().feed(SceneView::Game).frame.is_none());
+        assert!(harness.shows("No Camera 3D in the scene"));
+    }
+
+    #[test]
+    fn the_camera_tab_follows_the_selected_camera() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        let second = harness.app.entities[1].id;
+        let engine = harness.app.engine.as_mut().unwrap();
+        add_component(engine, second, "Camera 3D").expect("a second camera");
+        harness.dispatch(Message::ShowCameraPreview);
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Camera,
+            iced::Size::new(320.0, 200.0),
+        ));
+        let first = harness.app.entities[0].id;
+        // Selecting the second entity (a camera) previews through it.
+        harness.dispatch(Message::SelectEntity(1));
+        assert!(tick_until(&mut harness, |h| h
+            .app()
+            .feed(SceneView::Camera)
+            .frame
+            .is_some()));
+        let chosen = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .scene_camera(SceneView::Camera)
+            .unwrap()
+            .0;
+        assert_eq!(chosen, second);
+        let _ = first;
+    }
+
+    #[test]
+    fn the_viewport_and_a_scene_view_share_the_device_one_frame_at_a_time() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        // Put the Camera tab in a pane of its own beside the Viewport, so both are on screen at once.
+        let workspace = harness
+            .app
+            .panes
+            .iter()
+            .find(|(_, group)| group.pages.contains(&PaneKind::CameraPreview))
+            .map(|(pane, _)| *pane)
+            .unwrap();
+        harness
+            .app
+            .panes
+            .get_mut(workspace)
+            .unwrap()
+            .pages
+            .retain(|page| *page != PaneKind::CameraPreview);
+        harness
+            .app
+            .panes
+            .split(
+                pane_grid::Axis::Vertical,
+                workspace,
+                PaneGroup::new(&[PaneKind::CameraPreview]),
+            )
+            .expect("a split");
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Camera,
+            iced::Size::new(320.0, 200.0),
+        ));
+        let mut overlapped = false;
+        for _ in 0..300 {
+            harness.dispatch(Message::ViewportTick);
+            let app = harness.app();
+            if app.viewport_pending && app.scene_frame_in_flight() {
+                overlapped = true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(6));
+        }
+        assert!(!overlapped, "two frames were in flight at once");
+        assert!(
+            harness.app().viewport_requests > 0,
+            "the editor viewport still draws"
+        );
+        assert!(
+            harness.app().feed(SceneView::Camera).requests > 0,
+            "so does the camera view"
+        );
+        assert!(harness.app().feed(SceneView::Camera).frame.is_some());
+    }
+
+    #[test]
+    fn leaving_a_tab_with_a_frame_in_flight_does_not_freeze_the_viewport() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        harness.dispatch(Message::ShowGameplay);
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Game,
+            iced::Size::new(320.0, 200.0),
+        ));
+        // Tick until the Gameplay tab has asked for a frame and has not yet collected it.
+        assert!(tick_until(&mut harness, |h| h
+            .app()
+            .scene_frame_in_flight()));
+        // Back to the Viewport before it is collected: the hidden tab's frame must still be drained.
+        harness.click(id::PANE_TAB_VIEWPORT);
+        assert!(
+            tick_until(&mut harness, |h| !h.app().scene_frame_in_flight()),
+            "a frame asked for by a hidden tab was never collected"
+        );
+        // And the viewport navigates again.
+        let before = harness.app().viewport_requests;
+        harness.dispatch(Message::ResetCamera);
+        assert!(tick_until(&mut harness, |h| h.app().viewport_requests > before));
+        // Same through Play and Pause, the way it was reported.
+        harness.click(id::TRANSPORT_PLAY);
+        for _ in 0..6 {
+            harness.dispatch(Message::ViewportTick);
+        }
+        harness.click(id::TRANSPORT_PLAY); // pause
+        harness.click(id::PANE_TAB_VIEWPORT);
+        assert!(tick_until(&mut harness, |h| !h
+            .app()
+            .scene_frame_in_flight()));
+        let before = harness.app().viewport_requests;
+        harness.dispatch(Message::ResetCamera);
+        assert!(
+            tick_until(&mut harness, |h| h.app().viewport_requests > before),
+            "the viewport froze"
+        );
+        harness.click(id::TRANSPORT_STOP);
+    }
+
+    #[test]
+    fn the_picture_clock_runs_in_play_whichever_view_is_on_screen() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        let clock = |h: &Harness| {
+            h.app()
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.weather_state().ok())
+                .map(|state| state.clock_s)
+                .unwrap_or(-1.0)
+        };
+        for tab in [
+            id::PANE_TAB_VIEWPORT,
+            id::PANE_TAB_GAMEPLAY,
+            id::PANE_TAB_CAMERA_PREVIEW,
+        ] {
+            let label = tab.key().to_owned();
+            harness.click(tab);
+            harness.dispatch(Message::SceneViewResized(
+                SceneView::Game,
+                iced::Size::new(320.0, 200.0),
+            ));
+            harness.dispatch(Message::SceneViewResized(
+                SceneView::Camera,
+                iced::Size::new(320.0, 200.0),
+            ));
+            let before = clock(&harness);
+            harness.click(id::TRANSPORT_PLAY);
+            // The game ticks in real time; give it a few tenths of a second.
+            let started = std::time::Instant::now();
+            assert!(
+                tick_until(&mut harness, |h| clock(h) > before + 0.15
+                    && started.elapsed().as_secs_f32() > 0.2),
+                "the clock did not move with {label} on screen: {before} -> {}",
+                clock(&harness)
+            );
+            harness.click(id::TRANSPORT_STOP);
+        }
+    }
+
+    #[test]
+    fn keys_reach_the_game_only_while_it_plays_in_the_gameplay_tab() {
+        let Some(mut harness) = with_camera() else {
+            return;
+        };
+        assert!(!harness.app().game_has_keyboard());
+        harness.dispatch(Message::GameKey(26, true)); // W, ignored: nothing plays
+        harness.click(id::TRANSPORT_PLAY);
+        assert!(harness.app().game_has_keyboard());
+        harness.dispatch(Message::GameKey(26, true));
+        harness.dispatch(Message::GameKey(26, false));
+        harness.dispatch(Message::GamePointer(5.0, 5.0, 0, false));
+        harness.click(id::TRANSPORT_PLAY); // paused
+        assert!(!harness.app().game_has_keyboard());
+        harness.click(id::TRANSPORT_STOP);
+    }
+
+    #[test]
+    fn the_hid_scancodes_match_the_engine_keys() {
+        use iced::keyboard::key::Code;
+        assert_eq!(hid_scancode(Code::KeyA), Some(4));
+        assert_eq!(hid_scancode(Code::KeyW), Some(26));
+        assert_eq!(hid_scancode(Code::Space), Some(44));
+        assert_eq!(hid_scancode(Code::ArrowLeft), Some(80));
+        assert_eq!(hid_scancode(Code::ArrowUp), Some(82));
+        assert_eq!(hid_scancode(Code::ShiftLeft), Some(225));
+        assert_eq!(hid_scancode(Code::F13), None);
+    }
+}
+
+mod animation_panes {
+    use super::*;
+    use crate::uikit::panels::phaseshift::{Edit as PhaseShiftEdit, ParamKind};
+    use crate::uikit::panels::rig2d::Edit as RigEdit;
+
+    /// A PhaseShift and a rig are given to a real engine entity from the panes, then their edits reach the engine.
+    #[test]
+    fn the_panes_give_an_entity_its_phase_shift_parameters_and_rig() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        // Without the engine library the harness is None and the test returns early; here it must be loaded.
+        assert!(
+            harness.app.engine.is_some(),
+            "the engine must load for this test to mean anything"
+        );
+        harness.app.selected = 0;
+        harness.app.refresh_animation_panes();
+
+        harness.dispatch(Message::ShowPhaseShift);
+        assert!(
+            harness.app().animation.phase_shift.is_none(),
+            "no PhaseShift yet"
+        );
+        harness.dispatch(Message::PhaseShift(PhaseShiftEdit::AddPhaseShift));
+        assert!(
+            harness.app().animation.phase_shift.is_some(),
+            "the entity got a PhaseShift"
+        );
+
+        harness.dispatch(Message::PhaseShift(PhaseShiftEdit::AddParameter(
+            ParamKind::Float,
+        )));
+        let model = harness.app().animation.phase_shift.clone().expect("model");
+        assert_eq!(model.parameters.len(), 1);
+        assert_eq!(model.parameters[0].name, "float_1");
+        assert_eq!(model.parameters[0].kind, ParamKind::Float);
+
+        harness.dispatch(Message::PhaseShift(PhaseShiftEdit::RemoveParameter(0)));
+        let model = harness.app().animation.phase_shift.clone().expect("model");
+        assert!(
+            model.parameters.is_empty(),
+            "the parameter was removed in the engine"
+        );
+
+        let rig_path = std::env::temp_dir().join("doppio_panel_rig.rig2d");
+        std::fs::write(&rig_path, "CAFRIG2D1\nbone root -1 0 0 0 1 1\n").unwrap();
+        harness.dispatch(Message::ShowRig2d);
+        harness.dispatch(Message::Rig2d(RigEdit::SetDraft(
+            rig_path.display().to_string(),
+        )));
+        harness.dispatch(Message::Rig2d(RigEdit::Attach));
+        let rig = harness
+            .app()
+            .animation
+            .rig
+            .clone()
+            .expect("the rig attached");
+        assert_eq!(rig.bones.len(), 1);
+        assert_eq!(rig.bones[0].name, "root");
+        let _ = std::fs::remove_file(rig_path);
+    }
+}
+
+/// Frame budget of a small Photon scene (a sun, a camera, Photon GI and a cube), measured with the engine's own
+/// profiler. Ignored by default: it prints numbers, it asserts nothing about speed.
+///
+///   cargo test -p doppio-ui --lib -- --ignored --nocapture frame_budget::
+mod frame_budget {
+    use super::*;
+    use doppio_engine::SceneView;
+
+    fn scene() -> Option<Harness> {
+        let mut harness = engine_harness()?;
+        if harness.app().engine.as_ref()?.capi_version() < 23 {
+            return None;
+        }
+        create_prefab_labelled(&mut harness, "Cube");
+        create_prefab_labelled(&mut harness, "Directional Light");
+        create_prefab_labelled(&mut harness, "Camera");
+        harness.dispatch(Message::Photon(crate::uikit::panels::photon::Edit::Add));
+        Some(harness)
+    }
+
+    fn frames(
+        harness: &mut Harness,
+        count: usize,
+        editor: (u32, u32),
+        views: &[(SceneView, (u32, u32))],
+    ) -> f32 {
+        let engine = harness.app.engine.as_mut().unwrap();
+        let mut editor_pixels = vec![0u8; (editor.0 * editor.1 * 4) as usize];
+        let start = std::time::Instant::now();
+        for _ in 0..count {
+            engine.render_begin(editor.0, editor.1).expect("begin");
+            loop {
+                match engine.render_poll(&mut editor_pixels).expect("poll") {
+                    doppio_engine::RenderState::Ready => break,
+                    _ => std::thread::sleep(std::time::Duration::from_micros(200)),
+                }
+            }
+            for (view, size) in views {
+                let mut pixels = vec![0u8; (size.0 * size.1 * 4) as usize];
+                engine
+                    .view_render_begin(*view, size.0, size.1)
+                    .expect("begin");
+                loop {
+                    match engine.view_render_poll(*view, &mut pixels).expect("poll") {
+                        doppio_engine::RenderState::Ready => break,
+                        _ => std::thread::sleep(std::time::Duration::from_micros(200)),
+                    }
+                }
+            }
+        }
+        start.elapsed().as_secs_f32() * 1000.0 / count as f32
+    }
+
+    fn report(harness: &Harness, title: &str, wall_ms: f32) {
+        let engine = harness.app().engine.as_ref().unwrap();
+        println!(
+            "\n== {title}: {wall_ms:.2} ms per frame (all views), {:.0} fps",
+            1000.0 / wall_ms
+        );
+        if let Ok(stats) = engine.photon_stats() {
+            println!(
+                "   photon: far={} full_rebuilds={} target_rebuilds={} far_skipped={} half_rate={}",
+                stats.far_enabled,
+                stats.full_rebuilds,
+                stats.target_rebuilds,
+                stats.far_skipped,
+                stats.far_half_rate
+            );
+        }
+        if let Ok(scopes) = engine.profiler_scopes() {
+            for scope in scopes
+                .iter()
+                .filter(|scope| scope.depth <= 2 && scope.avg_ms >= 0.05)
+            {
+                println!(
+                    "   {:indent$}{:<34} avg {:>7.2} ms  max {:>8.2}  calls {}",
+                    "",
+                    scope.name,
+                    scope.avg_ms,
+                    scope.max_ms,
+                    scope.calls,
+                    indent = scope.depth as usize * 2
+                );
+            }
+        }
+    }
+
+    fn picture(engine: &mut doppio_engine::Engine) -> Vec<u8> {
+        render_entity_view_sized(engine, 256, 144)
+    }
+
+    /// Mean absolute difference per channel between two pictures.
+    fn difference(a: &[u8], b: &[u8]) -> f32 {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| x.abs_diff(*y) as f32)
+            .sum::<f32>()
+            / a.len().max(1) as f32
+    }
+
+    #[test]
+    fn photon_rests_when_nothing_changes_and_wakes_when_the_camera_moves() {
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.set_simulating(true);
+        let mut settled = Vec::new();
+        for _ in 0..60 {
+            settled = picture(engine);
+        }
+        let before = engine.photon_stats().unwrap();
+        let mut resting = Vec::new();
+        for _ in 0..60 {
+            resting = picture(engine);
+        }
+        let after = engine.photon_stats().unwrap();
+        assert!(
+            after.far_skipped > before.far_skipped + 20,
+            "a still scene should leave the far field alone: {} -> {}",
+            before.far_skipped,
+            after.far_skipped
+        );
+        assert!(
+            difference(&settled, &resting) < 2.0,
+            "the picture it keeps showing is the one it had: {}",
+            difference(&settled, &resting)
+        );
+
+        // Turning the camera wakes the far field up: no more whole-frame skips, and every other frame is traced.
+        let skipped = engine.photon_stats().unwrap().far_skipped;
+        for _ in 0..30 {
+            if let Ok(mut camera) = engine.camera() {
+                camera.yaw += 0.02;
+                let _ = engine.set_camera(camera);
+            }
+            picture(engine);
+        }
+        let turning = engine.photon_stats().unwrap();
+        assert_eq!(
+            turning.far_skipped, skipped,
+            "a turning camera is not a resting scene"
+        );
+        assert!(
+            turning.far_half_rate > 0,
+            "a turning camera traces every other frame"
+        );
+    }
+
+    #[test]
+    fn with_photon_off_no_photon_work_is_done() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        if harness
+            .app()
+            .engine
+            .as_ref()
+            .is_none_or(|engine| engine.capi_version() < 23)
+        {
+            return;
+        }
+        create_prefab_labelled(&mut harness, "Cube");
+        create_prefab_labelled(&mut harness, "Directional Light");
+        create_prefab_labelled(&mut harness, "Camera");
+        let views = [(SceneView::Game, (96, 64))];
+        let _ = frames(&mut harness, 5, (128, 72), &views);
+        let engine = harness.app.engine.as_ref().unwrap();
+        engine.profiler_reset().ok();
+        let _ = frames(&mut harness, 20, (128, 72), &views);
+        let engine = harness.app.engine.as_ref().unwrap();
+        let scopes = engine.profiler_scopes().unwrap();
+        let photon: Vec<_> = scopes
+            .iter()
+            .filter(|scope| scope.name.to_ascii_lowercase().contains("photon") && scope.calls > 0)
+            .map(|scope| format!("{} ({} calls)", scope.name, scope.calls))
+            .collect();
+        assert!(
+            photon.is_empty(),
+            "Photon ran with no Photon in the scene: {photon:?}"
+        );
+        assert!(
+            scopes
+                .iter()
+                .any(|scope| scope.name.contains("renderWithCamera")),
+            "it did render"
+        );
+    }
+
+    #[test]
+    fn a_disabled_photon_component_does_no_photon_work_either() {
+        use crate::uikit::panels::photon as photon_panel;
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        let views = [(SceneView::Game, (96, 64))];
+        let _ = frames(&mut harness, 5, (128, 72), &views);
+        harness.dispatch(Message::Photon(photon_panel::Edit::Flag(
+            photon_panel::Flag::Enabled,
+            false,
+        )));
+        let _ = frames(&mut harness, 5, (128, 72), &views);
+        harness.app.engine.as_ref().unwrap().profiler_reset().ok();
+        let _ = frames(&mut harness, 20, (128, 72), &views);
+        let scopes = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .profiler_scopes()
+            .unwrap();
+        let photon: Vec<_> = scopes
+            .iter()
+            .filter(|scope| scope.name.to_ascii_lowercase().contains("photon") && scope.calls > 0)
+            .map(|scope| format!("{} ({} calls)", scope.name, scope.calls))
+            .collect();
+        assert!(
+            photon.is_empty(),
+            "Photon is switched off but still ran: {photon:?}"
+        );
+    }
+
+    #[test]
+    fn views_of_other_sizes_do_not_make_photon_rebuild_its_targets() {
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        let editor = (256, 144);
+        let views = [(SceneView::Game, (96, 64)), (SceneView::Camera, (160, 90))];
+        let _ = frames(&mut harness, 3, editor, &views);
+        let engine = harness.app.engine.as_ref().unwrap();
+        let first = engine.photon_stats().unwrap();
+        let _ = frames(&mut harness, 40, editor, &views);
+        let engine = harness.app.engine.as_ref().unwrap();
+        let last = engine.photon_stats().unwrap();
+        assert_eq!(
+            last.target_rebuilds, first.target_rebuilds,
+            "the targets were recreated while views alternated"
+        );
+        assert!(
+            last.full_rebuilds <= first.full_rebuilds + 1,
+            "the voxel volume was rebuilt by another view's camera"
+        );
+    }
+
+    /// Where the editor's own thread goes while it plays a Photon scene: a tick (the viewport pump), the view
+    /// build and its layout. Run it with the Profiler tab open, as it usually is.
+    #[test]
+    #[ignore]
+    fn editor_thread_budget() {
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        harness.click(id::PANE_TAB_PROFILER);
+        harness.dispatch(Message::SceneViewResized(
+            SceneView::Game,
+            iced::Size::new(480.0, 300.0),
+        ));
+        harness.dispatch(Message::TogglePlay);
+        for _ in 0..30 {
+            harness.dispatch(Message::ViewportTick);
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        let mut tick = std::time::Duration::ZERO;
+        let mut view = std::time::Duration::ZERO;
+        let mut layout = std::time::Duration::ZERO;
+        let mut baseline = std::time::Duration::ZERO;
+        let frames = 60;
+        for _ in 0..frames {
+            let start = std::time::Instant::now();
+            harness.dispatch(Message::ViewportTick);
+            tick += start.elapsed();
+            let start = std::time::Instant::now();
+            let element = harness.app().view();
+            view += start.elapsed();
+            let start = std::time::Instant::now();
+            let ui = sim(element);
+            layout += start.elapsed();
+            drop(ui);
+            let start = std::time::Instant::now();
+            let trivial = sim(iced::widget::text("x"));
+            baseline += start.elapsed();
+            drop(trivial);
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0 / frames as f32;
+        println!(
+            "\n== editor thread, playing, Profiler tab open: tick {:.2} ms, view() {:.2} ms, layout {:.2} ms (a trivial widget costs {:.2} ms)",
+            ms(tick),
+            ms(view),
+            ms(layout),
+            ms(baseline)
+        );
+        harness.dispatch(Message::StopPlay);
+    }
+
+    /// What each tab costs to lay out (iced rebuilds and lays out the whole window on every tick).
+    #[test]
+    #[ignore]
+    fn tab_layout_cost() {
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        harness.dispatch(Message::TogglePlay);
+        for _ in 0..30 {
+            harness.dispatch(Message::ViewportTick);
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        let time = |element: iced::Element<'_, Message>| {
+            let start = std::time::Instant::now();
+            let ui = sim(element);
+            let elapsed = start.elapsed();
+            drop(ui);
+            elapsed.as_secs_f32() * 1000.0
+        };
+        let baseline = (0..5)
+            .map(|_| time(iced::widget::text("x").into()))
+            .fold(f32::MAX, f32::min);
+        println!("\n== layout cost per tab (ms over a trivial widget {baseline:.1})");
+        let mut rows: Vec<(f32, &'static str)> = Vec::new();
+        for kind in PaneKind::ALL {
+            let (_, _, _, body) = harness.app().pane_parts(kind);
+            let best = (0..3)
+                .map(|_| {
+                    let (_, _, _, body) = harness.app().pane_parts(kind);
+                    time(crate::uikit::components::panel::body(body))
+                })
+                .fold(f32::MAX, f32::min);
+            drop(body);
+            rows.push((best - baseline, kind.title()));
+        }
+        rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (ms, title) in rows {
+            println!("   {title:<22} {ms:>7.2} ms");
+        }
+        let whole = (0..3)
+            .map(|_| time(harness.app().view()))
+            .fold(f32::MAX, f32::min);
+        println!("   {:<22} {:>7.2} ms", "whole window", whole - baseline);
+        harness.dispatch(Message::StopPlay);
+    }
+
+    #[test]
+    #[ignore]
+    fn photon_scene_budget() {
+        let Some(mut harness) = scene() else {
+            return;
+        };
+        let editor = (1158, 536);
+        harness
+            .app
+            .engine
+            .as_mut()
+            .unwrap()
+            .set_profiler_gpu_timing(true)
+            .ok();
+        harness.app.engine.as_mut().unwrap().set_simulating(true);
+        let measure =
+            |harness: &mut Harness, title: &str, views: &[(SceneView, (u32, u32))], orbit: bool| {
+                let _ = frames_orbit(harness, 60, editor, views, orbit);
+                harness.app.engine.as_ref().unwrap().profiler_reset().ok();
+                let wall = frames_orbit(harness, 100, editor, views, orbit);
+                report(harness, title, wall);
+            };
+        measure(&mut harness, "editor viewport, camera still", &[], false);
+        measure(&mut harness, "editor viewport, camera orbiting", &[], true);
+        let views = [
+            (SceneView::Game, (480, 300)),
+            (SceneView::Camera, (480, 300)),
+        ];
+        measure(
+            &mut harness,
+            "editor + Gameplay + Camera, still",
+            &views,
+            false,
+        );
+    }
+
+    /// `frames`, optionally turning the editor camera a little every frame.
+    fn frames_orbit(
+        harness: &mut Harness,
+        count: usize,
+        editor: (u32, u32),
+        views: &[(SceneView, (u32, u32))],
+        orbit: bool,
+    ) -> f32 {
+        if !orbit {
+            return frames(harness, count, editor, views);
+        }
+        let mut total = 0.0;
+        for _ in 0..count {
+            let engine = harness.app.engine.as_mut().unwrap();
+            if let Ok(mut camera) = engine.camera() {
+                camera.yaw += 0.01;
+                let _ = engine.set_camera(camera);
+            }
+            total += frames(harness, 1, editor, views);
+        }
+        total / count as f32
+    }
+}
+
+mod performance_panel {
+    use super::*;
+    use crate::uikit::panels::performance::{self as panel, Amount, Edit, Flag, Settings};
+
+    fn field(harness: &Harness, name: &str) -> Option<doppio_engine::FieldValue> {
+        let engine = harness.app().engine.as_ref()?;
+        let entity = harness.app().performance.entity?;
+        let components = engine.entity_components(entity);
+        let index = components.iter().position(|c| c.name == panel::COMPONENT)?;
+        let names: Vec<String> = engine
+            .component_types()
+            .into_iter()
+            .find(|kind| kind.name == panel::COMPONENT)?
+            .fields
+            .into_iter()
+            .map(|field| field.name)
+            .collect();
+        let at = names.iter().position(|n| n == name)?;
+        engine
+            .component_values(entity, index as u32)
+            .get(at)
+            .cloned()
+    }
+
+    #[test]
+    fn the_tables_are_consistent_and_documented() {
+        use std::collections::HashSet;
+        let mut keys = HashSet::new();
+        for flag in Flag::ALL {
+            let spec = flag.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for amount in Amount::ALL {
+            let spec = amount.spec();
+            assert!(keys.insert(spec.key), "duplicate key {}", spec.key);
+            assert!(
+                spec.min < spec.max && spec.default >= spec.min && spec.default <= spec.max,
+                "{}",
+                spec.key
+            );
+            assert!(
+                crate::uikit::id::description(spec.id.key()).is_some(),
+                "{} is not in the CATALOG",
+                spec.id.key()
+            );
+        }
+        for id in [
+            id::PERF_ADD,
+            id::PERF_RENDER_SCALE,
+            id::PERF_ANTI_ALIASING,
+            id::PERF_SHADOWS,
+            id::PERF_GRID,
+            id::PANE_PERFORMANCE,
+            id::PANE_TAB_PERFORMANCE,
+            id::SHOW_PERFORMANCE,
+        ] {
+            assert!(
+                crate::uikit::id::description(id.key()).is_some(),
+                "{} is not in the CATALOG",
+                id.key()
+            );
+        }
+        assert_eq!(panel::scale_index(1.5), 4);
+        assert_eq!(panel::scale_index(0.1), 0);
+        assert_eq!(panel::summary(None), "engine defaults");
+        assert_eq!(panel::summary(Some(&Settings::default())), "2 of 5 on");
+    }
+
+    #[test]
+    fn the_tab_is_in_the_right_column_and_the_view_menu_opens_it() {
+        let mut harness = Harness::empty();
+        assert!(harness.has(Id::from(id::PANE_TAB_PERFORMANCE)));
+        harness.click(id::PANE_TAB_PERFORMANCE);
+        assert!(
+            harness.has(Id::from(id::PERF_RENDER_SCALE)),
+            "the editor viewport options are always there"
+        );
+        assert!(
+            harness.has(Id::from(id::PERF_ADD)),
+            "no component yet: it offers to add one"
+        );
+        harness.click(id::PANE_TAB_INSPECTOR);
+        harness.click(id::MENU_VIEW);
+        harness.click(id::SHOW_PERFORMANCE);
+        assert!(harness.has(Id::from(id::PERF_ADD)));
+    }
+
+    #[test]
+    fn the_viewport_options_reach_the_engine_and_the_panel_shows_them() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.dispatch(Message::ShowPerformance);
+        harness.dispatch(Message::Performance(Edit::RenderScale(0)));
+        harness.dispatch(Message::Performance(Edit::AntiAliasing(0)));
+        harness.dispatch(Message::Performance(Edit::Shadows(true)));
+        harness.dispatch(Message::Performance(Edit::Grid(false)));
+        let settings = harness
+            .app()
+            .engine
+            .as_ref()
+            .unwrap()
+            .viewport_settings()
+            .unwrap();
+        assert_eq!(settings.render_scale, 0.5);
+        assert_eq!(settings.anti_aliasing, doppio_engine::AntiAliasing::Off);
+        assert!(settings.shadows);
+        assert!(!settings.show_grid);
+        assert_eq!(harness.app().viewport_settings, settings);
+        // The editor starts at the target size, not supersampled. (One harness at a time: they share the GPU lock.)
+        drop(harness);
+        let Some(fresh) = engine_harness_as_started() else {
+            return;
+        };
+        assert!(fresh.app().viewport_settings.render_scale <= 1.0);
+    }
+
+    #[test]
+    fn adding_editing_and_undoing_the_render_features() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        harness.rebase_history();
+        harness.dispatch(Message::ShowPerformance);
+        assert!(harness.app().performance.settings.is_none());
+        harness.dispatch(Message::Performance(Edit::Add));
+        assert_eq!(
+            harness.app().performance.settings,
+            Some(Settings::default()),
+            "the engine's defaults are the panel's"
+        );
+        let entities = harness.app().entities.len();
+        harness.dispatch(Message::Performance(Edit::Add));
+        assert_eq!(
+            harness.app().entities.len(),
+            entities,
+            "a second Add does nothing"
+        );
+
+        harness.dispatch(Message::Performance(Edit::Flag(Flag::Occlusion, true)));
+        harness.dispatch(Message::Performance(Edit::Flag(Flag::Reflections, false)));
+        harness.dispatch(Message::Performance(Edit::Amount(Amount::Occluders, 12.4)));
+        harness.dispatch(Message::Performance(Edit::Amount(Amount::MaxProbes, 99.0)));
+        let s = harness.app().performance.settings.clone().unwrap();
+        assert!(s.flag(Flag::Occlusion));
+        assert!(!s.flag(Flag::Reflections));
+        assert_eq!(
+            s.amount(Amount::Occluders),
+            12.0,
+            "a whole number is written as one"
+        );
+        assert_eq!(
+            s.amount(Amount::MaxProbes),
+            16.0,
+            "clamped to what the table allows"
+        );
+        // And it is the engine's component that changed (what the renderer reads).
+        assert_eq!(
+            field(&harness, "Occlusion: Enabled"),
+            Some(doppio_engine::FieldValue::Bool(true))
+        );
+        assert!(matches!(
+            field(&harness, "Occlusion: Max Occluders"),
+            Some(doppio_engine::FieldValue::U32(12))
+        ));
+
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        harness.dispatch(Message::Undo);
+        let s = harness.app().performance.settings.clone().unwrap();
+        assert!(!s.flag(Flag::Occlusion), "undo walks the edits back");
+        assert!(s.flag(Flag::Reflections));
+    }
+
+    #[cfg(feature = "agent")]
+    #[test]
+    fn the_agent_reaches_every_option_by_its_key() {
+        for flag in Flag::ALL {
+            let edit = super::agent::performance_edit(flag.spec().key, &serde_json::json!(true));
+            assert!(
+                matches!(edit, Ok(Edit::Flag(found, true)) if found == *flag),
+                "{}",
+                flag.spec().key
+            );
+        }
+        for amount in Amount::ALL {
+            let edit = super::agent::performance_edit(amount.spec().key, &serde_json::json!(2));
+            assert!(
+                matches!(edit, Ok(Edit::Amount(found, _)) if found == *amount),
+                "{}",
+                amount.spec().key
+            );
+        }
+        assert!(matches!(
+            super::agent::performance_edit("render_scale", &serde_json::json!(1.0)),
+            Ok(Edit::RenderScale(2))
+        ));
+        assert!(matches!(
+            super::agent::performance_edit("anti_aliasing", &serde_json::json!("TAA")),
+            Ok(Edit::AntiAliasing(2))
+        ));
+        assert!(
+            super::agent::performance_edit("anti_aliasing", &serde_json::json!("msaa")).is_err()
+        );
+        assert!(super::agent::performance_edit("nonsense", &serde_json::json!(1)).is_err());
+        assert!(super::agent::performance_edit("instancing", &serde_json::json!("yes")).is_err());
+    }
 }

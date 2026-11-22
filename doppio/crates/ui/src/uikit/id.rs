@@ -230,6 +230,160 @@ pub const PANE_TAB_NATURE_GENERATOR: UiId = UiId::fixed("editor.pane.tab.nature_
 pub const PANE_WATER_GENERATOR: UiId = UiId::fixed("editor.pane.water_generator");
 pub const PANE_TAB_WATER_GENERATOR: UiId = UiId::fixed("editor.pane.tab.water_generator");
 pub const SHOW_WATER_GENERATOR: UiId = UiId::fixed("editor.menu.view.water_generator");
+pub const PANE_PHOTON: UiId = UiId::fixed("editor.pane.photon");
+pub const PANE_TAB_PHOTON: UiId = UiId::fixed("editor.pane.tab.photon");
+pub const SHOW_PHOTON: UiId = UiId::fixed("editor.menu.view.photon");
+pub const PHOTON_ADD: UiId = UiId::fixed("photon.setup.add");
+pub const PHOTON_PRESET: UiId = UiId::fixed("photon.setup.preset");
+pub const PHOTON_ENABLED: UiId = UiId::fixed("photon.lighting.enabled");
+pub const PHOTON_PATH: UiId = UiId::fixed("photon.lighting.path");
+pub const PHOTON_QUALITY: UiId = UiId::fixed("photon.lighting.quality");
+pub const PHOTON_INTENSITY: UiId = UiId::fixed("photon.lighting.intensity");
+pub const PHOTON_BOUNCE_GAIN: UiId = UiId::fixed("photon.lighting.bounce_gain");
+pub const PHOTON_SKY: UiId = UiId::fixed("photon.lighting.sky");
+pub const PHOTON_AMBIENT: UiId = UiId::fixed("photon.lighting.ambient");
+pub const PHOTON_RADIUS: UiId = UiId::fixed("photon.lighting.radius");
+pub const PHOTON_VOXEL_SKINNED: UiId = UiId::fixed("photon.voxels.skinned");
+pub const PHOTON_VOXEL_CUTOUT: UiId = UiId::fixed("photon.voxels.cutout");
+pub const PHOTON_VOXEL_TERRAIN: UiId = UiId::fixed("photon.voxels.terrain");
+pub const PHOTON_FULL_REBUILDS: UiId = UiId::fixed("photon.voxels.full_rebuilds");
+pub const PHOTON_REBUILD: UiId = UiId::fixed("photon.voxels.rebuild");
+pub const PHOTON_DEBUG_VIEW: UiId = UiId::fixed("photon.debug.view");
+pub const PHOTON_STATS: UiId = UiId::fixed("photon.stats");
+pub const PANE_PROFILER: UiId = UiId::fixed("editor.pane.profiler");
+pub const PANE_TAB_PROFILER: UiId = UiId::fixed("editor.pane.tab.profiler");
+pub const SHOW_PROFILER: UiId = UiId::fixed("editor.menu.view.profiler");
+pub const PROFILER_GPU: UiId = UiId::fixed("profiler.setup.gpu_timing");
+pub const PROFILER_RESET: UiId = UiId::fixed("profiler.setup.reset");
+pub const PROFILER_FRAME: UiId = UiId::fixed("profiler.summary.frame");
+pub const PROFILER_TABLE: UiId = UiId::fixed("profiler.table.scopes");
+pub const PROFILER_ROW: UiId = UiId::fixed("profiler.table.row");
+pub const PROFILER_CHART_FPS: UiId = UiId::fixed("profiler.chart.fps");
+pub const PROFILER_CHART_CPU: UiId = UiId::fixed("profiler.chart.cpu_cores");
+pub const PROFILER_CHART_GPU: UiId = UiId::fixed("profiler.chart.gpu");
+pub const PROFILER_CHART_MEMORY: UiId = UiId::fixed("profiler.chart.memory");
+pub const PANE_ENVIRONMENT: UiId = UiId::fixed("editor.pane.environment");
+pub const PANE_TAB_ENVIRONMENT: UiId = UiId::fixed("editor.pane.tab.environment");
+pub const SHOW_ENVIRONMENT: UiId = UiId::fixed("editor.menu.view.environment");
+pub const PANE_AUDIO: UiId = UiId::fixed("editor.pane.audio");
+pub const PANE_TAB_AUDIO: UiId = UiId::fixed("editor.pane.tab.audio");
+pub const TRANSPORT_PLAY: UiId = UiId::fixed("editor.transport.play");
+pub const TRANSPORT_STOP: UiId = UiId::fixed("editor.transport.stop");
+pub const PANE_GAMEPLAY: UiId = UiId::fixed("editor.pane.gameplay");
+pub const PANE_TAB_GAMEPLAY: UiId = UiId::fixed("editor.pane.tab.gameplay");
+pub const SHOW_GAMEPLAY: UiId = UiId::fixed("editor.menu.view.gameplay");
+pub const GAMEPLAY_VIEW: UiId = UiId::fixed("gameplay.view.surface");
+pub const PANE_CAMERA_PREVIEW: UiId = UiId::fixed("editor.pane.camera_preview");
+pub const PANE_TAB_CAMERA_PREVIEW: UiId = UiId::fixed("editor.pane.tab.camera_preview");
+pub const SHOW_CAMERA_PREVIEW: UiId = UiId::fixed("editor.menu.view.camera_preview");
+pub const CAMERA_PREVIEW_VIEW: UiId = UiId::fixed("camerapreview.view.surface");
+pub const PERF_ENABLED: UiId = UiId::fixed("performance.features.enabled");
+pub const PERF_INSTANCING: UiId = UiId::fixed("performance.features.instancing");
+pub const PERF_OCCLUSION: UiId = UiId::fixed("performance.features.occlusion");
+pub const PERF_REFLECTIONS: UiId = UiId::fixed("performance.features.reflections");
+pub const PERF_SCREENSPACEREFLECTIONS: UiId = UiId::fixed("performance.features.reflections_ssr");
+pub const PERF_REFLECTIONSWHENSETTLED: UiId =
+    UiId::fixed("performance.features.reflections_settled");
+pub const PERF_VOLUMETRICS: UiId = UiId::fixed("performance.features.volumetrics");
+pub const PERF_IBL: UiId = UiId::fixed("performance.features.ibl");
+pub const PERF_INSTANCINGBATCH: UiId = UiId::fixed("performance.features.instancing_batch");
+pub const PERF_OCCLUDERS: UiId = UiId::fixed("performance.features.occluders");
+pub const PERF_OCCLUDERRADIUS: UiId = UiId::fixed("performance.features.occluder_radius");
+pub const PERF_REFLECTIONSTRENGTH: UiId = UiId::fixed("performance.features.reflection_strength");
+pub const PERF_REFLECTIONSCALE: UiId = UiId::fixed("performance.features.reflection_scale");
+pub const PERF_PROBERESOLUTION: UiId = UiId::fixed("performance.features.probe_resolution");
+pub const PERF_MAXPROBES: UiId = UiId::fixed("performance.features.max_probes");
+pub const PERF_SSRSTEPS: UiId = UiId::fixed("performance.features.ssr_steps");
+pub const PERF_FOGDENSITY: UiId = UiId::fixed("performance.features.fog_density");
+pub const PERF_ADD: UiId = UiId::fixed("performance.setup.add");
+pub const PERF_RENDER_SCALE: UiId = UiId::fixed("performance.viewport.render_scale");
+pub const PERF_ANTI_ALIASING: UiId = UiId::fixed("performance.viewport.anti_aliasing");
+pub const PERF_SHADOWS: UiId = UiId::fixed("performance.viewport.shadows");
+pub const PERF_GRID: UiId = UiId::fixed("performance.viewport.grid");
+pub const PANE_PERFORMANCE: UiId = UiId::fixed("editor.pane.performance");
+pub const PANE_TAB_PERFORMANCE: UiId = UiId::fixed("editor.pane.tab.performance");
+pub const SHOW_PERFORMANCE: UiId = UiId::fixed("editor.menu.view.performance");
+pub const SHOW_AUDIO: UiId = UiId::fixed("editor.menu.view.audio");
+pub const PANE_PHASESHIFT: UiId = UiId::fixed("editor.pane.phaseshift");
+pub const PANE_TAB_PHASESHIFT: UiId = UiId::fixed("editor.pane.tab.phaseshift");
+pub const SHOW_PHASESHIFT: UiId = UiId::fixed("editor.menu.view.phaseshift");
+pub const PANE_RIG2D: UiId = UiId::fixed("editor.pane.rig2d");
+pub const PANE_TAB_RIG2D: UiId = UiId::fixed("editor.pane.tab.rig2d");
+pub const SHOW_RIG2D: UiId = UiId::fixed("editor.menu.view.rig2d");
+pub const AUDIO_ADD: UiId = UiId::fixed("audio.setup.add");
+pub const AUDIO_ENABLED: UiId = UiId::fixed("audio.mixer.enabled");
+pub const AUDIO_OUTPUT: UiId = UiId::fixed("audio.output.speakers");
+pub const AUDIO_DEVICE: UiId = UiId::fixed("audio.output.device");
+pub const AUDIO_MASTER: UiId = UiId::fixed("audio.output.master");
+pub const AUDIO_WORLD: UiId = UiId::fixed("audio.output.world");
+pub const AUDIO_AMBIENT: UiId = UiId::fixed("audio.output.ambient");
+pub const AUDIO_MUSIC: UiId = UiId::fixed("audio.output.music");
+pub const AUDIO_PROPAGATION_DELAY: UiId = UiId::fixed("audio.travel.delay");
+pub const AUDIO_DOPPLER: UiId = UiId::fixed("audio.travel.doppler");
+pub const AUDIO_SPEED_OF_SOUND: UiId = UiId::fixed("audio.travel.speed");
+pub const AUDIO_AIR_ABSORPTION: UiId = UiId::fixed("audio.travel.air");
+pub const AUDIO_OCCLUSION: UiId = UiId::fixed("audio.travel.occlusion");
+pub const AUDIO_DIFFRACTION: UiId = UiId::fixed("audio.travel.diffraction");
+pub const AUDIO_REVERB: UiId = UiId::fixed("audio.travel.reverb");
+pub const AUDIO_ADD_SOURCE: UiId = UiId::fixed("audio.sounds.add_source");
+pub const AUDIO_ADD_WALL: UiId = UiId::fixed("audio.sounds.add_wall");
+pub const ENV_ADD: UiId = UiId::fixed("environment.setup.add");
+pub const ENV_PRESET: UiId = UiId::fixed("environment.setup.preset");
+pub const ENV_CLOUDS_ENABLED: UiId = UiId::fixed("environment.clouds.enabled");
+pub const ENV_CLOUDS_QUALITY: UiId = UiId::fixed("environment.clouds.quality");
+pub const ENV_CLOUDS_DIM_SUN: UiId = UiId::fixed("environment.clouds.dim_sun");
+pub const ENV_CLOUDS_COVERAGE: UiId = UiId::fixed("environment.clouds.coverage");
+pub const ENV_CLOUDS_DENSITY: UiId = UiId::fixed("environment.clouds.density");
+pub const ENV_CLOUDS_BASE_ALTITUDE: UiId = UiId::fixed("environment.clouds.base_altitude");
+pub const ENV_CLOUDS_TOP_ALTITUDE: UiId = UiId::fixed("environment.clouds.top_altitude");
+pub const ENV_CLOUDS_DETAIL: UiId = UiId::fixed("environment.clouds.detail");
+pub const ENV_CLOUDS_WIND_SPEED: UiId = UiId::fixed("environment.clouds.wind_speed");
+pub const ENV_CLOUDS_WIND_DIRECTION: UiId = UiId::fixed("environment.clouds.wind_direction");
+pub const ENV_CLOUDS_SUN_SCATTER: UiId = UiId::fixed("environment.clouds.sun_scatter");
+pub const ENV_CLOUDS_DARKNESS: UiId = UiId::fixed("environment.clouds.darkness");
+pub const ENV_CLOUDS_SKY_LIGHT: UiId = UiId::fixed("environment.clouds.sky_light");
+pub const ENV_CLOUDS_MIST_DENSITY: UiId = UiId::fixed("environment.clouds.mist_density");
+pub const ENV_CLOUDS_MIST_HEIGHT: UiId = UiId::fixed("environment.clouds.mist_height");
+pub const ENV_CLOUDS_TINT_R: UiId = UiId::fixed("environment.clouds.tint_r");
+pub const ENV_CLOUDS_TINT_G: UiId = UiId::fixed("environment.clouds.tint_g");
+pub const ENV_CLOUDS_TINT_B: UiId = UiId::fixed("environment.clouds.tint_b");
+pub const ENV_WEATHER_ENABLED: UiId = UiId::fixed("environment.weather.enabled");
+pub const ENV_WEATHER_LINK_SKY: UiId = UiId::fixed("environment.weather.link_sky");
+pub const ENV_FOG_ENABLED: UiId = UiId::fixed("environment.fog.enabled");
+pub const ENV_FOG_DENSITY: UiId = UiId::fixed("environment.fog.density");
+pub const ENV_FOG_HEIGHT_FALLOFF: UiId = UiId::fixed("environment.fog.height_falloff");
+pub const ENV_FOG_BASE_HEIGHT: UiId = UiId::fixed("environment.fog.base_height");
+pub const ENV_FOG_START: UiId = UiId::fixed("environment.fog.start");
+pub const ENV_FOG_MAX_OPACITY: UiId = UiId::fixed("environment.fog.max_opacity");
+pub const ENV_FOG_SKY_BLEND: UiId = UiId::fixed("environment.fog.sky_blend");
+pub const ENV_FOG_SUN_SCATTER: UiId = UiId::fixed("environment.fog.sun_scatter");
+pub const ENV_FOG_SUN_EXPONENT: UiId = UiId::fixed("environment.fog.sun_exponent");
+pub const ENV_FOG_COLOR_R: UiId = UiId::fixed("environment.fog.color_r");
+pub const ENV_FOG_COLOR_G: UiId = UiId::fixed("environment.fog.color_g");
+pub const ENV_FOG_COLOR_B: UiId = UiId::fixed("environment.fog.color_b");
+pub const ENV_RAIN_ENABLED: UiId = UiId::fixed("environment.rain.enabled");
+pub const ENV_RAIN_INTENSITY: UiId = UiId::fixed("environment.rain.intensity");
+pub const ENV_RAIN_WIND_SPEED: UiId = UiId::fixed("environment.rain.wind_speed");
+pub const ENV_RAIN_WIND_DIRECTION: UiId = UiId::fixed("environment.rain.wind_direction");
+pub const ENV_RAIN_DROP_LENGTH: UiId = UiId::fixed("environment.rain.drop_length");
+pub const ENV_RAIN_SPEED: UiId = UiId::fixed("environment.rain.speed");
+pub const ENV_RAIN_BRIGHTNESS: UiId = UiId::fixed("environment.rain.brightness");
+pub const ENV_RAIN_WETNESS: UiId = UiId::fixed("environment.rain.wetness");
+pub const ENV_CLOUDS_GROUND_SHADOWS: UiId = UiId::fixed("environment.clouds.ground_shadows");
+pub const ENV_CLOUDS_SHADOW_STRENGTH: UiId = UiId::fixed("environment.clouds.shadow_strength");
+pub const ENV_CLOUDS_SILVER_LINING: UiId = UiId::fixed("environment.clouds.silver_lining");
+pub const ENV_CLOUDS_SUN_SHAFTS: UiId = UiId::fixed("environment.clouds.sun_shafts");
+pub const ENV_RAIN_SPLASHES: UiId = UiId::fixed("environment.rain.splashes");
+pub const ENV_AUDIO_ENABLED: UiId = UiId::fixed("environment.audio.enabled");
+pub const ENV_AUDIO_VOLUME: UiId = UiId::fixed("environment.audio.volume");
+pub const ENV_WEATHER_WIND_GUST: UiId = UiId::fixed("environment.weather.wind_gust");
+pub const ENV_WEATHER_WIND_FOLIAGE: UiId = UiId::fixed("environment.weather.wind_foliage");
+pub const ENV_LIGHTNING_ENABLED: UiId = UiId::fixed("environment.lightning.enabled");
+pub const ENV_LIGHTNING_THUNDER: UiId = UiId::fixed("environment.lightning.thunder");
+pub const ENV_LIGHTNING_RATE: UiId = UiId::fixed("environment.lightning.rate");
+pub const ENV_LIGHTNING_INTENSITY: UiId = UiId::fixed("environment.lightning.intensity");
+pub const ENV_LIGHTNING_DISTANCE_MIN: UiId = UiId::fixed("environment.lightning.distance_min");
+pub const ENV_LIGHTNING_DISTANCE_MAX: UiId = UiId::fixed("environment.lightning.distance_max");
 pub const WATERGEN_CANVAS: UiId = UiId::fixed("watergen.canvas");
 pub const WATERGEN_UNDO: UiId = UiId::fixed("watergen.toolbar.undo");
 pub const WATERGEN_REDO: UiId = UiId::fixed("watergen.toolbar.redo");
@@ -379,6 +533,23 @@ pub const MATERIAL_SCROLL: UiId = UiId::fixed("material.body.scroll");
 pub const MATERIAL_BAKE_DIRECTX: UiId = UiId::fixed("material.bake.directx");
 pub const MATERIAL_BAKE_WRAP: UiId = UiId::fixed("material.bake.wrap");
 pub const MATERIAL_BAKE_SCENE_AO: UiId = UiId::fixed("material.bake.scene_ao");
+pub const FILEBROWSER: UiId = UiId::fixed("filebrowser.window.root");
+pub const FILEBROWSER_CLOSE: UiId = UiId::fixed("filebrowser.window.close");
+pub const FILEBROWSER_UP: UiId = UiId::fixed("filebrowser.nav.up");
+pub const FILEBROWSER_REFRESH: UiId = UiId::fixed("filebrowser.nav.refresh");
+pub const FILEBROWSER_PATH: UiId = UiId::fixed("filebrowser.nav.path");
+pub const FILEBROWSER_SEARCH: UiId = UiId::fixed("filebrowser.filter.search");
+pub const FILEBROWSER_SUPPORTED: UiId = UiId::fixed("filebrowser.filter.supported");
+pub const FILEBROWSER_HIDDEN: UiId = UiId::fixed("filebrowser.filter.hidden");
+pub const FILEBROWSER_SELECT_SUPPORTED: UiId = UiId::fixed("filebrowser.action.select_all");
+pub const FILEBROWSER_CLEAR: UiId = UiId::fixed("filebrowser.action.clear");
+pub const FILEBROWSER_CONFIRM: UiId = UiId::fixed("filebrowser.action.confirm");
+pub const FILEBROWSER_CANCEL: UiId = UiId::fixed("filebrowser.action.cancel");
+pub const WIZARD_IMPORT_BROWSE: UiId = UiId::fixed("assets.wizard.import.browse");
+pub const ASSET_PICK: UiId = UiId::fixed("asset.pick.root");
+pub const ASSET_PICK_CLOSE: UiId = UiId::fixed("asset.pick.close");
+pub const ASSET_PICK_SEARCH: UiId = UiId::fixed("asset.pick.search");
+pub const ASSET_PICK_NONE: UiId = UiId::fixed("asset.pick.none");
 pub const MATERIAL_PICKER: UiId = UiId::fixed("material.picker");
 pub const MATERIAL_PICKER_CLOSE: UiId = UiId::fixed("material.picker.close");
 pub const MATERIAL_PICKER_SEARCH: UiId = UiId::fixed("material.picker.search");
@@ -456,6 +627,11 @@ pub fn naturegen_add(op: &str) -> UiId {
 
 pub fn naturegen_param(key: &str) -> UiId {
     UiId::dynamic(format!("naturegen.param.{key}"))
+}
+
+/// One row of the profiler's table (`profiler.table.row.N`).
+pub fn profiler_row(index: usize) -> UiId {
+    UiId::dynamic(format!("profiler.table.row.{index}"))
 }
 
 pub fn watergen_group(name: &str) -> UiId {
@@ -590,6 +766,31 @@ pub fn material_environment_item(index: usize) -> UiId {
     UiId::dynamic(format!("material.environment.picker.item.{index}"))
 }
 
+/// One entry of the file browser's list.
+pub fn file_browser_row(index: usize) -> UiId {
+    UiId::dynamic(format!("filebrowser.list.entry.{index}"))
+}
+
+/// One shortcut in the file browser's sidebar.
+pub fn file_browser_place(index: usize) -> UiId {
+    UiId::dynamic(format!("filebrowser.places.place.{index}"))
+}
+
+/// One step of the file browser's path trail.
+pub fn file_browser_crumb(index: usize) -> UiId {
+    UiId::dynamic(format!("filebrowser.nav.crumb.{index}"))
+}
+
+/// One row of the shared asset picker.
+pub fn asset_pick_item(index: usize) -> UiId {
+    UiId::dynamic(format!("asset.pick.item.{index}"))
+}
+
+/// One kind filter chip of the shared asset picker (`0` is "All").
+pub fn asset_pick_kind(index: usize) -> UiId {
+    UiId::dynamic(format!("asset.pick.kind.{index}"))
+}
+
 pub fn material_picker_item(index: usize) -> UiId {
     UiId::dynamic(format!("material.picker.item.{index}"))
 }
@@ -630,6 +831,21 @@ pub fn prefab_category(key: &str) -> UiId {
 
 pub fn prefab_item(key: &str) -> UiId {
     UiId::dynamic(format!("create.palette.item.{key}"))
+}
+
+/// The button that turns a pane's active tab into a window of its own.
+pub fn pane_detach(pane: &str) -> UiId {
+    UiId::dynamic(format!("editor.pane.detach.{pane}"))
+}
+
+/// The button of a detached window that docks its page back into the editor.
+pub fn window_dock(kind: &str) -> UiId {
+    UiId::dynamic(format!("editor.window.dock.{kind}"))
+}
+
+/// The body of a detached window.
+pub fn window_body(kind: &str) -> UiId {
+    UiId::dynamic(format!("editor.window.body.{kind}"))
 }
 
 pub fn pane_split(pane: &str) -> UiId {
@@ -820,6 +1036,771 @@ pub const CATALOG: &[UiMeta] = &[
         id: SHOW_WATER_GENERATOR,
         description: "Opens the Water Generator tab (lakes, rivers, seas and storms from nodes).",
         kind: "menu_item",
+    },
+    UiMeta {
+        id: PANE_PHOTON,
+        description: "Photon: the global illumination settings of the scene (switch, path, quality, bounce gain, voxel geometry, presets) and live statistics of the voxel far field.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_PHOTON,
+        description: "Tab of the Photon pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_PHOTON,
+        description: "Opens the Photon tab (global illumination: settings, presets and voxel statistics).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PHOTON_ADD,
+        description: "Adds the Photon GI component to a new entity when the scene has none (on, compute path, High quality).",
+        kind: "button",
+    },
+    UiMeta {
+        id: PHOTON_PRESET,
+        description: "Photon presets: Balanced, Interior (strong bounce), Outdoor, Fast (Eco) and Diagnostic. A preset sets every Photon setting at once.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PHOTON_ENABLED,
+        description: "Switches Photon global illumination on or off for the scene.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PHOTON_PATH,
+        description: "Photon path: the screen fallback gather, or the compute cascades with the voxel far field.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PHOTON_QUALITY,
+        description: "Photon quality tier: probe spacing and cascade count (Off, Low, Balanced, High, Eco).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PHOTON_INTENSITY,
+        description: "Multiplier of the indirect light Photon adds to the scene.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PHOTON_BOUNCE_GAIN,
+        description: "Scales the light the voxels hold (sun, lights, sky), so the bounce between surfaces grows without touching the direct light.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PHOTON_SKY,
+        description: "Strength of the sky light a ray finds when it leaves the screen and the voxels.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PHOTON_AMBIENT,
+        description: "Extra ambient bounce added to the sky fallback.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PHOTON_RADIUS,
+        description: "Near-field reach of the screen cascades, in world units.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PHOTON_VOXEL_SKINNED,
+        description: "Puts skinned meshes in the voxel volume in their current pose; they are revoxelised where they move.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PHOTON_VOXEL_CUTOUT,
+        description: "Treats cut-out meshes (foliage cards) as solid in the voxel volume.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PHOTON_VOXEL_TERRAIN,
+        description: "Puts terrain meshes in the voxel volume.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PHOTON_FULL_REBUILDS,
+        description: "Diagnostic: rebuilds every voxel level whenever anything changes instead of only the voxels around what moved.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PHOTON_REBUILD,
+        description: "Throws the voxel volume away; the next frame voxelises the whole scene again.",
+        kind: "button",
+    },
+    UiMeta {
+        id: PHOTON_DEBUG_VIEW,
+        description: "Debug view: the lit scene, the GI alone, or the sky fallback alone.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PHOTON_STATS,
+        description: "Voxel volume statistics: objects, triangles, regions and levels rebuilt, update time, and whether the scene is over the 1M-triangle budget.",
+        kind: "text",
+    },
+    UiMeta {
+        id: PANE_PROFILER,
+        description: "Profiler: the engine's timed scopes (render stages and, with GPU timing, the GPU passes) as a tree with average, worst and call counts.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_PROFILER,
+        description: "Tab of the Profiler pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_PROFILER,
+        description: "Opens the Profiler tab (timed scopes of the renderer, GPU timing).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PROFILER_GPU,
+        description: "GPU timing: every GPU pass waits for the GPU at its edges so its time is the real cost. Frames get slower while it is on.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PROFILER_RESET,
+        description: "Forgets every sample; the averages start again.",
+        kind: "button",
+    },
+    UiMeta {
+        id: PROFILER_FRAME,
+        description: "Frame time of the renderer (average of the top scope) and the frame rate it implies.",
+        kind: "text",
+    },
+    UiMeta {
+        id: PROFILER_TABLE,
+        description: "The profiler's scope tree: name, a bar, the average and worst time and how many times it ran.",
+        kind: "list",
+    },
+    UiMeta {
+        id: PROFILER_ROW,
+        description: "A scope of the profiler's table; rows use a .N suffix.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: PROFILER_CHART_FPS,
+        description: "Frame rate over the last minute (the viewport's frames per second, sampled four times a second).",
+        kind: "chart",
+    },
+    UiMeta {
+        id: PROFILER_CHART_CPU,
+        description: "CPU use of every logical core over the last minute, one colour per core, with the whole machine and this process below it.",
+        kind: "chart",
+    },
+    UiMeta {
+        id: PROFILER_CHART_GPU,
+        description: "GPU busy share and video memory in use over the last minute (NVML or sysfs; empty where the platform cannot say).",
+        kind: "chart",
+    },
+    UiMeta {
+        id: PROFILER_CHART_MEMORY,
+        description: "Memory in use on the machine and by this process over the last minute, in MiB.",
+        kind: "chart",
+    },
+    UiMeta {
+        id: PANE_ENVIRONMENT,
+        description: "Environment: clouds, fog and rain of the scene, with presets (clear sky, cloudy, fog, light rain, storm) and the coupling that makes them agree with the sun and Photon's sky light.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_ENVIRONMENT,
+        description: "Tab of the Environment pane.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: PANE_AUDIO,
+        description: "The Audio tab: the scene's volumetric audio, its room and one row per sound.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_AUDIO,
+        description: "Brings the Audio tab to the front.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: TRANSPORT_PLAY,
+        description: "Play / Pause: starts the game's simulation (the scene as the compiled game runs it) and shows it in the Gameplay tab; while it plays, pauses it; while paused, resumes it.",
+        kind: "button",
+    },
+    UiMeta {
+        id: TRANSPORT_STOP,
+        description: "Stop: ends the game and puts the scene back as it was before Play.",
+        kind: "button",
+    },
+    UiMeta {
+        id: PANE_GAMEPLAY,
+        description: "Gameplay preview: the scene through its active camera, running the game's simulation while Play is on.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_GAMEPLAY,
+        description: "Tab of the Gameplay preview.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_GAMEPLAY,
+        description: "Brings the Gameplay preview to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: GAMEPLAY_VIEW,
+        description: "The Gameplay picture; while the game plays the keyboard and the pointer reach its scripts through it.",
+        kind: "image",
+    },
+    UiMeta {
+        id: PANE_CAMERA_PREVIEW,
+        description: "Camera preview: the scene through the selected Camera 3D (or the active one), without playing.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_CAMERA_PREVIEW,
+        description: "Tab of the Camera preview.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_CAMERA_PREVIEW,
+        description: "Brings the Camera preview to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: CAMERA_PREVIEW_VIEW,
+        description: "The Camera preview picture.",
+        kind: "image",
+    },
+    UiMeta {
+        id: PERF_ENABLED,
+        description: "Performance: Render features on. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_INSTANCING,
+        description: "Performance: Instancing: copies drawn together. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_OCCLUSION,
+        description: "Performance: Occlusion culling: skip what a big object hides. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_REFLECTIONS,
+        description: "Performance: Reflections (probes and planes). Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_SCREENSPACEREFLECTIONS,
+        description: "Performance: Screen-space reflections. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_REFLECTIONSWHENSETTLED,
+        description: "Performance: Reflections only while the view is still. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_VOLUMETRICS,
+        description: "Performance: Volumetric light. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_IBL,
+        description: "Performance: Sky as diffuse fill light. Switch of the Forward Render Features component.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_INSTANCINGBATCH,
+        description: "Performance: Instances per batch. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_OCCLUDERS,
+        description: "Performance: Occluders tested. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_OCCLUDERRADIUS,
+        description: "Performance: Smallest occluder (m). Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_REFLECTIONSTRENGTH,
+        description: "Performance: Reflection strength. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_REFLECTIONSCALE,
+        description: "Performance: Planar reflection resolution. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_PROBERESOLUTION,
+        description: "Performance: Probe resolution (px). Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_MAXPROBES,
+        description: "Performance: Reflection probes. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_SSRSTEPS,
+        description: "Performance: SSR march steps. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_FOGDENSITY,
+        description: "Performance: Volumetric density. Number of the Forward Render Features component.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: PERF_ADD,
+        description: "Adds the Forward Render Features component on a new entity, so the scene's render options can be changed.",
+        kind: "button",
+    },
+    UiMeta {
+        id: PERF_RENDER_SCALE,
+        description: "Internal render scale of the editor viewport: below 1 is lighter, above 1 supersamples.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PERF_ANTI_ALIASING,
+        description: "Anti-aliasing of the editor viewport: off, FXAA or temporal.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: PERF_SHADOWS,
+        description: "Draws the lights' shadow maps in the editor viewport.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PERF_GRID,
+        description: "Shows the ground grid in the editor viewport.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: PANE_PERFORMANCE,
+        description: "Performance: instancing, occlusion culling, reflections and volumetric light of the scene, and the editor viewport's render scale, anti-aliasing, shadows and grid.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_PERFORMANCE,
+        description: "Tab of the Performance panel.",
+        kind: "tab",
+    },
+    UiMeta {
+        id: SHOW_PERFORMANCE,
+        description: "Brings the Performance tab to the front.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: SHOW_AUDIO,
+        description: "Shows the Audio tab (volumetric audio).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PANE_PHASESHIFT,
+        description: "The PhaseShift tab: the selected entity's animator parameters, states and transitions.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_PHASESHIFT,
+        description: "Brings the PhaseShift tab to the front.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_PHASESHIFT,
+        description: "Shows the PhaseShift tab (animator state machine).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: PANE_RIG2D,
+        description: "The Rig 2D tab: the selected entity's 2D bones, skinned mesh and rig parameters.",
+        kind: "pane",
+    },
+    UiMeta {
+        id: PANE_TAB_RIG2D,
+        description: "Brings the Rig 2D tab to the front.",
+        kind: "pane_tab",
+    },
+    UiMeta {
+        id: SHOW_RIG2D,
+        description: "Shows the Rig 2D tab (bones and parameters).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: AUDIO_ADD,
+        description: "Adds the Volumetric Audio component on a new entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: AUDIO_ENABLED,
+        description: "Volumetric audio on or off for the scene.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_OUTPUT,
+        description: "Plays the mixer on this computer's sound device; off, it mixes silently so the live numbers still move.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_DEVICE,
+        description: "The sound device the speakers switch plays on: the system default or one of the computer's outputs.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: AUDIO_MASTER,
+        description: "Master volume of the volumetric audio.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_WORLD,
+        description: "Volume of the World layer: localised, spatial sounds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_AMBIENT,
+        description: "Volume of the Ambient layer: rain, wind, anything that covers the scene.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_MUSIC,
+        description: "Volume of the Music layer.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_PROPAGATION_DELAY,
+        description: "Sound takes distance / speed of sound to arrive.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_DOPPLER,
+        description: "How much a moving source is Doppler shifted: 0 none, 1 real.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_SPEED_OF_SOUND,
+        description: "Speed of sound in metres per second.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: AUDIO_AIR_ABSORPTION,
+        description: "The air takes the highs: far sound is dull, near sound is clear.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_OCCLUSION,
+        description: "Walls between the source and the listener muffle it: the lows pass, the highs do not.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_DIFFRACTION,
+        description: "Sound bends round the end of a wall or through a doorway and seems to come from there.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_REVERB,
+        description: "The room round the listener sets a reverb tail, and far hard surfaces send echoes.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: AUDIO_ADD_SOURCE,
+        description: "Adds an entity with an Audio Emitter; pick its clip in the Inspector.",
+        kind: "button",
+    },
+    UiMeta {
+        id: AUDIO_ADD_WALL,
+        description: "Adds a 6 x 3 x 0.3 m wall with an Acoustic Obstacle (concrete).",
+        kind: "button",
+    },
+    UiMeta {
+        id: SHOW_ENVIRONMENT,
+        description: "Opens the Environment tab (clouds, fog, rain, presets).",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: ENV_ADD,
+        description: "Adds the Weather and Volumetric Clouds components on a new entity when the scene has none, starting from the Clear sky preset.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ENV_PRESET,
+        description: "Applies a weather preset: Off, Clear sky, Cloudy, Fog, Light rain or Storm. Sets clouds, fog and rain together.",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_ENABLED,
+        description: "Draws procedural volumetric clouds in the sky.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_QUALITY,
+        description: "Cloud ray-march quality: Off, Low (8 steps), Medium (16) or High (24).",
+        kind: "dropdown",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_DIM_SUN,
+        description: "The clouds dim the sun by their cover (the direct light, Photon's bounce and the fog glow follow).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_COVERAGE,
+        description: "Sky coverage, 0 (clear) to 1 (the sky is full).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_DENSITY,
+        description: "Extinction of the cloud medium: thin and wispy to thick and dark.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_BASE_ALTITUDE,
+        description: "Height of the bottom of the cloud layer, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_TOP_ALTITUDE,
+        description: "Height of the top of the cloud layer, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_DETAIL,
+        description: "Weight of the high-frequency detail octaves.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_WIND_SPEED,
+        description: "How fast the clouds drift, in metres per second.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_WIND_DIRECTION,
+        description: "Direction the clouds drift, in degrees around the vertical axis.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_SUN_SCATTER,
+        description: "How strongly the sun lights the clouds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_DARKNESS,
+        description: "Darkens the clouds towards a storm, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_SKY_LIGHT,
+        description: "Sky light that fills the shadowed side of the clouds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_MIST_DENSITY,
+        description: "Ground mist at the horizon, 0 to 1 (also thickens the volumetric fog of the forward pass).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_MIST_HEIGHT,
+        description: "Height the ground mist fades out over, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_TINT_R,
+        description: "Red of the tint on the sun-lit side of the clouds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_TINT_G,
+        description: "Green of the tint on the sun-lit side of the clouds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_TINT_B,
+        description: "Blue of the tint on the sun-lit side of the clouds.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_WEATHER_ENABLED,
+        description: "Master switch of the Weather component (fog, rain and the coupling).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_WEATHER_LINK_SKY,
+        description: "Couples the sections: rain thickens the clouds and the fog, an overcast sky dims the sun and greys Photon's sky light, fog tints it.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_FOG_ENABLED,
+        description: "Exponential height fog, integrated along each view ray (the sky fades into it at the horizon).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_FOG_DENSITY,
+        description: "Fog density per metre at the base height.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_HEIGHT_FALLOFF,
+        description: "How fast the fog thins with height; 0 is the same density everywhere.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_BASE_HEIGHT,
+        description: "World height where the fog has the density above.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_START,
+        description: "Distance from the camera before the fog begins, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_MAX_OPACITY,
+        description: "The most the fog can hide, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_SKY_BLEND,
+        description: "0 uses the fog colour, 1 uses the sky's colour at the horizon in the direction looked at.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_SUN_SCATTER,
+        description: "Glow of the fog towards the sun.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_SUN_EXPONENT,
+        description: "How tight the glow towards the sun is.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_COLOR_R,
+        description: "Red of the fog colour.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_COLOR_G,
+        description: "Green of the fog colour.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_FOG_COLOR_B,
+        description: "Blue of the fog colour.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_ENABLED,
+        description: "Falling rain: layered streaks hidden behind nearer geometry, and wet surfaces.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_RAIN_INTENSITY,
+        description: "How hard it rains, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_WIND_SPEED,
+        description: "Sideways wind that leans the streaks, in metres per second.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_WIND_DIRECTION,
+        description: "Direction of that wind, in degrees around the vertical axis.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_DROP_LENGTH,
+        description: "Length of a streak, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_SPEED,
+        description: "Animation speed of the falling rain.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_BRIGHTNESS,
+        description: "How bright a streak is.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_WETNESS,
+        description: "How wet surfaces get at full intensity: darker and glossier.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_GROUND_SHADOWS,
+        description: "The clouds cast moving shadows on the ground and on everything lit by the sun (the sun is traced through the layer; nothing is baked).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_SHADOW_STRENGTH,
+        description: "How dark a cloud's shadow is, 0 (none) to 1 (as dark as the cloud is thick).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_SILVER_LINING,
+        description: "A bright rim on the edge of the clouds that sit in front of the sun.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_CLOUDS_SUN_SHAFTS,
+        description: "Light shafts: rays that stream through the gaps of the clouds when the sun is in view.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_AUDIO_ENABLED,
+        description: "Plays the weather's sound: a rain bed, a wind bed that follows the gusts, and a clap of thunder for every strike, panned to where it struck. Made from noise, no files.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_AUDIO_VOLUME,
+        description: "The master volume of the weather's sound, 0 to 1.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_RAIN_SPLASHES,
+        description: "Rings and splashes where the rain meets the ground near the camera.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_WEATHER_WIND_GUST,
+        description: "How much the wind surges: the rain's slant, the foliage and the clouds share the gusts.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_WEATHER_WIND_FOLIAGE,
+        description: "How strongly foliage materials sway with the wind (0 leaves foliage alone).",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_ENABLED,
+        description: "Lightning: a flash that lights the clouds, the scene and Photon's bounce, with a bolt in the sky. Needs an overcast sky when linked.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_THUNDER,
+        description: "Each strike raises a thunder event that arrives after the sound's travel time (the Console logs it; scripts can play it).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_RATE,
+        description: "Strikes per minute.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_INTENSITY,
+        description: "The brightness of the flash, 0 to 2.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_DISTANCE_MIN,
+        description: "The closest a strike lands, in metres.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: ENV_LIGHTNING_DISTANCE_MAX,
+        description: "The farthest a strike lands, in metres.",
+        kind: "slider",
     },
     UiMeta {
         id: WATERGEN_CANVAS,
@@ -1379,17 +2360,17 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: PROJECT_TAB_CREATE,
         description: "Project manager tab for creating a project.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PROJECT_TAB_RECENT,
         description: "Project manager tab for recent projects.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PROJECT_TAB_BROWSE,
         description: "Project manager tab for scanning a folder.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PROJECT_NAME,
@@ -1710,6 +2691,91 @@ pub const CATALOG: &[UiMeta] = &[
         id: MATERIAL_BAKE_WRAP,
         description: "Samples the height field toroidally for tiling maps.",
         kind: "checkbox",
+    },
+    UiMeta {
+        id: FILEBROWSER,
+        description: "File browser: Doppio's own picker for files and folders on this computer, the same on every operating system.",
+        kind: "palette",
+    },
+    UiMeta {
+        id: FILEBROWSER_CLOSE,
+        description: "Closes the file browser without adding anything.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_UP,
+        description: "Goes to the parent folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_REFRESH,
+        description: "Lists the folder again.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_PATH,
+        description: "Type or paste a path (`~`, relative, quoted or file:// all work); Enter opens a folder or selects a file.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: FILEBROWSER_SEARCH,
+        description: "Filters the listed entries by name.",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: FILEBROWSER_SUPPORTED,
+        description: "Shows only the file types the project can import (folders always show).",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: FILEBROWSER_HIDDEN,
+        description: "Shows hidden files and folders.",
+        kind: "checkbox",
+    },
+    UiMeta {
+        id: FILEBROWSER_SELECT_SUPPORTED,
+        description: "Selects every importable file listed in this folder.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_CLEAR,
+        description: "Empties the selection.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_CONFIRM,
+        description: "Adds the selected files and folders to the import queue and closes the browser.",
+        kind: "button",
+    },
+    UiMeta {
+        id: FILEBROWSER_CANCEL,
+        description: "Closes the file browser without adding anything.",
+        kind: "button",
+    },
+    UiMeta {
+        id: WIZARD_IMPORT_BROWSE,
+        description: "Opens the file browser to choose what to import, instead of typing a path.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_PICK,
+        description: "Shared asset picker: lists the project's assets a field accepts, with thumbnails, kind filters and search.",
+        kind: "palette",
+    },
+    UiMeta {
+        id: ASSET_PICK_CLOSE,
+        description: "Closes the asset picker without changing the field.",
+        kind: "button",
+    },
+    UiMeta {
+        id: ASSET_PICK_SEARCH,
+        description: "Search field of the asset picker (name or path).",
+        kind: "text_input",
+    },
+    UiMeta {
+        id: ASSET_PICK_NONE,
+        description: "Empties the field the asset picker was opened for.",
+        kind: "button",
     },
     UiMeta {
         id: MATERIAL_PICKER,
@@ -2149,37 +3215,37 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: PANE_TAB_HIERARCHY,
         description: "Hierarchy tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_ASSETS,
         description: "Assets tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_VIEWPORT,
         description: "Viewport tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_INSPECTOR,
         description: "Inspector tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_SCRIPT,
         description: "Script editor tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_DRYAD_NODES,
         description: "Dryad Nodes tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: PANE_TAB_CONSOLE,
         description: "Console tab in a shared pane.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: CONSOLE_FILTER_ERROR,
@@ -2299,7 +3365,7 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: UiId::fixed("script.editor.tab"),
         description: "A script editor file tab; tabs use the .N suffix.",
-        kind: "tab",
+        kind: "pane_tab",
     },
     UiMeta {
         id: UiId::fixed("script.editor.tab.close"),
@@ -2335,6 +3401,51 @@ pub const CATALOG: &[UiMeta] = &[
         id: UiId::fixed("material.picker.item"),
         description: "A texture row in the material picker; rows use a .N suffix.",
         kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.parameters.row"),
+        description: "A parameter of the PhaseShift animator (name, type, live value); rows use the .N suffix.",
+        kind: "card",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.add"),
+        description: "Gives the selected entity a PhaseShift when it has none.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.parameters.add"),
+        description: "Adds a PhaseShift parameter of a kind (float, bool, int, trigger); the name is picked for you.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.parameters.remove"),
+        description: "Removes a PhaseShift parameter; rows use the .N suffix.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.parameters.smoothing"),
+        description: "Smoothing time slider of a float PhaseShift parameter, in seconds; uses the .N suffix.",
+        kind: "slider",
+    },
+    UiMeta {
+        id: UiId::fixed("phaseshift.states.row"),
+        description: "A state of the PhaseShift animator; rows use the .N suffix and select the state.",
+        kind: "list_row",
+    },
+    UiMeta {
+        id: UiId::fixed("rig2d.attach.path"),
+        description: "The path of a .rig2d file to attach to the selected entity; Enter attaches it.",
+        kind: "text_field",
+    },
+    UiMeta {
+        id: UiId::fixed("rig2d.attach.button"),
+        description: "Attaches the path in the attach field to the selected entity.",
+        kind: "button",
+    },
+    UiMeta {
+        id: UiId::fixed("rig2d.parameters.reset"),
+        description: "Returns every rig parameter to its default.",
+        kind: "button",
     },
 ];
 
