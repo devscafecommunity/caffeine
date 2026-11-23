@@ -601,6 +601,28 @@ impl App {
                 }
             }
             Edit::SetString(id, index, text) => {
+                // The slots that hold a project file (a material, an image) keep the asset manager's form of
+                // the path; the other string slots are plain text.
+                let kinds: Option<(crate::uikit::asset_kind::AssetKind, &str)> =
+                    self.nature.graph.node(id).and_then(|node| match node.op {
+                        "mat_project" | "material" => Some((
+                            crate::uikit::asset_kind::AssetKind::Material,
+                            "Nature material",
+                        )),
+                        "mat_texture" | "texture" => {
+                            Some((crate::uikit::asset_kind::AssetKind::Image, "Nature image"))
+                        }
+                        _ => None,
+                    });
+                let text = match kinds {
+                    Some((kind, what)) if index == 0 => {
+                        let Some(text) = self.reference_text(text, &[kind], what) else {
+                            return;
+                        };
+                        text
+                    }
+                    _ => text,
+                };
                 self.nature.graph.set_string(id, index, text);
                 self.nature.push(Some(format!("string:{id}:{index}")));
                 self.nature.refresh();

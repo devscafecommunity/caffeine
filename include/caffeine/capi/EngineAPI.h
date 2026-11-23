@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define CAFFEINE_CAPI_VERSION 23
+#define CAFFEINE_CAPI_VERSION 27
 #define CAFFEINE_ENTITY_NONE UINT32_MAX
 
 typedef struct CaffeineSession CaffeineSession;
@@ -90,6 +90,29 @@ typedef struct CaffeineAOBakeResult {
     char material_path[512];
     char error[256];
 } CaffeineAOBakeResult;
+
+/**
+ * How a path was understood by the project's asset manager (see caffeine_session_asset_reference).
+ * Anything that refers to an asset (a component field, a generator node) stores `asset_path` of an OK
+ * reference (or `project_path` in files that are relative to the project), so it always names a file that is inside the project (or an engine built-in).
+ */
+typedef enum CaffeineReferenceStatus {
+    CAFFEINE_REF_OK = 0,
+    CAFFEINE_REF_EMPTY = 1,
+    CAFFEINE_REF_MISSING = 2,         /* no such file in the project, its assets folder or the engine's assets */
+    CAFFEINE_REF_OUTSIDE_PROJECT = 3, /* a real file, but outside the project: import it first */
+    CAFFEINE_REF_NOT_A_FILE = 4
+} CaffeineReferenceStatus;
+
+typedef struct CaffeineAssetReference {
+    int status;        /* CaffeineReferenceStatus */
+    int engine_asset;  /* 1 for an engine built-in, 0 for a project file */
+    int imported;      /* 1 when this call copied the file into the project */
+    char project_path[512];  /* relative to the project root: what scenes and .mat files store */
+    char asset_path[512];    /* relative to the assets folder when the file is in it: what components store */
+    char absolute_path[512];
+    char kind[32];     /* image, mesh, audio, material, script, animation, generator, asset, file */
+} CaffeineAssetReference;
 
 typedef struct CaffeineAssetInfo {
     char name[128];
@@ -284,6 +307,14 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_path(const CaffeineSessi
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_project_path(const CaffeineSession* session,
                                                      const char* relative_path, char* buffer,
                                                      size_t buffer_size);
+/**
+ * The project's asset manager decides what a path refers to: relative to the project, the assets folder or the
+ * engine's assets, or absolute. With `import` set, a real file outside the project is first copied into the
+ * assets folder (in the folder of its kind; identical files are not duplicated) and the reference points at the
+ * copy. `out->status` says what happened; the result is CAFFEINE_OK even for a missing file (look at the status).
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_asset_reference(CaffeineSession* session, const char* path,
+                                                  int import, CaffeineAssetReference* out);
 /** Resolves a texture/material path against the scene, asset root and engine assets. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_resolve_path(const CaffeineSession* session,
                                                 const char* path, char* buffer,
@@ -974,6 +1005,99 @@ CAFFEINE_CAPI_API CaffeineResult caffeine_session_set_terrain(CaffeineSession* s
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain(const CaffeineSession* session,
                                                           CaffeineEntity entity,
                                                           CaffeineTerrain* out);
+/**
+ * Terrain editing strokes (terrain editing roadmap, phase 0). A brush is dragged over a terrain: the engine lays
+ * stamps along the path a fixed number of metres apart (never one per frame, so the result does not depend on the
+ * frame rate), rebuilds only the tiles of the mesh the stamps touched, and keeps what changed, tile by tile, so a
+ * finished stroke can be undone and redone exactly. Units are real: metres for radius, spacing and heights.
+ */
+typedef enum CaffeineTerrainBrushMode {
+    CAFFEINE_BRUSH_RAISE = 0,
+    CAFFEINE_BRUSH_LOWER = 1,
+    CAFFEINE_BRUSH_SMOOTH = 2,
+    CAFFEINE_BRUSH_FLATTEN = 3,
+    CAFFEINE_BRUSH_NOISE = 4
+} CaffeineTerrainBrushMode;
+
+typedef enum CaffeineTerrainFalloff {
+    CAFFEINE_FALLOFF_SMOOTH = 0,
+    CAFFEINE_FALLOFF_LINEAR = 1,
+    CAFFEINE_FALLOFF_SHARP = 2,
+    CAFFEINE_FALLOFF_CONSTANT = 3
+} CaffeineTerrainFalloff;
+
+typedef struct CaffeineTerrainBrush {
+    int32_t mode;               /* CaffeineTerrainBrushMode */
+    float radius_m;
+    float strength;             /* raise, lower, noise: metres per stamp; smooth, flatten: 0..1 per stamp */
+    float spacing_m;            /* metres between stamps; 0 = a quarter of the radius */
+    int32_t falloff;            /* CaffeineTerrainFalloff */
+    float rotation_degrees;     /* of the stamp image */
+    float target_height_m;      /* flatten: the height to go to; negative = the height under the first stamp */
+    float pressure_to_strength; /* 0 ignores pen pressure, 1 follows it */
+    uint64_t seed;              /* noise */
+} CaffeineTerrainBrush;
+
+typedef struct CaffeineTerrainStrokeResult {
+    uint32_t record;            /* id for revert / reapply; 0 when the stroke changed nothing */
+    uint32_t stamps;
+    uint32_t tiles_changed;
+    uint64_t bytes;             /* memory the undo record holds */
+    int has_region;
+    uint32_t region_min_x, region_min_z, region_max_x, region_max_z; /* height-grid vertices that changed (a tight rectangle) */
+} CaffeineTerrainStrokeResult;
+
+/**
+ * The file format of a terrain's data (v26). `out_legacy` is 1 when the terrain was opened from an old `.cterrain` and
+ * has not been saved as the native `.terrain` since: it still opens and edits as it is, and the editor offers to
+ * convert it.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_data_legacy(const CaffeineSession* session,
+                                                      CaffeineEntity entity, int* out_legacy);
+/**
+ * Saves a terrain as the native `.terrain` next to its legacy file, checks the file by reading it back bit for bit and
+ * points the scene at it (the scene is marked changed; the legacy file stays). `out_path` (optional) receives the new
+ * project-relative path. CAFFEINE_ERROR when the terrain has no data file, there is no project folder, or the file read
+ * back is not identical.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_convert_native(CaffeineSession* session,
+                                                         CaffeineEntity entity, char* out_path,
+                                                         size_t out_path_size);
+
+/**
+ * Where a world-space ray meets a terrain (v27), in world space (metres): what a brush follows under the mouse.
+ * CAFFEINE_NOT_FOUND when the ray misses the terrain.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_raycast(const CaffeineSession* session,
+                                                  CaffeineEntity entity, const double origin[3],
+                                                  const double direction[3], double out_hit[3]);
+/**
+ * The ring a brush of `radius_m` metres makes on the terrain surface around `center` (a world-space point, usually the
+ * raycast hit): `segments` points (3 to 512) in world space, each on the terrain's height a few centimetres above it,
+ * written as x, y, z triples to `out_xyz`. It follows the relief, so a viewport draws the brush as a decal that hugs the
+ * ground.
+ */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_brush_outline(const CaffeineSession* session,
+                                                        CaffeineEntity entity, const double center[3],
+                                                        float radius_m, uint32_t segments, float* out_xyz);
+
+/** Starts a stroke on a terrain entity. `stamp_alpha` (optional, `stamp_size` squared floats in 0..1) shapes the brush. A
+ *  stroke that is still open is ended first. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session,
+                                                       CaffeineEntity entity,
+                                                       const CaffeineTerrainBrush* brush,
+                                                       const float* stamp_alpha, uint32_t stamp_size);
+/** Extends the open stroke to a point in world space (metres); `out_stamps` (optional) is how many stamps it laid. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_point(CaffeineSession* session, double x,
+                                                       double y, double z, float pressure,
+                                                       uint32_t* out_stamps);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_end(CaffeineSession* session,
+                                                     CaffeineTerrainStrokeResult* out);
+/** Undo and redo of a finished stroke by its record id. Records are kept within a memory budget, oldest dropped first. */
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_revert(CaffeineSession* session,
+                                                        uint32_t record);
+CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_stroke_reapply(CaffeineSession* session,
+                                                         uint32_t record);
 /** Terrain height in metres at (x, z) metres from the terrain's corner. The mesh is centred on its entity, so the corner is at the entity position minus half the size. */
 CAFFEINE_CAPI_API CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,
                                                                  CaffeineEntity entity, float x,

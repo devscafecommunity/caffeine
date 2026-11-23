@@ -2915,6 +2915,30 @@ void emitGiTriangles(const GiPiece& piece, std::vector<PhotonTriangle>& out) {
     }
 }
 
+/// Boxes that overlap or touch become their union: the tiles of one brush stroke, an object's old and new bounds. The
+/// voxeliser takes only a few boxes before it rebuilds a level whole, so many neighbouring tiles are worth fewer, larger
+/// boxes (a superset of the same voxels, still a part of the volume). Used for terrain tiles only: a scene that changed
+/// wholesale has to keep its many boxes, which is what makes the voxeliser rebuild whole and the light settle again.
+void coalesceBoxes(std::vector<PhotonBox>& boxes) {
+    bool merged = true;
+    while (merged && boxes.size() > 1) {
+        merged = false;
+        for (usize i = 0; i < boxes.size() && !merged; ++i) {
+            for (usize j = i + 1; j < boxes.size() && !merged; ++j) {
+                const PhotonBox& a = boxes[i];
+                const PhotonBox& b = boxes[j];
+                const bool apart = a.hi.x < b.lo.x || b.hi.x < a.lo.x || a.hi.y < b.lo.y || b.hi.y < a.lo.y ||
+                                   a.hi.z < b.lo.z || b.hi.z < a.lo.z;
+                if (apart) continue;
+                boxes[i] = PhotonBox{Vec3(std::min(a.lo.x, b.lo.x), std::min(a.lo.y, b.lo.y), std::min(a.lo.z, b.lo.z)),
+                                     Vec3(std::max(a.hi.x, b.hi.x), std::max(a.hi.y, b.hi.y), std::max(a.hi.z, b.hi.z))};
+                boxes.erase(boxes.begin() + static_cast<std::ptrdiff_t>(j));
+                merged = true;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 GpuSceneRenderer::PhotonView& GpuSceneRenderer::photonViewFor(u64 viewId) {
@@ -2977,23 +3001,53 @@ bool GpuSceneRenderer::updatePhotonGeometry(ECS::World& world, const std::string
         const std::vector<Assets::Vertex3D>* posedForBounds = nullptr;
         mix(worldMatrix.data(), sizeof(f32) * 16);
 
-        // Terrain: the terrain's own mesh, with an earth colour (its splat layers are not one picture).
+        // Terrain: cut into tiles, each its own object with the tile's own revision, so an edit (a brush stroke)
+        // revoxelises the tiles it touched and not the whole terrain. Earth colour: its splat layers are not one picture.
         if (const ECS::TerrainComponent* terrain = world.get<ECS::TerrainComponent>(entity)) {
             if (!settings.voxelTerrain) return;
-            const Assets::Mesh3D* mesh = Terrain::TerrainCache::instance().meshFor(entity);
-            if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) return;
-            GiPiece piece;
-            piece.mesh = mesh;
-            piece.world = worldMatrix;
             const Vec3 tint = srgbToLinear(Vec3(terrain->tint.x, terrain->tint.y, terrain->tint.z));
-            piece.albedo = Vec3(tint.x * 0.4f, tint.y * 0.4f, tint.z * 0.4f);
-            piece.indexCount = static_cast<u32>(mesh->indices.size());
-            mix(&mesh, sizeof(mesh));
-            mix(&mesh->geometryRevision, sizeof(mesh->geometryRevision));
-            mix(&piece.albedo, sizeof(piece.albedo));
-            pieces.push_back(piece);
-            triangles = piece.indexCount / 3;
-            boundsMesh = mesh;
+            const Vec3 albedo(tint.x * 0.4f, tint.y * 0.4f, tint.z * 0.4f);
+            for (const Terrain::TerrainGiTile& tile : Terrain::TerrainCache::instance().giTilesFor(entity, *terrain)) {
+                if (tile.mesh.vertices.empty() || tile.mesh.indices.size() < 3) continue;
+                u64 tileHash = 1469598103934665603ull;
+                auto mixTile = [&tileHash](const void* data, usize bytes) {
+                    const u8* p = static_cast<const u8*>(data);
+                    for (usize i = 0; i < bytes; ++i) {
+                        tileHash ^= p[i];
+                        tileHash *= 1099511628211ull;
+                    }
+                };
+                mixTile(worldMatrix.data(), sizeof(f32) * 16);
+                mixTile(&tile.revision, sizeof(tile.revision));
+                mixTile(&albedo, sizeof(albedo));
+
+                GiPiece piece;
+                piece.mesh = &tile.mesh;
+                piece.world = worldMatrix;
+                piece.albedo = albedo;
+                piece.indexCount = static_cast<u32>(tile.mesh.indices.size());
+                Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+                for (int corner = 0; corner < 8; ++corner) {
+                    const Vec3 c((corner & 1) ? tile.hi.x : tile.lo.x, (corner & 2) ? tile.hi.y : tile.lo.y,
+                                 (corner & 4) ? tile.hi.z : tile.lo.z);
+                    const Vec3 w = worldMatrix.transformPoint(c);
+                    lo = Vec3(std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z));
+                    hi = Vec3(std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z));
+                }
+                GiSource source;
+                // Unique among objects: the high bit marks a terrain tile, then the entity, then the tile.
+                source.key = (1ull << 62) | (static_cast<u64>(entity.id()) << 24) | tile.index;
+                source.hash = tileHash;
+                source.lo = lo;
+                source.hi = hi;
+                source.count = piece.indexCount / 3;
+                source.pieceFirst = static_cast<u32>(pieces.size());
+                source.pieceCount = 1;
+                pieces.push_back(piece);
+                sources.push_back(source);
+                totalTriangles += source.count;
+            }
+            return;
         } else {
             Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
             if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
@@ -3159,6 +3213,8 @@ bool GpuSceneRenderer::updatePhotonGeometry(ECS::World& world, const std::string
     PhotonGeometry next;
     next.overBudget = totalTriangles > kMaxGiTriangles;
     std::vector<PhotonBox> dirty;
+    std::vector<PhotonBox> tileDirty;  // the boxes of terrain tiles (keys with bit 62 set)
+    auto isTerrainTile = [](u64 key) { return (key >> 62) == 1u; };
     std::vector<bool> kept(m_pv->geometry.objects.size(), false);
     if (!next.overBudget) next.triangles.reserve(static_cast<usize>(totalTriangles));
     for (const GiSource& source : sources) {
@@ -3186,18 +3242,26 @@ bool GpuSceneRenderer::updatePhotonGeometry(ECS::World& world, const std::string
             }
         }
         if (!unchanged) {
-            dirty.push_back({source.lo, source.hi});
+            std::vector<PhotonBox>& into = isTerrainTile(source.key) ? tileDirty : dirty;
+            into.push_back({source.lo, source.hi});
             if (it != before.end()) {
                 const PhotonObject& old = m_pv->geometry.objects[it->second];
-                dirty.push_back({old.lo, old.hi});
+                into.push_back({old.lo, old.hi});
             }
         }
         next.objects.push_back(object);
     }
     for (usize i = 0; i < kept.size(); ++i) {
-        if (!kept[i]) dirty.push_back({m_pv->geometry.objects[i].lo, m_pv->geometry.objects[i].hi});
+        if (!kept[i]) {
+            (isTerrainTile(m_pv->geometry.objects[i].key) ? tileDirty : dirty)
+                .push_back({m_pv->geometry.objects[i].lo, m_pv->geometry.objects[i].hi});
+        }
     }
 
+    // Neighbouring terrain tiles (one brush stroke) become fewer, larger boxes. Only those: a scene that changed
+    // wholesale must still be seen as many boxes, which makes the voxeliser rebuild whole and the light settle again.
+    coalesceBoxes(tileDirty);
+    dirty.insert(dirty.end(), tileDirty.begin(), tileDirty.end());
     const bool full = first || settings.fullRebuild || next.overBudget || m_pv->geometry.overBudget;
     m_pv->cascades.setGeometry(next, dirty, full);
     m_pv->geometry = std::move(next);

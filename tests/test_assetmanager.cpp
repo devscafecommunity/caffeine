@@ -4,8 +4,12 @@
 #include "../src/caffeine/core/io/CafWriter.hpp"
 #include "../src/caffeine/core/io/CafTypes.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <vector>
 #include <thread>
 #include <chrono>
 
@@ -434,4 +438,280 @@ TEST_CASE("HotReloader - integration reload and callback", "[hotreload]") {
     }
 
     std::filesystem::remove_all(tmpDir);
+}
+
+// ============================================================================
+// Review fixes
+// ============================================================================
+
+TEST_CASE("AssetManager - a load with a tiny budget is not evicted before the handle holds it", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "", 0);  // every unreferenced asset is over budget
+    auto handle = mgr.loadSync<Texture>(kTexturePath);
+    REQUIRE(handle.isReady());
+    REQUIRE(handle.get() != nullptr);
+    auto async = mgr.loadAsync<AudioClip>(kAudioPath);
+    REQUIRE(async.isReady());
+    REQUIRE(handle.isReady());  // the second load does not push out the one that is held
+}
+
+TEST_CASE("AssetManager - the same file under different spellings is one asset", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    auto a = mgr.loadSync<Texture>(kTexturePath);
+    auto b = mgr.loadSync<Texture>("./am_test_texture.caf");
+    auto c = mgr.loadSync<Texture>("sub/../am_test_texture.caf");
+    REQUIRE(a.isReady());
+    REQUIRE(a.id() == b.id());
+    REQUIRE(a.id() == c.id());
+}
+
+TEST_CASE("AssetManager - a path that climbs out of the base folder gives no handle", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    REQUIRE_FALSE(mgr.loadSync<Texture>("../am_test_texture.caf").isValid());
+    REQUIRE_FALSE(mgr.loadSync<Texture>("a/../../am_test_texture.caf").isValid());
+    REQUIRE_FALSE(mgr.loadSync<Texture>("").isValid());
+    REQUIRE_FALSE(mgr.loadSync<Texture>(nullptr).isValid());
+}
+
+TEST_CASE("AssetManager - a file loaded as one type is refused as another", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    auto texture = mgr.loadSync<Texture>(kTexturePath);
+    REQUIRE(texture.isReady());
+    REQUIRE_FALSE(mgr.loadSync<AudioClip>(kTexturePath).isValid());  // same slot, other type
+    // A file that holds another kind of asset than asked for fails to load instead of resolving garbage.
+    auto wrong = mgr.loadSync<Texture>(kAudioPath);
+    REQUIRE_FALSE(wrong.isReady());
+}
+
+TEST_CASE("AssetManager - several threads loading the same asset load it once", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    std::vector<std::thread> threads;
+    std::atomic<int> ready{0};
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&] {
+            auto handle = mgr.loadSync<Texture>(kTexturePath);
+            if (handle.isReady() && handle.get() && handle.get()->width == 16) ++ready;
+        });
+    }
+    for (auto& t : threads) t.join();
+    REQUIRE(ready == 8);
+    REQUIRE(mgr.cacheStats().textureCount == 1);
+}
+
+namespace {
+AssetManager* g_callbackManager = nullptr;
+int g_callbacks = 0;
+void callbackThatCallsBack(const InvalidatedAsset& info, void*) {
+    ++g_callbacks;
+    // Used to deadlock: callbacks ran with the manager's lock held.
+    (void)g_callbackManager->isHandleAlive(info.id, info.generation);
+    (void)g_callbackManager->cacheStats();
+}
+}  // namespace
+
+TEST_CASE("AssetManager - an invalidation callback may call back into the manager", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    g_callbackManager = &mgr;
+    g_callbacks = 0;
+    mgr.registerInvalidationCallback(callbackThatCallsBack);
+    {
+        auto handle = mgr.loadSync<Texture>(kTexturePath);
+        REQUIRE(handle.isReady());
+    }
+    mgr.collectGarbage();
+    REQUIRE(g_callbacks == 1);
+    mgr.unregisterInvalidationCallback(callbackThatCallsBack);
+}
+
+TEST_CASE("AssetManager - the cache counts every kind of asset", "[assets][review]") {
+    TestFixture fix;
+    AssetManager mgr(nullptr, "");
+    auto texture = mgr.loadSync<Texture>(kTexturePath);
+    auto audio = mgr.loadSync<AudioClip>(kAudioPath);
+    auto shader = mgr.loadSync<ShaderBlob>(kShaderPath);
+    const CacheStats stats = mgr.cacheStats();
+    REQUIRE(stats.textureCount == 1);
+    REQUIRE(stats.audioCount == 1);
+    REQUIRE(stats.shaderCount == 1);
+}
+
+// ============================================================================
+// Project references
+// ============================================================================
+
+namespace {
+
+namespace fs = std::filesystem;
+
+struct ProjectFixture {
+    fs::path root;
+    fs::path outside;
+    fs::path engine;
+    ProjectFixture() {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path base = fs::temp_directory_path() / ("caffeine-refs-" + std::to_string(stamp));
+        root = base / "project";
+        outside = base / "elsewhere";
+        engine = base / "engine";
+        fs::create_directories(root / "assets" / "Textures");
+        fs::create_directories(outside);
+        fs::create_directories(engine / "builtin");
+        write(root / "assets" / "Textures" / "brick.png", "brick");
+        write(root / "top.png", "top");
+        write(outside / "stone.png", "stone");
+        write(outside / "song.wav", "song");
+        write(engine / "builtin" / "grass.png", "grass");
+    }
+    ~ProjectFixture() {
+        std::error_code ec;
+        fs::remove_all(root.parent_path(), ec);
+    }
+    static void write(const fs::path& path, const std::string& text) {
+        std::ofstream(path, std::ios::binary) << text;
+    }
+    void configure(AssetManager& mgr) const {
+        mgr.setProjectRoot(root.string());
+        mgr.setAssetRoot((root / "assets").string());
+        mgr.setEngineAssetRoot(engine.string());
+    }
+};
+
+}  // namespace
+
+TEST_CASE("AssetManager references - a project file is referenced by its project-relative path", "[assets][references]") {
+    ProjectFixture fx;
+    AssetManager mgr(nullptr, "");
+    fx.configure(mgr);
+
+    const auto fromRoot = mgr.resolveReference("top.png");
+    REQUIRE(fromRoot.ok());
+    REQUIRE(fromRoot.projectPath == "top.png");
+    REQUIRE(fromRoot.kind == "image");
+
+    // Relative to the assets folder or to the project: the stored form is always from the project root.
+    const auto fromAssets = mgr.resolveReference("Textures/brick.png");
+    REQUIRE(fromAssets.ok());
+    REQUIRE(fromAssets.projectPath == "assets/Textures/brick.png");
+    REQUIRE(fromAssets.assetPath == "Textures/brick.png");  // what the picker lists and components store
+    REQUIRE(fromRoot.assetPath == "top.png");               // outside the assets folder: from the project root
+    const auto fromProject = mgr.resolveReference("assets/Textures/brick.png");
+    REQUIRE(fromProject.projectPath == "assets/Textures/brick.png");
+    // Spelling does not matter: slashes, dots, double slashes.
+    REQUIRE(mgr.resolveReference("assets\\Textures\\.\\brick.png").projectPath == "assets/Textures/brick.png");
+    REQUIRE(mgr.resolveReference("assets//Textures/../Textures/brick.png").projectPath == "assets/Textures/brick.png");
+    // An absolute path inside the project becomes relative.
+    const auto absolute = mgr.resolveReference((fx.root / "assets" / "Textures" / "brick.png").string());
+    REQUIRE(absolute.ok());
+    REQUIRE(absolute.projectPath == "assets/Textures/brick.png");
+    REQUIRE(absolute.origin == ReferenceOrigin::Project);
+}
+
+TEST_CASE("AssetManager references - engine built-ins are valid references", "[assets][references]") {
+    ProjectFixture fx;
+    AssetManager mgr(nullptr, "");
+    fx.configure(mgr);
+    const auto builtin = mgr.resolveReference("builtin/grass.png");
+    REQUIRE(builtin.ok());
+    REQUIRE(builtin.origin == ReferenceOrigin::Engine);
+    REQUIRE(builtin.projectPath == "builtin/grass.png");
+    // A project file wins over an engine file of the same relative path.
+    ProjectFixture::write(fx.root / "builtin_dup.png", "x");
+    REQUIRE(mgr.resolveReference("builtin/grass.png").origin == ReferenceOrigin::Engine);
+}
+
+TEST_CASE("AssetManager references - what is not in the project is reported, never accepted", "[assets][references]") {
+    ProjectFixture fx;
+    AssetManager mgr(nullptr, "");
+    fx.configure(mgr);
+
+    REQUIRE(mgr.resolveReference("").status == ReferenceStatus::Empty);
+    REQUIRE(mgr.resolveReference("nope.png").status == ReferenceStatus::Missing);
+    REQUIRE(mgr.resolveReference("../elsewhere/stone.png").status == ReferenceStatus::Missing);  // climbs out
+    const auto outside = mgr.resolveReference((fx.outside / "stone.png").string());
+    REQUIRE(outside.status == ReferenceStatus::OutsideProject);
+    REQUIRE(outside.kind == "image");
+    REQUIRE_FALSE(outside.ok());
+    REQUIRE(mgr.resolveReference((fx.outside / "missing.png").string()).status == ReferenceStatus::Missing);
+    REQUIRE(mgr.resolveReference((fx.root / "assets").string()).status == ReferenceStatus::NotAFile);
+    REQUIRE(mgr.resolveReference("assets").status == ReferenceStatus::NotAFile);
+}
+
+TEST_CASE("AssetManager references - importing copies a file into the project, once", "[assets][references]") {
+    ProjectFixture fx;
+    AssetManager mgr(nullptr, "");
+    fx.configure(mgr);
+
+    const auto first = mgr.importReference((fx.outside / "stone.png").string());
+    REQUIRE(first.ok());
+    REQUIRE(first.imported);
+    REQUIRE(first.projectPath == "assets/Textures/stone.png");
+    REQUIRE(first.assetPath == "Textures/stone.png");
+    REQUIRE(fs::exists(fx.root / "assets" / "Textures" / "stone.png"));
+    REQUIRE(mgr.resolveReference(first.projectPath).ok());
+
+    // The same file again: the copy that is there is used.
+    const auto again = mgr.importReference((fx.outside / "stone.png").string());
+    REQUIRE(again.ok());
+    REQUIRE_FALSE(again.imported);
+    REQUIRE(again.projectPath == first.projectPath);
+
+    // A different file with the same name does not overwrite the first.
+    const fs::path other = fx.outside / "other" / "stone.png";
+    fs::create_directories(other.parent_path());
+    ProjectFixture::write(other, "a different stone");
+    const auto renamed = mgr.importReference(other.string());
+    REQUIRE(renamed.ok());
+    REQUIRE(renamed.imported);
+    REQUIRE(renamed.projectPath == "assets/Textures/stone_1.png");
+
+    // Each kind goes to its own folder, and a file that is already in the project is just referenced.
+    const auto song = mgr.importReference((fx.outside / "song.wav").string());
+    REQUIRE(song.projectPath == "assets/Audio/song.wav");
+    const auto inside = mgr.importReference("Textures/brick.png");
+    REQUIRE(inside.ok());
+    REQUIRE_FALSE(inside.imported);
+    // Things that are not there stay unresolved: nothing is invented.
+    REQUIRE(mgr.importReference("nope.png").status == ReferenceStatus::Missing);
+    REQUIRE(mgr.importReference("").status == ReferenceStatus::Empty);
+}
+
+TEST_CASE("AssetManager references - an existing folder is reused whatever its case", "[assets][references]") {
+    ProjectFixture fx;
+    fs::create_directories(fx.root / "assets" / "audio");  // lower-case twin of Audio
+    AssetManager mgr(nullptr, "");
+    fx.configure(mgr);
+    const auto song = mgr.importReference((fx.outside / "song.wav").string());
+    REQUIRE(song.projectPath == "assets/audio/song.wav");
+}
+
+TEST_CASE("AssetManager references - without a project nothing can be imported", "[assets][references]") {
+    ProjectFixture fx;
+    AssetManager mgr(nullptr, "");
+    const auto outside = mgr.importReference((fx.outside / "stone.png").string());
+    REQUIRE(outside.status == ReferenceStatus::OutsideProject);
+    REQUIRE_FALSE(fs::exists(fx.root / "assets" / "Textures" / "stone.png"));
+}
+
+TEST_CASE("AssetManager references - kinds and path normalisation", "[assets][references]") {
+    REQUIRE(AssetManager::classify("a/b.PNG") == "image");
+    REQUIRE(AssetManager::classify("m.glb") == "mesh");
+    REQUIRE(AssetManager::classify("s.ogg") == "audio");
+    REQUIRE(AssetManager::classify("x.mat") == "material");
+    REQUIRE(AssetManager::classify("Rock.generator.material") == "generator");
+    REQUIRE(AssetManager::classify("run.lua") == "script");
+    REQUIRE(AssetManager::classify("data.bin") == "file");
+    REQUIRE(AssetManager::classify("dir", true) == "folder");
+
+    std::string out;
+    REQUIRE(AssetManager::normalizeRelative("a\\b//./c/../d.png", out));
+    REQUIRE(out == "a/b/d.png");
+    REQUIRE_FALSE(AssetManager::normalizeRelative("../x", out));
+    REQUIRE_FALSE(AssetManager::normalizeRelative("a/../../x", out));
+    REQUIRE(AssetManager::normalizeRelative("", out));
+    REQUIRE(out.empty());
 }

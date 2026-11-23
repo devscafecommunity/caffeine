@@ -76,6 +76,7 @@ fn is_passive(message: &Message) -> bool {
                 | Message::ViewportBoost(_)
                 | Message::ViewportResized(_, _)
                 | Message::ViewportMoved(_)
+                | Message::TerrainBrushCursor { .. }
                 | Message::PointerReleased
                 | Message::TabEnter(_, _)
                 | Message::TabExit(_, _)
@@ -672,6 +673,16 @@ enum Message {
     ShowTerrainGenerator,
     /// Scatters a plan on a terrain (`Scene > Scatter on Terrain`, the `scatter_on_terrain` agent action).
     ScatterOnTerrain(scatter::ScatterRequest),
+    /// Saves the terrains that are still in the old `.cterrain` format as native `.terrain` files
+    /// (`Scene > Convert terrains to .terrain`, the `convert_terrains` agent action).
+    ConvertLegacyTerrains,
+    /// Turns the terrain brush cursor on or off and sizes it (the `terrain_brush_cursor` agent action; the Terrain
+    /// Editor's brush tools, from Phase 1, are the other sender).
+    #[cfg_attr(not(feature = "agent"), allow(dead_code))]
+    TerrainBrushCursor {
+        active: bool,
+        radius_m: f32,
+    },
     Generator(material_generator::Edit),
     GeneratorTextureSearch(String),
     GeneratorTexturePick(String),
@@ -811,6 +822,7 @@ struct App {
     viewport_fps_window: Instant,
     viewport_frames: u32,
     viewport_hovered: bool,
+    terrain_cursor: terraincursor::State,
     /// The scene holds a water surface, so the editor keeps stepping the engine for it.
     has_water: bool,
     water_scan: u32,
@@ -1210,6 +1222,7 @@ impl App {
             viewport_fps_window: Instant::now(),
             viewport_frames: 0,
             viewport_hovered: false,
+            terrain_cursor: terraincursor::State::default(),
             has_water: false,
             water_scan: 0,
             viewport_last_tick: None,
@@ -1357,6 +1370,7 @@ impl App {
         }
         app.refresh_components();
         app.refresh_asset_cache();
+        app.warn_legacy_terrains();
         let initial = app.capture_state();
         app.history = History::new(initial);
         app
@@ -1677,6 +1691,20 @@ impl App {
     }
 
     fn edit_component_text(&mut self, component: usize, field: usize, axis: usize, text: String) {
+        let mut text = text;
+        // A field that holds an asset keeps what the asset manager makes of the path: a file from outside
+        // the project is imported, a path of the wrong kind is refused.
+        if axis == 0 {
+            if let Some((kinds, what)) = self.component_asset_field(component, field) {
+                match self.reference_text(text.clone(), &kinds, &what) {
+                    Some(stored) => text = stored,
+                    None => {
+                        self.field_inputs.remove(&(component, field, axis));
+                        return;
+                    }
+                }
+            }
+        }
         self.field_inputs
             .insert((component, field, axis), text.clone());
         let Some(current) = self
@@ -2754,6 +2782,7 @@ impl App {
         self.entities = entities;
         self.assets = assets;
         crate::uikit::asset_kind::refine(&mut self.assets);
+        self.warn_legacy_terrains();
         self.selected = 0;
         self.name_input = self
             .entities
@@ -4559,6 +4588,13 @@ impl App {
                 }
             }
             material_generator::Edit::SetImagePath(node, path) => {
+                let Some(path) = self.reference_text(
+                    path,
+                    &[crate::uikit::asset_kind::AssetKind::Image],
+                    "Image node",
+                ) else {
+                    return;
+                };
                 if let Some(document) = self.material.as_mut() {
                     if let Some(node) = document.generator.node_mut(node) {
                         if let generators::NodeKind::Image { path: texture, .. }
@@ -4729,18 +4765,23 @@ impl App {
         }
     }
 
+    /// Finds the file of every image a graph reads, through the engine's asset manager: a path that names a
+    /// file outside the project is imported (and the node, in the graph and in the open document, keeps the
+    /// project's form of the path); engine built-ins and project files are used where they are.
     fn resolve_graph_textures(
-        &self,
-        graph: &MaterialGraph,
+        &mut self,
+        graph: &mut MaterialGraph,
     ) -> Result<Vec<(String, String)>, String> {
         let mut texture_paths: Vec<(String, String)> = Vec::new();
-        for node in &graph.nodes {
-            let (generators::NodeKind::Image { path, .. }
-            | generators::NodeKind::NormalMap { path, .. }) = &node.kind
-            else {
-                continue;
+        let mut rewrites: Vec<(String, String)> = Vec::new();
+        let mut imported: Vec<String> = Vec::new();
+        for index in 0..graph.nodes.len() {
+            let path = match &graph.nodes[index].kind {
+                generators::NodeKind::Image { path, .. }
+                | generators::NodeKind::NormalMap { path, .. } => path.clone(),
+                _ => continue,
             };
-            if path.is_empty() || texture_paths.iter().any(|(key, _)| key == path) {
+            if path.is_empty() {
                 continue;
             }
             // Only graphs that read project images need the engine to find them;
@@ -4748,15 +4789,77 @@ impl App {
             let Some(engine) = self.engine.as_ref() else {
                 return Err("No engine".to_owned());
             };
-            let resolved = engine
-                .resolve_path(path)
-                .ok()
-                .filter(|resolved| std::path::Path::new(resolved).exists())
-                .or_else(|| engine.asset_path(path).ok());
-            let Some(resolved) = resolved else {
-                return Err(format!("Image texture missing: {path}"));
+            let reference = engine
+                .asset_reference(&path, true)
+                .filter(doppio_engine::AssetReference::is_ok)
+                .or_else(|| {
+                    // Older paths the manager does not know by name: the engine's search finds the file, and
+                    // the manager then brings it into the project if it is outside.
+                    let found = engine
+                        .resolve_path(&path)
+                        .ok()
+                        .filter(|resolved| std::path::Path::new(resolved).exists())
+                        .or_else(|| {
+                            engine
+                                .asset_path(&path)
+                                .ok()
+                                .filter(|resolved| std::path::Path::new(resolved).exists())
+                        })?;
+                    engine
+                        .asset_reference(&found, true)
+                        .filter(doppio_engine::AssetReference::is_ok)
+                });
+            let (stored, resolved) = match reference {
+                Some(reference) => {
+                    if reference.imported {
+                        imported.push(format!("{path} → {}", reference.asset_path));
+                    }
+                    (reference.asset_path, reference.absolute_path)
+                }
+                None => {
+                    // An engine library older than the asset manager keeps the old lookup.
+                    let resolved = engine
+                        .resolve_path(&path)
+                        .ok()
+                        .filter(|resolved| std::path::Path::new(resolved).exists())
+                        .or_else(|| engine.asset_path(&path).ok());
+                    let Some(resolved) = resolved else {
+                        return Err(format!("Image texture missing: {path}"));
+                    };
+                    (path.clone(), resolved)
+                }
             };
-            texture_paths.push((path.clone(), resolved));
+            if stored != path {
+                if let generators::NodeKind::Image { path: node, .. }
+                | generators::NodeKind::NormalMap { path: node, .. } =
+                    &mut graph.nodes[index].kind
+                {
+                    *node = stored.clone();
+                }
+                rewrites.push((path.clone(), stored.clone()));
+            }
+            if !texture_paths.iter().any(|(key, _)| *key == stored) {
+                texture_paths.push((stored, resolved));
+            }
+        }
+        if !rewrites.is_empty() {
+            if let Some(document) = self.material.as_mut() {
+                for node in &mut document.generator.nodes {
+                    if let generators::NodeKind::Image { path, .. }
+                    | generators::NodeKind::NormalMap { path, .. } = &mut node.kind
+                    {
+                        if let Some((_, to)) = rewrites.iter().find(|(from, _)| from == path) {
+                            *path = to.clone();
+                        }
+                    }
+                }
+            }
+        }
+        if !imported.is_empty() {
+            for line in imported {
+                self.log(LogLevel::Action, format!("Imported texture {line}"));
+            }
+            self.refresh_assets();
         }
         Ok(texture_paths)
     }
@@ -4797,11 +4900,11 @@ impl App {
             .to_owned();
         let packing = document.generator_packing.clone();
         let bits = document.generator_bits;
-        let graph = document.generator.clone();
+        let mut graph = document.generator.clone();
 
         // Resolve paths on the UI thread; decoding and baking both run on the
         // worker so a large texture never stalls the interface.
-        let texture_paths = match self.resolve_graph_textures(&graph) {
+        let texture_paths = match self.resolve_graph_textures(&mut graph) {
             Ok(paths) => paths,
             Err(error) => {
                 self.generator_status = Some(error);
@@ -4988,7 +5091,7 @@ impl App {
         };
         let mut graph = document.generator.clone();
         graph.resolution = graph.resolution.clamp(96, 256);
-        let texture_paths = match self.resolve_graph_textures(&graph) {
+        let texture_paths = match self.resolve_graph_textures(&mut graph) {
             Ok(paths) => paths,
             Err(error) => {
                 self.generator_status = Some(error);
@@ -7518,6 +7621,13 @@ impl App {
             }
             Message::GeneratorTexturePick(path) => {
                 let target = self.generator_texture_target.take();
+                let Some(path) = self.reference_text(
+                    path,
+                    &[crate::uikit::asset_kind::AssetKind::Image],
+                    "Image node",
+                ) else {
+                    return;
+                };
                 if let (Some(node), Some(document)) = (target, self.material.as_mut()) {
                     if let Some(node) = document.generator.node_mut(node) {
                         if let generators::NodeKind::Image { path: texture, .. }
@@ -7574,6 +7684,12 @@ impl App {
             Message::TerrainGen(edit) => self.edit_terrain(edit),
             Message::ShowTerrainGenerator => self.show_terrain_pane(),
             Message::ScatterOnTerrain(request) => self.scatter_on_terrain(request),
+            Message::ConvertLegacyTerrains => {
+                self.convert_legacy_terrains();
+            }
+            Message::TerrainBrushCursor { active, radius_m } => {
+                self.set_terrain_brush_cursor(active, radius_m);
+            }
             Message::OpenGenerator => {
                 self.show_generator_pane();
             }
@@ -7852,6 +7968,7 @@ impl App {
             Message::ViewportHover(hovered) => {
                 self.viewport_hovered = hovered;
                 if !hovered {
+                    self.clear_terrain_cursor();
                     self.fly_keys.clear();
                     self.fly_boost = false;
                 }
@@ -7933,6 +8050,7 @@ impl App {
             }
             Message::ViewportMoved(point) => {
                 self.viewport_hovered = true;
+                self.update_terrain_cursor(point);
                 let paint_drag = self.texture_set_paint_mode
                     && self
                         .viewport_drag
@@ -8087,6 +8205,12 @@ impl App {
                         label: "Scatter on Terrain",
                         shortcut: None,
                         message: Message::ScatterOnTerrain(scatter::ScatterRequest::default()),
+                    },
+                    menu::Item {
+                        id: id::CONVERT_TERRAINS_MENU,
+                        label: "Convert terrains to .terrain",
+                        shortcut: None,
+                        message: Message::ConvertLegacyTerrains,
                     },
                     menu::Item {
                         id: id::DRYAD_NODES_MENU,
@@ -9236,6 +9360,7 @@ impl App {
                     markers: &self.markers,
                     show_markers: self.show_markers && self.engine.is_some(),
                     selected_entity: self.entities.get(self.selected).map(|entity| entity.id),
+                    brush_cursor: self.terrain_cursor.cursor.as_ref(),
                     target: self
                         .entities
                         .get(self.selected)
@@ -10351,6 +10476,7 @@ fn format_transform_number(value: f32) -> String {
 }
 
 mod assetpick;
+mod assetref;
 mod audio;
 mod detach;
 mod environment;
@@ -10364,6 +10490,8 @@ mod profiler;
 mod recipes;
 mod scatter;
 mod sceneview;
+mod terraincursor;
+mod terrainformat;
 mod terraingen;
 mod texturegen;
 mod watergen;

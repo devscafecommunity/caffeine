@@ -367,6 +367,13 @@ impl App {
                 }
             }
             Edit::SetString(id, index, text) => {
+                let Some(text) = self.reference_text(
+                    text,
+                    &[crate::uikit::asset_kind::AssetKind::Image],
+                    "Terrain layer picture",
+                ) else {
+                    return;
+                };
                 self.terraingen.graph.set_string(id, index, text);
                 self.terraingen.push(Some(format!("string:{id}:{index}")));
                 self.terraingen.refresh();

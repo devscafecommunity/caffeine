@@ -86,6 +86,9 @@ struct CacheStats {
     u64 maxCacheBytes    = 0;
     u32 textureCount     = 0;
     u32 audioCount       = 0;
+    u32 shaderCount      = 0;
+    u32 meshCount        = 0;
+    u32 prefabCount      = 0;
     u32 pendingJobs      = 0;
     u32 evictedCount     = 0;
     f32 cacheHitRate     = 0.0f;

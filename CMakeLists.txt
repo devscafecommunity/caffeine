@@ -109,6 +109,9 @@ add_library(caffeine-core
     src/caffeine/terrain/TerrainMeshBuilder.cpp
     src/caffeine/terrain/TerrainCache.cpp
     src/caffeine/terrain/TerrainSculptor.cpp
+    src/caffeine/terrain/edit/TerrainTiles.cpp
+    src/caffeine/terrain/edit/TerrainStroke.cpp
+    src/caffeine/terrain/TerrainContainer.cpp
     src/caffeine/terrain/TerrainLodSystem.cpp
     src/caffeine/terrain/TerrainSplatmap.cpp
     src/caffeine/terrain/TerrainSplatPainter.cpp

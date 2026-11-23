@@ -515,6 +515,41 @@ struct RawRenderStats {
     shadow_draws_culled: u32,
 }
 
+/// What the project's asset manager made of a path (see `Engine::asset_reference`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceStatus {
+    /// A file inside the project (or an engine built-in).
+    Ok,
+    Empty,
+    /// No such file in the project, its assets folder or the engine's assets.
+    Missing,
+    /// A real file, but not inside the project: it has to be imported first.
+    OutsideProject,
+    NotAFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetReference {
+    pub status: ReferenceStatus,
+    /// An engine built-in rather than a project file.
+    pub engine_asset: bool,
+    /// The call copied the file into the project.
+    pub imported: bool,
+    /// Relative to the project root, `/`-separated: what scenes and `.mat` files store.
+    pub project_path: String,
+    /// Relative to the assets folder when the file is in it (what the picker lists and components store),
+    /// else the same as `project_path`.
+    pub asset_path: String,
+    pub absolute_path: String,
+    pub kind: String,
+}
+
+impl AssetReference {
+    pub fn is_ok(&self) -> bool {
+        self.status == ReferenceStatus::Ok
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetInfo {
     pub name: String,
@@ -717,6 +752,114 @@ struct RawComponentInfo {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+struct RawTerrainBrush {
+    mode: i32,
+    radius_m: f32,
+    strength: f32,
+    spacing_m: f32,
+    falloff: i32,
+    rotation_degrees: f32,
+    target_height_m: f32,
+    pressure_to_strength: f32,
+    seed: u64,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct RawStrokeResult {
+    record: u32,
+    stamps: u32,
+    tiles_changed: u32,
+    bytes: u64,
+    has_region: i32,
+    region_min_x: u32,
+    region_min_z: u32,
+    region_max_x: u32,
+    region_max_z: u32,
+}
+
+/// What a terrain brush does under a stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrushMode {
+    Raise = 0,
+    Lower = 1,
+    Smooth = 2,
+    Flatten = 3,
+    Noise = 4,
+}
+
+/// How a stamp's weight falls from its centre to its edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Falloff {
+    Smooth = 0,
+    Linear = 1,
+    Sharp = 2,
+    Constant = 3,
+}
+
+/// A terrain brush in real units (metres), see `caffeine_session_terrain_stroke_begin`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainBrush {
+    pub mode: BrushMode,
+    pub radius_m: f32,
+    /// Raise, lower, noise: metres per stamp. Smooth, flatten: 0..1 per stamp.
+    pub strength: f32,
+    /// Metres between stamps along the path; 0 is a quarter of the radius.
+    pub spacing_m: f32,
+    pub falloff: Falloff,
+    pub rotation_degrees: f32,
+    /// Flatten: metres; negative takes the height under the first stamp.
+    pub target_height_m: f32,
+    /// 0 ignores a pen's pressure, 1 follows it.
+    pub pressure_to_strength: f32,
+    pub seed: u64,
+    /// A square grey-scale image (`size` squared values, 0..1) that shapes the stamp, if any.
+    pub stamp: Option<(u32, Vec<f32>)>,
+}
+
+impl Default for TerrainBrush {
+    fn default() -> Self {
+        TerrainBrush {
+            mode: BrushMode::Raise,
+            radius_m: 6.0,
+            strength: 0.25,
+            spacing_m: 0.0,
+            falloff: Falloff::Smooth,
+            rotation_degrees: 0.0,
+            target_height_m: -1.0,
+            pressure_to_strength: 0.0,
+            seed: 0,
+            stamp: None,
+        }
+    }
+}
+
+/// What a finished stroke changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StrokeSummary {
+    /// Id for `terrain_stroke_revert` / `terrain_stroke_reapply`; 0 when the stroke changed nothing.
+    pub record: u32,
+    pub stamps: u32,
+    pub tiles_changed: u32,
+    /// Memory the undo record holds.
+    pub bytes: u64,
+    /// Height-grid vertices to refresh: `(min_x, min_z, max_x, max_z)`.
+    pub region: Option<(u32, u32, u32, u32)>,
+}
+
+#[repr(C)]
+struct RawAssetReference {
+    status: i32,
+    engine_asset: i32,
+    imported: i32,
+    project_path: [c_char; 512],
+    asset_path: [c_char; 512],
+    absolute_path: [c_char; 512],
+    kind: [c_char; 32],
+}
+
+#[repr(C)]
 struct RawAssetInfo {
     name: [c_char; 128],
     relative_path: [c_char; 512],
@@ -835,6 +978,8 @@ type EntityMaterialFn = unsafe extern "C" fn(*const c_void, u32, *mut c_char, us
 type MaterialPreviewFn =
     unsafe extern "C" fn(*mut c_void, *const RawMaterial, u32, f32, f32, *mut u8, usize) -> i32;
 type AssetPathFn = unsafe extern "C" fn(*const c_void, *const c_char, *mut c_char, usize) -> i32;
+type AssetReferenceFn =
+    unsafe extern "C" fn(*mut c_void, *const c_char, i32, *mut RawAssetReference) -> i32;
 type GenerateMapFn = unsafe extern "C" fn(
     *const c_char,
     *const c_char,
@@ -881,6 +1026,17 @@ type PreviewBeginFn = unsafe extern "C" fn(
 type SetTerrainFn =
     unsafe extern "C" fn(*mut c_void, u32, *const RawTerrain, *const f32, *const u8) -> i32;
 type GetTerrainFn = unsafe extern "C" fn(*const c_void, u32, *mut RawTerrain) -> i32;
+type StrokeBeginFn =
+    unsafe extern "C" fn(*mut c_void, u32, *const RawTerrainBrush, *const f32, u32) -> i32;
+type StrokePointFn = unsafe extern "C" fn(*mut c_void, f64, f64, f64, f32, *mut u32) -> i32;
+type StrokeEndFn = unsafe extern "C" fn(*mut c_void, *mut RawStrokeResult) -> i32;
+type StrokeRecordFn = unsafe extern "C" fn(*mut c_void, u32) -> i32;
+type TerrainRaycastFn =
+    unsafe extern "C" fn(*const c_void, u32, *const f64, *const f64, *mut f64) -> i32;
+type TerrainOutlineFn =
+    unsafe extern "C" fn(*const c_void, u32, *const f64, f32, u32, *mut f32) -> i32;
+type TerrainDataLegacyFn = unsafe extern "C" fn(*const c_void, u32, *mut i32) -> i32;
+type TerrainConvertNativeFn = unsafe extern "C" fn(*mut c_void, u32, *mut c_char, usize) -> i32;
 type TerrainHeightFn = unsafe extern "C" fn(*const c_void, u32, f32, f32, *mut f32) -> i32;
 type SetTerrainMaskFn =
     unsafe extern "C" fn(*mut c_void, u32, *const c_char, u32, u32, *const u8) -> i32;
@@ -1097,6 +1253,7 @@ struct Functions {
     asset_path: AssetPathFn,
     asset_project_path: AssetPathFn,
     resolve_path: AssetPathFn,
+    asset_reference: Option<AssetReferenceFn>,
     generate_map: GenerateMapFn,
     pack_maps: PackMapsFn,
     save_rgba: SaveRgbaFn,
@@ -1126,6 +1283,15 @@ struct Functions {
     simulating: Option<SimulatingFn>,
     set_water: Option<SetWaterFn>,
     set_terrain: Option<SetTerrainFn>,
+    terrain_raycast: Option<TerrainRaycastFn>,
+    terrain_outline: Option<TerrainOutlineFn>,
+    terrain_data_legacy: Option<TerrainDataLegacyFn>,
+    terrain_convert_native: Option<TerrainConvertNativeFn>,
+    stroke_begin: Option<StrokeBeginFn>,
+    stroke_point: Option<StrokePointFn>,
+    stroke_end: Option<StrokeEndFn>,
+    stroke_revert: Option<StrokeRecordFn>,
+    stroke_reapply: Option<StrokeRecordFn>,
     get_terrain: Option<GetTerrainFn>,
     terrain_height: Option<TerrainHeightFn>,
     set_terrain_mask: Option<SetTerrainMaskFn>,
@@ -1336,6 +1502,8 @@ impl Engine {
                 load_symbol(library, b"caffeine_session_asset_project_path\0")
             }?,
             resolve_path: unsafe { load_symbol(library, b"caffeine_session_resolve_path\0") }?,
+            // v24: an older libcaffeine-capi has no asset manager references; the editor then keeps the path as typed.
+            asset_reference: unsafe { load_symbol(library, b"caffeine_session_asset_reference\0") },
             generate_map: unsafe { load_symbol(library, b"caffeine_texture_generate_map\0") }?,
             pack_maps: unsafe { load_symbol(library, b"caffeine_texture_pack_maps\0") }?,
             save_rgba: unsafe { load_symbol(library, b"caffeine_texture_save_rgba\0") }?,
@@ -1358,6 +1526,29 @@ impl Engine {
                 load_symbol(library, b"caffeine_session_set_material_preview_light\0")
             },
             set_terrain: unsafe { load_symbol(library, b"caffeine_session_set_terrain\0") },
+            terrain_raycast: unsafe { load_symbol(library, b"caffeine_session_terrain_raycast\0") },
+            terrain_outline: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_brush_outline\0")
+            },
+            terrain_data_legacy: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_data_legacy\0")
+            },
+            terrain_convert_native: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_convert_native\0")
+            },
+            stroke_begin: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_stroke_begin\0")
+            },
+            stroke_point: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_stroke_point\0")
+            },
+            stroke_end: unsafe { load_symbol(library, b"caffeine_session_terrain_stroke_end\0") },
+            stroke_revert: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_stroke_revert\0")
+            },
+            stroke_reapply: unsafe {
+                load_symbol(library, b"caffeine_session_terrain_stroke_reapply\0")
+            },
             get_terrain: unsafe { load_symbol(library, b"caffeine_session_terrain\0") },
             terrain_height: unsafe { load_symbol(library, b"caffeine_session_terrain_height\0") },
             set_terrain_mask: unsafe {
@@ -1926,6 +2117,42 @@ impl Engine {
         })
     }
 
+    /// Asks the project's asset manager what `path` refers to. With `import`, a real file outside the project is
+    /// copied into the assets folder first and the reference names the copy. `None` when the engine library is
+    /// older than the asset manager (C ABI 24).
+    pub fn asset_reference(&self, path: &str, import: bool) -> Option<AssetReference> {
+        let function = self.functions.asset_reference?;
+        let path = CString::new(path).ok()?;
+        let mut raw = RawAssetReference {
+            status: 0,
+            engine_asset: 0,
+            imported: 0,
+            project_path: [0; 512],
+            asset_path: [0; 512],
+            absolute_path: [0; 512],
+            kind: [0; 32],
+        };
+        if unsafe { function(self.session, path.as_ptr(), i32::from(import), &mut raw) } != 0 {
+            return None;
+        }
+        let status = match raw.status {
+            0 => ReferenceStatus::Ok,
+            1 => ReferenceStatus::Empty,
+            2 => ReferenceStatus::Missing,
+            3 => ReferenceStatus::OutsideProject,
+            _ => ReferenceStatus::NotAFile,
+        };
+        Some(AssetReference {
+            status,
+            engine_asset: raw.engine_asset != 0,
+            imported: raw.imported != 0,
+            project_path: c_char_array(&raw.project_path),
+            asset_path: c_char_array(&raw.asset_path),
+            absolute_path: c_char_array(&raw.absolute_path),
+            kind: c_char_array(&raw.kind),
+        })
+    }
+
     pub fn resolve_path(&self, path: &str) -> EngineResult<String> {
         let path = CString::new(path).map_err(|_| EngineError::InvalidArgument)?;
         read_string(512, |buffer, size| unsafe {
@@ -2109,6 +2336,155 @@ impl Engine {
                 splat_rgba.map_or(std::ptr::null(), <[u8]>::as_ptr),
             )
         })
+    }
+
+    /// Where a world-space ray meets a terrain, in world space (C ABI 27). `None` when it misses, for an entity that is
+    /// not a terrain, or from an older engine library.
+    pub fn terrain_raycast(
+        &self,
+        entity: u32,
+        origin: [f64; 3],
+        direction: [f64; 3],
+    ) -> Option<[f64; 3]> {
+        let cast = self.functions.terrain_raycast?;
+        let mut hit = [0.0f64; 3];
+        (unsafe {
+            cast(
+                self.session,
+                entity,
+                origin.as_ptr(),
+                direction.as_ptr(),
+                hit.as_mut_ptr(),
+            )
+        } == 0)
+            .then_some(hit)
+    }
+
+    /// The ring a brush of `radius_m` metres makes on the terrain around a world-space `center`: `segments` points on
+    /// the relief, a few centimetres above it (C ABI 27).
+    pub fn terrain_brush_outline(
+        &self,
+        entity: u32,
+        center: [f64; 3],
+        radius_m: f32,
+        segments: u32,
+    ) -> Option<Vec<[f32; 3]>> {
+        let outline = self.functions.terrain_outline?;
+        let mut out = vec![0.0f32; segments as usize * 3];
+        (unsafe {
+            outline(
+                self.session,
+                entity,
+                center.as_ptr(),
+                radius_m,
+                segments,
+                out.as_mut_ptr(),
+            )
+        } == 0)
+            .then(|| out.as_chunks::<3>().0.to_vec())
+    }
+
+    /// Whether a terrain's data is still in the old `.cterrain` format (C ABI 26): it opens and edits as it is, and
+    /// `terrain_convert_native` saves it as the native `.terrain`. `None` for an entity that is not a terrain, or
+    /// from an older engine library.
+    pub fn terrain_data_is_legacy(&self, entity: u32) -> Option<bool> {
+        let query = self.functions.terrain_data_legacy?;
+        let mut legacy = 0i32;
+        (unsafe { query(self.session, entity, &mut legacy) } == 0).then_some(legacy != 0)
+    }
+
+    /// Saves a terrain as the native `.terrain` next to its legacy file, checked by reading it back bit for bit, and
+    /// points the scene at it. Returns the new project-relative path.
+    pub fn terrain_convert_native(&mut self, entity: u32) -> EngineResult<String> {
+        let convert = self
+            .functions
+            .terrain_convert_native
+            .ok_or(EngineError::Error)?;
+        read_string(256, |buffer, size| unsafe {
+            convert(self.session, entity, buffer, size)
+        })
+    }
+
+    /// Whether the engine library can place a brush cursor on a terrain (C ABI 27).
+    pub fn has_terrain_cursor(&self) -> bool {
+        self.functions.terrain_raycast.is_some() && self.functions.terrain_outline.is_some()
+    }
+
+    /// Whether the engine library has terrain strokes (C ABI 25).
+    pub fn has_terrain_strokes(&self) -> bool {
+        self.functions.stroke_begin.is_some()
+    }
+
+    /// Starts a brush stroke on a terrain (C ABI 25). A stroke that is still open is ended first.
+    pub fn terrain_stroke_begin(&mut self, entity: u32, brush: &TerrainBrush) -> EngineResult<()> {
+        let begin = self.functions.stroke_begin.ok_or(EngineError::Error)?;
+        let raw = RawTerrainBrush {
+            mode: brush.mode as i32,
+            radius_m: brush.radius_m,
+            strength: brush.strength,
+            spacing_m: brush.spacing_m,
+            falloff: brush.falloff as i32,
+            rotation_degrees: brush.rotation_degrees,
+            target_height_m: brush.target_height_m,
+            pressure_to_strength: brush.pressure_to_strength,
+            seed: brush.seed,
+        };
+        let (alpha, size) = match &brush.stamp {
+            Some((size, alpha)) if alpha.len() == (*size as usize) * (*size as usize) => {
+                (alpha.as_ptr(), *size)
+            }
+            Some(_) => return Err(EngineError::InvalidArgument),
+            None => (std::ptr::null(), 0),
+        };
+        result(unsafe { begin(self.session, entity, &raw, alpha, size) })
+    }
+
+    /// Extends the open stroke to a world-space point, in metres. Returns how many stamps it laid.
+    pub fn terrain_stroke_point(&mut self, world: [f64; 3], pressure: f32) -> EngineResult<u32> {
+        let point = self.functions.stroke_point.ok_or(EngineError::Error)?;
+        let mut stamps = 0u32;
+        result(unsafe {
+            point(
+                self.session,
+                world[0],
+                world[1],
+                world[2],
+                pressure,
+                &mut stamps,
+            )
+        })?;
+        Ok(stamps)
+    }
+
+    /// Ends the open stroke and keeps its record for undo.
+    pub fn terrain_stroke_end(&mut self) -> EngineResult<StrokeSummary> {
+        let end = self.functions.stroke_end.ok_or(EngineError::Error)?;
+        let mut raw = RawStrokeResult::default();
+        result(unsafe { end(self.session, &mut raw) })?;
+        Ok(StrokeSummary {
+            record: raw.record,
+            stamps: raw.stamps,
+            tiles_changed: raw.tiles_changed,
+            bytes: raw.bytes,
+            region: (raw.has_region != 0).then_some((
+                raw.region_min_x,
+                raw.region_min_z,
+                raw.region_max_x,
+                raw.region_max_z,
+            )),
+        })
+    }
+
+    /// Undoes a finished stroke exactly, by the id `terrain_stroke_end` gave.
+    pub fn terrain_stroke_revert(&mut self, record: u32) -> EngineResult<()> {
+        let revert = self.functions.stroke_revert.ok_or(EngineError::Error)?;
+        result(unsafe { revert(self.session, record) })
+    }
+
+    /// Redoes an undone stroke.
+    pub fn terrain_stroke_reapply(&mut self, record: u32) -> EngineResult<()> {
+        let reapply = self.functions.stroke_reapply.ok_or(EngineError::Error)?;
+        result(unsafe { reapply(self.session, record) })
     }
 
     pub fn terrain(&self, entity: u32) -> EngineResult<Terrain> {
@@ -3280,6 +3656,66 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_terrain_stroke_edits_locally_and_undoes_exactly() {
+        let _guard = test_lock();
+        let Some(mut engine) = Engine::load_default() else {
+            return;
+        };
+        if !engine.has_terrain_strokes() {
+            return; // a libcaffeine-capi from before C ABI 25
+        }
+        let entity = engine.create_entity("Ground").expect("entity");
+        let terrain = Terrain {
+            resolution: [257, 257],
+            size: [512.0, 512.0],
+            max_height: 80.0,
+            ..Terrain::default()
+        };
+        engine
+            .set_terrain(entity, &terrain, &vec![0.5; 257 * 257], None)
+            .expect("terrain");
+        let height = |engine: &Engine, x: f32, z: f32| {
+            engine.terrain_height(entity, x + 256.0, z + 256.0).unwrap()
+        };
+        let before = height(&engine, 0.0, 0.0);
+
+        engine
+            .terrain_stroke_begin(
+                entity,
+                &TerrainBrush {
+                    radius_m: 10.0,
+                    strength: 2.0,
+                    spacing_m: 5.0,
+                    ..TerrainBrush::default()
+                },
+            )
+            .expect("begin");
+        assert_eq!(engine.terrain_stroke_point([0.0, 0.0, 0.0], 1.0), Ok(1));
+        assert_eq!(engine.terrain_stroke_point([50.0, 0.0, 0.0], 1.0), Ok(10));
+        assert!(height(&engine, 25.0, 0.0) > before + 1.5);
+        assert!((height(&engine, 0.0, 100.0) - before).abs() < 0.001);
+        let summary = engine.terrain_stroke_end().expect("end");
+        assert_ne!(summary.record, 0);
+        assert_eq!(summary.stamps, 11);
+        assert!(summary.tiles_changed >= 1 && summary.tiles_changed < 16);
+        assert!(summary.region.is_some());
+        let edited = height(&engine, 25.0, 0.0);
+
+        engine
+            .terrain_stroke_revert(summary.record)
+            .expect("revert");
+        assert!((height(&engine, 25.0, 0.0) - before).abs() < 1e-4);
+        engine
+            .terrain_stroke_reapply(summary.record)
+            .expect("reapply");
+        assert!((height(&engine, 25.0, 0.0) - edited).abs() < 1e-4);
+        assert_eq!(
+            engine.terrain_stroke_revert(9999),
+            Err(EngineError::NotFound)
+        );
+    }
 
     #[test]
     fn dense_scene_snapshot_restores_position() {

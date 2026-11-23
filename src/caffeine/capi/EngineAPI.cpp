@@ -41,6 +41,9 @@
 #include "audio/VolumetricComponents.hpp"
 #include "audio/volumetric/SceneAudio.hpp"
 #include "audio/volumetric/VolumetricAudio.hpp"
+#include "assets/AssetManager.hpp"
+#include "terrain/TerrainSculptor.hpp"
+#include "terrain/edit/TerrainStroke.hpp"
 #include "assets/MaterialCache.hpp"
 #include "micromesh/Micromesh.hpp"
 #include "assets/MaterialFile.hpp"
@@ -87,34 +90,28 @@ struct AssetEntry {
 };
 
 std::string assetKind(const std::filesystem::path& path, bool isDirectory) {
-    if (isDirectory) return "folder";
-    std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    // `Rock.generator.material`: the editable recipe of a generator, not a material.
-    std::string stem = path.stem().string();
-    std::transform(stem.begin(), stem.end(), stem.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const std::string marker = ".generator";
-    if (stem.size() > marker.size() &&
-        stem.compare(stem.size() - marker.size(), marker.size(), marker) == 0) {
-        return "generator";
-    }
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gif" ||
-        ext == ".hdr" || ext == ".exr") {
-        return "image";
-    }
-    if (ext == ".obj" || ext == ".glb" || ext == ".gltf") return "mesh";
-    if (ext == ".mat" || ext == ".material") return "material";
-    if (ext == ".lua" || ext == ".dyd") return "script";
-    if (ext == ".caf" || ext == ".cap") return "asset";
-    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "audio";
-    if (ext == ".anim") return "animation";
-    return "file";
+    return Caffeine::Assets::AssetManager::classify(path.generic_string(), isDirectory);
 }
 
 struct CaffeineSession {
     Caffeine::ECS::World world;
+    // Decides what a path in a component or a generator node refers to (see caffeine_session_asset_reference).
+    Caffeine::Assets::AssetManager assetManager{nullptr, ""};
+    // Terrain editing strokes: the open one, and the finished ones kept for undo within a memory budget.
+    struct TerrainStrokeSlot {
+        std::unique_ptr<Caffeine::Terrain::TerrainStroke> stroke;
+        CaffeineEntity entity = 0;
+        const Caffeine::Terrain::TerrainHeightmap* heightmap = nullptr;  // to notice a terrain that was replaced
+    } terrainStroke;
+    struct TerrainStrokeRecord {
+        CaffeineEntity entity = 0;
+        Caffeine::Terrain::StrokeRecord record;
+    };
+    std::unordered_map<uint32_t, TerrainStrokeRecord> terrainRecords;
+    std::vector<uint32_t> terrainRecordOrder;
+    uint32_t nextTerrainRecord = 1;
+    size_t terrainRecordBytes = 0;
+    static constexpr size_t kTerrainRecordBudget = 512ull * 1024 * 1024;
     Caffeine::Editor::EditorContext context;
     std::string scenePath;
     float lastDelta = 0.0f;
@@ -1964,6 +1961,33 @@ CaffeineResult caffeine_session_asset_project_path(const CaffeineSession* sessio
     return CAFFEINE_OK;
 }
 
+CaffeineResult caffeine_session_asset_reference(CaffeineSession* session, const char* path, int import,
+                                                CaffeineAssetReference* out) {
+    if (!session || !out) return CAFFEINE_INVALID_ARGUMENT;
+    std::memset(out, 0, sizeof(*out));
+    out->status = CAFFEINE_REF_EMPTY;
+    if (!path) return CAFFEINE_OK;
+
+    // The manager follows the session's folders: set them from the session on every call, so a project that
+    // was opened, or an asset root that was changed, is always what references resolve against.
+    Caffeine::Assets::AssetManager& manager = session->assetManager;
+    manager.setProjectRoot(session->context.projectRootPath);
+    manager.setAssetRoot(session->assetRoot);
+    manager.setEngineAssetRoot(Caffeine::Assets::MeshCache::engineAssetsRoot());
+
+    const Caffeine::Assets::AssetReference ref = import ? manager.importReference(path)
+                                                        : manager.resolveReference(path);
+    out->status = static_cast<int>(ref.status);
+    out->engine_asset = ref.origin == Caffeine::Assets::ReferenceOrigin::Engine ? 1 : 0;
+    out->imported = ref.imported ? 1 : 0;
+    copyText(out->project_path, sizeof(out->project_path), ref.projectPath.c_str());
+    copyText(out->asset_path, sizeof(out->asset_path), ref.assetPath.c_str());
+    copyText(out->absolute_path, sizeof(out->absolute_path), ref.absolutePath.c_str());
+    copyText(out->kind, sizeof(out->kind), ref.kind.c_str());
+    if (ref.imported) session->scanAssets();
+    return CAFFEINE_OK;
+}
+
 CaffeineResult caffeine_session_resolve_path(const CaffeineSession* session, const char* path,
                                                 char* buffer, size_t buffer_size) {
     if (!session || !path || !buffer || buffer_size == 0) {
@@ -3656,6 +3680,235 @@ CaffeineResult caffeine_session_terrain(const CaffeineSession* session, Caffeine
     out->max_height = component->maxHeight;
     out->cast_shadows = component->castShadows ? 1 : 0;
     return CAFFEINE_OK;
+}
+
+namespace {
+
+/// Ends the open stroke (if any): keeps its record for undo, refreshes the collision mesh and fills `out`.
+CaffeineResult endTerrainStroke(CaffeineSession& session, CaffeineTerrainStrokeResult* out) {
+    using namespace Caffeine;
+    if (out) *out = CaffeineTerrainStrokeResult{};
+    auto& slot = session.terrainStroke;
+    if (!slot.stroke) return CAFFEINE_NOT_FOUND;
+    Terrain::StrokeRecord record = slot.stroke->finish();
+    const CaffeineEntity entityId = slot.entity;
+    slot.stroke.reset();
+    slot.heightmap = nullptr;
+    if (out) {
+        out->stamps = record.stamps;
+        out->tiles_changed = static_cast<uint32_t>(record.tiles.size());
+        out->bytes = record.bytes();
+        out->has_region = record.region.valid ? 1 : 0;
+        out->region_min_x = record.region.minX;
+        out->region_min_z = record.region.minZ;
+        out->region_max_x = record.region.maxX;
+        out->region_max_z = record.region.maxZ;
+    }
+    if (record.empty()) return CAFFEINE_OK;
+    if (entityAlive(session, entityId)) {
+        const ECS::Entity entity = entityOf(session, entityId);
+        if (auto* component = session.world.get<ECS::TerrainComponent>(entity)) {
+            // The strokes only refreshed the meshes; the coarse collision mesh is rebuilt once, here.
+            Terrain::TerrainCache::instance().commitHeightEdit(entity, *component, record.region, true);
+        }
+    }
+    session.context.markDirty();
+    const uint32_t id = session.nextTerrainRecord++;
+    if (out) out->record = id;
+    session.terrainRecordBytes += record.bytes();
+    session.terrainRecords[id] = CaffeineSession::TerrainStrokeRecord{entityId, std::move(record)};
+    session.terrainRecordOrder.push_back(id);
+    while (session.terrainRecordBytes > CaffeineSession::kTerrainRecordBudget &&
+           session.terrainRecordOrder.size() > 1) {
+        const uint32_t oldest = session.terrainRecordOrder.front();
+        session.terrainRecordOrder.erase(session.terrainRecordOrder.begin());
+        auto it = session.terrainRecords.find(oldest);
+        if (it != session.terrainRecords.end()) {
+            session.terrainRecordBytes -= std::min(session.terrainRecordBytes, it->second.record.bytes());
+            session.terrainRecords.erase(it);
+        }
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult applyTerrainRecord(CaffeineSession& session, uint32_t id, bool revert) {
+    using namespace Caffeine;
+    auto it = session.terrainRecords.find(id);
+    if (it == session.terrainRecords.end()) return CAFFEINE_NOT_FOUND;
+    if (!entityAlive(session, it->second.entity)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(session, it->second.entity);
+    auto* component = session.world.get<ECS::TerrainComponent>(entity);
+    auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!component || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    if (session.terrainStroke.stroke) endTerrainStroke(session, nullptr);
+    const Terrain::TerrainVertexBounds region =
+        revert ? it->second.record.applyBefore(*heightmap) : it->second.record.applyAfter(*heightmap);
+    Terrain::TerrainCache::instance().commitHeightEdit(entity, *component, region, true);
+    session.context.markDirty();
+    return CAFFEINE_OK;
+}
+
+}  // namespace
+
+CaffeineResult caffeine_session_terrain_data_legacy(const CaffeineSession* session, CaffeineEntity entityId,
+                                                    int* out_legacy) {
+    using namespace Caffeine;
+    if (!session || !out_legacy) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(mutableSession, entityId);
+    if (!mutableSession.world.get<ECS::TerrainComponent>(entity)) return CAFFEINE_NOT_FOUND;
+    *out_legacy = Terrain::TerrainCache::instance().dataFileIsLegacy(entity) ? 1 : 0;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_convert_native(CaffeineSession* session, CaffeineEntity entityId,
+                                                       char* out_path, size_t out_path_size) {
+    using namespace Caffeine;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(*session, entityId);
+    auto* terrain = session->world.get<ECS::TerrainComponent>(entity);
+    if (!terrain) return CAFFEINE_NOT_FOUND;
+    if (session->terrainStroke.stroke) endTerrainStroke(*session, nullptr);
+    const std::filesystem::path root(session->context.projectRootPath);
+    if (!Terrain::TerrainCache::instance().convertToNative(entity, *terrain, root)) return CAFFEINE_ERROR;
+    if (out_path && out_path_size > 0) copyText(out_path, out_path_size, terrain->terrainDataPath);
+    session->context.markDirty();
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_raycast(const CaffeineSession* session, CaffeineEntity entityId,
+                                                const double origin[3], const double direction[3],
+                                                double out_hit[3]) {
+    using namespace Caffeine;
+    if (!session || !origin || !direction || !out_hit) return CAFFEINE_INVALID_ARGUMENT;
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(mutableSession, entityId);
+    const auto* terrain = mutableSession.world.get<ECS::TerrainComponent>(entity);
+    const auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!terrain || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    const Mat4 world = Scene::computeWorldMatrix(mutableSession.world, entity);
+    Vec3 hit;
+    if (!Terrain::TerrainSculptor::raycast(
+            world, *heightmap, *terrain,
+            Vec3(static_cast<f32>(origin[0]), static_cast<f32>(origin[1]), static_cast<f32>(origin[2])),
+            Vec3(static_cast<f32>(direction[0]), static_cast<f32>(direction[1]), static_cast<f32>(direction[2])),
+            hit)) {
+        return CAFFEINE_NOT_FOUND;
+    }
+    out_hit[0] = hit.x;
+    out_hit[1] = hit.y;
+    out_hit[2] = hit.z;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_brush_outline(const CaffeineSession* session, CaffeineEntity entityId,
+                                                      const double center[3], float radius_m, uint32_t segments,
+                                                      float* out_xyz) {
+    using namespace Caffeine;
+    if (!session || !center || !out_xyz || segments < 3 || segments > 512 || !(radius_m > 0.0f)) {
+        return CAFFEINE_INVALID_ARGUMENT;
+    }
+    CaffeineSession& mutableSession = const_cast<CaffeineSession&>(*session);
+    if (!entityAlive(mutableSession, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(mutableSession, entityId);
+    const auto* terrain = mutableSession.world.get<ECS::TerrainComponent>(entity);
+    const auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!terrain || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    const Mat4 world = Scene::computeWorldMatrix(mutableSession.world, entity);
+    const Vec3 local = world.inverted().transformPoint(
+        Vec3(static_cast<f32>(center[0]), static_cast<f32>(center[1]), static_cast<f32>(center[2])));
+    const f32 halfX = terrain->worldSizeX * 0.5f, halfZ = terrain->worldSizeZ * 0.5f;
+    for (uint32_t i = 0; i < segments; ++i) {
+        const f32 angle = 6.2831853f * static_cast<f32>(i) / static_cast<f32>(segments);
+        const f32 x = local.x + radius_m * std::cos(angle);
+        const f32 z = local.z + radius_m * std::sin(angle);
+        const f32 u = std::clamp((x + halfX) / terrain->worldSizeX, 0.0f, 1.0f);
+        const f32 v = std::clamp((z + halfZ) / terrain->worldSizeZ, 0.0f, 1.0f);
+        const f32 y = heightmap->sampleBilinear(u, v) * terrain->maxHeight + 0.05f;
+        const Vec3 point = world.transformPoint(Vec3(x, y, z));
+        out_xyz[i * 3] = point.x;
+        out_xyz[i * 3 + 1] = point.y;
+        out_xyz[i * 3 + 2] = point.z;
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_stroke_begin(CaffeineSession* session, CaffeineEntity entityId,
+                                                     const CaffeineTerrainBrush* brush,
+                                                     const float* stamp_alpha, uint32_t stamp_size) {
+    using namespace Caffeine;
+    if (!session || !brush) return CAFFEINE_INVALID_ARGUMENT;
+    if (!entityAlive(*session, entityId)) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityOf(*session, entityId);
+    auto* component = session->world.get<ECS::TerrainComponent>(entity);
+    auto* heightmap = Terrain::TerrainCache::instance().heightmapFor(entity);
+    if (!component || !heightmap || heightmap->empty()) return CAFFEINE_NOT_FOUND;
+    if (stamp_alpha && (stamp_size < 2 || stamp_size > 1024)) return CAFFEINE_INVALID_ARGUMENT;
+
+    if (session->terrainStroke.stroke) endTerrainStroke(*session, nullptr);
+
+    Terrain::StrokeBrush settings;
+    settings.mode = static_cast<Terrain::TerrainBrushMode>(std::clamp(brush->mode, 0, 4));
+    settings.radiusM = std::clamp(brush->radius_m, 0.05f, 2000.0f);
+    settings.strength = std::max(brush->strength, 0.0f);
+    settings.spacingM = std::max(brush->spacing_m, 0.0f);
+    settings.falloff = static_cast<Terrain::FalloffCurve>(std::clamp(brush->falloff, 0, 3));
+    settings.rotationDegrees = brush->rotation_degrees;
+    settings.targetHeightM = brush->target_height_m;
+    settings.pressureToStrength = std::clamp(brush->pressure_to_strength, 0.0f, 1.0f);
+    settings.seed = brush->seed;
+    if (stamp_alpha) {
+        settings.stamp.size = stamp_size;
+        settings.stamp.alpha.assign(stamp_alpha, stamp_alpha + static_cast<size_t>(stamp_size) * stamp_size);
+    }
+    session->terrainStroke.stroke = std::make_unique<Terrain::TerrainStroke>(*heightmap, *component, settings);
+    session->terrainStroke.entity = entityId;
+    session->terrainStroke.heightmap = heightmap;
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_stroke_point(CaffeineSession* session, double x, double y, double z,
+                                                     float pressure, uint32_t* out_stamps) {
+    using namespace Caffeine;
+    if (out_stamps) *out_stamps = 0;
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    auto& slot = session->terrainStroke;
+    if (!slot.stroke) return CAFFEINE_NOT_FOUND;
+    const ECS::Entity entity = entityAlive(*session, slot.entity) ? entityOf(*session, slot.entity) : ECS::Entity::INVALID;
+    auto* component = entity.isValid() ? session->world.get<ECS::TerrainComponent>(entity) : nullptr;
+    // The terrain this stroke edits is gone, or was replaced under it: drop the stroke instead of writing into freed memory.
+    if (!component || Terrain::TerrainCache::instance().heightmapFor(entity) != slot.heightmap) {
+        slot.stroke.reset();
+        slot.heightmap = nullptr;
+        return CAFFEINE_NOT_FOUND;
+    }
+    const Mat4 world = Scene::computeWorldMatrix(session->world, entity);
+    const Vec3 local = world.inverted().transformPoint(Vec3(static_cast<f32>(x), static_cast<f32>(y), static_cast<f32>(z)));
+    const uint32_t laid = slot.stroke->addPoint(Terrain::StrokePoint{local.x, local.z, std::clamp(pressure, 0.0f, 1.0f)});
+    if (out_stamps) *out_stamps = laid;
+    if (slot.stroke->dirty().any()) {
+        Terrain::TerrainCache::instance().commitHeightEdit(entity, *component, slot.stroke->dirty().changed(), false);
+        slot.stroke->clearDirty();
+    }
+    return CAFFEINE_OK;
+}
+
+CaffeineResult caffeine_session_terrain_stroke_end(CaffeineSession* session, CaffeineTerrainStrokeResult* out) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    return endTerrainStroke(*session, out);
+}
+
+CaffeineResult caffeine_session_terrain_stroke_revert(CaffeineSession* session, uint32_t record) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    return applyTerrainRecord(*session, record, true);
+}
+
+CaffeineResult caffeine_session_terrain_stroke_reapply(CaffeineSession* session, uint32_t record) {
+    if (!session) return CAFFEINE_INVALID_ARGUMENT;
+    return applyTerrainRecord(*session, record, false);
 }
 
 CaffeineResult caffeine_session_terrain_height(const CaffeineSession* session,

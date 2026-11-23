@@ -1625,3 +1625,281 @@ TEST_CASE("C API adds a PhaseShift and its parameters from the editor", "[capi][
     CHECK(caffeine_session_phase_shift_remove_parameter(session, entity, 5) == CAFFEINE_NOT_FOUND);
     caffeine_session_destroy(session);
 }
+
+TEST_CASE("C ABI asset references decide what a path means", "[capi][assets][references]") {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / "caffeine-capi-references";
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    const fs::path assets = base / "project" / "Assets";
+    const fs::path outside = base / "downloads";
+    fs::create_directories(assets / "Textures", ec);
+    fs::create_directories(outside, ec);
+    { std::ofstream(assets / "Textures" / "brick.png", std::ios::binary) << "brick"; }
+    { std::ofstream(outside / "rock.png", std::ios::binary) << "rock"; }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    REQUIRE(caffeine_session_set_asset_root(session, assets.string().c_str()) == CAFFEINE_OK);
+
+    CaffeineAssetReference ref{};
+    REQUIRE(caffeine_session_asset_reference(session, "Textures/brick.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OK);
+    CHECK(std::string(ref.asset_path) == "Textures/brick.png");
+    CHECK(std::string(ref.kind) == "image");
+    CHECK(ref.imported == 0);
+
+    REQUIRE(caffeine_session_asset_reference(session, "nothing.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_MISSING);
+    REQUIRE(caffeine_session_asset_reference(session, "", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_EMPTY);
+    REQUIRE(caffeine_session_asset_reference(session, "../downloads/rock.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_MISSING);  // a relative path never climbs out of the project
+
+    const std::string rock = (outside / "rock.png").string();
+    REQUIRE(caffeine_session_asset_reference(session, rock.c_str(), 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OUTSIDE_PROJECT);
+    CHECK_FALSE(fs::exists(assets / "Textures" / "rock.png"));  // looking does not import
+
+    REQUIRE(caffeine_session_asset_reference(session, rock.c_str(), 1, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OK);
+    CHECK(ref.imported == 1);
+    CHECK(std::string(ref.asset_path) == "Textures/rock.png");
+    CHECK(fs::exists(assets / "Textures" / "rock.png"));
+    // The import shows up in the project's asset list.
+    bool listed = false;
+    for (uint32_t i = 0; i < caffeine_session_asset_count(session); ++i) {
+        CaffeineAssetInfo info{};
+        REQUIRE(caffeine_session_asset_at(session, i, &info) == CAFFEINE_OK);
+        if (std::string(info.relative_path) == "Textures/rock.png") listed = true;
+    }
+    CHECK(listed);
+
+    CHECK(caffeine_session_asset_reference(nullptr, "x", 0, &ref) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_asset_reference(session, "x", 0, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_destroy(session);
+    fs::remove_all(base, ec);
+}
+
+TEST_CASE("C API terrain strokes: stamps by metre, a local rebuild, exact undo and redo", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 257;
+    terrain.resolution_z = 257;
+    terrain.size_x = 512.0f;
+    terrain.size_z = 512.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(257 * 257, 0.5f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    auto heightAt = [&](float x, float z) {
+        float h = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, x + 256.0f, z + 256.0f, &h) == CAFFEINE_OK);
+        return h;
+    };
+    const float before = heightAt(0.0f, 0.0f);
+    CHECK(before == Approx(40.0f).margin(0.01f));
+
+    CaffeineTerrainBrush brush{};
+    brush.mode = CAFFEINE_BRUSH_RAISE;
+    brush.radius_m = 10.0f;
+    brush.strength = 2.0f;  // metres per stamp
+    brush.spacing_m = 5.0f;
+    brush.falloff = CAFFEINE_FALLOFF_SMOOTH;
+    REQUIRE(caffeine_session_terrain_stroke_begin(session, entity, &brush, nullptr, 0) == CAFFEINE_OK);
+    uint32_t stamps = 0;
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, &stamps) == CAFFEINE_OK);
+    CHECK(stamps == 1);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 50.0, 0.0, 0.0, 1.0f, &stamps) == CAFFEINE_OK);
+    CHECK(stamps == 10);  // 50 m at one stamp per 5 m
+    // The terrain moved at once, only around the path.
+    CHECK(heightAt(0.0f, 0.0f) > before + 1.5f);
+    CHECK(heightAt(25.0f, 0.0f) > before + 1.5f);
+    CHECK(heightAt(0.0f, 100.0f) == Approx(before).margin(0.001f));
+
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    CHECK(result.stamps == 11);
+    CHECK(result.tiles_changed >= 1);
+    CHECK(result.tiles_changed < 16);  // a part of the 16 tiles
+    CHECK(result.has_region == 1);
+    CHECK(result.bytes < 257u * 257u * sizeof(float));
+    const float after = heightAt(25.0f, 0.0f);
+
+    // Undo puts every tile back exactly; redo brings the stroke back.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    CHECK(heightAt(25.0f, 0.0f) == Approx(before).margin(1e-4f));
+    CHECK(heightAt(0.0f, 0.0f) == Approx(before).margin(1e-4f));
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);
+    CHECK(heightAt(25.0f, 0.0f) == Approx(after).margin(1e-4f));
+
+    // Errors: no open stroke, an unknown record, a missing entity, a bad brush.
+    CHECK(caffeine_session_terrain_stroke_point(session, 0, 0, 0, 1.0f, nullptr) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_end(session, nullptr) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_revert(session, 9999u) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_begin(session, 9999u, &brush, nullptr, 0) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_begin(session, entity, nullptr, nullptr, 0) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_stroke_begin(session, entity, &brush, nullptr, 0) == CAFFEINE_OK);
+
+    // A stroke on a terrain that is replaced under it is dropped, not written into freed memory.
+    CHECK(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain strokes follow the entity's transform and a stamp image", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 128.0f;
+    terrain.size_z = 128.0f;
+    terrain.max_height = 50.0f;
+    std::vector<float> heights(129 * 129, 0.5f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_set_entity_position(session, entity, CaffeineVec3{1000.0f, 0.0f, -500.0f}) == CAFFEINE_OK);
+
+    // The stamp: only the right half of the brush is solid.
+    std::vector<float> alpha(16 * 16, 0.0f);
+    for (int z = 0; z < 16; ++z) {
+        for (int x = 8; x < 16; ++x) alpha[z * 16 + x] = 1.0f;
+    }
+    CaffeineTerrainBrush brush{};
+    brush.mode = CAFFEINE_BRUSH_RAISE;
+    brush.radius_m = 8.0f;
+    brush.strength = 3.0f;
+    brush.falloff = CAFFEINE_FALLOFF_CONSTANT;
+    REQUIRE(caffeine_session_terrain_stroke_begin(session, entity, &brush, alpha.data(), 16) == CAFFEINE_OK);
+    // The point is given in world space: the terrain is 1 km east and 0.5 km north of the origin.
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 1000.0, 0.0, -500.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+
+    float right = 0.0f, left = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 64.0f + 4.0f, 64.0f, &right) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 64.0f - 4.0f, 64.0f, &left) == CAFFEINE_OK);
+    CHECK(right > 25.0f + 1.0f);
+    CHECK(left == Approx(25.0f).margin(0.01f));
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain data: a new terrain saves as .terrain and reloads, a bare one cannot convert", "[capi][terrain][legacy]") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "caffeine-capi-terrain-format";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Scenes", ec);
+    { std::ofstream(root / "project.caffeine") << "{}\n"; }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 60.0f;
+    std::vector<float> heights(129 * 129);
+    for (size_t i = 0; i < heights.size(); ++i) heights[i] = 0.2f + static_cast<float>(i % 97) * 0.003f;
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    int legacy = 1;
+    REQUIRE(caffeine_session_terrain_data_legacy(session, entity, &legacy) == CAFFEINE_OK);
+    CHECK(legacy == 0);  // a terrain made here was never legacy
+    char path[256] = {};
+    CHECK(caffeine_session_terrain_convert_native(session, entity, path, sizeof(path)) == CAFFEINE_ERROR);  // no data file yet
+
+    const fs::path scene = root / "Scenes" / "main.caf";
+    REQUIRE(caffeine_session_save_scene(session, scene.string().c_str()) == CAFFEINE_OK);
+    bool native = false, old = false;
+    for (const auto& entry : fs::recursive_directory_iterator(root / "terrain", ec)) {
+        native = native || entry.path().extension() == ".terrain";
+        old = old || entry.path().extension() == ".cterrain";
+    }
+    CHECK(native);
+    CHECK_FALSE(old);  // new terrains use the native container
+
+    caffeine_session_destroy(session);
+    session = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(session, scene.string().c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool found = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(session); ++i) {
+        CaffeineEntityInfo info{};
+        REQUIRE(caffeine_session_entity_at(session, i, &info) == CAFFEINE_OK);
+        if (std::string(info.name) == "Ground") {
+            loaded = info.id;
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    float h = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, loaded, 64.0f, 64.0f, &h) == CAFFEINE_OK);
+    CHECK(h > 0.0f);
+    legacy = 1;
+    REQUIRE(caffeine_session_terrain_data_legacy(session, loaded, &legacy) == CAFFEINE_OK);
+    CHECK(legacy == 0);
+    CHECK(caffeine_session_terrain_data_legacy(session, 9999u, &legacy) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_data_legacy(nullptr, loaded, &legacy) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_destroy(session);
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("C API terrain cursor: a ray meets the terrain and the brush outline hugs the relief", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 50.0f;
+    std::vector<float> heights(129 * 129);
+    for (int z = 0; z < 129; ++z) {
+        for (int x = 0; x < 129; ++x) heights[z * 129 + x] = 0.2f + 0.5f * static_cast<float>(x) / 128.0f;  // a ramp along X
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // A ray straight down over the middle of the terrain lands on the surface there.
+    const double origin[3] = {10.0, 200.0, 20.0};
+    const double down[3] = {0.0, -1.0, 0.0};
+    double hit[3] = {};
+    REQUIRE(caffeine_session_terrain_raycast(session, entity, origin, down, hit) == CAFFEINE_OK);
+    CHECK(hit[0] == Approx(10.0).margin(0.5));
+    CHECK(hit[2] == Approx(20.0).margin(0.5));
+    float expected = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 10.0f, 128.0f + 20.0f, &expected) == CAFFEINE_OK);
+    CHECK(hit[1] == Approx(expected).margin(0.3));
+    // A ray beside the terrain misses it.
+    const double aside[3] = {5000.0, 200.0, 0.0};
+    CHECK(caffeine_session_terrain_raycast(session, entity, aside, down, hit) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_raycast(session, 9999u, origin, down, hit) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_raycast(session, entity, nullptr, down, hit) == CAFFEINE_INVALID_ARGUMENT);
+
+    // The ring: 48 points at the brush radius from the centre, each on the surface (the ramp rises along X).
+    std::vector<float> ring(48 * 3);
+    REQUIRE(caffeine_session_terrain_brush_outline(session, entity, hit, 15.0f, 48, ring.data()) == CAFFEINE_OK);
+    float minY = 1e9f, maxY = -1e9f;
+    for (int i = 0; i < 48; ++i) {
+        const double dx = ring[i * 3] - hit[0], dz = ring[i * 3 + 2] - hit[2];
+        CHECK(std::sqrt(dx * dx + dz * dz) == Approx(15.0).margin(0.01));
+        float surface = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, ring[i * 3] + 128.0f, ring[i * 3 + 2] + 128.0f, &surface) == CAFFEINE_OK);
+        CHECK(ring[i * 3 + 1] == Approx(surface + 0.05f).margin(0.02f));  // just above the ground
+        minY = std::min(minY, ring[i * 3 + 1]);
+        maxY = std::max(maxY, ring[i * 3 + 1]);
+    }
+    CHECK(maxY - minY > 2.5f);  // it climbs the ramp (25 m over 256 m: 2.9 m across a 30 m ring), not a flat circle
+    CHECK(caffeine_session_terrain_brush_outline(session, entity, hit, 15.0f, 2, ring.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_brush_outline(session, entity, hit, 0.0f, 48, ring.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_brush_outline(session, 9999u, hit, 5.0f, 48, ring.data()) == CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}

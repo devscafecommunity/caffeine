@@ -471,6 +471,13 @@ impl App {
                 );
             }
             Edit::SetString(id, index, text) => {
+                let Some(text) = self.reference_text(
+                    text,
+                    &[crate::uikit::asset_kind::AssetKind::Material],
+                    "Water look material",
+                ) else {
+                    return;
+                };
                 self.watergen.graph.set_string(id, index, text);
                 self.watergen.push(Some(format!("string:{id}:{index}")));
                 self.watergen.refresh();

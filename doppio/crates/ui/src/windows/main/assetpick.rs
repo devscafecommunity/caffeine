@@ -71,6 +71,29 @@ impl App {
         });
     }
 
+    /// The kinds a string field of the selected entity's component accepts and a label for messages, when the
+    /// field holds an asset (judged by its name); `None` for a plain text field or another kind of value.
+    pub(super) fn component_asset_field(
+        &self,
+        component: usize,
+        field: usize,
+    ) -> Option<(Vec<AssetKind>, String)> {
+        let data = self.components.get(component)?;
+        if !matches!(
+            data.values.get(field),
+            Some(doppio_engine::FieldValue::String(_))
+        ) {
+            return None;
+        }
+        let info = self
+            .component_types
+            .iter()
+            .find(|kind| kind.id == data.info.type_id)
+            .and_then(|kind| kind.fields.get(field))?;
+        let kinds = asset_kind::for_field(&info.name)?;
+        Some((kinds, format!("{} · {}", data.info.name, info.name)))
+    }
+
     /// Opens the picker for a string field of the selected entity's component.
     pub(super) fn open_field_pick(&mut self, component: usize, field: usize) {
         let Some(data) = self.components.get(component) else {

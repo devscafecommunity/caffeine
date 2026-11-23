@@ -91,6 +91,7 @@ pub const PROJECT_REFRESH_ASSETS: UiId = UiId::fixed("editor.menu.project.refres
 pub const SCRIPT_EDITOR_MENU: UiId = UiId::fixed("editor.menu.scene.script_editor");
 pub const DRYAD_NODES_MENU: UiId = UiId::fixed("editor.menu.scene.dryad_nodes");
 pub const SCATTER_TERRAIN_MENU: UiId = UiId::fixed("editor.menu.scene.scatter_terrain");
+pub const CONVERT_TERRAINS_MENU: UiId = UiId::fixed("editor.menu.scene.convert_terrains");
 pub const MENU_SCENE: UiId = UiId::fixed("editor.menu.scene");
 pub const MENU_EDIT: UiId = UiId::fixed("editor.menu.edit");
 pub const MENU_VIEW: UiId = UiId::fixed("editor.menu.view");
@@ -198,6 +199,7 @@ pub const DRYAD_PROPERTIES: UiId = UiId::fixed("dryad.nodes.properties");
 pub const DRYAD_EMPTY: UiId = UiId::fixed("dryad.nodes.empty");
 pub const PANE_VIEWPORT: UiId = UiId::fixed("editor.pane.viewport");
 pub const VIEWPORT_MARKERS: UiId = UiId::fixed("viewport.canvas.markers");
+pub const VIEWPORT_BRUSH_CURSOR: UiId = UiId::fixed("viewport.canvas.brush_cursor");
 pub const TOGGLE_MARKERS: UiId = UiId::fixed("editor.view.toggle_markers");
 pub const TOGGLE_SNAP: UiId = UiId::fixed("editor.view.toggle_snap");
 pub const VIEWPORT_GIZMO: UiId = UiId::fixed("viewport.canvas.gizmo");
@@ -1968,6 +1970,11 @@ pub const CATALOG: &[UiMeta] = &[
         kind: "canvas",
     },
     UiMeta {
+        id: VIEWPORT_BRUSH_CURSOR,
+        description: "The terrain brush's ring on the ground under the mouse: the radius, where the stroke is at full strength, and the centre. It only draws; clicks pass through to the viewport.",
+        kind: "canvas",
+    },
+    UiMeta {
         id: TOGGLE_SNAP,
         description: "Snaps gizmo edits to a grid: 0.25 m for Move, 15 degrees for Rotate, 0.1 for Scale.",
         kind: "menu_item",
@@ -2120,6 +2127,11 @@ pub const CATALOG: &[UiMeta] = &[
     UiMeta {
         id: SCATTER_TERRAIN_MENU,
         description: "Scatters the project's plan (Scatter/default.scatter: pines, boulders, grass by slope, wetness and height) on the selected terrain, as one undo step.",
+        kind: "menu_item",
+    },
+    UiMeta {
+        id: CONVERT_TERRAINS_MENU,
+        description: "Saves every terrain still in the old .cterrain format as a native .terrain next to it (the old file stays; the engine checks the new one bit for bit).",
         kind: "menu_item",
     },
     UiMeta {

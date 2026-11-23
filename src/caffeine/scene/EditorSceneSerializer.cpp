@@ -30,6 +30,7 @@
 #include "scene/SceneComponents.hpp"
 #include "terrain/TerrainGenerationBlobLegacy.hpp"
 #include "terrain/TerrainCache.hpp"
+#include "terrain/TerrainContainer.hpp"
 #include "terrain/TerrainHeightmap.hpp"
 #include "terrain/TerrainSplatmap.hpp"
 #include <vector>
@@ -623,13 +624,20 @@ void SceneSerializer::collectTerrainComponents(
                 if (name->name[0] != '\0') entityName = name->name;
             }
             const std::string relPath = "terrain/" + sanitizeTerrainFileStem(entityName) + "_" +
-                                        std::to_string(e.id()) + ".cterrain";
+                                        std::to_string(e.id()) + Terrain::TerrainContainer::kExtension;
             std::strncpy(terrain.terrainDataPath, relPath.c_str(), sizeof(terrain.terrainDataPath) - 1);
             terrain.terrainDataPath[sizeof(terrain.terrainDataPath) - 1] = '\0';
         }
 
         if (!projectRoot.empty()) {
-            cache.saveTerrainFile(e, projectRoot / terrain.terrainDataPath, terrain.useSplatmap);
+            // A `.terrain` is the native container; a scene that still points at a `.cterrain` keeps saving that
+            // until the terrain is converted (`caffeine_session_terrain_convert_native`).
+            const std::filesystem::path dataFile = projectRoot / terrain.terrainDataPath;
+            if (dataFile.extension() == Terrain::TerrainContainer::kExtension) {
+                cache.saveNativeTerrainFile(e, terrain, dataFile, terrain.useSplatmap);
+            } else {
+                cache.saveTerrainFile(e, dataFile, terrain.useSplatmap);
+            }
         }
 
         entries.push_back({e.id(), serializeTerrainComponent(terrain)});

@@ -10646,6 +10646,78 @@ mod photon_gi {
     }
 
     #[test]
+    fn a_terrain_stroke_revoxelises_only_the_tiles_it_touched() {
+        let Some(mut harness) = engine_harness() else {
+            return;
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        if !engine.has_terrain_strokes() {
+            return; // a libcaffeine-capi from before C ABI 25
+        }
+        clear_scene(engine);
+        let mut room = Room::new("photon-terrain-region");
+        room.sun(engine, [-55.0, 35.0, 0.0]);
+        room.photon(engine);
+        let ground = engine.create_entity("Ground").unwrap();
+        let terrain = doppio_engine::Terrain {
+            resolution: [257, 257],
+            size: [512.0, 512.0],
+            max_height: 80.0,
+            ..doppio_engine::Terrain::default()
+        };
+        engine
+            .set_terrain(ground, &terrain, &vec![0.2; 257 * 257], None)
+            .unwrap();
+        room.gi(engine, true, "GI only");
+        engine
+            .set_camera(doppio_engine::Camera {
+                yaw: 0.0,
+                pitch: 0.5,
+                distance: 90.0,
+                focus: [0.0, 16.0, 0.0],
+            })
+            .unwrap();
+        for _ in 0..12 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let settled = engine.photon_stats().unwrap();
+        // The terrain is a set of tiles (4 x 4), not one object.
+        assert_eq!(settled.objects, 16, "one object per tile of the terrain");
+        assert!(settled.triangles > 0 && !settled.over_budget);
+
+        engine
+            .terrain_stroke_begin(
+                ground,
+                &doppio_engine::TerrainBrush {
+                    radius_m: 12.0,
+                    strength: 2.0,
+                    ..doppio_engine::TerrainBrush::default()
+                },
+            )
+            .unwrap();
+        engine
+            .terrain_stroke_point([10.0, 16.0, 10.0], 1.0)
+            .unwrap();
+        let summary = engine.terrain_stroke_end().unwrap();
+        assert!(summary.tiles_changed >= 1 && summary.tiles_changed <= 4);
+        for _ in 0..3 {
+            let _ = render_entity_view_sized(engine, W, H);
+        }
+        let after = engine.photon_stats().unwrap();
+        std::fs::remove_dir_all(&room.dir).ok();
+        assert_eq!(after.objects, 16, "the tiles are still there");
+        assert_eq!(
+            after.full_rebuilds, settled.full_rebuilds,
+            "an edit does not rebuild the volume whole"
+        );
+        let regions = after.region_rebuilds - settled.region_rebuilds;
+        assert!(
+            (1..=8).contains(&regions),
+            "only the boxes of the touched tiles were revoxelised, not the terrain: {regions}"
+        );
+    }
+
+    #[test]
     #[ignore = "diagnostic: how the closed room's GI settles frame by frame"]
     fn zz_closed_room_settling() {
         let Some(mut harness) = engine_harness() else {
@@ -15679,5 +15751,650 @@ mod performance_panel {
         );
         assert!(super::agent::performance_edit("nonsense", &serde_json::json!(1)).is_err());
         assert!(super::agent::performance_edit("instancing", &serde_json::json!("yes")).is_err());
+    }
+}
+
+mod asset_references {
+    use super::*;
+    use crate::uikit::asset_kind::AssetKind;
+    use doppio_engine::{
+        ComponentData, ComponentInfo, ComponentType, FieldInfo, FieldKind, FieldValue,
+    };
+
+    /// A project on disk (`project.caffeine`, `Assets/Raw`) with a file outside it, an engine, and a selected
+    /// entity whose component has a texture, a mesh and a text field.
+    struct Fixture {
+        harness: Harness,
+        project: std::path::PathBuf,
+        outside: std::path::PathBuf,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            if let Some(root) = self.project.parent() {
+                let _ = std::fs::remove_dir_all(root);
+            }
+        }
+    }
+
+    fn fixture() -> Option<Fixture> {
+        let mut harness = engine_harness()?;
+        // A libcaffeine-capi from before the asset manager (C ABI 24) has no references to test.
+        harness
+            .app
+            .engine
+            .as_ref()
+            .expect("engine")
+            .asset_reference("", false)?;
+        let root = test_temp_root("asset-references");
+        let project = root.join("project");
+        let outside = root.join("downloads");
+        std::fs::create_dir_all(project.join("Scenes")).unwrap();
+        std::fs::create_dir_all(project.join("Assets/Raw/Textures")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(project.join("project.caffeine"), "{}\n").unwrap();
+        std::fs::write(project.join("Assets/Raw/Textures/brick.png"), b"brick").unwrap();
+        std::fs::write(outside.join("rock.png"), b"rock").unwrap();
+        std::fs::write(outside.join("hero.glb"), b"glb").unwrap();
+        let scene = project.join("Scenes/main.caf");
+        {
+            let engine = harness.app.engine.as_mut().unwrap();
+            engine.save_scene(&scene.to_string_lossy()).unwrap();
+            engine.load_scene(&scene.to_string_lossy()).unwrap();
+            engine
+                .set_asset_root(&project.join("Assets/Raw").to_string_lossy())
+                .unwrap();
+        }
+        let field = |name: &str| FieldInfo {
+            name: name.to_owned(),
+            kind: FieldKind::String,
+            min: 0.0,
+            max: 0.0,
+            step: 0.0,
+            options: Vec::new(),
+        };
+        harness.app.component_types = vec![ComponentType {
+            id: 7,
+            name: "Look".to_owned(),
+            fields: vec![field("Texture Path"), field("Mesh Path"), field("Tag")],
+        }];
+        harness.app.components = vec![ComponentData {
+            info: ComponentInfo {
+                type_id: 7,
+                name: "Look".to_owned(),
+                field_count: 3,
+            },
+            values: vec![
+                FieldValue::String(String::new()),
+                FieldValue::String(String::new()),
+                FieldValue::String(String::new()),
+            ],
+        }];
+        Some(Fixture {
+            harness,
+            project,
+            outside,
+        })
+    }
+
+    fn value(fixture: &Fixture, field: usize) -> String {
+        match &fixture.harness.app().components[0].values[field] {
+            FieldValue::String(text) => text.clone(),
+            other => panic!("not a string: {other:?}"),
+        }
+    }
+
+    fn logged(fixture: &Fixture, needle: &str) -> bool {
+        fixture
+            .harness
+            .app()
+            .log
+            .iter()
+            .any(|entry| entry.text.contains(needle))
+    }
+
+    #[test]
+    fn without_an_engine_the_text_is_kept_as_typed() {
+        let outcome = assetref::resolve_value(None, "anything/at/all.png", &[AssetKind::Image]);
+        assert_eq!(
+            outcome.resolved,
+            assetref::Resolved::Store("anything/at/all.png".to_owned())
+        );
+        assert_eq!(
+            assetref::resolve_value(None, "   ", &[]).resolved,
+            assetref::Resolved::Store(String::new())
+        );
+    }
+
+    #[test]
+    fn a_file_typed_from_outside_the_project_is_imported_and_the_field_keeps_the_project_path() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        let typed = fx.outside.join("rock.png").to_string_lossy().into_owned();
+        fx.harness.app.edit_component_text(0, 0, 0, typed);
+        assert_eq!(value(&fx, 0), "Textures/rock.png");
+        assert!(
+            fx.project.join("Assets/Raw/Textures/rock.png").is_file(),
+            "the file was copied into the project"
+        );
+        assert!(logged(&fx, "Imported"));
+        // Typed again, it is the same copy: no second file.
+        let again = fx.outside.join("rock.png").to_string_lossy().into_owned();
+        fx.harness.app.edit_component_text(0, 0, 0, again);
+        assert_eq!(value(&fx, 0), "Textures/rock.png");
+        assert!(!fx.project.join("Assets/Raw/Textures/rock_1.png").exists());
+    }
+
+    #[test]
+    fn a_project_file_is_kept_in_the_pickers_form_however_it_is_spelled() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        let absolute = fx
+            .project
+            .join("Assets/Raw/Textures/brick.png")
+            .to_string_lossy()
+            .into_owned();
+        fx.harness.app.edit_component_text(0, 0, 0, absolute);
+        assert_eq!(value(&fx, 0), "Textures/brick.png");
+        fx.harness
+            .app
+            .edit_component_text(0, 0, 0, "Textures\\.\\brick.png".to_owned());
+        assert_eq!(value(&fx, 0), "Textures/brick.png");
+        fx.harness
+            .app
+            .edit_component_text(0, 0, 0, "Assets/Raw/Textures/brick.png".to_owned());
+        assert_eq!(value(&fx, 0), "Textures/brick.png");
+    }
+
+    #[test]
+    fn a_path_still_being_typed_is_kept_and_the_wrong_kind_is_refused() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        // Half a name: nothing is there yet, the text stays so the typing can go on.
+        fx.harness
+            .app
+            .edit_component_text(0, 0, 0, "Textures/bri".to_owned());
+        assert_eq!(value(&fx, 0), "Textures/bri");
+        // A mesh in a texture field is refused and the field keeps what it had.
+        let mesh = fx.outside.join("hero.glb").to_string_lossy().into_owned();
+        fx.harness.app.edit_component_text(0, 0, 0, mesh);
+        assert_eq!(value(&fx, 0), "Textures/bri");
+        assert!(logged(&fx, "this takes a texture"));
+        // The refused mesh is not imported into the project either, only the kind that fits is.
+        assert!(!fx.project.join("Assets/Raw/Models/hero.glb").exists());
+        // The same file in a mesh field is welcome.
+        let mesh = fx.outside.join("hero.glb").to_string_lossy().into_owned();
+        fx.harness.app.edit_component_text(0, 1, 0, mesh);
+        assert_eq!(value(&fx, 1), "Models/hero.glb");
+        assert!(fx.project.join("Assets/Raw/Models/hero.glb").is_file());
+    }
+
+    #[test]
+    fn a_plain_text_field_is_never_treated_as_a_path() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        let text = fx.outside.join("rock.png").to_string_lossy().into_owned();
+        fx.harness.app.edit_component_text(0, 2, 0, text.clone());
+        assert_eq!(value(&fx, 2), text);
+        assert!(!fx.project.join("Assets/Raw/Textures/rock.png").exists());
+    }
+
+    #[test]
+    fn a_picker_choice_goes_through_the_same_reference() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        fx.harness.app.open_field_pick(0, 0);
+        fx.harness
+            .dispatch(Message::AssetPick(assetpick::PickEdit::Pick(
+                fx.outside.join("rock.png").to_string_lossy().into_owned(),
+            )));
+        assert_eq!(value(&fx, 0), "Textures/rock.png");
+    }
+
+    #[test]
+    fn a_generator_image_node_imports_what_it_is_given() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        fx.harness.app.new_material();
+        let node = fx
+            .harness
+            .app
+            .material
+            .as_mut()
+            .map(|document| {
+                document.generator.add_node(
+                    generators::NodeKind::Image {
+                        path: String::new(),
+                        projection: generators::Projection::Uv,
+                        tiling: [1.0, 1.0],
+                        offset: [0.0, 0.0],
+                        filter: generators::ImageFilter::Linear,
+                        wrap: generators::WrapMode::Repeat,
+                    },
+                    iced::Point::new(0.0, 0.0),
+                )
+            })
+            .expect("a material document");
+        let typed = fx.outside.join("rock.png").to_string_lossy().into_owned();
+        fx.harness
+            .dispatch(Message::Generator(material_generator::Edit::SetImagePath(
+                node, typed,
+            )));
+        let path = |fx: &Fixture| match &fx
+            .harness
+            .app()
+            .material
+            .as_ref()
+            .unwrap()
+            .generator
+            .node(node)
+            .unwrap()
+            .kind
+        {
+            generators::NodeKind::Image { path, .. } => path.clone(),
+            other => panic!("not an image node: {other:?}"),
+        };
+        assert_eq!(path(&fx), "Textures/rock.png");
+        assert!(fx.project.join("Assets/Raw/Textures/rock.png").is_file());
+    }
+
+    #[test]
+    fn a_graph_that_names_a_file_outside_the_project_is_imported_when_it_bakes() {
+        let Some(mut fx) = fixture() else {
+            return;
+        };
+        fx.harness.app.new_material();
+        let outside = fx.outside.join("rock.png").to_string_lossy().into_owned();
+        let node = fx
+            .harness
+            .app
+            .material
+            .as_mut()
+            .map(|document| {
+                document.generator.add_node(
+                    generators::NodeKind::NormalMap {
+                        path: outside.clone(),
+                        projection: generators::Projection::Uv,
+                        tiling: [1.0, 1.0],
+                        offset: [0.0, 0.0],
+                        filter: generators::ImageFilter::Linear,
+                        wrap: generators::WrapMode::Repeat,
+                    },
+                    iced::Point::new(0.0, 0.0),
+                )
+            })
+            .expect("a material document");
+        let mut graph = fx
+            .harness
+            .app()
+            .material
+            .as_ref()
+            .unwrap()
+            .generator
+            .clone();
+        let paths = fx
+            .harness
+            .app
+            .resolve_graph_textures(&mut graph)
+            .expect("the texture resolves");
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0].0, "Textures/rock.png",
+            "the node's key is the project path"
+        );
+        assert!(
+            std::path::Path::new(&paths[0].1)
+                .starts_with(std::fs::canonicalize(&fx.project).unwrap()),
+            "the file read is the project's copy: {}",
+            paths[0].1
+        );
+        // The open document follows: saving it would not keep a path from someone's Downloads folder.
+        match &fx
+            .harness
+            .app()
+            .material
+            .as_ref()
+            .unwrap()
+            .generator
+            .node(node)
+            .unwrap()
+            .kind
+        {
+            generators::NodeKind::NormalMap { path, .. } => assert_eq!(path, "Textures/rock.png"),
+            other => panic!("not a normal map node: {other:?}"),
+        }
+    }
+}
+
+mod terrain_format {
+    use super::*;
+
+    /// A legacy `.cterrain` (signature, version 2, size, flags 0, then the heights) written by hand.
+    fn write_legacy(path: &std::path::Path, resolution: u32, heights: &[f32]) {
+        let mut bytes = Vec::new();
+        for value in [0x4E52_5443u32, 2, resolution, resolution, 0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for height in heights {
+            bytes.extend_from_slice(&height.to_le_bytes());
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// A project on disk with one terrain that is stored as a legacy `.cterrain`, loaded again so the engine knows it
+    /// came from the old format.
+    fn old_project() -> Option<(Harness, std::path::PathBuf, u32, Vec<f32>)> {
+        let mut harness = engine_harness()?;
+        harness
+            .app
+            .engine
+            .as_ref()
+            .expect("engine")
+            .terrain_data_is_legacy(0)
+            .map(|_| ())
+            .or_else(|| {
+                harness
+                    .app
+                    .engine
+                    .as_ref()?
+                    .terrain_data_is_legacy(1)
+                    .map(|_| ())
+            })
+            .or(Some(()))?;
+        if !harness.app.engine.as_ref().unwrap().has_terrain_strokes() {
+            return None;
+        }
+        let root = test_temp_root("terrain-format");
+        std::fs::create_dir_all(root.join("Scenes")).unwrap();
+        std::fs::write(root.join("project.caffeine"), "{}\n").unwrap();
+        let heights: Vec<f32> = (0..129 * 129)
+            .map(|i| 0.3 + (i % 101) as f32 * 0.003_133_7)
+            .collect();
+        let scene = root.join("Scenes/main.caf");
+        let id = {
+            let engine = harness.app.engine.as_mut().unwrap();
+            let id = engine.create_entity("Ground").unwrap();
+            let terrain = doppio_engine::Terrain {
+                resolution: [129, 129],
+                size: [256.0, 256.0],
+                max_height: 60.0,
+                ..doppio_engine::Terrain::default()
+            };
+            engine
+                .set_terrain(id, &terrain, &vec![0.2; 129 * 129], None)
+                .unwrap();
+            id
+        };
+        let engine = harness.app.engine.as_mut().unwrap();
+        let components = engine.entity_component_data(id);
+        let (component, field) = components
+            .iter()
+            .enumerate()
+            .find_map(|(c, data)| {
+                engine
+                    .component_types()
+                    .iter()
+                    .find(|kind| kind.id == data.info.type_id)
+                    .and_then(|kind| {
+                        kind.fields
+                            .iter()
+                            .position(|f| f.name == "Terrain Data Path")
+                            .map(|f| (c, f))
+                    })
+            })
+            .expect("a Terrain Data Path field");
+        engine
+            .set_component_field(
+                id,
+                component as u32,
+                field as u32,
+                &doppio_engine::FieldValue::String("terrain/ground.cterrain".to_owned()),
+            )
+            .unwrap();
+        // Saving writes the terrain to the file the scene names; the old file the project really had goes in after
+        // that, so the scene opens it.
+        engine.save_scene(&scene.to_string_lossy()).unwrap();
+        write_legacy(&root.join("terrain/ground.cterrain"), 129, &heights);
+        engine.load_scene(&scene.to_string_lossy()).unwrap();
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        let id = harness
+            .app
+            .entities
+            .iter()
+            .find(|entity| entity.name == "Ground")
+            .map(|entity| entity.id)
+            .expect("the terrain entity");
+        Some((harness, root, id, heights))
+    }
+
+    #[test]
+    fn an_old_terrain_is_reported_converted_once_and_kept_in_the_native_format() {
+        let Some((mut harness, root, id, heights)) = old_project() else {
+            return;
+        };
+        let legacy = |harness: &Harness| {
+            harness
+                .app
+                .engine
+                .as_ref()
+                .unwrap()
+                .terrain_data_is_legacy(id)
+        };
+        assert_eq!(legacy(&harness), Some(true), "opened from the old format");
+        assert_eq!(harness.app.legacy_terrains().len(), 1);
+        harness.app.warn_legacy_terrains();
+        assert!(harness
+            .app
+            .log
+            .iter()
+            .any(|entry| entry.text.contains("old .cterrain format")));
+        // It still reads as it was written.
+        let height = harness
+            .app
+            .engine
+            .as_ref()
+            .unwrap()
+            .terrain_height(id, 128.0, 128.0)
+            .unwrap();
+        // Vertex (64, 64) of the 129 x 129 grid is texel 64 * 129 + 64 of the file.
+        let expected = heights[64 * 129 + 64] * 60.0;
+        assert!((height - expected).abs() < 1e-3, "{height} vs {expected}");
+
+        harness.dispatch(Message::ConvertLegacyTerrains);
+        assert!(root.join("terrain/ground.terrain").is_file());
+        assert!(
+            root.join("terrain/ground.cterrain").is_file(),
+            "the old file stays"
+        );
+        assert_eq!(legacy(&harness), Some(false));
+        assert!(harness.app.legacy_terrains().is_empty());
+        assert!(harness
+            .app
+            .log
+            .iter()
+            .any(|entry| entry.text.contains("Converted terrain Ground")));
+
+        // Saved and opened again, the scene reads the native file and the same heights.
+        let scene = root.join("Scenes/main.caf");
+        let engine = harness.app.engine.as_mut().unwrap();
+        engine.save_scene(&scene.to_string_lossy()).unwrap();
+        engine.load_scene(&scene.to_string_lossy()).unwrap();
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        let id = harness
+            .app
+            .entities
+            .iter()
+            .find(|entity| entity.name == "Ground")
+            .map(|entity| entity.id)
+            .unwrap();
+        let engine = harness.app.engine.as_ref().unwrap();
+        assert_eq!(engine.terrain_data_is_legacy(id), Some(false));
+        let after = engine.terrain_height(id, 128.0, 128.0).unwrap();
+        assert_eq!(after, height, "the same terrain, bit for bit");
+
+        // Nothing is left to convert: a second request says so and changes nothing.
+        harness.dispatch(Message::ConvertLegacyTerrains);
+        assert!(harness
+            .app
+            .log
+            .iter()
+            .any(|entry| entry.text.contains("No terrain uses the old")));
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
+
+mod terrain_cursor {
+    use super::*;
+
+    /// A terrain in front of the camera, and the cursor turned on.
+    fn scene() -> Option<(Harness, u32)> {
+        let mut harness = engine_harness()?;
+        if !harness.app.engine.as_ref()?.has_terrain_cursor() {
+            return None; // a libcaffeine-capi from before the terrain cursor (C ABI 27)
+        }
+        let engine = harness.app.engine.as_mut().unwrap();
+        let id = engine.create_entity("Ground").ok()?;
+        let heights: Vec<f32> = (0..129 * 129)
+            .map(|i| 0.2 + 0.5 * ((i % 129) as f32 / 128.0))
+            .collect();
+        engine
+            .set_terrain(
+                id,
+                &doppio_engine::Terrain {
+                    resolution: [129, 129],
+                    size: [256.0, 256.0],
+                    max_height: 50.0,
+                    ..doppio_engine::Terrain::default()
+                },
+                &heights,
+                None,
+            )
+            .ok()?;
+        harness.app.entities = projectloader::read_entities(harness.app.engine.as_ref().unwrap());
+        harness.app.camera = doppio_engine::Camera {
+            yaw: 0.0,
+            pitch: 1.0,
+            distance: 120.0,
+            focus: [0.0, 12.0, 0.0],
+        };
+        harness.app.viewport_frame_camera = None;
+        Some((harness, id))
+    }
+
+    fn centre(harness: &Harness) -> iced::Point {
+        iced::Point::new(
+            harness.app().viewport_logical.0 * 0.5,
+            harness.app().viewport_logical.1 * 0.5,
+        )
+    }
+
+    #[test]
+    fn the_brush_ring_follows_the_mouse_over_the_terrain_and_hugs_the_relief() {
+        let Some((mut harness, id)) = scene() else {
+            return;
+        };
+        let at = centre(&harness);
+        // Off by default: moving the mouse draws nothing.
+        harness.dispatch(Message::ViewportMoved(at));
+        assert!(harness.app().terrain_cursor.cursor.is_none());
+
+        harness.dispatch(Message::TerrainBrushCursor {
+            active: true,
+            radius_m: 10.0,
+        });
+        harness.dispatch(Message::ViewportMoved(at));
+        let cursor = harness
+            .app()
+            .terrain_cursor
+            .cursor
+            .clone()
+            .expect("the mouse is over the terrain");
+        assert_eq!(cursor.outer.len(), 72);
+        assert_eq!(cursor.inner.len(), 48);
+        // Every point of the outer ring is 10 m from the centre and on the ground.
+        let engine = harness.app().engine.as_ref().unwrap();
+        for point in &cursor.outer {
+            let dx = point[0] - cursor.center[0];
+            let dz = point[2] - cursor.center[2];
+            assert!(((dx * dx + dz * dz).sqrt() - 10.0).abs() < 0.05);
+            let ground = engine
+                .terrain_height(id, point[0] + 128.0, point[2] + 128.0)
+                .unwrap();
+            assert!(
+                (point[1] - ground - 0.05).abs() < 0.05,
+                "{} vs {ground}",
+                point[1]
+            );
+        }
+        // The inner ring is half as wide.
+        let reach = |ring: &[[f32; 3]]| {
+            ring.iter()
+                .map(|p| {
+                    ((p[0] - cursor.center[0]).powi(2) + (p[2] - cursor.center[2]).powi(2)).sqrt()
+                })
+                .fold(0.0f32, f32::max)
+        };
+        assert!((reach(&cursor.inner) - 5.0).abs() < 0.05);
+
+        // Off the terrain (the top-left corner looks at sky) there is no ring; leaving the viewport clears it.
+        harness.dispatch(Message::ViewportMoved(iced::Point::new(1.0, 1.0)));
+        assert!(harness.app().terrain_cursor.cursor.is_none());
+        harness.dispatch(Message::ViewportMoved(at));
+        assert!(harness.app().terrain_cursor.cursor.is_some());
+        harness.dispatch(Message::ViewportHover(false));
+        assert!(harness.app().terrain_cursor.cursor.is_none());
+
+        // The radius follows the setting, and turning the cursor off removes it.
+        harness.dispatch(Message::TerrainBrushCursor {
+            active: true,
+            radius_m: 30.0,
+        });
+        harness.dispatch(Message::ViewportMoved(at));
+        let wide = harness.app().terrain_cursor.cursor.clone().unwrap();
+        let far = wide
+            .outer
+            .iter()
+            .map(|p| ((p[0] - wide.center[0]).powi(2) + (p[2] - wide.center[2]).powi(2)).sqrt())
+            .fold(0.0f32, f32::max);
+        assert!((far - 30.0).abs() < 0.1);
+        harness.dispatch(Message::TerrainBrushCursor {
+            active: false,
+            radius_m: 30.0,
+        });
+        assert!(harness.app().terrain_cursor.cursor.is_none());
+    }
+
+    #[test]
+    fn the_cursor_is_an_overlay_that_does_not_make_the_viewport_render() {
+        // A mouse move is bookkeeping: the ring is drawn by the UI over the last picture.
+        assert!(is_passive(&Message::TerrainBrushCursor {
+            active: true,
+            radius_m: 5.0
+        }));
+        assert!(is_passive(&Message::ViewportMoved(iced::Point::ORIGIN)));
+    }
+
+    #[test]
+    fn the_viewport_shows_the_ring_layer_only_while_there_is_a_cursor() {
+        let Some((mut harness, _)) = scene() else {
+            return;
+        };
+        assert!(!harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
+        harness.dispatch(Message::TerrainBrushCursor {
+            active: true,
+            radius_m: 8.0,
+        });
+        let at = centre(&harness);
+        harness.dispatch(Message::ViewportMoved(at));
+        assert!(harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
+        harness.dispatch(Message::ViewportHover(false));
+        assert!(!harness.has(Id::from(id::VIEWPORT_BRUSH_CURSOR)));
     }
 }

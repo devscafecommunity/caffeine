@@ -1014,6 +1014,24 @@ pub fn run() -> iced::Result {
             },
         )
         .action(
+            "terrain_brush_cursor",
+            "Turns the terrain brush cursor on or off and sizes it: while on, the viewport draws the brush's ring on the terrain under the mouse. args: { \"active\"?: boolean (default true), \"radius_m\"?: number (metres, default 6) }",
+            |args| {
+                Ok(Message::TerrainBrushCursor {
+                    active: args.get("active").and_then(Value::as_bool).unwrap_or(true),
+                    radius_m: args
+                        .get("radius_m")
+                        .and_then(Value::as_f64)
+                        .map_or(6.0, |radius| radius as f32),
+                })
+            },
+        )
+        .action(
+            "convert_terrains",
+            "Saves every terrain still in the old .cterrain format as a native .terrain next to it, checked bit for bit, and points the scene at the new files (the old files stay). No args.",
+            |_| Ok(Message::ConvertLegacyTerrains),
+        )
+        .action(
             "scatter_on_terrain",
             "Scatters a plan on a terrain: pines, boulders, grass... placed by the terrain's slope, wetness and height, one undo step, deterministic for a seed. args: { \"plan_text\"?: string (a scatter plan; else the project file), \"plan_file\"?: string (project-relative, default \"Scatter/default.scatter\", written from the built-in plan if missing), \"seed\"?: number, \"max_instances\"?: number, \"terrain_id\"?: number (default: the selected entity) }",
             |args| {
