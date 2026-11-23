@@ -18,6 +18,7 @@
 #ifdef CF_HAS_SDL3
 #include "render/GpuSceneRenderer.hpp"
 #include "render/SkyboxRenderer.hpp"
+#include "render/Scene2DOverlay.hpp"
 #include "rhi/RenderDevice.hpp"
 #include "rhi/CommandBuffer.hpp"
 #endif
@@ -32,6 +33,10 @@ public:
     bool init(RHI::RenderDevice* device);
     void shutdown();
     void setFrameCommandBuffer(RHI::CommandBuffer* cmd) { m_frameCmd = cmd; }
+    /// The weather of the latest frame, and the thunder that has arrived: what the weather's sound is made from.
+    const Scene::WeatherResolved& weather() const { return m_gpuRenderer.weather(); }
+    f32 weatherWindGust() const { return m_gpuRenderer.weatherWindGust(); }
+    u32 pollThunder(Scene::ThunderEvent* out, u32 capacity) { return m_gpuRenderer.pollThunder(out, capacity); }
 #endif
 
     void render(ECS::World& world, Editor::EditorContext& ctx, ImDrawList* dl, const Mat4& vp,
@@ -52,6 +57,8 @@ private:
     u32 m_canvasH = 0;
     Render::GpuSceneRenderer m_gpuRenderer;
     Render::SkyboxRenderer m_skyboxRenderer;
+    /// Draws sprites and 2D rigs over the scene (created with the first GPU frame).
+    std::unique_ptr<Render::Scene2DOverlay> m_rigOverlay;
     bool m_gpuReady = false;
 #endif
 

@@ -57,6 +57,129 @@ pub enum MaterialSpec {
     ProjectTexture(String, (u32, u32)),
     /// Built by a **Material node** in the graph: colour, your textures and the surface settings.
     Custom(CustomMaterial),
+    /// A library material (or one already edited) with a **Edit Library Material** node's changes
+    /// on top: the base is baked as usual, then a graded copy of it is written beside it.
+    Edited(Box<MaterialSpec>, MaterialEdit),
+}
+
+/// What an **Edit Library Material** node changes: a colour grade for the colour map and
+/// multipliers or offsets for the surface settings. The neutral values change nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialEdit {
+    /// Hue rotation in degrees.
+    pub hue: f32,
+    pub saturation: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub tint: [f32; 3],
+    /// Multiplies the roughness.
+    pub roughness: f32,
+    /// Multiplies the normal-map strength.
+    pub normal: f32,
+    /// Added to the parallax depth (the height lives in the normal map's alpha).
+    pub depth: f32,
+    /// Multiplies the texture repeats.
+    pub tiling: f32,
+    /// Added to the cut-out threshold of a cut-out material.
+    pub cutoff: f32,
+    pub translucency: f32,
+    pub sway: f32,
+    pub flutter: f32,
+}
+
+impl Default for MaterialEdit {
+    fn default() -> Self {
+        MaterialEdit {
+            hue: 0.0,
+            saturation: 1.0,
+            brightness: 1.0,
+            contrast: 1.0,
+            tint: [1.0; 3],
+            roughness: 1.0,
+            normal: 1.0,
+            depth: 0.0,
+            tiling: 1.0,
+            cutoff: 0.0,
+            translucency: 0.0,
+            sway: 0.0,
+            flutter: 0.0,
+        }
+    }
+}
+
+impl MaterialEdit {
+    /// True when the colour grade changes nothing (the colour map can be used as it is).
+    pub fn grade_is_neutral(&self) -> bool {
+        self.hue == 0.0
+            && self.saturation == 1.0
+            && self.brightness == 1.0
+            && self.contrast == 1.0
+            && self.tint == [1.0; 3]
+    }
+
+    /// The grade applied to one colour (each channel 0..1): tint, brightness, contrast around a
+    /// dark mid-tone (albedo lives low), saturation, then a hue rotation.
+    pub fn grade(&self, rgb: [f32; 3]) -> [f32; 3] {
+        if self.grade_is_neutral() {
+            return rgb;
+        }
+        let mut c = [
+            rgb[0] * self.tint[0] * self.brightness,
+            rgb[1] * self.tint[1] * self.brightness,
+            rgb[2] * self.tint[2] * self.brightness,
+        ];
+        const PIVOT: f32 = 0.4;
+        for v in &mut c {
+            *v = (*v - PIVOT) * self.contrast + PIVOT;
+        }
+        let luma = c[0] * 0.299 + c[1] * 0.587 + c[2] * 0.114;
+        for v in &mut c {
+            *v = luma + (*v - luma) * self.saturation;
+        }
+        if self.hue != 0.0 {
+            // Rotation about the grey axis (the usual YIQ-free matrix).
+            let (sin, cos) = self.hue.to_radians().sin_cos();
+            let k = 1.0 / 3.0;
+            let a = cos + (1.0 - cos) * k;
+            let b = k * (1.0 - cos) - 3f32.sqrt() * k * sin;
+            let d = k * (1.0 - cos) + 3f32.sqrt() * k * sin;
+            c = [
+                c[0] * a + c[1] * b + c[2] * d,
+                c[0] * d + c[1] * a + c[2] * b,
+                c[0] * b + c[1] * d + c[2] * a,
+            ];
+        }
+        [
+            c[0].clamp(0.0, 1.0),
+            c[1].clamp(0.0, 1.0),
+            c[2].clamp(0.0, 1.0),
+        ]
+    }
+
+    /// Grades an RGBA8 picture in place (alpha untouched).
+    pub fn grade_pixels(&self, rgba: &mut [u8]) {
+        if self.grade_is_neutral() {
+            return;
+        }
+        for pixel in rgba.chunks_exact_mut(4) {
+            let graded = self.grade([
+                pixel[0] as f32 / 255.0,
+                pixel[1] as f32 / 255.0,
+                pixel[2] as f32 / 255.0,
+            ]);
+            for (out, value) in pixel.iter_mut().zip(graded) {
+                *out = (value * 255.0).round() as u8;
+            }
+        }
+    }
+
+    /// A short stable name for this set of changes (file names).
+    pub fn key(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{self:?}").hash(&mut hasher);
+        format!("{:08x}", hasher.finish() & 0xffff_ffff)
+    }
 }
 
 /// The settings of a Material node plus the texture layers Texture nodes added.
@@ -166,6 +289,7 @@ impl MaterialSpec {
                         .collect::<String>()
                 )
             }
+            MaterialSpec::Edited(inner, edit) => format!("{}_e{}", inner.slug(), edit.key()),
             MaterialSpec::Custom(custom) => {
                 use std::hash::{Hash, Hasher};
                 // Stable across runs (the default hasher has fixed keys): one file per setting set.
@@ -546,6 +670,57 @@ impl NatureModel {
 
     pub fn vertices(&self) -> usize {
         self.parts.iter().map(|p| p.positions.len()).sum()
+    }
+
+    /// One Wavefront OBJ holding the listed parts, each as its own `usemtl <part name>` group. The engine turns every
+    /// group into a **sub-mesh**, so the parts keep their own materials (`Material slots` on the Mesh Filter, in the
+    /// order of `parts`) while they place as one entity. Vertex colours are kept: parts without painted ones are white.
+    pub fn merged_obj(&self, parts: &[usize], name: &str) -> String {
+        let chosen: Vec<&Part> = parts.iter().filter_map(|i| self.parts.get(*i)).collect();
+        let painted = chosen.iter().any(|p| p.painted_colors().is_some());
+        let mut text = format!("# Caffeine Nature Generator\no {name}\n");
+        for part in &chosen {
+            let colors = part.painted_colors();
+            for (i, p) in part.positions.iter().enumerate() {
+                if painted {
+                    let c = colors.map_or([1.0; 4], |c| c[i]);
+                    text.push_str(&format!(
+                        "v {:.5} {:.5} {:.5} {:.4} {:.4} {:.4} {:.4}\n",
+                        p[0], p[1], p[2], c[0], c[1], c[2], c[3]
+                    ));
+                } else {
+                    text.push_str(&format!("v {:.5} {:.5} {:.5}\n", p[0], p[1], p[2]));
+                }
+            }
+        }
+        for part in &chosen {
+            for t in &part.uvs {
+                text.push_str(&format!("vt {:.5} {:.5}\n", t[0], t[1]));
+            }
+        }
+        for part in &chosen {
+            for n in &part.normals {
+                text.push_str(&format!("vn {:.4} {:.4} {:.4}\n", n[0], n[1], n[2]));
+            }
+        }
+        let mut base = 0u32;
+        for part in &chosen {
+            text.push_str(&format!(
+                "usemtl {}\n",
+                part.name.replace(char::is_whitespace, "_")
+            ));
+            for tri in part.indices.chunks_exact(3) {
+                let i = |k: usize| tri[k] + base + 1;
+                text.push_str(&format!(
+                    "f {a}/{a}/{a} {b}/{b}/{b} {c}/{c}/{c}\n",
+                    a = i(0),
+                    b = i(1),
+                    c = i(2)
+                ));
+            }
+            base += part.positions.len() as u32;
+        }
+        text
     }
 
     /// Bounds of the whole model.

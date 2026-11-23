@@ -50,7 +50,7 @@ cargo run -p doppio-ui -- ../assets/benchmarks/dense_outdoor.caf
 
 Checks used by CI/agents: `./scripts/check-rust-ui.sh` (fmt, tests, clippy and the
 core/ImGui coupling audit). The old C++ editor is frozen in `doppio-archived/`;
-architecture notes live in [`doppio/docs/rust-ui.md`](doppio/docs/rust-ui.md).
+architecture notes live in [`rust-ui.md`](https://github.com/devscafecommunity/caffeine-website/blob/main/content/en/docs/doppio/rust-ui.md).
 
 ## Editor plugins
 
@@ -96,4 +96,4 @@ desktop screenshot:
 ```
 
 Authoring standard: [`caffeine-website/DOCS_STYLE.md`](caffeine-website/DOCS_STYLE.md).
-Editor architecture: [`doppio/docs/rust-ui.md`](doppio/docs/rust-ui.md).
+Editor architecture: [`rust-ui.md`](https://github.com/devscafecommunity/caffeine-website/blob/main/content/en/docs/doppio/rust-ui.md).

@@ -55,12 +55,21 @@ ShaderBytecodeView lookupSpirv(BuiltinShader shader) {
         case BuiltinShader::PostPhotonFragment:  return {Shaders::post_photon_frag_spirv, Shaders::post_photon_frag_spirvSize};
         case BuiltinShader::PostPhotonResolveFragment: return {Shaders::post_photon_resolve_frag_spirv, Shaders::post_photon_resolve_frag_spirvSize};
         case BuiltinShader::MinZDownsampleFragment: return {Shaders::minz_downsample_frag_spirv, Shaders::minz_downsample_frag_spirvSize};
+        case BuiltinShader::Batch2DVertex: return {Shaders::batch2d_vert_spirv, Shaders::batch2d_vert_spirvSize};
+        case BuiltinShader::Batch2DFragment: return {Shaders::batch2d_frag_spirv, Shaders::batch2d_frag_spirvSize};
         case BuiltinShader::PhotonCascade:       return {Shaders::photon_cascade_spirv, Shaders::photon_cascade_spirvSize};
         case BuiltinShader::PhotonC0:            return {Shaders::photon_c0_spirv, Shaders::photon_c0_spirvSize};
         case BuiltinShader::PhotonVoxelize:      return {Shaders::photon_voxelize_spirv, Shaders::photon_voxelize_spirvSize};
+        case BuiltinShader::PhotonVoxelizeTri:   return {Shaders::photon_voxelize_tri_spirv, Shaders::photon_voxelize_tri_spirvSize};
         case BuiltinShader::PhotonInject:        return {Shaders::photon_inject_spirv, Shaders::photon_inject_spirvSize};
         case BuiltinShader::PhotonProbe:         return {Shaders::photon_probe_spirv, Shaders::photon_probe_spirvSize};
         case BuiltinShader::PhotonBakeAO:        return {Shaders::photon_bake_ao_spirv, Shaders::photon_bake_ao_spirvSize};
+        case BuiltinShader::MicromeshCull:       return {Shaders::micromesh_cull_spirv, Shaders::micromesh_cull_spirvSize};
+        case BuiltinShader::SceneMicromeshVertex: return {Shaders::scene_micromesh_vert_spirv, Shaders::scene_micromesh_vert_spirvSize};
+        case BuiltinShader::ShadowMicromeshVertex: return {Shaders::shadow_micromesh_vert_spirv, Shaders::shadow_micromesh_vert_spirvSize};
+        case BuiltinShader::MicromeshCompact:    return {Shaders::micromesh_compact_spirv, Shaders::micromesh_compact_spirvSize};
+        case BuiltinShader::MicromeshHzb:        return {Shaders::micromesh_hzb_spirv, Shaders::micromesh_hzb_spirvSize};
+        case BuiltinShader::MicromeshReset:      return {Shaders::micromesh_reset_spirv, Shaders::micromesh_reset_spirvSize};
     }
 #endif
     (void)shader;
@@ -132,7 +141,8 @@ ShaderBytecodeView getBuiltinShaderBytecode(BuiltinShader shader, RHI::ShaderByt
 }
 
 RHI::Shader* createBuiltinShader(RHI::RenderDevice* device, BuiltinShader shader,
-                                 RHI::ShaderStage stage, u32 numUniformBuffers, u32 numSamplers) {
+                                 RHI::ShaderStage stage, u32 numUniformBuffers, u32 numSamplers,
+                                 u32 numStorageBuffers) {
     if (!device) return nullptr;
     const auto format = detectShaderFormat(device);
     const auto bytecode = getBuiltinShaderBytecode(shader, format);
@@ -146,6 +156,7 @@ RHI::Shader* createBuiltinShader(RHI::RenderDevice* device, BuiltinShader shader
     desc.entryPoint = bytecode.entryPoint;
     desc.numUniformBuffers = numUniformBuffers;
     desc.numSamplers = numSamplers;
+    desc.numStorageBuffers = numStorageBuffers;
     return device->createShader(desc);
 }
 

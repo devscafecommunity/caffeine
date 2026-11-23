@@ -15,7 +15,7 @@ documentation lives in the **`caffeine-website`** submodule, not here.
 | `doppio/crates/engine/` | The **only** crate that loads `libcaffeine-capi` (libloading + C types) |
 | `doppio/crates/ui/` | Iced UI: `uikit/{components,panels,id.rs}` and `windows/` |
 | `doppio/crates/ui/src/windows/` | `main.rs` (state + PaneGrid), `projectloader.rs`, `main/tests.rs`, `main/agent.rs` |
-| `doppio/docs/`, `doppio/.iced-mcp/` | Live Doppio docs, caption source, MCP flows and visual baselines |
+| `doppio/.iced-mcp/` | MCP flows and visual baselines (no documentation lives in `doppio/`) |
 | `doppio/tests/ui-flows/` | Headless UI flows (JSON) run by `cargo test` and the `doppio-headless` CLI |
 | `doppio-archived/` | Frozen C++ Doppio snapshot; reference only, not built |
 | `apps/` | C++ executables (`caffeine-runtime`, `caffeine-combined`) |
@@ -29,8 +29,8 @@ documentation lives in the **`caffeine-website`** submodule, not here.
 | `caffeine-launcher/` | Desktop hub — launch apps, plugins, updates (Rust/Iced) |
 
 Do not add a root `docs/`, `planning/`, or `.planning/` back to this repo.
-Doppio architecture/plugin/roadmap notes live in `doppio/docs/` (see the documentation
-policy below).
+All Doppio documentation (architecture, generators, roadmaps, headless testing) lives in
+`caffeine-website/content/{en,pt}/docs/doppio/` (see the documentation policy below).
 
 ## Layering
 
@@ -116,7 +116,7 @@ Vulkan / D3D12 / Metal
   Do not pretend a readback change is a shared-texture fix.
 - **Fixtures keep tests deterministic**: `App::empty()` and the two-entity editor fixture.
 
-Architecture details and migration status: [`doppio/docs/rust-ui.md`](doppio/docs/rust-ui.md).
+Architecture details and migration status: [`rust-ui.md`](caffeine-website/content/en/docs/doppio/rust-ui.md).
 
 ## Ecosystem submodules
 
@@ -164,39 +164,47 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
     stay inside the documentation tree; `../../src/...` is rejected by
     `python3 scripts/audit-docs.py`.
   - Screenshots and recordings come from the **headless driver**, not a desktop
-    screenshot. Capture flows live in `doppio/docs/flows/capture-*.json`; add or
+    screenshot. Capture flows live in `caffeine-website/captures/flows/capture-*.json`; add or
     update one, then regenerate the images. See `DOCS_STYLE.md` §4.
   - Before committing, run `python3 scripts/audit-docs.py --include-engine` and
     `python3 scripts/audit-docs-i18n.py` from `caffeine-website/`. Both must pass.
 - **No general Markdown documentation** in the engine tree (no root `docs/**/*.md`, no
   planning RFCs here).
-- **Exception — Doppio only**: `doppio/docs/*.md` document the IDE architecture, ids,
-  agent bridge, tests and roadmap. They must not duplicate core/engine docs.
+- **Doppio documentation lives in the website, not in `doppio/`**: the guides (`rust-ui`, `headless-testing`,
+  the generator guides, `generator-recipes`, `materials-guide`, `micromeshes`, the roadmaps, ...) are
+  `caffeine-website/content/{en,pt}/docs/doppio/*.md`, and their pictures are
+  `caffeine-website/content/{en,pt}/docs/images/doppio/` (the scripts write the English tree and
+  `scripts/mirror-doppio-images.sh` copies it to the Portuguese one). Do not add a `doppio/docs/` back.
+  The capture flows are `caffeine-website/captures/flows/capture-*.json` and the widget captions
+  `caffeine-website/captures/ui-captions.json`. Doppio pages must not duplicate core/engine docs.
   `doppio-archived/` is a frozen C++ snapshot and holds no live documentation.
-- **Material pipeline roadmap**: `doppio/docs/material-pipeline.md` is the living
+  When a change touches a page, edit the English page and the Portuguese one together (same lines,
+  `##`/`###` headings and code fences, which `audit-docs-i18n.py` checks), then commit the website
+  submodule and bump its pointer in the engine.
+- **Material pipeline roadmap**: `caffeine-website/content/en/docs/doppio/material-pipeline.md` is the living
   checklist for materials, textures, map baking, node generators, MaterialCraft
   interoperability and TextureCraft-style texture sets. Keep it current when one of
   those areas changes.
-- **Gizmos and markers**: `doppio/docs/gizmos-and-markers.md` documents the viewport overlays
+- **Gizmos and markers**: `caffeine-website/content/en/docs/doppio/gizmos-and-markers.md` documents the viewport overlays
   (transform gizmo, scene markers for lights / cameras / colliders / empties). Keep it current when
   they change.
-- **Nature Generator**: `doppio/docs/nature-generator-guide.md` documents the separate nature tool
+- **Nature Generator**: `caffeine-website/content/en/docs/doppio/nature-generator-guide.md` documents the separate nature tool
   (rocks, trees, plants built with a node graph: Mesh/Skeleton/Points ports, quality modes from low poly to hi-fi, your own materials and textures, `.obj` export, placement with per-part materials).
   Keep it current when that tool changes.
-- **Terrain Generator**: `doppio/docs/terrain-generator-guide.md` documents the terrain tool (node graph of
+- **Terrain Generator**: `caffeine-website/content/en/docs/doppio/terrain-generator-guide.md` documents the terrain tool (node graph of
   field sources, modifiers, masks and erosion; presets; splat layers from slope, height and sea level; the C ABI
   v8 terrain and its limits). `reference/nerthus` (MIT) is study material only: nothing is copied from it.
   Keep the guide current when the tool or the engine terrain changes.
-- **Water Generator**: `doppio/docs/water-generator-guide.md` documents the water tool (node graph of
+- **Water Generator**: `caffeine-website/content/en/docs/doppio/water-generator-guide.md` documents the water tool (node graph of
   wave sources, modifiers and look; presets; the C ABI v7 water surface and `water_height`; limits and the
   shader roadmap). Keep it current when that tool or the engine water changes.
-- **Texture Generator**: `doppio/docs/texture-generator-guide.md` documents the separate texture
+- **Texture Generator**: `caffeine-website/content/en/docs/doppio/texture-generator-guide.md` documents the separate texture
   tool (`.texgraph`, Texture Output, VFX & Shapes ops, presets, export, flipbooks). Keep it current
   when that tool changes.
-- **Headless testing**: `doppio/docs/headless-testing.md` documents the `doppio-headless`
+- **Headless testing**: `caffeine-website/content/en/docs/doppio/headless-testing.md` documents the `doppio-headless`
   driver (actions, targets, flows, recipes). Its reference section is generated from
   `headless/reference.rs`; a test fails if they drift apart.
-- **Generated UI reference**: `doppio/docs/ui-captions.json` is the source of English and
+- **Generated UI reference**: `caffeine-website/captures/ui-captions.json` is the source of English and
   Portuguese widget descriptions. `scripts/generate-doppio-ui-docs.sh` captures every
   catalogued widget and can publish the Markdown + images into
   `caffeine-website/content/{en,pt}/docs/editor/ui-reference.md`.
@@ -220,7 +228,7 @@ config, or `build/plugins/`) and enabled in the Plugin Manager. Override with
    engine crate) and, for user-visible behaviour, a flow in `doppio/tests/ui-flows/*.json`;
    run `./scripts/check-rust-ui.sh`.
    **To see or exercise the UI, use the headless driver, never a real window or a desktop
-   screenshot** (`doppio/docs/headless-testing.md`): `./scripts/doppio-headless.sh` takes
+   screenshot** (`caffeine-website/content/en/docs/doppio/headless-testing.md`): `./scripts/doppio-headless.sh` takes
    JSON scripts (click/drag/type/keys/screenshot/expect), works with any agent and does
    not open anything.
 4. **UI ids and history** — new interactive widgets need a `UiId` constant (or dynamic

@@ -24,6 +24,12 @@ struct AudioEmitter {
     bool             loop        = false;
     bool             playOnSpawn = true;
     bool             spatial     = true;
+
+    // ---- Appended with the volumetric audio: a scene written before keeps these defaults.
+    bool             doppler     = true;   ///< a moving source is Doppler shifted
+    u8               layer       = 0;      ///< 0 World (spatial), 1 Ambient (covers the scene), 2 Music, 3 Ui
+    u8               _pad[2]     = {};
+    f32              refDistance = 2.0f;   ///< full volume up to here (metres)
 };
 
 }  // namespace Caffeine::Audio

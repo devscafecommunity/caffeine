@@ -1,0 +1,232 @@
+{
+  "namespace": "effects",
+  "group": "Rendering",
+  "lua": "caffeine.effects",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Effects",
+    "pt": "Efeitos"
+  },
+  "summary": {
+    "en": "Effect components on entities: particles, volumetric light, reflective surfaces, material shades and fog.",
+    "pt": "Componentes de efeitos em entidades: partículas, luz volumétrica, superfícies refletoras, sombreados de material e nevoeiro."
+  },
+  "functions": [
+    {
+      "name": "set",
+      "lua": "caffeine.effects.set",
+      "dryad": null,
+      "signature": "set(entity, kind, quality) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "kind",
+          "type": "number",
+          "en": "0 Particles, 1 VolumetricLight, 2 ReflectiveSurface, 3 MaterialShade, 4 Fog; clamped to 4.",
+          "pt": "0 Particles, 1 VolumetricLight, 2 ReflectiveSurface, 3 MaterialShade, 4 Fog; limitado a 4."
+        },
+        {
+          "name": "quality",
+          "type": "number",
+          "en": "0 Performance, 1 Balanced, 2 Quality; clamped to 2.",
+          "pt": "0 Performance, 1 Balanced, 2 Quality; limitado a 2."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Assigns an effect kind and quality to the entity.",
+      "pt": "Atribui um tipo de efeito e uma qualidade à entidade.",
+      "example": "caffeine.effects.set(e, 0, 1)"
+    },
+    {
+      "name": "particle",
+      "lua": "caffeine.effects.particle",
+      "dryad": null,
+      "signature": "particle(entity, domain) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "domain",
+          "type": "number",
+          "en": "0 Both, 1 2D, 2 3D; clamped to 2.",
+          "pt": "0 Both, 1 2D, 2 3D; limitado a 2."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Turns the entity into a particle emitter for the given domain.",
+      "pt": "Transforma a entidade num emissor de partículas para o domínio indicado.",
+      "example": "caffeine.effects.particle(e, 2)"
+    },
+    {
+      "name": "particleParams",
+      "lua": "caffeine.effects.particleParams",
+      "dryad": null,
+      "signature": "particleParams(entity, rate, lifetime, maxParticles, startSize, endSize, gravityY) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "rate",
+          "type": "number",
+          "en": "Emission rate.",
+          "pt": "Taxa de emissão."
+        },
+        {
+          "name": "lifetime",
+          "type": "number",
+          "en": "Particle lifetime.",
+          "pt": "Tempo de vida da partícula."
+        },
+        {
+          "name": "maxParticles",
+          "type": "number",
+          "en": "Maximum live particles.",
+          "pt": "Máximo de partículas vivas."
+        },
+        {
+          "name": "startSize",
+          "type": "number",
+          "en": "Size at birth.",
+          "pt": "Tamanho ao nascer."
+        },
+        {
+          "name": "endSize",
+          "type": "number",
+          "en": "Size at death.",
+          "pt": "Tamanho ao fim da vida."
+        },
+        {
+          "name": "gravityY",
+          "type": "number",
+          "en": "Vertical gravity.",
+          "pt": "Gravidade vertical."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the particle emitter parameters.",
+      "pt": "Define os parâmetros do emissor de partículas.",
+      "example": "caffeine.effects.particleParams(e, 30, 2, 200, 0.2, 0.0, -1)"
+    },
+    {
+      "name": "volumetric",
+      "lua": "caffeine.effects.volumetric",
+      "dryad": null,
+      "signature": "volumetric(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Makes the entity a volumetric light and ensures its volume mesh.",
+      "pt": "Torna a entidade uma luz volumétrica e garante a respetiva malha de volume.",
+      "example": "caffeine.effects.volumetric(lamp)"
+    },
+    {
+      "name": "volumetricShape",
+      "lua": "caffeine.effects.volumetricShape",
+      "dryad": null,
+      "signature": "volumetricShape(entity, shape, columns, rows) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "shape",
+          "type": "number",
+          "en": "0 Sphere, 1 Cone, 2 Box, 3 Cylinder, 4 Window; clamped to 4.",
+          "pt": "0 Sphere, 1 Cone, 2 Box, 3 Cylinder, 4 Window; limitado a 4."
+        },
+        {
+          "name": "columns",
+          "type": "number",
+          "en": "Column count.",
+          "pt": "Número de colunas."
+        },
+        {
+          "name": "rows",
+          "type": "number",
+          "en": "Row count.",
+          "pt": "Número de linhas."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the shape of a volumetric light.",
+      "pt": "Define a forma de uma luz volumétrica.",
+      "example": "caffeine.effects.volumetricShape(lamp, 1, 8, 8)"
+    },
+    {
+      "name": "fog",
+      "lua": "caffeine.effects.fog",
+      "dryad": null,
+      "signature": "fog(entity, domain, style) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "domain",
+          "type": "number",
+          "en": "0 Both, 1 2D, 2 3D; clamped to 2.",
+          "pt": "0 Both, 1 2D, 2 3D; limitado a 2."
+        },
+        {
+          "name": "style",
+          "type": "number",
+          "en": "0 Fog, 1 Dust, 2 Mist, 3 Smoke; clamped to 3.",
+          "pt": "0 Fog, 1 Dust, 2 Mist, 3 Smoke; limitado a 3."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Turns the entity into a fog effect with the given style.",
+      "pt": "Transforma a entidade num efeito de nevoeiro com o estilo indicado.",
+      "example": "caffeine.effects.fog(e, 2, 2)"
+    }
+  ]
+}

@@ -6,6 +6,10 @@
 #include "events/Events.hpp"
 #include "input/InputManager.hpp"
 #include "physics/PhysicsSystem2D.hpp"
+#include "audio/AudioService.hpp"
+#include "audio/volumetric/SceneAudio.hpp"
+#include "audio/volumetric/VolumetricAudio.hpp"
+#include "physics/PhysicsSystem3D.hpp"
 #include "script/ScriptEngine.hpp"
 #include "script/ScriptSystem.hpp"
 #include "scene/NaturalFluidSystem.hpp"
@@ -461,6 +465,16 @@ int main(int argc, char** argv) {
     Caffeine::Input::InputManager input;
     Caffeine::Events::EventBus eventBus;
     Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
+    Caffeine::Physics3D::PhysicsSystem3D physics3d(&eventBus);
+    Caffeine::Audio::AudioService audio;
+    audio.setSearchRoot(buildRoot.string());
+    if (!audio.init()) std::fprintf(stderr, "caffeine-runtime: no audio device, sound disabled\n");
+    // The volumetric audio (sound that travels through the scene): idle until the scene has a `Volumetric Audio`
+    // component; the sound device is opened the first frame it does.
+    Caffeine::Audio::VolumetricAudio volumetric(48000);
+    Caffeine::Audio::SceneAudio sceneAudio(volumetric);
+    sceneAudio.setSearchRoots({buildRoot.string(), (buildRoot / "Assets" / "Audio").string(), (buildRoot / "Audio").string()});
+    bool volumetricDeviceTried = false;
     Caffeine::Animation::AnimationSystem animation;
     Caffeine::UI::UISystem uiSystem(&eventBus);
     Caffeine::Script::ScriptEngine scriptEngine;
@@ -469,8 +483,11 @@ int main(int argc, char** argv) {
     scriptParams.input = &input;
     scriptParams.events = &eventBus;
     scriptParams.ui = &uiSystem;
+    scriptParams.physics3d = &physics3d.world();
+    scriptParams.audio = &audio;
     const bool scriptsReady = scriptEngine.init(scriptParams);
     scriptEngine.setSearchRoot(buildRoot.string());
+    scriptEngine.sceneRequests().setCurrent(config.LastScene);
     Caffeine::Script::ScriptSystem scriptSystem(scriptsReady ? &scriptEngine : nullptr, &eventBus);
     if (!config.RootPath.empty()) {
         scriptSystem.setProjectRoot(config.RootPath.string());
@@ -549,16 +566,75 @@ int main(int argc, char** argv) {
             Caffeine::Scene::tickNaturalFluids(world, dt, false);
             Caffeine::Navigation::updateNavigation(world, dt);
             physics.onUpdate(world, dt);
+            physics3d.onUpdate(world, dt);
             if (scriptsReady) {
                 scriptEngine.setWorld(&world);
                 scriptEngine.setInput(&input);
                 scriptSystem.onUpdate(world, dt);
+
+                // A script asked for another scene: swap it now, between frames' scripts.
+                auto& sceneRequests = scriptEngine.sceneRequests();
+                if (sceneRequests.hasPending()) {
+                    const std::string requested = sceneRequests.take();
+                    std::filesystem::path next(requested);
+                    if (!std::filesystem::exists(next)) next = buildRoot / requested;
+                    if (std::filesystem::exists(next)) {
+                        physics3d.reset();
+                        Caffeine::Editor::SceneSerializer serializer(world);
+                        if (serializer.deserialize(next.string())) {
+                            Caffeine::Scene::resetNaturalFluidRuntime();
+                            scriptSystem.resetPlayState();
+                            audio.stopAll();
+                            sceneRequests.setCurrent(requested);
+                            scenePath = next;
+                            sceneLoaded = true;
+#ifdef CF_HAS_IMGUI
+                            editorCtx.currentScenePath = scenePath.string();
+#endif
+                            std::printf("Loaded scene: %s\n", next.string().c_str());
+                        } else {
+                            std::fprintf(stderr, "caffeine-runtime: scene failed to load: %s\n", next.string().c_str());
+                        }
+                    } else {
+                        std::fprintf(stderr, "caffeine-runtime: scene not found: %s\n", requested.c_str());
+                    }
+                }
             }
+            audio.update(dt);
             Caffeine::Procedural::ProceduralWorldSystem::update(world);
             uiSystem.onUpdate(world, dt);
         }
 
         Caffeine::Scene::propagateTransforms(world);
+
+        if (sceneLoaded) {
+            Caffeine::ECS::Entity audioCamera;
+            Caffeine::ECS::Camera3DComponent* audioCam = nullptr;
+            Caffeine::Vec3 ears{};
+            if (findActiveCamera3D(world, audioCamera, audioCam) && tryGetEntityPosition(world, audioCamera, ears)) {
+                sceneAudio.sync(world, ears, entityForward(world, audioCamera).normalized(), dt);
+#if defined(CF_HAS_IMGUI) && defined(CF_HAS_SDL3)
+                // The weather's rain, wind and thunder, played by the same mixer (so walls muffle them).
+                const auto& weather = renderer.weather();
+                Caffeine::Scene::ThunderEvent thunder[16];
+                const uint32_t arrived = renderer.pollThunder(thunder, 16);
+                Caffeine::Audio::SceneAudio::WeatherFeed feed;
+                feed.enabled = weather.audio;
+                feed.volume = weather.audioVolume;
+                feed.rain = weather.rain;
+                feed.rainIntensity = weather.rainIntensity;
+                feed.windSpeed = weather.rainWindSpeed;
+                feed.gust = renderer.weatherWindGust();
+                Caffeine::Audio::SceneAudio::ThunderClap claps[16];
+                for (uint32_t i = 0; i < arrived; ++i) claps[i] = {thunder[i].distance, thunder[i].azimuth, thunder[i].volume};
+                sceneAudio.feedWeather(feed, claps, arrived, dt);
+#endif
+                if (sceneAudio.enabled() && !volumetricDeviceTried) {
+                    volumetricDeviceTried = true;
+                    if (!volumetric.openDevice(-1)) std::fprintf(stderr, "caffeine-runtime: no sound device for the volumetric audio\n");
+                }
+            }
+        }
 
         Caffeine::RHI::CommandBuffer* cmd = device.beginFrame();
         if (cmd) {

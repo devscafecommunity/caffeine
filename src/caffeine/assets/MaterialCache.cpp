@@ -2,6 +2,7 @@
 
 #include "assets/MaterialFile.hpp"
 
+#include <chrono>
 #include <filesystem>
 
 namespace Caffeine::Assets {
@@ -65,12 +66,34 @@ std::string MaterialCache::canonicalKey(const std::string& materialPath,
 MaterialSurface MaterialCache::resolve(const std::string& materialPath,
                                        const std::string& projectRoot) {
     MaterialSurface empty;
-    const std::string key = canonicalKey(materialPath, projectRoot);
+    if (materialPath.empty()) return empty;
+
+    static thread_local std::string fastKey;
+    fastKey.assign(materialPath);
+    fastKey.push_back('\0');
+    fastKey.append(projectRoot);
+    const u64 nowMs = static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count());
+    Fast& fast = m_fast[fastKey];
+    if (fast.key.empty()) {
+        fast.key = canonicalKey(materialPath, projectRoot);
+        fast.recheckAtMs = 0;
+    }
+    const std::string& key = fast.key;
     if (key.empty()) return empty;
     auto it = m_cache.find(key);
+    if (nowMs < fast.recheckAtMs) {
+        if (it != m_cache.end()) return it->second.surface;
+        if (fast.negative) return empty;
+    }
+    fast.recheckAtMs = nowMs + kRecheckMs;
+    fast.negative = false;
+
     if (!std::filesystem::exists(key)) {
         // Published-only materials (e.g. the editor preview) have no file behind them.
         if (it != m_cache.end() && !it->second.hasStamp) return it->second.surface;
+        fast.negative = true;
         return empty;
     }
 
@@ -81,7 +104,10 @@ MaterialSurface MaterialCache::resolve(const std::string& materialPath,
     }
 
     MaterialSurface surface;
-    if (!loadMaterialFile(key, surface)) return empty;
+    if (!loadMaterialFile(key, surface)) {
+        fast.negative = true;
+        return empty;
+    }
     Entry entry;
     entry.surface = surface;
     entry.stamp = stamp;
@@ -115,6 +141,7 @@ void MaterialCache::publish(const std::string& materialPath, const std::string& 
 
 void MaterialCache::invalidate(const std::string& materialPath) {
     ++m_revision;
+    m_fast.clear();
     if (materialPath.empty()) {
         m_cache.clear();
         return;

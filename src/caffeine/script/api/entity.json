@@ -1,0 +1,132 @@
+{
+  "namespace": "entity",
+  "group": "Core",
+  "lua": "caffeine.entity",
+  "dryad_prefix": "caffeine_entity_",
+  "title": {
+    "en": "Entity",
+    "pt": "Entidade"
+  },
+  "summary": {
+    "en": "Names and lookup. Entities are plain numeric ids; a name is optional and need not be unique.",
+    "pt": "Nomes e procura. As entidades são ids numéricos; o nome é opcional e não tem de ser único."
+  },
+  "functions": [
+    {
+      "name": "name",
+      "lua": "caffeine.entity.name",
+      "dryad": "caffeine_entity_name",
+      "signature": "name(entity) -> string",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "en": "The name, or an empty string when unnamed or dead.",
+        "pt": "O nome, ou texto vazio se não tiver nome ou estiver morta."
+      },
+      "en": "Reads the editor name of an entity.",
+      "pt": "Lê o nome de editor de uma entidade.",
+      "example": "print(caffeine.entity.name(eid))"
+    },
+    {
+      "name": "setName",
+      "lua": "caffeine.entity.setName",
+      "dryad": "caffeine_entity_set_name",
+      "signature": "setName(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "New name, at most 63 characters.",
+          "pt": "Novo nome, até 63 caracteres."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the entity is not alive.",
+        "pt": "false se a entidade não estiver viva."
+      },
+      "en": "Names an entity so it can be found later.",
+      "pt": "Dá um nome a uma entidade para a poder encontrar depois.",
+      "example": "caffeine.entity.setName(eid, \"Boss\")"
+    },
+    {
+      "name": "find",
+      "lua": "caffeine.entity.find",
+      "dryad": "caffeine_entity_find",
+      "signature": "find(name) -> number",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Exact name to look for.",
+          "pt": "Nome exato a procurar."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "The lowest matching entity id, or 0 when none.",
+        "pt": "O menor id que corresponde, ou 0 se nenhum."
+      },
+      "en": "Finds an entity by name.",
+      "pt": "Encontra uma entidade pelo nome.",
+      "example": "local boss = caffeine.entity.find(\"Boss\")"
+    },
+    {
+      "name": "findAll",
+      "lua": "caffeine.entity.findAll",
+      "dryad": "caffeine_entity_find_all",
+      "signature": "findAll(name) -> table",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Exact name to look for.",
+          "pt": "Nome exato a procurar."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "Array of matching entity ids, ascending (empty when none).",
+        "pt": "Array de ids que correspondem, por ordem crescente (vazio se nenhum)."
+      },
+      "en": "Finds every entity with a name.",
+      "pt": "Encontra todas as entidades com um nome.",
+      "example": "for _, id in ipairs(caffeine.entity.findAll(\"Coin\")) do caffeine.world.destroy(id) end"
+    },
+    {
+      "name": "isAlive",
+      "lua": "caffeine.entity.isAlive",
+      "dryad": null,
+      "signature": "isAlive(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "The entity id.",
+          "pt": "O id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the entity exists.",
+        "pt": "true se a entidade existir."
+      },
+      "en": "Tells whether an id still refers to a live entity. Dryad: use caffeine_world_is_alive.",
+      "pt": "Indica se um id ainda refere uma entidade viva. Dryad: usar caffeine_world_is_alive.",
+      "example": "if caffeine.entity.isAlive(target) then end"
+    }
+  ]
+}

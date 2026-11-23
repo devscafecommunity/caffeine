@@ -160,6 +160,8 @@ std::string MeshCache::normalizeTexturePath(const std::string& path) {
     return normalized;
 }
 
+std::string MeshCache::engineAssetsRoot() { return findEngineAssetsRoot().generic_string(); }
+
 std::string MeshCache::resolveTexturePath(const std::string& path, const std::string& projectRoot) {
     if (path.empty()) return {};
 

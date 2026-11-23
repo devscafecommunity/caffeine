@@ -204,8 +204,13 @@ fn every_shipped_flow_passes() {
 
 #[test]
 fn the_docs_reference_is_in_sync_with_the_action_table() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/headless-testing.md");
+    // The guide lives in the website submodule; a checkout without it has nothing to compare.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../caffeine-website/content/en/docs/doppio/headless-testing.md");
+    if !path.is_file() {
+        eprintln!("skipped: {} is not checked out", path.display());
+        return;
+    }
     let docs = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let begin = "<!-- BEGIN GENERATED REFERENCE -->";
     let end = "<!-- END GENERATED REFERENCE -->";
@@ -214,7 +219,7 @@ fn the_docs_reference_is_in_sync_with_the_action_table() {
     assert_eq!(
         docs[start..stop].trim(),
         super::reference::markdown().trim(),
-        "doppio/docs/headless-testing.md is out of date: run `scripts/doppio-headless.sh docs` and paste it between the markers"
+        "caffeine-website/content/en/docs/doppio/headless-testing.md is out of date: run `scripts/doppio-headless.sh docs` and paste it between the markers"
     );
     // Every action is also mentioned by name in the hand-written part.
     for action in super::reference::ACTIONS {

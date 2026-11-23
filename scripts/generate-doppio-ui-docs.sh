@@ -4,13 +4,13 @@
 #   ./scripts/generate-doppio-ui-docs.sh            # writes doppio/target/doppio-ui-docs
 #   ./scripts/generate-doppio-ui-docs.sh --publish  # also updates caffeine-website
 #
-# Descriptions come from doppio/docs/ui-captions.json (en + pt). An agent can
+# Descriptions come from caffeine-website/captures/ui-captions.json (en + pt). An agent can
 # edit that file to improve or translate the captions without touching code.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="${DOPPIO_DOCS_OUT:-${root}/doppio/target/doppio-ui-docs}"
-captions="${DOPPIO_DOCS_CAPTIONS:-${root}/doppio/docs/ui-captions.json}"
+captions="${DOPPIO_DOCS_CAPTIONS:-${root}/caffeine-website/captures/ui-captions.json}"
 
 publish=0
 if [[ "${1:-}" == "--publish" ]]; then

@@ -77,6 +77,17 @@ void WaveField::configure(const WaveSettings& settings) {
             }
             m_waves.push_back(wave);
         }
+        // Past sum(Q * k * A) = 1 the surface folds over itself and its normal flips (large dark
+        // patches with hard edges), so authored waves are scaled back to the stability bound.
+        f32 total = 0.0f;
+        for (const GerstnerWave& wave : m_waves) {
+            total += wave.steepness * (Math::TAU / wave.wavelength) * wave.amplitude;
+        }
+        constexpr f32 kMaxTotalSteepness = 0.95f;
+        if (total > kMaxTotalSteepness) {
+            const f32 scale = kMaxTotalSteepness / total;
+            for (GerstnerWave& wave : m_waves) wave.steepness *= scale;
+        }
         refreshDerived();
         ++m_revision;
         return;

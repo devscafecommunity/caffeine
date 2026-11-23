@@ -42,16 +42,24 @@ pub enum Template {
     Empty,
     TwoD,
     ThreeD,
+    /// The fixed project the team benchmarks and tries Doppio in (`samples/Sample` in the repository).
+    Sample,
 }
 
 impl Template {
-    pub const ALL: [Template; 3] = [Template::Empty, Template::TwoD, Template::ThreeD];
+    pub const ALL: [Template; 4] = [
+        Template::Empty,
+        Template::TwoD,
+        Template::ThreeD,
+        Template::Sample,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Template::Empty => "Empty",
             Template::TwoD => "2D",
             Template::ThreeD => "3D",
+            Template::Sample => "Sample",
         }
     }
 
@@ -60,6 +68,9 @@ impl Template {
             Template::Empty => "Blank project with the standard project folders.",
             Template::TwoD => "Starter folders for sprites, tilesets and 2D scenes.",
             Template::ThreeD => "Starter folders for models, textures and 3D scenes.",
+            Template::Sample => {
+                "The fixed Sample project: the same every time, the one Doppio is benchmarked and tried in. Named Sample unless you type a name."
+            }
         }
     }
 
@@ -68,6 +79,7 @@ impl Template {
             Template::Empty => "Empty",
             Template::TwoD => "2D",
             Template::ThreeD => "3D",
+            Template::Sample => "Sample",
         }
     }
 
@@ -76,6 +88,7 @@ impl Template {
             Template::Empty => 0,
             Template::TwoD => 1,
             Template::ThreeD => 2,
+            Template::Sample => 3,
         }
     }
 
@@ -83,7 +96,8 @@ impl Template {
         match index {
             0 => Template::Empty,
             1 => Template::TwoD,
-            _ => Template::ThreeD,
+            2 => Template::ThreeD,
+            _ => Template::Sample,
         }
     }
 
@@ -92,6 +106,7 @@ impl Template {
             "empty" => Some(Template::Empty),
             "2d" | "two_d" | "two-dimensional" => Some(Template::TwoD),
             "3d" | "three_d" | "three-dimensional" => Some(Template::ThreeD),
+            "sample" | "benchmark" => Some(Template::Sample),
             _ => None,
         }
     }
@@ -318,12 +333,7 @@ pub fn view<'a, Message: Clone + 'a>(
                 ));
             }
             column![
-                text_field::stacked(
-                    id::PROJECT_NAME,
-                    "Project name",
-                    &state.name,
-                    on_name,
-                ),
+                text_field::stacked(id::PROJECT_NAME, "Project name", &state.name, on_name,),
                 row![location, default_location]
                     .spacing(4)
                     .align_y(iced::Alignment::End),
@@ -335,10 +345,11 @@ pub fn view<'a, Message: Clone + 'a>(
                 space().height(Length::Fixed(8.0)),
                 button::primary(id::PROJECT_CREATE, "Create & Open", on_create),
                 text(if state.name.trim().is_empty() {
-                    "Enter a name to create project.caffeine with assets/raw, scenes, materials and texture_sets.".to_owned()
+                    "Enter a name to create project.caffeine with Assets, Scripts and Scenes."
+                        .to_owned()
                 } else {
                     format!(
-                        "Creates {}/{}/project.caffeine with assets/raw, scenes, materials and texture_sets.",
+                        "Creates {}/{}/project.caffeine with Assets, Scripts and Scenes.",
                         state.location.trim_end_matches(['/', '\\']),
                         state.name.trim()
                     )

@@ -1,0 +1,48 @@
+{
+  "name": "Camera tab beside the Viewport: each picture keeps its own texture",
+  "fixture": "scene3d",
+  "size": [
+    1440,
+    800
+  ],
+  "steps": [
+    {
+      "action": "drag",
+      "from": "id:editor.pane.tab.camera_preview",
+      "by": [
+        -80,
+        660
+      ],
+      "hold": true,
+      "steps": 14,
+      "label": "pick the Camera tab up and carry it over the bottom dock"
+    },
+    {
+      "action": "mouse_up",
+      "label": "drop it in the middle of that pane"
+    },
+    {
+      "action": "click",
+      "target": "id:editor.pane.tab.viewport",
+      "label": "the Viewport tab of the old pane"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:camerapreview.view.surface",
+        "id:editor.pane.viewport"
+      ],
+      "label": "both pictures are on screen"
+    },
+    {
+      "action": "wait",
+      "ms": 600,
+      "real_time": true,
+      "label": "let both draw"
+    },
+    {
+      "action": "screenshot",
+      "name": "viewport-and-camera"
+    }
+  ]
+}

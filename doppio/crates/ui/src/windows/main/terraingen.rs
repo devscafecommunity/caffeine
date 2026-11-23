@@ -33,6 +33,8 @@ pub(super) struct TerrainGen {
     pub preview: Option<Handle>,
     pub stats: String,
     pub status: Option<String>,
+    /// The terrain entity Place made last: what the Scatter card scatters on (the selection wins when it is a terrain).
+    pub placed: Option<u32>,
     pub dirty: bool,
     pub view: preview::View,
     orbit: Option<Point>,
@@ -69,6 +71,7 @@ impl TerrainGen {
             preview: None,
             stats: String::new(),
             status: None,
+            placed: None,
             dirty: false,
             view: preview::View::default(),
             orbit: None,
@@ -79,7 +82,7 @@ impl TerrainGen {
         state
     }
 
-    fn load(&mut self, graph: TerrainGraph) {
+    pub(super) fn load(&mut self, graph: TerrainGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -118,9 +121,9 @@ impl TerrainGen {
         let min_y = nodes.iter().map(|n| n.position.y).fold(f32::MAX, f32::min);
         let max_x = nodes.iter().map(|n| n.position.x).fold(f32::MIN, f32::max) + 170.0;
         let max_y = nodes.iter().map(|n| n.position.y).fold(f32::MIN, f32::max) + 130.0;
-        let zoom = (620.0 / (max_x - min_x).max(1.0))
-            .min(380.0 / (max_y - min_y).max(1.0))
-            .clamp(0.3, 1.0);
+        let zoom = (780.0 / (max_x - min_x).max(1.0))
+            .min(470.0 / (max_y - min_y).max(1.0))
+            .clamp(0.3, 1.4);
         self.zoom = zoom;
         self.pan = Vector::new(24.0 - min_x * zoom, 24.0 - min_y * zoom);
     }
@@ -228,7 +231,7 @@ impl App {
     }
 
     pub(super) fn terrain_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("terrain"))
+        self.asset_root_dir().map(|root| root.join("Terrain"))
     }
 
     pub(super) fn edit_terrain(&mut self, edit: Edit) {
@@ -364,11 +367,34 @@ impl App {
                 }
             }
             Edit::SetString(id, index, text) => {
+                let Some(text) = self.reference_text(
+                    text,
+                    &[crate::uikit::asset_kind::AssetKind::Image],
+                    "Terrain layer picture",
+                ) else {
+                    return;
+                };
                 self.terraingen.graph.set_string(id, index, text);
                 self.terraingen.push(Some(format!("string:{id}:{index}")));
                 self.terraingen.refresh();
             }
+            Edit::PickAsset(id, index) => {
+                let current = self
+                    .terraingen
+                    .graph
+                    .node(id)
+                    .and_then(|node| node.strings.get(index).cloned())
+                    .unwrap_or_default();
+                self.open_asset_pick(
+                    super::assetpick::PickTarget::TerrainString { node: id, index },
+                    vec![crate::uikit::asset_kind::AssetKind::Image],
+                    "Terrain layer picture".to_owned(),
+                    current,
+                );
+            }
             Edit::SetName(name) => self.terraingen.name = name,
+            Edit::Scatter => self.scatter_from_terrain_tab(),
+            Edit::EditScatterPlan => self.edit_scatter_plan(),
             Edit::New => {
                 let mut graph = TerrainGraph::new();
                 graph.add("output", Point::new(400.0, 80.0));
@@ -400,7 +426,27 @@ impl App {
         }
     }
 
+    /// Writes `<slug>.generator.terrain` beside the height map the terrain exports.
+    fn save_terrain_recipe(&mut self) -> Result<std::path::PathBuf, String> {
+        self.ensure_workspace();
+        let dir = self
+            .terrain_dir()
+            .ok_or("Open a project first: terrains are written to its assets folder")?;
+        let slug = crate::uikit::nature::slug(&self.terraingen.name);
+        let name = self.terraingen.name.clone();
+        let graph = terrain::to_text(&name, &self.terraingen.graph);
+        self.write_recipe(
+            &dir,
+            crate::uikit::recipe::Kind::Terrain,
+            &slug,
+            &name,
+            &format!("{slug}_height.png"),
+            graph,
+        )
+    }
+
     fn export_terrain(&mut self) {
+        self.ensure_workspace();
         let Some(dir) = self.terrain_dir() else {
             self.terraingen.status =
                 Some("Open a project first: terrains are written to its assets folder".to_owned());
@@ -410,11 +456,16 @@ impl App {
         let res = self.terraingen.graph.output_resolution();
         let result = self.terraingen.graph.build(res).and_then(|model| {
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            std::fs::write(
-                dir.join(format!("{slug}.terrain-graph")),
-                terrain::to_text(&self.terraingen.name, &self.terraingen.graph),
-            )
-            .map_err(|e| e.to_string())?;
+            let name = self.terraingen.name.clone();
+            let graph = terrain::to_text(&name, &self.terraingen.graph);
+            self.write_recipe(
+                &dir,
+                crate::uikit::recipe::Kind::Terrain,
+                &slug,
+                &name,
+                &format!("{slug}_height.png"),
+                graph,
+            )?;
             // A 16-bit height map, ready for any other tool.
             let pixels: Vec<u16> = model
                 .height
@@ -430,15 +481,16 @@ impl App {
             .map_err(|e| e.to_string())
         });
         self.terraingen.status = Some(match result {
-            Ok(()) => format!("Saved terrain/{slug}.terrain-graph and {slug}_height.png"),
+            Ok(()) => format!("Saved Terrain/{slug}.generator.terrain and {slug}_height.png"),
             Err(error) => format!("Could not save: {error}"),
         });
     }
 
     /// Golden rule: the terrain's layer pictures are project assets. Empty slots on the Output node
-    /// are filled by baking material-library pictures into `terrain/layers/`; existing files and
+    /// are filled by baking material-library pictures into `Terrain/Layers/`; existing files and
     /// paths you chose are never touched.
     pub(super) fn materialize_terrain_assets(&mut self) -> Result<(), String> {
+        self.ensure_workspace();
         let Some(dir) = self.terrain_dir() else {
             return Ok(());
         };
@@ -465,7 +517,7 @@ impl App {
             else {
                 continue;
             };
-            let folder = dir.join("layers");
+            let folder = dir.join("Layers");
             std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
             let file = folder.join(format!("{slug}.png"));
             if !file.exists() {
@@ -493,8 +545,8 @@ impl App {
                 material.name = format!("{slug} terrain layer");
                 material.albedo_map = if rooted {
                     engine
-                        .asset_project_path(&format!("terrain/layers/{slug}.png"))
-                        .unwrap_or_else(|_| format!("terrain/layers/{slug}.png"))
+                        .asset_project_path(&format!("Terrain/Layers/{slug}.png"))
+                        .unwrap_or_else(|_| format!("Terrain/Layers/{slug}.png"))
                 } else {
                     file.display().to_string()
                 };
@@ -505,7 +557,7 @@ impl App {
                     .map_err(|e| format!("{e:?}"))?;
             }
             let path = if rooted {
-                format!("terrain/layers/{slug}.mat")
+                format!("Terrain/Layers/{slug}.mat")
             } else {
                 mat_file.display().to_string()
             };
@@ -521,13 +573,21 @@ impl App {
             self.terraingen.status = Some(error);
             return;
         }
+        // The recipe goes first: whatever happens to the scene below, the graph is never lost.
+        let saved = match self.save_terrain_recipe() {
+            Ok(_) => format!(
+                ". Recipe: {}.generator.terrain",
+                crate::uikit::nature::slug(&self.terraingen.name)
+            ),
+            Err(error) => format!(". The recipe was not saved ({error})"),
+        };
         let layers = self.terraingen.graph.layer_paths();
         let layer_root = self.asset_root_dir();
         let res = self.terraingen.graph.output_resolution();
         let model = match self.terraingen.graph.build(res) {
             Ok(model) => model,
             Err(error) => {
-                self.terraingen.status = Some(format!("Graph: {error}"));
+                self.terraingen.status = Some(format!("Graph: {error}{saved}"));
                 return;
             }
         };
@@ -546,6 +606,7 @@ impl App {
         };
         // The terrain mesh is centred on its entity: put it under the camera focus.
         let _ = engine.set_position(id, [focus[0], 0.0, focus[2]]);
+        self.terraingen.placed = Some(id);
         let settings = doppio_engine::Terrain {
             resolution: [res as u32, res as u32],
             size: model.size,
@@ -560,9 +621,37 @@ impl App {
             ));
             return;
         }
+        // The masks the graph makes (flow, wetness, erosion wear and deposit) go with the terrain, so scatter and
+        // the biome table can place by them. An engine without C ABI v15 just has none.
+        let sent: Vec<String> = model
+            .masks
+            .iter()
+            .filter(|(name, bytes)| {
+                engine
+                    .set_terrain_mask(id, name, [res as u32, res as u32], bytes)
+                    .is_ok()
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         // The four layer pictures are the project's textures, written from the Output node.
         if let Some(type_id) = super::component_type_id(engine, "Terrain") {
             for (i, path) in layers.iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+                // A `generator.material` / `generator.texture` recipe stands for what it baked.
+                let recipe_kind = layer_root
+                    .as_ref()
+                    .and_then(|root| crate::uikit::recipe::kind_of(&root.join(path)));
+                let path = &match (recipe_kind, layer_root.as_ref()) {
+                    (Some(kind), Some(root)) => {
+                        match crate::uikit::recipe_ref::resolve_product(root, path, kind) {
+                            Ok(product) => product,
+                            Err(error) => {
+                                self.terraingen.status = Some(error);
+                                continue;
+                            }
+                        }
+                    }
+                    _ => path.clone(),
+                };
                 // A slot is a material (its albedo map paints the layer) or, as before, a picture.
                 let picture = if path.ends_with(".mat") {
                     let file = layer_root
@@ -594,8 +683,9 @@ impl App {
         }
         self.terraingen.dirty = false;
         self.terraingen.status = Some(format!(
-            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there",
-            model.sea_metres
+            "Placed {name} ({res}² vertices); the sea level is at {:.0} m, add a Water body there. Masks: height, slope, curvature{}{saved}",
+            model.sea_metres,
+            sent.iter().map(|n| format!(", {n}")).collect::<String>()
         ));
         self.refresh_components();
         self.commit("Place terrain", None);

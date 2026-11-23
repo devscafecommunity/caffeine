@@ -58,7 +58,7 @@ void main() {
     }
     v_worldPos = worldPos.xyz;
 
-    vec3 N = normalize(mat3(model) * aNormal);
+    vec3 N = normalize(transpose(inverse(mat3(model))) * aNormal);  // inverse transpose: right under a non-uniform scale
     vec3 T = normalize(mat3(model) * aTangent.xyz);
     vec3 B = cross(N, T) * aTangent.w;
 

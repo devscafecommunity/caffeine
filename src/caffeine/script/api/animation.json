@@ -1,0 +1,332 @@
+{
+  "namespace": "animation",
+  "group": "Rendering",
+  "lua": "caffeine.animation",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Animation",
+    "pt": "Animação"
+  },
+  "summary": {
+    "en": "Clip, state-machine, skinned-mesh and sprite-sheet animation control.",
+    "pt": "Controlo de animação por clips, máquina de estados, malhas com skin e sprite sheets."
+  },
+  "functions": [
+    {
+      "name": "playClip",
+      "lua": "caffeine.animation.playClip",
+      "dryad": null,
+      "signature": "playClip(entity, path) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Clip asset path.",
+          "pt": "Caminho do asset do clip."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Plays an animation clip on the entity.",
+      "pt": "Reproduz um clip de animação na entidade.",
+      "example": "caffeine.animation.playClip(e, 'clips/run.anim')"
+    },
+    {
+      "name": "playSkinnedClip",
+      "lua": "caffeine.animation.playSkinnedClip",
+      "dryad": null,
+      "signature": "playSkinnedClip(entity, meshPath, clipIndex) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "meshPath",
+          "type": "string",
+          "en": "Skinned mesh path.",
+          "pt": "Caminho da malha com skin."
+        },
+        {
+          "name": "clipIndex",
+          "type": "number",
+          "en": "Index of the clip in the mesh.",
+          "pt": "Índice do clip na malha."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Plays a clip of a skinned mesh by index.",
+      "pt": "Reproduz um clip de uma malha com skin pelo índice.",
+      "example": "caffeine.animation.playSkinnedClip(e, 'models/hero.glb', 0)"
+    },
+    {
+      "name": "playState",
+      "lua": "caffeine.animation.playState",
+      "dryad": null,
+      "signature": "playState(entity, state) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "en": "State name.",
+          "pt": "Nome do estado."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Switches the animator to a named state.",
+      "pt": "Muda o animator para um estado com nome.",
+      "example": "caffeine.animation.playState(e, 'Idle')"
+    },
+    {
+      "name": "setBool",
+      "lua": "caffeine.animation.setBool",
+      "dryad": null,
+      "signature": "setBool(entity, name, value) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Parameter name.",
+          "pt": "Nome do parâmetro."
+        },
+        {
+          "name": "value",
+          "type": "boolean",
+          "en": "New value.",
+          "pt": "Novo valor."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets a boolean animator parameter.",
+      "pt": "Define um parâmetro booleano do animator.",
+      "example": "caffeine.animation.setBool(e, 'grounded', true)"
+    },
+    {
+      "name": "setFloat",
+      "lua": "caffeine.animation.setFloat",
+      "dryad": null,
+      "signature": "setFloat(entity, name, value) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Parameter name.",
+          "pt": "Nome do parâmetro."
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "en": "New value.",
+          "pt": "Novo valor."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets a float animator parameter.",
+      "pt": "Define um parâmetro float do animator.",
+      "example": "caffeine.animation.setFloat(e, 'speed', 3.5)"
+    },
+    {
+      "name": "setTrigger",
+      "lua": "caffeine.animation.setTrigger",
+      "dryad": null,
+      "signature": "setTrigger(entity, name) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Trigger name.",
+          "pt": "Nome do trigger."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Fires an animator trigger.",
+      "pt": "Dispara um trigger do animator.",
+      "example": "caffeine.animation.setTrigger(e, 'jump')"
+    },
+    {
+      "name": "setSpriteSheet",
+      "lua": "caffeine.animation.setSpriteSheet",
+      "dryad": null,
+      "signature": "setSpriteSheet(entity, columns, rows, frameCount) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "columns",
+          "type": "number",
+          "en": "Columns in the sheet.",
+          "pt": "Colunas na folha."
+        },
+        {
+          "name": "rows",
+          "type": "number",
+          "en": "Rows in the sheet.",
+          "pt": "Linhas na folha."
+        },
+        {
+          "name": "frameCount",
+          "type": "number",
+          "en": "Total number of frames.",
+          "pt": "Número total de frames."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Configures sprite-sheet animation on the entity.",
+      "pt": "Configura a animação por sprite sheet na entidade.",
+      "example": "caffeine.animation.setSpriteSheet(e, 4, 4, 16)"
+    },
+    {
+      "name": "attachRig2D",
+      "lua": "caffeine.animation.attachRig2D",
+      "dryad": null,
+      "signature": "attachRig2D(entity, rigPath) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "rigPath",
+          "type": "string",
+          "en": "Path to a .rig2d file.",
+          "pt": "Caminho para um ficheiro .rig2d."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the rig was attached.",
+        "pt": "true quando o rig foi associado."
+      },
+      "en": "Attaches a 2D rig (bones, skinned mesh, parameters) to the entity. Replaces the rig if one is already attached and resets its clip.",
+      "pt": "Associa um rig 2D (ossos, malha com skin, parâmetros) à entidade. Substitui o rig se já existir um e reinicia o clip.",
+      "example": "caffeine.animation.attachRig2D(e, \"assets/hero.rig2d\")"
+    },
+    {
+      "name": "playRig2DClip",
+      "lua": "caffeine.animation.playRig2DClip",
+      "dryad": null,
+      "signature": "playRig2DClip(entity, clipPath) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "clipPath",
+          "type": "string",
+          "en": "Path to a .pclip parameter clip.",
+          "pt": "Caminho para um clip de parâmetros .pclip."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the clip was set. The rig must be attached first.",
+        "pt": "true quando o clip foi definido. O rig tem de estar associado antes."
+      },
+      "en": "Plays a parameter clip on the entity's rig from time zero. Parameters with the same name as PhaseShift floats are then overridden by the PhaseShift values.",
+      "pt": "Reproduz um clip de parâmetros no rig da entidade a partir do tempo zero. Os parâmetros com o mesmo nome que floats do PhaseShift são depois substituídos pelos valores do PhaseShift.",
+      "example": "caffeine.animation.playRig2DClip(e, \"assets/hero_blink.pclip\")"
+    },
+    {
+      "name": "setSmoothing",
+      "lua": "caffeine.animation.setSmoothing",
+      "dryad": null,
+      "signature": "setSmoothing(entity, name, smoothTime) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Name of a float parameter.",
+          "pt": "Nome de um parâmetro float."
+        },
+        {
+          "name": "smoothTime",
+          "type": "number",
+          "en": "Seconds to reach the target. 0 turns smoothing off.",
+          "pt": "Segundos para atingir o alvo. 0 desliga a suavização."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true when the parameter exists and is a float.",
+        "pt": "true quando o parâmetro existe e é float."
+      },
+      "en": "Smooths a float parameter with a critically damped spring. Transitions read the smoothed value, so blends are not abrupt.",
+      "pt": "Suaviza um parâmetro float com uma mola criticamente amortecida. As transições leem o valor suavizado, por isso as misturas não são bruscas.",
+      "example": "caffeine.animation.setSmoothing(e, \"speed\", 0.15)"
+    }
+  ]
+}

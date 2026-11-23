@@ -19,7 +19,7 @@ fn usage() -> ! {
          doppio-material texset-export <file.texset> --out DIR [--preset NAME]\n  \
          doppio-material bake-preset <NAME|--all> --out DIR [--size 512] [--depth 0.04] [--list|--slugs]\n  \
          doppio-material nature <NAME|--all> --out DIR [--quality 0|1|2] [--seed N] [--list]\n  \
-         doppio-material bake-texture <NAME|FILE.texgraph|--all> --out DIR [--size 512] [--bits 8|16] [--flipbook CxR] [--list|--slugs]"
+         doppio-material variants <FILE.generator.nature> --out DIR [--count 4] [--seed 1] [--quality 0|1|2]\n         doppio-material bake-texture <NAME|FILE.texgraph|--all> --out DIR [--size 512] [--bits 8|16] [--flipbook CxR] [--list|--slugs]"
     );
     std::process::exit(2);
 }
@@ -41,6 +41,7 @@ fn main() {
         "bake-preset" => bake_preset(&args[1..]),
         "bake-texture" => bake_texture(&args[1..]),
         "nature" => nature_models(&args[1..]),
+        "variants" => recipe_variants(&args[1..]),
         _ => usage(),
     };
     if let Err(error) = result {
@@ -570,6 +571,37 @@ fn bake_texture(args: &[String]) -> Result<(), String> {
 }
 
 /// Exports Nature Generator presets as `.obj` files (one per part) plus their `.nature` recipe.
+/// `variants <Name.generator.nature> --out DIR [--count 4] [--seed 1] [--quality 0|1|2]`:
+/// bakes seeded variants of a nature recipe into a content-addressed cache folder.
+fn recipe_variants(args: &[String]) -> Result<(), String> {
+    use doppio_ui::uikit::{nature, recipe_ref};
+    let recipe = positional(args).ok_or_else(|| "name a .generator.nature file".to_owned())?;
+    let out = argument(args, "--out")
+        .map(PathBuf::from)
+        .ok_or_else(|| "expected --out DIR".to_owned())?;
+    let count: u32 = argument(args, "--count")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(4);
+    let seed: u64 = argument(args, "--seed")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let quality = argument(args, "--quality")
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(nature::Quality::from_index);
+    for baked in
+        recipe_ref::nature_variants(std::path::Path::new(recipe), seed, count, quality, &out)?
+    {
+        println!(
+            "{:016x}  seed {:<5} {} {}",
+            baked.key,
+            baked.seed,
+            if baked.cached { "cached" } else { "baked " },
+            baked.directory.display()
+        );
+    }
+    Ok(())
+}
+
 fn nature_models(args: &[String]) -> Result<(), String> {
     use doppio_ui::uikit::nature;
     let presets = nature::presets();

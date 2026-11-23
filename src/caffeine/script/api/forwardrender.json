@@ -1,0 +1,188 @@
+{
+  "namespace": "forwardrender",
+  "group": "Rendering",
+  "lua": "caffeine.forwardrender",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Forward render",
+    "pt": "Render forward"
+  },
+  "summary": {
+    "en": "Per-entity forward renderer features: instancing, image-based lighting, occlusion, reflections and volumetrics.",
+    "pt": "Funcionalidades do renderer forward por entidade: instancing, iluminação baseada em imagem, oclusão, reflexos e volumétricos."
+  },
+  "functions": [
+    {
+      "name": "ensure",
+      "lua": "caffeine.forwardrender.ensure",
+      "dryad": null,
+      "signature": "ensure(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false if the entity is invalid.",
+        "pt": "false se a entidade for inválida."
+      },
+      "en": "Adds the forward-render features component to the entity if missing. The setters below do nothing without it.",
+      "pt": "Adiciona à entidade o componente de funcionalidades do render forward, se faltar. Os setters abaixo não fazem nada sem ele.",
+      "example": "caffeine.forwardrender.ensure(cam)"
+    },
+    {
+      "name": "setInstancing",
+      "lua": "caffeine.forwardrender.setInstancing",
+      "dryad": null,
+      "signature": "setInstancing(entity, enabled, maxBatch)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns the feature on or off.",
+          "pt": "Liga ou desliga a funcionalidade."
+        },
+        {
+          "name": "maxBatch",
+          "type": "number",
+          "en": "Maximum instances per batch. Optional.",
+          "pt": "Máximo de instâncias por lote. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Configures GPU instancing.",
+      "pt": "Configura o instancing na GPU.",
+      "example": "caffeine.forwardrender.setInstancing(cam, true, 256)"
+    },
+    {
+      "name": "setIbl",
+      "lua": "caffeine.forwardrender.setIbl",
+      "dryad": null,
+      "signature": "setIbl(entity, enabled, diffuse, specular)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns the feature on or off.",
+          "pt": "Liga ou desliga a funcionalidade."
+        },
+        {
+          "name": "diffuse",
+          "type": "number",
+          "en": "Diffuse strength. Optional.",
+          "pt": "Intensidade difusa. Opcional."
+        },
+        {
+          "name": "specular",
+          "type": "number",
+          "en": "Specular strength. Optional.",
+          "pt": "Intensidade especular. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Configures image-based lighting.",
+      "pt": "Configura a iluminação baseada em imagem.",
+      "example": "caffeine.forwardrender.setIbl(cam, true, 1.0, 1.0)"
+    },
+    {
+      "name": "setOcclusion",
+      "lua": "caffeine.forwardrender.setOcclusion",
+      "dryad": null,
+      "signature": "setOcclusion(entity, enabled)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns the feature on or off.",
+          "pt": "Liga ou desliga a funcionalidade."
+        }
+      ],
+      "returns": null,
+      "en": "Turns occlusion on or off.",
+      "pt": "Liga ou desliga a oclusão.",
+      "example": "caffeine.forwardrender.setOcclusion(cam, true)"
+    },
+    {
+      "name": "setReflections",
+      "lua": "caffeine.forwardrender.setReflections",
+      "dryad": null,
+      "signature": "setReflections(entity, enabled, mode)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns the feature on or off.",
+          "pt": "Liga ou desliga a funcionalidade."
+        },
+        {
+          "name": "mode",
+          "type": "number",
+          "en": "0 Off, 1 Planar, 2 ScreenSpace, 3 Probe; clamped to 0..3. Optional.",
+          "pt": "0 Off, 1 Planar, 2 ScreenSpace, 3 Probe; limitado a 0..3. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Configures reflections and their mode.",
+      "pt": "Configura os reflexos e o respetivo modo.",
+      "example": "caffeine.forwardrender.setReflections(cam, true, 2)"
+    },
+    {
+      "name": "setVolumetrics",
+      "lua": "caffeine.forwardrender.setVolumetrics",
+      "dryad": null,
+      "signature": "setVolumetrics(entity, enabled, quality)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "en": "Turns the feature on or off.",
+          "pt": "Liga ou desliga a funcionalidade."
+        },
+        {
+          "name": "quality",
+          "type": "number",
+          "en": "0 Off, 1 Low, 2 Medium, 3 High; clamped to 0..3. Optional.",
+          "pt": "0 Off, 1 Low, 2 Medium, 3 High; limitado a 0..3. Opcional."
+        }
+      ],
+      "returns": null,
+      "en": "Configures volumetric fog and its quality.",
+      "pt": "Configura o nevoeiro volumétrico e a respetiva qualidade.",
+      "example": "caffeine.forwardrender.setVolumetrics(cam, true, 2)"
+    }
+  ]
+}

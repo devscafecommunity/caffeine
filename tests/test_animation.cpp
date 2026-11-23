@@ -89,11 +89,11 @@ TEST_CASE("AnimationState - defaults", "[animation]") {
 }
 
 // ============================================================================
-// Animator
+// PhaseShift
 // ============================================================================
 
-TEST_CASE("Animator - defaults", "[animation]") {
-    Animator anim;
+TEST_CASE("PhaseShift - defaults", "[animation]") {
+    PhaseShift anim;
     REQUIRE(approxEq(anim.timeInState,   0.0f));
     REQUIRE(approxEq(anim.blendWeight,   1.0f));
     REQUIRE(approxEq(anim.playbackScale, 1.0f));
@@ -120,13 +120,13 @@ TEST_CASE("AnimationSystem - entity with no Sprite is skipped safely", "[animati
     World world;
     AnimationSystem sys;
     Entity e = world.create();
-    Animator anim;
-    world.add<Animator>(e, anim);
+    PhaseShift anim;
+    world.add<PhaseShift>(e, anim);
     sys.onUpdate(world, 0.016f);
     REQUIRE(true);
 }
 
-TEST_CASE("AnimationSystem - entity with no Animator is skipped safely", "[animation]") {
+TEST_CASE("AnimationSystem - entity with no PhaseShift is skipped safely", "[animation]") {
     World world;
     AnimationSystem sys;
     Entity e = world.create();
@@ -135,17 +135,17 @@ TEST_CASE("AnimationSystem - entity with no Animator is skipped safely", "[anima
     REQUIRE(true);
 }
 
-TEST_CASE("AnimationSystem - empty Animator does not crash on update", "[animation]") {
+TEST_CASE("AnimationSystem - empty PhaseShift does not crash on update", "[animation]") {
     World world;
     AnimationSystem sys;
     Entity e = world.create();
-    world.add<Animator>(e, Animator{});
+    world.add<PhaseShift>(e, PhaseShift{});
     world.add<Sprite>(e, Sprite{});
     sys.onUpdate(world, 0.016f);
     REQUIRE(true);
 }
 
-TEST_CASE("AnimationSystem - paused Animator does not advance time", "[animation]") {
+TEST_CASE("AnimationSystem - paused PhaseShift does not advance time", "[animation]") {
     World world;
     AnimationSystem sys;
 
@@ -154,18 +154,18 @@ TEST_CASE("AnimationSystem - paused Animator does not advance time", "[animation
     state.name = "idle";
     state.clip = &clip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("idle"), state);
     anim.currentState = "idle";
     anim.paused       = true;
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 0.5f);
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(approxEq(a->timeInState, 0.0f));
 }
 
@@ -178,12 +178,12 @@ TEST_CASE("AnimationSystem - advances frameIndex with time", "[animation]") {
     state.name = "idle";
     state.clip = &clip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("idle"), state);
     anim.currentState = "idle";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 0.5f);
@@ -201,12 +201,12 @@ TEST_CASE("AnimationSystem - non-looping clip clamps at last frame", "[animation
     state.name = "attack";
     state.clip = &clip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("attack"), state);
     anim.currentState = "attack";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 10.0f);
@@ -224,12 +224,12 @@ TEST_CASE("AnimationSystem - looping clip wraps frame index", "[animation]") {
     state.name = "walk";
     state.clip = &clip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("walk"), state);
     anim.currentState = "walk";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 1.125f);
@@ -257,18 +257,18 @@ TEST_CASE("AnimationSystem - transition fires when condition is true", "[animati
     walk.name = "walk";
     walk.clip = &walkClip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("idle"), idle);
     anim.states.set(FixedString<32>("walk"), walk);
     anim.currentState = "idle";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 0.016f);
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(a->currentState == FixedString<32>("walk"));
 }
 
@@ -286,17 +286,17 @@ TEST_CASE("AnimationSystem - transition does not fire when condition is false", 
     t.legacyCondition = []() { return false; };
     idle.transitions.push_back(t);
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("idle"), idle);
     anim.currentState = "idle";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 0.016f);
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(a->currentState == FixedString<32>("idle"));
 }
 
@@ -310,7 +310,7 @@ TEST_CASE("AnimationSystem - frame event fires at correct frame", "[animation]")
     state.name = "action";
     state.clip = &clip;
 
-    Animator anim;
+    PhaseShift anim;
     anim.states.set(FixedString<32>("action"), state);
     anim.currentState = "action";
     anim.frameEvents.push_back({0u, FixedString<32>("hit")});
@@ -319,12 +319,12 @@ TEST_CASE("AnimationSystem - frame event fires at correct frame", "[animation]")
     anim.onFrameEvent = [&](const FixedString<32>& evt) { fired = evt; };
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.onUpdate(world, 0.0f);
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(a->currentState == FixedString<32>("action"));
 }
 
@@ -333,12 +333,12 @@ TEST_CASE("AnimationSystem - play() resets state", "[animation]") {
     AnimationSystem sys;
 
     Entity e = world.create();
-    world.add<Animator>(e, Animator{});
+    world.add<PhaseShift>(e, PhaseShift{});
     world.add<Sprite>(e, Sprite{});
 
     sys.play(world, e, "walk");
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(a->currentState == FixedString<32>("walk"));
     REQUIRE(approxEq(a->timeInState, 0.0f));
     REQUIRE(a->paused == false);
@@ -349,14 +349,14 @@ TEST_CASE("AnimationSystem - pause and resume", "[animation]") {
     AnimationSystem sys;
 
     Entity e = world.create();
-    world.add<Animator>(e, Animator{});
+    world.add<PhaseShift>(e, PhaseShift{});
     world.add<Sprite>(e, Sprite{});
 
     sys.pause(world, e);
-    REQUIRE(world.get<Animator>(e)->paused == true);
+    REQUIRE(world.get<PhaseShift>(e)->paused == true);
 
     sys.resume(world, e);
-    REQUIRE(world.get<Animator>(e)->paused == false);
+    REQUIRE(world.get<PhaseShift>(e)->paused == false);
 }
 
 TEST_CASE("AnimationSystem - setSpeed updates playbackScale", "[animation]") {
@@ -364,23 +364,23 @@ TEST_CASE("AnimationSystem - setSpeed updates playbackScale", "[animation]") {
     AnimationSystem sys;
 
     Entity e = world.create();
-    world.add<Animator>(e, Animator{});
+    world.add<PhaseShift>(e, PhaseShift{});
     world.add<Sprite>(e, Sprite{});
 
     sys.setSpeed(world, e, 2.0f);
-    REQUIRE(approxEq(world.get<Animator>(e)->playbackScale, 2.0f));
+    REQUIRE(approxEq(world.get<PhaseShift>(e)->playbackScale, 2.0f));
 }
 
 TEST_CASE("AnimationSystem - isPlaying returns true for active state", "[animation]") {
     World world;
     AnimationSystem sys;
 
-    Animator anim;
+    PhaseShift anim;
     anim.currentState = "idle";
     anim.paused       = false;
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     REQUIRE(sys.isPlaying(world, e, "idle") == true);
@@ -391,12 +391,12 @@ TEST_CASE("AnimationSystem - isPlaying returns false when paused", "[animation]"
     World world;
     AnimationSystem sys;
 
-    Animator anim;
+    PhaseShift anim;
     anim.currentState = "idle";
     anim.paused       = true;
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     REQUIRE(sys.isPlaying(world, e, "idle") == false);
@@ -406,16 +406,16 @@ TEST_CASE("AnimationSystem - play() stores previousState", "[animation]") {
     World world;
     AnimationSystem sys;
 
-    Animator anim;
+    PhaseShift anim;
     anim.currentState = "idle";
 
     Entity e = world.create();
-    world.add<Animator>(e, anim);
+    world.add<PhaseShift>(e, anim);
     world.add<Sprite>(e, Sprite{});
 
     sys.play(world, e, "walk");
 
-    const Animator* a = world.get<Animator>(e);
+    const PhaseShift* a = world.get<PhaseShift>(e);
     REQUIRE(a->previousState == FixedString<32>("idle"));
     REQUIRE(a->currentState  == FixedString<32>("walk"));
 }

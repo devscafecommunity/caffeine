@@ -1,0 +1,11 @@
+{
+  "project_name": "Sample",
+  "engine_version": "0.1.0",
+  "paths": {
+    "assets_raw": "Assets/Raw",
+    "assets_processed": "Assets/Processed",
+    "scripts": "Scripts"
+  },
+  "template_type": "Sample",
+  "last_scene": ""
+}

@@ -129,6 +129,25 @@ fn limit_steepness(waves: &mut [WaterWave], choppiness: f32) {
     }
 }
 
+/// The largest `sum(Q * k * A)` the surface may have. Past 1 the Gerstner surface folds over itself:
+/// the normal flips and the fold shows as large dark patches with hard edges (a stormy Merge or a
+/// Scale with choppiness above 1 gets there easily), so the final wave list is scaled back to it.
+pub const MAX_TOTAL_STEEPNESS: f32 = 0.95;
+
+/// Scales every steepness by the same factor when `sum(Q * k * A)` is above [`MAX_TOTAL_STEEPNESS`].
+pub fn limit_total_steepness(waves: &mut [WaterWave]) {
+    let total: f32 = waves
+        .iter()
+        .map(|w| w.steepness * std::f32::consts::TAU / w.wavelength.max(0.05) * w.amplitude)
+        .sum();
+    if total > MAX_TOTAL_STEEPNESS {
+        let scale = MAX_TOTAL_STEEPNESS / total;
+        for wave in waves.iter_mut() {
+            wave.steepness *= scale;
+        }
+    }
+}
+
 // ------------------------------------------------------------------ nodes
 
 const WAVES_OUT: &[PortDef] = &[port("Waves", Kind::Waves)];
@@ -670,6 +689,7 @@ impl WaterGraph {
             wave.amplitude *= t * t * (3.0 - 2.0 * t);
         }
         waves.retain(|w| w.amplitude > 1e-5);
+        limit_total_steepness(&mut waves);
         let dropped = before.saturating_sub(waves.len());
         if waves.is_empty() {
             // Everything was too fine (or nothing is wired): flat water, not a wind sea.

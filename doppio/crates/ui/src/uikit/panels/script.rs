@@ -46,6 +46,7 @@ pub struct Callbacks<'a, Message> {
     pub on_select: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_tab_close: Box<dyn Fn(usize) -> Message + 'a>,
     pub on_action: Box<dyn Fn(iced_code_editor::Message) -> Message + 'a>,
+    pub on_overlay: Box<dyn Fn(iced_code_editor::LspOverlayMessage) -> Message + 'a>,
     pub on_save: Message,
     pub on_revert: Message,
     pub on_close: Message,
@@ -62,6 +63,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_select,
         on_tab_close,
         on_action,
+        on_overlay,
         on_save,
         on_revert,
         on_close,
@@ -139,7 +141,13 @@ pub fn view<'a, Message: Clone + 'a>(
     }
 
     let body: Element<'a, Message> = match active {
-        Some(document) => code_editor::view(ids.editor, &document.editor, on_action),
+        Some(document) => code_editor::view_with_reference(
+            ids.editor,
+            &document.editor,
+            &document.overlay,
+            on_action,
+            on_overlay,
+        ),
         None => container(
             text("Select a script tab.")
                 .size(10)

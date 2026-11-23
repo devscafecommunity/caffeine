@@ -10,7 +10,7 @@
 //! Materials/Nature/<name>.mat        materials written by the Nature tool
 //! Textures/Nature/<name>_*.png       baked maps of those materials
 //! Textures/<name>.png + .texgraph    Texture Generator exports
-//! Textures/Sets/<name>.texset        Texture Set projects
+//! TextureSets/<name>.texset        Texture Set projects
 //! Materials/<name>.mat + .mgraph     Material Generator output
 //! ```
 
@@ -26,6 +26,7 @@ pub enum AssetFolder {
     NatureModels,
     NatureMaterials,
     NatureTextures,
+    Prefabs,
 }
 
 impl AssetFolder {
@@ -33,12 +34,13 @@ impl AssetFolder {
     pub fn canonical(self) -> &'static str {
         match self {
             AssetFolder::Textures => "Textures",
-            AssetFolder::TextureSets => "Textures/Sets",
+            AssetFolder::TextureSets => "TextureSets",
             AssetFolder::Materials => "Materials",
             AssetFolder::Models => "Models",
             AssetFolder::NatureModels => "Models/Nature",
             AssetFolder::NatureMaterials => "Materials/Nature",
             AssetFolder::NatureTextures => "Textures/Nature",
+            AssetFolder::Prefabs => "Prefabs",
         }
     }
 }

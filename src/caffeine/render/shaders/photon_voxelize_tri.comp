@@ -1,0 +1,152 @@
+#version 450
+
+// Photon P-A: conservative triangle voxeliser for the far-field material volume.
+//
+// The screened fill (photon_voxelize.comp) only knows the surfaces the camera sees; rays that leave the
+// screen then find nothing (the underside of a ceiling, a wall behind the camera) and return sky light.
+// This pass writes the geometry of the whole scene into the same volume: one invocation per triangle,
+// and for every clipmap level in the mask each voxel the triangle touches (separating-axis triangle/box
+// test, the box grown by a hair so a triangle lying on a cell face still marks it). The voxel gets the
+// triangle's albedo and coverage 1, the same encoding the screened fill uses.
+//
+// Mode 1 clears the region of the levels in the mask instead (one invocation per texel), so a level whose
+// clipmap origin moved can be rebuilt without touching the others. Modes 2 and 3 do the same for a world box
+// only: an object that moved clears and revoxelises the voxels around its old and new place, not the volume.
+//
+// Levels are packed side by side in one RGBA8 atlas: level l owns columns [l * 512, (l + 1) * 512);
+// inside a level, z slice s sits in tile (s % 8, s / 8) of 64 x 64 voxels.
+//
+// SDL_GPU compute layout: set 0 read-only storage, set 1 read-write storage, set 2 uniforms.
+// Keep TriUBO in sync with render/PhotonCascades.cpp.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Four vec4 per triangle: the three world-space corners, then (albedo rgb, 0).
+layout(std430, set = 0, binding = 0) readonly buffer Triangles { vec4 tris[]; };
+layout(set = 1, binding = 0, rgba8) uniform image2D uVoxel;
+
+layout(set = 2, binding = 0) uniform TriUBO {
+    vec4 uClip[4];   // per level: xyz origin, w cell size
+    uvec4 uParams;   // x triangle count, y level mask, z mode, w cells per axis (64)
+    uvec4 uAtlas;    // x tiles per row (8), y level stride (512)
+    vec4 uRegionLo;  // world box of a region update (modes 2 and 3)
+    vec4 uRegionHi;
+} u;
+
+// Modes: 0 voxelise every triangle into the levels in the mask, 1 clear those levels, 2 clear only the voxels
+// of a world box, 3 voxelise into only the voxels of that box (triangles outside it are skipped at once).
+
+// Is the triangle's projection on `axis` disjoint from the box's? (Box centred on the origin.)
+bool separated(vec3 axis, vec3 v0, vec3 v1, vec3 v2, vec3 half_) {
+    float len2 = dot(axis, axis);
+    if (len2 < 1.0e-12) return false;  // a degenerate axis separates nothing
+    float p0 = dot(axis, v0);
+    float p1 = dot(axis, v1);
+    float p2 = dot(axis, v2);
+    float r = dot(half_, abs(axis));
+    return min(p0, min(p1, p2)) > r || max(p0, max(p1, p2)) < -r;
+}
+
+bool triangleTouchesBox(vec3 centre, vec3 half_, vec3 a, vec3 b, vec3 c) {
+    vec3 v0 = a - centre;
+    vec3 v1 = b - centre;
+    vec3 v2 = c - centre;
+    vec3 e0 = v1 - v0;
+    vec3 e1 = v2 - v1;
+    vec3 e2 = v0 - v2;
+
+    // The triangle's plane.
+    vec3 n = cross(e0, e1);
+    if (abs(dot(n, v0)) > dot(half_, abs(n))) return false;
+
+    // The three box axes.
+    if (min(v0.x, min(v1.x, v2.x)) > half_.x || max(v0.x, max(v1.x, v2.x)) < -half_.x) return false;
+    if (min(v0.y, min(v1.y, v2.y)) > half_.y || max(v0.y, max(v1.y, v2.y)) < -half_.y) return false;
+    if (min(v0.z, min(v1.z, v2.z)) > half_.z || max(v0.z, max(v1.z, v2.z)) < -half_.z) return false;
+
+    // Nine edge x axis cross products.
+    const vec3 axes[3] = vec3[3](vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0));
+    for (int i = 0; i < 3; ++i) {
+        if (separated(cross(axes[i], e0), v0, v1, v2, half_)) return false;
+        if (separated(cross(axes[i], e1), v0, v1, v2, half_)) return false;
+        if (separated(cross(axes[i], e2), v0, v1, v2, half_)) return false;
+    }
+    return true;
+}
+
+ivec2 atlasTexel(int level, ivec3 g) {
+    int cells = int(u.uParams.w);
+    int tiles = int(u.uAtlas.x);
+    return ivec2(level * int(u.uAtlas.y) + (g.z % tiles) * cells + g.x, (g.z / tiles) * cells + g.y);
+}
+
+// The voxels of `level` a world box touches, as an inclusive grid range (empty when lo > hi).
+void regionRange(int level, out ivec3 lo, out ivec3 hi) {
+    float cell = u.uClip[level].w;
+    vec3 origin = u.uClip[level].xyz;
+    int cells = int(u.uParams.w);
+    lo = max(ivec3(floor((u.uRegionLo.xyz - origin) / cell)), ivec3(0));
+    hi = min(ivec3(floor((u.uRegionHi.xyz - origin) / cell)), ivec3(cells - 1));
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    int cells = int(u.uParams.w);
+    uint mode = u.uParams.z;
+
+    if (mode == 1u || mode == 2u) {
+        // Clear: one invocation per texel of the levels in the mask (mode 2: only inside the region's box).
+        uint perLevel = uint(cells * cells * cells);
+        uint level = index / perLevel;
+        if (level >= 4u || (u.uParams.y & (1u << level)) == 0u) return;
+        uint cell = index % perLevel;
+        ivec3 g = ivec3(int(cell % uint(cells)), int((cell / uint(cells)) % uint(cells)),
+                        int(cell / uint(cells * cells)));
+        if (mode == 2u) {
+            ivec3 rlo, rhi;
+            regionRange(int(level), rlo, rhi);
+            if (any(lessThan(g, rlo)) || any(greaterThan(g, rhi))) return;
+        }
+        imageStore(uVoxel, atlasTexel(int(level), g), vec4(0.0));
+        return;
+    }
+
+    if (index >= u.uParams.x) return;
+    vec3 a = tris[index * 4u + 0u].xyz;
+    vec3 b = tris[index * 4u + 1u].xyz;
+    vec3 c = tris[index * 4u + 2u].xyz;
+    vec3 albedo = clamp(tris[index * 4u + 3u].xyz, vec3(0.0), vec3(1.0));
+    vec3 lo = min(a, min(b, c));
+    vec3 hi = max(a, max(b, c));
+    // A region update skips every triangle that cannot touch the box, before any per-voxel work.
+    if (mode == 3u && (any(greaterThan(lo, u.uRegionHi.xyz)) || any(lessThan(hi, u.uRegionLo.xyz)))) return;
+
+    for (int level = 0; level < 4; ++level) {
+        if ((u.uParams.y & (1u << uint(level))) == 0u) continue;
+        vec3 origin = u.uClip[level].xyz;
+        float cell = u.uClip[level].w;
+        // The box is grown by 2% of a cell so a triangle lying exactly on a face marks the voxels on both sides.
+        vec3 half_ = vec3(cell * 0.51);
+        ivec3 g0 = ivec3(floor((lo - origin) / cell - 0.02));
+        ivec3 g1 = ivec3(floor((hi - origin) / cell + 0.02));
+        g0 = max(g0, ivec3(0));
+        g1 = min(g1, ivec3(cells - 1));
+        if (mode == 3u) {
+            ivec3 rlo, rhi;
+            regionRange(level, rlo, rhi);
+            g0 = max(g0, rlo);
+            g1 = min(g1, rhi);
+        }
+        if (g1.x < g0.x || g1.y < g0.y || g1.z < g0.z) continue;
+        for (int z = g0.z; z <= g1.z; ++z) {
+            for (int y = g0.y; y <= g1.y; ++y) {
+                for (int x = g0.x; x <= g1.x; ++x) {
+                    vec3 centre = origin + (vec3(x, y, z) + 0.5) * cell;
+                    if (triangleTouchesBox(centre, half_, a, b, c)) {
+                        imageStore(uVoxel, atlasTexel(level, ivec3(x, y, z)), vec4(albedo, 1.0));
+                    }
+                }
+            }
+        }
+    }
+}

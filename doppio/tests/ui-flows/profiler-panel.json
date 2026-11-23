@@ -1,0 +1,24 @@
+{
+  "name": "Profiler: the tab lists the engine's timed scopes and its two controls work",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.profiler", "label": "open the Profiler tab" },
+    { "action": "expect", "exists": "id:editor.pane.profiler" },
+    { "action": "expect", "exists": "id:profiler.setup.gpu_timing" },
+    { "action": "expect", "exists": "id:profiler.setup.reset" },
+    { "action": "expect", "exists": "id:profiler.summary.frame" },
+    { "action": "wait", "ms": 900, "real_time": true, "label": "let the viewport render and the tab read the scopes" },
+    { "action": "expect", "exists": "id:profiler.chart.fps", "label": "the frame rate chart" },
+    { "action": "expect", "exists": "id:profiler.chart.cpu_cores", "label": "the CPU chart, a line per core" },
+    { "action": "expect", "exists": "id:profiler.chart.gpu" },
+    { "action": "expect", "exists": "id:profiler.chart.memory" },
+    { "action": "expect", "exists": "id:profiler.table.scopes" },
+    { "action": "expect", "exists": "id:profiler.table.row.0", "label": "the renderer's scopes are listed" },
+    { "action": "click", "target": "id:profiler.setup.gpu_timing", "offset": [-115, 0], "label": "GPU timing on (the box is at the row's left end)" },
+    { "action": "click", "target": "id:profiler.setup.gpu_timing", "offset": [-115, 0], "label": "GPU timing off again" },
+    { "action": "click", "target": "id:profiler.setup.reset", "label": "reset the samples" },
+    { "action": "screenshot", "name": "profiler-tab" }
+  ]
+}

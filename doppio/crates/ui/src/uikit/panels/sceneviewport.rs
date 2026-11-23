@@ -1,4 +1,6 @@
-use crate::uikit::components::{gizmo, scene_markers, viewport_shader, viewport_surface};
+use crate::uikit::components::{
+    brush_cursor, gizmo, scene_markers, viewport_shader, viewport_surface,
+};
 use crate::uikit::id;
 use iced::mouse;
 use iced::widget::container;
@@ -17,6 +19,8 @@ pub struct ViewportState<'a> {
     pub markers: &'a [scene_markers::Marker],
     pub show_markers: bool,
     pub selected_entity: Option<u32>,
+    /// The terrain brush under the mouse, when a brush tool is on and the mouse is over a terrain.
+    pub brush_cursor: Option<&'a brush_cursor::BrushCursor>,
 }
 
 pub struct ViewportCallbacks<'a, Message> {
@@ -45,9 +49,18 @@ pub fn view<'a, Message: Clone + 'a>(
         target: state.target,
     })
     .map(callbacks.surface_gizmo);
-    // Markers sit under the gizmo: its handles win a click, then a marker icon, then the scene.
-    let overlay: Element<'a, Message> = if state.show_markers && !state.markers.is_empty() {
-        iced::widget::stack![
+    // The brush ring lies on the ground, under everything; markers sit under the gizmo: its handles win a click,
+    // then a marker icon, then the scene.
+    let mut layers: Vec<Element<'a, Message>> = Vec::new();
+    if let Some(cursor) = state.brush_cursor {
+        layers.push(brush_cursor::view(brush_cursor::View {
+            camera: state.camera,
+            viewport: state.size,
+            cursor,
+        }));
+    }
+    if state.show_markers && !state.markers.is_empty() {
+        layers.push(
             scene_markers::view(scene_markers::View {
                 camera: state.camera,
                 viewport: state.size,
@@ -55,11 +68,13 @@ pub fn view<'a, Message: Clone + 'a>(
                 selected: state.selected_entity,
             })
             .map(callbacks.surface_marker),
-            gizmo,
-        ]
-        .into()
-    } else {
+        );
+    }
+    let overlay: Element<'a, Message> = if layers.is_empty() {
         gizmo
+    } else {
+        layers.push(gizmo);
+        iced::widget::Stack::with_children(layers).into()
     };
 
     let surface = viewport_surface::view(viewport_surface::Surface {

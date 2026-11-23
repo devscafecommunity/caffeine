@@ -2,7 +2,7 @@
 # Launch the Rust Doppio with the iced-mcp bridge enabled.
 #
 # Requires `cargo install iced-mcp-server` once, and an MCP client configured
-# with the `iced` server (see .cursor/mcp.json or doppio/docs/rust-ui.md).
+# with the `iced` server (see .cursor/mcp.json or caffeine-website/content/en/docs/doppio/rust-ui.md).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

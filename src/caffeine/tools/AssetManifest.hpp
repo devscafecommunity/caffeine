@@ -176,6 +176,7 @@ private:
             case AssetType::Shader:    return "Shader";
             case AssetType::Animation: return "Animation";
             case AssetType::Font:      return "Font";
+            case AssetType::Terrain:   return "Terrain";
             default:                   return "Unknown";
         }
     }
@@ -189,6 +190,7 @@ private:
         if (std::strcmp(name, "Shader") == 0)    return AssetType::Shader;
         if (std::strcmp(name, "Animation") == 0) return AssetType::Animation;
         if (std::strcmp(name, "Font") == 0)      return AssetType::Font;
+        if (std::strcmp(name, "Terrain") == 0)   return AssetType::Terrain;
         return AssetType::Unknown;
     }
 };

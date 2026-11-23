@@ -1,0 +1,20 @@
+{
+  "name": "Generators: placement options, scatter bridges and a notice that says what happened",
+  "description": "The Nature tab shows its Placement card (merge parts, Micromesh, add to scatter plan) next to the preview, not at the bottom of the palette. The Terrain tab has a Scatter card; with nothing placed, pressing Scatter says so in the top bar instead of failing silently.",
+  "fixture": "nature",
+  "size": [1600, 900],
+  "preset": "Oak",
+  "steps": [
+    { "action": "expect", "exists": "id:naturegen.merge_parts" },
+    { "action": "expect", "exists": "id:naturegen.micromesh" },
+    { "action": "expect", "exists": "id:naturegen.scatter" },
+    { "action": "click", "target": "id:naturegen.merge_parts", "label": "turn Merge parts off" },
+    { "action": "click", "target": "id:naturegen.merge_parts", "label": "and on again" },
+    { "action": "expect", "exists": "id:naturegen.place" },
+    { "action": "reset", "fixture": "terrain", "preset": "Alpine Range", "size": [1600, 900] },
+    { "action": "expect", "exists": "id:terraingen.scatter" },
+    { "action": "expect", "exists": "id:terraingen.scatter_plan" },
+    { "action": "click", "target": "id:terraingen.scatter", "label": "Scatter with nothing placed" },
+    { "action": "expect", "exists": { "text": "place a terrain first" } }
+  ]
+}

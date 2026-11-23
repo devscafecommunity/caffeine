@@ -22,6 +22,8 @@ public:
     static std::vector<std::string> buildCandidatePaths(const std::string& path,
                                                         const std::string& projectRoot);
     static std::string normalizeTexturePath(const std::string& path);
+    /// The folder of the engine's own assets (built-in textures, skyboxes), or empty when none is found.
+    static std::string engineAssetsRoot();
     static std::string resolveTexturePath(const std::string& path,
                                           const std::string& projectRoot = "");
 

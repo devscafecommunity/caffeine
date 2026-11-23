@@ -82,7 +82,7 @@ impl WaterGen {
         state
     }
 
-    fn load(&mut self, graph: WaterGraph) {
+    pub(super) fn load(&mut self, graph: WaterGraph) {
         self.undo = vec![(graph.clone(), None)];
         self.cursor = 0;
         self.graph = graph;
@@ -121,9 +121,9 @@ impl WaterGen {
         let min_y = nodes.iter().map(|n| n.position.y).fold(f32::MAX, f32::min);
         let max_x = nodes.iter().map(|n| n.position.x).fold(f32::MIN, f32::max) + 170.0;
         let max_y = nodes.iter().map(|n| n.position.y).fold(f32::MIN, f32::max) + 130.0;
-        let zoom = (620.0 / (max_x - min_x).max(1.0))
-            .min(380.0 / (max_y - min_y).max(1.0))
-            .clamp(0.3, 1.0);
+        let zoom = (780.0 / (max_x - min_x).max(1.0))
+            .min(470.0 / (max_y - min_y).max(1.0))
+            .clamp(0.3, 1.4);
         self.zoom = zoom;
         self.pan = Vector::new(24.0 - min_x * zoom, 24.0 - min_y * zoom);
     }
@@ -207,7 +207,7 @@ fn write_water_material(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let slug = crate::uikit::nature::slug(name);
     let file = dir.join(format!("{slug}.mat"));
-    let relative = format!("water/{slug}.mat");
+    let relative = format!("Water/{slug}.mat");
     let rooted = engine
         .asset_path("")
         .map(|root| !root.is_empty())
@@ -257,6 +257,7 @@ impl App {
     /// this writes its `.mat` into the project (once; an existing file is never overwritten) and
     /// turns the node into **Your Water Material** pointing at it.
     pub(super) fn materialize_water_assets(&mut self) -> Result<(), String> {
+        self.ensure_workspace();
         let Some(dir) = self.water_dir() else {
             return Ok(());
         };
@@ -354,7 +355,7 @@ impl App {
     }
 
     fn water_dir(&self) -> Option<PathBuf> {
-        self.asset_root_dir().map(|root| root.join("water"))
+        self.asset_root_dir().map(|root| root.join("Water"))
     }
 
     pub(super) fn edit_water(&mut self, edit: Edit) {
@@ -455,7 +456,28 @@ impl App {
                 self.watergen.push(Some(format!("param:{id}:{index}")));
                 self.watergen.refresh();
             }
+            Edit::PickAsset(id, index) => {
+                let current = self
+                    .watergen
+                    .graph
+                    .node(id)
+                    .and_then(|node| node.strings.get(index).cloned())
+                    .unwrap_or_default();
+                self.open_asset_pick(
+                    super::assetpick::PickTarget::WaterString { node: id, index },
+                    vec![crate::uikit::asset_kind::AssetKind::Material],
+                    "Water look material".to_owned(),
+                    current,
+                );
+            }
             Edit::SetString(id, index, text) => {
+                let Some(text) = self.reference_text(
+                    text,
+                    &[crate::uikit::asset_kind::AssetKind::Material],
+                    "Water look material",
+                ) else {
+                    return;
+                };
                 self.watergen.graph.set_string(id, index, text);
                 self.watergen.push(Some(format!("string:{id}:{index}")));
                 self.watergen.refresh();
@@ -508,22 +530,29 @@ impl App {
         }
     }
 
-    fn export_water(&mut self) {
-        let Some(dir) = self.water_dir() else {
-            self.watergen.status = Some(
-                "Open a project first: water graphs are written to its assets folder".to_owned(),
-            );
-            return;
-        };
+    /// Writes `<slug>.generator.water` beside the water material, so the graph can be reopened later.
+    fn save_water_recipe(&mut self) -> Result<std::path::PathBuf, String> {
+        self.ensure_workspace();
+        let dir = self
+            .water_dir()
+            .ok_or("Open a project first: water graphs are written to its assets folder")?;
         let slug = crate::uikit::nature::slug(&self.watergen.name);
-        let result = std::fs::create_dir_all(&dir).and_then(|_| {
-            std::fs::write(
-                dir.join(format!("{slug}.water")),
-                water::to_text(&self.watergen.name, &self.watergen.graph),
-            )
-        });
-        self.watergen.status = Some(match result {
-            Ok(()) => format!("Saved water/{slug}.water"),
+        let name = self.watergen.name.clone();
+        let graph = water::to_text(&name, &self.watergen.graph);
+        self.write_recipe(
+            &dir,
+            crate::uikit::recipe::Kind::Water,
+            &slug,
+            &name,
+            &format!("{slug}.mat"),
+            graph,
+        )
+    }
+
+    fn export_water(&mut self) {
+        let slug = crate::uikit::nature::slug(&self.watergen.name);
+        self.watergen.status = Some(match self.save_water_recipe() {
+            Ok(_) => format!("Saved Water/{slug}.generator.water"),
             Err(error) => format!("Could not save: {error}"),
         });
     }
@@ -534,14 +563,23 @@ impl App {
             self.watergen.status = Some(error);
             return;
         }
+        // The recipe goes first: whatever happens to the scene below, the graph is never lost.
+        let saved = match self.save_water_recipe() {
+            Ok(_) => format!(
+                "; recipe saved as {}.generator.water",
+                crate::uikit::nature::slug(&self.watergen.name)
+            ),
+            Err(error) => format!("; the recipe was not saved ({error})"),
+        };
         self.watergen.refresh();
         let Some(water) = self.watergen.water.clone() else {
-            self.watergen.status = Some("Graph: nothing to place".to_owned());
+            self.watergen.status = Some(format!("Graph: nothing to place{saved}"));
             return;
         };
         let material_path = self.watergen.graph.look_asset();
         let name = self.watergen.name.clone();
         let focus = self.camera.focus;
+        self.ensure_workspace();
         let water_dir = self.water_dir();
         let Some(engine) = self.engine.as_mut() else {
             self.watergen.status = Some("The engine is not available".to_owned());
@@ -583,7 +621,10 @@ impl App {
         }
         self.has_water = true;
         self.watergen.dirty = false;
-        self.watergen.status = Some(format!("Placed {name} ({} waves)", water.waves.len()));
+        self.watergen.status = Some(format!(
+            "Placed {name} ({} waves){saved}",
+            water.waves.len()
+        ));
         self.refresh_components();
         self.commit("Place water", None);
         self.log(LogLevel::Action, format!("Placed water {name}"));

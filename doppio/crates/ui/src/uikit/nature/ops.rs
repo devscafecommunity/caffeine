@@ -291,6 +291,7 @@ pub fn atlas_of(spec: &MaterialSpec) -> (u32, u32) {
     match spec {
         MaterialSpec::Cards(name) if name.starts_with("Atlas") => (4, 2),
         MaterialSpec::Project(_, atlas) | MaterialSpec::ProjectTexture(_, atlas) => *atlas,
+        MaterialSpec::Edited(inner, _) => atlas_of(inner),
         _ => (1, 1),
     }
 }
@@ -341,6 +342,7 @@ fn preview_colour(spec: &MaterialSpec, fallback: [f32; 3]) -> [f32; 3] {
             .find(|m| matches!(m.1, Source::Library(n) | Source::Cards(n) if n == *name))
             .map(|m| m.2)
             .unwrap_or(fallback),
+        MaterialSpec::Edited(inner, edit) => edit.grade(preview_colour(inner, fallback)),
         _ => fallback,
     }
 }
@@ -709,6 +711,8 @@ const GROW_P: &[crate::uikit::procedural::ParamSpec] = &[
     float("start", "Branches start at", 0.0, 0.9, 0.35, 0.01),
     int("max_segments", "Segment budget", 100, 6000, 1800),
     int("seed", "Seed", 0, 9999, 1),
+    int("scaffold", "Extra main limbs", 0, 8, 0),
+    float("lift", "Limbs sweep up", 0.0, 1.0, 0.0, 0.01),
 ];
 
 fn eval_grow(a: &Args) -> Vec<Value> {
@@ -736,6 +740,8 @@ fn eval_grow(a: &Args) -> Vec<Value> {
             budget
         },
         seed: a.u(13).wrapping_add(a.salt),
+        scaffold: a.u(14).min(8),
+        lift: a.f(15),
     };
     vec![Value::Skeleton(tree::grow(&params))]
 }
@@ -792,7 +798,14 @@ fn eval_roots(a: &Args) -> Vec<Value> {
 
 const TUBES_P: &[crate::uikit::procedural::ParamSpec] = &[
     int("sides", "Sides", 3, 12, 8),
-    float("bark_scale", "Bark repeats / m", 0.1, 3.0, 0.6, 0.05),
+    float(
+        "bark_scale",
+        "Bark repeats round (per m of girth)",
+        0.1,
+        3.0,
+        0.6,
+        0.05,
+    ),
     int("min_level", "From level", 0, 4, 0),
     int("max_level", "To level", 0, 4, 4),
 ];
@@ -822,7 +835,7 @@ const LEAVES_P: &[crate::uikit::procedural::ParamSpec] = &[
     float("density", "Leaves per metre", 0.0, 30.0, 12.0, 0.5),
     float("size", "Leaf size (% of tree height)", 0.5, 40.0, 7.0, 0.1),
     float("inner", "Inner limbs", 0.0, 1.0, 0.45, 0.01),
-    int("budget", "Triangle budget", 200, 30000, 9000),
+    int("budget", "Triangle budget", 200, 60000, 9000),
     int("seed", "Seed", 0, 9999, 1),
     float("fold", "Fold along the midrib", 0.0, 1.0, 0.35, 0.01),
     float("droop", "Droop", 0.0, 1.0, 0.3, 0.01),
@@ -847,8 +860,8 @@ fn eval_leaves(a: &Args) -> Vec<Value> {
     }
     let rows = match a.quality {
         super::Quality::Stylized => 1,
-        super::Quality::Balanced => 2,
-        super::Quality::Detailed => 4,
+        super::Quality::Balanced => 3,
+        super::Quality::Detailed => 5,
     };
     // The texture wired into the node tells it how many leaf shapes its atlas holds.
     let atlas = a.material(1).map_or((1, 1), atlas_of);
@@ -1253,6 +1266,73 @@ fn eval_mat_texture(a: &Args) -> Vec<Value> {
         ))],
         None => Vec::new(),
     }
+}
+
+/// True for a project material the Nature tool baked from the library (`Materials/Nature/…`): applying a
+/// preset turns its library nodes into **Your Material** nodes pointing at these files, and they stay
+/// library assets for the Edit Library Material node.
+pub fn is_library_baked(path: &str) -> bool {
+    path.replace('\\', "/")
+        .to_lowercase()
+        .contains("materials/nature/")
+}
+
+const MAT_IN: &[PortDef] = &[port("Material", Kind::Material)];
+const EDIT_P: &[crate::uikit::procedural::ParamSpec] = &[
+    float("hue", "Hue shift (°)", -180.0, 180.0, 0.0, 1.0),
+    float("saturation", "Saturation", 0.0, 2.0, 1.0, 0.01),
+    float("brightness", "Brightness", 0.2, 3.0, 1.0, 0.01),
+    float("contrast", "Contrast", 0.5, 1.6, 1.0, 0.01),
+    float("r", "Tint R", 0.0, 1.0, 1.0, 0.01),
+    float("g", "Tint G", 0.0, 1.0, 1.0, 0.01),
+    float("b", "Tint B", 0.0, 1.0, 1.0, 0.01),
+    float("roughness", "Roughness ×", 0.0, 2.0, 1.0, 0.01),
+    float("normal", "Normal strength ×", 0.0, 3.0, 1.0, 0.01),
+    float("depth", "Extra depth (parallax)", 0.0, 0.08, 0.0, 0.001),
+    float("tiling", "Texture repeats ×", 0.25, 4.0, 1.0, 0.05),
+    float("cutoff", "Cut-out threshold shift", -0.3, 0.3, 0.0, 0.01),
+    float("translucency", "Translucency +", 0.0, 1.0, 0.0, 0.01),
+    float("sway", "Wind sway +", 0.0, 0.1, 0.0, 0.001),
+    float("flutter", "Leaf flutter +", 0.0, 1.0, 0.0, 0.01),
+];
+
+/// An **Edit Library Material** node: takes the material of a library node (or of another edit
+/// node) and passes it on with changes on top: a colour grade, surface settings, texture repeats.
+/// It only accepts a library material (`NatureGraph::connect` refuses anything else), so what it
+/// edits is always a real library asset.
+fn eval_mat_edit(a: &Args) -> Vec<Value> {
+    let Some(base) = a.material(0) else {
+        return Vec::new();
+    };
+    let library = match base {
+        MaterialSpec::Preset(_)
+        | MaterialSpec::Cards(_)
+        | MaterialSpec::Solid { .. }
+        | MaterialSpec::Edited(..) => true,
+        MaterialSpec::Project(path, _) => is_library_baked(path),
+        _ => false,
+    };
+    if !library {
+        return Vec::new();
+    }
+    vec![Value::Material(MaterialSpec::Edited(
+        Box::new(base.clone()),
+        MaterialEdit {
+            hue: a.f(0),
+            saturation: a.f(1),
+            brightness: a.f(2),
+            contrast: a.f(3),
+            tint: [a.f(4), a.f(5), a.f(6)],
+            roughness: a.f(7),
+            normal: a.f(8),
+            depth: a.f(9),
+            tiling: a.f(10),
+            cutoff: a.f(11),
+            translucency: a.f(12),
+            sway: a.f(13),
+            flutter: a.f(14),
+        },
+    ))]
 }
 
 const MATERIAL_STRINGS: &[StringSpec] = &[StringSpec {
@@ -1676,6 +1756,15 @@ pub static NODES: &[NodeDef] = &[
         MAT_OUT,
         SOLID_P,
         eval_mat_solid
+    ),
+    node!(
+        "mat_edit",
+        "Edit Library Material",
+        "Materials",
+        MAT_IN,
+        MAT_OUT,
+        EDIT_P,
+        eval_mat_edit
     ),
     NodeDef {
         id: "mat_project",

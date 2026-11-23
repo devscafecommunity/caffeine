@@ -1,0 +1,216 @@
+{
+  "namespace": "input",
+  "group": "Input",
+  "lua": "caffeine.input",
+  "dryad_prefix": "caffeine_input_",
+  "title": {
+    "en": "Input",
+    "pt": "Entrada"
+  },
+  "summary": {
+    "en": "Keyboard, mapped axes and actions, and the mouse. Dryad mirrors them with caffeine_input_* natives.",
+    "pt": "Teclado, eixos e ações mapeados e o rato. O Dryad espelha-os com as natives caffeine_input_*."
+  },
+  "functions": [
+    {
+      "name": "isKeyDown",
+      "lua": "caffeine.input.isKeyDown",
+      "dryad": "caffeine_input_key_down",
+      "signature": "isKeyDown(name) -> boolean",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Key name such as \"Space\", \"W\", \"Up\", \"LShift\", \"Escape\", \"0\"-\"9\".",
+          "pt": "Nome da tecla, como \"Space\", \"W\", \"Up\", \"LShift\", \"Escape\", \"0\"-\"9\"."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True while the key is held; false for an unknown name or without input.",
+        "pt": "Verdadeiro enquanto a tecla está premida; falso para um nome desconhecido ou sem entrada."
+      },
+      "en": "Checks whether a keyboard key is held.",
+      "pt": "Verifica se uma tecla do teclado está premida.",
+      "example": "if caffeine.input.isKeyDown('Space') then end"
+    },
+    {
+      "name": "getAxis",
+      "lua": "caffeine.input.getAxis",
+      "dryad": "caffeine_input_axis",
+      "signature": "getAxis(name) -> number",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Axis: Horizontal, Vertical, LookX, LookY.",
+          "pt": "Eixo: Horizontal, Vertical, LookX, LookY."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Axis value; 0 for an unknown name or without input.",
+        "pt": "Valor do eixo; 0 para um nome desconhecido ou sem entrada."
+      },
+      "en": "Reads a mapped input axis.",
+      "pt": "Lê um eixo de entrada mapeado.",
+      "example": "local h = caffeine.input.getAxis('Horizontal')"
+    },
+    {
+      "name": "isActionDown",
+      "lua": "caffeine.input.isActionDown",
+      "dryad": "caffeine_input_action_down",
+      "signature": "isActionDown(name) -> boolean",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Action: MoveUp, MoveDown, MoveLeft, MoveRight, Jump, Attack, Interact, Pause.",
+          "pt": "Ação: MoveUp, MoveDown, MoveLeft, MoveRight, Jump, Attack, Interact, Pause."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True while the action is held.",
+        "pt": "Verdadeiro enquanto a ação está ativa."
+      },
+      "en": "Checks whether a mapped action is held.",
+      "pt": "Verifica se uma ação mapeada está ativa.",
+      "example": "if caffeine.input.isActionDown('Jump') then end"
+    },
+    {
+      "name": "isActionPressed",
+      "lua": "caffeine.input.isActionPressed",
+      "dryad": "caffeine_input_action_pressed",
+      "signature": "isActionPressed(name) -> boolean",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Action: MoveUp, MoveDown, MoveLeft, MoveRight, Jump, Attack, Interact, Pause.",
+          "pt": "Ação: MoveUp, MoveDown, MoveLeft, MoveRight, Jump, Attack, Interact, Pause."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True only on the frame the action started.",
+        "pt": "Verdadeiro apenas no frame em que a ação começou."
+      },
+      "en": "Checks whether a mapped action was just pressed this frame.",
+      "pt": "Verifica se uma ação mapeada acabou de ser premida neste frame.",
+      "example": "if caffeine.input.isActionPressed('Attack') then end"
+    },
+    {
+      "name": "mouseDelta",
+      "lua": "caffeine.input.mouseDelta",
+      "dryad": null,
+      "signature": "mouseDelta() -> number, number",
+      "params": [],
+      "returns": {
+        "type": "number, number",
+        "en": "dx, dy (two return values).",
+        "pt": "dx, dy (dois valores de retorno)."
+      },
+      "en": "Mouse movement since the previous frame. Returns two values, not a table.",
+      "pt": "Movimento do rato desde o frame anterior. Devolve dois valores, não uma tabela.",
+      "example": "local dx, dy = caffeine.input.mouseDelta()"
+    },
+    {
+      "name": "mousePosition",
+      "lua": "caffeine.input.mousePosition",
+      "dryad": null,
+      "signature": "mousePosition() -> number, number",
+      "params": [],
+      "returns": {
+        "type": "number, number",
+        "en": "x, y (two return values).",
+        "pt": "x, y (dois valores de retorno)."
+      },
+      "en": "Mouse position as reported by the input manager. Returns two values, not a table.",
+      "pt": "Posição do rato conforme indicada pelo gestor de entrada. Devolve dois valores, não uma tabela.",
+      "example": "local mx, my = caffeine.input.mousePosition()"
+    },
+    {
+      "name": "isMouseButtonDown",
+      "lua": "caffeine.input.isMouseButtonDown",
+      "dryad": "caffeine_input_mouse_down",
+      "signature": "isMouseButtonDown(button) -> boolean",
+      "params": [
+        {
+          "name": "button",
+          "type": "integer",
+          "en": "1 left, 2 middle, 3 right.",
+          "pt": "1 esquerdo, 2 do meio, 3 direito."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True while held; false for any other number.",
+        "pt": "Verdadeiro enquanto premido; falso para qualquer outro número."
+      },
+      "en": "Checks whether a mouse button is held.",
+      "pt": "Verifica se um botão do rato está premido.",
+      "example": "if caffeine.input.isMouseButtonDown(1) then end"
+    },
+    {
+      "name": "caffeine_input_mouse_x",
+      "lua": null,
+      "dryad": "caffeine_input_mouse_x",
+      "signature": "caffeine_input_mouse_x() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Mouse x position; 0 without input.",
+        "pt": "Rato: posição x; 0 sem entrada."
+      },
+      "en": "Dryad only: mouse x position.",
+      "pt": "Apenas Dryad: rato, posição x.",
+      "example": "let v = caffeine_input_mouse_x();"
+    },
+    {
+      "name": "caffeine_input_mouse_y",
+      "lua": null,
+      "dryad": "caffeine_input_mouse_y",
+      "signature": "caffeine_input_mouse_y() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Mouse y position; 0 without input.",
+        "pt": "Rato: posição y; 0 sem entrada."
+      },
+      "en": "Dryad only: mouse y position.",
+      "pt": "Apenas Dryad: rato, posição y.",
+      "example": "let v = caffeine_input_mouse_y();"
+    },
+    {
+      "name": "caffeine_input_mouse_dx",
+      "lua": null,
+      "dryad": "caffeine_input_mouse_dx",
+      "signature": "caffeine_input_mouse_dx() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Mouse x movement since the previous frame; 0 without input.",
+        "pt": "Rato: movimento x desde o frame anterior; 0 sem entrada."
+      },
+      "en": "Dryad only: mouse x movement since the previous frame.",
+      "pt": "Apenas Dryad: rato, movimento x desde o frame anterior.",
+      "example": "let v = caffeine_input_mouse_dx();"
+    },
+    {
+      "name": "caffeine_input_mouse_dy",
+      "lua": null,
+      "dryad": "caffeine_input_mouse_dy",
+      "signature": "caffeine_input_mouse_dy() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "Mouse y movement since the previous frame; 0 without input.",
+        "pt": "Rato: movimento y desde o frame anterior; 0 sem entrada."
+      },
+      "en": "Dryad only: mouse y movement since the previous frame.",
+      "pt": "Apenas Dryad: rato, movimento y desde o frame anterior.",
+      "example": "let v = caffeine_input_mouse_dy();"
+    }
+  ]
+}

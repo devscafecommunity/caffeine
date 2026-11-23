@@ -54,6 +54,10 @@ void Profiler::endScope(const char* name) {
 
     node.callCount++;
     node.totalMs += elapsedMs;
+    node.lastMs = elapsedMs;
+    node.recent[node.recentHead] = static_cast<f32>(elapsedMs);
+    node.recentHead = (node.recentHead + 1) % kRecentWindow;
+    if (node.recentCount < kRecentWindow) ++node.recentCount;
     node.selfMs += selfMs;
     if (elapsedMs < node.minMs) node.minMs = elapsedMs;
     if (elapsedMs > node.maxMs) node.maxMs = elapsedMs;
@@ -79,6 +83,17 @@ void Profiler::report(Vector<ScopeStats>& out) const {
         stats.nextSiblingIndex = node.nextSibling;
         stats.callCount = node.callCount;
         stats.totalMs = node.totalMs;
+        stats.lastMs = node.lastMs;
+        if (node.recentCount > 0) {
+            f64 sum = 0.0;
+            f32 worst = 0.0f;
+            for (u32 r = 0; r < node.recentCount; ++r) {
+                sum += node.recent[r];
+                worst = std::max(worst, node.recent[r]);
+            }
+            stats.recentAvgMs = sum / static_cast<f64>(node.recentCount);
+            stats.recentMaxMs = worst;
+        }
         stats.selfMs = node.selfMs;
         stats.avgMs = (node.callCount > 0) ? node.totalMs / static_cast<f64>(node.callCount) : 0.0;
         stats.avgSelfMs =

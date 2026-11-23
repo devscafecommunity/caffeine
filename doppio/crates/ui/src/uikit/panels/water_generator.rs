@@ -8,9 +8,10 @@
 //! The preview is a top-down render of the same waves the engine animates; **Place in scene** makes
 //! the real water entity.
 
+use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::components::{
-    button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status, text_field,
-    tree_view,
+    asset_field, button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status,
+    text_field, tree_view,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
@@ -46,6 +47,8 @@ pub enum Edit {
     SetParam(NodeId, usize, f32),
     /// Node, string index, text (an asset path).
     SetString(NodeId, usize, String),
+    /// The **…** of a string slot: open the shared asset picker for it.
+    PickAsset(NodeId, usize),
     Undo,
     Redo,
     Fit,
@@ -183,7 +186,7 @@ pub fn view<'a, Message: Clone + 'a>(
         id::WATERGEN_PRESET,
         "Preset",
         view.presets.to_vec(),
-        None,
+        dropdown::current_option(view.presets, view.name),
         move |choice| {
             preset_emit(Edit::ApplyPreset(
                 preset_lookup.iter().position(|p| *p == choice).unwrap_or(0),
@@ -195,7 +198,7 @@ pub fn view<'a, Message: Clone + 'a>(
             title,
             iced::widget::space::horizontal(),
             container(preset).width(Length::Fixed(240.0)),
-            checkbox::property(id::WATERGEN_PLAY, "Animate", view.playing, {
+            checkbox::inline(id::WATERGEN_PLAY, "Animate", view.playing, {
                 let emit = emit.clone();
                 move |on| emit(Edit::TogglePlay(on))
             }),
@@ -381,11 +384,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(theme::surface),
     );
     if let Some(note) = view.status {
-        right = right.push(
-            container(text(note).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(note));
     }
 
     let body = row![
@@ -496,20 +495,20 @@ fn properties<'a, Message: Clone + 'a>(
     }
     if node.op == "look_asset" {
         let current = node.strings.first().cloned().unwrap_or_default();
-        let pick_emit = emit.clone();
-        body = body.push(dropdown::property(
-            id::watergen_param("asset"),
-            "Your .mat",
-            view.project_materials.clone(),
-            Some(current.clone()).filter(|c| !c.is_empty()),
-            move |choice| pick_emit(Edit::SetString(node_id, 0, choice)),
-        ));
-        let text_emit = emit.clone();
-        body = body.push(text_field::property(
-            id::watergen_param("asset_path"),
-            "Path",
-            &current,
+        let (text_emit, pick_emit, clear_emit) = (emit.clone(), emit.clone(), emit.clone());
+        body = body.push(asset_field::view(
+            asset_field::AssetField {
+                label: "Material",
+                value: &current,
+                kinds: &[AssetKind::Material],
+                thumbnail: None,
+                text_id: id::watergen_param("asset_path").into(),
+                pick_id: id::watergen_param("asset_pick").into(),
+                clear_id: id::watergen_param("asset_clear").into(),
+            },
             move |value| text_emit(Edit::SetString(node_id, 0, value)),
+            pick_emit(Edit::PickAsset(node_id, 0)),
+            clear_emit(Edit::SetString(node_id, 0, String::new())),
         ));
     }
     container(body)

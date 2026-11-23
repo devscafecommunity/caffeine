@@ -32,10 +32,17 @@ impl fmt::Debug for Frame {
     }
 }
 
-/// Render a finished engine frame with a persistent texture.
+/// Render a finished engine frame with a persistent texture (the editor viewport's own slot).
 pub fn view<'a, Message: 'a>(frame: &Frame) -> iced::Element<'a, Message> {
+    view_slot(frame, 0)
+}
+
+/// Render a frame in texture slot `slot`. Every picture on screen at once (the editor viewport, the Gameplay
+/// tab, the Camera tab) needs a slot of its own: they would otherwise write into, and draw from, one texture.
+pub fn view_slot<'a, Message: 'a>(frame: &Frame, slot: u64) -> iced::Element<'a, Message> {
     Shader::new(ViewportProgram {
         frame: frame.clone(),
+        slot,
     })
     .width(iced::Length::Fill)
     .height(iced::Length::Fill)
@@ -44,6 +51,7 @@ pub fn view<'a, Message: 'a>(frame: &Frame) -> iced::Element<'a, Message> {
 
 struct ViewportProgram {
     frame: Frame,
+    slot: u64,
 }
 
 impl<Message> shader::Program<Message> for ViewportProgram {
@@ -58,12 +66,14 @@ impl<Message> shader::Program<Message> for ViewportProgram {
     ) -> Self::Primitive {
         ViewportPrimitive {
             frame: self.frame.clone(),
+            slot: self.slot,
         }
     }
 }
 
 struct ViewportPrimitive {
     frame: Frame,
+    slot: u64,
 }
 
 impl fmt::Debug for ViewportPrimitive {
@@ -71,6 +81,7 @@ impl fmt::Debug for ViewportPrimitive {
         formatter
             .debug_struct("ViewportPrimitive")
             .field("frame", &self.frame)
+            .field("slot", &self.slot)
             .finish()
     }
 }
@@ -86,11 +97,15 @@ impl Primitive for ViewportPrimitive {
         _bounds: &Rectangle,
         _viewport: &shader::Viewport,
     ) {
-        pipeline.upload(device, queue, &self.frame);
+        pipeline.upload(device, queue, self.slot, &self.frame);
     }
 
     fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
-        let Some(bind_group) = pipeline.bind_group.as_ref() else {
+        let Some(bind_group) = pipeline
+            .slots
+            .get(&self.slot)
+            .and_then(|slot| slot.bind_group.as_ref())
+        else {
             return false;
         };
         render_pass.set_pipeline(&pipeline.pipeline);
@@ -100,29 +115,41 @@ impl Primitive for ViewportPrimitive {
     }
 }
 
-struct ViewportPipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+/// One picture's texture: each viewport-like widget draws from its own.
+#[derive(Default)]
+struct Slot {
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
     width: u32,
     height: u32,
-    texture_format: wgpu::TextureFormat,
     uploaded_frame: Option<u64>,
 }
 
-impl ViewportPipeline {
-    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {
-        if self.width != frame.width || self.height != frame.height || self.texture.is_none() {
-            self.recreate(device, frame.width, frame.height);
-        }
+struct ViewportPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    slots: std::collections::HashMap<u64, Slot>,
+    texture_format: wgpu::TextureFormat,
+}
 
-        if self.uploaded_frame == Some(frame.id) {
+impl ViewportPipeline {
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slot_id: u64, frame: &Frame) {
+        let needs_texture = self.slots.get(&slot_id).is_none_or(|slot| {
+            slot.width != frame.width || slot.height != frame.height || slot.texture.is_none()
+        });
+        if needs_texture {
+            self.recreate(device, slot_id, frame.width, frame.height);
+        }
+        let Some(slot) = self.slots.get_mut(&slot_id) else {
+            return;
+        };
+
+        if slot.uploaded_frame == Some(frame.id) {
             return;
         }
 
-        let Some(texture) = self.texture.as_ref() else {
+        let Some(texture) = slot.texture.as_ref() else {
             return;
         };
         let expected = frame.width as usize * frame.height as usize * 4;
@@ -149,10 +176,10 @@ impl ViewportPipeline {
                 depth_or_array_layers: 1,
             },
         );
-        self.uploaded_frame = Some(frame.id);
+        slot.uploaded_frame = Some(frame.id);
     }
 
-    fn recreate(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    fn recreate(&mut self, device: &wgpu::Device, slot_id: u64, width: u32, height: u32) {
         let width = width.max(1);
         let height = height.max(1);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -184,11 +211,12 @@ impl ViewportPipeline {
                 },
             ],
         });
-        self.texture = Some(texture);
-        self.bind_group = Some(bind_group);
-        self.width = width;
-        self.height = height;
-        self.uploaded_frame = None;
+        let slot = self.slots.entry(slot_id).or_default();
+        slot.texture = Some(texture);
+        slot.bind_group = Some(bind_group);
+        slot.width = width;
+        slot.height = height;
+        slot.uploaded_frame = None;
     }
 
     fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -271,12 +299,8 @@ impl Pipeline for ViewportPipeline {
             pipeline,
             bind_group_layout,
             sampler,
-            texture: None,
-            bind_group: None,
-            width: 0,
-            height: 0,
+            slots: std::collections::HashMap::new(),
             texture_format,
-            uploaded_frame: None,
         }
     }
 }

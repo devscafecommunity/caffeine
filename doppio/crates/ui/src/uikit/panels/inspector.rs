@@ -53,6 +53,11 @@ pub enum Edit {
     },
     OpenMaterial(String),
     OpenMaterialPicker,
+    /// The **…** of an asset field: open the shared asset picker for it.
+    PickField {
+        component: usize,
+        field: usize,
+    },
     DropMaterialAsset,
     ClearMaterial,
     Delete,
@@ -64,6 +69,8 @@ pub struct Inspector<'a> {
     pub components: &'a [ComponentData],
     pub component_types: &'a [ComponentType],
     pub field_inputs: &'a HashMap<(usize, usize, usize), String>,
+    /// Thumbnails of project assets by relative path, for the asset fields.
+    pub thumbnails: &'a HashMap<String, iced::widget::image::Handle>,
     pub transform_inputs: &'a HashMap<(usize, usize), String>,
     pub collapsed_components: &'a HashSet<u32>,
     pub material: Option<&'a str>,
@@ -184,6 +191,7 @@ pub fn view<'a, Message: Clone + 'a>(
                 component,
                 meta,
                 inputs: inspector.field_inputs,
+                thumbnails: inspector.thumbnails,
                 collapsed: inspector
                     .collapsed_components
                     .contains(&component.info.type_id),
@@ -264,5 +272,6 @@ fn map_field<Message: Clone>(
             axis,
             value,
         }),
+        field_editor::FieldEdit::Pick => emit(Edit::PickField { component, field }),
     }
 }

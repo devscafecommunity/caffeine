@@ -76,7 +76,7 @@ impl TextureGen {
     }
 
     /// Replaces the graph (new document or library preset) and resets the view.
-    fn load_graph(&mut self, graph: MaterialGraph) {
+    pub(super) fn load_graph(&mut self, graph: MaterialGraph) {
         self.history = GraphHistory::new(graph.clone());
         self.selected = graph.texture_output_node();
         self.graph = graph;
@@ -283,23 +283,32 @@ impl App {
 
     fn save_texgen(&mut self) {
         let stem = file_stem(&self.texgen.name);
-        let path = self.texgen.path.clone().unwrap_or_else(|| {
-            self.texgen_dir()
-                .join(format!("{stem}.{}", texture_graph::EXTENSION))
-        });
-        match texture_graph::save(&self.texgen.graph, &path) {
-            Ok(()) => {
+        self.ensure_workspace();
+        let directory = self.texgen_dir();
+        let name = self.texgen.name.clone();
+        let graph = texture_graph::to_text(&self.texgen.graph);
+        // The recipe lives beside the PNG it exports, so the graph is never lost.
+        let result = self.write_recipe(
+            &directory,
+            crate::uikit::recipe::Kind::Texture,
+            &stem,
+            &name,
+            &format!("{stem}.png"),
+            graph,
+        );
+        match result {
+            Ok(path) => {
                 self.texgen.path = Some(path.clone());
                 self.texgen.dirty = false;
                 self.texgen.status = Some(format!("Saved {}", path.display()));
                 self.log(
                     LogLevel::Action,
-                    format!("Saved texture graph {}", path.display()),
+                    format!("Saved texture recipe {}", path.display()),
                 );
             }
             Err(error) => {
                 self.texgen.status = Some(format!("Could not save: {error}"));
-                self.log(LogLevel::Error, format!("Texture graph: {error}"));
+                self.log(LogLevel::Error, format!("Texture recipe: {error}"));
             }
         }
     }
@@ -310,6 +319,7 @@ impl App {
             return;
         }
         let stem = file_stem(&self.texgen.name);
+        self.ensure_workspace();
         let directory = self.texgen_dir();
         let depth = if self.texgen.bits == 16 {
             BitDepth::Sixteen
@@ -483,6 +493,18 @@ impl App {
             N::Fit => {
                 self.texgen.fit();
                 self.texgen.status = Some("Framed the graph".to_owned());
+            }
+            N::Reseed => {
+                let seed = self.next_reseed(Some(texture_graph::to_text(&self.texgen.graph)));
+                let count = self.texgen.graph.reseed(seed);
+                if count > 0 {
+                    changed = Some(("Reseed".to_owned(), None));
+                }
+                self.texgen.status = Some(match count {
+                    0 => "No node in this graph has a seed".to_owned(),
+                    1 => "Reseeded 1 node".to_owned(),
+                    n => format!("Reseeded {n} nodes"),
+                });
             }
             N::SetSnap(value) => self.texgen.snap = value,
             N::SetSearch(value) => self.texgen.search = value,

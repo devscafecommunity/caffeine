@@ -1,0 +1,95 @@
+#version 450
+
+// Micromeshes, GPU cull and cut selection. One invocation per cluster: it decides whether the cluster
+// belongs to this frame's cut (its own error is invisible at this distance but its parent's is not),
+// whether it is inside the frustum and whether it can face the camera, and writes one indexed-draw
+// argument set per cluster. A culled cluster gets indexCount 0, so the CPU always issues the same
+// `drawIndexedIndirect(args, 0, clusterCount)` and needs no read-back and no atomics.
+//
+// SDL_GPU compute layout: set 0 read-only storage, set 1 read-write storage, set 2 uniforms.
+// Keep the cluster layout in sync with render/MicromeshGpu.cpp and micromesh/Micromesh.cpp::selectCut.
+//
+// Instances: the invocation index is `instance * clusterCount + cluster`. Each instance has an affine
+// transform with a uniform scale; the cluster spheres, the errors and the cone are brought to world
+// space here, so every instance gets its own cut, its own frustum test and its own back-face test.
+// The draw argument's firstInstance is that same index, so the vertex shader finds both ids.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Five vec4 per cluster:
+//   0 bounds sphere (xyz, r)         1 own lod sphere (xyz, r)       2 parent lod sphere (xyz, r)
+//   3 cone (axis xyz, cutoff)        4 (error, parentError, firstIndex, indexCount) as bits
+layout(std430, set = 0, binding = 0) readonly buffer Clusters { vec4 clusters[]; };
+// Four vec4 per instance: the first three rows of the object-to-world matrix, then (scale, 0, 0, 0).
+layout(std430, set = 0, binding = 1) readonly buffer Instances { vec4 instances[]; };
+layout(std430, set = 1, binding = 0) buffer Args { uint args[]; };   // 5 uints per cluster and instance
+
+layout(set = 2, binding = 0) uniform CullUBO {
+    vec4 planes[6];  // inside is dot(n, p) + w >= 0
+    vec4 camera;     // xyz position, w error threshold
+    uvec4 params;    // x cluster count, y flags: 1 frustum, 2 cone, 4 view-dependent error, z instance count
+} u;
+
+const float kRootError = 3.0e38;
+
+float projected(float error, vec4 sphere) {
+    if (error >= kRootError) return error;
+    if ((u.params.y & 4u) == 0u) return error;
+    float dist = max(length(sphere.xyz - u.camera.xyz) - sphere.w, 1.0e-4);
+    return error / dist;
+}
+
+vec3 toWorld(vec3 p, vec4 r0, vec4 r1, vec4 r2) {
+    return vec3(dot(r0.xyz, p) + r0.w, dot(r1.xyz, p) + r1.w, dot(r2.xyz, p) + r2.w);
+}
+
+void main() {
+    uint g = gl_GlobalInvocationID.x;
+    if (g >= u.params.x * u.params.z) return;
+    uint i = g % u.params.x;
+    uint inst = g / u.params.x;
+
+    vec4 r0 = instances[inst * 4u + 0u];
+    vec4 r1 = instances[inst * 4u + 1u];
+    vec4 r2 = instances[inst * 4u + 2u];
+    float scale = instances[inst * 4u + 3u].x;
+
+    vec4 bounds = clusters[i * 5u + 0u];
+    vec4 lod = clusters[i * 5u + 1u];
+    vec4 parentLod = clusters[i * 5u + 2u];
+    vec4 cone = clusters[i * 5u + 3u];
+    vec4 meta = clusters[i * 5u + 4u];
+
+    bounds = vec4(toWorld(bounds.xyz, r0, r1, r2), bounds.w * scale);
+    lod = vec4(toWorld(lod.xyz, r0, r1, r2), lod.w * scale);
+    parentLod = vec4(toWorld(parentLod.xyz, r0, r1, r2), parentLod.w * scale);
+    // Rotation only (the rows carry the scale): divide it back out.
+    cone.xyz = vec3(dot(r0.xyz, cone.xyz), dot(r1.xyz, cone.xyz), dot(r2.xyz, cone.xyz)) / max(scale, 1.0e-12);
+    float error = meta.x >= kRootError ? meta.x : meta.x * scale;
+    float parentError = meta.y >= kRootError ? meta.y : meta.y * scale;
+
+    float threshold = u.camera.w;
+    bool selected = projected(error, lod) <= threshold && projected(parentError, parentLod) > threshold;
+
+    if (selected && (u.params.y & 1u) != 0u) {
+        for (int p = 0; p < 6; ++p) {
+            if (dot(u.planes[p].xyz, bounds.xyz) + u.planes[p].w < -bounds.w) {
+                selected = false;
+                break;
+            }
+        }
+    }
+    if (selected && (u.params.y & 2u) != 0u && cone.w > 0.0) {
+        vec3 toCamera = normalize(u.camera.xyz - bounds.xyz);
+        float sine = sqrt(max(0.0, 1.0 - cone.w * cone.w));
+        if (dot(toCamera, cone.xyz) < -sine) selected = false;
+    }
+
+    uint firstIndex = floatBitsToUint(meta.z);
+    uint indexCount = floatBitsToUint(meta.w);
+    args[g * 5u + 0u] = selected ? indexCount : 0u;  // indexCount
+    args[g * 5u + 1u] = 1u;                          // instanceCount
+    args[g * 5u + 2u] = firstIndex;                  // firstIndex
+    args[g * 5u + 3u] = 0u;                          // vertexOffset
+    args[g * 5u + 4u] = g;                           // firstInstance = instance * clusterCount + cluster (gl_InstanceIndex)
+}

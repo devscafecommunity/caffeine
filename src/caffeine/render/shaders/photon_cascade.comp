@@ -230,7 +230,7 @@ int traceInterval(vec3 O, vec3 omega, vec3 omegaWorld, float t0, float t1, int s
 // Spec §9.3: geometry-aware bilinear continuation from M̄_{k+1}.
 //   strideUp = s0·2^(k+1), tileUp = s_{k+1} = n_k, gridUp = G_{k+1}.
 vec4 upperLookup(vec2 probeAnchor, vec3 Pp, vec3 Np, vec2 atlasSize, float strideUp,
-                 float tileUp, vec2 gridUp, int dx, int dy, float delta) {
+                 float tileUp, vec2 gridUp, int dx, int dy, float delta, vec3 farOrigin, vec3 farOmega) {
     vec2 g = probeAnchor / strideUp - 0.5;
     ivec2 base = ivec2(floor(g));
     vec2 f = g - vec2(base);
@@ -271,7 +271,8 @@ vec4 upperLookup(vec2 probeAnchor, vec3 Pp, vec3 Np, vec2 atlasSize, float strid
         return vec4(accum / weightSum, accumT / weightSum);
     }
     // No valid neighbour: fall back to the far field (sky-only in P3).
-    return vec4(pc.uSky.rgb, 1.0);
+    // No valid probe above: the far field knows the whole scene (the sky is its last resort).
+    return farQuery(farOrigin, farOmega);
 }
 
 
@@ -296,6 +297,21 @@ vec3 shadeHit(vec2 hitUv) {
     if (history.a < 0.5) return dts;
     vec3 rho = min(max(textureLod(uGBufferAlbedo, hitUv, 0.0).rgb, vec3(0.0)), vec3(0.95));
     return dts + rho * min(history.rgb, vec3(pc.uSParams.x));
+}
+
+
+// The frame's direction jitter, rotated by a fixed per-probe offset (a Cranley-Patterson rotation): every probe
+// still gets a low-discrepancy sequence over time, but the probes no longer move their samples together, so the
+// frame-to-frame noise does not brighten and darken a whole surface at once.
+vec2 probeJitter(vec2 frameJitter, ivec2 id, int salt) {
+    uint n = uint(id.x) * 73856093u ^ uint(id.y) * 19349663u ^ uint(salt) * 83492791u;
+    n ^= n >> 16u;
+    n *= 0x7feb352du;
+    n ^= n >> 15u;
+    n *= 0x846ca68bu;
+    n ^= n >> 16u;
+    vec2 h = vec2(float(n & 0xFFFFu), float(n >> 16u)) / 65536.0;
+    return fract(frameJitter + 0.5 + h) - 0.5;
 }
 
 void main() {
@@ -344,12 +360,15 @@ void main() {
     vec2 atlasSize = vec2(gridK) * float(tile); // 2W'/s0
     vec2 gridUp = atlasSize / tileUp;
 
+    // The far field is asked from a little off the surface, outside the voxels the surface itself fills
+    // (they are up to 0.5 m thick).
+    vec3 originWorld = (pc.uInvView * vec4(O + N * 0.4, 1.0)).xyz;
     vec4 sum = vec4(0.0);
     for (int c = 0; c < 4; ++c) {
         ivec2 d = ivec2(2 * b.x + (c & 1), 2 * b.y + (c >> 1));
-        vec2 duv = (vec2(d) + 0.5 + pc.uJitter.xy) / dirSide;
+        vec2 duv = (vec2(d) + 0.5 + probeJitter(pc.uJitter.xy, p, k + 1)) / dirSide;
         duv = clamp(duv, 0.0, 1.0);
-        vec3 omegaWorld = octDecode(duv * 2.0 - 1.0);
+        vec3 omegaWorld = octDecode(duv);  // octDecode takes [0,1]: the old duv*2-1 mapped directions twice
         vec3 omega = normalize(mat3(pc.uView) * omegaWorld);
 
         vec2 hitUv;
@@ -358,11 +377,10 @@ void main() {
         if (status == kHit) {
             sum += vec4(shadeHit(hitUv), 0.0);
         } else if (status == kExit || k >= K - 1) {
-            vec3 endWorld = (pc.uInvView * vec4(endPointView, 1.0)).xyz;
-            sum += farQuery(endWorld, omegaWorld);
+            sum += farQuery(originWorld, omegaWorld);
         } else {
             sum += upperLookup(anchor, P, N, atlasSize, strideUp, tileUp, gridUp, d.x, d.y,
-                               strideUp * u);
+                               strideUp * u, originWorld, omegaWorld);
         }
     }
 

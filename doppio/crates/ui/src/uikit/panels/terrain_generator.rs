@@ -8,9 +8,10 @@
 //! The preview is a software 3D render (drag to orbit, scroll to zoom); **Place in scene** makes the
 //! real engine terrain with its splat layers.
 
+use crate::uikit::asset_kind::AssetKind;
 use crate::uikit::components::{
-    button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status, text_field,
-    tree_view,
+    asset_field, button, checkbox, dropdown, material_preview, node_canvas, scroll, slider, status,
+    text_field, tree_view,
 };
 use crate::uikit::icons::Icon;
 use crate::uikit::id;
@@ -46,6 +47,8 @@ pub enum Edit {
     SetParam(NodeId, usize, f32),
     /// Node, string index, text (a texture path).
     SetString(NodeId, usize, String),
+    /// The **…** of a string slot: open the shared asset picker for it.
+    PickAsset(NodeId, usize),
     Undo,
     Redo,
     Fit,
@@ -58,6 +61,10 @@ pub enum Edit {
     New,
     Export,
     Place,
+    /// Scatters the default plan on the terrain (the selected one, else the last placed).
+    Scatter,
+    /// Opens the default scatter plan in the script editor.
+    EditScatterPlan,
     Noop,
     PreviewPress,
     PreviewMove(Point),
@@ -180,7 +187,7 @@ pub fn view<'a, Message: Clone + 'a>(
         id::TERRAINGEN_PRESET,
         "Preset",
         view.presets.to_vec(),
-        None,
+        dropdown::current_option(view.presets, view.name),
         move |choice| {
             preset_emit(Edit::ApplyPreset(
                 preset_lookup.iter().position(|p| *p == choice).unwrap_or(0),
@@ -198,6 +205,12 @@ pub fn view<'a, Message: Clone + 'a>(
             button::compact(id::TERRAINGEN_NEW, "New", emit(Edit::New)),
             button::compact(id::TERRAINGEN_EXPORT, "Export", emit(Edit::Export)),
             button::primary(id::TERRAINGEN_PLACE, "Place in scene", emit(Edit::Place)),
+            button::compact(id::TERRAINGEN_SCATTER, "Scatter", emit(Edit::Scatter)),
+            button::compact(
+                id::TERRAINGEN_SCATTER_PLAN,
+                "Edit scatter plan",
+                emit(Edit::EditScatterPlan)
+            ),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)
@@ -374,11 +387,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(theme::surface),
     );
     if let Some(note) = view.status {
-        right = right.push(
-            container(text(note).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(note));
     }
 
     let body = row![
@@ -489,20 +498,20 @@ fn properties<'a, Message: Clone + 'a>(
     }
     for (index, label) in def.strings.iter().enumerate() {
         let current = node.strings.get(index).cloned().unwrap_or_default();
-        let pick_emit = emit.clone();
-        body = body.push(dropdown::property(
-            id::terraingen_param(&format!("layer{index}")),
-            *label,
-            view.project_textures.clone(),
-            Some(current.clone()).filter(|c| !c.is_empty()),
-            move |choice| pick_emit(Edit::SetString(node_id, index, choice)),
-        ));
-        let text_emit = emit.clone();
-        body = body.push(text_field::property(
-            id::terraingen_param(&format!("layer{index}_path")),
-            "Path",
-            &current,
+        let (text_emit, pick_emit, clear_emit) = (emit.clone(), emit.clone(), emit.clone());
+        body = body.push(asset_field::view(
+            asset_field::AssetField {
+                label,
+                value: &current,
+                kinds: &[AssetKind::Image],
+                thumbnail: None,
+                text_id: id::terraingen_param(&format!("layer{index}_path")).into(),
+                pick_id: id::terraingen_param(&format!("layer{index}_pick")).into(),
+                clear_id: id::terraingen_param(&format!("layer{index}_clear")).into(),
+            },
             move |value| text_emit(Edit::SetString(node_id, index, value)),
+            pick_emit(Edit::PickAsset(node_id, index)),
+            clear_emit(Edit::SetString(node_id, index, String::new())),
         ));
     }
     container(body)

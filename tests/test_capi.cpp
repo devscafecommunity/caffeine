@@ -1,11 +1,19 @@
 #include "catch.hpp"
-#include "caffeine/capi/EngineAPI.h"
 
+#include "../src/caffeine/debug/Profiler.hpp"
+#include "../src/caffeine/debug/SystemMetrics.hpp"
+#include "../src/caffeine/math/Quat.hpp"
+#include "caffeine/capi/EngineAPI.h"
+#include "../src/caffeine/animation/Rig2DAsset.hpp"
+#include <stb/stb_image_write.h>
+
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 TEST_CASE("C API session creates, renames and selects entities", "[capi]") {
     CaffeineSession* session = caffeine_session_create();
@@ -168,6 +176,49 @@ TEST_CASE("C API lists project assets", "[capi]") {
     REQUIRE(foundImage);
     REQUIRE(foundMesh);
     REQUIRE(foundDirectory);
+
+    // With no project loaded the asset root is also where relative asset paths resolve: a generator that
+    // writes "meshes/tree.obj" there and applies it by that path must find it again.
+    char resolved[512] = {};
+    REQUIRE(caffeine_session_resolve_path(session, "meshes/tree.obj", resolved, sizeof(resolved)) ==
+            CAFFEINE_OK);
+    REQUIRE(std::filesystem::equivalent(resolved, root / "meshes" / "tree.obj"));
+
+    caffeine_session_destroy(session);
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("C API takes the folder with project.caffeine as the project root", "[capi]") {
+    // The layout Doppio creates: project.caffeine, Scenes/ (capital S) and Assets/Raw/.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "caffeine_capi_project_root_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "Scenes", ec);
+    std::filesystem::create_directories(root / "Assets" / "Raw" / "Models", ec);
+    {
+        std::ofstream manifest(root / "project.caffeine");
+        manifest << "{}";
+        std::ofstream mesh(root / "Assets" / "Raw" / "Models" / "tree.obj");
+        mesh << "v 0 0 0";
+    }
+    const std::string scene = (root / "Scenes" / "main.caf").string();
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    REQUIRE(caffeine_session_save_scene(session, scene.c_str()) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_load_scene(session, scene.c_str()) == CAFFEINE_OK);
+
+    // The asset root is found whatever the case of "Assets/Raw"...
+    char buffer[512] = {};
+    REQUIRE(caffeine_session_asset_path(session, "", buffer, sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::filesystem::equivalent(buffer, root / "Assets" / "Raw"));
+    // ...and a project path resolves from the manifest's folder, not from Scenes/.
+    REQUIRE(caffeine_session_asset_project_path(session, "Models/tree.obj", buffer,
+                                                sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::string(buffer) == "Assets/Raw/Models/tree.obj");
+    REQUIRE(caffeine_session_resolve_path(session, buffer, buffer, sizeof(buffer)) == CAFFEINE_OK);
+    CHECK(std::filesystem::equivalent(buffer, root / "Assets" / "Raw" / "Models" / "tree.obj"));
 
     caffeine_session_destroy(session);
     std::filesystem::remove_all(root, ec);
@@ -451,6 +502,285 @@ TEST_CASE("C API bakes scene AO through Photon", "[capi]") {
 TEST_CASE("C API reports its version", "[capi]") {
     CHECK(caffeine_capi_version() == CAFFEINE_CAPI_VERSION);
     CHECK(caffeine_capi_version() >= 2);
+}
+
+TEST_CASE("C API sessions simulate by default and an editor can pause them", "[capi][simulation]") {
+    CHECK(caffeine_capi_version() >= 21);
+    CHECK(caffeine_session_simulating(nullptr) == 0);
+    caffeine_session_set_simulating(nullptr, 1);  // nothing to set: must not crash
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    // The runtime and every existing caller simulate unless they ask otherwise.
+    CHECK(caffeine_session_simulating(session) == 1);
+    caffeine_session_set_simulating(session, 0);
+    CHECK(caffeine_session_simulating(session) == 0);
+    caffeine_session_set_simulating(session, 7);  // any non-zero is on
+    CHECK(caffeine_session_simulating(session) == 1);
+    caffeine_session_destroy(session);
+}
+
+namespace {
+uint32_t typeIdByName(const char* wanted) {
+    const uint32_t count = caffeine_component_type_count();
+    for (uint32_t i = 0; i < count; ++i) {
+        CaffeineComponentTypeInfo info{};
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && std::strcmp(info.name, wanted) == 0) return info.id;
+    }
+    return UINT32_MAX;
+}
+}  // namespace
+
+TEST_CASE("C API scene views look through the scene's cameras", "[capi][views]") {
+    CHECK(caffeine_capi_version() >= 23);
+    uint32_t entity = 0;
+    float fov = 0.0f;
+    CHECK(caffeine_session_scene_camera(nullptr, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_INVALID_ARGUMENT);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CHECK(caffeine_session_scene_camera(session, 5, &entity, &fov) == CAFFEINE_INVALID_ARGUMENT);
+    // No camera: there is no scene view.
+    CHECK(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_ERROR);
+
+    const uint32_t cameraType = typeIdByName("Camera 3D");
+    REQUIRE(cameraType != UINT32_MAX);
+    const CaffeineEntity first = caffeine_session_create_entity(session, "Camera A");
+    const CaffeineEntity second = caffeine_session_create_entity(session, "Camera B");
+    REQUIRE(caffeine_session_add_component(session, first, cameraType) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_add_component(session, second, cameraType) == CAFFEINE_OK);
+
+    // With no active camera the first one is the game's; the preview follows unless a camera is chosen.
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, &fov) == CAFFEINE_OK);
+    CHECK(entity == first);
+    CHECK(fov > 1.0f);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    CHECK(caffeine_session_set_preview_camera(session, second) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == second);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_GAME, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    // A chosen camera that no longer exists falls back to the others.
+    CHECK(caffeine_session_set_preview_camera(session, 99999) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_scene_camera(session, CAFFEINE_VIEW_CAMERA, &entity, nullptr) == CAFFEINE_OK);
+    CHECK(entity == first);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API game clock follows the game's ticks, once, whichever view draws", "[capi][game][simulation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const uint32_t cameraType = typeIdByName("Camera 3D");
+    REQUIRE(cameraType != UINT32_MAX);
+    const CaffeineEntity camera = caffeine_session_create_entity(session, "Camera");
+    REQUIRE(caffeine_session_add_component(session, camera, cameraType) == CAFFEINE_OK);
+
+    const uint32_t w = 64, h = 48;
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 4u);
+    auto clock = [&]() {
+        CaffeineWeatherState state{};
+        REQUIRE(caffeine_session_weather_state(session, &state) == CAFFEINE_OK);
+        return state.clock_s;
+    };
+    auto drawEditor = [&]() { REQUIRE(caffeine_session_render(session, w, h, pixels.data(), pixels.size()) == CAFFEINE_OK); };
+    auto drawGame = [&]() {
+        REQUIRE(caffeine_session_view_render_begin(session, CAFFEINE_VIEW_GAME, w, h) == CAFFEINE_OK);
+        for (int i = 0; i < 400; ++i) {
+            if (caffeine_session_view_render_poll(session, CAFFEINE_VIEW_GAME, pixels.data(), pixels.size()) ==
+                CAFFEINE_RENDER_READY) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        FAIL("the game view did not finish");
+    };
+
+    // Stopped: nothing steps the clock.
+    caffeine_session_set_simulating(session, 0);
+    drawEditor();
+    const float stopped = clock();
+    drawEditor();
+    CHECK(clock() == stopped);
+
+    // Playing: the clock moves by the game's ticks, no more, no less.
+    caffeine_session_set_simulating(session, 1);
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    drawEditor();
+    CHECK(clock() == stopped);  // no tick yet, nothing to show
+    REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawEditor();  // the editor viewport takes the step...
+    CHECK(clock() == Approx(stopped + 0.05f).margin(1e-4));
+    drawGame();  // ...and the game view, in the same tick, takes none
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.05f).margin(1e-4));
+    // With only the game view on screen it takes the step instead.
+    REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawGame();
+    CHECK(clock() == Approx(stopped + 0.10f).margin(1e-4));
+    // Ticks nobody saw add up, up to a quarter of a second.
+    for (int i = 0; i < 20; ++i) REQUIRE(caffeine_session_game_tick(session, 0.05f) == CAFFEINE_OK);
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.10f + 0.25f).margin(1e-3));
+    // Paused (not simulating): pictures stand still again.
+    caffeine_session_set_simulating(session, 0);
+    drawEditor();
+    CHECK(clock() == Approx(stopped + 0.35f).margin(1e-3));
+    caffeine_session_game_stop(session);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API runs the game: start, tick, keys and stop", "[capi][game]") {
+    CAFFEINE_GAME_CHECK_NULLS:
+    CHECK(caffeine_session_game_running(nullptr) == 0);
+    CHECK(caffeine_session_game_tick(nullptr, 0.016f) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineGameState state{};
+    CHECK(caffeine_session_game_state(nullptr, &state) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_game_key(nullptr, 4, 1);  // must not crash
+    caffeine_session_game_stop(nullptr);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CHECK(caffeine_session_game_running(session) == 0);
+    CHECK(caffeine_session_game_tick(session, 0.016f) == CAFFEINE_INVALID_ARGUMENT);  // not started
+
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    CHECK(caffeine_session_game_running(session) == 1);
+    for (int i = 0; i < 5; ++i) REQUIRE(caffeine_session_game_tick(session, 1.0f / 60.0f) == CAFFEINE_OK);
+    caffeine_session_game_key(session, 4, 1);
+    caffeine_session_game_key(session, 4, 0);
+    caffeine_session_game_mouse(session, 10.0f, 20.0f, 1, 1);
+    caffeine_session_game_release_keys(session);
+    REQUIRE(caffeine_session_game_state(session, &state) == CAFFEINE_OK);
+    CHECK(state.running == 1);
+    CHECK(state.frames == 5);
+    CHECK(state.time_s == Approx(5.0f / 60.0f).epsilon(0.01));
+
+    // The editor's own tick leaves the scene to the game.
+    const uint64_t before = state.frames;
+    caffeine_session_tick(session, 0.5f);
+    caffeine_session_game_state(session, &state);
+    CHECK(state.frames == before);
+
+    caffeine_session_game_stop(session);
+    CHECK(caffeine_session_game_running(session) == 0);
+    CHECK(caffeine_session_game_tick(session, 0.016f) == CAFFEINE_INVALID_ARGUMENT);
+    // Starting again begins a fresh run.
+    REQUIRE(caffeine_session_game_start(session) == CAFFEINE_OK);
+    caffeine_session_game_state(session, &state);
+    CHECK(state.frames == 0);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API reports Photon's voxel stats and takes a rebuild request", "[capi][photon]") {
+    CHECK(caffeine_capi_version() >= 17);
+    CHECK(caffeine_session_photon_stats(nullptr, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_photon_rebuild(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeinePhotonStats stats{};
+    stats.objects = 99;
+    // No frame was rendered: every counter is zero and nothing is over budget.
+    CHECK(caffeine_session_photon_stats(session, &stats) == CAFFEINE_OK);
+    CHECK(stats.objects == 0);
+    CHECK(stats.triangles == 0);
+    CHECK(stats.over_budget == 0);
+    CHECK(caffeine_session_photon_rebuild(session) == CAFFEINE_OK);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API reports the scope profiler and switches GPU timing", "[capi][profiler]") {
+    CHECK(caffeine_capi_version() >= 18);
+    uint32_t count = 0;
+    CHECK(caffeine_profiler_report(nullptr, 0, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_profiler_report(nullptr, 4, &count) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_profiler_gpu_timing(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+    CHECK(caffeine_profiler_report(nullptr, 0, &count) == CAFFEINE_OK);
+    CHECK(count == 0);
+    {
+        CF_PROFILE_SCOPE("capi_outer");
+        for (int i = 0; i < 3; ++i) {
+            CF_PROFILE_SCOPE("capi_inner");
+        }
+    }
+    // The count is reported even when the buffer is too small, and the scopes come outer first.
+    CHECK(caffeine_profiler_report(nullptr, 0, &count) == CAFFEINE_OK);
+    REQUIRE(count == 2);
+    CaffeineProfileScope scopes[4]{};
+    CHECK(caffeine_profiler_report(scopes, 1, &count) == CAFFEINE_OK);
+    CHECK(count == 2);
+    CHECK(std::strcmp(scopes[0].name, "capi_outer") == 0);
+    CHECK(scopes[0].depth == 0);
+    CHECK(scopes[1].calls == 0);  // not copied: capacity 1
+    CHECK(caffeine_profiler_report(scopes, 4, &count) == CAFFEINE_OK);
+    CHECK(std::strcmp(scopes[1].name, "capi_inner") == 0);
+    CHECK(scopes[1].depth == 1);
+    CHECK(scopes[1].calls == 3);
+    CHECK(scopes[0].calls == 1);
+    CHECK(scopes[0].avg_ms >= scopes[1].avg_ms);
+    CHECK(scopes[0].max_ms >= scopes[0].last_ms);
+
+    // The recent figures cover the latest calls only: a slow start leaves them, the cumulative average keeps it.
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+    for (int i = 0; i < 10; ++i) {
+        CF_PROFILE_SCOPE("capi_window");
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+    for (int i = 0; i < 130; ++i) {
+        CF_PROFILE_SCOPE("capi_window");
+    }
+    CaffeineProfileScope window[2]{};
+    REQUIRE(caffeine_profiler_report(window, 2, &count) == CAFFEINE_OK);
+    REQUIRE(count == 1);
+    CHECK(window[0].calls == 140);
+    CHECK(window[0].max_ms >= 3.0f);                          // the slow calls are in the whole history
+    CHECK(window[0].recent_max_ms < 1.0f);                    // and gone from the last 120
+    CHECK(window[0].recent_avg_ms < window[0].avg_ms * 0.5f);
+    CHECK(window[0].recent_avg_ms >= 0.0f);
+
+    int32_t on = 1;
+    CHECK(caffeine_profiler_gpu_timing(&on) == CAFFEINE_OK);
+    CHECK(on == 0);
+    CHECK(caffeine_profiler_set_gpu_timing(1) == CAFFEINE_OK);
+    CHECK(caffeine_profiler_gpu_timing(&on) == CAFFEINE_OK);
+    CHECK(on == 1);
+    CHECK(caffeine_profiler_set_gpu_timing(0) == CAFFEINE_OK);
+    CHECK(caffeine_profiler_reset() == CAFFEINE_OK);
+}
+
+TEST_CASE("C API reports the machine's CPU cores, memory and GPU", "[capi][profiler]") {
+    CHECK(caffeine_capi_version() >= 19);
+    CHECK(caffeine_system_metrics(nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CaffeineSystemMetrics first{};
+    CHECK(caffeine_system_metrics(&first) == CAFFEINE_OK);
+    // Burn a little CPU so the second sample has something to measure.
+    volatile double sink = 0.0;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);
+    while (std::chrono::steady_clock::now() < until) sink = sink + 1.0;
+    CaffeineSystemMetrics m{};
+    REQUIRE(caffeine_system_metrics(&m) == CAFFEINE_OK);
+#ifdef __linux__
+    CHECK(m.cpu_core_count >= 1);
+    CHECK(m.cpu_core_count <= CAFFEINE_MAX_CPU_CORES);
+    for (uint32_t i = 0; i < m.cpu_core_count; ++i) {
+        CHECK(m.cpu_core_percent[i] >= 0.0f);
+        CHECK(m.cpu_core_percent[i] <= 100.0f);
+    }
+    CHECK(m.cpu_total_percent >= 0.0f);
+    CHECK(m.cpu_total_percent <= 100.0f);
+    CHECK(m.process_cpu_percent > 0.0f);  // this thread was spinning
+    CHECK(m.ram_total_mib > 0.0f);
+    CHECK(m.ram_used_mib > 0.0f);
+    CHECK(m.ram_used_mib <= m.ram_total_mib);
+    CHECK(m.ram_process_mib > 0.0f);
+    CHECK(m.ram_process_mib <= m.ram_total_mib);
+#endif
+    // Unavailable values are negative, never garbage.
+    CHECK((m.gpu_busy_percent < 0.0f || m.gpu_busy_percent <= 100.0f));
+    CHECK((m.vram_total_mib < 0.0f || m.vram_used_mib <= m.vram_total_mib));
+    // Cores beyond the count stay zero.
+    for (uint32_t i = m.cpu_core_count; i < CAFFEINE_MAX_CPU_CORES; ++i) CHECK(m.cpu_core_percent[i] == 0.0f);
+    (void)first;
 }
 
 TEST_CASE("C API exposes component schemas and values", "[capi]") {
@@ -748,5 +1078,828 @@ TEST_CASE("C API builds a terrain from generated heights and splat weights", "[c
           CAFFEINE_INVALID_ARGUMENT);
     CHECK(caffeine_session_set_terrain(session, 9999u, &terrain, heights.data(), nullptr) ==
           CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain masks: built-ins from the heightfield, stored masks, the normal, a rectangle",
+          "[capi][terrain][masks]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineEntity bare = caffeine_session_create_entity(session, "No terrain");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 65;
+    terrain.resolution_z = 65;
+    terrain.size_x = 64.0f;
+    terrain.size_z = 64.0f;
+    terrain.max_height = 20.0f;
+    std::vector<float> heights(65 * 65);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 0; x < 65; ++x) heights[z * 65 + x] = std::min(1.0f, static_cast<float>(x) / 64.0f);  // 0.3125 m/m
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // The three built-ins come first.
+    uint32_t count = 0;
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &count) == CAFFEINE_OK);
+    CHECK(count == 3u);
+    CaffeineTerrainMaskInfo info{};
+    REQUIRE(caffeine_session_terrain_mask_at(session, entity, 1, &info) == CAFFEINE_OK);
+    CHECK(std::strcmp(info.name, "slope") == 0);
+    CHECK(info.builtin == 1);
+    CHECK(info.resolution_x == 0u);
+    CHECK(caffeine_session_terrain_mask_at(session, entity, 3, &info) == CAFFEINE_NOT_FOUND);
+
+    float value = -1.0f;
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "height", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.5f).margin(0.01f));
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "slope", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(std::atan(20.0f / 64.0f) / 1.57079632679f).margin(0.01f));
+    float normal[3] = {};
+    REQUIRE(caffeine_session_terrain_normal(session, entity, 32.0f, 10.0f, normal) == CAFFEINE_OK);
+    const float slope = 20.0f / 64.0f;
+    CHECK(normal[0] == Approx(-slope / std::sqrt(1.0f + slope * slope)).margin(0.01f));
+    CHECK(normal[1] == Approx(1.0f / std::sqrt(1.0f + slope * slope)).margin(0.01f));
+
+    // A stored mask: set, listed after the built-ins, read, saved with its name, removed.
+    const std::vector<uint8_t> wet = {0, 255, 0, 255};  // 2 x 2 (z rows): dry on the left, wet on the right
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 2, 2, wet.data()) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_mask_count(session, entity, &count) == CAFFEINE_OK);
+    CHECK(count == 4u);
+    REQUIRE(caffeine_session_terrain_mask_at(session, entity, 3, &info) == CAFFEINE_OK);
+    CHECK(std::strcmp(info.name, "wetness") == 0);
+    CHECK(info.builtin == 0);
+    CHECK(info.resolution_x == 2u);
+    REQUIRE(caffeine_session_terrain_mask(session, entity, "wetness", 32.0f, 10.0f, &value) == CAFFEINE_OK);
+    CHECK(value == Approx(0.5f).margin(0.01f));
+    uint8_t grid[4 * 2] = {};
+    REQUIRE(caffeine_session_terrain_mask_rect(session, entity, "wetness", 0.0f, 0.0f, 64.0f, 64.0f, 4, 2, grid) ==
+            CAFFEINE_OK);
+    CHECK(grid[0] < grid[3]);  // left to right
+    CHECK(grid[3] > 200);
+    CHECK(grid[0] < 60);
+
+    // Errors: unknown mask, bad names, built-in names, no terrain, a missing entity.
+    CHECK(caffeine_session_terrain_mask(session, entity, "nope", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "slope", 2, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "bad name", 2, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "tiny", 1, 2, wet.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_mask(session, bare, "height", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_mask(session, 9999u, "height", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_mask(session, entity, nullptr, 1.0f, 1.0f, &value) == CAFFEINE_INVALID_ARGUMENT);
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 0, 0, nullptr) == CAFFEINE_OK);
+    CHECK(caffeine_session_terrain_mask(session, entity, "wetness", 1.0f, 1.0f, &value) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_set_terrain_mask(session, entity, "wetness", 0, 0, nullptr) == CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API scatter on a terrain: placement by the terrain, the biome table, orientation, errors",
+          "[capi][terrain][scatter]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineEntity bare = caffeine_session_create_entity(session, "No terrain");
+    REQUIRE(caffeine_session_set_entity_position(session, entity, CaffeineVec3{100.0f, 5.0f, -50.0f}) == CAFFEINE_OK);
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 65;
+    terrain.resolution_z = 65;
+    terrain.size_x = 120.0f;
+    terrain.size_z = 120.0f;
+    terrain.max_height = 20.0f;
+    std::vector<float> heights(65 * 65);
+    for (int z = 0; z < 65; ++z) {
+        for (int x = 0; x < 65; ++x) heights[z * 65 + x] = 0.3f + 0.2f * std::sin(static_cast<float>(x) * 0.12f);
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    // The right half of the terrain (x > 60 m) is wet.
+    std::vector<uint8_t> wet(64 * 2);
+    for (int z = 0; z < 2; ++z) {
+        for (int x = 0; x < 64; ++x) wet[z * 64 + x] = x >= 32 ? 255 : 0;
+    }
+    REQUIRE(caffeine_session_set_terrain_mask(session, entity, "wetness", 64, 2, wet.data()) == CAFFEINE_OK);
+
+    CaffeineScatterClass tree{};
+    tree.id = 2; tree.priority = 20; tree.cell_size = 6.0f; tree.radius = 2.0f; tree.density = 0.9f;
+    tree.min_scale = 0.8f; tree.max_scale = 1.3f; tree.tilt_to_normal = 0.5f; tree.sink = 0.1f; tree.tint_jitter = 0.05f;
+    tree.variants = 3;
+    CaffeineScatterClass grass = tree;
+    grass.id = 3; grass.priority = 5; grass.cell_size = 3.0f; grass.radius = 0.5f; grass.tilt_to_normal = 1.0f; grass.sink = 0.0f;
+    const CaffeineScatterClass classes[2] = {tree, grass};
+    const char* biome = "class 2\n  wetness 0 0 0.3 0.6\n";  // trees stay out of the wet half
+
+    uint32_t total = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, nullptr, 0, &total) ==
+            CAFFEINE_OK);
+    REQUIRE(total > 200u);
+    std::vector<CaffeineScatterInstance> list(total);
+    uint32_t again = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, list.data(),
+                                             static_cast<uint32_t>(list.size()), &again) == CAFFEINE_OK);
+    CHECK(again == total);
+
+    size_t trees = 0, grasses = 0;
+    for (const CaffeineScatterInstance& i : list) {
+        // Scene space: inside the terrain, which is centred on its entity at (100, 5, -50).
+        CHECK(i.position[0] >= 100.0f - 60.0f - 0.01f);
+        CHECK(i.position[0] <= 100.0f + 60.0f + 0.01f);
+        CHECK(i.position[2] >= -50.0f - 60.0f - 0.01f);
+        CHECK(i.position[2] <= -50.0f + 60.0f + 0.01f);
+        // On the surface (the entity's height added, the tree's sink taken off).
+        float ground = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, i.position[0] - 100.0f + 60.0f,
+                                                i.position[2] + 50.0f + 60.0f, &ground) == CAFFEINE_OK);
+        const float sink = i.class_id == 2 ? 0.1f * i.scale : 0.0f;
+        CHECK(i.position[1] == Approx(5.0f + ground - sink).margin(0.05f));
+        CHECK(i.scale >= 0.79f);
+        CHECK(i.scale <= 1.31f);
+        CHECK(i.variant < 3u);
+        // The Euler angles carry +Y onto `up`.
+        const Caffeine::Quat q = Caffeine::Quat::fromEuler(i.rotation_degrees[0] * 0.017453292f,
+                                                            i.rotation_degrees[1] * 0.017453292f,
+                                                            i.rotation_degrees[2] * 0.017453292f);
+        const Caffeine::Vec3 axis = q.rotate(Caffeine::Vec3(0.0f, 1.0f, 0.0f));
+        CHECK(axis.x == Approx(i.up[0]).margin(2e-3f));
+        CHECK(axis.y == Approx(i.up[1]).margin(2e-3f));
+        CHECK(axis.z == Approx(i.up[2]).margin(2e-3f));
+        if (i.class_id == 2) {
+            ++trees;
+            CHECK(i.position[0] < 100.0f + 5.0f);  // x < 60 m from the corner, with the mask's soft edge: the dry half
+        } else {
+            ++grasses;
+        }
+    }
+    CHECK(trees > 20u);
+    CHECK(grasses > trees);
+
+    // A smaller buffer is filled and the total still says how many there are. A region restricts the scatter.
+    std::vector<CaffeineScatterInstance> few(10);
+    uint32_t t2 = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, nullptr, few.data(), 10, &t2) ==
+            CAFFEINE_OK);
+    CHECK(t2 == total);
+    CHECK(few[3].position[0] == list[3].position[0]);
+    const float region[4] = {0.0f, 0.0f, 30.0f, 120.0f};
+    uint32_t part = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, biome, region, nullptr, 0, &part) ==
+            CAFFEINE_OK);
+    CHECK(part > 0u);
+    CHECK(part < total / 2);
+    // Another seed, another forest.
+    std::vector<CaffeineScatterInstance> reseeded(total + 100);
+    uint32_t t3 = 0;
+    REQUIRE(caffeine_session_scatter_terrain(session, entity, 8, classes, 2, biome, nullptr, reseeded.data(),
+                                             static_cast<uint32_t>(reseeded.size()), &t3) == CAFFEINE_OK);
+    CHECK(reseeded[0].position[0] != list[0].position[0]);
+
+    // Errors.
+    uint32_t n = 0;
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, classes, 2, "class x\n", nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CaffeineScatterClass broken = tree;
+    broken.radius = 0.0f;
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, &broken, 1, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_scatter_terrain(session, entity, 7, classes, 0, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_scatter_terrain(session, bare, 7, classes, 2, nullptr, nullptr, nullptr, 0, &n) ==
+          CAFFEINE_NOT_FOUND);
+    char why[128] = {};
+    CHECK(caffeine_biome_check("class 2\n  slope 0 0 0.2 0.5\n", why, sizeof(why)) == CAFFEINE_OK);
+    CHECK(caffeine_biome_check("class 2\n  slope 0.5 0.2 1 1\n", why, sizeof(why)) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(std::strstr(why, "line 2") != nullptr);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("CPU load is computed the same way from any platform's counters", "[profiler][metrics]") {
+    using namespace Caffeine::Debug;
+    CpuSnapshot a;
+    CpuSnapshot b;
+    a.cores = {{100, 1000}, {500, 1000}, {0, 0}};
+    b.cores = {{150, 1100}, {500, 1200}, {0, 0}};  // core 0: 50 busy of 100, core 1: idle, core 2: no time passed
+    a.all = {600, 2000};
+    b.all = {650, 2300};
+    a.processSeconds = 10.0;
+    b.processSeconds = 11.5;  // 1.5 s of CPU in 1 s of wall time: one and a half cores
+
+    MachineMetrics m;
+    cpuLoadFromSnapshots(a, b, 1.0, m);
+    REQUIRE(m.cpuCoreCount == 3);
+    CHECK(m.cpuCorePercent[0] == Approx(50.0f));
+    CHECK(m.cpuCorePercent[1] == Approx(0.0f));
+    CHECK(m.cpuCorePercent[2] == Approx(0.0f));
+    CHECK(m.cpuTotalPercent == Approx(100.0f * 50.0f / 300.0f));
+    CHECK(m.processCpuPercent == Approx(150.0f));
+
+    // A core that came or went: the count is reported, the percentages have no baseline and stay at zero.
+    CpuSnapshot fewer = a;
+    fewer.cores.pop_back();
+    MachineMetrics changed;
+    cpuLoadFromSnapshots(fewer, b, 1.0, changed);
+    CHECK(changed.cpuCoreCount == 3);
+    CHECK(changed.cpuCorePercent[0] == 0.0f);
+
+    // A counter that went backwards counts as no time; the others still count.
+    CpuSnapshot wrapped = b;
+    wrapped.cores[0] = {10, 50};
+    MachineMetrics back;
+    cpuLoadFromSnapshots(a, wrapped, 1.0, back);
+    CHECK(back.cpuCorePercent[0] == 0.0f);
+    CHECK(back.cpuCorePercent[1] == Approx(0.0f));
+
+    // Busy cannot exceed total, whatever the counters say.
+    CpuSnapshot odd;
+    odd.cores = {{0, 0}};
+    CpuSnapshot odd2;
+    odd2.cores = {{500, 100}};
+    MachineMetrics clamped;
+    cpuLoadFromSnapshots(odd, odd2, 1.0, clamped);
+    CHECK(clamped.cpuCorePercent[0] == Approx(100.0f));
+
+    // More cores than the report holds: the count is capped and nothing is written past the array.
+    CpuSnapshot big;
+    CpuSnapshot big2;
+    big.cores.assign(100, {0, 0});
+    big2.cores.assign(100, {50, 100});
+    MachineMetrics many;
+    cpuLoadFromSnapshots(big, big2, 1.0, many);
+    CHECK(many.cpuCoreCount == kMaxCpuCores);
+    CHECK(many.cpuCorePercent[kMaxCpuCores - 1] == Approx(50.0f));
+
+    // No elapsed time: the process figure stays at zero instead of dividing by it.
+    MachineMetrics none;
+    cpuLoadFromSnapshots(a, b, 0.0, none);
+    CHECK(none.processCpuPercent == 0.0f);
+}
+
+TEST_CASE("C API reads and writes a 2D rig and its PhaseShift parameters", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    // One root bone, one parameter that rotates it, two vertices.
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::Parameter2D bend;
+    bend.name = "Bend";
+    bend.minValue = 0.0f;
+    bend.maxValue = 1.0f;
+    rig.parameters = {bend};
+    Caffeine::Animation::ParamBinding2D turn;
+    turn.parameter = 0;
+    turn.bone = 0;
+    turn.keys = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+    rig.bindings = {turn};
+    Caffeine::Animation::Vertex2D v;
+    v.position = Caffeine::Vec2(1.0f, 0.0f);
+    v.influences = {{0, 1.0f}};
+    rig.vertices = {v, v};
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_capi_hero.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+
+    // Before a rig is attached the entity reports nothing loaded.
+    CaffeineRig2DCounts none{};
+    REQUIRE(caffeine_session_rig2d_counts(session, entity, &none) == CAFFEINE_OK);
+    CHECK(none.loaded == 0);
+
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+    CaffeineRig2DCounts counts{};
+    REQUIRE(caffeine_session_rig2d_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.loaded == 1);
+    CHECK(counts.bones == 1);
+    CHECK(counts.vertices == 2);
+    CHECK(counts.parameters == 1);
+    CHECK(counts.bindings == 1);
+
+    CaffeineRig2DParameter param{};
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(std::strcmp(param.name, "Bend") == 0);
+    CHECK(param.maximum == Approx(1.0f));
+
+    // Setting a rig parameter writes the PhaseShift float with the same name, clamped to the range.
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 4.0f) == CAFFEINE_OK);
+    CaffeinePhaseShiftCounts ps{};
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &ps) == CAFFEINE_OK);
+    CHECK(ps.parameters == 1);
+    CaffeinePhaseShiftParameter psParam{};
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &psParam) == CAFFEINE_OK);
+    CHECK(std::strcmp(psParam.name, "Bend") == 0);
+    CHECK(psParam.kind == 1u);  // float
+    CHECK(psParam.value == Approx(1.0f));
+
+    REQUIRE(caffeine_session_phase_shift_set_smoothing(session, entity, 0, 0.2f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &psParam) == CAFFEINE_OK);
+    CHECK(psParam.smoothing == Approx(0.2f));
+
+    // A tick evaluates the rig, so the parameter now reports the value the rig used.
+    caffeine_session_tick(session, 0.016f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value == Approx(1.0f));
+
+    CHECK(caffeine_session_rig2d_bone(session, entity, 9, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_rig2d_counts(session, 9999u, &counts) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_phase_shift_counts(session, 9999u, &ps) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_rig2d_attach(session, entity, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+
+#ifdef CF_HAS_SDL3
+TEST_CASE("C API draws an attached 2D rig on the GPU over the scene", "[capi][gpu][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    const uint32_t w = 128;
+    const uint32_t h = 128;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+    std::vector<uint8_t> before(bytes), after(bytes);
+    REQUIRE(caffeine_session_render(session, w, h, before.data(), bytes) == CAFFEINE_OK);
+
+    // A large white quad, so it covers a good part of the view wherever the camera looks.
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::buildGridMesh2D(rig, 1, 1);
+    // Rest vertices live in skeleton space, so the size is in the vertices, not the bone's rest scale.
+    for (auto& v : rig.vertices) v.position *= 400.0f;
+    Caffeine::Animation::bindVerticesToBone2D(rig, 0);
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_gpu_quad.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+    caffeine_session_tick(session, 0.016f);  // poses the rig (AnimationSystem)
+
+    REQUIRE(caffeine_session_render(session, w, h, after.data(), bytes) == CAFFEINE_OK);
+
+    size_t changed = 0;
+    size_t whitish = 0;
+    for (size_t i = 0; i < bytes; i += 4) {
+        if (before[i] != after[i] || before[i + 1] != after[i + 1] || before[i + 2] != after[i + 2]) {
+            ++changed;
+            if (after[i] > 200 && after[i + 1] > 200 && after[i + 2] > 200) ++whitish;
+        }
+    }
+    INFO("pixels changed by the rig: " << changed << ", of them near white: " << whitish);
+    CHECK(changed > 50);
+    CHECK(whitish > 50);
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+#endif
+
+#ifdef CF_HAS_SDL3
+static uint32_t componentTypeId(const char* name) {
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        CaffeineComponentTypeInfo info{};
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && std::strcmp(info.name, name) == 0) return info.id;
+    }
+    return 0;
+}
+
+static uint32_t componentFieldIndex(uint32_t type, const char* name) {
+    CaffeineComponentTypeInfo info{};
+    for (uint32_t i = 0; i < caffeine_component_type_count(); ++i) {
+        if (caffeine_component_type_at(i, &info) == CAFFEINE_OK && info.id == type) break;
+    }
+    for (uint32_t f = 0; f < 16; ++f) {
+        CaffeineFieldInfo field{};
+        if (caffeine_component_type_field_at(type, f, &field) != CAFFEINE_OK) break;
+        if (std::strcmp(field.name, name) == 0) return f;
+    }
+    return UINT32_MAX;
+}
+
+static uint32_t componentIndexOf(CaffeineSession* session, CaffeineEntity entity, uint32_t type) {
+    const uint32_t count = caffeine_session_entity_component_count(session, entity);
+    for (uint32_t i = 0; i < count; ++i) {
+        CaffeineComponentInfo info{};
+        if (caffeine_session_entity_component_at(session, entity, i, &info) == CAFFEINE_OK && info.type_id == type) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+TEST_CASE("C API draws a textured sprite on the GPU over the scene", "[capi][gpu][sprite]") {
+    const uint32_t w = 128;
+    const uint32_t h = 128;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+
+    // An 8x8 solid red image: any red pixel in the frame came from the sprite's texture.
+    std::vector<uint8_t> redPixels(8 * 8 * 4);
+    for (size_t i = 0; i < redPixels.size(); i += 4) {
+        redPixels[i] = 255;
+        redPixels[i + 1] = 0;
+        redPixels[i + 2] = 0;
+        redPixels[i + 3] = 255;
+    }
+    const auto imagePath = std::filesystem::temp_directory_path() / "caffeine_gpu_red.png";
+    REQUIRE(stbi_write_png(imagePath.string().c_str(), 8, 8, 4, redPixels.data(), 8 * 4) != 0);
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Sprite");
+    REQUIRE(caffeine_session_set_entity_position(session, entity, {0.0f, 0.0f, 0.0f}) == CAFFEINE_OK);
+
+    std::vector<uint8_t> before(bytes), after(bytes);
+    REQUIRE(caffeine_session_render(session, w, h, before.data(), bytes) == CAFFEINE_OK);
+
+    // The sprite component: its Name is the image path, and the entity's Transform scales the quad up.
+    const uint32_t spriteType = componentTypeId("Sprite");
+    REQUIRE(spriteType != 0);
+    REQUIRE(caffeine_session_add_component(session, entity, spriteType) == CAFFEINE_OK);
+    const uint32_t spriteIndex = componentIndexOf(session, entity, spriteType);
+    REQUIRE(spriteIndex != UINT32_MAX);
+    const uint32_t nameField = componentFieldIndex(spriteType, "Name");
+    REQUIRE(nameField != UINT32_MAX);
+    CaffeineFieldValue name{};
+    name.kind = CAFFEINE_FIELD_STRING;
+    std::strncpy(name.text, imagePath.string().c_str(), sizeof(name.text) - 1);
+    REQUIRE(caffeine_session_entity_component_field_set(session, entity, spriteIndex, nameField, &name) == CAFFEINE_OK);
+
+    const uint32_t transformType = componentTypeId("Transform");
+    REQUIRE(transformType != 0);
+    const uint32_t transformIndex = componentIndexOf(session, entity, transformType);
+    const uint32_t scaleField = componentFieldIndex(transformType, "Scale");
+    REQUIRE(scaleField != UINT32_MAX);
+    CaffeineFieldValue scale{};
+    scale.kind = CAFFEINE_FIELD_VEC3;
+    scale.vec[0] = 400.0f;
+    scale.vec[1] = 400.0f;
+    scale.vec[2] = 1.0f;
+    REQUIRE(caffeine_session_entity_component_field_set(session, entity, transformIndex, scaleField, &scale) == CAFFEINE_OK);
+
+    REQUIRE(caffeine_session_render(session, w, h, after.data(), bytes) == CAFFEINE_OK);
+
+    size_t changed = 0;
+    size_t red = 0;
+    for (size_t i = 0; i < bytes; i += 4) {
+        if (before[i] != after[i] || before[i + 1] != after[i + 1] || before[i + 2] != after[i + 2]) {
+            ++changed;
+            if (after[i] > 200 && after[i + 1] < 60 && after[i + 2] < 60) ++red;
+        }
+    }
+    INFO("pixels changed by the sprite: " << changed << ", of them red: " << red);
+    CHECK(changed > 50);
+    CHECK(red > 50);
+    std::filesystem::remove(imagePath);
+    caffeine_session_destroy(session);
+}
+#endif
+
+TEST_CASE("C API animation advances only while the scene simulates", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Smoother");
+
+    Caffeine::Animation::Rig2D rig;
+    Caffeine::Animation::Bone2D root;
+    root.name = "root";
+    rig.skeleton.bones = {root};
+    Caffeine::Animation::Parameter2D bend;
+    bend.name = "Bend";
+    bend.minValue = 0.0f;
+    bend.maxValue = 1.0f;
+    rig.parameters = {bend};
+    const auto rigPath = std::filesystem::temp_directory_path() / "caffeine_capi_smooth.rig2d";
+    REQUIRE(Caffeine::Animation::saveRig2D(rigPath, rig));
+    REQUIRE(caffeine_session_rig2d_attach(session, entity, rigPath.string().c_str()) == CAFFEINE_OK);
+
+    // Creates the PhaseShift float, smooths it, then asks for 1.0: the spring starts at 0.
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 0.0f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_set_smoothing(session, entity, 0, 0.5f) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_rig2d_set_parameter(session, entity, 0, 1.0f) == CAFFEINE_OK);
+
+    CaffeineRig2DParameter param{};
+    caffeine_session_set_simulating(session, 0);
+    for (int i = 0; i < 120; ++i) caffeine_session_tick(session, 1.0f / 60.0f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value == Approx(0.0f));
+
+    caffeine_session_set_simulating(session, 1);
+    for (int i = 0; i < 120; ++i) caffeine_session_tick(session, 1.0f / 60.0f);
+    REQUIRE(caffeine_session_rig2d_parameter(session, entity, 0, &param) == CAFFEINE_OK);
+    CHECK(param.value > 0.9f);
+
+    std::filesystem::remove(rigPath);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API adds a PhaseShift and its parameters from the editor", "[capi][animation]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    const CaffeineEntity entity = caffeine_session_create_entity(session, "Hero");
+
+    CaffeinePhaseShiftCounts counts{};
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_NOT_FOUND);
+
+    REQUIRE(caffeine_session_phase_shift_add(session, entity) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_add(session, entity) == CAFFEINE_OK);  // no-op when present
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 0);
+
+    REQUIRE(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_add_parameter(session, entity, "grounded", 0) == CAFFEINE_OK);
+    // Duplicate names, unknown kinds and empty or over-long names are refused.
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "speed", 1) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "bad", 9) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, "", 1) == CAFFEINE_INVALID_ARGUMENT);
+    const std::string longName(40, 'x');
+    CHECK(caffeine_session_phase_shift_add_parameter(session, entity, longName.c_str(), 1) == CAFFEINE_INVALID_ARGUMENT);
+
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 2);
+    CaffeinePhaseShiftParameter first{};
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &first) == CAFFEINE_OK);
+    CHECK(std::strcmp(first.name, "speed") == 0);
+    CHECK(first.kind == 1u);
+
+    REQUIRE(caffeine_session_phase_shift_remove_parameter(session, entity, 0) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_phase_shift_counts(session, entity, &counts) == CAFFEINE_OK);
+    CHECK(counts.parameters == 1);
+    REQUIRE(caffeine_session_phase_shift_parameter(session, entity, 0, &first) == CAFFEINE_OK);
+    CHECK(std::strcmp(first.name, "grounded") == 0);
+    CHECK(caffeine_session_phase_shift_remove_parameter(session, entity, 5) == CAFFEINE_NOT_FOUND);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C ABI asset references decide what a path means", "[capi][assets][references]") {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / "caffeine-capi-references";
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    const fs::path assets = base / "project" / "Assets";
+    const fs::path outside = base / "downloads";
+    fs::create_directories(assets / "Textures", ec);
+    fs::create_directories(outside, ec);
+    { std::ofstream(assets / "Textures" / "brick.png", std::ios::binary) << "brick"; }
+    { std::ofstream(outside / "rock.png", std::ios::binary) << "rock"; }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    REQUIRE(caffeine_session_set_asset_root(session, assets.string().c_str()) == CAFFEINE_OK);
+
+    CaffeineAssetReference ref{};
+    REQUIRE(caffeine_session_asset_reference(session, "Textures/brick.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OK);
+    CHECK(std::string(ref.asset_path) == "Textures/brick.png");
+    CHECK(std::string(ref.kind) == "image");
+    CHECK(ref.imported == 0);
+
+    REQUIRE(caffeine_session_asset_reference(session, "nothing.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_MISSING);
+    REQUIRE(caffeine_session_asset_reference(session, "", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_EMPTY);
+    REQUIRE(caffeine_session_asset_reference(session, "../downloads/rock.png", 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_MISSING);  // a relative path never climbs out of the project
+
+    const std::string rock = (outside / "rock.png").string();
+    REQUIRE(caffeine_session_asset_reference(session, rock.c_str(), 0, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OUTSIDE_PROJECT);
+    CHECK_FALSE(fs::exists(assets / "Textures" / "rock.png"));  // looking does not import
+
+    REQUIRE(caffeine_session_asset_reference(session, rock.c_str(), 1, &ref) == CAFFEINE_OK);
+    CHECK(ref.status == CAFFEINE_REF_OK);
+    CHECK(ref.imported == 1);
+    CHECK(std::string(ref.asset_path) == "Textures/rock.png");
+    CHECK(fs::exists(assets / "Textures" / "rock.png"));
+    // The import shows up in the project's asset list.
+    bool listed = false;
+    for (uint32_t i = 0; i < caffeine_session_asset_count(session); ++i) {
+        CaffeineAssetInfo info{};
+        REQUIRE(caffeine_session_asset_at(session, i, &info) == CAFFEINE_OK);
+        if (std::string(info.relative_path) == "Textures/rock.png") listed = true;
+    }
+    CHECK(listed);
+
+    CHECK(caffeine_session_asset_reference(nullptr, "x", 0, &ref) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_asset_reference(session, "x", 0, nullptr) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_destroy(session);
+    fs::remove_all(base, ec);
+}
+
+TEST_CASE("C API terrain strokes: stamps by metre, a local rebuild, exact undo and redo", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 257;
+    terrain.resolution_z = 257;
+    terrain.size_x = 512.0f;
+    terrain.size_z = 512.0f;
+    terrain.max_height = 80.0f;
+    std::vector<float> heights(257 * 257, 0.5f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    auto heightAt = [&](float x, float z) {
+        float h = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, x + 256.0f, z + 256.0f, &h) == CAFFEINE_OK);
+        return h;
+    };
+    const float before = heightAt(0.0f, 0.0f);
+    CHECK(before == Approx(40.0f).margin(0.01f));
+
+    CaffeineTerrainBrush brush{};
+    brush.mode = CAFFEINE_BRUSH_RAISE;
+    brush.radius_m = 10.0f;
+    brush.strength = 2.0f;  // metres per stamp
+    brush.spacing_m = 5.0f;
+    brush.falloff = CAFFEINE_FALLOFF_SMOOTH;
+    REQUIRE(caffeine_session_terrain_stroke_begin(session, entity, &brush, nullptr, 0) == CAFFEINE_OK);
+    uint32_t stamps = 0;
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, &stamps) == CAFFEINE_OK);
+    CHECK(stamps == 1);
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 50.0, 0.0, 0.0, 1.0f, &stamps) == CAFFEINE_OK);
+    CHECK(stamps == 10);  // 50 m at one stamp per 5 m
+    // The terrain moved at once, only around the path.
+    CHECK(heightAt(0.0f, 0.0f) > before + 1.5f);
+    CHECK(heightAt(25.0f, 0.0f) > before + 1.5f);
+    CHECK(heightAt(0.0f, 100.0f) == Approx(before).margin(0.001f));
+
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+    CHECK(result.stamps == 11);
+    CHECK(result.tiles_changed >= 1);
+    CHECK(result.tiles_changed < 16);  // a part of the 16 tiles
+    CHECK(result.has_region == 1);
+    CHECK(result.bytes < 257u * 257u * sizeof(float));
+    const float after = heightAt(25.0f, 0.0f);
+
+    // Undo puts every tile back exactly; redo brings the stroke back.
+    REQUIRE(caffeine_session_terrain_stroke_revert(session, result.record) == CAFFEINE_OK);
+    CHECK(heightAt(25.0f, 0.0f) == Approx(before).margin(1e-4f));
+    CHECK(heightAt(0.0f, 0.0f) == Approx(before).margin(1e-4f));
+    REQUIRE(caffeine_session_terrain_stroke_reapply(session, result.record) == CAFFEINE_OK);
+    CHECK(heightAt(25.0f, 0.0f) == Approx(after).margin(1e-4f));
+
+    // Errors: no open stroke, an unknown record, a missing entity, a bad brush.
+    CHECK(caffeine_session_terrain_stroke_point(session, 0, 0, 0, 1.0f, nullptr) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_end(session, nullptr) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_revert(session, 9999u) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_begin(session, 9999u, &brush, nullptr, 0) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_stroke_begin(session, entity, nullptr, nullptr, 0) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_stroke_begin(session, entity, &brush, nullptr, 0) == CAFFEINE_OK);
+
+    // A stroke on a terrain that is replaced under it is dropped, not written into freed memory.
+    CHECK(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    caffeine_session_terrain_stroke_point(session, 0.0, 0.0, 0.0, 1.0f, nullptr);
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain strokes follow the entity's transform and a stamp image", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 128.0f;
+    terrain.size_z = 128.0f;
+    terrain.max_height = 50.0f;
+    std::vector<float> heights(129 * 129, 0.5f);
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_set_entity_position(session, entity, CaffeineVec3{1000.0f, 0.0f, -500.0f}) == CAFFEINE_OK);
+
+    // The stamp: only the right half of the brush is solid.
+    std::vector<float> alpha(16 * 16, 0.0f);
+    for (int z = 0; z < 16; ++z) {
+        for (int x = 8; x < 16; ++x) alpha[z * 16 + x] = 1.0f;
+    }
+    CaffeineTerrainBrush brush{};
+    brush.mode = CAFFEINE_BRUSH_RAISE;
+    brush.radius_m = 8.0f;
+    brush.strength = 3.0f;
+    brush.falloff = CAFFEINE_FALLOFF_CONSTANT;
+    REQUIRE(caffeine_session_terrain_stroke_begin(session, entity, &brush, alpha.data(), 16) == CAFFEINE_OK);
+    // The point is given in world space: the terrain is 1 km east and 0.5 km north of the origin.
+    REQUIRE(caffeine_session_terrain_stroke_point(session, 1000.0, 0.0, -500.0, 1.0f, nullptr) == CAFFEINE_OK);
+    CaffeineTerrainStrokeResult result{};
+    REQUIRE(caffeine_session_terrain_stroke_end(session, &result) == CAFFEINE_OK);
+    CHECK(result.record != 0);
+
+    float right = 0.0f, left = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 64.0f + 4.0f, 64.0f, &right) == CAFFEINE_OK);
+    REQUIRE(caffeine_session_terrain_height(session, entity, 64.0f - 4.0f, 64.0f, &left) == CAFFEINE_OK);
+    CHECK(right > 25.0f + 1.0f);
+    CHECK(left == Approx(25.0f).margin(0.01f));
+    caffeine_session_destroy(session);
+}
+
+TEST_CASE("C API terrain data: a new terrain saves as .terrain and reloads, a bare one cannot convert", "[capi][terrain][legacy]") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "caffeine-capi-terrain-format";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Scenes", ec);
+    { std::ofstream(root / "project.caffeine") << "{}\n"; }
+
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Ground");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 60.0f;
+    std::vector<float> heights(129 * 129);
+    for (size_t i = 0; i < heights.size(); ++i) heights[i] = 0.2f + static_cast<float>(i % 97) * 0.003f;
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    int legacy = 1;
+    REQUIRE(caffeine_session_terrain_data_legacy(session, entity, &legacy) == CAFFEINE_OK);
+    CHECK(legacy == 0);  // a terrain made here was never legacy
+    char path[256] = {};
+    CHECK(caffeine_session_terrain_convert_native(session, entity, path, sizeof(path)) == CAFFEINE_ERROR);  // no data file yet
+
+    const fs::path scene = root / "Scenes" / "main.caf";
+    REQUIRE(caffeine_session_save_scene(session, scene.string().c_str()) == CAFFEINE_OK);
+    bool native = false, old = false;
+    for (const auto& entry : fs::recursive_directory_iterator(root / "terrain", ec)) {
+        native = native || entry.path().extension() == ".terrain";
+        old = old || entry.path().extension() == ".cterrain";
+    }
+    CHECK(native);
+    CHECK_FALSE(old);  // new terrains use the native container
+
+    caffeine_session_destroy(session);
+    session = caffeine_session_create();
+    REQUIRE(caffeine_session_load_scene(session, scene.string().c_str()) == CAFFEINE_OK);
+    CaffeineEntity loaded = 0;
+    bool found = false;
+    for (uint32_t i = 0; i < caffeine_session_entity_count(session); ++i) {
+        CaffeineEntityInfo info{};
+        REQUIRE(caffeine_session_entity_at(session, i, &info) == CAFFEINE_OK);
+        if (std::string(info.name) == "Ground") {
+            loaded = info.id;
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    float h = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, loaded, 64.0f, 64.0f, &h) == CAFFEINE_OK);
+    CHECK(h > 0.0f);
+    legacy = 1;
+    REQUIRE(caffeine_session_terrain_data_legacy(session, loaded, &legacy) == CAFFEINE_OK);
+    CHECK(legacy == 0);
+    CHECK(caffeine_session_terrain_data_legacy(session, 9999u, &legacy) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_data_legacy(nullptr, loaded, &legacy) == CAFFEINE_INVALID_ARGUMENT);
+    caffeine_session_destroy(session);
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("C API terrain cursor: a ray meets the terrain and the brush outline hugs the relief", "[capi][terrain][edit]") {
+    CaffeineSession* session = caffeine_session_create();
+    REQUIRE(session != nullptr);
+    CaffeineEntity entity = caffeine_session_create_entity(session, "Hills");
+    CaffeineTerrain terrain{};
+    terrain.resolution_x = 129;
+    terrain.resolution_z = 129;
+    terrain.size_x = 256.0f;
+    terrain.size_z = 256.0f;
+    terrain.max_height = 50.0f;
+    std::vector<float> heights(129 * 129);
+    for (int z = 0; z < 129; ++z) {
+        for (int x = 0; x < 129; ++x) heights[z * 129 + x] = 0.2f + 0.5f * static_cast<float>(x) / 128.0f;  // a ramp along X
+    }
+    REQUIRE(caffeine_session_set_terrain(session, entity, &terrain, heights.data(), nullptr) == CAFFEINE_OK);
+
+    // A ray straight down over the middle of the terrain lands on the surface there.
+    const double origin[3] = {10.0, 200.0, 20.0};
+    const double down[3] = {0.0, -1.0, 0.0};
+    double hit[3] = {};
+    REQUIRE(caffeine_session_terrain_raycast(session, entity, origin, down, hit) == CAFFEINE_OK);
+    CHECK(hit[0] == Approx(10.0).margin(0.5));
+    CHECK(hit[2] == Approx(20.0).margin(0.5));
+    float expected = 0.0f;
+    REQUIRE(caffeine_session_terrain_height(session, entity, 128.0f + 10.0f, 128.0f + 20.0f, &expected) == CAFFEINE_OK);
+    CHECK(hit[1] == Approx(expected).margin(0.3));
+    // A ray beside the terrain misses it.
+    const double aside[3] = {5000.0, 200.0, 0.0};
+    CHECK(caffeine_session_terrain_raycast(session, entity, aside, down, hit) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_raycast(session, 9999u, origin, down, hit) == CAFFEINE_NOT_FOUND);
+    CHECK(caffeine_session_terrain_raycast(session, entity, nullptr, down, hit) == CAFFEINE_INVALID_ARGUMENT);
+
+    // The ring: 48 points at the brush radius from the centre, each on the surface (the ramp rises along X).
+    std::vector<float> ring(48 * 3);
+    REQUIRE(caffeine_session_terrain_brush_outline(session, entity, hit, 15.0f, 48, ring.data()) == CAFFEINE_OK);
+    float minY = 1e9f, maxY = -1e9f;
+    for (int i = 0; i < 48; ++i) {
+        const double dx = ring[i * 3] - hit[0], dz = ring[i * 3 + 2] - hit[2];
+        CHECK(std::sqrt(dx * dx + dz * dz) == Approx(15.0).margin(0.01));
+        float surface = 0.0f;
+        REQUIRE(caffeine_session_terrain_height(session, entity, ring[i * 3] + 128.0f, ring[i * 3 + 2] + 128.0f, &surface) == CAFFEINE_OK);
+        CHECK(ring[i * 3 + 1] == Approx(surface + 0.05f).margin(0.02f));  // just above the ground
+        minY = std::min(minY, ring[i * 3 + 1]);
+        maxY = std::max(maxY, ring[i * 3 + 1]);
+    }
+    CHECK(maxY - minY > 2.5f);  // it climbs the ramp (25 m over 256 m: 2.9 m across a 30 m ring), not a flat circle
+    CHECK(caffeine_session_terrain_brush_outline(session, entity, hit, 15.0f, 2, ring.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_brush_outline(session, entity, hit, 0.0f, 48, ring.data()) == CAFFEINE_INVALID_ARGUMENT);
+    CHECK(caffeine_session_terrain_brush_outline(session, 9999u, hit, 5.0f, 48, ring.data()) == CAFFEINE_NOT_FOUND);
     caffeine_session_destroy(session);
 }

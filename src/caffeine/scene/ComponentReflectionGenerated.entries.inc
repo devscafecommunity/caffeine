@@ -245,7 +245,10 @@
             ref<T>("Max Distance", [](T& c) -> auto& { return c.maxDistance; }),
             ref<T>("Loop", [](T& c) -> auto& { return c.loop; }),
             ref<T>("Play On Spawn", [](T& c) -> auto& { return c.playOnSpawn; }),
-            ref<T>("Spatial", [](T& c) -> auto& { return c.spatial; })
+            ref<T>("Spatial", [](T& c) -> auto& { return c.spatial; }),
+            ref<T>("Doppler", [](T& c) -> auto& { return c.doppler; }),
+            ref<T>("Layer", [](T& c) -> auto& { return c.layer; }),
+            ref<T>("Ref Distance", [](T& c) -> auto& { return c.refDistance; })
             });
         }(),
         [] {
@@ -409,7 +412,8 @@
             ref<T>("Structure Profile", [](T& c) -> auto& { return c.structureProfile; }),
             ref<T>("Preset", [](T& c) -> auto& { return c.preset; }),
             ref<T>("Custom Script Path", [](T& c) -> auto& { return c.customScriptPath; }),
-            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; })
+            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; }),
+            ref<T>("Generator Version", [](T& c) -> auto& { return c.generatorVersion; })
             });
         }(),
         [] {
@@ -420,5 +424,97 @@
             ref<T>("Zoom Minimal", [](T& c) -> auto& { return c.zoomMinimal; }),
             ref<T>("Minimal Scale Factor", [](T& c) -> auto& { return c.minimalScaleFactor; }),
             ref<T>("Hide When Minimal", [](T& c) -> auto& { return c.hideWhenMinimal; })
+            });
+        }(),
+        [] {
+            using T = Caffeine::ECS::VolumetricCloudsComponent;
+            return component<T>(128, "Volumetric Clouds", {
+            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; }),
+            ref<T>("Quality", [](T& c) -> auto& { return c.quality; }),
+            ref<T>("Coverage", [](T& c) -> auto& { return c.coverage; }),
+            ref<T>("Density", [](T& c) -> auto& { return c.density; }),
+            ref<T>("Base Altitude", [](T& c) -> auto& { return c.baseAltitude; }),
+            ref<T>("Top Altitude", [](T& c) -> auto& { return c.topAltitude; }),
+            ref<T>("Detail", [](T& c) -> auto& { return c.detail; }),
+            ref<T>("Seed", [](T& c) -> auto& { return c.seed; }),
+            ref<T>("Wind Speed", [](T& c) -> auto& { return c.windSpeed; }),
+            ref<T>("Wind Direction", [](T& c) -> auto& { return c.windDirection; }),
+            ref<T>("Mist Density", [](T& c) -> auto& { return c.mistDensity; }),
+            ref<T>("Mist Height", [](T& c) -> auto& { return c.mistHeight; }),
+            ref<T>("Mist Falloff", [](T& c) -> auto& { return c.mistFalloff; }),
+            ref<T>("Sun Scatter", [](T& c) -> auto& { return c.sunScatter; }),
+            ref<T>("Cast Shadows", [](T& c) -> auto& { return c.castShadows; }),
+            ref<T>("Tint", [](T& c) -> auto& { return c.tint; }),
+            ref<T>("Darkness", [](T& c) -> auto& { return c.darkness; }),
+            ref<T>("Sky Light", [](T& c) -> auto& { return c.skyLight; }),
+            ref<T>("Ground Shadows", [](T& c) -> auto& { return c.groundShadows; }),
+            ref<T>("Shadow Strength", [](T& c) -> auto& { return c.shadowStrength; }),
+            ref<T>("Silver Lining", [](T& c) -> auto& { return c.silverLining; }),
+            ref<T>("Sun Shafts", [](T& c) -> auto& { return c.sunShafts; })
+            });
+        }(),
+        [] {
+            using T = Caffeine::ECS::WeatherComponent;
+            return component<T>(129, "Weather", {
+            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; }),
+            ref<T>("Fog Enabled", [](T& c) -> auto& { return c.fogEnabled; }),
+            ref<T>("Rain Enabled", [](T& c) -> auto& { return c.rainEnabled; }),
+            ref<T>("Link Sky", [](T& c) -> auto& { return c.linkSky; }),
+            ref<T>("Fog Density", [](T& c) -> auto& { return c.fogDensity; }),
+            ref<T>("Fog Height Falloff", [](T& c) -> auto& { return c.fogHeightFalloff; }),
+            ref<T>("Fog Base Height", [](T& c) -> auto& { return c.fogBaseHeight; }),
+            ref<T>("Fog Start", [](T& c) -> auto& { return c.fogStart; }),
+            ref<T>("Fog Max Opacity", [](T& c) -> auto& { return c.fogMaxOpacity; }),
+            ref<T>("Fog Color", [](T& c) -> auto& { return c.fogColor; }),
+            ref<T>("Fog Sky Blend", [](T& c) -> auto& { return c.fogSkyBlend; }),
+            ref<T>("Fog Sun Scatter", [](T& c) -> auto& { return c.fogSunScatter; }),
+            ref<T>("Fog Sun Exponent", [](T& c) -> auto& { return c.fogSunExponent; }),
+            ref<T>("Rain Intensity", [](T& c) -> auto& { return c.rainIntensity; }),
+            ref<T>("Rain Wind Speed", [](T& c) -> auto& { return c.rainWindSpeed; }),
+            ref<T>("Rain Wind Direction", [](T& c) -> auto& { return c.rainWindDirection; }),
+            ref<T>("Rain Drop Length", [](T& c) -> auto& { return c.rainDropLength; }),
+            ref<T>("Rain Speed", [](T& c) -> auto& { return c.rainSpeed; }),
+            ref<T>("Rain Brightness", [](T& c) -> auto& { return c.rainBrightness; }),
+            ref<T>("Rain Wetness", [](T& c) -> auto& { return c.rainWetness; }),
+            ref<T>("Rain Splashes", [](T& c) -> auto& { return c.rainSplashes; }),
+            ref<T>("Wind Gust", [](T& c) -> auto& { return c.windGust; }),
+            ref<T>("Wind Foliage", [](T& c) -> auto& { return c.windFoliage; }),
+            ref<T>("Lightning Enabled", [](T& c) -> auto& { return c.lightningEnabled; }),
+            ref<T>("Thunder", [](T& c) -> auto& { return c.thunder; }),
+            ref<T>("Lightning Rate", [](T& c) -> auto& { return c.lightningRate; }),
+            ref<T>("Lightning Intensity", [](T& c) -> auto& { return c.lightningIntensity; }),
+            ref<T>("Lightning Distance Min", [](T& c) -> auto& { return c.lightningDistanceMin; }),
+            ref<T>("Lightning Distance Max", [](T& c) -> auto& { return c.lightningDistanceMax; }),
+            ref<T>("Lightning Seed", [](T& c) -> auto& { return c.lightningSeed; }),
+            ref<T>("Audio Enabled", [](T& c) -> auto& { return c.audioEnabled; }),
+            ref<T>("Audio Volume", [](T& c) -> auto& { return c.audioVolume; })
+            });
+        }(),
+        [] {
+            using T = Caffeine::Audio::AcousticObstacle;
+            return component<T>(130, "Acoustic Obstacle", {
+            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; }),
+            ref<T>("Material", [](T& c) -> auto& { return c.material; }),
+            ref<T>("Custom", [](T& c) -> auto& { return c.custom; }),
+            ref<T>("Transmission Low", [](T& c) -> auto& { return c.transmissionLow; }),
+            ref<T>("Transmission High", [](T& c) -> auto& { return c.transmissionHigh; }),
+            ref<T>("Reflectivity", [](T& c) -> auto& { return c.reflectivity; })
+            });
+        }(),
+        [] {
+            using T = Caffeine::Audio::VolumetricAudioComponent;
+            return component<T>(131, "Volumetric Audio", {
+            ref<T>("Enabled", [](T& c) -> auto& { return c.enabled; }),
+            ref<T>("Occlusion", [](T& c) -> auto& { return c.occlusion; }),
+            ref<T>("Diffraction", [](T& c) -> auto& { return c.diffraction; }),
+            ref<T>("Reverb", [](T& c) -> auto& { return c.reverb; }),
+            ref<T>("Air Absorption", [](T& c) -> auto& { return c.airAbsorption; }),
+            ref<T>("Propagation Delay", [](T& c) -> auto& { return c.propagationDelay; }),
+            ref<T>("Master Volume", [](T& c) -> auto& { return c.masterVolume; }),
+            ref<T>("World Volume", [](T& c) -> auto& { return c.worldVolume; }),
+            ref<T>("Ambient Volume", [](T& c) -> auto& { return c.ambientVolume; }),
+            ref<T>("Music Volume", [](T& c) -> auto& { return c.musicVolume; }),
+            ref<T>("Doppler Scale", [](T& c) -> auto& { return c.dopplerScale; }),
+            ref<T>("Speed Of Sound", [](T& c) -> auto& { return c.speedOfSound; })
             });
         }(),

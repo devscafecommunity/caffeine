@@ -44,13 +44,17 @@ COMPONENTS = [
     ("ecs/MapComponents.hpp", "Caffeine::ECS::MapSurface2DComponent", "Map Surface 2D", 125),
     ("ecs/ProceduralComponents.hpp", "Caffeine::ECS::ProceduralWorldComponent", "Procedural World", 126),
     ("ecs/LodComponents.hpp", "Caffeine::ECS::SpriteLod2DComponent", "Sprite LOD 2D", 127),
+    ("caffeine/environment/VolumetricClouds.hpp", "Caffeine::ECS::VolumetricCloudsComponent", "Volumetric Clouds", 128),
+    ("ecs/WeatherComponents.hpp", "Caffeine::ECS::WeatherComponent", "Weather", 129),
+    ("audio/VolumetricComponents.hpp", "Caffeine::Audio::AcousticObstacle", "Acoustic Obstacle", 130),
+    ("audio/VolumetricComponents.hpp", "Caffeine::Audio::VolumetricAudioComponent", "Volumetric Audio", 131),
 ]
 
 HEADERS = sorted({c[0] for c in COMPONENTS} | {
     "ecs/CameraComponents.hpp", "physics/PhysicsComponents2D.hpp"})
 
 # Members never worth exposing: runtime caches and padding.
-SKIP = re.compile(r"(revision|dirty|cache|^pad\d*$|carry|^_pad|handle)", re.I)
+SKIP = re.compile(r"(revision|dirty|cache|^pad\d*$|carry|^_pad|^_reserved|handle)", re.I)
 
 def strip_comments(text):
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)

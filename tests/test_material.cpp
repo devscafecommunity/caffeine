@@ -6,8 +6,10 @@
 #include "assets/TextureMapGenerator.hpp"
 #include "render/ReflectionBudget.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 using namespace Caffeine;
 using namespace Caffeine::Assets;
@@ -485,4 +487,67 @@ TEST_CASE("run-time modifiers round-trip, stay clamped and default to none", "[m
     REQUIRE(old.modWetness == Approx(0.0f));
     REQUIRE(old.modTint.y == Approx(1.0f));
     std::filesystem::remove_all(dir);
+}
+
+// A draw asks for its material every frame. The cache answers from memory and looks at the disk again only every
+// half second; a missing material is remembered; a published material (the editor preview) takes effect at once.
+TEST_CASE("MaterialCache: lookups come from memory, with a recheck for files that change", "[material][cache]") {
+    using namespace Caffeine;
+    using Assets::MaterialCache;
+    using Assets::MaterialSurface;
+    const auto dir = std::filesystem::temp_directory_path() / "caffeine_material_cache_test";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "cache.mat";
+    std::filesystem::remove(path);
+    auto& cache = MaterialCache::instance();
+    cache.invalidate();
+
+    // Missing: nothing, and the miss is remembered (the file appears but the answer holds for the window).
+    CHECK_FALSE(cache.resolve(path.string()).valid);
+    MaterialSurface made;
+    made.name = "grass";
+    made.roughness = 0.33f;
+    REQUIRE(Assets::saveMaterialFile(path, made));
+    CHECK_FALSE(cache.resolve(path.string()).valid);
+    std::this_thread::sleep_for(std::chrono::milliseconds(650));
+    const MaterialSurface found = cache.resolve(path.string());
+    REQUIRE(found.valid);
+    CHECK(found.roughness == Approx(0.33f));
+
+    // Asked again: from memory, even with the file gone.
+    const u64 revision = cache.revision();
+    std::filesystem::remove(path);
+    CHECK(cache.resolve(path.string()).roughness == Approx(0.33f));
+    CHECK(cache.revision() == revision);
+
+    // Rewritten: noticed after the window (a later timestamp whatever the file system's resolution).
+    made.roughness = 0.9f;
+    REQUIRE(Assets::saveMaterialFile(path, made));
+    std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5));
+    CHECK(cache.resolve(path.string()).roughness == Approx(0.33f));
+    std::this_thread::sleep_for(std::chrono::milliseconds(650));
+    CHECK(cache.resolve(path.string()).roughness == Approx(0.9f));
+    CHECK(cache.revision() > revision);
+
+    // invalidate() forgets everything at once.
+    made.roughness = 0.1f;
+    REQUIRE(Assets::saveMaterialFile(path, made));
+    std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(10));
+    cache.invalidate(path.string());
+    CHECK(cache.resolve(path.string()).roughness == Approx(0.1f));
+
+    // A published material (no file) is served at once, and a later publish replaces it at once.
+    const auto virtualPath = (dir / "preview.mat").string();
+    std::filesystem::remove(virtualPath);
+    CHECK_FALSE(cache.resolve(virtualPath).valid);
+    MaterialSurface preview;
+    preview.roughness = 0.5f;
+    cache.publish(virtualPath, "", preview);
+    CHECK(cache.resolve(virtualPath).roughness == Approx(0.5f));
+    preview.roughness = 0.7f;
+    cache.publish(virtualPath, "", preview);
+    CHECK(cache.resolve(virtualPath).roughness == Approx(0.7f));
+
+    cache.invalidate();
+    std::filesystem::remove(path);
 }

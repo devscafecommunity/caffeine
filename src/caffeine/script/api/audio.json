@@ -1,0 +1,317 @@
+{
+  "namespace": "audio",
+  "group": "Game",
+  "lua": "caffeine.audio",
+  "dryad_prefix": "caffeine_audio_",
+  "title": {
+    "en": "Audio",
+    "pt": "Áudio"
+  },
+  "summary": {
+    "en": "Plays WAV files from the project. Play returns a handle you use to control that sound while it is playing. Without an audio device every call is a safe no-op (0 or false). Handles are only valid while the sound plays: after it ends, the slot may be reused by another sound.",
+    "pt": "Reproduz ficheiros WAV do projeto. O play devolve um handle para controlar esse som enquanto toca. Sem dispositivo de áudio, todas as chamadas são no-ops seguros (0 ou false). Os handles só são válidos enquanto o som toca: depois de acabar, o espaço pode ser reutilizado por outro som."
+  },
+  "functions": [
+    {
+      "name": "isAvailable",
+      "lua": "caffeine.audio.isAvailable",
+      "dryad": "caffeine_audio_available",
+      "signature": "isAvailable() -> boolean",
+      "params": [],
+      "returns": {
+        "type": "boolean",
+        "en": "true when a playback device is open.",
+        "pt": "true quando há um dispositivo de reprodução aberto."
+      },
+      "en": "Tells whether sound can be played.",
+      "pt": "Indica se é possível reproduzir som.",
+      "example": "if not caffeine.audio.isAvailable() then caffeine.debug.warn(\"no sound\") end"
+    },
+    {
+      "name": "play",
+      "lua": "caffeine.audio.play",
+      "dryad": "caffeine_audio_play",
+      "signature": "play(path[, volume[, pan[, loop]]]) -> number",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "en": "WAV file, relative to the project root.",
+          "pt": "Ficheiro WAV, relativo à raiz do projeto."
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "en": "0 to 1, default 1.",
+          "pt": "0 a 1, por omissão 1."
+        },
+        {
+          "name": "pan",
+          "type": "number",
+          "en": "-1 left to 1 right, default 0.",
+          "pt": "-1 esquerda a 1 direita, por omissão 0."
+        },
+        {
+          "name": "loop",
+          "type": "boolean",
+          "en": "Repeat until stopped, default false.",
+          "pt": "Repetir até parar, por omissão false."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "A handle greater than 0, or 0 when the sound could not play (no device, missing file, all 32 channels busy).",
+        "pt": "Um handle maior que 0, ou 0 quando o som não pôde tocar (sem dispositivo, ficheiro em falta, 32 canais ocupados)."
+      },
+      "en": "Plays a sound. The file is decoded once and cached.",
+      "pt": "Toca um som. O ficheiro é descodificado uma vez e fica em cache.",
+      "example": "local h = caffeine.audio.play(\"audio/jump.wav\", 0.8)"
+    },
+    {
+      "name": "playAt",
+      "lua": "caffeine.audio.playAt",
+      "dryad": "caffeine_audio_play_at",
+      "signature": "playAt(path, x, y[, maxDistance[, volume]]) -> number",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "en": "WAV file, relative to the project root.",
+          "pt": "Ficheiro WAV, relativo à raiz do projeto."
+        },
+        {
+          "name": "x, y",
+          "type": "number",
+          "en": "Sound position in the 2D world.",
+          "pt": "Posição do som no mundo 2D."
+        },
+        {
+          "name": "maxDistance",
+          "type": "number",
+          "en": "Distance at which the sound is silent, default 500.",
+          "pt": "Distância a que o som fica mudo, por omissão 500."
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "en": "Extra gain, default 1.",
+          "pt": "Ganho extra, por omissão 1."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "A handle, or 0 when it could not play.",
+        "pt": "Um handle, ou 0 se não pôde tocar."
+      },
+      "en": "Plays a sound whose volume and left/right pan follow its distance to the listener (see setListener).",
+      "pt": "Toca um som cujo volume e panning esquerda/direita seguem a distância ao ouvinte (ver setListener).",
+      "example": "caffeine.audio.playAt(\"audio/boom.wav\", 120, 40, 300)"
+    },
+    {
+      "name": "stop",
+      "lua": "caffeine.audio.stop",
+      "dryad": "caffeine_audio_stop",
+      "signature": "stop(handle) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the handle is unknown or the sound has already ended.",
+        "pt": "false se o handle for desconhecido ou o som já tiver terminado."
+      },
+      "en": "Stops a sound.",
+      "pt": "Para um som.",
+      "example": "caffeine.audio.stop(h)"
+    },
+    {
+      "name": "pause",
+      "lua": "caffeine.audio.pause",
+      "dryad": "caffeine_audio_pause",
+      "signature": "pause(handle) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the handle is unknown or the sound has already ended.",
+        "pt": "false se o handle for desconhecido ou o som já tiver terminado."
+      },
+      "en": "Pauses a sound; resume continues it.",
+      "pt": "Pausa um som; o resume continua-o.",
+      "example": "caffeine.audio.pause(h)"
+    },
+    {
+      "name": "resume",
+      "lua": "caffeine.audio.resume",
+      "dryad": "caffeine_audio_resume",
+      "signature": "resume(handle) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the handle is unknown or the sound has already ended.",
+        "pt": "false se o handle for desconhecido ou o som já tiver terminado."
+      },
+      "en": "Resumes a paused sound.",
+      "pt": "Retoma um som em pausa.",
+      "example": "caffeine.audio.resume(h)"
+    },
+    {
+      "name": "setVolume",
+      "lua": "caffeine.audio.setVolume",
+      "dryad": "caffeine_audio_set_volume",
+      "signature": "setVolume(handle, volume) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        },
+        {
+          "name": "volume",
+          "type": "number",
+          "en": "0 to 1.",
+          "pt": "0 a 1."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the handle is unknown or the sound has already ended.",
+        "pt": "false se o handle for desconhecido ou o som já tiver terminado."
+      },
+      "en": "Changes the volume of a playing sound.",
+      "pt": "Altera o volume de um som a tocar.",
+      "example": "caffeine.audio.setVolume(h, 0.3)"
+    },
+    {
+      "name": "setLoop",
+      "lua": "caffeine.audio.setLoop",
+      "dryad": "caffeine_audio_set_loop",
+      "signature": "setLoop(handle, loop) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        },
+        {
+          "name": "loop",
+          "type": "boolean",
+          "en": "true to repeat.",
+          "pt": "true para repetir."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "false when the handle is unknown or the sound has already ended.",
+        "pt": "false se o handle for desconhecido ou o som já tiver terminado."
+      },
+      "en": "Turns looping on or off for a playing sound.",
+      "pt": "Liga ou desliga a repetição de um som a tocar.",
+      "example": "caffeine.audio.setLoop(h, false)"
+    },
+    {
+      "name": "isPlaying",
+      "lua": "caffeine.audio.isPlaying",
+      "dryad": "caffeine_audio_is_playing",
+      "signature": "isPlaying(handle) -> boolean",
+      "params": [
+        {
+          "name": "handle",
+          "type": "number",
+          "en": "Handle returned by play or playAt.",
+          "pt": "Handle devolvido por play ou playAt."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true while the sound plays (not paused, not ended).",
+        "pt": "true enquanto o som toca (não em pausa, não terminado)."
+      },
+      "en": "Tells whether a sound is still playing.",
+      "pt": "Indica se um som ainda está a tocar.",
+      "example": "if not caffeine.audio.isPlaying(h) then h = caffeine.audio.play(\"audio/loop.wav\") end"
+    },
+    {
+      "name": "stopAll",
+      "lua": "caffeine.audio.stopAll",
+      "dryad": "caffeine_audio_stop_all",
+      "signature": "stopAll()",
+      "params": [],
+      "returns": null,
+      "en": "Stops every sound. Scene changes do this automatically.",
+      "pt": "Para todos os sons. As mudanças de cena fazem-no automaticamente.",
+      "example": "caffeine.audio.stopAll()"
+    },
+    {
+      "name": "setMasterVolume",
+      "lua": "caffeine.audio.setMasterVolume",
+      "dryad": "caffeine_audio_set_master_volume",
+      "signature": "setMasterVolume(volume)",
+      "params": [
+        {
+          "name": "volume",
+          "type": "number",
+          "en": "0 to 1.",
+          "pt": "0 a 1."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the volume applied to sounds started afterwards.",
+      "pt": "Define o volume aplicado aos sons iniciados depois.",
+      "example": "caffeine.audio.setMasterVolume(0.5)"
+    },
+    {
+      "name": "masterVolume",
+      "lua": "caffeine.audio.masterVolume",
+      "dryad": "caffeine_audio_master_volume",
+      "signature": "masterVolume() -> number",
+      "params": [],
+      "returns": {
+        "type": "number",
+        "en": "The master volume, 0 to 1 (0 without audio).",
+        "pt": "O volume geral, 0 a 1 (0 sem áudio)."
+      },
+      "en": "Reads the master volume.",
+      "pt": "Lê o volume geral.",
+      "example": "local v = caffeine.audio.masterVolume()"
+    },
+    {
+      "name": "setListener",
+      "lua": "caffeine.audio.setListener",
+      "dryad": "caffeine_audio_set_listener",
+      "signature": "setListener(x, y)",
+      "params": [
+        {
+          "name": "x, y",
+          "type": "number",
+          "en": "Listener position in the 2D world.",
+          "pt": "Posição do ouvinte no mundo 2D."
+        }
+      ],
+      "returns": null,
+      "en": "Sets where playAt measures distance from, usually the player or camera.",
+      "pt": "Define o ponto de onde o playAt mede a distância, normalmente o jogador ou a câmara.",
+      "example": "caffeine.audio.setListener(player_x, player_y)"
+    }
+  ]
+}

@@ -165,6 +165,19 @@ pub struct NatureNode {
     pub position: Point,
 }
 
+/// A node the Edit Library Material node may read: a library node, another edit node, or **Your
+/// Material** pointing at a material the library baked into the project.
+pub fn is_library_node(node: &NatureNode) -> bool {
+    match node.op {
+        "mat_library" | "mat_cards" | "mat_edit" => true,
+        "mat_project" => node
+            .strings
+            .first()
+            .is_some_and(|path| super::ops::is_library_baked(path)),
+        _ => false,
+    }
+}
+
 impl NatureNode {
     pub fn def(&self) -> &'static NodeDef {
         super::ops::find(self.op).unwrap_or_else(|| panic!("unknown nature op {}", self.op))
@@ -273,6 +286,11 @@ impl NatureGraph {
             return false;
         };
         if out.kind != inp.kind {
+            return false;
+        }
+        // An Edit Library Material node edits library assets only: its source is a library material
+        // (Library Material, Leaf / Petal Texture) or another edit node.
+        if b.op == "mat_edit" && !is_library_node(a) {
             return false;
         }
         // No cycles: `to` must not already reach `from`.

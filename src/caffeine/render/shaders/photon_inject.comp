@@ -5,6 +5,9 @@
 // One invocation per material-atlas texel (2048×512 = 4 levels side by side).
 // For every solid voxel and every exposed face:
 //     B_f = Le + rho * (E_dir + E_ind) / pi
+// E_dir is the sky ambient scaled by how much of the sky the face sees through the material volume
+// (the triangle voxeliser puts the whole scene in it), plus the scene's sun, point and spot lights,
+// each shadowed by a march through the same volume.
 // E_ind comes from the probe-field SH of the same level (previous frame); the
 // probe trace runs after injection, so each bounce has one update of latency.
 //
@@ -28,6 +31,16 @@ layout(set = 2, binding = 0) uniform InjectUBO {
     vec4 uParams;     // x cells, y material level stride, z levels
     vec4 uAmbient;    // rgb ambient irradiance
     vec4 uAtlas;      // x probe atlas width, y height, z SH level stride, w radiance stride
+    vec4 uCounts;     // x directional, y point, z spot light count
+    vec4 uDirDir[2];      // xyz the way the light travels
+    vec4 uDirColor[2];    // rgb radiance (colour x intensity)
+    vec4 uPointPos[8];    // xyz position, w radius
+    vec4 uPointColor[8];  // rgb radiance
+    vec4 uSpotPos[4];     // xyz position, w radius
+    vec4 uSpotDir[4];     // xyz the way it points, w cos(half angle)
+    vec4 uSpotColor[4];   // rgb radiance
+    vec4 uCloudShadow[3]; // the clouds' shadow on directional light 0: x strength, y coverage, z density / xyz wind
+                          // offset, w base altitude / xyz toward the sun, w top altitude
 } ij;
 
 const float kPi = 3.14159265359;
@@ -51,8 +64,11 @@ float coverageAt(ivec3 v, int level) {
 }
 
 vec3 probeIrradiance(vec3 Q, vec3 N, int level) {
-    vec3 g = (Q - ij.uProbe[level].xyz) / ij.uProbe[level].w - 0.5;
-    ivec3 q = clamp(ivec3(floor(g)), ivec3(0), ivec3(15));
+    // The probe nearest to a point half a probe spacing in front of the face: the probe the face can see.
+    // (The lattice cell's lower corner can lie on the other side of a thin wall, in the open air, and
+    // would hand the sky's irradiance to a surface that is shut off from it.)
+    vec3 g = (Q + N * (0.5 * ij.uProbe[level].w) - ij.uProbe[level].xyz) / ij.uProbe[level].w - 0.5;
+    ivec3 q = clamp(ivec3(floor(g + 0.5)), ivec3(0), ivec3(15));
     const int n = 16;
     int idx = q.x + q.y * n + q.z * n * n;
     ivec2 base = ivec2(level * int(ij.uAtlas.z) + (idx % n) * 2, (idx / n) * 2);
@@ -64,6 +80,141 @@ vec3 probeIrradiance(vec3 Q, vec3 N, int level) {
     vec3 s = t00.rgb * kY00 +
              (2.0 / 3.0) * (t10.rgb * y1.x + t01.rgb * y1.y + t11.rgb * y1.z);
     return kPi * max(s, vec3(0.0));
+}
+
+// One ray through the material volume: does it leave the volume (open sky) before it meets a solid voxel?
+float rayOpen(vec3 origin, vec3 dir, int level) {
+    float cell = ij.uClip[level].w;
+    int cells = int(ij.uParams.x);
+    float t = cell * 0.75;  // clear of the face's own neighbourhood
+    for (int i = 0; i < 96; ++i) {
+        vec3 g = (origin + dir * t - ij.uClip[level].xyz) / cell;
+        if (any(lessThan(g, vec3(0.0))) || any(greaterThanEqual(g, vec3(float(cells))))) return 1.0;
+        if (coverageAt(ivec3(floor(g)), level) > 0.5) return 0.0;
+        t += cell * 0.7;
+    }
+    return 1.0;
+}
+
+// How much of the sky a face sees, from six rays of the cosine lobe (the normal and five tilted ~51 degrees
+// round it). The ambient term used to be unoccluded: a roofed room was lit by a sky it cannot see.
+float skyVisibility(vec3 Q, vec3 N, int level) {
+    vec3 helper = abs(N.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(helper, N));
+    vec3 B = cross(N, T);
+    float open = rayOpen(Q, N, level);
+    for (int i = 0; i < 5; ++i) {
+        float phi = float(i) * 1.2566371;
+        vec3 d = normalize(N * 0.62 + (T * cos(phi) + B * sin(phi)) * 0.78);
+        open += rayOpen(Q, d, level);
+    }
+    return open / 6.0;
+}
+
+// Is the segment from `origin` along `dir` (length `maxT`) free of solid voxels? Leaving the volume counts as free.
+float lightVisible(vec3 origin, vec3 dir, float maxT, int level) {
+    float cell = ij.uClip[level].w;
+    int cells = int(ij.uParams.x);
+    float t = cell * 0.5;
+    for (int i = 0; i < 128; ++i) {
+        if (t >= maxT) return 1.0;
+        vec3 g = (origin + dir * t - ij.uClip[level].xyz) / cell;
+        if (any(lessThan(g, vec3(0.0))) || any(greaterThanEqual(g, vec3(float(cells))))) return 1.0;
+        if (coverageAt(ivec3(floor(g)), level) > 0.5) return 0.0;
+        t += cell * 0.7;
+    }
+    return 1.0;
+}
+
+// ---- Cloud shadows on the sun: the same noise the sky and the forward shaders read (see scene_lit.frag).
+float csHash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float csNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(csHash(i), csHash(i + vec3(1, 0, 0)), f.x),
+                   mix(csHash(i + vec3(0, 1, 0)), csHash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(csHash(i + vec3(0, 0, 1)), csHash(i + vec3(1, 0, 1)), f.x),
+                   mix(csHash(i + vec3(0, 1, 1)), csHash(i + vec3(1, 1, 1)), f.x), f.y),
+               f.z);
+}
+
+float csFbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 3; ++i) {
+        value += amplitude * csNoise(p);
+        p = p * 2.03 + vec3(17.1, 9.2, 13.7);
+        amplitude *= 0.5;
+    }
+    return value / 0.875;
+}
+
+float cloudShadow(vec3 world) {
+    float strength = ij.uCloudShadow[0].x;
+    vec3 sun = ij.uCloudShadow[2].xyz;
+    if (strength <= 0.0 || sun.y <= 0.03) return 1.0;
+    float base = ij.uCloudShadow[1].w;
+    float top = ij.uCloudShadow[2].w;
+    float span = max(top - base, 1.0);
+    float optical = 0.0;
+    for (int i = 0; i < 2; ++i) {
+        float altitude = base + span * (i == 0 ? 0.32 : 0.68);
+        float t = (altitude - world.y) / sun.y;
+        if (t <= 0.0) continue;
+        vec3 q = (world + sun * t + ij.uCloudShadow[1].xyz) * 0.00125;
+        float cover = smoothstep(1.00 - ij.uCloudShadow[0].y, 1.12 - ij.uCloudShadow[0].y, csFbm(q));
+        optical += cover * ij.uCloudShadow[0].z * span * 0.5 * 0.008;
+    }
+    return mix(1.0, exp(-optical), clamp(strength, 0.0, 1.0));
+}
+
+// The light the scene's lights deliver to a face, as N.L-weighted radiance (the forward shader's
+// radiance * N.L, so the voxel's outgoing radiance is albedo * this). Shadows come from the volume.
+vec3 directLight(vec3 Q, vec3 N, int level) {
+    float cell = ij.uClip[level].w;
+    vec3 start = Q + N * (cell * 0.6);  // clear of the face and of the surface it lies on
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < int(ij.uCounts.x); ++i) {
+        vec3 L = -normalize(ij.uDirDir[i].xyz);
+        float nl = dot(N, L);
+        if (nl <= 0.0) continue;
+        float shade = i == 0 ? cloudShadow(Q) : 1.0;
+        sum += ij.uDirColor[i].rgb * nl * shade * lightVisible(start, L, 4096.0, level);
+    }
+    for (int i = 0; i < int(ij.uCounts.y); ++i) {
+        vec3 toLight = ij.uPointPos[i].xyz - Q;
+        float dist = length(toLight);
+        float radius = max(ij.uPointPos[i].w, 0.001);
+        if (dist > radius || dist < 1e-4) continue;
+        vec3 L = toLight / dist;
+        float nl = dot(N, L);
+        if (nl <= 0.0) continue;
+        float atten = 1.0 - smoothstep(radius * 0.75, radius, dist);
+        sum += ij.uPointColor[i].rgb * nl * atten * lightVisible(start, L, dist, level);
+    }
+    for (int i = 0; i < int(ij.uCounts.z); ++i) {
+        vec3 toPoint = Q - ij.uSpotPos[i].xyz;
+        float dist = length(toPoint);
+        float radius = max(ij.uSpotPos[i].w, 0.001);
+        if (dist > radius || dist < 1e-4) continue;
+        vec3 fromLight = toPoint / dist;
+        float cone = dot(normalize(ij.uSpotDir[i].xyz), fromLight);
+        float cosHalf = ij.uSpotDir[i].w;
+        if (cone < cosHalf) continue;
+        vec3 L = -fromLight;
+        float nl = dot(N, L);
+        if (nl <= 0.0) continue;
+        float spot = (cone - cosHalf) / max(0.0001, 1.0 - cosHalf);
+        float range = 1.0 - dist / radius;
+        sum += ij.uSpotColor[i].rgb * nl * spot * range * range * lightVisible(start, L, dist, level);
+    }
+    return sum;
 }
 
 void main() {
@@ -110,7 +261,10 @@ void main() {
                 vec3 N = vec3(normal);
                 vec3 Q = center + N * (0.5 * cellSize + 0.01);
                 vec3 eInd = probeIrradiance(Q, N, level);
-                radiance = albedo * (ij.uAmbient.rgb + eInd) / kPi;
+                // B = rho * (E_sky + E_ind) / pi + rho * (the lights' radiance x N.L): the forward shader's
+                // direct term carries no 1/pi, so it is added after the division.
+                radiance = albedo * ((ij.uAmbient.rgb * skyVisibility(Q, N, level) + eInd) / kPi +
+                                     directLight(Q, N, level));
             }
 
             ivec2 target = ivec2(radianceBase + 2 * ax + side, ay);

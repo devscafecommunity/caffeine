@@ -1,0 +1,18 @@
+{
+  "name": "Audio: adding the volumetric audio to an engine scene shows the mixer, the room and the sounds",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.audio", "label": "open the Audio tab" },
+    { "action": "click", "target": "id:audio.setup.add", "label": "add the volumetric audio" },
+    { "action": "expect", "missing": "id:audio.setup.add", "label": "Add is gone once the scene has it" },
+    { "action": "expect", "exists": "id:audio.output.speakers", "label": "the speakers switch" },
+    { "action": "expect", "exists": "id:audio.output.master" },
+    { "action": "scroll", "target": "id:editor.pane.audio", "dy": -8, "label": "scroll the tab down to the sounds" },
+    { "action": "expect", "exists": "id:audio.sounds.add_source", "label": "sources and walls can be added from the tab" },
+    { "action": "click", "target": "id:audio.sounds.add_source", "label": "add an audio source" },
+    { "action": "wait", "ms": 300, "real_time": true, "label": "let a few frames render" },
+    { "action": "screenshot", "name": "audio-settings" }
+  ]
+}

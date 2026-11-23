@@ -1,0 +1,51 @@
+{
+  "name": "Performance: the render options are one tab away, with the editor viewport's own and the scene's",
+  "fixture": "scene3d",
+  "size": [
+    1440,
+    800
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "target": "id:editor.menu.view",
+      "label": "open the View menu"
+    },
+    {
+      "action": "click",
+      "target": "id:editor.menu.view.performance",
+      "label": "open the Performance tab"
+    },
+    {
+      "action": "expect",
+      "exists": [
+        "id:performance.viewport.render_scale",
+        "id:performance.viewport.anti_aliasing",
+        "id:performance.viewport.shadows",
+        "id:performance.viewport.grid",
+        "id:performance.setup.add"
+      ],
+      "label": "the viewport's options are always there; the scene's wait for a component"
+    },
+    {
+      "action": "click",
+      "target": "id:performance.setup.add",
+      "label": "add the render features"
+    },
+    {
+      "action": "expect",
+      "missing": "id:performance.setup.add",
+      "exists": [
+        "id:performance.features.instancing",
+        "id:performance.features.occlusion",
+        "id:performance.features.reflections",
+        "id:performance.features.volumetrics"
+      ]
+    },
+    {
+      "action": "screenshot",
+      "name": "performance-tab",
+      "target": "id:editor.pane.performance"
+    }
+  ]
+}

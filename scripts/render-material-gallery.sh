@@ -4,7 +4,7 @@
 #   scripts/render-material-gallery.sh [--out DIR] [--size 512] [--baked DIR]
 #
 # Needs libcaffeine-capi + caffeine-render-snapshot (./rebuild.sh) and ImageMagick.
-# Produces in DIR (default doppio/docs/images/material):
+# Produces in DIR (default caffeine-website/content/en/docs/images/doppio/material):
 #   gallery-albedo.png        contact sheet of every preset's base colour
 #   gallery-height.png        contact sheet of every preset's height map
 #   gallery-normal.png        contact sheet of the normal maps (height in alpha ignored)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${root}/doppio/docs/images/material"
+out="${root}/caffeine-website/content/en/docs/images/doppio/material"
 size=512
 bake=1
 baked_dir=""
@@ -78,3 +78,5 @@ if [[ ${#shots[@]} -gt 0 ]]; then
     montage "${shots[@]}" -tile 2x -geometry 640x360+3+3 -background '#151515' "${out}/realistic-renders.png"
 fi
 echo "wrote gallery to ${out}"
+
+"${root}/scripts/mirror-doppio-images.sh"

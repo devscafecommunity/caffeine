@@ -1,5 +1,5 @@
 //! `doppio-headless`: scripted, human-like UI actions and screenshots without a
-//! window. See `doppio/docs/headless-testing.md`.
+//! window. See `caffeine-website/content/en/docs/doppio/headless-testing.md`.
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

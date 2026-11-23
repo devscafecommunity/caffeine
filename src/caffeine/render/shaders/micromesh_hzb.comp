@@ -1,0 +1,36 @@
+#version 450
+
+// The farthest-depth pyramid (HZB) of a depth buffer, for Micromesh occlusion culling. Level 0 is the depth
+// buffer itself (0 near, 1 far); each level above holds the MAXIMUM depth of the 2x2 texels below it, so a
+// sphere whose nearest depth is beyond a texel's value is hidden by everything under that texel. (The Min-Z
+// pyramid of Photon keeps the nearest linear depth, the opposite reduction.) The pyramid lives in ONE storage
+// buffer, level after level, so a level is built from the previous one without a same-texture feedback.
+//
+// mode 0: level 0, from the sampled depth texture. mode 1: level k from level k-1 of the buffer.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uDepth;
+layout(std430, set = 1, binding = 0) buffer Hzb { float hzb[]; };
+
+layout(set = 2, binding = 0) uniform HzbUBO {
+    uvec4 sizes;    // x source width, y source height, z destination width, w destination height
+    uvec4 offsets;  // x source offset, y destination offset, z mode
+} u;
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= u.sizes.z || p.y >= u.sizes.w) return;
+    float value;
+    if (u.offsets.z == 0u) {
+        value = texelFetch(uDepth, ivec2(p), 0).r;
+    } else {
+        uvec2 a = min(p * 2u, u.sizes.xy - 1u);
+        uvec2 b = min(p * 2u + 1u, u.sizes.xy - 1u);
+        float d00 = hzb[u.offsets.x + a.y * u.sizes.x + a.x];
+        float d10 = hzb[u.offsets.x + a.y * u.sizes.x + b.x];
+        float d01 = hzb[u.offsets.x + b.y * u.sizes.x + a.x];
+        float d11 = hzb[u.offsets.x + b.y * u.sizes.x + b.x];
+        value = max(max(d00, d10), max(d01, d11));
+    }
+    hzb[u.offsets.y + p.y * u.sizes.z + p.x] = value;
+}

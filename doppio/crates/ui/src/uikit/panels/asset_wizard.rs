@@ -80,6 +80,8 @@ pub enum Edit {
     Create,
     ImportInput(String),
     ImportAdd,
+    /// Opens the file browser to choose what to import.
+    ImportBrowse,
     ImportRemove(usize),
     ImportRun,
     GenerateIds(bool),
@@ -221,14 +223,24 @@ fn import_tab<'a, Message: Clone + 'a>(
     let mut queued = column![].spacing(2);
     if state.sources.is_empty() {
         queued = queued.push(
-            text("Nothing queued. Type a path and press Add, or drop files onto the window.")
+            text("Nothing queued. Press Browse…, type a path and press Add, or drop files onto the window.")
                 .size(10)
                 .color(theme::TEXT_MUTED),
         );
     }
     for (index, source) in state.sources.iter().enumerate() {
+        let path = std::path::Path::new(source);
+        let (badge, tone) = if path.is_dir() {
+            ("DIR", theme::WARNING)
+        } else {
+            match crate::uikit::asset_wizard::classify(path) {
+                Some(kind) => (kind.badge(), kind.icon().color()),
+                None => ("SKIP", theme::DANGER),
+            }
+        };
         queued = queued.push(
             row![
+                container(text(badge).size(8).color(tone)).width(Length::Fixed(34.0)),
                 container(text(source).size(11)).width(Length::Fill),
                 button::compact(
                     id::wizard_source(index),
@@ -251,6 +263,11 @@ fn import_tab<'a, Message: Clone + 'a>(
             ))
             .width(Length::Fill),
             button::toolbar(id::WIZARD_IMPORT_ADD, "Add", emit(Edit::ImportAdd)),
+            button::primary(
+                id::WIZARD_IMPORT_BROWSE,
+                "Browse…",
+                emit(Edit::ImportBrowse)
+            ),
         ]
         .spacing(6),
         container(scroll::vertical(queued))
@@ -258,9 +275,7 @@ fn import_tab<'a, Message: Clone + 'a>(
             .height(Length::Fixed(190.0))
             .width(Length::Fill)
             .style(theme::surface),
-        text("Textures, meshes (.obj/.glb/.gltf), audio, scripts, materials and .lang tables.")
-            .size(10)
-            .color(theme::TEXT_MUTED),
+        accepted_types(),
         button::primary(
             id::WIZARD_IMPORT_RUN,
             if count == 0 {
@@ -272,6 +287,43 @@ fn import_tab<'a, Message: Clone + 'a>(
         ),
     ]
     .spacing(8)
+    .into()
+}
+
+/// The file types the importer takes, one line per kind, straight from the shared table.
+fn accepted_types<'a, Message: Clone + 'a>() -> Element<'a, Message> {
+    let mut lines = column![].spacing(1);
+    for kind in crate::uikit::asset_kind::AssetKind::IMPORTABLE {
+        let extensions = kind.extensions();
+        if extensions.is_empty() {
+            continue;
+        }
+        let list = extensions
+            .iter()
+            .map(|extension| format!(".{extension}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines = lines.push(
+            row![
+                text(kind.badge())
+                    .size(8)
+                    .color(kind.icon().color())
+                    .width(Length::Fixed(34.0)),
+                text(list).size(9).color(theme::TEXT_MUTED),
+            ]
+            .spacing(4),
+        );
+    }
+    column![
+        text("Accepted types (anything else is skipped and reported):")
+            .size(10)
+            .color(theme::TEXT_MUTED),
+        container(scroll::vertical(lines))
+            .height(Length::Fixed(84.0))
+            .padding([2, 4])
+            .style(theme::surface),
+    ]
+    .spacing(3)
     .into()
 }
 

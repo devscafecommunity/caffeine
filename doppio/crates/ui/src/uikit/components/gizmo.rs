@@ -141,7 +141,7 @@ pub struct Target {
     pub scale: [f32; 3],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Edit {
     Move {
         axis: Axis,
@@ -155,6 +155,13 @@ pub enum Edit {
     Rotate {
         axis: Axis,
         rotation: [f32; 3],
+    },
+    /// A ring drag: the object that had Euler angles `start` is turned by `angle` degrees about the
+    /// ring's world axis. Its Euler angles come from [`Edit::turned`].
+    Turn {
+        axis: Axis,
+        start: [f32; 3],
+        angle: f32,
     },
     Scale {
         axis: Axis,
@@ -172,7 +179,9 @@ impl Edit {
         match self {
             Edit::Move { axis, .. } => format!("Move {}", axis.label()),
             Edit::MovePlane { plane, .. } => format!("Move {}", plane.label()),
-            Edit::Rotate { axis, .. } => format!("Rotate {}", axis.label()),
+            Edit::Rotate { axis, .. } | Edit::Turn { axis, .. } => {
+                format!("Rotate {}", axis.label())
+            }
             Edit::Scale { axis, .. } => format!("Scale {}", axis.label()),
             Edit::ScaleUniform { .. } => "Scale uniformly".to_owned(),
         }
@@ -183,9 +192,94 @@ impl Edit {
         match self {
             Edit::Move { axis, .. } => format!("gizmo:move:{entity}:{}", axis.label()),
             Edit::MovePlane { plane, .. } => format!("gizmo:move:{entity}:{}", plane.label()),
-            Edit::Rotate { axis, .. } => format!("gizmo:rotate:{entity}:{}", axis.label()),
+            Edit::Rotate { axis, .. } | Edit::Turn { axis, .. } => {
+                format!("gizmo:rotate:{entity}:{}", axis.label())
+            }
             Edit::Scale { axis, .. } => format!("gizmo:scale:{entity}:{}", axis.label()),
             Edit::ScaleUniform { .. } => format!("gizmo:scale:{entity}:uniform"),
+        }
+    }
+}
+
+impl Edit {
+    /// The Euler angles a `Turn` leaves the object with (`None` for the other edits).
+    pub fn turned(&self) -> Option<[f32; 3]> {
+        match *self {
+            Edit::Turn { axis, start, angle } => Some(vm::turn_euler(start, axis.vector(), angle)),
+            _ => None,
+        }
+    }
+}
+
+/// Grid steps used when snapping is on: metres, degrees and a scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapSteps {
+    pub translate: f32,
+    pub rotate: f32,
+    pub scale: f32,
+}
+
+impl Default for SnapSteps {
+    fn default() -> Self {
+        Self {
+            translate: 0.25,
+            rotate: 15.0,
+            scale: 0.1,
+        }
+    }
+}
+
+fn round_to(value: f32, step: f32) -> f32 {
+    if step <= 0.0 {
+        value
+    } else {
+        // `+ 0.0` turns a negative zero into zero so history keys and text stay clean.
+        (value / step).round() * step + 0.0
+    }
+}
+
+impl Edit {
+    /// The same edit with the handle's own values moved onto the grid. Only the coordinates the
+    /// handle controls are snapped, so dragging X never nudges Y or Z.
+    pub fn snapped(&self, steps: SnapSteps) -> Edit {
+        match *self {
+            Edit::Move { axis, mut position } => {
+                let i = axis.index();
+                position[i] = round_to(position[i], steps.translate);
+                Edit::Move { axis, position }
+            }
+            Edit::MovePlane {
+                plane,
+                mut position,
+            } => {
+                let (a, b) = plane.spans();
+                for axis in [a, b] {
+                    position[axis.index()] = round_to(position[axis.index()], steps.translate);
+                }
+                Edit::MovePlane { plane, position }
+            }
+            Edit::Rotate { axis, mut rotation } => {
+                let i = axis.index();
+                rotation[i] = round_to(rotation[i], steps.rotate);
+                Edit::Rotate { axis, rotation }
+            }
+            // The swept angle goes onto the grid, not the Euler components it ends up in.
+            Edit::Turn { axis, start, angle } => Edit::Turn {
+                axis,
+                start,
+                angle: round_to(angle, steps.rotate),
+            },
+            Edit::Scale { axis, mut scale } => {
+                let i = axis.index();
+                scale[i] = round_to(scale[i], steps.scale).max(steps.scale.max(0.01));
+                Edit::Scale { axis, scale }
+            }
+            Edit::ScaleUniform { scale } => {
+                let value = round_to(scale[0], steps.scale).max(steps.scale.max(0.01));
+                Edit::ScaleUniform {
+                    scale: [value, value, value],
+                }
+            }
         }
     }
 }
@@ -684,9 +778,11 @@ impl Program {
                     return None;
                 }
                 let delta = sweep(start, current) * self.rotation_sign(axis);
-                let mut rotation = active.start_target.rotation;
-                rotation[axis.index()] += delta.to_degrees();
-                Some(Edit::Rotate { axis, rotation })
+                Some(Edit::Turn {
+                    axis,
+                    start: active.start_target.rotation,
+                    angle: delta.to_degrees(),
+                })
             }
             _ => None,
         }
@@ -1316,11 +1412,27 @@ mod tests {
         // A quarter turn around the centre in screen space.
         let radial = start - center;
         let quarter = center + iced::Vector::new(-radial.y, radial.x);
-        let Some(Edit::Rotate { rotation, .. }) = program.edit(active, quarter) else {
-            panic!("expected a rotate edit");
+        let Some(edit @ Edit::Turn { angle, start, .. }) = program.edit(active, quarter) else {
+            panic!("expected a turn");
         };
-        assert!((rotation[1].abs() - 90.0).abs() < 1.0, "{rotation:?}");
-        assert_eq!(rotation[0], 10.0, "other axes are untouched");
+        assert!((angle.abs() - 90.0).abs() < 1.0, "{angle}");
+        assert_eq!(
+            start,
+            [10.0, 0.0, 0.0],
+            "the turn starts from the pressed rotation"
+        );
+        // The object ends up turned a quarter about the world Y axis, whatever Euler angles say so.
+        let turned = edit.turned().expect("a turn has Euler angles");
+        let expected = vm::turn_euler([10.0, 0.0, 0.0], Axis::Y.vector(), angle);
+        for (a, b) in vm::euler_axes(turned)
+            .iter()
+            .zip(vm::euler_axes(expected).iter())
+        {
+            assert!(
+                vm::length(vm::sub(*a, *b)) < 1e-3,
+                "{turned:?} vs {expected:?}"
+            );
+        }
     }
 
     #[test]
@@ -1347,12 +1459,12 @@ mod tests {
             let radial = ring[8] - center;
             // Clockwise on screen: rotate the radial vector by +90 degrees in y-down coordinates.
             let clockwise = center + iced::Vector::new(-radial.y, radial.x);
-            let Some(Edit::Rotate { rotation, .. }) = program.edit(active, clockwise) else {
-                panic!("expected a rotate edit");
+            let Some(Edit::Turn { angle, .. }) = program.edit(active, clockwise) else {
+                panic!("expected a turn");
             };
             // Clockwise as seen by the viewer is a negative turn about an axis pointing at them.
             let at_viewer = vm::dot(Axis::Z.vector(), basis.forward) < 0.0;
-            assert_eq!(rotation[2] < 0.0, at_viewer, "{rotation:?}");
+            assert_eq!(angle < 0.0, at_viewer, "{angle}");
         }
     }
 
@@ -1368,5 +1480,94 @@ mod tests {
             Edit::ScaleUniform { scale: [1.0; 3] }.history_key(7),
             "gizmo:scale:7:uniform"
         );
+    }
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+
+    #[test]
+    fn moving_one_axis_only_snaps_that_axis() {
+        let edit = Edit::Move {
+            axis: Axis::X,
+            position: [1.13, 2.37, -0.61],
+        };
+        let Edit::Move { position, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a move");
+        };
+        assert_eq!(position, [1.25, 2.37, -0.61]);
+    }
+
+    #[test]
+    fn plane_moves_snap_both_coordinates_of_the_plane() {
+        let edit = Edit::MovePlane {
+            plane: Plane::XZ,
+            position: [0.9, 5.55, -1.1],
+        };
+        let Edit::MovePlane { position, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a plane move");
+        };
+        assert_eq!(position, [1.0, 5.55, -1.0]);
+    }
+
+    #[test]
+    fn a_ring_turn_snaps_its_swept_angle_not_the_euler_components() {
+        let edit = Edit::Turn {
+            axis: Axis::X,
+            start: [0.0, 180.0, 0.0],
+            angle: 37.4,
+        };
+        let Edit::Turn { angle, start, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a turn");
+        };
+        assert_eq!(angle, 30.0);
+        assert_eq!(start, [0.0, 180.0, 0.0]);
+    }
+
+    #[test]
+    fn rotation_snaps_to_degrees_and_never_leaves_negative_zero() {
+        let edit = Edit::Rotate {
+            axis: Axis::Y,
+            rotation: [3.0, 37.4, -2.0],
+        };
+        let Edit::Rotate { rotation, .. } = edit.snapped(SnapSteps::default()) else {
+            panic!("still a rotation");
+        };
+        assert_eq!(rotation, [3.0, 30.0, -2.0]);
+        assert!(round_to(-0.01, 15.0).is_sign_positive());
+    }
+
+    #[test]
+    fn scale_snaps_and_never_reaches_zero() {
+        let Edit::ScaleUniform { scale } = (Edit::ScaleUniform {
+            scale: [0.012, 0.012, 0.012],
+        })
+        .snapped(SnapSteps::default()) else {
+            panic!("still uniform");
+        };
+        assert_eq!(scale, [0.1, 0.1, 0.1]);
+        let Edit::Scale { scale, .. } = (Edit::Scale {
+            axis: Axis::Z,
+            scale: [1.0, 1.0, 2.46],
+        })
+        .snapped(SnapSteps::default()) else {
+            panic!("still a scale");
+        };
+        assert_eq!(scale, [1.0, 1.0, 2.5]);
+    }
+
+    #[test]
+    fn a_zero_step_leaves_values_alone() {
+        let steps = SnapSteps {
+            translate: 0.0,
+            rotate: 0.0,
+            scale: 0.0,
+        };
+        let edit = Edit::Move {
+            axis: Axis::Z,
+            position: [0.1, 0.2, 0.3],
+        };
+        assert_eq!(edit.snapped(steps), edit);
     }
 }

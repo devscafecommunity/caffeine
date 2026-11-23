@@ -1,12 +1,15 @@
 #include "render/GpuSceneRenderer.hpp"
 #include "animation/SkinLibrary.hpp"
 #include "caffeine/environment/VolumetricClouds.hpp"
+#include "render/GpuProfile.hpp"
+#include "render/ShadowCulling.hpp"
 #include "caffeine/environment/NaturalFluids.hpp"
 #include "caffeine/photon/Photon.hpp"
 #include "effects/EffectSystem.hpp"
 #include "render/PostProcessRenderer.hpp"
 #include "render/CoarseOcclusion.hpp"
 #include "render/InstanceBatch.hpp"
+#include "micromesh/Micromesh.hpp"
 #include "render/ForwardRenderFeatures.hpp"
 #include "debug/Profiler.hpp"
 #include "render/ShaderBytecode.hpp"
@@ -38,15 +41,29 @@
 #include "debug/CrashHandler.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <chrono>
 #include <cstring>
 
 namespace Caffeine::Render {
 namespace {
+
+using StatsClock = std::chrono::steady_clock;
+
+/// Adds the milliseconds of its scope to `out`.
+struct ScopedMs {
+    f32& out;
+    StatsClock::time_point start = StatsClock::now();
+    explicit ScopedMs(f32& target) : out(target) {}
+    ~ScopedMs() {
+        out += std::chrono::duration<f32, std::milli>(StatsClock::now() - start).count();
+    }
+};
 
 constexpr u32 kVertexStride = sizeof(Assets::Vertex3D);
 
@@ -127,6 +144,9 @@ struct LightingUBO {
     float modifiers[4]; // x wetness, y snow, z age
     float modTint[4];   // rgb albedo tint
     float water[4];     // x water surface, y foam scale, z ripple detail, w time
+    float cloudShadowA[4];  // x strength (0 = off), y coverage, z density
+    float cloudShadowB[4];  // xyz wind offset of the cloud noise, w base altitude
+    float cloudShadowC[4];  // xyz direction toward the sun, w top altitude
 };
 
 static_assert(offsetof(LightingUBO, iblColor) == 608, "LightingUBO.iblColor must match GLSL std140");
@@ -148,6 +168,10 @@ struct SkyUBO {
     float cloudC[4];
     float sunDir[4];
     float sunColor[4];
+    float cloudD[4];
+    float cloudE[4];
+    float boltA[4];
+    float boltB[4];
 };
 
 struct GridUBO {
@@ -373,6 +397,27 @@ Vec3 meshWorldCenter(const Mat4& worldMatrix, const Assets::Mesh3D* mesh) {
     return worldMatrix.transformPoint(localCenter);
 }
 
+/// The external texture files a mesh file names. Reading and scanning the whole mesh file for every
+/// draw of every frame cost milliseconds per object on a dense OBJ without materials, so the answer is
+/// remembered until the file's modification time changes.
+const std::vector<std::string>& externalMeshUris(const std::string& meshPath) {
+    struct Entry {
+        std::filesystem::file_time_type stamp{};
+        std::vector<std::string> uris;
+    };
+    static std::unordered_map<std::string, Entry> cache;
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(meshPath, ec);
+    auto it = cache.find(meshPath);
+    if (it == cache.end() || (!ec && it->second.stamp != stamp)) {
+        Entry entry;
+        if (!ec) entry.stamp = stamp;
+        entry.uris = Assets::MeshImportValidator::listGltfExternalUris(meshPath);
+        it = cache.insert_or_assign(meshPath, std::move(entry)).first;
+    }
+    return it->second.uris;
+}
+
 ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Mesh3D* mesh,
                                      const std::string& meshPath, const std::string& projectRoot,
                                      const std::string& customTexturePath, u32 materialIndex,
@@ -414,7 +459,7 @@ ResolvedMeshAlbedo resolveMeshAlbedo(RHI::RenderDevice* device, const Assets::Me
         result.texture = cache.acquire(device, pngPath, projectRoot, qualityTier, true);
         if (result.texture) return result;
 
-        for (const std::string& uri : Assets::MeshImportValidator::listGltfExternalUris(meshPath)) {
+        for (const std::string& uri : externalMeshUris(meshPath)) {
             const std::string texPath =
                 (std::filesystem::path(meshPath).parent_path() / uri).string();
             result.texture = cache.acquire(device, texPath, projectRoot, qualityTier, true);
@@ -518,7 +563,6 @@ bool GpuSceneRenderer::init(RHI::RenderDevice* device) {
     m_fallbackCube = m_device->createTexture(cubeDesc);
     m_views.reserve(kMaxViewTargets);
     m_post.init(device);
-    m_photonCascades.init(device);
     m_ready = m_sampler && m_repeatSampler && m_pointSampler && m_post.ready();
     return m_ready;
 }
@@ -635,6 +679,11 @@ void GpuSceneRenderer::shutdown() {
         if (m_shadowCutoutFrag) m_device->destroyShader(m_shadowCutoutFrag);
         if (m_shadowCutoutPipeline) m_device->destroyPipeline(m_shadowCutoutPipeline);
         if (m_foliageVert) m_device->destroyShader(m_foliageVert);
+        releaseMicromeshes();
+        if (m_micromeshVert) m_device->destroyShader(m_micromeshVert);
+        if (m_micromeshPipeline) m_device->destroyPipeline(m_micromeshPipeline);
+        if (m_shadowMicromeshVert) m_device->destroyShader(m_shadowMicromeshVert);
+        if (m_shadowMicromeshPipeline) m_device->destroyPipeline(m_shadowMicromeshPipeline);
         if (m_waterVert) m_device->destroyShader(m_waterVert);
         if (m_waterPipeline) m_device->destroyPipeline(m_waterPipeline);
         if (m_waterBlendPipeline) m_device->destroyPipeline(m_waterBlendPipeline);
@@ -664,7 +713,9 @@ void GpuSceneRenderer::shutdown() {
         if (m_reflectionColor) m_device->destroyTexture(m_reflectionColor);
         if (m_reflectionDepth) m_device->destroyTexture(m_reflectionDepth);
         destroyGBufferTargets(m_device, m_reflectionGbuffer);
-        m_photonCascades.shutdown(m_device);
+        for (auto& entry : m_photonViews) entry.second->cascades.shutdown(m_device);
+        m_photonViews.clear();
+        m_pv = nullptr;
         if (m_fallbackCube) m_device->destroyTexture(m_fallbackCube);
         m_environment.release(m_device);
         if (m_sampler) m_device->destroySampler(m_sampler);
@@ -685,6 +736,10 @@ void GpuSceneRenderer::shutdown() {
     m_shadowCutoutFrag = nullptr;
     m_shadowCutoutPipeline = nullptr;
     m_foliageVert = nullptr;
+    m_micromeshVert = nullptr;
+    m_micromeshPipeline = nullptr;
+    m_shadowMicromeshVert = nullptr;
+    m_shadowMicromeshPipeline = nullptr;
     m_waterVert = nullptr;
     m_waterPipeline = nullptr;
     m_waterBlendPipeline = nullptr;
@@ -853,6 +908,56 @@ bool GpuSceneRenderer::createPipelines() {
         m_waterBlendPipeline = m_device->createGraphicsPipeline(m_waterVert, m_sceneFrag, blendDesc);
     }
 
+    // Micromeshes: the cluster buffers (positions, normals, UVs, tangents) and the instance matrix from a
+    // storage buffer, into the same G-buffer through scene_lit.frag. Optional: without it (a backend
+    // other than SPIR-V, or no storage buffers) a Micromesh entity just draws as a normal mesh.
+    {
+        const RHI::DeviceCapabilities caps = m_device->capabilities();
+        if (caps.indirectDraw && caps.graphicsStorageBuffers && caps.computeStorageWrite &&
+            format == RHI::ShaderBytecodeFormat::SPIRV) {
+            m_micromeshVert = createBuiltinShader(m_device, BuiltinShader::SceneMicromeshVertex,
+                                                  RHI::ShaderStage::Vertex, 1, 0, 1);
+        }
+        if (m_micromeshVert) {
+            RHI::VertexBufferLayoutDesc microLayouts[5]{};
+            RHI::VertexAttributeDesc microAttrs[5]{};
+            microLayouts[0] = {0, static_cast<u32>(sizeof(float) * 3), false};
+            microLayouts[1] = {1, static_cast<u32>(sizeof(float) * 3), false};
+            microLayouts[2] = {2, static_cast<u32>(sizeof(float) * 2), false};
+            microLayouts[3] = {3, static_cast<u32>(sizeof(float) * 4), false};
+            microAttrs[0] = {0, 0, RHI::VertexFormat::Float3, 0};
+            microAttrs[1] = {1, 1, RHI::VertexFormat::Float3, 0};
+            microAttrs[2] = {2, 2, RHI::VertexFormat::Float2, 0};
+            microAttrs[3] = {3, 3, RHI::VertexFormat::Float4, 0};
+            microLayouts[4] = {4, static_cast<u32>(sizeof(float) * 4), false};
+            microAttrs[4] = {4, 4, RHI::VertexFormat::Float4, 0};
+            RHI::GraphicsPipelineDesc microDesc = sceneDesc;
+            microDesc.vertexBuffers = microLayouts;
+            microDesc.numVertexBuffers = 5;
+            microDesc.attributes = microAttrs;
+            microDesc.numAttributes = 5;
+            m_micromeshPipeline = m_device->createGraphicsPipeline(m_micromeshVert, m_sceneFrag, microDesc);
+        }
+        // The directional shadow cascades of Micromesh objects: positions only, the same colour-only target.
+        if (m_micromeshPipeline && caps.graphicsStorageBuffers) {
+            m_shadowMicromeshVert = createBuiltinShader(m_device, BuiltinShader::ShadowMicromeshVertex,
+                                                        RHI::ShaderStage::Vertex, 1, 0, 1);
+        }
+        if (m_shadowMicromeshVert) {
+            RHI::VertexBufferLayoutDesc posLayout{0, static_cast<u32>(sizeof(float) * 3), false};
+            RHI::VertexAttributeDesc posAttr{0, 0, RHI::VertexFormat::Float3, 0};
+            RHI::GraphicsPipelineDesc posDesc{};
+            fillMeshPipelineDesc(posDesc, layout, attrs, RHI::TextureFormat::R16_FLOAT, false, false);
+            posDesc.blendMode = RHI::BlendMode::Min;
+            posDesc.vertexBuffers = &posLayout;
+            posDesc.numVertexBuffers = 1;
+            posDesc.attributes = &posAttr;
+            posDesc.numAttributes = 1;
+            m_shadowMicromeshPipeline =
+                m_device->createGraphicsPipeline(m_shadowMicromeshVert, m_shadowFrag, posDesc);
+        }
+    }
+
     // Meshes with per-vertex colour read it from a second vertex stream (never instanced).
     RHI::VertexBufferLayoutDesc foliageLayouts[2]{};
     RHI::VertexAttributeDesc foliageAttrs[5]{};
@@ -933,10 +1038,15 @@ bool GpuSceneRenderer::createPipelines() {
 }
 
 void GpuSceneRenderer::setWind(float* out, const MeshDraw& draw) const {
-    out[0] = draw.windStrength;
+    // A weather wind sways foliage harder the stronger it blows, in gusts (0 leaves the material as authored).
+    const f32 windScale =
+        m_weather.windFoliage > 0.0f
+            ? 1.0f + m_weather.windFoliage * (m_weather.rainWindSpeed / 8.0f) * m_gust
+            : 1.0f;
+    out[0] = draw.windStrength * windScale;
     out[1] = draw.windSpeed;
     out[2] = draw.windFlutter;
-    out[3] = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
+    out[3] = m_simTime;
 }
 
 void GpuSceneRenderer::pushShadowDraw(RHI::CommandBuffer* cmd, const MeshDraw& draw,
@@ -1009,8 +1119,11 @@ void GpuSceneRenderer::pushShadowDrawsForMesh(RHI::CommandBuffer* cmd, const Mes
     if (!draw.mesh || draw.mesh->indices.empty()) return;
 
     if (draw.mesh->subMeshes.size() > 1) {
+        u32 index = 0;
         for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
+            const u32 current = index++;
             if (submesh.indexCount == 0) continue;
+            if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != current) continue;
             pushShadowDraw(cmd, draw, mvp, lightPos, mode, submesh.indexCount, submesh.indexOffset);
         }
         return;
@@ -1025,6 +1138,16 @@ bool GpuSceneRenderer::ensureMeshUploaded(Assets::Mesh3D* mesh) {
 
     const u64 vertexBytes = mesh->vertices.size() * sizeof(Assets::Vertex3D);
     const u64 indexBytes = mesh->indices.size() * sizeof(u32);
+
+    // Buffers of another device (a mesh from a process-wide cache that outlived its device) are not ours to use or
+    // free: forget them and upload again.
+    if (mesh->gpuDeviceSerial != m_device->serial()) {
+        mesh->vertexBuffer = nullptr;
+        mesh->indexBuffer = nullptr;
+        mesh->colorBuffer = nullptr;
+        mesh->uploadedRevision = 0;
+        mesh->gpuDeviceSerial = m_device->serial();
+    }
 
     if (mesh->vertexBuffer && mesh->indexBuffer &&
         mesh->uploadedRevision == mesh->geometryRevision) {
@@ -1131,6 +1254,26 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
                                  cascadeVPs, splits);
         m_directionalShadows.setCascadeData(shadowSlot, cascadeCount, cascadeVPs, splits, true);
 
+        // Micromesh objects cast their own coarser cut into each cascade: a compute pass per cascade, before
+        // the render pass. The error budget is four shadow texels (view independent: the cascade is ortho).
+        u32 microViews[GpuDirectionalShadowMap::kMaxCascades];
+        for (u32 cascade = 0; cascade < GpuDirectionalShadowMap::kMaxCascades; ++cascade) microViews[cascade] = ~0u;
+        if (!m_micromeshDraws.empty() && m_shadowMicromeshPipeline) {
+            for (u32 cascade = 0; cascade < cascadeCount; ++cascade) {
+                const Mat4& vp = cascadeVPs[cascade];
+                const f32 scaleX = Vec3(vp(0, 0), vp(0, 1), vp(0, 2)).length();
+                const f32 texels = cascadeCount > 1 ? cascadeSize : atlasSize;
+                MicromeshCullParams params;
+                params.planes = planesFromViewProj(vp);
+                params.camera = camera.position;
+                params.threshold = scaleX > 1e-9f ? (2.0f / scaleX) / texels * 4.0f : 0.0f;
+                params.frustum = true;
+                params.cone = false;
+                params.viewDependent = false;
+                microViews[cascade] = cullMicromeshView(cmd, params);
+            }
+        }
+
         RHI::RenderPassDesc pass;
         pass.colorTarget = map;
         pass.clearColor[0] = 1.0f;
@@ -1146,8 +1289,33 @@ void GpuSceneRenderer::renderDirectionalShadows(RHI::CommandBuffer* cmd, ECS::Wo
             const f32 viewportH = cascadeCount > 1 ? cascadeSize : atlasSize;
             cmd->setViewport(offsetX, offsetY, viewportW, viewportH);
 
+            // A cascade is a box round one slice of the view: what lies outside its sides is not drawn into it
+            // (a caster in the far cascade's range used to be submitted to all four).
+            const std::array<Vec4, 6> sides = planesFromViewProj(cascadeVPs[cascade]);
             for (const auto& draw : draws) {
                 if (!draw.castShadows || !draw.mesh || !ensureMeshUploaded(draw.mesh)) continue;
+                // Wind, displacement and waves move vertices off the box the draw was gathered with.
+                if (draw.hasAabb && !draw.displaced && !draw.gpuWater) {
+                    const Vec3 margin(0.5f, 0.5f, 0.5f);
+                    if (outsideCascadeSides(sides, draw.aabbMin - margin, draw.aabbMax + margin)) {
+                        ++m_building.shadowDrawsCulled;
+                        continue;
+                    }
+                }
+                ++m_building.shadowDraws;
+                const MicromeshDrawRef* microRef = nullptr;
+                if (microViews[cascade] != ~0u && microDrawParts(&draw, microRef)) {
+                    cmd->bindPipeline(m_shadowMicromeshPipeline);
+                    float viewProj[16];
+                    std::memcpy(viewProj, cascadeVPs[cascade].data(), sizeof(viewProj));
+                    cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, viewProj, sizeof(viewProj));
+                    for (const auto& part : microRef->parts) {
+                        RHI::Buffer* storage[1] = {part.first->gpu.instanceBuffer()};
+                        cmd->bindVertexStorageBuffers(storage, 0, 1);
+                        part.first->gpu.drawSceneSlotPositions(cmd, m_micromeshArena, microViews[cascade], part.second);
+                    }
+                    continue;
+                }
                 pushShadowDrawsForMesh(cmd, draw, cascadeVPs[cascade] * draw.worldMatrix,
                                        camera.focus, 1);
             }
@@ -1315,12 +1483,134 @@ void GpuSceneRenderer::drawSky(RHI::CommandBuffer* cmd, const GpuSceneCamera& ca
     setVec4(ubo.sunDir, clouds.sunDirection.x, clouds.sunDirection.y, clouds.sunDirection.z,
             clouds.sunIntensity * clouds.sunScatter);
     setVec4(ubo.sunColor, clouds.sunColor.x, clouds.sunColor.y, clouds.sunColor.z, 1.0f);
+    setVec4(ubo.cloudD, clouds.tint.x, clouds.tint.y, clouds.tint.z, clouds.darkness);
+    setVec4(ubo.cloudE, clouds.skyLight, 0.0f, 0.0f, 0.0f);
+    setVec4(ubo.boltA, m_lightning.strike.azimuth, m_lightning.strike.elevation, m_lightning.bolt,
+            m_lightning.flash);
+    setVec4(ubo.boltB, m_lightning.strike.start, clouds.silverLining, 0.0f, 0.0f);
 
     RHI::Texture* bound = env ? env : GpuTextureCache::instance().whiteTexture(m_device);
     cmd->bindPipeline(m_skyPipeline);
     if (bound) cmd->bindTexture(bound, 0, m_repeatSampler);
     cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &ubo, sizeof(ubo));
     cmd->draw(3);
+}
+
+void GpuSceneRenderer::applyWeatherToLights(Scene::LightingData& lights) const {
+    if (m_weather.sunScale != 1.0f) {
+        for (auto& d : lights.directionals) d.intensity *= m_weather.sunScale;
+    }
+    // A flash lights the scene from where the bolt struck: a cold directional light with no shadow of its own,
+    // seen by the forward shader and by Photon's injection alike (so the bounce flashes too).
+    const f32 flash = m_lightning.flash;
+    if (flash > 0.02f && lights.directionals.size() < 4) {
+        const Scene::LightningStrike& strike = m_lightning.strike;
+        const f32 elevation = strike.elevation * 0.6f;
+        const Vec3 toBolt(std::sin(strike.azimuth) * std::cos(elevation), std::sin(elevation),
+                          std::cos(strike.azimuth) * std::cos(elevation));
+        Scene::DirectionalLightData bolt;
+        bolt.direction = toBolt * -1.0f;
+        bolt.color = Vec4(0.78f, 0.84f, 1.0f, 1.0f);
+        bolt.intensity = flash * 5.0f;
+        bolt.shadowDistance = 0.0f;
+        bolt.castShadows = false;
+        lights.directionals.push_back(bolt);
+    }
+}
+
+void GpuSceneRenderer::updateWeatherDynamics() {
+    m_gust = Scene::windGustFactor(m_cloudTime, m_weather.windGust);
+    m_lightning = {};
+    if (m_weather.lightning) {
+        Scene::LightningSettings settings;
+        settings.rate = m_weather.lightningRate;
+        settings.intensity = m_weather.lightningIntensity;
+        settings.distanceMin = m_weather.lightningDistanceMin;
+        settings.distanceMax = m_weather.lightningDistanceMax;
+        settings.seed = m_weather.lightningSeed;
+        m_lightning = Scene::lightningAt(settings, m_cloudTime);
+    }
+}
+
+u32 GpuSceneRenderer::pollThunder(Scene::ThunderEvent* out, u32 capacity) {
+    if (!m_weather.lightning || !m_weather.thunder) {
+        m_thunderLast = m_cloudTime;
+        return 0;
+    }
+    if (m_cloudTime < m_thunderLast) m_thunderLast = 0.0f;  // the clock wrapped
+    Scene::LightningSettings settings;
+    settings.rate = m_weather.lightningRate;
+    settings.intensity = m_weather.lightningIntensity;
+    settings.distanceMin = m_weather.lightningDistanceMin;
+    settings.distanceMax = m_weather.lightningDistanceMax;
+    settings.seed = m_weather.lightningSeed;
+    const u32 found = Scene::thunderBetween(settings, m_thunderLast, m_cloudTime, out, capacity);
+    m_thunderLast = m_cloudTime;
+    return std::min(found, capacity);
+}
+
+PostWeather GpuSceneRenderer::buildPostWeather(const GpuSceneCamera& camera, u32 width,
+                                               u32 height) const {
+    (void)width;
+    (void)height;
+    PostWeather wx;
+    const Scene::WeatherResolved& w = m_weather;
+    if (w.fog) {
+        wx.fog = true;
+        wx.fogDensity = w.fogDensity;
+        wx.fogHeightFalloff = w.fogHeightFalloff;
+        wx.fogBaseHeight = w.fogBaseHeight;
+        wx.fogStart = w.fogStart;
+        wx.fogMaxOpacity = w.fogMaxOpacity;
+        wx.fogColor = w.fogColor;
+        wx.fogSkyBlend = w.fogSkyBlend;
+        wx.fogSunScatter = w.fogSunScatter;
+        wx.fogSunExponent = w.fogSunExponent;
+        wx.sunDirection = m_weatherSunDirection;
+        wx.sunColor = m_weatherSunColor * (m_weatherSunIntensity * 0.5f);
+        wx.horizon = Vec3(kSkyHorizon.x * w.skyScale * w.skyTint.x, kSkyHorizon.y * w.skyScale * w.skyTint.y,
+                          kSkyHorizon.z * w.skyScale * w.skyTint.z);
+        RHI::Texture* env = m_environment.texture();
+        if (env && m_environmentExposure > 0.0f) {
+            wx.environment = env;
+            wx.environmentExposure = m_environmentExposure * w.skyScale;
+            const u32 mips = m_environment.mipCount();
+            wx.environmentLod = static_cast<f32>(std::min(mips > 0 ? mips - 1 : 0u, 6u));
+        }
+    }
+    if (m_cloudSettings.enabled && m_cloudSettings.sunShafts > 0.0f) {
+        // The sun's place on the screen (a far point along its direction), and whether it is in front of the camera.
+        const Vec3 toward = m_weatherSunDirection;
+        const Vec4 clip = (camera.proj * camera.view)
+                              .transformVec4(Vec4(camera.position.x + toward.x * 1000.0f,
+                                                  camera.position.y + toward.y * 1000.0f,
+                                                  camera.position.z + toward.z * 1000.0f, 1.0f));
+        if (clip.w > 1e-4f) {
+            wx.sunAhead = true;
+            wx.shaftSun = Vec2(clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f);
+            wx.shafts = m_cloudSettings.sunShafts;
+        }
+    }
+    if (m_lightning.flash > 0.0f) {
+        wx.flash = m_lightning.flash;
+        wx.flashColor = Vec3(0.78f, 0.84f, 1.0f);
+    }
+    if (w.rain) {
+        wx.rain = true;
+        wx.rainIntensity = w.rainIntensity;
+        wx.rainDropLength = w.rainDropLength;
+        wx.rainFallSpeed = w.rainSpeed;
+        wx.rainBrightness = w.rainBrightness;
+        // The wind's velocity in the world, surging with the gusts: the shader tilts the whole lattice of drops by it.
+        const f32 angle = w.rainWindDirection * kPi / 180.0f;
+        const f32 speed = w.rainWindSpeed * m_gust;
+        wx.rainWind = Vec3(std::cos(angle) * speed, 0.0f, std::sin(angle) * speed);
+        wx.rainSplashes = w.rainSplashes;
+        const f32 level = std::clamp(0.12f + 0.30f * m_weatherSunIntensity, 0.08f, 0.6f);
+        wx.rainColor = Vec3(0.75f * level * w.skyTint.x, 0.80f * level * w.skyTint.y,
+                            0.92f * level * w.skyTint.z);
+    }
+    return wx;
 }
 
 void GpuSceneRenderer::drawGrid(RHI::CommandBuffer* cmd, const GpuSceneCamera& camera,
@@ -1379,10 +1669,14 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     // Everything that is the same for every draw of the pass.
     LightingUBO base{};
     setVec4(base.cameraPos, camera.position.x, camera.position.y, camera.position.z, 0.0f);
+    // Weather greys and dims the sky light: overcast or fog changes the ambient like it does Photon's sky.
+    const Vec3 weatherSky = m_weather.skyTint * (m_weather.skyScale * (1.0f + 1.2f * m_lightning.flash));
     if (options.overrideAmbient) {
-        setVec4(base.ambient, options.ambientColor.x, options.ambientColor.y, options.ambientColor.z, 0.0f);
+        setVec4(base.ambient, options.ambientColor.x * weatherSky.x, options.ambientColor.y * weatherSky.y,
+                options.ambientColor.z * weatherSky.z, 0.0f);
     } else {
-        setVec4(base.ambient, kFallbackAmbient.x, kFallbackAmbient.y, kFallbackAmbient.z, 0.0f);
+        setVec4(base.ambient, kFallbackAmbient.x * weatherSky.x, kFallbackAmbient.y * weatherSky.y,
+                kFallbackAmbient.z * weatherSky.z, 0.0f);
     }
     base.dirCount = static_cast<int>(std::min(lighting.lights.directionals.size(), size_t{4}));
     for (int i = 0; i < base.dirCount; ++i) {
@@ -1390,6 +1684,18 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         const Vec3 c = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
         setVec4(base.dirData + i * 4, d.direction.x, d.direction.y, d.direction.z, d.intensity);
         setVec4(base.dirColor + i * 4, c.x, c.y, c.z, 0.0f);
+    }
+    {
+        // Cloud shadows: the forward shaders read the clouds' noise at the point where the sun's ray crosses the layer.
+        const GpuCloudSettings& cs = m_cloudSettings;
+        const bool shade = cs.enabled && cs.groundShadows && !wireframe;
+        const f32 strength = shade ? std::max(cs.shadowStrength, m_weather.cloudShadowStrength) : 0.0f;
+        const f32 windAngle = cs.windDirection * kPi / 180.0f;
+        const f32 drift = cs.windSpeed * cs.time;
+        setVec4(base.cloudShadowA, strength, cs.coverage, cs.density, 0.0f);
+        setVec4(base.cloudShadowB, std::cos(windAngle) * drift + cs.seed, cs.seed, std::sin(windAngle) * drift + cs.seed,
+                cs.baseAltitude);
+        setVec4(base.cloudShadowC, cs.sunDirection.x, cs.sunDirection.y, cs.sunDirection.z, cs.topAltitude);
     }
     base.pointCount = static_cast<int>(std::min(lighting.lights.points.size(), size_t{4}));
     for (int i = 0; i < base.pointCount; ++i) {
@@ -1410,8 +1716,9 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
     }
 
     const bool environmentOn = m_environment.texture() != nullptr && !wireframe;
-    const Vec3 irradiance =
+    Vec3 irradiance =
         environmentOn ? m_environment.averageColor() * m_environmentExposure : kFallbackAmbient;
+    irradiance = Vec3(irradiance.x * weatherSky.x, irradiance.y * weatherSky.y, irradiance.z * weatherSky.z);
     setVec4(base.iblColor, irradiance.x, irradiance.y, irradiance.z, features.iblSpecular);
     base.iblParams[0] = features.iblDiffuse;
     base.iblParams[1] = (features.iblEnabled && !wireframe) ? 1.0f : 0.0f;
@@ -1484,6 +1791,13 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         const bool gpuWater = draw.gpuWater && !wireframe && m_waterPipeline && m_waterBlendPipeline &&
                               (blendedPass || basePipeline == m_scenePipeline);
         if (gpuWater) pipeline = blendedPass ? m_waterBlendPipeline : m_waterPipeline;
+        // A Micromesh draw: its cull pass ran before this render pass (see beginMicromeshFrame).
+        const MicromeshDrawRef* microRef = nullptr;
+        if (!wireframe && !draw.isTerrain && !gpuWater && m_micromeshMainView != ~0u && !m_inReflectionPass) {
+            microDrawParts(drawPtr, microRef);
+        }
+        const bool micro = microRef != nullptr;
+        if (micro) pipeline = m_micromeshPipeline;
         cmd->bindPipeline(pipeline);
 
         LightingUBO lights = base;
@@ -1523,7 +1837,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             setVec4(lights.coat, draw.clearcoat, draw.clearcoatRoughness, draw.ior,
                     draw.transmission);
             setVec4(lights.foliage, draw.translucency, 0.0f, 0.0f, 0.0f);
-            setVec4(lights.modifiers, draw.modWetness, draw.modSnow, draw.modAge, 0.0f);
+            setVec4(lights.modifiers, std::max(draw.modWetness, m_weather.wetness), draw.modSnow, draw.modAge, 0.0f);
             setVec4(lights.modTint, draw.modTint.x, draw.modTint.y, draw.modTint.z, 1.0f);
             setVec4(lights.water, draw.isWater ? 1.0f : 0.0f, draw.gpuWater ? 1.0f : 0.0f, 0.4f,
                     draw.waterTime);
@@ -1550,6 +1864,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         }
 
         if (!wireframe && draw.isTerrain) {
+            CF_PROFILE_SCOPE("terrain::material");
             lights.roughness = 1.0f;
             lights.reflectance = 0.04f;
             TerrainMaterialUBO mat{};
@@ -1574,6 +1889,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
 
             if (draw.entity != lastTerrainTexEntity || texTier != lastTerrainTexTier) {
+                CF_PROFILE_SCOPE("terrain::textures");
                 lastTerrainTexEntity = draw.entity;
                 lastTerrainTexTier = texTier;
                 for (u32 slot = 0; slot < 6; ++slot) {
@@ -1612,7 +1928,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                     if (normalTex) cmd->bindTexture(normalTex, 5, m_repeatSampler);
                 }
             }
-            bindShadowTextures(6, 8, 10);
+            {
+                CF_PROFILE_SCOPE("terrain::shadowBind");
+                bindShadowTextures(6, 8, 10);
+            }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 2, &mat, sizeof(mat));
         }
 
@@ -1641,6 +1960,10 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             wubo.params[2] = draw.waterFoamThreshold;
             std::memcpy(wubo.waves, draw.waveData, sizeof(wubo.waves));
             cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, &wubo, sizeof(wubo));
+        } else if (micro) {
+            float viewProj[16];
+            std::memcpy(viewProj, pass.viewProj.data(), sizeof(viewProj));
+            cmd->pushUniformData(RHI::ShaderStage::Vertex, 0, viewProj, sizeof(viewProj));
         } else {
             VertexUBO vubo{};
             std::memcpy(vubo.mvp, mvp.data(), sizeof(vubo.mvp));
@@ -1653,6 +1976,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         cmd->bindIndexBuffer(draw.mesh->indexBuffer);
 
         if (draw.isTerrain) {
+            CF_PROFILE_SCOPE("terrain::submit");
             if (wireframe) {
                 for (u32 slot = 0; slot < 6; ++slot) {
                     if (whiteTex) cmd->bindTexture(whiteTex, slot, m_repeatSampler);
@@ -1661,6 +1985,9 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             }
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &lights, sizeof(lights));
             cmd->drawIndexed(static_cast<u32>(draw.mesh->indices.size()));
+            // (Terrain used to skip the frame counters: it showed as 0 triangles and 0 draws.)
+            ++m_building.drawCalls;
+            m_building.triangles += draw.mesh->indices.size() / 3;
             continue;
         }
 
@@ -1709,7 +2036,7 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
         if (ormTex) cmd->bindTexture(ormTex, 10, m_repeatSampler);
         if (emissionTex) cmd->bindTexture(emissionTex, 14, m_repeatSampler);
 
-        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex) {
+        auto drawMeshRange = [&](u32 firstIndex, u32 indexCount, u32 materialIndex, u32 partIndex) {
             if (indexCount == 0) return;
             LightingUBO rangeLights = lights;
             RHI::Texture* albedoTex = whiteTex;
@@ -1739,6 +2066,18 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
             if (albedoTex) cmd->bindTexture(albedoTex, 0, m_repeatSampler);
             cmd->pushUniformData(RHI::ShaderStage::Fragment, 0, &rangeLights, sizeof(rangeLights));
 
+            if (micro) {
+                // One indexed draw of this instance's compacted cut (sub-mesh `partIndex`'s asset).
+                if (partIndex < microRef->parts.size()) {
+                    MicromeshAsset* asset = microRef->parts[partIndex].first;
+                    RHI::Buffer* storage[1] = {asset->gpu.instanceBuffer()};
+                    cmd->bindVertexStorageBuffers(storage, 0, 1);
+                    asset->gpu.drawSceneSlot(cmd, m_micromeshArena, m_micromeshMainView,
+                                             microRef->parts[partIndex].second);
+                    ++m_building.drawCalls;
+                }
+                return;
+            }
             const bool instanced = !wireframe && !displaced && draw.batchCount > 1 && m_instanceBuffer &&
                                    (coloured ? m_foliageInstancedPipeline : m_instancedPipeline);
             if (instanced) {
@@ -1752,21 +2091,241 @@ void GpuSceneRenderer::drawMeshList(RHI::CommandBuffer* cmd,
                 if (coloured) cmd->bindVertexBuffer(draw.mesh->colorBuffer, 2);
                 cmd->bindIndexBuffer(draw.mesh->indexBuffer);
                 cmd->drawIndexedInstanced(indexCount, draw.batchCount, firstIndex, 0, 0);
+                ++m_building.drawCalls;
+                ++m_building.instancedDrawCalls;
+                m_building.triangles += static_cast<u64>(indexCount / 3) * draw.batchCount;
             } else {
                 cmd->drawIndexed(indexCount, firstIndex, 0);
+                ++m_building.drawCalls;
+                m_building.triangles += indexCount / 3;
             }
+            if (gpuWater) ++m_building.gpuWaterDraws;
         };
 
         if (draw.mesh->subMeshes.size() > 1) {
+            u32 partIndex = 0;
+            u32 subIndex = 0;
             for (const Assets::SubMesh& submesh : draw.mesh->subMeshes) {
-                drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex);
+                const u32 current = subIndex++;
+                if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != current) continue;
+                drawMeshRange(submesh.indexOffset, submesh.indexCount, submesh.materialIndex, partIndex++);
             }
         } else {
             const u32 materialIndex =
                 draw.mesh->subMeshes.empty() ? 0u : draw.mesh->subMeshes[0].materialIndex;
-            drawMeshRange(0, static_cast<u32>(draw.mesh->indices.size()), materialIndex);
+            drawMeshRange(0, static_cast<u32>(draw.mesh->indices.size()), materialIndex, 0u);
         }
     }
+}
+
+GpuSceneRenderer::MicromeshAsset* GpuSceneRenderer::micromeshAssetFor(Assets::Mesh3D* mesh, u32 subMesh,
+                                                                        u32 firstIndex, u32 indexCount) {
+    if (!mesh || !m_device) return nullptr;
+    std::unique_ptr<MicromeshAsset>& slot = m_micromeshAssets[{mesh, subMesh}];
+    if (slot && slot->revision == mesh->geometryRevision) return slot->ready ? slot.get() : nullptr;
+    // (Re)build: once per mesh asset, sub-mesh and geometry revision. It is baking work: a mesh of ~80 000
+    // triangles takes about a second on the first frame it is seen (an offline `.micromesh` section in
+    // the `.caf` is the planned way to not pay it at run time).
+    slot = std::make_unique<MicromeshAsset>();
+    slot->revision = mesh->geometryRevision;
+    const size_t total = mesh->indices.size();
+    if (mesh->vertices.empty() || firstIndex >= total || indexCount < 3) return nullptr;
+    const size_t last = std::min<size_t>(total, static_cast<size_t>(firstIndex) + indexCount);
+    // Meshes are often stored unindexed (three vertices per triangle) or with a vertex per face corner: weld
+    // the vertices that agree on position, normal and UV, or no edge would be shared and every edge would
+    // look like a boundary (nothing could be simplified). A UV seam or a hard edge differs in UV or normal,
+    // so it stays split, and stays locked. Only the vertices this sub-mesh uses are kept.
+    struct WeldKey {
+        float v[8];
+        bool operator==(const WeldKey& o) const { return std::memcmp(v, o.v, sizeof(v)) == 0; }
+    };
+    struct WeldHash {
+        size_t operator()(const WeldKey& k) const {
+            u64 h = 1469598103934665603ull;
+            for (float f : k.v) {
+                u32 bits;
+                std::memcpy(&bits, &f, sizeof(bits));
+                h = (h ^ bits) * 1099511628211ull;
+            }
+            return static_cast<size_t>(h);
+        }
+    };
+    std::unordered_map<WeldKey, u32, WeldHash> welded;
+    std::vector<Vec3> positions, normals;
+    std::vector<Vec2> uvs;
+    std::vector<Vec4> tangents;
+    std::vector<Vec4> colors;
+    const bool coloured = mesh->vertexColors.size() == mesh->vertices.size();
+    std::vector<u32> indices;
+    indices.reserve(last - firstIndex);
+    for (size_t k = firstIndex; k < last; ++k) {
+        const u32 original = mesh->indices[k];
+        if (original >= mesh->vertices.size()) return nullptr;
+        const Assets::Vertex3D& v = mesh->vertices[original];
+        const WeldKey key{{v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z,
+                           v.texcoord.x, v.texcoord.y}};
+        const auto [it, inserted] = welded.emplace(key, static_cast<u32>(positions.size()));
+        if (inserted) {
+            positions.push_back(v.position);
+            normals.push_back(v.normal);
+            uvs.push_back(v.texcoord);
+            tangents.push_back(v.tangent);
+            colors.push_back(coloured ? mesh->vertexColors[original] : Vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        } else {
+            // The same vertex seen again (another face): average the tangents.
+            Vec4& t = tangents[it->second];
+            const Vec3 sum(t.x + v.tangent.x, t.y + v.tangent.y, t.z + v.tangent.z);
+            const f32 len = sum.length();
+            if (len > 1e-6f) t = Vec4(sum.x / len, sum.y / len, sum.z / len, t.w);
+        }
+        indices.push_back(it->second);
+    }
+    Micromesh::Attributes attributes;
+    attributes.normals = &normals;
+    attributes.uvs = &uvs;
+    attributes.tangents = &tangents;
+    attributes.colors = &colors;
+    const Micromesh::Data data = Micromesh::build(positions, indices, attributes);
+    // A mesh that reduces to one level has nothing to cut: draw it as a normal mesh.
+    if (data.clusters.empty() || data.levelCount < 2) return nullptr;
+    if (!slot->gpu.init(m_device) || !slot->gpu.upload(data) || !slot->gpu.hasSceneAttributes()) return nullptr;
+    slot->ready = true;
+    return slot.get();
+}
+
+void GpuSceneRenderer::beginMicromeshFrame(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws) {
+    m_micromeshDraws.clear();
+    m_micromeshNextView = 0;
+    m_micromeshMainView = ~0u;
+    ++m_micromeshFrame;
+    for (auto& entry : m_micromeshAssets) {
+        if (entry.second) {
+            entry.second->users.clear();
+            entry.second->viewsUsed = 0;
+        }
+    }
+    if (!m_micromeshPipeline || !cmd) return;
+    bool any = false;
+    for (const MeshDraw& draw : draws) any = any || draw.micromeshPixels > 0.0f;
+    if (!any) return;
+    if (!m_micromeshArena.ready() && !m_micromeshArena.init(m_device, kMicromeshArenaStart)) return;
+    // The arena grows to what the scene needs: every few frames, read back last frame's allocation counter (it
+    // counts what was asked for, also past the capacity). A cut that did not fit was not drawn that frame, so
+    // growth shows within a few frames.
+    if (m_micromeshFrame % 15 == 0) {
+        const u32 asked = m_micromeshArena.readUsed();
+        const u32 capacity = m_micromeshArena.capacity();
+        if (asked + asked / 8u > capacity && capacity < kMicromeshArenaMax) {
+            u32 grown = capacity;
+            while (grown < kMicromeshArenaMax && asked + asked / 8u > grown) grown *= 2u;
+            m_micromeshArena.init(m_device, std::min(grown, kMicromeshArenaMax));
+        }
+    }
+
+    // Group by asset: every entity of a mesh (and sub-mesh) is one instance of its asset.
+    for (const MeshDraw& draw : draws) {
+        if (draw.micromeshPixels <= 0.0f || draw.skipColorDraw || !draw.mesh || draw.isTerrain || draw.displaced ||
+            draw.isWater || draw.skinnedVertices || draw.windStrength > 0.0f || draw.windFlutter > 0.0f ||
+            draw.isTranslucent() || draw.alphaMode == 1 || !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer) {
+            continue;
+        }
+        Assets::Mesh3D* mesh = draw.mesh;
+        MicromeshDrawRef ref;
+        bool ok = true;
+        auto addPart = [&](u32 subMesh, u32 firstIndex, u32 indexCount) {
+            MicromeshAsset* asset = micromeshAssetFor(mesh, subMesh, firstIndex, indexCount);
+            if (!asset) {
+                ok = false;
+                return;
+            }
+            ref.parts.emplace_back(asset, static_cast<u32>(asset->users.size()));
+            asset->users.push_back(&draw);
+        };
+        if (mesh->subMeshes.size() > 1) {
+            for (u32 s = 0; s < mesh->subMeshes.size() && ok; ++s) {
+                if (draw.onlySubMesh >= 0 && static_cast<u32>(draw.onlySubMesh) != s) continue;
+                addPart(s, mesh->subMeshes[s].indexOffset, mesh->subMeshes[s].indexCount);
+            }
+        } else {
+            addPart(0u, 0u, static_cast<u32>(mesh->indices.size()));
+        }
+        if (!ok) {
+            // A sub-mesh that cannot be cut (too small, build failure): the whole entity draws plain. Undo
+            // the parts already added.
+            for (auto& part : ref.parts) {
+                if (!part.first->users.empty() && part.first->users.back() == &draw) part.first->users.pop_back();
+            }
+            continue;
+        }
+        m_micromeshDraws[&draw] = std::move(ref);
+    }
+    // Upload every asset's matrices (one buffer per asset, once per frame) and the arena reset.
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        std::vector<Mat4> transforms;
+        std::vector<u8> occlusion;
+        transforms.reserve(asset->users.size());
+        for (const MeshDraw* user : asset->users) {
+            transforms.push_back(user->worldMatrix);
+            occlusion.push_back(user->micromeshOcclusion ? 1u : 0u);
+        }
+        if (!asset->gpu.setSceneInstances(transforms, kMicromeshViews, occlusion)) {
+            // Could not size its buffers: drop its users from the frame (they draw plain).
+            for (const MeshDraw* user : asset->users) m_micromeshDraws.erase(user);
+            asset->users.clear();
+        }
+    }
+    m_building.micromeshDraws = static_cast<u32>(m_micromeshDraws.size());
+    m_micromeshArena.beginFrame(cmd);
+}
+
+u32 GpuSceneRenderer::cullMicromeshView(RHI::CommandBuffer* cmd, const MicromeshCullParams& params) {
+    if (!cmd || m_micromeshDraws.empty() || m_micromeshNextView >= kMicromeshViews) return ~0u;
+    const u32 view = m_micromeshNextView++;
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        if (asset->gpu.cullScene(cmd, params, m_micromeshArena, view)) asset->viewsUsed = view + 1;
+    }
+    return view;
+}
+
+bool GpuSceneRenderer::microDrawParts(const MeshDraw* draw, const MicromeshDrawRef*& out) const {
+    const auto it = m_micromeshDraws.find(draw);
+    if (it == m_micromeshDraws.end()) return false;
+    out = &it->second;
+    return true;
+}
+
+GpuSceneRenderer::MicromeshFrameStats GpuSceneRenderer::readMicromeshStats() {
+    MicromeshFrameStats total;
+    if (m_micromeshMainView == ~0u) return total;
+    total.draws = static_cast<u32>(m_micromeshDraws.size());
+    total.views = m_micromeshNextView;
+    total.occlusionActive = m_micromeshOcclusionActive;
+    total.arenaUsed = m_micromeshArena.readUsed();
+    total.arenaCapacity = m_micromeshArena.capacity();
+    for (auto& entry : m_micromeshAssets) {
+        MicromeshAsset* asset = entry.second.get();
+        if (!asset || !asset->ready || asset->users.empty()) continue;
+        for (u32 view = 0; view < asset->viewsUsed; ++view) {
+            const MicromeshGpu::SceneViewStats stats = asset->gpu.readSceneView(view);
+            total.overflowed += stats.overflowed;
+            if (view != m_micromeshMainView) continue;
+            total.clusters += stats.visibleClusters;
+            total.triangles += stats.triangles;
+        }
+        total.sourceTriangles += static_cast<u64>(asset->gpu.sourceTriangles()) * asset->users.size();
+    }
+    return total;
+}
+
+void GpuSceneRenderer::releaseMicromeshes() {
+    m_micromeshDraws.clear();
+    m_micromeshAssets.clear();
+    m_micromeshArena.shutdown();
+    m_micromeshHzb.shutdown();
 }
 
 u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<MeshDraw>& draws,
@@ -1851,7 +2410,9 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     rp.cycle = pass.cycleTargets;
 
     {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::opaque");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::opaque");
+        ScopedMs timer(m_building.opaqueMs);
+        // Micromesh cull passes are compute: they run before the render pass opens.
         cmd->beginRenderPass(rp);
         cmd->setViewport(0, 0, static_cast<f32>(width), static_cast<f32>(height));
         cmd->pushUniformData(RHI::ShaderStage::Fragment, 1, &shadowUbo, sizeof(shadowUbo));
@@ -1863,7 +2424,8 @@ u32 GpuSceneRenderer::renderMeshes(RHI::CommandBuffer* cmd, const std::vector<Me
     }
 
     if (!translucent.empty()) {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::translucent");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::translucent");
+        ScopedMs timer(m_building.translucentMs);
         auto distanceSq = [&](const MeshDraw* d) {
             const Vec3 center = d->hasAabb ? (d->aabbMin + d->aabbMax) * 0.5f
                                            : d->worldMatrix.transformPoint(Vec3(0.0f, 0.0f, 0.0f));
@@ -2017,7 +2579,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 }
             }
             hasAabb = true;
-            if (!frustum.intersects(aabb)) return;
+            if (!frustum.intersects(aabb)) {
+                ++m_building.frustumCulled;
+                return;
+            }
         }
 
         const f32 sx = Vec3(worldMatrix(0, 0), worldMatrix(1, 0), worldMatrix(2, 0)).length();
@@ -2026,7 +2591,10 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
         const f32 scale = std::max(sx, std::max(sy, sz));
         const f32 lodDistance = viewerDistanceFor(meshWorldCenter(worldMatrix, mesh)) / std::max(scale, 0.001f);
 
+        // One draw per material slot (see MeshFilterComponent::slotMaterials), or one for the whole mesh.
+        auto buildDraw = [&](const std::string& materialPath, i32 onlySubMesh) {
         MeshDraw draw;
+        draw.onlySubMesh = onlySubMesh;
         draw.entity = entity;
         draw.mesh = selectMeshLod(mesh, entity, lodDistance);
         if (const std::vector<Assets::Vertex3D>* posed = Animation::skinnedVerticesFor(entity.id())) {
@@ -2036,6 +2604,12 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             }
         }
         draw.worldMatrix = worldMatrix;
+        // A lower LOD may have fewer sub-mesh ranges than the slots: slot 0 then draws the whole of it, the rest nothing.
+        if (draw.mesh && draw.onlySubMesh >= 0 &&
+            static_cast<usize>(draw.onlySubMesh) >= draw.mesh->subMeshes.size()) {
+            if (draw.onlySubMesh > 0) return;
+            draw.onlySubMesh = -1;
+        }
         draw.castShadows = Scene::meshCastsShadows(world, entity);
         draw.receiveShadows = Scene::meshReceivesShadows(world, entity);
         if (auto* renderer = world.get<ECS::MeshRendererComponent>(entity)) {
@@ -2045,6 +2619,8 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.modWetness = renderer->modWetness;
             draw.modSnow = renderer->modSnow;
             draw.modAge = renderer->modAge;
+            if (renderer->micromesh) draw.micromeshPixels = std::max(renderer->micromeshPixels, 0.05f);
+            draw.micromeshOcclusion = renderer->micromesh && renderer->micromeshOcclusion;
         }
         draw.shininess = filter.shininess;
         draw.customTexturePath = filter.customTexturePath;
@@ -2061,9 +2637,9 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
             draw.alphaMode = mode;
             draw.alphaCutoff = cutoff;
         }
-        if (!filter.customMaterialPath.empty()) {
+        if (!materialPath.empty()) {
             const Assets::MaterialSurface surface =
-                Assets::MaterialCache::instance().resolve(filter.customMaterialPath, projectRoot);
+                Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
             if (surface.valid) {
                 draw.hasAuthoredMaterial = true;
                 const Vec3 albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
@@ -2170,7 +2746,20 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                 if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume) &&
                     draw.hasAuthoredMaterial) {
                     // The entity has its own material (a .mat, for example one written by the
-                    // Water Generator): it is the water's material, as for any mesh.
+                    // Water Generator): it is the water's material, as for any mesh. The waves
+                    // and the water look (ripples, foam) still come from the water surface.
+                    draw.isWater = true;
+                    Scene::GpuWaterWaves waves;
+                    if (Scene::naturalFluidGpuWaves(world, entity.id(), waves)) {
+                        draw.gpuWater = true;
+                        draw.waveCount = waves.count;
+                        draw.waterTime = waves.time;
+                        draw.waterFoamThreshold = waves.foamThreshold;
+                        std::memcpy(draw.waveData, waves.packed, sizeof(draw.waveData));
+                    } else if (const Fluids::FluidWorld* surface =
+                                   Scene::naturalFluidWorldFor(world, entity.id())) {
+                        draw.waterTime = surface->time();
+                    }
                 } else if (fluid->mode != static_cast<u8>(ECS::NaturalFluidMode::FluidVolume)) {
                     // No material assigned: a physically-based transparent liquid with a sharp
                     // clearcoat, so reflections read as water.
@@ -2260,9 +2849,424 @@ std::vector<GpuSceneRenderer::MeshDraw> GpuSceneRenderer::gatherMeshDraws(
                               (flat && options.features.reflections == ReflectionMode::Planar &&
                                std::abs(worldY - options.features.reflectionPlaneY) < 0.4f);
         draws.push_back(draw);
+        };
+        // The Mesh Filter's material wins; the Mesh Renderer's is the fallback (a scene or script may only set that one).
+        const ECS::MeshRendererComponent* rendererForMaterial = world.get<ECS::MeshRendererComponent>(entity);
+        const std::string& baseMaterial =
+            !filter.customMaterialPath.empty() || !rendererForMaterial ? filter.customMaterialPath
+                                                                        : rendererForMaterial->materialPath;
+        const std::vector<std::string> slots = ECS::splitMaterialSlots(filter.slotMaterials);
+        if (slots.empty() || mesh->subMeshes.size() < 2) {
+            buildDraw(baseMaterial, -1);
+        } else {
+            for (u32 s = 0; s < mesh->subMeshes.size(); ++s) {
+                const bool own = s < slots.size() && !slots[s].empty();
+                buildDraw(own ? slots[s] : baseMaterial, static_cast<i32>(s));
+            }
+        }
     });
 
     return draws;
+}
+
+namespace {
+
+/// One run of triangles of an object with one albedo (a material slot, or the whole mesh).
+struct GiPiece {
+    const Assets::Mesh3D* mesh = nullptr;
+    const std::vector<Assets::Vertex3D>* posed = nullptr;  ///< the skinned pose, when the mesh has one
+    Mat4 world = Mat4::identity();
+    Vec3 albedo{1.0f, 1.0f, 1.0f};
+    u32 firstIndex = 0;
+    u32 indexCount = 0;
+};
+
+/// An object's identity, before any triangle is made.
+struct GiSource {
+    u64 key = 0;
+    u64 hash = 0;
+    Vec3 lo{};
+    Vec3 hi{};
+    u32 count = 0;       ///< triangles
+    u32 pieceFirst = 0;
+    u32 pieceCount = 0;
+};
+
+constexpr u32 kMaxGiTriangles = 1u << 20;  ///< what the voxeliser takes (PhotonCascades.cpp: kMaxVoxelTriangles)
+
+void emitGiTriangles(const GiPiece& piece, std::vector<PhotonTriangle>& out) {
+    const Assets::Mesh3D& mesh = *piece.mesh;
+    const std::vector<Assets::Vertex3D>& vertices = piece.posed ? *piece.posed : mesh.vertices;
+    const u32 end = std::min<u32>(piece.firstIndex + piece.indexCount, static_cast<u32>(mesh.indices.size()));
+    for (u32 i = piece.firstIndex; i + 2 < end; i += 3) {
+        const u32 ia = mesh.indices[i];
+        const u32 ib = mesh.indices[i + 1];
+        const u32 ic = mesh.indices[i + 2];
+        if (ia >= vertices.size() || ib >= vertices.size() || ic >= vertices.size()) continue;
+        const Vec3 a = piece.world.transformPoint(vertices[ia].position);
+        const Vec3 b = piece.world.transformPoint(vertices[ib].position);
+        const Vec3 c = piece.world.transformPoint(vertices[ic].position);
+        PhotonTriangle t{};
+        t.p0[0] = a.x; t.p0[1] = a.y; t.p0[2] = a.z;
+        t.p1[0] = b.x; t.p1[1] = b.y; t.p1[2] = b.z;
+        t.p2[0] = c.x; t.p2[1] = c.y; t.p2[2] = c.z;
+        t.albedo[0] = piece.albedo.x; t.albedo[1] = piece.albedo.y; t.albedo[2] = piece.albedo.z;
+        out.push_back(t);
+    }
+}
+
+/// Boxes that overlap or touch become their union: the tiles of one brush stroke, an object's old and new bounds. The
+/// voxeliser takes only a few boxes before it rebuilds a level whole, so many neighbouring tiles are worth fewer, larger
+/// boxes (a superset of the same voxels, still a part of the volume). Used for terrain tiles only: a scene that changed
+/// wholesale has to keep its many boxes, which is what makes the voxeliser rebuild whole and the light settle again.
+void coalesceBoxes(std::vector<PhotonBox>& boxes) {
+    bool merged = true;
+    while (merged && boxes.size() > 1) {
+        merged = false;
+        for (usize i = 0; i < boxes.size() && !merged; ++i) {
+            for (usize j = i + 1; j < boxes.size() && !merged; ++j) {
+                const PhotonBox& a = boxes[i];
+                const PhotonBox& b = boxes[j];
+                const bool apart = a.hi.x < b.lo.x || b.hi.x < a.lo.x || a.hi.y < b.lo.y || b.hi.y < a.lo.y ||
+                                   a.hi.z < b.lo.z || b.hi.z < a.lo.z;
+                if (apart) continue;
+                boxes[i] = PhotonBox{Vec3(std::min(a.lo.x, b.lo.x), std::min(a.lo.y, b.lo.y), std::min(a.lo.z, b.lo.z)),
+                                     Vec3(std::max(a.hi.x, b.hi.x), std::max(a.hi.y, b.hi.y), std::max(a.hi.z, b.hi.z))};
+                boxes.erase(boxes.begin() + static_cast<std::ptrdiff_t>(j));
+                merged = true;
+            }
+        }
+    }
+}
+
+}  // namespace
+
+GpuSceneRenderer::PhotonView& GpuSceneRenderer::photonViewFor(u64 viewId) {
+    for (auto& entry : m_photonViews) {
+        if (entry.first == viewId) {
+            entry.second->lastUsed = m_frameCounter;
+            return *entry.second;
+        }
+    }
+    // A few views at most (the editor, the game, a camera preview): the least recently used makes room.
+    constexpr usize kMaxPhotonViews = 4;
+    if (m_photonViews.size() >= kMaxPhotonViews) {
+        usize oldest = 0;
+        for (usize i = 1; i < m_photonViews.size(); ++i) {
+            if (m_photonViews[i].second->lastUsed < m_photonViews[oldest].second->lastUsed) oldest = i;
+        }
+        m_photonViews[oldest].second->cascades.shutdown(m_device);
+        m_photonViews.erase(m_photonViews.begin() + static_cast<std::ptrdiff_t>(oldest));
+    }
+    auto view = std::make_unique<PhotonView>();
+    view->cascades.init(m_device);
+    view->lastUsed = m_frameCounter;
+    m_photonViews.emplace_back(viewId, std::move(view));
+    return *m_photonViews.back().second;
+}
+
+bool GpuSceneRenderer::updatePhotonGeometry(ECS::World& world, const std::string& projectRoot,
+                                            const ECS::PhotonGIComponent& settings) {
+    std::vector<GiSource> sources;
+    std::vector<GiPiece> pieces;
+    u64 totalTriangles = 0;
+
+    ECS::ComponentQuery q;
+    q.with<ECS::MeshFilterComponent>();
+    world.forEach<ECS::MeshFilterComponent>(q, [&](ECS::Entity entity, ECS::MeshFilterComponent& filter) {
+        if (Scene::isEffectivelyDisabled(world, entity)) return;
+        // Water and light volumes are not solid.
+        if (const ECS::NaturalFluidComponent* fluid = world.get<ECS::NaturalFluidComponent>(entity)) {
+            if (fluid->enabled) return;
+        }
+        if (const Effects::EffectComponent* volume = world.get<Effects::EffectComponent>(entity)) {
+            if (volume->enabled &&
+                volume->kind == static_cast<u8>(Effects::EffectKind::VolumetricLight)) {
+                return;
+            }
+        }
+
+        u64 hash = 1469598103934665603ull;
+        auto mix = [&hash](const void* data, usize bytes) {
+            const u8* p = static_cast<const u8*>(data);
+            for (usize i = 0; i < bytes; ++i) {
+                hash ^= p[i];
+                hash *= 1099511628211ull;
+            }
+        };
+        const Mat4 worldMatrix = entityMatrix(world, entity);
+        const u32 pieceFirst = static_cast<u32>(pieces.size());
+        u32 triangles = 0;
+        const Assets::Mesh3D* boundsMesh = nullptr;
+        const std::vector<Assets::Vertex3D>* posedForBounds = nullptr;
+        mix(worldMatrix.data(), sizeof(f32) * 16);
+
+        // Terrain: cut into tiles, each its own object with the tile's own revision, so an edit (a brush stroke)
+        // revoxelises the tiles it touched and not the whole terrain. Earth colour: its splat layers are not one picture.
+        if (const ECS::TerrainComponent* terrain = world.get<ECS::TerrainComponent>(entity)) {
+            if (!settings.voxelTerrain) return;
+            const Vec3 tint = srgbToLinear(Vec3(terrain->tint.x, terrain->tint.y, terrain->tint.z));
+            const Vec3 albedo(tint.x * 0.4f, tint.y * 0.4f, tint.z * 0.4f);
+            for (const Terrain::TerrainGiTile& tile : Terrain::TerrainCache::instance().giTilesFor(entity, *terrain)) {
+                if (tile.mesh.vertices.empty() || tile.mesh.indices.size() < 3) continue;
+                u64 tileHash = 1469598103934665603ull;
+                auto mixTile = [&tileHash](const void* data, usize bytes) {
+                    const u8* p = static_cast<const u8*>(data);
+                    for (usize i = 0; i < bytes; ++i) {
+                        tileHash ^= p[i];
+                        tileHash *= 1099511628211ull;
+                    }
+                };
+                mixTile(worldMatrix.data(), sizeof(f32) * 16);
+                mixTile(&tile.revision, sizeof(tile.revision));
+                mixTile(&albedo, sizeof(albedo));
+
+                GiPiece piece;
+                piece.mesh = &tile.mesh;
+                piece.world = worldMatrix;
+                piece.albedo = albedo;
+                piece.indexCount = static_cast<u32>(tile.mesh.indices.size());
+                Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+                for (int corner = 0; corner < 8; ++corner) {
+                    const Vec3 c((corner & 1) ? tile.hi.x : tile.lo.x, (corner & 2) ? tile.hi.y : tile.lo.y,
+                                 (corner & 4) ? tile.hi.z : tile.lo.z);
+                    const Vec3 w = worldMatrix.transformPoint(c);
+                    lo = Vec3(std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z));
+                    hi = Vec3(std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z));
+                }
+                GiSource source;
+                // Unique among objects: the high bit marks a terrain tile, then the entity, then the tile.
+                source.key = (1ull << 62) | (static_cast<u64>(entity.id()) << 24) | tile.index;
+                source.hash = tileHash;
+                source.lo = lo;
+                source.hi = hi;
+                source.count = piece.indexCount / 3;
+                source.pieceFirst = static_cast<u32>(pieces.size());
+                source.pieceCount = 1;
+                pieces.push_back(piece);
+                sources.push_back(source);
+                totalTriangles += source.count;
+            }
+            return;
+        } else {
+            Assets::Mesh3D* mesh = ECS::editedMesh(world, entity);
+            if (!mesh && filter.primitive == ECS::MeshPrimitive::Custom) {
+                if (!filter.customMeshPath.empty()) {
+                    mesh = Assets::MeshCache::getInstance().getMesh(filter.customMeshPath, projectRoot);
+                }
+                if (!mesh) return;
+            } else if (!mesh) {
+                mesh = GpuProceduralMeshes::get(filter.primitive);
+            }
+            if (!mesh || mesh->vertices.empty() || mesh->indices.size() < 3) return;
+
+            // A skinned mesh is voxelised in its current pose, and moves with it.
+            const std::vector<Assets::Vertex3D>* posed = Animation::skinnedVerticesFor(entity.id());
+            if (posed && posed->size() != mesh->vertices.size()) posed = nullptr;
+            if (posed) {
+                if (!settings.voxelSkinned) return;
+                // The pose's generation bumps exactly when the posed vertices change: it stands for them. Hashing every
+                // vertex of a 40k-vertex tree byte by byte, for every view, every frame, was the whole cost of this pass.
+                const u64 generation = Animation::skinnedGenerationFor(entity.id());
+                const usize posedCount = posed->size();
+                mix(&generation, sizeof(generation));
+                mix(&posedCount, sizeof(posedCount));
+                posedForBounds = posed;
+            }
+            const ECS::MeshRendererComponent* renderer = world.get<ECS::MeshRendererComponent>(entity);
+            const std::string& baseMaterial =
+                !filter.customMaterialPath.empty() || !renderer ? filter.customMaterialPath
+                                                                : renderer->materialPath;
+            const std::vector<std::string> slots = ECS::splitMaterialSlots(filter.slotMaterials);
+
+            // The albedo a voxel gets: the material's colour times the mean colour of its picture (mid grey
+            // when the picture cannot be read). Blended surfaces are not solid; cut-out ones only when the
+            // Photon component says so.
+            auto albedoOf = [&](const std::string& materialPath, Vec3& albedo) {
+                albedo = Vec3(1.0f, 1.0f, 1.0f);
+                std::string picture = filter.customTexturePath;
+                if (!materialPath.empty()) {
+                    const Assets::MaterialSurface surface =
+                        Assets::MaterialCache::instance().resolve(materialPath, projectRoot);
+                    if (surface.valid) {
+                        if (surface.alphaMode == Assets::MaterialAlphaMode::Blend) return false;
+                        if (surface.alphaMode == Assets::MaterialAlphaMode::Cutout && !settings.voxelCutout) {
+                            return false;
+                        }
+                        albedo = srgbToLinear(Vec3(surface.albedo.x, surface.albedo.y, surface.albedo.z));
+                        if (picture.empty()) picture = surface.albedoMap;
+                    }
+                }
+                if (!picture.empty()) {
+                    mix(picture.data(), picture.size());
+                    Vec3 average(0.5f, 0.5f, 0.5f);
+                    GpuTextureCache::instance().averageColor(picture, projectRoot, average);
+                    albedo = Vec3(albedo.x * average.x, albedo.y * average.y, albedo.z * average.z);
+                } else if (!mesh->baseColorTexture.empty() && mesh->textureWidth > 0 &&
+                           mesh->textureHeight > 0 && mesh->textureChannels >= 3) {
+                    // A picture embedded in the mesh (glTF): its mean, from at most about 65k texels.
+                    const size_t channels = static_cast<size_t>(mesh->textureChannels);
+                    const size_t total = static_cast<size_t>(mesh->textureWidth) * mesh->textureHeight;
+                    const size_t stride = std::max<size_t>(1, total / 65536);
+                    Vec3 sum(0.0f, 0.0f, 0.0f);
+                    size_t count = 0;
+                    for (size_t t = 0; t < total && (t + 1) * channels <= mesh->baseColorTexture.size();
+                         t += stride) {
+                        const u8* p = mesh->baseColorTexture.data() + t * channels;
+                        sum = sum + srgbToLinear(Vec3(p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f));
+                        ++count;
+                    }
+                    const f32 inv = count ? 1.0f / static_cast<f32>(count) : 0.0f;
+                    const Vec3 average =
+                        count ? Vec3(sum.x * inv, sum.y * inv, sum.z * inv) : Vec3(0.5f, 0.5f, 0.5f);
+                    albedo = Vec3(albedo.x * average.x, albedo.y * average.y, albedo.z * average.z);
+                }
+                return true;
+            };
+
+            mix(&mesh, sizeof(mesh));
+            mix(&mesh->geometryRevision, sizeof(mesh->geometryRevision));
+            auto addPiece = [&](u32 firstIndex, u32 indexCount, const Vec3& albedo) {
+                GiPiece piece;
+                piece.mesh = mesh;
+                piece.posed = posed;
+                piece.world = worldMatrix;
+                piece.albedo = albedo;
+                piece.firstIndex = firstIndex;
+                piece.indexCount = indexCount;
+                mix(&firstIndex, sizeof(firstIndex));
+                mix(&indexCount, sizeof(indexCount));
+                mix(&albedo, sizeof(albedo));
+                pieces.push_back(piece);
+                triangles += indexCount / 3;
+            };
+            if (slots.empty() || mesh->subMeshes.size() < 2) {
+                Vec3 albedo;
+                if (albedoOf(baseMaterial, albedo)) {
+                    addPiece(0, static_cast<u32>(mesh->indices.size()), albedo);
+                }
+            } else {
+                for (u32 s = 0; s < mesh->subMeshes.size(); ++s) {
+                    const bool own = s < slots.size() && !slots[s].empty();
+                    Vec3 albedo;
+                    if (albedoOf(own ? slots[s] : baseMaterial, albedo)) {
+                        addPiece(mesh->subMeshes[s].indexOffset, mesh->subMeshes[s].indexCount, albedo);
+                    }
+                }
+            }
+            boundsMesh = mesh;
+        }
+        if (pieces.size() == pieceFirst || triangles == 0) return;
+
+        // World bounds: the mesh's (or the pose's) box through the transform.
+        Vec3 lo(1e30f, 1e30f, 1e30f);
+        Vec3 hi(-1e30f, -1e30f, -1e30f);
+        Vec3 boxMin = boundsMesh->bounds.min;
+        Vec3 boxMax = boundsMesh->bounds.max;
+        if (posedForBounds) {
+            boxMin = Vec3(1e30f, 1e30f, 1e30f);
+            boxMax = Vec3(-1e30f, -1e30f, -1e30f);
+            for (const Assets::Vertex3D& v : *posedForBounds) {
+                boxMin = Vec3(std::min(boxMin.x, v.position.x), std::min(boxMin.y, v.position.y),
+                              std::min(boxMin.z, v.position.z));
+                boxMax = Vec3(std::max(boxMax.x, v.position.x), std::max(boxMax.y, v.position.y),
+                              std::max(boxMax.z, v.position.z));
+            }
+        }
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3 c((corner & 1) ? boxMax.x : boxMin.x, (corner & 2) ? boxMax.y : boxMin.y,
+                         (corner & 4) ? boxMax.z : boxMin.z);
+            const Vec3 w = worldMatrix.transformPoint(c);
+            lo = Vec3(std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z));
+            hi = Vec3(std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z));
+        }
+
+        GiSource source;
+        source.key = entity.id();
+        source.hash = hash;
+        source.lo = lo;
+        source.hi = hi;
+        source.count = triangles;
+        source.pieceFirst = pieceFirst;
+        source.pieceCount = static_cast<u32>(pieces.size()) - pieceFirst;
+        sources.push_back(source);
+        totalTriangles += triangles;
+    });
+
+    // Nothing to do while every object is as it was (the common frame: a hash per object and no more).
+    const u32 flags = (settings.voxelSkinned ? 1u : 0u) | (settings.voxelCutout ? 2u : 0u) |
+                      (settings.voxelTerrain ? 4u : 0u);
+    const bool first = flags != m_pv->flags || !m_pv->cascades.hasGeometry();
+    if (!first && sources.size() == m_pv->geometry.objects.size()) {
+        bool same = true;
+        for (usize i = 0; i < sources.size() && same; ++i) {
+            same = sources[i].key == m_pv->geometry.objects[i].key &&
+                   sources[i].hash == m_pv->geometry.objects[i].hash;
+        }
+        if (same) return false;
+    }
+
+    // Something changed: rebuild the list, copying the triangles of what did not.
+    std::unordered_map<u64, usize> before;
+    for (usize i = 0; i < m_pv->geometry.objects.size(); ++i) before[m_pv->geometry.objects[i].key] = i;
+
+    PhotonGeometry next;
+    next.overBudget = totalTriangles > kMaxGiTriangles;
+    std::vector<PhotonBox> dirty;
+    std::vector<PhotonBox> tileDirty;  // the boxes of terrain tiles (keys with bit 62 set)
+    auto isTerrainTile = [](u64 key) { return (key >> 62) == 1u; };
+    std::vector<bool> kept(m_pv->geometry.objects.size(), false);
+    if (!next.overBudget) next.triangles.reserve(static_cast<usize>(totalTriangles));
+    for (const GiSource& source : sources) {
+        PhotonObject object;
+        object.key = source.key;
+        object.hash = source.hash;
+        object.lo = source.lo;
+        object.hi = source.hi;
+        object.count = source.count;
+        object.first = static_cast<u32>(next.triangles.size());
+        const auto it = before.find(source.key);
+        // An over-budget set holds no triangles to copy from, so nothing in it counts as unchanged.
+        const bool unchanged = it != before.end() && !first && !m_pv->geometry.overBudget &&
+                               m_pv->geometry.objects[it->second].hash == source.hash;
+        if (it != before.end()) kept[it->second] = true;
+        if (!next.overBudget) {
+            if (unchanged) {
+                const PhotonObject& old = m_pv->geometry.objects[it->second];
+                next.triangles.insert(next.triangles.end(), m_pv->geometry.triangles.begin() + old.first,
+                                      m_pv->geometry.triangles.begin() + old.first + old.count);
+            } else {
+                for (u32 k = 0; k < source.pieceCount; ++k) {
+                    emitGiTriangles(pieces[source.pieceFirst + k], next.triangles);
+                }
+            }
+        }
+        if (!unchanged) {
+            std::vector<PhotonBox>& into = isTerrainTile(source.key) ? tileDirty : dirty;
+            into.push_back({source.lo, source.hi});
+            if (it != before.end()) {
+                const PhotonObject& old = m_pv->geometry.objects[it->second];
+                into.push_back({old.lo, old.hi});
+            }
+        }
+        next.objects.push_back(object);
+    }
+    for (usize i = 0; i < kept.size(); ++i) {
+        if (!kept[i]) {
+            (isTerrainTile(m_pv->geometry.objects[i].key) ? tileDirty : dirty)
+                .push_back({m_pv->geometry.objects[i].lo, m_pv->geometry.objects[i].hi});
+        }
+    }
+
+    // Neighbouring terrain tiles (one brush stroke) become fewer, larger boxes. Only those: a scene that changed
+    // wholesale must still be seen as many boxes, which makes the voxeliser rebuild whole and the light settle again.
+    coalesceBoxes(tileDirty);
+    dirty.insert(dirty.end(), tileDirty.begin(), tileDirty.end());
+    const bool full = first || settings.fullRebuild || next.overBudget || m_pv->geometry.overBudget;
+    m_pv->cascades.setGeometry(next, dirty, full);
+    m_pv->geometry = std::move(next);
+    m_pv->flags = flags;
+    return true;
 }
 
 void GpuSceneRenderer::applyCoarseOcclusion(std::vector<MeshDraw>& draws, const GpuSceneCamera& camera,
@@ -2305,11 +3309,12 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
     std::vector<InstanceBatchItem> items(draws.size());
     for (u32 i = 0; i < draws.size(); ++i) {
         const MeshDraw& draw = draws[i];
-        const bool singleSubmesh = draw.mesh && draw.mesh->subMeshes.size() <= 1;
+        const bool singleSubmesh = draw.mesh && (draw.mesh->subMeshes.size() <= 1 || draw.onlySubMesh >= 0);
         // Probed and translucent draws need per-object data (cube map, sort order).
         const bool hasColours = draw.mesh && !draw.mesh->vertexColors.empty() &&
                                 draw.mesh->vertexColors.size() == draw.mesh->vertices.size();
         items[i].allow = singleSubmesh && !draw.isTerrain && !draw.displaced && draw.probeIndex < 0 &&
+                         draw.micromeshPixels <= 0.0f &&
                          !draw.isTranslucent() && (!hasColours || m_foliageInstancedPipeline);
         u64 key = static_cast<u64>(reinterpret_cast<uintptr_t>(draw.mesh));
         auto mixBytes = [&](const std::string& text) {
@@ -2362,6 +3367,7 @@ void GpuSceneRenderer::assignInstanceBatches(std::vector<MeshDraw>& draws,
         mixFloat(draw.modSnow);
         mixFloat(draw.modAge);
         key = key * 131u + draw.alphaMode;
+        key = key * 131u + static_cast<u32>(draw.onlySubMesh + 1);
         if (draw.receiveShadows) key ^= 0x9e3779b97f4a7c15ull;
         items[i].key = key == 0 ? 1 : key;
     }
@@ -2443,7 +3449,7 @@ void GpuSceneRenderer::renderPlanarReflection(RHI::CommandBuffer* cmd, ECS::Worl
     inner.resolveEnvironmentFromScene = false;
     inner.colorLayer = 0;
     inner.grid.enabled = false;
-    CF_PROFILE_SCOPE("GpuSceneRenderer::planarReflection");
+    CF_GPU_SCOPE(cmd, "GpuSceneRenderer::planarReflection");
     const bool wasInReflection = m_inReflectionPass;
     m_inReflectionPass = true;
     ScenePassContext innerPass;
@@ -2529,7 +3535,7 @@ bool GpuSceneRenderer::captureProbe(RHI::CommandBuffer* cmd, ECS::World& world,
     inner.drawSky = true;
     inner.textureQualityViewers.clear();
 
-    CF_PROFILE_SCOPE("GpuSceneRenderer::probe");
+    CF_GPU_SCOPE(cmd, "GpuSceneRenderer::probe");
     const bool wasInReflection = m_inReflectionPass;
     m_inReflectionPass = true;
     for (u32 face = 0; face < 6; ++face) {
@@ -2738,9 +3744,31 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
         camera.position, camera.focus, Vec3(0.0f, 1.0f, 0.0f), camera.fovRad, aspect,
         camera.nearClip, camera.farClip);
 
+    // Stats belong to the outermost scene pass; reflection passes add to the same frame.
+    struct FrameStats {
+        RenderStats& building;
+        RenderStats& committed;
+        bool top;
+        StatsClock::time_point start = StatsClock::now();
+        ~FrameStats() {
+            if (!top) return;
+            building.totalMs =
+                std::chrono::duration<f32, std::milli>(StatsClock::now() - start).count();
+            committed = building;
+        }
+    } frameStats{m_building, m_stats, !m_inReflectionPass};
+    if (frameStats.top) {
+        m_building = RenderStats{};
+        // The Micromesh draw references point into last frame's draw list: forget them before anything
+        // (a planar reflection, a probe) can match a reused address.
+        m_micromeshDraws.clear();
+        m_micromeshMainView = ~0u;
+    }
+
     std::vector<MeshDraw> draws;
     {
         CF_PROFILE_SCOPE("GpuSceneRenderer::gather");
+        ScopedMs timer(m_building.gatherMs);
         draws = gatherMeshDraws(world, camera.position, frustum, projectRoot, opts);
     }
     // Upload GPU buffers before any render pass. Creating/uploading buffers
@@ -2751,6 +3779,7 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                                           !draw.mesh->vertexBuffer || !draw.mesh->indexBuffer;
                                }),
                 draws.end());
+    m_building.meshesGathered += static_cast<u32>(draws.size());
     applyCoarseOcclusion(draws, camera, opts);
 
         if (pass.view) {
@@ -2780,9 +3809,54 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                                instanceMatrices.size() * sizeof(float));
     }
 
+    if (!m_inReflectionPass) beginMicromeshFrame(cmd, draws);
+    if (!m_micromeshDraws.empty() && !opts.wireframeMeshes) {
+        // The camera's cut comes first: it is the one that must always fit in the arena (the shadow
+        // cascades' cuts take what is left).
+        f32 pixels = 1.5f;
+        for (const auto& entry : m_micromeshDraws) {
+            pixels = entry.first->micromeshPixels;
+            break;
+        }
+        const f32 proj11 = std::max(std::abs(camera.proj(1, 1)), 1e-4f);
+        MicromeshCullParams params;
+        params.planes = planesFromViewProj(pass.viewProj);
+        params.camera = camera.position;
+        // Error in pixels -> world units per metre of distance: one pixel spans 2 / (proj11 * height).
+        params.threshold = pixels * 2.0f / (proj11 * static_cast<f32>(std::max(height, 1u)));
+        params.frustum = true;
+        params.cone = true;
+        params.viewDependent = true;
+        // Occlusion: last frame's depth, reduced to a farthest-depth pyramid, tests the clusters of the
+        // instances that opted in. Needs a previous frame of this view at the same size.
+        MicromeshOcclusion occlusion;
+        bool wantsOcclusion = false;
+        for (const auto& entry : m_micromeshDraws) wantsOcclusion = wantsOcclusion || entry.first->micromeshOcclusion;
+        m_micromeshOcclusionActive = false;
+        if (wantsOcclusion && pass.view && pass.view->hasPrevious && !m_inReflectionPass) {
+            RHI::Texture* previousDepth = pass.view->depth[pass.view->current ^ 1u];
+            if (previousDepth && m_micromeshHzb.init(m_device, pass.view->width, pass.view->height) &&
+                m_micromeshHzb.build(cmd, previousDepth, m_pointSampler)) {
+                occlusion.hzb = &m_micromeshHzb;
+                occlusion.prevView = pass.view->prevView;
+                occlusion.p00 = pass.view->prevProj(0, 0);
+                occlusion.p11 = pass.view->prevProj(1, 1);
+                occlusion.p22 = pass.view->prevProj(2, 2);
+                occlusion.p23 = pass.view->prevProj(2, 3);
+                params.occlusion = &occlusion;
+                m_micromeshOcclusionActive = true;
+            }
+        }
+        m_micromeshMainView = cullMicromeshView(cmd, params);
+    }
+
+    // Weather first: it scales the sun every later stage of this frame sees (forward shader, clouds, fog, Photon).
+    m_weather = Scene::resolveSceneWeather(world);
+    updateWeatherDynamics();
     Scene::SceneLighting lighting;
     lighting.clear();
     Scene::collectSceneLights(world, lighting.lights);
+    applyWeatherToLights(lighting.lights);
 
     // Resolve the procedural cloud/mist profile for the sky pass.
     m_cloudSettings = {};
@@ -2808,6 +3882,20 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                 settings.mistHeight = std::max(clouds.mistHeight, 1.0f);
                 settings.mistFalloff = clouds.mistFalloff;
                 settings.sunScatter = std::max(clouds.sunScatter, 0.0f);
+                settings.tint = Vec3(std::max(clouds.tint.x, 0.0f), std::max(clouds.tint.y, 0.0f),
+                                     std::max(clouds.tint.z, 0.0f));
+                settings.darkness = std::clamp(clouds.darkness, 0.0f, 1.0f);
+                settings.skyLight = std::max(clouds.skyLight, 0.0f);
+                settings.silverLining = std::clamp(clouds.silverLining, 0.0f, 2.0f);
+                settings.groundShadows = clouds.groundShadows;
+                settings.shadowStrength = std::clamp(clouds.shadowStrength, 0.0f, 1.0f);
+                settings.sunShafts = std::clamp(clouds.sunShafts, 0.0f, 1.0f);
+                // A weather component couples the clouds to the rain (thicker, darker, more cover).
+                if (m_weather.cloudsLinked) {
+                    settings.coverage = std::clamp(m_weather.cloudCoverage, 0.0f, 1.0f);
+                    settings.density = std::max(m_weather.cloudDensity, 0.0f);
+                    settings.darkness = std::clamp(m_weather.cloudDarkness, 0.0f, 1.0f);
+                }
                 settings.time = m_cloudTime;
                 if (!lighting.lights.directionals.empty()) {
                     const auto& d = lighting.lights.directionals[0];
@@ -2818,6 +3906,14 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
                 }
                 m_cloudSettings = settings;
             });
+    }
+
+    m_weatherSunIntensity = 0.0f;
+    if (!lighting.lights.directionals.empty()) {
+        const auto& d = lighting.lights.directionals[0];
+        m_weatherSunDirection = (d.direction * -1.0f).normalized();
+        m_weatherSunColor = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z));
+        m_weatherSunIntensity = std::max(d.intensity, 0.0f);
     }
 
     // Let the cloud mist drive the existing scene volumetric fog so ground
@@ -2837,7 +3933,8 @@ u32 GpuSceneRenderer::renderSceneHdr(RHI::CommandBuffer* cmd, ECS::World& world,
     m_shadowProjectRoot = projectRoot;
     m_shadowTextureQuality = opts.textureQuality;
     if (!opts.wireframeMeshes && opts.enableShadows && !draws.empty()) {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::shadows");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::shadows");
+        ScopedMs timer(m_building.shadowsMs);
         renderDirectionalShadows(cmd, world, lighting, draws, camera);
         renderPointShadows(cmd, world, lighting, draws);
         renderSpotShadows(cmd, world, lighting, draws);
@@ -2906,9 +4003,15 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     m_probesPending = false;
 
     GpuSceneRenderOptions opts = options;
-    m_cloudTime = std::fmod(m_cloudTime + std::clamp(options.deltaTime, 1e-4f, 0.25f), 3600.0f);
+    // The simulation clock: what clouds, weather, wind and foliage animate by. A delta of 0 (the editor while it
+    // is not playing) freezes all of them; the frame counter above keeps counting for the temporal effects.
+    const f32 simStep = std::clamp(options.deltaTime, 0.0f, 0.25f);
+    m_cloudTime = std::fmod(m_cloudTime + simStep, 3600.0f);
+    m_simTime = std::fmod(m_simTime + simStep, 86400.0f);
     if (options.resolveFeaturesFromScene) opts.features = resolveForwardRenderFeatures(world);
     resolveEnvironment(world, projectRoot, opts);
+    m_weather = Scene::resolveSceneWeather(world);
+    updateWeatherDynamics();
     ECS::PostProcessComponent post =
         opts.resolvePostProcessFromScene
             ? resolvePostProcess(world, opts.postProcessCamera, opts.postProcess)
@@ -2922,6 +4025,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
             if (c.enabled) photon = c;
         });
     }
+    // Overcast / fog change the sky light Photon falls back to (same factors as the forward ambient).
+    photon.skyIntensity *= m_weather.skyScale * (1.0f + 2.5f * m_lightning.flash);
     if (opts.overrideAntiAliasing) post.antiAliasing = opts.antiAliasingOverride;
     // Wireframe is a debug view: stale G-buffer data would feed Photon garbage.
     if (opts.wireframeMeshes) photon.enabled = false;
@@ -2978,23 +4083,117 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
     u32 photonS0 = 0;
     const bool feedbackValid = view->sValid && view->hasPrevious;
     RHI::Texture* feedbackPrev = feedbackValid ? view->sBuffer[view->sIndex] : nullptr;
-    if (photon.enabled && photon.quality != ECS::PhotonQuality::Off &&
-        photon.path == ECS::PhotonPath::ComputeC0 && !opts.wireframeMeshes &&
-        view->gbuffer.valid() && m_photonCascades.ready()) {
-        if (m_photonCascades.execute(cmd, depth, view->gbuffer.albedo,
+    const bool photonWanted = photon.enabled && photon.quality != ECS::PhotonQuality::Off &&
+                              photon.path == ECS::PhotonPath::ComputeC0 && !opts.wireframeMeshes &&
+                              view->gbuffer.valid();
+    m_pv = photonWanted ? &photonViewFor(viewId) : nullptr;
+    f32 giTemporalWeight = 0.4f;
+    if (photonWanted && m_pv->cascades.ready()) {
+        m_pv->cascades.setSkyTint(m_weather.skyTint);
+        CF_GPU_SCOPE(cmd, "Photon::cascades");
+        // The whole scene's triangles for the voxeliser: hashed every frame (cheap), gathered and
+        // uploaded only when something that shapes them changed.
+        PhotonLights lights;
+        {
+            // The scene's direct lights for the voxel injection (the same radiance the forward pass uses).
+            Scene::SceneLighting gi;
+            gi.clear();
+            Scene::collectSceneLights(world, gi.lights);
+            applyWeatherToLights(gi.lights);
+            for (const auto& d : gi.lights.directionals) {
+                if (lights.directionalCount >= PhotonLights::kMaxDirectional) break;
+                const Vec3 c = srgbToLinear(Vec3(d.color.x, d.color.y, d.color.z)) * d.intensity;
+                lights.directionalDir[lights.directionalCount] = Vec4(d.direction.x, d.direction.y, d.direction.z, 0.0f);
+                lights.directionalColor[lights.directionalCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            for (const auto& p : gi.lights.points) {
+                if (lights.pointCount >= PhotonLights::kMaxPoint) break;
+                const Vec3 c = srgbToLinear(Vec3(p.color.x, p.color.y, p.color.z)) * p.intensity;
+                lights.pointPosition[lights.pointCount] = Vec4(p.position.x, p.position.y, p.position.z, p.radius);
+                lights.pointColor[lights.pointCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            for (const auto& sp : gi.lights.spots) {
+                if (lights.spotCount >= PhotonLights::kMaxSpot) break;
+                const Vec3 c = srgbToLinear(Vec3(sp.color.x, sp.color.y, sp.color.z)) * sp.intensity;
+                const f32 halfAngle = std::clamp(sp.angle * kPi / 180.0f * 0.5f, 0.01f, 1.5533f);
+                lights.spotPosition[lights.spotCount] = Vec4(sp.position.x, sp.position.y, sp.position.z, sp.radius);
+                lights.spotDirection[lights.spotCount] = Vec4(sp.direction.x, sp.direction.y, sp.direction.z, std::cos(halfAngle));
+                lights.spotColor[lights.spotCount++] = Vec4(c.x, c.y, c.z, 0.0f);
+            }
+            {
+                // The clouds' shadow on the sun, so what bounces off the ground follows it (the near field already
+                // does: it reads the forward pass's direct light).
+                const GpuCloudSettings& cs = m_cloudSettings;
+                if (cs.enabled && cs.groundShadows && !opts.wireframeMeshes) {
+                    const f32 windAngle = cs.windDirection * kPi / 180.0f;
+                    const f32 drift = cs.windSpeed * cs.time;
+                    lights.cloudShadow[0] = Vec4(std::max(cs.shadowStrength, m_weather.cloudShadowStrength),
+                                                 cs.coverage, cs.density, 0.0f);
+                    lights.cloudShadow[1] = Vec4(std::cos(windAngle) * drift + cs.seed, cs.seed,
+                                                 std::sin(windAngle) * drift + cs.seed, cs.baseAltitude);
+                    lights.cloudShadow[2] = Vec4(cs.sunDirection.x, cs.sunDirection.y, cs.sunDirection.z,
+                                                 cs.topAltitude);
+                }
+            }
+            m_pv->cascades.setLights(lights);
+        }
+        bool sceneChanged = false;
+        if (m_pv->cascades.hasTriangleVoxelizer()) {
+            CF_PROFILE_SCOPE("Photon::collectGeometry");
+            sceneChanged = updatePhotonGeometry(world, projectRoot, photon);
+        }
+        // The resolve averages frames in time, which makes a moved object or light leave a ghost. While the scene
+        // changes the average follows the present frame closely; it narrows again as the scene stays still.
+        {
+            u64 lightHash = 1469598103934665603ull;
+            auto mix = [&lightHash](const void* data, usize bytes) {
+                const u8* p = static_cast<const u8*>(data);
+                for (usize i = 0; i < bytes; ++i) {
+                    lightHash ^= p[i];
+                    lightHash *= 1099511628211ull;
+                }
+            };
+            mix(&lights.directionalCount, sizeof(u32));
+            mix(&lights.pointCount, sizeof(u32));
+            mix(&lights.spotCount, sizeof(u32));
+            for (u32 i = 0; i < lights.directionalCount; ++i) {
+                mix(&lights.directionalDir[i], sizeof(Vec4));
+                mix(&lights.directionalColor[i], sizeof(Vec4));
+            }
+            for (u32 i = 0; i < lights.pointCount; ++i) {
+                mix(&lights.pointPosition[i], sizeof(Vec4));
+                mix(&lights.pointColor[i], sizeof(Vec4));
+            }
+            for (u32 i = 0; i < lights.spotCount; ++i) {
+                mix(&lights.spotPosition[i], sizeof(Vec4));
+                mix(&lights.spotDirection[i], sizeof(Vec4));
+                mix(&lights.spotColor[i], sizeof(Vec4));
+            }
+            if (lightHash != m_pv->lightHash) sceneChanged = true;
+            m_pv->lightHash = lightHash;
+            m_pv->calmFrames = sceneChanged ? 0u : std::min(m_pv->calmFrames + 1u, 1000u);
+            // 0.4 right after a change, falling to 0.07 within about five calm frames. The resolve also follows a
+            // large difference between history and present quickly, so a slow average cannot keep a stale picture.
+            const f32 settled = 0.07f;
+            m_pv->temporalWeight =
+                std::max(settled, 0.4f * std::pow(0.7f, static_cast<f32>(m_pv->calmFrames)));
+            giTemporalWeight = m_pv->temporalWeight;
+            m_pv->cascades.setTemporalWeight(m_pv->temporalWeight);
+        }
+        if (m_pv->cascades.execute(cmd, depth, view->gbuffer.albedo,
                                      view->gbuffer.normalMaterial, view->gbuffer.direct,
                                      camera.view, camera.proj, sceneW, sceneH, photon,
                                      static_cast<u32>(view->frameIndex), feedbackPrev,
                                      view->prevViewProj, feedbackValid)) {
-            photonSH = m_photonCascades.shAtlas();
-            photonGridW = m_photonCascades.gridWidth();
-            photonGridH = m_photonCascades.gridHeight();
-            photonS0 = m_photonCascades.probeSpacing();
+            photonSH = m_pv->cascades.shAtlas();
+            photonGridW = m_pv->cascades.gridWidth();
+            photonGridH = m_pv->cascades.gridHeight();
+            photonS0 = m_pv->cascades.probeSpacing();
         }
     }
 
     {
-        CF_PROFILE_SCOPE("GpuSceneRenderer::post");
+        CF_GPU_SCOPE(cmd, "GpuSceneRenderer::post");
         PostProcessInputs in;
         in.sceneColor = hdr;
         in.sceneDepth = depth;
@@ -3009,12 +4208,14 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.prevViewProj = view->hasPrevious ? view->prevViewProj : unjitteredViewProj;
         in.cameraPos = camera.position;
         in.deltaTime = std::clamp(opts.deltaTime, 1e-4f, 0.25f);
-        in.time = static_cast<f32>(m_frameCounter) * (1.0f / 60.0f);
+        in.time = m_simTime;
         in.frameIndex = view->frameIndex;
         in.historyValid = view->hasPrevious && !opts.skipTemporalSettle;
         in.jitterPixels = jitter;
         in.viewId = viewId;
         in.photon = photon;
+        in.weather = buildPostWeather(camera, width, height);
+        in.photonSkyTint = m_weather.skyTint;
         in.gbufferAlbedo = view->gbuffer.albedo;
         in.gbufferNormalMaterial = view->gbuffer.normalMaterial;
         in.gbufferDirect = view->gbuffer.direct;
@@ -3023,6 +4224,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
         in.photonGridH = photonGridH;
         in.photonS0 = photonS0;
         in.photonS = photonSH ? view->sBuffer[view->sIndex ^ 1] : nullptr;
+        in.photonSPrev = photonSH ? feedbackPrev : nullptr;
+        in.photonTemporalWeight = giTemporalWeight;
         m_post.execute(cmd, post, in);
     }
     if (photonSH) {
@@ -3033,6 +4236,20 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     // Keep redrawing until temporal effects converge after anything changes.
     u64 changeHash = pass.sceneHash;
+    {
+        // Weather changes what every pixel shows without touching a draw.
+        const f32 weatherKey[] = {m_weather.fogDensity, m_weather.fogHeightFalloff, m_weather.fogBaseHeight,
+                                  m_weather.fogStart, m_weather.fogMaxOpacity, m_weather.fogColor.x,
+                                  m_weather.fogColor.y, m_weather.fogColor.z, m_weather.fogSkyBlend,
+                                  m_weather.fogSunScatter, m_weather.rainIntensity, m_weather.wetness,
+                                  m_weather.sunScale, m_weather.skyScale, m_weather.cloudCoverage,
+                                  m_weather.cloudDensity, m_weather.cloudDarkness};
+        for (f32 value : weatherKey) {
+            u32 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            changeHash = (changeHash ^ bits) * 1099511628211ull;
+        }
+    }
     for (u32 i = 0; i < 16; ++i) {
         u32 bits = 0;
         std::memcpy(&bits, unjitteredViewProj.data() + i, sizeof(bits));
@@ -3059,7 +4276,8 @@ u32 GpuSceneRenderer::renderWithCamera(RHI::CommandBuffer* cmd, ECS::World& worl
 
     const bool continuous = post.enabled && (post.autoExposure.enabled ||
                                              (post.grain.enabled && post.grain.intensity > 0.0f));
-    m_needsAnotherFrame = continuous || m_probesPending || view->settleFrames > 0;
+    // Falling rain moves every frame.
+    m_needsAnotherFrame = continuous || m_weather.rain || m_weather.lightning || m_probesPending || view->settleFrames > 0;
     return drawn;
 }
 

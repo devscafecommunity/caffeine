@@ -130,19 +130,7 @@ pub fn visible_count(assets: &[AssetInfo], directory: &str, search: &str) -> usi
 }
 
 fn entry_icon(kind: &str, is_directory: bool) -> Icon {
-    if is_directory {
-        return Icon::Folder;
-    }
-    match kind {
-        "image" => Icon::Texture,
-        "material" => Icon::Material,
-        "mesh" => Icon::Mesh,
-        "audio" => Icon::Audio,
-        "script" => Icon::Script,
-        "asset" => Icon::Scene,
-        "animation" => Icon::Player,
-        _ => Icon::File,
-    }
+    crate::uikit::asset_kind::AssetKind::from_key(if is_directory { "folder" } else { kind }).icon()
 }
 
 fn format_size(bytes: u64) -> String {
@@ -176,14 +164,21 @@ fn preview_entry<'a>(
     selected: bool,
     searching: bool,
 ) -> asset_preview::Entry<'a> {
+    let icon = entry_icon(&asset.kind, asset.is_directory);
     asset_preview::Entry {
         name: asset.name.clone(),
         kind: asset.kind.clone(),
         detail: entry_detail(asset, searching),
         thumbnail: thumbnails.get(index).and_then(Option::as_ref),
         tint: tints.get(index).copied().flatten(),
-        icon: Some(entry_icon(&asset.kind, asset.is_directory)),
+        icon: Some(icon),
         selected,
+        accent: Some(icon.color()),
+        tag: if asset.is_directory {
+            String::new()
+        } else {
+            crate::uikit::asset_kind::extension_tag(&asset.name)
+        },
     }
 }
 

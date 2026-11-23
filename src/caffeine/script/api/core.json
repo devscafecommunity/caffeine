@@ -1,0 +1,34 @@
+{
+  "namespace": "core",
+  "group": "Core",
+  "lua": "caffeine",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Core",
+    "pt": "Núcleo"
+  },
+  "summary": {
+    "en": "Top-level helpers of the caffeine table.",
+    "pt": "Auxiliares de topo da tabela caffeine."
+  },
+  "functions": [
+    {
+      "name": "require",
+      "lua": "caffeine.require",
+      "dryad": null,
+      "signature": "require(name)",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "en": "Module name; dots become folders, so 'util.maths' loads scripts/util/maths.lua.",
+          "pt": "Nome do módulo; os pontos tornam-se pastas, por isso 'util.maths' carrega scripts/util/maths.lua."
+        }
+      ],
+      "returns": null,
+      "en": "Loads and runs another script module from the project's scripts/ folder. It returns nothing; an error is raised if loading fails.",
+      "pt": "Carrega e executa outro módulo de script da pasta scripts/ do projeto. Não devolve nada; é lançado um erro se o carregamento falhar.",
+      "example": "caffeine.require('util.maths')"
+    }
+  ]
+}

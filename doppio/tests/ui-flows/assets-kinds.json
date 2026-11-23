@@ -1,0 +1,30 @@
+{
+  "name": "Assets: every kind the project holds gets its own card, and the browser filters across them",
+  "fixture": "entities",
+  "size": [1440, 800],
+  "assets": [
+    { "name": "rock.png", "path": "Textures/rock.png" },
+    { "name": "scan.bmp", "path": "Textures/scan.bmp" },
+    { "name": "hero.glb", "path": "Models/hero.glb" },
+    { "name": "brick.mat", "path": "Materials/brick.mat" },
+    { "name": "boom.wav", "path": "Sounds/boom.wav" },
+    { "name": "theme.flac", "path": "Sounds/theme.flac" },
+    { "name": "spin.lua", "path": "Scripts/spin.lua" },
+    { "name": "tree.prefab", "path": "Props/tree.prefab" },
+    { "name": "level.scene", "path": "Levels/level.scene" },
+    { "name": "alps.terrain", "path": "Terrain/alps.terrain" },
+    { "name": "sea.water", "path": "Water/sea.water" },
+    { "name": "oak.nature", "path": "Nature/oak.nature" },
+    { "name": "ui.ttf", "path": "Fonts/ui.ttf" },
+    { "name": "items.json", "path": "Data/items.json" }
+  ],
+  "steps": [
+    { "action": "expect", "exists": ["id:assets.toolbar.import", "id:assets.toolbar.search"] },
+    { "action": "type", "target": "id:assets.toolbar.search", "text": "e", "label": "search across every folder" },
+    { "action": "expect", "exists": "id:assets.grid.asset_card.0", "label": "matching assets show as cards" },
+    { "action": "screenshot", "name": "asset-kinds", "target": "id:editor.pane.assets" },
+    { "action": "click", "target": "id:assets.toolbar.view_list", "label": "switch to the list" },
+    { "action": "expect", "exists": "id:assets.list.asset_row.0", "label": "rows carry the kind too" },
+    { "action": "screenshot", "name": "asset-kinds-list", "target": "id:editor.pane.assets" }
+  ]
+}

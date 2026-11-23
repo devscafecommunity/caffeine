@@ -1,8 +1,9 @@
 //! Project manifest and recent-project storage.
 //!
 //! The format matches the existing `project.caffeine` convention: a small JSON
-//! file at the project root plus `assets/raw`, `assets/processed`, `scripts`,
-//! `scenes`, `materials`, `texture_sets` and `build` folders.
+//! file at the project root plus `Assets/Raw`, `Assets/Processed`, `Scripts`,
+//! `Scenes` and `Build` folders. Folders the editor creates are capitalised
+//! (`Materials`, `Textures`, `Generators`); a user may rename them freely.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -30,15 +31,15 @@ impl Default for ProjectPaths {
 }
 
 fn default_assets_raw() -> String {
-    "assets/raw".to_owned()
+    "Assets/Raw".to_owned()
 }
 
 fn default_assets_processed() -> String {
-    "assets/processed".to_owned()
+    "Assets/Processed".to_owned()
 }
 
 fn default_scripts() -> String {
-    "scripts".to_owned()
+    "Scripts".to_owned()
 }
 
 fn default_engine_version() -> String {
@@ -88,7 +89,7 @@ impl ProjectInfo {
 
     pub fn scene_path(&self) -> Option<PathBuf> {
         if self.last_scene.is_empty() {
-            let default = self.root.join("scenes").join("main.caf");
+            let default = scenes_dir(&self.root).join("main.caf");
             return default.exists().then_some(default);
         }
         let relative = Path::new(&self.last_scene);
@@ -98,6 +99,16 @@ impl ProjectInfo {
             self.root.join(relative)
         };
         scene.exists().then_some(scene)
+    }
+}
+
+/// Scene folder of a project: `Scenes`, or a legacy lowercase `scenes` that already exists.
+pub fn scenes_dir(root: &Path) -> PathBuf {
+    let legacy = root.join("scenes");
+    if legacy.is_dir() && !root.join("Scenes").is_dir() {
+        legacy
+    } else {
+        root.join("Scenes")
     }
 }
 
@@ -156,6 +167,28 @@ pub fn validate_project_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+/// The name the Sample template uses when none is typed, and the folder of its canonical copy in the repository
+/// (`samples/Sample`).
+pub const SAMPLE_PROJECT_NAME: &str = "Sample";
+
+/// The folders every new project gets (the Sample template too: it is the same project, with nothing in it yet).
+const PROJECT_FOLDERS: [&str; 14] = [
+    "Assets/Raw",
+    "Assets/Raw/Animations",
+    "Assets/Raw/Audio",
+    "Assets/Raw/Generators",
+    "Assets/Raw/Materials",
+    "Assets/Raw/Models",
+    "Assets/Raw/Prefabs",
+    "Assets/Raw/Sky",
+    "Assets/Raw/TextureSets",
+    "Assets/Raw/Textures",
+    "Assets/Processed",
+    "Scripts",
+    "Scenes",
+    "Build",
+];
+
 pub fn create_project(location: &Path, name: &str, template: &str) -> Result<ProjectInfo, String> {
     let name = validate_project_name(name)?;
     let root = location.join(name);
@@ -163,20 +196,7 @@ pub fn create_project(location: &Path, name: &str, template: &str) -> Result<Pro
         return Err(format!("A project already exists at {}", root.display()));
     }
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    for folder in [
-        "assets/raw",
-        "assets/raw/Animations",
-        "assets/raw/Models",
-        "assets/raw/Materials",
-        "assets/raw/Textures",
-        "assets/raw/Audio",
-        "assets/raw/Prefabs",
-        "assets/raw/Sky",
-        "assets/processed",
-        "scripts",
-        "scenes",
-        "build",
-    ] {
+    for folder in PROJECT_FOLDERS {
         std::fs::create_dir_all(root.join(folder)).map_err(|error| error.to_string())?;
     }
     let paths = ProjectPaths::default();
@@ -400,6 +420,94 @@ fn canonical_root(root: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    /// The canonical Sample project, kept in the repository.
+    fn repo_sample() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../samples")
+            .join(SAMPLE_PROJECT_NAME)
+    }
+
+    fn listing(root: &Path) -> Vec<String> {
+        fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+            let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().collect();
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if relative.ends_with(".gitkeep") {
+                    continue;
+                }
+                out.push(relative);
+                if path.is_dir() {
+                    walk(&path, base, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    /// The Sample template is the fixed project: what the creator makes is what `samples/Sample` holds, so the project the
+    /// team benchmarks in and the one a user creates from the template are the same. (Folders are compared without their
+    /// `.gitkeep`, which only exists so git keeps an empty folder.) Run
+    /// `cargo test -p doppio-ui zz_write_sample -- --ignored` to rewrite the repository copy after changing the template.
+    #[test]
+    fn the_sample_template_matches_the_fixed_project_in_the_repository() {
+        let root = temp_dir("sample-template");
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let created = create_project(&root, SAMPLE_PROJECT_NAME, "Sample").expect("create");
+        assert_eq!(created.template, "Sample");
+        assert_eq!(created.name, "Sample");
+        let sample = repo_sample();
+        assert!(
+            sample.join(PROJECT_FILE).is_file(),
+            "samples/Sample is in the repository"
+        );
+        assert_eq!(listing(&created.root), listing(&sample));
+        let manifest = |dir: &Path| {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(dir.join(PROJECT_FILE)).unwrap())
+                    .unwrap();
+            value
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, _| !key.to_lowercase().contains("engine"));
+            value
+        };
+        assert_eq!(manifest(&created.root), manifest(&sample));
+        // It opens like any project.
+        let loaded = load_project(&sample).expect("load the repository copy");
+        assert_eq!(loaded.template, "Sample");
+        // And nothing is in it yet but the standard folders: no scene, no scripts, no assets.
+        for entry in listing(&sample) {
+            assert!(
+                entry == PROJECT_FILE
+                    || PROJECT_FOLDERS
+                        .iter()
+                        .any(|f| f == &entry || f.starts_with(&format!("{entry}/"))),
+                "unexpected content in the sample: {entry}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "rewrites samples/Sample"]
+    fn zz_write_sample() {
+        let sample = repo_sample();
+        let _ = std::fs::remove_dir_all(&sample);
+        let parent = sample.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        create_project(parent, SAMPLE_PROJECT_NAME, "Sample").expect("create");
+        for folder in PROJECT_FOLDERS {
+            std::fs::write(sample.join(folder).join(".gitkeep"), "").unwrap();
+        }
+    }
     use super::*;
 
     fn temp_dir(label: &str) -> PathBuf {
@@ -420,18 +528,20 @@ mod tests {
         std::fs::create_dir_all(&root).expect("temp dir");
         let project = create_project(&root, "Demo", "3D").expect("create");
         assert!(project.root.join(PROJECT_FILE).exists());
-        assert!(project.root.join("assets/raw/Textures").is_dir());
-        assert_eq!(project.asset_root(), project.root.join("assets/raw"));
+        assert!(project.root.join("Assets/Raw/Textures").is_dir());
+        assert!(project.root.join("Assets/Raw/Generators").is_dir());
+        assert!(!project.root.join("Assets/Raw/materials").exists());
+        assert_eq!(project.asset_root(), project.root.join("Assets/Raw"));
 
         let loaded = load_project(&project.root).expect("load");
         assert_eq!(loaded.name, "Demo");
         assert_eq!(loaded.template, "3D");
-        assert_eq!(loaded.paths.assets_raw, "assets/raw");
+        assert_eq!(loaded.paths.assets_raw, "Assets/Raw");
 
         update_last_scene(&project.root, "scenes/main.caf").expect("scene");
         let updated = load_project(&project.root).expect("reload");
         assert_eq!(updated.last_scene, "scenes/main.caf");
-        assert_eq!(updated.paths.assets_raw, "assets/raw");
+        assert_eq!(updated.paths.assets_raw, "Assets/Raw");
 
         let scanned = scan_projects(&root);
         assert!(scanned.iter().any(|entry| entry.name == "Demo"));

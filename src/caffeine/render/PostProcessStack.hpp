@@ -20,6 +20,45 @@ struct Shader;
 
 namespace Caffeine::Render {
 
+/// Scene weather for the composite pass: exponential height fog and screen-space rain. The default
+/// (everything off) leaves the image untouched.
+struct PostWeather {
+    bool fog = false;
+    f32 fogDensity = 0.0f;
+    f32 fogHeightFalloff = 0.0f;
+    f32 fogBaseHeight = 0.0f;
+    f32 fogStart = 0.0f;
+    f32 fogMaxOpacity = 0.0f;
+    Vec3 fogColor{1.0f, 1.0f, 1.0f};  ///< linear
+    f32 fogSkyBlend = 0.0f;
+    f32 fogSunScatter = 0.0f;
+    f32 fogSunExponent = 1.0f;
+    Vec3 sunDirection{0.0f, 1.0f, 0.0f};  ///< toward the sun
+    Vec3 sunColor{0.0f, 0.0f, 0.0f};      ///< linear radiance of the sun for the fog glow
+    /// Equirectangular sky the fog takes its horizon colour from (nullptr = `horizon`).
+    RHI::Texture* environment = nullptr;
+    f32 environmentExposure = 0.0f;
+    f32 environmentLod = 6.0f;
+    Vec3 horizon{0.6f, 0.7f, 0.9f};
+
+    /// A lightning flash: the colour of the light it adds to the fog (a = strength, 0 = none).
+    Vec3 flashColor{0.75f, 0.82f, 1.0f};
+    f32 flash = 0.0f;
+    /// Light shafts: the sun's place on the screen (uv), their strength and whether the sun is ahead of the camera.
+    Vec2 shaftSun{0.5f, 0.5f};
+    f32 shafts = 0.0f;
+    bool sunAhead = false;
+
+    bool rain = false;
+    f32 rainIntensity = 0.0f;
+    f32 rainDropLength = 0.5f;
+    f32 rainFallSpeed = 1.0f;
+    Vec3 rainWind{0.0f, 0.0f, 0.0f};  ///< wind velocity in world space, m/s (gusts included): tilts the streaks
+    f32 rainSplashes = 0.0f;          ///< 0..1: rings where drops meet surfaces that face up
+    f32 rainBrightness = 0.6f;
+    Vec3 rainColor{0.5f, 0.55f, 0.65f};  ///< linear, what a streak adds
+};
+
 /// What the scene pass produced for one view, plus where the display image goes.
 struct PostProcessInputs {
     RHI::Texture* sceneColor = nullptr;  ///< RGBA16F linear HDR
@@ -40,6 +79,9 @@ struct PostProcessInputs {
     bool historyValid = false;           ///< false after a camera cut or resize
     Vec2 jitterPixels;                   ///< TAA sub-pixel offset applied to `proj`
     u64 viewId = 0;                      ///< separates TAA / eye-adaptation history per view
+    PostWeather weather;                 ///< fog and rain (off by default)
+    /// Multiplies the sky radiance the screen-space Photon fallback uses (weather: overcast, fog).
+    Vec3 photonSkyTint{1.0f, 1.0f, 1.0f};
     ECS::PhotonGIComponent photon;       ///< Photon v0.1 GI settings for this view
     /// Minimal G-buffer produced by the scene pass (see GBufferTargets).
     /// Albedo alpha is 1 on GI-relevant surfaces, 0 on sky/grid/effects.
@@ -57,6 +99,10 @@ struct PostProcessInputs {
     /// Second resolve target: S(t) = indirect irradiance / π, RGBA16F (alpha =
     /// validity). Written by the P5 resolve; consumed as S(t-1) next frame.
     RHI::Texture* photonS = nullptr;
+    /// S(t-1), when valid: the resolve averages it into this frame (nullptr after a cut or a resize).
+    RHI::Texture* photonSPrev = nullptr;
+    /// Weight of the present frame in the resolve's temporal average (high while the scene changes).
+    f32 photonTemporalWeight = 0.15f;
 };
 
 /// GPU post-processing driven by ECS::PostProcessComponent: TAA, motion blur, depth of field,

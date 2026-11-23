@@ -228,59 +228,6 @@ TEST_CASE("BlendNode defaults", "[skeletal]") {
     REQUIRE(node.parameter == Approx(0.0f));
 }
 
-TEST_CASE("SkeletalAnimationState defaults", "[skeletal]") {
-    SkeletalAnimationState state;
-    REQUIRE(state.name == "");
-    REQUIRE(state.clip == nullptr);
-    REQUIRE(state.speed == Approx(1.0f));
-}
-
-TEST_CASE("SkeletalAnimator defaults", "[skeletal]") {
-    SkeletalAnimator anim;
-    REQUIRE(anim.skeleton == nullptr);
-    REQUIRE(anim.boneMatrices.empty());
-    REQUIRE(anim.currentState == "");
-    REQUIRE(anim.timeInState == Approx(0.0f));
-    REQUIRE(anim.blendWeight == Approx(1.0f));
-    REQUIRE(anim.paused == false);
-    REQUIRE(anim.blendTree == nullptr);
-}
-
-TEST_CASE("SkeletalAnimator play and pause", "[skeletal]") {
-    // Test logic without a full ECS world
-    SkeletalAnimator anim;
-    SkeletalAnimationSystem system;
-
-    // Verify the system API compiles and works with basic operations
-    // Full integration tests require a World with an entity
-    REQUIRE(anim.paused == false);
-    anim.paused = true;
-    REQUIRE(anim.paused == true);
-    anim.paused = false;
-}
-
-TEST_CASE("SkeletalAnimationState transitions", "[skeletal]") {
-    SkeletalAnimationState idle;
-    idle.name = "idle";
-    idle.speed = 1.0f;
-
-    SkeletalAnimationState walk;
-    walk.name = "walk";
-    walk.speed = 2.0f;
-
-    SkeletalAnimator anim;
-    anim.states.set(idle.name, idle);
-    anim.states.set(walk.name, walk);
-    anim.currentState = "idle";
-    anim.timeInState = 0.0f;
-
-    REQUIRE(anim.currentState == "idle");
-
-    // Manually switch state (testing the state storage, not transitions)
-    anim.currentState = walk.name;
-    REQUIRE(anim.currentState == "walk");
-}
-
 TEST_CASE("Skeleton bones stored parent-first order", "[skeletal]") {
     // This test verifies the assumption that bones are stored in topological order
     // (parents before children), which sampleAt depends on.
@@ -423,4 +370,59 @@ TEST_CASE("Explicit humanoid synthesis still works", "[skeletal][skin]") {
     REQUIRE(skin->boneNames.size() == 17);
     REQUIRE(!mesh.skin.empty());
     REQUIRE(mesh.skin[0].weights[0] > 0.0f);
+}
+
+// ============================================================================
+// Blend-tree regression
+// ============================================================================
+
+TEST_CASE("BlendNode Blend1D - halfway between identity and a quarter turn is a 45 degree turn", "[skeletal]") {
+    Skeleton skel;
+    Bone bone;
+    bone.name = "bone";
+    bone.parentIndex = -1;
+    bone.bindPoseInverse = Mat4::identity();
+    bone.localTransform = Mat4::identity();
+    skel.bones = {bone};
+    skel.skinSpace = Mat4::identity();
+
+    std::vector<SkeletalKeyframe> restKeys(1);
+    restKeys[0].time = 0.0f;
+    SkeletalClip still;
+    still.duration = 1.0f;
+    still.loop = false;
+    still.channels.set(0, restKeys);
+
+    const Quat quarter = Quat::fromAxisAngle(Vec3(0.0f, 0.0f, 1.0f), 1.5707963f);
+    std::vector<SkeletalKeyframe> turnKeys(2);
+    turnKeys[0].time = 0.0f;
+    turnKeys[0].rotation = quarter;
+    turnKeys[1].time = 1.0f;
+    turnKeys[1].rotation = quarter;
+    SkeletalClip turned;
+    turned.duration = 1.0f;
+    turned.loop = false;
+    turned.channels.set(0, turnKeys);
+
+    BlendNode a;
+    a.type = BlendNode::Type::Clip;
+    a.clip = &still;
+    BlendNode b;
+    b.type = BlendNode::Type::Clip;
+    b.clip = &turned;
+    BlendNode root;
+    root.type = BlendNode::Type::Blend1D;
+    root.children = {{0.0f, &a}, {1.0f, &b}};
+    root.parameter = 0.5f;
+
+    std::vector<Mat4> out(1);
+    for (u32 k = 0; k < 16; ++k) out[0].data()[k] = 0.0f;
+    sampleBlendTree(&root, 0.0f, skel, out, 1.0f);
+    const Mat4& m = out[0];
+
+    // Slerp gives a true 45 degree rotation. Averaging matrices would give 0.5 here and a non-unit column.
+    const f32 c45 = std::cos(0.7853982f);
+    REQUIRE(m(0, 0) == Approx(c45).margin(1e-3));
+    const f32 column = m(0, 0) * m(0, 0) + m(1, 0) * m(1, 0);
+    REQUIRE(column == Approx(1.0f).margin(1e-3));
 }

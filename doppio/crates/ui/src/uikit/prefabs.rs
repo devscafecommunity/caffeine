@@ -37,6 +37,8 @@ pub enum Kind {
         scale: [f32; 3],
     },
     DuplicateSelection,
+    /// The scene's weather: clouds, fog and rain (one entity; a scene has one).
+    Environment,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -252,6 +254,15 @@ pub const PREFABS: &[Prefab] = &[
             primitive: "Plane",
             scale: [50.0, 0.1, 50.0],
         },
+    },
+    Prefab {
+        key: "environment",
+        label: "Environment",
+        description:
+            "Clouds, fog and rain for the scene. Selects the existing one when the scene has it.",
+        category: "world",
+        icon: Icon::Wind,
+        kind: Kind::Environment,
     },
 ];
 

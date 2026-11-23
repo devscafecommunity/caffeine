@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Caffeine VERSION 0.1.0 LANGUAGES CXX C)
 
+# Third-party static libs (Bullet, Lua, ...) end up inside libcaffeine-capi.so, so every
+# object must be position independent.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -55,6 +59,10 @@ add_library(caffeine-core
     src/caffeine/debug/LogSystem.cpp
     src/caffeine/debug/CrashHandler.cpp
     src/caffeine/debug/Profiler.cpp
+    src/caffeine/audio/AudioService.cpp
+    src/caffeine/audio/volumetric/VolumetricMixer.cpp
+    src/caffeine/audio/volumetric/VolumetricAudio.cpp
+    src/caffeine/audio/volumetric/SceneAudio.cpp
     src/caffeine/debug/SystemMetrics.cpp
     src/caffeine/threading/JobSystem.cpp
     src/caffeine/ecs/CommandBuffer.cpp
@@ -83,6 +91,7 @@ add_library(caffeine-core
     src/caffeine/render/StbImageWrite.cpp
     src/caffeine/runtime/PlayClock.cpp
     src/caffeine/runtime/GameStateStack.cpp
+    src/caffeine/runtime/GameSimulation.cpp
     src/caffeine/scene/EnvironmentSystem.cpp
     src/caffeine/scene/CpuDirectionalShadowMap.cpp
     src/caffeine/scene/LightingSystem.cpp
@@ -100,14 +109,22 @@ add_library(caffeine-core
     src/caffeine/terrain/TerrainMeshBuilder.cpp
     src/caffeine/terrain/TerrainCache.cpp
     src/caffeine/terrain/TerrainSculptor.cpp
+    src/caffeine/terrain/edit/TerrainTiles.cpp
+    src/caffeine/terrain/edit/TerrainStroke.cpp
+    src/caffeine/terrain/TerrainContainer.cpp
     src/caffeine/terrain/TerrainLodSystem.cpp
     src/caffeine/terrain/TerrainSplatmap.cpp
     src/caffeine/terrain/TerrainSplatPainter.cpp
     src/caffeine/terrain/TerrainSerializer.cpp
+    src/caffeine/terrain/TerrainMasks.cpp
+    src/caffeine/terrain/TerrainBiome.cpp
     src/caffeine/terrain/TerrainGpuTextures.cpp
     src/caffeine/terrain/TerrainHeightmapImporter.cpp
     src/caffeine/terrain/TerrainCollisionMeshBuilder.cpp
     src/caffeine/procedural/ProceduralNoise.cpp
+    src/caffeine/scatter/Scatter.cpp
+    src/caffeine/scatter/TerrainScatter.cpp
+    src/caffeine/micromesh/Micromesh.cpp
     src/caffeine/procedural/ProceduralProfiles.cpp
     src/caffeine/procedural/ProceduralGenerator.cpp
     src/caffeine/procedural/ProceduralStreamer.cpp
@@ -229,12 +246,21 @@ else()
                 "post_photon_frag|fragment|post_photon.frag"
                 "post_photon_resolve_frag|fragment|post_photon_resolve.frag"
                 "minz_downsample_frag|fragment|minz_downsample.frag"
+                "batch2d_vert|vertex|batch2d.vert"
+                "batch2d_frag|fragment|batch2d.frag"
                 "photon_cascade|compute|photon_cascade.comp"
                 "photon_c0|compute|photon_c0.comp"
                 "photon_voxelize|compute|photon_voxelize.comp"
+                "photon_voxelize_tri|compute|photon_voxelize_tri.comp"
                 "photon_inject|compute|photon_inject.comp"
                 "photon_probe|compute|photon_probe.comp"
                 "photon_bake_ao|compute|photon_bake_ao.comp"
+                "micromesh_cull|compute|micromesh_cull.comp"
+                "scene_micromesh_vert|vertex|scene_micromesh.vert"
+                "shadow_micromesh_vert|vertex|shadow_micromesh.vert"
+                "micromesh_compact|compute|micromesh_compact.comp"
+                "micromesh_reset|compute|micromesh_reset.comp"
+                "micromesh_hzb|compute|micromesh_hzb.comp"
             )
             set(_caffeine_shader_headers)
             set(_caffeine_shader_cat_commands)
@@ -270,6 +296,7 @@ else()
             src/caffeine/render/PostProcessStack.cpp
             src/caffeine/render/MinZPyramid.cpp
             src/caffeine/render/PhotonCascades.cpp
+            src/caffeine/render/MicromeshGpu.cpp
             src/caffeine/render/PhotonGpuBake.cpp
             src/caffeine/render/PhotonAOBake.cpp
             src/caffeine/render/GpuEnvironmentMap.cpp
@@ -467,11 +494,18 @@ if(CAFFEINE_ENABLE_SCRIPTING)
         src/caffeine/script/RuntimeScriptBindings.cpp
         src/caffeine/script/AssetTextLoader.cpp
         src/caffeine/script/NativeModuleHost.cpp
+        src/caffeine/script/WorldApiBindings.cpp
+        src/caffeine/script/Physics3DBindings.cpp
+        src/caffeine/script/AudioSceneBindings.cpp
     )
     if(DRYAD_AVAILABLE)
         target_sources(caffeine-core PRIVATE
             src/caffeine/script/DryadHost.cpp
             src/caffeine/script/DryadComponentBindings.cpp
+            src/caffeine/script/DryadRuntimeBindings.cpp
+            src/caffeine/script/DryadWorldBindings.cpp
+            src/caffeine/script/DryadPhysics3DBindings.cpp
+            src/caffeine/script/DryadAudioSceneBindings.cpp
             src/caffeine/script/nodes/NodeGraph.cpp
             src/caffeine/script/nodes/NodeCatalog.cpp
             src/caffeine/script/nodes/NodeEmitter.cpp
@@ -500,8 +534,34 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
         GIT_TAG        docking
         GIT_SHALLOW    TRUE
     )
+    # imnodes is the node-graph widget the composable UI kit (NodeCanvas.hpp) includes. It is fetched here so the
+    # plugin SDK finds it under build/_deps/imnodes-src (see doppio-plugins/cmake/DoppioPlugin.cmake).
+    FetchContent_Declare(
+        imnodes
+        GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
+        GIT_TAG        v0.5
+        GIT_SHALLOW    TRUE
+    )
     set(FETCHCONTENT_QUIET OFF)
-    FetchContent_MakeAvailable(imgui)
+    FetchContent_MakeAvailable(imgui imnodes)
+
+    # imnodes v0.5 predates the TexRef texture API of ImGui docking.
+    file(WRITE "${CMAKE_BINARY_DIR}/patch_imnodes.py"
+"import sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+content = content.replace(
+    'draw_list->_TextureIdStack.back()',
+    'draw_list->_TextureStack.back()._TexID'
+)
+content = content.replace(
+    'draw_cmd.TextureId',
+    'draw_cmd.TexRef._TexID'
+)
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+")
+    execute_process(COMMAND python3 "${CMAKE_BINARY_DIR}/patch_imnodes.py" "${imnodes_SOURCE_DIR}/imnodes.cpp")
 
     add_library(ImGui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
@@ -591,6 +651,10 @@ if(SDL3_FOUND AND NOT CAFFEINE_BUILD_HEADLESS)
 endif()
 
 # ── caf-encode CLI tool (legacy — prefer caf-pack CLI) ─────────
+add_executable(caffeine-audio-demo tools/audio-demo/main.cpp)
+target_link_libraries(caffeine-audio-demo PRIVATE caffeine-core)
+target_compile_features(caffeine-audio-demo PRIVATE cxx_std_20)
+
 add_executable(caf-encode tools/caf-encode/main.cpp)
 target_link_libraries(caf-encode PRIVATE caffeine-core)
 target_include_directories(caf-encode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

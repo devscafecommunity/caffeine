@@ -1,0 +1,200 @@
+{
+  "namespace": "ui",
+  "group": "UI",
+  "lua": "caffeine.ui",
+  "dryad_prefix": null,
+  "title": {
+    "en": "UI",
+    "pt": "Interface"
+  },
+  "summary": {
+    "en": "Create canvases, labels and buttons, update them and hit-test screen positions.",
+    "pt": "Criar canvases, rótulos e botões, atualizá-los e testar acertos em posições do ecrã."
+  },
+  "functions": [
+    {
+      "name": "createCanvas",
+      "lua": "caffeine.ui.createCanvas",
+      "dryad": null,
+      "signature": "createCanvas([w, h]) -> integer",
+      "params": [
+        {
+          "name": "w",
+          "type": "number",
+          "en": "Width (default 1280).",
+          "pt": "Largura (por omissão 1280)."
+        },
+        {
+          "name": "h",
+          "type": "number",
+          "en": "Height (default 720).",
+          "pt": "Altura (por omissão 720)."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Canvas entity id, or 0 without a UI system or world.",
+        "pt": "Id da entidade do canvas, ou 0 sem sistema de UI ou mundo."
+      },
+      "en": "Creates a UI canvas entity.",
+      "pt": "Cria uma entidade de canvas de UI.",
+      "example": "local canvas = caffeine.ui.createCanvas(1280, 720)"
+    },
+    {
+      "name": "createLabel",
+      "lua": "caffeine.ui.createLabel",
+      "dryad": null,
+      "signature": "createLabel(parent, text, pos) -> integer",
+      "params": [
+        {
+          "name": "parent",
+          "type": "integer",
+          "en": "Parent canvas or widget id.",
+          "pt": "Id do canvas ou widget pai."
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "en": "Label text.",
+          "pt": "Texto do rótulo."
+        },
+        {
+          "name": "pos",
+          "type": "table",
+          "en": "{x, y} position.",
+          "pt": "Posição {x, y}."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Label entity id, or 0.",
+        "pt": "Id da entidade do rótulo, ou 0."
+      },
+      "en": "Creates a text label under a parent.",
+      "pt": "Cria um rótulo de texto sob um pai.",
+      "example": "local l = caffeine.ui.createLabel(canvas, 'Score: 0', { x = 10, y = 10 })"
+    },
+    {
+      "name": "createButton",
+      "lua": "caffeine.ui.createButton",
+      "dryad": null,
+      "signature": "createButton(parent, text, pos[, w, h]) -> integer",
+      "params": [
+        {
+          "name": "parent",
+          "type": "integer",
+          "en": "Parent canvas or widget id.",
+          "pt": "Id do canvas ou widget pai."
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "en": "Button text.",
+          "pt": "Texto do botão."
+        },
+        {
+          "name": "pos",
+          "type": "table",
+          "en": "{x, y} position.",
+          "pt": "Posição {x, y}."
+        },
+        {
+          "name": "w",
+          "type": "number",
+          "en": "Width (default 120).",
+          "pt": "Largura (por omissão 120)."
+        },
+        {
+          "name": "h",
+          "type": "number",
+          "en": "Height (default 40).",
+          "pt": "Altura (por omissão 40)."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Button entity id, or 0.",
+        "pt": "Id da entidade do botão, ou 0."
+      },
+      "en": "Creates a button under a parent.",
+      "pt": "Cria um botão sob um pai.",
+      "example": "local b = caffeine.ui.createButton(canvas, 'Play', { x = 20, y = 60 })"
+    },
+    {
+      "name": "hitTest",
+      "lua": "caffeine.ui.hitTest",
+      "dryad": null,
+      "signature": "hitTest(sx, sy) -> integer",
+      "params": [
+        {
+          "name": "sx",
+          "type": "number",
+          "en": "Screen x.",
+          "pt": "x do ecrã."
+        },
+        {
+          "name": "sy",
+          "type": "number",
+          "en": "Screen y.",
+          "pt": "y do ecrã."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "UI entity id under the point, or 0.",
+        "pt": "Id da entidade de UI sob o ponto, ou 0."
+      },
+      "en": "Finds the UI element at a screen position.",
+      "pt": "Encontra o elemento de UI numa posição do ecrã.",
+      "example": "local hit = caffeine.ui.hitTest(100, 80)"
+    },
+    {
+      "name": "setLabel",
+      "lua": "caffeine.ui.setLabel",
+      "dryad": null,
+      "signature": "setLabel(entity, text)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "en": "New text (up to 255 characters).",
+          "pt": "Novo texto (até 255 caracteres)."
+        }
+      ],
+      "returns": null,
+      "en": "Changes a label's text. Does nothing when the entity has no label.",
+      "pt": "Muda o texto de um rótulo. Não faz nada se a entidade não tiver rótulo.",
+      "example": "caffeine.ui.setLabel(l, 'Score: 10')"
+    },
+    {
+      "name": "setProgress",
+      "lua": "caffeine.ui.setProgress",
+      "dryad": null,
+      "signature": "setProgress(entity, normalized)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "normalized",
+          "type": "number",
+          "en": "0..1; clamped.",
+          "pt": "0..1; é limitado."
+        }
+      ],
+      "returns": null,
+      "en": "Sets a progress bar between its min and max. Does nothing when the entity has no progress bar.",
+      "pt": "Define uma barra de progresso entre o mínimo e o máximo. Não faz nada se a entidade não tiver barra de progresso.",
+      "example": "caffeine.ui.setProgress(bar, 0.5)"
+    }
+  ]
+}

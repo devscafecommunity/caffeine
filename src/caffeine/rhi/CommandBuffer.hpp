@@ -50,15 +50,34 @@ public:
     void drawInstanced(u32 vertexCount, u32 instanceCount,
                        u32 firstVertex = 0, u32 firstInstance = 0);
 
+    /// Draws from arguments stored in `args` (a `BufferUsage::Indirect`/`IndirectWrite` buffer):
+    /// `drawCount` consecutive `IndirectDrawArgs` / `IndirectIndexedDrawArgs` starting at `offset`.
+    void drawIndirect(Buffer* args, u32 offset = 0, u32 drawCount = 1);
+    void drawIndexedIndirect(Buffer* args, u32 offset = 0, u32 drawCount = 1);
+    /// Read-only storage buffers for the vertex / fragment stage (`BufferUsage::GraphicsStorage*`),
+    /// bound at set 0 next to the samplers of that stage.
+    void bindVertexStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+    void bindFragmentStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
+
     void pushUniformData(ShaderStage stage, u32 slot, const void* data, u32 size);
 
     // Compute. `beginComputePass` accepts one or more read-write storage
     // textures (with an explicit mip/layer so a single texture can be reduced
     // level by level); read-only storage buffers are bound with
     // bindComputeStorageBuffers and sampled textures with bindComputeTexture(s).
-    void beginComputePass(Texture* storageTexture = nullptr, u32 mipLevel = 0, u32 layer = 0);
+    /// `cycle` false keeps the texture's contents when it was already used in this command buffer: a volume
+    /// that several passes build up (Photon's material volume) must not be cycled, or each pass discards
+    /// what the one before wrote.
+    void beginComputePass(Texture* storageTexture = nullptr, u32 mipLevel = 0, u32 layer = 0,
+                          bool cycle = true);
     /// Multiple read-write storage textures (slots 0..count-1), mip 0/layer 0.
     void beginComputePass(Texture* const* storageTextures, u32 count);
+    /// Compute pass with read-write storage **buffers** (and optionally textures): the pass that
+    /// builds draw arguments and visible lists. Buffers need a `StorageWrite`-capable usage.
+    void beginComputePass(Texture* const* storageTextures, u32 textureCount,
+                          Buffer* const* storageBuffers, u32 bufferCount);
+    /// Dispatch with group counts read from `args` (a `BufferUsage::Indirect*` buffer).
+    void dispatchIndirect(Buffer* args, u32 offset = 0);
     void endComputePass();
     void bindComputePipeline(ComputePipeline* pipeline);
     void bindComputeStorageBuffers(Buffer* const* buffers, u32 firstSlot, u32 count);
@@ -80,6 +99,11 @@ public:
 
     /// Fills mips 1..N from mip 0. Outside a render pass; texture needs Sampler | ColorTarget.
     void generateMipmaps(Texture* texture);
+
+    /// Submits what has been recorded, waits for the GPU to finish it and continues recording into a fresh
+    /// command buffer. Only between passes. For profiling (it serialises CPU and GPU: never in a normal
+    /// frame); returns false when it cannot (inside a pass, or no device).
+    bool flushAndWait();
 
     bool isInRenderPass() const { return m_inRenderPass; }
     bool isInComputePass() const { return m_inComputePass; }

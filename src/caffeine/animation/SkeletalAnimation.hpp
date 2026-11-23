@@ -11,6 +11,7 @@
 #include "containers/FixedString.hpp"
 #include "containers/HashMap.hpp"
 
+#include <algorithm>
 #include <vector>
 #include <cmath>
 #include <functional>
@@ -47,6 +48,15 @@ struct Skeleton {
     }
 };
 
+/// Local transform of one bone: TRS when it has keys, or the raw bind-local matrix when it does not.
+struct BoneLocal {
+    Vec3 position { 0.0f, 0.0f, 0.0f };
+    Quat rotation { Quat::identity() };
+    Vec3 scale    { 1.0f, 1.0f, 1.0f };
+    Mat4 raw      = Mat4::identity();
+    bool isRaw    = false;
+};
+
 // ============================================================================
 // @brief Keyframe de animação esquelética.
 // ============================================================================
@@ -75,6 +85,9 @@ struct SkeletalClip {
     /// When `jointPositions` is set, it receives each joint in skeleton space.
     void sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
                   std::vector<Vec3>* jointPositions = nullptr) const;
+
+    /// Local pose of every bone at `time` (no hierarchy applied). Blending works on these, not on matrices.
+    void sampleLocal(f32 time, const Skeleton& skeleton, std::vector<BoneLocal>& locals) const;
 };
 
 // ============================================================================
@@ -94,58 +107,7 @@ struct BlendNode {
 };
 
 // ============================================================================
-// @brief Estado de animação esquelética (análogo a AnimationState da Fase 4).
-// ============================================================================
-struct SkeletalAnimationState {
-    FixedString<32>                  name;
-    const SkeletalClip*              clip  = nullptr;
-    f32                              speed = 1.0f;
-    std::vector<AnimationTransition> transitions;
-};
-
-// ============================================================================
-// @brief Componente de animação esquelética de uma entidade.
-// ============================================================================
-struct SkeletalAnimator {
-    const Skeleton*         skeleton     = nullptr;
-    std::vector<Mat4>       boneMatrices;
-
-    // State machine
-    HashMap<FixedString<32>, SkeletalAnimationState> states;
-    FixedString<32>  currentState;
-    f32              timeInState = 0.0f;
-    f32              blendWeight = 1.0f;
-    bool             paused      = false;
-
-    // Blend tree (opcional)
-    BlendNode* blendTree = nullptr;
-};
-
-// ============================================================================
-// @brief Sistema de animação esquelética.
-// ============================================================================
-class SkeletalAnimationSystem : public ECS::ISystem {
-public:
-    void onUpdate(ECS::World& world, f32 dt) override;
-
-    // Controle de playback
-    void play(ECS::World& world, ECS::Entity e, const char* stateName);
-    void pause(ECS::World& world, ECS::Entity e);
-    void resume(ECS::World& world, ECS::Entity e);
-    void setSpeed(ECS::World& world, ECS::Entity e, f32 speed);
-    bool isPlaying(ECS::World& world, ECS::Entity e, const char* stateName) const;
-
-private:
-    static void evaluateTransitions(SkeletalAnimator& anim);
-    static void sampleBlendTree(const BlendNode* node, f32 time,
-                                 const Skeleton& skeleton,
-                                 std::vector<Mat4>& outResult,
-                                 f32 weight = 1.0f);
-    static void accumulateBlend(std::vector<Mat4>& accum, const std::vector<Mat4>& sample, f32 weight);
-};
-
-// ============================================================================
-// Implementação inline de SkeletalClip::sampleAt
+// Sampling and blending (the skinned pose path is SkinnedPose + AnimationSystem in SkinLibrary)
 // ============================================================================
 
 namespace Detail {
@@ -163,12 +125,62 @@ inline Mat4 buildTRS(const Vec3& pos, const Quat& rot, const Vec3& scale) {
 
 } // namespace Detail
 
-inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
-                                  std::vector<Vec3>* jointPositions) const {
-    u32 boneCount = skeleton.boneCount();
-    if (boneTransforms.size() < boneCount) {
-        boneTransforms.resize(boneCount);
+inline Mat4 boneLocalMatrix(const BoneLocal& l) {
+    return l.isRaw ? l.raw : Detail::buildTRS(l.position, l.rotation, l.scale);
+}
+
+/// Blends two local poses. TRS blends component-wise; a raw matrix blends element-wise.
+inline BoneLocal lerpBoneLocal(const BoneLocal& a, const BoneLocal& b, f32 t) {
+    BoneLocal out;
+    if (a.isRaw || b.isRaw) {
+        const Mat4 ma = boneLocalMatrix(a);
+        const Mat4 mb = boneLocalMatrix(b);
+        out.isRaw = true;
+        for (u32 k = 0; k < 16; ++k) {
+            out.raw.data()[k] = ma.data()[k] + (mb.data()[k] - ma.data()[k]) * t;
+        }
+        return out;
     }
+    out.position = Detail::lerpVec3(a.position, b.position, t);
+    out.rotation = Quat::slerp(a.rotation, b.rotation, t);
+    out.scale    = Detail::lerpVec3(a.scale, b.scale, t);
+    return out;
+}
+
+
+inline void composeBoneWorld(const Skeleton& skeleton, const std::vector<BoneLocal>& locals,
+                            std::vector<Mat4>& world) {
+    const u32 boneCount = skeleton.boneCount();
+    world.assign(boneCount, Mat4::identity());
+    std::vector<u8> resolved(boneCount, 0);
+    // Parents may appear after children in imported joint lists.
+    for (u32 pass = 0; pass < boneCount; ++pass) {
+        bool progressed = false;
+        for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
+            if (resolved[boneIdx]) continue;
+            const Bone& bone = skeleton.bones[boneIdx];
+            const Mat4 localMatrix = boneIdx < locals.size()
+                ? (locals[boneIdx].isRaw ? locals[boneIdx].raw
+                                         : Detail::buildTRS(locals[boneIdx].position, locals[boneIdx].rotation,
+                                                            locals[boneIdx].scale))
+                : bone.localTransform;
+            if (bone.parentIndex >= 0) {
+                const u32 parent = static_cast<u32>(bone.parentIndex);
+                if (parent >= boneCount || !resolved[parent]) continue;
+                world[boneIdx] = world[parent] * localMatrix;
+            } else {
+                world[boneIdx] = localMatrix;
+            }
+            resolved[boneIdx] = 1;
+            progressed = true;
+        }
+        if (!progressed) break;
+    }
+}
+
+inline void SkeletalClip::sampleLocal(f32 time, const Skeleton& skeleton, std::vector<BoneLocal>& locals) const {
+    const u32 boneCount = skeleton.boneCount();
+    locals.assign(boneCount, BoneLocal{});
 
     // Wrap/clamp time
     f32 t = time;
@@ -181,66 +193,55 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
         }
     }
 
-    // Bones without keys keep the bind-pose local transform.
-    std::vector<Mat4> localMatrices(boneCount, Mat4::identity());
-
     for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
-        localMatrices[boneIdx] = skeleton.bones[boneIdx].localTransform;
+        BoneLocal& out = locals[boneIdx];
+        // Bones without keys keep the bind-pose local transform.
+        out.isRaw = true;
+        out.raw = skeleton.bones[boneIdx].localTransform;
+
         const std::vector<SkeletalKeyframe>* keys = channels.get(boneIdx);
         if (!keys || keys->empty()) continue;
 
+        out.isRaw = false;
         const auto& kf = *keys;
-
-        // Antes do primeiro keyframe
         if (t <= kf[0].time) {
-            localMatrices[boneIdx] = Detail::buildTRS(kf[0].position, kf[0].rotation, kf[0].scale);
+            out.position = kf[0].position;
+            out.rotation = kf[0].rotation;
+            out.scale    = kf[0].scale;
             continue;
         }
-
-        // Após o último keyframe
         if (t >= kf.back().time) {
-            localMatrices[boneIdx] = Detail::buildTRS(kf.back().position, kf.back().rotation, kf.back().scale);
+            out.position = kf.back().position;
+            out.rotation = kf.back().rotation;
+            out.scale    = kf.back().scale;
             continue;
         }
 
-        // Encontrar keyframes de interpolação
         usize i = 0;
         for (; i + 1 < kf.size(); ++i) {
             if (kf[i + 1].time >= t) break;
         }
-
         const SkeletalKeyframe& k0 = kf[i];
         const SkeletalKeyframe& k1 = kf[i + 1];
-        f32 segDur = k1.time - k0.time;
-        f32 frac = (segDur > 0.0f) ? (t - k0.time) / segDur : 0.0f;
+        const f32 segDur = k1.time - k0.time;
+        const f32 frac = (segDur > 0.0f) ? (t - k0.time) / segDur : 0.0f;
+        out.position = Detail::lerpVec3(k0.position, k1.position, frac);
+        out.rotation = Quat::slerp(k0.rotation, k1.rotation, frac);
+        out.scale    = Detail::lerpVec3(k0.scale, k1.scale, frac);
+    }
+}
 
-        Vec3 pos = Detail::lerpVec3(k0.position, k1.position, frac);
-        Quat rot = Quat::slerp(k0.rotation, k1.rotation, frac);
-        Vec3 s   = Detail::lerpVec3(k0.scale, k1.scale, frac);
-
-        localMatrices[boneIdx] = Detail::buildTRS(pos, rot, s);
+inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vector<Mat4>& boneTransforms,
+                                  std::vector<Vec3>* jointPositions) const {
+    const u32 boneCount = skeleton.boneCount();
+    if (boneTransforms.size() < boneCount) {
+        boneTransforms.resize(boneCount);
     }
 
-    // Parents may appear after children in imported joint lists.
-    std::vector<Mat4> worldMatrices(boneCount, Mat4::identity());
-    std::vector<u8> resolved(boneCount, 0);
-    for (u32 pass = 0; pass < boneCount; ++pass) {
-        bool progressed = false;
-        for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
-            if (resolved[boneIdx]) continue;
-            const Bone& bone = skeleton.bones[boneIdx];
-            if (bone.parentIndex >= 0 &&
-                (bone.parentIndex >= static_cast<i32>(boneCount) || !resolved[static_cast<u32>(bone.parentIndex)])) {
-                continue;
-            }
-            worldMatrices[boneIdx] = bone.parentIndex >= 0
-                ? worldMatrices[static_cast<u32>(bone.parentIndex)] * localMatrices[boneIdx]
-                : localMatrices[boneIdx];
-            resolved[boneIdx] = 1;
-            progressed = true;
-        }
-        if (!progressed) break;
-    }
+    std::vector<BoneLocal> locals;
+    sampleLocal(time, skeleton, locals);
+    std::vector<Mat4> worldMatrices;
+    composeBoneWorld(skeleton, locals, worldMatrices);
 
     for (u32 boneIdx = 0; boneIdx < boneCount; ++boneIdx) {
         boneTransforms[boneIdx] =
@@ -256,207 +257,83 @@ inline void SkeletalClip::sampleAt(f32 time, const Skeleton& skeleton, std::vect
     }
 }
 
-// ============================================================================
-// Implementação inline de SkeletalAnimationSystem
-// ============================================================================
+/// Adds `sample` into `accum`, scaled by `weight`. Blend trees sum their clips this way.
+inline void accumulateBlend(std::vector<Mat4>& accum, const std::vector<Mat4>& sample, f32 weight);
 
-inline void SkeletalAnimationSystem::onUpdate(ECS::World& world, f32 dt) {
-    ECS::ComponentQuery q;
-    q.with<SkeletalAnimator>();
+/// Skinning matrices of a blend tree at `time`, multiplied by `weight` and added into `outResult`.
+inline void sampleBlendTree(const BlendNode* node, f32 time, const Skeleton& skeleton,
+                            std::vector<Mat4>& outResult, f32 weight);
 
-    world.forEach<SkeletalAnimator>(q,
-        [dt](ECS::Entity entity, SkeletalAnimator& anim) {
-            (void)entity;
-            if (anim.paused) return;
-            if (!anim.skeleton || anim.skeleton->bones.empty()) return;
+/// Local pose of a blend node. Blend1D interpolates TRS between the two children around its parameter,
+/// so rotations stay on the sphere instead of being averaged as matrices.
+inline void sampleBlendLocal(const BlendNode* node, f32 time, const Skeleton& skeleton,
+                             std::vector<BoneLocal>& out) {
+    if (!node) return;
+    switch (node->type) {
+    case BlendNode::Type::Clip:
+        if (node->clip) node->clip->sampleLocal(time, skeleton, out);
+        return;
 
-            u32 boneCount = anim.skeleton->boneCount();
-            if (anim.boneMatrices.size() < boneCount) {
-                anim.boneMatrices.resize(boneCount, Mat4::identity());
-            }
-
-            // Estado inicial: bind pose
-            std::vector<Mat4> blendedResult(boneCount);
-            for (u32 i = 0; i < boneCount; ++i) {
-                blendedResult[i] = anim.skeleton->bones[i].bindPoseInverse;
-            }
-
-            f32 totalWeight = 0.0f;
-
-            // ── Blend tree ──
-            if (anim.blendTree) {
-                sampleBlendTree(anim.blendTree, anim.timeInState,
-                                *anim.skeleton, blendedResult, 1.0f);
-                totalWeight = 1.0f;
-            }
-
-            // ── State machine ──
-            const SkeletalAnimationState* state = anim.states.get(anim.currentState);
-            if (state && state->clip) {
-                evaluateTransitions(anim);
-
-                // Re-obter state após possível transição
-                state = anim.states.get(anim.currentState);
-                if (!state || !state->clip) return;
-
-                f32 effectiveSpeed = state->speed;
-                anim.timeInState += dt * effectiveSpeed;
-
-                const SkeletalClip* clip = state->clip;
-
-                // Amostrar clipe
-                std::vector<Mat4> clipMatrices(boneCount, Mat4::identity());
-                clip->sampleAt(anim.timeInState, *anim.skeleton, clipMatrices);
-
-                if (totalWeight > 0.0f) {
-                    // Blend entre acumulado (blend tree) e state machine
-                    f32 invW = 1.0f - anim.blendWeight;
-                    for (u32 i = 0; i < boneCount; ++i) {
-                        for (u32 k = 0; k < 16; ++k) {
-                            anim.boneMatrices[i].data()[k] =
-                                blendedResult[i].data()[k] * invW +
-                                clipMatrices[i].data()[k] * anim.blendWeight;
-                        }
-                    }
-                } else {
-                    anim.boneMatrices = clipMatrices;
-                }
-            } else if (totalWeight > 0.0f) {
-                anim.boneMatrices = blendedResult;
-            }
-
-            // Verificar fim de clipe não-looping
-            if (state && state->clip && !state->clip->loop) {
-                if (state->clip->duration > 0.0f && anim.timeInState >= state->clip->duration) {
-                    anim.timeInState = state->clip->duration;
-                }
-            }
-        });
-}
-
-inline void SkeletalAnimationSystem::play(ECS::World& world, ECS::Entity e, const char* stateName) {
-    SkeletalAnimator* anim = world.get<SkeletalAnimator>(e);
-    if (!anim) return;
-    anim->currentState = stateName;
-    anim->timeInState  = 0.0f;
-    anim->paused       = false;
-}
-
-inline void SkeletalAnimationSystem::pause(ECS::World& world, ECS::Entity e) {
-    SkeletalAnimator* anim = world.get<SkeletalAnimator>(e);
-    if (anim) anim->paused = true;
-}
-
-inline void SkeletalAnimationSystem::resume(ECS::World& world, ECS::Entity e) {
-    SkeletalAnimator* anim = world.get<SkeletalAnimator>(e);
-    if (anim) anim->paused = false;
-}
-
-inline void SkeletalAnimationSystem::setSpeed(ECS::World& world, ECS::Entity e, f32 speed) {
-    SkeletalAnimator* anim = world.get<SkeletalAnimator>(e);
-    if (anim) anim->blendWeight = speed;
-}
-
-inline bool SkeletalAnimationSystem::isPlaying(ECS::World& world, ECS::Entity e, const char* stateName) const {
-    const SkeletalAnimator* anim = world.get<SkeletalAnimator>(e);
-    if (!anim || anim->paused) return false;
-    return anim->currentState == FixedString<32>(stateName);
-}
-
-inline void SkeletalAnimationSystem::evaluateTransitions(SkeletalAnimator& anim) {
-    const SkeletalAnimationState* state = anim.states.get(anim.currentState);
-    if (!state) return;
-
-    for (const auto& t : state->transitions) {
-        if (!t.legacyCondition) continue;
-        if (t.hasExitTime && state->clip) {
-            if (anim.timeInState < state->clip->duration) continue;
-        }
-        if (t.legacyCondition()) {
-            anim.currentState = t.toState;
-            anim.timeInState  = 0.0f;
+    case BlendNode::Type::Blend1D: {
+        if (node->children.empty()) return;
+        const f32 param = node->parameter;
+        if (param <= node->children[0].first || node->children.size() == 1) {
+            sampleBlendLocal(node->children[0].second, time, skeleton, out);
             return;
         }
+        if (param >= node->children.back().first) {
+            sampleBlendLocal(node->children.back().second, time, skeleton, out);
+            return;
+        }
+        for (usize i = 0; i + 1 < node->children.size(); ++i) {
+            const f32 a = node->children[i].first;
+            const f32 b = node->children[i + 1].first;
+            if (param >= a && param <= b) {
+                const f32 t = (b > a) ? (param - a) / (b - a) : 0.0f;
+                std::vector<BoneLocal> la;
+                std::vector<BoneLocal> lb;
+                sampleBlendLocal(node->children[i].second, time, skeleton, la);
+                sampleBlendLocal(node->children[i + 1].second, time, skeleton, lb);
+                const usize n = std::min(la.size(), lb.size());
+                out.resize(n);
+                for (usize j = 0; j < n; ++j) {
+                    out[j] = lerpBoneLocal(la[j], lb[j], t);
+                }
+                return;
+            }
+        }
+        return;
+    }
+
+    case BlendNode::Type::Blend2D:
+        // Blend2D is not implemented yet: it plays its first child.
+        if (!node->children.empty()) {
+            sampleBlendLocal(node->children[0].second, time, skeleton, out);
+        }
+        return;
     }
 }
 
-inline void SkeletalAnimationSystem::sampleBlendTree(
+inline void sampleBlendTree(
     const BlendNode* node, f32 time,
     const Skeleton& skeleton,
     std::vector<Mat4>& outResult,
     f32 weight)
 {
-    if (!node) return;
+    std::vector<BoneLocal> locals;
+    sampleBlendLocal(node, time, skeleton, locals);
+    if (locals.empty()) return;
 
-    switch (node->type) {
-    case BlendNode::Type::Clip:
-        if (node->clip) {
-            std::vector<Mat4> sample(skeleton.boneCount(), Mat4::identity());
-            node->clip->sampleAt(time, skeleton, sample);
-            accumulateBlend(outResult, sample, weight);
-        }
-        break;
-
-    case BlendNode::Type::Blend1D: {
-        if (node->children.empty()) break;
-        // Encontrar os dois children que cercam o parâmetro
-        f32 param = node->parameter;
-
-        // Se param <= primeiro child ou children só tem 1
-        if (param <= node->children[0].first || node->children.size() == 1) {
-            sampleBlendTree(node->children[0].second, time, skeleton, outResult, weight);
-            break;
-        }
-
-        // Se param >= último child
-        if (param >= node->children.back().first) {
-            sampleBlendTree(node->children.back().second, time, skeleton, outResult, weight);
-            break;
-        }
-
-        // Interpolar entre dois children
-        for (usize i = 0; i + 1 < node->children.size(); ++i) {
-            f32 a = node->children[i].first;
-            f32 b = node->children[i + 1].first;
-            if (param >= a && param <= b) {
-                f32 t = (b > a) ? (param - a) / (b - a) : 0.0f;
-                // Amostrar ambos e interpolar
-                std::vector<Mat4> sampleA(skeleton.boneCount(), Mat4::identity());
-                std::vector<Mat4> sampleB(skeleton.boneCount(), Mat4::identity());
-                sampleBlendTree(node->children[i].second, time, skeleton, sampleA, 1.0f);
-                sampleBlendTree(node->children[i + 1].second, time, skeleton, sampleB, 1.0f);
-                for (u32 j = 0; j < skeleton.boneCount(); ++j) {
-                    // Interpolar as translações
-                    Vec3 posA(sampleA[j].data()[0], sampleA[j].data()[1], sampleA[j].data()[2]);
-                    Vec3 posB(sampleB[j].data()[0], sampleB[j].data()[1], sampleB[j].data()[2]);
-                    Vec3 pos = Detail::lerpVec3(posA, posB, t);
-                    (void)pos;
-                    // As bone matrices completas usam lerp para simplificar
-                    Mat4 blended;
-                    for (u32 k = 0; k < 16; ++k) {
-                        blended.data()[k] = sampleA[j].data()[k] + (sampleB[j].data()[k] - sampleA[j].data()[k]) * t;
-                    }
-                    // Acumular com peso
-                    for (u32 k = 0; k < 16; ++k) {
-                        outResult[j].data()[k] += blended.data()[k] * weight;
-                    }
-                }
-                return;
-            }
-        }
-        break;
+    std::vector<Mat4> world;
+    composeBoneWorld(skeleton, locals, world);
+    std::vector<Mat4> skin(skeleton.boneCount(), Mat4::identity());
+    for (u32 i = 0; i < skeleton.boneCount() && i < world.size(); ++i) {
+        skin[i] = skeleton.skinSpace * world[i] * skeleton.bones[i].bindPoseInverse;
     }
-
-    case BlendNode::Type::Blend2D:
-        // Blend2D: simplificado — amostra primeiro child
-        if (!node->children.empty()) {
-            sampleBlendTree(node->children[0].second, time, skeleton, outResult, weight);
-        }
-        break;
-    }
+    accumulateBlend(outResult, skin, weight);
 }
 
-inline void SkeletalAnimationSystem::accumulateBlend(
+inline void accumulateBlend(
     std::vector<Mat4>& accum,
     const std::vector<Mat4>& sample,
     f32 weight)

@@ -1,0 +1,180 @@
+{
+  "namespace": "navigation",
+  "group": "World",
+  "lua": "caffeine.navigation",
+  "dryad_prefix": null,
+  "title": {
+    "en": "Navigation",
+    "pt": "Navegação"
+  },
+  "summary": {
+    "en": "Navigation agents: destinations, patrol points, follow targets and behaviour scripts.",
+    "pt": "Agentes de navegação: destinos, pontos de patrulha, alvos a seguir e scripts de comportamento."
+  },
+  "functions": [
+    {
+      "name": "setDestination",
+      "lua": "caffeine.navigation.setDestination",
+      "dryad": null,
+      "signature": "setDestination(entity, x, y, z) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "World X.",
+          "pt": "X no mundo."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "World Y.",
+          "pt": "Y no mundo."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "World Z.",
+          "pt": "Z no mundo."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the agent's destination in world space.",
+      "pt": "Define o destino do agente no espaço do mundo.",
+      "example": "caffeine.navigation.setDestination(npc, 10, 0, 5)"
+    },
+    {
+      "name": "setMode",
+      "lua": "caffeine.navigation.setMode",
+      "dryad": null,
+      "signature": "setMode(entity, mode) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "mode",
+          "type": "string",
+          "en": "\"patrol\", \"follow\" or \"scripted\"; any other value means idle.",
+          "pt": "\"patrol\", \"follow\" ou \"scripted\"; qualquer outro valor significa idle."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the agent's navigation mode.",
+      "pt": "Define o modo de navegação do agente.",
+      "example": "caffeine.navigation.setMode(npc, 'patrol')"
+    },
+    {
+      "name": "addPatrolPoint",
+      "lua": "caffeine.navigation.addPatrolPoint",
+      "dryad": null,
+      "signature": "addPatrolPoint(entity, x, y, z) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "World X.",
+          "pt": "X no mundo."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "World Y.",
+          "pt": "Y no mundo."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "World Z.",
+          "pt": "Z no mundo."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Appends a point to the agent's patrol route.",
+      "pt": "Acrescenta um ponto à rota de patrulha do agente.",
+      "example": "caffeine.navigation.addPatrolPoint(npc, 0, 0, 0)"
+    },
+    {
+      "name": "setFollowTarget",
+      "lua": "caffeine.navigation.setFollowTarget",
+      "dryad": null,
+      "signature": "setFollowTarget(entity, targetId) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "targetId",
+          "type": "number",
+          "en": "Entity id to follow.",
+          "pt": "Id da entidade a seguir."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the entity the agent follows.",
+      "pt": "Define a entidade que o agente segue.",
+      "example": "caffeine.navigation.setFollowTarget(npc, player)"
+    },
+    {
+      "name": "setBehaviorScript",
+      "lua": "caffeine.navigation.setBehaviorScript",
+      "dryad": null,
+      "signature": "setBehaviorScript(entity, path) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "number",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "en": "Behaviour script path.",
+          "pt": "Caminho do script de comportamento."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "true on success.",
+        "pt": "true em caso de sucesso."
+      },
+      "en": "Sets the script that drives the agent in scripted mode.",
+      "pt": "Define o script que controla o agente no modo scripted.",
+      "example": "caffeine.navigation.setBehaviorScript(npc, 'scripts/ai.lua')"
+    }
+  ]
+}

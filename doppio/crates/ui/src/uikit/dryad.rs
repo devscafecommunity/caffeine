@@ -32,11 +32,59 @@ pub enum NodeKind {
     Log,
     Constant,
     Branch,
+    KeyDown,
+    ActionDown,
+    Axis,
+    TotalTime,
+    DestroySelf,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
+    Less,
+    Greater,
+    Equal,
+    And,
+    Or,
+    Not,
+    SelfEntity,
+    IsAlive,
+    Distance,
+    RandomValue,
+    RandomRange,
+    RandomInt,
+    RandomChance,
+    MouseX,
+    MouseY,
+    MouseDeltaX,
+    MouseDeltaY,
+    MouseDown,
+    FixedDelta,
+    FrameCount,
+    Min,
+    Max,
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Sqrt,
+    Pow,
+    Sin,
+    Cos,
+    Radians,
+    Degrees,
+    Sign,
+    Clamp,
+    Clamp01,
+    Lerp,
+    InverseLerp,
+    Smoothstep,
 }
 
 impl NodeKind {
     /// Every kind, in catalog order.
-    pub const ALL: [NodeKind; 10] = [
+    pub const ALL: [NodeKind; 58] = [
         NodeKind::Constant,
         NodeKind::Branch,
         NodeKind::OnUpdate,
@@ -47,6 +95,54 @@ impl NodeKind {
         NodeKind::GetScale,
         NodeKind::DeltaTime,
         NodeKind::Log,
+        NodeKind::KeyDown,
+        NodeKind::ActionDown,
+        NodeKind::Axis,
+        NodeKind::TotalTime,
+        NodeKind::DestroySelf,
+        NodeKind::Add,
+        NodeKind::Subtract,
+        NodeKind::Multiply,
+        NodeKind::Divide,
+        NodeKind::Negate,
+        NodeKind::Less,
+        NodeKind::Greater,
+        NodeKind::Equal,
+        NodeKind::And,
+        NodeKind::Or,
+        NodeKind::Not,
+        NodeKind::SelfEntity,
+        NodeKind::IsAlive,
+        NodeKind::Distance,
+        NodeKind::RandomValue,
+        NodeKind::RandomRange,
+        NodeKind::RandomInt,
+        NodeKind::RandomChance,
+        NodeKind::MouseX,
+        NodeKind::MouseY,
+        NodeKind::MouseDeltaX,
+        NodeKind::MouseDeltaY,
+        NodeKind::MouseDown,
+        NodeKind::FixedDelta,
+        NodeKind::FrameCount,
+        NodeKind::Min,
+        NodeKind::Max,
+        NodeKind::Abs,
+        NodeKind::Floor,
+        NodeKind::Ceil,
+        NodeKind::Round,
+        NodeKind::Sqrt,
+        NodeKind::Pow,
+        NodeKind::Sin,
+        NodeKind::Cos,
+        NodeKind::Radians,
+        NodeKind::Degrees,
+        NodeKind::Sign,
+        NodeKind::Clamp,
+        NodeKind::Clamp01,
+        NodeKind::Lerp,
+        NodeKind::InverseLerp,
+        NodeKind::Smoothstep,
     ];
 
     /// The `type` field written to `.node.json` (`"OnUpdate"`, `"Branch"`…).
@@ -62,6 +158,26 @@ impl NodeKind {
             NodeKind::Log => "Log",
             NodeKind::Constant => "Constant",
             NodeKind::Branch => "Branch",
+            NodeKind::KeyDown => "KeyDown",
+            NodeKind::ActionDown => "ActionDown",
+            NodeKind::Axis => "Axis",
+            NodeKind::TotalTime => "TotalTime",
+            NodeKind::DestroySelf => "DestroySelf",
+            NodeKind::Add => "Add",
+            NodeKind::Subtract => "Subtract",
+            NodeKind::Multiply => "Multiply",
+            NodeKind::Divide => "Divide",
+            NodeKind::Negate => "Negate",
+            NodeKind::Less => "Less",
+            NodeKind::Greater => "Greater",
+            NodeKind::Equal => "Equal",
+            NodeKind::And => "And",
+            NodeKind::Or => "Or",
+            NodeKind::Not => "Not",
+            NodeKind::SelfEntity => "SelfEntity",
+            NodeKind::IsAlive => "IsAlive",
+            NodeKind::Distance => "Distance",
+            other => native_row(other).map_or("", |row| row.type_name),
         }
     }
 
@@ -78,6 +194,12 @@ impl NodeKind {
             NodeKind::Log => "Log",
             NodeKind::Constant => "Constant",
             NodeKind::Branch => "If / Else",
+            NodeKind::KeyDown => "Key Down",
+            NodeKind::ActionDown => "Action Down",
+            NodeKind::Axis => "Input Axis",
+            NodeKind::TotalTime => "Total Time",
+            NodeKind::DestroySelf => "Destroy Self",
+            other => extra(other).1,
         }
     }
 
@@ -94,6 +216,10 @@ impl NodeKind {
             | NodeKind::GetScale => "Engine / Transform",
             NodeKind::DeltaTime => "Engine / Time",
             NodeKind::Log => "Engine / Debug",
+            NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis => "Engine / Input",
+            NodeKind::TotalTime => "Engine / Time",
+            NodeKind::DestroySelf => "Engine / World",
+            other => extra(other).2,
         }
     }
 
@@ -111,6 +237,12 @@ impl NodeKind {
             NodeKind::GetScale => "Read the entity scale.",
             NodeKind::DeltaTime => "Seconds elapsed since the previous frame.",
             NodeKind::Log => "Write a message to the Doppio console.",
+            NodeKind::KeyDown => "True while the named key is held (Space, W, LShift...).",
+            NodeKind::ActionDown => "True while the named action is held (Jump, Attack...).",
+            NodeKind::Axis => "Input axis in -1..1 (Horizontal, Vertical, LookX, LookY).",
+            NodeKind::TotalTime => "Scaled seconds since play started.",
+            NodeKind::DestroySelf => "Destroy the entity that runs this script.",
+            other => extra(other).3,
         }
     }
 
@@ -127,6 +259,12 @@ impl NodeKind {
             NodeKind::Log => "console message",
             NodeKind::DeltaTime => "frame delta",
             NodeKind::Constant => "fixed value",
+            NodeKind::KeyDown => "keyboard",
+            NodeKind::ActionDown => "input action",
+            NodeKind::Axis => "input axis",
+            NodeKind::TotalTime => "time since play",
+            NodeKind::DestroySelf => "removes the entity",
+            other => extra(other).4,
         }
     }
 
@@ -140,12 +278,537 @@ impl NodeKind {
 
     /// `true` for nodes that only produce data and have no exec pins.
     pub fn is_data_only(self) -> bool {
-        matches!(
-            self,
-            NodeKind::GetPosition | NodeKind::GetScale | NodeKind::DeltaTime | NodeKind::Constant
-        )
+        self.call_native().is_some()
+            || matches!(
+                self,
+                NodeKind::GetPosition
+                    | NodeKind::GetScale
+                    | NodeKind::DeltaTime
+                    | NodeKind::Constant
+                    | NodeKind::KeyDown
+                    | NodeKind::ActionDown
+                    | NodeKind::Axis
+                    | NodeKind::TotalTime
+                    | NodeKind::Add
+                    | NodeKind::Subtract
+                    | NodeKind::Multiply
+                    | NodeKind::Divide
+                    | NodeKind::Negate
+                    | NodeKind::Less
+                    | NodeKind::Greater
+                    | NodeKind::Equal
+                    | NodeKind::And
+                    | NodeKind::Or
+                    | NodeKind::Not
+                    | NodeKind::SelfEntity
+                    | NodeKind::IsAlive
+                    | NodeKind::Distance
+            )
+    }
+
+    /// Infix or prefix operator emitted for a math, compare or logic node.
+    pub fn operator(self) -> Option<Operator> {
+        let (symbol, unary, input, output) = match self {
+            NodeKind::Add => ("+", false, PinKind::Number, PinKind::Number),
+            NodeKind::Subtract => ("-", false, PinKind::Number, PinKind::Number),
+            NodeKind::Multiply => ("*", false, PinKind::Number, PinKind::Number),
+            NodeKind::Divide => ("/", false, PinKind::Number, PinKind::Number),
+            NodeKind::Negate => ("-", true, PinKind::Number, PinKind::Number),
+            NodeKind::Less => ("<", false, PinKind::Number, PinKind::Bool),
+            NodeKind::Greater => (">", false, PinKind::Number, PinKind::Bool),
+            NodeKind::Equal => ("==", false, PinKind::Number, PinKind::Bool),
+            NodeKind::And => ("&&", false, PinKind::Bool, PinKind::Bool),
+            NodeKind::Or => ("||", false, PinKind::Bool, PinKind::Bool),
+            NodeKind::Not => ("!", true, PinKind::Bool, PinKind::Bool),
+            _ => return None,
+        };
+        Some(Operator {
+            symbol,
+            unary,
+            input,
+            output,
+        })
+    }
+
+    /// Native called by a node that wraps one engine function, with its argument count.
+    pub fn call_native(self) -> Option<(&'static str, usize)> {
+        match self {
+            NodeKind::IsAlive => Some(("caffeine_world_is_alive", 1)),
+            NodeKind::Distance => Some(("caffeine_world_distance", 2)),
+            other => native_row(other).map(|row| (row.native, row.arity)),
+        }
     }
 }
+
+/// A data node that wraps one engine native taking up to three number inputs `a`, `b`, `c`.
+#[derive(Debug, Clone, Copy)]
+struct NativeNode {
+    kind: NodeKind,
+    type_name: &'static str,
+    display_name: &'static str,
+    category: &'static str,
+    description: &'static str,
+    subtitle: &'static str,
+    native: &'static str,
+    arity: usize,
+    boolean: bool,
+}
+
+fn native_row(kind: NodeKind) -> Option<&'static NativeNode> {
+    NATIVE_NODES.iter().find(|row| row.kind == kind)
+}
+
+const NATIVE_NODES: [NativeNode; 29] = [
+    NativeNode {
+        kind: NodeKind::RandomValue,
+        type_name: "RandomValue",
+        display_name: "Random Value",
+        category: "Engine / Random",
+        description: "A random number from 0 up to 1.",
+        subtitle: "random 0..1",
+        native: "caffeine_random_value",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::RandomRange,
+        type_name: "RandomRange",
+        display_name: "Random Range",
+        category: "Engine / Random",
+        description: "A random number between a and b.",
+        subtitle: "between a and b",
+        native: "caffeine_random_range",
+        arity: 2,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::RandomInt,
+        type_name: "RandomInt",
+        display_name: "Random Int",
+        category: "Engine / Random",
+        description: "A random whole number between a and b, both included.",
+        subtitle: "whole number",
+        native: "caffeine_random_int",
+        arity: 2,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::RandomChance,
+        type_name: "RandomChance",
+        display_name: "Random Chance",
+        category: "Engine / Random",
+        description: "True with the probability a (0 never, 1 always).",
+        subtitle: "coin flip",
+        native: "caffeine_random_chance",
+        arity: 1,
+        boolean: true,
+    },
+    NativeNode {
+        kind: NodeKind::MouseX,
+        type_name: "MouseX",
+        display_name: "Mouse X",
+        category: "Engine / Input",
+        description: "Mouse horizontal position in pixels.",
+        subtitle: "pointer x",
+        native: "caffeine_input_mouse_x",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::MouseY,
+        type_name: "MouseY",
+        display_name: "Mouse Y",
+        category: "Engine / Input",
+        description: "Mouse vertical position in pixels.",
+        subtitle: "pointer y",
+        native: "caffeine_input_mouse_y",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::MouseDeltaX,
+        type_name: "MouseDeltaX",
+        display_name: "Mouse Delta X",
+        category: "Engine / Input",
+        description: "Horizontal mouse movement since the previous frame.",
+        subtitle: "pointer dx",
+        native: "caffeine_input_mouse_dx",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::MouseDeltaY,
+        type_name: "MouseDeltaY",
+        display_name: "Mouse Delta Y",
+        category: "Engine / Input",
+        description: "Vertical mouse movement since the previous frame.",
+        subtitle: "pointer dy",
+        native: "caffeine_input_mouse_dy",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::MouseDown,
+        type_name: "MouseDown",
+        display_name: "Mouse Button",
+        category: "Engine / Input",
+        description: "True while the mouse button a is held (1 left, 2 middle, 3 right).",
+        subtitle: "mouse button",
+        native: "caffeine_input_mouse_down",
+        arity: 1,
+        boolean: true,
+    },
+    NativeNode {
+        kind: NodeKind::FixedDelta,
+        type_name: "FixedDelta",
+        display_name: "Fixed Delta",
+        category: "Engine / Time",
+        description: "The fixed simulation step in seconds.",
+        subtitle: "fixed step",
+        native: "caffeine_time_fixed_delta",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::FrameCount,
+        type_name: "FrameCount",
+        display_name: "Frame Count",
+        category: "Engine / Time",
+        description: "Frames elapsed since play started.",
+        subtitle: "frame number",
+        native: "caffeine_time_frame",
+        arity: 0,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Min,
+        type_name: "Min",
+        display_name: "Min",
+        category: "Language / Math",
+        description: "The smaller of a and b.",
+        subtitle: "smaller",
+        native: "caffeine_math_min",
+        arity: 2,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Max,
+        type_name: "Max",
+        display_name: "Max",
+        category: "Language / Math",
+        description: "The larger of a and b.",
+        subtitle: "larger",
+        native: "caffeine_math_max",
+        arity: 2,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Abs,
+        type_name: "Abs",
+        display_name: "Abs",
+        category: "Language / Math",
+        description: "Absolute value of a.",
+        subtitle: "absolute",
+        native: "caffeine_math_abs",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Floor,
+        type_name: "Floor",
+        display_name: "Floor",
+        category: "Language / Math",
+        description: "Rounds a down to a whole number.",
+        subtitle: "round down",
+        native: "caffeine_math_floor",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Ceil,
+        type_name: "Ceil",
+        display_name: "Ceil",
+        category: "Language / Math",
+        description: "Rounds a up to a whole number.",
+        subtitle: "round up",
+        native: "caffeine_math_ceil",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Round,
+        type_name: "Round",
+        display_name: "Round",
+        category: "Language / Math",
+        description: "Rounds a to the nearest whole number.",
+        subtitle: "nearest",
+        native: "caffeine_math_round",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Sqrt,
+        type_name: "Sqrt",
+        display_name: "Square Root",
+        category: "Language / Math",
+        description: "Square root of a; negative input gives 0.",
+        subtitle: "square root",
+        native: "caffeine_math_sqrt",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Pow,
+        type_name: "Pow",
+        display_name: "Power",
+        category: "Language / Math",
+        description: "a raised to the power b.",
+        subtitle: "a to the b",
+        native: "caffeine_math_pow",
+        arity: 2,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Sin,
+        type_name: "Sin",
+        display_name: "Sine",
+        category: "Language / Trigonometry",
+        description: "Sine of an angle a in radians.",
+        subtitle: "radians",
+        native: "caffeine_math_sin",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Cos,
+        type_name: "Cos",
+        display_name: "Cosine",
+        category: "Language / Trigonometry",
+        description: "Cosine of an angle a in radians.",
+        subtitle: "radians",
+        native: "caffeine_math_cos",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Radians,
+        type_name: "Radians",
+        display_name: "Degrees to Radians",
+        category: "Language / Trigonometry",
+        description: "Converts degrees a to radians.",
+        subtitle: "deg to rad",
+        native: "caffeine_math_radians",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Degrees,
+        type_name: "Degrees",
+        display_name: "Radians to Degrees",
+        category: "Language / Trigonometry",
+        description: "Converts radians a to degrees.",
+        subtitle: "rad to deg",
+        native: "caffeine_math_degrees",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Sign,
+        type_name: "Sign",
+        display_name: "Sign",
+        category: "Language / Math",
+        description: "-1, 0 or 1 by the sign of a.",
+        subtitle: "sign",
+        native: "caffeine_math_sign",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Clamp,
+        type_name: "Clamp",
+        display_name: "Clamp",
+        category: "Language / Math",
+        description: "Limits a to the range b..c.",
+        subtitle: "limit range",
+        native: "caffeine_math_clamp",
+        arity: 3,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Clamp01,
+        type_name: "Clamp01",
+        display_name: "Clamp 0..1",
+        category: "Language / Math",
+        description: "Limits a to 0..1.",
+        subtitle: "limit 0..1",
+        native: "caffeine_math_clamp01",
+        arity: 1,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Lerp,
+        type_name: "Lerp",
+        display_name: "Lerp",
+        category: "Language / Math",
+        description: "Blend from a to b by the factor c.",
+        subtitle: "blend",
+        native: "caffeine_math_lerp",
+        arity: 3,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::InverseLerp,
+        type_name: "InverseLerp",
+        display_name: "Inverse Lerp",
+        category: "Language / Math",
+        description: "Where c sits between a and b (0 at a, 1 at b).",
+        subtitle: "position in range",
+        native: "caffeine_math_inverse_lerp",
+        arity: 3,
+        boolean: false,
+    },
+    NativeNode {
+        kind: NodeKind::Smoothstep,
+        type_name: "Smoothstep",
+        display_name: "Smoothstep",
+        category: "Language / Math",
+        description: "Smooth 0..1 ramp of c between the edges a and b.",
+        subtitle: "smooth ramp",
+        native: "caffeine_math_smoothstep",
+        arity: 3,
+        boolean: false,
+    },
+];
+
+/// How an operator node is written in Dryad source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Operator {
+    pub symbol: &'static str,
+    pub unary: bool,
+    pub input: PinKind,
+    pub output: PinKind,
+}
+
+/// `(type, display, category, description, subtitle)` of the nodes added after the first ten.
+fn extra(
+    kind: NodeKind,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    if let Some(row) = native_row(kind) {
+        return (
+            row.type_name,
+            row.display_name,
+            row.category,
+            row.description,
+            row.subtitle,
+        );
+    }
+    EXTRA
+        .iter()
+        .copied()
+        .find(|row| row.0 == kind.type_name())
+        .unwrap_or(("", "", "", "", ""))
+}
+
+const EXTRA: [(&str, &str, &str, &str, &str); 14] = [
+    ("Add", "Add", "Language / Math", "a + b", "add"),
+    (
+        "Subtract",
+        "Subtract",
+        "Language / Math",
+        "a - b",
+        "subtract",
+    ),
+    (
+        "Multiply",
+        "Multiply",
+        "Language / Math",
+        "a * b",
+        "multiply",
+    ),
+    (
+        "Divide",
+        "Divide",
+        "Language / Math",
+        "a / b. Dividing by zero gives an error value, guard it with a Compare.",
+        "divide",
+    ),
+    (
+        "Negate",
+        "Negate",
+        "Language / Math",
+        "The value with its sign flipped.",
+        "-a",
+    ),
+    (
+        "Less",
+        "Less Than",
+        "Language / Compare",
+        "True when a is smaller than b.",
+        "a < b",
+    ),
+    (
+        "Greater",
+        "Greater Than",
+        "Language / Compare",
+        "True when a is larger than b.",
+        "a > b",
+    ),
+    (
+        "Equal",
+        "Equal",
+        "Language / Compare",
+        "True when a and b are the same value.",
+        "a == b",
+    ),
+    (
+        "And",
+        "And",
+        "Language / Logic",
+        "True when both inputs are true.",
+        "a and b",
+    ),
+    (
+        "Or",
+        "Or",
+        "Language / Logic",
+        "True when at least one input is true.",
+        "a or b",
+    ),
+    (
+        "Not",
+        "Not",
+        "Language / Logic",
+        "The opposite of the input.",
+        "not a",
+    ),
+    (
+        "SelfEntity",
+        "This Entity",
+        "Engine / World",
+        "The id of the entity that runs this script.",
+        "entity id",
+    ),
+    (
+        "IsAlive",
+        "Is Alive",
+        "Engine / World",
+        "True while the entity with this id still exists.",
+        "entity exists",
+    ),
+    (
+        "Distance",
+        "Distance",
+        "Engine / World",
+        "World distance between two entities.",
+        "between entities",
+    ),
+];
 
 /// One catalog row shared by the palette, the canvas and the emitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,10 +822,21 @@ pub struct CatalogEntry {
 
 /// The catalog. It is static so the palette, tests and agents share one list.
 pub fn catalog() -> &'static [CatalogEntry] {
-    &CATALOG
+    static ALL_ENTRIES: std::sync::OnceLock<Vec<CatalogEntry>> = std::sync::OnceLock::new();
+    ALL_ENTRIES.get_or_init(|| {
+        let mut entries = CATALOG.to_vec();
+        entries.extend(NATIVE_NODES.iter().map(|row| CatalogEntry {
+            kind: row.kind,
+            type_name: row.type_name,
+            display_name: row.display_name,
+            category: row.category,
+            description: row.description,
+        }));
+        entries
+    })
 }
 
-const CATALOG: [CatalogEntry; 10] = [
+const CATALOG: [CatalogEntry; 29] = [
     CatalogEntry {
         kind: NodeKind::Constant,
         type_name: "Constant",
@@ -232,6 +906,139 @@ const CATALOG: [CatalogEntry; 10] = [
         display_name: "Log",
         category: "Engine / Debug",
         description: "Write a message to the Doppio console.",
+    },
+    CatalogEntry {
+        kind: NodeKind::KeyDown,
+        type_name: "KeyDown",
+        display_name: "Key Down",
+        category: "Engine / Input",
+        description: "True while the named key is held (Space, W, LShift...).",
+    },
+    CatalogEntry {
+        kind: NodeKind::ActionDown,
+        type_name: "ActionDown",
+        display_name: "Action Down",
+        category: "Engine / Input",
+        description: "True while the named action is held (Jump, Attack...).",
+    },
+    CatalogEntry {
+        kind: NodeKind::Axis,
+        type_name: "Axis",
+        display_name: "Input Axis",
+        category: "Engine / Input",
+        description: "Input axis in -1..1 (Horizontal, Vertical, LookX, LookY).",
+    },
+    CatalogEntry {
+        kind: NodeKind::TotalTime,
+        type_name: "TotalTime",
+        display_name: "Total Time",
+        category: "Engine / Time",
+        description: "Scaled seconds since play started.",
+    },
+    CatalogEntry {
+        kind: NodeKind::DestroySelf,
+        type_name: "DestroySelf",
+        display_name: "Destroy Self",
+        category: "Engine / World",
+        description: "Destroy the entity that runs this script.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Add,
+        type_name: "Add",
+        display_name: "Add",
+        category: "Language / Math",
+        description: "a + b",
+    },
+    CatalogEntry {
+        kind: NodeKind::Subtract,
+        type_name: "Subtract",
+        display_name: "Subtract",
+        category: "Language / Math",
+        description: "a - b",
+    },
+    CatalogEntry {
+        kind: NodeKind::Multiply,
+        type_name: "Multiply",
+        display_name: "Multiply",
+        category: "Language / Math",
+        description: "a * b",
+    },
+    CatalogEntry {
+        kind: NodeKind::Divide,
+        type_name: "Divide",
+        display_name: "Divide",
+        category: "Language / Math",
+        description: "a / b. Dividing by zero gives an error value, guard it with a Compare.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Negate,
+        type_name: "Negate",
+        display_name: "Negate",
+        category: "Language / Math",
+        description: "The value with its sign flipped.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Less,
+        type_name: "Less",
+        display_name: "Less Than",
+        category: "Language / Compare",
+        description: "True when a is smaller than b.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Greater,
+        type_name: "Greater",
+        display_name: "Greater Than",
+        category: "Language / Compare",
+        description: "True when a is larger than b.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Equal,
+        type_name: "Equal",
+        display_name: "Equal",
+        category: "Language / Compare",
+        description: "True when a and b are the same value.",
+    },
+    CatalogEntry {
+        kind: NodeKind::And,
+        type_name: "And",
+        display_name: "And",
+        category: "Language / Logic",
+        description: "True when both inputs are true.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Or,
+        type_name: "Or",
+        display_name: "Or",
+        category: "Language / Logic",
+        description: "True when at least one input is true.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Not,
+        type_name: "Not",
+        display_name: "Not",
+        category: "Language / Logic",
+        description: "The opposite of the input.",
+    },
+    CatalogEntry {
+        kind: NodeKind::SelfEntity,
+        type_name: "SelfEntity",
+        display_name: "This Entity",
+        category: "Engine / World",
+        description: "The id of the entity that runs this script.",
+    },
+    CatalogEntry {
+        kind: NodeKind::IsAlive,
+        type_name: "IsAlive",
+        display_name: "Is Alive",
+        category: "Engine / World",
+        description: "True while the entity with this id still exists.",
+    },
+    CatalogEntry {
+        kind: NodeKind::Distance,
+        type_name: "Distance",
+        display_name: "Distance",
+        category: "Engine / World",
+        description: "World distance between two entities.",
     },
 ];
 
@@ -310,6 +1117,62 @@ const VALUE_OUTPUT: [PinDef; 1] = [PinDef {
     label: "value",
     kind: PinKind::Number,
 }];
+const BOOL_VALUE_OUTPUT: [PinDef; 1] = [PinDef {
+    name: "value",
+    label: "value",
+    kind: PinKind::Bool,
+}];
+const NUMBER_AB: [PinDef; 2] = [
+    PinDef {
+        name: "a",
+        label: "a",
+        kind: PinKind::Number,
+    },
+    PinDef {
+        name: "b",
+        label: "b",
+        kind: PinKind::Number,
+    },
+];
+const NUMBER_ABC: [PinDef; 3] = [
+    PinDef {
+        name: "a",
+        label: "a",
+        kind: PinKind::Number,
+    },
+    PinDef {
+        name: "b",
+        label: "b",
+        kind: PinKind::Number,
+    },
+    PinDef {
+        name: "c",
+        label: "c",
+        kind: PinKind::Number,
+    },
+];
+const NUMBER_A: [PinDef; 1] = [PinDef {
+    name: "a",
+    label: "a",
+    kind: PinKind::Number,
+}];
+const BOOL_AB: [PinDef; 2] = [
+    PinDef {
+        name: "a",
+        label: "a",
+        kind: PinKind::Bool,
+    },
+    PinDef {
+        name: "b",
+        label: "b",
+        kind: PinKind::Bool,
+    },
+];
+const BOOL_A: [PinDef; 1] = [PinDef {
+    name: "a",
+    label: "a",
+    kind: PinKind::Bool,
+}];
 const LOG_INPUTS: [PinDef; 1] = [EXEC_IN];
 const BRANCH_INPUTS: [PinDef; 2] = [
     EXEC_IN,
@@ -335,28 +1198,82 @@ const BRANCH_OUTPUTS: [PinDef; 3] = [
 
 /// Input pins for a kind, in canvas order.
 pub fn inputs(kind: NodeKind) -> &'static [PinDef] {
+    if let Some(row) = native_row(kind) {
+        return match row.arity {
+            0 => &[],
+            1 => &NUMBER_A,
+            2 => &NUMBER_AB,
+            _ => &NUMBER_ABC,
+        };
+    }
     match kind {
         NodeKind::SetPosition | NodeKind::Translate | NodeKind::SetScale => &VECTOR_INPUTS,
-        NodeKind::Log => &LOG_INPUTS,
+        NodeKind::Log | NodeKind::DestroySelf => &LOG_INPUTS,
         NodeKind::Branch => &BRANCH_INPUTS,
-        NodeKind::OnUpdate
+        NodeKind::Add
+        | NodeKind::Subtract
+        | NodeKind::Multiply
+        | NodeKind::Divide
+        | NodeKind::Less
+        | NodeKind::Greater
+        | NodeKind::Equal
+        | NodeKind::Distance => &NUMBER_AB,
+        NodeKind::Negate | NodeKind::IsAlive => &NUMBER_A,
+        NodeKind::And | NodeKind::Or => &BOOL_AB,
+        NodeKind::Not => &BOOL_A,
+        NodeKind::SelfEntity
+        | NodeKind::OnUpdate
         | NodeKind::GetPosition
         | NodeKind::DeltaTime
         | NodeKind::GetScale
-        | NodeKind::Constant => &[],
+        | NodeKind::Constant
+        | NodeKind::KeyDown
+        | NodeKind::ActionDown
+        | NodeKind::Axis
+        | NodeKind::TotalTime => &[],
+        // Native-call nodes returned above.
+        _ => &[],
     }
 }
 
 /// Output pins for a kind. `Constant` always reports a number here; the
 /// canvas and connection checks use [`outputs_for`] to honour `bool`.
 pub fn outputs(kind: NodeKind) -> &'static [PinDef] {
+    if let Some(row) = native_row(kind) {
+        return if row.boolean {
+            &BOOL_VALUE_OUTPUT
+        } else {
+            &VALUE_OUTPUT
+        };
+    }
     match kind {
         NodeKind::OnUpdate => std::slice::from_ref(&EXEC_OUT),
         NodeKind::SetPosition | NodeKind::Translate | NodeKind::SetScale => &VECTOR_OUTPUTS,
         NodeKind::GetPosition | NodeKind::GetScale => &VECTOR_DATA_OUTPUTS,
-        NodeKind::DeltaTime | NodeKind::Constant => &VALUE_OUTPUT,
-        NodeKind::Log => std::slice::from_ref(&EXEC_OUT),
+        NodeKind::DeltaTime
+        | NodeKind::Constant
+        | NodeKind::Axis
+        | NodeKind::TotalTime
+        | NodeKind::Add
+        | NodeKind::Subtract
+        | NodeKind::Multiply
+        | NodeKind::Divide
+        | NodeKind::Negate
+        | NodeKind::SelfEntity
+        | NodeKind::Distance => &VALUE_OUTPUT,
+        NodeKind::KeyDown
+        | NodeKind::ActionDown
+        | NodeKind::Less
+        | NodeKind::Greater
+        | NodeKind::Equal
+        | NodeKind::And
+        | NodeKind::Or
+        | NodeKind::Not
+        | NodeKind::IsAlive => &BOOL_VALUE_OUTPUT,
+        NodeKind::Log | NodeKind::DestroySelf => std::slice::from_ref(&EXEC_OUT),
         NodeKind::Branch => &BRANCH_OUTPUTS,
+        // Native-call nodes returned above.
+        _ => &[],
     }
 }
 
@@ -406,7 +1323,13 @@ impl GraphNode {
             input_y: 0.0,
             input_z: 0.0,
             input_condition: false,
-            text_value: "Hello from Dryad".to_owned(),
+            text_value: match kind {
+                NodeKind::KeyDown => "Space",
+                NodeKind::ActionDown => "Jump",
+                NodeKind::Axis => "Horizontal",
+                _ => "Hello from Dryad",
+            }
+            .to_owned(),
         }
     }
 
@@ -865,6 +1788,16 @@ impl<'a> Emitter<'a> {
                 }
                 Ok(())
             }
+            NodeKind::DestroySelf => {
+                Self::line(out, depth, &format!("// @node {}", node.id));
+                Self::line(out, depth, "caffeine_world_destroy(entity);");
+                if let Some(next) = self.exec_edge_from(&node.id, "out") {
+                    let (next_id, _) = parse_pin_ref(&next.to)
+                        .ok_or_else(|| "invalid exec edge from DestroySelf".to_owned())?;
+                    self.emit_exec_chain(next_id, out, depth)?;
+                }
+                Ok(())
+            }
             NodeKind::Log => {
                 Self::line(out, depth, &format!("// @node {}", node.id));
                 Self::line(
@@ -906,7 +1839,26 @@ impl<'a> Emitter<'a> {
             NodeKind::GetPosition
             | NodeKind::GetScale
             | NodeKind::DeltaTime
+            | NodeKind::KeyDown
+            | NodeKind::ActionDown
+            | NodeKind::Axis
+            | NodeKind::TotalTime
+            | NodeKind::Add
+            | NodeKind::Subtract
+            | NodeKind::Multiply
+            | NodeKind::Divide
+            | NodeKind::Negate
+            | NodeKind::Less
+            | NodeKind::Greater
+            | NodeKind::Equal
+            | NodeKind::And
+            | NodeKind::Or
+            | NodeKind::Not
+            | NodeKind::SelfEntity
+            | NodeKind::IsAlive
+            | NodeKind::Distance
             | NodeKind::Constant => Err(format!("data-only node in exec chain: {node_id}")),
+            _ => Err(format!("data-only node in exec chain: {node_id}")),
         }
     }
 
@@ -917,6 +1869,13 @@ impl<'a> Emitter<'a> {
             return self.resolve_data_output(source_node, source_pin);
         }
         if let Some(node) = self.graph.find_node(node_id) {
+            if node
+                .kind
+                .operator()
+                .is_some_and(|op| op.input == PinKind::Bool)
+            {
+                return Ok("false".to_owned());
+            }
             match pin {
                 "x" => return Ok(format_number(node.input_x)),
                 "y" => return Ok(format_number(node.input_y)),
@@ -965,6 +1924,26 @@ impl<'a> Emitter<'a> {
                 }
                 "dt".to_owned()
             }
+            NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis => {
+                if pin != "value" {
+                    return Err(format!(
+                        "{} only exposes pin 'value'",
+                        node.kind.type_name()
+                    ));
+                }
+                let native = match node.kind {
+                    NodeKind::KeyDown => "caffeine_input_key_down",
+                    NodeKind::ActionDown => "caffeine_input_action_down",
+                    _ => "caffeine_input_axis",
+                };
+                format!("{native}(\"{}\")", json_escape(&node.text_value))
+            }
+            NodeKind::TotalTime => {
+                if pin != "value" {
+                    return Err("TotalTime only exposes pin 'value'".to_owned());
+                }
+                "caffeine_time_total()".to_owned()
+            }
             NodeKind::GetPosition => match pin {
                 "x" => "caffeine_get_position_x(entity)".to_owned(),
                 "y" => "caffeine_get_position_y(entity)".to_owned(),
@@ -977,11 +1956,168 @@ impl<'a> Emitter<'a> {
                 "z" => "caffeine_get_scale_z(entity)".to_owned(),
                 _ => return Err("GetScale exposes x, y, z pins".to_owned()),
             },
+            NodeKind::SelfEntity => "entity".to_owned(),
+            kind if kind.operator().is_some() => {
+                let Some(op) = kind.operator() else {
+                    return Err(format!("node {node_id} is not an operator"));
+                };
+                let a = self.resolve_data_input(node_id, "a")?;
+                if op.unary {
+                    format!("({}{a})", op.symbol)
+                } else {
+                    let b = self.resolve_data_input(node_id, "b")?;
+                    format!("({a} {} {b})", op.symbol)
+                }
+            }
+            kind if kind.call_native().is_some() => {
+                let Some((native, arity)) = kind.call_native() else {
+                    return Err(format!("node {node_id} is not a call"));
+                };
+                let mut arguments = Vec::new();
+                for pin in ["a", "b", "c"].into_iter().take(arity) {
+                    arguments.push(self.resolve_data_input(node_id, pin)?);
+                }
+                format!("{native}({})", arguments.join(", "))
+            }
             _ => return Err(format!("node {node_id} is not a data source")),
         };
         self.cache.insert(key, expression.clone());
         Ok(expression)
     }
+}
+
+/// Split `(a + b)`, `(!a)` or `caffeine_world_distance(a, b)` into a node kind and its operand
+/// expressions. The emitter parenthesises every operator, so each has exactly one at depth 0.
+fn parse_operator_expression(expression: &str) -> Option<(NodeKind, Vec<String>)> {
+    let expression = expression.trim();
+    for kind in NodeKind::ALL {
+        let Some((native, arity)) = kind.call_native() else {
+            continue;
+        };
+        let Some(rest) = expression
+            .strip_prefix(native)
+            .and_then(|rest| rest.strip_prefix('('))
+        else {
+            continue;
+        };
+        let inner = rest.strip_suffix(')')?;
+        let parts = if inner.trim().is_empty() {
+            Vec::new()
+        } else {
+            split_top_level(inner, ',')
+        };
+        return (parts.len() == arity).then_some((kind, parts));
+    }
+    let inner = expression.strip_prefix('(')?.strip_suffix(')')?;
+    // The leading `(` must close at the very end, not earlier (`(a) + (b)`).
+    let mut depth = 0i32;
+    for (index, character) in expression.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && index + 1 != expression.len() {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    let inner = inner.trim();
+    if let Some(operand) = inner.strip_prefix('!') {
+        return Some((NodeKind::Not, vec![operand.trim().to_owned()]));
+    }
+    if let Some(operand) = inner.strip_prefix('-') {
+        // `-5` is a constant; only `-` before an expression is a Negate node.
+        if operand.trim_start().starts_with(['(', '_'])
+            || operand.trim_start().starts_with(char::is_alphabetic)
+        {
+            return Some((NodeKind::Negate, vec![operand.trim().to_owned()]));
+        }
+    }
+    for (symbol, kind) in [
+        (" && ", NodeKind::And),
+        (" || ", NodeKind::Or),
+        (" == ", NodeKind::Equal),
+        (" < ", NodeKind::Less),
+        (" > ", NodeKind::Greater),
+        (" + ", NodeKind::Add),
+        (" - ", NodeKind::Subtract),
+        (" * ", NodeKind::Multiply),
+        (" / ", NodeKind::Divide),
+    ] {
+        let parts = split_top_level(inner, symbol);
+        if parts.len() == 2 {
+            return Some((kind, parts));
+        }
+    }
+    None
+}
+
+/// Split `text` at the separator where it appears outside parentheses and quotes.
+fn split_top_level<P: SplitPattern>(text: &str, separator: P) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut quoted = false;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < text.len() {
+        let rest = &text[index..];
+        let character = rest.chars().next().unwrap_or(' ');
+        match character {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && !quoted {
+            if let Some(width) = separator.matches_at(rest) {
+                parts.push(text[start..index].trim().to_owned());
+                index += width;
+                start = index;
+                continue;
+            }
+        }
+        index += character.len_utf8();
+    }
+    parts.push(text[start..].trim().to_owned());
+    parts
+}
+
+trait SplitPattern {
+    fn matches_at(&self, rest: &str) -> Option<usize>;
+}
+
+impl SplitPattern for char {
+    fn matches_at(&self, rest: &str) -> Option<usize> {
+        rest.starts_with(*self).then(|| self.len_utf8())
+    }
+}
+
+impl SplitPattern for &str {
+    fn matches_at(&self, rest: &str) -> Option<usize> {
+        rest.starts_with(*self).then_some(self.len())
+    }
+}
+
+/// Recognise `caffeine_input_key_down("Space")` style calls and return the node kind
+/// plus the quoted name.
+fn input_call(expression: &str) -> Option<(NodeKind, String)> {
+    for (native, kind) in [
+        ("caffeine_input_key_down", NodeKind::KeyDown),
+        ("caffeine_input_action_down", NodeKind::ActionDown),
+        ("caffeine_input_axis", NodeKind::Axis),
+    ] {
+        let Some(rest) = expression.strip_prefix(native) else {
+            continue;
+        };
+        let inner = rest.strip_prefix("(\"")?.strip_suffix("\")")?;
+        if inner.contains('"') {
+            return None;
+        }
+        return Some((kind, inner.replace("\\\\", "\\")));
+    }
+    None
 }
 
 fn json_escape(text: &str) -> String {
@@ -1056,7 +2192,10 @@ fn serialize_json(graph: &Graph) -> String {
                 }
             ));
         }
-        if node.kind == NodeKind::Log {
+        if matches!(
+            node.kind,
+            NodeKind::Log | NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis
+        ) {
             json.push_str(&format!(
                 ", \"text\": \"{}\"",
                 json_escape(&node.text_value)
@@ -1147,7 +2286,10 @@ fn parse_json(source: &str) -> Result<Graph, String> {
                     node.number_value = number;
                 }
             }
-            if kind == NodeKind::Log {
+            if matches!(
+                kind,
+                NodeKind::Log | NodeKind::KeyDown | NodeKind::ActionDown | NodeKind::Axis
+            ) {
                 if let Some(text) = entry.get("text").and_then(|text| text.as_str()) {
                     node.text_value = text.to_owned();
                 }
@@ -1402,6 +2544,8 @@ impl<'a> DydImporter<'a> {
                 exec_out = self.parse_vector_call(&node_id, NodeKind::Translate, &exec_out)?;
             } else if self.consume("caffeine_set_scale") {
                 exec_out = self.parse_vector_call(&node_id, NodeKind::SetScale, &exec_out)?;
+            } else if self.consume("caffeine_world_destroy") {
+                exec_out = self.parse_destroy(&node_id, &exec_out)?;
             } else if self.consume("caffeine_log") {
                 exec_out = self.parse_log(&node_id, &exec_out)?;
             } else if self.consume("if") {
@@ -1447,6 +2591,20 @@ impl<'a> DydImporter<'a> {
         self.wire_data_expr(&y, node_id, "y")?;
         self.wire_data_expr(&z, node_id, "z")?;
 
+        Ok(format!("{node_id}.out"))
+    }
+
+    fn parse_destroy(&mut self, node_id: &str, exec_out: &str) -> Result<String, String> {
+        self.ensure_node(node_id, NodeKind::DestroySelf);
+        if exec_out.is_empty() {
+            return Err("DestroySelf without exec input".to_owned());
+        }
+        self.add_edge(exec_out.to_owned(), format!("{node_id}.in"));
+        for expected in ["(", "entity", ")", ";"] {
+            if !self.consume(expected) {
+                return Err(format!("expected {expected} after caffeine_world_destroy"));
+            }
+        }
         Ok(format!("{node_id}.out"))
     }
 
@@ -1625,6 +2783,24 @@ impl<'a> DydImporter<'a> {
             self.add_edge(format!("{source}.{pin_name}"), format!("{to_node}.{pin}"));
             return Ok(());
         }
+        if expression == "entity" {
+            let id = format!("import_self{}", self.serial);
+            self.serial += 1;
+            self.ensure_node(&id, NodeKind::SelfEntity);
+            self.add_edge(format!("{id}.value"), format!("{to_node}.{pin}"));
+            return Ok(());
+        }
+        if let Some((kind, parts)) = parse_operator_expression(expression) {
+            let id = format!("import_op{}", self.serial);
+            self.serial += 1;
+            self.ensure_node(&id, kind);
+            let inputs = ["a", "b", "c"];
+            for (part, input) in parts.iter().zip(inputs) {
+                self.wire_data_expr(part, &id, input)?;
+            }
+            self.add_edge(format!("{id}.value"), format!("{to_node}.{pin}"));
+            return Ok(());
+        }
         if expression == "dt" {
             if self.delta_time_id.is_none() {
                 let id = format!("import_dt{}", self.serial);
@@ -1633,6 +2809,37 @@ impl<'a> DydImporter<'a> {
                 self.delta_time_id = Some(id);
             }
             let source = self.delta_time_id.clone().unwrap_or_default();
+            self.add_edge(format!("{source}.value"), format!("{to_node}.{pin}"));
+            return Ok(());
+        }
+        if let Some((kind, text)) = input_call(expression) {
+            let source = match self.expr_to_constant.get(expression).cloned() {
+                Some(existing) => existing,
+                None => {
+                    let id = format!("import_i{}", self.serial);
+                    self.serial += 1;
+                    let node = self.ensure_node(&id, kind);
+                    node.text_value = text;
+                    self.expr_to_constant
+                        .insert(expression.to_owned(), id.clone());
+                    id
+                }
+            };
+            self.add_edge(format!("{source}.value"), format!("{to_node}.{pin}"));
+            return Ok(());
+        }
+        if expression == "caffeine_time_total()" {
+            let source = match self.expr_to_constant.get(expression).cloned() {
+                Some(existing) => existing,
+                None => {
+                    let id = format!("import_tt{}", self.serial);
+                    self.serial += 1;
+                    self.ensure_node(&id, NodeKind::TotalTime);
+                    self.expr_to_constant
+                        .insert(expression.to_owned(), id.clone());
+                    id
+                }
+            };
             self.add_edge(format!("{source}.value"), format!("{to_node}.{pin}"));
             return Ok(());
         }
@@ -2456,5 +3663,238 @@ mod tests {
         assert_eq!(format_f32(-12.5), "-12.5");
         assert_eq!(format_f32(1234567.0), "1.23457e+06");
         assert_eq!(format_f32(0.001), "0.001");
+    }
+
+    #[test]
+    fn math_compare_and_logic_nodes_emit_and_round_trip() {
+        let mut graph = Graph::new("logic.dyd");
+        let root = graph.add_node(NodeKind::OnUpdate, 0.0, 0.0);
+        let branch = graph.add_node(NodeKind::Branch, 100.0, 0.0);
+        let log = graph.add_node(NodeKind::Log, 200.0, 0.0);
+        let and = graph.add_node(NodeKind::And, 0.0, 100.0);
+        let key = graph.add_node(NodeKind::KeyDown, 0.0, 200.0);
+        let less = graph.add_node(NodeKind::Less, 0.0, 300.0);
+        let total = graph.add_node(NodeKind::TotalTime, 0.0, 400.0);
+        let add = graph.add_node(NodeKind::Add, 0.0, 500.0);
+        let dt = graph.add_node(NodeKind::DeltaTime, 0.0, 600.0);
+        let not = graph.add_node(NodeKind::Not, 0.0, 700.0);
+        let alive = graph.add_node(NodeKind::IsAlive, 0.0, 800.0);
+        let me = graph.add_node(NodeKind::SelfEntity, 0.0, 900.0);
+        let c = |g: &mut Graph, a: &str, b: &str| g.connect(a, b).unwrap();
+        c(&mut graph, &format!("{root}.out"), &format!("{branch}.in"));
+        c(&mut graph, &format!("{branch}.then"), &format!("{log}.in"));
+        c(
+            &mut graph,
+            &format!("{and}.value"),
+            &format!("{branch}.condition"),
+        );
+        c(&mut graph, &format!("{key}.value"), &format!("{and}.a"));
+        c(&mut graph, &format!("{less}.value"), &format!("{not}.a"));
+        c(&mut graph, &format!("{not}.value"), &format!("{and}.b"));
+        c(&mut graph, &format!("{total}.value"), &format!("{less}.a"));
+        c(&mut graph, &format!("{add}.value"), &format!("{less}.b"));
+        c(&mut graph, &format!("{dt}.value"), &format!("{add}.a"));
+        c(&mut graph, &format!("{me}.value"), &format!("{alive}.a"));
+        // A number cannot feed a bool input, and a bool cannot feed math.
+        assert!(graph
+            .connect(&format!("{total}.value"), &format!("{and}.a"))
+            .is_err());
+        assert!(graph
+            .connect(&format!("{key}.value"), &format!("{add}.b"))
+            .is_err());
+
+        let out = graph.emit().unwrap();
+        assert!(
+            out.dyd.contains(
+                "if ((caffeine_input_key_down(\"Space\") && (!(caffeine_time_total() < (dt + 0))))) {"
+            ),
+            "{}",
+            out.dyd
+        );
+        let imported = import_from_dyd(&out.dyd, "logic.dyd", None).unwrap();
+        let count = |kind: NodeKind| imported.nodes.iter().filter(|n| n.kind == kind).count();
+        for kind in [NodeKind::And, NodeKind::Not, NodeKind::Less, NodeKind::Add] {
+            assert_eq!(count(kind), 1, "{kind:?}");
+        }
+        assert_eq!(imported.emit().unwrap().dyd, out.dyd);
+
+        // A graph with a call node and `entity` also survives the trip.
+        let mut calls = Graph::new("calls.dyd");
+        let root = calls.add_node(NodeKind::OnUpdate, 0.0, 0.0);
+        let branch = calls.add_node(NodeKind::Branch, 100.0, 0.0);
+        let log = calls.add_node(NodeKind::Log, 200.0, 0.0);
+        let alive = calls.add_node(NodeKind::IsAlive, 0.0, 100.0);
+        let me = calls.add_node(NodeKind::SelfEntity, 0.0, 200.0);
+        c(&mut calls, &format!("{root}.out"), &format!("{branch}.in"));
+        c(&mut calls, &format!("{branch}.then"), &format!("{log}.in"));
+        c(
+            &mut calls,
+            &format!("{alive}.value"),
+            &format!("{branch}.condition"),
+        );
+        c(&mut calls, &format!("{me}.value"), &format!("{alive}.a"));
+        let text = calls.emit().unwrap().dyd;
+        assert!(
+            text.contains("if (caffeine_world_is_alive(entity)) {"),
+            "{text}"
+        );
+        let again = import_from_dyd(&text, "calls.dyd", None).unwrap();
+        assert_eq!(again.emit().unwrap().dyd, text);
+    }
+
+    #[test]
+    fn input_and_world_nodes_emit_and_round_trip() {
+        let mut graph = Graph::new("input.dyd");
+        let root = graph.add_node(NodeKind::OnUpdate, 0.0, 0.0);
+        let branch = graph.add_node(NodeKind::Branch, 100.0, 0.0);
+        let key = graph.add_node(NodeKind::KeyDown, 0.0, 100.0);
+        let destroy = graph.add_node(NodeKind::DestroySelf, 200.0, 0.0);
+        let mv = graph.add_node(NodeKind::Translate, 200.0, 100.0);
+        let axis = graph.add_node(NodeKind::Axis, 0.0, 200.0);
+        let total = graph.add_node(NodeKind::TotalTime, 0.0, 300.0);
+        graph.find_node_mut(&axis).unwrap().text_value = "Vertical".to_owned();
+        graph
+            .connect(&format!("{root}.out"), &format!("{branch}.in"))
+            .unwrap();
+        graph
+            .connect(&format!("{key}.value"), &format!("{branch}.condition"))
+            .unwrap();
+        graph
+            .connect(&format!("{branch}.then"), &format!("{destroy}.in"))
+            .unwrap();
+        graph
+            .connect(&format!("{branch}.else"), &format!("{mv}.in"))
+            .unwrap();
+        graph
+            .connect(&format!("{axis}.value"), &format!("{mv}.x"))
+            .unwrap();
+        graph
+            .connect(&format!("{total}.value"), &format!("{mv}.y"))
+            .unwrap();
+
+        let out = graph.emit().unwrap();
+        assert!(out
+            .dyd
+            .contains("if (caffeine_input_key_down(\"Space\")) {"));
+        assert!(out.dyd.contains("caffeine_world_destroy(entity);"));
+        assert!(out
+            .dyd
+            .contains("caffeine_translate(entity, caffeine_input_axis(\"Vertical\"), caffeine_time_total(), 0);"));
+
+        // A bool pin cannot feed a number input.
+        assert!(graph
+            .connect(&format!("{key}.value"), &format!("{mv}.z"))
+            .is_err());
+
+        let imported = import_from_dyd(&out.dyd, "input.dyd", None).unwrap();
+        let count = |kind: NodeKind| imported.nodes.iter().filter(|n| n.kind == kind).count();
+        assert_eq!(count(NodeKind::KeyDown), 1);
+        assert_eq!(count(NodeKind::DestroySelf), 1);
+        assert_eq!(count(NodeKind::TotalTime), 1);
+        assert!(imported
+            .nodes
+            .iter()
+            .any(|n| n.kind == NodeKind::Axis && n.text_value == "Vertical"));
+        assert_eq!(imported.emit().unwrap().dyd, out.dyd);
+
+        let reloaded = Graph::from_json(&out.node_json).unwrap();
+        assert!(reloaded
+            .nodes
+            .iter()
+            .any(|n| n.kind == NodeKind::Axis && n.text_value == "Vertical"));
+        assert_eq!(reloaded.emit().unwrap().dyd, out.dyd);
+    }
+
+    #[test]
+    fn every_native_node_emits_calls_and_round_trips() {
+        let natives: Vec<NodeKind> = NodeKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| native_row(*kind).is_some())
+            .collect();
+        assert!(natives.len() >= 29, "the native table feeds the catalog");
+        for kind in natives {
+            let row = native_row(kind).unwrap();
+            let mut graph = Graph::new("native.dyd");
+            let root = graph.add_node(NodeKind::OnUpdate, 0.0, 0.0);
+            let node = graph.add_node(kind, 0.0, 100.0);
+            let mv = graph.add_node(NodeKind::Translate, 200.0, 0.0);
+            if row.boolean {
+                let branch = graph.add_node(NodeKind::Branch, 100.0, 0.0);
+                graph
+                    .connect(&format!("{root}.out"), &format!("{branch}.in"))
+                    .unwrap();
+                graph
+                    .connect(&format!("{node}.value"), &format!("{branch}.condition"))
+                    .unwrap();
+                graph
+                    .connect(&format!("{branch}.then"), &format!("{mv}.in"))
+                    .unwrap();
+            } else {
+                graph
+                    .connect(&format!("{root}.out"), &format!("{mv}.in"))
+                    .unwrap();
+                graph
+                    .connect(&format!("{node}.value"), &format!("{mv}.x"))
+                    .unwrap();
+            }
+            let out = graph.emit().unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+            let zeros = vec!["0"; row.arity].join(", ");
+            assert!(
+                out.dyd.contains(&format!("{}({zeros})", row.native)),
+                "{kind:?} emits its native: {}",
+                out.dyd
+            );
+            let imported = import_from_dyd(&out.dyd, "native.dyd", None)
+                .unwrap_or_else(|e| panic!("{kind:?} import: {e}"));
+            assert_eq!(
+                imported.nodes.iter().filter(|n| n.kind == kind).count(),
+                1,
+                "{kind:?} survives the import"
+            );
+            assert_eq!(imported.emit().unwrap().dyd, out.dyd, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn nested_native_nodes_keep_their_arguments() {
+        let mut graph = Graph::new("nested.dyd");
+        let root = graph.add_node(NodeKind::OnUpdate, 0.0, 0.0);
+        let mv = graph.add_node(NodeKind::Translate, 300.0, 0.0);
+        let clamp = graph.add_node(NodeKind::Clamp, 200.0, 0.0);
+        let clamp01 = graph.add_node(NodeKind::Clamp01, 100.0, 0.0);
+        let sin = graph.add_node(NodeKind::Sin, 0.0, 0.0);
+        graph
+            .connect(&format!("{root}.out"), &format!("{mv}.in"))
+            .unwrap();
+        graph
+            .connect(&format!("{sin}.value"), &format!("{clamp01}.a"))
+            .unwrap();
+        graph
+            .connect(&format!("{clamp01}.value"), &format!("{clamp}.a"))
+            .unwrap();
+        graph
+            .connect(&format!("{clamp}.value"), &format!("{mv}.y"))
+            .unwrap();
+        let out = graph.emit().unwrap();
+        assert!(out
+            .dyd
+            .contains("caffeine_math_clamp(caffeine_math_clamp01(caffeine_math_sin(0)), 0, 0)"));
+        let imported = import_from_dyd(&out.dyd, "nested.dyd", None).unwrap();
+        assert!(imported.nodes.iter().any(|n| n.kind == NodeKind::Clamp));
+        assert!(imported.nodes.iter().any(|n| n.kind == NodeKind::Clamp01));
+        assert_eq!(imported.emit().unwrap().dyd, out.dyd);
+    }
+
+    #[test]
+    fn catalog_lists_every_kind_once() {
+        assert_eq!(catalog().len(), NodeKind::ALL.len());
+        for kind in NodeKind::ALL {
+            let entry = catalog_entry(kind.type_name()).expect("catalog row");
+            assert_eq!(entry.kind, kind);
+            assert_eq!(entry.display_name, kind.display_name());
+            assert_eq!(entry.category, kind.category());
+            assert_eq!(entry.description, kind.description());
+        }
     }
 }

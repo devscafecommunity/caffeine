@@ -8,6 +8,10 @@
 #include <stb/stb_image.h>
 
 #include <algorithm>
+#include <cmath>
+#include "debug/Profiler.hpp"
+
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -155,6 +159,50 @@ RHI::Texture* GpuTextureCache::loadTexture(RHI::RenderDevice* device, const std:
     return createMippedTexture(device, std::move(rgba), uploadW, uploadH, srgb);
 }
 
+bool GpuTextureCache::averageColor(const std::string& path, const std::string& projectRoot, Vec3& out) {
+    if (path.empty()) return false;
+    const std::string resolved = resolvePath(path, projectRoot);
+    if (resolved.empty()) return false;
+    const u64 stamp = fileTimestamp(resolved);
+    auto it = m_averages.find(resolved);
+    if (it != m_averages.end() && it->second.fileStamp == stamp) {
+        out = it->second.colour;
+        return it->second.valid;
+    }
+    Average entry;
+    entry.fileStamp = stamp;
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    u8* pixels = stbi_load(resolved.c_str(), &width, &height, &channels, 4);
+    if (pixels && width > 0 && height > 0) {
+        // At most about 65k samples, evenly spread: a mean does not need every texel of a 4k picture.
+        const size_t total = static_cast<size_t>(width) * static_cast<size_t>(height);
+        const size_t stride = std::max<size_t>(1, total / 65536);
+        double sum[3] = {0.0, 0.0, 0.0};
+        double weight = 0.0;
+        for (size_t i = 0; i < total; i += stride) {
+            const u8* p = pixels + i * 4;
+            const double a = p[3] / 255.0;
+            for (int c = 0; c < 3; ++c) {
+                const double v = p[c] / 255.0;
+                const double linear = v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+                sum[c] += linear * a;
+            }
+            weight += a;
+        }
+        if (weight > 0.0) {
+            entry.colour = Vec3(static_cast<f32>(sum[0] / weight), static_cast<f32>(sum[1] / weight),
+                                static_cast<f32>(sum[2] / weight));
+            entry.valid = true;
+        }
+    }
+    if (pixels) stbi_image_free(pixels);
+    m_averages[resolved] = entry;
+    out = entry.colour;
+    return entry.valid;
+}
+
 RHI::Texture* GpuTextureCache::acquireFromPixels(RHI::RenderDevice* device,
                                                  const std::string& cacheKey, const u8* pixels,
                                                  u32 width, u32 height, int channels,
@@ -212,10 +260,40 @@ RHI::Texture* GpuTextureCache::acquireFromPixels(RHI::RenderDevice* device,
 RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::string& path,
                                        const std::string& projectRoot, u32 qualityTier,
                                        bool srgb) {
+    CF_PROFILE_SCOPE("texcache::acquire");
     if (!device || path.empty()) return nullptr;
 
+    // The per-draw fast path: no file-system call while the entry was checked recently.
+    static thread_local std::string fastKey;
+    fastKey.assign(path);
+    fastKey.push_back('\0');
+    fastKey.append(projectRoot);
+    fastKey.push_back('\0');
+    fastKey.push_back(static_cast<char>('0' + std::min<u32>(qualityTier, 9u)));
+    fastKey.push_back(srgb ? 's' : 'l');
+    const u64 nowMs = static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    if (auto fast = m_fast.find(fastKey); fast != m_fast.end()) {
+        Entry* entry = fast->second.entry;
+        if (nowMs < fast->second.recheckAtMs) {
+            // A null entry is a remembered miss (a path that does not resolve or a picture that does not load):
+            // asking the disk again every frame for a file that is not there costs about as much as a draw.
+            if (!entry) return nullptr;
+            if (entry->texture) {
+                entry->refCount++;
+                return entry->texture;
+            }
+        }
+    }
+
+    CF_PROFILE_SCOPE("texcache::slow");
     const std::string resolved = resolvePath(path, projectRoot);
-    if (resolved.empty()) return nullptr;
+    if (resolved.empty()) {
+        m_fast[fastKey] = Fast{nullptr, nowMs + kRecheckMs};
+        return nullptr;
+    }
 
     const std::string cacheKey = colorSpaceKey(textureCacheKeyForTier(resolved, qualityTier), srgb);
     const u64 stamp = fileTimestamp(resolved);
@@ -235,12 +313,16 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
             entry.fileStamp = 0;
         } else {
             entry.refCount++;
+            m_fast[fastKey] = Fast{&entry, nowMs + kRecheckMs};
             return entry.texture;
         }
     }
 
     RHI::Texture* texture = loadTexture(device, resolved, qualityTier, srgb);
-    if (!texture) return nullptr;
+    if (!texture) {
+        m_fast[fastKey] = Fast{nullptr, nowMs + kRecheckMs};
+        return nullptr;
+    }
 
     Entry entry;
     entry.texture = texture;
@@ -250,6 +332,7 @@ RHI::Texture* GpuTextureCache::acquire(RHI::RenderDevice* device, const std::str
     entry.width = texture->width;
     entry.height = texture->height;
     m_cache[cacheKey] = entry;
+    m_fast[fastKey] = Fast{&m_cache[cacheKey], nowMs + kRecheckMs};
     return texture;
 }
 
@@ -264,6 +347,7 @@ void GpuTextureCache::release(RHI::RenderDevice* device, const std::string& reso
             if (entry.refCount > 0) entry.refCount--;
             if (entry.refCount == 0) {
                 destroyEntry(device, entry);
+                m_fast.clear();  // its entries point into m_cache
                 m_cache.erase(it);
             }
         }
@@ -279,6 +363,7 @@ void GpuTextureCache::release(RHI::RenderDevice* device, RHI::Texture* texture) 
             if (entry->refCount > 0) entry->refCount--;
             if (entry->refCount == 0) {
                 destroyEntry(device, *entry);
+                m_fast.clear();  // its entries point into m_cache
                 m_cache.erase(it);
             }
             return;
@@ -305,6 +390,7 @@ RHI::Texture* GpuTextureCache::whiteTexture(RHI::RenderDevice* device) {
 }
 
 void GpuTextureCache::invalidate(const std::string& resolvedPath) {
+    m_fast.clear();
     for (u32 tier = 0; tier <= kTextureQualityMaxTier; ++tier) {
         for (bool srgb : {false, true}) {
             const std::string key = colorSpaceKey(textureCacheKeyForTier(resolvedPath, tier), srgb);
@@ -321,6 +407,7 @@ void GpuTextureCache::invalidate(const std::string& resolvedPath) {
 }
 
 void GpuTextureCache::releaseAll(RHI::RenderDevice* device) {
+    m_fast.clear();
     for (auto it = m_cache.begin(); it != m_cache.end();) {
         if (!device || it->second.device == device) {
             destroyEntry(device, it->second);

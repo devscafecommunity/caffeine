@@ -36,6 +36,18 @@ void registerAnimationScriptBindings(sol::state& lua, ECS::World** worldPtr) {
         if (!worldPtr || !*worldPtr) return false;
         return Animation::playState(**worldPtr, ECS::Entity(entityId, *worldPtr), state.c_str());
     };
+    animation["attachRig2D"] = [worldPtr](u32 entityId, const std::string& rigPath) {
+        if (!worldPtr || !*worldPtr) return false;
+        return Animation::attachRig2D(**worldPtr, ECS::Entity(entityId, *worldPtr), rigPath);
+    };
+    animation["playRig2DClip"] = [worldPtr](u32 entityId, const std::string& clipPath) {
+        if (!worldPtr || !*worldPtr) return false;
+        return Animation::playRig2DClip(**worldPtr, ECS::Entity(entityId, *worldPtr), clipPath);
+    };
+    animation["setSmoothing"] = [worldPtr](u32 entityId, const std::string& name, f32 smoothTime) {
+        if (!worldPtr || !*worldPtr) return false;
+        return Animation::setPhaseShiftSmoothing(**worldPtr, ECS::Entity(entityId, *worldPtr), name.c_str(), smoothTime);
+    };
 }
 
 }  // namespace Caffeine::Script

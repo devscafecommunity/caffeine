@@ -264,3 +264,118 @@ fn terrain_presets_dump_for_review() {
         .unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------------------- masks
+
+#[test]
+fn flow_gathers_in_a_valley_and_is_deterministic() {
+    use super::masks::{flow_accumulation, wetness};
+    // A V-shaped valley along y with a gentle fall toward y = 1: water gathers on the floor.
+    let height = Field::from_fn(65, |x, y| 0.1 + 0.8 * (x - 0.5).abs() + 0.05 * (1.0 - y));
+    let flow = flow_accumulation(&height);
+    assert!(flow
+        .data
+        .iter()
+        .all(|v| (0.0..=1.0).contains(v) && v.is_finite()));
+    let floor = flow.at(32, 50);
+    let slope = flow.at(8, 50);
+    assert!(floor > slope + 0.3, "floor {floor} vs slope {slope}");
+    assert!((flow.data.iter().copied().fold(0.0f32, f32::max) - 1.0).abs() < 1e-5);
+    // The same height gives the same flow, bit for bit.
+    assert_eq!(flow, flow_accumulation(&height));
+    // Wetness: the floor of the valley is wet when it is not steep; the dry crest is not; below the sea is.
+    let steepness = height.slope(0.05);
+    let wet = wetness(&height, &flow, &steepness, 0.15, 0.02);
+    assert!(wet.at(32, 50) > 0.5, "valley floor {}", wet.at(32, 50));
+    assert!(wet.at(4, 10) < 0.2, "crest {}", wet.at(4, 10));
+    let drowned = Field::new(65, 0.05);
+    let wet_sea = wetness(
+        &drowned,
+        &flow_accumulation(&drowned),
+        &drowned.slope(0.05),
+        0.2,
+        0.02,
+    );
+    assert!(
+        wet_sea.data.iter().all(|&v| v > 0.99),
+        "everything below the sea is wet"
+    );
+}
+
+#[test]
+fn every_preset_exports_its_masks() {
+    for p in presets() {
+        let g = p.graph();
+        let model = g.build(97).unwrap_or_else(|e| panic!("{}: {e}", p.name));
+        let names: Vec<&str> = model.masks.iter().map(|(n, _)| n.as_str()).collect();
+        for (name, bytes) in &model.masks {
+            assert_eq!(bytes.len(), 97 * 97, "{}: {name}", p.name);
+        }
+        assert!(
+            names.contains(&"flow") && names.contains(&"wetness"),
+            "{}: {names:?}",
+            p.name
+        );
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "{}: duplicate mask names",
+            p.name
+        );
+        // A preset with hydraulic erosion wires its wear and deposit through.
+        let erodes = g.nodes.iter().any(|n| n.op == "hydraulic");
+        assert_eq!(names.contains(&"wear"), erodes, "{}", p.name);
+        assert_eq!(names.contains(&"deposit"), erodes, "{}", p.name);
+        for name in ["flow", "wetness"] {
+            let bytes = &model.masks.iter().find(|(n, _)| n == name).unwrap().1;
+            assert!(
+                bytes.iter().any(|&b| b > 0) && bytes.iter().any(|&b| b < 255),
+                "{}: {name} is constant",
+                p.name
+            );
+        }
+    }
+}
+
+#[test]
+fn erosion_wear_lands_where_the_water_ran() {
+    let g = preset("Alpine Range").graph();
+    let model = g.build(129).unwrap();
+    let wear = &model
+        .masks
+        .iter()
+        .find(|(n, _)| n == "wear")
+        .expect("wear")
+        .1;
+    let flow = &model
+        .masks
+        .iter()
+        .find(|(n, _)| n == "flow")
+        .expect("flow")
+        .1;
+    assert!(
+        wear.iter().any(|&b| b > 100),
+        "erosion left a visible wear mask"
+    );
+    // Wear and drainage overlap: the mean flow under strong wear beats the mean flow elsewhere.
+    let (mut under, mut under_n, mut other, mut other_n) = (0.0f64, 0u64, 0.0f64, 0u64);
+    for (w, f) in wear.iter().zip(flow) {
+        if *w > 90 {
+            under += *f as f64;
+            under_n += 1;
+        } else {
+            other += *f as f64;
+            other_n += 1;
+        }
+    }
+    assert!(under_n > 0 && other_n > 0);
+    assert!(
+        under / under_n as f64 > other / other_n as f64,
+        "wear {} vs elsewhere {}",
+        under / under_n as f64,
+        other / other_n as f64
+    );
+}

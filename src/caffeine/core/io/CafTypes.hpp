@@ -41,7 +41,8 @@ enum class AssetType : u16 {
     Scene,         // World State (Fase 4)
     Shader,        // SPIR-V / bytecode
     Animation,     // AnimationClip frames
-    Font           // Bitmap/SDF font atlas
+    Font,          // Bitmap/SDF font atlas
+    Terrain        // Tiled terrain (heights, splat, masks): the native .terrain container
 };
 
 // ============================================================================

@@ -1,0 +1,681 @@
+{
+  "namespace": "world",
+  "group": "Core",
+  "lua": "caffeine.world",
+  "dryad_prefix": "caffeine_world_",
+  "title": {
+    "en": "World",
+    "pt": "Mundo"
+  },
+  "summary": {
+    "en": "Create and destroy entities, move them, and read or write transforms, 2D physics, sprites and particle emitters. Dryad adds position and scale natives.",
+    "pt": "Criar e destruir entidades, movê-las e ler ou escrever transformações, física 2D, sprites e emissores de partículas. O Dryad acrescenta natives de posição e escala."
+  },
+  "functions": [
+    {
+      "name": "create",
+      "lua": "caffeine.world.create",
+      "dryad": "caffeine_world_create",
+      "signature": "create() -> integer",
+      "params": [],
+      "returns": {
+        "type": "integer",
+        "en": "The new entity id, or 0 when there is no world.",
+        "pt": "O id da nova entidade, ou 0 se não houver mundo."
+      },
+      "en": "Creates an entity named \"LuaEntity\".",
+      "pt": "Cria uma entidade com o nome \"LuaEntity\".",
+      "example": "local e = caffeine.world.create()"
+    },
+    {
+      "name": "destroy",
+      "lua": "caffeine.world.destroy",
+      "dryad": "caffeine_world_destroy",
+      "signature": "destroy(entity)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": null,
+      "en": "Destroys an entity. Does nothing when there is no world.",
+      "pt": "Destrói uma entidade. Não faz nada se não houver mundo.",
+      "example": "caffeine.world.destroy(e)"
+    },
+    {
+      "name": "hasComponent",
+      "lua": "caffeine.world.hasComponent",
+      "dryad": null,
+      "signature": "hasComponent(entity, type) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "en": "One of \"Transform\", \"Sprite\", \"RigidBody2D\", \"Collider2D\".",
+          "pt": "Um de \"Transform\", \"Sprite\", \"RigidBody2D\", \"Collider2D\"."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when the entity has it; false for any other type name.",
+        "pt": "Verdadeiro se a entidade o tiver; falso para qualquer outro nome."
+      },
+      "en": "Checks one of four built-in component types. \"Transform\" is also true for a Position3D. For other components use `caffeine.component.has`.",
+      "pt": "Verifica um de quatro tipos de componente incorporados. \"Transform\" também é verdadeiro para Position3D. Para outros componentes use `caffeine.component.has`.",
+      "example": "if caffeine.world.hasComponent(e, 'Sprite') then end"
+    },
+    {
+      "name": "getTransform",
+      "lua": "caffeine.world.getTransform",
+      "dryad": null,
+      "signature": "getTransform(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y, z, rotation, scaleX, scaleY}; defaults 0 and scale 1.",
+        "pt": "{x, y, z, rotation, scaleX, scaleY}; por omissão 0 e escala 1."
+      },
+      "en": "Reads the position of the entity (from Position3D or Transform); rotation and scale come from Transform.",
+      "pt": "Lê a posição da entidade (de Position3D ou Transform); a rotação e a escala vêm de Transform.",
+      "example": "local t = caffeine.world.getTransform(e)\ncaffeine.debug.log(t.x .. ', ' .. t.y)"
+    },
+    {
+      "name": "setTransform",
+      "lua": "caffeine.world.setTransform",
+      "dryad": null,
+      "signature": "setTransform(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Fields x, y, z, rotation, scaleX, scaleY; missing fields keep the current value.",
+          "pt": "Campos x, y, z, rotation, scaleX, scaleY; os campos em falta mantêm o valor atual."
+        }
+      ],
+      "returns": null,
+      "en": "Writes position (and rotation/scale on a Transform). Creates a Transform when the entity has neither Transform nor Position3D.",
+      "pt": "Escreve a posição (e rotação/escala num Transform). Cria um Transform se a entidade não tiver Transform nem Position3D.",
+      "example": "caffeine.world.setTransform(e, { x = 1, y = 2 })"
+    },
+    {
+      "name": "addTransform",
+      "lua": "caffeine.world.addTransform",
+      "dryad": null,
+      "signature": "addTransform(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Same fields as setTransform.",
+          "pt": "Os mesmos campos que setTransform."
+        }
+      ],
+      "returns": null,
+      "en": "Alias of `caffeine.world.setTransform`.",
+      "pt": "Alias de `caffeine.world.setTransform`.",
+      "example": "caffeine.world.addTransform(e, { x = 0, y = 0 })"
+    },
+    {
+      "name": "distanceTo",
+      "lua": "caffeine.world.distanceTo",
+      "dryad": "caffeine_world_distance",
+      "signature": "distanceTo(a, b) -> number",
+      "params": [
+        {
+          "name": "a",
+          "type": "integer",
+          "en": "First entity id.",
+          "pt": "Id da primeira entidade."
+        },
+        {
+          "name": "b",
+          "type": "integer",
+          "en": "Second entity id.",
+          "pt": "Id da segunda entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Distance in world units; 1e9 when either entity has no position or there is no world.",
+        "pt": "Distância em unidades do mundo; 1e9 se alguma entidade não tiver posição ou não houver mundo."
+      },
+      "en": "Straight-line distance between two entities.",
+      "pt": "Distância em linha reta entre duas entidades.",
+      "example": "local d = caffeine.world.distanceTo(e, target)"
+    },
+    {
+      "name": "findNearest",
+      "lua": "caffeine.world.findNearest",
+      "dryad": null,
+      "signature": "findNearest(from, maxDist) -> integer",
+      "params": [
+        {
+          "name": "from",
+          "type": "integer",
+          "en": "Entity to search around.",
+          "pt": "Entidade à volta da qual procurar."
+        },
+        {
+          "name": "maxDist",
+          "type": "number",
+          "en": "Search radius; must be greater than 0.",
+          "pt": "Raio de pesquisa; tem de ser maior que 0."
+        }
+      ],
+      "returns": {
+        "type": "integer",
+        "en": "Id of the nearest other entity with a position, or 0.",
+        "pt": "Id da entidade mais próxima com posição, ou 0."
+      },
+      "en": "Finds the closest other entity that has a Position3D or Transform within maxDist.",
+      "pt": "Encontra a entidade mais próxima, com Position3D ou Transform, dentro de maxDist.",
+      "example": "local near = caffeine.world.findNearest(e, 10)"
+    },
+    {
+      "name": "setYawPitch",
+      "lua": "caffeine.world.setYawPitch",
+      "dryad": null,
+      "signature": "setYawPitch(entity, yaw, pitch)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "yaw",
+          "type": "number",
+          "en": "Yaw in radians.",
+          "pt": "Guinada em radianos."
+        },
+        {
+          "name": "pitch",
+          "type": "number",
+          "en": "Pitch in radians.",
+          "pt": "Inclinação em radianos."
+        }
+      ],
+      "returns": null,
+      "en": "Sets a 3D rotation (Rotation3D quaternion, roll 0). When the entity has a Transform its rotation x/y are also written in degrees.",
+      "pt": "Define uma rotação 3D (quaternião de Rotation3D, roll 0). Se a entidade tiver Transform, a rotação x/y também é escrita em graus.",
+      "example": "caffeine.world.setYawPitch(e, caffeine.math.radians(90), 0)"
+    },
+    {
+      "name": "getRigidBody2D",
+      "lua": "caffeine.world.getRigidBody2D",
+      "dryad": null,
+      "signature": "getRigidBody2D(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{mass, restitution, friction, linearDamping, isKinematic, lockRotation, velocityX, velocityY}; empty when there is no RigidBody2D.",
+        "pt": "{mass, restitution, friction, linearDamping, isKinematic, lockRotation, velocityX, velocityY}; vazia se não houver RigidBody2D."
+      },
+      "en": "Reads the 2D rigid body of an entity.",
+      "pt": "Lê o corpo rígido 2D de uma entidade.",
+      "example": "local rb = caffeine.world.getRigidBody2D(e)"
+    },
+    {
+      "name": "setRigidBody2D",
+      "lua": "caffeine.world.setRigidBody2D",
+      "dryad": null,
+      "signature": "setRigidBody2D(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Fields mass (1), restitution (0.3), friction (0.5), linearDamping (0), isKinematic (false), lockRotation (true), velocityX, velocityY.",
+          "pt": "Campos mass (1), restitution (0.3), friction (0.5), linearDamping (0), isKinematic (false), lockRotation (true), velocityX, velocityY."
+        }
+      ],
+      "returns": null,
+      "en": "Adds a RigidBody2D when missing and writes it. Fields you omit are reset to the defaults listed, except velocityX/velocityY, which keep their value.",
+      "pt": "Adiciona um RigidBody2D se não existir e escreve-o. Os campos omitidos voltam aos valores por omissão indicados, exceto velocityX/velocityY, que mantêm o valor.",
+      "example": "caffeine.world.setRigidBody2D(e, { mass = 2, friction = 0.8 })"
+    },
+    {
+      "name": "getVelocity",
+      "lua": "caffeine.world.getVelocity",
+      "dryad": null,
+      "signature": "getVelocity(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{x, y}; 0 when there is no RigidBody2D.",
+        "pt": "{x, y}; 0 se não houver RigidBody2D."
+      },
+      "en": "Reads the 2D velocity of the rigid body.",
+      "pt": "Lê a velocidade 2D do corpo rígido.",
+      "example": "local v = caffeine.world.getVelocity(e)"
+    },
+    {
+      "name": "setVelocity",
+      "lua": "caffeine.world.setVelocity",
+      "dryad": null,
+      "signature": "setVelocity(entity, v)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "v",
+          "type": "table",
+          "en": "{x, y}; missing fields keep the current value.",
+          "pt": "{x, y}; os campos em falta mantêm o valor atual."
+        }
+      ],
+      "returns": null,
+      "en": "Sets the 2D velocity (adds a RigidBody2D when missing) and wakes the body.",
+      "pt": "Define a velocidade 2D (adiciona um RigidBody2D se não existir) e acorda o corpo.",
+      "example": "caffeine.world.setVelocity(e, { x = 5, y = 0 })"
+    },
+    {
+      "name": "getSprite",
+      "lua": "caffeine.world.getSprite",
+      "dryad": null,
+      "signature": "getSprite(entity) -> table",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "table",
+        "en": "{name, frameIndex}; empty when there is no Sprite.",
+        "pt": "{name, frameIndex}; vazia se não houver Sprite."
+      },
+      "en": "Reads the sprite name and frame index.",
+      "pt": "Lê o nome e o índice de frame do sprite.",
+      "example": "local s = caffeine.world.getSprite(e)"
+    },
+    {
+      "name": "setSprite",
+      "lua": "caffeine.world.setSprite",
+      "dryad": null,
+      "signature": "setSprite(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Fields name (string, default \"\") and frameIndex (default 0).",
+          "pt": "Campos name (texto, por omissão \"\") e frameIndex (por omissão 0)."
+        }
+      ],
+      "returns": null,
+      "en": "Adds a Sprite when missing and writes name and frame index.",
+      "pt": "Adiciona um Sprite se não existir e escreve o nome e o índice de frame.",
+      "example": "caffeine.world.setSprite(e, { name = 'hero', frameIndex = 2 })"
+    },
+    {
+      "name": "addSprite",
+      "lua": "caffeine.world.addSprite",
+      "dryad": null,
+      "signature": "addSprite(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Same fields as setSprite.",
+          "pt": "Os mesmos campos que setSprite."
+        }
+      ],
+      "returns": null,
+      "en": "Alias of `caffeine.world.setSprite`.",
+      "pt": "Alias de `caffeine.world.setSprite`.",
+      "example": "caffeine.world.addSprite(e, { name = 'hero' })"
+    },
+    {
+      "name": "addParticleEmitter",
+      "lua": "caffeine.world.addParticleEmitter",
+      "dryad": null,
+      "signature": "addParticleEmitter(entity, t)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "t",
+          "type": "table",
+          "en": "Fields maxParticles (100), emissionRate (10), lifetime (2), startSize (1), endSize (0), startColor and endColor ({r,g,b,a} in 0..1).",
+          "pt": "Campos maxParticles (100), emissionRate (10), lifetime (2), startSize (1), endSize (0), startColor e endColor ({r,g,b,a} em 0..1)."
+        }
+      ],
+      "returns": null,
+      "en": "Adds a particle emitter component to the entity (and a Transform when missing).",
+      "pt": "Adiciona um componente emissor de partículas à entidade (e um Transform se não existir).",
+      "example": "caffeine.world.addParticleEmitter(e, { emissionRate = 30, lifetime = 1.5 })"
+    },
+    {
+      "name": "caffeine_world_is_alive",
+      "lua": null,
+      "dryad": "caffeine_world_is_alive",
+      "signature": "caffeine_world_is_alive(entity) -> boolean",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "boolean",
+        "en": "True when the entity exists.",
+        "pt": "Verdadeiro se a entidade existir."
+      },
+      "en": "Dryad only: checks that an entity id still refers to a live entity.",
+      "pt": "Apenas Dryad: verifica se um id ainda corresponde a uma entidade viva.",
+      "example": "function onUpdate(entity, dt) {\n  if (caffeine_world_is_alive(entity)) { caffeine_translate(entity, 0, dt, 0); }\n}"
+    },
+    {
+      "name": "caffeine_set_position",
+      "lua": null,
+      "dryad": "caffeine_set_position",
+      "signature": "caffeine_set_position(entity, x, y, z)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "X.",
+          "pt": "X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Y.",
+          "pt": "Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Z.",
+          "pt": "Z."
+        }
+      ],
+      "returns": null,
+      "en": "Dryad only: sets the position of an entity (Position3D and/or Transform; a Transform is created when it has neither).",
+      "pt": "Apenas Dryad: define a posição de uma entidade (Position3D e/ou Transform; é criado um Transform se não tiver nenhum).",
+      "example": "caffeine_set_position(entity, 0, 1, 0);"
+    },
+    {
+      "name": "caffeine_translate",
+      "lua": null,
+      "dryad": "caffeine_translate",
+      "signature": "caffeine_translate(entity, dx, dy, dz)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "en": "Offset on X.",
+          "pt": "Deslocamento em X."
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "en": "Offset on Y.",
+          "pt": "Deslocamento em Y."
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "en": "Offset on Z.",
+          "pt": "Deslocamento em Z."
+        }
+      ],
+      "returns": null,
+      "en": "Dryad only: moves an entity by an offset.",
+      "pt": "Apenas Dryad: move uma entidade por um deslocamento.",
+      "example": "caffeine_translate(entity, 1 * dt, 0, 0);"
+    },
+    {
+      "name": "caffeine_get_position_x",
+      "lua": null,
+      "dryad": "caffeine_get_position_x",
+      "signature": "caffeine_get_position_x(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Position on X; 0 when the entity has none.",
+        "pt": "Posição em X; 0 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the X position of an entity.",
+      "pt": "Apenas Dryad: lê a posição X de uma entidade.",
+      "example": "let p = caffeine_get_position_x(entity);"
+    },
+    {
+      "name": "caffeine_get_position_y",
+      "lua": null,
+      "dryad": "caffeine_get_position_y",
+      "signature": "caffeine_get_position_y(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Position on Y; 0 when the entity has none.",
+        "pt": "Posição em Y; 0 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the Y position of an entity.",
+      "pt": "Apenas Dryad: lê a posição Y de uma entidade.",
+      "example": "let p = caffeine_get_position_y(entity);"
+    },
+    {
+      "name": "caffeine_get_position_z",
+      "lua": null,
+      "dryad": "caffeine_get_position_z",
+      "signature": "caffeine_get_position_z(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Position on Z; 0 when the entity has none.",
+        "pt": "Posição em Z; 0 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the Z position of an entity.",
+      "pt": "Apenas Dryad: lê a posição Z de uma entidade.",
+      "example": "let p = caffeine_get_position_z(entity);"
+    },
+    {
+      "name": "caffeine_set_scale",
+      "lua": null,
+      "dryad": "caffeine_set_scale",
+      "signature": "caffeine_set_scale(entity, x, y, z)",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "en": "Scale on X.",
+          "pt": "Escala em X."
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "en": "Scale on Y.",
+          "pt": "Escala em Y."
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "en": "Scale on Z.",
+          "pt": "Escala em Z."
+        }
+      ],
+      "returns": null,
+      "en": "Dryad only: sets the scale of an entity (Scale3D or Transform).",
+      "pt": "Apenas Dryad: define a escala de uma entidade (Scale3D ou Transform).",
+      "example": "caffeine_set_scale(entity, 2, 2, 2);"
+    },
+    {
+      "name": "caffeine_get_scale_x",
+      "lua": null,
+      "dryad": "caffeine_get_scale_x",
+      "signature": "caffeine_get_scale_x(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Scale on X; 1 when the entity has none.",
+        "pt": "Escala em X; 1 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the X scale of an entity.",
+      "pt": "Apenas Dryad: lê a escala X de uma entidade.",
+      "example": "let s = caffeine_get_scale_x(entity);"
+    },
+    {
+      "name": "caffeine_get_scale_y",
+      "lua": null,
+      "dryad": "caffeine_get_scale_y",
+      "signature": "caffeine_get_scale_y(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Scale on Y; 1 when the entity has none.",
+        "pt": "Escala em Y; 1 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the Y scale of an entity.",
+      "pt": "Apenas Dryad: lê a escala Y de uma entidade.",
+      "example": "let s = caffeine_get_scale_y(entity);"
+    },
+    {
+      "name": "caffeine_get_scale_z",
+      "lua": null,
+      "dryad": "caffeine_get_scale_z",
+      "signature": "caffeine_get_scale_z(entity) -> number",
+      "params": [
+        {
+          "name": "entity",
+          "type": "integer",
+          "en": "Entity id.",
+          "pt": "Id da entidade."
+        }
+      ],
+      "returns": {
+        "type": "number",
+        "en": "Scale on Z; 1 when the entity has none.",
+        "pt": "Escala em Z; 1 se a entidade não tiver."
+      },
+      "en": "Dryad only: reads the Z scale of an entity.",
+      "pt": "Apenas Dryad: lê a escala Z de uma entidade.",
+      "example": "let s = caffeine_get_scale_z(entity);"
+    }
+  ]
+}

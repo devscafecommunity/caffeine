@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Builds the preview contact sheets of the Nature Generator presets used by
-# doppio/docs/nature-generator-guide.md (software renderer, no engine needed). Needs ImageMagick.
+# caffeine-website/content/en/docs/doppio/nature-generator-guide.md (software renderer, no engine needed). Needs ImageMagick.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${root}/doppio/docs/images/nature"
+out="${root}/caffeine-website/content/en/docs/images/doppio/nature"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
@@ -26,3 +26,5 @@ sheet "$out/nature-trees.png" oak:Oak pine:Pine birch:Birch autumn_maple:"Autumn
 sheet "$out/nature-plants.png" grass_clump:"Grass Clump" tall_grass:"Tall Grass" fern:Fern shrub:Shrub \
     autumn_shrub:"Autumn Shrub" fern_patch:"Fern Patch (hi-fi)" pink_flower:"Pink Flower" white_flower:"White Flower"
 echo "wrote $out/nature-{rocks,trees,plants}.png"
+
+"${root}/scripts/mirror-doppio-images.sh"

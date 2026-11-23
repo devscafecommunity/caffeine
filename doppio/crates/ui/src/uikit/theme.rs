@@ -35,6 +35,28 @@ pub const OVERLAY_PLATE: Color = Color::from_rgba(0.06, 0.07, 0.09, 0.62);
 pub const ICON_ORANGE: Color = Color::from_rgba8(0xf0, 0x9a, 0x4a, 1.0);
 pub const ICON_PINK: Color = Color::from_rgba8(0xe8, 0x7f, 0xb4, 1.0);
 
+/// Colours of the lines in a chart, one per series (the profiler gives each CPU core its own). Chosen to stay
+/// apart from each other on the dark panel; they wrap around after twelve.
+pub const SERIES: [Color; 12] = [
+    Color::from_rgba8(0x4a, 0x8f, 0xe0, 1.0),
+    Color::from_rgba8(0xf0, 0x9a, 0x4a, 1.0),
+    Color::from_rgba8(0x5d, 0xa5, 0x6b, 1.0),
+    Color::from_rgba8(0xe8, 0x7f, 0xb4, 1.0),
+    Color::from_rgba8(0xb8, 0x8c, 0xf0, 1.0),
+    Color::from_rgba8(0x5c, 0xc7, 0xcf, 1.0),
+    Color::from_rgba8(0xd1, 0xc2, 0x3c, 1.0),
+    Color::from_rgba8(0xc2, 0x4f, 0x4f, 1.0),
+    Color::from_rgba8(0x8f, 0xd1, 0x4a, 1.0),
+    Color::from_rgba8(0x4a, 0xd1, 0xa0, 1.0),
+    Color::from_rgba8(0xd1, 0x6a, 0x3c, 1.0),
+    Color::from_rgba8(0x8e, 0x9b, 0xf0, 1.0),
+];
+
+/// The colour of series `index` (wraps around).
+pub fn series_color(index: usize) -> Color {
+    SERIES[index % SERIES.len()]
+}
+
 pub fn background(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(BACKGROUND.into()),
@@ -275,6 +297,33 @@ pub fn filter_chip(active: bool, color: Color) -> impl Fn(&Theme, button::Status
         },
         shadow: Shadow::default(),
         snap: true,
+    }
+}
+
+/// A transport button (Play, Pause, Stop): a flat square that lights up in its colour when it is the active state.
+pub fn transport_button(
+    active: bool,
+    color: Color,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: if active {
+                Some(Color { a: 0.22, ..color }.into())
+            } else if hovered {
+                Some(PANEL_ALT.into())
+            } else {
+                Some(SURFACE.into())
+            },
+            text_color: if active || hovered { color } else { TEXT },
+            border: Border {
+                color: if active { color } else { BORDER_STRONG },
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
     }
 }
 
@@ -656,16 +705,106 @@ pub fn settings() -> iced::Settings {
     }
 }
 
-/// Idle asset tile: flat until hovered/selected so the thumbnails lead.
+/// Idle asset tile: a raised card with a hairline border, so a grid of assets reads as objects.
 pub fn asset_card(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Color { a: 0.5, ..SURFACE }.into()),
+        background: Some(PANEL.into()),
         border: Border {
-            color: Color::TRANSPARENT,
+            color: BORDER,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
+/// A selected asset tile: accent ring over the pressed accent.
+pub fn asset_card_selected(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(
+            Color {
+                a: 0.35,
+                ..ACCENT_PRESSED
+            }
+            .into(),
+        ),
+        border: Border {
+            color: ACCENT,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: Some(TEXT),
+        ..container::Style::default()
+    }
+}
+
+/// The well behind an asset's icon: the kind colour, dimmed, with a rounded edge.
+pub fn asset_tile(accent: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(Color { a: 0.14, ..accent }.into()),
+        border: Border {
+            color: Color { a: 0.45, ..accent },
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// A thumbnail's frame: transparent fill, so the picture keeps its colours.
+pub fn asset_thumbnail_frame(_theme: &Theme) -> container::Style {
+    container::Style {
+        border: Border {
+            color: BORDER_STRONG,
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// The small extension / kind chip on a tile corner.
+pub fn asset_chip(accent: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(
+            Color {
+                a: 0.82,
+                ..BACKGROUND
+            }
+            .into(),
+        ),
+        border: Border {
+            color: Color { a: 0.7, ..accent },
             width: 1.0,
             radius: 3.0.into(),
         },
-        text_color: Some(TEXT),
+        text_color: Some(accent),
+        ..container::Style::default()
+    }
+}
+
+/// The thin bar across the top of a card that names its kind by colour.
+pub fn asset_accent_bar(accent: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(accent.into()),
+        border: Border {
+            radius: 2.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// A filter chip row above a picker list (kind filters).
+pub fn picker_header(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(PANEL.into()),
+        border: Border {
+            color: BORDER,
+            width: 1.0,
+            radius: 0.0.into(),
+        },
         ..container::Style::default()
     }
 }

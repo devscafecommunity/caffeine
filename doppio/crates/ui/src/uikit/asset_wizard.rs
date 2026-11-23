@@ -4,7 +4,7 @@
 //! be tested with temp directories and never touches the engine. The wizard
 //! panel and `App` only translate messages into these calls.
 //!
-//! Raw assets live under the project asset root (`assets/raw`). The engine
+//! Raw assets live under the project asset root (`Assets/Raw`). The engine
 //! recognises them by extension (see `assetKind` in the C ABI); `caf-pack`
 //! turns that raw tree into the `.cap` archive shipped with a game.
 
@@ -155,49 +155,13 @@ pub fn create(
         .map_err(|error| error.to_string())
 }
 
-/// What the engine / caf-pack will treat an imported file as.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImportKind {
-    Texture,
-    Mesh,
-    Audio,
-    Script,
-    Material,
-    Packed,
-    Animation,
-    Localization,
-}
+/// What the engine / caf-pack will treat an imported file as. The table of extensions lives in
+/// [`crate::uikit::asset_kind`], shared with the asset browser and the pickers.
+pub use crate::uikit::asset_kind::AssetKind as ImportKind;
 
-impl ImportKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            ImportKind::Texture => "texture",
-            ImportKind::Mesh => "mesh",
-            ImportKind::Audio => "audio",
-            ImportKind::Script => "script",
-            ImportKind::Material => "material",
-            ImportKind::Packed => "packed asset",
-            ImportKind::Animation => "animation",
-            ImportKind::Localization => "localization",
-        }
-    }
-}
-
-/// Classifies by extension, mirroring the engine's `assetKind` plus the
-/// `.lang` tables caf-pack's Scribe processor turns into string tables.
+/// Classifies by extension; `None` for a file type the project cannot use (it is skipped).
 pub fn classify(path: &Path) -> Option<ImportKind> {
-    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    Some(match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "tga" | "gif" | "hdr" | "exr" => ImportKind::Texture,
-        "obj" | "glb" | "gltf" | "fbx" => ImportKind::Mesh,
-        "wav" | "ogg" | "mp3" => ImportKind::Audio,
-        "lua" | "dyd" => ImportKind::Script,
-        "mat" | "material" => ImportKind::Material,
-        "caf" | "cap" => ImportKind::Packed,
-        "anim" => ImportKind::Animation,
-        "lang" => ImportKind::Localization,
-        _ => return None,
-    })
+    crate::uikit::asset_kind::classify(path)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -209,12 +173,46 @@ pub struct ImportReport {
 }
 
 impl ImportReport {
+    /// `3 textures, 1 mesh`: what came in, by kind, most numerous first.
+    pub fn breakdown(&self) -> String {
+        let mut counts: Vec<(ImportKind, usize)> = Vec::new();
+        for path in &self.imported {
+            let Some(kind) = classify(Path::new(path)) else {
+                continue;
+            };
+            match counts.iter_mut().find(|(known, _)| *known == kind) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((kind, 1)),
+            }
+        }
+        counts.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        counts
+            .into_iter()
+            .map(|(kind, count)| {
+                if count == 1 {
+                    format!("1 {}", kind.label())
+                } else {
+                    format!("{count} {}s", kind.label())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     pub fn summary(&self) -> String {
+        let detail = self.breakdown();
+        let detail = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(" ({detail})")
+        };
         match (self.imported.len(), self.skipped.len()) {
             (0, 0) => "Nothing to import.".to_owned(),
-            (imported, 0) => format!("Imported {imported} file(s)."),
+            (imported, 0) => format!("Imported {imported} file(s){detail}."),
             (0, skipped) => format!("Nothing imported; {skipped} skipped."),
-            (imported, skipped) => format!("Imported {imported} file(s); {skipped} skipped."),
+            (imported, skipped) => {
+                format!("Imported {imported} file(s){detail}; {skipped} skipped.")
+            }
         }
     }
 }
@@ -398,11 +396,11 @@ mod tests {
         let source = temp("import-src");
         std::fs::write(source.join("rock.png"), b"png").expect("write");
         std::fs::write(source.join("hero.glb"), b"glb").expect("write");
-        std::fs::write(source.join("notes.txt"), b"x").expect("write");
+        std::fs::write(source.join("archive.zip"), b"x").expect("write");
         let sources = vec![
             source.join("rock.png"),
             source.join("hero.glb"),
-            source.join("notes.txt"),
+            source.join("archive.zip"),
             source.join("missing.wav"),
         ];
         let report = import(&root, "Models", &sources);
@@ -423,7 +421,7 @@ mod tests {
 
     #[test]
     fn classify_matches_engine_kinds() {
-        assert_eq!(classify(Path::new("a.PNG")), Some(ImportKind::Texture));
+        assert_eq!(classify(Path::new("a.PNG")), Some(ImportKind::Image));
         assert_eq!(classify(Path::new("a.glb")), Some(ImportKind::Mesh));
         assert_eq!(classify(Path::new("a.wav")), Some(ImportKind::Audio));
         assert_eq!(
@@ -431,6 +429,62 @@ mod tests {
             Some(ImportKind::Localization)
         );
         assert_eq!(classify(Path::new("a.zip")), None);
+    }
+
+    #[test]
+    fn the_importer_accepts_the_new_kinds() {
+        for (name, kind) in [
+            ("a.bmp", ImportKind::Image),
+            ("a.psd", ImportKind::Image),
+            ("a.flac", ImportKind::Audio),
+            ("a.ttf", ImportKind::Font),
+            ("a.otf", ImportKind::Font),
+            ("a.prefab", ImportKind::Prefab),
+            ("a.scene", ImportKind::Scene),
+            ("a.terrain", ImportKind::Terrain),
+            ("a.water", ImportKind::Water),
+            ("a.nature", ImportKind::Nature),
+            ("a.texset", ImportKind::TextureSet),
+            ("a.texgraph", ImportKind::TextureGraph),
+            ("a.mtl", ImportKind::Data),
+            ("a.bin", ImportKind::Data),
+            ("a.json", ImportKind::Data),
+            ("a.csv", ImportKind::Data),
+            ("Rock.generator.material", ImportKind::Generator),
+        ] {
+            assert_eq!(classify(Path::new(name)), Some(kind), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_report_counts_what_came_in_by_kind() {
+        let root = temp("breakdown-root");
+        let source = temp("breakdown-src");
+        for name in [
+            "a.png", "b.png", "c.png", "hero.glb", "font.ttf", "hero.bin",
+        ] {
+            std::fs::write(source.join(name), b"x").expect("write");
+        }
+        let sources: Vec<PathBuf> = std::fs::read_dir(&source)
+            .expect("dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        let report = import(&root, "", &sources);
+        assert_eq!(report.imported.len(), 6);
+        assert!(
+            report.breakdown().starts_with("3 textures"),
+            "{}",
+            report.breakdown()
+        );
+        assert!(report.breakdown().contains("1 mesh"));
+        assert!(report.breakdown().contains("1 font"));
+        assert!(report.breakdown().contains("1 data file"));
+        assert!(report
+            .summary()
+            .starts_with("Imported 6 file(s) (3 textures"));
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(source);
     }
 
     #[test]

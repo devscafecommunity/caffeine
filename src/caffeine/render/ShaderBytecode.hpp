@@ -42,12 +42,21 @@ enum class BuiltinShader : u8 {
     PostPhotonFragment,
     PostPhotonResolveFragment,
     MinZDownsampleFragment,
+    Batch2DVertex,
+    Batch2DFragment,
     PhotonCascade,
     PhotonC0,
     PhotonVoxelize,
+    PhotonVoxelizeTri,
     PhotonInject,
     PhotonProbe,
     PhotonBakeAO,
+    MicromeshCull,
+    SceneMicromeshVertex,
+    ShadowMicromeshVertex,
+    MicromeshCompact,
+    MicromeshReset,
+    MicromeshHzb,
 };
 
 struct ShaderBytecodeView {
@@ -63,6 +72,6 @@ RHI::ShaderBytecodeFormat detectShaderFormat(RHI::RenderDevice* device);
 /// Creates a GPU shader from the embedded bytecode; nullptr when the format isn't bundled.
 RHI::Shader* createBuiltinShader(RHI::RenderDevice* device, BuiltinShader shader,
                                  RHI::ShaderStage stage, u32 numUniformBuffers,
-                                 u32 numSamplers = 0);
+                                 u32 numSamplers = 0, u32 numStorageBuffers = 0);
 
 }  // namespace Caffeine::Render

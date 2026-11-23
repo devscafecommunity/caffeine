@@ -193,7 +193,78 @@ void TerrainCache::rebuildMesh(ECS::Entity entity, TerrainEntry& entry,
     component.meshRevision = component.dataRevision;
     entry.builtRevision = component.dataRevision;
     rebuildCollisionMesh(entry, component);
+    markTilesEdited(entry, component, nullptr);  // the heights may all have changed (a generator, a load, a resample)
     (void)entity;
+}
+
+void TerrainCache::markTilesEdited(TerrainEntry& entry, const ECS::TerrainComponent& settings,
+                                   const TerrainVertexBounds* region) {
+    const TileGrid grid(entry.heightmap.resolutionX(), entry.heightmap.resolutionZ(), settings.worldSizeX,
+                        settings.worldSizeZ);
+    if (!grid.valid()) return;
+    if (entry.tileRevision.size() != grid.tileCount()) entry.tileRevision.assign(grid.tileCount(), 0);
+    if (!region || !region->valid) {
+        for (u64& revision : entry.tileRevision) revision = ++entry.editSerial;
+        return;
+    }
+    // A changed vertex also moves the triangles of the next tile: the tiles' mesh regions, as the dirty set does.
+    DirtyTiles touched(grid);
+    touched.mark(*region);
+    for (const TileCoord tile : touched.tiles()) entry.tileRevision[grid.index(tile)] = ++entry.editSerial;
+}
+
+u32 TerrainCache::giStepFor(u32 resolutionX, u32 resolutionZ, f64 sizeX, f64 sizeZ) {
+    constexpr f64 kTriangleBudget = 400000.0;  // of the voxeliser's million: the rest is for the scene's objects
+    const f64 cellsX = std::max(1u, resolutionX - 1), cellsZ = std::max(1u, resolutionZ - 1);
+    const f64 cellX = sizeX / cellsX, cellZ = sizeZ / cellsZ;
+    // The voxel volume resolves about a metre at best: finer cells would only cost triangles.
+    f64 byDetail = std::max(1.0 / std::max(cellX, 1e-6), 1.0 / std::max(cellZ, 1e-6));
+    f64 byBudget = std::sqrt(std::max(1.0, 2.0 * cellsX * cellsZ / kTriangleBudget));
+    u32 step = 1;
+    while (step < 64 && static_cast<f64>(step) < std::max(byDetail, byBudget)) step *= 2;
+    return step;
+}
+
+const std::vector<TerrainGiTile>& TerrainCache::giTilesFor(ECS::Entity entity,
+                                                           const ECS::TerrainComponent& settings) {
+    static const std::vector<TerrainGiTile> none;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || it->second.heightmap.empty()) return none;
+    TerrainEntry& entry = it->second;
+    const u32 resX = entry.heightmap.resolutionX(), resZ = entry.heightmap.resolutionZ();
+    const TileGrid grid(resX, resZ, settings.worldSizeX, settings.worldSizeZ);
+    if (!grid.valid()) return none;
+    const u32 step = giStepFor(resX, resZ, settings.worldSizeX, settings.worldSizeZ);
+
+    // The tiles' shape depends on the grid and the step; when it changes they all start again.
+    u64 signature = 1469598103934665603ull;
+    for (const u64 part : {static_cast<u64>(resX), static_cast<u64>(resZ),
+                           static_cast<u64>(static_cast<f32>(settings.worldSizeX) * 1000.0f),
+                           static_cast<u64>(static_cast<f32>(settings.worldSizeZ) * 1000.0f),
+                           static_cast<u64>(settings.maxHeight * 1000.0f), static_cast<u64>(step)}) {
+        signature = (signature ^ part) * 1099511628211ull;
+    }
+    if (entry.tileRevision.size() != grid.tileCount()) entry.tileRevision.assign(grid.tileCount(), ++entry.editSerial);
+    if (entry.giSignature != signature || entry.giTiles.size() != grid.tileCount()) {
+        entry.giSignature = signature;
+        entry.giTiles.assign(grid.tileCount(), TerrainGiTile{});
+        for (u32 i = 0; i < grid.tileCount(); ++i) entry.giTiles[i].index = i;
+        for (u64& revision : entry.tileRevision) revision = ++entry.editSerial;
+    }
+
+    for (u32 i = 0; i < grid.tileCount(); ++i) {
+        TerrainGiTile& tile = entry.giTiles[i];
+        if (tile.revision == entry.tileRevision[i]) continue;
+        const TerrainVertexBounds owned = grid.owned(grid.coordOf(i));
+        // One vertex past the tile joins it to the next; the step divides the 64-cell tile.
+        const u32 endX = std::min(owned.minX + kTileCells, resX - 1);
+        const u32 endZ = std::min(owned.minZ + kTileCells, resZ - 1);
+        tile.mesh = TerrainMeshBuilder::buildRegion(entry.heightmap, settings, owned.minX, owned.minZ, endX, endZ, step);
+        tile.lo = tile.mesh.bounds.min;
+        tile.hi = tile.mesh.bounds.max;
+        tile.revision = entry.tileRevision[i];
+    }
+    return entry.giTiles;
 }
 
 void TerrainCache::rebuildRegion(ECS::Entity entity,
@@ -205,6 +276,16 @@ void TerrainCache::rebuildRegion(ECS::Entity entity,
 
     TerrainEntry& entry = it->second;
     if (entry.heightmap.empty()) return;
+    {
+        // The global illumination follows by tile: only the tiles this region touches get a new revision.
+        TerrainVertexBounds region;
+        region.minX = minVertexX;
+        region.minZ = minVertexZ;
+        region.maxX = maxVertexX;
+        region.maxZ = maxVertexZ;
+        region.valid = true;
+        markTilesEdited(entry, settings, &region);
+    }
 
     if (entry.useChunks && !entry.chunks.empty()) {
 #ifdef CF_HAS_SDL3
@@ -227,6 +308,19 @@ void TerrainCache::rebuildRegion(ECS::Entity entity,
 #endif
         *entry.mesh = TerrainMeshBuilder::build(entry.heightmap, settings);
     }
+}
+
+void TerrainCache::commitHeightEdit(ECS::Entity entity, ECS::TerrainComponent& settings,
+                                    const TerrainVertexBounds& region, bool final) {
+    if (!region.valid) return;
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || it->second.heightmap.empty()) return;
+    TerrainEntry& entry = it->second;
+    ++settings.dataRevision;
+    rebuildRegion(entity, settings, region.minX, region.minZ, region.maxX, region.maxZ);
+    settings.meshRevision = settings.dataRevision;
+    entry.builtRevision = settings.dataRevision;
+    if (final) rebuildCollisionMesh(entry, settings);
 }
 
 void TerrainCache::syncEntity(ECS::World& world, ECS::Entity entity) {
@@ -322,6 +416,16 @@ const TerrainSplatmap* TerrainCache::splatmapFor(ECS::Entity entity) const {
     return it != m_entries.end() ? &it->second.splatmap : nullptr;
 }
 
+TerrainMasks* TerrainCache::masksFor(ECS::Entity entity) {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.masks : nullptr;
+}
+
+const TerrainMasks* TerrainCache::masksFor(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() ? &it->second.masks : nullptr;
+}
+
 Assets::Mesh3D* TerrainCache::collisionMeshFor(ECS::Entity entity) {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end() || !it->second.collisionMesh) return nullptr;
@@ -348,7 +452,64 @@ bool TerrainCache::saveTerrainFile(ECS::Entity entity, const std::filesystem::pa
                                    bool includeSplat) const {
     auto it = m_entries.find(entity.id());
     if (it == m_entries.end()) return false;
-    return TerrainSerializer::save(path, it->second.heightmap, it->second.splatmap, includeSplat);
+    if (path.extension() == TerrainContainer::kExtension) {
+        // The native container records the extent and height scale, which the cache does not hold: the caller's
+        // terrain component does, so a scene that saves the native format goes through `saveNativeTerrainFile`.
+        return false;
+    }
+    return TerrainSerializer::save(path, it->second.heightmap, it->second.splatmap, includeSplat,
+                                   &it->second.masks);
+}
+
+bool TerrainCache::saveNativeTerrainFile(ECS::Entity entity, const ECS::TerrainComponent& terrain,
+                                         const std::filesystem::path& path, bool includeSplat) const {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end()) return false;
+    const TerrainDimensions dimensions{static_cast<f64>(terrain.worldSizeX), static_cast<f64>(terrain.worldSizeZ),
+                                       terrain.maxHeight};
+    return TerrainContainer::save(path, it->second.heightmap, it->second.splatmap, includeSplat, &it->second.masks,
+                                  dimensions);
+}
+
+bool TerrainCache::dataFileIsLegacy(ECS::Entity entity) const {
+    auto it = m_entries.find(entity.id());
+    return it != m_entries.end() && it->second.fromLegacy;
+}
+
+bool TerrainCache::convertToNative(ECS::Entity entity, ECS::TerrainComponent& terrain,
+                                   const std::filesystem::path& projectRoot) {
+    auto it = m_entries.find(entity.id());
+    if (it == m_entries.end() || it->second.heightmap.empty() || projectRoot.empty()) return false;
+    if (terrain.terrainDataPath[0] == '\0') return false;
+    const std::filesystem::path legacy = projectRoot / terrain.terrainDataPath;
+    const std::filesystem::path native = nativeTerrainPath(legacy);
+    if (!saveNativeTerrainFile(entity, terrain, native, terrain.useSplatmap)) return false;
+
+    // What was written must read back as what is in memory, bit for bit, before the scene is pointed at it.
+    TerrainHeightmap heights;
+    TerrainSplatmap splat;
+    TerrainMasks masks;
+    bool hadSplat = false;
+    if (!TerrainContainer::load(native, heights, splat, &hadSplat, &masks)) {
+        std::error_code ec;
+        std::filesystem::remove(native, ec);
+        return false;
+    }
+    const TerrainEntry& entry = it->second;
+    const bool sameSplat = !terrain.useSplatmap || terrainsIdentical(entry.heightmap, heights, entry.splatmap, splat,
+                                                                      entry.masks, masks);
+    const bool sameHeights = entry.heightmap.heights() == heights.heights();
+    if (!sameHeights || !sameSplat) {
+        std::error_code ec;
+        std::filesystem::remove(native, ec);
+        return false;
+    }
+    std::error_code ec;
+    const std::string relative = std::filesystem::relative(native, projectRoot, ec).generic_string();
+    if (ec || relative.empty() || relative.size() >= sizeof(terrain.terrainDataPath)) return false;
+    std::memcpy(terrain.terrainDataPath, relative.c_str(), relative.size() + 1);
+    it->second.fromLegacy = false;
+    return true;
 }
 
 bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
@@ -358,9 +519,12 @@ bool TerrainCache::loadTerrainFile(ECS::World& world, ECS::Entity entity,
     repairTexturePaths(terrain);
     TerrainEntry& entry = ensureEntry(entity);
     bool hadSplat = false;
-    if (!TerrainSerializer::load(path, entry.heightmap, entry.splatmap, &hadSplat)) {
+    bool fromLegacy = false;
+    // Either format: a legacy `.cterrain` (an old project) opens as it is, a native `.terrain` is read tile by tile.
+    if (!loadTerrainAny(path, entry.heightmap, entry.splatmap, &hadSplat, &entry.masks, &fromLegacy)) {
         return false;
     }
+    entry.fromLegacy = fromLegacy;
 
     terrain.resolutionX = entry.heightmap.resolutionX();
     terrain.resolutionZ = entry.heightmap.resolutionZ();
@@ -483,6 +647,8 @@ void TerrainCache::releaseGpuResources(RHI::RenderDevice* device) {
     for (auto& [_, entry] : m_entries) {
         releaseEntryGpu(entry);
     }
+    // Nothing of this device is kept: a later call that reaches for the device must not find it (it is about to go).
+    if (m_gpuDevice == device) m_gpuDevice = nullptr;
 }
 #endif
 

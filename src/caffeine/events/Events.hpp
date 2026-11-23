@@ -2,6 +2,7 @@
 
 #include "core/Types.hpp"
 #include "math/Vec2.hpp"
+#include "math/Vec3.hpp"
 
 namespace Caffeine::Events {
 
@@ -25,6 +26,23 @@ struct OnTrigger2D {
     u32  triggerEntity;
     u32  otherEntity;
     bool entered; // true = enter, false = exit
+};
+
+/// 3D contacts, reported when a pair of bodies starts or stops touching (not every frame they rest).
+struct OnCollision3D {
+    u32  entityA;
+    u32  entityB;
+    Vec3 contactPoint;
+    Vec3 normal;   // from A to B
+    f32  impulse;  // total impulse the solver applied at the contact
+    bool entered;  // true = began touching, false = stopped
+};
+
+/// A body entering or leaving a trigger volume (a 3D collider with `isTrigger`).
+struct OnTrigger3D {
+    u32  triggerEntity;
+    u32  otherEntity;
+    bool entered;
 };
 
 struct OnHealthChanged {

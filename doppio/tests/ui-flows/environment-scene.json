@@ -1,0 +1,29 @@
+{
+  "name": "Environment: adding the weather to an engine scene shows clouds, fog and rain, and the switches work",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "click", "target": "id:editor.menu.view", "label": "open the View menu" },
+    { "action": "click", "target": "id:editor.menu.view.environment", "label": "open the Environment tab" },
+    { "action": "expect", "exists": "id:environment.setup.add" },
+    { "action": "click", "target": "id:environment.setup.add", "label": "add the environment" },
+    { "action": "expect", "missing": "id:environment.setup.add", "label": "Add is gone once the scene has one" },
+    { "action": "expect", "exists": "id:environment.setup.preset", "label": "the presets are there" },
+    { "action": "expect", "exists": "id:environment.clouds.coverage" },
+    { "action": "expect", "exists": "id:environment.clouds.tint_r" },
+    { "action": "expect", "exists": "id:environment.fog.density" },
+    { "action": "expect", "exists": "id:environment.fog.color_b" },
+    { "action": "expect", "exists": "id:environment.rain.intensity" },
+    { "action": "expect", "exists": "id:environment.weather.link_sky" },
+    { "action": "scroll", "target": "id:editor.pane.environment", "dy": -6, "label": "scroll the tab down to the fog" },
+    { "action": "click", "target": "id:environment.fog.enabled", "offset": [-115, 0], "label": "switch the fog on (the box is at the row's left end)" },
+    { "action": "scroll", "target": "id:editor.pane.environment", "dy": -6, "label": "scroll the tab down to the rain" },
+    { "action": "click", "target": "id:environment.rain.enabled", "offset": [-115, 0], "label": "switch the rain on" },
+    { "action": "scroll", "target": "id:editor.pane.environment", "dy": -6, "label": "scroll the tab down to the wind and the lightning" },
+    { "action": "expect", "exists": "id:environment.weather.wind_gust", "label": "the wind has its own card" },
+    { "action": "click", "target": "id:environment.lightning.enabled", "offset": [-115, 0], "label": "switch the lightning on" },
+    { "action": "expect", "exists": "id:environment.lightning.rate", "label": "the lightning settings are there" },
+    { "action": "wait", "ms": 300, "real_time": true, "label": "let a few frames render" },
+    { "action": "screenshot", "name": "environment-settings" }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Play: the transport in the top bar runs the game in the Gameplay tab, pauses it and stops it",
+  "fixture": "scene3d",
+  "size": [1440, 800],
+  "steps": [
+    { "action": "expect", "exists": ["id:editor.transport.play", "id:editor.transport.stop"], "label": "the transport sits in the top bar" },
+    { "action": "expect", "exists": ["id:editor.pane.tab.gameplay", "id:editor.pane.tab.camera_preview"], "label": "Gameplay and Camera tabs next to the Viewport" },
+    { "action": "screenshot", "name": "transport-stopped", "target": "id:editor.transport.play" },
+    { "action": "click", "target": "id:editor.transport.play", "label": "Play" },
+    { "action": "expect", "exists": "id:gameplay.view.surface", "label": "Play brings the game forward" },
+    { "action": "wait", "ms": 400, "real_time": true, "label": "let the game run a few frames" },
+    { "action": "screenshot", "name": "gameplay-playing", "target": "id:editor.pane.gameplay" },
+    { "action": "click", "target": "id:editor.transport.play", "label": "Pause" },
+    { "action": "click", "target": "id:editor.transport.play", "label": "Resume" },
+    { "action": "click", "target": "id:editor.transport.stop", "label": "Stop" },
+    { "action": "click", "target": "id:editor.pane.tab.camera_preview", "label": "the Camera tab" },
+    { "action": "expect", "exists": "id:camerapreview.view.surface" },
+    { "action": "screenshot", "name": "camera-preview", "target": "id:editor.pane.camera_preview" }
+  ]
+}

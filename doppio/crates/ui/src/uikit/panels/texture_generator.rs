@@ -6,7 +6,7 @@
 //! (over a checkerboard) and export (a single PNG or a flipbook sheet).
 
 use crate::uikit::components::{
-    button, checkbox, dropdown, node_canvas, text_field, toggle_chip, tree_view,
+    button, checkbox, dropdown, node_canvas, status, text_field, toggle_chip, tree_view,
 };
 use crate::uikit::generators::{MaterialGraph, NodeId, NodeKind};
 use crate::uikit::icons::Icon;
@@ -106,8 +106,8 @@ pub fn view<'a, Message: Clone + 'a>(
     let library = dropdown::property(
         id::TEXTUREGEN_LIBRARY,
         "Library",
-        library_options,
-        None,
+        library_options.clone(),
+        dropdown::current_option(&library_options, view.name),
         move |choice| {
             let index = library_lookup
                 .iter()
@@ -159,6 +159,11 @@ pub fn view<'a, Message: Clone + 'a>(
                 id::TEXTUREGEN_FIT,
                 "Fit",
                 emit(Edit::Node(nodes_panel::Edit::Fit))
+            ),
+            button::compact(
+                id::TEXTUREGEN_RESEED,
+                "Reseed",
+                emit(Edit::Node(nodes_panel::Edit::Reseed))
             ),
             container(size).width(Length::Fixed(138.0)),
             button::compact(id::TEXTUREGEN_SAVE, "Save", emit(Edit::Save)),
@@ -439,11 +444,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .style(theme::surface),
     );
     if let Some(status) = view.status {
-        right = right.push(
-            container(text(status).size(9).color(theme::WARNING))
-                .width(Length::Fill)
-                .padding(3),
-        );
+        right = right.push(status::note(status));
     }
 
     let body = row![

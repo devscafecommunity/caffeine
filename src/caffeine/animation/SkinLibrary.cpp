@@ -1214,7 +1214,7 @@ void tickSkinnedPoses(ECS::World& world, f32 dt) {
             mode = 1;
             keyTime = pose.time;
         } else {
-            const Animator* animator = world.get<Animator>(entity);
+            const PhaseShift* animator = world.get<PhaseShift>(entity);
             if (animator) buildAnimatorMix(*animator, *skin, mix);
             if (!mix.empty()) {
                 mode = 2;
@@ -1315,13 +1315,13 @@ u64 skinFrameCounter() {
     return g_frame;
 }
 
-f32 effectiveLayerWeight(const Animator& animator, const AnimatorLayer& layer) {
+f32 effectiveLayerWeight(const PhaseShift& animator, const PhaseShiftLayer& layer) {
     if (layer.muted) return 0.0f;
     f32 weight = std::clamp(layer.weight, 0.0f, 1.0f);
     FixedString<32> parent = layer.parentGroup;
     for (int depth = 0; depth < 8 && !parent.empty(); ++depth) {
-        const AnimatorLayer* group = nullptr;
-        for (const AnimatorLayer& candidate : animator.layers) {
+        const PhaseShiftLayer* group = nullptr;
+        for (const PhaseShiftLayer& candidate : animator.layers) {
             if (candidate.isGroup && candidate.name == parent) {
                 group = &candidate;
                 break;
@@ -1337,7 +1337,7 @@ f32 effectiveLayerWeight(const Animator& animator, const AnimatorLayer& layer) {
 
 namespace {
 
-void appendMachineSamples(const AnimatorStateMachine& sm, const ImportedSkin& skin, PoseLayerMix& layer) {
+void appendMachineSamples(const PhaseShiftStateMachine& sm, const ImportedSkin& skin, PoseLayerMix& layer) {
     auto clipOf = [&](const FixedString<32>& name) -> i32 {
         if (name.empty()) return -1;
         const AnimationState* state = sm.states.get(name);
@@ -1360,15 +1360,15 @@ void appendMachineSamples(const AnimatorStateMachine& sm, const ImportedSkin& sk
 
 }  // namespace
 
-void buildAnimatorMix(const Animator& animator, const ImportedSkin& skin, std::vector<PoseLayerMix>& out) {
+void buildAnimatorMix(const PhaseShift& animator, const ImportedSkin& skin, std::vector<PoseLayerMix>& out) {
     out.clear();
     bool active = !animator.currentState.empty();
-    for (const AnimatorLayer& layer : animator.layers) active = active || (!layer.isGroup && !layer.currentState.empty());
+    for (const PhaseShiftLayer& layer : animator.layers) active = active || (!layer.isGroup && !layer.currentState.empty());
     if (!active || skin.clips.empty()) return;
     PoseLayerMix base;
     appendMachineSamples(animator, skin, base);
     out.push_back(std::move(base));
-    for (const AnimatorLayer& layer : animator.layers) {
+    for (const PhaseShiftLayer& layer : animator.layers) {
         if (layer.isGroup) continue;
         PoseLayerMix mix;
         mix.weight = effectiveLayerWeight(animator, layer);
