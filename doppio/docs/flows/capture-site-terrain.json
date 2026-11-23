@@ -1,0 +1,72 @@
+{
+  "name": "Site clip: terrain",
+  "description": "Run through scripts/capture-site-tour.sh",
+  "fixture": "terrain",
+  "size": [
+    1600,
+    900
+  ],
+  "steps": [
+    {
+      "action": "wait",
+      "ms": 2200,
+      "real_time": true
+    },
+    {
+      "action": "record_start",
+      "name": "terrain",
+      "format": "mp4",
+      "fps": 14,
+      "width": 1280
+    },
+    {
+      "action": "wait",
+      "ms": 600,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "terrain",
+      "preset": "Alpine Range"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "terrain",
+      "preset": "Volcanic Island"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "terrain",
+      "preset": "Badlands"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "terrain",
+      "preset": "Archipelago"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "record_stop"
+    }
+  ],
+  "preset": "Rolling Hills"
+}

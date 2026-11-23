@@ -1,0 +1,61 @@
+{
+  "name": "Site clip: material",
+  "description": "Run through scripts/capture-site-tour.sh",
+  "fixture": "material",
+  "size": [
+    1600,
+    900
+  ],
+  "steps": [
+    {
+      "action": "wait",
+      "ms": 2200,
+      "real_time": true
+    },
+    {
+      "action": "record_start",
+      "name": "material",
+      "format": "mp4",
+      "fps": 14,
+      "width": 1280
+    },
+    {
+      "action": "wait",
+      "ms": 600,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "material",
+      "preset": "Red Brick"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "material",
+      "preset": "Rusted Iron"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "reset",
+      "fixture": "material",
+      "preset": "Cobblestone"
+    },
+    {
+      "action": "wait",
+      "ms": 1400,
+      "real_time": true
+    },
+    {
+      "action": "record_stop"
+    }
+  ]
+}
