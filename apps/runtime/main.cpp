@@ -465,7 +465,7 @@ int main(int argc, char** argv) {
     Caffeine::Input::InputManager input;
     Caffeine::Events::EventBus eventBus;
     Caffeine::Physics2D::PhysicsSystem2D physics(&eventBus);
-    Caffeine::Physics3D::PhysicsSystem3D physics3d;
+    Caffeine::Physics3D::PhysicsSystem3D physics3d(&eventBus);
     Caffeine::Audio::AudioService audio;
     audio.setSearchRoot(buildRoot.string());
     if (!audio.init()) std::fprintf(stderr, "caffeine-runtime: no audio device, sound disabled\n");

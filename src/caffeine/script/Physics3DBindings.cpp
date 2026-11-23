@@ -13,6 +13,15 @@ void registerPhysics3DBindings(sol::state& lua, P::PhysicsWorld3D** physicsPtr) 
     sol::table t = lua["caffeine"]["physics3d"].get_or_create<sol::table>();
 
     t["isAvailable"] = [physics]() { auto* p = physics(); return p && p->isAvailable(); };
+    // "blend" (friction: geometric mean, restitution: the larger) or "product" (Bullet's rule).
+    t["setSurfaceCombine"] = [physics](const std::string& mode) {
+        auto* p = physics();
+        if (!p) return false;
+        if (mode == "blend") p->setSurfaceCombine(P::PhysicsWorld3D::SurfaceCombine::Blend);
+        else if (mode == "product") p->setSurfaceCombine(P::PhysicsWorld3D::SurfaceCombine::Product);
+        else return false;
+        return true;
+    };
     t["setGravity"] = [physics](f32 x, f32 y, f32 z) { if (auto* p = physics()) p->setGravity(Vec3(x, y, z)); };
     t["raycast"] = [physics, &lua](f32 ox, f32 oy, f32 oz, f32 dx, f32 dy, f32 dz, f32 maxDistance) -> sol::object {
         auto* p = physics();

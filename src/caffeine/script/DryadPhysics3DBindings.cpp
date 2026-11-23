@@ -1,5 +1,6 @@
 // Dryad natives for `caffeine.physics3d`; same behaviour as the Lua functions.
 //   caffeine_physics3d_available() / _set_gravity(x, y, z)
+//   caffeine_physics3d_set_surface_combine("blend" | "product") -> bool
 //   caffeine_physics3d_raycast(ox, oy, oz, dx, dy, dz, maxDistance) -> {entity, x, y, z, nx, ny, nz, distance} or null
 //   caffeine_physics3d_add_force / _add_impulse / _set_velocity (entity, x, y, z) -> bool
 //   caffeine_physics3d_velocity(entity) -> {x, y, z} or null
@@ -32,6 +33,14 @@ void bindPhysics3DNatives(dryad::Interpreter& interp, Physics3D::PhysicsWorld3D*
     defineNative(interp, "caffeine_physics3d_set_gravity", [=](const Args& a) {
         if (auto* p = physics()) p->setGravity(vec(a, 0));
         return dryad::Value(); });
+    defineNative(interp, "caffeine_physics3d_set_surface_combine", [=](const Args& a) {
+        auto* p = physics();
+        if (!p || a.empty() || !a[0].is_string()) return dryad::Value(false);
+        const std::string mode = a[0].as_string();
+        if (mode == "blend") p->setSurfaceCombine(Physics3D::PhysicsWorld3D::SurfaceCombine::Blend);
+        else if (mode == "product") p->setSurfaceCombine(Physics3D::PhysicsWorld3D::SurfaceCombine::Product);
+        else return dryad::Value(false);
+        return dryad::Value(true); });
     defineNative(interp, "caffeine_physics3d_raycast", [=](const Args& a) {
         auto* p = physics();
         if (!p) return dryad::Value();

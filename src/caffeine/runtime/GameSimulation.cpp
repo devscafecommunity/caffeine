@@ -38,7 +38,7 @@ struct GameSimulation::Impl {
     Input::InputManager input;
     Events::EventBus events;
     Physics2D::PhysicsSystem2D physics2d{&events};
-    Physics3D::PhysicsSystem3D physics3d;
+    Physics3D::PhysicsSystem3D physics3d{&events};
     Animation::AnimationSystem animation;
     UI::UISystem ui{&events};
 #ifdef CF_HAS_SCRIPTING
